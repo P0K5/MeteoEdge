@@ -10,7 +10,7 @@ This repo is developed by a multi-agent team. Agent definitions live in `/agents
 
 | Role | Agent file | Model | Spawn `model` param | Responsibility |
 |---|---|---|---|---|
-| Tech Lead PM | `agents/project-manager.md` | Opus | _(this session)_ | Architecture, planning, issue creation, delegation, code review, progress tracking |
+| Tech Lead PM | `agents/project-manager.md` | Sonnet | `"sonnet"` | Architecture, planning, issue creation, delegation, code review, progress tracking |
 | Designer | `agents/designer.md` | Sonnet | `"sonnet"` | UX/UI direction, design specs, frontend PR review |
 | Mid Developer | `agents/mid-dev.md` | Sonnet | `"sonnet"` | Moderate-complexity implementation |
 | Junior Developer | `agents/junior-dev.md` | Haiku | `"haiku"` | Simple, well-defined implementation |
@@ -21,11 +21,12 @@ When spawning subagents via the Agent tool, you **MUST** set the `model` paramet
 
 | Agent | `model` value | Rationale |
 |---|---|---|
+| Tech Lead PM | `"sonnet"` | Strong reasoning for architecture, planning, code review |
 | Designer | `"sonnet"` | Strong UX reasoning, structured spec output |
 | Mid Developer | `"sonnet"` | Handles moderate complexity within patterns |
 | Junior Developer | `"haiku"` | Simple, well-scoped tasks with clear templates |
 
-The Tech Lead PM (you, in execution mode) runs on Opus as the main session. **Never spawn an agent without the correct `model` parameter — this is non-negotiable.**
+**Never spawn an agent without the correct `model` parameter — this is non-negotiable.**
 
 ---
 
@@ -36,8 +37,8 @@ The Tech Lead PM (you, in execution mode) runs on Opus as the main session. **Ne
 Used for project planning, epic definition, and design alignment. Run separate Claude Code sessions:
 
 ```bash
-# Tech Lead PM — receives the spec, creates epics, defines architecture (Opus)
-claude --model claude-opus-4-6 --system-prompt "$(cat agents/project-manager.md)"
+# Tech Lead PM — receives the spec, creates epics, defines architecture (Sonnet)
+claude --model claude-sonnet-4-6 --system-prompt "$(cat agents/project-manager.md)"
 
 # Designer — produces design specs, reviews UX direction (Sonnet)
 claude --model claude-sonnet-4-6 --system-prompt "$(cat agents/designer.md)"
@@ -51,7 +52,7 @@ Used for epic-by-epic development. Launch a single Claude Code session with this
 
 > "Execute epic #N"
 
-You (the **Tech Lead PM**, running on Opus) will:
+You (the **Tech Lead PM**, running on Sonnet) will:
 
 1. **Read** the epic, all linked design specs, requirements, and context. Also read `agents/project-manager.md` for your full role definition.
 2. **Spawn a Designer agent** (`model: "sonnet"`) to review the epic's design spec and confirm readiness. The Designer remains available throughout the epic for:
@@ -70,7 +71,7 @@ You (the **Tech Lead PM**, running on Opus) will:
 ### Chain of command
 
 ```
-Tech Lead PM (you, Opus)
+Tech Lead PM (you, Sonnet)
 ├── Spawns & consults: Designer (Sonnet)
 ├── Spawns & manages: Mid Developer(s) (Sonnet)
 ├── Spawns & manages: Junior Developer(s) (Haiku)
