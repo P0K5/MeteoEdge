@@ -18,7 +18,7 @@ MeteoEdge trades the mispricing that occurs when Kalshi's market prices lag behi
 - **NOAA METAR** — hourly airport observations to track the running daily high
 - **NWS Forecast API** — zone forecasts with physics-grounded temperature ceilings
 - **Kalshi API** — market snapshots and order execution
-- **Claude Sonnet** — sanity-check layer (not decision-maker) on every proposed trade
+- **LLM sanity check** — provider-agnostic layer (Claude, DeepSeek, or OpenAI) — validates trades, not decides them
 
 ## System Architecture
 
@@ -31,7 +31,7 @@ Mac mini (Ubuntu)
    ├─ Envelope Calculator
    ├─ Edge Scanner
    ├─ Risk Manager (kill switch, position limits)
-   └─ Claude Sanity Check
+   └─ LLM Sanity Check (provider-agnostic)
       └─ Order Router (Kalshi API)
          └─ Dashboard + Alerts (FastAPI + email)
 ```
@@ -43,7 +43,7 @@ Mac mini (Ubuntu)
 | **Envelope Engine** | Calculate physical daily high range given current conditions | Python | 100% (unit + integration) |
 | **Edge Scanner** | Compute true probability and EV vs. market prices | Python | 100% (unit + properties) |
 | **Risk Manager** | Enforce position, exposure, and drawdown limits | Python | 100% (unit) |
-| **Sanity Checker** | Claude-powered validation layer (approval required, not decision) | Python + Claude API | 100% (unit + integration) |
+| **Sanity Checker** | LLM-powered validation layer (approval required, not decision). Provider-agnostic: Claude, DeepSeek, or OpenAI | Python | 100% (unit + integration) |
 | **Order Router** | Place, amend, cancel orders via Kalshi SDK | Python | 100% (integration) |
 | **Pollers** | METAR, NWS, Kalshi data ingestion with retry/backoff | Python | 100% (unit + mocking) |
 | **Dashboard** | FastAPI + HTMX UI (positions, P&L, system health, risk events) | Python + HTML/CSS | Manual testing |
@@ -149,7 +149,13 @@ Trade candidates require:
 KALSHI_ENV=demo|prod
 KALSHI_API_KEY_ID=...
 KALSHI_PRIVATE_KEY_PATH=/etc/meteoedge/kalshi_private.pem
-ANTHROPIC_API_KEY=...
+
+# LLM provider (choose one: anthropic, deepseek, openai)
+LLM_PROVIDER=anthropic
+ANTHROPIC_API_KEY=...     # if LLM_PROVIDER=anthropic
+DEEPSEEK_API_KEY=...      # if LLM_PROVIDER=deepseek
+OPENAI_API_KEY=...        # if LLM_PROVIDER=openai
+
 POSTGRES_DSN=postgresql://meteoedge@localhost:5432/meteoedge
 REDIS_URL=redis://localhost:6379/0
 BANKROLL_CAP_EUR=500
@@ -161,11 +167,11 @@ TRADING_ENABLED=false    # master switch for production
 | Item | Monthly cost |
 |---|---|
 | Electricity (24/7) | €3–5 |
-| Anthropic API (~200 calls/day) | €90 |
+| LLM API (~200 calls/day) | €6–90 (DeepSeek ~€6, OpenAI ~€60, Claude ~€90) |
 | Kalshi trading fees | 2–5% of volume |
-| **Fixed** | **~€100** |
+| **Fixed** | **€10–100** (depends on LLM provider) |
 
-Break-even on €500 bankroll requires ~20% monthly gross return. On €2,000 it's ~5% (more realistic).
+Break-even depends on LLM provider. With DeepSeek (~€6/mo), a €500 bankroll needs only ~2% monthly gross return. With Claude (~€90/mo), it needs ~20% on €500 or ~5% on €2,000.
 
 ## Team & Development
 
@@ -199,7 +205,10 @@ Over 3 months of Stage 4 operation:
 - **Kalshi API:** https://kalshi.com/api-docs
 - **NOAA METAR:** https://aviationweather.gov/api/data/metar
 - **NWS Forecast:** https://api.weather.gov/
-- **Anthropic API:** https://api.anthropic.com/ (Claude Sonnet 4.6)
+- **LLM Providers:**
+  - Anthropic (Claude): https://api.anthropic.com/
+  - DeepSeek: https://api.deepseek.com/
+  - OpenAI: https://api.openai.com/
 
 ---
 

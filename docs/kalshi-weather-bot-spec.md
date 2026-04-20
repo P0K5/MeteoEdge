@@ -100,8 +100,8 @@ The system is a deterministic rules engine in Python with an LLM (Claude) acting
 │                 └───────────┬───────────┘ │                     │
 │                             ▼             │                     │
 │                 ┌───────────────────────┐ │                     │
-│                 │  Claude Sanity Check  │ │                     │
-│                 │  (Sonnet, structured) │ │                     │
+│                 │  LLM Sanity Check    │ │                     │
+│                 │  (provider-agnostic) │ │                     │
 │                 └───────────┬───────────┘ │                     │
 │                             ▼             │                     │
 │                 ┌───────────────────────┐ │                     │
@@ -130,7 +130,7 @@ The system is a deterministic rules engine in Python with an LLM (Claude) acting
 | Envelope Engine | Given METAR + forecast + time-of-day, compute achievable daily high range | Python module |
 | Edge Scanner | For each bracket, compute true probability and edge vs. ask | Python module |
 | Risk Manager | Enforce position, exposure, and drawdown limits; own the kill switch | Python module |
-| Sanity Checker | Pass proposed trade + context to Claude Sonnet; require JSON approval | Python module |
+| Sanity Checker | Pass proposed trade + context to configured LLM provider; require JSON approval | Python module |
 | Order Router | Sign Kalshi requests, place/cancel/reconcile orders | Python module |
 | Dashboard | Local FastAPI UI showing positions, P&L, live edges, system health | Web service |
 | Alerter | Email on halts, anomalies, daily P&L summary | Python module |
@@ -143,7 +143,7 @@ The system is a deterministic rules engine in Python with an LLM (Claude) acting
 - **Kalshi SDK:** `kalshi-python-sync` with RSA-PSS request signing
 - **Process management:** `systemd` units, one per service
 - **Secrets:** environment variables loaded from `/etc/meteoedge/env` with `chmod 600`
-- **LLM:** Anthropic API, `claude-sonnet-4-6` for sanity checks, `claude-haiku-4-5` for non-critical parsing
+- **LLM:** Provider-agnostic via abstraction layer. Default: Anthropic (`claude-sonnet-4-6` sanity checks, `claude-haiku-4-5` parsing). Alternatives: DeepSeek, OpenAI, or any provider exposing a chat-completions-style API with structured JSON output
 - **Observability:** structured JSON logs to `/var/log/meteoedge/*.jsonl`, rotated daily
 - **Dashboard:** FastAPI + HTMX, served on `localhost:8080` only (no external exposure)
 
@@ -360,11 +360,42 @@ Always round down to integer contracts.
 | Manual kill switch | `/var/run/meteoedge/STOP` file exists | HALT immediately |
 | Settlement proximity | < 15 min to market close | Reject new trades; do not cancel existing |
 
-## 8. Claude Sanity-Check Contract
+## 8. LLM Sanity-Check Contract
 
-Before any order is placed, the strategy engine calls Claude Sonnet with:
+Before any order is placed, the strategy engine calls the configured LLM provider via an abstraction layer. The provider is interchangeable — Claude, DeepSeek, OpenAI, or any model that supports structured JSON output.
 
-**Input payload:**
+### 8.1 Provider abstraction
+
+```
+src/meteoedge/llm/
+├── provider.py          # LLMProvider protocol (ABC)
+├── anthropic_provider.py  # Anthropic (Claude) implementation
+├── deepseek_provider.py   # DeepSeek implementation
+├── openai_provider.py     # OpenAI-compatible implementation (covers any OpenAI-API-compatible endpoint)
+└── sanity_check.py        # Sanity check logic — uses LLMProvider, provider-agnostic
+```
+
+The `LLMProvider` protocol defines:
+```python
+class LLMProvider(Protocol):
+    def sanity_check(self, request: SanityCheckRequest) -> SanityCheckResponse: ...
+    def parse_text(self, prompt: str, response_schema: type[T]) -> T: ...
+    @property
+    def name(self) -> str: ...
+    @property
+    def cost_per_call_estimate(self) -> float: ...
+```
+
+Each provider implementation handles its own:
+- Authentication (API keys, signing)
+- Request formatting (Messages API vs. chat completions vs. provider-specific)
+- Response parsing into the common `SanityCheckResponse` schema
+- Error handling and timeouts
+
+Provider selection is via `LLM_PROVIDER` env var. The sanity-check module never imports a specific provider directly.
+
+### 8.2 Input payload (provider-agnostic)
+
 ```json
 {
   "proposed_trade": {
@@ -391,7 +422,8 @@ Before any order is placed, the strategy engine calls Claude Sonnet with:
 }
 ```
 
-**Required response schema:**
+### 8.3 Required response schema (all providers must produce this)
+
 ```json
 {
   "approve": true,
@@ -401,14 +433,19 @@ Before any order is placed, the strategy engine calls Claude Sonnet with:
 }
 ```
 
-**Handling logic:**
+Each provider implementation is responsible for coercing its model's output into this exact schema. If the model returns malformed output after retries, treat as a rejection (fail-safe).
+
+### 8.4 Handling logic
+
 - `approve: false` → abort trade, log rationale, increment rejection counter
-- `approve: true, confidence < 0.7` → abort trade (Claude uncertain is a halt signal)
+- `approve: true, confidence < 0.7` → abort trade (LLM uncertain is a halt signal)
 - `warnings` non-empty and flagging any of ["cold front", "data error", "anomaly"] → abort
 - LLM API error or timeout (> 10s) → abort trade, log, continue
 - Under no circumstance does LLM approval override a rules engine rejection (AND gate, not OR)
 
-**Cost control:** cap at 200 Claude calls per day. If exceeded, halt new trades and alert.
+### 8.5 Cost control
+
+Cap at 200 LLM calls per day (configurable via `LLM_DAILY_CALL_CAP`). If exceeded, halt new trades and alert. Cost tracking is per-provider since pricing varies significantly (e.g., DeepSeek is ~10x cheaper than Claude Sonnet for equivalent context).
 
 ## 9. External Integrations
 
@@ -442,12 +479,23 @@ Before any order is placed, the strategy engine calls Claude Sonnet with:
   - `GET /portfolio/fills` — reconciliation
   - `GET /portfolio/positions` — position check
 
-### 9.4 Anthropic API
+### 9.4 LLM Provider API
 
-- **URL:** `https://api.anthropic.com/v1/messages`
-- **Auth:** `ANTHROPIC_API_KEY` environment variable
-- **Model:** `claude-sonnet-4-6` primary, `claude-haiku-4-5-20251001` for parsing tasks
-- **Failure mode:** abort trade, log, continue
+The LLM integration is provider-agnostic. Configure via `LLM_PROVIDER` env var. Each provider has its own auth and endpoint config:
+
+| Provider | Env vars | Primary model | Parsing model | Approx. cost/call |
+|---|---|---|---|---|
+| `anthropic` (default) | `ANTHROPIC_API_KEY` | `claude-sonnet-4-6` | `claude-haiku-4-5` | ~$0.015 |
+| `deepseek` | `DEEPSEEK_API_KEY` | `deepseek-chat` | `deepseek-chat` | ~$0.001 |
+| `openai` | `OPENAI_API_KEY` | `gpt-4o` | `gpt-4o-mini` | ~$0.010 |
+
+- **Failure mode (all providers):** abort trade, log, continue
+- **Timeout:** 10s per call, non-negotiable
+- **Provider-specific notes:**
+  - Anthropic: Uses Messages API with structured JSON output via tool use
+  - DeepSeek: Uses OpenAI-compatible chat completions endpoint with JSON mode
+  - OpenAI: Uses chat completions with structured output / function calling
+- **Adding a new provider:** Implement the `LLMProvider` protocol (see Section 8.1), register in provider factory, add env vars to config
 
 ## 10. Deployment
 
@@ -468,7 +516,12 @@ Before any order is placed, the strategy engine calls Claude Sonnet with:
 │   │   │   ├── risk_manager.py
 │   │   │   └── sizing.py
 │   │   ├── llm/
-│   │   │   └── sanity_check.py
+│   │   │   ├── provider.py           # LLMProvider protocol
+│   │   │   ├── anthropic_provider.py  # Anthropic (Claude) implementation
+│   │   │   ├── deepseek_provider.py   # DeepSeek implementation
+│   │   │   ├── openai_provider.py     # OpenAI-compatible implementation
+│   │   │   ├── factory.py            # Provider factory from config
+│   │   │   └── sanity_check.py       # Provider-agnostic sanity check logic
 │   │   ├── execution/
 │   │   │   ├── order_router.py
 │   │   │   └── reconciler.py
@@ -522,7 +575,19 @@ All services run as user `meteoedge`, `Restart=on-failure`, `RestartSec=30s`.
 KALSHI_ENV=demo|prod
 KALSHI_API_KEY_ID=...
 KALSHI_PRIVATE_KEY_PATH=/etc/meteoedge/kalshi_private.pem
-ANTHROPIC_API_KEY=...
+
+# LLM provider (choose one)
+LLM_PROVIDER=anthropic          # anthropic | deepseek | openai
+LLM_PRIMARY_MODEL=...           # override default primary model for the provider
+LLM_PARSING_MODEL=...           # override default parsing model for the provider
+LLM_DAILY_CALL_CAP=200          # max sanity-check calls per day
+
+# Provider-specific keys (only the active provider's key is required)
+ANTHROPIC_API_KEY=...            # required if LLM_PROVIDER=anthropic
+DEEPSEEK_API_KEY=...             # required if LLM_PROVIDER=deepseek
+OPENAI_API_KEY=...               # required if LLM_PROVIDER=openai
+OPENAI_API_BASE=...              # optional: custom base URL for OpenAI-compatible endpoints
+
 POSTGRES_DSN=postgresql://meteoedge@localhost:5432/meteoedge
 REDIS_URL=redis://localhost:6379/0
 ALERT_EMAIL_FROM=...
@@ -614,7 +679,7 @@ If any metric misses, the strategy as specified does not work. Do not proceed.
 - No secrets in code, Git, logs, or dashboard
 - Dashboard bound to `127.0.0.1` only; access via SSH tunnel
 - PostgreSQL accepts localhost only; `meteoedge` role has no superuser rights
-- Outbound network allowlist: `api.anthropic.com`, `api.elections.kalshi.com`, `demo-api.kalshi.co`, `aviationweather.gov`, `api.weather.gov`, SMTP host
+- Outbound network allowlist: active LLM provider endpoint only (`api.anthropic.com` / `api.deepseek.com` / `api.openai.com` based on `LLM_PROVIDER`), `api.elections.kalshi.com`, `demo-api.kalshi.co`, `aviationweather.gov`, `api.weather.gov`, SMTP host
 - Daily logrotate, keep 30 days, weekly gzipped archive to external storage
 - All order placements logged with decision ID, timestamp, payload hash, and response
 - Monthly audit: operator reviews 10 random trades end-to-end from signal to settlement
@@ -653,13 +718,21 @@ If any metric misses, the strategy as specified does not work. Do not proceed.
 | Hardware (sunk) | €0 |
 | Electricity (Mac mini, 24/7) | €3-5 |
 | PostgreSQL / Redis (self-hosted) | €0 |
-| Anthropic API (Sonnet, ~200 calls/day @ avg €0.015/call) | €90 |
+| LLM API (~200 calls/day) — see provider comparison below | €6-90 |
 | Kalshi trading fees | variable, ~2-5% of trade volume |
 | Historical data (one-time, DeltaBase or similar) | €50-200 once |
 | Deposit/withdrawal friction (debit card + FX) | ~2% per round trip |
-| **Fixed operating cost** | **~€100/month** |
+| **Fixed operating cost** | **€10-100/month** (depends on LLM provider) |
 
-Break-even requires roughly €100/month net trading profit. On a €500 bankroll that is a 20% monthly gross return before fees — aggressive but not impossible if the edge is real. On a €2,000 bankroll the break-even drops to 5% monthly which is much more realistic.
+**LLM provider cost comparison** (at ~200 calls/day, ~6,000/month):
+
+| Provider | Model | Avg cost/call | Monthly estimate |
+|---|---|---|---|
+| Anthropic | Claude Sonnet | ~€0.015 | ~€90 |
+| DeepSeek | DeepSeek Chat | ~€0.001 | ~€6 |
+| OpenAI | GPT-4o | ~€0.010 | ~€60 |
+
+Using DeepSeek drops the break-even to ~€10/month, making it viable even on a €500 bankroll (2% monthly gross return). With Anthropic, break-even requires ~€100/month — 20% monthly on €500 (aggressive) or 5% on €2,000 (realistic).
 
 ## 15. Success Criteria (V1 exit)
 
@@ -705,9 +778,10 @@ Below is a first-cut epic breakdown. Each epic should be estimated separately an
 - Daily P&L limit enforcement
 
 ### Epic 5 — LLM Sanity Check
-- Anthropic API client
-- Structured request/response schema
-- Cost tracking and daily cap
+- LLM provider abstraction layer (protocol + factory)
+- Provider implementations: Anthropic, DeepSeek, OpenAI-compatible
+- Structured request/response schema (provider-agnostic)
+- Cost tracking and daily cap (per-provider cost awareness)
 - Rejection-reason logging
 
 ### Epic 6 — Order Execution
@@ -757,7 +831,7 @@ All critical business logic (envelope, edge scanner, risk manager, fee formula) 
 2. **Historical Kalshi data.** DeltaBase vs. self-scraping vs. Kalshi's own 3-month window. Recommend: start with the 3-month native window for Stage 1, evaluate DeltaBase if edge is confirmed.
 3. **International tier specifics.** Confirm with Kalshi support whether weather markets are available to Portugal-resident accounts and whether any fee or market differences apply. Block Epic 10 on this answer.
 4. **DST / local time edge cases.** The NWS Climate Report uses local standard time even during DST. Envelope logic must handle this — add a dedicated test suite.
-5. **Claude model version pinning.** Pin specific model string (e.g. `claude-sonnet-4-6`) and refresh deliberately, never automatically.
+5. **LLM model version pinning.** Pin specific model strings per provider (e.g. `claude-sonnet-4-6`, `deepseek-chat`) via `LLM_PRIMARY_MODEL` / `LLM_PARSING_MODEL` env vars. Refresh deliberately, never automatically. When switching providers, run at least 1 week of parallel observation (old provider + new provider on same trades) to verify comparable approval/rejection behavior before cutting over.
 
 ---
 
