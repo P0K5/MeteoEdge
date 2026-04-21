@@ -22,7 +22,7 @@ KALSHI_TEMP_SERIES = {
     "KORD": "KXHIGHCHI",  # TODO: verify from kalshi.com URL
     "KMIA": "KXHIGHMIA",  # TODO: verify from kalshi.com URL
     "KAUS": "KXHIGHAUS",  # TODO: verify from kalshi.com URL
-    "KLAX": "KXHIGHLA",   # TODO: verify from kalshi.com URL
+    "KLAX": "KXHIGHLAX",  # TODO: verify from kalshi.com URL
 }
 
 # Polling cadence
