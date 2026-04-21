@@ -38,7 +38,7 @@ def _sign_request(method: str, path: str) -> dict:
 
 def get_weather_events() -> list[dict]:
     """Return all open weather events. The spike filters to daily-high only."""
-    path = "/events?status=open&category=Climate&with_nested_markets=true&limit=200"
+    path = "/events?status=open&category=Weather&with_nested_markets=true&limit=200"
     url = f"{KALSHI_API_BASE}{path}"
     try:
         headers = _sign_request("GET", path)
