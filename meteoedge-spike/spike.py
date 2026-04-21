@@ -273,8 +273,13 @@ def poll_once():
         return
 
     print(f"[kalshi] {len(events)} events fetched")
-    high_titles = [e.get("title", "?") for e in events if "high" in (e.get("title") or "").lower()]
-    print(f"[kalshi] events with 'high' in title ({len(high_titles)}): {high_titles[:10]}")
+    temp_events = [e for e in events if "temperature" in str(e).lower() or "temp" in str(e).lower()]
+    print(f"[kalshi] events mentioning temperature ({len(temp_events)})")
+    if temp_events:
+        import json
+        print(f"[kalshi] first temp event raw: {json.dumps(temp_events[0], default=str)[:500]}")
+    else:
+        print(f"[kalshi] first event raw: {str(events[0])[:300]}" if events else "[kalshi] no events")
     for event in events:
         for market in event.get("markets", []):
             try:
