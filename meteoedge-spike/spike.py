@@ -264,9 +264,8 @@ def poll_once():
         return
 
     print(f"[kalshi] {len(events)} events fetched")
-    if events:
-        titles = [e.get("title", "?") for e in events[:5]]
-        print(f"[kalshi] sample titles: {titles}")
+    high_titles = [e.get("title", "?") for e in events if "high" in (e.get("title") or "").lower()]
+    print(f"[kalshi] events with 'high' in title ({len(high_titles)}): {high_titles[:10]}")
     for event in events:
         for market in event.get("markets", []):
             try:
