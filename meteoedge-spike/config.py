@@ -15,6 +15,16 @@ STATIONS = [
     ("KLAX", 33.9425, -118.4081, "Los Angeles", "KLAX"),
 ]
 
+# Kalshi series tickers for daily high temperature markets.
+# Event tickers are constructed as {SERIES}-{YYMONDD} (e.g. KXHIGHNY-26APR21).
+KALSHI_TEMP_SERIES = {
+    "KNYC": "KXHIGHNY",   # confirmed
+    "KORD": "KXHIGHCHI",  # TODO: verify from kalshi.com URL
+    "KMIA": "KXHIGHMIA",  # TODO: verify from kalshi.com URL
+    "KAUS": "KXHIGHAUS",  # TODO: verify from kalshi.com URL
+    "KLAX": "KXHIGHLA",   # TODO: verify from kalshi.com URL
+}
+
 # Polling cadence
 POLL_INTERVAL_SECONDS = 300  # 5 minutes
 

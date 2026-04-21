@@ -272,14 +272,7 @@ def poll_once():
         print(f"[kalshi] error fetching events: {e}. Skipping this poll.")
         return
 
-    print(f"[kalshi] {len(events)} events fetched")
-    temp_events = [e for e in events if "temperature" in str(e).lower() or "temp" in str(e).lower()]
-    print(f"[kalshi] events mentioning temperature ({len(temp_events)})")
-    if temp_events:
-        import json
-        print(f"[kalshi] first temp event raw: {json.dumps(temp_events[0], default=str)[:500]}")
-    else:
-        print(f"[kalshi] first event raw: {str(events[0])[:300]}" if events else "[kalshi] no events")
+    print(f"[kalshi] {len(events)} temperature events fetched")
     for event in events:
         for market in event.get("markets", []):
             try:
