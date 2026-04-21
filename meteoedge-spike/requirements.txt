@@ -1,0 +1,6 @@
+httpx
+pandas
+python-dateutil
+pytz
+astral
+cryptography

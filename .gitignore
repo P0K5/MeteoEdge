@@ -69,6 +69,11 @@ data/cache/
 *.key
 secrets.yaml
 
+# MeteoEdge spike (credentials and runtime data)
+meteoedge-spike/keys/kalshi_private.pem
+meteoedge-spike/logs/
+!meteoedge-spike/logs/.gitkeep
+
 # OS
 .DS_Store
 Thumbs.db
