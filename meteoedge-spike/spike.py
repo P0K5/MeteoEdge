@@ -127,34 +127,42 @@ def parse_bracket_from_market(m: dict) -> "Bracket | None":
     if not ticker:
         return None
 
-    # The bracket bounds are encoded in the subtitle / rules_primary.
-    # Kalshi typically uses phrasings like "between 82 and 84°" or ">=85°".
+    # Bracket bounds are encoded in the subtitle. Kalshi uses phrasings like
+    # "Between 82 and 84", "85 or above", "79 or below", ">=85", "<=79".
     sub = (m.get("subtitle") or m.get("yes_sub_title") or "").strip()
 
-    # Heuristic range parser — handles: "82-84", "82 to 84", "82–84"
-    m_range = re.search(r"(\d{1,3})\s*(?:-|to|–)\s*(\d{1,3})", sub)
-    # Handles: ">=85", "≥85", "85 or above", "85 or more", "85 or higher"
-    m_gte = re.search(r"(?:>=|≥|(\d{1,3})\s+or\s+(?:above|more|higher))", sub)
-    # Handles: "<=82", "≤82", "82 or below", "82 or less", "82 or lower"
-    m_lte = re.search(r"(?:<=|≤|(\d{1,3})\s+or\s+(?:below|less|lower))", sub)
-
-    # Also handle explicit >=N and <=N patterns with the number after the operator
+    # Range: "82-84", "82 to 84", "82–84", "82 and 84", "between 82 and 84"
+    m_range = re.search(r"(\d{1,3})\s*(?:-|to|–|and)\s*(\d{1,3})", sub)
+    # GTE: ">=85", "≥85"
     m_gte_explicit = re.search(r"(?:>=|≥)\s*(\d{1,3})", sub)
+    # GTE: "85 or above/more/higher", "85 and above"
+    m_gte_or = re.search(r"(\d{1,3})(?:\s*°F?)?\s+(?:or|and)\s+(?:above|more|higher)", sub, re.IGNORECASE)
+    # GTE: "above 85"
+    m_gte_bare = re.search(r"\babove\s+(\d{1,3})", sub, re.IGNORECASE)
+    # LTE: "<=79", "≤79"
     m_lte_explicit = re.search(r"(?:<=|≤)\s*(\d{1,3})", sub)
+    # LTE: "79 or below/less/lower", "79 and below"
+    m_lte_or = re.search(r"(\d{1,3})(?:\s*°F?)?\s+(?:or|and)\s+(?:below|less|lower)", sub, re.IGNORECASE)
+    # LTE: "below 79"
+    m_lte_bare = re.search(r"\bbelow\s+(\d{1,3})", sub, re.IGNORECASE)
 
     if m_range:
         lo, hi = float(m_range.group(1)), float(m_range.group(2))
     elif m_gte_explicit:
         lo, hi = float(m_gte_explicit.group(1)), 200.0
+    elif m_gte_or:
+        lo, hi = float(m_gte_or.group(1)), 200.0
+    elif m_gte_bare:
+        lo, hi = float(m_gte_bare.group(1)), 200.0
     elif m_lte_explicit:
         lo, hi = -50.0, float(m_lte_explicit.group(1))
-    elif m_gte and m_gte.group(1):
-        # "85 or above" form
-        lo, hi = float(m_gte.group(1)), 200.0
-    elif m_lte and m_lte.group(1):
-        # "82 or below" form
-        lo, hi = -50.0, float(m_lte.group(1))
+    elif m_lte_or:
+        lo, hi = -50.0, float(m_lte_or.group(1))
+    elif m_lte_bare:
+        lo, hi = -50.0, float(m_lte_bare.group(1))
     else:
+        if sub:
+            print(f"[parse] unparseable subtitle for {ticker}: {repr(sub[:80])}")
         return None
 
     return Bracket(
@@ -180,7 +188,7 @@ def is_daily_high_market(event: dict, market: dict) -> tuple[bool, "str | None"]
     """Identify daily-high-temperature markets and extract the station code."""
     title = (event.get("title") or "").lower()
     sub_title = (event.get("sub_title") or "").lower()
-    if "highest" not in title and "highest" not in sub_title:
+    if "high" not in title and "high" not in sub_title:
         return False, None
     for station, _, _, city, _ in STATIONS:
         for alias in CITY_ALIASES.get(city, [city.lower()]):
@@ -273,18 +281,22 @@ def poll_once():
         return
 
     print(f"[kalshi] {len(events)} temperature events fetched")
+    n_markets = n_daily = n_brackets = n_flagged = 0
     for event in events:
         for market in event.get("markets", []):
+            n_markets += 1
             try:
                 is_daily, station = is_daily_high_market(event, market)
                 if not is_daily or station not in weather:
                     continue
+                n_daily += 1
                 mins_left = minutes_to_settlement(market)
                 if mins_left < MIN_MINUTES_TO_SETTLEMENT:
                     continue
                 bracket = parse_bracket_from_market(market)
                 if not bracket:
                     continue
+                n_brackets += 1
 
                 state = weather[station]
                 p_yes = true_probability_yes(bracket, state)
@@ -311,6 +323,7 @@ def poll_once():
                 append_snapshot(snap)
 
                 if candidate:
+                    n_flagged += 1
                     side, edge, price, confidence = candidate
                     row = {**snap, "flagged_side": side, "flagged_edge": round(edge, 2),
                            "flagged_price": price, "flagged_confidence": round(confidence, 4)}
@@ -321,6 +334,7 @@ def poll_once():
                 ticker = market.get("ticker", "unknown")
                 print(f"[market] error processing {ticker}: {e}, skipping")
                 continue
+    print(f"[scan] {n_markets} markets total, {n_daily} daily-high matched, {n_brackets} brackets parsed, {n_flagged} flagged")
 
 
 def main():
