@@ -37,18 +37,28 @@ def _sign_request(method: str, path: str) -> dict:
 
 
 def get_weather_events() -> list[dict]:
-    """Return all open weather events. The spike filters to daily-high only."""
-    path = "/events?status=open&with_nested_markets=true&limit=200"
-    url = f"{KALSHI_API_BASE}{path}"
-    try:
-        headers = _sign_request("GET", path)
-        r = httpx.get(url, headers=headers, timeout=HTTP_TIMEOUT_SECONDS)
-        r.raise_for_status()
-        return r.json().get("events", [])
-    except httpx.HTTPStatusError as e:
-        raise RuntimeError(f"Kalshi HTTP error {e.response.status_code}: {e.response.text}") from e
-    except Exception as e:
-        raise RuntimeError(f"Kalshi request failed: {e}") from e
+    """Return all open Climate events via cursor pagination."""
+    all_events: list[dict] = []
+    cursor: str | None = None
+    for _ in range(10):  # max 10 pages (2000 events)
+        path = "/events?status=open&category=Climate&with_nested_markets=true&limit=200"
+        if cursor:
+            path += f"&cursor={cursor}"
+        url = f"{KALSHI_API_BASE}{path}"
+        try:
+            headers = _sign_request("GET", path)
+            r = httpx.get(url, headers=headers, timeout=HTTP_TIMEOUT_SECONDS)
+            r.raise_for_status()
+            body = r.json()
+        except httpx.HTTPStatusError as e:
+            raise RuntimeError(f"Kalshi HTTP error {e.response.status_code}: {e.response.text}") from e
+        except Exception as e:
+            raise RuntimeError(f"Kalshi request failed: {e}") from e
+        all_events.extend(body.get("events", []))
+        cursor = body.get("cursor")
+        if not cursor:
+            break
+    return all_events
 
 
 def get_orderbook(ticker: str) -> dict:

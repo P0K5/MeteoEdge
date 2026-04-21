@@ -168,15 +168,24 @@ def parse_bracket_from_market(m: dict) -> "Bracket | None":
     )
 
 
+CITY_ALIASES: dict[str, list[str]] = {
+    "New York":    ["new york", "nyc"],
+    "Chicago":     ["chicago"],
+    "Miami":       ["miami"],
+    "Austin":      ["austin"],
+    "Los Angeles": ["los angeles", "la"],
+}
+
 def is_daily_high_market(event: dict, market: dict) -> tuple[bool, "str | None"]:
     """Identify daily-high-temperature markets and extract the station code."""
     title = (event.get("title") or "").lower()
     sub_title = (event.get("sub_title") or "").lower()
-    if "high" not in title and "high" not in sub_title:
+    if "highest" not in title and "highest" not in sub_title:
         return False, None
     for station, _, _, city, _ in STATIONS:
-        if city.lower() in title or city.lower() in sub_title:
-            return True, station
+        for alias in CITY_ALIASES.get(city, [city.lower()]):
+            if alias in title or alias in sub_title:
+                return True, station
     return False, None
 
 
