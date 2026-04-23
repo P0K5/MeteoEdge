@@ -299,20 +299,19 @@ def poll_once():
                 n_brackets += 1
 
                 # Enrich bracket with real-time prices from the orderbook.
-                # The nested event response does not include live ask prices.
-                # Kalshi returns orderbook_fp with yes_dollars/no_dollars as
-                # [price_str, size_str] pairs (prices in dollars, not cents).
+                # yes_dollars/no_dollars are BID levels (sorted ascending, [-1] = best bid).
+                # In a binary market: YES ask = 100 - best NO bid, NO ask = 100 - best YES bid.
                 try:
                     ob = get_orderbook(bracket.ticker)
                     book = ob.get("orderbook_fp", {})
                     yes_lvls = book.get("yes_dollars") or []
                     no_lvls = book.get("no_dollars") or []
-                    if yes_lvls:
-                        bracket.yes_ask_cents = round(float(yes_lvls[-1][0]) * 100)
-                        bracket.yes_ask_size = round(float(yes_lvls[-1][1]))
                     if no_lvls:
-                        bracket.no_ask_cents = round(float(no_lvls[-1][0]) * 100)
-                        bracket.no_ask_size = round(float(no_lvls[-1][1]))
+                        bracket.yes_ask_cents = 100 - round(float(no_lvls[-1][0]) * 100)
+                        bracket.yes_ask_size = round(float(no_lvls[-1][1]))
+                    if yes_lvls:
+                        bracket.no_ask_cents = 100 - round(float(yes_lvls[-1][0]) * 100)
+                        bracket.no_ask_size = round(float(yes_lvls[-1][1]))
                 except Exception as e:
                     print(f"[orderbook] {bracket.ticker}: {e}")
 
