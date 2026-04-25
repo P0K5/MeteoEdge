@@ -10,13 +10,15 @@ from pathlib import Path
 
 from config import (
     UNIVERSE, POLL_INTERVAL_SECONDS, PERSISTENCE_LOOKBACK_HOURS,
-    ENTRY_THRESHOLD_BPS, ROUND_TRIP_FEE_BPS, VIRTUAL_NOTIONAL_USD,
+    ENTRY_THRESHOLD_BPS, PERSISTENCE_FRACTION_MIN,
+    ROUND_TRIP_FEE_BPS, VIRTUAL_NOTIONAL_USD,
     TARGET_HOLD_HOURS, LOG_DIR, SIGNALS_CSV, CYCLES_CSV,
     SNAPSHOTS_JSONL, OPEN_HEDGES_JSON,
 )
 from scorer import (
     MarketState, should_enter, should_exit,
-    compute_basis_bps, persistence_fraction_from_history, rate_to_bps,
+    compute_basis_bps, persistence_fraction_from_history,
+    negative_persistence_fraction_from_history, rate_to_bps,
 )
 from binance_client import (
     get_spot_book_ticker, get_perp_book_ticker,
@@ -71,7 +73,6 @@ def fetch_market_state(symbol: str, clock=None) -> "MarketState | None":
         basis_bps = compute_basis_bps(spot_mid, perp_mid)
 
         funding_rate = float(prem["lastFundingRate"])
-        predicted_rate = float(prem.get("predictedFundingRate", funding_rate))
         funding_time = datetime.fromtimestamp(int(prem["nextFundingTime"]) / 1000, tz=timezone.utc)
 
         # Persistence: 72h of funding history (9 settlements)
@@ -80,6 +81,7 @@ def fetch_market_state(symbol: str, clock=None) -> "MarketState | None":
         history = get_funding_history(symbol, start_ms, now_ms)
         threshold_rate = ENTRY_THRESHOLD_BPS / 10_000
         persistence = persistence_fraction_from_history(history, threshold_rate)
+        negative_persistence = negative_persistence_fraction_from_history(history, threshold_rate)
 
         now_utc = clock if clock is not None else datetime.now(timezone.utc)
 
@@ -87,12 +89,12 @@ def fetch_market_state(symbol: str, clock=None) -> "MarketState | None":
             symbol=symbol,
             now_utc=now_utc,
             funding_rate=funding_rate,
-            predicted_rate=predicted_rate,
             funding_time=funding_time,
             spot_bid=spot_bid, spot_ask=spot_ask,
             perp_bid=perp_bid, perp_ask=perp_ask,
             basis_bps=basis_bps,
             persistence_fraction=persistence,
+            negative_persistence_fraction=negative_persistence,
         )
     except Exception as e:
         print(f"[fetch] {symbol} error: {e}")
@@ -143,7 +145,6 @@ def open_virtual_hedge(state: MarketState) -> dict:
         "hedge_id": hedge["id"],
         "symbol": state.symbol,
         "funding_rate_bps": rate_to_bps(state.funding_rate),
-        "predicted_rate_bps": rate_to_bps(state.predicted_rate),
         "basis_bps": state.basis_bps,
         "persistence": state.persistence_fraction,
         "spot_ask": state.spot_ask,
@@ -218,21 +219,36 @@ def poll_once(open_hedges: dict[str, dict], clock=None) -> dict[str, dict]:
         if not state:
             continue
 
+        rate_bps = rate_to_bps(state.funding_rate)
+        inverse_eligible = (
+            rate_bps <= -ENTRY_THRESHOLD_BPS
+            and state.negative_persistence_fraction >= PERSISTENCE_FRACTION_MIN
+        )
+
         append_snapshot({
             "ts": ts,
             "symbol": symbol,
-            "funding_rate_bps": rate_to_bps(state.funding_rate),
-            "predicted_rate_bps": rate_to_bps(state.predicted_rate),
+            "funding_rate_bps": rate_bps,
             "basis_bps": state.basis_bps,
             "persistence": state.persistence_fraction,
+            "negative_persistence": state.negative_persistence_fraction,
+            "inverse_eligible": inverse_eligible,
             "spot_mid": (state.spot_bid + state.spot_ask) / 2,
             "perp_mid": (state.perp_bid + state.perp_ask) / 2,
         })
 
         print(
-            f"[{symbol}] rate={rate_to_bps(state.funding_rate):+.2f} bps "
-            f"basis={state.basis_bps:+.2f} bps persistence={state.persistence_fraction:.2f}"
+            f"[{symbol}] rate={rate_bps:+.2f} bps "
+            f"basis={state.basis_bps:+.2f} bps "
+            f"persistence={state.persistence_fraction:.2f} "
+            f"neg_persistence={state.negative_persistence_fraction:.2f}"
         )
+        if inverse_eligible:
+            print(
+                f"  ~~ OBSERVE {symbol} inverse-eligible "
+                f"(rate={rate_bps:+.2f} bps, neg_persistence={state.negative_persistence_fraction:.2f}) "
+                f"— V2 short-funding candidate, not traded"
+            )
 
         # 1. Update any open hedge on this symbol
         if symbol in open_hedges:

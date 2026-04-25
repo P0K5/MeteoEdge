@@ -2,7 +2,14 @@
 from pathlib import Path
 
 # Universe
-UNIVERSE = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT"]
+# Spec V1 nominally targets 4 majors; widened here for the spike's observation phase.
+# Mid-caps print higher and more variable funding, so the spike actually exercises
+# the open/accrue/close machinery instead of sitting idle on majors.
+UNIVERSE = [
+    "BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT",
+    "DOGEUSDT", "AVAXUSDT", "LINKUSDT", "ARBUSDT",
+    "XRPUSDT", "OPUSDT", "SUIUSDT", "AAVEUSDT",
+]
 
 # Polling cadence
 POLL_INTERVAL_SECONDS = 60

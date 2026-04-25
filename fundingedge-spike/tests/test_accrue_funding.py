@@ -32,7 +32,6 @@ def _make_state(
         symbol=symbol,
         now_utc=now_utc,
         funding_rate=funding_rate,
-        predicted_rate=funding_rate,
         funding_time=funding_time,
         spot_bid=60_000.0,
         spot_ask=60_001.0,

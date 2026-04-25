@@ -12,14 +12,14 @@ class MarketState:
     symbol: str
     now_utc: datetime
     funding_rate: float           # realised, as decimal (not bps); 0.0003 = 3 bps = 0.03%/8h
-    predicted_rate: float
     funding_time: datetime
     spot_bid: float
     spot_ask: float
     perp_bid: float
     perp_ask: float
     basis_bps: float
-    persistence_fraction: float   # fraction of last 72h where rate > entry threshold
+    persistence_fraction: float            # fraction of last 72h where rate >= +threshold
+    negative_persistence_fraction: float = 0.0  # fraction where rate <= -threshold (observation only)
 
 
 def rate_to_bps(rate: float) -> float:
@@ -68,4 +68,14 @@ def persistence_fraction_from_history(history: list[dict], threshold_rate: float
     if not history:
         return 0.0
     qualifying = sum(1 for h in history if float(h["fundingRate"]) >= threshold_rate)
+    return qualifying / len(history)
+
+
+def negative_persistence_fraction_from_history(history: list[dict], threshold_rate: float) -> float:
+    """Observation-only mirror: fraction of settlements at or below -threshold.
+    Logged so we can study negative-funding regimes against the V2 question of
+    whether to add the inverse cash-and-carry trade. Not used in entry/exit."""
+    if not history:
+        return 0.0
+    qualifying = sum(1 for h in history if float(h["fundingRate"]) <= -threshold_rate)
     return qualifying / len(history)

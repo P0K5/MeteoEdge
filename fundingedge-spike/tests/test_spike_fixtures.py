@@ -36,13 +36,12 @@ def _perp_ticker(bid="60003.0", ask="60004.0"):
     return {"bidPrice": bid, "askPrice": ask}
 
 
-def _premium_index(rate="0.0005", predicted="0.0005", next_funding_ms=None):
+def _premium_index(rate="0.0005", next_funding_ms=None):
     """Simulate Binance premium index response."""
     if next_funding_ms is None:
         next_funding_ms = int(FUNDING_TIME.timestamp() * 1000)
     return {
         "lastFundingRate": rate,
-        "predictedFundingRate": predicted,
         "nextFundingTime": str(next_funding_ms),
     }
 
