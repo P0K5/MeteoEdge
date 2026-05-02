@@ -89,7 +89,10 @@ def settle_yesterday():
                     writer.writeheader()
             writer.writerow(out)
 
-    print(f"Wrote settlements to {SETTLEMENTS_CSV}")
+    if writer is not None:
+        print(f"Wrote settlements to {SETTLEMENTS_CSV}")
+    else:
+        print(f"No candidates matched {yesterday} in {CANDIDATES_CSV} — nothing written.")
 
 
 if __name__ == "__main__":

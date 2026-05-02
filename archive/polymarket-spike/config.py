@@ -39,7 +39,10 @@ MIN_MINUTES_TO_SETTLEMENT = 15
 
 # Historical climb rates: p95 additional rise (°F) from time-of-day to end-of-day.
 # Hand-seeded approximations. In the full build, compute from 5 years of METAR.
+# Hours 0-9 reflect the full diurnal range still ahead (daily min typically 4-7am).
 DEFAULT_CLIMB_LOOKUP = {
+    0: 25.0, 1: 25.0, 2: 25.0, 3: 24.0, 4: 23.0, 5: 21.0,
+    6: 18.0, 7: 15.0, 8: 12.0, 9: 10.0,
     10: 8.0, 11: 7.0, 12: 6.0, 13: 5.0, 14: 4.0,
     15: 3.0, 16: 2.0, 17: 1.0, 18: 0.5, 19: 0.0,
     20: 0.0, 21: 0.0, 22: 0.0, 23: 0.0,
