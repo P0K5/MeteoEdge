@@ -21,10 +21,11 @@ astral>=3.2
 pandas>=1.5.0  # For results analysis
 numpy>=1.24.0  # For statistical calculations
 
-# Optional: Web Dashboard (future)
-# fastapi>=0.95.0
-# uvicorn>=0.21.0
-# pydantic>=1.10.0
+# Web Dashboard (Epic 4)
+fastapi>=0.95.0
+uvicorn>=0.21.0
+httpx>=0.24.0  # required by fastapi TestClient
+pydantic>=1.10.0
 
 # Development
 pytest>=7.0  # For testing

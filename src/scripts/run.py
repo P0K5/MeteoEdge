@@ -26,6 +26,7 @@ from src.data.nws import fetch_nws_forecast_high
 from src.data.open_meteo import fetch_secondary_forecast
 from src.data.polymarket import get_weather_markets
 from src.model.envelope import WeatherState
+from src.monitoring.alerts import AlertManager
 from src.risk.manager import RiskManager
 from src.strategy.scanner import scan_markets
 
@@ -235,7 +236,7 @@ def _sync_open_orders(live_trader) -> None:
         print(f"[orders] failed to sync open orders: {e} — dedup guard uses in-memory state")
 
 
-def poll_once(risk_manager, live_trader=None) -> None:
+def poll_once(risk_manager, live_trader=None, alert_manager=None) -> None:
     """Run one full poll: build weather states, fetch markets, scan, log candidates."""
     ts = datetime.now(timezone.utc).isoformat()
     mode_label = "LIVE" if live_trader else "PAPER"
@@ -336,6 +337,22 @@ def poll_once(risk_manager, live_trader=None) -> None:
         f"{len(candidates)} candidates, {n_acted} acted on"
     )
 
+    # Update dashboard last_poll timestamp
+    import src.monitoring.dashboard as _dashboard
+    _dashboard.last_poll_ts = ts
+
+    # Fire email alerts if thresholds are crossed
+    if alert_manager is not None:
+        from src.monitoring.dashboard import _load_trades, _compute_win_rate
+        _trades = _load_trades()
+        _win_rate_20 = _compute_win_rate(_trades, n=20)
+        _last_poll_dt = datetime.now(timezone.utc)
+        alert_manager.check(
+            daily_pnl=risk_manager._daily_pnl,
+            win_rate_20=_win_rate_20,
+            last_poll_time=_last_poll_dt,
+        )
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="MeteoEdge polling loop")
@@ -378,16 +395,17 @@ def main() -> None:
         min_market_liquidity=RISK_MIN_LIQUIDITY,
         starting_capital=STARTING_CAPITAL_EUR,
     )
+    alert_manager = AlertManager()
 
     if args.once:
-        poll_once(risk_manager, live_trader)
+        poll_once(risk_manager, live_trader, alert_manager)
         print("[run] --once mode: exiting after single poll.")
         return
 
     print(f"Polling every {POLL_INTERVAL_SECONDS}s. Press Ctrl-C to stop.")
     while True:
         try:
-            poll_once(risk_manager, live_trader)
+            poll_once(risk_manager, live_trader, alert_manager)
         except KeyboardInterrupt:
             print("\n[run] Stopping.")
             break
