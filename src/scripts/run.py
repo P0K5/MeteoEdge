@@ -407,6 +407,9 @@ def main() -> None:
     )
     alert_manager = AlertManager()
 
+    from src.monitoring.dashboard import start_dashboard
+    start_dashboard()
+
     if args.once:
         poll_once(risk_manager, live_trader, alert_manager)
         print("[run] --once mode: exiting after single poll.")
