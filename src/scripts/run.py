@@ -88,7 +88,7 @@ def _execute_live(candidate, clob_client_factory, risk_manager, ts: str) -> None
         risk_manager.close_position()
         return
 
-    order_key = (token_id, candidate.side)
+    order_key = token_id
     with _open_orders_lock:
         if order_key in _open_orders:
             print(f"  [live] skip {candidate.side} {candidate.bracket.ticker[:16]}… — GTC order already open on exchange")
@@ -223,17 +223,13 @@ def _sync_open_orders(live_trader) -> None:
     try:
         from py_clob_client_v2.clob_types import OpenOrderParams
         orders = live_trader.client.get_open_orders(OpenOrderParams())
-        live_keys = {(o["asset_id"], "YES" if o.get("side") == "BUY" else "NO") for o in orders}
-        # asset_id on Polymarket = token_id, which maps to our ticker via the bracket.
-        # We key _open_orders by (ticker/conditionId, side) but Polymarket returns asset_id
-        # (the token_id). Store token_ids here so _execute_live dedup also works by token.
+        # Key by token_id (asset_id) only — YES/NO tokens already have distinct IDs,
+        # and we always place side="BUY" on the exchange regardless of YES/NO direction,
+        # so mapping exchange side→YES/NO is unreliable.
         with _open_orders_lock:
-            # Replace the set with what's actually open on the exchange
             _open_orders.clear()
             for o in orders:
-                token_id = o.get("asset_id", "")
-                side = "YES" if o.get("side") == "BUY" else "NO"
-                _open_orders.add((token_id, side))
+                _open_orders.add(o.get("asset_id", ""))
         print(f"[orders] {len(orders)} open orders on exchange synced to dedup guard")
     except Exception as e:
         print(f"[orders] failed to sync open orders: {e} — dedup guard uses in-memory state")
