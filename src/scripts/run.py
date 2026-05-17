@@ -26,6 +26,7 @@ from src.data.nws import fetch_nws_forecast_high
 from src.data.open_meteo import fetch_secondary_forecast
 from src.data.polymarket import get_weather_markets
 from src.model.envelope import WeatherState
+from src.monitoring.alerts import AlertManager
 from src.risk.manager import RiskManager
 from src.strategy.scanner import scan_markets
 
@@ -235,11 +236,16 @@ def _sync_open_orders(live_trader) -> None:
         print(f"[orders] failed to sync open orders: {e} — dedup guard uses in-memory state")
 
 
-def poll_once(risk_manager, live_trader=None) -> None:
+def poll_once(risk_manager, live_trader=None, alert_manager=None) -> None:
     """Run one full poll: build weather states, fetch markets, scan, log candidates."""
     ts = datetime.now(timezone.utc).isoformat()
     mode_label = "LIVE" if live_trader else "PAPER"
     print(f"\n=== Poll [{mode_label}] at {ts} ===")
+
+    # Capture the previous poll's timestamp BEFORE overwriting it so the
+    # poll-missed alert can measure the gap between the last and current cycle.
+    import src.monitoring.dashboard as _dashboard
+    prev_poll_ts_str = _dashboard.last_poll_ts  # None on first poll, ISO string on subsequent
 
     if live_trader:
         _sync_open_orders(live_trader)
@@ -336,6 +342,27 @@ def poll_once(risk_manager, live_trader=None) -> None:
         f"{len(candidates)} candidates, {n_acted} acted on"
     )
 
+    # Update dashboard last_poll timestamp for the next cycle
+    _dashboard.last_poll_ts = ts
+
+    # Fire email alerts if thresholds are crossed
+    if alert_manager is not None:
+        from src.monitoring.dashboard import _load_trades, _compute_win_rate
+        _trades = _load_trades()
+        _win_rate_20 = _compute_win_rate(_trades, n=20)
+        # Resolve the previous poll's ISO string to a datetime so the poll-missed
+        # check can compute the gap correctly.  On the very first poll this is None,
+        # which the alert manager handles by skipping the poll-missed check.
+        prev_poll_dt = None
+        if prev_poll_ts_str:
+            from dateutil import parser as dtparse
+            prev_poll_dt = dtparse.parse(prev_poll_ts_str)
+        alert_manager.check(
+            daily_pnl=risk_manager._daily_pnl,
+            win_rate_20=_win_rate_20,
+            last_poll_time=prev_poll_dt,  # previous poll's time, not now()
+        )
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="MeteoEdge polling loop")
@@ -378,16 +405,17 @@ def main() -> None:
         min_market_liquidity=RISK_MIN_LIQUIDITY,
         starting_capital=STARTING_CAPITAL_EUR,
     )
+    alert_manager = AlertManager()
 
     if args.once:
-        poll_once(risk_manager, live_trader)
+        poll_once(risk_manager, live_trader, alert_manager)
         print("[run] --once mode: exiting after single poll.")
         return
 
     print(f"Polling every {POLL_INTERVAL_SECONDS}s. Press Ctrl-C to stop.")
     while True:
         try:
-            poll_once(risk_manager, live_trader)
+            poll_once(risk_manager, live_trader, alert_manager)
         except KeyboardInterrupt:
             print("\n[run] Stopping.")
             break
