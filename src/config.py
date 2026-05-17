@@ -96,7 +96,7 @@ POSITION_SIZE_WITH_FEES = POSITION_SIZE_EUR * 1.02
 
 # HTTP
 HTTP_TIMEOUT_SECONDS = 15
-USER_AGENT = "MeteoEdge-Spike/0.3 (contact: you@example.com)"
+USER_AGENT = "MeteoEdge/1.0 (Polymarket weather-arbitrage research bot; contact: andre.freixo.santos@gmail.com)"
 
 # Optional: enrich market prices with live CLOB orderbook data per bracket.
 # Adds ~2 API calls per matched bracket per poll. Off by default to keep polls fast;
