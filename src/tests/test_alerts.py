@@ -4,6 +4,7 @@ All SMTP calls are mocked. Tests verify:
 - Each of the 4 triggers fires correctly
 - Deduplication blocks resends within 1 hour
 - No crash when SMTP credentials are missing
+- poll_once() integration: previous poll timestamp is passed to alert check
 """
 from __future__ import annotations
 
@@ -272,3 +273,184 @@ class TestCheckIntegration:
         with patch.object(mgr, "_send") as mock_send:
             mgr.check(daily_pnl=10.0, win_rate_20=0.70, last_poll_time=recent_poll)
         mock_send.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# poll_once integration: correct timestamp is passed to alert check
+# ---------------------------------------------------------------------------
+
+class TestPollOnceAlertIntegration:
+    """Verify that poll_once() passes the PREVIOUS poll's timestamp to
+    alert_manager.check(), not datetime.now().
+
+    A bug existed where last_poll_time was set to datetime.now(timezone.utc)
+    after every poll, making the poll-missed threshold unreachable.
+
+    These tests mock unavailable heavy dependencies (dateutil, pytz, etc.) at
+    the sys.modules level so that src.scripts.run can be imported in the test
+    environment.
+    """
+
+    # Heavy modules that run.py pulls in transitively and that are not installed
+    # in the test environment.
+    _STUB_MODULES = [
+        "dateutil", "dateutil.parser",
+        "pytz",
+        "src.data.metar", "src.data.nws", "src.data.open_meteo",
+        "src.data.polymarket",
+        "src.model.envelope",
+        "src.risk.manager",
+        "src.strategy.scanner",
+        "src.config",
+    ]
+
+    @classmethod
+    def _stub_sys_modules(cls):
+        """Return a dict of module-name -> MagicMock stubs for missing imports."""
+        stubs = {}
+        for name in cls._STUB_MODULES:
+            stubs[name] = MagicMock()
+        # src.config needs specific constants used at module import time in run.py
+        cfg = stubs["src.config"]
+        cfg.STATIONS = []
+        cfg.STATION_TZ = {}
+        cfg.POLL_INTERVAL_SECONDS = 300
+        cfg.LOG_DIR = MagicMock()
+        cfg.CANDIDATES_CSV = MagicMock()
+        cfg.SNAPSHOTS_JSONL = MagicMock()
+        cfg.LIVE_TRADES_JSONL = MagicMock()
+        cfg.RISK_DAILY_LOSS_LIMIT_EUR = 50.0
+        cfg.RISK_MAX_OPEN_POSITIONS = 3
+        cfg.RISK_DRAWDOWN_STOP_PCT = 0.20
+        cfg.RISK_MIN_LIQUIDITY = 50
+        cfg.STARTING_CAPITAL_EUR = 500.0
+        cfg.POSITION_SIZE_EUR = 20.0
+        cfg.POSITION_SIZE_WITH_FEES = 21.0
+        # dateutil.parser.parse must return a real datetime so the alert threshold
+        # comparison (minutes_ago > 20) works correctly.
+        def _parse_iso(s, **kwargs):
+            return datetime.fromisoformat(s)
+        stubs["dateutil.parser"] = MagicMock()
+        stubs["dateutil.parser"].parse = _parse_iso
+        stubs["dateutil"] = MagicMock()
+        stubs["dateutil"].parser = stubs["dateutil.parser"]
+        return stubs
+
+    def _make_mock_risk_manager(self):
+        rm = MagicMock()
+        rm._daily_pnl = 0.0
+        rm.allow_trade.return_value = (False, "test")
+        return rm
+
+    def _import_run_with_stubs(self, stubs):
+        """Import (or re-import) src.scripts.run with stub modules in place.
+
+        Returns (run_module, original_modules) so the caller can hold stubs
+        active during execution and restore them afterwards.
+        """
+        import sys
+        # Remove any cached version of the module so it re-executes with stubs
+        sys.modules.pop("src.scripts.run", None)
+        original = {}
+        for name, stub in stubs.items():
+            original[name] = sys.modules.get(name)
+            sys.modules[name] = stub
+        import src.scripts.run as run_module
+        return run_module, original
+
+    @staticmethod
+    def _restore_stubs(original):
+        """Restore sys.modules to state before stubs were applied."""
+        import sys
+        for name, orig in original.items():
+            if orig is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = orig
+        sys.modules.pop("src.scripts.run", None)
+
+    def test_poll_missed_alert_fires_when_previous_poll_was_old(self):
+        """If the previous poll ran >20 min ago, the alert must fire."""
+        import src.monitoring.dashboard as dashboard_module
+
+        # Simulate a previous poll that happened 25 minutes ago
+        old_ts = (_utcnow() - timedelta(minutes=25)).isoformat()
+
+        stubs = self._stub_sys_modules()
+        # Keep stubs active during the call so lazy imports inside poll_once resolve correctly
+        run_module, original = self._import_run_with_stubs(stubs)
+        try:
+            alert_mgr = AlertManager()
+            risk_mgr = self._make_mock_risk_manager()
+
+            with patch.object(dashboard_module, "last_poll_ts", old_ts):
+                with patch.object(run_module, "_build_weather", return_value={"KORD": MagicMock()}):
+                    with patch.object(run_module, "get_weather_markets", return_value=[]):
+                        with patch.object(run_module, "scan_markets", return_value=([], [])):
+                            with patch.object(dashboard_module, "_load_trades", return_value=[]):
+                                with patch.object(dashboard_module, "_compute_win_rate", return_value=0.7):
+                                    with patch.object(alert_mgr, "_send") as mock_send:
+                                        run_module.poll_once(risk_mgr, live_trader=None, alert_manager=alert_mgr)
+        finally:
+            self._restore_stubs(original)
+
+        # The poll-missed alert should have fired because prev_poll_ts was 25 min ago
+        subjects = [c[0][0] for c in mock_send.call_args_list]
+        assert any("poll" in s.lower() for s in subjects), (
+            f"Expected poll-missed alert to fire, but _send was called with: {subjects}"
+        )
+
+    def test_poll_missed_alert_does_not_fire_when_previous_poll_was_recent(self):
+        """If the previous poll ran <20 min ago, the poll-missed alert must not fire."""
+        import src.monitoring.dashboard as dashboard_module
+
+        # Simulate a previous poll that happened 5 minutes ago
+        recent_ts = (_utcnow() - timedelta(minutes=5)).isoformat()
+
+        stubs = self._stub_sys_modules()
+        run_module, original = self._import_run_with_stubs(stubs)
+        try:
+            alert_mgr = AlertManager()
+            risk_mgr = self._make_mock_risk_manager()
+
+            with patch.object(dashboard_module, "last_poll_ts", recent_ts):
+                with patch.object(run_module, "_build_weather", return_value={"KORD": MagicMock()}):
+                    with patch.object(run_module, "get_weather_markets", return_value=[]):
+                        with patch.object(run_module, "scan_markets", return_value=([], [])):
+                            with patch.object(dashboard_module, "_load_trades", return_value=[]):
+                                with patch.object(dashboard_module, "_compute_win_rate", return_value=0.7):
+                                    with patch.object(alert_mgr, "_send") as mock_send:
+                                        run_module.poll_once(risk_mgr, live_trader=None, alert_manager=alert_mgr)
+        finally:
+            self._restore_stubs(original)
+
+        subjects = [c[0][0] for c in mock_send.call_args_list]
+        assert not any("poll" in s.lower() for s in subjects), (
+            f"Expected no poll-missed alert, but _send was called with: {subjects}"
+        )
+
+    def test_no_poll_missed_alert_on_first_poll(self):
+        """On the very first poll (last_poll_ts is None), the alert must not fire."""
+        import src.monitoring.dashboard as dashboard_module
+
+        stubs = self._stub_sys_modules()
+        run_module, original = self._import_run_with_stubs(stubs)
+        try:
+            alert_mgr = AlertManager()
+            risk_mgr = self._make_mock_risk_manager()
+
+            with patch.object(dashboard_module, "last_poll_ts", None):
+                with patch.object(run_module, "_build_weather", return_value={"KORD": MagicMock()}):
+                    with patch.object(run_module, "get_weather_markets", return_value=[]):
+                        with patch.object(run_module, "scan_markets", return_value=([], [])):
+                            with patch.object(dashboard_module, "_load_trades", return_value=[]):
+                                with patch.object(dashboard_module, "_compute_win_rate", return_value=0.7):
+                                    with patch.object(alert_mgr, "_send") as mock_send:
+                                        run_module.poll_once(risk_mgr, live_trader=None, alert_manager=alert_mgr)
+        finally:
+            self._restore_stubs(original)
+
+        subjects = [c[0][0] for c in mock_send.call_args_list]
+        assert not any("poll" in s.lower() for s in subjects), (
+            f"Expected no poll-missed alert on first poll, but _send was called with: {subjects}"
+        )

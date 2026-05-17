@@ -242,6 +242,11 @@ def poll_once(risk_manager, live_trader=None, alert_manager=None) -> None:
     mode_label = "LIVE" if live_trader else "PAPER"
     print(f"\n=== Poll [{mode_label}] at {ts} ===")
 
+    # Capture the previous poll's timestamp BEFORE overwriting it so the
+    # poll-missed alert can measure the gap between the last and current cycle.
+    import src.monitoring.dashboard as _dashboard
+    prev_poll_ts_str = _dashboard.last_poll_ts  # None on first poll, ISO string on subsequent
+
     if live_trader:
         _sync_open_orders(live_trader)
 
@@ -337,8 +342,7 @@ def poll_once(risk_manager, live_trader=None, alert_manager=None) -> None:
         f"{len(candidates)} candidates, {n_acted} acted on"
     )
 
-    # Update dashboard last_poll timestamp
-    import src.monitoring.dashboard as _dashboard
+    # Update dashboard last_poll timestamp for the next cycle
     _dashboard.last_poll_ts = ts
 
     # Fire email alerts if thresholds are crossed
@@ -346,11 +350,17 @@ def poll_once(risk_manager, live_trader=None, alert_manager=None) -> None:
         from src.monitoring.dashboard import _load_trades, _compute_win_rate
         _trades = _load_trades()
         _win_rate_20 = _compute_win_rate(_trades, n=20)
-        _last_poll_dt = datetime.now(timezone.utc)
+        # Resolve the previous poll's ISO string to a datetime so the poll-missed
+        # check can compute the gap correctly.  On the very first poll this is None,
+        # which the alert manager handles by skipping the poll-missed check.
+        prev_poll_dt = None
+        if prev_poll_ts_str:
+            from dateutil import parser as dtparse
+            prev_poll_dt = dtparse.parse(prev_poll_ts_str)
         alert_manager.check(
             daily_pnl=risk_manager._daily_pnl,
             win_rate_20=_win_rate_20,
-            last_poll_time=_last_poll_dt,
+            last_poll_time=prev_poll_dt,  # previous poll's time, not now()
         )
 
 
