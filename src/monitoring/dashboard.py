@@ -80,18 +80,24 @@ def _load_trades() -> list[dict]:
 
 
 def _compute_win_rate(trades: list[dict], n: int = 50) -> float:
-    """Compute win rate over the last *n* filled trades.
+    """Compute win rate over the last *n* settled trades.
 
-    A trade is considered a win when outcome == 'filled' and pnl > 0.
-    If pnl is absent (live trades log pnl=0 at fill time pending settlement)
-    we count filled outcomes as neutral — the denominator still grows.
-    Returns a float 0.0–1.0, or 0.0 when there are no settled trades.
+    Only trades with a non-zero pnl are considered settled — live trades have
+    pnl=0.0 at fill time and are updated only after Polymarket resolves the
+    market. Unsettled trades are excluded from both numerator and denominator
+    so they cannot artificially depress the win rate.
+
+    Returns a float 0.0–1.0, or 1.0 when no settled trades exist yet
+    (sentinel value that does not trigger the win-rate alert).
     """
-    filled = [t for t in trades if t.get("outcome") == "filled"][:n]
-    if not filled:
-        return 0.0
-    wins = sum(1 for t in filled if float(t.get("pnl", 0)) > 0)
-    return wins / len(filled)
+    settled = [
+        t for t in trades
+        if t.get("outcome") == "filled" and float(t.get("pnl", 0)) != 0.0
+    ][:n]
+    if not settled:
+        return 1.0  # No settlement data yet — suppress alert
+    wins = sum(1 for t in settled if float(t.get("pnl", 0)) > 0)
+    return wins / len(settled)
 
 
 def _today_pnl(trades: list[dict]) -> float:
