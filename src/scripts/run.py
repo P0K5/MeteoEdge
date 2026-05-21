@@ -37,6 +37,7 @@ _write_lock = threading.Lock()
 _order_lock = threading.Lock()  # Serialize CLOB placements — HTTP/2 pool not thread-safe
 _open_orders: set[tuple[str, str]] = set()  # (ticker, side) pairs with a live GTC order
 _open_orders_lock = threading.Lock()
+_sold_positions: set[str] = set()  # no_token_ids sold this session (METAR stop-loss)
 
 
 # ---------------------------------------------------------------------------
@@ -139,6 +140,9 @@ def _execute_live(candidate, clob_client_factory, risk_manager, ts: str) -> None
             "question": candidate.market.get("question") or candidate.market.get("groupItemTitle") or "",
             "end_date": (candidate.market.get("endDate") or candidate.market.get("end_date_iso") or "")[:10],
             "ticker": candidate.bracket.ticker,
+            "no_token_id": token_id if candidate.side == "NO" else candidate.bracket.no_token_id,
+            "bracket_low": candidate.bracket.low_f,
+            "bracket_high": candidate.bracket.high_f,
             "side": candidate.side,
             "price_cents": candidate.price_cents,
             "size_eur": POSITION_SIZE_EUR,
@@ -236,6 +240,109 @@ def _sync_open_orders(live_trader) -> None:
         print(f"[orders] failed to sync open orders: {e} — dedup guard uses in-memory state")
 
 
+def _load_open_no_positions(today: str) -> list[dict]:
+    """Return filled NO positions for today that have not yet been sold.
+
+    Reads live_trades.jsonl and groups by no_token_id. A token is considered
+    sold if any record with outcome='sold' exists for it today.
+    """
+    if not LIVE_TRADES_JSONL.exists():
+        return []
+    records: list[dict] = []
+    sold_tokens: set[str] = set()
+    try:
+        with open(LIVE_TRADES_JSONL) as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    r = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if r.get("end_date", "")[:10] != today:
+                    continue
+                if r.get("outcome") == "sold":
+                    sold_tokens.add(r.get("no_token_id", ""))
+                elif (r.get("outcome") == "filled"
+                        and r.get("side") == "NO"
+                        and r.get("no_token_id")
+                        and r.get("bracket_low") is not None
+                        and r.get("bracket_high") is not None):
+                    records.append(r)
+    except OSError:
+        return []
+    return [r for r in records if r.get("no_token_id") not in sold_tokens]
+
+
+def _check_metar_exits(weather: dict, live_trader, ts: str) -> None:
+    """Exit NO positions where the running METAR daily high is inside the bracket.
+
+    Called once per live poll after weather states are built. When the current
+    high temperature has entered a bracket where we hold NO tokens, that position
+    is losing and may resolve YES — we sell at the best available bid to recover
+    whatever value remains rather than losing the full stake at settlement.
+    """
+    today = datetime.now(timezone.utc).date().isoformat()
+    open_positions = _load_open_no_positions(today)
+    if not open_positions:
+        return
+
+    # Group fills by no_token_id so we can aggregate shares across DCA fills
+    from collections import defaultdict
+    by_token: dict[str, list[dict]] = defaultdict(list)
+    for pos in open_positions:
+        by_token[pos["no_token_id"]].append(pos)
+
+    for token_id, fills in by_token.items():
+        if token_id in _sold_positions:
+            continue
+
+        # All fills for a token share the same bracket and station
+        bracket_low = fills[0]["bracket_low"]
+        bracket_high = fills[0]["bracket_high"]
+        station = fills[0]["station"]
+
+        if station not in weather:
+            continue
+
+        current_high = weather[station].current_high_f
+        if not (bracket_low <= current_high <= bracket_high):
+            continue
+
+        total_shares = sum(f["size_eur"] / (f["price_cents"] / 100) for f in fills)
+        total_eur = sum(f["size_eur"] for f in fills)
+        question = fills[0].get("question", "")
+        print(
+            f"  [exit] METAR high {current_high:.1f}°F is inside {bracket_low:.0f}-"
+            f"{bracket_high:.0f}°F bracket — selling {total_shares:.1f} NO shares "
+            f"for {station}"
+        )
+        try:
+            sell_id = live_trader.sell_position(token_id, total_shares)
+            _sold_positions.add(token_id)
+            _append_live_trade({
+                "ts": ts,
+                "order_id": sell_id,
+                "station": station,
+                "question": question,
+                "end_date": today,
+                "ticker": fills[0].get("ticker", ""),
+                "no_token_id": token_id,
+                "bracket_low": bracket_low,
+                "bracket_high": bracket_high,
+                "side": "SELL",
+                "price_cents": 0,
+                "size_eur": total_eur,
+                "edge_cents": 0,
+                "outcome": "sold",
+                "trigger": f"metar_high={current_high:.1f}F",
+            })
+            print(f"  [exit] sell {sell_id[:12]}… placed — {station} {bracket_low:.0f}-{bracket_high:.0f}°F NO")
+        except Exception as e:
+            print(f"  [exit] sell failed for {station} {bracket_low:.0f}-{bracket_high:.0f}°F: {e}")
+
+
 def poll_once(risk_manager, live_trader=None, alert_manager=None) -> None:
     """Run one full poll: build weather states, fetch markets, scan, log candidates."""
     ts = datetime.now(timezone.utc).isoformat()
@@ -254,6 +361,9 @@ def poll_once(risk_manager, live_trader=None, alert_manager=None) -> None:
     if not weather:
         print("[run] No weather data for any station — skipping market scan")
         return
+
+    if live_trader:
+        _check_metar_exits(weather, live_trader, ts)
 
     try:
         markets = get_weather_markets()

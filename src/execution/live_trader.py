@@ -4,6 +4,8 @@ from typing import Literal
 from py_clob_client_v2 import ClobClient
 from py_clob_client_v2.clob_types import AssetType, BalanceAllowanceParams, CreateOrderOptions, OrderArgs
 
+from src.data.polymarket import get_orderbook
+
 
 class LiveTrader:
     def __init__(self, client: ClobClient):
@@ -36,6 +38,30 @@ class LiveTrader:
         order_id = resp.get("orderID") or resp.get("id")
         if not order_id:
             raise RuntimeError(f"Order placement failed: {resp}")
+        return order_id
+
+    def sell_position(self, token_id: str, shares: float) -> str:
+        """Sell NO tokens at the current best bid price.
+
+        Used for METAR-triggered stop-loss exits when the running daily high
+        has moved inside the bracket. Raises RuntimeError if no bids exist.
+        """
+        ob = get_orderbook(token_id)
+        bids = ob.get("bids") or []
+        if not bids:
+            raise RuntimeError(f"No bids for token {token_id[:14]}… — cannot sell")
+        best_bid = max(float(b["price"]) for b in bids)
+        args = OrderArgs(
+            token_id=token_id,
+            price=round(best_bid, 4),
+            size=round(shares, 2),
+            side="SELL",
+        )
+        options = CreateOrderOptions(tick_size="0.01", neg_risk=True)
+        resp = self.client.create_and_post_order(args, options)
+        order_id = resp.get("orderID") or resp.get("id")
+        if not order_id:
+            raise RuntimeError(f"Sell order failed: {resp}")
         return order_id
 
     def cancel_order(self, order_id: str) -> bool:
