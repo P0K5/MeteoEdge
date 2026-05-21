@@ -319,8 +319,15 @@ def _check_metar_exits(weather: dict, live_trader, ts: str) -> None:
             f"for {station}"
         )
         try:
-            sell_id = live_trader.sell_position(token_id, total_shares)
+            sell_id, sell_price_cents = live_trader.sell_position(token_id, total_shares)
             _sold_positions.add(token_id)
+            # Weighted average entry price across all DCA fills
+            avg_entry_cents = sum(
+                f["price_cents"] * (f["size_eur"] / (f["price_cents"] / 100))
+                for f in fills
+            ) / total_shares
+            # Actual realised PnL: (sell - avg_entry) per share × total shares, in EUR
+            pnl = round((sell_price_cents - avg_entry_cents) / 100 * total_shares, 4)
             _append_live_trade({
                 "ts": ts,
                 "order_id": sell_id,
@@ -332,13 +339,17 @@ def _check_metar_exits(weather: dict, live_trader, ts: str) -> None:
                 "bracket_low": bracket_low,
                 "bracket_high": bracket_high,
                 "side": "SELL",
-                "price_cents": 0,
+                "price_cents": sell_price_cents,
                 "size_eur": total_eur,
                 "edge_cents": 0,
+                "pnl": pnl,
                 "outcome": "sold",
                 "trigger": f"metar_high={current_high:.1f}F",
             })
-            print(f"  [exit] sell {sell_id[:12]}… placed — {station} {bracket_low:.0f}-{bracket_high:.0f}°F NO")
+            print(
+                f"  [exit] sell {sell_id[:12]}… placed @ {sell_price_cents}¢ — "
+                f"{station} {bracket_low:.0f}-{bracket_high:.0f}°F NO  pnl={pnl:+.2f}"
+            )
         except Exception as e:
             print(f"  [exit] sell failed for {station} {bracket_low:.0f}-{bracket_high:.0f}°F: {e}")
 

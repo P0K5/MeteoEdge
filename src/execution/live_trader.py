@@ -40,17 +40,19 @@ class LiveTrader:
             raise RuntimeError(f"Order placement failed: {resp}")
         return order_id
 
-    def sell_position(self, token_id: str, shares: float) -> str:
+    def sell_position(self, token_id: str, shares: float) -> tuple[str, int]:
         """Sell NO tokens at the current best bid price.
 
         Used for METAR-triggered stop-loss exits when the running daily high
         has moved inside the bracket. Raises RuntimeError if no bids exist.
+        Returns (order_id, sell_price_cents).
         """
         ob = get_orderbook(token_id)
         bids = ob.get("bids") or []
         if not bids:
             raise RuntimeError(f"No bids for token {token_id[:14]}… — cannot sell")
         best_bid = max(float(b["price"]) for b in bids)
+        sell_price_cents = max(1, min(99, round(best_bid * 100)))
         args = OrderArgs(
             token_id=token_id,
             price=round(best_bid, 4),
@@ -62,7 +64,7 @@ class LiveTrader:
         order_id = resp.get("orderID") or resp.get("id")
         if not order_id:
             raise RuntimeError(f"Sell order failed: {resp}")
-        return order_id
+        return order_id, sell_price_cents
 
     def cancel_order(self, order_id: str) -> bool:
         """Cancel an open order. Returns True if cancelled."""
