@@ -220,24 +220,51 @@ def _build_weather() -> dict[str, WeatherState]:
 
 
 def _sync_open_orders(live_trader) -> None:
-    """Refresh _open_orders from Polymarket's actual open order list.
+    """Refresh _open_orders from exchange open orders + today's filled positions.
 
-    Called at the top of every live poll so the dedup guard reflects reality —
-    not just in-memory state that can drift after timeouts or restarts.
+    Called at the top of every live poll. Two sources feed the dedup guard:
+    1. Exchange open orders (pending GTC orders not yet filled or cancelled).
+    2. Today's filled positions from live_trades.jsonl — once a fill is matched
+       the exchange order disappears, but we must not re-buy the same token
+       within the same trading day.
     """
-    try:
-        from py_clob_client_v2.clob_types import OpenOrderParams
-        orders = live_trader.client.get_open_orders(OpenOrderParams())
-        # Key by token_id (asset_id) only — YES/NO tokens already have distinct IDs,
-        # and we always place side="BUY" on the exchange regardless of YES/NO direction,
-        # so mapping exchange side→YES/NO is unreliable.
-        with _open_orders_lock:
-            _open_orders.clear()
+    today = datetime.now(timezone.utc).date().isoformat()
+
+    with _open_orders_lock:
+        _open_orders.clear()
+
+        # Source 1: live exchange open orders
+        try:
+            from py_clob_client_v2.clob_types import OpenOrderParams
+            orders = live_trader.client.get_open_orders(OpenOrderParams())
             for o in orders:
                 _open_orders.add(o.get("asset_id", ""))
-        print(f"[orders] {len(orders)} open orders on exchange synced to dedup guard")
-    except Exception as e:
-        print(f"[orders] failed to sync open orders: {e} — dedup guard uses in-memory state")
+            print(f"[orders] {len(orders)} open exchange orders synced to dedup guard")
+        except Exception as e:
+            print(f"[orders] failed to sync open orders: {e} — using filled-positions only")
+
+        # Source 2: today's already-filled no_token_ids from live_trades.jsonl
+        filled_count = 0
+        if LIVE_TRADES_JSONL.exists():
+            try:
+                with open(LIVE_TRADES_JSONL) as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            r = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+                        if (r.get("end_date", "")[:10] == today
+                                and r.get("outcome") == "filled"
+                                and r.get("no_token_id")):
+                            _open_orders.add(r["no_token_id"])
+                            filled_count += 1
+            except OSError:
+                pass
+        if filled_count:
+            print(f"[orders] {filled_count} today's filled position(s) added to dedup guard")
 
 
 def _load_open_no_positions(today: str) -> list[dict]:
