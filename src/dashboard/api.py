@@ -184,7 +184,7 @@ def _positions_from_wallet() -> list[PositionOut]:
     if not wallet:
         raise RuntimeError("POLYMARKET_DEPOSIT_WALLET not set")
 
-    url = f"https://data-api.polymarket.com/positions?user_address={wallet}&sizeThreshold=.01&limit=100"
+    url = f"https://data-api.polymarket.com/positions?user={wallet}&sizeThreshold=0.01&limit=100"
     r = httpx.get(url, timeout=15)
     r.raise_for_status()
     rows = r.json()
