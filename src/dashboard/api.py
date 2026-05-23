@@ -153,22 +153,32 @@ def _weather_token_ids() -> set[str]:
         return _weather_tokens
     tokens: set[str] = set()
     for closed in ("false", "true"):
-        url = f"{POLYMARKET_GAMMA_API}/markets?limit=500&tag_id=84&closed={closed}"
-        try:
-            r = httpx.get(url, timeout=10)
-            batch = r.json()
-            if isinstance(batch, dict):
-                batch = batch.get("markets") or []
-            for m in batch:
-                raw = m.get("clobTokenIds") or "[]"
-                ids = raw if isinstance(raw, list) else _json.loads(raw)
-                for t in ids:
-                    tokens.add(str(t))
-        except Exception as e:
-            logger.warning("Weather token fetch failed (closed=%s): %s", closed, e)
+        for offset in range(0, 10000, 100):
+            url = (
+                f"{POLYMARKET_GAMMA_API}/markets"
+                f"?limit=100&tag_id=84&closed={closed}&offset={offset}"
+            )
+            try:
+                r = httpx.get(url, timeout=10)
+                batch = r.json()
+                if isinstance(batch, dict):
+                    batch = batch.get("markets") or []
+                if not batch:
+                    break
+                for m in batch:
+                    raw = m.get("clobTokenIds") or "[]"
+                    ids = raw if isinstance(raw, list) else _json.loads(raw)
+                    for t in ids:
+                        tokens.add(str(t))
+                if len(batch) < 100:
+                    break
+            except Exception as e:
+                logger.warning("Weather token fetch failed (closed=%s offset=%d): %s", closed, offset, e)
+                break
     if tokens:
         _weather_tokens = tokens
         _weather_tokens_ts = time.monotonic()
+        logger.info("Loaded %d weather token IDs", len(tokens))
     return _weather_tokens
 
 
