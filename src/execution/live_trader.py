@@ -11,7 +11,7 @@ from py_clob_client_v2.clob_types import AssetType, BalanceAllowanceParams, Crea
 
 from src.data.polymarket import get_orderbook
 
-STATE_PATH = Path("live_state.json")
+STATE_PATH = Path(__file__).parent.parent.parent / "live_state.json"
 
 
 def persist_state(open_trades: list[dict]) -> None:
