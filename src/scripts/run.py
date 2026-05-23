@@ -337,6 +337,22 @@ def _check_metar_exits(weather: dict, live_trader, ts: str) -> None:
         if not (bracket_low <= current_high <= bracket_high):
             continue
 
+        # Narrow brackets (≤3°F) are often passed through while the temperature
+        # is still rising in the morning.  Only exit after 13:00 local time when
+        # the daily high is more firmly established.  Wide/open-ended brackets
+        # (e.g. "≤59°F", width≈109°F) can fire at any time because the
+        # temperature needs a large rise to exit them.
+        bracket_width = bracket_high - bracket_low
+        if bracket_width <= 3.0:
+            local_hour = weather[station].now_local.hour
+            if local_hour < 13:
+                print(
+                    f"  [exit] {station} {bracket_low:.0f}-{bracket_high:.0f}°F "
+                    f"inside bracket but local time is {local_hour:02d}:xx — "
+                    f"deferring stop-loss until after 13:00"
+                )
+                continue
+
         total_shares = sum(f["size_eur"] / (f["price_cents"] / 100) for f in fills)
         total_eur = sum(f["size_eur"] for f in fills)
         question = fills[0].get("question", "")
