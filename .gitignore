@@ -60,6 +60,7 @@ logs/
 # Data
 *.csv
 *.json
+live_state.json
 data/feeds/
 data/cache/
 

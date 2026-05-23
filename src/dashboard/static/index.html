@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MeteoEdge Dashboard</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #0f1117;
+      color: #e2e8f0;
+      min-height: 100vh;
+    }
+
+    header {
+      background: #1a1d27;
+      border-bottom: 1px solid #2d3148;
+      padding: 1rem 1.5rem;
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+    header h1 { font-size: 1.25rem; font-weight: 700; letter-spacing: 0.02em; }
+    header span.badge {
+      font-size: 0.7rem;
+      background: #2563eb;
+      color: #fff;
+      border-radius: 999px;
+      padding: 0.2rem 0.55rem;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+    }
+    #refresh-label {
+      margin-left: auto;
+      font-size: 0.75rem;
+      color: #64748b;
+    }
+
+    main { padding: 1.5rem; max-width: 1200px; margin: 0 auto; }
+
+    .card {
+      background: #1a1d27;
+      border: 1px solid #2d3148;
+      border-radius: 0.75rem;
+      padding: 1.25rem 1.5rem;
+      margin-bottom: 1.5rem;
+    }
+    .card-title {
+      font-size: 0.7rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: #64748b;
+      margin-bottom: 1rem;
+    }
+
+    /* Wallet summary */
+    .wallet-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 1rem;
+    }
+    .stat { display: flex; flex-direction: column; gap: 0.25rem; }
+    .stat-label { font-size: 0.7rem; color: #64748b; text-transform: uppercase; letter-spacing: 0.08em; }
+    .stat-value { font-size: 1.5rem; font-weight: 700; }
+    .stat-value.positive { color: #22c55e; }
+    .stat-value.negative { color: #ef4444; }
+    .stat-value.neutral  { color: #e2e8f0; }
+
+    /* Tables */
+    table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+    thead th {
+      text-align: left;
+      font-size: 0.68rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #64748b;
+      padding: 0 0.5rem 0.75rem;
+      border-bottom: 1px solid #2d3148;
+    }
+    tbody tr { border-bottom: 1px solid #1e2235; }
+    tbody tr:last-child { border-bottom: none; }
+    tbody td { padding: 0.65rem 0.5rem; vertical-align: middle; }
+
+    .chip {
+      display: inline-block;
+      padding: 0.15rem 0.5rem;
+      border-radius: 999px;
+      font-size: 0.7rem;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+    }
+    .chip-yes { background: #052e16; color: #4ade80; border: 1px solid #166534; }
+    .chip-no  { background: #450a0a; color: #f87171; border: 1px solid #991b1b; }
+
+    .empty-msg {
+      text-align: center;
+      color: #475569;
+      padding: 2rem 0;
+      font-size: 0.9rem;
+    }
+
+    .edge-positive { color: #22c55e; }
+    .edge-negative { color: #ef4444; }
+
+    footer {
+      text-align: center;
+      font-size: 0.72rem;
+      color: #334155;
+      padding: 1.5rem;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>MeteoEdge</h1>
+  <span class="badge">LIVE</span>
+  <span id="refresh-label">Refreshing…</span>
+</header>
+
+<main>
+  <!-- Wallet summary -->
+  <div class="card" id="wallet-card">
+    <div class="card-title">Portfolio</div>
+    <div class="wallet-grid" id="wallet-grid">
+      <div class="stat">
+        <span class="stat-label">Cash (USDC)</span>
+        <span class="stat-value neutral" id="stat-cash">—</span>
+      </div>
+      <div class="stat">
+        <span class="stat-label">Open Positions</span>
+        <span class="stat-value neutral" id="stat-count">—</span>
+      </div>
+      <div class="stat">
+        <span class="stat-label">Invested</span>
+        <span class="stat-value neutral" id="stat-invested">—</span>
+      </div>
+      <div class="stat">
+        <span class="stat-label">Mark-to-Market</span>
+        <span class="stat-value neutral" id="stat-mtm">—</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Open positions -->
+  <div class="card">
+    <div class="card-title">Open Positions</div>
+    <div id="open-container">
+      <p class="empty-msg">Loading…</p>
+    </div>
+  </div>
+
+  <!-- Closed positions (settled externally by Polymarket) -->
+  <div class="card">
+    <div class="card-title">Closed Positions</div>
+    <div id="closed-container">
+      <p class="empty-msg">Settlements are handled by Polymarket and not tracked here.</p>
+    </div>
+  </div>
+</main>
+
+<footer id="footer">Last updated: —</footer>
+
+<script>
+  function fmt(n, decimals = 2) {
+    return Number(n).toFixed(decimals);
+  }
+
+  function renderWallet(positions, cashUsdc) {
+    document.getElementById('stat-cash').textContent = '$' + fmt(cashUsdc);
+
+    const totalInvested = positions.reduce((s, p) => s + p.invested, 0);
+    const totalMtm = positions.reduce((s, p) => s + p.current_value, 0);
+    const pnl = totalMtm - totalInvested;
+
+    document.getElementById('stat-count').textContent = positions.length;
+    document.getElementById('stat-invested').textContent = '$' + fmt(totalInvested);
+
+    const mtmEl = document.getElementById('stat-mtm');
+    mtmEl.textContent = '$' + fmt(totalMtm);
+    mtmEl.className = 'stat-value ' + (pnl >= 0 ? 'positive' : 'negative');
+  }
+
+  function renderOpen(positions) {
+    const container = document.getElementById('open-container');
+    if (!positions.length) {
+      container.innerHTML = '<p class="empty-msg">No open positions.</p>';
+      return;
+    }
+    const rows = positions.map(p => {
+      const edgeClass = p.edge >= 0 ? 'edge-positive' : 'edge-negative';
+      const edgeSign = p.edge >= 0 ? '+' : '';
+      return `
+        <tr>
+          <td>${p.station}</td>
+          <td><span class="chip chip-${p.side.toLowerCase()}">${p.side}</span></td>
+          <td>${fmt(p.bracket_low, 0)}–${fmt(p.bracket_high, 0)}°F</td>
+          <td>${p.entry_price}¢</td>
+          <td>${p.market_prob}¢</td>
+          <td>${p.my_prob}¢</td>
+          <td class="${edgeClass}">${edgeSign}${fmt(p.edge, 1)}¢</td>
+          <td>${fmt(p.shares, 2)}</td>
+          <td>$${fmt(p.invested)}</td>
+          <td>$${fmt(p.current_value)}</td>
+          <td>$${fmt(p.target_value)}</td>
+        </tr>`;
+    }).join('');
+
+    container.innerHTML = `
+      <table>
+        <thead>
+          <tr>
+            <th>Station</th><th>Side</th><th>Bracket</th>
+            <th>Entry</th><th>Market</th><th>My&nbsp;Prob</th>
+            <th>Edge</th><th>Shares</th>
+            <th>Invested</th><th>Curr&nbsp;Value</th><th>Target</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>`;
+  }
+
+  function renderClosed(positions) {
+    // Settled externally by Polymarket; no data available from the API.
+  }
+
+  async function fetchPortfolio() {
+    try {
+      const r = await fetch('/api/portfolio');
+      if (!r.ok) throw new Error(r.statusText);
+      const data = await r.json();
+      renderWallet(data.open_positions, data.cash_usdc);
+      renderOpen(data.open_positions);
+      renderClosed([]);
+
+      const ts = data.updated_at ? new Date(data.updated_at).toLocaleString() : '—';
+      document.getElementById('footer').textContent = 'State updated: ' + ts;
+      document.getElementById('refresh-label').textContent =
+        'Auto-refresh every 30 s · ' + new Date().toLocaleTimeString();
+    } catch (e) {
+      console.error('Portfolio fetch failed:', e);
+      document.getElementById('refresh-label').textContent = 'Fetch error — retrying…';
+    }
+  }
+
+  fetchPortfolio();
+  setInterval(fetchPortfolio, 30_000);
+</script>
+
+</body>
+</html>

@@ -38,6 +38,8 @@ _order_lock = threading.Lock()  # Serialize CLOB placements — HTTP/2 pool not 
 _open_orders: set[tuple[str, str]] = set()  # (ticker, side) pairs with a live GTC order
 _open_orders_lock = threading.Lock()
 _sold_positions: set[str] = set()  # no_token_ids sold this session (METAR stop-loss)
+_open_trades: list[dict] = []      # in-memory open positions written to live_state.json
+_open_trades_lock = threading.Lock()
 
 
 # ---------------------------------------------------------------------------
@@ -98,6 +100,8 @@ def _execute_live(candidate, clob_client_factory, risk_manager, ts: str) -> None
             return
         _open_orders.add(order_key)
 
+    predicted_price = round(candidate.confidence * 100)
+
     try:
         with _order_lock:  # Serialize HTTP/2 placements; fill-monitoring remains parallel
             try:
@@ -106,6 +110,11 @@ def _execute_live(candidate, clob_client_factory, risk_manager, ts: str) -> None
                     side=candidate.side,
                     price_cents=candidate.price_cents,
                     size_usdc=POSITION_SIZE_EUR,
+                    station=candidate.station,
+                    bracket_low=candidate.bracket.low_f,
+                    bracket_high=candidate.bracket.high_f,
+                    predicted_price=predicted_price,
+                    predicted_edge=round(candidate.edge_cents, 2),
                 )
             except Exception as e:
                 print(f"  [live] place_order failed: {e}")
@@ -132,6 +141,23 @@ def _execute_live(candidate, clob_client_factory, risk_manager, ts: str) -> None
         risk_manager.close_position()
         if outcome == "filled":
             risk_manager.record_pnl(0.0)  # Actual PnL resolved at settlement
+            from src.execution.live_trader import persist_state
+            trade_record = {
+                "order_id": order_id,
+                "token_id": token_id,
+                "station": candidate.station,
+                "side": candidate.side,
+                "bracket_low": candidate.bracket.low_f,
+                "bracket_high": candidate.bracket.high_f,
+                "entry_price": candidate.price_cents,
+                "predicted_price": predicted_price,
+                "predicted_edge": round(candidate.edge_cents, 2),
+                "size_usdc": POSITION_SIZE_EUR,
+                "placed_at": ts,
+            }
+            with _open_trades_lock:
+                _open_trades.append(trade_record)
+                persist_state(list(_open_trades))
 
         _append_live_trade({
             "ts": ts,
@@ -364,6 +390,10 @@ def _check_metar_exits(weather: dict, live_trader, ts: str) -> None:
         try:
             sell_id, sell_price_cents = live_trader.sell_position(token_id, total_shares)
             _sold_positions.add(token_id)
+            from src.execution.live_trader import persist_state
+            with _open_trades_lock:
+                _open_trades[:] = [t for t in _open_trades if t.get("token_id") != token_id]
+                persist_state(list(_open_trades))
             # Weighted average entry price across all DCA fills
             avg_entry_cents = sum(
                 f["price_cents"] * (f["size_eur"] / (f["price_cents"] / 100))
