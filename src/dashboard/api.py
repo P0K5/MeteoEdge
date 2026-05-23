@@ -227,10 +227,11 @@ def _positions_from_wallet() -> tuple[list[PositionOut], list[ClosedPositionOut]
         my_prob = int(enrich.get("predicted_price", avg_entry_cents))
 
         if row.get("redeemable"):
-            # Resolved market — show in closed section
-            cur_price = float(row.get("curPrice") or 0)
-            exit_cents = max(0, min(100, round(cur_price * 100)))
-            pnl = round(float(row.get("cashPnl") or 0), 2)
+            # Won — redeemable means user holds winning tokens worth $1 each.
+            # cashPnl uses curPrice=0 (market closed) so it's always wrong; compute directly.
+            initial_value = float(row.get("initialValue") or shares * avg_price)
+            pnl = round(shares * 1.0 - initial_value, 2)
+            exit_cents = 100  # winning tokens redeem at $1.00
             closed_positions.append(ClosedPositionOut(
                 question=question,
                 station=str(enrich.get("station", "")),
