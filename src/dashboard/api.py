@@ -140,6 +140,49 @@ _CITY_COORDS: dict[str, tuple[float, float]] = {
 }
 
 
+def _stopped_positions() -> list[ClosedPositionOut]:
+    """Return positions closed by the METAR stop-loss, sourced from live_trades.jsonl.
+
+    These are sold before settlement so they never appear as redeemable in the
+    Data API.  The sold record already carries entry_price_cents, shares, and pnl.
+    """
+    if not LIVE_TRADES_JSONL.exists():
+        return []
+    result: list[ClosedPositionOut] = []
+    try:
+        import json as _json
+        with open(LIVE_TRADES_JSONL) as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    r = _json.loads(line)
+                except Exception:
+                    continue
+                if r.get("outcome") != "sold":
+                    continue
+                exit_cents = int(r.get("price_cents") or 0)
+                entry_cents = int(r.get("entry_price_cents") or exit_cents)
+                shares = float(r.get("shares") or 0)
+                pnl = float(r.get("pnl") or 0)
+                result.append(ClosedPositionOut(
+                    question=str(r.get("question") or ""),
+                    station=str(r.get("station") or ""),
+                    side="NO",  # METAR exits are always NO positions
+                    bracket_low=float(r.get("bracket_low") or 0.0),
+                    bracket_high=float(r.get("bracket_high") or 0.0),
+                    entry_price=entry_cents,
+                    exit_price=exit_cents,
+                    pnl=pnl,
+                    shares=round(shares, 4),
+                    closed_at=str(r.get("ts") or ""),
+                ))
+    except Exception as e:
+        logger.warning("live_trades.jsonl stop-loss read error: %s", e)
+    return result
+
+
 def _nws_forecast_for_title(title: str) -> float | None:
     """Return today's NWS forecast high (°F) for the city mentioned in *title*."""
     t = title.lower()
@@ -278,11 +321,13 @@ def _positions_from_wallet() -> tuple[list[PositionOut], list[ClosedPositionOut]
         my_prob = int(enrich.get("predicted_price", avg_entry_cents))
 
         if row.get("redeemable"):
-            # Won — redeemable means user holds winning tokens worth $1 each.
-            # cashPnl uses curPrice=0 (market closed) so it's always wrong; compute directly.
+            # Market resolved. Both winning ($1) and losing ($0) tokens are "redeemable"
+            # in Polymarket's CTF — the API sets curPrice=1 for the winning side only.
             initial_value = float(row.get("initialValue") or shares * avg_price)
-            pnl = round(shares * 1.0 - initial_value, 2)
-            exit_cents = 100  # winning tokens redeem at $1.00
+            cur_price = float(row.get("curPrice") or 0)
+            is_win = cur_price >= 0.99
+            pnl = round(shares * 1.0 - initial_value if is_win else -initial_value, 2)
+            exit_cents = 100 if is_win else 0
             closed_positions.append(ClosedPositionOut(
                 question=question,
                 station=str(enrich.get("station", "")),
@@ -315,6 +360,7 @@ def _positions_from_wallet() -> tuple[list[PositionOut], list[ClosedPositionOut]
                 forecast_high_f=_nws_forecast_for_title(question),
             ))
 
+    closed_positions.extend(_stopped_positions())
     open_positions.sort(key=lambda p: p.invested, reverse=True)
     closed_positions.sort(key=lambda p: p.closed_at, reverse=True)
     return open_positions, closed_positions

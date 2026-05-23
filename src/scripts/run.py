@@ -415,6 +415,8 @@ def _check_metar_exits(weather: dict, live_trader, ts: str) -> None:
                 "bracket_high": bracket_high,
                 "side": "SELL",
                 "price_cents": sell_price_cents,
+                "entry_price_cents": round(avg_entry_cents),
+                "shares": round(total_shares, 4),
                 "size_eur": total_eur,
                 "edge_cents": 0,
                 "pnl": pnl,
