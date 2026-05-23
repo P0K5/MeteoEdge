@@ -26,7 +26,8 @@ from pydantic import BaseModel
 
 from py_clob_client_v2.clob_types import BookParams
 
-from src.config import POLYMARKET_GAMMA_API
+from src.config import POLYMARKET_GAMMA_API, STATIONS, LIVE_TRADES_JSONL
+from src.data.nws import fetch_nws_forecast_high
 from src.data.polymarket import get_orderbook
 from src.execution.live_trader import STATE_PATH
 
@@ -61,6 +62,7 @@ class PositionOut(BaseModel):
     invested: float
     current_value: float
     target_value: float
+    forecast_high_f: float | None = None  # NWS forecast high °F for today
 
 
 class ClosedPositionOut(BaseModel):
@@ -100,6 +102,54 @@ def _read_state() -> dict:
 def _state_enrichment() -> dict[str, dict]:
     """Return live_state.json open trades keyed by token_id for quick lookup."""
     return {t["token_id"]: t for t in (_read_state().get("open_trades") or []) if t.get("token_id")}
+
+
+def _trades_file_enrichment() -> dict[str, dict]:
+    """Read live_trades.jsonl and return the most recent filled record per asset_id.
+
+    Used as a durable fallback when live_state.json is missing or stale — the JSONL
+    file persists across trader restarts and always carries predicted_price.
+    """
+    if not LIVE_TRADES_JSONL.exists():
+        return {}
+    result: dict[str, dict] = {}
+    try:
+        import json as _json
+        with open(LIVE_TRADES_JSONL) as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    r = _json.loads(line)
+                except Exception:
+                    continue
+                if r.get("outcome") != "filled":
+                    continue
+                asset_id = r.get("asset_id") or r.get("no_token_id") or ""
+                if asset_id:
+                    result[asset_id] = r  # last filled record wins
+    except Exception as e:
+        logger.warning("live_trades.jsonl read error: %s", e)
+    return result
+
+
+# City → (lat, lon) from STATIONS config — built once at import time.
+_CITY_COORDS: dict[str, tuple[float, float]] = {
+    city: (lat, lon) for _, lat, lon, city, _ in STATIONS
+}
+
+
+def _nws_forecast_for_title(title: str) -> float | None:
+    """Return today's NWS forecast high (°F) for the city mentioned in *title*."""
+    t = title.lower()
+    for city, (lat, lon) in _CITY_COORDS.items():
+        if city.lower() in t:
+            try:
+                return fetch_nws_forecast_high(lat, lon)
+            except Exception:
+                return None
+    return None
 
 
 def _midpoint_cents(token_id: str, fallback_cents: int) -> int:
@@ -192,6 +242,7 @@ def _positions_from_wallet() -> tuple[list[PositionOut], list[ClosedPositionOut]
         rows = rows.get("positions") or rows.get("data") or []
 
     enrichment = _state_enrichment()
+    jsonl_enrichment = _trades_file_enrichment()
 
     # Batch-fetch live midpoints for non-resolved positions only
     from src.execution.auth import get_clob_client
@@ -223,7 +274,7 @@ def _positions_from_wallet() -> tuple[list[PositionOut], list[ClosedPositionOut]
         avg_entry_cents = max(1, min(99, round(avg_price * 100))) if avg_price else 50
         side: Literal["YES", "NO"] = "YES" if str(row.get("outcome") or "").upper() == "YES" else "NO"
         question = str(row.get("title") or "")
-        enrich = enrichment.get(token_id, {})
+        enrich = enrichment.get(token_id) or jsonl_enrichment.get(token_id, {})
         my_prob = int(enrich.get("predicted_price", avg_entry_cents))
 
         if row.get("redeemable"):
@@ -261,6 +312,7 @@ def _positions_from_wallet() -> tuple[list[PositionOut], list[ClosedPositionOut]
                 invested=round(shares * avg_price, 2),
                 current_value=round(float(row.get("currentValue") or shares * avg_price / 100), 2),
                 target_value=round(shares * 1.00, 2),
+                forecast_high_f=_nws_forecast_for_title(question),
             ))
 
     open_positions.sort(key=lambda p: p.invested, reverse=True)
