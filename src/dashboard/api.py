@@ -25,6 +25,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from py_clob_client_v2.clob_types import BookParams
+
 from src.config import POLYMARKET_GAMMA_API
 from src.data.polymarket import get_orderbook
 from src.execution.live_trader import STATE_PATH
@@ -102,6 +104,7 @@ def _state_enrichment() -> dict[str, dict]:
 
 
 def _midpoint_cents(token_id: str, fallback_cents: int) -> int:
+    """Single-token midpoint — used only in the live_state.json fallback path."""
     try:
         ob = get_orderbook(token_id)
         bids = ob.get("bids") or []
@@ -112,8 +115,28 @@ def _midpoint_cents(token_id: str, fallback_cents: int) -> int:
         best_ask = min(float(a["price"]) for a in asks)
         return max(1, min(99, round((best_bid + best_ask) / 2 * 100)))
     except Exception:
-        logger.warning("Orderbook fetch failed for %s — using fallback", token_id[:14])
         return fallback_cents
+
+
+def _batch_midpoints(client, token_ids: list[str], fallbacks: dict[str, int]) -> dict[str, int]:
+    """Fetch midpoints for all token_ids in a single CLOB request."""
+    if not token_ids:
+        return {}
+    try:
+        params = [BookParams(token_id=t) for t in token_ids]
+        resp = client.get_midpoints(params)
+        # Response is a dict keyed by token_id with mid value as string or float
+        result: dict[str, int] = {}
+        for token_id in token_ids:
+            raw = resp.get(token_id)
+            if raw is not None:
+                result[token_id] = max(1, min(99, round(float(raw) * 100)))
+            else:
+                result[token_id] = fallbacks.get(token_id, 50)
+        return result
+    except Exception as e:
+        logger.warning("Batch midpoints failed (%s) — using entry prices", e)
+        return {t: fallbacks.get(t, 50) for t in token_ids}
 
 
 _question_cache: dict[str, str] = {}
@@ -178,30 +201,46 @@ def _positions_from_clob() -> tuple[list[PositionOut], list[ClosedPositionOut]]:
 
     enrichment = _state_enrichment()
 
-    open_positions: list[PositionOut] = []
-    closed_positions: list[ClosedPositionOut] = []
-
-    for token_id in set(buys) | set(sells):
+    # Pre-compute per-token aggregates
+    all_tokens = set(buys) | set(sells)
+    token_data: dict[str, dict] = {}
+    for token_id in all_tokens:
         buy_list = buys.get(token_id, [])
         sell_list = sells.get(token_id, [])
-
         total_bought = sum(b["size"] for b in buy_list)
         total_sold = sum(s["size"] for s in sell_list)
-        net_shares = round(total_bought - total_sold, 4)
-
         avg_buy_price = (
             sum(b["size"] * b["price"] for b in buy_list) / total_bought
             if total_bought > 0 else 0.0
         )
-        avg_entry_cents = max(1, min(99, round(avg_buy_price * 100)))
+        token_data[token_id] = {
+            "buy_list": buy_list,
+            "sell_list": sell_list,
+            "total_bought": total_bought,
+            "total_sold": total_sold,
+            "net_shares": round(total_bought - total_sold, 4),
+            "avg_buy_price": avg_buy_price,
+            "avg_entry_cents": max(1, min(99, round(avg_buy_price * 100))) if avg_buy_price else 50,
+        }
 
+    # Batch-fetch midpoints for all open tokens in a single request
+    open_tokens = [t for t, d in token_data.items() if d["net_shares"] > 0.01]
+    fallbacks = {t: token_data[t]["avg_entry_cents"] for t in open_tokens}
+    midpoints = _batch_midpoints(client, open_tokens, fallbacks)
+
+    open_positions: list[PositionOut] = []
+    closed_positions: list[ClosedPositionOut] = []
+
+    for token_id, d in token_data.items():
         enrich = enrichment.get(token_id, {})
         outcome_str = outcomes.get(token_id, "Yes")
         side: Literal["YES", "NO"] = enrich.get("side") or ("YES" if outcome_str.upper() == "YES" else "NO")
         question = _market_question(condition_ids.get(token_id, ""))
+        avg_entry_cents = d["avg_entry_cents"]
+        avg_buy_price = d["avg_buy_price"]
 
-        if net_shares > 0.01:
-            market_prob = _midpoint_cents(token_id, avg_entry_cents)
+        if d["net_shares"] > 0.01:
+            market_prob = midpoints.get(token_id, avg_entry_cents)
             my_prob = int(enrich.get("predicted_price", avg_entry_cents))
             open_positions.append(PositionOut(
                 question=question,
@@ -213,17 +252,18 @@ def _positions_from_clob() -> tuple[list[PositionOut], list[ClosedPositionOut]]:
                 market_prob=market_prob,
                 my_prob=my_prob,
                 edge=round(my_prob - market_prob, 2),
-                shares=net_shares,
-                invested=round(net_shares * avg_buy_price, 2),
-                current_value=round(net_shares * (market_prob / 100), 2),
-                target_value=round(net_shares * 1.00, 2),
+                shares=d["net_shares"],
+                invested=round(d["net_shares"] * avg_buy_price, 2),
+                current_value=round(d["net_shares"] * (market_prob / 100), 2),
+                target_value=round(d["net_shares"] * 1.00, 2),
             ))
 
-        if sell_list:
-            avg_sell_price = sum(s["size"] * s["price"] for s in sell_list) / total_sold
+        if d["sell_list"]:
+            total_sold = d["total_sold"]
+            avg_sell_price = sum(s["size"] * s["price"] for s in d["sell_list"]) / total_sold
             avg_sell_cents = max(1, min(99, round(avg_sell_price * 100)))
             pnl = round((avg_sell_price - avg_buy_price) * total_sold, 2)
-            latest_ts = max((s["ts"] for s in sell_list), default="")
+            latest_ts = max((s["ts"] for s in d["sell_list"]), default="")
             closed_positions.append(ClosedPositionOut(
                 question=question,
                 station=str(enrich.get("station", "")),
