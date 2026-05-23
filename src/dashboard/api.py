@@ -14,7 +14,6 @@ Data source (priority order):
 from __future__ import annotations
 
 import logging
-from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
@@ -178,120 +177,73 @@ def _cash_usdc() -> float:
         return 0.0
 
 
-def _positions_from_clob() -> tuple[list[PositionOut], list[ClosedPositionOut]]:
-    """Build open and closed positions from CLOB authenticated trade history."""
-    from src.execution.auth import get_clob_client
-    client = get_clob_client()
-    trades = client.get_trades(only_first_page=True)
+def _positions_from_wallet() -> list[PositionOut]:
+    """Fetch current open positions directly from Polymarket Data API by wallet address."""
+    import os
+    wallet = os.environ.get("POLYMARKET_DEPOSIT_WALLET", "")
+    if not wallet:
+        raise RuntimeError("POLYMARKET_DEPOSIT_WALLET not set")
 
-
-    # Group fills by token
-    buys: dict[str, list[dict]] = defaultdict(list)
-    sells: dict[str, list[dict]] = defaultdict(list)
-    condition_ids: dict[str, str] = {}
-    outcomes: dict[str, str] = {}  # token_id -> "Yes"/"No"
-
-    for t in trades:
-        token_id = str(t.get("asset_id") or t.get("assetId") or "")
-        if not token_id:
-            continue
-        side = (t.get("side") or "").upper()
-        size = float(t.get("size") or 0)
-        price = float(t.get("price") or 0)
-        condition_ids[token_id] = str(t.get("market") or "")
-        outcomes[token_id] = str(t.get("outcome") or "Yes")
-        fill = {"size": size, "price": price, "ts": str(t.get("match_time") or "")}
-        if side == "BUY":
-            buys[token_id].append(fill)
-        elif side == "SELL":
-            sells[token_id].append(fill)
+    url = f"https://data-api.polymarket.com/positions?user_address={wallet}&sizeThreshold=.01&limit=100"
+    r = httpx.get(url, timeout=15)
+    r.raise_for_status()
+    rows = r.json()
+    if not isinstance(rows, list):
+        rows = rows.get("positions") or rows.get("data") or []
 
     enrichment = _state_enrichment()
 
-    # Pre-compute per-token aggregates
-    all_tokens = set(buys) | set(sells)
-    token_data: dict[str, dict] = {}
-    for token_id in all_tokens:
-        buy_list = buys.get(token_id, [])
-        sell_list = sells.get(token_id, [])
-        total_bought = sum(b["size"] for b in buy_list)
-        total_sold = sum(s["size"] for s in sell_list)
-        avg_buy_price = (
-            sum(b["size"] * b["price"] for b in buy_list) / total_bought
-            if total_bought > 0 else 0.0
-        )
-        token_data[token_id] = {
-            "buy_list": buy_list,
-            "sell_list": sell_list,
-            "total_bought": total_bought,
-            "total_sold": total_sold,
-            "net_shares": round(total_bought - total_sold, 4),
-            "avg_buy_price": avg_buy_price,
-            "avg_entry_cents": max(1, min(99, round(avg_buy_price * 100))) if avg_buy_price else 50,
-        }
-
-    # Batch-fetch midpoints for all open tokens in a single request
-    open_tokens = [t for t, d in token_data.items() if d["net_shares"] > 0.01]
-    fallbacks = {t: token_data[t]["avg_entry_cents"] for t in open_tokens}
-    midpoints = _batch_midpoints(client, open_tokens, fallbacks)
+    from src.execution.auth import get_clob_client
+    client = get_clob_client()
+    token_ids = [str(p.get("asset") or p.get("tokenId") or p.get("token_id") or "") for p in rows]
+    token_ids = [t for t in token_ids if t]
+    fallbacks = {t: 50 for t in token_ids}
+    midpoints = _batch_midpoints(client, token_ids, fallbacks)
 
     open_positions: list[PositionOut] = []
-    closed_positions: list[ClosedPositionOut] = []
-
-    for token_id, d in token_data.items():
-        question = _market_question(condition_ids.get(token_id, ""))
-        if question and not _is_weather_question(question):
+    for row in rows:
+        token_id = str(row.get("asset") or row.get("tokenId") or row.get("token_id") or "")
+        if not token_id:
+            continue
+        shares = float(row.get("size") or row.get("shares") or 0)
+        if shares < 0.01:
             continue
 
+        avg_price = float(row.get("avgPrice") or row.get("avg_price") or 0)
+        avg_entry_cents = max(1, min(99, round(avg_price * 100))) if avg_price else 50
+
+        outcome_str = str(row.get("outcome") or row.get("side") or "Yes")
+        side: Literal["YES", "NO"] = "YES" if outcome_str.upper() in ("YES", "1") else "NO"
+
+        market_obj = row.get("market") or {}
+        question = (
+            market_obj.get("question")
+            or market_obj.get("groupItemTitle")
+            or _market_question(str(row.get("conditionId") or market_obj.get("conditionId") or ""))
+        )
+
         enrich = enrichment.get(token_id, {})
-        outcome_str = outcomes.get(token_id, "Yes")
-        side: Literal["YES", "NO"] = enrich.get("side") or ("YES" if outcome_str.upper() == "YES" else "NO")
-        avg_entry_cents = d["avg_entry_cents"]
-        avg_buy_price = d["avg_buy_price"]
+        market_prob = midpoints.get(token_id, avg_entry_cents)
+        my_prob = int(enrich.get("predicted_price", avg_entry_cents))
 
-        if d["net_shares"] > 0.01:
-            market_prob = midpoints.get(token_id, avg_entry_cents)
-            my_prob = int(enrich.get("predicted_price", avg_entry_cents))
-            open_positions.append(PositionOut(
-                question=question,
-                station=str(enrich.get("station", "")),
-                side=side,
-                bracket_low=float(enrich.get("bracket_low", 0.0)),
-                bracket_high=float(enrich.get("bracket_high", 0.0)),
-                entry_price=avg_entry_cents,
-                market_prob=market_prob,
-                my_prob=my_prob,
-                edge=round(my_prob - market_prob, 2),
-                shares=d["net_shares"],
-                invested=round(d["net_shares"] * avg_buy_price, 2),
-                current_value=round(d["net_shares"] * (market_prob / 100), 2),
-                target_value=round(d["net_shares"] * 1.00, 2),
-            ))
+        open_positions.append(PositionOut(
+            question=question,
+            station=str(enrich.get("station", "")),
+            side=side,
+            bracket_low=float(enrich.get("bracket_low", 0.0)),
+            bracket_high=float(enrich.get("bracket_high", 0.0)),
+            entry_price=avg_entry_cents,
+            market_prob=market_prob,
+            my_prob=my_prob,
+            edge=round(my_prob - market_prob, 2),
+            shares=round(shares, 4),
+            invested=round(shares * avg_price, 2),
+            current_value=round(shares * (market_prob / 100), 2),
+            target_value=round(shares * 1.00, 2),
+        ))
 
-        if d["sell_list"]:
-            total_sold = d["total_sold"]
-            avg_sell_price = sum(s["size"] * s["price"] for s in d["sell_list"]) / total_sold
-            avg_sell_cents = max(1, min(99, round(avg_sell_price * 100)))
-            pnl = round((avg_sell_price - avg_buy_price) * total_sold, 2)
-            latest_ts = max((s["ts"] for s in d["sell_list"]), default="")
-            closed_positions.append(ClosedPositionOut(
-                question=question,
-                station=str(enrich.get("station", "")),
-                side=side,
-                bracket_low=float(enrich.get("bracket_low", 0.0)),
-                bracket_high=float(enrich.get("bracket_high", 0.0)),
-                entry_price=avg_entry_cents,
-                exit_price=avg_sell_cents,
-                pnl=pnl,
-                shares=round(total_sold, 4),
-                closed_at=latest_ts,
-            ))
-
-    # Sort: open by invested desc, closed by time desc
     open_positions.sort(key=lambda p: p.invested, reverse=True)
-    closed_positions.sort(key=lambda p: p.closed_at, reverse=True)
-
-    return open_positions, closed_positions
+    return open_positions
 
 
 # ---------------------------------------------------------------------------
@@ -306,42 +258,16 @@ def health() -> dict:
 @app.get("/api/portfolio", response_model=PortfolioOut)
 def portfolio() -> PortfolioOut:
     try:
-        open_pos, closed_pos = _positions_from_clob()
+        open_pos = _positions_from_wallet()
     except Exception as e:
-        logger.warning("CLOB trade fetch failed (%s) — falling back to live_state.json", e)
-        # Fallback: reconstruct open positions from live_state.json only
-        state = _read_state()
-        open_trades = state.get("open_trades") or []
+        logger.warning("Wallet positions fetch failed (%s) — returning empty", e)
         open_pos = []
-        for trade in open_trades:
-            entry_price = int(trade.get("entry_price", 0))
-            token_id = str(trade.get("token_id", ""))
-            size_usdc = float(trade.get("size_usdc", 0.0))
-            my_prob = int(trade.get("predicted_price", entry_price))
-            market_prob = _midpoint_cents(token_id, entry_price)
-            shares = round(size_usdc / (entry_price / 100), 4) if entry_price > 0 else 0.0
-            open_pos.append(PositionOut(
-                question="",
-                station=str(trade.get("station", "")),
-                side=trade.get("side", "YES"),
-                bracket_low=float(trade.get("bracket_low", 0.0)),
-                bracket_high=float(trade.get("bracket_high", 0.0)),
-                entry_price=entry_price,
-                market_prob=market_prob,
-                my_prob=my_prob,
-                edge=round(my_prob - market_prob, 2),
-                shares=shares,
-                invested=round(size_usdc, 2),
-                current_value=round(shares * (market_prob / 100), 2),
-                target_value=round(shares * 1.00, 2),
-            ))
-        closed_pos = []
 
     cash = _cash_usdc()
     return PortfolioOut(
         cash_usdc=round(cash, 2),
         open_positions=open_pos,
-        closed_positions=closed_pos,
+        closed_positions=[],
         updated_at=datetime.now(timezone.utc).isoformat(),
     )
 
