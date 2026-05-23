@@ -60,6 +60,7 @@ a,button,input,select{transition:color var(--transition),background var(--transi
   position:sticky;top:0;z-index:50;
 }
 .logo{display:flex;align-items:center;gap:var(--space-3);text-decoration:none;}
+.logo-img{height:36px;width:auto;display:block;}
 .logo-text{font-weight:700;font-size:var(--text-base);color:var(--text);}
 .logo-sub{font-size:var(--text-xs);color:var(--muted);}
 .topbar-spacer{flex:1;}
@@ -159,9 +160,10 @@ a,button,input,select{transition:color var(--transition),background var(--transi
 /* ── PROB ROW ── */
 .prob-row{
   padding:0 var(--space-5) var(--space-4);
-  display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:var(--space-4);
+  display:grid;grid-template-columns:1fr 1fr 1fr 1fr 1fr;gap:var(--space-4);
 }
 @media(max-width:600px){.prob-row{grid-template-columns:1fr 1fr;}}
+.prob-value.nws{color:var(--muted);}
 .prob-item{}
 .prob-label{font-size:var(--text-xs);color:var(--muted);font-weight:500;margin-bottom:3px;}
 .prob-value{font-size:var(--text-base);font-weight:700;font-variant-numeric:tabular-nums;}
@@ -299,12 +301,7 @@ a,button,input,select{transition:color var(--transition),background var(--transi
 <!-- ── TOPBAR ── -->
 <header class="topbar">
   <div class="logo">
-    <svg width="28" height="28" viewBox="0 0 32 32" fill="none" aria-label="MeteoEdge">
-      <rect width="32" height="32" rx="8" fill="var(--primary)" opacity="0.15"/>
-      <path d="M6 22 Q10 10 16 16 Q22 22 26 10" stroke="var(--primary)" stroke-width="2.5" stroke-linecap="round" fill="none"/>
-      <circle cx="16" cy="16" r="2.5" fill="var(--primary)"/>
-      <path d="M16 7L16 4M23 10L25.1 7.9M25 17L28 17" stroke="var(--primary)" stroke-width="2" stroke-linecap="round"/>
-    </svg>
+    <img src="/logo.png" alt="MeteoEdge" class="logo-img">
     <div>
       <div class="logo-text">MeteoEdge</div>
       <div class="logo-sub" id="last-updated">Polymarket Weather Trading</div>
@@ -480,6 +477,10 @@ function renderOpen(positions) {
         <div class="prob-item">
           <div class="prob-label">Entry price</div>
           <div class="prob-value entry">${p.entry_price}¢</div>
+        </div>
+        <div class="prob-item">
+          <div class="prob-label">NWS High</div>
+          <div class="prob-value nws">${p.forecast_high_f != null ? p.forecast_high_f.toFixed(1) + '°F' : '—'}</div>
         </div>
         <div class="prob-item">
           <div class="prob-label">Unrealised P&L</div>
