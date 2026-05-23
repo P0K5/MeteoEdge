@@ -2,25 +2,30 @@
 
 Endpoints:
     GET /api/health    — liveness probe
-    GET /api/portfolio — open positions with live CLOB mark-to-market
+    GET /api/portfolio — open + closed positions, sourced from CLOB trade history
     GET /             — serves static/index.html (mounted last)
 
-Usage:
-    python run_dashboard.py
+Data source (priority order):
+    1. Polymarket CLOB trade history — positions and fills
+    2. live_state.json — optional enrichment for my_prob / edge / station / bracket
+    3. Gamma API — market question strings
+    4. CLOB orderbook — live mark-to-market per open position
 """
 from __future__ import annotations
 
-import json
 import logging
+from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
 
+import httpx
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from src.config import POLYMARKET_GAMMA_API
 from src.data.polymarket import get_orderbook
 from src.execution.live_trader import STATE_PATH
 
@@ -37,29 +42,43 @@ app.add_middleware(
 
 STATIC = Path(__file__).parent / "static"
 
-
 # ---------------------------------------------------------------------------
 # Pydantic models
 # ---------------------------------------------------------------------------
 
 class PositionOut(BaseModel):
+    question: str = ""
     station: str
     side: Literal["YES", "NO"]
     bracket_low: float
     bracket_high: float
-    entry_price: int     # cents — actual fill price
+    entry_price: int     # cents — avg fill price
     market_prob: int     # cents — live CLOB midpoint
-    my_prob: int         # cents — predicted_price at entry
+    my_prob: int         # cents — model prediction (from enrichment, or entry_price)
     edge: float          # my_prob - market_prob
     shares: float
-    invested: float      # USD cost basis
-    current_value: float # USD mark-to-market
-    target_value: float  # USD if wins (shares × $1.00)
+    invested: float
+    current_value: float
+    target_value: float
+
+
+class ClosedPositionOut(BaseModel):
+    question: str = ""
+    station: str = ""
+    side: Literal["YES", "NO"] = "YES"
+    bracket_low: float = 0.0
+    bracket_high: float = 0.0
+    entry_price: int     # cents — avg buy price
+    exit_price: int      # cents — sell price
+    pnl: float           # realised P&L in USD
+    shares: float
+    closed_at: str = ""
 
 
 class PortfolioOut(BaseModel):
     cash_usdc: float
     open_positions: list[PositionOut]
+    closed_positions: list[ClosedPositionOut]
     updated_at: str
 
 
@@ -71,14 +90,18 @@ def _read_state() -> dict:
     """Read live_state.json; return empty state if missing or corrupt."""
     try:
         if STATE_PATH.exists():
-            return json.loads(STATE_PATH.read_text())
-    except (json.JSONDecodeError, OSError):
+            return {"open_trades": [], **__import__("json").loads(STATE_PATH.read_text())}
+    except Exception:
         pass
     return {"updated_at": "", "open_trades": []}
 
 
+def _state_enrichment() -> dict[str, dict]:
+    """Return live_state.json open trades keyed by token_id for quick lookup."""
+    return {t["token_id"]: t for t in (_read_state().get("open_trades") or []) if t.get("token_id")}
+
+
 def _midpoint_cents(token_id: str, fallback_cents: int) -> int:
-    """Return CLOB midpoint in cents, falling back to fallback_cents on error."""
     try:
         ob = get_orderbook(token_id)
         bids = ob.get("bids") or []
@@ -89,12 +112,34 @@ def _midpoint_cents(token_id: str, fallback_cents: int) -> int:
         best_ask = min(float(a["price"]) for a in asks)
         return max(1, min(99, round((best_bid + best_ask) / 2 * 100)))
     except Exception:
-        logger.warning("Orderbook fetch failed for %s… — using entry_price fallback", token_id[:14])
+        logger.warning("Orderbook fetch failed for %s — using fallback", token_id[:14])
         return fallback_cents
 
 
+_question_cache: dict[str, str] = {}
+
+def _market_question(condition_id: str) -> str:
+    """Fetch market question from Gamma API by condition_id, cached in-process."""
+    if not condition_id:
+        return ""
+    if condition_id in _question_cache:
+        return _question_cache[condition_id]
+    try:
+        url = f"{POLYMARKET_GAMMA_API}/markets?conditionId={condition_id}&limit=1"
+        r = httpx.get(url, timeout=8)
+        data = r.json()
+        batch = data if isinstance(data, list) else data.get("markets") or []
+        question = ""
+        if batch:
+            m = batch[0]
+            question = m.get("question") or m.get("groupItemTitle") or ""
+        _question_cache[condition_id] = question
+        return question
+    except Exception:
+        return ""
+
+
 def _cash_usdc() -> float:
-    """Return CLOB USDC balance; return 0.0 on any error."""
     try:
         from src.execution.auth import get_clob_client
         from src.execution.live_trader import LiveTrader
@@ -102,6 +147,101 @@ def _cash_usdc() -> float:
     except Exception:
         logger.warning("Could not fetch USDC balance — returning 0.0")
         return 0.0
+
+
+def _positions_from_clob() -> tuple[list[PositionOut], list[ClosedPositionOut]]:
+    """Build open and closed positions from CLOB authenticated trade history."""
+    from src.execution.auth import get_clob_client
+    client = get_clob_client()
+    trades = client.get_trades(only_first_page=True)
+
+    # Group fills by token
+    buys: dict[str, list[dict]] = defaultdict(list)
+    sells: dict[str, list[dict]] = defaultdict(list)
+    condition_ids: dict[str, str] = {}
+    outcomes: dict[str, str] = {}  # token_id -> "Yes"/"No"
+
+    for t in trades:
+        token_id = str(t.get("asset_id") or t.get("assetId") or "")
+        if not token_id:
+            continue
+        side = (t.get("side") or "").upper()
+        size = float(t.get("size") or 0)
+        price = float(t.get("price") or 0)
+        condition_ids[token_id] = str(t.get("market") or "")
+        outcomes[token_id] = str(t.get("outcome") or "Yes")
+        fill = {"size": size, "price": price, "ts": str(t.get("match_time") or "")}
+        if side == "BUY":
+            buys[token_id].append(fill)
+        elif side == "SELL":
+            sells[token_id].append(fill)
+
+    enrichment = _state_enrichment()
+
+    open_positions: list[PositionOut] = []
+    closed_positions: list[ClosedPositionOut] = []
+
+    for token_id in set(buys) | set(sells):
+        buy_list = buys.get(token_id, [])
+        sell_list = sells.get(token_id, [])
+
+        total_bought = sum(b["size"] for b in buy_list)
+        total_sold = sum(s["size"] for s in sell_list)
+        net_shares = round(total_bought - total_sold, 4)
+
+        avg_buy_price = (
+            sum(b["size"] * b["price"] for b in buy_list) / total_bought
+            if total_bought > 0 else 0.0
+        )
+        avg_entry_cents = max(1, min(99, round(avg_buy_price * 100)))
+
+        enrich = enrichment.get(token_id, {})
+        outcome_str = outcomes.get(token_id, "Yes")
+        side: Literal["YES", "NO"] = enrich.get("side") or ("YES" if outcome_str.upper() == "YES" else "NO")
+        question = _market_question(condition_ids.get(token_id, ""))
+
+        if net_shares > 0.01:
+            market_prob = _midpoint_cents(token_id, avg_entry_cents)
+            my_prob = int(enrich.get("predicted_price", avg_entry_cents))
+            open_positions.append(PositionOut(
+                question=question,
+                station=str(enrich.get("station", "")),
+                side=side,
+                bracket_low=float(enrich.get("bracket_low", 0.0)),
+                bracket_high=float(enrich.get("bracket_high", 0.0)),
+                entry_price=avg_entry_cents,
+                market_prob=market_prob,
+                my_prob=my_prob,
+                edge=round(my_prob - market_prob, 2),
+                shares=net_shares,
+                invested=round(net_shares * avg_buy_price, 2),
+                current_value=round(net_shares * (market_prob / 100), 2),
+                target_value=round(net_shares * 1.00, 2),
+            ))
+
+        if sell_list:
+            avg_sell_price = sum(s["size"] * s["price"] for s in sell_list) / total_sold
+            avg_sell_cents = max(1, min(99, round(avg_sell_price * 100)))
+            pnl = round((avg_sell_price - avg_buy_price) * total_sold, 2)
+            latest_ts = max((s["ts"] for s in sell_list), default="")
+            closed_positions.append(ClosedPositionOut(
+                question=question,
+                station=str(enrich.get("station", "")),
+                side=side,
+                bracket_low=float(enrich.get("bracket_low", 0.0)),
+                bracket_high=float(enrich.get("bracket_high", 0.0)),
+                entry_price=avg_entry_cents,
+                exit_price=avg_sell_cents,
+                pnl=pnl,
+                shares=round(total_sold, 4),
+                closed_at=latest_ts,
+            ))
+
+    # Sort: open by invested desc, closed by time desc
+    open_positions.sort(key=lambda p: p.invested, reverse=True)
+    closed_positions.sort(key=lambda p: p.closed_at, reverse=True)
+
+    return open_positions, closed_positions
 
 
 # ---------------------------------------------------------------------------
@@ -115,45 +255,44 @@ def health() -> dict:
 
 @app.get("/api/portfolio", response_model=PortfolioOut)
 def portfolio() -> PortfolioOut:
-    state = _read_state()
-    open_trades = state.get("open_trades") or []
-    updated_at = state.get("updated_at") or ""
+    try:
+        open_pos, closed_pos = _positions_from_clob()
+    except Exception as e:
+        logger.warning("CLOB trade fetch failed (%s) — falling back to live_state.json", e)
+        # Fallback: reconstruct open positions from live_state.json only
+        state = _read_state()
+        open_trades = state.get("open_trades") or []
+        open_pos = []
+        for trade in open_trades:
+            entry_price = int(trade.get("entry_price", 0))
+            token_id = str(trade.get("token_id", ""))
+            size_usdc = float(trade.get("size_usdc", 0.0))
+            my_prob = int(trade.get("predicted_price", entry_price))
+            market_prob = _midpoint_cents(token_id, entry_price)
+            shares = round(size_usdc / (entry_price / 100), 4) if entry_price > 0 else 0.0
+            open_pos.append(PositionOut(
+                question="",
+                station=str(trade.get("station", "")),
+                side=trade.get("side", "YES"),
+                bracket_low=float(trade.get("bracket_low", 0.0)),
+                bracket_high=float(trade.get("bracket_high", 0.0)),
+                entry_price=entry_price,
+                market_prob=market_prob,
+                my_prob=my_prob,
+                edge=round(my_prob - market_prob, 2),
+                shares=shares,
+                invested=round(size_usdc, 2),
+                current_value=round(shares * (market_prob / 100), 2),
+                target_value=round(shares * 1.00, 2),
+            ))
+        closed_pos = []
 
     cash = _cash_usdc()
-
-    positions: list[PositionOut] = []
-    for trade in open_trades:
-        entry_price: int = int(trade.get("entry_price", 0))
-        token_id: str = str(trade.get("token_id", ""))
-        size_usdc: float = float(trade.get("size_usdc", 0.0))
-        my_prob: int = int(trade.get("predicted_price", entry_price))
-
-        market_prob = _midpoint_cents(token_id, entry_price)
-
-        if entry_price > 0:
-            shares = round(size_usdc / (entry_price / 100), 4)
-        else:
-            shares = 0.0
-
-        positions.append(PositionOut(
-            station=str(trade.get("station", "")),
-            side=trade.get("side", "YES"),
-            bracket_low=float(trade.get("bracket_low", 0.0)),
-            bracket_high=float(trade.get("bracket_high", 0.0)),
-            entry_price=entry_price,
-            market_prob=market_prob,
-            my_prob=my_prob,
-            edge=round(my_prob - market_prob, 2),
-            shares=shares,
-            invested=round(size_usdc, 2),
-            current_value=round(shares * (market_prob / 100), 2),
-            target_value=round(shares * 1.00, 2),
-        ))
-
     return PortfolioOut(
         cash_usdc=round(cash, 2),
-        open_positions=positions,
-        updated_at=updated_at,
+        open_positions=open_pos,
+        closed_positions=closed_pos,
+        updated_at=datetime.now(timezone.utc).isoformat(),
     )
 
 

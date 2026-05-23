@@ -453,7 +453,7 @@ function renderOpen(positions) {
     const edgeCls = edgeClass(p.edge);
     const hasEdge = p.edge > 3;
     const edgeLbl = edgeLabel(p.edge);
-    const question = buildQuestion(p.station, p.side, p.bracket_low, p.bracket_high);
+    const question = p.question || buildQuestion(p.station, p.side, p.bracket_low, p.bracket_high);
 
     return `<div class="pos-card">
       <div class="pos-header">
@@ -525,10 +525,30 @@ function renderOpen(positions) {
   lucide.createIcons();
 }
 
-function renderClosed() {
+function renderClosed(positions) {
   const el = document.getElementById('closed-positions');
-  document.getElementById('closed-count').textContent = 0;
-  el.innerHTML = `<div class="empty"><i data-lucide="clock"></i><h3>No closed trade data</h3><p>Settlements are handled externally by Polymarket.</p></div>`;
+  document.getElementById('closed-count').textContent = positions.length;
+
+  if (!positions.length) {
+    el.innerHTML = `<div class="empty"><i data-lucide="clock"></i><h3>No closed trades</h3><p>Exited positions will appear here.</p></div>`;
+    lucide.createIcons();
+    return;
+  }
+
+  el.innerHTML = positions.map(p => {
+    const win = p.pnl >= 0;
+    const question = p.question || buildQuestion(p.station, p.side, p.bracket_low, p.bracket_high);
+    const pnlFmt = (p.pnl >= 0 ? '+' : '') + '$' + Math.abs(p.pnl).toFixed(2);
+    const age = p.closed_at ? new Date(p.closed_at * 1000).toLocaleString() : '—';
+    return `<div class="closed-row">
+      <span class="result-badge ${win ? 'result-win' : 'result-loss'}">${win ? 'WIN' : 'LOSS'}</span>
+      <div class="closed-q" title="${question}">${question}</div>
+      <div class="footer-bracket">${p.station || p.side} · ${p.entry_price}¢ → ${p.exit_price}¢</div>
+      <div class="closed-pnl ${win ? 'win' : 'loss'}">${pnlFmt}</div>
+      <div class="pos-ts">${age}</div>
+    </div>`;
+  }).join('');
+
   lucide.createIcons();
 }
 
@@ -547,7 +567,7 @@ async function fetchPortfolio() {
 
     renderWallet(data.open_positions, data.cash_usdc);
     renderOpen(data.open_positions);
-    renderClosed();
+    renderClosed(data.closed_positions || []);
 
     const ts = data.updated_at
       ? 'State: ' + new Date(data.updated_at).toLocaleTimeString()
