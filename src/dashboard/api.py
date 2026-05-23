@@ -177,8 +177,8 @@ def _cash_usdc() -> float:
         return 0.0
 
 
-def _positions_from_wallet() -> list[PositionOut]:
-    """Fetch current open positions directly from Polymarket Data API by wallet address."""
+def _positions_from_wallet() -> tuple[list[PositionOut], list[ClosedPositionOut]]:
+    """Fetch positions directly from Polymarket Data API by wallet address."""
     import os
     wallet = os.environ.get("POLYMARKET_DEPOSIT_WALLET", "")
     if not wallet:
@@ -193,57 +193,78 @@ def _positions_from_wallet() -> list[PositionOut]:
 
     enrichment = _state_enrichment()
 
+    # Batch-fetch live midpoints for non-resolved positions only
     from src.execution.auth import get_clob_client
     client = get_clob_client()
-    token_ids = [str(p.get("asset") or p.get("tokenId") or p.get("token_id") or "") for p in rows]
-    token_ids = [t for t in token_ids if t]
-    fallbacks = {t: 50 for t in token_ids}
-    midpoints = _batch_midpoints(client, token_ids, fallbacks)
+    active_token_ids = [
+        str(row.get("asset") or "")
+        for row in rows
+        if not row.get("redeemable") and row.get("asset")
+    ]
+    avg_prices = {
+        str(row.get("asset") or ""): float(row.get("avgPrice") or 0)
+        for row in rows
+    }
+    fallbacks = {t: max(1, min(99, round(avg_prices.get(t, 0) * 100))) for t in active_token_ids}
+    midpoints = _batch_midpoints(client, active_token_ids, fallbacks)
 
     open_positions: list[PositionOut] = []
+    closed_positions: list[ClosedPositionOut] = []
+
     for row in rows:
-        token_id = str(row.get("asset") or row.get("tokenId") or row.get("token_id") or "")
+        token_id = str(row.get("asset") or "")
         if not token_id:
             continue
-        shares = float(row.get("size") or row.get("shares") or 0)
+        shares = float(row.get("size") or 0)
         if shares < 0.01:
             continue
 
-        avg_price = float(row.get("avgPrice") or row.get("avg_price") or 0)
+        avg_price = float(row.get("avgPrice") or 0)
         avg_entry_cents = max(1, min(99, round(avg_price * 100))) if avg_price else 50
-
-        outcome_str = str(row.get("outcome") or row.get("side") or "Yes")
-        side: Literal["YES", "NO"] = "YES" if outcome_str.upper() in ("YES", "1") else "NO"
-
-        market_obj = row.get("market") or {}
-        question = (
-            market_obj.get("question")
-            or market_obj.get("groupItemTitle")
-            or _market_question(str(row.get("conditionId") or market_obj.get("conditionId") or ""))
-        )
-
+        side: Literal["YES", "NO"] = "YES" if str(row.get("outcome") or "").upper() == "YES" else "NO"
+        question = str(row.get("title") or "")
         enrich = enrichment.get(token_id, {})
-        market_prob = midpoints.get(token_id, avg_entry_cents)
         my_prob = int(enrich.get("predicted_price", avg_entry_cents))
 
-        open_positions.append(PositionOut(
-            question=question,
-            station=str(enrich.get("station", "")),
-            side=side,
-            bracket_low=float(enrich.get("bracket_low", 0.0)),
-            bracket_high=float(enrich.get("bracket_high", 0.0)),
-            entry_price=avg_entry_cents,
-            market_prob=market_prob,
-            my_prob=my_prob,
-            edge=round(my_prob - market_prob, 2),
-            shares=round(shares, 4),
-            invested=round(shares * avg_price, 2),
-            current_value=round(shares * (market_prob / 100), 2),
-            target_value=round(shares * 1.00, 2),
-        ))
+        if row.get("redeemable"):
+            # Resolved market — show in closed section
+            cur_price = float(row.get("curPrice") or 0)
+            exit_cents = max(0, min(100, round(cur_price * 100)))
+            pnl = round(float(row.get("cashPnl") or 0), 2)
+            closed_positions.append(ClosedPositionOut(
+                question=question,
+                station=str(enrich.get("station", "")),
+                side=side,
+                bracket_low=float(enrich.get("bracket_low", 0.0)),
+                bracket_high=float(enrich.get("bracket_high", 0.0)),
+                entry_price=avg_entry_cents,
+                exit_price=exit_cents,
+                pnl=pnl,
+                shares=round(shares, 4),
+                closed_at=str(row.get("endDate") or ""),
+            ))
+        else:
+            # Active position
+            market_prob = midpoints.get(token_id, avg_entry_cents)
+            open_positions.append(PositionOut(
+                question=question,
+                station=str(enrich.get("station", "")),
+                side=side,
+                bracket_low=float(enrich.get("bracket_low", 0.0)),
+                bracket_high=float(enrich.get("bracket_high", 0.0)),
+                entry_price=avg_entry_cents,
+                market_prob=market_prob,
+                my_prob=my_prob,
+                edge=round(my_prob - market_prob, 2),
+                shares=round(shares, 4),
+                invested=round(shares * avg_price, 2),
+                current_value=round(float(row.get("currentValue") or shares * avg_price / 100), 2),
+                target_value=round(shares * 1.00, 2),
+            ))
 
     open_positions.sort(key=lambda p: p.invested, reverse=True)
-    return open_positions
+    closed_positions.sort(key=lambda p: p.closed_at, reverse=True)
+    return open_positions, closed_positions
 
 
 # ---------------------------------------------------------------------------
@@ -258,16 +279,16 @@ def health() -> dict:
 @app.get("/api/portfolio", response_model=PortfolioOut)
 def portfolio() -> PortfolioOut:
     try:
-        open_pos = _positions_from_wallet()
+        open_pos, closed_pos = _positions_from_wallet()
     except Exception as e:
         logger.warning("Wallet positions fetch failed (%s) — returning empty", e)
-        open_pos = []
+        open_pos, closed_pos = [], []
 
     cash = _cash_usdc()
     return PortfolioOut(
         cash_usdc=round(cash, 2),
         open_positions=open_pos,
-        closed_positions=[],
+        closed_positions=closed_pos,
         updated_at=datetime.now(timezone.utc).isoformat(),
     )
 
