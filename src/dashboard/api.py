@@ -140,6 +140,37 @@ def _batch_midpoints(client, token_ids: list[str], fallbacks: dict[str, int]) ->
 
 
 _question_cache: dict[str, str] = {}
+_weather_tokens: set[str] = set()
+_weather_tokens_ts: float = 0.0
+
+
+def _weather_token_ids() -> set[str]:
+    """Return token IDs for all weather markets (active + recently closed). Cached 10 min."""
+    import time
+    import json as _json
+    global _weather_tokens, _weather_tokens_ts
+    if _weather_tokens and time.monotonic() - _weather_tokens_ts < 600:
+        return _weather_tokens
+    tokens: set[str] = set()
+    for closed in ("false", "true"):
+        url = f"{POLYMARKET_GAMMA_API}/markets?limit=500&tag_id=84&closed={closed}"
+        try:
+            r = httpx.get(url, timeout=10)
+            batch = r.json()
+            if isinstance(batch, dict):
+                batch = batch.get("markets") or []
+            for m in batch:
+                raw = m.get("clobTokenIds") or "[]"
+                ids = raw if isinstance(raw, list) else _json.loads(raw)
+                for t in ids:
+                    tokens.add(str(t))
+        except Exception as e:
+            logger.warning("Weather token fetch failed (closed=%s): %s", closed, e)
+    if tokens:
+        _weather_tokens = tokens
+        _weather_tokens_ts = time.monotonic()
+    return _weather_tokens
+
 
 def _market_question(condition_id: str) -> str:
     """Fetch market question from Gamma API by condition_id, cached in-process."""
@@ -178,6 +209,8 @@ def _positions_from_clob() -> tuple[list[PositionOut], list[ClosedPositionOut]]:
     client = get_clob_client()
     trades = client.get_trades(only_first_page=True)
 
+    weather_tokens = _weather_token_ids()
+
     # Group fills by token
     buys: dict[str, list[dict]] = defaultdict(list)
     sells: dict[str, list[dict]] = defaultdict(list)
@@ -187,6 +220,8 @@ def _positions_from_clob() -> tuple[list[PositionOut], list[ClosedPositionOut]]:
     for t in trades:
         token_id = str(t.get("asset_id") or t.get("assetId") or "")
         if not token_id:
+            continue
+        if weather_tokens and token_id not in weather_tokens:
             continue
         side = (t.get("side") or "").upper()
         size = float(t.get("size") or 0)
