@@ -1,10 +1,30 @@
 """Live order execution via Polymarket CLOB."""
+import json
+import os
+import tempfile
+from datetime import datetime
+from pathlib import Path
 from typing import Literal
 
 from py_clob_client_v2 import ClobClient
 from py_clob_client_v2.clob_types import AssetType, BalanceAllowanceParams, CreateOrderOptions, OrderArgs
 
 from src.data.polymarket import get_orderbook
+
+STATE_PATH = Path("live_state.json")
+
+
+def persist_state(open_trades: list[dict]) -> None:
+    """Atomically write open-trade state to live_state.json via tmp-then-rename."""
+    payload = {
+        "updated_at": datetime.utcnow().isoformat() + "Z",
+        "open_trades": open_trades,
+    }
+    with tempfile.NamedTemporaryFile("w", dir=STATE_PATH.parent,
+                                     delete=False, suffix=".tmp") as f:
+        json.dump(payload, f, indent=2)
+        tmp = f.name
+    os.replace(tmp, STATE_PATH)
 
 
 class LiveTrader:
@@ -22,6 +42,12 @@ class LiveTrader:
         side: str,          # "YES" or "NO" — we always BUY the token
         price_cents: int,   # e.g. 72 → 0.72 USDC per contract
         size_usdc: float,   # e.g. 5.0 → spend up to €5 (denominated in USDC)
+        *,
+        station: str = "",
+        bracket_low: float = 0.0,
+        bracket_high: float = 0.0,
+        predicted_price: int = 0,
+        predicted_edge: float = 0.0,
     ) -> str:
         """Place a GTC limit order. Returns order_id string."""
         price = round(price_cents / 100, 4)
