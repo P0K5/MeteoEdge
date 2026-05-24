@@ -199,13 +199,27 @@ def start_dashboard(host: str = "0.0.0.0", port: int = 8000) -> None:
     """Start the FastAPI dashboard in a background daemon thread.
 
     Returns immediately. The dashboard runs until the process exits.
-    Safe to call multiple times — subsequent calls are no-ops.
+    If the port is already bound (e.g., the portfolio dashboard at
+    src/dashboard/api.py is running on the same port), logs a notice and
+    skips silently rather than letting uvicorn raise inside the daemon
+    thread.
     """
     try:
         import uvicorn
     except ImportError:
         print("[dashboard] uvicorn not installed — dashboard disabled")
         return
+
+    import socket
+    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        probe.bind(("" if host == "0.0.0.0" else host, port))
+    except OSError:
+        print(f"[dashboard] port {port} already in use — embedded monitor skipped")
+        return
+    finally:
+        probe.close()
 
     def _run() -> None:
         uvicorn.run(app, host=host, port=port, log_level="warning")
