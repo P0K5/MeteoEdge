@@ -275,6 +275,12 @@ a,button,input,select{transition:color var(--transition),background var(--transi
 .btn-outline:hover{background:var(--surface-off);color:var(--text);}
 .btn-outline i{width:13px;height:13px;}
 
+/* ── FALLBACK TAG ── */
+.fallback-tag{
+  font-size:10px;color:var(--muted);font-weight:500;font-family:var(--font-mono);
+  margin-left:5px;opacity:.65;vertical-align:middle;
+}
+
 /* ── SCROLLBAR ── */
 ::-webkit-scrollbar{width:5px;height:5px;}
 ::-webkit-scrollbar-thumb{background:var(--surface-dyn);border-radius:var(--radius-full);}
@@ -400,9 +406,9 @@ function edgeClass(edge) {
   return 'edge-zero';
 }
 function edgeLabel(edge) {
-  if (edge > 3) return `+${edge.toFixed(1)}¢ edge`;
-  if (edge < -3) return `${edge.toFixed(1)}¢ edge`;
-  return 'Edge ≈ 0';
+  if (edge > 3) return `+${edge.toFixed(1)}¢ (model > market)`;
+  if (edge < -3) return `${edge.toFixed(1)}¢ (market > model)`;
+  return '≈ 0¢ edge';
 }
 function fmtUSD(v) {
   const sign = v >= 0 ? '+' : '-';
@@ -457,7 +463,7 @@ function renderOpen(positions) {
         <div class="pos-icon ${isYes ? 'icon-yes' : 'icon-no'}">${meta.emoji}</div>
         <div class="pos-meta">
           <div class="pos-question" title="${question}">${question}</div>
-          <div class="pos-station"><i data-lucide="map-pin"></i>${meta.name} · ${p.station}</div>
+          <div class="pos-station"><i data-lucide="map-pin"></i>${p.station ? `${meta.name} · ${p.station}` : '—'}</div>
         </div>
         <div class="pos-right">
           <span class="side-badge ${isYes ? 'side-yes' : 'side-no'}">${p.side}</span>
@@ -467,12 +473,12 @@ function renderOpen(positions) {
 
       <div class="prob-row">
         <div class="prob-item">
-          <div class="prob-label">Market prob</div>
+          <div class="prob-label">Market price</div>
           <div class="prob-value market">${p.market_prob}¢</div>
         </div>
         <div class="prob-item">
-          <div class="prob-label">My model</div>
-          <div class="prob-value mine">${p.my_prob}¢</div>
+          <div class="prob-label">Model fair value</div>
+          <div class="prob-value ${p.my_prob === p.entry_price ? 'entry' : 'mine'}">${p.my_prob}¢${p.my_prob === p.entry_price ? '<span class="fallback-tag">no data</span>' : ''}</div>
         </div>
         <div class="prob-item">
           <div class="prob-label">Entry price</div>
@@ -508,15 +514,15 @@ function renderOpen(positions) {
       </div>
 
       ${hasEdge
-        ? `<div class="edge-hint"><i data-lucide="trending-up"></i>Model sees <strong>${p.edge.toFixed(1)}¢ edge</strong> — market underpricing our side. Position still advantaged.</div>`
+        ? `<div class="edge-hint"><i data-lucide="trending-up"></i>Model (${p.my_prob}¢) − market (${p.market_prob}¢) = <strong>+${p.edge.toFixed(1)}¢</strong> — market underpricing our side. Position still advantaged.</div>`
         : p.edge < -3
-        ? `<div class="edge-hint"><i data-lucide="alert-triangle"></i>Edge has <strong>flipped negative (${p.edge.toFixed(1)}¢)</strong> — market moved against model.</div>`
-        : `<div class="edge-hint"><i data-lucide="minus-circle"></i>Edge near zero — market has mostly priced in this outcome.</div>`}
+        ? `<div class="edge-hint"><i data-lucide="alert-triangle"></i>Model (${p.my_prob}¢) − market (${p.market_prob}¢) = <strong>${p.edge.toFixed(1)}¢</strong> — market moved against model.</div>`
+        : `<div class="edge-hint"><i data-lucide="minus-circle"></i>Model (${p.my_prob}¢) ≈ market (${p.market_prob}¢) — edge near zero, market has priced in this outcome.</div>`}
 
       <div class="pos-footer">
         <div class="pos-footer-left">
           <div class="footer-stat"><strong>${p.shares}</strong> shares @ $${(p.entry_price / 100).toFixed(2)}</div>
-          <div class="footer-bracket">bracket: ${p.bracket_low}°F – ${p.bracket_high}°F</div>
+          ${(p.bracket_low || p.bracket_high) ? `<div class="footer-bracket">bracket: ${p.bracket_low}°F – ${p.bracket_high}°F</div>` : ''}
         </div>
         <div class="pos-ts">${p.station}</div>
       </div>
