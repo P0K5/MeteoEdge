@@ -8,6 +8,8 @@ Usage:
 import argparse
 import csv
 import json
+import os
+import tempfile
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -245,6 +247,97 @@ def _build_weather() -> dict[str, WeatherState]:
         )
         print(f"[{station}] high={high_f:.1f}°F latest={latest_temp_f:.1f}°F nws={forecast_nws}")
     return weather
+
+
+def _wallet_held_token_ids() -> set[str]:
+    """Return non-redeemable token_ids currently held in the wallet (size > 0.01).
+
+    Used to reconcile timeout records against actual exchange state — if a
+    token is in the wallet, the order filled despite our local timeout marker.
+    """
+    wallet = os.environ.get("POLYMARKET_DEPOSIT_WALLET", "")
+    if not wallet:
+        return set()
+    try:
+        import httpx
+        url = f"https://data-api.polymarket.com/positions?user={wallet}&sizeThreshold=0.01&limit=100"
+        r = httpx.get(url, timeout=15)
+        r.raise_for_status()
+        rows = r.json()
+        if not isinstance(rows, list):
+            rows = rows.get("positions") or rows.get("data") or []
+        return {
+            str(row.get("asset") or "")
+            for row in rows
+            if row.get("asset") and not row.get("redeemable")
+        }
+    except Exception as e:
+        print(f"[reconcile] wallet fetch failed: {e} — skipping reconciliation")
+        return set()
+
+
+def _reconcile_timeout_fills(ts: str) -> None:
+    """Patch timeout JSONL records whose tokens still appear in the wallet.
+
+    GTC limit orders sometimes fill after our 5-minute wait window expires.
+    The follow-up cancel_order() can fail silently or lose a race with the
+    matching engine, leaving the order live on the exchange.  When the order
+    later fills, the wallet shows the position but our JSONL says
+    outcome=timeout — invisible to the dashboard enrichment and to the
+    take-profit / METAR stop-loss exits.
+
+    Rewriting these records to outcome=filled restores visibility everywhere
+    that filters on outcome.  Reconciliation runs once per poll, before
+    _sync_open_orders so the dedup guard sees the patched records.
+    """
+    if not LIVE_TRADES_JSONL.exists():
+        return
+    held = _wallet_held_token_ids()
+    if not held:
+        return
+
+    patched = 0
+    new_lines: list[str] = []
+    try:
+        with open(LIVE_TRADES_JSONL) as f:
+            for line in f:
+                stripped = line.strip()
+                if not stripped:
+                    new_lines.append(line)
+                    continue
+                try:
+                    r = json.loads(stripped)
+                except json.JSONDecodeError:
+                    new_lines.append(line)
+                    continue
+                token = r.get("asset_id") or r.get("no_token_id") or ""
+                if r.get("outcome") == "timeout" and token in held:
+                    r["outcome"] = "filled"
+                    r["reconciled_at"] = ts
+                    new_lines.append(json.dumps(r, default=str) + "\n")
+                    patched += 1
+                else:
+                    new_lines.append(line)
+    except OSError as e:
+        print(f"[reconcile] read failed: {e}")
+        return
+
+    if patched == 0:
+        return
+
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w", dir=LIVE_TRADES_JSONL.parent, delete=False, suffix=".tmp"
+        ) as f:
+            f.writelines(new_lines)
+            tmp = f.name
+        os.replace(tmp, LIVE_TRADES_JSONL)
+        print(
+            f"[reconcile] patched {patched} timeout record(s) → filled "
+            f"(token present in wallet)"
+        )
+    except OSError as e:
+        print(f"[reconcile] write failed: {e}")
 
 
 def _sync_open_orders(live_trader) -> None:
@@ -537,6 +630,7 @@ def poll_once(risk_manager, live_trader=None, alert_manager=None) -> None:
     prev_poll_ts_str = _dashboard.last_poll_ts  # None on first poll, ISO string on subsequent
 
     if live_trader:
+        _reconcile_timeout_fills(ts)
         _sync_open_orders(live_trader)
 
     weather = _build_weather()
