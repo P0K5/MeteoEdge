@@ -19,12 +19,12 @@ from src.config import (
     CANDIDATES_CSV, SNAPSHOTS_JSONL, LIVE_TRADES_JSONL,
     RISK_DAILY_LOSS_LIMIT_EUR, RISK_MAX_OPEN_POSITIONS,
     RISK_DRAWDOWN_STOP_PCT, RISK_MIN_LIQUIDITY, STARTING_CAPITAL_EUR,
-    POSITION_SIZE_EUR, POSITION_SIZE_WITH_FEES,
+    POSITION_SIZE_EUR, POSITION_SIZE_WITH_FEES, TAKE_PROFIT_BUFFER_CENTS,
 )
 from src.data.metar import fetch_all_metars_today, compute_daily_high, now_local, sunset_local
 from src.data.nws import fetch_nws_forecast_high
 from src.data.open_meteo import fetch_secondary_forecast
-from src.data.polymarket import get_weather_markets
+from src.data.polymarket import get_orderbook, get_weather_markets
 from src.model.envelope import WeatherState
 from src.monitoring.alerts import AlertManager
 from src.risk.manager import RiskManager
@@ -330,6 +330,100 @@ def _load_open_no_positions(today: str) -> list[dict]:
     return [r for r in records if r.get("no_token_id") not in sold_tokens]
 
 
+def _check_take_profit_exits(live_trader, ts: str) -> None:
+    """Exit NO positions where the best bid has reached predicted_price - buffer.
+
+    The model snapshot is frozen at entry time and cannot validate further price
+    movement.  Once market price converges to our fair value, the edge we
+    measured is fully captured — holding longer is a bet on the (stale) model
+    being right that the market underprices the outcome.  Locking in the gain
+    recycles capital into the next edge and reduces variance without giving up
+    expected value.
+    """
+    today = datetime.now(timezone.utc).date().isoformat()
+    open_positions = _load_open_no_positions(today)
+    if not open_positions:
+        return
+
+    from collections import defaultdict
+    by_token: dict[str, list[dict]] = defaultdict(list)
+    for pos in open_positions:
+        by_token[pos["no_token_id"]].append(pos)
+
+    for token_id, fills in by_token.items():
+        if token_id in _sold_positions:
+            continue
+
+        predicted_price = fills[0].get("predicted_price")
+        if not predicted_price:
+            continue
+        target_cents = int(predicted_price) - TAKE_PROFIT_BUFFER_CENTS
+
+        try:
+            ob = get_orderbook(token_id)
+            bids = ob.get("bids") or []
+            if not bids:
+                continue
+            best_bid_cents = max(1, min(99, round(max(float(b["price"]) for b in bids) * 100)))
+        except Exception as e:
+            print(f"  [tp] orderbook fetch failed for {token_id[:14]}…: {e}")
+            continue
+
+        if best_bid_cents < target_cents:
+            continue
+
+        bracket_low = fills[0]["bracket_low"]
+        bracket_high = fills[0]["bracket_high"]
+        station = fills[0]["station"]
+        total_shares = sum(f["size_eur"] / (f["price_cents"] / 100) for f in fills)
+        total_eur = sum(f["size_eur"] for f in fills)
+        question = fills[0].get("question", "")
+
+        print(
+            f"  [tp] {station} {bracket_low:.0f}-{bracket_high:.0f}°F NO bid "
+            f"{best_bid_cents}¢ ≥ target {target_cents}¢ (predicted {predicted_price}¢) "
+            f"— selling {total_shares:.1f} shares"
+        )
+        try:
+            sell_id, sell_price_cents = live_trader.sell_position(token_id, total_shares)
+            _sold_positions.add(token_id)
+            from src.execution.live_trader import persist_state
+            with _open_trades_lock:
+                _open_trades[:] = [t for t in _open_trades if t.get("token_id") != token_id]
+                persist_state(list(_open_trades))
+            avg_entry_cents = sum(
+                f["price_cents"] * (f["size_eur"] / (f["price_cents"] / 100))
+                for f in fills
+            ) / total_shares
+            pnl = round((sell_price_cents - avg_entry_cents) / 100 * total_shares, 4)
+            _append_live_trade({
+                "ts": ts,
+                "order_id": sell_id,
+                "station": station,
+                "question": question,
+                "end_date": today,
+                "ticker": fills[0].get("ticker", ""),
+                "no_token_id": token_id,
+                "bracket_low": bracket_low,
+                "bracket_high": bracket_high,
+                "side": "SELL",
+                "price_cents": sell_price_cents,
+                "entry_price_cents": round(avg_entry_cents),
+                "shares": round(total_shares, 4),
+                "size_eur": total_eur,
+                "edge_cents": 0,
+                "pnl": pnl,
+                "outcome": "sold",
+                "trigger": f"take_profit@{best_bid_cents}c_target{target_cents}c_predicted{predicted_price}c",
+            })
+            print(
+                f"  [tp] sell {sell_id[:12]}… placed @ {sell_price_cents}¢ — "
+                f"{station} {bracket_low:.0f}-{bracket_high:.0f}°F NO  pnl={pnl:+.2f}"
+            )
+        except Exception as e:
+            print(f"  [tp] sell failed for {station} {bracket_low:.0f}-{bracket_high:.0f}°F: {e}")
+
+
 def _check_metar_exits(weather: dict, live_trader, ts: str) -> None:
     """Exit NO positions where the running METAR daily high is inside the bracket.
 
@@ -451,6 +545,7 @@ def poll_once(risk_manager, live_trader=None, alert_manager=None) -> None:
         return
 
     if live_trader:
+        _check_take_profit_exits(live_trader, ts)
         _check_metar_exits(weather, live_trader, ts)
 
     try:

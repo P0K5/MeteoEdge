@@ -94,6 +94,11 @@ POSITION_SIZE_EUR = float(os.getenv("POSITION_SIZE_EUR", "5.0"))
 # 2% buffer covers Polymarket taker fees (price-dependent, highest ~2% at extreme prices)
 POSITION_SIZE_WITH_FEES = POSITION_SIZE_EUR * 1.02
 
+# Take-profit: exit when market bid reaches (predicted_price - buffer).
+# The model snapshot is frozen at entry time and cannot validate further price
+# movement, so we lock in the captured edge and recycle capital into the next trade.
+TAKE_PROFIT_BUFFER_CENTS = int(os.getenv("TAKE_PROFIT_BUFFER_CENTS", "2"))
+
 # HTTP
 HTTP_TIMEOUT_SECONDS = 15
 USER_AGENT = "MeteoEdge/1.0 (Polymarket weather-arbitrage research bot; contact: andre.freixo.santos@gmail.com)"

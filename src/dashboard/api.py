@@ -141,10 +141,12 @@ _CITY_COORDS: dict[str, tuple[float, float]] = {
 
 
 def _stopped_positions() -> list[ClosedPositionOut]:
-    """Return positions closed by the METAR stop-loss, sourced from live_trades.jsonl.
+    """Return positions closed before settlement (METAR stop-loss or take-profit).
 
-    These are sold before settlement so they never appear as redeemable in the
-    Data API.  The sold record already carries entry_price_cents, shares, and pnl.
+    Both exit paths write outcome='sold' records to live_trades.jsonl with
+    entry_price_cents, shares, and pnl already computed.  Take-profit exits
+    have positive pnl; METAR stop-losses are typically negative.  The trigger
+    field on the source record distinguishes them.
     """
     if not LIVE_TRADES_JSONL.exists():
         return []
