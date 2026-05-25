@@ -281,6 +281,14 @@ a,button,input,select{transition:color var(--transition),background var(--transi
   margin-left:5px;opacity:.65;vertical-align:middle;
 }
 
+/* ── LIVE MODEL SUB-LINE ── */
+.prob-sub{
+  font-size:10px;color:var(--muted);font-weight:500;font-family:var(--font-mono);
+  margin-top:3px;
+}
+.prob-sub.up{color:var(--yes);}
+.prob-sub.down{color:var(--warn);}
+
 /* ── SCROLLBAR ── */
 ::-webkit-scrollbar{width:5px;height:5px;}
 ::-webkit-scrollbar-thumb{background:var(--surface-dyn);border-radius:var(--radius-full);}
@@ -457,6 +465,13 @@ function renderOpen(positions) {
     const hasEdge = p.edge > 3;
     const edgeLbl = edgeLabel(p.edge);
     const question = p.question || buildQuestion(p.station, p.side, p.bracket_low, p.bracket_high);
+    const hasLive = p.my_prob_now != null && p.my_prob !== p.entry_price;
+    const liveDelta = hasLive ? p.my_prob_now - p.my_prob : 0;
+    const liveDeltaCls = liveDelta > 1 ? 'up' : liveDelta < -1 ? 'down' : '';
+    const liveDeltaTxt = liveDelta >= 0 ? `+${liveDelta}` : `${liveDelta}`;
+    const liveSub = hasLive
+      ? `<div class="prob-sub ${liveDeltaCls}">live: ${p.my_prob_now}¢ (${liveDeltaTxt}¢)</div>`
+      : '';
 
     return `<div class="pos-card">
       <div class="pos-header">
@@ -479,6 +494,7 @@ function renderOpen(positions) {
         <div class="prob-item">
           <div class="prob-label">Model fair value</div>
           <div class="prob-value ${p.my_prob === p.entry_price ? 'entry' : 'mine'}">${p.my_prob}¢${p.my_prob === p.entry_price ? '<span class="fallback-tag">no data</span>' : ''}</div>
+          ${liveSub}
         </div>
         <div class="prob-item">
           <div class="prob-label">Entry price</div>

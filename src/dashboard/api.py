@@ -26,7 +26,7 @@ from pydantic import BaseModel
 
 from py_clob_client_v2.clob_types import BookParams
 
-from src.config import POLYMARKET_GAMMA_API, STATIONS, LIVE_TRADES_JSONL
+from src.config import POLYMARKET_GAMMA_API, STATIONS, LIVE_TRADES_JSONL, SNAPSHOTS_JSONL
 from src.data.nws import fetch_nws_forecast_high
 from src.data.polymarket import get_orderbook
 from src.execution.live_trader import STATE_PATH
@@ -56,8 +56,9 @@ class PositionOut(BaseModel):
     bracket_high: float
     entry_price: int     # cents — avg fill price
     market_prob: int     # cents — live CLOB midpoint
-    my_prob: int         # cents — model prediction (from enrichment, or entry_price)
-    edge: float          # my_prob - market_prob
+    my_prob: int         # cents — model prediction at entry time (from enrichment)
+    my_prob_now: int | None = None  # cents — current model prediction (from latest snapshot)
+    edge: float          # my_prob - market_prob (uses entry-time model, not live)
     shares: float
     invested: float
     current_value: float
@@ -102,6 +103,40 @@ def _read_state() -> dict:
 def _state_enrichment() -> dict[str, dict]:
     """Return live_state.json open trades keyed by token_id for quick lookup."""
     return {t["token_id"]: t for t in (_read_state().get("open_trades") or []) if t.get("token_id")}
+
+
+def _latest_model_probs() -> dict[tuple[str, float, float], float]:
+    """Latest model p_yes per (station, bracket_low, bracket_high).
+
+    snapshots.jsonl is append-only and chronologically ordered, so iterating
+    forward and overwriting the dict yields the most-recent p_yes for each
+    (station, bracket) pair.  Per-poll snapshots cover every bracket evaluated
+    by scan_markets(), so any open position with a matching key has a live
+    model probability available here.
+    """
+    if not SNAPSHOTS_JSONL.exists():
+        return {}
+    result: dict[tuple[str, float, float], float] = {}
+    try:
+        import json as _json
+        with open(SNAPSHOTS_JSONL) as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    r = _json.loads(line)
+                except Exception:
+                    continue
+                station = r.get("station") or ""
+                bl = r.get("bracket_low")
+                bh = r.get("bracket_high")
+                py = r.get("p_yes")
+                if station and bl is not None and bh is not None and py is not None:
+                    result[(station, float(bl), float(bh))] = float(py)
+    except OSError as e:
+        logger.warning("snapshots.jsonl read error: %s", e)
+    return result
 
 
 def _trades_file_enrichment() -> dict[str, dict]:
@@ -288,6 +323,7 @@ def _positions_from_wallet() -> tuple[list[PositionOut], list[ClosedPositionOut]
 
     enrichment = _state_enrichment()
     jsonl_enrichment = _trades_file_enrichment()
+    snap_probs = _latest_model_probs()
 
     # Batch-fetch live midpoints for non-resolved positions only
     from src.execution.auth import get_clob_client
@@ -345,15 +381,25 @@ def _positions_from_wallet() -> tuple[list[PositionOut], list[ClosedPositionOut]
         else:
             # Active position
             market_prob = midpoints.get(token_id, avg_entry_cents)
+            station_key = str(enrich.get("station", ""))
+            bracket_low_key = float(enrich.get("bracket_low", 0.0))
+            bracket_high_key = float(enrich.get("bracket_high", 0.0))
+            my_prob_now: int | None = None
+            snap_key = (station_key, bracket_low_key, bracket_high_key)
+            if station_key and snap_key in snap_probs:
+                py = snap_probs[snap_key]
+                raw_now = py * 100 if side == "YES" else (1 - py) * 100
+                my_prob_now = max(1, min(99, round(raw_now)))
             open_positions.append(PositionOut(
                 question=question,
-                station=str(enrich.get("station", "")),
+                station=station_key,
                 side=side,
-                bracket_low=float(enrich.get("bracket_low", 0.0)),
-                bracket_high=float(enrich.get("bracket_high", 0.0)),
+                bracket_low=bracket_low_key,
+                bracket_high=bracket_high_key,
                 entry_price=avg_entry_cents,
                 market_prob=market_prob,
                 my_prob=my_prob,
+                my_prob_now=my_prob_now,
                 edge=round(my_prob - market_prob, 2),
                 shares=round(shares, 4),
                 invested=round(shares * avg_price, 2),
