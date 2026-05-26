@@ -518,20 +518,28 @@ def _check_take_profit_exits(live_trader, ts: str) -> None:
 
 
 def _check_metar_exits(weather: dict, live_trader, ts: str) -> None:
-    """Exit NO positions where the running METAR daily high is inside the bracket.
+    """Exit NO positions where the running daily high is inside the bracket
+    AND the temperature is unlikely to climb past it.
 
-    Called once per live poll after weather states are built. When the current
-    high temperature has entered a bracket where we hold NO tokens, that position
-    is losing and may resolve YES — we sell at the best available bid to recover
-    whatever value remains rather than losing the full stake at settlement.
+    The original "any time the temp enters the bracket → exit" rule fired
+    false positives whenever the daily high overshot the bracket on its way
+    to a higher peak.  Counter-factual on 10 May exits: 3 were correct
+    (saved $7.86), 7 were wrong (lost $18.75) — net -$10.89 vs holding.
+
+    Reform: combine the in-bracket check with a climb-rate forecast.  Use
+    expected_additional_rise(now_local) — the p95 ceiling on remaining °F
+    rise from current hour to end-of-day — and require the upper-bound
+    end-of-day high to stay within the bracket before firing.  If the
+    pessimistic estimate already exceeds bracket_high, the temperature is
+    most likely passing through and NO will still win at settlement.
     """
     today = datetime.now(timezone.utc).date().isoformat()
     open_positions = _load_open_no_positions(today)
     if not open_positions:
         return
 
-    # Group fills by no_token_id so we can aggregate shares across DCA fills
     from collections import defaultdict
+    from src.model.climb_rates import expected_additional_rise
     by_token: dict[str, list[dict]] = defaultdict(list)
     for pos in open_positions:
         by_token[pos["no_token_id"]].append(pos)
@@ -540,7 +548,6 @@ def _check_metar_exits(weather: dict, live_trader, ts: str) -> None:
         if token_id in _sold_positions:
             continue
 
-        # All fills for a token share the same bracket and station
         bracket_low = fills[0]["bracket_low"]
         bracket_high = fills[0]["bracket_high"]
         station = fills[0]["station"]
@@ -552,21 +559,17 @@ def _check_metar_exits(weather: dict, live_trader, ts: str) -> None:
         if not (bracket_low <= current_high <= bracket_high):
             continue
 
-        # Narrow brackets (≤3°F) are often passed through while the temperature
-        # is still rising in the morning.  Only exit after 13:00 local time when
-        # the daily high is more firmly established.  Wide/open-ended brackets
-        # (e.g. "≤59°F", width≈109°F) can fire at any time because the
-        # temperature needs a large rise to exit them.
-        bracket_width = bracket_high - bracket_low
-        if bracket_width <= 3.0:
-            local_hour = weather[station].now_local.hour
-            if local_hour < 13:
-                print(
-                    f"  [exit] {station} {bracket_low:.0f}-{bracket_high:.0f}°F "
-                    f"inside bracket but local time is {local_hour:02d}:xx — "
-                    f"deferring stop-loss until after 13:00"
-                )
-                continue
+        now_local = weather[station].now_local
+        remaining_rise = expected_additional_rise(now_local)
+        expected_high = current_high + remaining_rise
+        if expected_high > bracket_high:
+            print(
+                f"  [exit] {station} {bracket_low:.0f}-{bracket_high:.0f}°F "
+                f"current high {current_high:.1f}°F inside bracket but expected "
+                f"end-of-day high is {expected_high:.1f}°F (+{remaining_rise:.1f}°F "
+                f"p95 remaining rise) — deferring, temp likely passing through"
+            )
+            continue
 
         total_shares = sum(f["size_eur"] / (f["price_cents"] / 100) for f in fills)
         total_eur = sum(f["size_eur"] for f in fills)
@@ -608,7 +611,7 @@ def _check_metar_exits(weather: dict, live_trader, ts: str) -> None:
                 "edge_cents": 0,
                 "pnl": pnl,
                 "outcome": "sold",
-                "trigger": f"metar_high={current_high:.1f}F",
+                "trigger": f"metar_high={current_high:.1f}F_expected={expected_high:.1f}F",
             })
             print(
                 f"  [exit] sell {sell_id[:12]}… placed @ {sell_price_cents}¢ — "
