@@ -87,6 +87,7 @@ CANDIDATES_CSV = LOG_DIR / "candidates.csv"
 SNAPSHOTS_JSONL = LOG_DIR / "snapshots.jsonl"
 SETTLEMENTS_CSV = LOG_DIR / "settlements.csv"
 LIVE_TRADES_JSONL = LOG_DIR / "live_trades.jsonl"
+POSITION_SNAPSHOTS_JSONL = LOG_DIR / "position_snapshots.jsonl"
 
 # Live execution
 POLYMARKET_HOST = os.getenv("POLYMARKET_HOST", "https://clob.polymarket.com")

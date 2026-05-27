@@ -18,10 +18,11 @@ from pathlib import Path
 
 from src.config import (
     STATIONS, STATION_TZ, POLL_INTERVAL_SECONDS, LOG_DIR,
-    CANDIDATES_CSV, SNAPSHOTS_JSONL, LIVE_TRADES_JSONL,
+    CANDIDATES_CSV, SNAPSHOTS_JSONL, LIVE_TRADES_JSONL, POSITION_SNAPSHOTS_JSONL,
     RISK_DAILY_LOSS_LIMIT_EUR, RISK_MAX_OPEN_POSITIONS,
     RISK_DRAWDOWN_STOP_PCT, RISK_MIN_LIQUIDITY, STARTING_CAPITAL_EUR,
     POSITION_SIZE_EUR, POSITION_SIZE_WITH_FEES, TAKE_PROFIT_BUFFER_CENTS,
+    FORECAST_STDDEV_F,
 )
 from src.data.metar import fetch_all_metars_today, compute_daily_high, now_local, sunset_local
 from src.data.nws import fetch_nws_forecast_high
@@ -423,6 +424,90 @@ def _load_open_no_positions(today: str) -> list[dict]:
     return [r for r in records if r.get("no_token_id") not in sold_tokens]
 
 
+def _log_open_position_snapshots(weather: dict, ts: str) -> None:
+    """Write one snapshot per open NO position per poll, capturing weather +
+    orderbook + live model probability.
+
+    snapshots.jsonl only contains rows for markets the scanner evaluates, which
+    drops to zero past noon UTC each day.  This logger runs every poll for
+    every open position regardless of market scan state — gives us continuous
+    intra-day data (especially the 14-22 UTC peak window) needed to backtest
+    exit strategies against real intra-day orderbook movement.
+    """
+    today = datetime.now(timezone.utc).date().isoformat()
+    open_positions = _load_open_no_positions(today)
+    if not open_positions:
+        return
+
+    from collections import defaultdict
+    from src.model.envelope import true_probability_yes, Bracket
+    by_token: dict[str, list[dict]] = defaultdict(list)
+    for pos in open_positions:
+        by_token[pos["no_token_id"]].append(pos)
+
+    LOG_DIR.mkdir(exist_ok=True)
+    for token_id, fills in by_token.items():
+        first = fills[0]
+        station = first.get("station", "")
+        bracket_low = first.get("bracket_low")
+        bracket_high = first.get("bracket_high")
+        if station not in weather or bracket_low is None or bracket_high is None:
+            continue
+
+        state = weather[station]
+
+        # Fetch live orderbook for the NO token
+        no_yes_ask = no_no_ask = no_yes_bid = no_no_bid = None
+        try:
+            ob = get_orderbook(token_id)
+            bids = ob.get("bids") or []
+            asks = ob.get("asks") or []
+            if bids:
+                no_no_bid = max(1, min(99, round(max(float(b["price"]) for b in bids) * 100)))
+            if asks:
+                no_no_ask = max(1, min(99, round(min(float(a["price"]) for a in asks) * 100)))
+        except Exception as e:
+            print(f"  [snap] orderbook {token_id[:14]}… error: {e}")
+
+        # Live p_yes by re-running the envelope model with current state
+        try:
+            bracket_stub = Bracket(
+                ticker=first.get("ticker", ""),
+                low_f=float(bracket_low),
+                high_f=float(bracket_high),
+                yes_ask_cents=50, yes_ask_size=0,
+                no_ask_cents=50, no_ask_size=0,
+            )
+            p_yes_now = true_probability_yes(bracket_stub, state)
+            fair_value_now = max(1, min(99, round((1 - p_yes_now) * 100)))
+        except Exception as e:
+            print(f"  [snap] model eval {station} {bracket_low}-{bracket_high} error: {e}")
+            p_yes_now = None
+            fair_value_now = None
+
+        snap = {
+            "ts": ts,
+            "ticker": first.get("ticker", ""),
+            "no_token_id": token_id,
+            "station": station,
+            "bracket_low": bracket_low,
+            "bracket_high": bracket_high,
+            "entry_price": first.get("price_cents"),
+            "predicted_price": first.get("predicted_price"),
+            "current_high": state.current_high_f,
+            "latest_temp": state.latest_temp_f,
+            "forecast_nws": state.forecast_high_f,
+            "forecast_secondary": state.secondary_forecast_f,
+            "no_best_bid": no_no_bid,
+            "no_best_ask": no_no_ask,
+            "p_yes_now": round(p_yes_now, 4) if p_yes_now is not None else None,
+            "fair_value_now": fair_value_now,
+        }
+        with _write_lock:
+            with open(POSITION_SNAPSHOTS_JSONL, "a") as f:
+                f.write(json.dumps(snap, default=str) + "\n")
+
+
 def _check_take_profit_exits(live_trader, ts: str) -> None:
     """Exit NO positions where the best bid has reached predicted_price - buffer.
 
@@ -561,13 +646,25 @@ def _check_metar_exits(weather: dict, live_trader, ts: str) -> None:
 
         now_local = weather[station].now_local
         remaining_rise = expected_additional_rise(now_local)
-        expected_high = current_high + remaining_rise
+        climb_ceiling = current_high + remaining_rise
+        nws_forecast = weather[station].forecast_high_f
+        # Use the TIGHTER of the climb ceiling and the NWS forecast (with a buffer
+        # for forecast error). NWS is today-specific; the climb table is a generic
+        # historical p95 that can dramatically over-estimate (e.g. 99°F when NWS
+        # says 81). Taking min() defers only when both signals agree the temp can
+        # plausibly escape the bracket.
+        if nws_forecast is not None:
+            expected_high = min(climb_ceiling, nws_forecast + FORECAST_STDDEV_F)
+            bound_source = f"min(climb={climb_ceiling:.1f}, nws+{FORECAST_STDDEV_F:.0f}={nws_forecast + FORECAST_STDDEV_F:.1f})"
+        else:
+            expected_high = climb_ceiling
+            bound_source = f"climb={climb_ceiling:.1f}"
         if expected_high > bracket_high:
             print(
                 f"  [exit] {station} {bracket_low:.0f}-{bracket_high:.0f}°F "
                 f"current high {current_high:.1f}°F inside bracket but expected "
-                f"end-of-day high is {expected_high:.1f}°F (+{remaining_rise:.1f}°F "
-                f"p95 remaining rise) — deferring, temp likely passing through"
+                f"end-of-day high is {expected_high:.1f}°F [{bound_source}] "
+                f"— deferring, temp likely passing through"
             )
             continue
 
@@ -611,7 +708,7 @@ def _check_metar_exits(weather: dict, live_trader, ts: str) -> None:
                 "edge_cents": 0,
                 "pnl": pnl,
                 "outcome": "sold",
-                "trigger": f"metar_high={current_high:.1f}F_expected={expected_high:.1f}F",
+                "trigger": f"metar_high={current_high:.1f}F_expected={expected_high:.1f}F_nws={nws_forecast}",
             })
             print(
                 f"  [exit] sell {sell_id[:12]}… placed @ {sell_price_cents}¢ — "
@@ -642,6 +739,7 @@ def poll_once(risk_manager, live_trader=None, alert_manager=None) -> None:
         return
 
     if live_trader:
+        _log_open_position_snapshots(weather, ts)
         _check_take_profit_exits(live_trader, ts)
         _check_metar_exits(weather, live_trader, ts)
 
