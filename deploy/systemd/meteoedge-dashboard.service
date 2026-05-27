@@ -7,8 +7,9 @@ Wants=network-online.target
 Type=simple
 User=p0k5
 WorkingDirectory=/home/p0k5/MeteoEdge
+Environment=PYTHONUNBUFFERED=1
 EnvironmentFile=/home/p0k5/MeteoEdge/.env
-ExecStart=/home/p0k5/MeteoEdge/.venv/bin/python run_dashboard.py
+ExecStart=/home/p0k5/MeteoEdge/.venv/bin/python -u run_dashboard.py
 Restart=always
 RestartSec=10s
 StandardOutput=append:/home/p0k5/MeteoEdge/logs/dashboard.log
