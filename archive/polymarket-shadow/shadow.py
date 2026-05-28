@@ -77,8 +77,17 @@ def sunset_local(station: str, lat: float, lon: float, tz_name: str) -> datetime
 
 # --- Daily-high computation in station unit
 def compute_daily_high(
-    metars: list[dict], tz_name: str, unit: str
+    metars: list[dict], tz_name: str, unit: str, min_local_hour: int = 6
 ) -> tuple[float, datetime] | None:
+    """Compute today's running daily high from METAR observations.
+
+    The min_local_hour=6 filter excludes pre-sunrise readings that are
+    usually yesterday's heat tail decaying through the night.  Without
+    this, a post-midnight observation (still warm from yesterday's peak)
+    becomes today's "running max" and never gets surpassed if today is
+    cooler — producing wrong p_yes estimates for brackets near that
+    inflated max.  Mirrors the fix in src/data/metar.py.
+    """
     tz = pytz.timezone(tz_name)
     today_local_date = datetime.now(tz).date()
     best_temp, best_time = None, None
@@ -94,6 +103,8 @@ def compute_daily_high(
             obs_local = obs_time.astimezone(tz)
             if obs_local.date() != today_local_date:
                 continue
+            if obs_local.hour < min_local_hour:
+                continue  # Skip overnight readings — likely yesterday's heat tail
             temp_native = float(temp_c) if unit == "C" else (float(temp_c) * 9 / 5 + 32)
             if best_temp is None or temp_native > best_temp:
                 best_temp, best_time = temp_native, obs_local
