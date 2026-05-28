@@ -740,6 +740,12 @@ def poll_once(risk_manager, live_trader=None, alert_manager=None) -> None:
         _reconcile_timeout_fills(ts)
         _sync_open_orders(live_trader)
 
+    # Take-profit is weather-independent — runs on every poll so the safety
+    # net stays live during pre-sunrise hours when no station yet has
+    # qualifying METAR data (post-06:00 local rule from the overnight-bug fix).
+    if live_trader:
+        _check_take_profit_exits(live_trader, ts)
+
     weather = _build_weather()
     if not weather:
         print("[run] No weather data for any station — skipping market scan")
@@ -747,7 +753,6 @@ def poll_once(risk_manager, live_trader=None, alert_manager=None) -> None:
 
     if live_trader:
         _log_open_position_snapshots(weather, ts)
-        _check_take_profit_exits(live_trader, ts)
         _check_metar_exits(weather, live_trader, ts)
 
     try:
