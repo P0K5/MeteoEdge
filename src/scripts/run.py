@@ -647,6 +647,13 @@ def _check_metar_exits(weather: dict, live_trader, ts: str) -> None:
         now_local = weather[station].now_local
         remaining_rise = expected_additional_rise(now_local)
         climb_ceiling = current_high + remaining_rise
+        # Safeguard: when the latest observation is well below the running daily
+        # high AND the p95 climb from current latest can't reach it, the day has
+        # peaked and temp won't climb above current_high.  Use current_high as
+        # the realistic ceiling instead of an unreachable climb estimate.
+        latest_temp = weather[station].latest_temp_f
+        if latest_temp + remaining_rise < current_high:
+            climb_ceiling = current_high
         nws_forecast = weather[station].forecast_high_f
         # Use the TIGHTER of the climb ceiling and the NWS forecast (with a buffer
         # for forecast error). NWS is today-specific; the climb table is a generic

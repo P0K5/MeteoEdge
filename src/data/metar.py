@@ -59,15 +59,24 @@ def sunset_local(station: str, lat: float, lon: float) -> datetime:
     return s["sunset"]
 
 
-def compute_daily_high(metars: list[dict], tz_name: str) -> tuple[float, datetime] | None:
+def compute_daily_high(
+    metars: list[dict], tz_name: str, min_local_hour: int = 6
+) -> tuple[float, datetime] | None:
     """Compute today's daily high temperature from a list of METAR observations.
 
     Args:
         metars: List of METAR report dicts (each containing 'temp', 'reportTime'/'obsTime', etc.)
         tz_name: Timezone name (e.g., 'America/New_York')
+        min_local_hour: Skip METARs before this local hour (default 6, ~sunrise).
+            Overnight observations after local midnight carry the previous day's
+            heat tail; including them anchors today's "running high" to yesterday's
+            decay curve.  Filtering to post-sunrise prevents the May 27 KHOU bug
+            where a 78.98°F reading from 03:43 CDT (≈ yesterday's tail) became
+            today's frozen daily high.
 
     Returns:
-        Tuple of (high_temp_f, obs_time_local) for today's high, or None if no valid observations.
+        Tuple of (high_temp_f, obs_time_local) for today's high, or None if no
+        valid post-sunrise observations exist yet.
     """
     tz = pytz.timezone(tz_name)
     today_local_date = datetime.now(tz).date()
@@ -84,6 +93,8 @@ def compute_daily_high(metars: list[dict], tz_name: str) -> tuple[float, datetim
             obs_local = obs_time.astimezone(tz)
             if obs_local.date() != today_local_date:
                 continue
+            if obs_local.hour < min_local_hour:
+                continue  # Skip overnight readings — likely yesterday's heat tail
             temp_f = (float(temp_c) * 9 / 5) + 32
             if best_temp is None or temp_f > best_temp:
                 best_temp, best_time = temp_f, obs_local
