@@ -247,6 +247,23 @@ a,button,input,select{transition:color var(--transition),background var(--transi
 .result-win{background:var(--yes-bg);color:var(--yes);}
 .result-loss{background:var(--no-bg);color:var(--no);}
 
+/* ── LOG SECTION ── */
+.log-section{margin-top:var(--space-8);}
+.log-box{
+  background:var(--surface);border:1px solid var(--border);
+  border-radius:var(--radius-lg);
+  padding:var(--space-4);
+  max-height:480px;overflow:auto;
+  font-family:var(--font-mono);font-size:var(--text-xs);
+  color:var(--text);
+  white-space:pre;
+  line-height:1.45;
+  box-shadow:var(--sh-sm);
+}
+.log-box .log-line{display:block;}
+.log-box .log-empty{color:var(--muted);font-family:var(--font-body);white-space:normal;}
+.log-meta{font-size:var(--text-xs);color:var(--muted);margin-bottom:var(--space-2);font-family:var(--font-mono);}
+
 /* ── EMPTY ── */
 .empty{
   text-align:center;padding:var(--space-10) var(--space-8);
@@ -370,6 +387,16 @@ a,button,input,select{transition:color var(--transition),background var(--transi
       <span class="count-pill" id="closed-count">0</span>
     </div>
     <div id="closed-positions"></div>
+  </div>
+
+  <!-- BOT LOG -->
+  <div class="log-section">
+    <div class="section-hdr">
+      <div class="section-title"><i data-lucide="terminal"></i>Bot Log</div>
+      <span class="count-pill" id="log-count">0</span>
+    </div>
+    <div class="log-meta" id="log-meta">logs/bot.log — last 200 lines</div>
+    <div class="log-box" id="bot-log"><span class="log-empty">Loading…</span></div>
   </div>
 
 </main>
@@ -562,7 +589,8 @@ function renderClosed(positions) {
     const win = p.pnl >= 0;
     const question = p.question || buildQuestion(p.station, p.side, p.bracket_low, p.bracket_high);
     const pnlFmt = (p.pnl >= 0 ? '+' : '') + '$' + Math.abs(p.pnl).toFixed(2);
-    const age = p.closed_at ? new Date(p.closed_at * 1000).toLocaleString() : '—';
+    const d = p.closed_at ? new Date(p.closed_at) : null;
+    const age = d && !isNaN(d) ? d.toLocaleString() : '—';
     return `<div class="closed-row">
       <span class="result-badge ${win ? 'result-win' : 'result-loss'}">${win ? 'WIN' : 'LOSS'}</span>
       <div class="closed-q" title="${question}">${question}</div>
@@ -603,8 +631,33 @@ async function fetchPortfolio() {
   }
 }
 
+async function fetchBotLog() {
+  const box = document.getElementById('bot-log');
+  const countEl = document.getElementById('log-count');
+  const metaEl = document.getElementById('log-meta');
+  try {
+    const r = await fetch('/api/bot-log?lines=200');
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json();
+    const lines = data.lines || [];
+    countEl.textContent = lines.length;
+    metaEl.textContent = (data.path || 'bot.log') + ' — last ' + lines.length + ' lines';
+    if (!lines.length) {
+      box.innerHTML = `<span class="log-empty">${data.error ? 'Error: ' + data.error : 'Log file is empty.'}</span>`;
+      return;
+    }
+    const wasNearBottom = (box.scrollHeight - box.scrollTop - box.clientHeight) < 40;
+    box.textContent = lines.join('\n');
+    if (wasNearBottom) box.scrollTop = box.scrollHeight;
+  } catch (e) {
+    box.innerHTML = `<span class="log-empty">Failed to load log (${e.message})</span>`;
+    console.error('Bot log fetch failed:', e);
+  }
+}
+
 function refresh() {
   fetchPortfolio();
+  fetchBotLog();
   const icon = document.querySelector('.btn-outline i');
   if (icon) {
     icon.style.transition = 'transform 0.5s';
@@ -629,7 +682,9 @@ function toggleTheme() {
 window.addEventListener('DOMContentLoaded', () => {
   lucide.createIcons();
   fetchPortfolio();
+  fetchBotLog();
   setInterval(fetchPortfolio, 30_000);
+  setInterval(fetchBotLog, 30_000);
 });
 </script>
 </body>

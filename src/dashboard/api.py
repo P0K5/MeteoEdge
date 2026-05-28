@@ -26,7 +26,7 @@ from pydantic import BaseModel
 
 from py_clob_client_v2.clob_types import BookParams
 
-from src.config import POLYMARKET_GAMMA_API, STATIONS, LIVE_TRADES_JSONL, SNAPSHOTS_JSONL
+from src.config import POLYMARKET_GAMMA_API, STATIONS, LIVE_TRADES_JSONL, SNAPSHOTS_JSONL, LOG_DIR
 from src.data.nws import fetch_nws_forecast_high
 from src.data.polymarket import get_orderbook
 from src.execution.live_trader import STATE_PATH
@@ -421,6 +421,36 @@ def _positions_from_wallet() -> tuple[list[PositionOut], list[ClosedPositionOut]
 @app.get("/api/health")
 def health() -> dict:
     return {"status": "ok", "ts": datetime.now(timezone.utc).isoformat()}
+
+
+@app.get("/api/bot-log")
+def bot_log(lines: int = 200) -> dict:
+    """Return the last *lines* lines of logs/bot.log (capped at 1000)."""
+    n = max(1, min(1000, lines))
+    path = LOG_DIR / "bot.log"
+    if not path.exists():
+        return {"path": str(path), "lines": [], "error": "log file not found"}
+    try:
+        with open(path, "rb") as fh:
+            try:
+                fh.seek(0, 2)
+                size = fh.tell()
+                block = 8192
+                data = b""
+                while size > 0 and data.count(b"\n") <= n:
+                    step = min(block, size)
+                    size -= step
+                    fh.seek(size)
+                    data = fh.read(step) + data
+                text = data.decode("utf-8", errors="replace")
+            except OSError:
+                fh.seek(0)
+                text = fh.read().decode("utf-8", errors="replace")
+        tail = text.splitlines()[-n:]
+        return {"path": str(path), "lines": tail}
+    except Exception as e:
+        logger.warning("bot.log read error: %s", e)
+        return {"path": str(path), "lines": [], "error": str(e)}
 
 
 @app.get("/api/portfolio", response_model=PortfolioOut)
