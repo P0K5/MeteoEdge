@@ -753,7 +753,11 @@ def poll_once(risk_manager, live_trader=None, alert_manager=None) -> None:
 
     if live_trader:
         _log_open_position_snapshots(weather, ts)
-        _check_metar_exits(weather, live_trader, ts)
+        # METAR stop-loss disabled 2026-05-29 pending review.
+        # Audit of 12 stops over May 20-28 showed 7 false positives
+        # (NO would have won at settlement) for a net -€15.49 vs hold-to-expiry.
+        # Position_snapshots keep recording for offline rule design.
+        # _check_metar_exits(weather, live_trader, ts)
 
     try:
         markets = get_weather_markets()
