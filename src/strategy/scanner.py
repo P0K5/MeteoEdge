@@ -14,8 +14,9 @@ from datetime import datetime, timezone
 from dateutil import parser as dtparse
 
 from src.config import (
-    STATIONS, MIN_EDGE_CENTS, MIN_PRICE_CENTS, MIN_CONFIDENCE_YES, MAX_CONFIDENCE_YES_FOR_NO,
-    ENABLE_YES_TRADES, MIN_MINUTES_TO_SETTLEMENT, ENABLE_CLOB_ENRICHMENT,
+    STATIONS, MIN_EDGE_CENTS, MAX_EDGE_CENTS, MIN_PRICE_CENTS, MIN_CONFIDENCE_YES,
+    MAX_CONFIDENCE_YES_FOR_NO, ENABLE_YES_TRADES, MIN_MINUTES_TO_SETTLEMENT,
+    ENABLE_CLOB_ENRICHMENT,
 )
 from src.model.envelope import Bracket, WeatherState, true_probability_yes, compute_envelope
 from src.data.polymarket import get_orderbook
@@ -260,24 +261,31 @@ def scan_markets(
 
             # Check for a tradeable edge
             candidate = None
+            skipped_reason = None
             if (ENABLE_YES_TRADES and ev_yes >= MIN_EDGE_CENTS and p_yes >= MIN_CONFIDENCE_YES
                     and bracket.yes_ask_cents >= MIN_PRICE_CENTS):
-                candidate = Candidate(
-                    station=station, bracket=bracket, side="YES",
-                    edge_cents=ev_yes, price_cents=bracket.yes_ask_cents,
-                    confidence=p_yes, p_yes=p_yes,
-                    ev_yes=ev_yes, ev_no=ev_no,
-                    minutes_to_settlement=mins_left, market=market,
-                )
+                if ev_yes > MAX_EDGE_CENTS:
+                    skipped_reason = f"YES edge {ev_yes:.2f}¢ > MAX_EDGE_CENTS={MAX_EDGE_CENTS}¢ (adverse selection)"
+                else:
+                    candidate = Candidate(
+                        station=station, bracket=bracket, side="YES",
+                        edge_cents=ev_yes, price_cents=bracket.yes_ask_cents,
+                        confidence=p_yes, p_yes=p_yes,
+                        ev_yes=ev_yes, ev_no=ev_no,
+                        minutes_to_settlement=mins_left, market=market,
+                    )
             elif (ev_no >= MIN_EDGE_CENTS and p_yes <= MAX_CONFIDENCE_YES_FOR_NO
                     and bracket.no_ask_cents >= MIN_PRICE_CENTS):
-                candidate = Candidate(
-                    station=station, bracket=bracket, side="NO",
-                    edge_cents=ev_no, price_cents=bracket.no_ask_cents,
-                    confidence=1 - p_yes, p_yes=p_yes,
-                    ev_yes=ev_yes, ev_no=ev_no,
-                    minutes_to_settlement=mins_left, market=market,
-                )
+                if ev_no > MAX_EDGE_CENTS:
+                    skipped_reason = f"NO edge {ev_no:.2f}¢ > MAX_EDGE_CENTS={MAX_EDGE_CENTS}¢ (adverse selection)"
+                else:
+                    candidate = Candidate(
+                        station=station, bracket=bracket, side="NO",
+                        edge_cents=ev_no, price_cents=bracket.no_ask_cents,
+                        confidence=1 - p_yes, p_yes=p_yes,
+                        ev_yes=ev_yes, ev_no=ev_no,
+                        minutes_to_settlement=mins_left, market=market,
+                    )
 
             if candidate:
                 candidates.append(candidate)
@@ -288,6 +296,9 @@ def scan_markets(
                     f"{candidate.price_cents}¢ edge={candidate.edge_cents:.2f}¢ "
                     f"p={candidate.confidence:.2%} closes={str(end_date)[:10]}"
                 )
+            elif skipped_reason:
+                label = market.get("groupItemTitle") or f"{bracket.low_f:.0f}-{bracket.high_f:.0f}°F"
+                print(f"  -- SKIPPED [{station}] {label}: {skipped_reason}")
 
         except Exception as e:
             mid = (market.get("conditionId") or market.get("id") or "unknown")[:16]

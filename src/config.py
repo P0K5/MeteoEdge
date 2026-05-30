@@ -43,6 +43,11 @@ STATION_TZ = {
 
 # Strategy thresholds (env var overrides)
 MIN_EDGE_CENTS = float(os.getenv("MIN_EDGE_CENTS", "15.0"))
+# Live ledger (97 trades, May 20–29) showed claimed edges above 25c are adversely
+# selected: 25–30c bucket = 13% WR / -79% ROI, 35c+ bucket = 0% WR / -89% ROI.
+# Cap rejects candidates whose claimed edge exceeds this — the market is usually
+# right when our model disagrees by that much. Override via env to experiment.
+MAX_EDGE_CENTS = float(os.getenv("MAX_EDGE_CENTS", "25.0"))
 MIN_PRICE_CENTS = int(os.getenv("MIN_PRICE_CENTS", "60"))  # below 60¢ ROI is negative (0-50% win rate)
 MIN_CONFIDENCE_YES = 0.85       # for YES-side trades
 MAX_CONFIDENCE_YES_FOR_NO = 0.15  # for NO-side trades (1 - confidence_no >= 0.85)
