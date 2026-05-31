@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from src.config import (
-    STATIONS, STATION_TZ, POLL_INTERVAL_SECONDS, LOG_DIR,
+    STATIONS, STATION_TZ, STATION_ACTIVE_HOURS, POLL_INTERVAL_SECONDS, LOG_DIR,
     CANDIDATES_CSV, SNAPSHOTS_JSONL, LIVE_TRADES_JSONL, POSITION_SNAPSHOTS_JSONL,
     RISK_DAILY_LOSS_LIMIT_EUR, RISK_MAX_OPEN_POSITIONS,
     RISK_DRAWDOWN_STOP_PCT, RISK_MIN_LIQUIDITY, STARTING_CAPITAL_EUR,
@@ -192,12 +192,15 @@ def _execute_live(candidate, clob_client_factory, risk_manager, ts: str) -> None
 
 def _build_weather() -> dict[str, WeatherState]:
     weather: dict[str, WeatherState] = {}
-    utc_date = datetime.now(timezone.utc).date()
     for station, lat, lon, city, _ in STATIONS:
         import pytz
-        local_date = datetime.now(pytz.timezone(STATION_TZ[station])).date()
-        if local_date < utc_date:
-            print(f"[{station}] local date {local_date} behind UTC {utc_date} — skipping to avoid yesterday's METAR data")
+        now_local_dt = datetime.now(pytz.timezone(STATION_TZ[station]))
+        active_start, active_end = STATION_ACTIVE_HOURS.get(station, (6, 23))
+        if not (active_start <= now_local_dt.hour < active_end):
+            print(
+                f"[{station}] local {now_local_dt.strftime('%H:%M')} outside "
+                f"active window {active_start:02d}:00-{active_end:02d}:00 — skipping"
+            )
             continue
 
         metars = fetch_all_metars_today(station)
@@ -205,7 +208,7 @@ def _build_weather() -> dict[str, WeatherState]:
             print(f"[{station}] no METAR data, skipping")
             continue
 
-        result = compute_daily_high(metars, STATION_TZ[station])
+        result = compute_daily_high(metars, STATION_TZ[station], min_local_hour=active_start)
         if not result:
             print(f"[{station}] could not compute daily high, skipping")
             continue

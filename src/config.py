@@ -41,6 +41,23 @@ STATION_TZ = {
     "KHOU": "America/Chicago",
 }
 
+# Per-station active local-hour window [start, end). Outside this window the
+# scanner skips the station — METARs before the start hour are usually
+# yesterday's heat-tail (see May 27 KHOU bug: 78.98°F at 03:43 CDT was a
+# carryover from the prior day's peak), and after the end hour the daily high
+# is locked in. The start hour also feeds compute_daily_high's `min_local_hour`,
+# so observations before it are filtered when computing today's running high.
+# Add new entries here when introducing stations on non-US timezones; the bot
+# polls continuously and each station is evaluated independently in its own
+# local day.
+STATION_ACTIVE_HOURS = {
+    "KORD": (6, 23),
+    "KMIA": (6, 23),
+    "KLAX": (6, 23),
+    "KATL": (6, 23),
+    "KHOU": (6, 23),
+}
+
 # Strategy thresholds (env var overrides)
 MIN_EDGE_CENTS = float(os.getenv("MIN_EDGE_CENTS", "15.0"))
 # Live ledger (97 trades, May 20–29) showed claimed edges above 25c are adversely
