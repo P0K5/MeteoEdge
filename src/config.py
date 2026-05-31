@@ -67,7 +67,14 @@ MIN_EDGE_CENTS = float(os.getenv("MIN_EDGE_CENTS", "15.0"))
 MAX_EDGE_CENTS = float(os.getenv("MAX_EDGE_CENTS", "25.0"))
 MIN_PRICE_CENTS = int(os.getenv("MIN_PRICE_CENTS", "60"))  # below 60¢ ROI is negative (0-50% win rate)
 MIN_CONFIDENCE_YES = 0.85       # for YES-side trades
-MAX_CONFIDENCE_YES_FOR_NO = 0.15  # for NO-side trades (1 - confidence_no >= 0.85)
+# NO-side entry threshold: only enter when model's p(YES) is at or below this.
+# Calibration on 30 trustworthy trades (May 24-29, with SELL pnl or yes_won
+# field) showed the model's predicted_NO band of 85-95c had 40-64% real
+# win rate — essentially noise.  The 95-99c and 100c bands had 67-90% real
+# WR, the only bands with measurable signal.  Tightening from 0.15 (allow
+# entries down to predicted_NO=85c) to 0.05 (only at predicted_NO>=95c)
+# restricts the bot to the calibrated regime. Override via env to experiment.
+MAX_CONFIDENCE_YES_FOR_NO = float(os.getenv("MAX_CONFIDENCE_YES_FOR_NO", "0.05"))
 
 # YES trades disabled: 51.9% win rate over 3 live days (vs 94.2% for NO).
 # Re-enable once ≥7 days of settlements validate YES accuracy.
