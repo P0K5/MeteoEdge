@@ -72,6 +72,9 @@ _LABEL_BETWEEN = re.compile(
 )
 # Range-dash requires an explicit unit character to avoid ambiguity with bare integers.
 _LABEL_RANGE_DASH = re.compile(r"(\d{1,3})\s*[-–]\s*(\d{1,3})\s*°\s*([FC])", re.IGNORECASE)
+# Bare single-value: "21°C" or "82°F". Polymarket Asian markets list each possible
+# integer daily high as its own market option. Treat as 1-unit-wide bracket [N, N+1).
+_LABEL_EXACT = re.compile(r"^\s*(\d{1,3})\s*°\s*([FC])\s*$", re.IGNORECASE)
 
 
 def _to_f(val: float, unit_char: "str | None") -> float:
@@ -109,6 +112,10 @@ def parse_bracket_from_market(market: dict) -> "Bracket | None":
     elif (m := _LABEL_RANGE_DASH.search(label)):
         unit = m.group(3)
         lo, hi = _to_f(float(m.group(1)), unit), _to_f(float(m.group(2)), unit)
+    elif (m := _LABEL_EXACT.search(label)):
+        unit = m.group(2)
+        val = float(m.group(1))
+        lo, hi = _to_f(val, unit), _to_f(val + 1, unit)
     else:
         print(f"[parse] unparseable label: {label[:60]!r}")
         return None
