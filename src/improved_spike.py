@@ -194,7 +194,7 @@ def run_polling_cycle(trader: PaperTrader, log_file: Path):
 
     # Fetch weather for all stations
     weather = {}
-    for station_code, lat, lon, city, _ in STATIONS:
+    for station_code, lat, lon, city, *_ in STATIONS:
         state = get_weather_state(station_code, lat, lon)
         if state:
             weather[station_code] = state

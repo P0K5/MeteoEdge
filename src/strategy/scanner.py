@@ -25,7 +25,7 @@ from src.strategy.fee import estimate_fee_cents
 
 # Map Polymarket city name (lowercase) → METAR station code
 POLYMARKET_CITY_TO_STATION: dict[str, str] = {
-    city.lower(): station for station, _, _, city, _ in STATIONS
+    city.lower(): station for station, _, _, city, *_ in STATIONS
 }
 
 
@@ -57,20 +57,37 @@ def _decode_json_string(value, default):
     return value
 
 
-# Bracket label patterns (Polymarket uses `groupItemTitle` for clean labels)
-_LABEL_LTE = re.compile(r"(\d{1,3})\s*°?F?\s+or\s+(?:below|less|lower|under)", re.IGNORECASE)
-_LABEL_GTE = re.compile(r"(\d{1,3})\s*°?F?\s+or\s+(?:above|more|higher|over)", re.IGNORECASE)
-_LABEL_BETWEEN = re.compile(
-    r"between\s+(\d{1,3})\s*(?:and|to|-|–)\s*(\d{1,3})\s*°?F?", re.IGNORECASE
+# Bracket label patterns. Each regex captures the optional unit character [FC] so
+# we can detect °C labels and convert bracket boundaries to °F before they enter
+# the envelope model (which is entirely °F-native). US markets label in °F;
+# all non-US Polymarket markets label in °C.
+_LABEL_LTE = re.compile(
+    r"(\d{1,3})\s*°?\s*([FC])?\s+or\s+(?:below|less|lower|under)", re.IGNORECASE
 )
-_LABEL_RANGE_DASH = re.compile(r"(\d{1,3})\s*[-–]\s*(\d{1,3})\s*°?F")
+_LABEL_GTE = re.compile(
+    r"(\d{1,3})\s*°?\s*([FC])?\s+or\s+(?:above|more|higher|over)", re.IGNORECASE
+)
+_LABEL_BETWEEN = re.compile(
+    r"between\s+(\d{1,3})\s*(?:and|to|-|–)\s*(\d{1,3})\s*°?\s*([FC])?", re.IGNORECASE
+)
+# Range-dash requires an explicit unit character to avoid ambiguity with bare integers.
+_LABEL_RANGE_DASH = re.compile(r"(\d{1,3})\s*[-–]\s*(\d{1,3})\s*°\s*([FC])", re.IGNORECASE)
+
+
+def _to_f(val: float, unit_char: "str | None") -> float:
+    """Convert val to °F if unit_char is 'C', otherwise return as-is."""
+    if unit_char and unit_char.upper() == "C":
+        return val * 9 / 5 + 32
+    return val
 
 
 def parse_bracket_from_market(market: dict) -> "Bracket | None":
     """
     Parse a Polymarket bracket market into a Bracket using the `groupItemTitle`
-    field (e.g. "55°F or below", "between 56-57°F", "92°F or above"). Falls
+    field (e.g. "55°F or below", "between 28-30°C", "92°F or above"). Falls
     back to the question text when groupItemTitle is missing.
+    All bracket boundaries are normalised to °F before storage — the envelope
+    model is entirely °F-native.
     """
     condition_id = market.get("conditionId") or market.get("condition_id") or market.get("id")
     if not condition_id:
@@ -81,13 +98,17 @@ def parse_bracket_from_market(market: dict) -> "Bracket | None":
         return None
 
     if (m := _LABEL_LTE.search(label)):
-        lo, hi = -50.0, float(m.group(1))
+        unit = m.group(2)
+        lo, hi = -58.0, _to_f(float(m.group(1)), unit)
     elif (m := _LABEL_GTE.search(label)):
-        lo, hi = float(m.group(1)), 200.0
+        unit = m.group(2)
+        lo, hi = _to_f(float(m.group(1)), unit), 392.0
     elif (m := _LABEL_BETWEEN.search(label)):
-        lo, hi = float(m.group(1)), float(m.group(2))
+        unit = m.group(3)
+        lo, hi = _to_f(float(m.group(1)), unit), _to_f(float(m.group(2)), unit)
     elif (m := _LABEL_RANGE_DASH.search(label)):
-        lo, hi = float(m.group(1)), float(m.group(2))
+        unit = m.group(3)
+        lo, hi = _to_f(float(m.group(1)), unit), _to_f(float(m.group(2)), unit)
     else:
         print(f"[parse] unparseable label: {label[:60]!r}")
         return None

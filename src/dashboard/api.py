@@ -171,7 +171,7 @@ def _trades_file_enrichment() -> dict[str, dict]:
 
 # City → (lat, lon) from STATIONS config — built once at import time.
 _CITY_COORDS: dict[str, tuple[float, float]] = {
-    city: (lat, lon) for _, lat, lon, city, _ in STATIONS
+    city: (lat, lon) for _, lat, lon, city, *_ in STATIONS
 }
 
 

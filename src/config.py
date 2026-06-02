@@ -15,21 +15,29 @@ POLYMARKET_CLOB_API = "https://clob.polymarket.com"
 # API ignores text search params (`q`, `keyword`), but `tag_id` works.
 POLYMARKET_WEATHER_TAG_ID = "84"
 
-# Stations: (METAR code, latitude, longitude, Polymarket city name, resolution station)
+# Stations: (METAR code, latitude, longitude, Polymarket city name, resolution station,
+#            unit, timezone)
 # City names match Polymarket's question text exactly ("highest temperature in <city>").
 # Resolution stations are extracted from market descriptions — these are the airports
 # Polymarket uses for settlement, so we fetch METAR from the same source.
+# unit is "F" for US stations (Polymarket labels in °F) and "C" for all others.
 # KBKF (Denver) and KDAL (Dallas) removed — 0% win rate, excluded until fixed.
 STATIONS = [
     # KLGA (NYC) removed — 31% win rate, -44% ROI on May 12 paper data
     # KAUS (Austin) removed — 38% win rate, -10% ROI on May 12 paper data
     # KSEA (Seattle) removed — 21% win rate, -66% ROI on May 14 paper data (marine layer)
     # KSFO removed — marine layer causes unreliable forecasts on both YES and NO sides
-    ("KORD", 41.9742,  -87.9073,  "Chicago",       "KORD"),
-    ("KMIA", 25.7953,  -80.2901,  "Miami",         "KMIA"),
-    ("KLAX", 33.9425,  -118.4081, "Los Angeles",   "KLAX"),
-    ("KATL", 33.6367,  -84.4281,  "Atlanta",       "KATL"),
-    ("KHOU", 29.6454,  -95.2789,  "Houston",       "KHOU"),  # Houston Hobby
+    ("KORD", 41.9742,  -87.9073,  "Chicago",       "KORD", "F", "America/Chicago"),
+    ("KMIA", 25.7953,  -80.2901,  "Miami",         "KMIA", "F", "America/New_York"),
+    ("KLAX", 33.9425, -118.4081,  "Los Angeles",   "KLAX", "F", "America/Los_Angeles"),
+    ("KATL", 33.6367,  -84.4281,  "Atlanta",       "KATL", "F", "America/New_York"),
+    ("KHOU", 29.6454,  -95.2789,  "Houston",       "KHOU", "F", "America/Chicago"),   # Houston Hobby
+    # International — validated by shadow loop (≥5 trades, 100% win rate, ≥3 days).
+    # Polymarket labels these in °C; the scanner converts bracket boundaries to °F
+    # before passing them to the envelope model, which remains entirely °F-native.
+    ("RKSI", 37.4602,  126.4407,  "Seoul",         "RKSI", "C", "Asia/Seoul"),        # 6/6 100% shadow
+    ("WMKK",  2.7456,  101.7099,  "Kuala Lumpur",  "WMKK", "C", "Asia/Kuala_Lumpur"),# 6/6 100% shadow
+    ("RKPK", 35.1795,  128.9382,  "Busan",         "RKPK", "C", "Asia/Seoul"),        # 5/5 100% shadow
 ]
 
 # Station timezone mapping (used for local time conversions at each location)
@@ -39,6 +47,9 @@ STATION_TZ = {
     "KLAX": "America/Los_Angeles",
     "KATL": "America/New_York",
     "KHOU": "America/Chicago",
+    "RKSI": "Asia/Seoul",
+    "WMKK": "Asia/Kuala_Lumpur",
+    "RKPK": "Asia/Seoul",
 }
 
 # Per-station active local-hour window [start, end). Outside this window the
@@ -56,6 +67,9 @@ STATION_ACTIVE_HOURS = {
     "KLAX": (6, 23),
     "KATL": (6, 23),
     "KHOU": (6, 23),
+    "RKSI": (6, 23),
+    "WMKK": (6, 23),
+    "RKPK": (6, 23),
 }
 
 # Strategy thresholds (env var overrides)

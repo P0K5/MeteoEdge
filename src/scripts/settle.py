@@ -56,7 +56,7 @@ def settle_yesterday():
     print(f"Settling for {yesterday}")
 
     truth = {}
-    for station, _, _, _, _ in STATIONS:
+    for station, *_ in STATIONS:
         h = fetch_daily_climate_high(station, yesterday)
         if h is not None:
             truth[station] = h
@@ -193,7 +193,7 @@ if __name__ == "__main__":
         # Reuse settle_yesterday logic but for arbitrary date
         print(f"Settling for {target}")
         truth = {}
-        for station, _, _, _, _ in STATIONS:
+        for station, *_ in STATIONS:
             h = fetch_daily_climate_high(station, target)
             if h is not None:
                 truth[station] = h

@@ -192,7 +192,7 @@ def _execute_live(candidate, clob_client_factory, risk_manager, ts: str) -> None
 
 def _build_weather() -> dict[str, WeatherState]:
     weather: dict[str, WeatherState] = {}
-    for station, lat, lon, city, _ in STATIONS:
+    for station, lat, lon, city, *_ in STATIONS:
         import pytz
         now_local_dt = datetime.now(pytz.timezone(STATION_TZ[station]))
         active_start, active_end = STATION_ACTIVE_HOURS.get(station, (6, 23))
