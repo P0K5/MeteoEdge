@@ -143,6 +143,13 @@ POSITION_SIZE_WITH_FEES = POSITION_SIZE_EUR * 1.02
 # movement, so we lock in the captured edge and recycle capital into the next trade.
 TAKE_PROFIT_BUFFER_CENTS = int(os.getenv("TAKE_PROFIT_BUFFER_CENTS", "2"))
 
+# Stop-loss: sell NO position when bid drops to or below this level.
+# Calibrated on June 3 position snapshots: 3 losers all crossed 55c before
+# collapsing to 1c; 6 winners on the same day all stayed above 60c (closest
+# was 62c on KATL 76-77F which recovered to 95c). 55c avoids that false
+# positive while catching confirmed collapses. Override via env to experiment.
+STOP_LOSS_NO_BID_CENTS = int(os.getenv("STOP_LOSS_NO_BID_CENTS", "55"))
+
 # HTTP
 HTTP_TIMEOUT_SECONDS = 15
 USER_AGENT = "MeteoEdge/1.0 (Polymarket weather-arbitrage research bot; contact: andre.freixo.santos@gmail.com)"

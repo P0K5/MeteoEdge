@@ -22,7 +22,7 @@ from src.config import (
     RISK_DAILY_LOSS_LIMIT_EUR, RISK_MAX_OPEN_POSITIONS,
     RISK_DRAWDOWN_STOP_PCT, RISK_MIN_LIQUIDITY, STARTING_CAPITAL_EUR,
     POSITION_SIZE_EUR, POSITION_SIZE_WITH_FEES, TAKE_PROFIT_BUFFER_CENTS,
-    FORECAST_STDDEV_F,
+    STOP_LOSS_NO_BID_CENTS, FORECAST_STDDEV_F,
 )
 from src.data.metar import fetch_all_metars_today, compute_daily_high, now_local, sunset_local
 from src.data.nws import fetch_nws_forecast_high
@@ -512,14 +512,18 @@ def _log_open_position_snapshots(weather: dict, ts: str) -> None:
 
 
 def _check_take_profit_exits(live_trader, ts: str) -> None:
-    """Exit NO positions where the best bid has reached predicted_price - buffer.
+    """Exit NO positions on take-profit or price-based stop-loss.
 
-    The model snapshot is frozen at entry time and cannot validate further price
-    movement.  Once market price converges to our fair value, the edge we
-    measured is fully captured — holding longer is a bet on the (stale) model
-    being right that the market underprices the outcome.  Locking in the gain
-    recycles capital into the next edge and reduces variance without giving up
-    expected value.
+    Take-profit: fires when bid >= predicted_price - buffer. Locks in the
+    captured edge and recycles capital rather than holding on a stale model.
+
+    Stop-loss: fires when bid <= STOP_LOSS_NO_BID_CENTS. Calibrated on June 3
+    position snapshots — 3 full-stake losses all crossed 55c before collapsing
+    to 1c; 6 winners on the same day stayed above 60c. At 55c the market is
+    pricing YES at 45%, indicating the bracket is genuinely being hit. Cuts
+    the loss to ~$0.60-$0.75 instead of the full $2.50 stake.
+
+    Orderbook is fetched once per position and shared between both checks.
     """
     today = datetime.now(timezone.utc).date().isoformat()
     open_positions = _load_open_no_positions(today)
@@ -536,9 +540,7 @@ def _check_take_profit_exits(live_trader, ts: str) -> None:
             continue
 
         predicted_price = fills[0].get("predicted_price")
-        if not predicted_price:
-            continue
-        target_cents = int(predicted_price) - TAKE_PROFIT_BUFFER_CENTS
+        tp_target_cents = (int(predicted_price) - TAKE_PROFIT_BUFFER_CENTS) if predicted_price else None
 
         try:
             ob = get_orderbook(token_id)
@@ -550,21 +552,32 @@ def _check_take_profit_exits(live_trader, ts: str) -> None:
             print(f"  [tp] orderbook fetch failed for {token_id[:14]}…: {e}")
             continue
 
-        if best_bid_cents < target_cents:
-            continue
-
         bracket_low = fills[0]["bracket_low"]
         bracket_high = fills[0]["bracket_high"]
         station = fills[0]["station"]
+
+        # Determine which exit fires (take-profit takes priority over stop-loss)
+        if tp_target_cents and best_bid_cents >= tp_target_cents:
+            trigger_label = f"take_profit@{best_bid_cents}c_target{tp_target_cents}c_predicted{predicted_price}c"
+            print(
+                f"  [tp] {station} {bracket_low:.0f}-{bracket_high:.0f}°F NO bid "
+                f"{best_bid_cents}c >= target {tp_target_cents}c (predicted {predicted_price}c) "
+                f"-- selling"
+            )
+        elif best_bid_cents <= STOP_LOSS_NO_BID_CENTS:
+            trigger_label = f"stop_loss@{best_bid_cents}c_threshold{STOP_LOSS_NO_BID_CENTS}c"
+            print(
+                f"  [sl] {station} {bracket_low:.0f}-{bracket_high:.0f}°F NO bid "
+                f"{best_bid_cents}c <= stop {STOP_LOSS_NO_BID_CENTS}c "
+                f"-- cutting loss"
+            )
+        else:
+            continue
+
         total_shares = sum(f["size_eur"] / (f["price_cents"] / 100) for f in fills)
         total_eur = sum(f["size_eur"] for f in fills)
         question = fills[0].get("question", "")
 
-        print(
-            f"  [tp] {station} {bracket_low:.0f}-{bracket_high:.0f}°F NO bid "
-            f"{best_bid_cents}¢ ≥ target {target_cents}¢ (predicted {predicted_price}¢) "
-            f"— selling {total_shares:.1f} shares"
-        )
         try:
             sell_id, sell_price_cents = live_trader.sell_position(token_id, total_shares)
             _sold_positions.add(token_id)
@@ -595,14 +608,14 @@ def _check_take_profit_exits(live_trader, ts: str) -> None:
                 "edge_cents": 0,
                 "pnl": pnl,
                 "outcome": "sold",
-                "trigger": f"take_profit@{best_bid_cents}c_target{target_cents}c_predicted{predicted_price}c",
+                "trigger": trigger_label,
             })
             print(
-                f"  [tp] sell {sell_id[:12]}… placed @ {sell_price_cents}¢ — "
+                f"  [exit] sell {sell_id[:12]}... placed @ {sell_price_cents}c -- "
                 f"{station} {bracket_low:.0f}-{bracket_high:.0f}°F NO  pnl={pnl:+.2f}"
             )
         except Exception as e:
-            print(f"  [tp] sell failed for {station} {bracket_low:.0f}-{bracket_high:.0f}°F: {e}")
+            print(f"  [exit] sell failed for {station} {bracket_low:.0f}-{bracket_high:.0f}°F: {e}")
 
 
 def _check_metar_exits(weather: dict, live_trader, ts: str) -> None:
