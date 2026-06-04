@@ -74,11 +74,11 @@ STATION_ACTIVE_HOURS = {
 
 # Strategy thresholds (env var overrides)
 MIN_EDGE_CENTS = float(os.getenv("MIN_EDGE_CENTS", "15.0"))
-# Live ledger (97 trades, May 20–29) showed claimed edges above 25c are adversely
-# selected: 25–30c bucket = 13% WR / -79% ROI, 35c+ bucket = 0% WR / -89% ROI.
-# Cap rejects candidates whose claimed edge exceeds this — the market is usually
-# right when our model disagrees by that much. Override via env to experiment.
-MAX_EDGE_CENTS = float(os.getenv("MAX_EDGE_CENTS", "25.0"))
+# Live ledger showed high-edge entries are adversely selected. Tightened from 25c
+# to 20c on 2026-06-04: 5/6 post-fix losses had edge 21-25c, and June 3 showed
+# a clear pattern of low-priced NO (high claimed edge) losing while higher-priced
+# entries on the same station/day won. Override via env to experiment.
+MAX_EDGE_CENTS = float(os.getenv("MAX_EDGE_CENTS", "20.0"))
 MIN_PRICE_CENTS = int(os.getenv("MIN_PRICE_CENTS", "60"))  # below 60¢ ROI is negative (0-50% win rate)
 MIN_CONFIDENCE_YES = 0.85       # for YES-side trades
 # NO-side entry threshold: only enter when model's p(YES) is at or below this.
