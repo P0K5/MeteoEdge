@@ -154,7 +154,13 @@ def get_nws_forecast_url(lat: float, lon: float) -> str | None:
         print(f"[nws-points] cached forecast URL for ({lat},{lon})")
         return url
     except Exception as exc:
-        print(f"[nws-points] ({lat},{lon}) error: {exc}")
+        # Cache None so we don't retry (and re-log) every poll — NWS only covers US coords
+        _nws_points_cache[key] = None
+        status = getattr(getattr(exc, "response", None), "status_code", None)
+        if status == 404:
+            print(f"[nws-points] ({lat},{lon}) not covered by NWS (non-US station)")
+        else:
+            print(f"[nws-points] ({lat},{lon}) error: {exc}")
         return None
 
 
