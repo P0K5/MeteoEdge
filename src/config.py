@@ -35,9 +35,13 @@ STATIONS = [
     # International — validated by shadow loop (≥5 trades, 100% win rate, ≥3 days).
     # Polymarket labels these in °C; the scanner converts bracket boundaries to °F
     # before passing them to the envelope model, which remains entirely °F-native.
-    ("RKSI", 37.4602,  126.4407,  "Seoul",         "RKSI", "C", "Asia/Seoul"),        # 6/6 100% shadow
-    ("WMKK",  2.7456,  101.7099,  "Kuala Lumpur",  "WMKK", "C", "Asia/Kuala_Lumpur"),# 6/6 100% shadow
-    ("RKPK", 35.1795,  128.9382,  "Busan",         "RKPK", "C", "Asia/Seoul"),        # 5/5 100% shadow
+    ("RKSI", 37.4602,  126.4407,  "Seoul",         "RKSI", "C", "Asia/Seoul"),        # 11/11 100% shadow
+    ("WMKK",  2.7456,  101.7099,  "Kuala Lumpur",  "WMKK", "C", "Asia/Kuala_Lumpur"),# 9/9 100% shadow
+    ("RKPK", 35.1795,  128.9382,  "Busan",         "RKPK", "C", "Asia/Seoul"),        # 9/10 90% shadow
+    ("ZSPD", 31.1443,  121.8083,  "Shanghai",      "ZSPD", "C", "Asia/Shanghai"),     # 8/8 100% shadow
+    ("ZGSZ", 22.6393,  113.8108,  "Shenzhen",      "ZGSZ", "C", "Asia/Shanghai"),     # 12/12 100% shadow
+    ("WSSS",  1.3644,  103.9915,  "Singapore",     "WSSS", "C", "Asia/Singapore"),    # 9/9 100% shadow
+    ("MPMG",  8.9734,  -79.5556,  "Panama City",   "MPMG", "C", "America/Panama"),    # 10/10 100% shadow
 ]
 
 # Station timezone mapping (used for local time conversions at each location)
@@ -50,6 +54,10 @@ STATION_TZ = {
     "RKSI": "Asia/Seoul",
     "WMKK": "Asia/Kuala_Lumpur",
     "RKPK": "Asia/Seoul",
+    "ZSPD": "Asia/Shanghai",
+    "ZGSZ": "Asia/Shanghai",
+    "WSSS": "Asia/Singapore",
+    "MPMG": "America/Panama",
 }
 
 # Per-station active local-hour window [start, end). Outside this window the
@@ -70,6 +78,10 @@ STATION_ACTIVE_HOURS = {
     "RKSI": (6, 23),
     "WMKK": (6, 23),
     "RKPK": (6, 23),
+    "ZSPD": (6, 23),
+    "ZGSZ": (6, 23),
+    "WSSS": (6, 23),
+    "MPMG": (6, 23),
 }
 
 # Strategy thresholds (env var overrides)

@@ -47,7 +47,7 @@ STATIONS = [
     ("LIMC", 45.6306,    8.7281,  "Milan",         "LIMC", "C", "Europe/Rome",         "eu", "open-meteo"),
     ("EFHK", 60.3172,   24.9633,  "Helsinki",      "EFHK", "C", "Europe/Helsinki",     "eu", "open-meteo"),
     ("EPWA", 52.1657,   20.9671,  "Warsaw",        "EPWA", "C", "Europe/Warsaw",       "eu", "open-meteo"),
-    ("UUWW", 55.5915,   37.2615,  "Moscow",        "UUWW", "C", "Europe/Moscow",       "eu", "open-meteo"),
+    # UUWW (Moscow) removed — 50% win, -41% calibration drift, 2 trades
     ("LTFM", 41.2611,   28.7416,  "Istanbul",      "LTFM", "C", "Europe/Istanbul",     "eu", "open-meteo"),
 
     # --- Asia/Pacific (13)
@@ -62,7 +62,7 @@ STATIONS = [
     ("ZSPD", 31.1443,  121.8083,  "Shanghai",      "ZSPD", "C", "Asia/Shanghai",       "asia", "open-meteo"),
     ("ZGGG", 23.3924,  113.2988,  "Guangzhou",     "ZGGG", "C", "Asia/Shanghai",       "asia", "open-meteo"),
     ("ZGSZ", 22.6393,  113.8108,  "Shenzhen",      "ZGSZ", "C", "Asia/Shanghai",       "asia", "open-meteo"),
-    ("ZUUU", 30.5786,  103.9471,  "Chengdu",       "ZUUU", "C", "Asia/Shanghai",       "asia", "open-meteo"),
+    # ZUUU (Chengdu) removed — 71% win, -21% calibration drift, 7 trades
     ("ZHHH", 30.7838,  114.2081,  "Wuhan",         "ZHHH", "C", "Asia/Shanghai",       "asia", "open-meteo"),
     ("ZSJN", 36.8572,  117.2161,  "Jinan",         "ZSJN", "C", "Asia/Shanghai",       "asia", "open-meteo"),
     ("ZHCC", 34.5197,  113.8408,  "Zhengzhou",     "ZHCC", "C", "Asia/Shanghai",       "asia", "open-meteo"),
@@ -82,7 +82,7 @@ STATIONS = [
     # MMMX (Mexico City) removed — 0 settled tickers in 5 days (market closes mid-UTC-night, never polled to within 5h)
     # FACT (Cape Town) removed — 50% win, -3.5% ROI, -50% calibration drift
     ("SBGR",-23.4356,  -46.4731,  "Sao Paulo",     "SBGR", "C", "America/Sao_Paulo",   "latam", "open-meteo"),
-    ("SAEZ",-34.8222,  -58.5358,  "Buenos Aires",  "SAEZ", "C", "America/Argentina/Buenos_Aires", "latam", "open-meteo"),
+    # SAEZ (Buenos Aires) removed — 67% win, -32% calibration drift, 3 trades
     ("MPMG",  8.9734,  -79.5556,  "Panama City",   "MPMG", "C", "America/Panama",      "latam", "open-meteo"),
 
     # --- Oceania (1)

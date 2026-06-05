@@ -44,7 +44,10 @@ def load_ticker_settlement() -> dict[str, dict]:
     out: dict[str, dict] = {}
     with open(SNAPSHOTS, "r", encoding="utf-8") as f:
         for line in f:
-            s = json.loads(line)
+            try:
+                s = json.loads(line)
+            except json.JSONDecodeError:
+                continue
             t = s["ticker"]
             if t not in out:
                 out[t] = {
