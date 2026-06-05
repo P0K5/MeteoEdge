@@ -75,9 +75,10 @@ STATION_ACTIVE_HOURS = {
     "KLAX": (6, 23),
     "KATL": (6, 23),
     "KHOU": (6, 23),
-    "RKSI": (6, 23),
+    "RKSI": (11, 23),   # delayed from 6: early entries (09-11 local) cause bracket blanketing
     "WMKK": (6, 23),
-    "RKPK": (6, 23),
+    "RKPK": (11, 23),   # delayed from 6: same rationale as RKSI (Seoul climate)
+
     "ZSPD": (6, 23),
     "ZGSZ": (6, 23),
     "WSSS": (6, 23),
