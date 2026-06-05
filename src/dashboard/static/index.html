@@ -228,6 +228,19 @@ a,button,input,select{transition:color var(--transition),background var(--transi
 
 /* ── CLOSED SECTION ── */
 .closed-section{margin-top:var(--space-8);}
+.pagination{
+  display:flex;align-items:center;justify-content:center;
+  gap:var(--space-3);margin-top:var(--space-4);
+}
+.pg-btn{
+  background:var(--surface);border:1px solid var(--border);color:var(--text);
+  border-radius:var(--radius-md);padding:var(--space-2) var(--space-4);
+  font-size:var(--text-sm);font-family:var(--font-body);cursor:pointer;
+  transition:background var(--transition);
+}
+.pg-btn:hover:not(:disabled){background:var(--surface-dyn);}
+.pg-btn:disabled{opacity:.35;cursor:default;}
+.pg-info{font-size:var(--text-sm);color:var(--muted);font-variant-numeric:tabular-nums;}
 .closed-row{
   background:var(--surface);border:1px solid var(--border);
   border-radius:var(--radius-lg);padding:var(--space-4) var(--space-5);
@@ -387,6 +400,11 @@ a,button,input,select{transition:color var(--transition),background var(--transi
       <span class="count-pill" id="closed-count">0</span>
     </div>
     <div id="closed-positions"></div>
+    <div class="pagination" id="closed-pagination" style="display:none">
+      <button class="pg-btn" id="pg-prev" onclick="closedChangePage(-1)">&#8592; Prev</button>
+      <span class="pg-info" id="pg-info"></span>
+      <button class="pg-btn" id="pg-next" onclick="closedChangePage(1)">Next &#8594;</button>
+    </div>
   </div>
 
   <!-- BOT LOG -->
@@ -575,17 +593,39 @@ function renderOpen(positions) {
   lucide.createIcons();
 }
 
-function renderClosed(positions) {
-  const el = document.getElementById('closed-positions');
-  document.getElementById('closed-count').textContent = positions.length;
+const CLOSED_PAGE_SIZE = 15;
+let _closedAll = [];
+let _closedPage = 0;
 
-  if (!positions.length) {
+function renderClosed(positions) {
+  _closedAll = positions;
+  _closedPage = 0;
+  document.getElementById('closed-count').textContent = positions.length;
+  _renderClosedPage();
+}
+
+function closedChangePage(delta) {
+  const total = Math.ceil(_closedAll.length / CLOSED_PAGE_SIZE);
+  _closedPage = Math.max(0, Math.min(_closedPage + delta, total - 1));
+  _renderClosedPage();
+}
+
+function _renderClosedPage() {
+  const el = document.getElementById('closed-positions');
+  const pgEl = document.getElementById('closed-pagination');
+
+  if (!_closedAll.length) {
     el.innerHTML = `<div class="empty"><i data-lucide="clock"></i><h3>No closed trades</h3><p>Exited positions will appear here.</p></div>`;
+    pgEl.style.display = 'none';
     lucide.createIcons();
     return;
   }
 
-  el.innerHTML = positions.map(p => {
+  const total = Math.ceil(_closedAll.length / CLOSED_PAGE_SIZE);
+  const start = _closedPage * CLOSED_PAGE_SIZE;
+  const page = _closedAll.slice(start, start + CLOSED_PAGE_SIZE);
+
+  el.innerHTML = page.map(p => {
     const win = p.pnl >= 0;
     const question = p.question || buildQuestion(p.station, p.side, p.bracket_low, p.bracket_high);
     const pnlFmt = (p.pnl >= 0 ? '+' : '') + '$' + Math.abs(p.pnl).toFixed(2);
@@ -599,6 +639,11 @@ function renderClosed(positions) {
       <div class="pos-ts">${age}</div>
     </div>`;
   }).join('');
+
+  pgEl.style.display = total > 1 ? 'flex' : 'none';
+  document.getElementById('pg-info').textContent = `Page ${_closedPage + 1} of ${total}`;
+  document.getElementById('pg-prev').disabled = _closedPage === 0;
+  document.getElementById('pg-next').disabled = _closedPage === total - 1;
 
   lucide.createIcons();
 }
