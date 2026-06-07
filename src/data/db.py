@@ -333,9 +333,33 @@ class Database:
             )
 
     def get_open_positions(self) -> list:
-        """Return all open positions ordered by entry time ascending."""
+        """Return all open positions ordered by entry time ascending.
+
+        Joins with trades to include bracket_low, bracket_high, and
+        predicted_price.  Aliases token_id → no_token_id, entry_price →
+        price_cents, and computes size_eur so callers match the JSONL schema.
+        """
         cur = self._conn.execute(
-            "SELECT * FROM open_positions ORDER BY entry_ts ASC"
+            """
+            SELECT
+                op.id, op.trade_id, op.station,
+                op.ticker, op.token_id,
+                op.token_id          AS no_token_id,
+                op.side, op.order_id,
+                op.entry_price,
+                op.entry_price       AS price_cents,
+                op.shares,
+                ROUND(op.shares * op.entry_price / 100.0, 4) AS size_eur,
+                op.entry_ts,
+                op.stop_loss_cents,
+                op.take_profit_cents,
+                t.bracket_low,
+                t.bracket_high,
+                t.predicted_price
+            FROM open_positions op
+            LEFT JOIN trades t ON t.id = op.trade_id
+            ORDER BY op.entry_ts ASC
+            """
         )
         return [dict(row) for row in cur.fetchall()]
 
