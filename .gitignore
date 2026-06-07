@@ -52,6 +52,7 @@ htmlcov/
 *.db
 *.sqlite
 *.sqlite3
+data/meteoedge.db*
 
 # Logs
 *.log
