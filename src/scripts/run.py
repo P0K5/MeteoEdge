@@ -24,6 +24,7 @@ from src.config import (
     POSITION_SIZE_EUR, POSITION_SIZE_WITH_FEES, TAKE_PROFIT_BUFFER_CENTS,
     FORECAST_STDDEV_F,
 )
+from src.data.db import Database
 from src.data.metar import fetch_all_metars_today, compute_daily_high, now_local, sunset_local
 from src.data.nws import fetch_nws_forecast_high
 from src.data.open_meteo import fetch_secondary_forecast
@@ -37,12 +38,10 @@ FILL_POLL_INTERVAL_S = 30
 FILL_MAX_WAIT_S = 300  # 5 minutes, 10 attempts
 
 _write_lock = threading.Lock()
-_order_lock = threading.Lock()  # Serialize CLOB placements — HTTP/2 pool not thread-safe
+_order_lock = threading.Lock()  # Serialize CLOB placements -- HTTP/2 pool not thread-safe
 _open_orders: set[tuple[str, str]] = set()  # (ticker, side) pairs with a live GTC order
 _open_orders_lock = threading.Lock()
 _sold_positions: set[str] = set()  # no_token_ids sold this session (METAR stop-loss)
-_open_trades: list[dict] = []      # in-memory open positions written to live_state.json
-_open_trades_lock = threading.Lock()
 
 
 # ---------------------------------------------------------------------------
@@ -66,39 +65,59 @@ def _append_candidate(row: dict) -> None:
             w.writerow(row)
 
 
-def _append_live_trade(record: dict) -> None:
+def _append_live_trade(record: dict, db=None) -> None:
     LOG_DIR.mkdir(exist_ok=True)
     with _write_lock:
         with open(LIVE_TRADES_JSONL, "a") as f:
             f.write(json.dumps(record, default=str) + "\n")
+    if db is not None:
+        try:
+            db.insert_trade(
+                ts=record.get("ts", ""),
+                station=record.get("station", ""),
+                ticker=record.get("ticker", ""),
+                bracket_low=float(record.get("bracket_low", 0)),
+                bracket_high=float(record.get("bracket_high", 0)),
+                side=record.get("side", "NO"),
+                predicted_price=int(record.get("predicted_price", 0)),
+                actual_price=int(record.get("price_cents", 0)),
+                predicted_edge=float(record.get("edge_cents", 0)),
+                mode="live",
+                order_id=record.get("order_id"),
+                outcome=record.get("outcome"),
+                pnl=float(record["pnl"]) if record.get("pnl") is not None else None,
+                capital_before=float(record.get("size_eur", 5.0)),
+            )
+        except Exception as e:
+            print(f"[run] DB live trade write failed: {e}")
 
 
 # ---------------------------------------------------------------------------
 # Live order lifecycle
 # ---------------------------------------------------------------------------
 
-def _execute_live(candidate, clob_client_factory, risk_manager, ts: str) -> None:
+def _execute_live(candidate, clob_client_factory, risk_manager, ts: str, db=None) -> None:
     """Place one order and wait for fill/timeout. open_position() already called by caller.
 
     Each thread creates its own LiveTrader/ClobClient to avoid HTTP/2 stream
     collisions when multiple orders are placed concurrently.
     """
     from src.execution.live_trader import LiveTrader
-    trader = LiveTrader(clob_client_factory())
+    trader = LiveTrader(clob_client_factory(), db)
 
     token_id = (
         candidate.bracket.yes_token_id if candidate.side == "YES"
         else candidate.bracket.no_token_id
     )
     if not token_id:
-        print(f"  [live] no token_id for {candidate.bracket.ticker[:16]}…, skipping")
+        print(f"  [live] no token_id for {candidate.bracket.ticker[:16]}..., skipping")
         risk_manager.close_position()
         return
 
     order_key = token_id
     with _open_orders_lock:
         if order_key in _open_orders:
-            print(f"  [live] skip {candidate.side} {candidate.bracket.ticker[:16]}… — GTC order already open on exchange")
+            print(f"  [live] skip {candidate.side} {candidate.bracket.ticker[:16]}... -- GTC order already open on exchange")
             risk_manager.close_position()
             return
         _open_orders.add(order_key)
@@ -124,7 +143,7 @@ def _execute_live(candidate, clob_client_factory, risk_manager, ts: str) -> None
                 risk_manager.close_position()
                 return
 
-        print(f"  [live] placed {order_id[:12]}… {candidate.side} @ {candidate.price_cents}¢")
+        print(f"  [live] placed {order_id[:12]}... {candidate.side} @ {candidate.price_cents}c")
 
         deadline = time.monotonic() + FILL_MAX_WAIT_S
         outcome = "timeout"
@@ -144,23 +163,6 @@ def _execute_live(candidate, clob_client_factory, risk_manager, ts: str) -> None
         risk_manager.close_position()
         if outcome == "filled":
             risk_manager.record_pnl(0.0)  # Actual PnL resolved at settlement
-            from src.execution.live_trader import persist_state
-            trade_record = {
-                "order_id": order_id,
-                "token_id": token_id,
-                "station": candidate.station,
-                "side": candidate.side,
-                "bracket_low": candidate.bracket.low_f,
-                "bracket_high": candidate.bracket.high_f,
-                "entry_price": candidate.price_cents,
-                "predicted_price": predicted_price,
-                "predicted_edge": round(candidate.edge_cents, 2),
-                "size_usdc": POSITION_SIZE_EUR,
-                "placed_at": ts,
-            }
-            with _open_trades_lock:
-                _open_trades.append(trade_record)
-                persist_state(list(_open_trades))
 
         _append_live_trade({
             "ts": ts,
@@ -179,8 +181,8 @@ def _execute_live(candidate, clob_client_factory, risk_manager, ts: str) -> None
             "size_eur": POSITION_SIZE_EUR,
             "edge_cents": round(candidate.edge_cents, 2),
             "outcome": outcome,
-        })
-        print(f"  [live] {outcome} {order_id[:12]}…")
+        }, db=db)
+        print(f"  [live] {outcome} {order_id[:12]}...")
     finally:
         with _open_orders_lock:
             _open_orders.discard(order_key)
@@ -199,7 +201,7 @@ def _build_weather() -> dict[str, WeatherState]:
         if not (active_start <= now_local_dt.hour < active_end):
             print(
                 f"[{station}] local {now_local_dt.strftime('%H:%M')} outside "
-                f"active window {active_start:02d}:00-{active_end:02d}:00 — skipping"
+                f"active window {active_start:02d}:00-{active_end:02d}:00 -- skipping"
             )
             continue
 
@@ -249,14 +251,14 @@ def _build_weather() -> dict[str, WeatherState]:
             forecast_high_f=forecast_nws,
             secondary_forecast_f=forecast_secondary,
         )
-        print(f"[{station}] high={high_f:.1f}°F latest={latest_temp_f:.1f}°F nws={forecast_nws}")
+        print(f"[{station}] high={high_f:.1f}F latest={latest_temp_f:.1f}F nws={forecast_nws}")
     return weather
 
 
 def _wallet_held_token_ids() -> set[str]:
     """Return non-redeemable token_ids currently held in the wallet (size > 0.01).
 
-    Used to reconcile timeout records against actual exchange state — if a
+    Used to reconcile timeout records against actual exchange state -- if a
     token is in the wallet, the order filled despite our local timeout marker.
     """
     wallet = os.environ.get("POLYMARKET_DEPOSIT_WALLET", "")
@@ -276,7 +278,7 @@ def _wallet_held_token_ids() -> set[str]:
             if row.get("asset") and not row.get("redeemable")
         }
     except Exception as e:
-        print(f"[reconcile] wallet fetch failed: {e} — skipping reconciliation")
+        print(f"[reconcile] wallet fetch failed: {e} -- skipping reconciliation")
         return set()
 
 
@@ -287,7 +289,7 @@ def _reconcile_timeout_fills(ts: str) -> None:
     The follow-up cancel_order() can fail silently or lose a race with the
     matching engine, leaving the order live on the exchange.  When the order
     later fills, the wallet shows the position but our JSONL says
-    outcome=timeout — invisible to the dashboard enrichment and to the
+    outcome=timeout -- invisible to the dashboard enrichment and to the
     take-profit / METAR stop-loss exits.
 
     Rewriting these records to outcome=filled restores visibility everywhere
@@ -337,21 +339,19 @@ def _reconcile_timeout_fills(ts: str) -> None:
             tmp = f.name
         os.replace(tmp, LIVE_TRADES_JSONL)
         print(
-            f"[reconcile] patched {patched} timeout record(s) → filled "
+            f"[reconcile] patched {patched} timeout record(s) -> filled "
             f"(token present in wallet)"
         )
     except OSError as e:
         print(f"[reconcile] write failed: {e}")
 
 
-def _sync_open_orders(live_trader) -> None:
+def _sync_open_orders(live_trader, db=None) -> None:
     """Refresh _open_orders from exchange open orders + today's filled positions.
 
     Called at the top of every live poll. Two sources feed the dedup guard:
     1. Exchange open orders (pending GTC orders not yet filled or cancelled).
-    2. Today's filled positions from live_trades.jsonl — once a fill is matched
-       the exchange order disappears, but we must not re-buy the same token
-       within the same trading day.
+    2. Today's filled positions from DB (preferred) or live_trades.jsonl (fallback).
     """
     today = datetime.now(timezone.utc).date().isoformat()
 
@@ -366,38 +366,57 @@ def _sync_open_orders(live_trader) -> None:
                 _open_orders.add(o.get("asset_id", ""))
             print(f"[orders] {len(orders)} open exchange orders synced to dedup guard")
         except Exception as e:
-            print(f"[orders] failed to sync open orders: {e} — using filled-positions only")
+            print(f"[orders] failed to sync open orders: {e} -- using filled-positions only")
 
-        # Source 2: today's already-filled no_token_ids from live_trades.jsonl
+        # Source 2: today's already-filled no_token_ids -- prefer DB, fall back to JSONL
         filled_count = 0
-        if LIVE_TRADES_JSONL.exists():
+        if db is not None:
             try:
-                with open(LIVE_TRADES_JSONL) as f:
-                    for line in f:
-                        line = line.strip()
-                        if not line:
-                            continue
-                        try:
-                            r = json.loads(line)
-                        except json.JSONDecodeError:
-                            continue
-                        if (r.get("end_date", "")[:10] == today
-                                and r.get("outcome") == "filled"
-                                and r.get("no_token_id")):
-                            _open_orders.add(r["no_token_id"])
-                            filled_count += 1
-            except OSError:
-                pass
+                trades = db.get_trades(limit=None, mode="live")
+                for t in trades:
+                    if (t.get("ts", "")[:10] == today
+                            and t.get("outcome") == "filled"
+                            and t.get("order_id")):
+                        _open_orders.add(t["order_id"])
+                        filled_count += 1
+            except Exception as e:
+                print(f"[orders] DB read failed: {e}")
+        else:
+            if LIVE_TRADES_JSONL.exists():
+                try:
+                    with open(LIVE_TRADES_JSONL) as f:
+                        for line in f:
+                            line = line.strip()
+                            if not line:
+                                continue
+                            try:
+                                r = json.loads(line)
+                            except json.JSONDecodeError:
+                                continue
+                            if (r.get("end_date", "")[:10] == today
+                                    and r.get("outcome") == "filled"
+                                    and r.get("no_token_id")):
+                                _open_orders.add(r["no_token_id"])
+                                filled_count += 1
+                except OSError:
+                    pass
         if filled_count:
             print(f"[orders] {filled_count} today's filled position(s) added to dedup guard")
 
 
-def _load_open_no_positions(today: str) -> list[dict]:
+def _load_open_no_positions(today: str, db=None) -> list[dict]:
     """Return filled NO positions for today that have not yet been sold.
 
-    Reads live_trades.jsonl and groups by no_token_id. A token is considered
-    sold if any record with outcome='sold' exists for it today.
+    Reads from DB when available; falls back to live_trades.jsonl.
+    A token is considered sold if any record with outcome='sold' exists for it today.
     """
+    if db is not None:
+        try:
+            positions = db.get_open_positions()
+            return [p for p in positions if p.get("side") == "NO"]
+        except Exception as e:
+            print(f"[positions] DB read failed: {e}")
+    # Fallback: existing JSONL path
     if not LIVE_TRADES_JSONL.exists():
         return []
     records: list[dict] = []
@@ -427,18 +446,18 @@ def _load_open_no_positions(today: str) -> list[dict]:
     return [r for r in records if r.get("no_token_id") not in sold_tokens]
 
 
-def _log_open_position_snapshots(weather: dict, ts: str) -> None:
+def _log_open_position_snapshots(weather: dict, ts: str, db=None) -> None:
     """Write one snapshot per open NO position per poll, capturing weather +
     orderbook + live model probability.
 
     snapshots.jsonl only contains rows for markets the scanner evaluates, which
     drops to zero past noon UTC each day.  This logger runs every poll for
-    every open position regardless of market scan state — gives us continuous
+    every open position regardless of market scan state -- gives us continuous
     intra-day data (especially the 14-22 UTC peak window) needed to backtest
     exit strategies against real intra-day orderbook movement.
     """
     today = datetime.now(timezone.utc).date().isoformat()
-    open_positions = _load_open_no_positions(today)
+    open_positions = _load_open_no_positions(today, db=db)
     if not open_positions:
         return
 
@@ -470,7 +489,7 @@ def _log_open_position_snapshots(weather: dict, ts: str) -> None:
             if asks:
                 no_no_ask = max(1, min(99, round(min(float(a["price"]) for a in asks) * 100)))
         except Exception as e:
-            print(f"  [snap] orderbook {token_id[:14]}… error: {e}")
+            print(f"  [snap] orderbook {token_id[:14]}... error: {e}")
 
         # Live p_yes by re-running the envelope model with current state
         try:
@@ -511,26 +530,26 @@ def _log_open_position_snapshots(weather: dict, ts: str) -> None:
                 f.write(json.dumps(snap, default=str) + "\n")
 
 
-def _check_take_profit_exits(live_trader, ts: str) -> None:
+def _check_take_profit_exits(live_trader, ts: str, db=None) -> None:
     """Exit NO positions where the best bid has reached predicted_price - buffer.
 
     The model snapshot is frozen at entry time and cannot validate further price
     movement.  Once market price converges to our fair value, the edge we
-    measured is fully captured — holding longer is a bet on the (stale) model
+    measured is fully captured -- holding longer is a bet on the (stale) model
     being right that the market underprices the outcome.  Locking in the gain
     recycles capital into the next edge and reduces variance without giving up
     expected value.
 
     NOTE: A price-based stop-loss was backtested against position_snapshots.jsonl
-    (May 27 – Jun 4) and found to be actively harmful at every threshold (10c–55c).
-    Many winning positions dip to 10-30c before recovering to 98-99c — the
+    (May 27 - Jun 4) and found to be actively harmful at every threshold (10c-55c).
+    Many winning positions dip to 10-30c before recovering to 98-99c -- the
     stop would cut exactly those positions.  Net degradation: -$28 at 55c,
     -$33 at 20c, -$40 at 10c vs baseline.  Do not re-add without a time-of-day
     condition (only fire in the final hour of trading, once temperature is
     locked in and recovery is impossible).
     """
     today = datetime.now(timezone.utc).date().isoformat()
-    open_positions = _load_open_no_positions(today)
+    open_positions = _load_open_no_positions(today, db=db)
     if not open_positions:
         return
 
@@ -555,7 +574,7 @@ def _check_take_profit_exits(live_trader, ts: str) -> None:
                 continue
             best_bid_cents = max(1, min(99, round(max(float(b["price"]) for b in bids) * 100)))
         except Exception as e:
-            print(f"  [tp] orderbook fetch failed for {token_id[:14]}…: {e}")
+            print(f"  [tp] orderbook fetch failed for {token_id[:14]}...: {e}")
             continue
 
         if best_bid_cents < target_cents:
@@ -569,17 +588,15 @@ def _check_take_profit_exits(live_trader, ts: str) -> None:
         question = fills[0].get("question", "")
 
         print(
-            f"  [tp] {station} {bracket_low:.0f}-{bracket_high:.0f}°F NO bid "
-            f"{best_bid_cents}¢ ≥ target {target_cents}¢ (predicted {predicted_price}¢) "
-            f"— selling {total_shares:.1f} shares"
+            f"  [tp] {station} {bracket_low:.0f}-{bracket_high:.0f}F NO bid "
+            f"{best_bid_cents}c >= target {target_cents}c (predicted {predicted_price}c) "
+            f"-- selling {total_shares:.1f} shares"
         )
         try:
             sell_id, sell_price_cents = live_trader.sell_position(token_id, total_shares)
             _sold_positions.add(token_id)
-            from src.execution.live_trader import persist_state
-            with _open_trades_lock:
-                _open_trades[:] = [t for t in _open_trades if t.get("token_id") != token_id]
-                persist_state(list(_open_trades))
+            if db is not None:
+                db.close_position(sell_id)
             avg_entry_cents = sum(
                 f["price_cents"] * (f["size_eur"] / (f["price_cents"] / 100))
                 for f in fills
@@ -604,33 +621,33 @@ def _check_take_profit_exits(live_trader, ts: str) -> None:
                 "pnl": pnl,
                 "outcome": "sold",
                 "trigger": f"take_profit@{best_bid_cents}c_target{target_cents}c_predicted{predicted_price}c",
-            })
+            }, db=db)
             print(
-                f"  [tp] sell {sell_id[:12]}… placed @ {sell_price_cents}¢ — "
-                f"{station} {bracket_low:.0f}-{bracket_high:.0f}°F NO  pnl={pnl:+.2f}"
+                f"  [tp] sell {sell_id[:12]}... placed @ {sell_price_cents}c -- "
+                f"{station} {bracket_low:.0f}-{bracket_high:.0f}F NO  pnl={pnl:+.2f}"
             )
         except Exception as e:
-            print(f"  [tp] sell failed for {station} {bracket_low:.0f}-{bracket_high:.0f}°F: {e}")
+            print(f"  [tp] sell failed for {station} {bracket_low:.0f}-{bracket_high:.0f}F: {e}")
 
 
-def _check_metar_exits(weather: dict, live_trader, ts: str) -> None:
+def _check_metar_exits(weather: dict, live_trader, ts: str, db=None) -> None:
     """Exit NO positions where the running daily high is inside the bracket
     AND the temperature is unlikely to climb past it.
 
-    The original "any time the temp enters the bracket → exit" rule fired
+    The original "any time the temp enters the bracket -> exit" rule fired
     false positives whenever the daily high overshot the bracket on its way
     to a higher peak.  Counter-factual on 10 May exits: 3 were correct
-    (saved $7.86), 7 were wrong (lost $18.75) — net -$10.89 vs holding.
+    (saved $7.86), 7 were wrong (lost $18.75) -- net -$10.89 vs holding.
 
     Reform: combine the in-bracket check with a climb-rate forecast.  Use
-    expected_additional_rise(now_local) — the p95 ceiling on remaining °F
-    rise from current hour to end-of-day — and require the upper-bound
+    expected_additional_rise(now_local) -- the p95 ceiling on remaining F
+    rise from current hour to end-of-day -- and require the upper-bound
     end-of-day high to stay within the bracket before firing.  If the
     pessimistic estimate already exceeds bracket_high, the temperature is
     most likely passing through and NO will still win at settlement.
     """
     today = datetime.now(timezone.utc).date().isoformat()
-    open_positions = _load_open_no_positions(today)
+    open_positions = _load_open_no_positions(today, db=db)
     if not open_positions:
         return
 
@@ -668,7 +685,7 @@ def _check_metar_exits(weather: dict, live_trader, ts: str) -> None:
         nws_forecast = weather[station].forecast_high_f
         # Use the TIGHTER of the climb ceiling and the NWS forecast (with a buffer
         # for forecast error). NWS is today-specific; the climb table is a generic
-        # historical p95 that can dramatically over-estimate (e.g. 99°F when NWS
+        # historical p95 that can dramatically over-estimate (e.g. 99F when NWS
         # says 81). Taking min() defers only when both signals agree the temp can
         # plausibly escape the bracket.
         if nws_forecast is not None:
@@ -679,10 +696,10 @@ def _check_metar_exits(weather: dict, live_trader, ts: str) -> None:
             bound_source = f"climb={climb_ceiling:.1f}"
         if expected_high > bracket_high:
             print(
-                f"  [exit] {station} {bracket_low:.0f}-{bracket_high:.0f}°F "
-                f"current high {current_high:.1f}°F inside bracket but expected "
-                f"end-of-day high is {expected_high:.1f}°F [{bound_source}] "
-                f"— deferring, temp likely passing through"
+                f"  [exit] {station} {bracket_low:.0f}-{bracket_high:.0f}F "
+                f"current high {current_high:.1f}F inside bracket but expected "
+                f"end-of-day high is {expected_high:.1f}F [{bound_source}] "
+                f"-- deferring, temp likely passing through"
             )
             continue
 
@@ -690,23 +707,21 @@ def _check_metar_exits(weather: dict, live_trader, ts: str) -> None:
         total_eur = sum(f["size_eur"] for f in fills)
         question = fills[0].get("question", "")
         print(
-            f"  [exit] METAR high {current_high:.1f}°F is inside {bracket_low:.0f}-"
-            f"{bracket_high:.0f}°F bracket — selling {total_shares:.1f} NO shares "
+            f"  [exit] METAR high {current_high:.1f}F is inside {bracket_low:.0f}-"
+            f"{bracket_high:.0f}F bracket -- selling {total_shares:.1f} NO shares "
             f"for {station}"
         )
         try:
             sell_id, sell_price_cents = live_trader.sell_position(token_id, total_shares)
             _sold_positions.add(token_id)
-            from src.execution.live_trader import persist_state
-            with _open_trades_lock:
-                _open_trades[:] = [t for t in _open_trades if t.get("token_id") != token_id]
-                persist_state(list(_open_trades))
+            if db is not None:
+                db.close_position(sell_id)
             # Weighted average entry price across all DCA fills
             avg_entry_cents = sum(
                 f["price_cents"] * (f["size_eur"] / (f["price_cents"] / 100))
                 for f in fills
             ) / total_shares
-            # Actual realised PnL: (sell - avg_entry) per share × total shares, in EUR
+            # Actual realised PnL: (sell - avg_entry) per share x total shares, in EUR
             pnl = round((sell_price_cents - avg_entry_cents) / 100 * total_shares, 4)
             _append_live_trade({
                 "ts": ts,
@@ -727,16 +742,16 @@ def _check_metar_exits(weather: dict, live_trader, ts: str) -> None:
                 "pnl": pnl,
                 "outcome": "sold",
                 "trigger": f"metar_high={current_high:.1f}F_expected={expected_high:.1f}F_nws={nws_forecast}",
-            })
+            }, db=db)
             print(
-                f"  [exit] sell {sell_id[:12]}… placed @ {sell_price_cents}¢ — "
-                f"{station} {bracket_low:.0f}-{bracket_high:.0f}°F NO  pnl={pnl:+.2f}"
+                f"  [exit] sell {sell_id[:12]}... placed @ {sell_price_cents}c -- "
+                f"{station} {bracket_low:.0f}-{bracket_high:.0f}F NO  pnl={pnl:+.2f}"
             )
         except Exception as e:
-            print(f"  [exit] sell failed for {station} {bracket_low:.0f}-{bracket_high:.0f}°F: {e}")
+            print(f"  [exit] sell failed for {station} {bracket_low:.0f}-{bracket_high:.0f}F: {e}")
 
 
-def poll_once(risk_manager, live_trader=None, alert_manager=None) -> None:
+def poll_once(risk_manager, live_trader=None, alert_manager=None, db=None) -> None:
     """Run one full poll: build weather states, fetch markets, scan, log candidates."""
     ts = datetime.now(timezone.utc).isoformat()
     mode_label = "LIVE" if live_trader else "PAPER"
@@ -749,31 +764,31 @@ def poll_once(risk_manager, live_trader=None, alert_manager=None) -> None:
 
     if live_trader:
         _reconcile_timeout_fills(ts)
-        _sync_open_orders(live_trader)
+        _sync_open_orders(live_trader, db=db)
 
-    # Take-profit is weather-independent — runs on every poll so the safety
+    # Take-profit is weather-independent -- runs on every poll so the safety
     # net stays live during pre-sunrise hours when no station yet has
     # qualifying METAR data (post-06:00 local rule from the overnight-bug fix).
     if live_trader:
-        _check_take_profit_exits(live_trader, ts)
+        _check_take_profit_exits(live_trader, ts, db=db)
 
     weather = _build_weather()
     if not weather:
-        print("[run] No weather data for any station — skipping market scan")
+        print("[run] No weather data for any station -- skipping market scan")
         return
 
     if live_trader:
-        _log_open_position_snapshots(weather, ts)
+        _log_open_position_snapshots(weather, ts, db=db)
         # METAR stop-loss disabled 2026-05-29 pending review.
         # Audit of 12 stops over May 20-28 showed 7 false positives
-        # (NO would have won at settlement) for a net -€15.49 vs hold-to-expiry.
+        # (NO would have won at settlement) for a net -15.49 vs hold-to-expiry.
         # Position_snapshots keep recording for offline rule design.
-        # _check_metar_exits(weather, live_trader, ts)
+        # _check_metar_exits(weather, live_trader, ts, db=db)
 
     try:
         markets = get_weather_markets()
     except Exception as e:
-        print(f"[polymarket] error: {e} — skipping this poll")
+        print(f"[polymarket] error: {e} -- skipping this poll")
         return
     print(f"[polymarket] {len(markets)} weather markets fetched")
 
@@ -790,7 +805,7 @@ def poll_once(risk_manager, live_trader=None, alert_manager=None) -> None:
             available_usdc = live_trader.get_usdc_balance()
             print(f"[balance] {available_usdc:.2f} USDC available")
         except Exception as e:
-            print(f"[balance] check failed: {e} — proceeding without balance gate")
+            print(f"[balance] check failed: {e} -- proceeding without balance gate")
 
     approved: list = []
     n_acted = 0
@@ -843,7 +858,7 @@ def poll_once(risk_manager, live_trader=None, alert_manager=None) -> None:
     if live_trader and approved:
         with ThreadPoolExecutor(max_workers=len(approved)) as executor:
             futures = [
-                executor.submit(_execute_live, cand, live_trader._client_factory, risk_manager, ts)
+                executor.submit(_execute_live, cand, live_trader._client_factory, risk_manager, ts, db)
                 for cand in approved
             ]
             for future in as_completed(futures):
@@ -883,11 +898,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="MeteoEdge polling loop")
     parser.add_argument(
         "--paper", action="store_true", default=False,
-        help="Paper trading mode — log candidates but place no real orders (default)",
+        help="Paper trading mode -- log candidates but place no real orders (default)",
     )
     parser.add_argument(
         "--live", action="store_true", default=False,
-        help="Live trading mode — place real orders via Polymarket CLOB (requires POLYMARKET_API_KEY)",
+        help="Live trading mode -- place real orders via Polymarket CLOB (requires POLYMARKET_API_KEY)",
     )
     parser.add_argument(
         "--once", action="store_true", default=False,
@@ -898,22 +913,25 @@ def main() -> None:
     if args.live and args.paper:
         parser.error("--live and --paper are mutually exclusive")
 
+    db = Database()
+    open_positions = db.get_open_positions()
+    if open_positions:
+        print(f"[startup] recovered {len(open_positions)} open position(s) from DB")
+
     live_trader = None
     if args.live:
         from src.execution.auth import get_clob_client, check_clob_health
         from src.execution.live_trader import LiveTrader
-        print("Checking CLOB connectivity…")
+        print("Checking CLOB connectivity...")
         if not check_clob_health():
-            raise SystemExit("[run] CLOB health check failed — verify POLYMARKET_API_KEY and connectivity")
-        live_trader = LiveTrader(get_clob_client())
+            raise SystemExit("[run] CLOB health check failed -- verify POLYMARKET_API_KEY and connectivity")
+        live_trader = LiveTrader(get_clob_client(), db)
         live_trader._client_factory = get_clob_client  # Each order thread creates its own client
         print("MeteoEdge starting in LIVE mode. Real orders will be placed.")
     else:
         print("MeteoEdge starting in PAPER mode.")
 
     print("Logs will be written to ./logs/")
-
-    db = Database()
 
     risk_manager = RiskManager(
         daily_loss_limit_eur=RISK_DAILY_LOSS_LIMIT_EUR,
@@ -926,17 +944,19 @@ def main() -> None:
     alert_manager = AlertManager()
 
     from src.monitoring.dashboard import start_dashboard
+    import src.monitoring.dashboard as _dashboard_mod
     start_dashboard()
+    _dashboard_mod.set_db(db)
 
     if args.once:
-        poll_once(risk_manager, live_trader, alert_manager)
+        poll_once(risk_manager, live_trader, alert_manager, db=db)
         print("[run] --once mode: exiting after single poll.")
         return
 
     print(f"Polling every {POLL_INTERVAL_SECONDS}s. Press Ctrl-C to stop.")
     while True:
         try:
-            poll_once(risk_manager, live_trader, alert_manager)
+            poll_once(risk_manager, live_trader, alert_manager, db=db)
         except KeyboardInterrupt:
             print("\n[run] Stopping.")
             break
