@@ -1,0 +1,290 @@
+"""Unit tests for src/data/db.py.
+
+All tests use an in-memory SQLite database (':memory:') to avoid file I/O,
+except test_wal_mode which requires a real file (WAL is a no-op for :memory:).
+"""
+import os
+import tempfile
+
+import pytest
+
+from src.data.db import Database
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _db() -> Database:
+    """Return a fresh in-memory Database instance."""
+    return Database(":memory:")
+
+
+# ---------------------------------------------------------------------------
+# Schema
+# ---------------------------------------------------------------------------
+
+class TestSchemaCreated:
+    """All 7 tables must exist after Database() initialisation."""
+
+    def test_schema_created(self):
+        db = _db()
+        cur = db._conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
+        )
+        tables = {row[0] for row in cur.fetchall()}
+        expected = {
+            "candidates",
+            "observations",
+            "open_positions",
+            "risk_state",
+            "settlements",
+            "trades",
+        }
+        # sqlite_sequence is created implicitly by AUTOINCREMENT — ignore it
+        assert expected.issubset(tables), f"Missing tables: {expected - tables}"
+
+
+# ---------------------------------------------------------------------------
+# WAL mode (requires a real file — :memory: always returns 'memory')
+# ---------------------------------------------------------------------------
+
+class TestWalMode:
+    """PRAGMA journal_mode must return 'wal' when using a file-backed database."""
+
+    def test_wal_mode(self):
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tf:
+            path = tf.name
+        try:
+            db = Database(path)
+            cur = db._conn.execute("PRAGMA journal_mode")
+            mode = cur.fetchone()[0]
+            assert mode == "wal", f"Expected 'wal', got '{mode}'"
+        finally:
+            os.unlink(path)
+            # Remove WAL side-car files if present
+            for ext in ("-wal", "-shm"):
+                try:
+                    os.unlink(path + ext)
+                except FileNotFoundError:
+                    pass
+
+
+# ---------------------------------------------------------------------------
+# Observations
+# ---------------------------------------------------------------------------
+
+class TestInsertObservation:
+    """insert_observation / get_observations round-trip."""
+
+    def test_insert_observation(self):
+        db = _db()
+        ts = "2024-01-15T12:00:00+00:00"
+        row_id = db.insert_observation(
+            ts=ts,
+            station="KORD",
+            temp_f=32.0,
+            temp_native=0.0,
+            unit="C",
+            source="metar",
+            current_high=35.0,
+            raw_json='{"raw": "KORD 011200Z"}',
+        )
+        assert isinstance(row_id, int)
+        assert row_id >= 1
+
+        rows = db.get_observations("KORD", since="2000-01-01")
+        assert len(rows) == 1
+        r = rows[0]
+        assert r["ts"] == ts
+        assert r["station"] == "KORD"
+        assert r["temp_f"] == pytest.approx(32.0)
+        assert r["temp_native"] == pytest.approx(0.0)
+        assert r["unit"] == "C"
+        assert r["current_high"] == pytest.approx(35.0)
+        assert r["source"] == "metar"
+        assert r["raw_json"] == '{"raw": "KORD 011200Z"}'
+
+    def test_get_observations_since_filter(self):
+        db = _db()
+        db.insert_observation(
+            ts="2024-01-01T00:00:00+00:00",
+            station="KORD",
+            temp_f=30.0,
+            temp_native=30.0,
+            unit="F",
+            source="metar",
+        )
+        db.insert_observation(
+            ts="2024-06-01T00:00:00+00:00",
+            station="KORD",
+            temp_f=75.0,
+            temp_native=75.0,
+            unit="F",
+            source="metar",
+        )
+        rows = db.get_observations("KORD", since="2024-03-01T00:00:00+00:00")
+        assert len(rows) == 1
+        assert rows[0]["temp_f"] == pytest.approx(75.0)
+
+    def test_get_observations_optional_fields_none(self):
+        db = _db()
+        db.insert_observation(
+            ts="2024-01-15T12:00:00+00:00",
+            station="KJFK",
+            temp_f=50.0,
+            temp_native=50.0,
+            unit="F",
+            source="nws",
+        )
+        rows = db.get_observations("KJFK", since="2000-01-01")
+        assert rows[0]["current_high"] is None
+        assert rows[0]["raw_json"] is None
+
+
+# ---------------------------------------------------------------------------
+# Open / close positions
+# ---------------------------------------------------------------------------
+
+class TestOpenClosePosition:
+    """open_position / close_position atomicity and correctness."""
+
+    def _insert_trade(self, db: Database) -> int:
+        return db.insert_trade(
+            ts="2024-01-15T12:00:00+00:00",
+            station="KORD",
+            ticker="KORD-2024-01-15-HIGH-32-36",
+            bracket_low=32.0,
+            bracket_high=36.0,
+            side="YES",
+            predicted_price=60,
+            actual_price=58,
+            predicted_edge=0.12,
+            mode="paper",
+            capital_before=1000.0,
+        )
+
+    def test_open_close_position(self):
+        db = _db()
+        trade_id = self._insert_trade(db)
+
+        db.open_position(
+            trade_id=trade_id,
+            station="KORD",
+            ticker="KORD-2024-01-15-HIGH-32-36",
+            token_id="tok123",
+            side="YES",
+            order_id="ord-abc",
+            entry_price=58,
+            shares=10.0,
+            entry_ts="2024-01-15T12:01:00+00:00",
+        )
+
+        positions = db.get_open_positions()
+        assert len(positions) == 1
+        assert positions[0]["order_id"] == "ord-abc"
+        assert positions[0]["trade_id"] == trade_id
+
+        db.close_position("ord-abc")
+        assert db.get_open_positions() == []
+
+    def test_open_position_unique_order_id(self):
+        """Inserting duplicate order_id must raise an IntegrityError."""
+        db = _db()
+        trade_id = self._insert_trade(db)
+        kwargs = dict(
+            trade_id=trade_id,
+            station="KORD",
+            ticker="KORD-2024-01-15-HIGH-32-36",
+            token_id="tok456",
+            side="YES",
+            order_id="ord-dup",
+            entry_price=55,
+            shares=5.0,
+            entry_ts="2024-01-15T12:02:00+00:00",
+        )
+        db.open_position(**kwargs)
+        with pytest.raises(Exception):
+            db.open_position(**kwargs)
+
+    def test_close_nonexistent_position_is_noop(self):
+        db = _db()
+        # Should not raise
+        db.close_position("does-not-exist")
+        assert db.get_open_positions() == []
+
+
+# ---------------------------------------------------------------------------
+# Daily PnL accumulation
+# ---------------------------------------------------------------------------
+
+class TestDailyPnlAccumulation:
+    """upsert_daily_risk accumulates deltas correctly."""
+
+    def test_daily_pnl_accumulation(self):
+        db = _db()
+        db.upsert_daily_risk("2024-01-15", pnl_delta=10.0, open_positions=1)
+        db.upsert_daily_risk("2024-01-15", pnl_delta=-15.0, open_positions=0)
+        assert db.get_daily_pnl("2024-01-15") == pytest.approx(-5.0)
+
+    def test_get_daily_pnl_missing_date(self):
+        db = _db()
+        assert db.get_daily_pnl("1900-01-01") == 0.0
+
+    def test_daily_pnl_different_dates_independent(self):
+        db = _db()
+        db.upsert_daily_risk("2024-01-15", pnl_delta=20.0, open_positions=2)
+        db.upsert_daily_risk("2024-01-16", pnl_delta=-5.0, open_positions=1)
+        assert db.get_daily_pnl("2024-01-15") == pytest.approx(20.0)
+        assert db.get_daily_pnl("2024-01-16") == pytest.approx(-5.0)
+
+    def test_open_positions_replaced_not_accumulated(self):
+        """open_positions column is replaced (not summed) on upsert."""
+        db = _db()
+        db.upsert_daily_risk("2024-01-15", pnl_delta=0.0, open_positions=5)
+        db.upsert_daily_risk("2024-01-15", pnl_delta=0.0, open_positions=3)
+        cur = db._conn.execute(
+            "SELECT open_positions FROM risk_state WHERE trade_date=?", ("2024-01-15",)
+        )
+        assert cur.fetchone()[0] == 3
+
+
+# ---------------------------------------------------------------------------
+# Settlement upsert
+# ---------------------------------------------------------------------------
+
+class TestInsertSettlementUpsert:
+    """insert_settlement must upsert (unique on ticker) and not duplicate rows."""
+
+    def test_insert_settlement_upsert(self):
+        db = _db()
+        common = dict(
+            ts="2024-01-15T20:00:00+00:00",
+            station="KORD",
+            ticker="KORD-2024-01-15-HIGH-32-36",
+            bracket_low=32.0,
+            bracket_high=36.0,
+            resolved_yes=1,
+        )
+        db.insert_settlement(**common, actual_high_f=34.5)
+        # Re-insert same ticker with different actual_high_f
+        db.insert_settlement(**common, actual_high_f=99.0)
+
+        rows = db.get_settlements("KORD", since="2000-01-01")
+        assert len(rows) == 1, "Expected exactly 1 row after upsert"
+        assert rows[0]["actual_high_f"] == pytest.approx(99.0)
+
+    def test_insert_settlement_defaults(self):
+        db = _db()
+        db.insert_settlement(
+            ts="2024-01-15T20:00:00+00:00",
+            station="KJFK",
+            ticker="KJFK-2024-01-15-HIGH-40-44",
+            bracket_low=40.0,
+            bracket_high=44.0,
+            actual_high_f=42.0,
+            resolved_yes=1,
+        )
+        rows = db.get_settlements("KJFK", since="2000-01-01")
+        assert rows[0]["source"] == "polymarket"
+        assert rows[0]["market_final_price"] is None
