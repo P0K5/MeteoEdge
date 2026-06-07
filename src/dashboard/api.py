@@ -29,7 +29,7 @@ from py_clob_client_v2.clob_types import BookParams
 from src.config import POLYMARKET_GAMMA_API, STATIONS, LIVE_TRADES_JSONL, SNAPSHOTS_JSONL, LOG_DIR
 from src.data.nws import fetch_nws_forecast_high
 from src.data.polymarket import get_orderbook
-from src.execution.live_trader import STATE_PATH
+STATE_PATH = Path("logs/live_state.json")
 
 logger = logging.getLogger(__name__)
 
