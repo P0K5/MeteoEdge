@@ -1,9 +1,6 @@
 """Live order execution via Polymarket CLOB."""
-import json
-import os
-import tempfile
+import logging
 from datetime import datetime
-from pathlib import Path
 from typing import Literal
 
 from py_clob_client_v2 import ClobClient
@@ -11,25 +8,11 @@ from py_clob_client_v2.clob_types import AssetType, BalanceAllowanceParams, Crea
 
 from src.data.polymarket import get_orderbook
 
-STATE_PATH = Path(__file__).parent.parent.parent / "live_state.json"
-
-
-def persist_state(open_trades: list[dict]) -> None:
-    """Atomically write open-trade state to live_state.json via tmp-then-rename."""
-    payload = {
-        "updated_at": datetime.utcnow().isoformat() + "Z",
-        "open_trades": open_trades,
-    }
-    with tempfile.NamedTemporaryFile("w", dir=STATE_PATH.parent,
-                                     delete=False, suffix=".tmp") as f:
-        json.dump(payload, f, indent=2)
-        tmp = f.name
-    os.replace(tmp, STATE_PATH)
-
 
 class LiveTrader:
-    def __init__(self, client: ClobClient):
+    def __init__(self, client: ClobClient, db=None):
         self.client = client
+        self._db = db
 
     def get_usdc_balance(self) -> float:
         """Return available USDC in the CLOB (internal balance, not on-chain)."""
@@ -39,9 +22,9 @@ class LiveTrader:
     def place_order(
         self,
         token_id: str,
-        side: str,          # "YES" or "NO" — we always BUY the token
-        price_cents: int,   # e.g. 72 → 0.72 USDC per contract
-        size_usdc: float,   # e.g. 5.0 → spend up to €5 (denominated in USDC)
+        side: str,          # "YES" or "NO" -- we always BUY the token
+        price_cents: int,   # e.g. 72 -> 0.72 USDC per contract
+        size_usdc: float,   # e.g. 5.0 -> spend up to 5 (denominated in USDC)
         *,
         station: str = "",
         bracket_low: float = 0.0,
@@ -56,7 +39,7 @@ class LiveTrader:
             token_id=token_id,
             price=price,
             size=size,
-            side="BUY",  # Always BUY YES or NO tokens — never short
+            side="BUY",  # Always BUY YES or NO tokens -- never short
         )
         # Weather markets on Polymarket are consistently neg_risk=True, tick_size=0.01
         options = CreateOrderOptions(tick_size="0.01", neg_risk=True)
@@ -64,6 +47,42 @@ class LiveTrader:
         order_id = resp.get("orderID") or resp.get("id")
         if not order_id:
             raise RuntimeError(f"Order placement failed: {resp}")
+
+        if self._db is not None:
+            try:
+                now_utc = datetime.utcnow().isoformat() + "Z"
+                trade_id = self._db.insert_trade(
+                    ts=now_utc,
+                    station=station,
+                    ticker=f"{station}-order-{order_id[:8]}",
+                    bracket_low=bracket_low,
+                    bracket_high=bracket_high,
+                    side=side,
+                    predicted_price=predicted_price,
+                    actual_price=price_cents,
+                    predicted_edge=predicted_edge,
+                    mode="live",
+                    order_id=order_id,
+                    capital_before=size_usdc,
+                )
+                self._db.open_position(
+                    trade_id=trade_id,
+                    station=station,
+                    ticker=f"{station}-order-{order_id[:8]}",
+                    token_id=token_id,
+                    side=side,
+                    order_id=order_id,
+                    entry_price=price_cents,
+                    shares=size,
+                    entry_ts=now_utc,
+                )
+            except Exception as db_err:
+                logging.critical(
+                    "[live] CRITICAL: CLOB order %s placed but DB write failed: %s. "
+                    "Position details: token_id=%s side=%s price=%sc size=%s",
+                    order_id, db_err, token_id, side, price_cents, size,
+                )
+
         return order_id
 
     def sell_position(self, token_id: str, shares: float) -> tuple[str, int]:
@@ -76,7 +95,7 @@ class LiveTrader:
         ob = get_orderbook(token_id)
         bids = ob.get("bids") or []
         if not bids:
-            raise RuntimeError(f"No bids for token {token_id[:14]}… — cannot sell")
+            raise RuntimeError(f"No bids for token {token_id[:14]}... -- cannot sell")
         best_bid = max(float(b["price"]) for b in bids)
         sell_price_cents = max(1, min(99, round(best_bid * 100)))
         args = OrderArgs(
@@ -96,9 +115,12 @@ class LiveTrader:
         """Cancel an open order. Returns True if cancelled."""
         try:
             resp = self.client.cancel(order_id)
-            return resp.get("canceled") == [order_id]
+            cancelled = resp.get("canceled") == [order_id]
+            if cancelled and self._db is not None:
+                self._db.close_position(order_id)
+            return cancelled
         except Exception as e:
-            print(f"[live] cancel {order_id[:12]}… error: {e}")
+            print(f"[live] cancel {order_id[:12]}... error: {e}")
             return False
 
     def check_fill(self, order_id: str) -> Literal["open", "filled", "cancelled"]:
@@ -112,5 +134,5 @@ class LiveTrader:
                 return "cancelled"
             return "open"
         except Exception as e:
-            print(f"[live] check_fill {order_id[:12]}… error: {e}")
-            return "open"  # Assume still open on error — will retry
+            print(f"[live] check_fill {order_id[:12]}... error: {e}")
+            return "open"  # Assume still open on error -- will retry

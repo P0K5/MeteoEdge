@@ -22,7 +22,7 @@ class Trade:
     predicted_edge: float  # cents
     win: bool
     pnl: int  # cents
-    position_size_eur: float  # €5 per trade
+    position_size_eur: float  # euros per trade
     capital_before: float
     capital_after: float
 
@@ -36,67 +36,50 @@ class PaperTrader:
         self.log_dir = Path("paper_trading_logs")
         self.log_dir.mkdir(exist_ok=True)
         if db is not None:
-            rows = db.get_trades(limit=1, mode='paper')
-            if rows and rows[0].get('capital_after') is not None:
-                self.capital = float(rows[0]['capital_after'])
+            rows = db.get_trades(limit=1, mode="paper")
+            if rows and rows[0].get("capital_after") is not None:
+                self.capital = float(rows[0]["capital_after"])
 
     def realistic_slippage(self) -> int:
-        """Random slippage model: 0.5¢ to 3¢ with distribution favoring smaller slips."""
-        # Gaussian centered at 1.5¢
+        """Random slippage model: 0.5 to 3 cents with distribution favoring smaller slips."""
         slip = max(0, random.gauss(1.5, 0.8))
-        slip = min(3.0, slip)  # Cap at 3¢
-        return int(slip * 100) // 100  # Return in cents, rounded
+        slip = min(3.0, slip)
+        return int(slip * 100) // 100
 
     def queue_delay(self) -> int:
-        """Simulate realistic order queue delay: 50-500ms, mostly in 100-300ms range."""
-        delay = max(50, int(random.gauss(150, 80)))  # ms, avg 150ms, min 50ms
-        return min(500, delay)  # Cap at 500ms
+        """Simulate realistic order queue delay: 50-500ms."""
+        delay = max(50, int(random.gauss(150, 80)))
+        return min(500, delay)
 
     def execute_trade(self, station: str, ticker: str, bracket_low: float, bracket_high: float,
                       side: str, predicted_price: int, predicted_edge: float,
-                      actual_daily_high: float, minutes_to_settlement: float) -> Trade | None:
-        """
-        Execute a paper trade with slippage and queue delay.
-
-        Returns Trade object if executed, None if insufficient capital.
-        """
-        # Check capital
+                      actual_daily_high: float, minutes_to_settlement: float):
         capital_needed = self.position_size
         if self.capital < capital_needed:
-            return None  # Skip trade, insufficient capital
+            return None
 
-        # Simulate queue delay
         delay_ms = self.queue_delay()
         time.sleep(delay_ms / 1000.0)
 
-        # Apply realistic slippage
         slippage = self.realistic_slippage()
         actual_price = predicted_price + slippage
-
-        # Clamp to valid range (1-99¢)
         actual_price = max(1, min(99, actual_price))
 
-        # Determine outcome based on actual daily high
         if side == "YES":
             win = bracket_low <= actual_daily_high <= bracket_high
             payout = 100 if win else 0
-        else:  # NO
+        else:
             win = not (bracket_low <= actual_daily_high <= bracket_high)
             payout = 100 if win else 0
 
-        # Calculate P&L
-        # If betting €5 at a price of X cents (where 100¢ = €1.00):
-        # Cost = €5 * (actual_price / 100)
         cost_eur = self.position_size * (actual_price / 100)
         revenue_eur = self.position_size * (payout / 100)
         pnl_eur = revenue_eur - cost_eur
         pnl_cents = int(pnl_eur * 100)
 
-        # Update capital
         capital_before = self.capital
         self.capital += pnl_eur
 
-        # Create trade record
         trade = Trade(
             ts=datetime.utcnow().isoformat(),
             station=station,
@@ -130,9 +113,9 @@ class PaperTrader:
                     actual_price=actual_price,
                     slippage=slippage,
                     predicted_edge=predicted_edge,
-                    mode='paper',
+                    mode="paper",
                     capital_before=capital_before,
-                    outcome='filled' if win else 'expired',
+                    outcome="filled" if win else "expired",
                     pnl=pnl_eur,
                     capital_after=trade.capital_after,
                 )
@@ -143,11 +126,10 @@ class PaperTrader:
         return trade
 
     def daily_report(self) -> dict:
-        """Generate daily statistics."""
         if not self.trades:
             return {"trades": 0, "pnl_eur": 0.0, "roi_pct": 0.0}
 
-        total_pnl = sum(t.pnl for t in self.trades) / 100  # Convert to EUR
+        total_pnl = sum(t.pnl for t in self.trades) / 100
         win_count = sum(1 for t in self.trades if t.win)
         total_slippage = sum(t.slippage for t in self.trades)
         avg_slippage = total_slippage / len(self.trades) if self.trades else 0
@@ -163,9 +145,9 @@ class PaperTrader:
 
     def save_trades(self, filepath: Path):
         """Save all trades to JSONL (backward compat for non-DB mode)."""
-        with open(filepath, 'w') as f:
+        with open(filepath, "w") as f:
             for trade in self.trades:
-                f.write(json.dumps(asdict(trade)) + '\n')
+                f.write(json.dumps(asdict(trade)) + "\n")
 
     def log_summary(self, timestamp: datetime):
         """Log hourly summary."""
@@ -175,7 +157,7 @@ class PaperTrader:
             **report
         }
         summary_path = self.log_dir / "summary.jsonl"
-        with open(summary_path, 'a') as f:
-            f.write(json.dumps(summary) + '\n')
+        with open(summary_path, "a") as f:
+            f.write(json.dumps(summary) + "\n")
         print(f"[summary] {timestamp.isoformat()}: {report['trades']} trades, "
-              f"€{report['pnl_eur']:.2f} PnL, capital: €{report['capital']:.2f}")
+              f"EUR{report['pnl_eur']:.2f} PnL, capital: EUR{report['capital']:.2f}")

@@ -43,6 +43,15 @@ _START_TIME = time.monotonic()
 # Stored as an ISO string or None.
 last_poll_ts: str | None = None
 
+# Database instance injected by run.py via set_db(). None until set.
+_db = None
+
+
+def set_db(db) -> None:
+    """Inject the Database instance from run.py so endpoints read from SQLite."""
+    global _db
+    _db = db
+
 
 # ---------------------------------------------------------------------------
 # Log-parsing helpers
@@ -73,9 +82,13 @@ def _today_utc() -> str:
 
 
 def _load_trades() -> list[dict]:
-    """Return all trade records from logs/live_trades.jsonl, newest first."""
+    """Return all trade records, newest first. Prefers DB when available."""
+    if _db is not None:
+        try:
+            return _db.get_trades(limit=None, mode=None)
+        except Exception:
+            pass
     records = _read_jsonl(LIVE_TRADES_JSONL)
-    # Reverse so the most recent trades come first (file is append-only, oldest first).
     return list(reversed(records))
 
 
@@ -118,10 +131,16 @@ def _today_trade_count(trades: list[dict]) -> int:
 
 
 def _latest_capital(snapshots: list[dict]) -> float:
-    """Return the most recent capital snapshot value, or the starting capital default."""
+    """Return the most recent capital value. Prefers DB; falls back to snapshots."""
+    if _db is not None:
+        try:
+            rows = _db.get_trades(limit=1, mode=None)
+            if rows and rows[0].get("capital_after") is not None:
+                return float(rows[0]["capital_after"])
+        except Exception:
+            pass
     if not snapshots:
         return STARTING_CAPITAL_EUR
-    # Snapshots are ordered oldest-first; last entry is most recent.
     last = snapshots[-1]
     return float(last.get("capital", STARTING_CAPITAL_EUR))
 

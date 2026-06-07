@@ -1,4 +1,10 @@
-"""Per-station calibration: does the flagged confidence match realized win rate?"""
+"""Per-station calibration: does the flagged confidence match realized win rate?
+
+Data sources (tried in order):
+- DB observations and candidates tables (when --db flag is set or DB has data)
+- File fallback: shadow-logs/snapshots.jsonl + shadow-logs/candidates.csv
+"""
+import argparse
 import csv
 import json
 from collections import defaultdict
@@ -13,7 +19,7 @@ MAX_MINS_TO_SETTLE = 300
 MIN_TEMP_DROP_FROM_PEAK = 1.0
 
 
-def load_tickers() -> dict[str, dict]:
+def load_tickers_from_file() -> dict[str, dict]:
     out: dict[str, dict] = {}
     with open(SNAPSHOTS, "r", encoding="utf-8") as f:
         for line in f:
@@ -36,13 +42,132 @@ def load_tickers() -> dict[str, dict]:
     return out
 
 
+def load_tickers_from_db(db, since: str = "2000-01-01") -> dict[str, dict]:
+    """Per-station rollup from DB observations table."""
+    out: dict[str, dict] = {}
+    from src.config import STATIONS as _STATIONS
+    for cfg in _STATIONS:
+        station = cfg[0]
+        unit = cfg[5] if len(cfg) > 5 else "F"
+        rows = db.get_observations(station=station, since=since)
+        if not rows:
+            continue
+        for row in rows:
+            key = station
+            if key not in out:
+                out[key] = {
+                    "station": station,
+                    "unit": unit,
+                    "max_high": row.get("current_high") or row["temp_f"],
+                    "last_ts": row["ts"],
+                    "last_temp": row["temp_f"],
+                    "min_mins_left": 9999,
+                }
+            else:
+                rec = out[key]
+                h = row.get("current_high") or row["temp_f"]
+                rec["max_high"] = max(rec["max_high"], h)
+                if row["ts"] > rec["last_ts"]:
+                    rec["last_ts"] = row["ts"]
+                    rec["last_temp"] = row["temp_f"]
+    return out
+
+
+def load_tickers(db=None, since: str = "2000-01-01") -> dict[str, dict]:
+    """Load ticker settlement data, preferring DB when available."""
+    if db is not None:
+        try:
+            result = load_tickers_from_db(db, since=since)
+            if result:
+                print(f"[calibration] Loaded tickers from DB ({len(result)} stations)")
+                return result
+        except Exception as e:
+            print(f"[calibration] DB ticker load failed: {e} — falling back to file")
+
+    if SNAPSHOTS.exists():
+        result = load_tickers_from_file()
+        print(f"[calibration] Loaded {len(result)} tickers from file")
+        return result
+
+    raise FileNotFoundError(
+        f"No data source available: DB empty/unavailable and {SNAPSHOTS} not found"
+    )
+
+
+def load_candidates_from_file() -> list[dict]:
+    with open(CANDIDATES, "r", encoding="utf-8") as f:
+        return sorted(csv.DictReader(f), key=lambda r: r["ts"])
+
+
+def load_candidates_from_db(db, since: str = "2000-01-01") -> list[dict]:
+    """Load candidates from DB, normalised to CSV field names."""
+    cur = db._conn.execute(
+        "SELECT * FROM candidates WHERE ts >= ? ORDER BY ts ASC",
+        (since,),
+    )
+    rows = [dict(r) for r in cur.fetchall()]
+    normalised = []
+    for r in rows:
+        normalised.append({
+            "ts": r["ts"],
+            "station": r["station"],
+            "ticker": r["ticker"],
+            "bracket_low": r["bracket_low"],
+            "bracket_high": r["bracket_high"],
+            "flagged_side": r["side"],
+            "flagged_price": r["predicted_price"],
+            "flagged_edge": r["predicted_edge"],
+            "flagged_confidence": r["confidence"],
+            "minutes_to_settlement": r["minutes_to_settlement"],
+            "flagged_first": r.get("flagged_first", 1),
+        })
+    return normalised
+
+
+def load_candidates(db=None, since: str = "2000-01-01") -> list[dict]:
+    """Load candidate rows, preferring DB when available."""
+    if db is not None:
+        try:
+            rows = load_candidates_from_db(db, since=since)
+            if rows:
+                print(f"[calibration] Loaded {len(rows)} candidates from DB")
+                return rows
+        except Exception as e:
+            print(f"[calibration] DB candidate load failed: {e} — falling back to file")
+
+    if CANDIDATES.exists():
+        rows = load_candidates_from_file()
+        print(f"[calibration] Loaded {len(rows)} candidates from file")
+        return rows
+
+    raise FileNotFoundError(
+        f"No data source available: DB empty/unavailable and {CANDIDATES} not found"
+    )
+
+
 def is_settled(rec: dict) -> bool:
     return (rec["min_mins_left"] <= MAX_MINS_TO_SETTLE
             and (rec["max_high"] - rec["last_temp"]) >= MIN_TEMP_DROP_FROM_PEAK)
 
 
 def main() -> None:
-    tickers = load_tickers()
+    parser = argparse.ArgumentParser(description="Calibration — expected vs realized win rate per station")
+    parser.add_argument("--db", action="store_true", default=False,
+                        help="Force DB as data source (default: auto-detect, file fallback)")
+    parser.add_argument("--since", default="2000-01-01",
+                        help="Only include data at or after this date (YYYY-MM-DD)")
+    args = parser.parse_args()
+
+    db = None
+    if args.db:
+        try:
+            from src.data.db import Database
+            db = Database()
+            print("[calibration] Using DB as primary data source")
+        except Exception as e:
+            print(f"[calibration] Failed to open DB: {e} — falling back to files")
+
+    tickers = load_tickers(db=db, since=args.since)
 
     # Per-day, per-station: collect first-flag-per-ticker trades
     per_day = defaultdict(lambda: defaultdict(lambda: {"n": 0, "w": 0, "pnl": 0.0}))
@@ -50,13 +175,13 @@ def main() -> None:
                                               "conf_sum": 0.0, "edges": []})
     seen = set()
 
-    with open(CANDIDATES, "r", encoding="utf-8") as f:
-        rows = sorted(csv.DictReader(f), key=lambda r: r["ts"])
-    for r in rows:
+    candidate_rows = load_candidates(db=db, since=args.since)
+    for r in candidate_rows:
         t = r["ticker"]
         if t in seen:
             continue
-        rec = tickers.get(t)
+        # Match by ticker first, then fall back to station for DB-sourced rollups
+        rec = tickers.get(t) or tickers.get(r.get("station", ""))
         if not rec or not is_settled(rec):
             continue
         seen.add(t)

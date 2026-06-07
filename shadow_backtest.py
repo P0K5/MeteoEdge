@@ -1,20 +1,26 @@
 """Backdated simulation of shadow-tracked stations vs live model.
 
 Strategy:
-1. For every ticker observed in shadow snapshots.jsonl, derive the settled
-   daily high as max(current_high) across all polls for that ticker.
+1. For every ticker observed in shadow snapshots.jsonl (or DB observations),
+   derive the settled daily high as max(current_high) across all polls for
+   that ticker.
 2. Trust the estimate only when polling continued to within an hour of the
    market's close (min_mins_to_settlement <= 60). Otherwise the day was
    still in progress when polling stopped and the peak may not have been
    captured.
-3. For each flagged candidate row in candidates.csv, take the first
-   flag per ticker (the live bot enters once and holds), and resolve
-   YES/NO based on whether the settled high lands inside the bracket.
+3. For each flagged candidate row in candidates.csv (or DB candidates),
+   take the first flag per ticker (the live bot enters once and holds), and
+   resolve YES/NO based on whether the settled high lands inside the bracket.
 4. PnL per trade (cents): win = (100 - price) - fee; loss = -price - fee.
    Fee uses the same heuristic as the shadow loop.
 5. Aggregate per station: trades, win-rate, total PnL, ROI on capital
    risked (sum of prices paid), avg edge at flag time.
+
+Data sources (tried in order):
+- DB observations and candidates tables (when --db flag is set or DB has data)
+- File fallback: shadow-logs/snapshots.jsonl + shadow-logs/candidates.csv
 """
+import argparse
 import csv
 import json
 from collections import defaultdict
@@ -39,8 +45,8 @@ def fee_cents(price_cents: float) -> float:
     return max(1.0, 7.0 * p * (1 - p))
 
 
-def load_ticker_settlement() -> dict[str, dict]:
-    """Per-ticker rollup from snapshots."""
+def load_ticker_settlement_from_file() -> dict[str, dict]:
+    """Per-ticker rollup from snapshots.jsonl file."""
     out: dict[str, dict] = {}
     with open(SNAPSHOTS, "r", encoding="utf-8") as f:
         for line in f:
@@ -74,9 +80,145 @@ def load_ticker_settlement() -> dict[str, dict]:
     return out
 
 
+def load_ticker_settlement_from_db(db, since: str = "2000-01-01") -> dict[str, dict]:
+    """Per-ticker rollup from DB observations table.
+
+    The DB observations table stores raw METAR data per station, not per
+    ticker. We build a station-level max_high rollup as a best approximation.
+    Tickers are matched later when reading candidates from the DB.
+    """
+    out: dict[str, dict] = {}
+    # We need to query all stations to build the rollup
+    from src.config import STATIONS as _STATIONS
+    for cfg in _STATIONS:
+        station = cfg[0]
+        unit = cfg[5] if len(cfg) > 5 else "F"
+        rows = db.get_observations(station=station, since=since)
+        if not rows:
+            continue
+        for row in rows:
+            # Use station as a proxy key — actual ticker matching happens in main()
+            key = station
+            if key not in out:
+                out[key] = {
+                    "station": station,
+                    "unit": unit,
+                    "region": "?",
+                    "city": cfg[3] if len(cfg) > 3 else "?",
+                    "max_high": row.get("current_high") or row["temp_f"],
+                    "last_ts": row["ts"],
+                    "last_temp": row["temp_f"],
+                    "min_mins_left": 9999,
+                    "n_polls": 1,
+                }
+            else:
+                rec = out[key]
+                h = row.get("current_high") or row["temp_f"]
+                rec["max_high"] = max(rec["max_high"], h)
+                rec["n_polls"] += 1
+                if row["ts"] > rec["last_ts"]:
+                    rec["last_ts"] = row["ts"]
+                    rec["last_temp"] = row["temp_f"]
+    return out
+
+
+def load_candidates_from_file() -> list[dict]:
+    """Load candidates from CSV file."""
+    with open(CANDIDATES, "r", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        rows = list(reader)
+    rows.sort(key=lambda r: r["ts"])
+    return rows
+
+
+def load_candidates_from_db(db, since: str = "2000-01-01") -> list[dict]:
+    """Load candidates from DB candidates table, sorted by timestamp."""
+    # Query candidates from DB — use raw SQL via connection for full range
+    cur = db._conn.execute(
+        "SELECT * FROM candidates WHERE ts >= ? ORDER BY ts ASC",
+        (since,),
+    )
+    rows = [dict(r) for r in cur.fetchall()]
+    # Normalise field names to match the CSV column names used in main()
+    normalised = []
+    for r in rows:
+        normalised.append({
+            "ts": r["ts"],
+            "station": r["station"],
+            "ticker": r["ticker"],
+            "bracket_low": r["bracket_low"],
+            "bracket_high": r["bracket_high"],
+            "flagged_side": r["side"],
+            "flagged_price": r["predicted_price"],
+            "flagged_edge": r["predicted_edge"],
+            "flagged_confidence": r["confidence"],
+            "minutes_to_settlement": r["minutes_to_settlement"],
+            "flagged_first": r.get("flagged_first", 1),
+        })
+    return normalised
+
+
+def load_ticker_settlement(db=None, since: str = "2000-01-01") -> dict[str, dict]:
+    """Load ticker settlement data, preferring DB when available."""
+    if db is not None:
+        try:
+            result = load_ticker_settlement_from_db(db, since=since)
+            if result:
+                print(f"[backtest] Loaded settlement data from DB ({len(result)} stations)")
+                return result
+        except Exception as e:
+            print(f"[backtest] DB settlement load failed: {e} — falling back to file")
+
+    if SNAPSHOTS.exists():
+        result = load_ticker_settlement_from_file()
+        print(f"[backtest] Loaded settlement data from file ({len(result)} tickers)")
+        return result
+
+    raise FileNotFoundError(
+        f"No data source available: DB empty/unavailable and {SNAPSHOTS} not found"
+    )
+
+
+def load_candidates(db=None, since: str = "2000-01-01") -> list[dict]:
+    """Load candidate rows, preferring DB when available."""
+    if db is not None:
+        try:
+            rows = load_candidates_from_db(db, since=since)
+            if rows:
+                print(f"[backtest] Loaded {len(rows)} candidates from DB")
+                return rows
+        except Exception as e:
+            print(f"[backtest] DB candidate load failed: {e} — falling back to file")
+
+    if CANDIDATES.exists():
+        rows = load_candidates_from_file()
+        print(f"[backtest] Loaded {len(rows)} candidates from file")
+        return rows
+
+    raise FileNotFoundError(
+        f"No data source available: DB empty/unavailable and {CANDIDATES} not found"
+    )
+
+
 def main() -> None:
-    tickers = load_ticker_settlement()
-    print(f"Loaded {len(tickers)} unique tickers across snapshots")
+    parser = argparse.ArgumentParser(description="Shadow backtest — replay candidates against settled highs")
+    parser.add_argument("--db", action="store_true", default=False,
+                        help="Force DB as data source (default: auto-detect, file fallback)")
+    parser.add_argument("--since", default="2000-01-01",
+                        help="Only include data at or after this date (YYYY-MM-DD)")
+    args = parser.parse_args()
+
+    db = None
+    if args.db:
+        try:
+            from src.data.db import Database
+            db = Database()
+            print("[backtest] Using DB as primary data source")
+        except Exception as e:
+            print(f"[backtest] Failed to open DB: {e} — falling back to files")
+
+    tickers = load_ticker_settlement(db=db, since=args.since)
+    print(f"Loaded {len(tickers)} unique tickers/stations across snapshots")
 
     def is_settled(rec: dict) -> bool:
         if rec["min_mins_left"] > MAX_MINS_TO_SETTLE_AT_LAST_POLL:
@@ -103,18 +245,15 @@ def main() -> None:
     skipped_dup = 0
     skipped_unknown = 0
 
-    with open(CANDIDATES, "r", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        rows = list(reader)
-    # Sort by timestamp so first-flag dedup is deterministic and chronological.
-    rows.sort(key=lambda r: r["ts"])
+    candidate_rows = load_candidates(db=db, since=args.since)
 
-    for r in rows:
+    for r in candidate_rows:
         t = r["ticker"]
         if t in seen_tickers:
             skipped_dup += 1
             continue
-        rec = tickers.get(t)
+        # When using DB settlement, match by station (the DB rollup key)
+        rec = tickers.get(t) or tickers.get(r.get("station", ""))
         if not rec:
             skipped_unknown += 1
             continue
@@ -135,8 +274,8 @@ def main() -> None:
 
         station = r["station"]
         s = stats[station]
-        s["unit"] = rec["unit"]
-        s["region"] = rec["region"]
+        s["unit"] = rec.get("unit", "?")
+        s["region"] = rec.get("region", "?")
         s["trades"] += 1
         s["capital_cents"] += price
         s["pnl_cents"] += pnl
@@ -193,6 +332,7 @@ def main() -> None:
 
     # Save the summary
     out_path = SHADOW_DIR / "backtest_summary.json"
+    SHADOW_DIR.mkdir(exist_ok=True)
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(rows_summary, f, indent=2)
     print(f"\nWrote {out_path}")
