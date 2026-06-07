@@ -79,7 +79,7 @@ STATION_ACTIVE_HOURS = {
     "WMKK": (6, 23),
     "RKPK": (11, 23),   # delayed from 6: same rationale as RKSI (Seoul climate)
 
-    "ZGSZ": (6, 23),
+    "ZGSZ": (11, 23),   # delayed from 6: narrow 1C brackets cause blanketing (same as RKSI)
     "WSSS": (6, 23),
     "MPMG": (6, 23),
 }
