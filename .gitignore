@@ -52,14 +52,17 @@ htmlcov/
 *.db
 *.sqlite
 *.sqlite3
+data/meteoedge.db*
 
 # Logs
 *.log
 logs/
+shadow-logs/
 
 # Data
 *.csv
 *.json
+live_state.json
 data/feeds/
 data/cache/
 

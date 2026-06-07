@@ -1,0 +1,10 @@
+[Unit]
+Description=Run MeteoEdge settlement daily at 12:00 UTC
+
+[Timer]
+OnCalendar=*-*-* 12:00:00 UTC
+AccuracySec=1m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

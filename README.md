@@ -149,6 +149,18 @@ POSITION_SIZE_EUR = 5.0  # €5 per trade
 STARTING_CAPITAL_EUR = 500.0  # Initial capital
 ```
 
+## Dashboard
+
+Run `python run_dashboard.py`, then open `http://<machine-ip>:8000` on any device on the same Wi-Fi.
+
+The dashboard shows live open positions, cash balance, and mark-to-market values. It fetches from `/api/portfolio` on load and every 30 seconds.
+
+```bash
+python run_dashboard.py
+curl http://localhost:8000/api/health    # → {"status":"ok","ts":"..."}
+curl http://localhost:8000/api/portfolio # → JSON with open_positions and cash_usdc
+```
+
 ## Next Steps
 
 - [ ] Recalibrate confidence scoring
