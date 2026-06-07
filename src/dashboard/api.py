@@ -314,12 +314,19 @@ def _positions_from_wallet() -> tuple[list[PositionOut], list[ClosedPositionOut]
     if not wallet:
         raise RuntimeError("POLYMARKET_DEPOSIT_WALLET not set")
 
-    url = f"https://data-api.polymarket.com/positions?user={wallet}&sizeThreshold=0.01&limit=100"
-    r = httpx.get(url, timeout=15)
-    r.raise_for_status()
-    rows = r.json()
-    if not isinstance(rows, list):
-        rows = rows.get("positions") or rows.get("data") or []
+    base_url = f"https://data-api.polymarket.com/positions?user={wallet}&sizeThreshold=0.01&limit=100"
+    rows: list = []
+    offset = 0
+    while True:
+        r = httpx.get(f"{base_url}&offset={offset}", timeout=15)
+        r.raise_for_status()
+        page = r.json()
+        if not isinstance(page, list):
+            page = page.get("positions") or page.get("data") or []
+        rows.extend(page)
+        if len(page) < 100:
+            break
+        offset += 100
 
     enrichment = _state_enrichment()
     jsonl_enrichment = _trades_file_enrichment()
