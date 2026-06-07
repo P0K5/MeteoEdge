@@ -240,3 +240,76 @@ class TestReadJsonl:
         assert len(result) == 2
         assert result[0]["a"] == 1
         assert result[1]["b"] == 2
+
+
+# ---------------------------------------------------------------------------
+# Issue G — DB-backed /status: capital and open_positions_count
+# ---------------------------------------------------------------------------
+
+class TestStatusDbCapital:
+    """Issue G acceptance criteria for /status capital and open_positions_count."""
+
+    def _setup_db(self):
+        from src.data.db import Database
+        return Database(":memory:")
+
+    def test_status_capital_from_db(self, tmp_path):
+        import src.monitoring.dashboard as dash
+        db = self._setup_db()
+        db.insert_trade(
+            ts="2024-01-15T12:00:00Z", station="KORD",
+            ticker="KORD-test", bracket_low=32.0, bracket_high=36.0,
+            side="NO", predicted_price=70, actual_price=71,
+            predicted_edge=0.08, mode="live",
+            capital_before=500.0, capital_after=450.0,
+        )
+        original = dash._db
+        try:
+            dash.set_db(db)
+            with patch("src.monitoring.dashboard.LIVE_TRADES_JSONL", tmp_path / "missing.jsonl"):
+                with patch("src.monitoring.dashboard.SNAPSHOTS_JSONL", tmp_path / "missing2.jsonl"):
+                    resp = client.get("/status")
+            assert resp.json()["capital"] == pytest.approx(450.0)
+        finally:
+            dash.set_db(original)
+
+    def test_status_open_positions_count(self, tmp_path):
+        import src.monitoring.dashboard as dash
+        db = self._setup_db()
+        today = datetime.now(timezone.utc).date().isoformat()
+        db.upsert_daily_risk(today, pnl_delta=0.0, open_positions=3)
+        original = dash._db
+        try:
+            dash.set_db(db)
+            with patch("src.monitoring.dashboard.LIVE_TRADES_JSONL", tmp_path / "missing.jsonl"):
+                with patch("src.monitoring.dashboard.SNAPSHOTS_JSONL", tmp_path / "missing2.jsonl"):
+                    resp = client.get("/status")
+            assert resp.json()["open_positions_count"] == 3
+        finally:
+            dash.set_db(original)
+
+    def test_status_defaults_no_data(self, tmp_path):
+        import src.monitoring.dashboard as dash
+        from src.config import STARTING_CAPITAL_EUR
+        db = self._setup_db()
+        original = dash._db
+        try:
+            dash.set_db(db)
+            with patch("src.monitoring.dashboard.LIVE_TRADES_JSONL", tmp_path / "missing.jsonl"):
+                with patch("src.monitoring.dashboard.SNAPSHOTS_JSONL", tmp_path / "missing2.jsonl"):
+                    resp = client.get("/status")
+            data = resp.json()
+            assert data["capital"] == pytest.approx(STARTING_CAPITAL_EUR)
+            assert data["open_positions_count"] == 0
+        finally:
+            dash.set_db(original)
+
+    def test_no_breaking_change(self, tmp_path):
+        """All original keys must still be present plus open_positions_count."""
+        original_keys = {"capital", "today_pnl", "today_trade_count", "win_rate", "last_poll"}
+        with patch("src.monitoring.dashboard.LIVE_TRADES_JSONL", tmp_path / "missing.jsonl"):
+            with patch("src.monitoring.dashboard.SNAPSHOTS_JSONL", tmp_path / "missing2.jsonl"):
+                resp = client.get("/status")
+        data = resp.json()
+        assert original_keys.issubset(data.keys()), f"Missing keys: {original_keys - data.keys()}"
+        assert "open_positions_count" in data

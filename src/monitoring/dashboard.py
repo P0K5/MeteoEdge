@@ -145,6 +145,21 @@ def _latest_capital(snapshots: list[dict]) -> float:
     return float(last.get("capital", STARTING_CAPITAL_EUR))
 
 
+def _open_positions_count() -> int:
+    """Return today's open position count from risk_state, or 0."""
+    if _db is None:
+        return 0
+    try:
+        cur = _db._conn.execute(
+            "SELECT open_positions FROM risk_state WHERE trade_date=?",
+            (_today_utc(),),
+        )
+        row = cur.fetchone()
+        return int(row[0]) if row else 0
+    except Exception:
+        return 0
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -162,7 +177,7 @@ def health() -> dict:
 
 @app.get("/status")
 def status() -> dict:
-    """Summary of current capital, today's PnL, trade count, and win rate."""
+    """Summary of current capital, today's PnL, trade count, win rate, and open positions."""
     trades = _load_trades()
     snapshots = _read_jsonl(SNAPSHOTS_JSONL)
 
@@ -170,12 +185,14 @@ def status() -> dict:
     today_pnl = _today_pnl(trades)
     today_count = _today_trade_count(trades)
     win_rate = _compute_win_rate(trades, n=50)
+    open_count = _open_positions_count()
 
     return {
         "capital": round(capital, 2),
         "today_pnl": round(today_pnl, 2),
         "today_trade_count": today_count,
         "win_rate": round(win_rate, 4),
+        "open_positions_count": open_count,
         "last_poll": last_poll_ts,
     }
 
