@@ -181,6 +181,15 @@ class Database:
         )
         return [dict(row) for row in cur.fetchall()]
 
+    def get_latest_observation(self, source: str, station: str) -> "dict | None":
+        """Return the most recent observation for a source and station, or None if none exists."""
+        cur = self._conn.execute(
+            "SELECT * FROM observations WHERE source=? AND station=? ORDER BY ts DESC LIMIT 1",
+            (source, station),
+        )
+        row = cur.fetchone()
+        return dict(row) if row else None
+
     # ------------------------------------------------------------------
     # candidates
     # ------------------------------------------------------------------
@@ -436,10 +445,25 @@ class Database:
                 row,
             )
 
+    def delete_stale_taf_windows(self, city: str, issued_at: str) -> int:
+        """Delete all taf_windows rows for *city* with the given *issued_at*.
+
+        Used before re-inserting a freshly fetched TAF to avoid duplicates.
+        Returns the number of rows deleted.
+        """
+        with self._conn:
+            cur = self._conn.execute(
+                "DELETE FROM taf_windows WHERE city=? AND issued_at=?",
+                (city, issued_at),
+            )
+        return cur.rowcount
+
     def get_taf_windows(self, city: str, from_ts: str, to_ts: str) -> list[dict]:
-        """Return TAF windows for *city* within [*from_ts*, *to_ts*], ordered by valid_from."""
+        """Return taf_windows for *city* where valid_from is in [from_ts, to_ts], ordered by valid_from."""
         cur = self._conn.execute(
-            "SELECT * FROM taf_windows WHERE city=? AND valid_from>=? AND valid_to<=? ORDER BY valid_from",
+            "SELECT * FROM taf_windows "
+            "WHERE city=? AND valid_from>=? AND valid_from<=? "
+            "ORDER BY valid_from ASC",
             (city, from_ts, to_ts),
         )
         return [dict(r) for r in cur.fetchall()]
