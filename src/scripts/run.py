@@ -913,12 +913,15 @@ def main() -> None:
 
     print("Logs will be written to ./logs/")
 
+    db = Database()
+
     risk_manager = RiskManager(
         daily_loss_limit_eur=RISK_DAILY_LOSS_LIMIT_EUR,
         max_open_positions=RISK_MAX_OPEN_POSITIONS,
         drawdown_stop_pct=RISK_DRAWDOWN_STOP_PCT,
         min_market_liquidity=RISK_MIN_LIQUIDITY,
         starting_capital=STARTING_CAPITAL_EUR,
+        db=db,
     )
     alert_manager = AlertManager()
 
