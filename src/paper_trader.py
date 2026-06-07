@@ -27,13 +27,18 @@ class Trade:
     capital_after: float
 
 class PaperTrader:
-    def __init__(self, starting_capital_eur: float = 500.0, position_size_eur: float = 5.0):
+    def __init__(self, db=None, starting_capital_eur: float = 500.0, position_size_eur: float = 5.0):
+        self._db = db
         self.starting_capital = starting_capital_eur
         self.position_size = position_size_eur
         self.capital = starting_capital_eur
         self.trades: list[Trade] = []
         self.log_dir = Path("paper_trading_logs")
         self.log_dir.mkdir(exist_ok=True)
+        if db is not None:
+            rows = db.get_trades(limit=1, mode='paper')
+            if rows and rows[0].get('capital_after') is not None:
+                self.capital = float(rows[0]['capital_after'])
 
     def realistic_slippage(self) -> int:
         """Random slippage model: 0.5¢ to 3¢ with distribution favoring smaller slips."""
@@ -112,6 +117,28 @@ class PaperTrader:
             capital_after=self.capital,
         )
 
+        if self._db is not None:
+            try:
+                self._db.insert_trade(
+                    ts=trade.ts,
+                    station=station,
+                    ticker=ticker[:16],
+                    bracket_low=bracket_low,
+                    bracket_high=bracket_high,
+                    side=side,
+                    predicted_price=predicted_price,
+                    actual_price=actual_price,
+                    slippage=slippage,
+                    predicted_edge=predicted_edge,
+                    mode='paper',
+                    capital_before=capital_before,
+                    outcome='filled' if win else 'expired',
+                    pnl=pnl_eur,
+                    capital_after=trade.capital_after,
+                )
+            except Exception as e:
+                print(f"[paper] DB write failed: {e}")
+
         self.trades.append(trade)
         return trade
 
@@ -135,7 +162,7 @@ class PaperTrader:
         }
 
     def save_trades(self, filepath: Path):
-        """Save all trades to JSONL."""
+        """Save all trades to JSONL (backward compat for non-DB mode)."""
         with open(filepath, 'w') as f:
             for trade in self.trades:
                 f.write(json.dumps(asdict(trade)) + '\n')

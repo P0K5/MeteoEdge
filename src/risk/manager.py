@@ -4,8 +4,11 @@ All limits are read from src/config.py and can be overridden via environment
 variables. State is held in memory and resets daily at midnight UTC; it is
 not persisted across process restarts (acceptable for the paper-trading phase).
 """
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
+from typing import TYPE_CHECKING
 
 from src.config import (
     RISK_DAILY_LOSS_LIMIT_EUR,
@@ -14,6 +17,9 @@ from src.config import (
     RISK_MIN_LIQUIDITY,
     STARTING_CAPITAL_EUR,
 )
+
+if TYPE_CHECKING:
+    from src.data.db import Database
 
 
 @dataclass
@@ -42,6 +48,7 @@ class RiskManager:
     drawdown_stop_pct: float = field(default_factory=lambda: RISK_DRAWDOWN_STOP_PCT)
     min_market_liquidity: int = field(default_factory=lambda: RISK_MIN_LIQUIDITY)
     starting_capital: float = field(default_factory=lambda: STARTING_CAPITAL_EUR)
+    db: "Database | None" = field(default=None, repr=False)
 
     # Internal state — reset daily at midnight UTC
     _daily_pnl: float = field(default=0.0, init=False, repr=False)
@@ -51,6 +58,12 @@ class RiskManager:
         init=False,
         repr=False,
     )
+
+    def __post_init__(self) -> None:
+        """Seed _daily_pnl from DB if db is provided."""
+        if self.db is not None:
+            today = datetime.now(timezone.utc).date().isoformat()
+            self._daily_pnl = self.db.get_daily_pnl(today)
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -62,6 +75,9 @@ class RiskManager:
         if today != self._trade_day:
             self._daily_pnl = 0.0
             self._trade_day = today
+            if self.db is not None:
+                today_str = today.isoformat()
+                self.db.upsert_daily_risk(today_str, pnl_delta=0.0, open_positions=self._open_positions)
 
     # ------------------------------------------------------------------
     # State mutators
@@ -74,6 +90,9 @@ class RiskManager:
         """
         self._reset_if_new_day()
         self._daily_pnl += pnl_eur
+        if self.db is not None:
+            today = datetime.now(timezone.utc).date().isoformat()
+            self.db.upsert_daily_risk(today, pnl_delta=pnl_eur, open_positions=self._open_positions)
 
     def open_position(self) -> None:
         """Increment the open-position counter when a trade is entered."""
