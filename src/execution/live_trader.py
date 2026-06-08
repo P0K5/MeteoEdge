@@ -100,7 +100,7 @@ class LiveTrader:
         sell_price_cents = max(1, min(99, round(best_bid * 100)))
         args = OrderArgs(
             token_id=token_id,
-            price=round(best_bid, 4),
+            price=round(sell_price_cents / 100, 4),
             size=round(shares, 2),
             side="SELL",
         )
