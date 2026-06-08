@@ -144,6 +144,18 @@ class Database:
             except sqlite3.OperationalError:
                 pass  # column already exists
 
+    def close(self) -> None:
+        """Close the underlying SQLite connection."""
+        self._conn.close()
+
+    def __enter__(self):
+        """Context manager entry."""
+        return self
+
+    def __exit__(self, *args):
+        """Context manager exit; closes the connection."""
+        self.close()
+
     def _now(self) -> str:
         return datetime.now(timezone.utc).isoformat()
 

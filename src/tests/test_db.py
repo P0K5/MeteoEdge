@@ -288,3 +288,49 @@ class TestInsertSettlementUpsert:
         rows = db.get_settlements("KJFK", since="2000-01-01")
         assert rows[0]["source"] == "polymarket"
         assert rows[0]["market_final_price"] is None
+
+
+# ---------------------------------------------------------------------------
+# Connection close and context manager
+# ---------------------------------------------------------------------------
+
+class TestDatabaseClose:
+    """Database.close() and context manager support."""
+
+    def test_close_closes_connection(self):
+        """Calling close() should close the underlying connection."""
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tf:
+            path = tf.name
+        try:
+            db = Database(path)
+            db.close()
+            # After closing, attempting to use the connection should raise
+            with pytest.raises(Exception):  # sqlite3.ProgrammingError
+                db._conn.execute("SELECT 1")
+        finally:
+            os.unlink(path)
+            for ext in ("-wal", "-shm"):
+                try:
+                    os.unlink(path + ext)
+                except FileNotFoundError:
+                    pass
+
+    def test_context_manager_closes_on_exit(self):
+        """Using Database in a with statement should close the connection on exit."""
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tf:
+            path = tf.name
+        try:
+            with Database(path) as db:
+                # Connection should be open inside the context
+                cur = db._conn.execute("SELECT 1")
+                assert cur.fetchone()[0] == 1
+            # After exiting the context, connection should be closed
+            with pytest.raises(Exception):  # sqlite3.ProgrammingError
+                db._conn.execute("SELECT 1")
+        finally:
+            os.unlink(path)
+            for ext in ("-wal", "-shm"):
+                try:
+                    os.unlink(path + ext)
+                except FileNotFoundError:
+                    pass
