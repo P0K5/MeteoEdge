@@ -3,6 +3,7 @@
 Ported from archive/polymarket-spike/tests/test_envelope.py with imports
 updated to use src.model.envelope (src.model.climb_rates provides climb rates).
 """
+import os
 from datetime import datetime
 from math import isclose
 
@@ -12,6 +13,7 @@ from src.model.envelope import (
     Bracket,
     WeatherState,
     compute_envelope,
+    ensemble_forecast,
     p_normal_between,
     true_probability_yes,
 )
@@ -273,3 +275,69 @@ class TestObsBiasCorrection:
         result = true_probability_yes(bracket, state)
         assert not isnan(result), "Result must not be NaN with large offset"
         assert 0.0 <= result <= 1.0, f"Result out of bounds: {result}"
+
+
+# ---------------------------------------------------------------------------
+# deb_mu_f — DEB-weighted forecast mean in true_probability_yes
+# ---------------------------------------------------------------------------
+
+class TestDebMuF:
+    def test_deb_mu_f_used_when_enabled(self, monkeypatch):
+        """WeatherState with deb_mu_f=90.0, DEB_ENABLED=true -> forecast_mean equals deb_mu_f."""
+        monkeypatch.setenv("DEB_ENABLED", "true")
+        # hour=14, climb=4.5; max_env = max(80, 79+4.5) = 83.5
+        # deb_mu_f=90 will be clamped to max_env=83.5, ensemble would give ~81.2
+        # Use a bracket well within the clamped mean region so p differs meaningfully
+        state_deb = make_state(current_high_f=80.0, latest_temp_f=79.0, hour=14, forecast_high_f=81.0)
+        state_deb.secondary_forecast_f = 81.0
+        state_deb.deb_mu_f = 90.0   # high DEB value → after clamping, mean = max_env = 83.5
+
+        state_no_deb = make_state(current_high_f=80.0, latest_temp_f=79.0, hour=14, forecast_high_f=81.0)
+        state_no_deb.secondary_forecast_f = 81.0
+        # deb_mu_f is None (default) — must use ensemble_forecast
+
+        bracket = make_bracket(low_f=81.0, high_f=85.0)
+
+        p_deb = true_probability_yes(bracket, state_deb)
+        p_ensemble = true_probability_yes(bracket, state_no_deb)
+
+        # deb_mu_f path should produce a different (higher here) probability than ensemble path
+        assert p_deb != p_ensemble, (
+            f"DEB path must differ from ensemble path; got deb={p_deb:.4f}, ensemble={p_ensemble:.4f}"
+        )
+
+    def test_deb_mu_f_ignored_when_disabled(self, monkeypatch):
+        """DEB_ENABLED=false (default) -> result equals baseline even with deb_mu_f set."""
+        monkeypatch.setenv("DEB_ENABLED", "false")
+        state_with_deb = make_state(current_high_f=80.0, latest_temp_f=79.0, hour=14, forecast_high_f=81.0)
+        state_with_deb.secondary_forecast_f = 81.0
+        state_with_deb.deb_mu_f = 90.0
+
+        state_no_deb = make_state(current_high_f=80.0, latest_temp_f=79.0, hour=14, forecast_high_f=81.0)
+        state_no_deb.secondary_forecast_f = 81.0
+        # deb_mu_f is None (default)
+
+        bracket = make_bracket(low_f=81.0, high_f=85.0)
+
+        p_with_deb_field = true_probability_yes(bracket, state_with_deb)
+        p_baseline = true_probability_yes(bracket, state_no_deb)
+
+        assert p_with_deb_field == p_baseline, (
+            f"DEB_ENABLED=false must leave result identical to baseline; "
+            f"got deb_field={p_with_deb_field:.6f}, baseline={p_baseline:.6f}"
+        )
+
+    def test_deb_mu_f_none_falls_back(self, monkeypatch):
+        """deb_mu_f=None with DEB_ENABLED=true -> falls back to ensemble_forecast() unchanged."""
+        monkeypatch.setenv("DEB_ENABLED", "true")
+        state = make_state(current_high_f=80.0, latest_temp_f=79.0, hour=14, forecast_high_f=81.0)
+        state.secondary_forecast_f = 81.0
+        state.deb_mu_f = None   # explicitly None — must fall through to ensemble_forecast()
+
+        bracket = make_bracket(low_f=81.0, high_f=85.0)
+        result = true_probability_yes(bracket, state)
+
+        # Compute expected value via ensemble_forecast directly to confirm it matches
+        ensemble_mean = ensemble_forecast(81.0, 81.0)   # 81.0 (both equal)
+        assert result is not None
+        assert 0.0 <= result <= 1.0

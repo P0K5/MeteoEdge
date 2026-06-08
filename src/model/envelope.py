@@ -3,6 +3,7 @@
 Promoted from src/improved_envelope.py. fetch_secondary_forecast has moved to
 src/data/open_meteo.py. Climb rates are now sourced from src/model/climb_rates.py.
 """
+import os
 from dataclasses import dataclass
 from datetime import datetime
 from math import erf, sqrt
@@ -22,6 +23,7 @@ class WeatherState:
     forecast_high_f: float | None
     secondary_forecast_f: float | None = None
     obs_bias_offset_f: float | None = None   # intraday obs bias vs model hourly temp
+    deb_mu_f: float | None = None            # DEB-weighted forecast high; used when DEB_ENABLED=true
 
 
 @dataclass
@@ -88,8 +90,11 @@ def true_probability_yes(bracket: Bracket, state: WeatherState,
     if lo <= state.current_high_f and hi >= max_env:
         return 1.0
 
-    # Use ensemble forecast
-    forecast_mean = ensemble_forecast(state.forecast_high_f, state.secondary_forecast_f)
+    # Use DEB-weighted forecast when enabled, else fall back to static ensemble
+    if state.deb_mu_f is not None and os.getenv("DEB_ENABLED", "false").lower() == "true":
+        forecast_mean = state.deb_mu_f
+    else:
+        forecast_mean = ensemble_forecast(state.forecast_high_f, state.secondary_forecast_f)
     if forecast_mean is None:
         forecast_mean = (state.current_high_f + max_env) / 2
 
