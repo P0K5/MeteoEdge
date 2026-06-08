@@ -478,6 +478,7 @@ class Database:
 
     def get_taf_windows(self, city: str, from_ts: str, to_ts: str) -> list[dict]:
         """Return taf_windows for *city* where valid_from is in [from_ts, to_ts], ordered by valid_from."""
+
         cur = self._conn.execute(
             "SELECT * FROM taf_windows "
             "WHERE city=? AND valid_from>=? AND valid_from<=? "
