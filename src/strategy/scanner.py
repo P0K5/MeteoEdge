@@ -8,9 +8,10 @@ For each market fetched from Polymarket, this module:
 5. Returns Candidate objects for any market with edge >= MIN_EDGE_CENTS
 """
 import json
+import os
 import re
-from dataclasses import dataclass
-from datetime import datetime, timezone
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from dateutil import parser as dtparse
 
 from src.config import (
@@ -20,12 +21,18 @@ from src.config import (
 )
 from src.model.envelope import Bracket, WeatherState, true_probability_yes, compute_envelope
 from src.data.polymarket import get_orderbook
+from src.data.taf_disruption import check_taf_disruption
 from src.strategy.fee import estimate_fee_cents
 
 
 # Map Polymarket city name (lowercase) → METAR station code
 POLYMARKET_CITY_TO_STATION: dict[str, str] = {
     city.lower(): station for station, _, _, city, *_ in STATIONS
+}
+
+# Reverse map: METAR station code → Polymarket city name
+STATION_TO_CITY: dict[str, str] = {
+    station: city for station, _, _, city, *_ in STATIONS
 }
 
 
@@ -214,17 +221,20 @@ class Candidate:
     ev_no: float        # expected value of buying NO
     minutes_to_settlement: float
     market: dict        # raw market dict (for logging, do not mutate)
+    taf_disruption: bool = field(default=False)  # TEMPO/PROB TS/SH/FG overlap
 
 
 def scan_markets(
     weather: dict[str, WeatherState],
     markets: list[dict],
+    db=None,
 ) -> tuple[list[Candidate], list[dict]]:
     """Scan all Polymarket markets against current weather states.
 
     Args:
         weather: dict mapping station code → WeatherState (only stations we have data for)
         markets: list of raw market dicts from get_weather_markets()
+        db: optional Database instance — when provided, TAF disruption is checked per candidate
 
     Returns:
         (candidates, all_snapshots) where:
@@ -314,6 +324,22 @@ def scan_markets(
                         ev_yes=ev_yes, ev_no=ev_no,
                         minutes_to_settlement=mins_left, market=market,
                     )
+
+            if candidate and db:
+                city = STATION_TO_CITY.get(station, "")
+                if city:
+                    now_utc = datetime.now(timezone.utc)
+                    peak_start = now_utc.isoformat()
+                    peak_end = (now_utc + timedelta(minutes=mins_left)).isoformat()
+                    taf_flag = check_taf_disruption(city, db, peak_start, peak_end)
+                    candidate.taf_disruption = taf_flag
+                    if taf_flag:
+                        factor = float(os.getenv("TAF_DISRUPTION_CONFIDENCE_FACTOR", "0.85"))
+                        candidate.confidence *= factor
+                        print(
+                            f"  [cue] {city} taf_disruption=True "
+                            f"confidence={candidate.confidence:.2f}"
+                        )
 
             if candidate:
                 candidates.append(candidate)
