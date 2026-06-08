@@ -21,6 +21,7 @@ _DECAY_RATE = 0.05  # per day; e^(-0.05*k) weights errors k days ago
 
 EQUAL_WEIGHTS: dict[str, float] = {"nws": 0.5, "open_meteo": 0.5}
 MODELS: tuple[str, ...] = ("nws", "open_meteo")
+MIN_SAMPLES: int = _MIN_SAMPLES
 
 
 # ---------------------------------------------------------------------------
