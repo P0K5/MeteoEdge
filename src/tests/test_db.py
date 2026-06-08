@@ -334,3 +334,60 @@ class TestDatabaseClose:
                     os.unlink(path + ext)
                 except FileNotFoundError:
                     pass
+
+
+# ---------------------------------------------------------------------------
+# Model weights and forecast log
+# ---------------------------------------------------------------------------
+
+class TestModelWeightsTables:
+    """upsert_model_weight / get_model_weights and upsert_forecast_log / get_forecast_log."""
+
+    def test_upsert_and_get_model_weights(self):
+        """Insert two weight rows for the same city (different models), retrieve and verify."""
+        db = _db()
+        db.upsert_model_weight(city="KORD", model="model_a", date="2024-01-15", weight=0.5, rmse=2.3)
+        db.upsert_model_weight(city="KORD", model="model_b", date="2024-01-15", weight=0.7, rmse=1.8)
+
+        rows = db.get_model_weights("KORD")
+        assert len(rows) == 2
+        weights_dict = {row["model"]: row for row in rows}
+        assert weights_dict["model_a"]["weight"] == pytest.approx(0.5)
+        assert weights_dict["model_a"]["rmse"] == pytest.approx(2.3)
+        assert weights_dict["model_b"]["weight"] == pytest.approx(0.7)
+        assert weights_dict["model_b"]["rmse"] == pytest.approx(1.8)
+
+    def test_model_weight_upsert_replaces(self):
+        """Insert same (city, model, date) twice with different rmse, verify only one row with latest value."""
+        db = _db()
+        db.upsert_model_weight(city="KORD", model="model_a", date="2024-01-15", weight=0.5, rmse=2.3)
+        db.upsert_model_weight(city="KORD", model="model_a", date="2024-01-15", weight=0.5, rmse=1.9)
+
+        rows = db.get_model_weights("KORD")
+        assert len(rows) == 1, "Expected exactly 1 row after upsert"
+        assert rows[0]["rmse"] == pytest.approx(1.9)
+
+    def test_upsert_and_get_forecast_log(self):
+        """Insert two forecast log rows for same station (different models), retrieve and verify."""
+        db = _db()
+        db.upsert_forecast_log(station="KORD", model="model_a", date="2024-01-15", forecast_high_f=32.5)
+        db.upsert_forecast_log(station="KORD", model="model_b", date="2024-01-16", forecast_high_f=35.0)
+
+        rows = db.get_forecast_log("KORD", since_date="2024-01-01")
+        assert len(rows) == 2
+        assert rows[0]["model"] == "model_a"
+        assert rows[0]["forecast_high_f"] == pytest.approx(32.5)
+        assert rows[1]["model"] == "model_b"
+        assert rows[1]["forecast_high_f"] == pytest.approx(35.0)
+        assert rows[0]["logged_at"] is not None
+        assert rows[1]["logged_at"] is not None
+
+    def test_forecast_log_upsert_replaces(self):
+        """Insert same (station, model, date) twice with different forecast_high_f, verify idempotent."""
+        db = _db()
+        db.upsert_forecast_log(station="KORD", model="model_a", date="2024-01-15", forecast_high_f=32.5)
+        db.upsert_forecast_log(station="KORD", model="model_a", date="2024-01-15", forecast_high_f=34.0)
+
+        rows = db.get_forecast_log("KORD", since_date="2024-01-01")
+        assert len(rows) == 1, "Expected exactly 1 row after upsert"
+        assert rows[0]["forecast_high_f"] == pytest.approx(34.0)

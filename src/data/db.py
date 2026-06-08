@@ -111,6 +111,27 @@ CREATE TABLE IF NOT EXISTS taf_windows (
     raw_text    TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_taf_city_from ON taf_windows(city, valid_from);
+
+CREATE TABLE IF NOT EXISTS model_weights (
+    city    TEXT NOT NULL,
+    model   TEXT NOT NULL,
+    date    TEXT NOT NULL,
+    weight  REAL NOT NULL,
+    rmse    REAL NOT NULL,
+    PRIMARY KEY (city, model, date)
+);
+CREATE INDEX IF NOT EXISTS idx_mw_city_date ON model_weights(city, date);
+
+CREATE TABLE IF NOT EXISTS model_forecast_log (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    station         TEXT NOT NULL,
+    model           TEXT NOT NULL,
+    date            TEXT NOT NULL,
+    forecast_high_f REAL NOT NULL,
+    logged_at       TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_mfl_station_model_date
+    ON model_forecast_log(station, model, date);
 """
 
 
@@ -496,5 +517,46 @@ class Database:
             "WHERE city=? AND valid_from>=? AND valid_from<=? "
             "ORDER BY valid_from ASC",
             (city, from_ts, to_ts),
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+    # ------------------------------------------------------------------
+    # model_weights
+    # ------------------------------------------------------------------
+
+    def upsert_model_weight(self, *, city: str, model: str, date: str, weight: float, rmse: float) -> None:
+        """Upsert a model weight record (unique on city, model, date)."""
+        with self._conn:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO model_weights(city,model,date,weight,rmse) VALUES(?,?,?,?,?)",
+                (city, model, date, weight, rmse),
+            )
+
+    def get_model_weights(self, city: str) -> list[dict]:
+        """Return model weights for *city*, ordered by date descending (most recent first)."""
+        cur = self._conn.execute(
+            "SELECT * FROM model_weights WHERE city=? ORDER BY date DESC",
+            (city,),
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+    # ------------------------------------------------------------------
+    # model_forecast_log
+    # ------------------------------------------------------------------
+
+    def upsert_forecast_log(self, *, station: str, model: str, date: str, forecast_high_f: float) -> None:
+        """Upsert a forecast log record (unique on station, model, date)."""
+        with self._conn:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO model_forecast_log"
+                "(station,model,date,forecast_high_f,logged_at) VALUES(?,?,?,?,?)",
+                (station, model, date, forecast_high_f, self._now()),
+            )
+
+    def get_forecast_log(self, station: str, since_date: str) -> list[dict]:
+        """Return forecast logs for *station* on or after *since_date*, ordered by date ascending."""
+        cur = self._conn.execute(
+            "SELECT * FROM model_forecast_log WHERE station=? AND date>=? ORDER BY date ASC",
+            (station, since_date),
         )
         return [dict(r) for r in cur.fetchall()]

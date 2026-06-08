@@ -90,6 +90,19 @@ class PortfolioOut(BaseModel):
     updated_at: str
 
 
+class DebWeightOut(BaseModel):
+    model: str
+    weight: float
+    rmse_f: float
+    n_samples: int = 0
+
+
+class DebOut(BaseModel):
+    city: str
+    updated_at: str
+    weights: list[DebWeightOut]
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -512,6 +525,39 @@ def get_city_taf(city: str, hours: int = 24) -> list[dict]:
         {**w, "taf_disruption": _window_has_disruption(w)}
         for w in windows
     ]
+
+
+@app.get("/api/cities/{city}/deb", response_model=DebOut)
+def get_city_deb(city: str) -> DebOut:
+    """Return DEB model weights and RMSE for *city*.
+
+    City name is normalised to title-case before the DB lookup so the endpoint
+    is case-insensitive.  Returns 404 when no model_weights rows exist for the
+    city.
+
+    ``updated_at`` is the most-recent ``date`` value across all weight rows,
+    formatted as an ISO date string.  ``n_samples`` is set to 0 because the
+    model_weights table does not carry a sample count; callers that need the
+    full forecast-log count should query the forecast-log endpoint directly.
+    """
+    normalised = city.title()
+    rows = _db.get_model_weights(normalised)
+    if not rows:
+        raise HTTPException(status_code=404, detail="no DEB data for city")
+
+    # updated_at = max date across all rows (rows are already ordered DESC)
+    updated_at = rows[0]["date"]
+
+    weights = [
+        DebWeightOut(
+            model=row["model"],
+            weight=round(float(row["weight"]), 4),
+            rmse_f=round(float(row["rmse"]), 4),
+            n_samples=0,
+        )
+        for row in rows
+    ]
+    return DebOut(city=normalised, updated_at=updated_at, weights=weights)
 
 
 # Mount static files last so /api routes take priority
