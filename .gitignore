@@ -80,3 +80,6 @@ meteoedge-spike/logs/
 # OS
 .DS_Store
 Thumbs.db
+
+# Claude Code agent worktrees (temporary, never commit)
+.claude/worktrees/
