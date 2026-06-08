@@ -372,12 +372,10 @@ def _sync_open_orders(live_trader, db=None) -> None:
         filled_count = 0
         if db is not None:
             try:
-                trades = db.get_trades(limit=None, mode="live")
-                for t in trades:
-                    if (t.get("ts", "")[:10] == today
-                            and t.get("outcome") == "filled"
-                            and t.get("order_id")):
-                        _open_orders.add(t["order_id"])
+                positions = db.get_open_positions()
+                for p in positions:
+                    if p.get("no_token_id"):
+                        _open_orders.add(p["no_token_id"])
                         filled_count += 1
             except Exception as e:
                 print(f"[orders] DB read failed: {e}")
