@@ -391,3 +391,58 @@ class TestModelWeightsTables:
         rows = db.get_forecast_log("KORD", since_date="2024-01-01")
         assert len(rows) == 1, "Expected exactly 1 row after upsert"
         assert rows[0]["forecast_high_f"] == pytest.approx(34.0)
+
+
+# ---------------------------------------------------------------------------
+# Intraday corrections
+# ---------------------------------------------------------------------------
+
+class TestIntradayCorrectionTable:
+    """upsert_intraday_correction / get_intraday_corrections round-trip."""
+
+    def test_table_exists(self):
+        db = _db()
+        cur = db._conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='intraday_corrections'"
+        )
+        assert cur.fetchone() is not None
+
+    def test_upsert_and_get(self):
+        db = _db()
+        db.upsert_intraday_correction(
+            city="Tokyo",
+            date="2024-01-15",
+            obs_time="2024-01-15T09:00:00+00:00",
+            obs_temp_f=68.0,
+            model_temp_f=65.0,
+            delta_f=2.4,
+            corrected_mu_f=82.4,
+            decay_factor=0.8,
+        )
+        rows = db.get_intraday_corrections("Tokyo", "2024-01-15")
+        assert len(rows) == 1
+        r = rows[0]
+        assert r["city"] == "Tokyo"
+        assert r["obs_temp_f"] == pytest.approx(68.0)
+        assert r["model_temp_f"] == pytest.approx(65.0)
+        assert r["delta_f"] == pytest.approx(2.4)
+        assert r["corrected_mu_f"] == pytest.approx(82.4)
+        assert r["decay_factor"] == pytest.approx(0.8)
+
+    def test_upsert_replaces(self):
+        db = _db()
+        common = dict(
+            city="Tokyo",
+            date="2024-01-15",
+            obs_time="2024-01-15T09:00:00+00:00",
+            obs_temp_f=68.0,
+            model_temp_f=65.0,
+            delta_f=2.4,
+            corrected_mu_f=82.4,
+            decay_factor=0.8,
+        )
+        db.upsert_intraday_correction(**common)
+        db.upsert_intraday_correction(**{**common, "corrected_mu_f": 99.0})
+        rows = db.get_intraday_corrections("Tokyo", "2024-01-15")
+        assert len(rows) == 1, "Expected exactly 1 row after upsert"
+        assert rows[0]["corrected_mu_f"] == pytest.approx(99.0)
