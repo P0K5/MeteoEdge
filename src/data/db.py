@@ -162,14 +162,32 @@ class Database:
         source: str,
         current_high: "float | None" = None,
         raw_json: "str | None" = None,
+        cadence_min: "int | None" = None,
+        is_official: "int | None" = None,
     ) -> int:
-        """Insert a weather observation; returns the new row id."""
-        cur = self._conn.execute(
-            "INSERT INTO observations"
-            "(ts,station,temp_f,temp_native,unit,current_high,source,raw_json) "
-            "VALUES(?,?,?,?,?,?,?,?)",
-            (ts, station, temp_f, temp_native, unit, current_high, source, raw_json),
-        )
+        """Insert a weather observation; returns the new row id.
+
+        cadence_min and is_official are optional and require the #106 schema
+        migration (ALTER TABLE adding those columns) to have run first.
+        """
+        if cadence_min is not None or is_official is not None:
+            cur = self._conn.execute(
+                "INSERT INTO observations"
+                "(ts,station,temp_f,temp_native,unit,current_high,source,raw_json,"
+                "cadence_min,is_official) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?)",
+                (
+                    ts, station, temp_f, temp_native, unit, current_high,
+                    source, raw_json, cadence_min, is_official,
+                ),
+            )
+        else:
+            cur = self._conn.execute(
+                "INSERT INTO observations"
+                "(ts,station,temp_f,temp_native,unit,current_high,source,raw_json) "
+                "VALUES(?,?,?,?,?,?,?,?)",
+                (ts, station, temp_f, temp_native, unit, current_high, source, raw_json),
+            )
         self._conn.commit()
         return cur.lastrowid
 
@@ -460,6 +478,7 @@ class Database:
 
     def get_taf_windows(self, city: str, from_ts: str, to_ts: str) -> list[dict]:
         """Return taf_windows for *city* where valid_from is in [from_ts, to_ts], ordered by valid_from."""
+
         cur = self._conn.execute(
             "SELECT * FROM taf_windows "
             "WHERE city=? AND valid_from>=? AND valid_from<=? "
