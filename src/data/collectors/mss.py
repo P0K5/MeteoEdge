@@ -52,8 +52,9 @@ log = logging.getLogger(__name__)
 
 _MSS_URL = "https://api.data.gov.sg/v1/environment/air-temperature"
 
-# Station priority list: try S24 (Changi Airport) first, then S108 (Paya Lebar)
-_STATION_PRIORITY = ["S24", "S108"]
+# Station priority list: S24 (Changi Airport) preferred, S108 (Paya Lebar) and
+# S107 (East Coast Parkway) as fallbacks when airport sensors are unavailable.
+_STATION_PRIORITY = ["S24", "S108", "S107"]
 
 # SGT = UTC+8
 _SGT = timezone(timedelta(hours=8))
