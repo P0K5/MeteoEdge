@@ -10,6 +10,9 @@ py-clob-client-v2>=1.0.1
 # Environment variable loading
 python-dotenv>=1.0.0
 
+# YAML config parsing
+pyyaml>=6.0
+
 # Timezone & Datetime
 python-dateutil>=2.8.2
 pytz>=2023.3
