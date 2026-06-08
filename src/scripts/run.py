@@ -23,12 +23,18 @@ from src.config import (
     RISK_DRAWDOWN_STOP_PCT, RISK_MIN_LIQUIDITY, STARTING_CAPITAL_EUR,
     POSITION_SIZE_EUR, POSITION_SIZE_WITH_FEES, TAKE_PROFIT_BUFFER_CENTS,
     FORECAST_STDDEV_F,
+    get_source_priority,
 )
 from src.data.db import Database
 from src.data.metar import fetch_all_metars_today, compute_daily_high, now_local, sunset_local
 from src.data.nws import fetch_nws_forecast_high
 from src.data.open_meteo import fetch_secondary_forecast
 from src.data.polymarket import get_orderbook, get_weather_markets
+from src.data.taf_collector import TafCollector
+from src.data.collectors.jma_ameidas import JmaAmedasCollector
+from src.data.collectors.amos import AmosCollector
+from src.data.collectors.mss import MssCollector
+from src.data.freshness_monitor import FreshnessMonitor
 from src.model.envelope import WeatherState
 from src.monitoring.alerts import AlertManager
 from src.risk.manager import RiskManager
@@ -790,10 +796,16 @@ def poll_once(risk_manager, live_trader=None, alert_manager=None, db=None) -> No
         return
     print(f"[polymarket] {len(markets)} weather markets fetched")
 
-    candidates, snapshots = scan_markets(weather, markets)
+    candidates, snapshots = scan_markets(weather, markets, db=db)
 
     for snap in snapshots:
         _append_snapshot(snap)
+
+    # Log freshness status for all configured high-frequency sources.
+    if db is not None:
+        _freshness_monitor = FreshnessMonitor()
+        for city_sources in [get_source_priority(c) for c in ["Tokyo", "Seoul", "Busan", "Singapore"]]:
+            _freshness_monitor.check_all(db, city_sources)
 
     # Filter candidates through risk manager sequentially so position counts are accurate,
     # then execute all approved live orders in parallel so they hit the market simultaneously.
@@ -892,6 +904,24 @@ def poll_once(risk_manager, live_trader=None, alert_manager=None, db=None) -> No
         )
 
 
+# ---------------------------------------------------------------------------
+# Collector thread helper
+# ---------------------------------------------------------------------------
+
+def _start_collector_thread(collector_fn, name: str) -> None:
+    """Start a collector in a daemon thread; log WARNING on any startup exception."""
+    import logging as _logging
+
+    def _run():
+        try:
+            collector_fn()
+        except Exception as e:
+            _logging.warning(f"[{name}] collector thread exited: {e}")
+
+    t = threading.Thread(target=_run, name=name, daemon=True)
+    t.start()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="MeteoEdge polling loop")
     parser.add_argument(
@@ -915,6 +945,14 @@ def main() -> None:
     open_positions = db.get_open_positions()
     if open_positions:
         print(f"[startup] recovered {len(open_positions)} open position(s) from DB")
+
+    # Start Sprint 1 data-collection threads (daemon — will not block shutdown).
+    # Each thread catches all exceptions and logs WARNING so a collector failure
+    # never crashes run.py.
+    _start_collector_thread(lambda: TafCollector(db).run_loop(), "taf-collector")
+    _start_collector_thread(lambda: JmaAmedasCollector(db).run_loop(), "jma-collector")
+    _start_collector_thread(lambda: AmosCollector(db).run_loop(), "amos-collector")
+    _start_collector_thread(lambda: MssCollector(db).run_loop(), "mss-collector")
 
     live_trader = None
     if args.live:
