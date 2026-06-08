@@ -37,7 +37,7 @@ class TestGetSourcePriority:
         assert len(sources) > 0
         assert sources[0]["source"] == "mss"
         assert sources[0]["station"] == "Singapore"
-        assert sources[0]["cadence_min"] == 20
+        assert sources[0]["cadence_min"] == 1
         assert sources[0]["is_official"] is True
 
     def test_get_source_priority_returns_list(self):

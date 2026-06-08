@@ -31,7 +31,7 @@ Busan:
 Singapore:
   - source: mss
     station: Singapore
-    cadence_min: 20
+    cadence_min: 1
     is_official: true
   - source: metar
     station: WSSS

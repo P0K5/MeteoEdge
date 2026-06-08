@@ -179,17 +179,11 @@ ENABLE_CLOB_ENRICHMENT = os.getenv("ENABLE_CLOB_ENRICHMENT", "false").lower() ==
 # ------------------------------------------------------------------
 
 @lru_cache(maxsize=None)
-def get_source_priority(city: str) -> list[dict]:
-    """Load and return the priority-ranked source list for a city.
-
-    Args:
-        city: The city name (e.g., "Tokyo", "Seoul", "Singapore")
-
-    Returns:
-        A list of dicts, each with keys: source, station, cadence_min, is_official
-        Cached after first load — file is read only once per process.
-    """
+def _load_source_priority() -> dict:
     config_path = Path(__file__).parent.parent / "config" / "source_priority.yaml"
     with open(config_path, "r") as f:
-        data = yaml.safe_load(f)
-    return data.get(city, [])
+        return yaml.safe_load(f)
+
+
+def get_source_priority(city: str) -> list[dict]:
+    return _load_source_priority().get(city, [])
