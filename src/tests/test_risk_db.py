@@ -235,3 +235,49 @@ class TestOpenPositionsTracking:
         row = cur.fetchone()
         assert row is not None
         assert row[0] == 3
+
+    def test_open_position_syncs_to_db(self):
+        """open_position() syncs the updated open_positions count to DB when db is set."""
+        db = Database(":memory:")
+        rm = _rm_with_db(db)
+
+        rm.open_position()
+
+        # Verify the DB has the open_positions count via get_daily_pnl and risk_state query
+        today = datetime.now(timezone.utc).date().isoformat()
+        cur = db._conn.execute(
+            "SELECT open_positions FROM risk_state WHERE trade_date=?",
+            (today,)
+        )
+        row = cur.fetchone()
+        assert row is not None
+        assert row[0] == 1
+
+    def test_close_position_syncs_to_db(self):
+        """close_position() syncs the updated open_positions count to DB when db is set."""
+        db = Database(":memory:")
+        rm = _rm_with_db(db)
+
+        rm.open_position()
+        rm.open_position()
+        rm.close_position()
+
+        # Verify the DB has the updated open_positions count
+        today = datetime.now(timezone.utc).date().isoformat()
+        cur = db._conn.execute(
+            "SELECT open_positions FROM risk_state WHERE trade_date=?",
+            (today,)
+        )
+        row = cur.fetchone()
+        assert row is not None
+        assert row[0] == 1
+
+    def test_no_db_no_error(self):
+        """open_position() and close_position() do not raise when db=None."""
+        rm = _rm_no_db()
+
+        rm.open_position()
+        rm.close_position()
+
+        # If we reach here without exception, test passes
+        assert rm._open_positions == 0
