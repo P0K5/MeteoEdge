@@ -14,12 +14,12 @@ Data source (priority order):
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Literal
 
 import httpx
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -27,9 +27,13 @@ from pydantic import BaseModel
 from py_clob_client_v2.clob_types import BookParams
 
 from src.config import POLYMARKET_GAMMA_API, STATIONS, LIVE_TRADES_JSONL, SNAPSHOTS_JSONL, LOG_DIR
+from src.data.db import Database
 from src.data.nws import fetch_nws_forecast_high
 from src.data.polymarket import get_orderbook
+from src.data.taf_disruption import check_taf_disruption
 STATE_PATH = Path("logs/live_state.json")
+
+_db = Database()
 
 logger = logging.getLogger(__name__)
 
@@ -475,6 +479,39 @@ def portfolio() -> PortfolioOut:
         closed_positions=closed_pos,
         updated_at=datetime.now(timezone.utc).isoformat(),
     )
+
+
+_DISRUPTION_GROUP = "Temporary Fluctuation"
+_DISRUPTION_CODES = frozenset({"TS", "SH", "FG"})
+
+
+def _window_has_disruption(window: dict) -> bool:
+    if window.get("group_type") != _DISRUPTION_GROUP:
+        return False
+    sig = set((window.get("sig_wx") or "").split())
+    return bool(sig & _DISRUPTION_CODES)
+
+
+@app.get("/api/cities/{city}/taf")
+def get_city_taf(city: str, hours: int = 24) -> list[dict]:
+    """Return TAF windows for *city* for the next *hours* hours (max 48).
+
+    Each window includes a computed `taf_disruption` boolean.
+    Returns 404 when no TAF data is available for the city.
+    """
+    hours = min(hours, 48)
+    now = datetime.now(timezone.utc)
+    from_ts = now.isoformat()
+    to_ts = (now + timedelta(hours=hours)).isoformat()
+
+    windows = _db.get_taf_windows(city, from_ts=from_ts, to_ts=to_ts)
+    if not windows:
+        raise HTTPException(status_code=404, detail=f"No TAF data for city: {city}")
+
+    return [
+        {**w, "taf_disruption": _window_has_disruption(w)}
+        for w in windows
+    ]
 
 
 # Mount static files last so /api routes take priority
