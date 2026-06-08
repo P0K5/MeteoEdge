@@ -232,7 +232,7 @@ class TestBuildWeatherHighFreqObs:
             patch("src.scripts.run.fetch_hourly_temp_now", return_value=84.0),
             patch("src.scripts.run.now_local", return_value=now),
             patch("src.scripts.run.sunset_local", return_value=now),
-            patch("src.scripts.run.STATION_ACTIVE_HOURS", {"WSSS": (6, 23)}),
+            patch("src.scripts.run.STATION_ACTIVE_HOURS", {"WSSS": (0, 24)}),
             patch("src.scripts.run.STATIONS", [("WSSS", 1.3644, 103.9915, "Singapore", "WSSS", "C", "Asia/Singapore")]),
             patch("src.scripts.run.STATION_TZ", {"WSSS": "Asia/Singapore"}),
             patch("src.scripts.run.get_source_priority", return_value=[
@@ -253,13 +253,13 @@ class TestBuildWeatherHighFreqObs:
         }
         db = self._make_mock_db(obs_dict=fresh_obs)
         state = self._run_build_weather(db, metar_temp_c=20.0)
-        if state is not None:
-            assert abs(state.latest_temp_f - 88.0) < 0.01
+        assert state is not None, "_build_weather must return WSSS state — check active hours patch"
+        assert abs(state.latest_temp_f - 88.0) < 0.01
 
     def test_no_db_produces_none_bias_offset(self):
         state = self._run_build_weather(db=None)
-        if state is not None:
-            assert state.obs_bias_offset_f is None
+        assert state is not None, "_build_weather must return WSSS state — check active hours patch"
+        assert state.obs_bias_offset_f is None
 
     def test_stale_high_freq_obs_falls_back_to_metar(self):
         from datetime import datetime, timezone, timedelta
@@ -271,9 +271,9 @@ class TestBuildWeatherHighFreqObs:
         }
         db = self._make_mock_db(obs_dict=stale_obs)
         state = self._run_build_weather(db, metar_temp_c=20.0)
-        if state is not None:
-            # 99F stale obs must NOT override METAR (20C = 68F)
-            assert abs(state.latest_temp_f - 68.0) < 0.5
+        assert state is not None, "_build_weather must return WSSS state — check active hours patch"
+        # 99F stale obs must NOT override METAR (20C = 68F)
+        assert abs(state.latest_temp_f - 68.0) < 0.5
 
     def test_bias_offset_computed_correctly(self):
         from datetime import datetime, timezone
@@ -283,6 +283,7 @@ class TestBuildWeatherHighFreqObs:
         }
         db = self._make_mock_db(obs_dict=fresh_obs)
         state = self._run_build_weather(db)
+        assert state is not None, "_build_weather must return WSSS state — check active hours patch"
         # fetch_hourly_temp_now is mocked to return 84.0 in _run_build_weather
-        if state is not None and state.obs_bias_offset_f is not None:
-            assert abs(state.obs_bias_offset_f - 3.0) < 0.01
+        assert state.obs_bias_offset_f is not None
+        assert abs(state.obs_bias_offset_f - 3.0) < 0.01
