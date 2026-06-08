@@ -97,10 +97,16 @@ class RiskManager:
     def open_position(self) -> None:
         """Increment the open-position counter when a trade is entered."""
         self._open_positions += 1
+        if self.db is not None:
+            today = datetime.now(timezone.utc).date().isoformat()
+            self.db.upsert_daily_risk(today, pnl_delta=0.0, open_positions=self._open_positions)
 
     def close_position(self) -> None:
         """Decrement the open-position counter when a trade is exited."""
         self._open_positions = max(0, self._open_positions - 1)
+        if self.db is not None:
+            today = datetime.now(timezone.utc).date().isoformat()
+            self.db.upsert_daily_risk(today, pnl_delta=0.0, open_positions=self._open_positions)
 
     # ------------------------------------------------------------------
     # Trade gate
