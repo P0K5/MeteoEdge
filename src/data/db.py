@@ -111,6 +111,19 @@ CREATE TABLE IF NOT EXISTS taf_windows (
     raw_text    TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_taf_city_from ON taf_windows(city, valid_from);
+
+CREATE TABLE IF NOT EXISTS intraday_corrections (
+    city           TEXT NOT NULL,
+    date           TEXT NOT NULL,
+    obs_time       TEXT NOT NULL,
+    obs_temp_f     REAL NOT NULL,
+    model_temp_f   REAL NOT NULL,
+    delta_f        REAL NOT NULL,
+    corrected_mu_f REAL NOT NULL,
+    decay_factor   REAL NOT NULL,
+    PRIMARY KEY (city, date, obs_time)
+);
+CREATE INDEX IF NOT EXISTS idx_ic_city_date ON intraday_corrections(city, date);
 """
 
 
@@ -496,5 +509,38 @@ class Database:
             "WHERE city=? AND valid_from>=? AND valid_from<=? "
             "ORDER BY valid_from ASC",
             (city, from_ts, to_ts),
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+    # ------------------------------------------------------------------
+    # intraday_corrections
+    # ------------------------------------------------------------------
+
+    def upsert_intraday_correction(
+        self,
+        *,
+        city: str,
+        date: str,
+        obs_time: str,
+        obs_temp_f: float,
+        model_temp_f: float,
+        delta_f: float,
+        corrected_mu_f: float,
+        decay_factor: float,
+    ) -> None:
+        """Upsert an intraday correction record (unique on city, date, obs_time)."""
+        with self._conn:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO intraday_corrections"
+                "(city,date,obs_time,obs_temp_f,model_temp_f,delta_f,corrected_mu_f,decay_factor) "
+                "VALUES(?,?,?,?,?,?,?,?)",
+                (city, date, obs_time, obs_temp_f, model_temp_f, delta_f, corrected_mu_f, decay_factor),
+            )
+
+    def get_intraday_corrections(self, city: str, date: str) -> list[dict]:
+        """Return intraday corrections for city on date, ordered by obs_time ascending."""
+        cur = self._conn.execute(
+            "SELECT * FROM intraday_corrections WHERE city=? AND date=? ORDER BY obs_time ASC",
+            (city, date),
         )
         return [dict(r) for r in cur.fetchall()]
