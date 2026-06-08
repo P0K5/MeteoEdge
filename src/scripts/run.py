@@ -28,7 +28,7 @@ from src.config import (
 from src.data.db import Database
 from src.data.metar import fetch_all_metars_today, compute_daily_high, now_local, sunset_local
 from src.data.nws import fetch_nws_forecast_high
-from src.data.open_meteo import fetch_secondary_forecast
+from src.data.open_meteo import fetch_secondary_forecast, fetch_hourly_temp_now
 from src.data.polymarket import get_orderbook, get_weather_markets
 from src.data.taf_collector import TafCollector
 from src.data.collectors.jma_ameidas import JmaAmedasCollector
@@ -198,7 +198,7 @@ def _execute_live(candidate, clob_client_factory, risk_manager, ts: str, db=None
 # Poll loop
 # ---------------------------------------------------------------------------
 
-def _build_weather() -> dict[str, WeatherState]:
+def _build_weather(db: "Database | None" = None) -> dict[str, WeatherState]:
     weather: dict[str, WeatherState] = {}
     for station, lat, lon, city, *_ in STATIONS:
         import pytz
@@ -243,6 +243,31 @@ def _build_weather() -> dict[str, WeatherState]:
             print(f"[{station}] METAR parse error: {e}, skipping")
             continue
 
+        # Attempt to upgrade latest_temp_f from a fresher high-freq obs
+        obs_bias_offset_f = None
+        if db is not None:
+            for src_cfg in get_source_priority(city):
+                if src_cfg["source"] == "metar":
+                    continue
+                obs = db.get_latest_observation(src_cfg["source"], src_cfg["station"])
+                if obs is None:
+                    continue
+                try:
+                    obs_ts = dtparse.parse(obs["ts"])
+                    if obs_ts.tzinfo is None:
+                        obs_ts = obs_ts.replace(tzinfo=timezone.utc)
+                except Exception:
+                    continue
+                age_min = (datetime.now(timezone.utc) - obs_ts).total_seconds() / 60
+                if age_min > 2 * src_cfg["cadence_min"]:
+                    continue  # stale — skip
+                latest_temp_f = float(obs["temp_f"])
+                latest_time = obs_ts
+                break  # highest-priority fresh source wins
+            hourly_model_f = fetch_hourly_temp_now(lat, lon)
+            if hourly_model_f is not None:
+                obs_bias_offset_f = latest_temp_f - hourly_model_f
+
         forecast_nws = fetch_nws_forecast_high(lat, lon)
         forecast_secondary = fetch_secondary_forecast(lat, lon)
 
@@ -256,6 +281,7 @@ def _build_weather() -> dict[str, WeatherState]:
             latest_temp_time=latest_time,
             forecast_high_f=forecast_nws,
             secondary_forecast_f=forecast_secondary,
+            obs_bias_offset_f=obs_bias_offset_f,
         )
         print(f"[{station}] high={high_f:.1f}F latest={latest_temp_f:.1f}F nws={forecast_nws}")
     return weather
@@ -776,7 +802,7 @@ def poll_once(risk_manager, live_trader=None, alert_manager=None, db=None) -> No
     if live_trader:
         _check_take_profit_exits(live_trader, ts, db=db)
 
-    weather = _build_weather()
+    weather = _build_weather(db=db)
     if not weather:
         print("[run] No weather data for any station -- skipping market scan")
         return

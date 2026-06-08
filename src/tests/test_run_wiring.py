@@ -199,3 +199,91 @@ class TestPollOncePassesDb:
         assert captured_kwargs[0]["db"] is mock_db, (
             "db passed to scan_markets must be the same object passed to poll_once"
         )
+
+
+# ---------------------------------------------------------------------------
+# _build_weather() high-freq obs wiring — issue #129
+# ---------------------------------------------------------------------------
+
+class TestBuildWeatherHighFreqObs:
+    """_build_weather() must prefer fresh high-freq obs over METAR when available."""
+
+    def _make_mock_db(self, obs_dict=None):
+        db = MagicMock()
+        db.get_latest_observation.return_value = obs_dict
+        return db
+
+    def _run_build_weather(self, db, metar_temp_c=20.0, metar_time_offset_min=-10):
+        """Run _build_weather() with mocked METAR and return the WeatherState for WSSS (Singapore)."""
+        from datetime import datetime, timezone, timedelta
+        from unittest.mock import patch, MagicMock
+        from src.scripts.run import _build_weather
+
+        now = datetime.now(timezone.utc)
+        metar_time = now + timedelta(minutes=metar_time_offset_min)
+
+        fake_metar = [{"temp": str(metar_temp_c), "reportTime": metar_time.isoformat()}]
+
+        with (
+            patch("src.scripts.run.fetch_all_metars_today", return_value=fake_metar),
+            patch("src.scripts.run.compute_daily_high", return_value=(80.0, now)),
+            patch("src.scripts.run.fetch_nws_forecast_high", return_value=82.0),
+            patch("src.scripts.run.fetch_secondary_forecast", return_value=83.0),
+            patch("src.scripts.run.fetch_hourly_temp_now", return_value=84.0),
+            patch("src.scripts.run.now_local", return_value=now),
+            patch("src.scripts.run.sunset_local", return_value=now),
+            patch("src.scripts.run.STATION_ACTIVE_HOURS", {"WSSS": (0, 24)}),
+            patch("src.scripts.run.STATIONS", [("WSSS", 1.3644, 103.9915, "Singapore", "WSSS", "C", "Asia/Singapore")]),
+            patch("src.scripts.run.STATION_TZ", {"WSSS": "Asia/Singapore"}),
+            patch("src.scripts.run.get_source_priority", return_value=[
+                {"source": "mss", "station": "Singapore", "cadence_min": 1},
+                {"source": "metar", "station": "WSSS", "cadence_min": 30},
+            ]),
+        ):
+            result = _build_weather(db=db)
+        return result.get("WSSS")
+
+    def test_fresh_high_freq_obs_overrides_metar_temp(self):
+        from datetime import datetime, timezone
+        fresh_obs = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "temp_f": 88.0,
+            "source": "mss",
+            "station": "Singapore",
+        }
+        db = self._make_mock_db(obs_dict=fresh_obs)
+        state = self._run_build_weather(db, metar_temp_c=20.0)
+        assert state is not None, "_build_weather must return WSSS state — check active hours patch"
+        assert abs(state.latest_temp_f - 88.0) < 0.01
+
+    def test_no_db_produces_none_bias_offset(self):
+        state = self._run_build_weather(db=None)
+        assert state is not None, "_build_weather must return WSSS state — check active hours patch"
+        assert state.obs_bias_offset_f is None
+
+    def test_stale_high_freq_obs_falls_back_to_metar(self):
+        from datetime import datetime, timezone, timedelta
+        stale_obs = {
+            "ts": (datetime.now(timezone.utc) - timedelta(minutes=60)).isoformat(),
+            "temp_f": 99.0,
+            "source": "mss",
+            "station": "Singapore",
+        }
+        db = self._make_mock_db(obs_dict=stale_obs)
+        state = self._run_build_weather(db, metar_temp_c=20.0)
+        assert state is not None, "_build_weather must return WSSS state — check active hours patch"
+        # 99F stale obs must NOT override METAR (20C = 68F)
+        assert abs(state.latest_temp_f - 68.0) < 0.5
+
+    def test_bias_offset_computed_correctly(self):
+        from datetime import datetime, timezone
+        fresh_obs = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "temp_f": 87.0,
+        }
+        db = self._make_mock_db(obs_dict=fresh_obs)
+        state = self._run_build_weather(db)
+        assert state is not None, "_build_weather must return WSSS state — check active hours patch"
+        # fetch_hourly_temp_now is mocked to return 84.0 in _run_build_weather
+        assert state.obs_bias_offset_f is not None
+        assert abs(state.obs_bias_offset_f - 3.0) < 0.01

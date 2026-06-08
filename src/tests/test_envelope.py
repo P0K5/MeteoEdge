@@ -212,3 +212,64 @@ class TestTrueProbabilityYes:
         bracket = make_bracket(low_f=79.0, high_f=85.0)
         result = true_probability_yes(bracket, state)
         assert 0.0 <= result <= 1.0
+
+
+# ---------------------------------------------------------------------------
+# obs_bias_offset_f — bias correction in true_probability_yes
+# ---------------------------------------------------------------------------
+
+class TestObsBiasCorrection:
+    def test_positive_offset_increases_probability_above_mean(self):
+        """A positive obs_bias_offset_f shifts forecast_mean up, raising p for high brackets."""
+        state = make_state(current_high_f=80.0, latest_temp_f=79.0, hour=14, forecast_high_f=82.0)
+        state_with_offset = make_state(
+            current_high_f=80.0, latest_temp_f=79.0, hour=14, forecast_high_f=82.0,
+        )
+        # Attach offset via dataclass field (make_state doesn't accept obs_bias_offset_f yet
+        # so we set it directly after construction)
+        state_with_offset.obs_bias_offset_f = 3.0
+        bracket = make_bracket(low_f=83.0, high_f=87.0)
+        p_base = true_probability_yes(bracket, state)
+        p_offset = true_probability_yes(bracket, state_with_offset)
+        assert p_offset > p_base, (
+            f"Positive bias offset should raise p for bracket above mean; "
+            f"got base={p_base:.4f}, offset={p_offset:.4f}"
+        )
+
+    def test_negative_offset_decreases_probability_above_mean(self):
+        """A negative obs_bias_offset_f shifts forecast_mean down, lowering p for high brackets."""
+        state = make_state(current_high_f=80.0, latest_temp_f=79.0, hour=14, forecast_high_f=82.0)
+        state_with_offset = make_state(
+            current_high_f=80.0, latest_temp_f=79.0, hour=14, forecast_high_f=82.0,
+        )
+        state_with_offset.obs_bias_offset_f = -3.0
+        bracket = make_bracket(low_f=83.0, high_f=87.0)
+        p_base = true_probability_yes(bracket, state)
+        p_offset = true_probability_yes(bracket, state_with_offset)
+        assert p_offset < p_base, (
+            f"Negative bias offset should lower p for bracket above mean; "
+            f"got base={p_base:.4f}, offset={p_offset:.4f}"
+        )
+
+    def test_none_offset_is_identical_to_baseline(self):
+        """obs_bias_offset_f=None must produce identical result to no offset field at all."""
+        state_no_field = make_state(current_high_f=80.0, latest_temp_f=79.0, hour=14, forecast_high_f=82.0)
+        state_none_offset = make_state(current_high_f=80.0, latest_temp_f=79.0, hour=14, forecast_high_f=82.0)
+        state_none_offset.obs_bias_offset_f = None
+        bracket = make_bracket(low_f=83.0, high_f=87.0)
+        p_no_field = true_probability_yes(bracket, state_no_field)
+        p_none_offset = true_probability_yes(bracket, state_none_offset)
+        assert p_no_field == p_none_offset, (
+            f"None offset must equal no-offset baseline; "
+            f"got no_field={p_no_field:.6f}, none={p_none_offset:.6f}"
+        )
+
+    def test_large_offset_clamps_to_envelope_bounds(self):
+        """A huge positive offset must clamp at max_env — result bounded [0, 1], not NaN."""
+        from math import isnan
+        state = make_state(current_high_f=80.0, latest_temp_f=79.0, hour=14, forecast_high_f=82.0)
+        state.obs_bias_offset_f = 999.0
+        bracket = make_bracket(low_f=83.0, high_f=87.0)
+        result = true_probability_yes(bracket, state)
+        assert not isnan(result), "Result must not be NaN with large offset"
+        assert 0.0 <= result <= 1.0, f"Result out of bounds: {result}"

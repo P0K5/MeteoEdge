@@ -21,6 +21,7 @@ class WeatherState:
     latest_temp_time: datetime
     forecast_high_f: float | None
     secondary_forecast_f: float | None = None
+    obs_bias_offset_f: float | None = None   # intraday obs bias vs model hourly temp
 
 
 @dataclass
@@ -93,6 +94,8 @@ def true_probability_yes(bracket: Bracket, state: WeatherState,
         forecast_mean = (state.current_high_f + max_env) / 2
 
     forecast_mean = max(min_env, min(max_env, forecast_mean))
+    if state.obs_bias_offset_f is not None:
+        forecast_mean = max(min_env, min(max_env, forecast_mean + state.obs_bias_offset_f))
 
     # Base probability
     p = p_normal_between(lo, hi, forecast_mean, forecast_stddev)
