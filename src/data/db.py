@@ -97,6 +97,20 @@ CREATE TABLE IF NOT EXISTS risk_state (
     open_positions  INTEGER NOT NULL DEFAULT 0,
     updated_at      TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS taf_windows (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    city        TEXT NOT NULL,
+    issued_at   TEXT NOT NULL,
+    valid_from  TEXT NOT NULL,
+    valid_to    TEXT NOT NULL,
+    group_type  TEXT NOT NULL,
+    temp        REAL,
+    wind_kt     REAL,
+    sig_wx      TEXT,
+    raw_text    TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_taf_city_from ON taf_windows(city, valid_from);
 """
 
 
@@ -114,6 +128,21 @@ class Database:
             if stmt:
                 self._conn.execute(stmt)
         self._conn.commit()
+        self._migrate()
+
+    def _migrate(self) -> None:
+        """Run idempotent migrations on the observations table."""
+        for col, definition in [
+            ("cadence_min", "INTEGER"),
+            ("is_official", "INTEGER DEFAULT 1"),
+        ]:
+            try:
+                self._conn.execute(
+                    f"ALTER TABLE observations ADD COLUMN {col} {definition}"
+                )
+                self._conn.commit()
+            except sqlite3.OperationalError:
+                pass  # column already exists
 
     def _now(self) -> str:
         return datetime.now(timezone.utc).isoformat()
@@ -393,3 +422,24 @@ class Database:
                 "updated_at=excluded.updated_at",
                 (date_str, pnl_delta, open_positions, self._now()),
             )
+
+    # ------------------------------------------------------------------
+    # taf_windows
+    # ------------------------------------------------------------------
+
+    def insert_taf_window(self, row: dict) -> None:
+        """Insert a TAF window record."""
+        with self._conn:
+            self._conn.execute(
+                "INSERT INTO taf_windows(city,issued_at,valid_from,valid_to,group_type,temp,wind_kt,sig_wx,raw_text) "
+                "VALUES(:city,:issued_at,:valid_from,:valid_to,:group_type,:temp,:wind_kt,:sig_wx,:raw_text)",
+                row,
+            )
+
+    def get_taf_windows(self, city: str, from_ts: str, to_ts: str) -> list[dict]:
+        """Return TAF windows for *city* within [*from_ts*, *to_ts*], ordered by valid_from."""
+        cur = self._conn.execute(
+            "SELECT * FROM taf_windows WHERE city=? AND valid_from>=? AND valid_to<=? ORDER BY valid_from",
+            (city, from_ts, to_ts),
+        )
+        return [dict(r) for r in cur.fetchall()]
