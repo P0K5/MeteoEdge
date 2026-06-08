@@ -1,7 +1,9 @@
 """Unified config for Polymarket weather arbitrage. Environment vars override defaults."""
 import os
+from functools import lru_cache
 from pathlib import Path
 
+import yaml
 from dotenv import load_dotenv
 
 load_dotenv()  # Load .env from cwd (or parent dirs) into os.environ
@@ -170,3 +172,18 @@ USER_AGENT = "MeteoEdge/1.0 (Polymarket weather-arbitrage research bot; contact:
 # Adds ~2 API calls per matched bracket per poll. Off by default to keep polls fast;
 # `outcomePrices` from Gamma is usually within 1¢ of the live mid for liquid markets.
 ENABLE_CLOB_ENRICHMENT = os.getenv("ENABLE_CLOB_ENRICHMENT", "false").lower() == "true"
+
+
+# ------------------------------------------------------------------
+# Source Priority Configuration
+# ------------------------------------------------------------------
+
+@lru_cache(maxsize=None)
+def _load_source_priority() -> dict:
+    config_path = Path(__file__).parent.parent / "config" / "source_priority.yaml"
+    with open(config_path, "r") as f:
+        return yaml.safe_load(f)
+
+
+def get_source_priority(city: str) -> list[dict]:
+    return _load_source_priority().get(city, [])

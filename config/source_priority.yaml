@@ -1,0 +1,39 @@
+Tokyo:
+  - source: jma_ameidas
+    station: Tokyo
+    cadence_min: 10
+    is_official: true
+  - source: metar
+    station: RJTT
+    cadence_min: 30
+    is_official: true
+
+Seoul:
+  - source: amos
+    station: Seoul
+    cadence_min: 15
+    is_official: true
+  - source: metar
+    station: RKSI
+    cadence_min: 30
+    is_official: true
+
+Busan:
+  - source: amos
+    station: Busan
+    cadence_min: 15
+    is_official: true
+  - source: metar
+    station: RKPK
+    cadence_min: 30
+    is_official: true
+
+Singapore:
+  - source: mss
+    station: Singapore
+    cadence_min: 1
+    is_official: true
+  - source: metar
+    station: WSSS
+    cadence_min: 30
+    is_official: true
