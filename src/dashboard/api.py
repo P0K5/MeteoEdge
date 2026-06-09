@@ -103,6 +103,16 @@ class DebOut(BaseModel):
     weights: list[DebWeightOut]
 
 
+class AnalysisOut(BaseModel):
+    city: str
+    corrected_mu_f: float | None = None
+    bias_delta_f: float | None = None
+    decay_factor: float | None = None
+    obs_temp_f: float | None = None
+    model_temp_at_obs_f: float | None = None
+    last_correction_time: str | None = None
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -558,6 +568,52 @@ def get_city_deb(city: str) -> DebOut:
         for row in rows
     ]
     return DebOut(city=normalised, updated_at=updated_at, weights=weights)
+
+
+@app.get("/api/cities/{city}/analysis", response_model=AnalysisOut)
+def get_city_analysis(city: str) -> AnalysisOut:
+    """Return intraday correction analysis for *city*.
+
+    Fetches the latest intraday correction for today's date and populates
+    the response with the most recent correction values. If no corrections
+    exist or any error occurs, all correction fields are returned as None.
+
+    City name is normalised to title-case before the DB lookup so the endpoint
+    is case-insensitive.
+    """
+    normalised = city.title()
+    today_date = datetime.now(timezone.utc).date().isoformat()
+
+    corrected_mu_f = None
+    bias_delta_f = None
+    decay_factor = None
+    obs_temp_f = None
+    model_temp_at_obs_f = None
+    last_correction_time = None
+
+    try:
+        corrections = _db.get_intraday_corrections(normalised, today_date)
+        if corrections:
+            # Get the most recent correction (last item in list)
+            latest = corrections[-1]
+            corrected_mu_f = float(latest["corrected_mu_f"])
+            bias_delta_f = float(latest["delta_f"])
+            decay_factor = float(latest["decay_factor"])
+            obs_temp_f = float(latest["obs_temp_f"])
+            model_temp_at_obs_f = float(latest["model_temp_f"])
+            last_correction_time = str(latest["obs_time"])
+    except Exception as e:
+        logger.warning("Could not fetch intraday corrections for %s: %s", normalised, e)
+
+    return AnalysisOut(
+        city=normalised,
+        corrected_mu_f=corrected_mu_f,
+        bias_delta_f=bias_delta_f,
+        decay_factor=decay_factor,
+        obs_temp_f=obs_temp_f,
+        model_temp_at_obs_f=model_temp_at_obs_f,
+        last_correction_time=last_correction_time,
+    )
 
 
 # Mount static files last so /api routes take priority
