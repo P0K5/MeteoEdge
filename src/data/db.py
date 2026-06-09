@@ -1,6 +1,7 @@
 """SQLite persistence layer for MeteoEdge."""
 import os
 import sqlite3
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -210,11 +211,16 @@ class Database:
         raw_json: "str | None" = None,
         cadence_min: "int | None" = None,
         is_official: "int | None" = None,
+        on_insert_callback=None,
     ) -> int:
         """Insert a weather observation; returns the new row id.
 
         cadence_min and is_official are optional and require the #106 schema
         migration (ALTER TABLE adding those columns) to have run first.
+
+        on_insert_callback: optional callable fired in a daemon thread after
+        commit, enabling event-driven intraday correction without blocking the
+        collector.
         """
         if cadence_min is not None or is_official is not None:
             cur = self._conn.execute(
@@ -235,7 +241,11 @@ class Database:
                 (ts, station, temp_f, temp_native, unit, current_high, source, raw_json),
             )
         self._conn.commit()
-        return cur.lastrowid
+        row_id = cur.lastrowid
+        if on_insert_callback is not None:
+            t = threading.Thread(target=on_insert_callback, daemon=True)
+            t.start()
+        return row_id
 
     def get_observations(self, station: str, since: str) -> list:
         """Return observations for *station* at or after *since* (ISO timestamp), oldest first."""
