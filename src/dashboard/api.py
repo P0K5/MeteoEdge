@@ -82,6 +82,7 @@ class ClosedPositionOut(BaseModel):
     pnl: float           # realised P&L in USD
     shares: float
     closed_at: str = ""
+    token_id: str = ""   # NO token id — used to fetch snapshot history for charting
 
 
 class PortfolioOut(BaseModel):
@@ -242,6 +243,7 @@ def _stopped_positions() -> list[ClosedPositionOut]:
                     pnl=pnl,
                     shares=round(shares, 4),
                     closed_at=str(r.get("ts") or ""),
+                    token_id=str(r.get("no_token_id") or r.get("asset_id") or ""),
                 ))
     except Exception as e:
         logger.warning("live_trades.jsonl stop-loss read error: %s", e)
@@ -412,6 +414,7 @@ def _positions_from_wallet() -> tuple[list[PositionOut], list[ClosedPositionOut]
                 pnl=pnl,
                 shares=round(shares, 4),
                 closed_at=str(row.get("endDate") or ""),
+                token_id=token_id,
             ))
         else:
             # Active position

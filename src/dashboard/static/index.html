@@ -242,6 +242,16 @@ a,button,input,select{transition:color var(--transition),background var(--transi
 .pg-btn:hover:not(:disabled){background:var(--surface-dyn);}
 .pg-btn:disabled{opacity:.35;cursor:default;}
 .pg-info{font-size:var(--text-sm);color:var(--muted);font-variant-numeric:tabular-nums;}
+.closed-card{
+  margin-bottom:var(--space-3);
+  background:var(--surface);border:1px solid var(--border);
+  border-radius:var(--radius-lg);box-shadow:var(--sh-sm);overflow:hidden;
+}
+.closed-card .closed-row{margin-bottom:0;border:none;border-radius:0;box-shadow:none;background:transparent;opacity:1;}
+.closed-card .closed-row:hover{background:var(--surface-off);}
+.closed-expandable{cursor:pointer;}
+.closed-chevron{flex-shrink:0;width:14px;height:14px;color:var(--muted);transition:transform var(--transition);}
+.closed-chart-section{border-top:1px solid var(--divider);background:var(--surface-2);padding:var(--space-4) var(--space-5);}
 .closed-row{
   background:var(--surface);border:1px solid var(--border);
   border-radius:var(--radius-lg);padding:var(--space-4) var(--space-5);
@@ -640,13 +650,24 @@ function _renderClosedPage() {
     const pnlFmt = (p.pnl >= 0 ? '+' : '') + '$' + Math.abs(p.pnl).toFixed(2);
     const d = p.closed_at ? new Date(p.closed_at) : null;
     const age = d && !isNaN(d) ? d.toLocaleString() : '—';
-    return `<div class="closed-row">
+    const hasChart = !!p.token_id;
+    const rowInner = `
       <span class="result-badge ${win ? 'result-win' : 'result-loss'}">${win ? 'WIN' : 'LOSS'}</span>
       <div class="closed-q" title="${question}">${question}</div>
       <div class="footer-bracket">${p.station || p.side} · ${p.entry_price}¢ → ${p.exit_price}¢</div>
       <div class="closed-pnl ${win ? 'win' : 'loss'}">${pnlFmt}</div>
       <div class="pos-ts">${age}</div>
-    </div>`;
+      ${hasChart ? `<i data-lucide="chevron-down" class="closed-chevron" id="chev-${p.token_id}"></i>` : ''}
+    `;
+    if (hasChart) {
+      return `<div class="closed-card">
+        <div class="closed-row closed-expandable" onclick="toggleClosedChart('${p.token_id}',${p.entry_price},${p.exit_price})">${rowInner}</div>
+        <div class="closed-chart-section" id="closed-chart-${p.token_id}" style="display:none">
+          <div class="chart-wrap" id="closed-wrap-${p.token_id}"><canvas id="canvas-closed-${p.token_id}"></canvas></div>
+        </div>
+      </div>`;
+    }
+    return `<div class="closed-row">${rowInner}</div>`;
   }).join('');
 
   pgEl.style.display = total > 1 ? 'flex' : 'none';
@@ -814,6 +835,140 @@ async function _renderChart(tokenId, entryPrice, myProb) {
           data: rows.map(() => myProb),
           borderColor: clr('--yes') + 'bb',
           borderWidth: 1,
+          borderDash: [3, 3],
+          pointRadius: 0,
+          fill: false,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: {
+          labels: {
+            color: clr('--text'),
+            boxWidth: 10,
+            padding: 12,
+            font: { size: 10, family: "'JetBrains Mono', monospace" },
+          },
+        },
+        tooltip: {
+          callbacks: {
+            label: ctx => ctx.dataset.label + ': ' + (ctx.parsed.y != null ? ctx.parsed.y + '¢' : '—'),
+          },
+        },
+      },
+      scales: {
+        x: {
+          ticks: { color: clr('--muted'), maxTicksLimit: 8, font: { size: 10 } },
+          grid: { color: clr('--border') + '55' },
+        },
+        y: {
+          min: 0,
+          max: 100,
+          ticks: { color: clr('--muted'), font: { size: 10 }, callback: v => v + '¢' },
+          grid: { color: clr('--border') + '55' },
+        },
+      },
+    },
+  });
+}
+
+/* ─────────────────────────────────────────
+   CLOSED POSITION CHARTS
+   ───────────────────────────────────────── */
+
+function toggleClosedChart(tokenId, entryPrice, exitPrice) {
+  const section = document.getElementById('closed-chart-' + tokenId);
+  const chev = document.getElementById('chev-' + tokenId);
+  if (!section) return;
+  const opening = section.style.display === 'none' || !section.style.display;
+  section.style.display = opening ? 'block' : 'none';
+  if (chev) chev.style.transform = opening ? 'rotate(180deg)' : 'rotate(0deg)';
+  if (opening && !section.dataset.loaded) {
+    section.dataset.loaded = '1';
+    _renderClosedChart(tokenId, entryPrice, exitPrice);
+  }
+}
+
+async function _renderClosedChart(tokenId, entryPrice, exitPrice) {
+  const wrapId = 'closed-wrap-' + tokenId;
+  const canvasId = 'canvas-closed-' + tokenId;
+  const wrap = document.getElementById(wrapId);
+  if (!wrap) return;
+
+  wrap.innerHTML = '<div class="chart-empty">Loading…</div>';
+
+  let rows;
+  try {
+    const r = await fetch('/api/positions/' + encodeURIComponent(tokenId) + '/snapshots');
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    rows = await r.json();
+  } catch (e) {
+    wrap.innerHTML = '<div class="chart-empty">Error: ' + e.message + '</div>';
+    return;
+  }
+
+  if (!rows.length) {
+    wrap.innerHTML = '<div class="chart-empty">No snapshot history recorded for this position.</div>';
+    return;
+  }
+
+  wrap.innerHTML = '<canvas id="' + canvasId + '"></canvas>';
+  const canvas = document.getElementById(canvasId);
+
+  const cs = getComputedStyle(document.documentElement);
+  const clr = k => cs.getPropertyValue(k).trim();
+  const exitColor = exitPrice >= entryPrice ? clr('--yes') : clr('--no');
+
+  const labels = rows.map(d => {
+    const t = new Date(d.ts);
+    return t.getUTCHours().toString().padStart(2,'0') + ':' + t.getUTCMinutes().toString().padStart(2,'0') + ' UTC';
+  });
+
+  new Chart(canvas, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: 'Market bid',
+          data: rows.map(d => d.market_bid),
+          borderColor: clr('--primary'),
+          backgroundColor: 'transparent',
+          borderWidth: 2,
+          pointRadius: 0,
+          tension: 0.25,
+          spanGaps: true,
+          fill: false,
+        },
+        {
+          label: 'Model fair value',
+          data: rows.map(d => d.fair_value),
+          borderColor: clr('--edge'),
+          backgroundColor: 'transparent',
+          borderWidth: 2,
+          pointRadius: 0,
+          tension: 0.25,
+          spanGaps: true,
+          fill: false,
+        },
+        {
+          label: 'Entry ' + entryPrice + '¢',
+          data: rows.map(() => entryPrice),
+          borderColor: clr('--muted') + '88',
+          borderWidth: 1,
+          borderDash: [4, 4],
+          pointRadius: 0,
+          fill: false,
+        },
+        {
+          label: 'Exit ' + exitPrice + '¢',
+          data: rows.map(() => exitPrice),
+          borderColor: exitColor + 'bb',
+          borderWidth: 1.5,
           borderDash: [3, 3],
           pointRadius: 0,
           fill: false,
