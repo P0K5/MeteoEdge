@@ -26,7 +26,7 @@ from pydantic import BaseModel
 
 from py_clob_client_v2.clob_types import BookParams
 
-from src.config import POLYMARKET_GAMMA_API, STATIONS, LIVE_TRADES_JSONL, SNAPSHOTS_JSONL, LOG_DIR
+from src.config import POLYMARKET_GAMMA_API, STATIONS, LIVE_TRADES_JSONL, SNAPSHOTS_JSONL, POSITION_SNAPSHOTS_JSONL, LOG_DIR
 from src.data.db import Database
 from src.data.nws import fetch_nws_forecast_high
 from src.data.polymarket import get_orderbook
@@ -68,6 +68,7 @@ class PositionOut(BaseModel):
     current_value: float
     target_value: float
     forecast_high_f: float | None = None  # NWS forecast high °F for today
+    token_id: str = ""   # NO token id — used to fetch position snapshots for charting
 
 
 class ClosedPositionOut(BaseModel):
@@ -440,6 +441,7 @@ def _positions_from_wallet() -> tuple[list[PositionOut], list[ClosedPositionOut]
                 current_value=round(float(row.get("currentValue") or shares * avg_price / 100), 2),
                 target_value=round(shares * 1.00, 2),
                 forecast_high_f=_nws_forecast_for_title(question),
+                token_id=token_id,
             ))
 
     closed_positions.extend(_stopped_positions())
@@ -614,6 +616,40 @@ def get_city_analysis(city: str) -> AnalysisOut:
         model_temp_at_obs_f=model_temp_at_obs_f,
         last_correction_time=last_correction_time,
     )
+
+
+@app.get("/api/positions/{token_id}/snapshots")
+def position_snapshots(token_id: str) -> list[dict]:
+    """Return time-series price/model snapshots for a position identified by its NO token_id.
+
+    Each record contains: ts, market_bid, fair_value, current_high, latest_temp.
+    Sourced from position_snapshots.jsonl written every poll by run.py.
+    """
+    if not POSITION_SNAPSHOTS_JSONL.exists():
+        return []
+    import json as _json
+    result = []
+    try:
+        with open(POSITION_SNAPSHOTS_JSONL) as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    r = _json.loads(line)
+                except Exception:
+                    continue
+                if r.get("no_token_id") == token_id:
+                    result.append({
+                        "ts": r.get("ts", ""),
+                        "market_bid": r.get("no_best_bid"),
+                        "fair_value": r.get("fair_value_now"),
+                        "current_high": r.get("current_high"),
+                        "latest_temp": r.get("latest_temp"),
+                    })
+    except OSError as e:
+        logger.warning("position_snapshots.jsonl read error: %s", e)
+    return result
 
 
 # Mount static files last so /api routes take priority
