@@ -276,7 +276,7 @@ class TestBuildWeatherHighFreqObs:
         assert abs(state.latest_temp_f - 68.0) < 0.5
 
     def test_bias_offset_computed_correctly(self):
-        from datetime import datetime, timezone
+        from datetime import datetime, timezone  # noqa: F811
         fresh_obs = {
             "ts": datetime.now(timezone.utc).isoformat(),
             "temp_f": 87.0,
@@ -287,3 +287,135 @@ class TestBuildWeatherHighFreqObs:
         # fetch_hourly_temp_now is mocked to return 84.0 in _run_build_weather
         assert state.obs_bias_offset_f is not None
         assert abs(state.obs_bias_offset_f - 3.0) < 0.01
+
+
+# ---------------------------------------------------------------------------
+# Intraday correction wiring — issue #151
+# ---------------------------------------------------------------------------
+
+class TestIntradayCorrectionWiring:
+    """WeatherState.corrected_mu_f and on_insert_callback wiring."""
+
+    def test_corrected_mu_f_takes_priority_over_deb_mu_f(self):
+        """When corrected_mu_f is set, true_probability_yes uses it over deb_mu_f."""
+        from src.model.envelope import WeatherState, Bracket, true_probability_yes
+        from datetime import datetime, timezone
+
+        now = datetime.now(timezone.utc)
+        state = WeatherState(
+            station="RJTT",
+            now_local=now,
+            sunset_local=now,
+            current_high_f=70.0,
+            current_high_time=now,
+            latest_temp_f=70.0,
+            latest_temp_time=now,
+            forecast_high_f=80.0,
+            deb_mu_f=85.0,
+            corrected_mu_f=78.0,
+        )
+        bracket = Bracket(
+            ticker="TEST-HIGH-76-80",
+            low_f=76.0,
+            high_f=80.0,
+            yes_ask_cents=50,
+            yes_ask_size=100,
+            no_ask_cents=50,
+            no_ask_size=100,
+        )
+        import os
+        with patch.dict("os.environ", {"DEB_ENABLED": "true", "INTRADAY_CORRECTION_ENABLED": "true"}):
+            p_corrected = true_probability_yes(bracket, state)
+
+        # Build a state without corrected_mu_f to compare
+        state_deb_only = WeatherState(
+            station="RJTT",
+            now_local=now,
+            sunset_local=now,
+            current_high_f=70.0,
+            current_high_time=now,
+            latest_temp_f=70.0,
+            latest_temp_time=now,
+            forecast_high_f=80.0,
+            deb_mu_f=85.0,
+            corrected_mu_f=None,
+        )
+        with patch.dict("os.environ", {"DEB_ENABLED": "true"}):
+            p_deb = true_probability_yes(bracket, state_deb_only)
+
+        # corrected_mu_f=78.0 (closer to bracket center) should give higher prob than deb_mu_f=85.0
+        assert p_corrected > p_deb, (
+            f"corrected_mu_f=78 should outweight deb_mu_f=85 for bracket 76-80, "
+            f"got p_corrected={p_corrected:.4f} p_deb={p_deb:.4f}"
+        )
+
+    def test_corrected_mu_f_none_falls_through_to_deb(self):
+        """When corrected_mu_f is None and DEB_ENABLED, deb_mu_f is used."""
+        from src.model.envelope import WeatherState, Bracket, true_probability_yes
+        from datetime import datetime, timezone
+
+        now = datetime.now(timezone.utc)
+        state = WeatherState(
+            station="RJTT",
+            now_local=now,
+            sunset_local=now,
+            current_high_f=70.0,
+            current_high_time=now,
+            latest_temp_f=70.0,
+            latest_temp_time=now,
+            forecast_high_f=None,
+            deb_mu_f=80.0,
+            corrected_mu_f=None,
+        )
+        bracket = Bracket(
+            ticker="TEST-HIGH-78-82",
+            low_f=78.0,
+            high_f=82.0,
+            yes_ask_cents=50,
+            yes_ask_size=100,
+            no_ask_cents=50,
+            no_ask_size=100,
+        )
+        with patch.dict("os.environ", {"DEB_ENABLED": "true"}):
+            p = true_probability_yes(bracket, state)
+        # deb_mu_f=80.0 is in the center of 78-82; probability should be substantial
+        assert p > 0.3, f"Expected substantial probability with deb_mu_f at bracket center, got {p:.4f}"
+
+    def test_on_insert_callback_fires_after_commit(self):
+        """on_insert_callback must be called after insert_observation commits."""
+        import time as _time
+        from src.data.db import Database
+
+        fired = []
+
+        def _cb():
+            fired.append(True)
+
+        db = Database(":memory:")
+        db.insert_observation(
+            ts="2024-01-15T12:00:00+00:00",
+            station="RJTT",
+            temp_f=60.0,
+            temp_native=15.0,
+            unit="C",
+            source="metar",
+            on_insert_callback=_cb,
+        )
+        # Daemon thread fires asynchronously — wait briefly
+        _time.sleep(0.05)
+        assert fired, "on_insert_callback was never called"
+
+    def test_on_insert_callback_none_does_not_raise(self):
+        """Calling insert_observation without callback must not raise."""
+        from src.data.db import Database
+
+        db = Database(":memory:")
+        row_id = db.insert_observation(
+            ts="2024-01-15T12:00:00+00:00",
+            station="RJTT",
+            temp_f=60.0,
+            temp_native=15.0,
+            unit="C",
+            source="metar",
+        )
+        assert isinstance(row_id, int)
