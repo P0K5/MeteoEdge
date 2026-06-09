@@ -35,6 +35,9 @@ from src.data.collectors.jma_ameidas import JmaAmedasCollector
 from src.data.collectors.amos import AmosCollector
 from src.data.collectors.mss import MssCollector
 from src.data.freshness_monitor import FreshnessMonitor
+from src.model.deb_weighting import log_forecast, refresh_weights, get_weights
+from src.model.deb_hourly_consensus import compute_deb_mu_f
+from src.model.intraday_correction import compute_correction
 from src.model.envelope import WeatherState
 from src.monitoring.alerts import AlertManager
 from src.risk.manager import RiskManager
@@ -271,6 +274,18 @@ def _build_weather(db: "Database | None" = None) -> dict[str, WeatherState]:
         forecast_nws = fetch_nws_forecast_high(lat, lon)
         forecast_secondary = fetch_secondary_forecast(lat, lon)
 
+        today_str = datetime.now(timezone.utc).date().isoformat()
+        if db is not None:
+            if forecast_nws is not None:
+                log_forecast(db, station, "nws", today_str, forecast_nws)
+            if forecast_secondary is not None:
+                log_forecast(db, station, "open_meteo", today_str, forecast_secondary)
+            refresh_weights(db, station, city)
+        weights = get_weights(db, city) if db is not None else {"nws": 0.5, "open_meteo": 0.5}
+        deb_mu_f = compute_deb_mu_f(forecast_nws, forecast_secondary, weights)
+        if deb_mu_f is not None:
+            print(f"[{station}] deb_mu_f={deb_mu_f:.1f}F weights=nws:{weights['nws']:.2f}/om:{weights['open_meteo']:.2f}")
+
         weather[station] = WeatherState(
             station=station,
             now_local=now_local(station),
@@ -282,7 +297,13 @@ def _build_weather(db: "Database | None" = None) -> dict[str, WeatherState]:
             forecast_high_f=forecast_nws,
             secondary_forecast_f=forecast_secondary,
             obs_bias_offset_f=obs_bias_offset_f,
+            deb_mu_f=deb_mu_f,
         )
+        if db is not None:
+            corrected = compute_correction(city, weather[station], db)
+            if corrected is not None:
+                weather[station].corrected_mu_f = corrected
+                print(f"[{station}] corrected_mu_f={corrected:.1f}F (delta={corrected - deb_mu_f:+.1f}F)")
         print(f"[{station}] high={high_f:.1f}F latest={latest_temp_f:.1f}F nws={forecast_nws}")
     return weather
 
