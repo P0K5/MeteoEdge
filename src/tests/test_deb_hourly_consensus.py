@@ -60,9 +60,15 @@ class TestDebConsensus:
         assert result is not None
         assert isclose(result, 80.4, abs_tol=1e-9), f"Expected 80.4, got {result}"
 
-    def test_compute_deb_mu_f_none_on_missing_input(self):
-        """Returns None when either forecast input is None."""
+    def test_compute_deb_mu_f_single_source_fallback(self):
+        """Returns the available source at full weight when the other is None."""
         weights = {"nws": 0.6, "open_meteo": 0.4}
-        assert compute_deb_mu_f(None, 78.0, weights) is None
-        assert compute_deb_mu_f(82.0, None, weights) is None
+        # Non-US station: no NWS — use Open-Meteo directly
+        assert compute_deb_mu_f(None, 78.0, weights) == 78.0
+        # Open-Meteo unavailable — use NWS directly
+        assert compute_deb_mu_f(82.0, None, weights) == 82.0
+
+    def test_compute_deb_mu_f_none_on_both_missing(self):
+        """Returns None only when both inputs are None."""
+        weights = {"nws": 0.6, "open_meteo": 0.4}
         assert compute_deb_mu_f(None, None, weights) is None

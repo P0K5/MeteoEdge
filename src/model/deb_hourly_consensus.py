@@ -42,10 +42,16 @@ def compute_deb_mu_f(
     """Return DEB-weighted forecast high (°F).
 
     Replaces the static 60/40 ensemble_forecast() blend when DEB_ENABLED=true.
-    Returns None if either input forecast is None.
+    When only one source is available (e.g. non-US stations have no NWS),
+    that source is used at full weight rather than returning None.
+    Returns None only when both inputs are None.
     """
-    if forecast_nws is None or forecast_open_meteo is None:
+    if forecast_nws is None and forecast_open_meteo is None:
         return None
+    if forecast_nws is None:
+        return forecast_open_meteo
+    if forecast_open_meteo is None:
+        return forecast_nws
     w_nws = weights.get("nws", 0.5)
     w_om = weights.get("open_meteo", 0.5)
     return w_nws * forecast_nws + w_om * forecast_open_meteo
