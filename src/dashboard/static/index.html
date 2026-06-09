@@ -324,16 +324,6 @@ a,button,input,select{transition:color var(--transition),background var(--transi
 .chart-section{border-top:1px solid var(--divider);background:var(--surface-2);padding:var(--space-4) var(--space-5);}
 .chart-wrap{position:relative;height:180px;}
 .chart-empty{color:var(--muted);font-size:var(--text-xs);text-align:center;padding:var(--space-8) 0;}
-.btn-chart{
-  padding:3px 9px;border-radius:var(--radius-md);
-  border:1px solid var(--border);background:var(--surface-off);
-  color:var(--muted);font-size:var(--text-xs);font-weight:600;
-  display:inline-flex;align-items:center;gap:4px;
-  transition:background var(--transition),color var(--transition),border-color var(--transition);
-}
-.btn-chart:hover{background:var(--surface-dyn);color:var(--text);}
-.btn-chart.active{background:var(--primary-bg);color:var(--primary);border-color:var(--primary);}
-.btn-chart i{width:12px;height:12px;}
 
 /* ── SCROLLBAR ── */
 ::-webkit-scrollbar{width:5px;height:5px;}
@@ -596,13 +586,12 @@ function renderOpen(positions) {
         ? `<div class="edge-hint"><i data-lucide="alert-triangle"></i>Model (${p.my_prob}¢) − market (${p.market_prob}¢) = <strong>${p.edge.toFixed(1)}¢</strong> — market moved against model.</div>`
         : `<div class="edge-hint"><i data-lucide="minus-circle"></i>Model (${p.my_prob}¢) ≈ market (${p.market_prob}¢) — edge near zero, market has priced in this outcome.</div>`}
 
-      ${p.token_id ? `<div class="chart-section" id="chart-${p.token_id}" style="display:none"><div class="chart-wrap"><canvas id="canvas-${p.token_id}"></canvas></div></div>` : ''}
+      ${p.token_id ? `<div class="chart-section" id="chart-${p.token_id}"><div class="chart-wrap"><canvas id="canvas-${p.token_id}"></canvas></div></div>` : ''}
 
       <div class="pos-footer">
         <div class="pos-footer-left">
           <div class="footer-stat"><strong>${p.shares}</strong> shares @ $${(p.entry_price / 100).toFixed(2)}</div>
           ${(p.bracket_low || p.bracket_high) ? `<div class="footer-bracket">bracket: ${p.bracket_low}°F – ${p.bracket_high}°F</div>` : ''}
-          ${p.token_id ? `<button class="btn-chart" data-chart-token="${p.token_id}" onclick="toggleChart('${p.token_id}',${p.entry_price},${p.my_prob})"><i data-lucide="line-chart"></i>Chart</button>` : ''}
         </div>
         <div class="pos-ts">${p.station}</div>
       </div>
@@ -610,7 +599,7 @@ function renderOpen(positions) {
   }).join('');
 
   lucide.createIcons();
-  _restoreOpenCharts();
+  _autoLoadCharts(positions);
 }
 
 const CLOSED_PAGE_SIZE = 15;
@@ -745,36 +734,10 @@ function toggleTheme() {
    POSITION CHARTS
    ───────────────────────────────────────── */
 
-// token_id → {entryPrice, myProb} for charts that are currently visible
-const _openCharts = new Map();
-
-function toggleChart(tokenId, entryPrice, myProb) {
-  const section = document.getElementById('chart-' + tokenId);
-  const btn = document.querySelector('[data-chart-token="' + tokenId + '"]');
-  if (!section) return;
-
-  if (section.style.display !== 'none') {
-    section.style.display = 'none';
-    if (btn) btn.classList.remove('active');
-    _openCharts.delete(tokenId);
-    return;
-  }
-
-  section.style.display = 'block';
-  if (btn) btn.classList.add('active');
-  _openCharts.set(tokenId, { entryPrice, myProb });
-  _renderChart(tokenId, entryPrice, myProb);
-}
-
-function _restoreOpenCharts() {
-  for (const [tokenId, { entryPrice, myProb }] of _openCharts.entries()) {
-    const section = document.getElementById('chart-' + tokenId);
-    if (!section) { _openCharts.delete(tokenId); continue; }
-    section.style.display = 'block';
-    const btn = document.querySelector('[data-chart-token="' + tokenId + '"]');
-    if (btn) btn.classList.add('active');
-    _renderChart(tokenId, entryPrice, myProb);
-  }
+function _autoLoadCharts(positions) {
+  positions.forEach(p => {
+    if (p.token_id) _renderChart(p.token_id, p.entry_price, p.my_prob);
+  });
 }
 
 async function _renderChart(tokenId, entryPrice, myProb) {
