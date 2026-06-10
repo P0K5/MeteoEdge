@@ -1,3 +1,7 @@
+# ARCHIVED: This file is for offline analysis only.
+# Old import paths: improved_envelope, paper_trader (no longer in src/)
+# Use with archived data in scripts/archive/ or reconstruct from historical snapshots.
+
 """Backdated simulation of shadow-tracked stations vs live model.
 
 Strategy:

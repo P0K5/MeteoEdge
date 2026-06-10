@@ -1,3 +1,7 @@
+# ARCHIVED: This file is for offline analysis only.
+# Old import paths: improved_envelope (no longer in src/)
+# Use with archived data or reconstruct from historical snapshots.
+
 """Per-station calibration: does the flagged confidence match realized win rate?
 
 Data sources (tried in order):

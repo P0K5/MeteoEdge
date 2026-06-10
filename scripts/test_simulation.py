@@ -1,10 +1,14 @@
+# ARCHIVED: This file is for offline testing only.
+# Old import paths: improved_envelope, paper_trader (no longer in src/)
+# Uncomment and fix imports if reviving this simulation.
+
 """Test simulation - simplified version to verify everything works."""
 from datetime import datetime, timedelta, timezone
 import random
 import pytz
 
-from improved_envelope import WeatherState, Bracket, true_probability_yes, fetch_secondary_forecast
-from paper_trader import PaperTrader
+# from improved_envelope import WeatherState, Bracket, true_probability_yes, fetch_secondary_forecast
+# from paper_trader import PaperTrader
 
 # Test configuration
 STATIONS_TEST = [

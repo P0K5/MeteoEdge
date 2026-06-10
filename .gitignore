@@ -62,9 +62,13 @@ shadow-logs/
 # Data
 *.csv
 *.json
+*.jsonl
 live_state.json
 data/feeds/
 data/cache/
+
+# Generated output
+simulation_output.txt
 
 # Secrets (never commit)
 /etc/meteoedge/
