@@ -253,6 +253,20 @@ gh api graphql -f query='
 
 **Cache the project ID, Status field ID, and option IDs after first lookup — they do not change between issues.** Pass them to spawned agents in the prompt to avoid redundant lookups.
 
+### PR merge gate — CI must be green (NON-NEGOTIABLE)
+
+**A PR may NEVER be approved or merged unless ALL of the following are true:**
+
+1. **All CI checks pass** — pytest and flake8 (and any other configured checks) must show green on the PR's head commit. Check via `mcp__github__actions_list` or the PR's check status before approving.
+2. **No direct pushes to master** — every change, including one-line hotfixes, must go through a PR. No exceptions.
+3. **Approval comes after CI is green** — if CI is still running, wait. If CI is red, the PR author must fix it first; do not approve in anticipation of a fix.
+
+**Verification steps before every approval (mandatory checklist):**
+- [ ] Run `mcp__github__actions_list` (or equivalent) to confirm all checks on the PR's head SHA are `completed` with `conclusion: success`
+- [ ] If any check is `in_progress`, `queued`, or `failure` — do NOT approve; post a comment and wait or request fixes
+- [ ] Code review passes all dimensions in §4 of `agents/project-manager.md`
+- [ ] All acceptance criteria from the linked issue are met
+
 ### Issue and PR linking rules
 
 1. **Every PR** must reference its issues with closing keywords: `Closes #N`, `Fixes #N`, or `Resolves #N`.

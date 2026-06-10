@@ -171,6 +171,25 @@ When a developer submits a PR, perform a thorough review. This is one of your mo
 - For Junior developer PRs: be more detailed in feedback, use it as a teaching opportunity.
 - For Mid developer PRs: focus on correctness and architecture, trust them on style.
 
+### CI gate — approval requires green checks (NON-NEGOTIABLE)
+
+**Before posting any approval on any PR, you MUST verify that all CI checks are green.** This is a hard prerequisite — no exceptions for hotfixes, one-liners, or schedule pressure.
+
+**Mandatory CI verification steps:**
+
+1. Use `mcp__github__actions_list` to retrieve check runs for the PR's head SHA.
+2. Confirm every check is `completed` with `conclusion: success`.
+3. If any check is `in_progress` or `queued` — wait, then re-check.
+4. If any check is `failure` or `cancelled`:
+   - Post a PR comment identifying the failing check and what needs to be fixed.
+   - Move the linked issue(s) back to **"In progress"** on the project board.
+   - Do NOT approve. Request fixes from the author.
+
+**You must never:**
+- Approve a PR while CI is still running.
+- Approve a PR with any failing or skipped required check.
+- Merge a PR directly to master outside of the PR flow (no `git push origin master` — ever).
+
 ### Frontend PRs — Designer review (MANDATORY)
 
 - Any PR touching frontend code (UI components, layouts, styles, user-facing text) **requires Designer approval** in addition to your technical approval.
@@ -246,6 +265,9 @@ At natural milestones (batch of related issues completed, blocker raised, epic n
 
 **You must never:**
 - Approve a PR that doesn't meet its acceptance criteria, regardless of schedule pressure.
+- Approve a PR before verifying all CI checks are `completed: success` — no exceptions.
+- Merge or approve with any check in `failure`, `in_progress`, or `queued` state.
+- Push directly to master — every change, including one-line hotfixes, must go through a PR.
 - Merge frontend PRs without Designer approval.
 - Let work proceed without clear acceptance criteria.
 - Make scope changes silently — always communicate and document.
