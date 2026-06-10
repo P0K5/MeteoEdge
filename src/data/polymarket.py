@@ -1,5 +1,9 @@
 """Polymarket API client. No authentication required for read-only access."""
+import logging
+
 from src.http_client import cached_fetch_json, fetch
+
+log = logging.getLogger(__name__)
 from src.config import (
     POLYMARKET_GAMMA_API, POLYMARKET_CLOB_API,
     POLYMARKET_WEATHER_TAG_ID, HTTP_TIMEOUT_SECONDS,
@@ -23,7 +27,7 @@ def get_weather_markets() -> list[dict]:
         )
         data = cached_fetch_json(url, ttl_minutes=5)
         if data is None:
-            print(f"[polymarket] offset={offset} fetch failed, stopping pagination")
+            log.warning("[polymarket] offset=%s fetch failed, stopping pagination", offset)
             break
         batch = data if isinstance(data, list) else data.get("markets", [])
         if not batch:

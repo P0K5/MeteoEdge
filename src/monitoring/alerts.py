@@ -26,9 +26,11 @@ Standalone test (sends a test email when run directly):
 """
 from __future__ import annotations
 
+import logging
 import os
 import smtplib
-import sys
+
+log = logging.getLogger(__name__)
 from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
 from typing import Optional
@@ -166,10 +168,8 @@ class AlertManager:
     def _send(self, subject: str, body: str) -> None:
         """Deliver an email via SMTP, or log to stderr if SMTP is not configured."""
         if not ALERT_SMTP_USER or not ALERT_SMTP_PASS:
-            print(
-                f"[alerts] SMTP not configured — alert suppressed to stderr:\n"
-                f"  Subject: {subject}",
-                file=sys.stderr,
+            log.warning(
+                "[alerts] SMTP not configured -- alert suppressed: %s", subject,
             )
             return
 
@@ -185,13 +185,9 @@ class AlertManager:
                 smtp.starttls()
                 smtp.login(ALERT_SMTP_USER, ALERT_SMTP_PASS)
                 smtp.send_message(msg)
-            print(f"[alerts] sent: {subject}")
+            log.info("[alerts] sent: %s", subject)
         except Exception as e:
-            print(
-                f"[alerts] failed to send email: {e}\n"
-                f"  Subject: {subject}",
-                file=sys.stderr,
-            )
+            log.error("[alerts] failed to send email: %s -- Subject: %s", e, subject, exc_info=True)
 
 
 # ---------------------------------------------------------------------------

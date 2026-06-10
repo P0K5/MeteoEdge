@@ -10,8 +10,12 @@ import pytz
 from astral import LocationInfo
 from astral.sun import sun
 
+import logging
+
 from src.config import STATION_TZ, HTTP_TIMEOUT_SECONDS
 from src.http_client import fetch
+
+log = logging.getLogger(__name__)
 
 
 def fetch_metar(station: str) -> dict | None:
@@ -28,7 +32,7 @@ def fetch_metar(station: str) -> dict | None:
             return None
         return data[0]
     except Exception as e:
-        print(f"[metar] {station} error: {e}")
+        log.warning("[%s] metar error: %s", station, e)
         return None
 
 
@@ -42,7 +46,7 @@ def fetch_all_metars_today(station: str) -> list[dict]:
         r = fetch(url, timeout=HTTP_TIMEOUT_SECONDS)
         return r.json() or []
     except Exception as e:
-        print(f"[metar-day] {station} error: {e}")
+        log.warning("[%s] metar-day error: %s", station, e)
         return []
 
 

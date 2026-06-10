@@ -5,7 +5,11 @@ Cached 30 min — Open-Meteo updates hourly and the free tier caps at 10,000 req
 """
 from datetime import datetime, timezone
 
+import logging
+
 from src.http_client import cached_fetch_json
+
+log = logging.getLogger(__name__)
 
 
 def _fetch_open_meteo_hourly(lat: float, lon: float) -> dict | None:
@@ -36,7 +40,7 @@ def fetch_secondary_forecast(lat: float, lon: float) -> float | None:
         temps = data["hourly"]["temperature_2m"][:24]
         return max(temps) if temps else None
     except Exception as e:
-        print(f"[open-meteo] parse error for ({lat},{lon}): {e}")
+        log.warning("[open-meteo] parse error for (%s,%s): %s", lat, lon, e)
         return None
 
 
@@ -61,5 +65,5 @@ def fetch_hourly_temp_now(lat: float, lon: float) -> float | None:
                 best_temp = float(t_val)
         return best_temp
     except Exception as e:
-        print(f"[open-meteo] hourly parse error for ({lat},{lon}): {e}")
+        log.warning("[open-meteo] hourly parse error for (%s,%s): %s", lat, lon, e)
         return None

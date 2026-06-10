@@ -14,8 +14,11 @@ Usage (embedded in run.py):
 from __future__ import annotations
 
 import json
+import logging
 import threading
 import time
+
+log = logging.getLogger(__name__)
 from collections import defaultdict
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -33,6 +36,7 @@ except ImportError as exc:  # pragma: no cover
     ) from exc
 
 from src.config import LOG_DIR, LIVE_TRADES_JSONL, SNAPSHOTS_JSONL, STARTING_CAPITAL_EUR
+from src.logging_config import setup_logging
 
 app = FastAPI(title="MeteoEdge Dashboard", version="1.0.0")
 
@@ -87,7 +91,7 @@ def _load_trades() -> list[dict]:
         try:
             return _db.get_trades(limit=None, mode=None)
         except Exception:
-            pass
+            log.warning("[dashboard] failed to load trades from DB", exc_info=True)
     records = _read_jsonl(LIVE_TRADES_JSONL)
     return list(reversed(records))
 
@@ -138,7 +142,7 @@ def _latest_capital(snapshots: list[dict]) -> float:
             if rows and rows[0].get("capital_after") is not None:
                 return float(rows[0]["capital_after"])
         except Exception:
-            pass
+            log.warning("[dashboard] failed to read latest capital from DB", exc_info=True)
     if not snapshots:
         return STARTING_CAPITAL_EUR
     last = snapshots[-1]
@@ -157,6 +161,7 @@ def _open_positions_count() -> int:
         row = cur.fetchone()
         return int(row[0]) if row else 0
     except Exception:
+        log.warning("[dashboard] failed to read open_positions count", exc_info=True)
         return 0
 
 
@@ -232,6 +237,7 @@ def stations() -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 def start_dashboard(host: str = "0.0.0.0", port: int = 8000) -> None:
+    setup_logging()
     """Start the FastAPI dashboard in a background daemon thread.
 
     Returns immediately. The dashboard runs until the process exits.
@@ -243,7 +249,7 @@ def start_dashboard(host: str = "0.0.0.0", port: int = 8000) -> None:
     try:
         import uvicorn
     except ImportError:
-        print("[dashboard] uvicorn not installed — dashboard disabled")
+        log.warning("[dashboard] uvicorn not installed -- dashboard disabled")
         return
 
     import socket
@@ -252,7 +258,7 @@ def start_dashboard(host: str = "0.0.0.0", port: int = 8000) -> None:
     try:
         probe.bind(("" if host == "0.0.0.0" else host, port))
     except OSError:
-        print(f"[dashboard] port {port} already in use — embedded monitor skipped")
+        log.info("[dashboard] port %s already in use -- embedded monitor skipped", port)
         return
     finally:
         probe.close()
@@ -262,4 +268,4 @@ def start_dashboard(host: str = "0.0.0.0", port: int = 8000) -> None:
 
     thread = threading.Thread(target=_run, name="dashboard", daemon=True)
     thread.start()
-    print(f"[dashboard] started at http://{host}:{port}")
+    log.info("[dashboard] started at http://%s:%s", host, port)
