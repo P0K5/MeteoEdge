@@ -84,6 +84,19 @@ def true_probability_yes(bracket: Bracket, state: WeatherState,
     lo, hi = bracket.low_f, bracket.high_f
     min_env, max_env = compute_envelope(state, minutes_to_settlement)
 
+    # Priority: corrected_mu_f (intraday) > deb_mu_f (DEB-enabled) > ensemble fallback.
+    # Compute before early exits so a high forecast can expand max_env.
+    if state.corrected_mu_f is not None:
+        forecast_mean = state.corrected_mu_f
+    elif state.deb_mu_f is not None and os.getenv("DEB_ENABLED", "false").lower() == "true":
+        forecast_mean = state.deb_mu_f
+    else:
+        forecast_mean = ensemble_forecast(state.forecast_high_f, state.secondary_forecast_f)
+
+    # A forecast above the temperature-progression ceiling expands the envelope.
+    if forecast_mean is not None and forecast_mean > max_env:
+        max_env = forecast_mean
+
     if hi < state.current_high_f:
         return 0.0
     if lo > max_env:
@@ -91,13 +104,6 @@ def true_probability_yes(bracket: Bracket, state: WeatherState,
     if lo <= state.current_high_f and hi >= max_env:
         return 1.0
 
-    # Priority: corrected_mu_f (intraday) > deb_mu_f (DEB-enabled) > ensemble fallback
-    if state.corrected_mu_f is not None:
-        forecast_mean = state.corrected_mu_f
-    elif state.deb_mu_f is not None and os.getenv("DEB_ENABLED", "false").lower() == "true":
-        forecast_mean = state.deb_mu_f
-    else:
-        forecast_mean = ensemble_forecast(state.forecast_high_f, state.secondary_forecast_f)
     if forecast_mean is None:
         forecast_mean = (state.current_high_f + max_env) / 2
 

@@ -52,16 +52,18 @@ class TestSchemaCreated:
 class TestWalMode:
     """PRAGMA journal_mode must return 'wal' when using a file-backed database."""
 
-    @pytest.mark.skip(reason="pre-existing: issue #182 — Fix TestWalMode on Windows")
     def test_wal_mode(self):
         with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tf:
             path = tf.name
+        db = None
         try:
             db = Database(path)
             cur = db._conn.execute("PRAGMA journal_mode")
             mode = cur.fetchone()[0]
             assert mode == "wal", f"Expected 'wal', got '{mode}'"
         finally:
+            if db is not None:
+                db.close()
             os.unlink(path)
             # Remove WAL side-car files if present
             for ext in ("-wal", "-shm"):

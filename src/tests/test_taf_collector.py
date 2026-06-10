@@ -60,15 +60,14 @@ class TestFetchOne:
             n = collector.fetch_one("RJTT", "Tokyo")
         assert n == 5  # base + TEMPO + FM + BECMG + PROB30 TEMPO
 
-    @pytest.mark.skip(reason="pre-existing: issue #187 — TAF windows not inserted after fetch_one")
     def test_inserts_windows_to_db(self, collector, db):
         with patch("src.data.taf_collector.fetch", return_value=_mock_response(SAMPLE_JSON)):
             collector.fetch_one("RJTT", "Tokyo")
-        # Pull windows out of DB — need some time range
+        # Pull windows out of DB — use a wide range to cover any day-of-month in SAMPLE_TAF
         from datetime import datetime, timezone, timedelta
         now = datetime.now(timezone.utc)
-        from_ts = (now - timedelta(days=1)).isoformat().replace("+00:00", "Z")
-        to_ts   = (now + timedelta(days=2)).isoformat().replace("+00:00", "Z")
+        from_ts = (now - timedelta(days=30)).isoformat().replace("+00:00", "Z")
+        to_ts   = (now + timedelta(days=30)).isoformat().replace("+00:00", "Z")
         windows = db.get_taf_windows("Tokyo", from_ts, to_ts)
         assert len(windows) == 5
 
@@ -77,8 +76,8 @@ class TestFetchOne:
             collector.fetch_one("RJTT", "Tokyo")
         from datetime import datetime, timezone, timedelta
         now = datetime.now(timezone.utc)
-        from_ts = (now - timedelta(days=1)).isoformat().replace("+00:00", "Z")
-        to_ts   = (now + timedelta(days=2)).isoformat().replace("+00:00", "Z")
+        from_ts = (now - timedelta(days=30)).isoformat().replace("+00:00", "Z")
+        to_ts   = (now + timedelta(days=30)).isoformat().replace("+00:00", "Z")
         windows = db.get_taf_windows("Tokyo", from_ts, to_ts)
         assert all(w["city"] == "Tokyo" for w in windows)
 
@@ -101,7 +100,6 @@ class TestFetchOne:
 # ---------------------------------------------------------------------------
 
 class TestStaleWindowDeletion:
-    @pytest.mark.skip(reason="pre-existing: issue #187 — TAF windows not inserted after fetch_one")
     def test_stale_windows_deleted_before_insert(self, collector, db):
         """Inserting a second time for the same issued_at should not duplicate rows."""
         with patch("src.data.taf_collector.fetch", return_value=_mock_response(SAMPLE_JSON)):
@@ -111,8 +109,8 @@ class TestStaleWindowDeletion:
             collector.fetch_one("RJTT", "Tokyo")
         from datetime import datetime, timezone, timedelta
         now = datetime.now(timezone.utc)
-        from_ts = (now - timedelta(days=1)).isoformat().replace("+00:00", "Z")
-        to_ts   = (now + timedelta(days=2)).isoformat().replace("+00:00", "Z")
+        from_ts = (now - timedelta(days=30)).isoformat().replace("+00:00", "Z")
+        to_ts   = (now + timedelta(days=30)).isoformat().replace("+00:00", "Z")
         windows = db.get_taf_windows("Tokyo", from_ts, to_ts)
         # Should still be exactly 5, not 10 (stale rows were deleted first)
         assert len(windows) == 5
@@ -182,7 +180,7 @@ class TestRunLoopErrorIsolation:
 
         from datetime import datetime, timezone, timedelta
         now = datetime.now(timezone.utc)
-        from_ts = (now - timedelta(days=1)).isoformat().replace("+00:00", "Z")
-        to_ts   = (now + timedelta(days=2)).isoformat().replace("+00:00", "Z")
+        from_ts = (now - timedelta(days=30)).isoformat().replace("+00:00", "Z")
+        to_ts   = (now + timedelta(days=30)).isoformat().replace("+00:00", "Z")
         windows = db.get_taf_windows("Tokyo", from_ts, to_ts)
         assert windows == []

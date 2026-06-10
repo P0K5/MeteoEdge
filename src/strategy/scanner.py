@@ -109,10 +109,10 @@ def parse_bracket_from_market(market: dict) -> "Bracket | None":
 
     if (m := _LABEL_LTE.search(label)):
         unit = m.group(2)
-        lo, hi = -58.0, _to_f(float(m.group(1)), unit)
+        lo, hi = -50.0, _to_f(float(m.group(1)), unit)
     elif (m := _LABEL_GTE.search(label)):
         unit = m.group(2)
-        lo, hi = _to_f(float(m.group(1)), unit), 392.0
+        lo, hi = _to_f(float(m.group(1)), unit), 200.0
     elif (m := _LABEL_BETWEEN.search(label)):
         unit = m.group(3)
         lo, hi = _to_f(float(m.group(1)), unit), _to_f(float(m.group(2)), unit)

@@ -29,6 +29,7 @@ def make_state(
     forecast_high_f: float | None = 81.0,
     hour: int = 14,
     station: str = "KNYC",
+    obs_bias_offset_f: float | None = None,
 ) -> WeatherState:
     """Build a WeatherState with sensible defaults for testing."""
     now = datetime(2026, 5, 15, hour, 30)
@@ -41,6 +42,7 @@ def make_state(
         latest_temp_f=latest_temp_f,
         latest_temp_time=now,
         forecast_high_f=forecast_high_f,
+        obs_bias_offset_f=obs_bias_offset_f,
     )
 
 
@@ -226,10 +228,8 @@ class TestObsBiasCorrection:
         state = make_state(current_high_f=80.0, latest_temp_f=79.0, hour=14, forecast_high_f=82.0)
         state_with_offset = make_state(
             current_high_f=80.0, latest_temp_f=79.0, hour=14, forecast_high_f=82.0,
+            obs_bias_offset_f=3.0,
         )
-        # Attach offset via dataclass field (make_state doesn't accept obs_bias_offset_f yet
-        # so we set it directly after construction)
-        state_with_offset.obs_bias_offset_f = 3.0
         bracket = make_bracket(low_f=83.0, high_f=87.0)
         p_base = true_probability_yes(bracket, state)
         p_offset = true_probability_yes(bracket, state_with_offset)
@@ -243,8 +243,8 @@ class TestObsBiasCorrection:
         state = make_state(current_high_f=80.0, latest_temp_f=79.0, hour=14, forecast_high_f=82.0)
         state_with_offset = make_state(
             current_high_f=80.0, latest_temp_f=79.0, hour=14, forecast_high_f=82.0,
+            obs_bias_offset_f=-3.0,
         )
-        state_with_offset.obs_bias_offset_f = -3.0
         bracket = make_bracket(low_f=83.0, high_f=87.0)
         p_base = true_probability_yes(bracket, state)
         p_offset = true_probability_yes(bracket, state_with_offset)
@@ -256,8 +256,8 @@ class TestObsBiasCorrection:
     def test_none_offset_is_identical_to_baseline(self):
         """obs_bias_offset_f=None must produce identical result to no offset field at all."""
         state_no_field = make_state(current_high_f=80.0, latest_temp_f=79.0, hour=14, forecast_high_f=82.0)
-        state_none_offset = make_state(current_high_f=80.0, latest_temp_f=79.0, hour=14, forecast_high_f=82.0)
-        state_none_offset.obs_bias_offset_f = None
+        state_none_offset = make_state(current_high_f=80.0, latest_temp_f=79.0, hour=14, forecast_high_f=82.0,
+                                       obs_bias_offset_f=None)
         bracket = make_bracket(low_f=83.0, high_f=87.0)
         p_no_field = true_probability_yes(bracket, state_no_field)
         p_none_offset = true_probability_yes(bracket, state_none_offset)
