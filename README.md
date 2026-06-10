@@ -244,17 +244,8 @@ For deeper specifications and implementation details, see:
 Run the test suite to validate your installation:
 
 ```bash
-# Run all tests
-python -m pytest src/tests/ -q
-
-# Run tests with coverage
-python -m pytest src/tests/ --cov=src
-
-# Run linting
-python -m flake8 src/
+pytest src/tests/
 ```
-
-All tests and lint checks are automatically run on every PR via GitHub Actions (see `.github/workflows/ci.yml`). Tests must pass and lint must pass before a PR can be merged.
 
 ## Project Status
 
