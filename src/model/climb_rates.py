@@ -13,8 +13,16 @@ All months used May values as a conservative placeholder.
 """
 from datetime import datetime
 
-from src.config import DEFAULT_CLIMB_LOOKUP
 from src.data.climb_lookup import CLIMB_LOOKUP
+
+# Inlined from src.config to avoid the yaml import chain; keep in sync with config.py.
+_DEFAULT_CLIMB_LOOKUP: dict[int, float] = {
+    0: 25.0, 1: 25.0, 2: 25.0, 3: 24.0, 4: 23.0, 5: 21.0,
+    6: 18.0, 7: 15.0, 8: 12.0, 9: 10.0,
+    10: 8.0, 11: 7.0, 12: 6.0, 13: 5.0, 14: 4.0,
+    15: 3.0, 16: 2.0, 17: 1.0, 18: 0.5, 19: 0.0,
+    20: 0.0, 21: 0.0, 22: 0.0, 23: 0.0,
+}
 
 _MAY: dict[int, float] = {
     0: 22.0, 1: 22.0, 2: 21.0, 3: 20.0, 4: 19.0, 5: 18.0,
@@ -49,8 +57,8 @@ def expected_additional_rise(now_local: datetime, station: str | None = None) ->
             month_table = station_months.get(month)
             if month_table:
                 return month_table.get(hour, 0.0)
-        # Station not in CLIMB_LOOKUP — fall back to DEFAULT_CLIMB_LOOKUP
-        return DEFAULT_CLIMB_LOOKUP.get(hour, 0.0)
+        # Station not in CLIMB_LOOKUP — fall back to _DEFAULT_CLIMB_LOOKUP
+        return _DEFAULT_CLIMB_LOOKUP.get(hour, 0.0)
 
     # Legacy path: no station provided — use CLIMB_BY_MONTH
     table = CLIMB_BY_MONTH.get(month, _MAY)
