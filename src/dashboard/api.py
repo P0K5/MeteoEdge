@@ -250,6 +250,63 @@ def _stopped_positions() -> list[ClosedPositionOut]:
     return result
 
 
+def _settled_jsonl_positions() -> list[ClosedPositionOut]:
+    """Return settled hold-to-expiry trades from live_trades.jsonl.
+
+    settle.py writes pnl/actual_high/yes_won back to outcome='filled' records
+    after each market resolves.  The presence of a 'pnl' field is the signal
+    that settlement has been recorded.  This catches positions that were
+    redeemed on Polymarket and therefore disappeared from the wallet API.
+
+    Records that also have an outcome='sold' sibling (stop-loss / take-profit
+    exits) are already captured by _stopped_positions() — settle.py skips
+    writing pnl back to those filled records, so they won't appear here.
+    """
+    if not LIVE_TRADES_JSONL.exists():
+        return []
+    result: list[ClosedPositionOut] = []
+    try:
+        import json as _json
+        with open(LIVE_TRADES_JSONL) as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    r = _json.loads(line)
+                except Exception:
+                    continue
+                if r.get("outcome") != "filled":
+                    continue
+                if "pnl" not in r:
+                    continue  # not yet settled by settle.py
+                token_id = str(r.get("no_token_id") or r.get("asset_id") or "")
+                entry_cents = int(r.get("price_cents") or r.get("entry_price_cents") or 50)
+                pnl = float(r["pnl"])
+                is_win = pnl > 0
+                exit_cents = 100 if is_win else 0
+                size_eur = float(r.get("size_eur") or 0)
+                shares = float(r.get("shares") or (
+                    size_eur / (entry_cents / 100) if entry_cents else 0
+                ))
+                result.append(ClosedPositionOut(
+                    question=str(r.get("question") or ""),
+                    station=str(r.get("station") or ""),
+                    side=str(r.get("side") or "NO"),
+                    bracket_low=float(r.get("bracket_low") or 0.0),
+                    bracket_high=float(r.get("bracket_high") or 0.0),
+                    entry_price=entry_cents,
+                    exit_price=exit_cents,
+                    pnl=pnl,
+                    shares=round(shares, 4),
+                    closed_at=str(r.get("end_date") or r.get("ts") or ""),
+                    token_id=token_id,
+                ))
+    except Exception as e:
+        logger.warning("live_trades.jsonl settled read error: %s", e)
+    return result
+
+
 def _nws_forecast_for_title(title: str) -> float | None:
     """Return today's NWS forecast high (°F) for the city mentioned in *title*."""
     t = title.lower()
@@ -448,6 +505,16 @@ def _positions_from_wallet() -> tuple[list[PositionOut], list[ClosedPositionOut]
             ))
 
     closed_positions.extend(_stopped_positions())
+
+    # Merge settled JSONL positions — catches trades already redeemed from the wallet.
+    # Deduplicate by token_id: wallet API record takes priority when both exist.
+    seen_token_ids = {p.token_id for p in closed_positions if p.token_id}
+    for p in _settled_jsonl_positions():
+        if not p.token_id or p.token_id not in seen_token_ids:
+            closed_positions.append(p)
+            if p.token_id:
+                seen_token_ids.add(p.token_id)
+
     open_positions.sort(key=lambda p: p.invested, reverse=True)
     closed_positions.sort(key=lambda p: p.closed_at, reverse=True)
     return open_positions, closed_positions
