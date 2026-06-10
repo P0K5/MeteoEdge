@@ -8,8 +8,10 @@ For each market fetched from Polymarket, this module:
 5. Returns Candidate objects for any market with edge >= MIN_EDGE_CENTS
 """
 import json
+import logging
 import os
 import re
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from dateutil import parser as dtparse
@@ -23,6 +25,8 @@ from src.model.envelope import Bracket, WeatherState, true_probability_yes, comp
 from src.data.polymarket import get_orderbook
 from src.data.taf_disruption import check_taf_disruption
 from src.strategy.fee import estimate_fee_cents
+
+log = logging.getLogger(__name__)
 
 
 # Map Polymarket city name (lowercase) → METAR station code
@@ -244,15 +248,25 @@ def scan_markets(
     candidates: list[Candidate] = []
     snapshots: list[dict] = []
     ts = datetime.now(timezone.utc).isoformat()
+    skip_reason_counts: Counter = Counter()  # Track skip reasons for final summary
 
     for market in markets:
         try:
             is_temp, station = is_highest_temp_market(market)
-            if not is_temp or station not in weather:
+            if not is_temp:
+                # Market is not a highest-temp market; don't even count it
+                continue
+            if station not in weather:
+                # It's a highest-temp market but we have no weather data for this station
+                skip_reason_counts["not_highest_temp"] += 1
                 continue
 
             mins_left = minutes_to_settlement(market)
             if mins_left < MIN_MINUTES_TO_SETTLEMENT:
+                label = market.get("groupItemTitle") or market.get("question", "")[:40]
+                log.debug("[%s] -- SKIPPED %s: closes in %.1f min < %d min",
+                         station, "outside_window", mins_left, MIN_MINUTES_TO_SETTLEMENT)
+                skip_reason_counts["outside_window"] += 1
                 continue
 
             # Only trade markets that settle today (UTC). Markets closing on a future
@@ -261,6 +275,7 @@ def scan_markets(
                 market.get("endDate") or market.get("end_date_iso")
                 or market.get("endDateIso") or market.get("close_time") or ""
             )
+            wrong_date_skipped = False
             if end_str:
                 try:
                     end_dt = dtparse.parse(str(end_str))
@@ -268,12 +283,22 @@ def scan_markets(
                         end_dt = end_dt.replace(tzinfo=timezone.utc)
                     today_utc = datetime.now(timezone.utc).date()
                     if end_dt.date() != today_utc:
-                        continue
+                        label = market.get("groupItemTitle") or market.get("question", "")[:40]
+                        log.debug("[%s] -- SKIPPED %s: closes %s != today (%s)",
+                                 station, "wrong_date", end_dt.date(), today_utc)
+                        skip_reason_counts["wrong_date"] += 1
+                        wrong_date_skipped = True
                 except Exception:
                     pass
 
+            if wrong_date_skipped:
+                continue
+
             bracket = parse_bracket_from_market(market)
             if not bracket:
+                label = market.get("groupItemTitle") or market.get("question", "")[:40]
+                log.debug("[%s] -- SKIPPED %s: %s", station, "bracket_parse_fail", label)
+                skip_reason_counts["bracket_parse_fail"] += 1
                 continue
 
             if ENABLE_CLOB_ENRICHMENT:
@@ -300,10 +325,14 @@ def scan_markets(
             # Check for a tradeable edge
             candidate = None
             skipped_reason = None
-            if (ENABLE_YES_TRADES and ev_yes >= MIN_EDGE_CENTS and p_yes >= MIN_CONFIDENCE_YES
-                    and bracket.yes_ask_cents >= MIN_PRICE_CENTS):
+            label = market.get("groupItemTitle") or f"{bracket.low_f:.0f}-{bracket.high_f:.0f}°F"
+
+            if ENABLE_YES_TRADES and ev_yes >= MIN_EDGE_CENTS and p_yes >= MIN_CONFIDENCE_YES and bracket.yes_ask_cents >= MIN_PRICE_CENTS:
                 if ev_yes > MAX_EDGE_CENTS:
-                    skipped_reason = f"YES edge {ev_yes:.2f}¢ > MAX_EDGE_CENTS={MAX_EDGE_CENTS}¢ (adverse selection)"
+                    skipped_reason = "max_edge"
+                    log.debug("[%s] -- SKIPPED %s: %s edge=%.2f¢ > MAX=%.2f¢",
+                             station, skipped_reason, "YES", ev_yes, MAX_EDGE_CENTS)
+                    skip_reason_counts[skipped_reason] += 1
                 else:
                     candidate = Candidate(
                         station=station, bracket=bracket, side="YES",
@@ -312,10 +341,12 @@ def scan_markets(
                         ev_yes=ev_yes, ev_no=ev_no,
                         minutes_to_settlement=mins_left, market=market,
                     )
-            elif (ev_no >= MIN_EDGE_CENTS and p_yes <= MAX_CONFIDENCE_YES_FOR_NO
-                    and bracket.no_ask_cents >= MIN_PRICE_CENTS):
+            elif ev_no >= MIN_EDGE_CENTS and p_yes <= MAX_CONFIDENCE_YES_FOR_NO and bracket.no_ask_cents >= MIN_PRICE_CENTS:
                 if ev_no > MAX_EDGE_CENTS:
-                    skipped_reason = f"NO edge {ev_no:.2f}¢ > MAX_EDGE_CENTS={MAX_EDGE_CENTS}¢ (adverse selection)"
+                    skipped_reason = "max_edge"
+                    log.debug("[%s] -- SKIPPED %s: %s edge=%.2f¢ > MAX=%.2f¢",
+                             station, skipped_reason, "NO", ev_no, MAX_EDGE_CENTS)
+                    skip_reason_counts[skipped_reason] += 1
                 else:
                     candidate = Candidate(
                         station=station, bracket=bracket, side="NO",
@@ -324,6 +355,40 @@ def scan_markets(
                         ev_yes=ev_yes, ev_no=ev_no,
                         minutes_to_settlement=mins_left, market=market,
                     )
+            else:
+                # Failed one of the gates — determine which one
+                # Check YES side gates first
+                if ev_yes >= MIN_EDGE_CENTS:
+                    if not ENABLE_YES_TRADES:
+                        skipped_reason = "confidence_gate"
+                        log.debug("[%s] -- SKIPPED %s: YES side disabled (ENABLE_YES_TRADES=False)",
+                                 station, skipped_reason)
+                    elif p_yes < MIN_CONFIDENCE_YES:
+                        skipped_reason = "confidence_gate"
+                        log.debug("[%s] -- SKIPPED %s: p_yes=%.4f < MIN=%.4f",
+                                 station, skipped_reason, p_yes, MIN_CONFIDENCE_YES)
+                    elif bracket.yes_ask_cents < MIN_PRICE_CENTS:
+                        skipped_reason = "min_edge"
+                        log.debug("[%s] -- SKIPPED %s: YES price=%.0f¢ < MIN=%.0f¢",
+                                 station, skipped_reason, bracket.yes_ask_cents, MIN_PRICE_CENTS)
+                    skip_reason_counts[skipped_reason] += 1
+                # Check NO side gates
+                elif ev_no >= MIN_EDGE_CENTS:
+                    if p_yes > MAX_CONFIDENCE_YES_FOR_NO:
+                        skipped_reason = "confidence_gate"
+                        log.debug("[%s] -- SKIPPED %s: p_yes=%.4f > MAX=%.4f",
+                                 station, skipped_reason, p_yes, MAX_CONFIDENCE_YES_FOR_NO)
+                    elif bracket.no_ask_cents < MIN_PRICE_CENTS:
+                        skipped_reason = "min_edge"
+                        log.debug("[%s] -- SKIPPED %s: NO price=%.0f¢ < MIN=%.0f¢",
+                                 station, skipped_reason, bracket.no_ask_cents, MIN_PRICE_CENTS)
+                    skip_reason_counts[skipped_reason] += 1
+                # Both edges below MIN_EDGE_CENTS
+                else:
+                    skipped_reason = "min_edge"
+                    log.debug("[%s] -- SKIPPED %s: max(%.2f¢, %.2f¢) < MIN=%.2f¢",
+                             station, skipped_reason, ev_yes, ev_no, MIN_EDGE_CENTS)
+                    skip_reason_counts[skipped_reason] += 1
 
             if candidate and db:
                 city = STATION_TO_CITY.get(station, "")
@@ -350,13 +415,16 @@ def scan_markets(
                     f"{candidate.price_cents}¢ edge={candidate.edge_cents:.2f}¢ "
                     f"p={candidate.confidence:.2%} closes={str(end_date)[:10]}"
                 )
-            elif skipped_reason:
-                label = market.get("groupItemTitle") or f"{bracket.low_f:.0f}-{bracket.high_f:.0f}°F"
-                print(f"  -- SKIPPED [{station}] {label}: {skipped_reason}")
 
         except Exception as e:
             mid = (market.get("conditionId") or market.get("id") or "unknown")[:16]
             print(f"[market] error processing {mid}…: {e}, skipping")
             continue
+
+    # Log summary at INFO level
+    num_flagged = len(candidates)
+    total_markets = len(markets)
+    counts_str = ", ".join(f"{count} {reason}" for reason, count in skip_reason_counts.most_common())
+    log.info("[scan] %d markets: %d flagged, %s", total_markets, num_flagged, counts_str)
 
     return candidates, snapshots
