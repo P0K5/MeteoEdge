@@ -66,7 +66,7 @@ def time_to_settlement_boost(p: float, minutes_left: float) -> float:
 def compute_envelope(state: WeatherState, minutes_to_settlement: float = 9999.0) -> tuple[float, float]:
     """Return (min_plausible_high, max_plausible_high) for the rest of the day."""
     min_high = state.current_high_f
-    additional = expected_additional_rise(state.now_local)
+    additional = expected_additional_rise(state.now_local, station=state.station)
     max_high = max(
         state.current_high_f,
         state.latest_temp_f + additional,

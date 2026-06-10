@@ -122,11 +122,11 @@ class TestComputeEnvelope:
         assert max_high >= 82.0
 
     def test_max_high_uses_climb_from_latest_temp(self):
-        """hour=14, climb=4.5: max = max(82, 80+4.5) = 84.5."""
+        """hour=14, KNYC falls back to DEFAULT_CLIMB_LOOKUP: climb=4.0: max = max(82, 80+4.0) = 84.0."""
         state = make_state(current_high_f=82.0, latest_temp_f=80.0, hour=14)
         min_high, max_high = compute_envelope(state)
         assert min_high == 82.0
-        assert max_high == 84.5
+        assert max_high == 84.0
 
     def test_max_high_when_latest_temp_above_high(self):
         """hour=12, climb=6: max = max(85, 85+6) = 91."""
