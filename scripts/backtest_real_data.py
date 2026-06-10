@@ -1,3 +1,7 @@
+# ARCHIVED: This file is for offline analysis only.
+# Old import paths: improved_envelope (moved to archive/)
+# Uncomment and fix imports if reviving this analysis.
+
 """Backtest improved model against real May 2026 Polymarket data."""
 import csv
 import json
@@ -7,7 +11,7 @@ from pathlib import Path
 from dataclasses import dataclass
 from collections import defaultdict
 
-from improved_envelope import WeatherState, Bracket, true_probability_yes
+# from improved_envelope import WeatherState, Bracket, true_probability_yes
 import pytz
 
 @dataclass
