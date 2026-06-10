@@ -265,7 +265,7 @@ def scan_markets(
             if mins_left < MIN_MINUTES_TO_SETTLEMENT:
                 label = market.get("groupItemTitle") or market.get("question", "")[:40]
                 log.debug("[%s] -- SKIPPED %s: closes in %.1f min < %d min",
-                         station, "outside_window", mins_left, MIN_MINUTES_TO_SETTLEMENT)
+                          station, "outside_window", mins_left, MIN_MINUTES_TO_SETTLEMENT)
                 skip_reason_counts["outside_window"] += 1
                 continue
 
@@ -285,7 +285,7 @@ def scan_markets(
                     if end_dt.date() != today_utc:
                         label = market.get("groupItemTitle") or market.get("question", "")[:40]
                         log.debug("[%s] -- SKIPPED %s: closes %s != today (%s)",
-                                 station, "wrong_date", end_dt.date(), today_utc)
+                                  station, "wrong_date", end_dt.date(), today_utc)
                         skip_reason_counts["wrong_date"] += 1
                         wrong_date_skipped = True
                 except Exception:
@@ -331,7 +331,7 @@ def scan_markets(
                 if ev_yes > MAX_EDGE_CENTS:
                     skipped_reason = "max_edge"
                     log.debug("[%s] -- SKIPPED %s: %s edge=%.2f¢ > MAX=%.2f¢",
-                             station, skipped_reason, "YES", ev_yes, MAX_EDGE_CENTS)
+                              station, skipped_reason, "YES", ev_yes, MAX_EDGE_CENTS)
                     skip_reason_counts[skipped_reason] += 1
                 else:
                     candidate = Candidate(
@@ -345,7 +345,7 @@ def scan_markets(
                 if ev_no > MAX_EDGE_CENTS:
                     skipped_reason = "max_edge"
                     log.debug("[%s] -- SKIPPED %s: %s edge=%.2f¢ > MAX=%.2f¢",
-                             station, skipped_reason, "NO", ev_no, MAX_EDGE_CENTS)
+                              station, skipped_reason, "NO", ev_no, MAX_EDGE_CENTS)
                     skip_reason_counts[skipped_reason] += 1
                 else:
                     candidate = Candidate(
@@ -362,32 +362,32 @@ def scan_markets(
                     if not ENABLE_YES_TRADES:
                         skipped_reason = "confidence_gate"
                         log.debug("[%s] -- SKIPPED %s: YES side disabled (ENABLE_YES_TRADES=False)",
-                                 station, skipped_reason)
+                                  station, skipped_reason)
                     elif p_yes < MIN_CONFIDENCE_YES:
                         skipped_reason = "confidence_gate"
                         log.debug("[%s] -- SKIPPED %s: p_yes=%.4f < MIN=%.4f",
-                                 station, skipped_reason, p_yes, MIN_CONFIDENCE_YES)
+                                  station, skipped_reason, p_yes, MIN_CONFIDENCE_YES)
                     elif bracket.yes_ask_cents < MIN_PRICE_CENTS:
                         skipped_reason = "min_edge"
                         log.debug("[%s] -- SKIPPED %s: YES price=%.0f¢ < MIN=%.0f¢",
-                                 station, skipped_reason, bracket.yes_ask_cents, MIN_PRICE_CENTS)
+                                  station, skipped_reason, bracket.yes_ask_cents, MIN_PRICE_CENTS)
                     skip_reason_counts[skipped_reason] += 1
                 # Check NO side gates
                 elif ev_no >= MIN_EDGE_CENTS:
                     if p_yes > MAX_CONFIDENCE_YES_FOR_NO:
                         skipped_reason = "confidence_gate"
                         log.debug("[%s] -- SKIPPED %s: p_yes=%.4f > MAX=%.4f",
-                                 station, skipped_reason, p_yes, MAX_CONFIDENCE_YES_FOR_NO)
+                                  station, skipped_reason, p_yes, MAX_CONFIDENCE_YES_FOR_NO)
                     elif bracket.no_ask_cents < MIN_PRICE_CENTS:
                         skipped_reason = "min_edge"
                         log.debug("[%s] -- SKIPPED %s: NO price=%.0f¢ < MIN=%.0f¢",
-                                 station, skipped_reason, bracket.no_ask_cents, MIN_PRICE_CENTS)
+                                  station, skipped_reason, bracket.no_ask_cents, MIN_PRICE_CENTS)
                     skip_reason_counts[skipped_reason] += 1
                 # Both edges below MIN_EDGE_CENTS
                 else:
                     skipped_reason = "min_edge"
                     log.debug("[%s] -- SKIPPED %s: max(%.2f¢, %.2f¢) < MIN=%.2f¢",
-                             station, skipped_reason, ev_yes, ev_no, MIN_EDGE_CENTS)
+                              station, skipped_reason, ev_yes, ev_no, MIN_EDGE_CENTS)
                     skip_reason_counts[skipped_reason] += 1
 
             if candidate and db:
