@@ -128,7 +128,7 @@ def parse_bracket_from_market(market: dict) -> "Bracket | None":
         val = float(m.group(1))
         lo, hi = _to_f(val, unit), _to_f(val + 1, unit)
     else:
-        print(f"[parse] unparseable label: {label[:60]!r}")
+        log.warning("[parse] unparseable label: %r", label[:60])
         return None
 
     outcomes = _decode_json_string(market.get("outcomes"), [])
@@ -197,7 +197,7 @@ def _enrich_from_clob(bracket: Bracket) -> None:
                 bracket.yes_ask_cents = max(1, min(99, round(best * 100)))
                 bracket.yes_ask_size = sum(max(0, int(float(a["size"]))) for a in asks[:3])
         except Exception as e:
-            print(f"[clob] YES {bracket.ticker[:14]}…: {e}")
+            log.warning("[clob] YES %s...: %s", bracket.ticker[:14], e)
 
     if bracket.no_token_id:
         try:
@@ -208,7 +208,7 @@ def _enrich_from_clob(bracket: Bracket) -> None:
                 bracket.no_ask_cents = max(1, min(99, round(best * 100)))
                 bracket.no_ask_size = sum(max(0, int(float(a["size"]))) for a in asks[:3])
         except Exception as e:
-            print(f"[clob] NO {bracket.ticker[:14]}…: {e}")
+            log.warning("[clob] NO %s...: %s", bracket.ticker[:14], e)
 
 
 @dataclass
@@ -401,24 +401,24 @@ def scan_markets(
                     if taf_flag:
                         factor = float(os.getenv("TAF_DISRUPTION_CONFIDENCE_FACTOR", "0.85"))
                         candidate.confidence *= factor
-                        print(
-                            f"  [cue] {city} taf_disruption=True "
-                            f"confidence={candidate.confidence:.2f}"
+                        log.info(
+                            "  [cue] %s taf_disruption=True confidence=%.2f",
+                            city, candidate.confidence,
                         )
 
             if candidate:
                 candidates.append(candidate)
                 label = market.get("groupItemTitle") or f"{bracket.low_f:.0f}-{bracket.high_f:.0f}°F"
                 end_date = market.get("endDate") or market.get("end_date_iso") or "?"
-                print(
-                    f"  ** FLAGGED [{station}] {label} {candidate.side} @ "
-                    f"{candidate.price_cents}¢ edge={candidate.edge_cents:.2f}¢ "
-                    f"p={candidate.confidence:.2%} closes={str(end_date)[:10]}"
+                log.info(
+                    "  ** FLAGGED [%s] %s %s @ %sc edge=%.2fc p=%.2f%% closes=%s",
+                    station, label, candidate.side, candidate.price_cents,
+                    candidate.edge_cents, candidate.confidence * 100, str(end_date)[:10],
                 )
 
         except Exception as e:
             mid = (market.get("conditionId") or market.get("id") or "unknown")[:16]
-            print(f"[market] error processing {mid}…: {e}, skipping")
+            log.warning("[market] error processing %s...: %s, skipping", mid, e, exc_info=True)
             continue
 
     # Log summary at INFO level

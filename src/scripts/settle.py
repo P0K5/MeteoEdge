@@ -1,8 +1,11 @@
 """Run once a day after NWS publishes the Daily Climate Report (typically ~9am local next day)."""
 import csv
 import json
+import logging
 from datetime import date, timedelta
 from pathlib import Path
+
+log = logging.getLogger(__name__)
 
 from src.config import STATIONS, LOG_DIR, CANDIDATES_CSV, SETTLEMENTS_CSV, STATION_TZ, LIVE_TRADES_JSONL
 from src.http_client import fetch
@@ -20,7 +23,7 @@ def fetch_daily_climate_high(station: str, target_date: date) -> float | None:
         r.raise_for_status()
         data = r.json() or []
     except Exception as e:
-        print(f"[settle] {station} error: {e}")
+        log.warning("[settle] [%s] error: %s", station, e)
         return None
 
     import pytz
@@ -49,18 +52,18 @@ def fetch_daily_climate_high(station: str, target_date: date) -> float | None:
 def settle_yesterday():
     """For each candidate from yesterday, record whether it would have won."""
     if not CANDIDATES_CSV.exists():
-        print("No candidates to settle.")
+        log.info("[settle] No candidates to settle.")
         return
 
     yesterday = date.today() - timedelta(days=1)
-    print(f"Settling for {yesterday}")
+    log.info("[settle] Settling for %s", yesterday)
 
     truth = {}
     for station, *_ in STATIONS:
         h = fetch_daily_climate_high(station, yesterday)
         if h is not None:
             truth[station] = h
-            print(f"  {station} daily high = {h:.1f}°F")
+            log.info("  [%s] daily high = %.1f°F", station, h)
 
     new_file = not SETTLEMENTS_CSV.exists()
     with open(CANDIDATES_CSV) as f_in, open(SETTLEMENTS_CSV, "a", newline="") as f_out:
@@ -92,9 +95,9 @@ def settle_yesterday():
             writer.writerow(out)
 
     if writer is not None:
-        print(f"Wrote settlements to {SETTLEMENTS_CSV}")
+        log.info("[settle] Wrote settlements to %s", SETTLEMENTS_CSV)
     else:
-        print(f"No candidates matched {yesterday} in {CANDIDATES_CSV} — nothing written.")
+        log.info("[settle] No candidates matched %s in %s -- nothing written.", yesterday, CANDIDATES_CSV)
 
     settle_live_trades(yesterday, truth)
 
@@ -113,7 +116,7 @@ def settle_live_trades(target: date, truth: dict[str, float]) -> None:
     then written back. Fine for the small trade volumes we have.
     """
     if not LIVE_TRADES_JSONL.exists():
-        print("[settle] live_trades.jsonl not found — skipping financial settlement")
+        log.info("[settle] live_trades.jsonl not found -- skipping financial settlement")
         return
 
     records: list[dict] = []
@@ -127,7 +130,7 @@ def settle_live_trades(target: date, truth: dict[str, float]) -> None:
                     except json.JSONDecodeError:
                         continue
     except OSError as e:
-        print(f"[settle] could not read live_trades.jsonl: {e}")
+        log.warning("[settle] could not read live_trades.jsonl: %s", e)
         return
 
     # Build a set of no_token_ids that were stop-loss exited (already have pnl)
@@ -177,27 +180,29 @@ def settle_live_trades(target: date, truth: dict[str, float]) -> None:
         n_updated += 1
 
     if n_updated == 0:
-        print(f"[settle] no live trades to update for {target}")
+        log.info("[settle] no live trades to update for %s", target)
         return
 
     with open(LIVE_TRADES_JSONL, "w") as f:
         for r in records:
             f.write(json.dumps(r, default=str) + "\n")
-    print(f"[settle] updated {n_updated} live trade(s) with P&L for {target}")
+    log.info("[settle] updated %s live trade(s) with P&L for %s", n_updated, target)
 
 
 if __name__ == "__main__":
     import sys
+    from src.logging_config import setup_logging
+    setup_logging()
     if len(sys.argv) > 1:
         target = date.fromisoformat(sys.argv[1])
         # Reuse settle_yesterday logic but for arbitrary date
-        print(f"Settling for {target}")
+        log.info("[settle] Settling for %s", target)
         truth = {}
         for station, *_ in STATIONS:
             h = fetch_daily_climate_high(station, target)
             if h is not None:
                 truth[station] = h
-                print(f"  {station} daily high = {h:.1f}°F")
+                log.info("  [%s] daily high = %.1f°F", station, h)
         new_file = not SETTLEMENTS_CSV.exists()
         with open(CANDIDATES_CSV) as f_in, open(SETTLEMENTS_CSV, "a", newline="") as f_out:
             reader = csv.DictReader(f_in)
@@ -224,9 +229,9 @@ if __name__ == "__main__":
                         writer.writeheader()
                 writer.writerow(out)
         if writer:
-            print(f"Wrote settlements to {SETTLEMENTS_CSV}")
+            log.info("[settle] Wrote settlements to %s", SETTLEMENTS_CSV)
         else:
-            print(f"No candidates matched {target} — nothing written.")
+            log.info("[settle] No candidates matched %s -- nothing written.", target)
         settle_live_trades(target, truth)
     else:
         settle_yesterday()

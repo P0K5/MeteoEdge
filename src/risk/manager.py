@@ -6,7 +6,10 @@ not persisted across process restarts (acceptable for the paper-trading phase).
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
+
+log = logging.getLogger(__name__)
 from datetime import date, datetime, timezone
 from typing import TYPE_CHECKING
 
@@ -34,7 +37,7 @@ class RiskManager:
         rm = RiskManager()
         ok, reason = rm.allow_trade(capital=current_capital, liquidity_contracts=200)
         if not ok:
-            print(f"Trade blocked: {reason}")
+            log.info("[risk] trade blocked: %s", reason)
             return
 
         rm.open_position()

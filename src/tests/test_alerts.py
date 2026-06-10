@@ -224,33 +224,36 @@ class TestDeduplication:
 # ---------------------------------------------------------------------------
 
 class TestSmtpNotConfigured:
-    def test_no_crash_when_smtp_user_empty(self, capsys):
-        """When SMTP credentials are absent, alerts are logged to stderr."""
+    def test_no_crash_when_smtp_user_empty(self, caplog):
+        """When SMTP credentials are absent, alerts are logged via the logging module."""
+        import logging
         mgr = AlertManager()
-        with patch("src.monitoring.alerts.ALERT_SMTP_USER", ""):
-            with patch("src.monitoring.alerts.ALERT_SMTP_PASS", ""):
-                mgr._send("Test subject", "Test body")
-        captured = capsys.readouterr()
-        assert "SMTP not configured" in captured.err
+        with caplog.at_level(logging.WARNING, logger="src.monitoring.alerts"):
+            with patch("src.monitoring.alerts.ALERT_SMTP_USER", ""):
+                with patch("src.monitoring.alerts.ALERT_SMTP_PASS", ""):
+                    mgr._send("Test subject", "Test body")
+        assert "SMTP not configured" in caplog.text
 
-    def test_no_crash_when_smtp_pass_empty(self, capsys):
+    def test_no_crash_when_smtp_pass_empty(self, caplog):
+        import logging
         mgr = AlertManager()
-        with patch("src.monitoring.alerts.ALERT_SMTP_USER", "user@example.com"):
-            with patch("src.monitoring.alerts.ALERT_SMTP_PASS", ""):
-                mgr._send("Test subject", "Test body")
-        captured = capsys.readouterr()
-        assert "SMTP not configured" in captured.err
+        with caplog.at_level(logging.WARNING, logger="src.monitoring.alerts"):
+            with patch("src.monitoring.alerts.ALERT_SMTP_USER", "user@example.com"):
+                with patch("src.monitoring.alerts.ALERT_SMTP_PASS", ""):
+                    mgr._send("Test subject", "Test body")
+        assert "SMTP not configured" in caplog.text
 
-    def test_smtp_error_logged_not_raised(self, capsys):
+    def test_smtp_error_logged_not_raised(self, caplog):
         """An SMTP connection failure must not propagate as an exception."""
+        import logging
         mgr = AlertManager()
-        with patch("src.monitoring.alerts.ALERT_SMTP_USER", "user@example.com"):
-            with patch("src.monitoring.alerts.ALERT_SMTP_PASS", "pass"):
-                with patch("smtplib.SMTP") as mock_smtp:
-                    mock_smtp.side_effect = ConnectionRefusedError("connection refused")
-                    mgr._send("Test subject", "Test body")  # must not raise
-        captured = capsys.readouterr()
-        assert "failed to send email" in captured.err
+        with caplog.at_level(logging.ERROR, logger="src.monitoring.alerts"):
+            with patch("src.monitoring.alerts.ALERT_SMTP_USER", "user@example.com"):
+                with patch("src.monitoring.alerts.ALERT_SMTP_PASS", "pass"):
+                    with patch("smtplib.SMTP") as mock_smtp:
+                        mock_smtp.side_effect = ConnectionRefusedError("connection refused")
+                        mgr._send("Test subject", "Test body")  # must not raise
+        assert "failed to send email" in caplog.text
 
 
 # ---------------------------------------------------------------------------

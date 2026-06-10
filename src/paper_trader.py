@@ -1,7 +1,10 @@
 """Paper trading engine with realistic slippage, queue delays, and capital tracking."""
 import json
+import logging
 import random
 import time
+
+log = logging.getLogger(__name__)
 from dataclasses import dataclass, asdict
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -120,7 +123,7 @@ class PaperTrader:
                     capital_after=trade.capital_after,
                 )
             except Exception as e:
-                print(f"[paper] DB write failed: {e}")
+                log.warning("[paper] DB write failed: %s", e)
 
         self.trades.append(trade)
         return trade
@@ -159,5 +162,7 @@ class PaperTrader:
         summary_path = self.log_dir / "summary.jsonl"
         with open(summary_path, "a") as f:
             f.write(json.dumps(summary) + "\n")
-        print(f"[summary] {timestamp.isoformat()}: {report['trades']} trades, "
-              f"EUR{report['pnl_eur']:.2f} PnL, capital: EUR{report['capital']:.2f}")
+        log.info(
+            "[summary] %s: %s trades, EUR%.2f PnL, capital: EUR%.2f",
+            timestamp.isoformat(), report['trades'], report['pnl_eur'], report['capital'],
+        )

@@ -9,9 +9,12 @@ Required env vars:
   POLYMARKET_CHAIN_ID          — 137 for Polygon mainnet, 80002 for Amoy testnet
   POLYMARKET_HOST              — https://clob.polymarket.com (default)
 """
+import logging
 import os
 
 from py_clob_client_v2 import ClobClient, SignatureTypeV2
+
+log = logging.getLogger(__name__)
 from py_clob_client_v2.clob_types import ApiCreds
 
 
@@ -42,5 +45,5 @@ def check_clob_health() -> bool:
         resp = client.get_ok()
         return resp in (True, "OK") or (isinstance(resp, dict) and resp.get("status") == "OK")
     except Exception as e:
-        print(f"[clob-health] {e}")
+        log.warning("[clob-health] %s", e)
         return False

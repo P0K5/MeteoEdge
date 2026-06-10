@@ -55,60 +55,63 @@ def _make_settlement(actual_high_f: float = 82.0, date_str: str = "2024-06-01") 
 # ---------------------------------------------------------------------------
 
 class TestNoDataExitsCleanly:
-    """When DB has no corrections, script prints the 'no data' message and exits 0."""
+    """When DB has no corrections, script logs the 'no data' message and exits 0."""
 
-    def test_no_data_exits_cleanly(self, capsys):
+    def test_no_data_exits_cleanly(self, caplog):
+        import logging
         mock_db = MagicMock()
         mock_db.get_intraday_corrections.return_value = []
         mock_db.get_settlements.return_value = []
 
-        with (
-            patch("src.scripts.intraday_correction_backtest.Database", return_value=mock_db),
-            patch("sys.argv", ["backtest", "--city", "Chicago", "--days", "7"]),
-            pytest.raises(SystemExit) as exc_info,
-        ):
-            main()
+        with caplog.at_level(logging.INFO):
+            with (
+                patch("src.scripts.intraday_correction_backtest.Database", return_value=mock_db),
+                patch("sys.argv", ["backtest", "--city", "Chicago", "--days", "7"]),
+                pytest.raises(SystemExit) as exc_info,
+            ):
+                main()
 
         assert exc_info.value.code == 0
-        captured = capsys.readouterr()
-        assert "No intraday_corrections data found" in captured.out
-        assert "Chicago" in captured.out
-        assert "7" in captured.out
+        assert "No intraday_corrections data found" in caplog.text
+        assert "Chicago" in caplog.text
+        assert "7" in caplog.text
 
-    def test_no_data_message_format(self, capsys):
+    def test_no_data_message_format(self, caplog):
         """The no-data message includes city name and days count."""
+        import logging
         mock_db = MagicMock()
         mock_db.get_intraday_corrections.return_value = []
         mock_db.get_settlements.return_value = []
 
-        with (
-            patch("src.scripts.intraday_correction_backtest.Database", return_value=mock_db),
-            patch("sys.argv", ["backtest", "--city", "Seoul", "--days", "14"]),
-            pytest.raises(SystemExit) as exc_info,
-        ):
-            main()
+        with caplog.at_level(logging.INFO):
+            with (
+                patch("src.scripts.intraday_correction_backtest.Database", return_value=mock_db),
+                patch("sys.argv", ["backtest", "--city", "Seoul", "--days", "14"]),
+                pytest.raises(SystemExit) as exc_info,
+            ):
+                main()
 
         assert exc_info.value.code == 0
-        captured = capsys.readouterr()
-        assert "Seoul" in captured.out
-        assert "14" in captured.out
+        assert "Seoul" in caplog.text
+        assert "14" in caplog.text
 
-    def test_corrections_without_matching_settlement(self, capsys):
+    def test_corrections_without_matching_settlement(self, caplog):
         """Corrections exist but no settlement for those dates → no data."""
+        import logging
         mock_db = MagicMock()
         mock_db.get_intraday_corrections.return_value = [_make_correction_row()]
         mock_db.get_settlements.return_value = []  # No settlements
 
-        with (
-            patch("src.scripts.intraday_correction_backtest.Database", return_value=mock_db),
-            patch("sys.argv", ["backtest", "--city", "Chicago", "--days", "7"]),
-            pytest.raises(SystemExit) as exc_info,
-        ):
-            main()
+        with caplog.at_level(logging.INFO):
+            with (
+                patch("src.scripts.intraday_correction_backtest.Database", return_value=mock_db),
+                patch("sys.argv", ["backtest", "--city", "Chicago", "--days", "7"]),
+                pytest.raises(SystemExit) as exc_info,
+            ):
+                main()
 
         assert exc_info.value.code == 0
-        captured = capsys.readouterr()
-        assert "No intraday_corrections data found" in captured.out
+        assert "No intraday_corrections data found" in caplog.text
 
 
 # ---------------------------------------------------------------------------
@@ -190,8 +193,9 @@ class TestRmseCalculation:
 class TestReportShowsImprovement:
     """With mock data where corrected_mu_f is closer to actual, report shows improvement."""
 
-    def _run_with_mock_data(self, capsys, city="Chicago", days=3):
+    def _run_with_mock_data(self, caplog, city="Chicago", days=3):
         """Run main() with injected DB data that shows correction improvement."""
+        import logging
         mock_db = MagicMock()
 
         # Build correction rows where corrected is closer to actual than baseline
@@ -221,24 +225,25 @@ class TestReportShowsImprovement:
         mock_db.get_intraday_corrections.side_effect = fake_get_corrections
         mock_db.get_settlements.side_effect = fake_get_settlements
 
-        with (
-            patch("src.scripts.intraday_correction_backtest.Database", return_value=mock_db),
-            patch("sys.argv", ["backtest", f"--city", city, "--days", str(days)]),
-        ):
-            main()
+        with caplog.at_level(logging.INFO):
+            with (
+                patch("src.scripts.intraday_correction_backtest.Database", return_value=mock_db),
+                patch("sys.argv", ["backtest", f"--city", city, "--days", str(days)]),
+            ):
+                main()
 
-        return capsys.readouterr()
+        return caplog.text
 
-    def test_report_shows_improvement(self, capsys):
+    def test_report_shows_improvement(self, caplog):
         """Report shows positive improvement when corrected < baseline RMSE."""
-        captured = self._run_with_mock_data(capsys)
+        log_text = self._run_with_mock_data(caplog)
 
-        assert "Overall baseline RMSE:" in captured.out
-        assert "Overall corrected RMSE:" in captured.out
-        assert "Improvement:" in captured.out
+        assert "Overall baseline RMSE:" in log_text
+        assert "Overall corrected RMSE:" in log_text
+        assert "Improvement:" in log_text
 
         # Extract improvement line and verify it's positive
-        for line in captured.out.splitlines():
+        for line in log_text.splitlines():
             if "Improvement:" in line:
                 # The improvement value should be positive (corrected < baseline)
                 # baseline_error=2.0, corrected_error=1.0, so improvement = 2.0-1.0 = 1.0
@@ -247,26 +252,27 @@ class TestReportShowsImprovement:
         else:
             pytest.fail("Improvement line not found in report output")
 
-    def test_report_header_contains_city_and_days(self, capsys):
+    def test_report_header_contains_city_and_days(self, caplog):
         """Report header includes city name and days count."""
-        captured = self._run_with_mock_data(capsys)
+        log_text = self._run_with_mock_data(caplog)
 
-        assert "Chicago" in captured.out
-        assert "3" in captured.out
+        assert "Chicago" in log_text
+        assert "3" in log_text
 
-    def test_report_dates_with_data_count(self, capsys):
+    def test_report_dates_with_data_count(self, caplog):
         """Report shows correct count of dates with data."""
-        captured = self._run_with_mock_data(capsys, days=3)
+        log_text = self._run_with_mock_data(caplog, days=3)
 
-        assert "Dates with data: 3/3" in captured.out
+        assert "Dates with data: 3/3" in log_text
 
-    def test_improvement_check_marker_present(self, capsys):
-        """Rows with improvement (delta < 0) show the ✓ marker."""
-        captured = self._run_with_mock_data(capsys)
-        assert "✓" in captured.out
+    def test_improvement_check_marker_present(self, caplog):
+        """Rows with improvement (delta < 0) show the 'ok' marker."""
+        log_text = self._run_with_mock_data(caplog)
+        assert " ok" in log_text
 
-    def test_no_improvement_case(self, capsys):
+    def test_no_improvement_case(self, caplog):
         """When baseline is better than corrected, improvement is negative."""
+        import logging
         mock_db = MagicMock()
 
         # corrected_mu_f = 85.0, delta_f = 3.0, decay_factor = 1.0
@@ -295,16 +301,17 @@ class TestReportShowsImprovement:
         mock_db.get_intraday_corrections.side_effect = fake_corrections
         mock_db.get_settlements.side_effect = fake_settlements
 
-        with (
-            patch("src.scripts.intraday_correction_backtest.Database", return_value=mock_db),
-            patch("sys.argv", ["backtest", "--city", "Chicago", "--days", str(days)]),
-        ):
-            main()
+        with caplog.at_level(logging.INFO):
+            with (
+                patch("src.scripts.intraday_correction_backtest.Database", return_value=mock_db),
+                patch("sys.argv", ["backtest", "--city", "Chicago", "--days", str(days)]),
+            ):
+                main()
 
-        captured = capsys.readouterr()
-        assert "Improvement:" in captured.out
+        log_text = caplog.text
+        assert "Improvement:" in log_text
         # negative improvement → baseline was better
-        for line in captured.out.splitlines():
+        for line in log_text.splitlines():
             if "Improvement:" in line:
                 assert "-" in line
                 break

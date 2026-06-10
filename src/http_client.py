@@ -14,6 +14,7 @@ Design decisions:
   a single session.
 """
 
+import logging
 import threading
 import time
 from dataclasses import dataclass
@@ -21,6 +22,8 @@ from datetime import datetime, timedelta
 from typing import Any
 
 import httpx
+
+log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Identity
@@ -97,10 +100,9 @@ def fetch(url: str, timeout: float = 15.0, max_retries: int = 3) -> httpx.Respon
             if r.status_code in (429, 503):
                 retry_after = float(r.headers.get("Retry-After", backoff))
                 retry_after = min(retry_after, 60.0)  # cap at 60 s
-                print(
-                    f"[http] {domain} returned {r.status_code} "
-                    f"(attempt {attempt + 1}/{max_retries}), "
-                    f"sleeping {retry_after:.0f}s"
+                log.warning(
+                    "[http] %s returned %s (attempt %s/%s), sleeping %ss",
+                    domain, r.status_code, attempt + 1, max_retries, f"{retry_after:.0f}",
                 )
                 time.sleep(retry_after)
                 backoff = min(backoff * 2, 60.0)
@@ -118,9 +120,9 @@ def fetch(url: str, timeout: float = 15.0, max_retries: int = 3) -> httpx.Respon
                 raise  # non-retriable 4xx / 5xx
 
         except (httpx.ConnectError, httpx.TimeoutException, httpx.RemoteProtocolError) as exc:
-            print(
-                f"[http] {domain} network error ({type(exc).__name__}) "
-                f"attempt {attempt + 1}/{max_retries}: {exc}"
+            log.warning(
+                "[http] %s network error (%s) attempt %s/%s: %s",
+                domain, type(exc).__name__, attempt + 1, max_retries, exc,
             )
             time.sleep(backoff)
             backoff = min(backoff * 2, 60.0)
@@ -151,16 +153,16 @@ def get_nws_forecast_url(lat: float, lon: float) -> str | None:
         r = fetch(f"https://api.weather.gov/points/{lat},{lon}")
         url = r.json()["properties"]["forecastHourly"]
         _nws_points_cache[key] = url
-        print(f"[nws-points] cached forecast URL for ({lat},{lon})")
+        log.debug("[nws-points] cached forecast URL for (%s,%s)", lat, lon)
         return url
     except Exception as exc:
         # Cache None so we don't retry (and re-log) every poll — NWS only covers US coords
         _nws_points_cache[key] = None
         status = getattr(getattr(exc, "response", None), "status_code", None)
         if status == 404:
-            print(f"[nws-points] ({lat},{lon}) not covered by NWS (non-US station)")
+            log.info("[nws-points] (%s,%s) not covered by NWS (non-US station)", lat, lon)
         else:
-            print(f"[nws-points] ({lat},{lon}) error: {exc}")
+            log.warning("[nws-points] (%s,%s) error: %s", lat, lon, exc)
         return None
 
 
@@ -198,12 +200,12 @@ def cached_fetch_json(url: str, ttl_minutes: float = 30) -> Any:
             _json_cache[url] = _CacheEntry(value=data, expires=expires)
         return data
     except Exception as exc:
-        print(f"[cache] fetch error for {url[:80]}: {exc}")
+        log.warning("[cache] fetch error for %s: %s", url[:80], exc)
         # Return stale value if available rather than None
         with _cache_lock:
             entry = _json_cache.get(url)
             if entry:
-                print(f"[cache] serving stale entry for {url[:80]}")
+                log.info("[cache] serving stale entry for %s", url[:80])
                 return entry.value
         return None
 

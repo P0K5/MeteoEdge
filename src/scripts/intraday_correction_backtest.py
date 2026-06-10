@@ -8,13 +8,17 @@ Usage:
     python -m src.scripts.intraday_correction_backtest --city Seoul --days 14
 """
 import argparse
+import logging
 import math
 import os
 import sys
 from datetime import date, timedelta
 
+log = logging.getLogger(__name__)
+
 from src.config import STATIONS
 from src.data.db import Database
+from src.logging_config import setup_logging
 
 _DEFAULT_DB_PATH = os.getenv("DB_PATH", "data/meteoedge.db")
 
@@ -90,6 +94,7 @@ def _build_daily_stats(
 # ---------------------------------------------------------------------------
 
 def main() -> None:
+    setup_logging()
     parser = argparse.ArgumentParser(
         description="Backtest intraday bias correction — compare corrected vs baseline RMSE"
     )
@@ -106,7 +111,7 @@ def main() -> None:
     # --- Find METAR station for this city ---
     station = _station_for_city(city)
     if station is None:
-        print(f"Unknown city: {city}. Available cities: {[r[3] for r in STATIONS]}")
+        log.error("Unknown city: %s. Available cities: %s", city, [r[3] for r in STATIONS])
         sys.exit(1)
 
     db = Database(_DEFAULT_DB_PATH)
@@ -149,7 +154,7 @@ def main() -> None:
 
     # --- No data path ---
     if not daily_results:
-        print(f"No intraday_corrections data found for {city} in the last {days} days.")
+        log.info("No intraday_corrections data found for %s in the last %s days.", city, days)
         sys.exit(0)
 
     # --- Compute overall RMSE ---
@@ -162,23 +167,23 @@ def main() -> None:
     improvement_pct = (improvement / overall_baseline_rmse * 100) if overall_baseline_rmse else 0.0
 
     # --- Print report ---
-    print(f"\nIntraday Correction Backtest — {city} — last {days} days")
-    print("=" * 44)
-    print(f"{'Date':<14} {'Baseline Err':>13} {'Corrected Err':>14} {'Delta':>8}")
+    log.info("Intraday Correction Backtest -- %s -- last %s days", city, days)
+    log.info("=" * 44)
+    log.info("%-14s %13s %14s %8s", "Date", "Baseline Err", "Corrected Err", "Delta")
 
     for r in daily_results:
         delta = r["corrected_error"] - r["baseline_error"]
-        marker = " ✓" if delta < 0 else (" ✗" if delta > 0 else "")
-        print(
-            f"{r['date']:<14} {r['baseline_error']:>13.2f} {r['corrected_error']:>14.2f}"
-            f" {delta:>8.2f}{marker}"
+        marker = " ok" if delta < 0 else (" WORSE" if delta > 0 else "")
+        log.info(
+            "%-14s %13.2f %14.2f %8.2f%s",
+            r['date'], r['baseline_error'], r['corrected_error'], delta, marker,
         )
 
-    print("-" * 44)
-    print(f"Overall baseline RMSE:  {overall_baseline_rmse:.2f} °F")
-    print(f"Overall corrected RMSE: {overall_corrected_rmse:.2f} °F")
-    print(f"Improvement:            {improvement:.2f} °F ({improvement_pct:.1f}%)")
-    print(f"Dates with data: {len(daily_results)}/{days}")
+    log.info("-" * 44)
+    log.info("Overall baseline RMSE:  %.2f F", overall_baseline_rmse)
+    log.info("Overall corrected RMSE: %.2f F", overall_corrected_rmse)
+    log.info("Improvement:            %.2f F (%.1f%%)", improvement, improvement_pct)
+    log.info("Dates with data: %s/%s", len(daily_results), days)
 
 
 if __name__ == "__main__":

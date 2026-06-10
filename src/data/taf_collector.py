@@ -19,10 +19,13 @@ Design notes
 """
 from __future__ import annotations
 
+import logging
 import os
 import time
 
 from src.config import STATIONS
+
+log = logging.getLogger(__name__)
 from src.data.db import Database
 from src.data.taf_parser import TafParser
 from src.http_client import fetch
@@ -100,13 +103,13 @@ class TafCollector:
         # Delete stale rows for this (city, issued_at) before re-inserting.
         deleted = self._db.delete_stale_taf_windows(city, issued_at)
         if deleted:
-            print(f"[taf] {icao}: deleted {deleted} stale windows for issued_at={issued_at}")
+            log.info("[taf] %s: deleted %s stale windows for issued_at=%s", icao, deleted, issued_at)
 
         for window in windows:
             self._db.insert_taf_window(window)
 
         n = len(windows)
-        print(f"[taf] fetched {icao}: {n} windows")
+        log.info("[taf] fetched %s: %s windows", icao, n)
         return n
 
     def run_loop(self) -> None:
@@ -116,16 +119,16 @@ class TafCollector:
         between full sweeps.  Errors for a single ICAO are logged and do not
         abort the loop.
         """
-        print(
-            f"[taf] starting loop — {len(self._icaos)} airports, "
-            f"cadence={self._cadence_min}min"
+        log.info(
+            "[taf] starting loop -- %s airports, cadence=%smin",
+            len(self._icaos), self._cadence_min,
         )
         while True:
             for icao, city in self._icaos:
                 try:
                     self.fetch_one(icao, city)
                 except Exception as exc:
-                    print(f"[taf] {icao} error: {exc}")
+                    log.warning("[taf] %s error: %s", icao, exc)
             time.sleep(self._cadence_min * 60)
 
 

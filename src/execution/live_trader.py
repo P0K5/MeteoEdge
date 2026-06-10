@@ -1,6 +1,8 @@
 """Live order execution via Polymarket CLOB."""
 import logging
 from datetime import datetime
+
+log = logging.getLogger(__name__)
 from typing import Literal
 
 from py_clob_client_v2 import ClobClient
@@ -120,7 +122,7 @@ class LiveTrader:
                 self._db.close_position(order_id)
             return cancelled
         except Exception as e:
-            print(f"[live] cancel {order_id[:12]}... error: {e}")
+            log.warning("[live] cancel %s... error: %s", order_id[:12], e)
             return False
 
     def check_fill(self, order_id: str) -> Literal["open", "filled", "cancelled"]:
@@ -134,5 +136,5 @@ class LiveTrader:
                 return "cancelled"
             return "open"
         except Exception as e:
-            print(f"[live] check_fill {order_id[:12]}... error: {e}")
+            log.warning("[live] check_fill %s... error: %s", order_id[:12], e)
             return "open"  # Assume still open on error -- will retry
