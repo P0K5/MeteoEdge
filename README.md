@@ -235,6 +235,8 @@ See `.env.example` for:
 
 For deeper specifications and implementation details, see:
 
+- **[OPERATIONS.md](docs/OPERATIONS.md)** — Deployment, run modes, settlement, recovery, and logging runbook
+- **[DB_SCHEMA.md](docs/DB_SCHEMA.md)** — Complete database schema with column definitions, types, units, and ownership
 - **[TECHNICAL_SPECIFICATION.md](docs/TECHNICAL_SPECIFICATION.md)** — System architecture, data flows, probability model
 - **[SPIKE_DOCUMENTATION.md](docs/SPIKE_DOCUMENTATION.md)** — Implementation decisions, backtest analysis
 - **[IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md)** — Planned features and enhancements
