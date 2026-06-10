@@ -64,11 +64,12 @@ def _make_market(
 def _insert_taf_window(db: Database, city: str = "Miami", group_type: str = "Temporary Fluctuation", sig_wx: str = "TS") -> None:
     from datetime import timedelta
     now = datetime.now(timezone.utc)
-    # valid_from 1 hour in the future so it falls within [now, now+mins_left]
+    # valid_from is 5 min ahead of now — falls within [peak_start, peak_end] for any
+    # market with mins_left > 5, without relying on the market closing hours away.
     db.insert_taf_window({
         "city": city,
         "issued_at": now.isoformat(),
-        "valid_from": (now + timedelta(hours=1)).isoformat(),
+        "valid_from": (now + timedelta(minutes=5)).isoformat(),
         "valid_to": (now + timedelta(hours=3)).isoformat(),
         "group_type": group_type,
         "temp": None,
@@ -134,6 +135,7 @@ def _scan_patched(weather, markets, db=None, extra_patches=None):
         MIN_CONFIDENCE_YES=0.0,
         MAX_CONFIDENCE_YES_FOR_NO=1.0,
         MIN_PRICE_CENTS=1,
+        MIN_MINUTES_TO_SETTLEMENT=0,
     )
     if extra_patches:
         kw.update(extra_patches)
