@@ -108,7 +108,7 @@ def _compute_win_rate(trades: list[dict], n: int = 50) -> float:
         if t.get("outcome") == "filled" and float(t.get("pnl") or 0) != 0.0
     ][:n]
     if not settled:
-        return 1.0  # No settlement data yet — suppress alert
+        return 0.0
     wins = sum(1 for t in settled if float(t.get("pnl") or 0) > 0)
     return wins / len(settled)
 

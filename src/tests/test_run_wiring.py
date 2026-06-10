@@ -297,7 +297,6 @@ class TestBuildWeatherHighFreqObs:
 class TestIntradayCorrectionWiring:
     """WeatherState.corrected_mu_f and on_insert_callback wiring."""
 
-    @pytest.mark.skip(reason="pre-existing: issue #185 — true_probability_yes returns 0 with INTRADAY_CORRECTION_ENABLED")
     def test_corrected_mu_f_takes_priority_over_deb_mu_f(self):
         """When corrected_mu_f is set, true_probability_yes uses it over deb_mu_f."""
         from src.model.envelope import WeatherState, Bracket, true_probability_yes
@@ -351,7 +350,6 @@ class TestIntradayCorrectionWiring:
             f"got p_corrected={p_corrected:.4f} p_deb={p_deb:.4f}"
         )
 
-    @pytest.mark.skip(reason="pre-existing: issue #185 — true_probability_yes returns 0 with INTRADAY_CORRECTION_ENABLED")
     def test_corrected_mu_f_none_falls_through_to_deb(self):
         """When corrected_mu_f is None and DEB_ENABLED, deb_mu_f is used."""
         from src.model.envelope import WeatherState, Bracket, true_probability_yes
