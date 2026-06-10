@@ -444,6 +444,17 @@ class Database:
                 "DELETE FROM open_positions WHERE order_id=?", (order_id,)
             )
 
+    def close_positions_by_token(self, token_id: str) -> int:
+        """Remove all open_positions rows for *token_id* (market resolved).
+
+        Returns the number of rows deleted.
+        """
+        with self._conn:
+            cur = self._conn.execute(
+                "DELETE FROM open_positions WHERE token_id=?", (token_id,)
+            )
+        return cur.rowcount
+
     def get_open_positions(self) -> list:
         """Return all open positions ordered by entry time ascending.
 

@@ -540,6 +540,10 @@ def _log_open_position_snapshots(weather: dict, ts: str, db=None) -> None:
             if asks:
                 no_no_ask = max(1, min(99, round(min(float(a["price"]) for a in asks) * 100)))
         except Exception as e:
+            if "404" in str(e):
+                n = db.close_positions_by_token(token_id) if db is not None else 0
+                print(f"  [snap] {token_id[:14]}... market resolved — removed {n} row(s) from open_positions")
+                continue
             print(f"  [snap] orderbook {token_id[:14]}... error: {e}")
 
         # Live p_yes by re-running the envelope model with current state
@@ -625,7 +629,11 @@ def _check_take_profit_exits(live_trader, ts: str, db=None) -> None:
                 continue
             best_bid_cents = max(1, min(99, round(max(float(b["price"]) for b in bids) * 100)))
         except Exception as e:
-            print(f"  [tp] orderbook fetch failed for {token_id[:14]}...: {e}")
+            if "404" in str(e):
+                n = db.close_positions_by_token(token_id) if db is not None else 0
+                print(f"  [tp] {token_id[:14]}... market resolved — removed {n} row(s) from open_positions")
+            else:
+                print(f"  [tp] orderbook fetch failed for {token_id[:14]}...: {e}")
             continue
 
         if best_bid_cents < target_cents:
