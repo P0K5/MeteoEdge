@@ -16,7 +16,32 @@ from fastapi.testclient import TestClient
 
 from src.monitoring.dashboard import app, _read_jsonl, _compute_win_rate, _today_pnl
 
-client = TestClient(app)
+
+@pytest.fixture
+def client():
+    """Create a fresh TestClient for each test to avoid state leakage.
+
+    Also resets module-level global state (_db, last_poll_ts) before and after
+    each test to prevent test isolation issues.
+    """
+    import src.monitoring.dashboard as dash
+
+    # Save original state
+    original_db = dash._db
+    original_last_poll_ts = dash.last_poll_ts
+
+    # Reset to clean state
+    dash._db = None
+    dash.last_poll_ts = None
+
+    # Yield fresh client
+    test_client = TestClient(app)
+    yield test_client
+
+    # Restore original state after test
+    dash._db = original_db
+    dash.last_poll_ts = original_last_poll_ts
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -37,28 +62,28 @@ def _today() -> str:
 # ---------------------------------------------------------------------------
 
 class TestHealthEndpoint:
-    def test_returns_200(self):
+    def test_returns_200(self, client):
         resp = client.get("/health")
         assert resp.status_code == 200
 
-    def test_returns_status_ok(self):
+    def test_returns_status_ok(self, client):
         resp = client.get("/health")
         data = resp.json()
         assert data["status"] == "ok"
 
-    def test_returns_uptime_seconds(self):
+    def test_returns_uptime_seconds(self, client):
         resp = client.get("/health")
         data = resp.json()
         assert "uptime_seconds" in data
         assert isinstance(data["uptime_seconds"], int)
         assert data["uptime_seconds"] >= 0
 
-    def test_returns_last_poll_field(self):
+    def test_returns_last_poll_field(self, client):
         resp = client.get("/health")
         data = resp.json()
         assert "last_poll" in data
 
-    def test_returns_200_with_empty_log_dir(self, tmp_path):
+    def test_returns_200_with_empty_log_dir(self, client, tmp_path):
         """Health endpoint must not crash when log directory does not exist."""
         with patch("src.monitoring.dashboard.LIVE_TRADES_JSONL", tmp_path / "no_trades.jsonl"):
             with patch("src.monitoring.dashboard.SNAPSHOTS_JSONL", tmp_path / "no_snaps.jsonl"):
@@ -71,7 +96,7 @@ class TestHealthEndpoint:
 # ---------------------------------------------------------------------------
 
 class TestStatusEndpoint:
-    def test_returns_expected_keys(self, tmp_path):
+    def test_returns_expected_keys(self, client, tmp_path):
         _write_jsonl(tmp_path / "trades.jsonl", [])
         _write_jsonl(tmp_path / "snaps.jsonl", [])
         with patch("src.monitoring.dashboard.LIVE_TRADES_JSONL", tmp_path / "trades.jsonl"):
@@ -82,8 +107,7 @@ class TestStatusEndpoint:
         for key in ("capital", "today_pnl", "today_trade_count", "win_rate", "last_poll"):
             assert key in data, f"Missing key: {key}"
 
-    @pytest.mark.skip(reason="pre-existing: issue #184 — global state isolation in TestStatusEndpoint")
-    def test_empty_logs_return_defaults(self, tmp_path):
+    def test_empty_logs_return_defaults(self, client, tmp_path):
         with patch("src.monitoring.dashboard.LIVE_TRADES_JSONL", tmp_path / "missing.jsonl"):
             with patch("src.monitoring.dashboard.SNAPSHOTS_JSONL", tmp_path / "missing2.jsonl"):
                 resp = client.get("/status")
@@ -92,7 +116,7 @@ class TestStatusEndpoint:
         assert data["today_trade_count"] == 0
         assert data["win_rate"] == 0.0
 
-    def test_today_pnl_sums_todays_trades(self, tmp_path):
+    def test_today_pnl_sums_todays_trades(self, client, tmp_path):
         today = _today()
         records = [
             {"ts": f"{today}T10:00:00+00:00", "outcome": "filled", "pnl": 5.0, "station": "KORD"},
@@ -105,7 +129,7 @@ class TestStatusEndpoint:
                 resp = client.get("/status")
         assert resp.json()["today_pnl"] == pytest.approx(3.0)
 
-    def test_capital_from_snapshot(self, tmp_path):
+    def test_capital_from_snapshot(self, client, tmp_path):
         snaps = [{"capital": 480.0, "ts": "2024-01-01T00:00:00+00:00"}]
         _write_jsonl(tmp_path / "snaps.jsonl", snaps)
         with patch("src.monitoring.dashboard.LIVE_TRADES_JSONL", tmp_path / "no_trades.jsonl"):
@@ -113,7 +137,7 @@ class TestStatusEndpoint:
                 resp = client.get("/status")
         assert resp.json()["capital"] == pytest.approx(480.0)
 
-    def test_win_rate_is_float_between_0_and_1(self, tmp_path):
+    def test_win_rate_is_float_between_0_and_1(self, client, tmp_path):
         today = _today()
         records = [
             {"ts": f"{today}T10:00:00+00:00", "outcome": "filled", "pnl": 3.0, "station": "KORD"}
@@ -135,14 +159,14 @@ class TestStatusEndpoint:
 # ---------------------------------------------------------------------------
 
 class TestTradesEndpoint:
-    def test_returns_list(self, tmp_path):
+    def test_returns_list(self, client, tmp_path):
         _write_jsonl(tmp_path / "trades.jsonl", [])
         with patch("src.monitoring.dashboard.LIVE_TRADES_JSONL", tmp_path / "trades.jsonl"):
             resp = client.get("/trades")
         assert resp.status_code == 200
         assert isinstance(resp.json(), list)
 
-    def test_returns_at_most_50(self, tmp_path):
+    def test_returns_at_most_50(self, client, tmp_path):
         records = [{"ts": "2024-01-01T00:00:00+00:00", "outcome": "filled", "station": "KORD", "i": i}
                    for i in range(100)]
         _write_jsonl(tmp_path / "trades.jsonl", records)
@@ -150,7 +174,7 @@ class TestTradesEndpoint:
             resp = client.get("/trades")
         assert len(resp.json()) == 50
 
-    def test_returns_newest_first(self, tmp_path):
+    def test_returns_newest_first(self, client, tmp_path):
         records = [
             {"ts": "2024-01-01T00:00:00+00:00", "station": "A"},
             {"ts": "2024-06-01T00:00:00+00:00", "station": "B"},
@@ -162,7 +186,7 @@ class TestTradesEndpoint:
         assert data[0]["station"] == "B"
         assert data[1]["station"] == "A"
 
-    def test_empty_log_returns_empty_list(self, tmp_path):
+    def test_empty_log_returns_empty_list(self, client, tmp_path):
         with patch("src.monitoring.dashboard.LIVE_TRADES_JSONL", tmp_path / "missing.jsonl"):
             resp = client.get("/trades")
         assert resp.json() == []
@@ -173,14 +197,14 @@ class TestTradesEndpoint:
 # ---------------------------------------------------------------------------
 
 class TestStationsEndpoint:
-    def test_returns_dict(self, tmp_path):
+    def test_returns_dict(self, client, tmp_path):
         _write_jsonl(tmp_path / "trades.jsonl", [])
         with patch("src.monitoring.dashboard.LIVE_TRADES_JSONL", tmp_path / "trades.jsonl"):
             resp = client.get("/stations")
         assert resp.status_code == 200
         assert isinstance(resp.json(), dict)
 
-    def test_groups_by_station(self, tmp_path):
+    def test_groups_by_station(self, client, tmp_path):
         records = [
             {"ts": "2024-01-01T00:00:00+00:00", "outcome": "filled", "pnl": 1.0, "station": "KORD"},
             {"ts": "2024-01-01T00:00:00+00:00", "outcome": "filled", "pnl": 2.0, "station": "KORD"},
@@ -195,7 +219,7 @@ class TestStationsEndpoint:
         assert data["KORD"]["trade_count"] == 2
         assert data["KMIA"]["trade_count"] == 1
 
-    def test_station_stats_structure(self, tmp_path):
+    def test_station_stats_structure(self, client, tmp_path):
         records = [
             {"ts": "2024-01-01T00:00:00+00:00", "outcome": "filled", "pnl": 5.0, "station": "KATL"},
         ]
@@ -206,7 +230,7 @@ class TestStationsEndpoint:
         for key in ("trade_count", "filled_count", "win_rate", "total_pnl"):
             assert key in station
 
-    def test_win_rate_calculated_per_station(self, tmp_path):
+    def test_win_rate_calculated_per_station(self, client, tmp_path):
         # 3 wins, 1 loss → win rate = 0.75
         records = [
             {"ts": "2024-01-01T00:00:00+00:00", "outcome": "filled", "pnl": 1.0, "station": "KORD"},
@@ -219,7 +243,7 @@ class TestStationsEndpoint:
             resp = client.get("/stations")
         assert resp.json()["KORD"]["win_rate"] == pytest.approx(0.75)
 
-    def test_empty_log_returns_empty_dict(self, tmp_path):
+    def test_empty_log_returns_empty_dict(self, client, tmp_path):
         with patch("src.monitoring.dashboard.LIVE_TRADES_JSONL", tmp_path / "missing.jsonl"):
             resp = client.get("/stations")
         assert resp.json() == {}
@@ -254,7 +278,7 @@ class TestStatusDbCapital:
         from src.data.db import Database
         return Database(":memory:")
 
-    def test_status_capital_from_db(self, tmp_path):
+    def test_status_capital_from_db(self, client, tmp_path):
         import src.monitoring.dashboard as dash
         db = self._setup_db()
         db.insert_trade(
@@ -274,7 +298,7 @@ class TestStatusDbCapital:
         finally:
             dash.set_db(original)
 
-    def test_status_open_positions_count(self, tmp_path):
+    def test_status_open_positions_count(self, client, tmp_path):
         import src.monitoring.dashboard as dash
         db = self._setup_db()
         today = datetime.now(timezone.utc).date().isoformat()
@@ -289,7 +313,7 @@ class TestStatusDbCapital:
         finally:
             dash.set_db(original)
 
-    def test_status_defaults_no_data(self, tmp_path):
+    def test_status_defaults_no_data(self, client, tmp_path):
         import src.monitoring.dashboard as dash
         from src.config import STARTING_CAPITAL_EUR
         db = self._setup_db()
@@ -305,7 +329,7 @@ class TestStatusDbCapital:
         finally:
             dash.set_db(original)
 
-    def test_no_breaking_change(self, tmp_path):
+    def test_no_breaking_change(self, client, tmp_path):
         """All original keys must still be present plus open_positions_count."""
         original_keys = {"capital", "today_pnl", "today_trade_count", "win_rate", "last_poll"}
         with patch("src.monitoring.dashboard.LIVE_TRADES_JSONL", tmp_path / "missing.jsonl"):
