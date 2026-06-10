@@ -154,6 +154,7 @@ class Database:
 
     def __init__(self, path: "str | Path" = _DEFAULT_PATH) -> None:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
+        self._lock = threading.RLock()
         self._conn = sqlite3.connect(str(path), check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
@@ -222,26 +223,27 @@ class Database:
         commit, enabling event-driven intraday correction without blocking the
         collector.
         """
-        if cadence_min is not None or is_official is not None:
-            cur = self._conn.execute(
-                "INSERT INTO observations"
-                "(ts,station,temp_f,temp_native,unit,current_high,source,raw_json,"
-                "cadence_min,is_official) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?)",
-                (
-                    ts, station, temp_f, temp_native, unit, current_high,
-                    source, raw_json, cadence_min, is_official,
-                ),
-            )
-        else:
-            cur = self._conn.execute(
-                "INSERT INTO observations"
-                "(ts,station,temp_f,temp_native,unit,current_high,source,raw_json) "
-                "VALUES(?,?,?,?,?,?,?,?)",
-                (ts, station, temp_f, temp_native, unit, current_high, source, raw_json),
-            )
-        self._conn.commit()
-        row_id = cur.lastrowid
+        with self._lock:
+            if cadence_min is not None or is_official is not None:
+                cur = self._conn.execute(
+                    "INSERT INTO observations"
+                    "(ts,station,temp_f,temp_native,unit,current_high,source,raw_json,"
+                    "cadence_min,is_official) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        ts, station, temp_f, temp_native, unit, current_high,
+                        source, raw_json, cadence_min, is_official,
+                    ),
+                )
+            else:
+                cur = self._conn.execute(
+                    "INSERT INTO observations"
+                    "(ts,station,temp_f,temp_native,unit,current_high,source,raw_json) "
+                    "VALUES(?,?,?,?,?,?,?,?)",
+                    (ts, station, temp_f, temp_native, unit, current_high, source, raw_json),
+                )
+            self._conn.commit()
+            row_id = cur.lastrowid
         if on_insert_callback is not None:
             t = threading.Thread(target=on_insert_callback, daemon=True)
             t.start()
@@ -285,20 +287,21 @@ class Database:
         flagged_first: int = 1,
     ) -> int:
         """Insert a trade candidate; returns the new row id."""
-        cur = self._conn.execute(
-            "INSERT INTO candidates"
-            "(ts,station,ticker,bracket_low,bracket_high,side,"
-            "predicted_price,predicted_edge,market_price,confidence,"
-            "minutes_to_settlement,flagged_first) "
-            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
-            (
-                ts, station, ticker, bracket_low, bracket_high, side,
-                predicted_price, predicted_edge, market_price, confidence,
-                minutes_to_settlement, flagged_first,
-            ),
-        )
-        self._conn.commit()
-        return cur.lastrowid
+        with self._lock:
+            cur = self._conn.execute(
+                "INSERT INTO candidates"
+                "(ts,station,ticker,bracket_low,bracket_high,side,"
+                "predicted_price,predicted_edge,market_price,confidence,"
+                "minutes_to_settlement,flagged_first) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    ts, station, ticker, bracket_low, bracket_high, side,
+                    predicted_price, predicted_edge, market_price, confidence,
+                    minutes_to_settlement, flagged_first,
+                ),
+            )
+            self._conn.commit()
+            return cur.lastrowid
 
     def count_candidates_today(self, ticker: str) -> int:
         """Return the number of candidates logged today (UTC) for *ticker*."""
@@ -334,20 +337,21 @@ class Database:
         settled_at: "str | None" = None,
     ) -> int:
         """Insert a trade record; returns the new row id."""
-        cur = self._conn.execute(
-            "INSERT INTO trades"
-            "(ts,station,ticker,bracket_low,bracket_high,side,"
-            "predicted_price,actual_price,slippage,predicted_edge,mode,order_id,"
-            "outcome,pnl,capital_before,capital_after,settled_at) "
-            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-            (
-                ts, station, ticker, bracket_low, bracket_high, side,
-                predicted_price, actual_price, slippage, predicted_edge, mode,
-                order_id, outcome, pnl, capital_before, capital_after, settled_at,
-            ),
-        )
-        self._conn.commit()
-        return cur.lastrowid
+        with self._lock:
+            cur = self._conn.execute(
+                "INSERT INTO trades"
+                "(ts,station,ticker,bracket_low,bracket_high,side,"
+                "predicted_price,actual_price,slippage,predicted_edge,mode,order_id,"
+                "outcome,pnl,capital_before,capital_after,settled_at) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    ts, station, ticker, bracket_low, bracket_high, side,
+                    predicted_price, actual_price, slippage, predicted_edge, mode,
+                    order_id, outcome, pnl, capital_before, capital_after, settled_at,
+                ),
+            )
+            self._conn.commit()
+            return cur.lastrowid
 
     def get_trades(self, limit: "int | None" = 50, mode: "str | None" = None) -> list:
         """Return trades ordered by most-recent-first.
@@ -385,17 +389,18 @@ class Database:
         source: str = "polymarket",
     ) -> None:
         """Upsert a settlement record (unique on ticker)."""
-        self._conn.execute(
-            "INSERT OR REPLACE INTO settlements"
-            "(ts,station,ticker,bracket_low,bracket_high,"
-            "actual_high_f,resolved_yes,market_final_price,source) "
-            "VALUES(?,?,?,?,?,?,?,?,?)",
-            (
-                ts, station, ticker, bracket_low, bracket_high,
-                actual_high_f, resolved_yes, market_final_price, source,
-            ),
-        )
-        self._conn.commit()
+        with self._lock:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO settlements"
+                "(ts,station,ticker,bracket_low,bracket_high,"
+                "actual_high_f,resolved_yes,market_final_price,source) "
+                "VALUES(?,?,?,?,?,?,?,?,?)",
+                (
+                    ts, station, ticker, bracket_low, bracket_high,
+                    actual_high_f, resolved_yes, market_final_price, source,
+                ),
+            )
+            self._conn.commit()
 
     def get_settlements(self, station: str, since: str) -> list:
         """Return settlements for *station* at or after *since*, oldest first."""
@@ -425,34 +430,37 @@ class Database:
         take_profit_cents: "int | None" = None,
     ) -> None:
         """Atomically insert an open position."""
-        with self._conn:
-            self._conn.execute(
-                "INSERT INTO open_positions"
-                "(trade_id,station,ticker,token_id,side,"
-                "order_id,entry_price,shares,entry_ts,stop_loss_cents,take_profit_cents) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-                (
-                    trade_id, station, ticker, token_id, side, order_id,
-                    entry_price, shares, entry_ts, stop_loss_cents, take_profit_cents,
-                ),
-            )
+        with self._lock:
+            with self._conn:
+                self._conn.execute(
+                    "INSERT INTO open_positions"
+                    "(trade_id,station,ticker,token_id,side,"
+                    "order_id,entry_price,shares,entry_ts,stop_loss_cents,take_profit_cents) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        trade_id, station, ticker, token_id, side, order_id,
+                        entry_price, shares, entry_ts, stop_loss_cents, take_profit_cents,
+                    ),
+                )
 
     def close_position(self, order_id: str) -> None:
         """Atomically remove an open position by order_id."""
-        with self._conn:
-            self._conn.execute(
-                "DELETE FROM open_positions WHERE order_id=?", (order_id,)
-            )
+        with self._lock:
+            with self._conn:
+                self._conn.execute(
+                    "DELETE FROM open_positions WHERE order_id=?", (order_id,)
+                )
 
     def close_positions_by_token(self, token_id: str) -> int:
         """Remove all open_positions rows for *token_id* (market resolved).
 
         Returns the number of rows deleted.
         """
-        with self._conn:
-            cur = self._conn.execute(
-                "DELETE FROM open_positions WHERE token_id=?", (token_id,)
-            )
+        with self._lock:
+            with self._conn:
+                cur = self._conn.execute(
+                    "DELETE FROM open_positions WHERE token_id=?", (token_id,)
+                )
         return cur.rowcount
 
     def get_open_positions(self) -> list:
@@ -506,16 +514,17 @@ class Database:
         On first insert the row is created; on conflict ``daily_pnl`` is incremented
         by ``pnl_delta`` and ``open_positions`` / ``updated_at`` are replaced.
         """
-        with self._conn:
-            self._conn.execute(
-                "INSERT INTO risk_state(trade_date,daily_pnl,open_positions,updated_at) "
-                "VALUES(?,?,?,?) "
-                "ON CONFLICT(trade_date) DO UPDATE SET "
-                "daily_pnl=daily_pnl+excluded.daily_pnl, "
-                "open_positions=excluded.open_positions, "
-                "updated_at=excluded.updated_at",
-                (date_str, pnl_delta, open_positions, self._now()),
-            )
+        with self._lock:
+            with self._conn:
+                self._conn.execute(
+                    "INSERT INTO risk_state(trade_date,daily_pnl,open_positions,updated_at) "
+                    "VALUES(?,?,?,?) "
+                    "ON CONFLICT(trade_date) DO UPDATE SET "
+                    "daily_pnl=daily_pnl+excluded.daily_pnl, "
+                    "open_positions=excluded.open_positions, "
+                    "updated_at=excluded.updated_at",
+                    (date_str, pnl_delta, open_positions, self._now()),
+                )
 
     # ------------------------------------------------------------------
     # taf_windows
@@ -523,12 +532,13 @@ class Database:
 
     def insert_taf_window(self, row: dict) -> None:
         """Insert a TAF window record."""
-        with self._conn:
-            self._conn.execute(
-                "INSERT INTO taf_windows(city,issued_at,valid_from,valid_to,group_type,temp,wind_kt,sig_wx,raw_text) "
-                "VALUES(:city,:issued_at,:valid_from,:valid_to,:group_type,:temp,:wind_kt,:sig_wx,:raw_text)",
-                row,
-            )
+        with self._lock:
+            with self._conn:
+                self._conn.execute(
+                    "INSERT INTO taf_windows(city,issued_at,valid_from,valid_to,group_type,temp,wind_kt,sig_wx,raw_text) "
+                    "VALUES(:city,:issued_at,:valid_from,:valid_to,:group_type,:temp,:wind_kt,:sig_wx,:raw_text)",
+                    row,
+                )
 
     def delete_stale_taf_windows(self, city: str, issued_at: str) -> int:
         """Delete all taf_windows rows for *city* with the given *issued_at*.
@@ -536,11 +546,12 @@ class Database:
         Used before re-inserting a freshly fetched TAF to avoid duplicates.
         Returns the number of rows deleted.
         """
-        with self._conn:
-            cur = self._conn.execute(
-                "DELETE FROM taf_windows WHERE city=? AND issued_at=?",
-                (city, issued_at),
-            )
+        with self._lock:
+            with self._conn:
+                cur = self._conn.execute(
+                    "DELETE FROM taf_windows WHERE city=? AND issued_at=?",
+                    (city, issued_at),
+                )
         return cur.rowcount
 
     def get_taf_windows(self, city: str, from_ts: str, to_ts: str) -> list[dict]:
@@ -560,11 +571,12 @@ class Database:
 
     def upsert_model_weight(self, *, city: str, model: str, date: str, weight: float, rmse: float) -> None:
         """Upsert a model weight record (unique on city, model, date)."""
-        with self._conn:
-            self._conn.execute(
-                "INSERT OR REPLACE INTO model_weights(city,model,date,weight,rmse) VALUES(?,?,?,?,?)",
-                (city, model, date, weight, rmse),
-            )
+        with self._lock:
+            with self._conn:
+                self._conn.execute(
+                    "INSERT OR REPLACE INTO model_weights(city,model,date,weight,rmse) VALUES(?,?,?,?,?)",
+                    (city, model, date, weight, rmse),
+                )
 
     def get_model_weights(self, city: str) -> list[dict]:
         """Return model weights for *city*, ordered by date descending (most recent first)."""
@@ -580,12 +592,13 @@ class Database:
 
     def upsert_forecast_log(self, *, station: str, model: str, date: str, forecast_high_f: float) -> None:
         """Upsert a forecast log record (unique on station, model, date)."""
-        with self._conn:
-            self._conn.execute(
-                "INSERT OR REPLACE INTO model_forecast_log"
-                "(station,model,date,forecast_high_f,logged_at) VALUES(?,?,?,?,?)",
-                (station, model, date, forecast_high_f, self._now()),
-            )
+        with self._lock:
+            with self._conn:
+                self._conn.execute(
+                    "INSERT OR REPLACE INTO model_forecast_log"
+                    "(station,model,date,forecast_high_f,logged_at) VALUES(?,?,?,?,?)",
+                    (station, model, date, forecast_high_f, self._now()),
+                )
 
     def get_forecast_log(self, station: str, since_date: str) -> list[dict]:
         """Return forecast logs for *station* on or after *since_date*, ordered by date ascending."""
@@ -612,13 +625,14 @@ class Database:
         decay_factor: float,
     ) -> None:
         """Upsert an intraday correction record (unique on city, date, obs_time)."""
-        with self._conn:
-            self._conn.execute(
-                "INSERT OR REPLACE INTO intraday_corrections"
-                "(city,date,obs_time,obs_temp_f,model_temp_f,delta_f,corrected_mu_f,decay_factor) "
-                "VALUES(?,?,?,?,?,?,?,?)",
-                (city, date, obs_time, obs_temp_f, model_temp_f, delta_f, corrected_mu_f, decay_factor),
-            )
+        with self._lock:
+            with self._conn:
+                self._conn.execute(
+                    "INSERT OR REPLACE INTO intraday_corrections"
+                    "(city,date,obs_time,obs_temp_f,model_temp_f,delta_f,corrected_mu_f,decay_factor) "
+                    "VALUES(?,?,?,?,?,?,?,?)",
+                    (city, date, obs_time, obs_temp_f, model_temp_f, delta_f, corrected_mu_f, decay_factor),
+                )
 
     def get_intraday_corrections(self, city: str, date: str) -> list[dict]:
         """Return intraday corrections for city on date, ordered by obs_time ascending."""
