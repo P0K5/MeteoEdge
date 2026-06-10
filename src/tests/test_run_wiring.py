@@ -15,6 +15,7 @@ from unittest.mock import MagicMock, patch, call
 
 import pytest
 
+import src.monitoring.dashboard
 from src.scripts.run import _start_collector_thread
 
 
