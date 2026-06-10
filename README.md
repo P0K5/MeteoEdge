@@ -1,5 +1,7 @@
 # MeteoEdge: Polymarket Weather Arbitrage
 
+![CI](https://github.com/P0K5/MeteoEdge/actions/workflows/ci.yml/badge.svg)
+
 A machine learning trading system that identifies and executes profitable weather market arbitrages on Polymarket by comparing real-time meteorological data with market-implied probabilities.
 
 ## What MeteoEdge Does
