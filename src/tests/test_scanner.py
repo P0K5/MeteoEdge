@@ -1,6 +1,7 @@
 """Unit tests for src/strategy/scanner.py — bracket parsing and market scanning."""
 import logging
 from datetime import datetime, timezone, timedelta
+from unittest.mock import patch
 import pytest
 from src.strategy.scanner import parse_bracket_from_market, scan_markets, is_highest_temp_market
 from src.model.envelope import WeatherState
@@ -150,9 +151,10 @@ class TestScanMarketsSkipReasons:
             question="Will the highest temperature in Miami be 80-85°F?",
             condition_id="0xmia_test"
         )
-        # Add settlement time (default: 2 hours from now)
-        now = datetime.now(timezone.utc)
-        default_end = (now + timedelta(hours=2)).isoformat()
+        # Add settlement time: end-of-day today UTC so the wrong_date gate
+        # never fires regardless of what time of day the test runs.
+        today = datetime.now(timezone.utc).date()
+        default_end = datetime(today.year, today.month, today.day, 23, 59, 59, tzinfo=timezone.utc).isoformat()
         market.setdefault("endDate", default_end)
         market.update(kwargs)
         return market
@@ -197,11 +199,12 @@ class TestScanMarketsSkipReasons:
     def test_bracket_parse_fail_skipped(self, caplog):
         """'bracket_parse_fail' gate: unparseable bracket labels are skipped."""
         weather = {"KMIA": self._weather_state()}
-        # Unparseable label
+        # Unparseable label; disable outside_window gate so only bracket-parse gate fires
         market = self._miami_market(group_title="something completely unparseable 999xyz")
 
-        with caplog.at_level(logging.DEBUG):
-            candidates, snapshots = scan_markets(weather, [market])
+        with patch("src.strategy.scanner.MIN_MINUTES_TO_SETTLEMENT", 0):
+            with caplog.at_level(logging.DEBUG):
+                candidates, snapshots = scan_markets(weather, [market])
 
         assert candidates == []
         assert any("bracket_parse_fail" in record.message for record in caplog.records)
@@ -245,8 +248,10 @@ class TestScanMarketsSkipReasons:
             outcomePrices='["0.50", "0.50"]'  # 50/50 prices (no edge)
         )
 
-        with caplog.at_level(logging.DEBUG):
-            candidates, snapshots = scan_markets(weather, [market])
+        # Disable outside_window gate so only min_edge gate fires
+        with patch("src.strategy.scanner.MIN_MINUTES_TO_SETTLEMENT", 0):
+            with caplog.at_level(logging.DEBUG):
+                candidates, snapshots = scan_markets(weather, [market])
 
         # Should skip because edge will be negligible
         assert candidates == []
@@ -292,8 +297,9 @@ class TestScanMarketsSkipReasons:
             ),
         ]
 
-        with caplog.at_level(logging.INFO):
-            candidates, snapshots = scan_markets(weather, markets)
+        with patch("src.strategy.scanner.MIN_MINUTES_TO_SETTLEMENT", 0):
+            with caplog.at_level(logging.INFO):
+                candidates, snapshots = scan_markets(weather, markets)
 
         # Check that INFO-level summary was logged
         summary_logs = [r for r in caplog.records if r.levelname == "INFO" and "[scan]" in r.message]
