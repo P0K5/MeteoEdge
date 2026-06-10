@@ -686,7 +686,16 @@ def _check_take_profit_exits(live_trader, ts: str, db=None) -> None:
                 f"{station} {bracket_low:.0f}-{bracket_high:.0f}F NO  pnl={pnl:+.2f}"
             )
         except Exception as e:
-            print(f"  [tp] sell failed for {station} {bracket_low:.0f}-{bracket_high:.0f}F: {e}")
+            err = str(e)
+            if "balance" in err.lower() and ("0" in err or "not enough" in err.lower()):
+                n = db.close_positions_by_token(token_id) if db is not None else 0
+                _sold_positions.add(token_id)
+                print(
+                    f"  [tp] {station} {bracket_low:.0f}-{bracket_high:.0f}F balance=0 "
+                    f"— tokens already gone, removed {n} row(s) from open_positions"
+                )
+            else:
+                print(f"  [tp] sell failed for {station} {bracket_low:.0f}-{bracket_high:.0f}F: {e}")
 
 
 def _check_metar_exits(weather: dict, live_trader, ts: str, db=None) -> None:
@@ -807,7 +816,16 @@ def _check_metar_exits(weather: dict, live_trader, ts: str, db=None) -> None:
                 f"{station} {bracket_low:.0f}-{bracket_high:.0f}F NO  pnl={pnl:+.2f}"
             )
         except Exception as e:
-            print(f"  [exit] sell failed for {station} {bracket_low:.0f}-{bracket_high:.0f}F: {e}")
+            err = str(e)
+            if "balance" in err.lower() and ("0" in err or "not enough" in err.lower()):
+                n = db.close_positions_by_token(token_id) if db is not None else 0
+                _sold_positions.add(token_id)
+                print(
+                    f"  [exit] {station} {bracket_low:.0f}-{bracket_high:.0f}F balance=0 "
+                    f"— tokens already gone, removed {n} row(s) from open_positions"
+                )
+            else:
+                print(f"  [exit] sell failed for {station} {bracket_low:.0f}-{bracket_high:.0f}F: {e}")
 
 
 def poll_once(risk_manager, live_trader=None, alert_manager=None, db=None) -> None:
