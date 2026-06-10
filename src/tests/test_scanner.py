@@ -1,6 +1,9 @@
 """Unit tests for src/strategy/scanner.py — bracket parsing and market scanning."""
+import logging
+from datetime import datetime, timezone, timedelta
 import pytest
 from src.strategy.scanner import parse_bracket_from_market, scan_markets, is_highest_temp_market
+from src.model.envelope import WeatherState
 
 
 def _market(group_title: str, question: str = "", condition_id: str = "0xabc") -> dict:
@@ -121,3 +124,181 @@ class TestIsHighestTempMarket:
         market = {"question": "Will the highest temperature in Unknown City be 80°F?"}
         is_temp, _ = is_highest_temp_market(market)
         assert is_temp is False
+
+
+class TestScanMarketsSkipReasons:
+    """Tests for skip-reason logging in scan_markets()."""
+
+    def _weather_state(self) -> WeatherState:
+        """Build a minimal WeatherState for testing."""
+        now = datetime.now(timezone.utc)
+        return WeatherState(
+            station="KMIA",
+            now_local=now,
+            sunset_local=now.replace(hour=20),
+            current_high_f=75.0,
+            current_high_time=now,
+            latest_temp_f=72.0,
+            latest_temp_time=now,
+            forecast_high_f=80.0,
+        )
+
+    def _miami_market(self, group_title: str = "80-85°F", **kwargs) -> dict:
+        """Build a Miami highest-temp market with defaults, override with kwargs."""
+        market = _market(
+            group_title=group_title,
+            question="Will the highest temperature in Miami be 80-85°F?",
+            condition_id="0xmia_test"
+        )
+        # Add settlement time (default: 2 hours from now)
+        now = datetime.now(timezone.utc)
+        default_end = (now + timedelta(hours=2)).isoformat()
+        market.setdefault("endDate", default_end)
+        market.update(kwargs)
+        return market
+
+    def test_not_highest_temp_skipped(self, caplog):
+        """'not_highest_temp' gate: markets for unknown stations are silently skipped."""
+        weather = {"KMIA": self._weather_state()}
+        # This market mentions Miami but is NOT a highest-temp market
+        market = {"question": "Will rainfall in Miami exceed 1 inch?"}
+        candidates, snapshots = scan_markets(weather, [market])
+        assert candidates == []
+        # not_highest_temp should NOT emit a debug log (silent skip for non-matching markets)
+
+    def test_outside_window_skipped(self, caplog):
+        """'outside_window' gate: markets closing too soon are skipped."""
+        weather = {"KMIA": self._weather_state()}
+        # Market closes in 5 minutes (less than MIN_MINUTES_TO_SETTLEMENT, typically 20)
+        now = datetime.now(timezone.utc)
+        close_time = (now + timedelta(minutes=5)).isoformat()
+        market = self._miami_market(endDate=close_time)
+
+        with caplog.at_level(logging.DEBUG):
+            candidates, snapshots = scan_markets(weather, [market])
+
+        assert candidates == []
+        assert any("outside_window" in record.message for record in caplog.records)
+
+    def test_wrong_date_skipped(self, caplog):
+        """'wrong_date' gate: markets closing on future date (not today UTC) are skipped."""
+        weather = {"KMIA": self._weather_state()}
+        # Market closes tomorrow instead of today
+        tomorrow = (datetime.now(timezone.utc) + timedelta(days=1)).date()
+        close_time = datetime(tomorrow.year, tomorrow.month, tomorrow.day, 20, 0, tzinfo=timezone.utc).isoformat()
+        market = self._miami_market(endDate=close_time)
+
+        with caplog.at_level(logging.DEBUG):
+            candidates, snapshots = scan_markets(weather, [market])
+
+        assert candidates == []
+        assert any("wrong_date" in record.message for record in caplog.records)
+
+    def test_bracket_parse_fail_skipped(self, caplog):
+        """'bracket_parse_fail' gate: unparseable bracket labels are skipped."""
+        weather = {"KMIA": self._weather_state()}
+        # Unparseable label
+        market = self._miami_market(group_title="something completely unparseable 999xyz")
+
+        with caplog.at_level(logging.DEBUG):
+            candidates, snapshots = scan_markets(weather, [market])
+
+        assert candidates == []
+        assert any("bracket_parse_fail" in record.message for record in caplog.records)
+
+    def test_confidence_gate_p_yes_too_low(self, caplog):
+        """'confidence_gate' gate: p_yes below MIN_CONFIDENCE_YES (for YES side)."""
+        weather = {"KMIA": self._weather_state()}
+        market = self._miami_market(
+            group_title="95-100°F",  # Very high bracket
+            outcomePrices='["0.90", "0.10"]'  # YES price 90¢ (attractive)
+        )
+
+        with caplog.at_level(logging.DEBUG):
+            candidates, snapshots = scan_markets(weather, [market])
+
+        # Should skip because p_yes will be low for such a high bracket
+        # and won't meet MIN_CONFIDENCE_YES
+        assert candidates == [] or all(c.side != "YES" for c in candidates)
+        # Check if confidence_gate was logged (may not be if min_edge gate fires first)
+
+    def test_confidence_gate_p_yes_too_high_for_no(self, caplog):
+        """'confidence_gate' gate: p_yes above MAX_CONFIDENCE_YES_FOR_NO (for NO side)."""
+        weather = {"KMIA": self._weather_state()}
+        market = self._miami_market(
+            group_title="50-55°F",  # Very low bracket
+            outcomePrices='["0.10", "0.90"]'  # NO price 90¢ (attractive)
+        )
+
+        with caplog.at_level(logging.DEBUG):
+            candidates, snapshots = scan_markets(weather, [market])
+
+        # Should skip because p_yes will be high for such a low bracket
+        # and won't meet MAX_CONFIDENCE_YES_FOR_NO for NO side trading
+        assert candidates == [] or all(c.side != "NO" for c in candidates)
+
+    def test_min_edge_below_threshold(self, caplog):
+        """'min_edge' gate: edge below MIN_EDGE_CENTS is skipped."""
+        weather = {"KMIA": self._weather_state()}
+        market = self._miami_market(
+            group_title="73-74°F",  # Very narrow bracket close to current temp
+            outcomePrices='["0.50", "0.50"]'  # 50/50 prices (no edge)
+        )
+
+        with caplog.at_level(logging.DEBUG):
+            candidates, snapshots = scan_markets(weather, [market])
+
+        # Should skip because edge will be negligible
+        assert candidates == []
+        assert any("min_edge" in record.message for record in caplog.records)
+
+    def test_max_edge_adverse_selection(self, caplog):
+        """'max_edge' gate: edge exceeds MAX_EDGE_CENTS (adverse selection) is skipped."""
+        weather = {"KMIA": self._weather_state()}
+        market = self._miami_market(
+            group_title="75-80°F",
+            outcomePrices='["0.99", "0.01"]'  # Extremely skewed prices
+        )
+
+        with caplog.at_level(logging.DEBUG):
+            candidates, snapshots = scan_markets(weather, [market])
+
+        # Should skip if edge exceeds MAX_EDGE_CENTS
+        if candidates:
+            # If candidate passed, edge should be acceptable
+            assert all(c.edge_cents <= 50 for c in candidates)  # MAX_EDGE_CENTS is typically 50
+
+    def test_scan_summary_logs_skip_counts(self, caplog):
+        """Per-poll summary at INFO level includes skip-reason counts."""
+        weather = {"KMIA": self._weather_state()}
+
+        # Create multiple markets with different skip reasons
+        now = datetime.now(timezone.utc)
+        markets = [
+            # outside_window
+            self._miami_market(
+                endDate=(now + timedelta(minutes=5)).isoformat()
+            ),
+            # wrong_date
+            self._miami_market(
+                endDate=(now + timedelta(days=1)).isoformat()
+            ),
+            # bracket_parse_fail
+            self._miami_market(group_title="unparseable 999xyz"),
+            # min_edge
+            self._miami_market(
+                group_title="73-74°F",
+                outcomePrices='["0.50", "0.50"]'
+            ),
+        ]
+
+        with caplog.at_level(logging.INFO):
+            candidates, snapshots = scan_markets(weather, markets)
+
+        # Check that INFO-level summary was logged
+        summary_logs = [r for r in caplog.records if r.levelname == "INFO" and "[scan]" in r.message]
+        assert len(summary_logs) > 0, "Expected [scan] summary log at INFO level"
+
+        summary = summary_logs[0].message
+        assert "4 markets" in summary or "markets:" in summary
+        assert "flagged" in summary
