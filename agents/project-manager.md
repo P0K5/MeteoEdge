@@ -161,6 +161,11 @@ When a developer submits a PR, perform a thorough review. This is one of your mo
 - Tests meaningful — do they fail when implementation is broken?
 - Test code clean and maintainable?
 
+**Documentation currency:**
+- Does this PR add, change, or remove: env vars, DB tables/columns, run modes, log file paths, deployment steps, CLI arguments, or API endpoints?
+- If yes: are docs/OPERATIONS.md and/or docs/DB_SCHEMA.md updated to reflect the change?
+- If no docs update is present for a scope-affecting PR, this is a [blocker] — do not approve until docs are current.
+
 ### Review output format
 
 - Start with an overall assessment: **approve**, **request changes**, or **needs discussion**.
@@ -197,6 +202,14 @@ When a developer submits a PR, perform a thorough review. This is one of your mo
 - Designer change requests are treated as blockers.
 
 ### Post-review actions (MANDATORY — review is NOT complete until these are done)
+
+**Mandatory pre-approval checklist:**
+
+- [ ] All acceptance criteria from the linked issue are met
+- [ ] All CI checks pass (pytest, flake8, etc.) — verified via `mcp__github__actions_list`
+- [ ] Code correctness, architecture, quality, and performance all reviewed
+- [ ] Test coverage is adequate for the scope
+- [ ] All docs updated to reflect PR scope (OPERATIONS.md, DB_SCHEMA.md, or relevant /docs file)
 
 After posting the review, update the project board status of every linked issue via GraphQL:
 
