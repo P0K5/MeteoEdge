@@ -24,12 +24,12 @@ MeteoEdge trades on Polymarket daily high temperature markets at these airports:
 | KLAX | Los Angeles | °F | METAR, NWS | ✅ Active |
 | KATL | Atlanta | °F | METAR, NWS | ✅ Active |
 | KHOU | Houston | °F | METAR, NWS | ✅ Active |
-| RKSI | Seoul | °C | METAR, JMA AMEDAS | ✅ Active |
-| WMKK | Kuala Lumpur | °C | METAR, AMOS | ✅ Active |
-| RKPK | Busan | °C | METAR, JMA AMEDAS | ✅ Active |
-| ZGSZ | Shenzhen | °C | METAR, MSS | ✅ Active |
-| WSSS | Singapore | °C | METAR, AMOS | ✅ Active |
-| MPMG | Panama City | °C | METAR, AMOS | ✅ Active |
+| RKSI | Seoul | °C | METAR, AMOS | ✅ Active |
+| WMKK | Kuala Lumpur | °C | METAR, NWS | ✅ Active |
+| RKPK | Busan | °C | METAR, AMOS | ✅ Active |
+| ZGSZ | Shenzhen | °C | METAR, NWS | ✅ Active |
+| WSSS | Singapore | °C | METAR, MSS | ✅ Active |
+| MPMG | Panama City | °C | METAR, NWS | ✅ Active |
 
 ## Architecture Overview
 
