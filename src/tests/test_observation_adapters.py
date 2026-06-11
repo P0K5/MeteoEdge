@@ -131,7 +131,8 @@ class TestAmosAdapterIntegration:
         assert row["source"] == "amos"
         assert row["station"] == "Seoul"
         assert row["unit"] == "C"
-        assert row["is_official"] == 1
+        # Open-Meteo fallback data is modelled, not official AMOS readings
+        assert row["is_official"] == 0
         assert isinstance(row["temp_f"], float)
         datetime.fromisoformat(row["ts"])
 
@@ -310,3 +311,123 @@ class TestFreshnessMonitorWithAdapters:
 
         result = monitor.check(db, "jma_ameidas", "Tokyo", cadence_min=10)
         assert result is False
+
+
+# ---------------------------------------------------------------------------
+# Fallback labeling and retry behavior
+# ---------------------------------------------------------------------------
+
+class TestFallbackLabeling:
+
+    def test_jma_fallback_stores_is_official_zero(self, tmp_path):
+        """When JMA 404s (both hours) and Open-Meteo is used, row is is_official=0."""
+        db = _db(tmp_path)
+        collector = JmaAmedasCollector(db)
+
+        now_utc = datetime.now(timezone.utc)
+        past_hour = now_utc.replace(minute=0, second=0, microsecond=0) - timedelta(hours=1)
+        resp_404 = _make_resp(404, {})
+        om_resp = _make_resp(200, {
+            "hourly": {
+                "time": [past_hour.isoformat()],
+                "temperature_2m": [21.0],
+            }
+        })
+
+        with patch(
+            "src.data.collectors.jma_ameidas.fetch",
+            side_effect=[resp_404, resp_404, om_resp],
+        ):
+            result = collector.poll()
+
+        assert result is True
+        obs = db.get_observations("Tokyo", since="2000-01-01")
+        row = obs[-1]
+        assert row["source"] == "jma_ameidas"
+        assert row["is_official"] == 0
+
+    def test_jma_official_path_stores_is_official_one(self, tmp_path):
+        """When the AMeDAS file is available, row keeps is_official=1."""
+        db = _db(tmp_path)
+        collector = JmaAmedasCollector(db)
+
+        jma_resp = _make_resp(200, {"090000": {"temp": [22.5, 0]}})
+        with patch("src.data.collectors.jma_ameidas.fetch", return_value=jma_resp):
+            result = collector.poll()
+
+        assert result is True
+        obs = db.get_observations("Tokyo", since="2000-01-01")
+        assert obs[-1]["is_official"] == 1
+
+
+class TestJmaPreviousHourRetry:
+
+    def test_404_on_current_hour_retries_previous_hour(self, tmp_path):
+        """A 404 on the current hour file triggers a retry on the previous hour."""
+        db = _db(tmp_path)
+        collector = JmaAmedasCollector(db)
+
+        resp_404 = _make_resp(404, {})
+        jma_resp = _make_resp(200, {"090000": {"temp": [19.5, 0]}})
+
+        fetched_urls: list[str] = []
+
+        def _fake_fetch(url, **kwargs):
+            fetched_urls.append(url)
+            return resp_404 if len(fetched_urls) == 1 else jma_resp
+
+        with patch("src.data.collectors.jma_ameidas.fetch", side_effect=_fake_fetch):
+            result = collector.poll()
+
+        assert result is True
+        assert len(fetched_urls) == 2
+        assert fetched_urls[0] != fetched_urls[1]
+        obs = db.get_observations("Tokyo", since="2000-01-01")
+        assert obs[-1]["is_official"] == 1
+
+
+class TestMssWarnOnStateChange:
+
+    def _resp_without_preferred(self):
+        return _make_resp(200, {
+            "items": [{
+                "timestamp": "2026-06-11T15:30:00+08:00",
+                "readings": [{"station_id": "S107", "value": 28.0}],
+            }]
+        })
+
+    def test_missing_station_warned_only_once(self, tmp_path, caplog):
+        """Repeated polls with the same missing stations warn only once."""
+        import logging as _logging
+        db = _db(tmp_path)
+        collector = MssCollector(db)
+
+        with patch("src.data.collectors.mss.fetch", return_value=self._resp_without_preferred()):
+            with caplog.at_level(_logging.WARNING, logger="src.data.collectors.mss"):
+                collector.poll()
+                collector.poll()
+                collector.poll()
+
+        s24_warnings = [r for r in caplog.records if "S24 not in readings" in r.message]
+        assert len(s24_warnings) == 1
+
+    def test_recovery_logged_when_station_returns(self, tmp_path, caplog):
+        """When a previously missing station reappears, an info recovery log fires."""
+        import logging as _logging
+        db = _db(tmp_path)
+        collector = MssCollector(db)
+
+        resp_with_s24 = _make_resp(200, {
+            "items": [{
+                "timestamp": "2026-06-11T15:31:00+08:00",
+                "readings": [{"station_id": "S24", "value": 29.0}],
+            }]
+        })
+
+        with caplog.at_level(_logging.INFO, logger="src.data.collectors.mss"):
+            with patch("src.data.collectors.mss.fetch", return_value=self._resp_without_preferred()):
+                collector.poll()
+            with patch("src.data.collectors.mss.fetch", return_value=resp_with_s24):
+                collector.poll()
+
+        assert any("S24 back in readings" in r.message for r in caplog.records)

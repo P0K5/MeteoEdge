@@ -205,6 +205,15 @@ def _execute_live(candidate, clob_client_factory, risk_manager, ts: str, db=None
 # Poll loop
 # ---------------------------------------------------------------------------
 
+def _station_in_active_window(station: str) -> bool:
+    import pytz
+    if station not in STATION_TZ:
+        return True
+    now_local_dt = datetime.now(pytz.timezone(STATION_TZ[station]))
+    active_start, active_end = STATION_ACTIVE_HOURS.get(station, (6, 23))
+    return active_start <= now_local_dt.hour < active_end
+
+
 def _build_weather(db: "Database | None" = None) -> dict[str, WeatherState]:
     weather: dict[str, WeatherState] = {}
     for station, lat, lon, city, *_ in STATIONS:
@@ -249,6 +258,24 @@ def _build_weather(db: "Database | None" = None) -> dict[str, WeatherState]:
         except Exception as e:
             log.warning("[%s] METAR parse error: %s, skipping", station, e)
             continue
+
+        # Persist the latest METAR so the freshness monitor and intraday
+        # correction can use it as a fallback observation source.
+        if db is not None:
+            metar_ts = latest_time.astimezone(timezone.utc).isoformat()
+            prev_metar = db.get_latest_observation("metar", station)
+            if prev_metar is None or prev_metar["ts"] != metar_ts:
+                db.insert_observation(
+                    ts=metar_ts,
+                    station=station,
+                    temp_f=latest_temp_f,
+                    temp_native=float(latest_temp_c),
+                    unit="C",
+                    source="metar",
+                    cadence_min=30,
+                    is_official=1,
+                    raw_json=json.dumps(latest),
+                )
 
         # Attempt to upgrade latest_temp_f from a fresher high-freq obs
         obs_bias_offset_f = None
@@ -876,10 +903,16 @@ def poll_once(risk_manager, live_trader=None, alert_manager=None, db=None) -> No
         _append_snapshot(snap)
 
     # Log freshness status for all configured high-frequency sources.
+    # METAR is only persisted while its station is inside the active window,
+    # so skip metar checks outside it to avoid overnight false alarms.
     if db is not None:
         _freshness_monitor = FreshnessMonitor()
         for city_sources in [get_source_priority(c) for c in ["Tokyo", "Seoul", "Busan", "Singapore"]]:
-            _freshness_monitor.check_all(db, city_sources)
+            active_sources = [
+                s for s in city_sources
+                if s["source"] != "metar" or _station_in_active_window(s["station"])
+            ]
+            _freshness_monitor.check_all(db, active_sources)
 
     # Filter candidates through risk manager sequentially so position counts are accurate,
     # then execute all approved live orders in parallel so they hit the market simultaneously.

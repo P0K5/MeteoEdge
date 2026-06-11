@@ -114,6 +114,7 @@ class AmosCollector:
         Returns True if a row was inserted.
         """
         reading = None
+        is_official = 1
 
         if self._api_key:
             reading = self._fetch_kma(station)
@@ -127,6 +128,7 @@ class AmosCollector:
             # This fallback is used when KMA_API_KEY is absent or the KMA endpoint fails.
             # Cadence is effectively hourly in this mode.
             reading = self._fetch_open_meteo(station)
+            is_official = 0
 
         if reading is None:
             self._check_staleness(station)
@@ -143,7 +145,7 @@ class AmosCollector:
             unit="C",
             source="amos",
             cadence_min=self._cadence_min,
-            is_official=1,
+            is_official=is_official,
             raw_json=json.dumps(raw),
         )
 

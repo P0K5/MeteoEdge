@@ -89,9 +89,11 @@ class JmaAmedasCollector:
         Returns True if a row was inserted, False otherwise.
         """
         reading = self._fetch_jma()
+        is_official = 1
         if reading is None:
             # FALLBACK: Open-Meteo hourly modelled data (not official AMeDAS).
             reading = self._fetch_open_meteo()
+            is_official = 0
 
         if reading is None:
             self._check_staleness()
@@ -108,7 +110,7 @@ class JmaAmedasCollector:
             unit="C",
             source="jma_ameidas",
             cadence_min=self._cadence_min,
-            is_official=1,
+            is_official=is_official,
             raw_json=json.dumps(raw),
         )
 
@@ -124,18 +126,24 @@ class JmaAmedasCollector:
         """Fetch the most recent 10-minute reading from the JMA AMeDAS API.
 
         JMA serves one JSON file per hour, keyed by 6-digit time strings (HHMMss).
-        We request the current JST hour and take the latest slot with a valid
-        quality flag (quality == 0).
+        We request the current JST hour; in the first minutes of an hour the
+        file may not be published yet (404), so we retry with the previous
+        hour before giving up.
 
         Returns (ts_utc, temp_c, raw_dict) or None on error.
         """
         now_jst = datetime.now(_JST)
-        date_str = now_jst.strftime("%Y%m%d")
-        hour_str = now_jst.strftime("%H")
+        reading = self._fetch_jma_hour(now_jst)
+        if reading is None:
+            reading = self._fetch_jma_hour(now_jst - timedelta(hours=1))
+        return reading
+
+    def _fetch_jma_hour(self, base_jst: datetime) -> "tuple[datetime, float, dict] | None":
+        """Fetch and parse the AMeDAS hourly file for *base_jst*'s date and hour."""
         url = _JMA_URL_TEMPLATE.format(
             station=_JMA_STATION,
-            date=date_str,
-            hour=hour_str,
+            date=base_jst.strftime("%Y%m%d"),
+            hour=base_jst.strftime("%H"),
         )
 
         try:
@@ -145,7 +153,10 @@ class JmaAmedasCollector:
             return None
 
         if r.status_code == 404:
-            log.error("[jma] AMeDAS endpoint returned 404 for station %s", _JMA_STATION)
+            log.warning(
+                "[jma] AMeDAS file not yet published for %s hour %s (station %s)",
+                base_jst.strftime("%Y%m%d"), base_jst.strftime("%H"), _JMA_STATION,
+            )
             return None
         if r.status_code != 200:
             log.error("[jma] unexpected HTTP %d for %s", r.status_code, url)
@@ -174,7 +185,7 @@ class JmaAmedasCollector:
             try:
                 hour = int(time_key[:2])
                 minute = int(time_key[2:4])
-                obs_jst = now_jst.replace(hour=hour, minute=minute, second=0, microsecond=0)
+                obs_jst = base_jst.replace(hour=hour, minute=minute, second=0, microsecond=0)
                 obs_utc = obs_jst.astimezone(timezone.utc)
             except (ValueError, OverflowError):
                 continue
@@ -183,7 +194,7 @@ class JmaAmedasCollector:
             best_raw = {"time_key": time_key, "slot": slot}
 
         if best_ts is None or best_temp is None:
-            log.warning("[jma] no valid temperature readings in current hour data")
+            log.warning("[jma] no valid temperature readings in hour data")
             return None
 
         return best_ts, best_temp, best_raw
