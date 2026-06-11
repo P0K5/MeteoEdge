@@ -353,6 +353,37 @@ class Database:
             self._conn.commit()
             return cur.lastrowid
 
+    def update_trade_by_order(
+        self,
+        order_id: str,
+        *,
+        ticker: "str | None" = None,
+        outcome: "str | None" = None,
+        pnl: "float | None" = None,
+        capital_after: "float | None" = None,
+        settled_at: "str | None" = None,
+    ) -> int:
+        """Update the trade row(s) matching *order_id*; only non-None fields
+        are written. Returns the number of rows updated (0 if no match)."""
+        fields = {
+            "ticker": ticker,
+            "outcome": outcome,
+            "pnl": pnl,
+            "capital_after": capital_after,
+            "settled_at": settled_at,
+        }
+        updates = {k: v for k, v in fields.items() if v is not None}
+        if not updates:
+            return 0
+        set_clause = ", ".join(f"{col}=?" for col in updates)
+        with self._lock:
+            with self._conn:
+                cur = self._conn.execute(
+                    f"UPDATE trades SET {set_clause} WHERE order_id=?",
+                    (*updates.values(), order_id),
+                )
+        return cur.rowcount
+
     def get_trades(self, limit: "int | None" = 50, mode: "str | None" = None) -> list:
         """Return trades ordered by most-recent-first.
 
@@ -524,6 +555,20 @@ class Database:
                     "open_positions=excluded.open_positions, "
                     "updated_at=excluded.updated_at",
                     (date_str, pnl_delta, open_positions, self._now()),
+                )
+
+    def add_settled_pnl(self, date_str: str, pnl_delta: float) -> None:
+        """Accumulate settlement PnL into the daily risk row for *date_str*
+        without touching the open_positions counter."""
+        with self._lock:
+            with self._conn:
+                self._conn.execute(
+                    "INSERT INTO risk_state(trade_date,daily_pnl,open_positions,updated_at) "
+                    "VALUES(?,?,0,?) "
+                    "ON CONFLICT(trade_date) DO UPDATE SET "
+                    "daily_pnl=daily_pnl+excluded.daily_pnl, "
+                    "updated_at=excluded.updated_at",
+                    (date_str, pnl_delta, self._now()),
                 )
 
     # ------------------------------------------------------------------

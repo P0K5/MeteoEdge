@@ -103,20 +103,19 @@ class TestSettlementWriter:
 class TestBackfillScript:
 
     def test_backfill_skips_unsettled(self):
-        """Backfill ignores records with pnl=0."""
-        import sys
+        """Backfill ignores records without an actual_high (not yet settled)."""
         import scripts.backfill_settlements as bfm
 
         with tempfile.TemporaryDirectory() as tmpdir:
             # Create temp JSONL with 2 settled and 1 unsettled
             jsonl = Path(tmpdir) / "live_trades.jsonl"
             records = [
-                {"ticker": "KORD-t1", "station": "KORD", "bracket_low": 32, "bracket_high": 36,
-                 "side": "NO", "pnl": 3.5, "actual_daily_high": 31.0, "actual_price": 95},
-                {"ticker": "KMIA-t1", "station": "KMIA", "bracket_low": 80, "bracket_high": 84,
-                 "side": "YES", "pnl": 0.0, "actual_daily_high": None},  # unsettled
-                {"ticker": "KATL-t1", "station": "KATL", "bracket_low": 70, "bracket_high": 74,
-                 "side": "NO", "pnl": -4.5, "actual_daily_high": 72.0, "actual_price": 5},
+                {"ticker": "0xkord1", "station": "KORD", "bracket_low": 32, "bracket_high": 36,
+                 "side": "NO", "pnl": 3.5, "actual_high": 31.0},
+                {"ticker": "0xkmia1", "station": "KMIA", "bracket_low": 80, "bracket_high": 84,
+                 "side": "YES", "actual_high": None},  # unsettled
+                {"ticker": "0xkatl1", "station": "KATL", "bracket_low": 70, "bracket_high": 74,
+                 "side": "NO", "pnl": -4.5, "actual_high": 72.0},
             ]
             with open(jsonl, "w") as f:
                 for r in records:
@@ -135,7 +134,7 @@ class TestBackfillScript:
                 bfm.LIVE_TRADES = original_lt
                 bfm.Database = original_db_class
 
-            # Should have 2 rows (KORD and KATL), not KMIA (pnl=0)
+            # Should have 2 rows (KORD and KATL), not KMIA (no actual_high)
             all_rows = db.get_settlements("KORD", since="2000-01-01") + \
                        db.get_settlements("KATL", since="2000-01-01") + \
                        db.get_settlements("KMIA", since="2000-01-01")
@@ -162,24 +161,24 @@ class TestBackfillScript:
         assert len(all_rows) == 0
 
     def test_backfill_resolved_yes_logic(self):
-        """Backfill correctly computes resolved_yes from side and pnl."""
+        """Backfill computes resolved_yes from the bracket and actual_high."""
         import scripts.backfill_settlements as bfm
 
         with tempfile.TemporaryDirectory() as tmpdir:
             jsonl = Path(tmpdir) / "live_trades.jsonl"
             records = [
-                # side=YES, pnl>0 -> resolved_yes=True
-                {"ticker": "T1", "station": "KORD", "bracket_low": 32, "bracket_high": 36,
-                 "side": "YES", "pnl": 5.0, "actual_daily_high": 35.0, "actual_price": 90},
-                # side=NO, pnl>0 -> resolved_yes=False
-                {"ticker": "T2", "station": "KORD", "bracket_low": 32, "bracket_high": 36,
-                 "side": "NO", "pnl": 5.0, "actual_daily_high": 31.0, "actual_price": 90},
-                # side=NO, pnl<0 -> resolved_yes=True
-                {"ticker": "T3", "station": "KORD", "bracket_low": 32, "bracket_high": 36,
-                 "side": "NO", "pnl": -5.0, "actual_daily_high": 35.0, "actual_price": 10},
-                # side=YES, pnl<0 -> resolved_yes=False
-                {"ticker": "T4", "station": "KORD", "bracket_low": 32, "bracket_high": 36,
-                 "side": "YES", "pnl": -5.0, "actual_daily_high": 31.0, "actual_price": 10},
+                # actual inside bracket -> resolved_yes=True
+                {"ticker": "0xt1", "station": "KORD", "bracket_low": 32, "bracket_high": 36,
+                 "side": "YES", "actual_high": 35.0},
+                # actual below bracket -> resolved_yes=False
+                {"ticker": "0xt2", "station": "KORD", "bracket_low": 32, "bracket_high": 36,
+                 "side": "NO", "actual_high": 31.0},
+                # actual on bracket edge -> resolved_yes=True
+                {"ticker": "0xt3", "station": "KORD", "bracket_low": 32, "bracket_high": 36,
+                 "side": "NO", "actual_high": 36.0},
+                # actual above bracket -> resolved_yes=False
+                {"ticker": "0xt4", "station": "KORD", "bracket_low": 32, "bracket_high": 36,
+                 "side": "YES", "actual_high": 37.0},
             ]
             with open(jsonl, "w") as f:
                 for r in records:
@@ -202,10 +201,10 @@ class TestBackfillScript:
 
             # Find by ticker and check resolved_yes
             by_ticker = {r["ticker"]: r for r in rows}
-            assert by_ticker["T1"]["resolved_yes"] == 1  # YES, pnl>0
-            assert by_ticker["T2"]["resolved_yes"] == 0  # NO, pnl>0
-            assert by_ticker["T3"]["resolved_yes"] == 1  # NO, pnl<0
-            assert by_ticker["T4"]["resolved_yes"] == 0  # YES, pnl<0
+            assert by_ticker["0xt1"]["resolved_yes"] == 1  # 35.0 in [32, 36]
+            assert by_ticker["0xt2"]["resolved_yes"] == 0  # 31.0 below
+            assert by_ticker["0xt3"]["resolved_yes"] == 1  # 36.0 on edge
+            assert by_ticker["0xt4"]["resolved_yes"] == 0  # 37.0 above
 
     def test_backfill_skips_invalid_json(self):
         """Backfill skips malformed JSON lines."""
@@ -214,9 +213,9 @@ class TestBackfillScript:
         with tempfile.TemporaryDirectory() as tmpdir:
             jsonl = Path(tmpdir) / "live_trades.jsonl"
             lines = [
-                '{"ticker": "T1", "station": "KORD", "bracket_low": 32, "bracket_high": 36, "side": "YES", "pnl": 5.0, "actual_daily_high": 35.0, "actual_price": 90}',
+                '{"ticker": "0xt1", "station": "KORD", "bracket_low": 32, "bracket_high": 36, "side": "YES", "actual_high": 35.0}',
                 "{ invalid json",
-                '{"ticker": "T2", "station": "KORD", "bracket_low": 32, "bracket_high": 36, "side": "NO", "pnl": -5.0, "actual_daily_high": 35.0, "actual_price": 10}',
+                '{"ticker": "0xt2", "station": "KORD", "bracket_low": 32, "bracket_high": 36, "side": "NO", "actual_high": 35.0}',
             ]
             with open(jsonl, "w") as f:
                 for line in lines:
