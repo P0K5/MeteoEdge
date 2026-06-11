@@ -81,6 +81,7 @@ class MssCollector:
         self._db = db
         self._cadence_min = int(os.getenv("MSS_CADENCE_MINUTES", "1"))
         self._last_obs_ts: datetime | None = None  # UTC-aware datetime of last stored obs
+        self._missing_stations: set[str] = set()  # stations already warned about
 
     # ------------------------------------------------------------------
     # Public API
@@ -156,10 +157,15 @@ class MssCollector:
             # Build a lookup of station_id → value from readings
             readings = {r["station_id"]: r["value"] for r in item.get("readings", [])}
 
-            # Try stations in priority order
+            # Try stations in priority order. Warn only when a station's
+            # availability changes, not on every poll (avoids 1/min log spam
+            # while a preferred sensor is offline).
             for station_id in _STATION_PRIORITY:
                 value = readings.get(station_id)
                 if value is not None:
+                    if station_id in self._missing_stations:
+                        self._missing_stations.discard(station_id)
+                        log.info("[mss] station %s back in readings", station_id)
                     temp_c = float(value)
                     raw = {
                         "timestamp": ts_str,
@@ -168,7 +174,8 @@ class MssCollector:
                         "all_readings": item.get("readings", []),
                     }
                     return ts_utc, temp_c, raw, station_id
-                else:
+                elif station_id not in self._missing_stations:
+                    self._missing_stations.add(station_id)
                     log.warning("[mss] station %s not in readings — trying next", station_id)
 
             log.error("[mss] none of the preferred stations (%s) found in readings", _STATION_PRIORITY)

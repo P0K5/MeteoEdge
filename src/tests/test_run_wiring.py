@@ -291,6 +291,104 @@ class TestBuildWeatherHighFreqObs:
 
 
 # ---------------------------------------------------------------------------
+# METAR persistence in _build_weather()
+# ---------------------------------------------------------------------------
+
+class TestBuildWeatherMetarPersistence:
+    """_build_weather() must persist the latest METAR with source='metar'."""
+
+    def _run(self, db, metar_time=None):
+        from datetime import datetime, timezone, timedelta
+        from unittest.mock import patch
+        from src.scripts.run import _build_weather
+
+        now = datetime.now(timezone.utc)
+        metar_time = metar_time or (now - timedelta(minutes=10))
+        fake_metar = [{"temp": "20.0", "reportTime": metar_time.isoformat()}]
+
+        with (
+            patch("src.scripts.run.fetch_all_metars_today", return_value=fake_metar),
+            patch("src.scripts.run.compute_daily_high", return_value=(80.0, now)),
+            patch("src.scripts.run.fetch_nws_forecast_high", return_value=82.0),
+            patch("src.scripts.run.fetch_secondary_forecast", return_value=83.0),
+            patch("src.scripts.run.fetch_hourly_temp_now", return_value=84.0),
+            patch("src.scripts.run.now_local", return_value=now),
+            patch("src.scripts.run.sunset_local", return_value=now),
+            patch("src.scripts.run.STATION_ACTIVE_HOURS", {"WSSS": (0, 24)}),
+            patch("src.scripts.run.STATIONS", [("WSSS", 1.3644, 103.9915, "Singapore", "WSSS", "C", "Asia/Singapore")]),
+            patch("src.scripts.run.STATION_TZ", {"WSSS": "Asia/Singapore"}),
+            patch("src.scripts.run.get_source_priority", return_value=[]),
+        ):
+            _build_weather(db=db)
+        return metar_time
+
+    def test_metar_observation_inserted(self):
+        db = MagicMock()
+        db.get_latest_observation.return_value = None
+        metar_time = self._run(db)
+
+        metar_inserts = [
+            c for c in db.insert_observation.call_args_list
+            if c.kwargs.get("source") == "metar"
+        ]
+        assert len(metar_inserts) == 1
+        kwargs = metar_inserts[0].kwargs
+        assert kwargs["station"] == "WSSS"
+        assert kwargs["ts"] == metar_time.isoformat()
+        assert kwargs["cadence_min"] == 30
+        assert kwargs["is_official"] == 1
+        assert abs(kwargs["temp_f"] - 68.0) < 0.01  # 20C
+
+    def test_metar_insert_deduped_on_same_ts(self):
+        from datetime import datetime, timezone, timedelta
+        metar_time = datetime.now(timezone.utc) - timedelta(minutes=10)
+        db = MagicMock()
+        db.get_latest_observation.return_value = {"ts": metar_time.isoformat()}
+        self._run(db, metar_time=metar_time)
+
+        metar_inserts = [
+            c for c in db.insert_observation.call_args_list
+            if c.kwargs.get("source") == "metar"
+        ]
+        assert len(metar_inserts) == 0
+
+    def test_no_insert_without_db(self):
+        # Must not raise when db is None
+        self._run(db=None)
+
+
+# ---------------------------------------------------------------------------
+# Active-window helper for freshness gating
+# ---------------------------------------------------------------------------
+
+class TestStationActiveWindow:
+
+    def test_inside_window(self):
+        from src.scripts.run import _station_in_active_window
+        with (
+            patch("src.scripts.run.STATION_TZ", {"WSSS": "UTC"}),
+            patch("src.scripts.run.STATION_ACTIVE_HOURS", {"WSSS": (0, 24)}),
+        ):
+            assert _station_in_active_window("WSSS") is True
+
+    def test_outside_window(self):
+        from src.scripts.run import _station_in_active_window
+        from datetime import datetime, timezone
+        h = datetime.now(timezone.utc).hour
+        # start == end → no hour satisfies start <= h < end
+        with (
+            patch("src.scripts.run.STATION_TZ", {"WSSS": "UTC"}),
+            patch("src.scripts.run.STATION_ACTIVE_HOURS", {"WSSS": (h, h)}),
+        ):
+            assert _station_in_active_window("WSSS") is False
+
+    def test_unknown_station_defaults_to_active(self):
+        from src.scripts.run import _station_in_active_window
+        with patch("src.scripts.run.STATION_TZ", {}):
+            assert _station_in_active_window("XXXX") is True
+
+
+# ---------------------------------------------------------------------------
 # Intraday correction wiring — issue #151
 # ---------------------------------------------------------------------------
 
