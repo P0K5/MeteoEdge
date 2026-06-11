@@ -83,8 +83,24 @@ def _append_live_trade(record: dict, db=None) -> None:
     with _write_lock:
         with open(LIVE_TRADES_JSONL, "a") as f:
             f.write(json.dumps(record, default=str) + "\n")
-    if db is not None:
-        try:
+    if db is None:
+        return
+    if record.get("side") == "SELL":
+        # SELL records violate trades.side CHECK(side IN ('YES','NO')); the
+        # sell paths update the original BUY rows per fill instead.
+        return
+    try:
+        # place_order() already inserted the trade row at placement time —
+        # update it with the market ticker and final order outcome.
+        updated = db.update_trade_by_order(
+            record.get("order_id") or "",
+            ticker=record.get("ticker"),
+            outcome=record.get("outcome"),
+            pnl=float(record["pnl"]) if record.get("pnl") is not None else None,
+        )
+        if not updated:
+            # Placement-time insert failed (logged CRITICAL) — insert now so
+            # the trade is not lost.
             db.insert_trade(
                 ts=record.get("ts", ""),
                 station=record.get("station", ""),
@@ -101,8 +117,8 @@ def _append_live_trade(record: dict, db=None) -> None:
                 pnl=float(record["pnl"]) if record.get("pnl") is not None else None,
                 capital_before=float(record.get("size_eur", 5.0)),
             )
-        except Exception as e:
-            log.warning("[run] DB live trade write failed: %s", e)
+    except Exception as e:
+        log.warning("[run] DB live trade write failed: %s", e)
 
 
 # ---------------------------------------------------------------------------
@@ -616,7 +632,7 @@ def _log_open_position_snapshots(weather: dict, ts: str, db=None) -> None:
                 f.write(json.dumps(snap, default=str) + "\n")
 
 
-def _check_take_profit_exits(live_trader, ts: str, db=None) -> None:
+def _check_take_profit_exits(live_trader, ts: str, db=None, risk_manager=None) -> None:
     """Exit NO positions where the best bid has reached predicted_price - buffer.
 
     The model snapshot is frozen at entry time and cannot validate further price
@@ -685,12 +701,17 @@ def _check_take_profit_exits(live_trader, ts: str, db=None) -> None:
             sell_id, sell_price_cents = live_trader.sell_position(token_id, total_shares)
             _sold_positions.add(token_id)
             if db is not None:
-                db.close_position(sell_id)
+                # open_positions rows are keyed by the BUY order_id, not the
+                # sell order — remove every fill for this token.
+                db.close_positions_by_token(token_id)
             avg_entry_cents = sum(
                 f["price_cents"] * (f["size_eur"] / (f["price_cents"] / 100))
                 for f in fills
             ) / total_shares
             pnl = round((sell_price_cents - avg_entry_cents) / 100 * total_shares, 4)
+            _record_sell_in_db(fills, sell_price_cents, ts, db=db)
+            if risk_manager is not None:
+                risk_manager.record_pnl(pnl)
             _append_live_trade({
                 "ts": ts,
                 "order_id": sell_id,
@@ -728,7 +749,25 @@ def _check_take_profit_exits(live_trader, ts: str, db=None) -> None:
                 log.warning("  [tp] sell failed for [%s] %.0f-%.0fF: %s", station, bracket_low, bracket_high, e)
 
 
-def _check_metar_exits(weather: dict, live_trader, ts: str, db=None) -> None:
+def _record_sell_in_db(fills: list, sell_price_cents: int, ts: str, db=None) -> None:
+    """Mark the BUY trade row of each fill as sold with its realised PnL."""
+    if db is None:
+        return
+    for f in fills:
+        order_id = f.get("order_id")
+        if not order_id:
+            continue
+        try:
+            shares = f["size_eur"] / (f["price_cents"] / 100)
+            fill_pnl = round((sell_price_cents - f["price_cents"]) / 100 * shares, 4)
+            db.update_trade_by_order(
+                order_id, outcome="sold", pnl=fill_pnl, settled_at=ts,
+            )
+        except Exception as e:
+            log.warning("[run] DB sell update failed for %s...: %s", str(order_id)[:12], e)
+
+
+def _check_metar_exits(weather: dict, live_trader, ts: str, db=None, risk_manager=None) -> None:
     """Exit NO positions where the running daily high is inside the bracket
     AND the temperature is unlikely to climb past it.
 
@@ -811,7 +850,9 @@ def _check_metar_exits(weather: dict, live_trader, ts: str, db=None) -> None:
             sell_id, sell_price_cents = live_trader.sell_position(token_id, total_shares)
             _sold_positions.add(token_id)
             if db is not None:
-                db.close_position(sell_id)
+                # open_positions rows are keyed by the BUY order_id, not the
+                # sell order — remove every fill for this token.
+                db.close_positions_by_token(token_id)
             # Weighted average entry price across all DCA fills
             avg_entry_cents = sum(
                 f["price_cents"] * (f["size_eur"] / (f["price_cents"] / 100))
@@ -819,6 +860,9 @@ def _check_metar_exits(weather: dict, live_trader, ts: str, db=None) -> None:
             ) / total_shares
             # Actual realised PnL: (sell - avg_entry) per share x total shares, in EUR
             pnl = round((sell_price_cents - avg_entry_cents) / 100 * total_shares, 4)
+            _record_sell_in_db(fills, sell_price_cents, ts, db=db)
+            if risk_manager is not None:
+                risk_manager.record_pnl(pnl)
             _append_live_trade({
                 "ts": ts,
                 "order_id": sell_id,
@@ -875,7 +919,7 @@ def poll_once(risk_manager, live_trader=None, alert_manager=None, db=None) -> No
     # net stays live during pre-sunrise hours when no station yet has
     # qualifying METAR data (post-06:00 local rule from the overnight-bug fix).
     if live_trader:
-        _check_take_profit_exits(live_trader, ts, db=db)
+        _check_take_profit_exits(live_trader, ts, db=db, risk_manager=risk_manager)
 
     weather = _build_weather(db=db)
     if not weather:

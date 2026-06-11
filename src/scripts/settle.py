@@ -2,13 +2,23 @@
 import csv
 import json
 import logging
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 log = logging.getLogger(__name__)
 
 from src.config import STATIONS, LOG_DIR, CANDIDATES_CSV, SETTLEMENTS_CSV, STATION_TZ, LIVE_TRADES_JSONL
 from src.http_client import fetch
+
+
+def _open_db():
+    """Return a Database handle, or None if the DB cannot be opened."""
+    try:
+        from src.data.db import Database
+        return Database()
+    except Exception as e:
+        log.warning("[settle] DB unavailable: %s -- skipping DB settlement", e)
+        return None
 
 
 def fetch_daily_climate_high(station: str, target_date: date) -> float | None:
@@ -99,10 +109,59 @@ def settle_yesterday():
     else:
         log.info("[settle] No candidates matched %s in %s -- nothing written.", yesterday, CANDIDATES_CSV)
 
-    settle_live_trades(yesterday, truth)
+    settle_live_trades(yesterday, truth, db=_open_db())
 
 
-def settle_live_trades(target: date, truth: dict[str, float]) -> None:
+def _write_db_settlements(records: list[dict], target: date, truth: dict[str, float], db) -> None:
+    """Upsert one settlement row per market resolved on *target*.
+
+    Market identity is the 0x… market hash when available; records written
+    with synthetic '{STATION}-order-…' tickers are mapped back to the hash
+    via no_token_id when another record for the same market carries it.
+    """
+    if db is None:
+        return
+    from src.data.settlements import SettlementWriter
+
+    hash_by_token = {
+        r["no_token_id"]: r["ticker"]
+        for r in records
+        if r.get("no_token_id") and str(r.get("ticker", "")).startswith("0x")
+    }
+    writer = SettlementWriter(db)
+    seen: set[str] = set()
+    for r in records:
+        if r.get("end_date", "")[:10] != target.isoformat():
+            continue
+        if r.get("bracket_low") is None or r.get("bracket_high") is None:
+            continue
+        station = r.get("station", "")
+        if station not in truth:
+            continue
+        ticker = str(r.get("ticker", ""))
+        if ticker.startswith("0x"):
+            market_key = ticker
+        else:
+            market_key = hash_by_token.get(r.get("no_token_id", "")) or r.get("no_token_id", "")
+        if not market_key or market_key in seen:
+            continue
+        seen.add(market_key)
+        lo, hi = float(r["bracket_low"]), float(r["bracket_high"])
+        actual = truth[station]
+        try:
+            writer.record_settlement(
+                ticker=market_key,
+                station=station,
+                bracket_low=lo,
+                bracket_high=hi,
+                actual_high_f=actual,
+                resolved_yes=lo <= actual <= hi,
+            )
+        except Exception as e:
+            log.warning("[settle] DB settlement write failed for %s: %s", market_key[:14], e)
+
+
+def settle_live_trades(target: date, truth: dict[str, float], db=None) -> None:
     """Write actual P&L back to live_trades.jsonl for a given date.
 
     Two cases:
@@ -132,6 +191,8 @@ def settle_live_trades(target: date, truth: dict[str, float]) -> None:
     except OSError as e:
         log.warning("[settle] could not read live_trades.jsonl: %s", e)
         return
+
+    _write_db_settlements(records, target, truth, db)
 
     # Build a set of no_token_ids that were stop-loss exited (already have pnl)
     sold_tokens: set[str] = {
@@ -178,6 +239,18 @@ def settle_live_trades(target: date, truth: dict[str, float]) -> None:
         r["actual_high"] = actual
         r["yes_won"] = yes_won
         n_updated += 1
+
+        if db is not None:
+            try:
+                now_iso = datetime.now(timezone.utc).isoformat()
+                db.update_trade_by_order(
+                    r.get("order_id") or "",
+                    pnl=r["pnl"], settled_at=now_iso,
+                )
+                db.add_settled_pnl(target.isoformat(), r["pnl"])
+            except Exception as e:
+                log.warning("[settle] DB trade update failed for %s...: %s",
+                            str(r.get("order_id"))[:12], e)
 
     if n_updated == 0:
         log.info("[settle] no live trades to update for %s", target)
@@ -232,6 +305,6 @@ if __name__ == "__main__":
             log.info("[settle] Wrote settlements to %s", SETTLEMENTS_CSV)
         else:
             log.info("[settle] No candidates matched %s -- nothing written.", target)
-        settle_live_trades(target, truth)
+        settle_live_trades(target, truth, db=_open_db())
     else:
         settle_yesterday()
