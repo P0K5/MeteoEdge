@@ -26,6 +26,8 @@ from src.config import (
     RISK_DRAWDOWN_STOP_PCT, RISK_MIN_LIQUIDITY, STARTING_CAPITAL_EUR,
     POSITION_SIZE_EUR, POSITION_SIZE_WITH_FEES, TAKE_PROFIT_BUFFER_CENTS,
     FORECAST_STDDEV_F,
+    STOP_LOSS_MIN_BID_CENTS, STOP_LOSS_CONSECUTIVE_POLLS,
+    STOP_LOSS_MIN_DEPTH_SHARES, STOP_LOSS_SELL_AGGRESSION_CENTS,
     get_source_priority,
 )
 from src.data.db import Database
@@ -544,7 +546,7 @@ def _load_open_no_positions(today: str, db=None) -> list[dict]:
     return [r for r in records if r.get("no_token_id") not in sold_tokens]
 
 
-def _log_open_position_snapshots(weather: dict, ts: str, db=None) -> None:
+def _log_open_position_snapshots(weather: dict, ts: str, db=None) -> list[dict]:
     """Write one snapshot per open NO position per poll, capturing weather +
     orderbook + live model probability.
 
@@ -553,11 +555,15 @@ def _log_open_position_snapshots(weather: dict, ts: str, db=None) -> None:
     every open position regardless of market scan state -- gives us continuous
     intra-day data (especially the 14-22 UTC peak window) needed to backtest
     exit strategies against real intra-day orderbook movement.
+
+    Returns a list of per-token position states ({token_id, fills, snap}) so
+    the stop-loss check can reuse the orderbook + model evaluation without a
+    second round of API calls.
     """
     today = datetime.now(timezone.utc).date().isoformat()
     open_positions = _load_open_no_positions(today, db=db)
     if not open_positions:
-        return
+        return []
 
     from collections import defaultdict
     from src.model.envelope import true_probability_yes, Bracket
@@ -566,6 +572,7 @@ def _log_open_position_snapshots(weather: dict, ts: str, db=None) -> None:
         by_token[pos["no_token_id"]].append(pos)
 
     LOG_DIR.mkdir(exist_ok=True)
+    position_states: list[dict] = []
     for token_id, fills in by_token.items():
         first = fills[0]
         station = first.get("station", "")
@@ -578,12 +585,15 @@ def _log_open_position_snapshots(weather: dict, ts: str, db=None) -> None:
 
         # Fetch live orderbook for the NO token
         no_yes_ask = no_no_ask = no_yes_bid = no_no_bid = None
+        no_best_bid_size = None
         try:
             ob = get_orderbook(token_id)
             bids = ob.get("bids") or []
             asks = ob.get("asks") or []
             if bids:
-                no_no_bid = max(1, min(99, round(max(float(b["price"]) for b in bids) * 100)))
+                best = max(bids, key=lambda b: float(b["price"]))
+                no_no_bid = max(1, min(99, round(float(best["price"]) * 100)))
+                no_best_bid_size = float(best.get("size") or 0)
             if asks:
                 no_no_ask = max(1, min(99, round(min(float(a["price"]) for a in asks) * 100)))
         except Exception as e:
@@ -623,6 +633,7 @@ def _log_open_position_snapshots(weather: dict, ts: str, db=None) -> None:
             "forecast_nws": state.forecast_high_f,
             "forecast_secondary": state.secondary_forecast_f,
             "no_best_bid": no_no_bid,
+            "no_best_bid_size": no_best_bid_size,
             "no_best_ask": no_no_ask,
             "p_yes_now": round(p_yes_now, 4) if p_yes_now is not None else None,
             "fair_value_now": fair_value_now,
@@ -630,6 +641,150 @@ def _log_open_position_snapshots(weather: dict, ts: str, db=None) -> None:
         with _write_lock:
             with open(POSITION_SNAPSHOTS_JSONL, "a") as f:
                 f.write(json.dumps(snap, default=str) + "\n")
+        position_states.append({"token_id": token_id, "fills": fills, "snap": snap})
+    return position_states
+
+
+_stop_loss_strikes: dict[str, int] = {}  # no_token_id -> consecutive polls with fair < entry
+
+
+def _check_stop_loss_exits(live_trader, ts: str, position_states: list[dict],
+                           db=None, risk_manager=None) -> None:
+    """Exit NO positions when the live model itself no longer supports the entry.
+
+    Trigger: fair_value_now (re-running the envelope model on current weather)
+    drops below the volume-weighted average entry price for
+    STOP_LOSS_CONSECUTIVE_POLLS consecutive polls.  This is a MODEL-confidence
+    stop, not a price stop -- price-based stops were backtested twice (May 27 -
+    Jun 4 and May 27 - Jun 12) and were net harmful at every threshold because
+    winning positions routinely dip to 10-30c before recovering.  The model
+    stop instead fires while the bid is still high (median exit bid ~70c in
+    backtest), cutting the -5 EUR full-stake loss tail roughly by a third at
+    ~zero EV cost (issue #177).
+
+    Guards before selling:
+    - bid floor: never sell below STOP_LOSS_MIN_BID_CENTS -- below that the
+      loss is mostly realised already and recovery upside dominates;
+    - depth: best-bid size must cover STOP_LOSS_MIN_DEPTH_SHARES so the fill
+      is real, not a 1-share phantom quote.
+
+    Execution is immediate-or-cancel via sell_position_immediate(): the limit
+    is priced *through* the best bid so it crosses instantly; if it does not
+    match it is cancelled at once.  We never leave a resting sell order that a
+    falling market could strand unfilled -- unfilled attempts simply retry on
+    the next poll while strikes persist.
+    """
+    today = datetime.now(timezone.utc).date().isoformat()
+    for ps in position_states:
+        token_id = ps["token_id"]
+        fills = ps["fills"]
+        snap = ps["snap"]
+        if token_id in _sold_positions:
+            continue
+
+        fair = snap.get("fair_value_now")
+        bid = snap.get("no_best_bid")
+        depth = snap.get("no_best_bid_size")
+        if fair is None:
+            continue
+
+        total_shares = sum(f["size_eur"] / (f["price_cents"] / 100) for f in fills)
+        avg_entry_cents = sum(
+            f["price_cents"] * (f["size_eur"] / (f["price_cents"] / 100))
+            for f in fills
+        ) / total_shares
+
+        if fair >= avg_entry_cents:
+            _stop_loss_strikes.pop(token_id, None)
+            continue
+
+        strikes = _stop_loss_strikes.get(token_id, 0) + 1
+        _stop_loss_strikes[token_id] = strikes
+        station = fills[0]["station"]
+        bracket_low = fills[0]["bracket_low"]
+        bracket_high = fills[0]["bracket_high"]
+        if strikes < STOP_LOSS_CONSECUTIVE_POLLS:
+            log.info(
+                "  [sl] [%s] %.0f-%.0fF fair %sc < entry %.0fc -- strike %s/%s",
+                station, bracket_low, bracket_high, fair, avg_entry_cents,
+                strikes, STOP_LOSS_CONSECUTIVE_POLLS,
+            )
+            continue
+
+        if bid is None or bid < STOP_LOSS_MIN_BID_CENTS:
+            log.info(
+                "  [sl] [%s] %.0f-%.0fF triggered (fair %sc < entry %.0fc) but bid %s < floor %sc -- holding",
+                station, bracket_low, bracket_high, fair, avg_entry_cents,
+                bid, STOP_LOSS_MIN_BID_CENTS,
+            )
+            continue
+        if depth is None or depth < STOP_LOSS_MIN_DEPTH_SHARES:
+            log.warning(
+                "  [sl] [%s] %.0f-%.0fF triggered but best-bid depth %s < %s shares -- skipping this poll",
+                station, bracket_low, bracket_high, depth, STOP_LOSS_MIN_DEPTH_SHARES,
+            )
+            continue
+
+        total_eur = sum(f["size_eur"] for f in fills)
+        question = fills[0].get("question", "")
+        log.info(
+            "  [sl] [%s] %.0f-%.0fF model fair %sc < entry %.0fc for %s polls, bid %sc -- selling %.1f shares",
+            station, bracket_low, bracket_high, fair, avg_entry_cents,
+            strikes, bid, total_shares,
+        )
+        try:
+            result = live_trader.sell_position_immediate(
+                token_id, total_shares, STOP_LOSS_SELL_AGGRESSION_CENTS,
+            )
+            if result is None:
+                # Not matched -- cancelled, never left resting. Strikes persist
+                # so the very next poll retries at the then-current bid.
+                continue
+            sell_id, sell_price_cents = result
+            _sold_positions.add(token_id)
+            _stop_loss_strikes.pop(token_id, None)
+            if db is not None:
+                db.close_positions_by_token(token_id)
+            pnl = round((sell_price_cents - avg_entry_cents) / 100 * total_shares, 4)
+            _record_sell_in_db(fills, sell_price_cents, ts, db=db)
+            if risk_manager is not None:
+                risk_manager.record_pnl(pnl)
+            _append_live_trade({
+                "ts": ts,
+                "order_id": sell_id,
+                "station": station,
+                "question": question,
+                "end_date": today,
+                "ticker": fills[0].get("ticker", ""),
+                "no_token_id": token_id,
+                "bracket_low": bracket_low,
+                "bracket_high": bracket_high,
+                "side": "SELL",
+                "price_cents": sell_price_cents,
+                "entry_price_cents": round(avg_entry_cents),
+                "shares": round(total_shares, 4),
+                "size_eur": total_eur,
+                "edge_cents": 0,
+                "pnl": pnl,
+                "outcome": "sold",
+                "trigger": f"stop_loss@{bid}c_fair{fair}c_entry{round(avg_entry_cents)}c",
+            }, db=db)
+            log.info(
+                "  [sl] sell %s... filled >= %sc -- [%s] %.0f-%.0fF NO  pnl=%+.2f",
+                sell_id[:12], sell_price_cents, station, bracket_low, bracket_high, pnl,
+            )
+        except Exception as e:
+            err = str(e)
+            if "balance" in err.lower() and ("0" in err or "not enough" in err.lower()):
+                n = db.close_positions_by_token(token_id) if db is not None else 0
+                _sold_positions.add(token_id)
+                _stop_loss_strikes.pop(token_id, None)
+                log.info(
+                    "  [sl] [%s] %.0f-%.0fF balance=0 -- tokens already gone, removed %s row(s) from open_positions",
+                    station, bracket_low, bracket_high, n,
+                )
+            else:
+                log.warning("  [sl] sell failed for [%s] %.0f-%.0fF: %s", station, bracket_low, bracket_high, e)
 
 
 def _check_take_profit_exits(live_trader, ts: str, db=None, risk_manager=None) -> None:
@@ -927,7 +1082,8 @@ def poll_once(risk_manager, live_trader=None, alert_manager=None, db=None) -> No
         return
 
     if live_trader:
-        _log_open_position_snapshots(weather, ts, db=db)
+        position_states = _log_open_position_snapshots(weather, ts, db=db)
+        _check_stop_loss_exits(live_trader, ts, position_states, db=db, risk_manager=risk_manager)
         # METAR stop-loss disabled 2026-05-29 pending review.
         # Audit of 12 stops over May 20-28 showed 7 false positives
         # (NO would have won at settlement) for a net -15.49 vs hold-to-expiry.

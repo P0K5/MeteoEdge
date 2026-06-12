@@ -37,7 +37,7 @@ STATIONS = [
     # International — validated by shadow loop (≥5 trades, 100% win rate, ≥3 days).
     # Polymarket labels these in °C; the scanner converts bracket boundaries to °F
     # before passing them to the envelope model, which remains entirely °F-native.
-    ("RKSI", 37.4602,  126.4407,  "Seoul",         "RKSI", "C", "Asia/Seoul"),        # 11/11 100% shadow
+    ("RKSI", 37.4602,  126.4407,  "Seoul",         "RKSI", "C", "Asia/Seoul"),        # entries disabled via DISABLED_STATIONS — June forecast busts (#201)
     ("WMKK",  2.7456,  101.7099,  "Kuala Lumpur",  "WMKK", "C", "Asia/Kuala_Lumpur"),# 9/9 100% shadow
     ("RKPK", 35.1795,  128.9382,  "Busan",         "RKPK", "C", "Asia/Seoul"),        # 9/10 90% shadow
     # ZSPD (Shanghai) removed — shadow trades averaged ~57c entry price, below MIN_PRICE_CENTS=60;
@@ -157,12 +157,42 @@ POSITION_SIZE_WITH_FEES = POSITION_SIZE_EUR * 1.02
 # movement, so we lock in the captured edge and recycle capital into the next trade.
 TAKE_PROFIT_BUFFER_CENTS = int(os.getenv("TAKE_PROFIT_BUFFER_CENTS", "2"))
 
-# Stop-loss: sell NO position when bid drops to or below this level.
-# Calibrated on June 3 position snapshots: 3 losers all crossed 55c before
-# collapsing to 1c; 6 winners on the same day all stayed above 60c (closest
-# was 62c on KATL 76-77F which recovered to 95c). 55c avoids that false
-# positive while catching confirmed collapses. Override via env to experiment.
-STOP_LOSS_NO_BID_CENTS = int(os.getenv("STOP_LOSS_NO_BID_CENTS", "55"))
+# Stop-loss: model-based, NOT price-based. Backtest of 130 settled positions
+# (May 27 - Jun 11, position_snapshots.jsonl replay) showed every bid-threshold
+# stop is net harmful (bid<=entry-15: -65.6 EUR; bid<=55c: -58.3 EUR vs hold)
+# because winners routinely dip to 10-30c on intraday noise before recovering
+# to 99c. The model trigger (live fair value below avg entry) is ~EV-neutral
+# but cuts the full-stake loss tail by ~1/3: it exits early at high bids,
+# before the market reprices. See issue #177 for the full table.
+# Trigger: fair_value_now < avg_entry for STOP_LOSS_CONSECUTIVE_POLLS polls.
+# Floor: only sell while bid >= STOP_LOSS_MIN_BID_CENTS -- below that the
+# salvage value is too small vs the recovery odds (strikes are kept, so a
+# bid recovery while the model still disagrees sells immediately).
+STOP_LOSS_MIN_BID_CENTS = int(os.getenv("STOP_LOSS_MIN_BID_CENTS", "40"))
+STOP_LOSS_CONSECUTIVE_POLLS = int(os.getenv("STOP_LOSS_CONSECUTIVE_POLLS", "2"))
+# Thin-book guard: require this many shares at the best bid before stopping
+# out -- a 1-share spoof quote must not trigger an exit.
+STOP_LOSS_MIN_DEPTH_SHARES = float(os.getenv("STOP_LOSS_MIN_DEPTH_SHARES", "10"))
+# Stop-loss sells are priced through the bid by this many cents so the order
+# crosses immediately even if the top of book ticks down between the orderbook
+# fetch and the post. Unfilled remainders are cancelled, never left resting.
+STOP_LOSS_SELL_AGGRESSION_CENTS = int(os.getenv("STOP_LOSS_SELL_AGGRESSION_CENTS", "2"))
+
+# Entry margin filter: skip NO entries when the bracket sits within this many
+# degrees F of max(forecast high, current running high). Margin-bucket analysis
+# of 117 confirmed outcomes (May 27 - Jun 11): 0-2F margin = 27% loss rate,
+# -11.62 EUR; 2-4F margin = 4% loss rate, +20.69 EUR. With ~+1 EUR wins vs
+# -5 EUR losses, the <2.5F zone is pure bleed. See issue #200.
+MIN_FORECAST_BRACKET_MARGIN_F = float(os.getenv("MIN_FORECAST_BRACKET_MARGIN_F", "2.5"))
+
+# Stations excluded from new entries (observations keep collecting).
+# RKSI: June forecast busts of +5.4 to +12.4F produced 4 losses (10W/4L,
+# -7.16 EUR net) -- the worst station of the month. See issue #201.
+DISABLED_STATIONS = {
+    s.strip().upper()
+    for s in os.getenv("DISABLED_STATIONS", "RKSI").split(",")
+    if s.strip()
+}
 
 # HTTP
 HTTP_TIMEOUT_SECONDS = 15

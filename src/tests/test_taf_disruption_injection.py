@@ -136,6 +136,8 @@ def _scan_patched(weather, markets, db=None, extra_patches=None):
         MAX_CONFIDENCE_YES_FOR_NO=1.0,
         MIN_PRICE_CENTS=1,
         MIN_MINUTES_TO_SETTLEMENT=0,
+        MIN_FORECAST_BRACKET_MARGIN_F=0.0,
+        DISABLED_STATIONS=set(),
     )
     if extra_patches:
         kw.update(extra_patches)

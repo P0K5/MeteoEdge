@@ -19,7 +19,7 @@ from dateutil import parser as dtparse
 from src.config import (
     STATIONS, MIN_EDGE_CENTS, MAX_EDGE_CENTS, MIN_PRICE_CENTS, MIN_CONFIDENCE_YES,
     MAX_CONFIDENCE_YES_FOR_NO, ENABLE_YES_TRADES, MIN_MINUTES_TO_SETTLEMENT,
-    ENABLE_CLOB_ENRICHMENT,
+    ENABLE_CLOB_ENRICHMENT, MIN_FORECAST_BRACKET_MARGIN_F, DISABLED_STATIONS,
 )
 from src.model.envelope import Bracket, WeatherState, true_probability_yes, compute_envelope
 from src.data.polymarket import get_orderbook
@@ -228,6 +228,32 @@ class Candidate:
     taf_disruption: bool = field(default=False)  # TEMPO/PROB TS/SH/FG overlap
 
 
+def no_entry_margin_gap(bracket: Bracket, state: WeatherState) -> float | None:
+    """Distance in °F between the bracket and the expected daily high, for NO entries.
+
+    Returns None when the gate does not apply:
+    - no forecast or running-high data available
+    - the forecast sits inside the bracket (historically 7% loss rate — the
+      envelope model prices these adequately)
+    - the running daily high already exceeds the bracket top (the daily max
+      cannot decrease, so NO can no longer lose)
+    """
+    forecast = state.forecast_high_f if state.forecast_high_f is not None else state.secondary_forecast_f
+    current = state.current_high_f
+    bases = [v for v in (forecast, current) if v is not None]
+    if not bases:
+        return None
+    base = max(bases)
+    if base < bracket.low_f:
+        # Bracket above: at risk if the temp climbs into it
+        return bracket.low_f - base
+    if bracket.high_f < 200 and base > bracket.high_f:
+        if current is not None and current > bracket.high_f:
+            return None
+        return base - bracket.high_f
+    return None
+
+
 def scan_markets(
     weather: dict[str, WeatherState],
     markets: list[dict],
@@ -327,7 +353,12 @@ def scan_markets(
             skipped_reason = None
             label = market.get("groupItemTitle") or f"{bracket.low_f:.0f}-{bracket.high_f:.0f}°F"
 
-            if ENABLE_YES_TRADES and ev_yes >= MIN_EDGE_CENTS and p_yes >= MIN_CONFIDENCE_YES and bracket.yes_ask_cents >= MIN_PRICE_CENTS:
+            if station in DISABLED_STATIONS:
+                skipped_reason = "station_disabled"
+                log.debug("[%s] -- SKIPPED %s: station excluded from entries (DISABLED_STATIONS)",
+                          station, skipped_reason)
+                skip_reason_counts[skipped_reason] += 1
+            elif ENABLE_YES_TRADES and ev_yes >= MIN_EDGE_CENTS and p_yes >= MIN_CONFIDENCE_YES and bracket.yes_ask_cents >= MIN_PRICE_CENTS:
                 if ev_yes > MAX_EDGE_CENTS:
                     skipped_reason = "max_edge"
                     log.debug("[%s] -- SKIPPED %s: %s edge=%.2f¢ > MAX=%.2f¢",
@@ -342,10 +373,17 @@ def scan_markets(
                         minutes_to_settlement=mins_left, market=market,
                     )
             elif ev_no >= MIN_EDGE_CENTS and p_yes <= MAX_CONFIDENCE_YES_FOR_NO and bracket.no_ask_cents >= MIN_PRICE_CENTS:
+                margin_gap = no_entry_margin_gap(bracket, state)
                 if ev_no > MAX_EDGE_CENTS:
                     skipped_reason = "max_edge"
                     log.debug("[%s] -- SKIPPED %s: %s edge=%.2f¢ > MAX=%.2f¢",
                               station, skipped_reason, "NO", ev_no, MAX_EDGE_CENTS)
+                    skip_reason_counts[skipped_reason] += 1
+                elif margin_gap is not None and margin_gap < MIN_FORECAST_BRACKET_MARGIN_F:
+                    skipped_reason = "margin_gate"
+                    log.debug("[%s] -- SKIPPED %s: bracket %.1f-%.1fF within %.1fF of expected high (< %.1fF)",
+                              station, skipped_reason, bracket.low_f, bracket.high_f,
+                              margin_gap, MIN_FORECAST_BRACKET_MARGIN_F)
                     skip_reason_counts[skipped_reason] += 1
                 else:
                     candidate = Candidate(
