@@ -1,22 +1,41 @@
-"""MeteoEdge web dashboard API server.
+"""MeteoEdge web dashboard API server — single consolidated dashboard.
 
 Endpoints:
-    GET /api/health    — liveness probe
-    GET /api/portfolio — open + closed positions, sourced from CLOB trade history
-    GET /             — serves static/index.html (mounted last)
+    GET /health         — liveness probe (uptime, last_poll)
+    GET /status         — capital, today PnL, win rate, open positions count
+    GET /trades         — last 50 trade records (newest first)
+    GET /stations       — per-station trade count, win rate, total PnL
+    GET /api/health     — liveness probe (ISO timestamp)
+    GET /api/bot-log    — tail of logs/bot.log
+    GET /api/portfolio  — open + closed positions, sourced from CLOB trade history
+    GET /api/cities/{city}/taf      — TAF windows with disruption flag
+    GET /api/cities/{city}/deb      — DEB model weights and RMSE
+    GET /api/cities/{city}/analysis — intraday correction analysis
+    GET /api/positions/{token_id}/snapshots — per-position price/model snapshots
+    GET /               — serves static/index.html (mounted last)
 
 Data source (priority order):
     1. Polymarket CLOB trade history — positions and fills
     2. live_state.json — optional enrichment for my_prob / edge / station / bracket
     3. Gamma API — market question strings
     4. CLOB orderbook — live mark-to-market per open position
+
+Usage (standalone):
+    uvicorn src.dashboard.api:app --port 8000
+
+Usage (embedded in run.py via bridge stub):
+    from src.monitoring.dashboard import start_dashboard
+    start_dashboard()   # fires a daemon thread, returns immediately
 """
 from __future__ import annotations
 
 import logging
+import time
+import threading
+from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import httpx
 from fastapi import FastAPI, HTTPException
@@ -26,16 +45,122 @@ from pydantic import BaseModel
 
 from py_clob_client_v2.clob_types import BookParams
 
-from src.config import POLYMARKET_GAMMA_API, STATIONS, LIVE_TRADES_JSONL, SNAPSHOTS_JSONL, POSITION_SNAPSHOTS_JSONL, LOG_DIR
+from src.config import (
+    POLYMARKET_GAMMA_API, STATIONS, LIVE_TRADES_JSONL, SNAPSHOTS_JSONL,
+    POSITION_SNAPSHOTS_JSONL, LOG_DIR, STARTING_CAPITAL_EUR,
+)
 from src.data.db import Database
 from src.data.nws import fetch_nws_forecast_high
 from src.data.polymarket import get_orderbook
 from src.data.taf_disruption import check_taf_disruption
+from src.dashboard.data import read_jsonl, load_live_trades, load_snapshots, load_position_snapshots
+
 STATE_PATH = Path("logs/live_state.json")
 
 _db = Database()
 
+# Module-level start time so /health can report uptime.
+_START_TIME = time.monotonic()
+
+# Last poll timestamp written here by run.py after each poll cycle.
+# Stored as an ISO string or None.  Also writeable via the bridge stub in
+# src/monitoring/dashboard.py so run.py does not need to be changed.
+last_poll_ts: str | None = None
+
 logger = logging.getLogger(__name__)
+
+
+def set_db(db) -> None:
+    """Inject the Database instance from run.py so endpoints read from SQLite."""
+    global _db
+    _db = db
+
+
+# ---------------------------------------------------------------------------
+# Monitoring helpers (ported from src/monitoring/dashboard.py)
+# ---------------------------------------------------------------------------
+
+def _today_utc() -> str:
+    """Return today's date as YYYY-MM-DD in UTC."""
+    return datetime.now(timezone.utc).date().isoformat()
+
+
+def _dashboard_load_trades() -> list[dict]:
+    """Return all trade records, newest first. Prefers DB when available."""
+    if _db is not None:
+        try:
+            rows = _db.get_trades(limit=None, mode=None)
+            if rows:
+                return rows
+        except Exception:
+            logger.warning("[dashboard] failed to load trades from DB", exc_info=True)
+    records = load_live_trades()
+    return list(reversed(records))
+
+
+def _compute_win_rate(trades: list[dict], n: int = 50) -> float:
+    """Compute win rate over the last *n* settled trades.
+
+    Only trades with a non-zero pnl are considered settled.
+    Returns 0.0 when no settled trades exist.
+    """
+    settled = [
+        t for t in trades
+        if t.get("outcome") == "filled" and float(t.get("pnl") or 0) != 0.0
+    ][:n]
+    if not settled:
+        return 0.0
+    wins = sum(1 for t in settled if float(t.get("pnl") or 0) > 0)
+    return wins / len(settled)
+
+
+def _today_pnl(trades: list[dict]) -> float:
+    """Sum PnL for trades whose timestamp falls on today (UTC)."""
+    today = _today_utc()
+    total = 0.0
+    for t in trades:
+        ts = t.get("ts", "")
+        if isinstance(ts, str) and ts.startswith(today):
+            total += float(t.get("pnl", 0))
+    return total
+
+
+def _today_trade_count(trades: list[dict]) -> int:
+    """Count trades whose timestamp falls on today (UTC)."""
+    today = _today_utc()
+    return sum(1 for t in trades if isinstance(t.get("ts", ""), str) and t["ts"].startswith(today))
+
+
+def _latest_capital(snapshots: list[dict]) -> float:
+    """Return the most recent capital value. Prefers DB; falls back to snapshots."""
+    if _db is not None:
+        try:
+            rows = _db.get_trades(limit=1, mode=None)
+            if rows and rows[0].get("capital_after") is not None:
+                return float(rows[0]["capital_after"])
+        except Exception:
+            logger.warning("[dashboard] failed to read latest capital from DB", exc_info=True)
+    if not snapshots:
+        return STARTING_CAPITAL_EUR
+    last = snapshots[-1]
+    return float(last.get("capital", STARTING_CAPITAL_EUR))
+
+
+def _open_positions_count() -> int:
+    """Return today's open position count from risk_state, or 0."""
+    if _db is None:
+        return 0
+    try:
+        cur = _db._conn.execute(
+            "SELECT open_positions FROM risk_state WHERE trade_date=?",
+            (_today_utc(),),
+        )
+        row = cur.fetchone()
+        return int(row[0]) if row else 0
+    except Exception:
+        logger.warning("[dashboard] failed to read open_positions count", exc_info=True)
+        return 0
+
 
 app = FastAPI(title="MeteoEdge Dashboard", version="1.0.0")
 
@@ -518,6 +643,77 @@ def _positions_from_wallet() -> tuple[list[PositionOut], list[ClosedPositionOut]
     open_positions.sort(key=lambda p: p.invested, reverse=True)
     closed_positions.sort(key=lambda p: p.closed_at, reverse=True)
     return open_positions, closed_positions
+
+
+# ---------------------------------------------------------------------------
+# Monitoring endpoints (ported from src/monitoring/dashboard.py)
+# These use the root path prefix (/health, /status, /trades, /stations)
+# ---------------------------------------------------------------------------
+
+@app.get("/health")
+def health_monitor() -> dict:
+    """Liveness probe. Always returns 200 even when log files are empty.
+
+    Reports uptime in seconds and the timestamp of the last polling cycle.
+    """
+    uptime = int(time.monotonic() - _START_TIME)
+    return {
+        "status": "ok",
+        "last_poll": last_poll_ts,
+        "uptime_seconds": uptime,
+    }
+
+
+@app.get("/status")
+def status() -> dict:
+    """Summary of current capital, today's PnL, trade count, win rate, and open positions."""
+    trades = _dashboard_load_trades()
+    snapshots = load_snapshots()
+
+    capital = _latest_capital(snapshots)
+    today_pnl = _today_pnl(trades)
+    today_count = _today_trade_count(trades)
+    win_rate = _compute_win_rate(trades, n=50)
+    open_count = _open_positions_count()
+
+    return {
+        "capital": round(capital, 2),
+        "today_pnl": round(today_pnl, 2),
+        "today_trade_count": today_count,
+        "win_rate": round(win_rate, 4),
+        "open_positions_count": open_count,
+        "last_poll": last_poll_ts,
+    }
+
+
+@app.get("/trades")
+def trades_list() -> list[dict]:
+    """Last 50 trade records, newest first."""
+    return _dashboard_load_trades()[:50]
+
+
+@app.get("/stations")
+def stations() -> dict[str, Any]:
+    """Per-station trade count, win rate, and total PnL."""
+    all_trades = _dashboard_load_trades()
+    by_station: dict[str, list[dict]] = defaultdict(list)
+    for t in all_trades:
+        station = t.get("station", "UNKNOWN")
+        by_station[station].append(t)
+
+    result: dict[str, Any] = {}
+    for station, station_trades in sorted(by_station.items()):
+        filled = [t for t in station_trades if t.get("outcome") == "filled"]
+        wins = sum(1 for t in filled if float(t.get("pnl", 0)) > 0)
+        win_rate = wins / len(filled) if filled else 0.0
+        total_pnl = sum(float(t.get("pnl", 0)) for t in station_trades)
+        result[station] = {
+            "trade_count": len(station_trades),
+            "filled_count": len(filled),
+            "win_rate": round(win_rate, 4),
+            "total_pnl": round(total_pnl, 2),
+        }
+    return result
 
 
 # ---------------------------------------------------------------------------
