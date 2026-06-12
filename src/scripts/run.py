@@ -646,6 +646,7 @@ def _log_open_position_snapshots(weather: dict, ts: str, db=None) -> list[dict]:
 
 
 _stop_loss_strikes: dict[str, int] = {}  # no_token_id -> consecutive polls with fair < entry
+_partial_fill_shares: dict[str, float] = {}  # no_token_id -> shares already sold via partial fills
 
 
 def _check_stop_loss_exits(live_trader, ts: str, position_states: list[dict],
@@ -727,25 +728,57 @@ def _check_stop_loss_exits(live_trader, ts: str, position_states: list[dict],
 
         total_eur = sum(f["size_eur"] for f in fills)
         question = fills[0].get("question", "")
+
+        # Account for any shares already sold via previous partial fills.
+        already_sold = _partial_fill_shares.get(token_id, 0.0)
+        remaining_shares = total_shares - already_sold
+        min_lot = float(os.environ.get("STOP_LOSS_MIN_LOT_SHARES", "0.5"))
+        if remaining_shares < min_lot:
+            log.info(
+                "  [sl] [%s] %.0f-%.0fF remaining shares %.4f < min lot %.4f after partial fills"
+                " -- skipping dust sell",
+                station, bracket_low, bracket_high, remaining_shares, min_lot,
+            )
+            _sold_positions.add(token_id)
+            _stop_loss_strikes.pop(token_id, None)
+            _partial_fill_shares.pop(token_id, None)
+            if db is not None:
+                db.close_positions_by_token(token_id)
+            continue
+
         log.info(
-            "  [sl] [%s] %.0f-%.0fF model fair %sc < entry %.0fc for %s polls, bid %sc -- selling %.1f shares",
+            "  [sl] [%s] %.0f-%.0fF model fair %sc < entry %.0fc for %s polls, bid %sc"
+            " -- selling %.4f shares (%.4f already sold)",
             station, bracket_low, bracket_high, fair, avg_entry_cents,
-            strikes, bid, total_shares,
+            strikes, bid, remaining_shares, already_sold,
         )
         try:
             result = live_trader.sell_position_immediate(
-                token_id, total_shares, STOP_LOSS_SELL_AGGRESSION_CENTS,
+                token_id, remaining_shares, STOP_LOSS_SELL_AGGRESSION_CENTS,
             )
-            if result is None:
-                # Not matched -- cancelled, never left resting. Strikes persist
-                # so the very next poll retries at the then-current bid.
+            sell_id, sell_price_or_order = result
+            if sell_id is None:
+                # Order was cancelled (may have partially filled before cancel).
+                # Query fill size so the next retry sells only the true remainder.
+                cancelled_order_id = sell_price_or_order
+                if cancelled_order_id:
+                    partial = live_trader.get_order_fill_size(cancelled_order_id)
+                    if partial > 0:
+                        _partial_fill_shares[token_id] = already_sold + partial
+                        log.info(
+                            "  [sl] partial fill %.4f shares on %s... -- tracking remainder",
+                            partial, cancelled_order_id[:12],
+                        )
+                # Strikes persist so the very next poll retries at the then-current bid.
                 continue
-            sell_id, sell_price_cents = result
+            sell_price_cents = sell_price_or_order
+            sold_shares = remaining_shares
             _sold_positions.add(token_id)
             _stop_loss_strikes.pop(token_id, None)
+            _partial_fill_shares.pop(token_id, None)
             if db is not None:
                 db.close_positions_by_token(token_id)
-            pnl = round((sell_price_cents - avg_entry_cents) / 100 * total_shares, 4)
+            pnl = round((sell_price_cents - avg_entry_cents) / 100 * sold_shares, 4)
             _record_sell_in_db(fills, sell_price_cents, ts, db=db)
             if risk_manager is not None:
                 risk_manager.record_pnl(pnl)
@@ -762,7 +795,7 @@ def _check_stop_loss_exits(live_trader, ts: str, position_states: list[dict],
                 "side": "SELL",
                 "price_cents": sell_price_cents,
                 "entry_price_cents": round(avg_entry_cents),
-                "shares": round(total_shares, 4),
+                "shares": round(sold_shares, 4),
                 "size_eur": total_eur,
                 "edge_cents": 0,
                 "pnl": pnl,
@@ -774,17 +807,7 @@ def _check_stop_loss_exits(live_trader, ts: str, position_states: list[dict],
                 sell_id[:12], sell_price_cents, station, bracket_low, bracket_high, pnl,
             )
         except Exception as e:
-            err = str(e)
-            if "balance" in err.lower() and ("0" in err or "not enough" in err.lower()):
-                n = db.close_positions_by_token(token_id) if db is not None else 0
-                _sold_positions.add(token_id)
-                _stop_loss_strikes.pop(token_id, None)
-                log.info(
-                    "  [sl] [%s] %.0f-%.0fF balance=0 -- tokens already gone, removed %s row(s) from open_positions",
-                    station, bracket_low, bracket_high, n,
-                )
-            else:
-                log.warning("  [sl] sell failed for [%s] %.0f-%.0fF: %s", station, bracket_low, bracket_high, e)
+            log.warning("  [sl] sell failed for [%s] %.0f-%.0fF: %s", station, bracket_low, bracket_high, e)
 
 
 def _check_take_profit_exits(live_trader, ts: str, db=None, risk_manager=None) -> None:
