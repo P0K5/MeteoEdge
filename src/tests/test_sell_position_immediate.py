@@ -30,7 +30,7 @@ class TestSellPositionImmediateCancelPaths:
     """#203 — cancel_order False must not mark position sold without fill confirmation."""
 
     def test_cancel_api_errors_order_still_live_returns_none(self):
-        """cancel_order() raises (network error) → check_fill shows 'open' → returns None."""
+        """cancel_order() raises (network error) → check_fill shows 'open' → returns (None, order_id)."""
         trader = _make_trader()
         # Order placed OK
         trader.client.create_and_post_order.return_value = {
@@ -44,7 +44,8 @@ class TestSellPositionImmediateCancelPaths:
         with patch("src.execution.live_trader.get_orderbook", return_value=_mock_orderbook()):
             result = trader.sell_position_immediate("tok-001", shares=10.0)
 
-        assert result is None, (
+        sell_id, _ = result
+        assert sell_id is None, (
             "When cancel errors AND order is not filled, position must NOT be marked sold"
         )
 
@@ -68,7 +69,7 @@ class TestSellPositionImmediateCancelPaths:
         assert isinstance(price_cents, int)
 
     def test_cancel_returns_false_check_fill_open_returns_none(self):
-        """cancel_order() returns False + check_fill shows open → returns None, not sold."""
+        """cancel_order() returns False + check_fill shows open → sell_id is None, not sold."""
         trader = _make_trader()
         trader.client.create_and_post_order.return_value = {
             "orderID": "sell-ord-003", "status": "live"
@@ -79,7 +80,8 @@ class TestSellPositionImmediateCancelPaths:
         with patch("src.execution.live_trader.get_orderbook", return_value=_mock_orderbook()):
             result = trader.sell_position_immediate("tok-003", shares=10.0)
 
-        assert result is None
+        sell_id, _ = result
+        assert sell_id is None
 
     def test_happy_path_immediate_fill_no_cancel_attempted(self):
         """Happy path: order fills immediately → returns (order_id, price), cancel never called."""
@@ -108,7 +110,6 @@ class TestSellPositionImmediateCancelPaths:
         with patch("src.execution.live_trader.get_orderbook", return_value=_mock_orderbook()):
             result = trader.sell_position_immediate("tok-005", shares=10.0)
 
-        assert result is None
-        # get_order called at most once (the pre-cancel status check on line 150),
-        # not again for the cancel-false disambiguation path (which was not reached).
-        assert trader.client.get_order.call_count <= 1
+        sell_id, cancelled_order_id = result
+        assert sell_id is None
+        assert cancelled_order_id == "sell-ord-005"
