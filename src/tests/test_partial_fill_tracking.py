@@ -102,15 +102,15 @@ class TestCheckStopLossPartialFillTracking:
     def test_partial_fill_then_retry_sells_remainder(self):
         """After 5-share partial fill, retry should sell only (total - 5) shares."""
         import src.scripts.run as run_mod
-        run_mod._stop_loss_strikes.clear()
-        run_mod._partial_fill_shares.clear()
-        run_mod._sold_positions.clear()
+        run_mod.order_manager._stop_loss_strikes.clear()
+        run_mod.order_manager._partial_fill_shares.clear()
+        run_mod.order_manager._sold_positions.clear()
 
         from src.config import STOP_LOSS_CONSECUTIVE_POLLS
         token_id = "tok-partial"
 
         # Prime strikes to trigger level
-        run_mod._stop_loss_strikes[token_id] = STOP_LOSS_CONSECUTIVE_POLLS
+        run_mod.order_manager._stop_loss_strikes[token_id] = STOP_LOSS_CONSECUTIVE_POLLS
 
         ps = self._make_position_state(token_id=token_id, fair=30, bid=65, depth=50,
                                        price_cents=70, size_eur=5.0)
@@ -126,14 +126,14 @@ class TestCheckStopLossPartialFillTracking:
             run_mod._check_stop_loss_exits(trader, "2026-06-12T10:00:00Z", [ps])
 
         # Partial fill tracked
-        assert run_mod._partial_fill_shares.get(token_id, 0.0) == pytest.approx(5.0)
+        assert run_mod.order_manager._partial_fill_shares.get(token_id, 0.0) == pytest.approx(5.0)
         # Position NOT marked sold yet
-        assert token_id not in run_mod._sold_positions
+        assert token_id not in run_mod.order_manager._sold_positions
 
         # Second call: sell the remainder
         remaining = total_shares - 5.0
         trader.sell_position_immediate.return_value = ("sell-ord-fill", 65)
-        run_mod._stop_loss_strikes[token_id] = STOP_LOSS_CONSECUTIVE_POLLS
+        run_mod.order_manager._stop_loss_strikes[token_id] = STOP_LOSS_CONSECUTIVE_POLLS
 
         with patch("src.scripts.run.STOP_LOSS_MIN_LOT_SHARES", 0.5, create=True), \
              patch("src.scripts.run._append_live_trade"), \
@@ -143,21 +143,21 @@ class TestCheckStopLossPartialFillTracking:
         # Should have called sell with remaining shares (not the full total)
         last_call = trader.sell_position_immediate.call_args
         assert last_call[0][1] == pytest.approx(remaining, abs=0.01)
-        assert token_id in run_mod._sold_positions
+        assert token_id in run_mod.order_manager._sold_positions
 
     def test_remaining_below_min_lot_skips_dust_sell(self):
         """Remaining shares below min lot after partial fill → skip, mark sold."""
         import src.scripts.run as run_mod
-        run_mod._stop_loss_strikes.clear()
-        run_mod._partial_fill_shares.clear()
-        run_mod._sold_positions.clear()
+        run_mod.order_manager._stop_loss_strikes.clear()
+        run_mod.order_manager._partial_fill_shares.clear()
+        run_mod.order_manager._sold_positions.clear()
 
         from src.config import STOP_LOSS_CONSECUTIVE_POLLS
         token_id = "tok-dust"
 
-        run_mod._stop_loss_strikes[token_id] = STOP_LOSS_CONSECUTIVE_POLLS
+        run_mod.order_manager._stop_loss_strikes[token_id] = STOP_LOSS_CONSECUTIVE_POLLS
         # Simulate 7.0 of 7.14 shares already sold via partial fill
-        run_mod._partial_fill_shares[token_id] = 7.0
+        run_mod.order_manager._partial_fill_shares[token_id] = 7.0
 
         ps = self._make_position_state(token_id=token_id, fair=30, bid=65, depth=50,
                                        price_cents=70, size_eur=5.0)
@@ -172,19 +172,19 @@ class TestCheckStopLossPartialFillTracking:
         # sell_position_immediate should NOT be called for dust
         trader.sell_position_immediate.assert_not_called()
         # Position should be marked sold (dust cleared)
-        assert token_id in run_mod._sold_positions
-        assert token_id not in run_mod._partial_fill_shares
+        assert token_id in run_mod.order_manager._sold_positions
+        assert token_id not in run_mod.order_manager._partial_fill_shares
 
     def test_full_fill_path_unaffected(self):
         """Full fill on first attempt: single clean record, _partial_fill_shares not touched."""
         import src.scripts.run as run_mod
-        run_mod._stop_loss_strikes.clear()
-        run_mod._partial_fill_shares.clear()
-        run_mod._sold_positions.clear()
+        run_mod.order_manager._stop_loss_strikes.clear()
+        run_mod.order_manager._partial_fill_shares.clear()
+        run_mod.order_manager._sold_positions.clear()
 
         from src.config import STOP_LOSS_CONSECUTIVE_POLLS
         token_id = "tok-full-fill"
-        run_mod._stop_loss_strikes[token_id] = STOP_LOSS_CONSECUTIVE_POLLS
+        run_mod.order_manager._stop_loss_strikes[token_id] = STOP_LOSS_CONSECUTIVE_POLLS
 
         ps = self._make_position_state(token_id=token_id, fair=30, bid=65, depth=50)
         trader = MagicMock()
@@ -194,6 +194,6 @@ class TestCheckStopLossPartialFillTracking:
              patch("src.scripts.run._record_sell_in_db"):
             run_mod._check_stop_loss_exits(trader, "2026-06-12T10:00:00Z", [ps])
 
-        assert token_id in run_mod._sold_positions
+        assert token_id in run_mod.order_manager._sold_positions
         # No partial fill tracking for a clean fill
-        assert token_id not in run_mod._partial_fill_shares
+        assert token_id not in run_mod.order_manager._partial_fill_shares

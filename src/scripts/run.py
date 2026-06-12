@@ -10,53 +10,54 @@ import csv
 import json
 import logging
 import os
-import tempfile
 import threading
 import time
-
-log = logging.getLogger(__name__)
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
-from pathlib import Path
+
+from dateutil import parser as dtparse
 
 from src.config import (
-    STATIONS, STATION_TZ, STATION_ACTIVE_HOURS, POLL_INTERVAL_SECONDS, LOG_DIR,
+    POLL_INTERVAL_SECONDS, LOG_DIR,
     CANDIDATES_CSV, SNAPSHOTS_JSONL, LIVE_TRADES_JSONL, POSITION_SNAPSHOTS_JSONL,
     RISK_DAILY_LOSS_LIMIT_EUR, RISK_MAX_OPEN_POSITIONS,
     RISK_DRAWDOWN_STOP_PCT, RISK_MIN_LIQUIDITY, STARTING_CAPITAL_EUR,
-    POSITION_SIZE_EUR, POSITION_SIZE_WITH_FEES, TAKE_PROFIT_BUFFER_CENTS,
+    POSITION_SIZE_EUR, POSITION_SIZE_WITH_FEES,
     FORECAST_STDDEV_F,
     STOP_LOSS_MIN_BID_CENTS, STOP_LOSS_CONSECUTIVE_POLLS,
     STOP_LOSS_MIN_DEPTH_SHARES, STOP_LOSS_SELL_AGGRESSION_CENTS,
     get_source_priority,
 )
 from src.data.db import Database
-from src.data.metar import fetch_all_metars_today, compute_daily_high, now_local, sunset_local
-from src.data.nws import fetch_nws_forecast_high
-from src.data.open_meteo import fetch_secondary_forecast, fetch_hourly_temp_now
 from src.data.polymarket import get_orderbook, get_weather_markets
 from src.data.taf_collector import TafCollector
 from src.data.collectors.jma_ameidas import JmaAmedasCollector
 from src.data.collectors.amos import AmosCollector
 from src.data.collectors.mss import MssCollector
 from src.data.freshness_monitor import FreshnessMonitor
-from src.model.deb_weighting import log_forecast, refresh_weights, get_weights
-from src.model.deb_hourly_consensus import compute_deb_mu_f
-from src.model.intraday_correction import compute_correction
-from src.model.envelope import WeatherState
+from src.model.envelope import Bracket, true_probability_yes
+from src.model.climb_rates import expected_additional_rise
 from src.logging_config import setup_logging
 from src.monitoring.alerts import AlertManager
 from src.risk.manager import RiskManager
 from src.strategy.scanner import scan_markets
+from src.weather.builder import _build_weather, _station_in_active_window
+from src.execution.live_trader import LiveTrader
+from src.execution.order_manager import OrderManager
+import src.monitoring.dashboard as _dashboard_module
+from src.monitoring.dashboard import _load_trades, _compute_win_rate, start_dashboard
+
+log = logging.getLogger(__name__)
 
 FILL_POLL_INTERVAL_S = 30
 FILL_MAX_WAIT_S = 300  # 5 minutes, 10 attempts
 
 _write_lock = threading.Lock()
-_order_lock = threading.Lock()  # Serialize CLOB placements -- HTTP/2 pool not thread-safe
-_open_orders: set[tuple[str, str]] = set()  # (ticker, side) pairs with a live GTC order
-_open_orders_lock = threading.Lock()
-_sold_positions: set[str] = set()  # no_token_ids sold this session (METAR stop-loss)
+
+# Module-level OrderManager instance: owns _open_orders, _open_orders_lock,
+# _order_lock, _sold_positions, _stop_loss_strikes, _partial_fill_shares.
+order_manager = OrderManager()
 
 
 # ---------------------------------------------------------------------------
@@ -127,13 +128,18 @@ def _append_live_trade(record: dict, db=None) -> None:
 # Live order lifecycle
 # ---------------------------------------------------------------------------
 
-def _execute_live(candidate, clob_client_factory, risk_manager, ts: str, db=None) -> None:
+def _execute_live(
+    candidate,
+    clob_client_factory,
+    risk_manager: "RiskManager",
+    ts: str,
+    db=None,
+) -> None:
     """Place one order and wait for fill/timeout. open_position() already called by caller.
 
     Each thread creates its own LiveTrader/ClobClient to avoid HTTP/2 stream
     collisions when multiple orders are placed concurrently.
     """
-    from src.execution.live_trader import LiveTrader
     trader = LiveTrader(clob_client_factory(), db)
 
     token_id = (
@@ -146,17 +152,17 @@ def _execute_live(candidate, clob_client_factory, risk_manager, ts: str, db=None
         return
 
     order_key = token_id
-    with _open_orders_lock:
-        if order_key in _open_orders:
+    with order_manager._open_orders_lock:
+        if order_key in order_manager._open_orders:
             log.info("  [live] skip %s %s... -- GTC order already open on exchange", candidate.side, candidate.bracket.ticker[:16])
             risk_manager.close_position()
             return
-        _open_orders.add(order_key)
+        order_manager._open_orders.add(order_key)
 
     predicted_price = round(candidate.confidence * 100)
 
     try:
-        with _order_lock:  # Serialize HTTP/2 placements; fill-monitoring remains parallel
+        with order_manager._order_lock:  # Serialize HTTP/2 placements; fill-monitoring remains parallel
             try:
                 order_id = trader.place_order(
                     token_id=token_id,
@@ -215,296 +221,15 @@ def _execute_live(candidate, clob_client_factory, risk_manager, ts: str, db=None
         }, db=db)
         log.info("  [live] %s %s...", outcome, order_id[:12])
     finally:
-        with _open_orders_lock:
-            _open_orders.discard(order_key)
+        with order_manager._open_orders_lock:
+            order_manager._open_orders.discard(order_key)
 
 
 # ---------------------------------------------------------------------------
-# Poll loop
+# Position helpers (kept here — tightly coupled to poll_once weather state)
 # ---------------------------------------------------------------------------
 
-def _station_in_active_window(station: str) -> bool:
-    import pytz
-    if station not in STATION_TZ:
-        return True
-    now_local_dt = datetime.now(pytz.timezone(STATION_TZ[station]))
-    active_start, active_end = STATION_ACTIVE_HOURS.get(station, (6, 23))
-    return active_start <= now_local_dt.hour < active_end
-
-
-def _build_weather(db: "Database | None" = None) -> dict[str, WeatherState]:
-    weather: dict[str, WeatherState] = {}
-    for station, lat, lon, city, *_ in STATIONS:
-        import pytz
-        now_local_dt = datetime.now(pytz.timezone(STATION_TZ[station]))
-        active_start, active_end = STATION_ACTIVE_HOURS.get(station, (6, 23))
-        if not (active_start <= now_local_dt.hour < active_end):
-            log.info(
-                "[%s] local %s outside active window %02d:00-%02d:00 -- skipping",
-                station, now_local_dt.strftime('%H:%M'), active_start, active_end,
-            )
-            continue
-
-        metars = fetch_all_metars_today(station)
-        if not metars:
-            log.info("[%s] no METAR data, skipping", station)
-            continue
-
-        result = compute_daily_high(metars, STATION_TZ[station], min_local_hour=active_start)
-        if not result:
-            log.info("[%s] could not compute daily high, skipping", station)
-            continue
-        high_f, high_time = result
-
-        latest = metars[0]
-        latest_temp_c = latest.get("temp")
-        if latest_temp_c is None:
-            log.info("[%s] latest METAR missing temp, skipping", station)
-            continue
-
-        obs_str = latest.get("reportTime") or latest.get("obsTime")
-        if not obs_str:
-            log.info("[%s] latest METAR missing time, skipping", station)
-            continue
-
-        try:
-            from dateutil import parser as dtparse
-            latest_temp_f = (float(latest_temp_c) * 9 / 5) + 32
-            latest_time = dtparse.parse(obs_str)
-            if latest_time.tzinfo is None:
-                latest_time = latest_time.replace(tzinfo=timezone.utc)
-        except Exception as e:
-            log.warning("[%s] METAR parse error: %s, skipping", station, e)
-            continue
-
-        # Persist the latest METAR so the freshness monitor and intraday
-        # correction can use it as a fallback observation source.
-        if db is not None:
-            metar_ts = latest_time.astimezone(timezone.utc).isoformat()
-            prev_metar = db.get_latest_observation("metar", station)
-            if prev_metar is None or prev_metar["ts"] != metar_ts:
-                db.insert_observation(
-                    ts=metar_ts,
-                    station=station,
-                    temp_f=latest_temp_f,
-                    temp_native=float(latest_temp_c),
-                    unit="C",
-                    source="metar",
-                    cadence_min=30,
-                    is_official=1,
-                    raw_json=json.dumps(latest),
-                )
-
-        # Attempt to upgrade latest_temp_f from a fresher high-freq obs
-        obs_bias_offset_f = None
-        if db is not None:
-            for src_cfg in get_source_priority(city):
-                if src_cfg["source"] == "metar":
-                    continue
-                obs = db.get_latest_observation(src_cfg["source"], src_cfg["station"])
-                if obs is None:
-                    continue
-                try:
-                    obs_ts = dtparse.parse(obs["ts"])
-                    if obs_ts.tzinfo is None:
-                        obs_ts = obs_ts.replace(tzinfo=timezone.utc)
-                except Exception:
-                    continue
-                age_min = (datetime.now(timezone.utc) - obs_ts).total_seconds() / 60
-                if age_min > 2 * src_cfg["cadence_min"]:
-                    continue  # stale — skip
-                latest_temp_f = float(obs["temp_f"])
-                latest_time = obs_ts
-                break  # highest-priority fresh source wins
-            hourly_model_f = fetch_hourly_temp_now(lat, lon)
-            if hourly_model_f is not None:
-                obs_bias_offset_f = latest_temp_f - hourly_model_f
-
-        forecast_nws = fetch_nws_forecast_high(lat, lon)
-        forecast_secondary = fetch_secondary_forecast(lat, lon)
-
-        today_str = datetime.now(timezone.utc).date().isoformat()
-        if db is not None:
-            if forecast_nws is not None:
-                log_forecast(db, station, "nws", today_str, forecast_nws)
-            if forecast_secondary is not None:
-                log_forecast(db, station, "open_meteo", today_str, forecast_secondary)
-            refresh_weights(db, station, city)
-        weights = get_weights(db, city) if db is not None else {"nws": 0.5, "open_meteo": 0.5}
-        deb_mu_f = compute_deb_mu_f(forecast_nws, forecast_secondary, weights)
-        if deb_mu_f is not None:
-            log.debug("[%s] deb_mu_f=%.1fF weights=nws:%.2f/om:%.2f", station, deb_mu_f, weights['nws'], weights['open_meteo'])
-
-        weather[station] = WeatherState(
-            station=station,
-            now_local=now_local(station),
-            sunset_local=sunset_local(station, lat, lon),
-            current_high_f=high_f,
-            current_high_time=high_time,
-            latest_temp_f=latest_temp_f,
-            latest_temp_time=latest_time,
-            forecast_high_f=forecast_nws,
-            secondary_forecast_f=forecast_secondary,
-            obs_bias_offset_f=obs_bias_offset_f,
-            deb_mu_f=deb_mu_f,
-        )
-        if db is not None:
-            corrected = compute_correction(city, weather[station], db)
-            if corrected is not None:
-                weather[station].corrected_mu_f = corrected
-                log.debug("[%s] corrected_mu_f=%.1fF (delta=%+.1fF)", station, corrected, corrected - deb_mu_f)
-        log.info("[%s] high=%.1fF latest=%.1fF nws=%s", station, high_f, latest_temp_f, forecast_nws)
-    return weather
-
-
-def _wallet_held_token_ids() -> set[str]:
-    """Return non-redeemable token_ids currently held in the wallet (size > 0.01).
-
-    Used to reconcile timeout records against actual exchange state -- if a
-    token is in the wallet, the order filled despite our local timeout marker.
-    """
-    wallet = os.environ.get("POLYMARKET_DEPOSIT_WALLET", "")
-    if not wallet:
-        return set()
-    try:
-        import httpx
-        url = f"https://data-api.polymarket.com/positions?user={wallet}&sizeThreshold=0.01&limit=100"
-        r = httpx.get(url, timeout=15)
-        r.raise_for_status()
-        rows = r.json()
-        if not isinstance(rows, list):
-            rows = rows.get("positions") or rows.get("data") or []
-        return {
-            str(row.get("asset") or "")
-            for row in rows
-            if row.get("asset") and not row.get("redeemable")
-        }
-    except Exception as e:
-        log.warning("[reconcile] wallet fetch failed: %s -- skipping reconciliation", e)
-        return set()
-
-
-def _reconcile_timeout_fills(ts: str) -> None:
-    """Patch timeout JSONL records whose tokens still appear in the wallet.
-
-    GTC limit orders sometimes fill after our 5-minute wait window expires.
-    The follow-up cancel_order() can fail silently or lose a race with the
-    matching engine, leaving the order live on the exchange.  When the order
-    later fills, the wallet shows the position but our JSONL says
-    outcome=timeout -- invisible to the dashboard enrichment and to the
-    take-profit / METAR stop-loss exits.
-
-    Rewriting these records to outcome=filled restores visibility everywhere
-    that filters on outcome.  Reconciliation runs once per poll, before
-    _sync_open_orders so the dedup guard sees the patched records.
-    """
-    if not LIVE_TRADES_JSONL.exists():
-        return
-    held = _wallet_held_token_ids()
-    if not held:
-        return
-
-    patched = 0
-    new_lines: list[str] = []
-    try:
-        with open(LIVE_TRADES_JSONL) as f:
-            for line in f:
-                stripped = line.strip()
-                if not stripped:
-                    new_lines.append(line)
-                    continue
-                try:
-                    r = json.loads(stripped)
-                except json.JSONDecodeError:
-                    new_lines.append(line)
-                    continue
-                token = r.get("asset_id") or r.get("no_token_id") or ""
-                if r.get("outcome") == "timeout" and token in held:
-                    r["outcome"] = "filled"
-                    r["reconciled_at"] = ts
-                    new_lines.append(json.dumps(r, default=str) + "\n")
-                    patched += 1
-                else:
-                    new_lines.append(line)
-    except OSError as e:
-        log.warning("[reconcile] read failed: %s", e)
-        return
-
-    if patched == 0:
-        return
-
-    try:
-        with tempfile.NamedTemporaryFile(
-            "w", dir=LIVE_TRADES_JSONL.parent, delete=False, suffix=".tmp"
-        ) as f:
-            f.writelines(new_lines)
-            tmp = f.name
-        os.replace(tmp, LIVE_TRADES_JSONL)
-        log.info(
-            "[reconcile] patched %s timeout record(s) -> filled (token present in wallet)",
-            patched,
-        )
-    except OSError as e:
-        log.warning("[reconcile] write failed: %s", e)
-
-
-def _sync_open_orders(live_trader, db=None) -> None:
-    """Refresh _open_orders from exchange open orders + today's filled positions.
-
-    Called at the top of every live poll. Two sources feed the dedup guard:
-    1. Exchange open orders (pending GTC orders not yet filled or cancelled).
-    2. Today's filled positions from DB (preferred) or live_trades.jsonl (fallback).
-    """
-    today = datetime.now(timezone.utc).date().isoformat()
-
-    with _open_orders_lock:
-        _open_orders.clear()
-
-        # Source 1: live exchange open orders
-        try:
-            from py_clob_client_v2.clob_types import OpenOrderParams
-            orders = live_trader.client.get_open_orders(OpenOrderParams())
-            for o in orders:
-                _open_orders.add(o.get("asset_id", ""))
-            log.info("[orders] %s open exchange orders synced to dedup guard", len(orders))
-        except Exception as e:
-            log.warning("[orders] failed to sync open orders: %s -- using filled-positions only", e)
-
-        # Source 2: today's already-filled no_token_ids -- prefer DB, fall back to JSONL
-        filled_count = 0
-        if db is not None:
-            try:
-                positions = db.get_open_positions()
-                for p in positions:
-                    if p.get("no_token_id"):
-                        _open_orders.add(p["no_token_id"])
-                        filled_count += 1
-            except Exception as e:
-                log.warning("[orders] DB read failed: %s", e)
-        else:
-            if LIVE_TRADES_JSONL.exists():
-                try:
-                    with open(LIVE_TRADES_JSONL) as f:
-                        for line in f:
-                            line = line.strip()
-                            if not line:
-                                continue
-                            try:
-                                r = json.loads(line)
-                            except json.JSONDecodeError:
-                                continue
-                            if (r.get("end_date", "")[:10] == today
-                                    and r.get("outcome") == "filled"
-                                    and r.get("no_token_id")):
-                                _open_orders.add(r["no_token_id"])
-                                filled_count += 1
-                except OSError:
-                    pass
-        if filled_count:
-            log.info("[orders] %s today's filled position(s) added to dedup guard", filled_count)
-
-
-def _load_open_no_positions(today: str, db=None) -> list[dict]:
+def _load_open_no_positions(today: str, db=None) -> list:
     """Return filled NO positions for today that have not yet been sold.
 
     Reads from DB when available; falls back to live_trades.jsonl.
@@ -519,8 +244,8 @@ def _load_open_no_positions(today: str, db=None) -> list[dict]:
     # Fallback: existing JSONL path
     if not LIVE_TRADES_JSONL.exists():
         return []
-    records: list[dict] = []
-    sold_tokens: set[str] = set()
+    records: list = []
+    sold_tokens: set = set()
     try:
         with open(LIVE_TRADES_JSONL) as f:
             for line in f:
@@ -546,7 +271,7 @@ def _load_open_no_positions(today: str, db=None) -> list[dict]:
     return [r for r in records if r.get("no_token_id") not in sold_tokens]
 
 
-def _log_open_position_snapshots(weather: dict, ts: str, db=None) -> list[dict]:
+def _log_open_position_snapshots(weather: dict, ts: str, db=None) -> list:
     """Write one snapshot per open NO position per poll, capturing weather +
     orderbook + live model probability.
 
@@ -565,14 +290,12 @@ def _log_open_position_snapshots(weather: dict, ts: str, db=None) -> list[dict]:
     if not open_positions:
         return []
 
-    from collections import defaultdict
-    from src.model.envelope import true_probability_yes, Bracket
-    by_token: dict[str, list[dict]] = defaultdict(list)
+    by_token: dict = defaultdict(list)
     for pos in open_positions:
         by_token[pos["no_token_id"]].append(pos)
 
     LOG_DIR.mkdir(exist_ok=True)
-    position_states: list[dict] = []
+    position_states: list = []
     for token_id, fills in by_token.items():
         first = fills[0]
         station = first.get("station", "")
@@ -645,11 +368,7 @@ def _log_open_position_snapshots(weather: dict, ts: str, db=None) -> list[dict]:
     return position_states
 
 
-_stop_loss_strikes: dict[str, int] = {}  # no_token_id -> consecutive polls with fair < entry
-_partial_fill_shares: dict[str, float] = {}  # no_token_id -> shares already sold via partial fills
-
-
-def _check_stop_loss_exits(live_trader, ts: str, position_states: list[dict],
+def _check_stop_loss_exits(live_trader, ts: str, position_states: list,
                            db=None, risk_manager=None) -> None:
     """Exit NO positions when the live model itself no longer supports the entry.
 
@@ -680,7 +399,7 @@ def _check_stop_loss_exits(live_trader, ts: str, position_states: list[dict],
         token_id = ps["token_id"]
         fills = ps["fills"]
         snap = ps["snap"]
-        if token_id in _sold_positions:
+        if token_id in order_manager._sold_positions:
             continue
 
         fair = snap.get("fair_value_now")
@@ -696,11 +415,11 @@ def _check_stop_loss_exits(live_trader, ts: str, position_states: list[dict],
         ) / total_shares
 
         if fair >= avg_entry_cents:
-            _stop_loss_strikes.pop(token_id, None)
+            order_manager._stop_loss_strikes.pop(token_id, None)
             continue
 
-        strikes = _stop_loss_strikes.get(token_id, 0) + 1
-        _stop_loss_strikes[token_id] = strikes
+        strikes = order_manager._stop_loss_strikes.get(token_id, 0) + 1
+        order_manager._stop_loss_strikes[token_id] = strikes
         station = fills[0]["station"]
         bracket_low = fills[0]["bracket_low"]
         bracket_high = fills[0]["bracket_high"]
@@ -730,7 +449,7 @@ def _check_stop_loss_exits(live_trader, ts: str, position_states: list[dict],
         question = fills[0].get("question", "")
 
         # Account for any shares already sold via previous partial fills.
-        already_sold = _partial_fill_shares.get(token_id, 0.0)
+        already_sold = order_manager._partial_fill_shares.get(token_id, 0.0)
         remaining_shares = total_shares - already_sold
         min_lot = float(os.environ.get("STOP_LOSS_MIN_LOT_SHARES", "0.5"))
         if remaining_shares < min_lot:
@@ -739,9 +458,9 @@ def _check_stop_loss_exits(live_trader, ts: str, position_states: list[dict],
                 " -- skipping dust sell",
                 station, bracket_low, bracket_high, remaining_shares, min_lot,
             )
-            _sold_positions.add(token_id)
-            _stop_loss_strikes.pop(token_id, None)
-            _partial_fill_shares.pop(token_id, None)
+            order_manager._sold_positions.add(token_id)
+            order_manager._stop_loss_strikes.pop(token_id, None)
+            order_manager._partial_fill_shares.pop(token_id, None)
             if db is not None:
                 db.close_positions_by_token(token_id)
             continue
@@ -764,7 +483,7 @@ def _check_stop_loss_exits(live_trader, ts: str, position_states: list[dict],
                 if cancelled_order_id:
                     partial = live_trader.get_order_fill_size(cancelled_order_id)
                     if partial > 0:
-                        _partial_fill_shares[token_id] = already_sold + partial
+                        order_manager._partial_fill_shares[token_id] = already_sold + partial
                         log.info(
                             "  [sl] partial fill %.4f shares on %s... -- tracking remainder",
                             partial, cancelled_order_id[:12],
@@ -773,9 +492,9 @@ def _check_stop_loss_exits(live_trader, ts: str, position_states: list[dict],
                 continue
             sell_price_cents = sell_price_or_order
             sold_shares = remaining_shares
-            _sold_positions.add(token_id)
-            _stop_loss_strikes.pop(token_id, None)
-            _partial_fill_shares.pop(token_id, None)
+            order_manager._sold_positions.add(token_id)
+            order_manager._stop_loss_strikes.pop(token_id, None)
+            order_manager._partial_fill_shares.pop(token_id, None)
             if db is not None:
                 db.close_positions_by_token(token_id)
             pnl = round((sell_price_cents - avg_entry_cents) / 100 * sold_shares, 4)
@@ -809,124 +528,6 @@ def _check_stop_loss_exits(live_trader, ts: str, position_states: list[dict],
             )
         except Exception as e:
             log.warning("  [sl] sell failed for [%s] %.0f-%.0fF: %s", station, bracket_low, bracket_high, e)
-
-
-def _check_take_profit_exits(live_trader, ts: str, db=None, risk_manager=None) -> None:
-    """Exit NO positions where the best bid has reached predicted_price - buffer.
-
-    The model snapshot is frozen at entry time and cannot validate further price
-    movement.  Once market price converges to our fair value, the edge we
-    measured is fully captured -- holding longer is a bet on the (stale) model
-    being right that the market underprices the outcome.  Locking in the gain
-    recycles capital into the next edge and reduces variance without giving up
-    expected value.
-
-    NOTE: A price-based stop-loss was backtested against position_snapshots.jsonl
-    (May 27 - Jun 4) and found to be actively harmful at every threshold (10c-55c).
-    Many winning positions dip to 10-30c before recovering to 98-99c -- the
-    stop would cut exactly those positions.  Net degradation: -$28 at 55c,
-    -$33 at 20c, -$40 at 10c vs baseline.  Do not re-add without a time-of-day
-    condition (only fire in the final hour of trading, once temperature is
-    locked in and recovery is impossible).
-    """
-    today = datetime.now(timezone.utc).date().isoformat()
-    open_positions = _load_open_no_positions(today, db=db)
-    if not open_positions:
-        return
-
-    from collections import defaultdict
-    by_token: dict[str, list[dict]] = defaultdict(list)
-    for pos in open_positions:
-        by_token[pos["no_token_id"]].append(pos)
-
-    for token_id, fills in by_token.items():
-        if token_id in _sold_positions:
-            continue
-
-        predicted_price = fills[0].get("predicted_price")
-        if not predicted_price:
-            continue
-        target_cents = int(predicted_price) - TAKE_PROFIT_BUFFER_CENTS
-
-        try:
-            ob = get_orderbook(token_id)
-            bids = ob.get("bids") or []
-            if not bids:
-                continue
-            best_bid_cents = max(1, min(99, round(max(float(b["price"]) for b in bids) * 100)))
-        except Exception as e:
-            if "404" in str(e):
-                n = db.close_positions_by_token(token_id) if db is not None else 0
-                log.info("  [tp] %s... market resolved -- removed %s row(s) from open_positions", token_id[:14], n)
-            else:
-                log.warning("  [tp] orderbook fetch failed for %s...: %s", token_id[:14], e)
-            continue
-
-        if best_bid_cents < target_cents:
-            continue
-
-        bracket_low = fills[0]["bracket_low"]
-        bracket_high = fills[0]["bracket_high"]
-        station = fills[0]["station"]
-        total_shares = sum(f["size_eur"] / (f["price_cents"] / 100) for f in fills)
-        total_eur = sum(f["size_eur"] for f in fills)
-        question = fills[0].get("question", "")
-
-        log.info(
-            "  [tp] [%s] %.0f-%.0fF NO bid %sc >= target %sc (predicted %sc) -- selling %.1f shares",
-            station, bracket_low, bracket_high, best_bid_cents, target_cents, predicted_price, total_shares,
-        )
-        try:
-            sell_id, sell_price_cents = live_trader.sell_position(token_id, total_shares)
-            _sold_positions.add(token_id)
-            if db is not None:
-                # open_positions rows are keyed by the BUY order_id, not the
-                # sell order — remove every fill for this token.
-                db.close_positions_by_token(token_id)
-            avg_entry_cents = sum(
-                f["price_cents"] * (f["size_eur"] / (f["price_cents"] / 100))
-                for f in fills
-            ) / total_shares
-            pnl = round((sell_price_cents - avg_entry_cents) / 100 * total_shares, 4)
-            _record_sell_in_db(fills, sell_price_cents, ts, db=db)
-            if risk_manager is not None:
-                risk_manager.record_pnl(pnl)
-            _append_live_trade({
-                "ts": ts,
-                "order_id": sell_id,
-                "station": station,
-                "question": question,
-                "end_date": today,
-                "ticker": fills[0].get("ticker", ""),
-                "no_token_id": token_id,
-                "bracket_low": bracket_low,
-                "bracket_high": bracket_high,
-                "side": "SELL",
-                "price_cents": sell_price_cents,
-                "entry_price_cents": round(avg_entry_cents),
-                "shares": round(total_shares, 4),
-                "size_eur": total_eur,
-                "edge_cents": 0,
-                "pnl": pnl,
-                "outcome": "sold",
-                "actual_fee_cents": None,
-                "trigger": f"take_profit@{best_bid_cents}c_target{target_cents}c_predicted{predicted_price}c",
-            }, db=db)
-            log.info(
-                "  [tp] sell %s... placed @ %sc -- [%s] %.0f-%.0fF NO  pnl=%+.2f",
-                sell_id[:12], sell_price_cents, station, bracket_low, bracket_high, pnl,
-            )
-        except Exception as e:
-            err = str(e)
-            if "balance" in err.lower() and ("0" in err or "not enough" in err.lower()):
-                n = db.close_positions_by_token(token_id) if db is not None else 0
-                _sold_positions.add(token_id)
-                log.info(
-                    "  [tp] [%s] %.0f-%.0fF balance=0 -- tokens already gone, removed %s row(s) from open_positions",
-                    station, bracket_low, bracket_high, n,
-                )
-            else:
-                log.warning("  [tp] sell failed for [%s] %.0f-%.0fF: %s", station, bracket_low, bracket_high, e)
 
 
 def _record_sell_in_db(fills: list, sell_price_cents: int, ts: str, db=None) -> None:
@@ -968,14 +569,12 @@ def _check_metar_exits(weather: dict, live_trader, ts: str, db=None, risk_manage
     if not open_positions:
         return
 
-    from collections import defaultdict
-    from src.model.climb_rates import expected_additional_rise
-    by_token: dict[str, list[dict]] = defaultdict(list)
+    by_token: dict = defaultdict(list)
     for pos in open_positions:
         by_token[pos["no_token_id"]].append(pos)
 
     for token_id, fills in by_token.items():
-        if token_id in _sold_positions:
+        if token_id in order_manager._sold_positions:
             continue
 
         bracket_low = fills[0]["bracket_low"]
@@ -989,8 +588,8 @@ def _check_metar_exits(weather: dict, live_trader, ts: str, db=None, risk_manage
         if not (bracket_low <= current_high <= bracket_high):
             continue
 
-        now_local = weather[station].now_local
-        remaining_rise = expected_additional_rise(now_local)
+        now_local_val = weather[station].now_local
+        remaining_rise = expected_additional_rise(now_local_val)
         climb_ceiling = current_high + remaining_rise
         # Safeguard: when the latest observation is well below the running daily
         # high AND the p95 climb from current latest can't reach it, the day has
@@ -1028,7 +627,7 @@ def _check_metar_exits(weather: dict, live_trader, ts: str, db=None, risk_manage
         )
         try:
             sell_id, sell_price_cents = live_trader.sell_position(token_id, total_shares)
-            _sold_positions.add(token_id)
+            order_manager._sold_positions.add(token_id)
             if db is not None:
                 # open_positions rows are keyed by the BUY order_id, not the
                 # sell order — remove every fill for this token.
@@ -1072,7 +671,7 @@ def _check_metar_exits(weather: dict, live_trader, ts: str, db=None, risk_manage
             err = str(e)
             if "balance" in err.lower() and ("0" in err or "not enough" in err.lower()):
                 n = db.close_positions_by_token(token_id) if db is not None else 0
-                _sold_positions.add(token_id)
+                order_manager._sold_positions.add(token_id)
                 log.info(
                     "  [exit] [%s] %.0f-%.0fF balance=0 -- tokens already gone, removed %s row(s) from open_positions",
                     station, bracket_low, bracket_high, n,
@@ -1081,7 +680,16 @@ def _check_metar_exits(weather: dict, live_trader, ts: str, db=None, risk_manage
                 log.warning("  [exit] sell failed for [%s] %.0f-%.0fF: %s", station, bracket_low, bracket_high, e)
 
 
-def poll_once(risk_manager, live_trader=None, alert_manager=None, db=None) -> None:
+# ---------------------------------------------------------------------------
+# Poll loop
+# ---------------------------------------------------------------------------
+
+def poll_once(
+    risk_manager: "RiskManager",
+    live_trader=None,
+    alert_manager=None,
+    db=None,
+) -> None:
     """Run one full poll: build weather states, fetch markets, scan, log candidates."""
     ts = datetime.now(timezone.utc).isoformat()
     mode_label = "LIVE" if live_trader else "PAPER"
@@ -1089,18 +697,17 @@ def poll_once(risk_manager, live_trader=None, alert_manager=None, db=None) -> No
 
     # Capture the previous poll's timestamp BEFORE overwriting it so the
     # poll-missed alert can measure the gap between the last and current cycle.
-    import src.monitoring.dashboard as _dashboard
-    prev_poll_ts_str = _dashboard.last_poll_ts  # None on first poll, ISO string on subsequent
+    prev_poll_ts_str = _dashboard_module.last_poll_ts  # None on first poll, ISO string on subsequent
 
     if live_trader:
-        _reconcile_timeout_fills(ts)
-        _sync_open_orders(live_trader, db=db)
+        order_manager.reconcile_timeout_fills(ts)
+        order_manager.sync_open_orders(live_trader, db=db)
 
     # Take-profit is weather-independent -- runs on every poll so the safety
     # net stays live during pre-sunrise hours when no station yet has
     # qualifying METAR data (post-06:00 local rule from the overnight-bug fix).
     if live_trader:
-        _check_take_profit_exits(live_trader, ts, db=db, risk_manager=risk_manager)
+        order_manager.check_take_profit_exits(live_trader, ts, db=db, risk_manager=risk_manager)
 
     weather = _build_weather(db=db)
     if not weather:
@@ -1216,11 +823,10 @@ def poll_once(risk_manager, live_trader=None, alert_manager=None, db=None) -> No
     )
 
     # Update dashboard last_poll timestamp for the next cycle
-    _dashboard.last_poll_ts = ts
+    _dashboard_module.last_poll_ts = ts
 
     # Fire email alerts if thresholds are crossed
     if alert_manager is not None:
-        from src.monitoring.dashboard import _load_trades, _compute_win_rate
         _trades = _load_trades()
         _win_rate_20 = _compute_win_rate(_trades, n=20)
         # Resolve the previous poll's ISO string to a datetime so the poll-missed
@@ -1228,7 +834,6 @@ def poll_once(risk_manager, live_trader=None, alert_manager=None, db=None) -> No
         # which the alert manager handles by skipping the poll-missed check.
         prev_poll_dt = None
         if prev_poll_ts_str:
-            from dateutil import parser as dtparse
             prev_poll_dt = dtparse.parse(prev_poll_ts_str)
         alert_manager.check(
             daily_pnl=risk_manager._daily_pnl,
@@ -1243,13 +848,11 @@ def poll_once(risk_manager, live_trader=None, alert_manager=None, db=None) -> No
 
 def _start_collector_thread(collector_fn, name: str) -> None:
     """Start a collector in a daemon thread; log WARNING on any startup exception."""
-    import logging as _logging
-
     def _run():
         try:
             collector_fn()
         except Exception as e:
-            _logging.warning(f"[{name}] collector thread exited: {e}")
+            logging.warning(f"[{name}] collector thread exited: {e}")
 
     t = threading.Thread(target=_run, name=name, daemon=True)
     t.start()
@@ -1291,7 +894,6 @@ def main() -> None:
     live_trader = None
     if args.live:
         from src.execution.auth import get_clob_client, check_clob_health
-        from src.execution.live_trader import LiveTrader
         log.info("Checking CLOB connectivity...")
         if not check_clob_health():
             raise SystemExit("[run] CLOB health check failed -- verify POLYMARKET_API_KEY and connectivity")
@@ -1313,10 +915,8 @@ def main() -> None:
     )
     alert_manager = AlertManager()
 
-    from src.monitoring.dashboard import start_dashboard
-    import src.monitoring.dashboard as _dashboard_mod
     start_dashboard()
-    _dashboard_mod.set_db(db)
+    _dashboard_module.set_db(db)
 
     if args.once:
         poll_once(risk_manager, live_trader, alert_manager, db=db)
