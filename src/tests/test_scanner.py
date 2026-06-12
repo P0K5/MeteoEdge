@@ -3,8 +3,10 @@ import logging
 from datetime import datetime, timezone, timedelta
 from unittest.mock import patch
 import pytest
-from src.strategy.scanner import parse_bracket_from_market, scan_markets, is_highest_temp_market
-from src.model.envelope import WeatherState
+from src.strategy.scanner import (
+    parse_bracket_from_market, scan_markets, is_highest_temp_market, no_entry_margin_gap,
+)
+from src.model.envelope import Bracket, WeatherState
 
 
 def _market(group_title: str, question: str = "", condition_id: str = "0xabc") -> dict:
@@ -308,3 +310,126 @@ class TestScanMarketsSkipReasons:
         summary = summary_logs[0].message
         assert "4 markets" in summary or "markets:" in summary
         assert "flagged" in summary
+
+
+def _state(forecast: float | None, current: float | None,
+           secondary: float | None = None) -> WeatherState:
+    now = datetime.now(timezone.utc)
+    return WeatherState(
+        station="KMIA",
+        now_local=now,
+        sunset_local=now.replace(hour=20),
+        current_high_f=current,
+        current_high_time=now,
+        latest_temp_f=current,
+        latest_temp_time=now,
+        forecast_high_f=forecast,
+        secondary_forecast_f=secondary,
+    )
+
+
+def _bracket(low: float, high: float) -> Bracket:
+    return Bracket(
+        ticker="T", low_f=low, high_f=high,
+        yes_ask_cents=50, yes_ask_size=0, no_ask_cents=50, no_ask_size=0,
+    )
+
+
+class TestNoEntryMarginGap:
+    """Tests for no_entry_margin_gap() — the issue #200 entry filter."""
+
+    def test_bracket_above_expected_high(self):
+        """Forecast 80, bracket 82-84 → gap = 2.0 (bracket_low - base)."""
+        assert no_entry_margin_gap(_bracket(82, 84), _state(80.0, 75.0)) == 2.0
+
+    def test_bracket_below_expected_high(self):
+        """Forecast 86, bracket 82-84 → gap = 2.0 (base - bracket_high)."""
+        assert no_entry_margin_gap(_bracket(82, 84), _state(86.0, 75.0)) == 2.0
+
+    def test_uses_max_of_forecast_and_current_high(self):
+        """Running high above forecast dominates: current 81, forecast 78, bracket 82-84 → gap 1.0."""
+        assert no_entry_margin_gap(_bracket(82, 84), _state(78.0, 81.0)) == 1.0
+
+    def test_forecast_inside_bracket_returns_none(self):
+        """Forecast inside the bracket → gate does not apply (model prices these fine)."""
+        assert no_entry_margin_gap(_bracket(82, 84), _state(83.0, 75.0)) is None
+
+    def test_current_high_already_past_bracket_returns_none(self):
+        """Running daily high above bracket top → NO can no longer lose, no gate."""
+        assert no_entry_margin_gap(_bracket(82, 84), _state(86.0, 85.0)) is None
+
+    def test_open_top_bracket_no_gap_above(self):
+        """'or above' bracket (high=200): base above low → None, never base - 200."""
+        assert no_entry_margin_gap(_bracket(92, 200), _state(95.0, 90.0)) is None
+
+    def test_open_top_bracket_gap_below(self):
+        """'or above' bracket below by 4F → gap 4.0."""
+        assert no_entry_margin_gap(_bracket(92, 200), _state(88.0, 85.0)) == 4.0
+
+    def test_secondary_forecast_fallback(self):
+        """No NWS forecast → falls back to secondary forecast."""
+        assert no_entry_margin_gap(_bracket(82, 84), _state(None, 75.0, secondary=80.0)) == 2.0
+
+    def test_no_data_returns_none(self):
+        """Neither forecast nor running high → gate cannot apply."""
+        assert no_entry_margin_gap(_bracket(82, 84), _state(None, None)) is None
+
+
+class TestEntryGates:
+    """Tests for the DISABLED_STATIONS and margin_gate entry filters in scan_markets()."""
+
+    def _weather_state(self) -> WeatherState:
+        return _state(forecast=80.0, current=75.0)
+
+    def _miami_market(self, group_title: str, outcome_prices: str) -> dict:
+        market = _market(
+            group_title=group_title,
+            question=f"Will the highest temperature in Miami be {group_title}?",
+            condition_id="0xmia_gate",
+        )
+        today = datetime.now(timezone.utc).date()
+        market["endDate"] = datetime(
+            today.year, today.month, today.day, 23, 59, 59, tzinfo=timezone.utc
+        ).isoformat()
+        market["outcomePrices"] = outcome_prices
+        return market
+
+    def test_disabled_station_skipped(self, caplog):
+        """'station_disabled' gate: stations in DISABLED_STATIONS never produce candidates."""
+        weather = {"KMIA": self._weather_state()}
+        market = self._miami_market("90-95°F", '["0.20", "0.80"]')
+
+        with patch("src.strategy.scanner.DISABLED_STATIONS", {"KMIA"}), \
+                patch("src.strategy.scanner.MIN_MINUTES_TO_SETTLEMENT", 0):
+            with caplog.at_level(logging.DEBUG):
+                candidates, _ = scan_markets(weather, [market])
+
+        assert candidates == []
+        assert any("station_disabled" in r.message for r in caplog.records)
+
+    def test_margin_gate_blocks_thin_margin_no_entry(self, caplog):
+        """'margin_gate': NO candidate with bracket too close to expected high is skipped."""
+        weather = {"KMIA": self._weather_state()}
+        # Bracket 90-95 is 10F above forecast 80 — raise the threshold to 15F
+        # so the gate fires on an otherwise-tradeable NO candidate.
+        market = self._miami_market("90-95°F", '["0.20", "0.80"]')
+
+        with patch("src.strategy.scanner.MIN_FORECAST_BRACKET_MARGIN_F", 15.0), \
+                patch("src.strategy.scanner.MIN_MINUTES_TO_SETTLEMENT", 0):
+            with caplog.at_level(logging.DEBUG):
+                candidates, _ = scan_markets(weather, [market])
+
+        assert candidates == []
+        assert any("margin_gate" in r.message for r in caplog.records)
+
+    def test_margin_gate_passes_wide_margin_no_entry(self, caplog):
+        """A NO candidate 10F clear of the forecast passes the default 2.5F gate."""
+        weather = {"KMIA": self._weather_state()}
+        market = self._miami_market("90-95°F", '["0.20", "0.80"]')
+
+        with patch("src.strategy.scanner.MIN_MINUTES_TO_SETTLEMENT", 0):
+            with caplog.at_level(logging.DEBUG):
+                candidates, _ = scan_markets(weather, [market])
+
+        assert not any("margin_gate" in r.message for r in caplog.records)
+        assert any(c.side == "NO" for c in candidates)

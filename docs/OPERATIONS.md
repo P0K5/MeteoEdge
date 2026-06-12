@@ -197,7 +197,12 @@ All configuration is controlled via environment variables (defaults in `src/conf
 |----------|---------|------|-------------|----------------------|
 | `POSITION_SIZE_EUR` | 5.0 | € | EUR staked per trade | No |
 | `TAKE_PROFIT_BUFFER_CENTS` | 2 | ¢ | Exit when market bid reaches (predicted_price - buffer) | No |
-| `STOP_LOSS_NO_BID_CENTS` | 55 | ¢ | Sell NO positions when bid drops to or below this level | No |
+| `STOP_LOSS_MIN_BID_CENTS` | 40 | ¢ | Model-confidence stop-loss only sells while the NO bid is at or above this floor | No |
+| `STOP_LOSS_CONSECUTIVE_POLLS` | 2 | polls | Consecutive polls with model fair value below entry before the stop fires | No |
+| `STOP_LOSS_MIN_DEPTH_SHARES` | 10 | shares | Minimum best-bid depth required before selling into it | No |
+| `STOP_LOSS_SELL_AGGRESSION_CENTS` | 2 | ¢ | Sell limit priced through the best bid (immediate-or-cancel; never left resting) | No |
+| `MIN_FORECAST_BRACKET_MARGIN_F` | 2.5 | °F | Skip NO entries whose bracket is closer than this to the expected daily high | No |
+| `DISABLED_STATIONS` | RKSI | codes | Comma-separated station codes excluded from new entries | No |
 
 ### Operational & API
 

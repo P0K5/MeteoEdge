@@ -113,6 +113,50 @@ class LiveTrader:
             raise RuntimeError(f"Sell order failed: {resp}")
         return order_id, sell_price_cents
 
+    def sell_position_immediate(
+        self, token_id: str, shares: float, aggression_cents: int = 2,
+    ) -> "tuple[str, int] | None":
+        """Sell NO tokens immediately or not at all — never leaves a resting order.
+
+        Prices the limit *through* the best bid by `aggression_cents` so the
+        order still crosses if the top of book ticks down between the orderbook
+        fetch and the post (it fills at the resting bids' prices, the limit is
+        only a floor). If the order does not match, it is cancelled so a
+        falling market can't strand us behind an unfillable resting sell.
+
+        Returns (order_id, limit_price_cents) on fill — actual proceeds are at
+        least the limit price — or None when the order was cancelled unfilled
+        (caller should retry on a later poll).
+        """
+        ob = get_orderbook(token_id)
+        bids = ob.get("bids") or []
+        if not bids:
+            raise RuntimeError(f"No bids for token {token_id[:14]}... -- cannot sell")
+        best_bid = max(float(b["price"]) for b in bids)
+        best_bid_cents = max(1, min(99, round(best_bid * 100)))
+        limit_cents = max(1, best_bid_cents - aggression_cents)
+        args = OrderArgs(
+            token_id=token_id,
+            price=round(limit_cents / 100, 4),
+            size=round(shares, 2),
+            side="SELL",
+        )
+        options = CreateOrderOptions(tick_size="0.01", neg_risk=True)
+        resp = self.client.create_and_post_order(args, options)
+        order_id = resp.get("orderID") or resp.get("id")
+        if not order_id:
+            raise RuntimeError(f"Sell order failed: {resp}")
+        status = (resp.get("status") or "").lower()
+        if status in ("matched", "filled") or self.check_fill(order_id) == "filled":
+            return order_id, limit_cents
+        if self.cancel_order(order_id):
+            log.info("[live] sell %s... not matched at %sc -- cancelled, will retry",
+                     order_id[:12], limit_cents)
+            return None
+        # Cancel refused: the order matched between the status check and the
+        # cancel attempt.
+        return order_id, limit_cents
+
     def cancel_order(self, order_id: str) -> bool:
         """Cancel an open order. Returns True if cancelled."""
         try:

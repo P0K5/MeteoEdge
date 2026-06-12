@@ -215,7 +215,12 @@ All configuration is controlled via environment variables (or defaults in `src/c
 ### Position Management
 
 - `TAKE_PROFIT_BUFFER_CENTS` — Exit when market bid reaches (predicted_price - buffer) (default: 2)
-- `STOP_LOSS_NO_BID_CENTS` — Sell NO positions when bid drops to or below this level (default: 55)
+- `STOP_LOSS_MIN_BID_CENTS` — Model-confidence stop-loss only sells while the NO bid is at or above this floor (default: 40)
+- `STOP_LOSS_CONSECUTIVE_POLLS` — Polls in a row with model fair value below entry before the stop fires (default: 2)
+- `STOP_LOSS_MIN_DEPTH_SHARES` — Minimum best-bid depth (shares) required before selling into it (default: 10)
+- `STOP_LOSS_SELL_AGGRESSION_CENTS` — Stop-loss sell limit is priced this many cents through the best bid so it crosses immediately; unfilled orders are cancelled, never left resting (default: 2)
+- `MIN_FORECAST_BRACKET_MARGIN_F` — Skip NO entries whose bracket is closer than this (°F) to the expected daily high (default: 2.5)
+- `DISABLED_STATIONS` — Comma-separated station codes excluded from new entries (default: RKSI)
 
 ### Operational
 
