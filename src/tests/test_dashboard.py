@@ -1,7 +1,10 @@
-"""Unit tests for src/monitoring/dashboard.py.
+"""Unit tests for the consolidated dashboard at src/dashboard/api.py.
 
 Tests use tmp_path to write mock log files and patch config paths so the
 dashboard reads from the temporary files rather than the real logs/ directory.
+
+The bridge stub at src/monitoring/dashboard delegates to src/dashboard/api,
+so importing from either module reaches the same implementation.
 """
 from __future__ import annotations
 
@@ -14,7 +17,9 @@ from unittest.mock import patch
 import pytest
 from fastapi.testclient import TestClient
 
-from src.monitoring.dashboard import app, _read_jsonl, _compute_win_rate, _today_pnl
+import src.dashboard.api as dash_api
+from src.dashboard.api import app, _compute_win_rate, _today_pnl
+from src.dashboard.data import read_jsonl as _read_jsonl
 
 
 @pytest.fixture
@@ -24,23 +29,26 @@ def client():
     Also resets module-level global state (_db, last_poll_ts) before and after
     each test to prevent test isolation issues.
     """
-    import src.monitoring.dashboard as dash
-
     # Save original state
-    original_db = dash._db
-    original_last_poll_ts = dash.last_poll_ts
+    original_db = dash_api._db
+    original_last_poll_ts = dash_api.last_poll_ts
 
     # Reset to clean state
-    dash._db = None
-    dash.last_poll_ts = None
+    dash_api._db = None
+    dash_api.last_poll_ts = None
+
+    # Also clear the data cache to avoid stale hits between tests
+    import src.dashboard.data as _data
+    with _data._cache_lock:
+        _data._cache.clear()
 
     # Yield fresh client
     test_client = TestClient(app)
     yield test_client
 
     # Restore original state after test
-    dash._db = original_db
-    dash.last_poll_ts = original_last_poll_ts
+    dash_api._db = original_db
+    dash_api.last_poll_ts = original_last_poll_ts
 
 
 # ---------------------------------------------------------------------------
@@ -85,8 +93,8 @@ class TestHealthEndpoint:
 
     def test_returns_200_with_empty_log_dir(self, client, tmp_path):
         """Health endpoint must not crash when log directory does not exist."""
-        with patch("src.monitoring.dashboard.LIVE_TRADES_JSONL", tmp_path / "no_trades.jsonl"):
-            with patch("src.monitoring.dashboard.SNAPSHOTS_JSONL", tmp_path / "no_snaps.jsonl"):
+        with patch("src.dashboard.data.LIVE_TRADES_JSONL", tmp_path / "no_trades.jsonl"):
+            with patch("src.dashboard.data.SNAPSHOTS_JSONL", tmp_path / "no_snaps.jsonl"):
                 resp = client.get("/health")
         assert resp.status_code == 200
 
@@ -99,8 +107,8 @@ class TestStatusEndpoint:
     def test_returns_expected_keys(self, client, tmp_path):
         _write_jsonl(tmp_path / "trades.jsonl", [])
         _write_jsonl(tmp_path / "snaps.jsonl", [])
-        with patch("src.monitoring.dashboard.LIVE_TRADES_JSONL", tmp_path / "trades.jsonl"):
-            with patch("src.monitoring.dashboard.SNAPSHOTS_JSONL", tmp_path / "snaps.jsonl"):
+        with patch("src.dashboard.data.LIVE_TRADES_JSONL", tmp_path / "trades.jsonl"):
+            with patch("src.dashboard.data.SNAPSHOTS_JSONL", tmp_path / "snaps.jsonl"):
                 resp = client.get("/status")
         assert resp.status_code == 200
         data = resp.json()
@@ -108,8 +116,8 @@ class TestStatusEndpoint:
             assert key in data, f"Missing key: {key}"
 
     def test_empty_logs_return_defaults(self, client, tmp_path):
-        with patch("src.monitoring.dashboard.LIVE_TRADES_JSONL", tmp_path / "missing.jsonl"):
-            with patch("src.monitoring.dashboard.SNAPSHOTS_JSONL", tmp_path / "missing2.jsonl"):
+        with patch("src.dashboard.data.LIVE_TRADES_JSONL", tmp_path / "missing.jsonl"):
+            with patch("src.dashboard.data.SNAPSHOTS_JSONL", tmp_path / "missing2.jsonl"):
                 resp = client.get("/status")
         data = resp.json()
         assert data["today_pnl"] == 0.0
@@ -124,16 +132,16 @@ class TestStatusEndpoint:
             {"ts": "2020-01-01T10:00:00+00:00", "outcome": "filled", "pnl": 100.0, "station": "KORD"},
         ]
         _write_jsonl(tmp_path / "trades.jsonl", records)
-        with patch("src.monitoring.dashboard.LIVE_TRADES_JSONL", tmp_path / "trades.jsonl"):
-            with patch("src.monitoring.dashboard.SNAPSHOTS_JSONL", tmp_path / "snaps.jsonl"):
+        with patch("src.dashboard.data.LIVE_TRADES_JSONL", tmp_path / "trades.jsonl"):
+            with patch("src.dashboard.data.SNAPSHOTS_JSONL", tmp_path / "snaps.jsonl"):
                 resp = client.get("/status")
         assert resp.json()["today_pnl"] == pytest.approx(3.0)
 
     def test_capital_from_snapshot(self, client, tmp_path):
         snaps = [{"capital": 480.0, "ts": "2024-01-01T00:00:00+00:00"}]
         _write_jsonl(tmp_path / "snaps.jsonl", snaps)
-        with patch("src.monitoring.dashboard.LIVE_TRADES_JSONL", tmp_path / "no_trades.jsonl"):
-            with patch("src.monitoring.dashboard.SNAPSHOTS_JSONL", tmp_path / "snaps.jsonl"):
+        with patch("src.dashboard.data.LIVE_TRADES_JSONL", tmp_path / "no_trades.jsonl"):
+            with patch("src.dashboard.data.SNAPSHOTS_JSONL", tmp_path / "snaps.jsonl"):
                 resp = client.get("/status")
         assert resp.json()["capital"] == pytest.approx(480.0)
 
@@ -147,8 +155,8 @@ class TestStatusEndpoint:
             for _ in range(6)
         ]
         _write_jsonl(tmp_path / "trades.jsonl", records)
-        with patch("src.monitoring.dashboard.LIVE_TRADES_JSONL", tmp_path / "trades.jsonl"):
-            with patch("src.monitoring.dashboard.SNAPSHOTS_JSONL", tmp_path / "snaps.jsonl"):
+        with patch("src.dashboard.data.LIVE_TRADES_JSONL", tmp_path / "trades.jsonl"):
+            with patch("src.dashboard.data.SNAPSHOTS_JSONL", tmp_path / "snaps.jsonl"):
                 resp = client.get("/status")
         win_rate = resp.json()["win_rate"]
         assert 0.0 <= win_rate <= 1.0
@@ -161,7 +169,7 @@ class TestStatusEndpoint:
 class TestTradesEndpoint:
     def test_returns_list(self, client, tmp_path):
         _write_jsonl(tmp_path / "trades.jsonl", [])
-        with patch("src.monitoring.dashboard.LIVE_TRADES_JSONL", tmp_path / "trades.jsonl"):
+        with patch("src.dashboard.data.LIVE_TRADES_JSONL", tmp_path / "trades.jsonl"):
             resp = client.get("/trades")
         assert resp.status_code == 200
         assert isinstance(resp.json(), list)
@@ -170,7 +178,7 @@ class TestTradesEndpoint:
         records = [{"ts": "2024-01-01T00:00:00+00:00", "outcome": "filled", "station": "KORD", "i": i}
                    for i in range(100)]
         _write_jsonl(tmp_path / "trades.jsonl", records)
-        with patch("src.monitoring.dashboard.LIVE_TRADES_JSONL", tmp_path / "trades.jsonl"):
+        with patch("src.dashboard.data.LIVE_TRADES_JSONL", tmp_path / "trades.jsonl"):
             resp = client.get("/trades")
         assert len(resp.json()) == 50
 
@@ -180,14 +188,14 @@ class TestTradesEndpoint:
             {"ts": "2024-06-01T00:00:00+00:00", "station": "B"},
         ]
         _write_jsonl(tmp_path / "trades.jsonl", records)
-        with patch("src.monitoring.dashboard.LIVE_TRADES_JSONL", tmp_path / "trades.jsonl"):
+        with patch("src.dashboard.data.LIVE_TRADES_JSONL", tmp_path / "trades.jsonl"):
             resp = client.get("/trades")
         data = resp.json()
         assert data[0]["station"] == "B"
         assert data[1]["station"] == "A"
 
     def test_empty_log_returns_empty_list(self, client, tmp_path):
-        with patch("src.monitoring.dashboard.LIVE_TRADES_JSONL", tmp_path / "missing.jsonl"):
+        with patch("src.dashboard.data.LIVE_TRADES_JSONL", tmp_path / "missing.jsonl"):
             resp = client.get("/trades")
         assert resp.json() == []
 
@@ -199,7 +207,7 @@ class TestTradesEndpoint:
 class TestStationsEndpoint:
     def test_returns_dict(self, client, tmp_path):
         _write_jsonl(tmp_path / "trades.jsonl", [])
-        with patch("src.monitoring.dashboard.LIVE_TRADES_JSONL", tmp_path / "trades.jsonl"):
+        with patch("src.dashboard.data.LIVE_TRADES_JSONL", tmp_path / "trades.jsonl"):
             resp = client.get("/stations")
         assert resp.status_code == 200
         assert isinstance(resp.json(), dict)
@@ -211,7 +219,7 @@ class TestStationsEndpoint:
             {"ts": "2024-01-01T00:00:00+00:00", "outcome": "filled", "pnl": -1.0, "station": "KMIA"},
         ]
         _write_jsonl(tmp_path / "trades.jsonl", records)
-        with patch("src.monitoring.dashboard.LIVE_TRADES_JSONL", tmp_path / "trades.jsonl"):
+        with patch("src.dashboard.data.LIVE_TRADES_JSONL", tmp_path / "trades.jsonl"):
             resp = client.get("/stations")
         data = resp.json()
         assert "KORD" in data
@@ -224,7 +232,7 @@ class TestStationsEndpoint:
             {"ts": "2024-01-01T00:00:00+00:00", "outcome": "filled", "pnl": 5.0, "station": "KATL"},
         ]
         _write_jsonl(tmp_path / "trades.jsonl", records)
-        with patch("src.monitoring.dashboard.LIVE_TRADES_JSONL", tmp_path / "trades.jsonl"):
+        with patch("src.dashboard.data.LIVE_TRADES_JSONL", tmp_path / "trades.jsonl"):
             resp = client.get("/stations")
         station = resp.json()["KATL"]
         for key in ("trade_count", "filled_count", "win_rate", "total_pnl"):
@@ -239,18 +247,18 @@ class TestStationsEndpoint:
             {"ts": "2024-01-01T00:00:00+00:00", "outcome": "filled", "pnl": -1.0, "station": "KORD"},
         ]
         _write_jsonl(tmp_path / "trades.jsonl", records)
-        with patch("src.monitoring.dashboard.LIVE_TRADES_JSONL", tmp_path / "trades.jsonl"):
+        with patch("src.dashboard.data.LIVE_TRADES_JSONL", tmp_path / "trades.jsonl"):
             resp = client.get("/stations")
         assert resp.json()["KORD"]["win_rate"] == pytest.approx(0.75)
 
     def test_empty_log_returns_empty_dict(self, client, tmp_path):
-        with patch("src.monitoring.dashboard.LIVE_TRADES_JSONL", tmp_path / "missing.jsonl"):
+        with patch("src.dashboard.data.LIVE_TRADES_JSONL", tmp_path / "missing.jsonl"):
             resp = client.get("/stations")
         assert resp.json() == {}
 
 
 # ---------------------------------------------------------------------------
-# _read_jsonl helper
+# _read_jsonl helper (from shared data layer)
 # ---------------------------------------------------------------------------
 
 class TestReadJsonl:
@@ -279,7 +287,6 @@ class TestStatusDbCapital:
         return Database(":memory:")
 
     def test_status_capital_from_db(self, client, tmp_path):
-        import src.monitoring.dashboard as dash
         db = self._setup_db()
         db.insert_trade(
             ts="2024-01-15T12:00:00Z", station="KORD",
@@ -288,53 +295,97 @@ class TestStatusDbCapital:
             predicted_edge=0.08, mode="live",
             capital_before=500.0, capital_after=450.0,
         )
-        original = dash._db
+        original = dash_api._db
         try:
-            dash.set_db(db)
-            with patch("src.monitoring.dashboard.LIVE_TRADES_JSONL", tmp_path / "missing.jsonl"):
-                with patch("src.monitoring.dashboard.SNAPSHOTS_JSONL", tmp_path / "missing2.jsonl"):
+            dash_api.set_db(db)
+            with patch("src.dashboard.data.LIVE_TRADES_JSONL", tmp_path / "missing.jsonl"):
+                with patch("src.dashboard.data.SNAPSHOTS_JSONL", tmp_path / "missing2.jsonl"):
                     resp = client.get("/status")
             assert resp.json()["capital"] == pytest.approx(450.0)
         finally:
-            dash.set_db(original)
+            dash_api.set_db(original)
 
     def test_status_open_positions_count(self, client, tmp_path):
-        import src.monitoring.dashboard as dash
         db = self._setup_db()
         today = datetime.now(timezone.utc).date().isoformat()
         db.upsert_daily_risk(today, pnl_delta=0.0, open_positions=3)
-        original = dash._db
+        original = dash_api._db
         try:
-            dash.set_db(db)
-            with patch("src.monitoring.dashboard.LIVE_TRADES_JSONL", tmp_path / "missing.jsonl"):
-                with patch("src.monitoring.dashboard.SNAPSHOTS_JSONL", tmp_path / "missing2.jsonl"):
+            dash_api.set_db(db)
+            with patch("src.dashboard.data.LIVE_TRADES_JSONL", tmp_path / "missing.jsonl"):
+                with patch("src.dashboard.data.SNAPSHOTS_JSONL", tmp_path / "missing2.jsonl"):
                     resp = client.get("/status")
             assert resp.json()["open_positions_count"] == 3
         finally:
-            dash.set_db(original)
+            dash_api.set_db(original)
 
     def test_status_defaults_no_data(self, client, tmp_path):
-        import src.monitoring.dashboard as dash
-        from src.config import STARTING_CAPITAL_EUR
         db = self._setup_db()
-        original = dash._db
+        from src.config import STARTING_CAPITAL_EUR
+        original = dash_api._db
         try:
-            dash.set_db(db)
-            with patch("src.monitoring.dashboard.LIVE_TRADES_JSONL", tmp_path / "missing.jsonl"):
-                with patch("src.monitoring.dashboard.SNAPSHOTS_JSONL", tmp_path / "missing2.jsonl"):
+            dash_api.set_db(db)
+            with patch("src.dashboard.data.LIVE_TRADES_JSONL", tmp_path / "missing.jsonl"):
+                with patch("src.dashboard.data.SNAPSHOTS_JSONL", tmp_path / "missing2.jsonl"):
                     resp = client.get("/status")
             data = resp.json()
             assert data["capital"] == pytest.approx(STARTING_CAPITAL_EUR)
             assert data["open_positions_count"] == 0
         finally:
-            dash.set_db(original)
+            dash_api.set_db(original)
 
     def test_no_breaking_change(self, client, tmp_path):
         """All original keys must still be present plus open_positions_count."""
         original_keys = {"capital", "today_pnl", "today_trade_count", "win_rate", "last_poll"}
-        with patch("src.monitoring.dashboard.LIVE_TRADES_JSONL", tmp_path / "missing.jsonl"):
-            with patch("src.monitoring.dashboard.SNAPSHOTS_JSONL", tmp_path / "missing2.jsonl"):
+        with patch("src.dashboard.data.LIVE_TRADES_JSONL", tmp_path / "missing.jsonl"):
+            with patch("src.dashboard.data.SNAPSHOTS_JSONL", tmp_path / "missing2.jsonl"):
                 resp = client.get("/status")
         data = resp.json()
         assert original_keys.issubset(data.keys()), f"Missing keys: {original_keys - data.keys()}"
         assert "open_positions_count" in data
+
+
+# ---------------------------------------------------------------------------
+# Bridge stub compatibility — src.monitoring.dashboard still works
+# ---------------------------------------------------------------------------
+
+class TestBridgeStubCompat:
+    """Verify that src.monitoring.dashboard correctly delegates to src.dashboard.api."""
+
+    def test_last_poll_ts_synced(self):
+        """Setting last_poll_ts via the bridge stub updates src.dashboard.api."""
+        import src.monitoring.dashboard as stub
+        original = dash_api.last_poll_ts
+        try:
+            stub.last_poll_ts = "2024-01-01T00:00:00+00:00"
+            assert dash_api.last_poll_ts == "2024-01-01T00:00:00+00:00"
+        finally:
+            dash_api.last_poll_ts = original
+
+    def test_set_db_delegates(self):
+        """set_db() via the bridge stub injects into src.dashboard.api."""
+        import src.monitoring.dashboard as stub
+        from unittest.mock import MagicMock
+        mock_db = MagicMock()
+        original = dash_api._db
+        try:
+            stub.set_db(mock_db)
+            assert dash_api._db is mock_db
+        finally:
+            dash_api._db = original
+
+    def test_load_trades_callable(self, tmp_path):
+        """_load_trades() from bridge stub returns a list."""
+        import src.monitoring.dashboard as stub
+        result = stub._load_trades()
+        assert isinstance(result, list)
+
+    def test_compute_win_rate_callable(self):
+        """_compute_win_rate() from bridge stub computes correctly."""
+        import src.monitoring.dashboard as stub
+        trades = [
+            {"outcome": "filled", "pnl": 1.0},
+            {"outcome": "filled", "pnl": -1.0},
+        ]
+        rate = stub._compute_win_rate(trades, n=50)
+        assert rate == pytest.approx(0.5)
