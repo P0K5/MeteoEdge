@@ -58,10 +58,14 @@ class TestSellPositionImmediate:
         trader.client.cancel.assert_called_once_with("s-2")
 
     def test_cancel_refused_means_filled_in_flight(self):
-        """A refused cancel means the order matched between checks — treat as filled."""
+        """Cancel refused + check_fill confirms filled → treat as filled."""
         trader = _trader()
         trader.client.create_and_post_order.return_value = {"orderID": "s-3", "status": "live"}
-        trader.client.get_order.return_value = {"status": "live"}
+        # check_fill called twice: pre-cancel returns open, post-cancel-refused returns matched
+        trader.client.get_order.side_effect = [
+            {"status": "live"},    # pre-cancel check → open, proceed to cancel
+            {"status": "matched"}, # post-cancel-refused check → confirmed filled
+        ]
         trader.client.cancel.return_value = {"canceled": []}
         with patch("src.execution.live_trader.get_orderbook", return_value=_orderbook("0.50")):
             result = trader.sell_position_immediate("tok-c", 6.25)
