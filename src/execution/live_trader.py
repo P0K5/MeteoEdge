@@ -153,9 +153,18 @@ class LiveTrader:
             log.info("[live] sell %s... not matched at %sc -- cancelled, will retry",
                      order_id[:12], limit_cents)
             return None
-        # Cancel refused: the order matched between the status check and the
-        # cancel attempt.
-        return order_id, limit_cents
+        # cancel_order() returned False — ambiguous: either the cancel API errored
+        # (network blip, order still resting) or the order matched in-flight and the
+        # exchange refused the cancel.  Verify via check_fill() before recording sold.
+        fill_status = self.check_fill(order_id)
+        if fill_status == "filled":
+            return order_id, limit_cents
+        log.warning(
+            "[live] sell %s... cancel returned False but order not confirmed filled "
+            "(status=%s) -- leaving position intact for next poll",
+            order_id[:12], fill_status,
+        )
+        return None
 
     def cancel_order(self, order_id: str) -> bool:
         """Cancel an open order. Returns True if cancelled."""
