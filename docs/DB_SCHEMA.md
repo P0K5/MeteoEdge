@@ -125,6 +125,7 @@ CREATE INDEX idx_trades_mode ON trades(mode);
 - `pnl` is filled in by the settle script (if outcome='filled') or by the exit handler (if outcome='sold').
 - For NO trades that are early-exited: `pnl = (sell_price - entry_price) / 100 * shares`.
 - For filled trades: `pnl = (100 - entry_price) / 100 * shares` if YES bracket hit (or NO bracket miss), else `pnl = -(entry_price / 100) * shares`.
+- **SELL records in live_trades.jsonl**: the `shares` field reflects the *remaining* shares sold in that specific exit attempt, not the full original position size. When a stop-loss IOC order partially fills across multiple poll cycles, each retry records only the unfilled remainder (see `_partial_fill_shares` tracking in `src/scripts/run.py`). The `size_eur` field still reflects the original position notional for context.
 
 ---
 

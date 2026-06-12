@@ -47,24 +47,26 @@ class TestSellPositionImmediate:
         assert result == ("s-1", 68)
 
     def test_unmatched_order_is_cancelled_and_returns_none(self):
-        """If the order does not cross it must be cancelled — never left resting."""
+        """If the order does not cross it must be cancelled — returns (None, order_id)."""
         trader = _trader()
         trader.client.create_and_post_order.return_value = {"orderID": "s-2", "status": "live"}
         trader.client.get_order.return_value = {"status": "live"}
         trader.client.cancel.return_value = {"canceled": ["s-2"]}
         with patch("src.execution.live_trader.get_orderbook", return_value=_orderbook("0.70")):
             result = trader.sell_position_immediate("tok-b", 6.25)
-        assert result is None
+        sell_id, cancelled_order_id = result
+        assert sell_id is None
+        assert cancelled_order_id == "s-2"
         trader.client.cancel.assert_called_once_with("s-2")
 
-    def test_cancel_refused_means_filled_in_flight(self):
-        """Cancel refused + check_fill confirms filled → treat as filled."""
+    def test_cancel_refused_with_fill_confirmed_means_filled_in_flight(self):
+        """Cancel refused + check_fill confirms filled → treat as sold."""
         trader = _trader()
         trader.client.create_and_post_order.return_value = {"orderID": "s-3", "status": "live"}
-        # check_fill called twice: pre-cancel returns open, post-cancel-refused returns matched
+        # check_fill is called twice: once pre-cancel (returns open), once post-cancel-refused (returns filled)
         trader.client.get_order.side_effect = [
-            {"status": "live"},    # pre-cancel check → open, proceed to cancel
-            {"status": "matched"}, # post-cancel-refused check → confirmed filled
+            {"status": "live"},    # pre-cancel check_fill → open
+            {"status": "matched"}, # post-cancel-refused check_fill → filled
         ]
         trader.client.cancel.return_value = {"canceled": []}
         with patch("src.execution.live_trader.get_orderbook", return_value=_orderbook("0.50")):
@@ -225,14 +227,16 @@ class TestCheckStopLossExits:
         trader.sell_position_immediate.assert_not_called()
         assert TOKEN not in run._stop_loss_strikes
 
-    def test_balance_zero_error_closes_position(self, _no_side_effects):
-        """'not enough balance' error means tokens are already gone — mark sold."""
+    def test_sell_exception_logs_warning_and_retries(self, _no_side_effects):
+        """Generic sell exception → warning logged, position NOT marked sold (will retry next poll).
+
+        The old error-string balance==0 reconciliation path was removed in #204
+        in favour of explicit partial-fill tracking via _partial_fill_shares.
+        """
         trader = MagicMock()
-        trader.sell_position_immediate.side_effect = Exception("not enough balance: 0")
+        trader.sell_position_immediate.side_effect = Exception("unexpected exchange error")
         db = MagicMock()
-        db.close_positions_by_token.return_value = 1
         ps = _position_state(fair=70, bid=75, depth=50.0)
         run._check_stop_loss_exits(trader, "ts", [ps], db=db)
-        run._check_stop_loss_exits(trader, "ts", [ps], db=db)
-        assert TOKEN in run._sold_positions
-        db.close_positions_by_token.assert_called_once_with(TOKEN)
+        # Position is NOT marked sold — caller retries on next poll
+        assert TOKEN not in run._sold_positions

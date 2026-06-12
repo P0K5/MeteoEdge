@@ -113,9 +113,26 @@ class LiveTrader:
             raise RuntimeError(f"Sell order failed: {resp}")
         return order_id, sell_price_cents
 
+    def get_order_fill_size(self, order_id: str) -> float:
+        """Return the shares matched/filled for *order_id* so far (0.0 on error).
+
+        Used after a cancelled IOC sell to detect partial fills before the
+        cancel completed.  Never raises.
+        """
+        try:
+            order = self.client.get_order(order_id)
+            for field in ("size_matched", "matched_amount", "filled_size", "size_filled"):
+                val = order.get(field)
+                if val is not None:
+                    return float(val)
+            return 0.0
+        except Exception as e:
+            log.warning("[live] get_order_fill_size %s... error: %s", order_id[:12], e)
+            return 0.0
+
     def sell_position_immediate(
         self, token_id: str, shares: float, aggression_cents: int = 2,
-    ) -> "tuple[str, int] | None":
+    ) -> "tuple[str, int] | tuple[None, str | None]":
         """Sell NO tokens immediately or not at all — never leaves a resting order.
 
         Prices the limit *through* the best bid by `aggression_cents` so the
@@ -124,9 +141,13 @@ class LiveTrader:
         only a floor). If the order does not match, it is cancelled so a
         falling market can't strand us behind an unfillable resting sell.
 
-        Returns (order_id, limit_price_cents) on fill — actual proceeds are at
-        least the limit price — or None when the order was cancelled unfilled
-        (caller should retry on a later poll).
+        Returns:
+          (order_id, limit_price_cents) on fill — actual proceeds are at least
+          the limit price.
+          (None, order_id) when the order was cancelled (may have partially
+          filled) — caller should query get_order_fill_size(order_id) for
+          partial fill tracking, then retry on a later poll.
+          (None, None) when no order_id is available.
         """
         ob = get_orderbook(token_id)
         bids = ob.get("bids") or []
@@ -152,7 +173,7 @@ class LiveTrader:
         if self.cancel_order(order_id):
             log.info("[live] sell %s... not matched at %sc -- cancelled, will retry",
                      order_id[:12], limit_cents)
-            return None
+            return None, order_id
         # cancel_order() returned False — ambiguous: either the cancel API errored
         # (network blip, order still resting) or the order matched in-flight and the
         # exchange refused the cancel.  Verify via check_fill() before recording sold.
@@ -164,7 +185,7 @@ class LiveTrader:
             "(status=%s) -- leaving position intact for next poll",
             order_id[:12], fill_status,
         )
-        return None
+        return None, order_id
 
     def cancel_order(self, order_id: str) -> bool:
         """Cancel an open order. Returns True if cancelled."""
