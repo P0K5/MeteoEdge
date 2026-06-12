@@ -113,11 +113,11 @@ def _position_state(fair: int | None, bid: int | None, depth: float | None,
 
 @pytest.fixture(autouse=True)
 def _clean_state():
-    run._stop_loss_strikes.clear()
-    run._sold_positions.clear()
+    run.order_manager._stop_loss_strikes.clear()
+    run.order_manager._sold_positions.clear()
     yield
-    run._stop_loss_strikes.clear()
-    run._sold_positions.clear()
+    run.order_manager._stop_loss_strikes.clear()
+    run.order_manager._sold_positions.clear()
 
 
 @pytest.fixture(autouse=True)
@@ -138,17 +138,17 @@ def _no_side_effects():
 
 class TestCheckStopLossExits:
     def test_fair_above_entry_no_action_and_resets_strikes(self, _no_side_effects):
-        run._stop_loss_strikes[TOKEN] = 1
+        run.order_manager._stop_loss_strikes[TOKEN] = 1
         trader = MagicMock()
         run._check_stop_loss_exits(trader, "ts", [_position_state(fair=85, bid=82, depth=50.0)])
         trader.sell_position_immediate.assert_not_called()
-        assert TOKEN not in run._stop_loss_strikes
+        assert TOKEN not in run.order_manager._stop_loss_strikes
 
     def test_first_strike_does_not_sell(self, _no_side_effects):
         trader = MagicMock()
         run._check_stop_loss_exits(trader, "ts", [_position_state(fair=70, bid=75, depth=50.0)])
         trader.sell_position_immediate.assert_not_called()
-        assert run._stop_loss_strikes[TOKEN] == 1
+        assert run.order_manager._stop_loss_strikes[TOKEN] == 1
 
     def test_strike_resets_on_recovery(self, _no_side_effects):
         trader = MagicMock()
@@ -156,7 +156,7 @@ class TestCheckStopLossExits:
         run._check_stop_loss_exits(trader, "ts", [_position_state(fair=85, bid=75, depth=50.0)])
         run._check_stop_loss_exits(trader, "ts", [_position_state(fair=70, bid=75, depth=50.0)])
         trader.sell_position_immediate.assert_not_called()
-        assert run._stop_loss_strikes[TOKEN] == 1
+        assert run.order_manager._stop_loss_strikes[TOKEN] == 1
 
     def test_consecutive_strikes_trigger_sell(self, _no_side_effects):
         append_mock, record_mock = _no_side_effects
@@ -167,8 +167,8 @@ class TestCheckStopLossExits:
         run._check_stop_loss_exits(trader, "ts", [ps], risk_manager=risk)
         run._check_stop_loss_exits(trader, "ts", [ps], risk_manager=risk)
         trader.sell_position_immediate.assert_called_once_with(TOKEN, pytest.approx(6.25), 2)
-        assert TOKEN in run._sold_positions
-        assert TOKEN not in run._stop_loss_strikes
+        assert TOKEN in run.order_manager._sold_positions
+        assert TOKEN not in run.order_manager._stop_loss_strikes
         # PnL: (68 - 80) / 100 * 6.25 shares = -0.75 EUR
         risk.record_pnl.assert_called_once_with(pytest.approx(-0.75))
         record_mock.assert_called_once()
@@ -183,7 +183,7 @@ class TestCheckStopLossExits:
         run._check_stop_loss_exits(trader, "ts", [ps])
         run._check_stop_loss_exits(trader, "ts", [ps])
         trader.sell_position_immediate.assert_not_called()
-        assert run._stop_loss_strikes[TOKEN] == 2
+        assert run.order_manager._stop_loss_strikes[TOKEN] == 2
 
     def test_thin_depth_skips_poll(self, _no_side_effects):
         """Triggered but best-bid depth too thin — skip this poll, keep strikes."""
@@ -192,7 +192,7 @@ class TestCheckStopLossExits:
         run._check_stop_loss_exits(trader, "ts", [ps])
         run._check_stop_loss_exits(trader, "ts", [ps])
         trader.sell_position_immediate.assert_not_called()
-        assert run._stop_loss_strikes[TOKEN] == 2
+        assert run.order_manager._stop_loss_strikes[TOKEN] == 2
 
     def test_unfilled_sell_retries_next_poll(self, _no_side_effects):
         """sell_position_immediate -> None (cancelled unfilled): no resting order,
@@ -203,17 +203,17 @@ class TestCheckStopLossExits:
         ps = _position_state(fair=70, bid=75, depth=50.0)
         run._check_stop_loss_exits(trader, "ts", [ps])
         run._check_stop_loss_exits(trader, "ts", [ps])
-        assert TOKEN not in run._sold_positions
-        assert run._stop_loss_strikes[TOKEN] == 2
+        assert TOKEN not in run.order_manager._sold_positions
+        assert run.order_manager._stop_loss_strikes[TOKEN] == 2
         append_mock.assert_not_called()
         record_mock.assert_not_called()
         # Next poll retries the sell
         trader.sell_position_immediate.return_value = ("sell-2", 67)
         run._check_stop_loss_exits(trader, "ts", [ps])
-        assert TOKEN in run._sold_positions
+        assert TOKEN in run.order_manager._sold_positions
 
     def test_already_sold_token_is_skipped(self, _no_side_effects):
-        run._sold_positions.add(TOKEN)
+        run.order_manager._sold_positions.add(TOKEN)
         trader = MagicMock()
         ps = _position_state(fair=70, bid=75, depth=50.0)
         run._check_stop_loss_exits(trader, "ts", [ps])
@@ -225,7 +225,7 @@ class TestCheckStopLossExits:
         trader = MagicMock()
         run._check_stop_loss_exits(trader, "ts", [_position_state(fair=None, bid=75, depth=50.0)])
         trader.sell_position_immediate.assert_not_called()
-        assert TOKEN not in run._stop_loss_strikes
+        assert TOKEN not in run.order_manager._stop_loss_strikes
 
     def test_sell_exception_logs_warning_and_retries(self, _no_side_effects):
         """Generic sell exception → warning logged, position NOT marked sold (will retry next poll).
@@ -239,4 +239,4 @@ class TestCheckStopLossExits:
         ps = _position_state(fair=70, bid=75, depth=50.0)
         run._check_stop_loss_exits(trader, "ts", [ps], db=db)
         # Position is NOT marked sold — caller retries on next poll
-        assert TOKEN not in run._sold_positions
+        assert TOKEN not in run.order_manager._sold_positions
