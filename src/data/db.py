@@ -167,14 +167,15 @@ class Database:
         self._migrate()
 
     def _migrate(self) -> None:
-        """Run idempotent migrations on the observations table."""
-        for col, definition in [
-            ("cadence_min", "INTEGER"),
-            ("is_official", "INTEGER DEFAULT 1"),
+        """Run idempotent schema migrations."""
+        for table, col, definition in [
+            ("observations", "cadence_min", "INTEGER"),
+            ("observations", "is_official", "INTEGER DEFAULT 1"),
+            ("trades", "actual_fee_cents", "REAL"),
         ]:
             try:
                 self._conn.execute(
-                    f"ALTER TABLE observations ADD COLUMN {col} {definition}"
+                    f"ALTER TABLE {table} ADD COLUMN {col} {definition}"
                 )
                 self._conn.commit()
             except sqlite3.OperationalError:

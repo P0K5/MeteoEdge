@@ -800,6 +800,7 @@ def _check_stop_loss_exits(live_trader, ts: str, position_states: list[dict],
                 "edge_cents": 0,
                 "pnl": pnl,
                 "outcome": "sold",
+                "actual_fee_cents": None,
                 "trigger": f"stop_loss@{bid}c_fair{fair}c_entry{round(avg_entry_cents)}c",
             }, db=db)
             log.info(
@@ -908,6 +909,7 @@ def _check_take_profit_exits(live_trader, ts: str, db=None, risk_manager=None) -
                 "edge_cents": 0,
                 "pnl": pnl,
                 "outcome": "sold",
+                "actual_fee_cents": None,
                 "trigger": f"take_profit@{best_bid_cents}c_target{target_cents}c_predicted{predicted_price}c",
             }, db=db)
             log.info(
@@ -1059,6 +1061,7 @@ def _check_metar_exits(weather: dict, live_trader, ts: str, db=None, risk_manage
                 "edge_cents": 0,
                 "pnl": pnl,
                 "outcome": "sold",
+                "actual_fee_cents": None,
                 "trigger": f"metar_high={current_high:.1f}F_expected={expected_high:.1f}F_nws={nws_forecast}",
             }, db=db)
             log.info(
