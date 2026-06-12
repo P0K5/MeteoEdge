@@ -449,3 +449,137 @@ class TestIntradayCorrectionTable:
         rows = db.get_intraday_corrections("Tokyo", "2024-01-15")
         assert len(rows) == 1, "Expected exactly 1 row after upsert"
         assert rows[0]["corrected_mu_f"] == pytest.approx(99.0)
+
+
+# ---------------------------------------------------------------------------
+# EMOS calibration
+# ---------------------------------------------------------------------------
+
+class TestEmosCalibrationTable:
+    """upsert_emos_coefficients / get_emos_coefficients round-trip and idempotency."""
+
+    def test_table_exists(self):
+        """emos_calibration table must exist after Database() initialization."""
+        db = _db()
+        cur = db._conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='emos_calibration'"
+        )
+        assert cur.fetchone() is not None
+
+    def test_migration_idempotency_create_twice(self):
+        """Creating Database twice (or calling _migrate twice) must not raise."""
+        db1 = _db()
+        # Calling _migrate again should be idempotent
+        db1._migrate()
+        # Should not raise
+
+    def test_upsert_and_get_round_trip(self):
+        """upsert_emos_coefficients and get_emos_coefficients preserve all fields."""
+        db = _db()
+        db.upsert_emos_coefficients(
+            city="Chicago",
+            model_mode="nws",
+            a=1.5,
+            b=0.8,
+            c=0.2,
+            d=0.05,
+            crps_score=0.12,
+            trained_at="2024-01-15T10:00:00+00:00",
+            ready_for_promotion=1,
+        )
+        result = db.get_emos_coefficients("Chicago", "nws")
+        assert result is not None
+        assert result["a"] == pytest.approx(1.5)
+        assert result["b"] == pytest.approx(0.8)
+        assert result["c"] == pytest.approx(0.2)
+        assert result["d"] == pytest.approx(0.05)
+        assert result["crps_score"] == pytest.approx(0.12)
+        assert result["trained_at"] == "2024-01-15T10:00:00+00:00"
+        assert result["ready_for_promotion"] == 1
+
+    def test_upsert_with_optional_none(self):
+        """upsert_emos_coefficients with None optional fields must work."""
+        db = _db()
+        db.upsert_emos_coefficients(
+            city="Seoul",
+            model_mode="open_meteo",
+            a=1.2,
+            b=0.7,
+            c=0.15,
+            d=0.03,
+            crps_score=None,
+            trained_at=None,
+            ready_for_promotion=0,
+        )
+        result = db.get_emos_coefficients("Seoul", "open_meteo")
+        assert result is not None
+        assert result["a"] == pytest.approx(1.2)
+        assert result["crps_score"] is None
+        assert result["trained_at"] is None
+        assert result["ready_for_promotion"] == 0
+
+    def test_upsert_overwrites_not_duplicates(self):
+        """Second upsert for same (city, model_mode) must overwrite, not duplicate."""
+        db = _db()
+        db.upsert_emos_coefficients(
+            city="Chicago",
+            model_mode="nws",
+            a=1.0,
+            b=0.5,
+            c=0.1,
+            d=0.01,
+            crps_score=0.15,
+        )
+        db.upsert_emos_coefficients(
+            city="Chicago",
+            model_mode="nws",
+            a=1.5,
+            b=0.8,
+            c=0.2,
+            d=0.05,
+            crps_score=0.12,
+        )
+        # Verify only one row exists
+        cur = db._conn.execute(
+            "SELECT COUNT(*) FROM emos_calibration WHERE city=? AND model_mode=?",
+            ("Chicago", "nws"),
+        )
+        count = cur.fetchone()[0]
+        assert count == 1
+
+        # Verify values are the new ones
+        result = db.get_emos_coefficients("Chicago", "nws")
+        assert result["a"] == pytest.approx(1.5)
+        assert result["crps_score"] == pytest.approx(0.12)
+
+    def test_get_nonexistent_returns_none(self):
+        """get_emos_coefficients for non-existent (city, model_mode) must return None."""
+        db = _db()
+        result = db.get_emos_coefficients("NonexistentCity", "nws")
+        assert result is None
+
+    def test_multiple_cities_and_modes(self):
+        """Multiple (city, model_mode) pairs must be stored independently."""
+        db = _db()
+        db.upsert_emos_coefficients(
+            city="Chicago", model_mode="nws", a=1.0, b=0.5, c=0.1, d=0.01
+        )
+        db.upsert_emos_coefficients(
+            city="Chicago", model_mode="open_meteo", a=1.2, b=0.6, c=0.12, d=0.02
+        )
+        db.upsert_emos_coefficients(
+            city="Seoul", model_mode="nws", a=1.1, b=0.55, c=0.11, d=0.011
+        )
+
+        # Each should be retrievable independently
+        chicago_nws = db.get_emos_coefficients("Chicago", "nws")
+        chicago_om = db.get_emos_coefficients("Chicago", "open_meteo")
+        seoul_nws = db.get_emos_coefficients("Seoul", "nws")
+
+        assert chicago_nws["a"] == pytest.approx(1.0)
+        assert chicago_om["a"] == pytest.approx(1.2)
+        assert seoul_nws["a"] == pytest.approx(1.1)
+
+        # Total count must be 3
+        cur = db._conn.execute("SELECT COUNT(*) FROM emos_calibration")
+        assert cur.fetchone()[0] == 3
