@@ -452,7 +452,7 @@ def _stopped_positions() -> list[ClosedPositionOut]:
                 elif trigger.startswith("stop_loss@"):
                     exit_reason = "stop_loss"
                 else:
-                    exit_reason = "won"  # fallback
+                    exit_reason = "won" if pnl > 0 else "lost"
                 result.append(ClosedPositionOut(
                     question=str(r.get("question") or ""),
                     station=str(r.get("station") or ""),
