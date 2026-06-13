@@ -166,6 +166,12 @@ CREATE TABLE IF NOT EXISTS emos_mode_override (
     effective_mode  TEXT NOT NULL,
     updated_at      TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS bot_config (
+    key         TEXT PRIMARY KEY,
+    value       TEXT NOT NULL,
+    updated_at  TEXT NOT NULL
+);
 """
 
 
@@ -877,3 +883,30 @@ class Database:
             )
             self._conn.commit()
         return new_val
+
+    # ------------------------------------------------------------------
+    # bot_config
+    # ------------------------------------------------------------------
+
+    def get_config(self, key: str) -> "str | None":
+        """Return the stored value for *key*, or None if no row exists."""
+        cur = self._conn.execute(
+            "SELECT value FROM bot_config WHERE key=?", (key,)
+        )
+        row = cur.fetchone()
+        return row[0] if row else None
+
+    def set_config(self, key: str, value: str) -> None:
+        """Upsert a config value. Thread-safe via the existing RLock."""
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO bot_config(key, value, updated_at) VALUES(?,?,?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
+                (key, value, self._now()),
+            )
+            self._conn.commit()
+
+    def get_all_config(self) -> "dict[str, str]":
+        """Return all bot_config rows as a plain {key: value} dict."""
+        cur = self._conn.execute("SELECT key, value FROM bot_config")
+        return {row[0]: row[1] for row in cur.fetchall()}
