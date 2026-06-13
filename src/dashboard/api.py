@@ -48,6 +48,7 @@ from py_clob_client_v2.clob_types import BookParams
 from src.config import (
     POLYMARKET_GAMMA_API, STATIONS, LIVE_TRADES_JSONL, SNAPSHOTS_JSONL,
     POSITION_SNAPSHOTS_JSONL, LOG_DIR, STARTING_CAPITAL_EUR,
+    STATION_ACTIVE_HOURS, DISABLED_STATIONS,
 )
 from src.data.db import Database
 from src.data.nws import fetch_nws_forecast_high
@@ -238,6 +239,25 @@ class AnalysisOut(BaseModel):
     obs_temp_f: float | None = None
     model_temp_at_obs_f: float | None = None
     last_correction_time: str | None = None
+
+
+class StationOverviewOut(BaseModel):
+    metar: str
+    city: str
+    lat: float
+    lon: float
+    unit: str
+    timezone: str
+    active_hours_utc: list[int]
+    enabled: bool
+    trade_count: int
+    filled_count: int
+    win_rate: float
+    total_pnl: float
+    last_trade_ts: str | None
+    open_positions_count: int
+    last_obs_ts: str | None
+    status: Literal["active", "outside_hours", "no_data", "disabled"]
 
 
 # ---------------------------------------------------------------------------
@@ -882,6 +902,128 @@ def get_city_analysis(city: str) -> AnalysisOut:
         model_temp_at_obs_f=model_temp_at_obs_f,
         last_correction_time=last_correction_time,
     )
+
+
+_stations_overview_cache: dict = {"ts": 0.0, "data": None}
+_STATIONS_OVERVIEW_TTL = 60.0  # seconds
+
+
+def _derive_station_status(
+    metar: str,
+    enabled: bool,
+    last_obs_ts: "str | None",
+) -> str:
+    """Derive the station status string from config and latest observation timestamp.
+
+    Logic:
+      - disabled  → station is in DISABLED_STATIONS
+      - outside_hours → enabled AND current UTC hour outside active_hours_utc
+      - no_data   → enabled AND in active hours AND (no obs or obs > 2h ago)
+      - active    → enabled AND in active hours AND obs within 2h
+    """
+    if not enabled:
+        return "disabled"
+
+    active_hours = STATION_ACTIVE_HOURS.get(metar)
+    now_utc = datetime.now(timezone.utc)
+    current_hour = now_utc.hour
+
+    if active_hours is not None:
+        start_h, end_h = active_hours
+        in_active_hours = start_h <= current_hour < end_h
+    else:
+        in_active_hours = True  # treat unknown as always active
+
+    if not in_active_hours:
+        return "outside_hours"
+
+    # In active hours — check observation freshness (within 2h)
+    if last_obs_ts is None:
+        return "no_data"
+
+    try:
+        # ISO timestamp may or may not have tz info
+        obs_dt = datetime.fromisoformat(last_obs_ts)
+        if obs_dt.tzinfo is None:
+            obs_dt = obs_dt.replace(tzinfo=timezone.utc)
+        age_seconds = (now_utc - obs_dt).total_seconds()
+        if age_seconds > 7200:  # 2h = 7200s
+            return "no_data"
+        return "active"
+    except (ValueError, TypeError):
+        return "no_data"
+
+
+@app.get("/api/stations/overview", response_model=list[StationOverviewOut])
+def stations_overview() -> list[StationOverviewOut]:
+    """Return config metadata and trade stats for all configured stations.
+
+    Response is cached for 60 seconds.  Fields per station:
+    - Config: metar, city, lat, lon, unit, timezone, active_hours_utc, enabled
+    - DB: trade_count, filled_count, win_rate, total_pnl, last_trade_ts,
+          open_positions_count, last_obs_ts
+    - Derived: status (active | outside_hours | no_data | disabled)
+    """
+    now = time.monotonic()
+    cached = _stations_overview_cache
+    if cached["data"] is not None and (now - cached["ts"]) < _STATIONS_OVERVIEW_TTL:
+        return cached["data"]
+
+    # Fetch all DB data in three batch queries (avoids N+1 per station)
+    last_obs_map: dict = {}
+    open_pos_map: dict = {}
+    trade_stats_map: dict = {}
+    if _db is not None:
+        try:
+            last_obs_map = _db.get_stations_last_obs_ts()
+        except Exception:
+            logger.warning("[stations/overview] failed to fetch last_obs_ts", exc_info=True)
+        try:
+            open_pos_map = _db.get_stations_open_positions_count()
+        except Exception:
+            logger.warning("[stations/overview] failed to fetch open_positions_count", exc_info=True)
+        try:
+            trade_stats_map = _db.get_stations_trade_stats()
+        except Exception:
+            logger.warning("[stations/overview] failed to fetch trade_stats", exc_info=True)
+
+    # Read DISABLED_STATIONS at request time (env var may change between restarts)
+    disabled = DISABLED_STATIONS
+
+    result: list[StationOverviewOut] = []
+    for station_cfg in STATIONS:
+        metar, lat, lon, city, _res_station, unit, tz = station_cfg
+        enabled = metar not in disabled
+        last_obs_ts = last_obs_map.get(metar)
+        open_positions_count = open_pos_map.get(metar, 0)
+        stats = trade_stats_map.get(metar, {})
+
+        status = _derive_station_status(metar, enabled, last_obs_ts)
+
+        active_hours = STATION_ACTIVE_HOURS.get(metar, (0, 24))
+
+        result.append(StationOverviewOut(
+            metar=metar,
+            city=city,
+            lat=lat,
+            lon=lon,
+            unit=unit,
+            timezone=tz,
+            active_hours_utc=list(active_hours),
+            enabled=enabled,
+            trade_count=stats.get("trade_count", 0),
+            filled_count=stats.get("filled_count", 0),
+            win_rate=stats.get("win_rate", 0.0),
+            total_pnl=stats.get("total_pnl", 0.0),
+            last_trade_ts=stats.get("last_trade_ts"),
+            open_positions_count=open_positions_count,
+            last_obs_ts=last_obs_ts,
+            status=status,
+        ))
+
+    _stations_overview_cache["ts"] = now
+    _stations_overview_cache["data"] = result
+    return result
 
 
 @app.get("/api/positions/{token_id}/snapshots")
