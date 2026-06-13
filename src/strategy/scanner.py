@@ -22,6 +22,7 @@ from src.config import (
     ENABLE_CLOB_ENRICHMENT, MIN_FORECAST_BRACKET_MARGIN_F, DISABLED_STATIONS,
 )
 from src.model.envelope import Bracket, WeatherState, true_probability_yes, compute_envelope
+from src.model.emos_mode import get_city_mode, apply_emos, _check_ready_for_promotion
 from src.data.polymarket import get_orderbook
 from src.data.taf_disruption import check_taf_disruption
 from src.strategy.fee import estimate_fee_cents
@@ -331,7 +332,63 @@ def scan_markets(
                 _enrich_from_clob(bracket)
 
             state = weather[station]
-            p_yes = true_probability_yes(bracket, state, mins_left)
+            city = STATION_TO_CITY.get(station, station)
+
+            # EMOS mode switching: determine mode for this city and optionally
+            # apply linear bias correction to forecast_mean and forecast_stddev.
+            emos_mode_used = "legacy"
+            emos_stddev_override = None
+            if db is not None:
+                mode = get_city_mode(city, db)
+                if mode == "emos_shadow":
+                    # Shadow: compute calibrated params for logging only; serve legacy probs.
+                    # forecast_mean and sigma used by true_probability_yes are not modified.
+                    from src.config import FORECAST_STDDEV_F
+                    _mu_cal, _sigma_cal = apply_emos(
+                        state.corrected_mu_f or state.deb_mu_f or state.forecast_high_f or 0.0,
+                        FORECAST_STDDEV_F,
+                        city, db,
+                    )
+                    log.debug(
+                        "[emos] shadow city=%s legacy_mu=%.2f emos_mu=%.2f"
+                        " legacy_sigma=%.2f emos_sigma=%.2f",
+                        city,
+                        state.corrected_mu_f or state.deb_mu_f or state.forecast_high_f or 0.0,
+                        _mu_cal,
+                        FORECAST_STDDEV_F,
+                        _sigma_cal,
+                    )
+                    emos_mode_used = "emos_shadow"
+                elif mode == "emos_primary":
+                    if not _check_ready_for_promotion(city, db):
+                        log.warning(
+                            "[emos] city=%s emos_primary but ready_for_promotion=0"
+                            " — falling back to legacy",
+                            city,
+                        )
+                        emos_mode_used = "legacy"
+                    else:
+                        from src.config import FORECAST_STDDEV_F
+                        _mu_raw = (
+                            state.corrected_mu_f
+                            or state.deb_mu_f
+                            or state.forecast_high_f
+                            or 0.0
+                        )
+                        _mu_cal, _sigma_cal = apply_emos(_mu_raw, FORECAST_STDDEV_F, city, db)
+                        # Inject calibrated values into a patched state so
+                        # true_probability_yes uses the EMOS-corrected mean.
+                        # We do this by temporarily wrapping: pass corrected_mu_f
+                        # and a stddev override without mutating the shared state.
+                        from dataclasses import replace as _dc_replace
+                        state = _dc_replace(state, corrected_mu_f=_mu_cal)
+                        emos_stddev_override = _sigma_cal
+                        emos_mode_used = "emos_primary"
+
+            if emos_stddev_override is not None:
+                p_yes = true_probability_yes(bracket, state, mins_left, forecast_stddev=emos_stddev_override)
+            else:
+                p_yes = true_probability_yes(bracket, state, mins_left)
             fee = estimate_fee_cents(min(bracket.yes_ask_cents, bracket.no_ask_cents))
 
             ev_yes = p_yes * 100 - bracket.yes_ask_cents - fee
@@ -345,6 +402,7 @@ def scan_markets(
                 "forecast_high": state.forecast_high_f, "p_yes": round(p_yes, 4),
                 "ev_yes": round(ev_yes, 2), "ev_no": round(ev_no, 2),
                 "minutes_to_settlement": round(mins_left, 1),
+                "emos_mode": emos_mode_used,
             }
             snapshots.append(snap)
 
@@ -429,19 +487,19 @@ def scan_markets(
                     skip_reason_counts[skipped_reason] += 1
 
             if candidate and db:
-                city = STATION_TO_CITY.get(station, "")
-                if city:
+                _taf_city = STATION_TO_CITY.get(station, "")
+                if _taf_city:
                     now_utc = datetime.now(timezone.utc)
                     peak_start = now_utc.isoformat()
                     peak_end = (now_utc + timedelta(minutes=mins_left)).isoformat()
-                    taf_flag = check_taf_disruption(city, db, peak_start, peak_end)
+                    taf_flag = check_taf_disruption(_taf_city, db, peak_start, peak_end)
                     candidate.taf_disruption = taf_flag
                     if taf_flag:
                         factor = float(os.getenv("TAF_DISRUPTION_CONFIDENCE_FACTOR", "0.85"))
                         candidate.confidence *= factor
                         log.info(
                             "  [cue] %s taf_disruption=True confidence=%.2f",
-                            city, candidate.confidence,
+                            _taf_city, candidate.confidence,
                         )
 
             if candidate:

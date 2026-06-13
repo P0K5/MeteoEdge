@@ -185,6 +185,11 @@ STOP_LOSS_SELL_AGGRESSION_CENTS = int(os.getenv("STOP_LOSS_SELL_AGGRESSION_CENTS
 # -5 EUR losses, the <2.5F zone is pure bleed. See issue #200.
 MIN_FORECAST_BRACKET_MARGIN_F = float(os.getenv("MIN_FORECAST_BRACKET_MARGIN_F", "2.5"))
 
+# EMOS deployment mode: 'legacy' | 'emos_shadow' | 'emos_primary'
+# Per-city mode is read from the emos_calibration table; this is the fallback
+# when no calibration row exists for a city.
+EMOS_DEFAULT_MODE: str = os.environ.get("EMOS_DEFAULT_MODE", "legacy")
+
 # Stations excluded from new entries (observations keep collecting).
 # RKSI: June forecast busts of +5.4 to +12.4F produced 4 losses (10W/4L,
 # -7.16 EUR net) -- the worst station of the month. See issue #201.
