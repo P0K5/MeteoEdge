@@ -172,6 +172,12 @@ CREATE TABLE IF NOT EXISTS bot_config (
     value       TEXT NOT NULL,
     updated_at  TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS station_overrides (
+    station    TEXT PRIMARY KEY,
+    enabled    INTEGER NOT NULL DEFAULT 1,
+    updated_at TEXT NOT NULL
+);
 """
 
 
@@ -910,3 +916,30 @@ class Database:
         """Return all bot_config rows as a plain {key: value} dict."""
         cur = self._conn.execute("SELECT key, value FROM bot_config")
         return {row[0]: row[1] for row in cur.fetchall()}
+
+    # ------------------------------------------------------------------
+    # station_overrides
+    # ------------------------------------------------------------------
+
+    def get_station_override(self, station: str) -> "bool | None":
+        """Return the DB-persisted enabled state for *station*, or None if no override exists."""
+        cur = self._conn.execute(
+            "SELECT enabled FROM station_overrides WHERE station=?", (station,)
+        )
+        row = cur.fetchone()
+        return bool(row[0]) if row is not None else None
+
+    def set_station_override(self, station: str, enabled: bool) -> None:
+        """Upsert the enabled flag for *station*. Thread-safe via the existing RLock."""
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO station_overrides(station, enabled, updated_at) VALUES(?,?,?) "
+                "ON CONFLICT(station) DO UPDATE SET enabled=excluded.enabled, updated_at=excluded.updated_at",
+                (station, int(enabled), self._now()),
+            )
+            self._conn.commit()
+
+    def get_all_station_overrides(self) -> "dict[str, bool]":
+        """Return all station_overrides rows as a plain {station: enabled} dict."""
+        cur = self._conn.execute("SELECT station, enabled FROM station_overrides")
+        return {row[0]: bool(row[1]) for row in cur.fetchall()}

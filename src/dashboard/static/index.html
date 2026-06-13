@@ -378,6 +378,94 @@ a,button,input,select{transition:color var(--transition),background var(--transi
   display:none;align-items:center;gap:var(--space-2);
 }
 .error-banner.visible{display:flex;}
+
+/* ── STATION CARDS ── */
+.station-card{
+  background:var(--surface);border:1px solid var(--border);
+  border-radius:var(--radius-xl);margin-bottom:var(--space-4);
+  box-shadow:var(--sh-sm);overflow:hidden;
+  transition:box-shadow var(--transition);
+  border-left:3px solid transparent;
+}
+.station-card:hover{box-shadow:var(--sh-md);}
+.station-card.accent-active{border-left-color:var(--yes);}
+.station-card.accent-no_data{border-left-color:var(--no);}
+.station-card.accent-disabled{border-left-color:var(--warn);}
+
+.station-header{
+  padding:var(--space-4) var(--space-5);
+  display:flex;align-items:center;gap:var(--space-4);
+}
+.station-header-left{flex:1;min-width:0;display:flex;align-items:center;gap:var(--space-3);}
+.station-codes{min-width:0;}
+.station-metar{font-size:var(--text-base);font-weight:700;letter-spacing:.04em;}
+.station-city{font-size:var(--text-xs);color:var(--muted);margin-top:2px;}
+.station-header-right{display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0;}
+.station-local-time{font-size:var(--text-sm);font-weight:600;font-family:var(--font-mono);font-variant-numeric:tabular-nums;}
+.station-time-tz{font-size:var(--text-xs);color:var(--muted);}
+
+.status-badge{
+  display:inline-flex;align-items:center;gap:5px;
+  padding:3px 10px;border-radius:var(--radius-full);
+  font-size:var(--text-xs);font-weight:700;letter-spacing:.04em;
+  flex-shrink:0;
+}
+.status-dot{width:6px;height:6px;border-radius:var(--radius-full);flex-shrink:0;}
+.badge-active{background:var(--yes-bg);color:var(--yes);}
+.badge-active .status-dot{background:var(--yes);}
+.badge-outside_hours{background:var(--surface-off);color:var(--muted);}
+.badge-outside_hours .status-dot{background:var(--muted);}
+.badge-no_data{background:var(--no-bg);color:var(--no);}
+.badge-no_data .status-dot{background:var(--no);}
+.badge-disabled{background:var(--warn-bg);color:var(--warn);}
+.badge-disabled .status-dot{background:var(--warn);}
+
+.station-stats{
+  padding:0 var(--space-5) var(--space-3);
+  display:flex;align-items:center;gap:var(--space-6);flex-wrap:wrap;
+  font-size:var(--text-xs);color:var(--muted);
+}
+.station-stat strong{color:var(--text);font-weight:600;}
+.station-stat-sep{color:var(--faint);}
+
+.station-footer{
+  padding:var(--space-3) var(--space-5);
+  border-top:1px solid var(--divider);
+  background:var(--surface-2);
+  display:flex;align-items:center;justify-content:space-between;
+  gap:var(--space-4);flex-wrap:wrap;
+}
+.station-footer-meta{
+  display:flex;align-items:center;gap:var(--space-4);flex-wrap:wrap;
+  font-size:var(--text-xs);color:var(--muted);
+}
+.station-footer-meta span strong{color:var(--text);font-weight:600;}
+
+.btn-toggle{
+  padding:5px 14px;border-radius:var(--radius-md);
+  font-size:var(--text-xs);font-weight:700;
+  border:1px solid var(--border);
+  display:inline-flex;align-items:center;gap:6px;
+  transition:background var(--transition),color var(--transition),border-color var(--transition);
+  flex-shrink:0;
+}
+.btn-toggle.enable{
+  background:var(--yes-bg);color:var(--yes);border-color:var(--yes-dim);
+}
+.btn-toggle.enable:hover{background:var(--yes-dim);}
+.btn-toggle.disable{
+  background:var(--surface-off);color:var(--muted);border-color:var(--border);
+}
+.btn-toggle.disable:hover{background:var(--surface-dyn);color:var(--text);}
+.btn-toggle:disabled{opacity:.5;cursor:default;}
+.btn-toggle .spinner{
+  width:10px;height:10px;border-radius:50%;
+  border:2px solid currentColor;border-top-color:transparent;
+  animation:spin 0.6s linear infinite;display:none;
+}
+.btn-toggle.loading .spinner{display:inline-block;}
+.btn-toggle.loading .btn-toggle-label{display:none;}
+@keyframes spin{to{transform:rotate(360deg);}}
 </style>
 </head>
 <body>
@@ -472,10 +560,20 @@ a,button,input,select{transition:color var(--transition),background var(--transi
 <!-- ── STATIONS TAB ── -->
 <section id="tab-stations" class="tab-panel">
   <main class="main">
-    <div class="empty">
-      <i data-lucide="map-pin"></i>
-      <h3>Stations</h3>
-      <p>Station details and management will appear here.</p>
+    <div class="error-banner" id="stations-error-banner">
+      <i data-lucide="alert-circle"></i>
+      <span id="stations-error-text">Could not reach /api/stations/overview — retrying…</span>
+    </div>
+    <div class="section-hdr">
+      <div class="section-title"><i data-lucide="map-pin"></i>Stations</div>
+      <span class="count-pill" id="stations-count">—</span>
+    </div>
+    <div id="stations-list">
+      <div class="empty">
+        <i data-lucide="loader"></i>
+        <h3>Loading stations…</h3>
+        <p>Fetching station overview from the API.</p>
+      </div>
     </div>
   </main>
 </section>
@@ -1086,6 +1184,202 @@ async function _renderClosedChart(tokenId, entryPrice, exitPrice) {
 }
 
 /* ─────────────────────────────────────────
+   STATIONS TAB
+   ───────────────────────────────────────── */
+
+let stationsLoaded = false;
+let stationsIntervalId = null;
+
+const STATUS_ORDER = { active: 0, outside_hours: 1, no_data: 2, disabled: 3 };
+
+function statusBadgeHTML(status) {
+  const labels = {
+    active: 'Active',
+    outside_hours: 'Outside hours',
+    no_data: 'No data',
+    disabled: 'Disabled',
+  };
+  const label = labels[status] || status;
+  return `<span class="status-badge badge-${status}"><span class="status-dot"></span>${label}</span>`;
+}
+
+function fmtLocalTime(timezone) {
+  try {
+    return new Intl.DateTimeFormat('en-GB', {
+      timeZone: timezone,
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    }).format(new Date());
+  } catch (_) {
+    return '—';
+  }
+}
+
+function fmtPnl(v) {
+  if (v == null) return '—';
+  const sign = v >= 0 ? '+' : '-';
+  return `${sign}$${Math.abs(v).toFixed(2)}`;
+}
+
+function fmtWinRate(v) {
+  if (v == null) return '—';
+  return (v * 100).toFixed(0) + '%';
+}
+
+function fmtRelTime(ts) {
+  if (!ts) return 'Never';
+  try {
+    const dt = new Date(ts);
+    const diff = Math.floor((Date.now() - dt.getTime()) / 1000);
+    if (diff < 60) return `${diff}s ago`;
+    if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+    if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+    return `${Math.floor(diff / 86400)}d ago`;
+  } catch (_) {
+    return '—';
+  }
+}
+
+function renderStationCard(s) {
+  const accentClass = (s.status === 'outside_hours') ? '' : ` accent-${s.status}`;
+  const localTime = fmtLocalTime(s.timezone);
+  const activeHours = s.active_hours_utc && s.active_hours_utc.length === 2
+    ? `${String(s.active_hours_utc[0]).padStart(2,'0')}–${String(s.active_hours_utc[1]).padStart(2,'0')} UTC`
+    : '—';
+  const toggleLabel = s.enabled ? 'Disable entries' : 'Enable entries';
+  const toggleClass = s.enabled ? 'disable' : 'enable';
+  const pnlFmt = fmtPnl(s.total_pnl);
+  const pnlColor = s.total_pnl >= 0 ? 'var(--yes)' : 'var(--no)';
+  const openPos = s.open_positions_count || 0;
+  const lastTrade = fmtRelTime(s.last_trade_ts);
+
+  return `<div class="station-card${accentClass}" id="station-card-${s.metar}">
+    <div class="station-header">
+      <div class="station-header-left">
+        ${statusBadgeHTML(s.status)}
+        <div class="station-codes">
+          <div class="station-metar">${s.metar}</div>
+          <div class="station-city">${s.city}</div>
+        </div>
+      </div>
+      <div class="station-header-right">
+        <div class="station-local-time" id="stime-${s.metar}" data-tz="${s.timezone}">${localTime}</div>
+        <div class="station-time-tz">${s.timezone}</div>
+      </div>
+    </div>
+
+    <div class="station-stats">
+      <span class="station-stat">Trades: <strong>${s.trade_count}</strong></span>
+      <span class="station-stat-sep">·</span>
+      <span class="station-stat">Win rate: <strong>${fmtWinRate(s.win_rate)}</strong></span>
+      <span class="station-stat-sep">·</span>
+      <span class="station-stat">PnL: <strong style="color:${pnlColor}">${pnlFmt}</strong></span>
+    </div>
+
+    <div class="station-stats" style="padding-top:0;padding-bottom:var(--space-4);">
+      <span class="station-stat">${openPos} open position${openPos !== 1 ? 's' : ''}</span>
+      <span class="station-stat-sep">·</span>
+      <span class="station-stat">Last trade: <strong>${lastTrade}</strong></span>
+    </div>
+
+    <div class="station-footer">
+      <div class="station-footer-meta">
+        <span>Active: <strong>${activeHours}</strong></span>
+        <span>Unit: <strong>${s.unit || '—'}</strong></span>
+        <span>TZ: <strong>${s.timezone}</strong></span>
+      </div>
+      <button class="btn-toggle ${toggleClass}" id="toggle-btn-${s.metar}"
+              onclick="toggleStation('${s.metar}', this)">
+        <span class="spinner"></span>
+        <span class="btn-toggle-label">${toggleLabel}</span>
+      </button>
+    </div>
+  </div>`;
+}
+
+function renderStations(stations) {
+  const listEl = document.getElementById('stations-list');
+  const countEl = document.getElementById('stations-count');
+  document.getElementById('stations-error-banner').classList.remove('visible');
+
+  if (!stations || !stations.length) {
+    countEl.textContent = '0';
+    listEl.innerHTML = `<div class="empty">
+      <i data-lucide="map-pin"></i>
+      <h3>No stations configured</h3>
+      <p>Add stations to your configuration to see them here.</p>
+    </div>`;
+    lucide.createIcons();
+    return;
+  }
+
+  // Sort: Active → Outside hours → No data → Disabled
+  const sorted = [...stations].sort((a, b) => {
+    const ao = STATUS_ORDER[a.status] ?? 99;
+    const bo = STATUS_ORDER[b.status] ?? 99;
+    return ao - bo;
+  });
+
+  countEl.textContent = sorted.length;
+  listEl.innerHTML = sorted.map(renderStationCard).join('');
+  lucide.createIcons();
+  _startStationClocks(sorted);
+}
+
+// Update local time displays every second for all visible station cards
+let _stationClockInterval = null;
+function _startStationClocks(stations) {
+  if (_stationClockInterval) clearInterval(_stationClockInterval);
+  _stationClockInterval = setInterval(() => {
+    stations.forEach(s => {
+      const el = document.getElementById('stime-' + s.metar);
+      if (el) el.textContent = fmtLocalTime(s.timezone);
+    });
+  }, 1000);
+}
+
+async function fetchStations() {
+  const banner = document.getElementById('stations-error-banner');
+  try {
+    const r = await fetch('/api/stations/overview');
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json();
+    renderStations(data);
+  } catch (e) {
+    banner.classList.add('visible');
+    document.getElementById('stations-error-text').textContent =
+      `Fetch failed (${e.message}) — retrying in 5 min`;
+    console.error('Stations fetch failed:', e);
+  }
+}
+
+async function toggleStation(metar, btn) {
+  if (btn.disabled) return;
+  btn.disabled = true;
+  btn.classList.add('loading');
+  try {
+    const r = await fetch(`/api/stations/${metar}/toggle`, { method: 'POST' });
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({}));
+      const detail = body.detail || `HTTP ${r.status}`;
+      console.warn(`Toggle ${metar} failed: ${detail}`);
+      if (r.status === 501) {
+        console.info('Toggle endpoint not yet implemented — ignoring.');
+      }
+    }
+    // Refresh regardless of response to show new state
+    await fetchStations();
+  } catch (e) {
+    console.error('Toggle failed:', e);
+  } finally {
+    btn.disabled = false;
+    btn.classList.remove('loading');
+  }
+}
+
+/* ─────────────────────────────────────────
    TAB MANAGEMENT
    ───────────────────────────────────────── */
 let currentTab = 'portfolio';
@@ -1115,6 +1409,16 @@ function switchTab(tab) {
     botLogIntervalId = null;
   }
 
+  // Stop stations polling when leaving Stations tab
+  if (currentTab === 'stations' && tab !== 'stations') {
+    clearInterval(stationsIntervalId);
+    stationsIntervalId = null;
+    if (_stationClockInterval) {
+      clearInterval(_stationClockInterval);
+      _stationClockInterval = null;
+    }
+  }
+
   currentTab = tab;
 
   // Start portfolio polling when entering Portfolio tab
@@ -1123,6 +1427,17 @@ function switchTab(tab) {
     fetchBotLog();
     portfolioIntervalId = setInterval(fetchPortfolio, 30_000);
     botLogIntervalId = setInterval(fetchBotLog, 30_000);
+  }
+
+  // Lazy-load stations on first activation; poll every 5 minutes
+  if (tab === 'stations') {
+    if (!stationsLoaded) {
+      stationsLoaded = true;
+      fetchStations();
+    }
+    if (!stationsIntervalId) {
+      stationsIntervalId = setInterval(fetchStations, 300_000);
+    }
   }
 }
 
