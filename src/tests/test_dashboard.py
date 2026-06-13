@@ -346,6 +346,129 @@ class TestStatusDbCapital:
 
 
 # ---------------------------------------------------------------------------
+# Closed positions with exit_reason
+# ---------------------------------------------------------------------------
+
+class TestClosedPositionsExitReason:
+    """Test exit_reason field on closed positions (early exits and settled)."""
+
+    def test_stopped_position_take_profit_exit_reason(self, tmp_path):
+        """_stopped_positions() should set exit_reason='take_profit' for take_profit@ triggers."""
+        from src.dashboard.api import _stopped_positions
+        records = [
+            {
+                "outcome": "sold",
+                "trigger": "take_profit@0.75",
+                "question": "Will it rain?",
+                "station": "KORD",
+                "entry_price_cents": 50,
+                "price_cents": 75,
+                "shares": 10.0,
+                "pnl": 2.5,
+                "ts": "2024-01-01T12:00:00+00:00",
+                "no_token_id": "token123",
+            }
+        ]
+        _write_jsonl(tmp_path / "trades.jsonl", records)
+        with patch("src.dashboard.api.LIVE_TRADES_JSONL", tmp_path / "trades.jsonl"):
+            positions = _stopped_positions()
+        assert len(positions) == 1
+        assert positions[0].exit_reason == "take_profit"
+
+    def test_stopped_position_stop_loss_exit_reason(self, tmp_path):
+        """_stopped_positions() should set exit_reason='stop_loss' for stop_loss@ triggers."""
+        from src.dashboard.api import _stopped_positions
+        records = [
+            {
+                "outcome": "sold",
+                "trigger": "stop_loss@20",
+                "question": "Will it rain?",
+                "station": "KORD",
+                "entry_price_cents": 50,
+                "price_cents": 20,
+                "shares": 10.0,
+                "pnl": -3.0,
+                "ts": "2024-01-01T12:00:00+00:00",
+                "no_token_id": "token456",
+            }
+        ]
+        _write_jsonl(tmp_path / "trades.jsonl", records)
+        with patch("src.dashboard.api.LIVE_TRADES_JSONL", tmp_path / "trades.jsonl"):
+            positions = _stopped_positions()
+        assert len(positions) == 1
+        assert positions[0].exit_reason == "stop_loss"
+
+    def test_settled_position_won_exit_reason(self, tmp_path):
+        """_settled_jsonl_positions() should set exit_reason='won' when pnl > 0."""
+        from src.dashboard.api import _settled_jsonl_positions
+        records = [
+            {
+                "outcome": "filled",
+                "question": "Will it rain?",
+                "station": "KORD",
+                "side": "YES",
+                "entry_price_cents": 50,
+                "shares": 10.0,
+                "pnl": 5.0,
+                "size_eur": 500.0,
+                "end_date": "2024-01-01T23:59:59+00:00",
+                "no_token_id": "token789",
+            }
+        ]
+        _write_jsonl(tmp_path / "trades.jsonl", records)
+        with patch("src.dashboard.api.LIVE_TRADES_JSONL", tmp_path / "trades.jsonl"):
+            positions = _settled_jsonl_positions()
+        assert len(positions) == 1
+        assert positions[0].exit_reason == "won"
+
+    def test_settled_position_lost_exit_reason(self, tmp_path):
+        """_settled_jsonl_positions() should set exit_reason='lost' when pnl <= 0."""
+        from src.dashboard.api import _settled_jsonl_positions
+        records = [
+            {
+                "outcome": "filled",
+                "question": "Will it rain?",
+                "station": "KORD",
+                "side": "NO",
+                "entry_price_cents": 50,
+                "shares": 10.0,
+                "pnl": -2.5,
+                "size_eur": 500.0,
+                "end_date": "2024-01-01T23:59:59+00:00",
+                "no_token_id": "token012",
+            }
+        ]
+        _write_jsonl(tmp_path / "trades.jsonl", records)
+        with patch("src.dashboard.api.LIVE_TRADES_JSONL", tmp_path / "trades.jsonl"):
+            positions = _settled_jsonl_positions()
+        assert len(positions) == 1
+        assert positions[0].exit_reason == "lost"
+
+    def test_settled_position_zero_pnl_is_lost(self, tmp_path):
+        """_settled_jsonl_positions() should set exit_reason='lost' when pnl == 0."""
+        from src.dashboard.api import _settled_jsonl_positions
+        records = [
+            {
+                "outcome": "filled",
+                "question": "Will it rain?",
+                "station": "KORD",
+                "side": "YES",
+                "entry_price_cents": 50,
+                "shares": 10.0,
+                "pnl": 0.0,
+                "size_eur": 500.0,
+                "end_date": "2024-01-01T23:59:59+00:00",
+                "no_token_id": "token345",
+            }
+        ]
+        _write_jsonl(tmp_path / "trades.jsonl", records)
+        with patch("src.dashboard.api.LIVE_TRADES_JSONL", tmp_path / "trades.jsonl"):
+            positions = _settled_jsonl_positions()
+        assert len(positions) == 1
+        assert positions[0].exit_reason == "lost"
+
+
+# ---------------------------------------------------------------------------
 # Bridge stub compatibility — src.monitoring.dashboard still works
 # ---------------------------------------------------------------------------
 

@@ -268,8 +268,10 @@ a,button,input,select{transition:color var(--transition),background var(--transi
 .result-badge{
   font-size:var(--text-xs);font-weight:700;padding:2px 8px;border-radius:var(--radius-full);
 }
-.result-win{background:var(--yes-bg);color:var(--yes);}
-.result-loss{background:var(--no-bg);color:var(--no);}
+.result-won{background:var(--yes-bg);color:var(--yes);}
+.result-lost{background:var(--no-bg);color:var(--no);}
+.result-take_profit{background:var(--primary-bg);color:var(--primary);}
+.result-stop_loss{background:var(--warn-bg);color:var(--warn);}
 
 /* ── LOG SECTION ── */
 .log-section{margin-top:var(--space-8);}
@@ -651,8 +653,16 @@ function _renderClosedPage() {
     const d = p.closed_at ? new Date(p.closed_at) : null;
     const age = d && !isNaN(d) ? d.toLocaleString() : '—';
     const hasChart = !!p.token_id;
+    // Map exit_reason to badge label and class
+    const exitReasonMap = {
+      'won': { label: 'Won', cls: 'result-won' },
+      'lost': { label: 'Lost', cls: 'result-lost' },
+      'take_profit': { label: 'Take Profit', cls: 'result-take_profit' },
+      'stop_loss': { label: 'Stop Loss', cls: 'result-stop_loss' }
+    };
+    const badgeInfo = exitReasonMap[p.exit_reason] || { label: 'Won', cls: 'result-won' };
     const rowInner = `
-      <span class="result-badge ${win ? 'result-win' : 'result-loss'}">${win ? 'WIN' : 'LOSS'}</span>
+      <span class="result-badge ${badgeInfo.cls}">${badgeInfo.label}</span>
       <div class="closed-q" title="${question}">${question}</div>
       <div class="footer-bracket">${p.station || p.side} · ${p.entry_price}¢ → ${p.exit_price}¢</div>
       <div class="closed-pnl ${win ? 'win' : 'loss'}">${pnlFmt}</div>
