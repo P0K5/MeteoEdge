@@ -78,6 +78,28 @@ a,button,input,select{transition:color var(--transition),background var(--transi
 }
 .theme-btn:hover{background:var(--surface-off);color:var(--text);}
 
+/* ── TAB BAR ── */
+.tab-bar{
+  background:var(--surface);border-bottom:1px solid var(--border);
+  padding:0 var(--space-6);height:52px;
+  display:flex;align-items:center;gap:var(--space-6);
+  position:sticky;top:58px;z-index:49;
+}
+.tab-btn{
+  height:100%;padding:0 var(--space-4);
+  border:none;background:none;color:var(--muted);
+  font-size:var(--text-sm);font-weight:600;
+  cursor:pointer;
+  border-bottom:2px solid transparent;
+  transition:color var(--transition),border-color var(--transition);
+}
+.tab-btn:hover{color:var(--text);}
+.tab-btn.active{color:var(--primary);border-bottom-color:var(--primary);}
+
+/* ── TAB PANELS ── */
+.tab-panel{display:none;}
+.tab-panel.active{display:block;}
+
 /* ── MAIN CONTENT ── */
 .main{max-width:980px;margin:0 auto;padding:var(--space-6) var(--space-4) var(--space-10);}
 
@@ -377,8 +399,17 @@ a,button,input,select{transition:color var(--transition),background var(--transi
   </button>
 </header>
 
-<!-- ── MAIN ── -->
-<main class="main">
+<!-- ── TAB BAR ── -->
+<nav class="tab-bar">
+  <button class="tab-btn active" onclick="switchTab('portfolio')">Portfolio</button>
+  <button class="tab-btn" onclick="switchTab('stations')">Stations</button>
+  <button class="tab-btn" onclick="switchTab('emos')">EMOS</button>
+  <button class="tab-btn" onclick="switchTab('config')">Config</button>
+</nav>
+
+<!-- ── PORTFOLIO TAB ── -->
+<section id="tab-portfolio" class="tab-panel active">
+  <main class="main">
 
   <div class="error-banner" id="error-banner">
     <i data-lucide="alert-circle"></i>
@@ -435,7 +466,41 @@ a,button,input,select{transition:color var(--transition),background var(--transi
     <div class="log-box" id="bot-log"><span class="log-empty">Loading…</span></div>
   </div>
 
-</main>
+  </main>
+</section>
+
+<!-- ── STATIONS TAB ── -->
+<section id="tab-stations" class="tab-panel">
+  <main class="main">
+    <div class="empty">
+      <i data-lucide="map-pin"></i>
+      <h3>Stations</h3>
+      <p>Station details and management will appear here.</p>
+    </div>
+  </main>
+</section>
+
+<!-- ── EMOS TAB ── -->
+<section id="tab-emos" class="tab-panel">
+  <main class="main">
+    <div class="empty">
+      <i data-lucide="gauge"></i>
+      <h3>EMOS</h3>
+      <p>Environmental monitoring and observation system data will appear here.</p>
+    </div>
+  </main>
+</section>
+
+<!-- ── CONFIG TAB ── -->
+<section id="tab-config" class="tab-panel">
+  <main class="main">
+    <div class="empty">
+      <i data-lucide="settings"></i>
+      <h3>Config</h3>
+      <p>Configuration and settings will appear here.</p>
+    </div>
+  </main>
+</section>
 
 <script>
 /* ─────────────────────────────────────────
@@ -1021,14 +1086,55 @@ async function _renderClosedChart(tokenId, entryPrice, exitPrice) {
 }
 
 /* ─────────────────────────────────────────
+   TAB MANAGEMENT
+   ───────────────────────────────────────── */
+let currentTab = 'portfolio';
+let portfolioIntervalId = null;
+let botLogIntervalId = null;
+
+function switchTab(tab) {
+  // Hide all panels
+  document.querySelectorAll('.tab-panel').forEach(panel => {
+    panel.classList.remove('active');
+  });
+
+  // Deactivate all tab buttons
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.classList.remove('active');
+  });
+
+  // Show selected panel and activate button
+  document.getElementById('tab-' + tab).classList.add('active');
+  event.target.classList.add('active');
+
+  // Stop portfolio polling when leaving Portfolio tab
+  if (currentTab === 'portfolio' && tab !== 'portfolio') {
+    clearInterval(portfolioIntervalId);
+    clearInterval(botLogIntervalId);
+    portfolioIntervalId = null;
+    botLogIntervalId = null;
+  }
+
+  currentTab = tab;
+
+  // Start portfolio polling when entering Portfolio tab
+  if (tab === 'portfolio' && !portfolioIntervalId) {
+    fetchPortfolio();
+    fetchBotLog();
+    portfolioIntervalId = setInterval(fetchPortfolio, 30_000);
+    botLogIntervalId = setInterval(fetchBotLog, 30_000);
+  }
+}
+
+/* ─────────────────────────────────────────
    BOOT
    ───────────────────────────────────────── */
 window.addEventListener('DOMContentLoaded', () => {
   lucide.createIcons();
   fetchPortfolio();
   fetchBotLog();
-  setInterval(fetchPortfolio, 30_000);
-  setInterval(fetchBotLog, 30_000);
+  portfolioIntervalId = setInterval(fetchPortfolio, 30_000);
+  botLogIntervalId = setInterval(fetchBotLog, 30_000);
 });
 </script>
 </body>
