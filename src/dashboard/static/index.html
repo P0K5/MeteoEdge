@@ -1093,15 +1093,21 @@ function switchTab(tab) {
     btn.classList.remove('active');
   });
 
-  // Show selected panel
+  // Show selected panel and activate button
   document.getElementById('tab-' + tab).classList.add('active');
-
-  // Activate selected tab button
   event.target.classList.add('active');
+
+  // Stop portfolio polling when leaving Portfolio tab
+  if (currentTab === 'portfolio' && tab !== 'portfolio') {
+    clearInterval(portfolioIntervalId);
+    clearInterval(botLogIntervalId);
+    portfolioIntervalId = null;
+    botLogIntervalId = null;
+  }
 
   currentTab = tab;
 
-  // If switching to portfolio, ensure refresh is running
+  // Start portfolio polling when entering Portfolio tab
   if (tab === 'portfolio' && !portfolioIntervalId) {
     fetchPortfolio();
     fetchBotLog();
