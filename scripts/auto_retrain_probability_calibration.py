@@ -22,6 +22,7 @@ auto_retrain_report.json schema (one entry per city):
 import argparse
 import json
 import socket
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -53,6 +54,15 @@ def _check_not_on_vps() -> None:
         )
 
 
+def validate_report(report: dict) -> None:
+    """Raise ValueError if any city entry is missing required fields."""
+    required = {"crps_train", "crps_holdout", "samples", "ready_for_promotion", "trained_at"}
+    for city, entry in report.items():
+        missing = required - entry.keys()
+        if missing:
+            raise ValueError(f"Report entry for {city!r} missing fields: {missing}")
+
+
 def get_all_cities() -> list:
     """Return list of city names from the STATIONS config."""
     return [cfg[3] for cfg in STATIONS]
@@ -77,9 +87,30 @@ def main() -> None:
         action="store_true",
         help="Compute but do not write to DB or JSON",
     )
+    parser.add_argument(
+        "--report-only",
+        action="store_true",
+        help="Print current DB state and exit",
+    )
     args = parser.parse_args()
 
     db = Database(args.db)
+
+    # Handle --report-only: query DB and exit
+    if args.report_only:
+        print("\n=== Current EMOS Calibration State ===")
+        print(f"{'City':<15} {'Model Mode':<15} {'CRPS Score':>11} {'Promote':>8} {'Trained At'}")
+        query = "SELECT city, model_mode, crps_score, ready_for_promotion, trained_at FROM emos_calibration"
+        try:
+            rows = db._conn.execute(query).fetchall()
+            for row in rows:
+                city, model_mode, crps_score, promote, trained_at = row
+                crps_str = f"{crps_score:.4f}" if crps_score is not None else "N/A"
+                print(f"{city:<15} {model_mode:<15} {crps_str:>11} {promote:>8} {trained_at}")
+        except Exception as e:
+            print(f"Error querying database: {e}")
+        return
+
     cities = [args.city] if args.city else get_all_cities()
 
     report = {}
@@ -143,6 +174,8 @@ def main() -> None:
         )
 
     if not args.dry_run and report:
+        # Validate report schema before writing
+        validate_report(report)
         # Atomic write: write to .tmp then rename to avoid partial reads
         report_path = Path("auto_retrain_report.json")
         tmp = report_path.with_suffix(".tmp")
