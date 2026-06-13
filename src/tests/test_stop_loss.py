@@ -96,18 +96,30 @@ TOKEN = "tok-sl-1"
 
 
 def _position_state(fair: int | None, bid: int | None, depth: float | None,
-                    entry_cents: int = 80) -> dict:
+                    entry_cents: int = 80, *,
+                    current_high: float | None = None,
+                    forecast_nws: float | None = None,
+                    forecast_secondary: float | None = None,
+                    bracket_low: float = 86.0,
+                    bracket_high: float = 87.8) -> dict:
     fills = [{
         "station": "WSSS",
-        "bracket_low": 86.0,
-        "bracket_high": 87.8,
+        "bracket_low": bracket_low,
+        "bracket_high": bracket_high,
         "price_cents": entry_cents,
         "size_eur": 5.0,
         "order_id": "buy-1",
         "ticker": "WSSS-order-buy1",
         "question": "Will the highest temperature in Singapore be 30-31C?",
     }]
-    snap = {"fair_value_now": fair, "no_best_bid": bid, "no_best_bid_size": depth}
+    snap = {
+        "fair_value_now": fair,
+        "no_best_bid": bid,
+        "no_best_bid_size": depth,
+        "current_high": current_high,
+        "forecast_nws": forecast_nws,
+        "forecast_secondary": forecast_secondary,
+    }
     return {"token_id": TOKEN, "fills": fills, "snap": snap}
 
 
@@ -125,7 +137,9 @@ def _fixed_thresholds():
     with patch.object(run, "STOP_LOSS_MIN_BID_CENTS", 40), \
             patch.object(run, "STOP_LOSS_CONSECUTIVE_POLLS", 2), \
             patch.object(run, "STOP_LOSS_MIN_DEPTH_SHARES", 10.0), \
-            patch.object(run, "STOP_LOSS_SELL_AGGRESSION_CENTS", 2):
+            patch.object(run, "STOP_LOSS_SELL_AGGRESSION_CENTS", 2), \
+            patch.object(run, "STOP_LOSS_MIN_BRACKET_PROXIMITY_F", 0.5), \
+            patch.object(run, "STOP_LOSS_RESPECT_FORECAST_OVERSHOOT", True):
         yield
 
 
@@ -240,3 +254,157 @@ class TestCheckStopLossExits:
         run._check_stop_loss_exits(trader, "ts", [ps], db=db)
         # Position is NOT marked sold — caller retries on next poll
         assert TOKEN not in run.order_manager._sold_positions
+
+
+class TestStopLossSafetyGuards:
+    """Hotfix guards added 2026-06-13 after 3 wins were cut in one day."""
+
+    def test_proximity_guard_blocks_when_temp_far_below_bracket(self, _no_side_effects):
+        """current_high 1.8F below bracket_low (>0.5F buffer) -- hold, keep strikes."""
+        trader = MagicMock()
+        ps = _position_state(
+            fair=70, bid=75, depth=50.0,
+            current_high=84.2,  # bracket_low=86.0 -- 1.8F below
+        )
+        run._check_stop_loss_exits(trader, "ts", [ps])
+        run._check_stop_loss_exits(trader, "ts", [ps])
+        trader.sell_position_immediate.assert_not_called()
+        assert run.order_manager._stop_loss_strikes[TOKEN] == 2
+
+    def test_proximity_guard_allows_when_temp_at_bracket(self, _no_side_effects):
+        """current_high within 0.5F of bracket_low -- guard passes, sell fires."""
+        trader = MagicMock()
+        trader.sell_position_immediate.return_value = ("sell-1", 73)
+        ps = _position_state(
+            fair=70, bid=75, depth=50.0,
+            current_high=85.6,  # bracket_low=86.0 -- 0.4F below, within buffer
+        )
+        run._check_stop_loss_exits(trader, "ts", [ps])
+        run._check_stop_loss_exits(trader, "ts", [ps])
+        trader.sell_position_immediate.assert_called_once()
+
+    def test_proximity_guard_allows_when_temp_inside_bracket(self, _no_side_effects):
+        """current_high above bracket_low -- definitely passes proximity guard."""
+        trader = MagicMock()
+        trader.sell_position_immediate.return_value = ("sell-1", 73)
+        ps = _position_state(
+            fair=70, bid=75, depth=50.0,
+            current_high=86.5,  # inside bracket 86.0-87.8
+        )
+        run._check_stop_loss_exits(trader, "ts", [ps])
+        run._check_stop_loss_exits(trader, "ts", [ps])
+        trader.sell_position_immediate.assert_called_once()
+
+    def test_proximity_guard_disabled_when_current_high_missing(self, _no_side_effects):
+        """No current_high in snap -- can't apply proximity guard, fall through to sell."""
+        trader = MagicMock()
+        trader.sell_position_immediate.return_value = ("sell-1", 73)
+        ps = _position_state(fair=70, bid=75, depth=50.0)  # no current_high
+        run._check_stop_loss_exits(trader, "ts", [ps])
+        run._check_stop_loss_exits(trader, "ts", [ps])
+        trader.sell_position_immediate.assert_called_once()
+
+    def test_overshoot_guard_blocks_when_forecast_above_bracket_high(self, _no_side_effects):
+        """Forecast > bracket_high -- NO wins on overshoot, hold, keep strikes."""
+        trader = MagicMock()
+        ps = _position_state(
+            fair=70, bid=75, depth=50.0,
+            current_high=86.5,  # passes proximity guard
+            forecast_nws=93.0,  # bracket_high=87.8 -- forecast predicts overshoot
+        )
+        run._check_stop_loss_exits(trader, "ts", [ps])
+        run._check_stop_loss_exits(trader, "ts", [ps])
+        trader.sell_position_immediate.assert_not_called()
+        assert run.order_manager._stop_loss_strikes[TOKEN] == 2
+
+    def test_overshoot_guard_uses_secondary_when_nws_missing(self, _no_side_effects):
+        """Falls back to forecast_secondary when forecast_nws is None."""
+        trader = MagicMock()
+        ps = _position_state(
+            fair=70, bid=75, depth=50.0,
+            current_high=86.5,
+            forecast_nws=None,
+            forecast_secondary=93.0,
+        )
+        run._check_stop_loss_exits(trader, "ts", [ps])
+        run._check_stop_loss_exits(trader, "ts", [ps])
+        trader.sell_position_immediate.assert_not_called()
+
+    def test_overshoot_guard_allows_when_forecast_inside_bracket(self, _no_side_effects):
+        """Forecast within bracket -- bracket not expected to be overshot, sell fires."""
+        trader = MagicMock()
+        trader.sell_position_immediate.return_value = ("sell-1", 73)
+        ps = _position_state(
+            fair=70, bid=75, depth=50.0,
+            current_high=86.5,
+            forecast_nws=87.0,  # inside bracket 86.0-87.8
+        )
+        run._check_stop_loss_exits(trader, "ts", [ps])
+        run._check_stop_loss_exits(trader, "ts", [ps])
+        trader.sell_position_immediate.assert_called_once()
+
+    def test_overshoot_guard_inactive_for_open_top_bracket(self, _no_side_effects):
+        """'or above' bracket (high=200) -- overshoot impossible, guard skipped."""
+        trader = MagicMock()
+        trader.sell_position_immediate.return_value = ("sell-1", 73)
+        ps = _position_state(
+            fair=70, bid=75, depth=50.0,
+            current_high=86.5,
+            forecast_nws=95.0,
+            bracket_low=86.0, bracket_high=200.0,
+        )
+        run._check_stop_loss_exits(trader, "ts", [ps])
+        run._check_stop_loss_exits(trader, "ts", [ps])
+        trader.sell_position_immediate.assert_called_once()
+
+    def test_overshoot_guard_disabled_by_config(self, _no_side_effects):
+        """STOP_LOSS_RESPECT_FORECAST_OVERSHOOT=False -- guard skipped."""
+        trader = MagicMock()
+        trader.sell_position_immediate.return_value = ("sell-1", 73)
+        ps = _position_state(
+            fair=70, bid=75, depth=50.0,
+            current_high=86.5,
+            forecast_nws=93.0,
+        )
+        with patch.object(run, "STOP_LOSS_RESPECT_FORECAST_OVERSHOOT", False):
+            run._check_stop_loss_exits(trader, "ts", [ps])
+            run._check_stop_loss_exits(trader, "ts", [ps])
+        trader.sell_position_immediate.assert_called_once()
+
+    def test_proximity_guard_disabled_by_negative_config(self, _no_side_effects):
+        """STOP_LOSS_MIN_BRACKET_PROXIMITY_F <= 0 -- guard disabled."""
+        trader = MagicMock()
+        trader.sell_position_immediate.return_value = ("sell-1", 73)
+        ps = _position_state(
+            fair=70, bid=75, depth=50.0,
+            current_high=70.0,  # very far from bracket, normally blocked
+        )
+        with patch.object(run, "STOP_LOSS_MIN_BRACKET_PROXIMITY_F", -1.0):
+            run._check_stop_loss_exits(trader, "ts", [ps])
+            run._check_stop_loss_exits(trader, "ts", [ps])
+        trader.sell_position_immediate.assert_called_once()
+
+    def test_today_jun13_scenario_wsss_blocked(self, _no_side_effects):
+        """Reproduces today's WSSS 91.4-93.2F false fire (cur_high=89.6, gap=1.8F)."""
+        trader = MagicMock()
+        ps = _position_state(
+            fair=67, bid=73, depth=50.0, entry_cents=79,
+            current_high=89.6,
+            bracket_low=91.4, bracket_high=93.2,
+        )
+        run._check_stop_loss_exits(trader, "ts", [ps])
+        run._check_stop_loss_exits(trader, "ts", [ps])
+        trader.sell_position_immediate.assert_not_called()  # proximity guard
+
+    def test_today_jun13_scenario_katl_blocked(self, _no_side_effects):
+        """Reproduces today's KATL 90-91F false fire (forecast 93 > bracket high 91)."""
+        trader = MagicMock()
+        ps = _position_state(
+            fair=80, bid=82, depth=50.0, entry_cents=84,
+            current_high=89.96,  # 0.04F below bracket -- passes proximity
+            forecast_nws=93.0,   # overshoot expected
+            bracket_low=90.0, bracket_high=91.0,
+        )
+        run._check_stop_loss_exits(trader, "ts", [ps])
+        run._check_stop_loss_exits(trader, "ts", [ps])
+        trader.sell_position_immediate.assert_not_called()  # overshoot guard

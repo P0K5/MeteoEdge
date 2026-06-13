@@ -178,6 +178,26 @@ STOP_LOSS_MIN_DEPTH_SHARES = float(os.getenv("STOP_LOSS_MIN_DEPTH_SHARES", "10")
 # fetch and the post. Unfilled remainders are cancelled, never left resting.
 STOP_LOSS_SELL_AGGRESSION_CENTS = int(os.getenv("STOP_LOSS_SELL_AGGRESSION_CENTS", "2"))
 
+# Stop-loss safety guards (hotfix 2026-06-13 after the model cut 3 likely wins
+# in one day -- WSSS 91-93, MPMG 88-90, KATL 90-91 all overshot bracket but
+# fair_value_now briefly crashed on intraday temp spikes).
+#
+# Proximity guard: don't fire while the running daily high is more than this
+# many F below bracket_low. The model occasionally panics when temp climbs a
+# couple of degrees in a few minutes; if the bracket is still 1-2F away, the
+# fair-value crash is usually a false alarm and the bid recovers within the
+# next polls. Set to a large negative number to disable.
+STOP_LOSS_MIN_BRACKET_PROXIMITY_F = float(
+    os.getenv("STOP_LOSS_MIN_BRACKET_PROXIMITY_F", "0.5")
+)
+# Overshoot guard: don't fire when an available forecast (NWS, else secondary)
+# predicts the daily high will exceed bracket_high. NO wins on overshoot, so a
+# model dip while the temp climbs through the bracket is the path to a win,
+# not a loss. Disabled for "or above" brackets where overshoot is impossible.
+STOP_LOSS_RESPECT_FORECAST_OVERSHOOT = (
+    os.getenv("STOP_LOSS_RESPECT_FORECAST_OVERSHOOT", "true").lower() == "true"
+)
+
 # Entry margin filter: skip NO entries when the bracket sits within this many
 # degrees F of max(forecast high, current running high). Margin-bucket analysis
 # of 117 confirmed outcomes (May 27 - Jun 11): 0-2F margin = 27% loss rate,
