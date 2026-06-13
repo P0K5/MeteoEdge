@@ -36,6 +36,8 @@ sys.modules.setdefault("py_clob_client_v2", _clob_stub)
 sys.modules.setdefault("py_clob_client_v2.clob_types", _clob_types_stub)
 
 from src.execution.order_manager import OrderManager  # noqa: E402
+import src.data.polymarket  # noqa: E402  -- pre-load so patch("src.data.polymarket.get_orderbook") is reliable
+import src.scripts.run  # noqa: E402  -- pre-load so patch("src.scripts.run.*") is reliable
 
 
 # ---------------------------------------------------------------------------
