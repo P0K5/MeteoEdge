@@ -779,11 +779,11 @@ class Database:
             """
             SELECT
                 station,
-                COUNT(*)                                                       AS trade_count,
-                SUM(CASE WHEN outcome='filled' THEN 1 ELSE 0 END)             AS filled_count,
-                SUM(CASE WHEN outcome='filled' AND pnl > 0 THEN 1 ELSE 0 END) AS win_count,
-                SUM(COALESCE(pnl, 0))                                          AS total_pnl,
-                MAX(ts)                                                         AS last_trade_ts
+                COUNT(*)                                                                        AS trade_count,
+                SUM(CASE WHEN outcome='filled' AND COALESCE(pnl,0) != 0 THEN 1 ELSE 0 END)    AS filled_count,
+                SUM(CASE WHEN outcome='filled' AND pnl > 0 THEN 1 ELSE 0 END)                  AS win_count,
+                SUM(COALESCE(pnl, 0))                                                           AS total_pnl,
+                MAX(ts)                                                                         AS last_trade_ts
             FROM trades
             GROUP BY station
             """
@@ -792,7 +792,7 @@ class Database:
         for row in cur.fetchall():
             filled = row["filled_count"] or 0
             win_count = row["win_count"] or 0
-            win_rate = round(win_count / filled, 4) if filled else 0.0
+            win_rate = round(win_count / filled, 4) if filled else None
             result[row["station"]] = {
                 "trade_count": row["trade_count"],
                 "filled_count": filled,

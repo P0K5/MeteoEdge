@@ -255,7 +255,7 @@ class StationOverviewOut(BaseModel):
     enabled: bool
     trade_count: int
     filled_count: int
-    win_rate: float
+    win_rate: float | None
     total_pnl: float
     last_trade_ts: str | None
     open_positions_count: int
@@ -1105,7 +1105,7 @@ def stations_overview() -> list[StationOverviewOut]:
             enabled=enabled,
             trade_count=stats.get("trade_count", 0),
             filled_count=stats.get("filled_count", 0),
-            win_rate=stats.get("win_rate", 0.0),
+            win_rate=stats.get("win_rate"),
             total_pnl=stats.get("total_pnl", 0.0),
             last_trade_ts=stats.get("last_trade_ts"),
             open_positions_count=open_positions_count,
