@@ -160,6 +160,12 @@ CREATE TABLE IF NOT EXISTS emos_calibration (
     trained_at          TEXT,
     UNIQUE(city, model_mode)
 );
+
+CREATE TABLE IF NOT EXISTS emos_mode_override (
+    city            TEXT PRIMARY KEY,
+    effective_mode  TEXT NOT NULL,
+    updated_at      TEXT NOT NULL
+);
 """
 
 
@@ -798,3 +804,76 @@ class Database:
             "a": row[0], "b": row[1], "c": row[2], "d": row[3],
             "crps_score": row[4], "ready_for_promotion": row[5], "trained_at": row[6],
         }
+
+    def get_all_emos_calibration(self) -> list[dict]:
+        """Return all rows from emos_calibration, one dict per (city, model_mode) pair."""
+        cur = self._conn.execute(
+            "SELECT city, model_mode, a, b, c, d, crps_score, ready_for_promotion, trained_at "
+            "FROM emos_calibration ORDER BY city, model_mode"
+        )
+        return [dict(row) for row in cur.fetchall()]
+
+    def get_settled_days_available(self, station: str) -> int:
+        """Return count of distinct dates in model_forecast_log joined to observations for a station.
+
+        A "settled day" is a date where a forecast exists AND a METAR observation
+        (source='metar') also exists, meaning the actual high can be determined.
+        """
+        cur = self._conn.execute(
+            """
+            SELECT COUNT(DISTINCT mfl.date)
+            FROM model_forecast_log mfl
+            WHERE mfl.station = ?
+              AND EXISTS (
+                  SELECT 1 FROM observations o
+                  WHERE o.station = ?
+                    AND o.source = 'metar'
+                    AND DATE(o.ts) = mfl.date
+              )
+            """,
+            (station, station),
+        )
+        row = cur.fetchone()
+        return int(row[0]) if row else 0
+
+    def get_emos_effective_mode(self, city: str) -> "str | None":
+        """Return the effective EMOS mode override for a city, or None if not set."""
+        cur = self._conn.execute(
+            "SELECT effective_mode FROM emos_mode_override WHERE city=?",
+            (city,),
+        )
+        row = cur.fetchone()
+        return row[0] if row else None
+
+    def set_emos_effective_mode(self, city: str, effective_mode: str) -> None:
+        """Upsert the effective EMOS mode for a city."""
+        with self._lock:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO emos_mode_override(city, effective_mode, updated_at) "
+                "VALUES(?, ?, ?)",
+                (city, effective_mode, self._now()),
+            )
+            self._conn.commit()
+
+    def toggle_emos_ready_for_promotion(self, city: str) -> "int | None":
+        """Toggle ready_for_promotion (0 ↔ 1) on the emos_shadow row for city.
+
+        Returns the new value (0 or 1), or None if no shadow row exists.
+        """
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT ready_for_promotion FROM emos_calibration "
+                "WHERE city=? AND model_mode='emos_shadow'",
+                (city,),
+            )
+            row = cur.fetchone()
+            if row is None:
+                return None
+            new_val = 0 if row[0] else 1
+            self._conn.execute(
+                "UPDATE emos_calibration SET ready_for_promotion=? "
+                "WHERE city=? AND model_mode='emos_shadow'",
+                (new_val, city),
+            )
+            self._conn.commit()
+        return new_val

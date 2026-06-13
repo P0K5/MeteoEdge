@@ -48,7 +48,7 @@ from py_clob_client_v2.clob_types import BookParams
 from src.config import (
     POLYMARKET_GAMMA_API, STATIONS, LIVE_TRADES_JSONL, SNAPSHOTS_JSONL,
     POSITION_SNAPSHOTS_JSONL, LOG_DIR, STARTING_CAPITAL_EUR,
-    STATION_ACTIVE_HOURS, DISABLED_STATIONS,
+    STATION_ACTIVE_HOURS, DISABLED_STATIONS, EMOS_DEFAULT_MODE,
 )
 from src.data.db import Database
 from src.data.nws import fetch_nws_forecast_high
@@ -168,7 +168,7 @@ app = FastAPI(title="MeteoEdge Dashboard", version="1.0.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_methods=["GET"],
+    allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
 
@@ -258,6 +258,71 @@ class StationOverviewOut(BaseModel):
     open_positions_count: int
     last_obs_ts: str | None
     status: Literal["active", "outside_hours", "no_data", "disabled"]
+
+
+class EmosCoefficients(BaseModel):
+    a: float
+    b: float
+    c: float
+    d: float
+    crps_score: float | None = None
+    trained_at: str | None = None
+    ready_for_promotion: bool
+
+
+class EmosCityStatus(BaseModel):
+    city: str
+    metar: str
+    effective_mode: str
+    shadow: EmosCoefficients | None = None
+    primary: EmosCoefficients | None = None
+    settled_days_available: int
+    min_settled_days_required: int
+
+
+# ---------------------------------------------------------------------------
+# EMOS helpers
+# ---------------------------------------------------------------------------
+
+_EMOS_MIN_SETTLED_DAYS = 60
+
+_CITY_TO_STATION: dict[str, str] = {
+    city: station for station, _lat, _lon, city, *_ in STATIONS
+}
+
+_STATION_TO_CITY: dict[str, str] = {v: k for k, v in _CITY_TO_STATION.items()}
+
+
+def _emos_row_to_coefficients(row: dict) -> EmosCoefficients:
+    return EmosCoefficients(
+        a=float(row["a"]),
+        b=float(row["b"]),
+        c=float(row["c"]),
+        d=float(row["d"]),
+        crps_score=float(row["crps_score"]) if row.get("crps_score") is not None else None,
+        trained_at=row.get("trained_at"),
+        ready_for_promotion=bool(row.get("ready_for_promotion", 0)),
+    )
+
+
+def _get_emos_city_status(city: str, station: str, calibration_by_city: dict) -> EmosCityStatus:
+    city_rows = calibration_by_city.get(city, {})
+    shadow_row = city_rows.get("emos_shadow")
+    primary_row = city_rows.get("emos_primary")
+    shadow = _emos_row_to_coefficients(shadow_row) if shadow_row else None
+    primary = _emos_row_to_coefficients(primary_row) if primary_row else None
+    settled = _db.get_settled_days_available(station) if _db is not None else 0
+    override = _db.get_emos_effective_mode(city) if _db is not None else None
+    effective_mode = override if override is not None else EMOS_DEFAULT_MODE
+    return EmosCityStatus(
+        city=city,
+        metar=station,
+        effective_mode=effective_mode,
+        shadow=shadow,
+        primary=primary,
+        settled_days_available=settled,
+        min_settled_days_required=_EMOS_MIN_SETTLED_DAYS,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1058,6 +1123,154 @@ def position_snapshots(token_id: str) -> list[dict]:
     except OSError as e:
         logger.warning("position_snapshots.jsonl read error: %s", e)
     return result
+
+
+# ---------------------------------------------------------------------------
+# EMOS management endpoints
+# ---------------------------------------------------------------------------
+
+@app.get("/api/emos/status", response_model=list[EmosCityStatus])
+def emos_status() -> list[EmosCityStatus]:
+    """Return EMOS calibration state for all cities defined in STATIONS.
+
+    For each city, reports the effective mode, shadow/primary calibration rows,
+    settled day count, and the minimum required before promotion.
+    """
+    if _db is None:
+        raise HTTPException(status_code=503, detail="Database not initialised")
+
+    # Load all emos_calibration rows once and group by city + model_mode
+    all_rows = _db.get_all_emos_calibration()
+    calibration_by_city: dict[str, dict[str, dict]] = {}
+    for row in all_rows:
+        city_key = row["city"]
+        mode_key = row["model_mode"]
+        calibration_by_city.setdefault(city_key, {})[mode_key] = row
+
+    result = []
+    for station, _lat, _lon, city, *_ in STATIONS:
+        status = _get_emos_city_status(city, station, calibration_by_city)
+        result.append(status)
+    return result
+
+
+def _resolve_city(city: str) -> tuple[str, str]:
+    """Resolve a URL city name to (canonical_city, station).
+
+    Performs a case-insensitive lookup against STATIONS. Raises 404 if not found.
+    The URL may use URL-encoded spaces (FastAPI decodes them automatically).
+    """
+    city_lower = city.lower()
+    for station, _lat, _lon, cfg_city, *_ in STATIONS:
+        if cfg_city.lower() == city_lower:
+            return cfg_city, station
+    raise HTTPException(status_code=404, detail=f"Unknown city: {city!r}")
+
+
+@app.post("/api/emos/{city}/promote", response_model=EmosCityStatus)
+def emos_promote(city: str) -> EmosCityStatus:
+    """Promote the emos_shadow row to emos_primary for a city.
+
+    Preconditions (409 if not met):
+    - A shadow row exists in emos_calibration for the city
+    - ready_for_promotion = 1
+
+    Action: copies shadow coefficients to a new/updated emos_primary row,
+    then sets effective mode to 'emos_primary'.
+
+    Returns the updated EmosCityStatus for the city.
+    """
+    if _db is None:
+        raise HTTPException(status_code=503, detail="Database not initialised")
+
+    canonical_city, station = _resolve_city(city)
+
+    shadow = _db.get_emos_coefficients(canonical_city, "emos_shadow")
+    if shadow is None:
+        raise HTTPException(
+            status_code=409,
+            detail=f"No shadow calibration row for city '{canonical_city}'",
+        )
+    if not shadow.get("ready_for_promotion"):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Shadow row for '{canonical_city}' is not ready for promotion "
+                f"(ready_for_promotion=0). Use POST /api/emos/{city}/mark-ready first."
+            ),
+        )
+
+    # Copy shadow → primary
+    _db.upsert_emos_coefficients(
+        city=canonical_city,
+        model_mode="emos_primary",
+        a=shadow["a"],
+        b=shadow["b"],
+        c=shadow["c"],
+        d=shadow["d"],
+        crps_score=shadow.get("crps_score"),
+        trained_at=shadow.get("trained_at"),
+        ready_for_promotion=0,
+    )
+    _db.set_emos_effective_mode(canonical_city, "emos_primary")
+
+    # Build and return updated status
+    all_rows = _db.get_all_emos_calibration()
+    calibration_by_city: dict[str, dict[str, dict]] = {}
+    for row in all_rows:
+        calibration_by_city.setdefault(row["city"], {})[row["model_mode"]] = row
+    return _get_emos_city_status(canonical_city, station, calibration_by_city)
+
+
+@app.post("/api/emos/{city}/demote", response_model=EmosCityStatus)
+def emos_demote(city: str) -> EmosCityStatus:
+    """Roll back to legacy mode for a city (idempotent).
+
+    Sets the effective mode to 'legacy'. Does not delete any calibration rows.
+    Safe to call regardless of current effective mode.
+
+    Returns the updated EmosCityStatus for the city.
+    """
+    if _db is None:
+        raise HTTPException(status_code=503, detail="Database not initialised")
+
+    canonical_city, station = _resolve_city(city)
+
+    _db.set_emos_effective_mode(canonical_city, "legacy")
+
+    all_rows = _db.get_all_emos_calibration()
+    calibration_by_city: dict[str, dict[str, dict]] = {}
+    for row in all_rows:
+        calibration_by_city.setdefault(row["city"], {})[row["model_mode"]] = row
+    return _get_emos_city_status(canonical_city, station, calibration_by_city)
+
+
+@app.post("/api/emos/{city}/mark-ready", response_model=EmosCityStatus)
+def emos_mark_ready(city: str) -> EmosCityStatus:
+    """Toggle ready_for_promotion (0 ↔ 1) on the shadow row for a city.
+
+    This is an administrative flag the operator sets after reviewing CRPS scores.
+    Returns 409 if no shadow row exists for the city.
+
+    Returns the updated EmosCityStatus for the city.
+    """
+    if _db is None:
+        raise HTTPException(status_code=503, detail="Database not initialised")
+
+    canonical_city, station = _resolve_city(city)
+
+    new_val = _db.toggle_emos_ready_for_promotion(canonical_city)
+    if new_val is None:
+        raise HTTPException(
+            status_code=409,
+            detail=f"No shadow calibration row for city '{canonical_city}'",
+        )
+
+    all_rows = _db.get_all_emos_calibration()
+    calibration_by_city: dict[str, dict[str, dict]] = {}
+    for row in all_rows:
+        calibration_by_city.setdefault(row["city"], {})[row["model_mode"]] = row
+    return _get_emos_city_status(canonical_city, station, calibration_by_city)
 
 
 # Mount static files last so /api routes take priority

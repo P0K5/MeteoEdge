@@ -572,3 +572,355 @@ class TestStationsOverviewEndpoint:
         resp2 = client.get("/api/stations/overview")
         assert resp1.status_code == 200
         assert resp1.json() == resp2.json()
+
+
+# ---------------------------------------------------------------------------
+# EMOS management API endpoints (issue #232)
+# ---------------------------------------------------------------------------
+
+class TestEmosStatusEndpoint:
+    """Tests for GET /api/emos/status."""
+
+    def _setup_db(self):
+        from src.data.db import Database
+        return Database(":memory:")
+
+    def test_returns_list_for_all_cities(self, client):
+        """Status endpoint returns one entry per city in STATIONS."""
+        from src.config import STATIONS
+        db = self._setup_db()
+        original = dash_api._db
+        try:
+            dash_api.set_db(db)
+            resp = client.get("/api/emos/status")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert isinstance(data, list)
+            assert len(data) == len(STATIONS)
+        finally:
+            dash_api.set_db(original)
+
+    def test_status_response_keys(self, client):
+        """Each status entry has the required keys."""
+        db = self._setup_db()
+        original = dash_api._db
+        try:
+            dash_api.set_db(db)
+            resp = client.get("/api/emos/status")
+            assert resp.status_code == 200
+            item = resp.json()[0]
+            for key in ("city", "metar", "effective_mode", "shadow", "primary",
+                        "settled_days_available", "min_settled_days_required"):
+                assert key in item, f"Missing key: {key}"
+        finally:
+            dash_api.set_db(original)
+
+    def test_status_shadow_null_when_no_calibration(self, client):
+        """shadow and primary are null when no calibration rows exist."""
+        db = self._setup_db()
+        original = dash_api._db
+        try:
+            dash_api.set_db(db)
+            resp = client.get("/api/emos/status")
+            assert resp.status_code == 200
+            for item in resp.json():
+                assert item["shadow"] is None
+                assert item["primary"] is None
+        finally:
+            dash_api.set_db(original)
+
+    def test_status_shadow_populated(self, client):
+        """shadow block is populated when a shadow calibration row exists."""
+        db = self._setup_db()
+        db.upsert_emos_coefficients(
+            city="Chicago", model_mode="emos_shadow",
+            a=-0.5, b=1.02, c=0.8, d=0.95,
+            crps_score=1.72, trained_at="2026-05-01T00:00:00Z",
+            ready_for_promotion=1,
+        )
+        original = dash_api._db
+        try:
+            dash_api.set_db(db)
+            resp = client.get("/api/emos/status")
+            assert resp.status_code == 200
+            data = resp.json()
+            chicago = next(d for d in data if d["city"] == "Chicago")
+            assert chicago["shadow"] is not None
+            assert chicago["shadow"]["a"] == pytest.approx(-0.5)
+            assert chicago["shadow"]["crps_score"] == pytest.approx(1.72)
+            assert chicago["shadow"]["ready_for_promotion"] is True
+            assert chicago["primary"] is None
+        finally:
+            dash_api.set_db(original)
+
+    def test_status_effective_mode_from_config_default(self, client):
+        """effective_mode defaults to EMOS_DEFAULT_MODE when no override is set."""
+        from src.config import EMOS_DEFAULT_MODE
+        db = self._setup_db()
+        original = dash_api._db
+        try:
+            dash_api.set_db(db)
+            resp = client.get("/api/emos/status")
+            data = resp.json()
+            for item in data:
+                assert item["effective_mode"] == EMOS_DEFAULT_MODE
+        finally:
+            dash_api.set_db(original)
+
+    def test_status_503_when_db_none(self, client):
+        """Returns 503 when _db is None."""
+        original = dash_api._db
+        try:
+            dash_api._db = None
+            resp = client.get("/api/emos/status")
+            assert resp.status_code == 503
+        finally:
+            dash_api._db = original
+
+
+class TestEmosPromoteEndpoint:
+    """Tests for POST /api/emos/{city}/promote."""
+
+    def _setup_db(self):
+        from src.data.db import Database
+        return Database(":memory:")
+
+    def _insert_shadow(self, db, city="Chicago", ready=1):
+        db.upsert_emos_coefficients(
+            city=city, model_mode="emos_shadow",
+            a=-0.4, b=1.03, c=0.81, d=0.97,
+            crps_score=1.61, trained_at="2026-05-28T00:00:00Z",
+            ready_for_promotion=ready,
+        )
+
+    def test_promote_happy_path(self, client):
+        """Promote succeeds when shadow exists and ready_for_promotion=1."""
+        db = self._setup_db()
+        self._insert_shadow(db, "Chicago", ready=1)
+        original = dash_api._db
+        try:
+            dash_api.set_db(db)
+            resp = client.post("/api/emos/Chicago/promote")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["city"] == "Chicago"
+            assert data["effective_mode"] == "emos_primary"
+            assert data["primary"] is not None
+            assert data["primary"]["a"] == pytest.approx(-0.4)
+        finally:
+            dash_api.set_db(original)
+
+    def test_promote_409_no_shadow(self, client):
+        """Promote returns 409 when no shadow row exists."""
+        db = self._setup_db()
+        original = dash_api._db
+        try:
+            dash_api.set_db(db)
+            resp = client.post("/api/emos/Chicago/promote")
+            assert resp.status_code == 409
+        finally:
+            dash_api.set_db(original)
+
+    def test_promote_409_not_ready(self, client):
+        """Promote returns 409 when shadow exists but ready_for_promotion=0."""
+        db = self._setup_db()
+        self._insert_shadow(db, "Chicago", ready=0)
+        original = dash_api._db
+        try:
+            dash_api.set_db(db)
+            resp = client.post("/api/emos/Chicago/promote")
+            assert resp.status_code == 409
+        finally:
+            dash_api.set_db(original)
+
+    def test_promote_404_unknown_city(self, client):
+        """Promote returns 404 for an unknown city name."""
+        db = self._setup_db()
+        original = dash_api._db
+        try:
+            dash_api.set_db(db)
+            resp = client.post("/api/emos/NotACity/promote")
+            assert resp.status_code == 404
+        finally:
+            dash_api.set_db(original)
+
+    def test_promote_url_encoded_city(self, client):
+        """Promote works with URL-encoded city names (spaces → %20)."""
+        db = self._setup_db()
+        db.upsert_emos_coefficients(
+            city="Kuala Lumpur", model_mode="emos_shadow",
+            a=0.1, b=1.0, c=0.5, d=1.0,
+            crps_score=2.0, trained_at="2026-05-01T00:00:00Z",
+            ready_for_promotion=1,
+        )
+        original = dash_api._db
+        try:
+            dash_api.set_db(db)
+            resp = client.post("/api/emos/Kuala%20Lumpur/promote")
+            assert resp.status_code == 200
+            assert resp.json()["city"] == "Kuala Lumpur"
+        finally:
+            dash_api.set_db(original)
+
+
+class TestEmosDemoteEndpoint:
+    """Tests for POST /api/emos/{city}/demote."""
+
+    def _setup_db(self):
+        from src.data.db import Database
+        return Database(":memory:")
+
+    def test_demote_sets_legacy_mode(self, client):
+        """Demote sets effective mode to legacy."""
+        db = self._setup_db()
+        # First set it to emos_primary
+        db.set_emos_effective_mode("Chicago", "emos_primary")
+        original = dash_api._db
+        try:
+            dash_api.set_db(db)
+            resp = client.post("/api/emos/Chicago/demote")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["city"] == "Chicago"
+            assert data["effective_mode"] == "legacy"
+        finally:
+            dash_api.set_db(original)
+
+    def test_demote_is_idempotent(self, client):
+        """Demote is safe to call when already in legacy mode."""
+        db = self._setup_db()
+        original = dash_api._db
+        try:
+            dash_api.set_db(db)
+            # Call twice
+            resp1 = client.post("/api/emos/Chicago/demote")
+            resp2 = client.post("/api/emos/Chicago/demote")
+            assert resp1.status_code == 200
+            assert resp2.status_code == 200
+            assert resp2.json()["effective_mode"] == "legacy"
+        finally:
+            dash_api.set_db(original)
+
+    def test_demote_404_unknown_city(self, client):
+        """Demote returns 404 for an unknown city name."""
+        db = self._setup_db()
+        original = dash_api._db
+        try:
+            dash_api.set_db(db)
+            resp = client.post("/api/emos/Nowhere/demote")
+            assert resp.status_code == 404
+        finally:
+            dash_api.set_db(original)
+
+    def test_demote_does_not_delete_calibration(self, client):
+        """Demote preserves shadow/primary calibration rows."""
+        db = self._setup_db()
+        db.upsert_emos_coefficients(
+            city="Chicago", model_mode="emos_shadow",
+            a=-0.4, b=1.03, c=0.81, d=0.97,
+            crps_score=1.61, trained_at="2026-05-28T00:00:00Z",
+            ready_for_promotion=1,
+        )
+        db.upsert_emos_coefficients(
+            city="Chicago", model_mode="emos_primary",
+            a=-0.4, b=1.03, c=0.81, d=0.97,
+            crps_score=1.61, trained_at="2026-05-28T00:00:00Z",
+            ready_for_promotion=0,
+        )
+        original = dash_api._db
+        try:
+            dash_api.set_db(db)
+            resp = client.post("/api/emos/Chicago/demote")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["shadow"] is not None, "Shadow row should be preserved after demote"
+            assert data["primary"] is not None, "Primary row should be preserved after demote"
+        finally:
+            dash_api.set_db(original)
+
+
+class TestEmosMarkReadyEndpoint:
+    """Tests for POST /api/emos/{city}/mark-ready."""
+
+    def _setup_db(self):
+        from src.data.db import Database
+        return Database(":memory:")
+
+    def test_mark_ready_toggles_0_to_1(self, client):
+        """mark-ready toggles ready_for_promotion from 0 to 1."""
+        db = self._setup_db()
+        db.upsert_emos_coefficients(
+            city="Chicago", model_mode="emos_shadow",
+            a=-0.4, b=1.03, c=0.81, d=0.97,
+            crps_score=1.61, trained_at="2026-05-28T00:00:00Z",
+            ready_for_promotion=0,
+        )
+        original = dash_api._db
+        try:
+            dash_api.set_db(db)
+            resp = client.post("/api/emos/Chicago/mark-ready")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["shadow"]["ready_for_promotion"] is True
+        finally:
+            dash_api.set_db(original)
+
+    def test_mark_ready_toggles_1_to_0(self, client):
+        """mark-ready toggles ready_for_promotion from 1 back to 0."""
+        db = self._setup_db()
+        db.upsert_emos_coefficients(
+            city="Chicago", model_mode="emos_shadow",
+            a=-0.4, b=1.03, c=0.81, d=0.97,
+            crps_score=1.61, trained_at="2026-05-28T00:00:00Z",
+            ready_for_promotion=1,
+        )
+        original = dash_api._db
+        try:
+            dash_api.set_db(db)
+            resp = client.post("/api/emos/Chicago/mark-ready")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["shadow"]["ready_for_promotion"] is False
+        finally:
+            dash_api.set_db(original)
+
+    def test_mark_ready_409_no_shadow(self, client):
+        """mark-ready returns 409 when no shadow row exists."""
+        db = self._setup_db()
+        original = dash_api._db
+        try:
+            dash_api.set_db(db)
+            resp = client.post("/api/emos/Chicago/mark-ready")
+            assert resp.status_code == 409
+        finally:
+            dash_api.set_db(original)
+
+    def test_mark_ready_404_unknown_city(self, client):
+        """mark-ready returns 404 for unknown city."""
+        db = self._setup_db()
+        original = dash_api._db
+        try:
+            dash_api.set_db(db)
+            resp = client.post("/api/emos/Nowhere/mark-ready")
+            assert resp.status_code == 404
+        finally:
+            dash_api.set_db(original)
+
+    def test_mark_ready_double_toggle_round_trips(self, client):
+        """Calling mark-ready twice returns to the original state."""
+        db = self._setup_db()
+        db.upsert_emos_coefficients(
+            city="Miami", model_mode="emos_shadow",
+            a=0.0, b=1.0, c=0.5, d=1.0,
+            crps_score=2.0, trained_at="2026-05-01T00:00:00Z",
+            ready_for_promotion=0,
+        )
+        original = dash_api._db
+        try:
+            dash_api.set_db(db)
+            resp1 = client.post("/api/emos/Miami/mark-ready")
+            assert resp1.json()["shadow"]["ready_for_promotion"] is True
+            resp2 = client.post("/api/emos/Miami/mark-ready")
+            assert resp2.json()["shadow"]["ready_for_promotion"] is False
+        finally:
+            dash_api.set_db(original)
