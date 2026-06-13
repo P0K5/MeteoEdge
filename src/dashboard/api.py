@@ -697,6 +697,7 @@ def _positions_from_wallet() -> tuple[list[PositionOut], list[ClosedPositionOut]
                 shares=round(shares, 4),
                 closed_at=str(row.get("endDate") or ""),
                 token_id=token_id,
+                exit_reason="won" if is_win else "lost",
             ))
         else:
             # Active position
