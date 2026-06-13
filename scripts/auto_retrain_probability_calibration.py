@@ -28,10 +28,12 @@ from pathlib import Path
 from src.config import STATIONS
 from src.data.db import Database
 from src.model.crps_score import mean_crps
-
-
-class InsufficientDataError(Exception):
-    """Raised when a city has fewer training samples than the minimum required."""
+from src.model.emos_calibration import (
+    InsufficientDataError,
+    fetch_training_data,
+    fit_emos,
+    save_coefficients,
+)
 
 
 def _check_not_on_vps() -> None:
@@ -54,109 +56,6 @@ def _check_not_on_vps() -> None:
 def get_all_cities() -> list:
     """Return list of city names from the STATIONS config."""
     return [cfg[3] for cfg in STATIONS]
-
-
-def fetch_training_data(
-    city: str,
-    db: Database,
-    min_samples: int = 60,
-) -> list:
-    """Fetch (mu, sigma, y) training triples for a city from the DB.
-
-    Pulls from the emos_training_data table (or equivalent source).
-    Each row must have: forecast_mu, forecast_sigma, observed_temp.
-
-    Args:
-        city: City name (as in STATIONS config).
-        db: Database instance pointing to a local SQLite snapshot.
-        min_samples: Minimum number of triples required; raises InsufficientDataError if fewer.
-
-    Returns:
-        List of (mu, sigma, y) tuples ordered by timestamp ascending.
-
-    Raises:
-        InsufficientDataError: If fewer than min_samples rows are found.
-    """
-    cur = db._conn.execute(
-        """
-        SELECT forecast_mu, forecast_sigma, observed_temp
-        FROM emos_training_data
-        WHERE city = ?
-        ORDER BY ts ASC
-        """,
-        (city,),
-    )
-    rows = cur.fetchall()
-    triples = [(float(r[0]), float(r[1]), float(r[2])) for r in rows]
-    if len(triples) < min_samples:
-        raise InsufficientDataError(
-            f"{city}: only {len(triples)} samples (need {min_samples})"
-        )
-    return triples
-
-
-def fit_emos(data: list) -> tuple:
-    """Fit EMOS linear regression coefficients from (mu, sigma, y) triples.
-
-    EMOS model: calibrated_mu = a + b*mu, calibrated_sigma = c + d*sigma
-    Coefficients are fitted by minimising mean CRPS via gradient-free
-    Nelder-Mead optimisation.
-
-    Args:
-        data: List of (mu, sigma, y) tuples — raw NWP forecasts and observations.
-
-    Returns:
-        Tuple (a, b, c, d) of fitted EMOS coefficients.
-    """
-    from scipy.optimize import minimize  # optional dependency — only needed here
-
-    def _objective(params):
-        a, b, c, d = params
-        calibrated = [(a + b * mu, max(c + d * sigma, 1e-6), y) for mu, sigma, y in data]
-        score = mean_crps(calibrated)
-        return score if score is not None else float("inf")
-
-    # Initialise at identity: no-op transformation
-    x0 = [0.0, 1.0, 0.0, 1.0]
-    bounds = [
-        (None, None),  # a — intercept for mu (unrestricted)
-        (None, None),  # b — slope for mu (unrestricted)
-        (0.0, None),   # c — intercept for sigma (must keep sigma > 0)
-        (0.0, None),   # d — slope for sigma (must keep sigma > 0)
-    ]
-    result = minimize(_objective, x0, method="Nelder-Mead", options={"maxiter": 5000, "xatol": 1e-6, "fatol": 1e-8})
-    a, b, c, d = result.x
-    return float(a), float(b), float(c), float(d)
-
-
-def save_coefficients(
-    city: str,
-    a: float,
-    b: float,
-    c: float,
-    d: float,
-    crps_score: float,
-    db: Database,
-) -> None:
-    """Persist EMOS coefficients to the DB in shadow mode (not yet promoted).
-
-    Args:
-        city: City name.
-        a, b, c, d: EMOS coefficients.
-        crps_score: Holdout CRPS used as the quality metric.
-        db: Database instance.
-    """
-    db.upsert_emos_coefficients(
-        city=city,
-        model_mode="emos_shadow",
-        a=a,
-        b=b,
-        c=c,
-        d=d,
-        crps_score=crps_score,
-        trained_at=datetime.now(timezone.utc).isoformat(),
-        ready_for_promotion=0,
-    )
 
 
 def main() -> None:
