@@ -351,7 +351,7 @@ CREATE INDEX idx_ic_city_date ON intraday_corrections(city, date);
 |--------|------|-------|----------|-------------|
 | `id` | INTEGER PRIMARY KEY | | No | Auto-increment row ID |
 | `city` | TEXT NOT NULL | city name | No | City (e.g., "Chicago", "Seoul") |
-| `model_mode` | TEXT NOT NULL | categorical | No | Model/mode: "nws", "open_meteo", or similar |
+| `model_mode` | TEXT NOT NULL | categorical | No | Deployment mode: `'legacy'` (existing Gaussian, default), `'emos_shadow'` (compute both, serve legacy), `'emos_primary'` (serve EMOS — requires `ready_for_promotion=1`) |
 | `a` | REAL NOT NULL | statistical coefficient | No | EMOS coefficient a (offset term) |
 | `b` | REAL NOT NULL | statistical coefficient | No | EMOS coefficient b (spread term) |
 | `c` | REAL NOT NULL | statistical coefficient | No | EMOS coefficient c (ensemble spread weight) |
