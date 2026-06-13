@@ -87,3 +87,7 @@ Thumbs.db
 
 # Claude Code agent worktrees (temporary, never commit)
 .claude/worktrees/
+
+# Generated retraining artifacts
+auto_retrain_report.json
+auto_retrain_report.tmp
