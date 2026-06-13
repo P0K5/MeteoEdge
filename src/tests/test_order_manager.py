@@ -412,11 +412,11 @@ class TestCheckTakeProfitExits:
         """best_bid >= predicted_price - buffer → sell is placed."""
         token = "tok-tp-1"
         fill = _make_fill(token, predicted_price=95)
-        # target = 95 - 2 = 93; bid 93 → should sell
-        trader = self._make_trader(sell_result=("sell-tp-1", 93))
+        # target = 95 - 2 = 93; bid 95 > 93 → should sell (bid clearly above target)
+        trader = self._make_trader(sell_result=("sell-tp-1", 95))
 
         with patch("src.data.polymarket.get_orderbook",
-                   return_value={"bids": [{"price": "0.93"}]}), \
+                   return_value={"bids": [{"price": "0.95"}]}), \
              patch("src.scripts.run._load_open_no_positions", return_value=[fill]), \
              patch("src.scripts.run._record_sell_in_db") as mock_record, \
              patch("src.scripts.run._append_live_trade") as mock_append:
