@@ -27,6 +27,7 @@ from src.config import (
     FORECAST_STDDEV_F,
     STOP_LOSS_MIN_BID_CENTS, STOP_LOSS_CONSECUTIVE_POLLS,
     STOP_LOSS_MIN_DEPTH_SHARES, STOP_LOSS_SELL_AGGRESSION_CENTS,
+    STOP_LOSS_MIN_BRACKET_PROXIMITY_F, STOP_LOSS_RESPECT_FORECAST_OVERSHOOT,
     get_source_priority,
 )
 from src.data.db import Database
@@ -428,6 +429,39 @@ def _check_stop_loss_exits(live_trader, ts: str, position_states: list,
                 "  [sl] [%s] %.0f-%.0fF fair %sc < entry %.0fc -- strike %s/%s",
                 station, bracket_low, bracket_high, fair, avg_entry_cents,
                 strikes, STOP_LOSS_CONSECUTIVE_POLLS,
+            )
+            continue
+
+        # Proximity guard: when the running daily high is still well below the
+        # bracket, an intraday fair-value crash is usually the model panicking
+        # on a temp spike that ends up overshooting. Hold; strikes persist so
+        # we can fire fast once the temp actually nears the bracket.
+        cur_high = snap.get("current_high")
+        if (STOP_LOSS_MIN_BRACKET_PROXIMITY_F > 0
+                and cur_high is not None
+                and cur_high < bracket_low - STOP_LOSS_MIN_BRACKET_PROXIMITY_F):
+            log.info(
+                "  [sl] [%s] %.0f-%.0fF triggered but current_high %.1fF still %.1fF"
+                " below bracket_low (> %.1fF buffer) -- holding",
+                station, bracket_low, bracket_high, cur_high,
+                bracket_low - cur_high, STOP_LOSS_MIN_BRACKET_PROXIMITY_F,
+            )
+            continue
+
+        # Overshoot guard: if any available forecast predicts the daily high
+        # to break above bracket_high, NO wins on overshoot -- the path through
+        # the bracket on the way higher is exactly the winning scenario.
+        forecast = snap.get("forecast_nws")
+        if forecast is None:
+            forecast = snap.get("forecast_secondary")
+        if (STOP_LOSS_RESPECT_FORECAST_OVERSHOOT
+                and forecast is not None
+                and bracket_high < 200
+                and forecast > bracket_high):
+            log.info(
+                "  [sl] [%s] %.0f-%.0fF triggered but forecast %.1fF > bracket_high"
+                " %.0fF (overshoot expected) -- holding",
+                station, bracket_low, bracket_high, forecast, bracket_high,
             )
             continue
 

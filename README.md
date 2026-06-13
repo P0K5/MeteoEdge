@@ -219,6 +219,8 @@ All configuration is controlled via environment variables (or defaults in `src/c
 - `STOP_LOSS_CONSECUTIVE_POLLS` — Polls in a row with model fair value below entry before the stop fires (default: 2)
 - `STOP_LOSS_MIN_DEPTH_SHARES` — Minimum best-bid depth (shares) required before selling into it (default: 10)
 - `STOP_LOSS_SELL_AGGRESSION_CENTS` — Stop-loss sell limit is priced this many cents through the best bid so it crosses immediately; unfilled orders are cancelled, never left resting (default: 2)
+- `STOP_LOSS_MIN_BRACKET_PROXIMITY_F` — Don't fire stop-loss while the running daily high is more than this many °F below bracket_low; prevents firing on intraday model panics when the temp is still well away from the bracket (default: 0.5; set ≤0 to disable)
+- `STOP_LOSS_RESPECT_FORECAST_OVERSHOOT` — When true, suppress stop-loss firing if forecast (NWS or secondary) exceeds bracket_high — NO wins on overshoot, so the dip is a false alarm (default: true)
 - `MIN_FORECAST_BRACKET_MARGIN_F` — Skip NO entries whose bracket is closer than this (°F) to the expected daily high (default: 2.5)
 - `DISABLED_STATIONS` — Comma-separated station codes excluded from new entries (default: RKSI)
 
