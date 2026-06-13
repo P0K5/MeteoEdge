@@ -340,6 +340,39 @@ CREATE INDEX idx_ic_city_date ON intraday_corrections(city, date);
 
 ---
 
+### emos_calibration
+
+**Purpose:** Store EMOS (Error Model Output Statistics) calibration coefficients for ensemble weather forecasts.
+
+**Writer:** EMOS calibration training pipeline (e.g., `src/model/emos_trainer.py`)  
+**Reader:** Forecast ensemble model for real-time probability adjustments
+
+| Column | Type | Units | Nullable | Description |
+|--------|------|-------|----------|-------------|
+| `id` | INTEGER PRIMARY KEY | | No | Auto-increment row ID |
+| `city` | TEXT NOT NULL | city name | No | City (e.g., "Chicago", "Seoul") |
+| `model_mode` | TEXT NOT NULL | categorical | No | Deployment mode: `'legacy'` (existing Gaussian, default), `'emos_shadow'` (compute both, serve legacy), `'emos_primary'` (serve EMOS — requires `ready_for_promotion=1`) |
+| `a` | REAL NOT NULL | statistical coefficient | No | EMOS coefficient a (offset term) |
+| `b` | REAL NOT NULL | statistical coefficient | No | EMOS coefficient b (spread term) |
+| `c` | REAL NOT NULL | statistical coefficient | No | EMOS coefficient c (ensemble spread weight) |
+| `d` | REAL NOT NULL | statistical coefficient | No | EMOS coefficient d (bias term) |
+| `crps_score` | REAL | continuous ranked probability | Yes | Continuous ranked probability skill score on validation set |
+| `ready_for_promotion` | INTEGER DEFAULT 0 | boolean (0/1) | No | Whether calibration is ready to promote to production |
+| `trained_at` | TEXT | ISO 8601 timestamp (UTC) | Yes | Timestamp when calibration was trained |
+
+**Unique Constraint:**
+```sql
+UNIQUE(city, model_mode)
+```
+
+**Notes:**
+- One row per (city, model_mode) pair. Updates replace the prior calibration.
+- EMOS post-processing corrects systematic forecast bias and improves probability estimates.
+- `crps_score` quantifies calibration quality; lower is better.
+- `ready_for_promotion` gates whether this calibration is safe to use in live forecasts.
+
+---
+
 ## Data Flow Diagram
 
 ```

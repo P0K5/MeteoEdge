@@ -146,6 +146,20 @@ CREATE TABLE IF NOT EXISTS intraday_corrections (
     PRIMARY KEY (city, date, obs_time)
 );
 CREATE INDEX IF NOT EXISTS idx_ic_city_date ON intraday_corrections(city, date);
+
+CREATE TABLE IF NOT EXISTS emos_calibration (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    city                TEXT NOT NULL,
+    model_mode          TEXT NOT NULL,
+    a                   REAL NOT NULL,
+    b                   REAL NOT NULL,
+    c                   REAL NOT NULL,
+    d                   REAL NOT NULL,
+    crps_score          REAL,
+    ready_for_promotion INTEGER DEFAULT 0,
+    trained_at          TEXT,
+    UNIQUE(city, model_mode)
+);
 """
 
 
@@ -687,3 +701,39 @@ class Database:
             (city, date),
         )
         return [dict(r) for r in cur.fetchall()]
+
+    # ------------------------------------------------------------------
+    # emos_calibration
+    # ------------------------------------------------------------------
+
+    def upsert_emos_coefficients(
+        self, *, city: str, model_mode: str,
+        a: float, b: float, c: float, d: float,
+        crps_score: "float | None" = None,
+        trained_at: "str | None" = None,
+        ready_for_promotion: int = 0,
+    ) -> None:
+        """Insert or replace EMOS calibration coefficients for a city/mode pair."""
+        with self._lock:
+            self._conn.execute(
+                """INSERT OR REPLACE INTO emos_calibration
+                   (city, model_mode, a, b, c, d, crps_score, ready_for_promotion, trained_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (city, model_mode, a, b, c, d, crps_score, ready_for_promotion, trained_at),
+            )
+            self._conn.commit()
+
+    def get_emos_coefficients(self, city: str, model_mode: str) -> "dict | None":
+        """Return EMOS coefficients dict for (city, model_mode), or None if not found."""
+        cur = self._conn.execute(
+            "SELECT a, b, c, d, crps_score, ready_for_promotion, trained_at "
+            "FROM emos_calibration WHERE city=? AND model_mode=?",
+            (city, model_mode),
+        )
+        row = cur.fetchone()
+        if row is None:
+            return None
+        return {
+            "a": row[0], "b": row[1], "c": row[2], "d": row[3],
+            "crps_score": row[4], "ready_for_promotion": row[5], "trained_at": row[6],
+        }
