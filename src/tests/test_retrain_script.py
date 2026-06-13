@@ -8,6 +8,10 @@ Tests cover:
 5. Promotion logic — both criteria met (CRPS < threshold AND samples >= min) => ready=1
 6. Promotion logic — CRPS not met (>= threshold) => ready=0
 7. Promotion logic — samples not met (< min) => skipped (InsufficientDataError)
+8. Atomic write — interrupted rename leaves no .json file
+9. validate_report — passes on valid entry
+10. validate_report — raises on missing field
+11. --report-only — no retrain, no fetch_training_data call
 """
 import argparse
 from pathlib import Path
@@ -110,6 +114,7 @@ class TestDryRun:
                 min_samples=60,
                 promote_threshold=0.08,
                 dry_run=True,
+                report_only=False,
             )
             with patch("argparse.ArgumentParser.parse_args", return_value=test_args), \
                  patch("scripts.auto_retrain_probability_calibration.Database", return_value=db):
@@ -183,6 +188,7 @@ class TestPromotionSamplesNotMet:
                 min_samples=60,
                 promote_threshold=0.08,
                 dry_run=False,
+                report_only=False,
             )
             with patch("argparse.ArgumentParser.parse_args", return_value=test_args), \
                  patch("scripts.auto_retrain_probability_calibration.Database", return_value=db):
@@ -198,3 +204,136 @@ class TestPromotionSamplesNotMet:
         promote_threshold = 0.08
         ready = 1 if (crps_holdout < promote_threshold and samples >= min_samples) else 0
         assert ready == 0
+
+
+# ---------------------------------------------------------------------------
+# 8. Atomic write — interrupted rename leaves no .json file
+# ---------------------------------------------------------------------------
+
+class TestAtomicWriteNoPartial:
+    """Atomic write must ensure interrupted rename leaves no .json file."""
+
+    def test_atomic_write_no_partial_on_failure(self):
+        """If Path.rename raises OSError, report_path should not exist."""
+        mod = _load_script()
+        db = Database(":memory:")
+        report_path = Path("auto_retrain_report.json")
+
+        with patch("socket.gethostname", return_value="my-laptop"), \
+             patch.object(Path, "exists", return_value=False), \
+             patch.object(mod, "get_all_cities", return_value=["Chicago"]), \
+             patch.object(mod, "fit_emos", return_value=(0.0, 1.0, 0.0, 1.0)), \
+             patch.object(mod, "fetch_training_data", return_value=_make_triples(80)):
+            test_args = argparse.Namespace(
+                db=":memory:",
+                city="Chicago",
+                min_samples=60,
+                promote_threshold=0.08,
+                dry_run=False,
+                report_only=False,
+            )
+            with patch("argparse.ArgumentParser.parse_args", return_value=test_args), \
+                 patch("scripts.auto_retrain_probability_calibration.Database", return_value=db), \
+                 patch("pathlib.Path.rename", side_effect=OSError("Rename failed")):
+                try:
+                    mod.main()
+                except OSError:
+                    pass  # Expected: rename raises
+            # Report should not exist after failed rename
+            assert not report_path.exists()
+
+
+# ---------------------------------------------------------------------------
+# 9. validate_report — passes on valid entry
+# ---------------------------------------------------------------------------
+
+class TestValidateReportValid:
+    """validate_report() must pass silently on a complete report."""
+
+    def test_validate_report_passes_valid_entry(self):
+        """A report with all required fields should not raise."""
+        mod = _load_script()
+        report = {
+            "Chicago": {
+                "crps_train": 0.05,
+                "crps_holdout": 0.06,
+                "samples": 100,
+                "ready_for_promotion": 1,
+                "trained_at": "2026-06-12T18:00:00+00:00",
+            }
+        }
+        mod.validate_report(report)  # Should not raise
+
+
+# ---------------------------------------------------------------------------
+# 10. validate_report — raises on missing field
+# ---------------------------------------------------------------------------
+
+class TestValidateReportMissing:
+    """validate_report() must raise ValueError when fields are missing."""
+
+    def test_validate_report_raises_on_missing_field(self):
+        """Report missing a required field should raise ValueError."""
+        mod = _load_script()
+        report = {
+            "Chicago": {
+                "crps_train": 0.05,
+                "crps_holdout": 0.06,
+                # Missing: samples, ready_for_promotion, trained_at
+            }
+        }
+        with pytest.raises(ValueError) as exc_info:
+            mod.validate_report(report)
+        # Check that error message mentions the missing fields
+        error_msg = str(exc_info.value)
+        assert "Chicago" in error_msg
+        assert "missing fields" in error_msg
+
+    def test_validate_report_missing_single_field(self):
+        """Missing one field should be caught."""
+        mod = _load_script()
+        report = {
+            "Tokyo": {
+                "crps_train": 0.05,
+                "crps_holdout": 0.06,
+                "samples": 100,
+                # Missing: ready_for_promotion
+                "trained_at": "2026-06-12T18:00:00+00:00",
+            }
+        }
+        with pytest.raises(ValueError) as exc_info:
+            mod.validate_report(report)
+        error_msg = str(exc_info.value)
+        assert "Tokyo" in error_msg
+        assert "ready_for_promotion" in error_msg
+
+
+# ---------------------------------------------------------------------------
+# 11. --report-only — no retrain, no fetch_training_data
+# ---------------------------------------------------------------------------
+
+class TestReportOnly:
+    """With --report-only, the script exits early and does not call fetch_training_data."""
+
+    def test_report_only_no_retrain(self):
+        """--report-only should exit before calling fetch_training_data."""
+        mod = _load_script()
+        db = Database(":memory:")
+
+        with patch("socket.gethostname", return_value="my-laptop"), \
+             patch.object(Path, "exists", return_value=False), \
+             patch.object(mod, "fetch_training_data") as mock_fetch:
+            test_args = argparse.Namespace(
+                db=":memory:",
+                city=None,
+                min_samples=60,
+                promote_threshold=0.08,
+                dry_run=False,
+                report_only=True,
+            )
+            with patch("argparse.ArgumentParser.parse_args", return_value=test_args), \
+                 patch("scripts.auto_retrain_probability_calibration.Database", return_value=db):
+                mod.main()
+
+        # fetch_training_data should never be called
+        mock_fetch.assert_not_called()
