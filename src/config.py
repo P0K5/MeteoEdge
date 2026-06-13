@@ -222,3 +222,79 @@ def _load_source_priority() -> dict:
 
 def get_source_priority(city: str) -> list[dict]:
     return _load_source_priority().get(city, [])
+
+
+# ------------------------------------------------------------------
+# DB-backed parameter store — config keys, defaults, and live access
+# ------------------------------------------------------------------
+
+# All editable config keys with their hardcoded defaults.
+# These must NOT include credentials, API keys, or STARTING_CAPITAL_EUR.
+CONFIG_DEFAULTS: "dict[str, str | int | float | bool]" = {
+    "MIN_EDGE_CENTS": 15.0,
+    "MAX_EDGE_CENTS": 20.0,
+    "MIN_PRICE_CENTS": 60,
+    "MIN_CONFIDENCE_YES": 0.85,
+    "MAX_CONFIDENCE_YES_FOR_NO": 0.05,
+    "ENABLE_YES_TRADES": False,
+    "MIN_FORECAST_BRACKET_MARGIN_F": 2.5,
+    "EMOS_DEFAULT_MODE": "legacy",
+    "DAILY_LOSS_LIMIT_EUR": 50.0,
+    "MAX_OPEN_POSITIONS": 15,
+    "DRAWDOWN_STOP_PCT": 0.15,
+    "MIN_MARKET_LIQUIDITY_SHARES": 50.0,
+    "POSITION_SIZE_EUR": 5.0,
+    "TAKE_PROFIT_BUFFER_CENTS": 2,
+    "STOP_LOSS_MIN_BID_CENTS": 40,
+    "STOP_LOSS_CONSECUTIVE_POLLS": 2,
+    "STOP_LOSS_MIN_DEPTH_SHARES": 10.0,
+    "POLL_INTERVAL_SECONDS": 300,
+    "MAX_MINUTES_TO_SETTLEMENT": 1440,
+    "MIN_MINUTES_TO_SETTLEMENT": 15,
+}
+
+
+def seed_config(db) -> None:
+    """Seed bot_config from env vars / hardcoded defaults on first run.
+
+    For each key in CONFIG_DEFAULTS:
+    - If no DB row exists: seed from env var (if set) or hardcoded default.
+    - If a row already exists: leave it alone — DB is authoritative.
+
+    Call once at process start before the first poll cycle.
+    """
+    for key, default in CONFIG_DEFAULTS.items():
+        existing = db.get_config(key)
+        if existing is None:
+            # First run — seed from env var if set, otherwise use hardcoded default
+            value = os.getenv(key, str(default))
+            db.set_config(key, value)
+
+
+def get_live_config(db) -> dict:
+    """Return current bot_config values as a typed dict.
+
+    Reads all rows from the bot_config table and casts each value to its
+    expected Python type.  Falls back to CONFIG_DEFAULTS for any key not
+    yet seeded (should not happen after seed_config() runs, but safe).
+    """
+    raw = db.get_all_config()
+    result: dict = {}
+    for key, default in CONFIG_DEFAULTS.items():
+        raw_val = raw.get(key, str(default))
+        if isinstance(default, bool):
+            result[key] = raw_val.lower() in ("true", "1", "yes")
+        elif isinstance(default, int):
+            try:
+                result[key] = int(raw_val)
+            except (ValueError, TypeError):
+                result[key] = default
+        elif isinstance(default, float):
+            try:
+                result[key] = float(raw_val)
+            except (ValueError, TypeError):
+                result[key] = default
+        else:
+            # str (covers EMOS_DEFAULT_MODE)
+            result[key] = raw_val
+    return result

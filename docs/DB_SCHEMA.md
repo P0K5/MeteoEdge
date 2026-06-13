@@ -12,6 +12,7 @@ The database is organized into these functional areas:
 4. **Risk State** — Daily P&L tracking
 5. **Model State** — Forecast logs, model weights, corrections
 6. **Market Metadata** — TAF windows for forecasting
+7. **Configuration** — DB-backed bot parameter store
 
 ---
 
@@ -370,6 +371,38 @@ UNIQUE(city, model_mode)
 - EMOS post-processing corrects systematic forecast bias and improves probability estimates.
 - `crps_score` quantifies calibration quality; lower is better.
 - `ready_for_promotion` gates whether this calibration is safe to use in live forecasts.
+
+---
+
+### bot_config
+
+**Purpose:** Persistent key-value store for operator-adjustable bot parameters. Values survive restarts and are authoritative over environment variables once seeded.
+
+**Writer:** `seed_config()` (startup, first run only) and `PATCH /api/config` (dashboard)
+**Reader:** `get_live_config()` (called each poll cycle), `GET /api/config` (dashboard)
+
+| Column | Type | Units | Nullable | Description |
+|--------|------|-------|----------|-------------|
+| `key` | TEXT PRIMARY KEY | | No | Parameter name (e.g., `MIN_EDGE_CENTS`, `POLL_INTERVAL_SECONDS`) |
+| `value` | TEXT NOT NULL | serialised string | No | Parameter value serialised as a string (cast to the correct type on read) |
+| `updated_at` | TEXT NOT NULL | ISO 8601 timestamp (UTC) | No | Timestamp of the last write |
+
+**DDL:**
+```sql
+CREATE TABLE IF NOT EXISTS bot_config (
+    key         TEXT PRIMARY KEY,
+    value       TEXT NOT NULL,
+    updated_at  TEXT NOT NULL
+);
+```
+
+**Notes:**
+- Seeded once at process start by `seed_config()` in `src/config.py`. Seeding only writes rows that do not yet exist — existing rows are never overwritten on restart.
+- Env vars are only consulted during the very first seed. After that, DB values are authoritative.
+- `STARTING_CAPITAL_EUR`, credentials, and API keys are NOT stored here.
+- `EMOS_DEFAULT_MODE` is an enum — only `legacy`, `emos_shadow`, `emos_primary` are valid values.
+- All 20 editable parameters are listed in `CONFIG_DEFAULTS` in `src/config.py`.
+- The bot reads live values via `get_live_config(db)` on each poll cycle, so parameter changes take effect within one poll interval — no restart needed.
 
 ---
 

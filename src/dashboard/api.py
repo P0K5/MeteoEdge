@@ -49,6 +49,7 @@ from src.config import (
     POLYMARKET_GAMMA_API, STATIONS, LIVE_TRADES_JSONL, SNAPSHOTS_JSONL,
     POSITION_SNAPSHOTS_JSONL, LOG_DIR, STARTING_CAPITAL_EUR,
     STATION_ACTIVE_HOURS, DISABLED_STATIONS, EMOS_DEFAULT_MODE,
+    CONFIG_DEFAULTS, get_live_config,
 )
 from src.data.db import Database
 from src.data.nws import fetch_nws_forecast_high
@@ -1271,6 +1272,288 @@ def emos_mark_ready(city: str) -> EmosCityStatus:
     for row in all_rows:
         calibration_by_city.setdefault(row["city"], {})[row["model_mode"]] = row
     return _get_emos_city_status(canonical_city, station, calibration_by_city)
+
+
+# ---------------------------------------------------------------------------
+# Config API — DB-backed parameter store
+# ---------------------------------------------------------------------------
+
+# Full parameter metadata: description, type, group, optional bounds.
+# Keys match CONFIG_DEFAULTS in src/config.py exactly.
+_CONFIG_META: dict[str, dict] = {
+    "MIN_EDGE_CENTS": {
+        "description": "Minimum required edge to enter a trade (¢)",
+        "type": "float",
+        "group": "strategy",
+        "min": 1.0,
+        "max": 50.0,
+    },
+    "MAX_EDGE_CENTS": {
+        "description": "Maximum edge — above this, adverse selection risk",
+        "type": "float",
+        "group": "strategy",
+        "min": 1.0,
+        "max": 50.0,
+    },
+    "MIN_PRICE_CENTS": {
+        "description": "Minimum market price to enter a trade (¢)",
+        "type": "int",
+        "group": "strategy",
+        "min": 1,
+        "max": 99,
+    },
+    "MIN_CONFIDENCE_YES": {
+        "description": "Minimum model confidence for YES-side entries",
+        "type": "float",
+        "group": "strategy",
+        "min": 0.5,
+        "max": 1.0,
+    },
+    "MAX_CONFIDENCE_YES_FOR_NO": {
+        "description": "Maximum p(YES) allowed for NO-side entries",
+        "type": "float",
+        "group": "strategy",
+        "min": 0.0,
+        "max": 0.5,
+    },
+    "ENABLE_YES_TRADES": {
+        "description": "Allow YES-side entries",
+        "type": "bool",
+        "group": "strategy",
+    },
+    "MIN_FORECAST_BRACKET_MARGIN_F": {
+        "description": "Minimum margin (°F) between forecast high and bracket boundary",
+        "type": "float",
+        "group": "strategy",
+        "min": 0.0,
+        "max": 10.0,
+    },
+    "EMOS_DEFAULT_MODE": {
+        "description": "EMOS deployment mode fallback when no calibration row exists",
+        "type": "enum",
+        "group": "strategy",
+        "options": ["legacy", "emos_shadow", "emos_primary"],
+    },
+    "DAILY_LOSS_LIMIT_EUR": {
+        "description": "Maximum daily loss before trading halts (€)",
+        "type": "float",
+        "group": "risk",
+        "min": 1.0,
+        "max": 500.0,
+    },
+    "MAX_OPEN_POSITIONS": {
+        "description": "Maximum number of simultaneous open positions",
+        "type": "int",
+        "group": "risk",
+        "min": 1,
+        "max": 50,
+    },
+    "DRAWDOWN_STOP_PCT": {
+        "description": "Drawdown fraction that halts trading for the day",
+        "type": "float",
+        "group": "risk",
+        "min": 0.01,
+        "max": 1.0,
+    },
+    "MIN_MARKET_LIQUIDITY_SHARES": {
+        "description": "Minimum shares at best bid/ask required to enter",
+        "type": "float",
+        "group": "risk",
+        "min": 1.0,
+        "max": 500.0,
+    },
+    "POSITION_SIZE_EUR": {
+        "description": "Notional size per trade (€)",
+        "type": "float",
+        "group": "position",
+        "min": 1.0,
+        "max": 100.0,
+    },
+    "TAKE_PROFIT_BUFFER_CENTS": {
+        "description": "Exit when bid reaches predicted_price minus this buffer (¢)",
+        "type": "int",
+        "group": "position",
+        "min": 0,
+        "max": 20,
+    },
+    "STOP_LOSS_MIN_BID_CENTS": {
+        "description": "Only stop-loss sell when bid is at or above this floor (¢)",
+        "type": "int",
+        "group": "position",
+        "min": 1,
+        "max": 99,
+    },
+    "STOP_LOSS_CONSECUTIVE_POLLS": {
+        "description": "Number of consecutive polls fair_value < entry required to trigger stop-loss",
+        "type": "int",
+        "group": "position",
+        "min": 1,
+        "max": 10,
+    },
+    "STOP_LOSS_MIN_DEPTH_SHARES": {
+        "description": "Minimum shares at best bid to avoid spoof-triggered stop-loss",
+        "type": "float",
+        "group": "position",
+        "min": 1.0,
+        "max": 100.0,
+    },
+    "POLL_INTERVAL_SECONDS": {
+        "description": "Seconds between poll cycles",
+        "type": "int",
+        "group": "timing",
+        "min": 30,
+        "max": 3600,
+    },
+    "MAX_MINUTES_TO_SETTLEMENT": {
+        "description": "Skip markets with more than this many minutes to settlement",
+        "type": "int",
+        "group": "timing",
+        "min": 60,
+        "max": 2880,
+    },
+    "MIN_MINUTES_TO_SETTLEMENT": {
+        "description": "Skip markets with fewer than this many minutes to settlement",
+        "type": "int",
+        "group": "timing",
+        "min": 1,
+        "max": 60,
+    },
+}
+
+_EMOS_VALID_MODES = frozenset({"legacy", "emos_shadow", "emos_primary"})
+
+
+class ConfigPatchRequest(BaseModel):
+    key: str
+    value: Any
+
+
+def _validate_config_value(key: str, raw_value: Any) -> "tuple[str, str | None]":
+    """Validate and coerce *raw_value* for *key*.
+
+    Returns ``(serialised_str, None)`` on success or ``('', error_message)`` on
+    failure.
+    """
+    meta = _CONFIG_META.get(key)
+    if meta is None:
+        return "", f"Unknown config key: {key!r}"
+
+    param_type = meta["type"]
+    try:
+        if param_type == "bool":
+            if isinstance(raw_value, bool):
+                coerced: Any = raw_value
+            elif isinstance(raw_value, str):
+                coerced = raw_value.lower() in ("true", "1", "yes")
+            else:
+                coerced = bool(raw_value)
+            return str(coerced).lower(), None
+
+        if param_type == "int":
+            coerced = int(raw_value)
+            lo = meta.get("min")
+            hi = meta.get("max")
+            if lo is not None and coerced < lo:
+                return "", f"{key} must be >= {lo}, got {coerced}"
+            if hi is not None and coerced > hi:
+                return "", f"{key} must be <= {hi}, got {coerced}"
+            return str(coerced), None
+
+        if param_type == "float":
+            coerced = float(raw_value)
+            lo = meta.get("min")
+            hi = meta.get("max")
+            if lo is not None and coerced < lo:
+                return "", f"{key} must be >= {lo}, got {coerced}"
+            if hi is not None and coerced > hi:
+                return "", f"{key} must be <= {hi}, got {coerced}"
+            return str(coerced), None
+
+        if param_type == "enum":
+            val = str(raw_value)
+            allowed = set(meta.get("options", []))
+            if key == "EMOS_DEFAULT_MODE":
+                allowed = _EMOS_VALID_MODES
+            if val not in allowed:
+                return "", f"{key} must be one of {sorted(allowed)}, got {val!r}"
+            return val, None
+
+    except (ValueError, TypeError) as exc:
+        return "", f"Invalid value for {key} ({param_type}): {exc}"
+
+    return "", f"Unsupported type {param_type!r} for {key}"
+
+
+def _typed_value(key: str, raw: str) -> Any:
+    """Cast raw DB string to the correct Python type for the API response."""
+    meta = _CONFIG_META.get(key, {})
+    param_type = meta.get("type", "str")
+    if param_type == "bool":
+        return raw.lower() in ("true", "1", "yes")
+    if param_type == "int":
+        try:
+            return int(raw)
+        except (ValueError, TypeError):
+            return raw
+    if param_type == "float":
+        try:
+            return float(raw)
+        except (ValueError, TypeError):
+            return raw
+    return raw
+
+
+def _build_param_entry(key: str, raw: str) -> dict:
+    """Build the parameter object returned by GET /api/config."""
+    meta = _CONFIG_META.get(key, {})
+    entry: dict = {
+        "value": _typed_value(key, raw),
+        "description": meta.get("description", ""),
+        "type": meta.get("type", "str"),
+    }
+    if "min" in meta:
+        entry["min"] = meta["min"]
+    if "max" in meta:
+        entry["max"] = meta["max"]
+    if "options" in meta:
+        entry["options"] = meta["options"]
+    return entry
+
+
+@app.get("/api/config")
+def get_config() -> dict:
+    """Return all editable bot parameters with their current DB values, grouped by category."""
+    live = get_live_config(_db)
+    # Build nested dict grouped by category
+    result: dict[str, dict] = {}
+    for key in CONFIG_DEFAULTS:
+        meta = _CONFIG_META.get(key, {})
+        group = meta.get("group", "other")
+        raw = str(live.get(key, CONFIG_DEFAULTS[key]))
+        if group not in result:
+            result[group] = {}
+        result[group][key] = _build_param_entry(key, raw)
+    return result
+
+
+@app.patch("/api/config")
+def patch_config(req: ConfigPatchRequest) -> dict:
+    """Update a single bot parameter.
+
+    Validates key existence, type, and bounds. Writes to the bot_config table.
+    Returns the updated parameter object or a 400 error on validation failure.
+    """
+    key = req.key
+    if key not in CONFIG_DEFAULTS:
+        raise HTTPException(status_code=400, detail=f"Unknown config key: {key!r}")
+
+    serialised, err = _validate_config_value(key, req.value)
+    if err:
+        raise HTTPException(status_code=400, detail=err)
+
+    _db.set_config(key, serialised)
+
+    return _build_param_entry(key, serialised)
 
 
 # Mount static files last so /api routes take priority
