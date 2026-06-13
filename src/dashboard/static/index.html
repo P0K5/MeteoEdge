@@ -466,6 +466,80 @@ a,button,input,select{transition:color var(--transition),background var(--transi
 .btn-toggle.loading .spinner{display:inline-block;}
 .btn-toggle.loading .btn-toggle-label{display:none;}
 @keyframes spin{to{transform:rotate(360deg);}}
+
+/* ── EMOS CARDS ── */
+.emos-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-xl);margin-bottom:var(--space-4);box-shadow:var(--sh-sm);overflow:hidden;transition:box-shadow var(--transition);border-left:3px solid transparent;}
+.emos-card:hover{box-shadow:var(--sh-md);}
+.emos-card.mode-legacy{border-left-color:var(--muted);}
+.emos-card.mode-shadow{border-left-color:var(--warn);}
+.emos-card.mode-primary{border-left-color:var(--yes);}
+.emos-header{padding:var(--space-4) var(--space-5);display:flex;align-items:center;gap:var(--space-4);}
+.emos-header-left{flex:1;min-width:0;display:flex;align-items:center;gap:var(--space-3);}
+.emos-names{min-width:0;}
+.emos-city{font-size:var(--text-base);font-weight:700;}
+.emos-metar{font-size:var(--text-xs);color:var(--muted);margin-top:2px;}
+.badge-legacy{background:var(--surface-off);color:var(--muted);}
+.badge-legacy .status-dot{background:var(--muted);}
+.badge-shadow{background:var(--warn-bg);color:var(--warn);}
+.badge-shadow .status-dot{background:var(--warn);}
+.badge-primary{background:var(--yes-bg);color:var(--yes);}
+.badge-primary .status-dot{background:var(--yes);}
+.emos-progress{padding:0 var(--space-5) var(--space-3);}
+.emos-progress-label{font-size:var(--text-xs);color:var(--muted);margin-bottom:6px;display:flex;justify-content:space-between;}
+.emos-progress-bar{height:6px;border-radius:var(--radius-full);background:var(--surface-off);overflow:hidden;}
+.emos-progress-fill{height:100%;border-radius:var(--radius-full);background:var(--yes);transition:width 0.4s ease;}
+.emos-progress-fill.incomplete{background:var(--warn);}
+.emos-crps{padding:0 var(--space-5) var(--space-3);display:flex;gap:var(--space-6);flex-wrap:wrap;font-size:var(--text-xs);color:var(--muted);}
+.emos-crps strong{color:var(--text);font-weight:600;}
+.emos-footer{padding:var(--space-3) var(--space-5);border-top:1px solid var(--divider);background:var(--surface-2);display:flex;align-items:center;justify-content:flex-end;gap:var(--space-3);flex-wrap:wrap;}
+.btn-emos{padding:5px 14px;border-radius:var(--radius-md);font-size:var(--text-xs);font-weight:700;border:1px solid var(--border);display:inline-flex;align-items:center;gap:6px;transition:background var(--transition),color var(--transition),border-color var(--transition);}
+.btn-emos:disabled{opacity:.5;cursor:default;}
+.btn-emos.btn-promote{background:var(--yes-bg);color:var(--yes);border-color:var(--yes-dim);}
+.btn-emos.btn-promote:hover:not(:disabled){background:var(--yes-dim);}
+.btn-emos.btn-demote{background:var(--no-bg);color:var(--no);border-color:var(--no-dim);}
+.btn-emos.btn-demote:hover:not(:disabled){background:var(--no-dim);}
+.btn-emos.btn-ready{background:var(--surface-off);color:var(--muted);border-color:var(--border);}
+.btn-emos.btn-ready.active{background:var(--warn-bg);color:var(--warn);border-color:var(--warn);}
+.btn-emos.btn-ready:hover:not(:disabled){background:var(--surface-dyn);color:var(--text);}
+.btn-emos.btn-confirm{background:var(--warn);color:var(--inverse);border-color:var(--warn);}
+.btn-emos.btn-confirm:hover:not(:disabled){opacity:.85;}
+.btn-emos.btn-cancel{background:var(--surface-off);color:var(--muted);border-color:var(--border);}
+.btn-emos.btn-cancel:hover:not(:disabled){background:var(--surface-dyn);color:var(--text);}
+
+/* ── CONFIG GROUPS ── */
+.config-hint{font-size:var(--text-xs);color:var(--muted);align-self:center;}
+.config-group{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-xl);margin-bottom:var(--space-4);overflow:hidden;}
+.config-group-hdr{padding:var(--space-4) var(--space-5);display:flex;align-items:center;justify-content:space-between;cursor:pointer;user-select:none;transition:background var(--transition);}
+.config-group-hdr:hover{background:var(--surface-2);}
+.config-group-title{font-weight:700;font-size:var(--text-sm);display:flex;align-items:center;gap:var(--space-2);}
+.config-group-chevron{transition:transform var(--transition);color:var(--muted);}
+.config-group.collapsed .config-group-chevron{transform:rotate(-90deg);}
+.config-group-body{border-top:1px solid var(--divider);}
+.config-group.collapsed .config-group-body{display:none;}
+.config-param{padding:var(--space-4) var(--space-5);border-bottom:1px solid var(--divider);display:flex;align-items:center;gap:var(--space-4);}
+.config-param:last-child{border-bottom:none;}
+.config-param-info{flex:1;min-width:0;}
+.config-param-key{font-size:var(--text-xs);font-weight:700;font-family:var(--font-mono);color:var(--text);}
+.config-param-desc{font-size:var(--text-xs);color:var(--muted);margin-top:2px;}
+.config-err{font-size:var(--text-xs);color:var(--no);margin-top:2px;min-height:1em;}
+.config-param-ctrl{display:flex;align-items:center;gap:var(--space-2);flex-shrink:0;}
+.config-val{font-size:var(--text-sm);font-weight:600;font-family:var(--font-mono);}
+.config-edit-input{padding:4px 8px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--surface-2);color:var(--text);font-family:var(--font-mono);font-size:var(--text-xs);width:90px;}
+.config-edit-input:focus{outline:none;border-color:var(--primary);}
+.config-edit-select{padding:4px 8px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--surface-2);color:var(--text);font-family:var(--font-mono);font-size:var(--text-xs);}
+.config-edit-select:focus{outline:none;border-color:var(--primary);}
+.btn-cfg{padding:4px 10px;border-radius:var(--radius-sm);font-size:var(--text-xs);font-weight:700;border:1px solid var(--border);cursor:pointer;transition:background var(--transition),color var(--transition);}
+.btn-cfg:disabled{opacity:.5;cursor:default;}
+.btn-cfg.btn-edit{background:var(--surface-off);color:var(--muted);}
+.btn-cfg.btn-edit:hover:not(:disabled){background:var(--surface-dyn);color:var(--text);}
+.btn-cfg.btn-save{background:var(--yes-bg);color:var(--yes);border-color:var(--yes-dim);}
+.btn-cfg.btn-save:hover:not(:disabled){background:var(--yes-dim);}
+.btn-cfg.btn-cancel{background:var(--surface-off);color:var(--muted);}
+.btn-cfg.btn-cancel:hover:not(:disabled){background:var(--surface-dyn);color:var(--text);}
+.bool-toggle{width:36px;height:20px;border-radius:10px;background:var(--surface-off);border:2px solid var(--border);position:relative;cursor:pointer;transition:background var(--transition),border-color var(--transition);flex-shrink:0;}
+.bool-toggle.on{background:var(--yes);border-color:var(--yes);}
+.bool-toggle::after{content:'';position:absolute;top:2px;left:2px;width:12px;height:12px;border-radius:50%;background:#fff;transition:left var(--transition);}
+.bool-toggle.on::after{left:18px;}
 </style>
 </head>
 <body>
@@ -581,10 +655,20 @@ a,button,input,select{transition:color var(--transition),background var(--transi
 <!-- ── EMOS TAB ── -->
 <section id="tab-emos" class="tab-panel">
   <main class="main">
-    <div class="empty">
-      <i data-lucide="gauge"></i>
-      <h3>EMOS</h3>
-      <p>Environmental monitoring and observation system data will appear here.</p>
+    <div class="error-banner" id="emos-error-banner">
+      <i data-lucide="alert-circle"></i>
+      <span id="emos-error-text">Could not reach /api/emos/status — retrying…</span>
+    </div>
+    <div class="section-hdr">
+      <div class="section-title"><i data-lucide="gauge"></i>EMOS Calibration</div>
+      <span class="count-pill" id="emos-count">—</span>
+    </div>
+    <div id="emos-list">
+      <div class="empty">
+        <i data-lucide="loader"></i>
+        <h3>Loading EMOS status…</h3>
+        <p>Fetching calibration state from the API.</p>
+      </div>
     </div>
   </main>
 </section>
@@ -592,10 +676,20 @@ a,button,input,select{transition:color var(--transition),background var(--transi
 <!-- ── CONFIG TAB ── -->
 <section id="tab-config" class="tab-panel">
   <main class="main">
-    <div class="empty">
-      <i data-lucide="settings"></i>
-      <h3>Config</h3>
-      <p>Configuration and settings will appear here.</p>
+    <div class="error-banner" id="config-error-banner">
+      <i data-lucide="alert-circle"></i>
+      <span id="config-error-text">Could not reach /api/config — retrying…</span>
+    </div>
+    <div class="section-hdr">
+      <div class="section-title"><i data-lucide="settings"></i>Bot Configuration</div>
+      <span class="config-hint">Changes apply on next poll cycle</span>
+    </div>
+    <div id="config-groups">
+      <div class="empty">
+        <i data-lucide="loader"></i>
+        <h3>Loading configuration…</h3>
+        <p>Fetching bot parameters from the API.</p>
+      </div>
     </div>
   </main>
 </section>
@@ -1380,6 +1474,377 @@ async function toggleStation(metar, btn) {
 }
 
 /* ─────────────────────────────────────────
+   EMOS TAB
+   ───────────────────────────────────────── */
+let emosLoaded = false;
+let emosIntervalId = null;
+let _emosData = [];
+
+function _emosModeClass(mode) {
+  if (mode === 'emos_shadow') return 'mode-shadow';
+  if (mode === 'emos_primary') return 'mode-primary';
+  return 'mode-legacy';
+}
+
+function _emosModeBadge(mode) {
+  const map = {
+    legacy: ['legacy', 'Legacy'],
+    emos_shadow: ['shadow', 'Shadow'],
+    emos_primary: ['primary', 'Primary'],
+  };
+  const [cls, label] = map[mode] || ['legacy', mode];
+  return `<span class="status-badge badge-${cls}"><span class="status-dot"></span>${label}</span>`;
+}
+
+function _emosCitySlug(city) {
+  return city.toLowerCase().replace(/\s+/g, '-');
+}
+
+function _fmtCrps(v) {
+  return v != null ? Number(v).toFixed(4) : '—';
+}
+
+function renderEmosCard(s) {
+  const slug = _emosCitySlug(s.city);
+  const pct = s.min_settled_days_required > 0
+    ? Math.min(100, Math.round(s.settled_days_available / s.min_settled_days_required * 100))
+    : 100;
+  const fillClass = pct >= 100 ? '' : ' incomplete';
+
+  let crpsHTML = '';
+  if (s.shadow || s.primary) {
+    crpsHTML = '<div class="emos-crps">';
+    if (s.shadow) crpsHTML += `<span>Shadow CRPS: <strong>${_fmtCrps(s.shadow.crps_score)}</strong></span>`;
+    if (s.primary) crpsHTML += `<span>Primary CRPS: <strong>${_fmtCrps(s.primary.crps_score)}</strong></span>`;
+    if (s.shadow && s.shadow.trained_at) {
+      crpsHTML += `<span>Trained: <strong>${s.shadow.trained_at.split('T')[0]}</strong></span>`;
+    }
+    crpsHTML += '</div>';
+  }
+
+  let footerHTML = '';
+  if (s.shadow) {
+    const readyActive = s.shadow.ready_for_promotion ? ' active' : '';
+    const readyLabel = s.shadow.ready_for_promotion ? 'Ready ✓' : 'Mark ready';
+    footerHTML += `<button class="btn-emos btn-ready${readyActive}" onclick="emosMarkReady('${s.city}', this)">${readyLabel}</button>`;
+    if (s.shadow.ready_for_promotion) {
+      footerHTML += `<button class="btn-emos btn-promote" onclick="emosConfirm('${s.city}', 'promote', this)">Promote →</button>`;
+    }
+  }
+  if (s.effective_mode !== 'legacy') {
+    footerHTML += `<button class="btn-emos btn-demote" onclick="emosConfirm('${s.city}', 'demote', this)">Demote to legacy</button>`;
+  }
+  if (!footerHTML) {
+    footerHTML = '<span style="font-size:var(--text-xs);color:var(--muted)">No actions available</span>';
+  }
+
+  return `<div class="emos-card ${_emosModeClass(s.effective_mode)}" id="emos-card-${slug}">
+  <div class="emos-header">
+    <div class="emos-header-left">
+      ${_emosModeBadge(s.effective_mode)}
+      <div class="emos-names">
+        <div class="emos-city">${s.city}</div>
+        <div class="emos-metar">${s.metar}</div>
+      </div>
+    </div>
+  </div>
+  <div class="emos-progress">
+    <div class="emos-progress-label"><span>Settled days</span><span>${s.settled_days_available} / ${s.min_settled_days_required}</span></div>
+    <div class="emos-progress-bar"><div class="emos-progress-fill${fillClass}" style="width:${pct}%"></div></div>
+  </div>
+  ${crpsHTML}
+  <div class="emos-footer" id="emos-footer-${slug}">${footerHTML}</div>
+</div>`;
+}
+
+function renderEmos(cities) {
+  const listEl = document.getElementById('emos-list');
+  const countEl = document.getElementById('emos-count');
+  document.getElementById('emos-error-banner').classList.remove('visible');
+
+  if (!cities || !cities.length) {
+    countEl.textContent = '0';
+    listEl.innerHTML = '<div class="empty"><i data-lucide="gauge"></i><h3>No cities configured</h3></div>';
+    lucide.createIcons();
+    return;
+  }
+
+  countEl.textContent = cities.length;
+  listEl.innerHTML = cities.map(renderEmosCard).join('');
+  lucide.createIcons();
+}
+
+async function fetchEmos() {
+  const banner = document.getElementById('emos-error-banner');
+  try {
+    const r = await fetch('/api/emos/status');
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    _emosData = await r.json();
+    renderEmos(_emosData);
+  } catch (e) {
+    banner.classList.add('visible');
+    document.getElementById('emos-error-text').textContent =
+      `Fetch failed (${e.message}) — retrying in 5 min`;
+    console.error('EMOS fetch failed:', e);
+  }
+}
+
+function _emosReplaceCard(updated) {
+  _emosData = _emosData.map(d => d.city === updated.city ? updated : d);
+  const slug = _emosCitySlug(updated.city);
+  const cardEl = document.getElementById('emos-card-' + slug);
+  if (!cardEl) return;
+  const tmp = document.createElement('div');
+  tmp.innerHTML = renderEmosCard(updated);
+  cardEl.replaceWith(tmp.firstElementChild);
+  lucide.createIcons();
+}
+
+async function emosMarkReady(city, btn) {
+  if (btn.disabled) return;
+  btn.disabled = true;
+  try {
+    const r = await fetch(`/api/emos/${encodeURIComponent(city)}/mark-ready`, { method: 'POST' });
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({}));
+      console.warn(`mark-ready ${city} failed:`, body.detail || r.status);
+      return;
+    }
+    _emosReplaceCard(await r.json());
+  } catch (e) {
+    console.error('mark-ready failed:', e);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function emosConfirm(city, action, _btn) {
+  const slug = _emosCitySlug(city);
+  const footerEl = document.getElementById('emos-footer-' + slug);
+  if (!footerEl) return;
+  const orig = footerEl.innerHTML;
+  footerEl.setAttribute('data-orig', orig);
+  const label = action === 'promote' ? 'Promote to primary' : 'Demote to legacy';
+  footerEl.innerHTML = `
+    <span style="font-size:var(--text-xs);color:var(--muted);flex:1">Confirm: ${label}?</span>
+    <button class="btn-emos btn-cancel"
+      onclick="document.getElementById('emos-footer-${slug}').innerHTML=document.getElementById('emos-footer-${slug}').getAttribute('data-orig')">Cancel</button>
+    <button class="btn-emos btn-confirm" onclick="emosDoAction('${city}','${action}',this)">Confirm</button>`;
+}
+
+async function emosDoAction(city, action, btn) {
+  btn.disabled = true;
+  if (btn.previousElementSibling) btn.previousElementSibling.disabled = true;
+  try {
+    const r = await fetch(`/api/emos/${encodeURIComponent(city)}/${action}`, { method: 'POST' });
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({}));
+      console.warn(`EMOS ${action} ${city} failed:`, body.detail || r.status);
+      await fetchEmos();
+      return;
+    }
+    _emosReplaceCard(await r.json());
+  } catch (e) {
+    console.error(`EMOS ${action} failed:`, e);
+    await fetchEmos();
+  }
+}
+
+/* ─────────────────────────────────────────
+   CONFIG TAB
+   ───────────────────────────────────────── */
+let configLoaded = false;
+let _configData = {};
+
+const _CFG_GROUP_LABELS = { strategy: 'Strategy', risk: 'Risk', position: 'Position Sizing', timing: 'Timing' };
+const _CFG_GROUP_ICONS = { strategy: 'trending-up', risk: 'shield', position: 'layers', timing: 'clock' };
+
+function _renderConfigParam(key, param) {
+  let ctrlHTML;
+  if (param.type === 'bool') {
+    const onClass = param.value ? ' on' : '';
+    ctrlHTML = `<div class="bool-toggle${onClass}" id="cfgtoggle-${key}" onclick="configToggleBool('${key}',this)"></div>`;
+  } else if (param.type === 'enum') {
+    const opts = (param.options || []).map(o =>
+      `<option value="${o}"${o === param.value ? ' selected' : ''}>${o}</option>`
+    ).join('');
+    ctrlHTML = `<select class="config-edit-select" data-prev="${param.value}" onchange="configSaveEnum('${key}',this)">${opts}</select>`;
+  } else {
+    ctrlHTML = `
+      <span class="config-val" id="cfgval-${key}">${param.value}</span>
+      <button class="btn-cfg btn-edit" onclick="configStartEdit('${key}',this)" title="Edit"><i data-lucide="pencil" style="width:12px;height:12px"></i></button>`;
+  }
+  return `<div class="config-param" id="cfgparam-${key}">
+  <div class="config-param-info">
+    <div class="config-param-key">${key}</div>
+    <div class="config-param-desc">${param.description}</div>
+    <div class="config-err" id="cfgerr-${key}"></div>
+  </div>
+  <div class="config-param-ctrl" id="cfgctrl-${key}">${ctrlHTML}</div>
+</div>`;
+}
+
+function _renderConfigGroups(data) {
+  const order = ['strategy', 'risk', 'position', 'timing'];
+  let html = '';
+  for (const group of order) {
+    if (!data[group]) continue;
+    const label = _CFG_GROUP_LABELS[group] || group;
+    const icon = _CFG_GROUP_ICONS[group] || 'settings';
+    const params = Object.entries(data[group]).map(([k, p]) => _renderConfigParam(k, p)).join('');
+    html += `<div class="config-group" id="cfggroup-${group}">
+  <div class="config-group-hdr" onclick="configToggleGroup('${group}')">
+    <div class="config-group-title"><i data-lucide="${icon}" style="width:16px;height:16px"></i>${label}</div>
+    <i data-lucide="chevron-down" class="config-group-chevron" style="width:16px;height:16px"></i>
+  </div>
+  <div class="config-group-body">${params}</div>
+</div>`;
+  }
+  return html;
+}
+
+function renderConfig(data) {
+  _configData = data;
+  const groupsEl = document.getElementById('config-groups');
+  document.getElementById('config-error-banner').classList.remove('visible');
+
+  if (!data || !Object.keys(data).length) {
+    groupsEl.innerHTML = '<div class="empty"><i data-lucide="settings"></i><h3>No configuration available</h3></div>';
+    lucide.createIcons();
+    return;
+  }
+
+  groupsEl.innerHTML = _renderConfigGroups(data);
+  lucide.createIcons();
+}
+
+async function fetchConfig() {
+  const banner = document.getElementById('config-error-banner');
+  try {
+    const r = await fetch('/api/config');
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    renderConfig(await r.json());
+  } catch (e) {
+    banner.classList.add('visible');
+    document.getElementById('config-error-text').textContent =
+      `Fetch failed (${e.message}) — retrying in 5 min`;
+    console.error('Config fetch failed:', e);
+  }
+}
+
+function configToggleGroup(group) {
+  document.getElementById('cfggroup-' + group).classList.toggle('collapsed');
+}
+
+function _cfgFindParam(key) {
+  for (const group of Object.values(_configData)) {
+    if (group[key] !== undefined) return group[key];
+  }
+  return null;
+}
+
+async function _patchConfig(key, value) {
+  const errEl = document.getElementById('cfgerr-' + key);
+  if (errEl) errEl.textContent = '';
+  try {
+    const r = await fetch('/api/config', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key, value }),
+    });
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({}));
+      if (errEl) errEl.textContent = body.detail || `Error ${r.status}`;
+      return null;
+    }
+    return await r.json();
+  } catch (e) {
+    if (errEl) errEl.textContent = 'Network error';
+    return null;
+  }
+}
+
+async function configToggleBool(key, el) {
+  const wasOn = el.classList.contains('on');
+  el.classList.toggle('on', !wasOn);
+  const result = await _patchConfig(key, !wasOn);
+  if (!result) el.classList.toggle('on', wasOn);
+  else {
+    for (const group of Object.values(_configData)) {
+      if (group[key] !== undefined) { group[key] = result; break; }
+    }
+  }
+}
+
+async function configSaveEnum(key, sel) {
+  const prev = sel.getAttribute('data-prev') || sel.value;
+  sel.disabled = true;
+  const result = await _patchConfig(key, sel.value);
+  sel.disabled = false;
+  if (!result) {
+    sel.value = prev;
+  } else {
+    sel.setAttribute('data-prev', sel.value);
+    for (const group of Object.values(_configData)) {
+      if (group[key] !== undefined) { group[key] = result; break; }
+    }
+  }
+}
+
+function configStartEdit(key, _btn) {
+  const ctrlEl = document.getElementById('cfgctrl-' + key);
+  if (!ctrlEl) return;
+  const param = _cfgFindParam(key);
+  const cur = param ? String(param.value) : '';
+  ctrlEl.innerHTML = `
+    <input class="config-edit-input" id="cfginput-${key}" value="${cur}" type="text">
+    <button class="btn-cfg btn-save" onclick="configSaveEdit('${key}',this)">Save</button>
+    <button class="btn-cfg btn-cancel" onclick="configCancelEdit('${key}')">✕</button>`;
+  const inp = document.getElementById('cfginput-' + key);
+  inp.focus();
+  inp.select();
+  inp.addEventListener('keydown', e => {
+    if (e.key === 'Enter') configSaveEdit(key, inp.nextElementSibling);
+    if (e.key === 'Escape') configCancelEdit(key);
+  });
+}
+
+async function configSaveEdit(key, btn) {
+  btn.disabled = true;
+  const inp = document.getElementById('cfginput-' + key);
+  const raw = inp ? inp.value.trim() : '';
+  const param = _cfgFindParam(key);
+  let value = raw;
+  if (param) {
+    if (param.type === 'int') value = parseInt(raw, 10);
+    else if (param.type === 'float') value = parseFloat(raw);
+  }
+  const result = await _patchConfig(key, value);
+  if (result) {
+    for (const group of Object.values(_configData)) {
+      if (group[key] !== undefined) { group[key] = result; break; }
+    }
+    _configRestoreCtrl(key, result);
+  } else {
+    btn.disabled = false;
+  }
+}
+
+function configCancelEdit(key) {
+  const param = _cfgFindParam(key);
+  if (param) _configRestoreCtrl(key, param);
+}
+
+function _configRestoreCtrl(key, param) {
+  const ctrlEl = document.getElementById('cfgctrl-' + key);
+  if (!ctrlEl) return;
+  ctrlEl.innerHTML = `
+    <span class="config-val" id="cfgval-${key}">${param.value}</span>
+    <button class="btn-cfg btn-edit" onclick="configStartEdit('${key}',this)" title="Edit"><i data-lucide="pencil" style="width:12px;height:12px"></i></button>`;
+  lucide.createIcons();
+}
+
+/* ─────────────────────────────────────────
    TAB MANAGEMENT
    ───────────────────────────────────────── */
 let currentTab = 'portfolio';
@@ -1419,6 +1884,12 @@ function switchTab(tab) {
     }
   }
 
+  // Stop EMOS polling when leaving EMOS tab
+  if (currentTab === 'emos' && tab !== 'emos') {
+    clearInterval(emosIntervalId);
+    emosIntervalId = null;
+  }
+
   currentTab = tab;
 
   // Start portfolio polling when entering Portfolio tab
@@ -1437,6 +1908,25 @@ function switchTab(tab) {
     }
     if (!stationsIntervalId) {
       stationsIntervalId = setInterval(fetchStations, 300_000);
+    }
+  }
+
+  // Lazy-load EMOS on first activation; poll every 5 minutes
+  if (tab === 'emos') {
+    if (!emosLoaded) {
+      emosLoaded = true;
+      fetchEmos();
+    }
+    if (!emosIntervalId) {
+      emosIntervalId = setInterval(fetchEmos, 300_000);
+    }
+  }
+
+  // Lazy-load config on first activation (no polling — user-driven)
+  if (tab === 'config') {
+    if (!configLoaded) {
+      configLoaded = true;
+      fetchConfig();
     }
   }
 }
