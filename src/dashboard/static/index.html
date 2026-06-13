@@ -1339,8 +1339,8 @@ function fmtRelTime(ts) {
 function renderStationCard(s) {
   const accentClass = (s.status === 'outside_hours') ? '' : ` accent-${s.status}`;
   const localTime = fmtLocalTime(s.timezone);
-  const activeHours = s.active_hours_utc && s.active_hours_utc.length === 2
-    ? `${String(s.active_hours_utc[0]).padStart(2,'0')}–${String(s.active_hours_utc[1]).padStart(2,'0')} UTC`
+  const activeHours = s.active_hours_local && s.active_hours_local.length === 2
+    ? `${String(s.active_hours_local[0]).padStart(2,'0')}–${String(s.active_hours_local[1]).padStart(2,'0')} Local`
     : '—';
   const toggleLabel = s.enabled ? 'Disable entries' : 'Enable entries';
   const toggleClass = s.enabled ? 'disable' : 'enable';

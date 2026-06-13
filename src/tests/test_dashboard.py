@@ -552,7 +552,7 @@ class TestStationsOverviewEndpoint:
         item = resp.json()[0]
         required = {
             "metar", "city", "lat", "lon", "unit", "timezone",
-            "active_hours_utc", "enabled", "trade_count", "filled_count",
+            "active_hours_local", "enabled", "trade_count", "filled_count",
             "win_rate", "total_pnl", "last_trade_ts", "open_positions_count",
             "last_obs_ts", "status",
         }
