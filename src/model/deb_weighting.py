@@ -52,13 +52,18 @@ def log_forecast(db, station: str, model: str, date: str, forecast_high_f: float
     )
 
 
-def compute_weights(db, station: str, city: str, window_days: int = 30) -> dict[str, float]:
+def compute_weights(
+    db, station: str, city: str, window_days: int = 30,
+) -> tuple[dict[str, float], dict[str, float]]:
     """Compute inverse-error weights for each model over the last *window_days* days.
 
     Joins model_forecast_log with settlements on (station, date) to obtain
     forecast-vs-actual pairs.  RMSE is computed with exponential time-decay so
-    that recent errors matter more than older ones.  Returns a dict that sums
-    to 1.0.
+    that recent errors matter more than older ones.
+
+    Returns:
+        (weights, rmse) where both are dicts keyed by model name.
+        weights sums to 1.0.  rmse values are 0.0 on equal-weights fallback.
 
     Falls back to EQUAL_WEIGHTS (logged at DEBUG) when any model has fewer
     than _MIN_SAMPLES valid pairs.
@@ -85,13 +90,14 @@ def compute_weights(db, station: str, city: str, window_days: int = 30) -> dict[
         errors[row["model"]].append((days_ago, err))
 
     # Check minimum samples for every model
+    _zero_rmse = {m: 0.0 for m in MODELS}
     for m in MODELS:
         if len(errors[m]) < _MIN_SAMPLES:
             log.debug(
-                "[deb] insufficient samples for %s/%s (%d < %d) — using equal weights",
+                "[deb] insufficient samples for %s/%s (%d < %d) -- using equal weights",
                 city, m, len(errors[m]), _MIN_SAMPLES,
             )
-            return dict(EQUAL_WEIGHTS)
+            return dict(EQUAL_WEIGHTS), _zero_rmse
 
     # Compute decay-weighted RMSE per model
     rmse: dict[str, float] = {}
@@ -103,7 +109,7 @@ def compute_weights(db, station: str, city: str, window_days: int = 30) -> dict[
     # Inverse-error weights, normalised to sum to 1.0
     raw = {m: 1.0 / rmse[m] for m in MODELS}
     total = sum(raw.values())
-    return {m: raw[m] / total for m in MODELS}
+    return {m: raw[m] / total for m in MODELS}, rmse
 
 
 def refresh_weights(db, station: str, city: str) -> None:
@@ -127,16 +133,16 @@ def refresh_weights(db, station: str, city: str) -> None:
     if existing and existing[0]["date"] == today:
         return
 
-    weights = compute_weights(db, station, city)
+    weights, rmse = compute_weights(db, station, city)
     for model, weight in weights.items():
         db.upsert_model_weight(
             city=city,
             model=model,
             date=today,
             weight=weight,
-            rmse=0.0,
+            rmse=rmse.get(model, 0.0),
         )
-    log.info("[deb] refreshed weights for %s: %s", city, weights)
+    log.info("[deb] refreshed weights for %s: %s  rmse=%s", city, weights, rmse)
 
 
 def get_weights(db, city: str) -> dict[str, float]:
