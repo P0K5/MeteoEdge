@@ -1591,6 +1591,8 @@ def _build_param_entry(key: str, raw: str) -> dict:
 @app.get("/api/config")
 def get_config() -> dict:
     """Return all editable bot parameters with their current DB values, grouped by category."""
+    if _db is None:
+        raise HTTPException(status_code=503, detail="Database not initialised")
     live = get_live_config(_db)
     # Build nested dict grouped by category
     result: dict[str, dict] = {}
@@ -1611,6 +1613,8 @@ def patch_config(req: ConfigPatchRequest) -> dict:
     Validates key existence, type, and bounds. Writes to the bot_config table.
     Returns the updated parameter object or a 400 error on validation failure.
     """
+    if _db is None:
+        raise HTTPException(status_code=503, detail="Database not initialised")
     key = req.key
     if key not in CONFIG_DEFAULTS:
         raise HTTPException(status_code=400, detail=f"Unknown config key: {key!r}")
