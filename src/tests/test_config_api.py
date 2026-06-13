@@ -312,3 +312,35 @@ class TestPatchConfigEndpoint:
         assert "description" in data
         assert "type" in data
         assert data["type"] == "float"
+
+
+# ---------------------------------------------------------------------------
+# _db=None guard — both config endpoints must return 503, not 500
+# ---------------------------------------------------------------------------
+
+@pytest.fixture()
+def no_db_client():
+    """TestClient with _db set to None to simulate uninitialised database."""
+    from src.dashboard import api as api_module
+
+    original_db = api_module._db
+    api_module.set_db(None)
+
+    client = TestClient(api_module.app, raise_server_exceptions=False)
+    yield client
+
+    api_module.set_db(original_db)
+
+
+class TestConfigEndpointsWithoutDb:
+    """GET and PATCH /api/config must return 503 when _db is None."""
+
+    def test_get_config_returns_503_when_db_none(self, no_db_client):
+        resp = no_db_client.get("/api/config")
+        assert resp.status_code == 503
+        assert resp.json()["detail"] == "Database not initialised"
+
+    def test_patch_config_returns_503_when_db_none(self, no_db_client):
+        resp = no_db_client.patch("/api/config", json={"key": "MIN_EDGE_CENTS", "value": 18.0})
+        assert resp.status_code == 503
+        assert resp.json()["detail"] == "Database not initialised"
