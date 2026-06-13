@@ -209,6 +209,7 @@ class ClosedPositionOut(BaseModel):
     shares: float
     closed_at: str = ""
     token_id: str = ""   # NO token id — used to fetch snapshot history for charting
+    exit_reason: Literal["take_profit", "stop_loss", "won", "lost"] = "won"
 
 
 class PortfolioOut(BaseModel):
@@ -442,6 +443,14 @@ def _stopped_positions() -> list[ClosedPositionOut]:
                 entry_cents = int(r.get("entry_price_cents") or exit_cents)
                 shares = float(r.get("shares") or 0)
                 pnl = float(r.get("pnl") or 0)
+                # Determine exit reason from trigger field
+                trigger = str(r.get("trigger") or "")
+                if trigger.startswith("take_profit@"):
+                    exit_reason = "take_profit"
+                elif trigger.startswith("stop_loss@"):
+                    exit_reason = "stop_loss"
+                else:
+                    exit_reason = "won"  # fallback
                 result.append(ClosedPositionOut(
                     question=str(r.get("question") or ""),
                     station=str(r.get("station") or ""),
@@ -454,6 +463,7 @@ def _stopped_positions() -> list[ClosedPositionOut]:
                     shares=round(shares, 4),
                     closed_at=str(r.get("ts") or ""),
                     token_id=str(r.get("no_token_id") or r.get("asset_id") or ""),
+                    exit_reason=exit_reason,
                 ))
     except Exception as e:
         logger.warning("live_trades.jsonl stop-loss read error: %s", e)
@@ -499,6 +509,8 @@ def _settled_jsonl_positions() -> list[ClosedPositionOut]:
                 shares = float(r.get("shares") or (
                     size_eur / (entry_cents / 100) if entry_cents else 0
                 ))
+                # Determine exit reason: won if pnl > 0, lost if pnl <= 0
+                exit_reason = "won" if pnl > 0 else "lost"
                 result.append(ClosedPositionOut(
                     question=str(r.get("question") or ""),
                     station=str(r.get("station") or ""),
@@ -511,6 +523,7 @@ def _settled_jsonl_positions() -> list[ClosedPositionOut]:
                     shares=round(shares, 4),
                     closed_at=str(r.get("end_date") or r.get("ts") or ""),
                     token_id=token_id,
+                    exit_reason=exit_reason,
                 ))
     except Exception as e:
         logger.warning("live_trades.jsonl settled read error: %s", e)
