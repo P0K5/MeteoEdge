@@ -251,7 +251,7 @@ class StationOverviewOut(BaseModel):
     lon: float
     unit: str
     timezone: str
-    active_hours_utc: list[int]
+    active_hours_local: list[int]
     enabled: bool
     trade_count: int
     filled_count: int
@@ -993,12 +993,13 @@ def _derive_station_status(
     metar: str,
     enabled: bool,
     last_obs_ts: "str | None",
+    station_tz: str = "UTC",
 ) -> str:
     """Derive the station status string from config and latest observation timestamp.
 
     Logic:
       - disabled  → station is in DISABLED_STATIONS
-      - outside_hours → enabled AND current UTC hour outside active_hours_utc
+      - outside_hours → enabled AND current local hour outside active_hours_local
       - no_data   → enabled AND in active hours AND (no obs or obs > 2h ago)
       - active    → enabled AND in active hours AND obs within 2h
     """
@@ -1007,7 +1008,12 @@ def _derive_station_status(
 
     active_hours = STATION_ACTIVE_HOURS.get(metar)
     now_utc = datetime.now(timezone.utc)
-    current_hour = now_utc.hour
+    try:
+        import zoneinfo
+        local_now = now_utc.astimezone(zoneinfo.ZoneInfo(station_tz))
+    except Exception:
+        local_now = now_utc
+    current_hour = local_now.hour
 
     if active_hours is not None:
         start_h, end_h = active_hours
@@ -1090,7 +1096,7 @@ def stations_overview() -> list[StationOverviewOut]:
         open_positions_count = open_pos_map.get(metar, 0)
         stats = trade_stats_map.get(metar, {})
 
-        status = _derive_station_status(metar, enabled, last_obs_ts)
+        status = _derive_station_status(metar, enabled, last_obs_ts, tz)
 
         active_hours = STATION_ACTIVE_HOURS.get(metar, (0, 24))
 
@@ -1101,7 +1107,7 @@ def stations_overview() -> list[StationOverviewOut]:
             lon=lon,
             unit=unit,
             timezone=tz,
-            active_hours_utc=list(active_hours),
+            active_hours_local=list(active_hours),
             enabled=enabled,
             trade_count=stats.get("trade_count", 0),
             filled_count=stats.get("filled_count", 0),
