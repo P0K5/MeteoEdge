@@ -410,33 +410,36 @@ class TestCheckTakeProfitExits:
         trader.sell_position.return_value = sell_result
         return trader
 
-    def test_sells_when_bid_reaches_target(self):
+    def test_sells_when_bid_reaches_target(self, tmp_path):
         """best_bid >= predicted_price - buffer → sell is placed."""
         token = "tok-tp-1"
         fill = _make_fill(token, predicted_price=95)
         fill["side"] = "NO"  # required for DB-based position lookup
         # target = 95 - 2 = 93; bid 95 > 93 → should sell (bid clearly above target)
         trader = self._make_trader(sell_result=("sell-tp-1", 95))
-        # Use mock_db so _load_open_no_positions takes the DB path (avoids lazy-import
-        # mock timing issues in Python 3.10 where the JSONL fallback returns []).
+        # Use mock_db so _load_open_no_positions uses the DB path directly.
         mock_db = MagicMock()
         mock_db.get_open_positions.return_value = [fill]
         mock_db.close_positions_by_token.return_value = 1
 
+        live_trades = tmp_path / "live_trades.jsonl"
+        # Patch module-level vars so the real _append_live_trade writes to tmp_path.
+        # Avoids lazy-import mock timing issues in Python 3.10.
         with patch("src.data.polymarket.get_orderbook",
                    return_value={"bids": [{"price": "0.95"}]}), \
-             patch("src.scripts.run._record_sell_in_db") as mock_record, \
-             patch("src.scripts.run._append_live_trade") as mock_append:
+             patch("src.scripts.run.LOG_DIR", tmp_path), \
+             patch("src.scripts.run.LIVE_TRADES_JSONL", live_trades):
             self.om.check_take_profit_exits(trader, "ts-tp", db=mock_db)
 
         trader.sell_position.assert_called_once()
         call_args = trader.sell_position.call_args[0]
         assert call_args[0] == token
         assert token in self.om._sold_positions
-        assert mock_append.called
-        trade_row = mock_append.call_args[0][0]
-        assert trade_row["outcome"] == "sold"
-        assert trade_row["trigger"].startswith("take_profit@")
+        mock_db.close_positions_by_token.assert_called_with(token)
+        lines = [json.loads(ln) for ln in live_trades.read_text().splitlines() if ln.strip()]
+        assert len(lines) == 1
+        assert lines[0]["outcome"] == "sold"
+        assert lines[0]["trigger"].startswith("take_profit@")
 
     def test_no_sell_when_bid_below_target(self):
         """best_bid < target → position is not touched."""
