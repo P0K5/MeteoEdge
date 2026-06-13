@@ -12,6 +12,7 @@ Endpoints:
     GET /api/cities/{city}/deb      — DEB model weights and RMSE
     GET /api/cities/{city}/analysis — intraday correction analysis
     GET /api/positions/{token_id}/snapshots — per-position price/model snapshots
+    POST /api/stations/{metar}/toggle — toggle station enable/disable (DB-persisted)
     GET /               — serves static/index.html (mounted last)
 
 Data source (priority order):
@@ -1066,13 +1067,24 @@ def stations_overview() -> list[StationOverviewOut]:
         except Exception:
             logger.warning("[stations/overview] failed to fetch trade_stats", exc_info=True)
 
-    # Read DISABLED_STATIONS at request time (env var may change between restarts)
-    disabled = DISABLED_STATIONS
+    # Read DISABLED_STATIONS at request time (env var may change between restarts).
+    # Merge with DB overrides: a station is disabled when it is in DISABLED_STATIONS
+    # OR when station_overrides.enabled = 0.  A DB override with enabled=True lifts
+    # the env-var disable (explicit DB state wins over the env baseline).
+    db_overrides: dict[str, bool] = {}
+    if _db is not None:
+        try:
+            db_overrides = _db.get_all_station_overrides()
+        except Exception:
+            logger.warning("[stations/overview] failed to fetch station_overrides", exc_info=True)
 
     result: list[StationOverviewOut] = []
     for station_cfg in STATIONS:
         metar, lat, lon, city, _res_station, unit, tz = station_cfg
-        enabled = metar not in disabled
+        if metar in db_overrides:
+            enabled = db_overrides[metar]
+        else:
+            enabled = metar not in DISABLED_STATIONS
         last_obs_ts = last_obs_map.get(metar)
         open_positions_count = open_pos_map.get(metar, 0)
         stats = trade_stats_map.get(metar, {})
@@ -1285,6 +1297,49 @@ def emos_mark_ready(city: str) -> EmosCityStatus:
     for row in all_rows:
         calibration_by_city.setdefault(row["city"], {})[row["model_mode"]] = row
     return _get_emos_city_status(canonical_city, station, calibration_by_city)
+
+
+# ---------------------------------------------------------------------------
+# Station toggle — enable/disable via DB-persisted overrides
+# ---------------------------------------------------------------------------
+
+# Build a quick set of valid METAR codes from STATIONS for 404 checks.
+_KNOWN_METARS: frozenset[str] = frozenset(s[0] for s in STATIONS)
+
+
+@app.post("/api/stations/{metar}/toggle")
+def station_toggle(metar: str) -> dict:
+    """Toggle the enabled/disabled state for *metar* (DB-persisted).
+
+    - Returns 404 for METAR codes not present in the STATIONS config.
+    - Reads the current effective enabled state (env baseline merged with DB
+      overrides), flips it, and writes the new value to station_overrides.
+    - Invalidates the stations overview cache so the next GET sees the new state.
+
+    Response: {"metar": str, "enabled": bool}
+    """
+    metar_upper = metar.upper()
+    if metar_upper not in _KNOWN_METARS:
+        raise HTTPException(status_code=404, detail=f"Unknown METAR code: {metar!r}")
+
+    if _db is None:
+        raise HTTPException(status_code=503, detail="Database not initialised")
+
+    # Determine current effective enabled state
+    db_override = _db.get_station_override(metar_upper)
+    if db_override is not None:
+        current_enabled = db_override
+    else:
+        current_enabled = metar_upper not in DISABLED_STATIONS
+
+    new_enabled = not current_enabled
+    _db.set_station_override(metar_upper, new_enabled)
+
+    # Invalidate the overview cache so the next request reflects the change.
+    _stations_overview_cache["ts"] = 0.0
+    _stations_overview_cache["data"] = None
+
+    return {"metar": metar_upper, "enabled": new_enabled}
 
 
 # ---------------------------------------------------------------------------

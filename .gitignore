@@ -87,3 +87,6 @@ Thumbs.db
 
 # Claude Code agent worktrees (temporary, never commit)
 .claude/worktrees/
+
+# Generated temp files
+*.tmp
