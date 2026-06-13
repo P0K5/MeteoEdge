@@ -723,6 +723,67 @@ class Database:
             )
             self._conn.commit()
 
+    # ------------------------------------------------------------------
+    # stations overview
+    # ------------------------------------------------------------------
+
+    def get_stations_last_obs_ts(self) -> dict:
+        """Return the most-recent observation timestamp per station.
+
+        Returns a dict mapping station → ISO timestamp string (or None when no
+        observation exists for that station).  Uses the (station, ts) index for
+        an efficient MAX(ts) GROUP BY scan.
+        """
+        cur = self._conn.execute(
+            "SELECT station, MAX(ts) AS last_obs_ts FROM observations GROUP BY station"
+        )
+        return {row["station"]: row["last_obs_ts"] for row in cur.fetchall()}
+
+    def get_stations_open_positions_count(self) -> dict:
+        """Return the count of open positions per station.
+
+        Returns a dict mapping station → integer count (0 for stations with no
+        open positions).
+        """
+        cur = self._conn.execute(
+            "SELECT station, COUNT(*) AS cnt FROM open_positions GROUP BY station"
+        )
+        return {row["station"]: row["cnt"] for row in cur.fetchall()}
+
+    def get_stations_trade_stats(self) -> dict:
+        """Return trade stats per station: trade_count, filled_count, win_rate, total_pnl, last_trade_ts.
+
+        Mirrors the logic in the /stations endpoint but runs as a single SQL
+        aggregation instead of loading all trades into Python.  Returns a dict
+        mapping station → stats dict.
+        """
+        cur = self._conn.execute(
+            """
+            SELECT
+                station,
+                COUNT(*)                                                       AS trade_count,
+                SUM(CASE WHEN outcome='filled' THEN 1 ELSE 0 END)             AS filled_count,
+                SUM(CASE WHEN outcome='filled' AND pnl > 0 THEN 1 ELSE 0 END) AS win_count,
+                SUM(COALESCE(pnl, 0))                                          AS total_pnl,
+                MAX(ts)                                                         AS last_trade_ts
+            FROM trades
+            GROUP BY station
+            """
+        )
+        result = {}
+        for row in cur.fetchall():
+            filled = row["filled_count"] or 0
+            win_count = row["win_count"] or 0
+            win_rate = round(win_count / filled, 4) if filled else 0.0
+            result[row["station"]] = {
+                "trade_count": row["trade_count"],
+                "filled_count": filled,
+                "win_rate": win_rate,
+                "total_pnl": round(float(row["total_pnl"] or 0.0), 2),
+                "last_trade_ts": row["last_trade_ts"],
+            }
+        return result
+
     def get_emos_coefficients(self, city: str, model_mode: str) -> "dict | None":
         """Return EMOS coefficients dict for (city, model_mode), or None if not found."""
         cur = self._conn.execute(

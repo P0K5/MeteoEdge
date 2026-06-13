@@ -389,3 +389,186 @@ class TestBridgeStubCompat:
         ]
         rate = stub._compute_win_rate(trades, n=50)
         assert rate == pytest.approx(0.5)
+
+
+# ---------------------------------------------------------------------------
+# GET /api/stations/overview
+# ---------------------------------------------------------------------------
+
+class TestStationsOverviewEndpoint:
+    """Tests for the /api/stations/overview endpoint (issue #229)."""
+
+    def _setup_db(self):
+        from src.data.db import Database
+        return Database(":memory:")
+
+    def _inject_db(self, db):
+        """Inject db and clear the stations overview cache."""
+        dash_api.set_db(db)
+        dash_api._stations_overview_cache["ts"] = 0.0
+        dash_api._stations_overview_cache["data"] = None
+
+    def test_returns_200_and_list(self, client):
+        """Endpoint must return 200 and a list."""
+        resp = client.get("/api/stations/overview")
+        assert resp.status_code == 200
+        assert isinstance(resp.json(), list)
+
+    def test_returns_all_configured_stations(self, client):
+        """One entry per configured STATION must appear."""
+        from src.config import STATIONS
+        resp = client.get("/api/stations/overview")
+        data = resp.json()
+        metars = {s[0] for s in STATIONS}
+        response_metars = {item["metar"] for item in data}
+        assert response_metars == metars
+
+    def test_station_record_has_required_keys(self, client):
+        """Each record must include all required fields."""
+        resp = client.get("/api/stations/overview")
+        item = resp.json()[0]
+        required = {
+            "metar", "city", "lat", "lon", "unit", "timezone",
+            "active_hours_utc", "enabled", "trade_count", "filled_count",
+            "win_rate", "total_pnl", "last_trade_ts", "open_positions_count",
+            "last_obs_ts", "status",
+        }
+        assert required.issubset(item.keys())
+
+    def test_disabled_station_has_disabled_status(self, client):
+        """A station in DISABLED_STATIONS must have status='disabled' and enabled=False."""
+        from src.config import STATIONS
+        original = dash_api._db
+        # Patch DISABLED_STATIONS to disable the first station
+        first_metar = STATIONS[0][0]
+        try:
+            with patch("src.dashboard.api.DISABLED_STATIONS", {first_metar}):
+                dash_api._stations_overview_cache["ts"] = 0.0
+                dash_api._stations_overview_cache["data"] = None
+                resp = client.get("/api/stations/overview")
+            data = resp.json()
+            item = next(s for s in data if s["metar"] == first_metar)
+            assert item["enabled"] is False
+            assert item["status"] == "disabled"
+        finally:
+            dash_api._db = original
+
+    def test_station_outside_hours_status(self, client):
+        """A station outside its active hours must have status='outside_hours'."""
+        from src.config import STATIONS
+        first_metar = STATIONS[0][0]
+        # Patch to ensure station is enabled but active hours exclude current hour
+        # We use hour 25 as end so no real hour can be "in" [0, 0) but let's use [0,0]
+        with patch("src.dashboard.api.DISABLED_STATIONS", set()):
+            with patch("src.dashboard.api.STATION_ACTIVE_HOURS", {first_metar: (0, 0)}):
+                dash_api._stations_overview_cache["ts"] = 0.0
+                dash_api._stations_overview_cache["data"] = None
+                resp = client.get("/api/stations/overview")
+        data = resp.json()
+        item = next(s for s in data if s["metar"] == first_metar)
+        assert item["status"] == "outside_hours"
+
+    def test_station_no_data_status_when_no_obs(self, client):
+        """A station with no observations and in active hours must have status='no_data'."""
+        from src.config import STATIONS
+        db = self._setup_db()
+        first_metar = STATIONS[0][0]
+        original = dash_api._db
+        try:
+            self._inject_db(db)
+            # Force active hours to cover all 24h and no disabled stations
+            with patch("src.dashboard.api.DISABLED_STATIONS", set()):
+                with patch("src.dashboard.api.STATION_ACTIVE_HOURS", {first_metar: (0, 24)}):
+                    resp = client.get("/api/stations/overview")
+            data = resp.json()
+            item = next(s for s in data if s["metar"] == first_metar)
+            assert item["status"] == "no_data"
+            assert item["last_obs_ts"] is None
+        finally:
+            dash_api.set_db(original)
+
+    def test_station_active_status_with_fresh_obs(self, client):
+        """A station with a recent observation and in active hours must have status='active'."""
+        from src.config import STATIONS
+        db = self._setup_db()
+        first_metar = STATIONS[0][0]
+        # Insert a fresh observation (now)
+        now_iso = datetime.now(timezone.utc).isoformat()
+        db.insert_observation(
+            ts=now_iso, station=first_metar, temp_f=75.0, temp_native=75.0,
+            unit="F", source="test",
+        )
+        original = dash_api._db
+        try:
+            self._inject_db(db)
+            with patch("src.dashboard.api.DISABLED_STATIONS", set()):
+                with patch("src.dashboard.api.STATION_ACTIVE_HOURS", {first_metar: (0, 24)}):
+                    resp = client.get("/api/stations/overview")
+            data = resp.json()
+            item = next(s for s in data if s["metar"] == first_metar)
+            assert item["status"] == "active"
+            assert item["last_obs_ts"] is not None
+        finally:
+            dash_api.set_db(original)
+
+    def test_trade_stats_reflected(self, client):
+        """Trade stats (trade_count, filled_count, win_rate, total_pnl) must come from the DB."""
+        from src.config import STATIONS
+        db = self._setup_db()
+        first_metar = STATIONS[0][0]
+        # Insert two trades: one win, one loss
+        for i, pnl in enumerate([3.0, -1.0]):
+            db.insert_trade(
+                ts=f"2026-06-01T1{i}:00:00Z", station=first_metar,
+                ticker=f"{first_metar}-t{i}", bracket_low=70.0, bracket_high=74.0,
+                side="NO", predicted_price=80, actual_price=81,
+                predicted_edge=0.10, mode="live", capital_before=500.0,
+                capital_after=500.0 + pnl, outcome="filled", pnl=pnl,
+            )
+        original = dash_api._db
+        try:
+            self._inject_db(db)
+            resp = client.get("/api/stations/overview")
+            data = resp.json()
+            item = next(s for s in data if s["metar"] == first_metar)
+            assert item["trade_count"] == 2
+            assert item["filled_count"] == 2
+            assert item["win_rate"] == pytest.approx(0.5)
+            assert item["total_pnl"] == pytest.approx(2.0)
+        finally:
+            dash_api.set_db(original)
+
+    def test_open_positions_count_from_db(self, client):
+        """open_positions_count must reflect the DB open_positions table."""
+        from src.config import STATIONS
+        db = self._setup_db()
+        first_metar = STATIONS[0][0]
+        # Insert a trade then an open position referencing it
+        trade_id = db.insert_trade(
+            ts="2026-06-01T10:00:00Z", station=first_metar,
+            ticker=f"{first_metar}-op", bracket_low=70.0, bracket_high=74.0,
+            side="NO", predicted_price=80, actual_price=80,
+            predicted_edge=0.10, mode="live", capital_before=500.0,
+        )
+        db.open_position(
+            trade_id=trade_id, station=first_metar,
+            ticker=f"{first_metar}-op", token_id="tok123",
+            side="NO", order_id="order-x", entry_price=80,
+            shares=10.0, entry_ts="2026-06-01T10:00:00Z",
+        )
+        original = dash_api._db
+        try:
+            self._inject_db(db)
+            resp = client.get("/api/stations/overview")
+            data = resp.json()
+            item = next(s for s in data if s["metar"] == first_metar)
+            assert item["open_positions_count"] == 1
+        finally:
+            dash_api.set_db(original)
+
+    def test_cache_returns_same_response(self, client):
+        """Two rapid requests must return identical data (cache hit on second)."""
+        resp1 = client.get("/api/stations/overview")
+        resp2 = client.get("/api/stations/overview")
+        assert resp1.status_code == 200
+        assert resp1.json() == resp2.json()
