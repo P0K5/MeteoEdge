@@ -917,7 +917,7 @@ function _renderClosedPage() {
       'take_profit': { label: 'Take Profit', cls: 'result-take_profit' },
       'stop_loss': { label: 'Stop Loss', cls: 'result-stop_loss' }
     };
-    const badgeInfo = exitReasonMap[p.exit_reason] || { label: 'Won', cls: 'result-won' };
+    const badgeInfo = exitReasonMap[p.exit_reason] || (win ? { label: 'Won', cls: 'result-won' } : { label: 'Lost', cls: 'result-lost' });
     const rowInner = `
       <span class="result-badge ${badgeInfo.cls}">${badgeInfo.label}</span>
       <div class="closed-q" title="${question}">${question}</div>
