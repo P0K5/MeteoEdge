@@ -1,4 +1,5 @@
 """Unit tests for src/model/crps_score.py."""
+import math
 from math import isclose
 
 import pytest
@@ -53,6 +54,20 @@ class TestCrpsGaussian:
         """crps_gaussian(10, 2, 15) > 0."""
         result = crps_gaussian(10, 2, 15)
         assert result > 0.0
+
+    def test_perfect_forecast(self):
+        """Perfect forecast: crps_gaussian(mu=10, sigma=1, y=10) matches formula.
+
+        When y=mu (perfect forecast), CRPS = σ * (2*φ(0) - 1/√π)
+        where φ(0) = 1/√(2π) ≈ 0.3989
+        So CRPS ≈ 1 * (2*0.3989 - 0.5642) ≈ 0.2337
+        """
+        result = crps_gaussian(10, 1, 10)
+        # Value should match the closed-form formula for z=0
+        expected = 2 / math.sqrt(2 * math.pi) - 1 / math.sqrt(math.pi)
+        assert isclose(result, expected, abs_tol=1e-10), (
+            f"Perfect forecast CRPS={result:.6f}, expected={expected:.6f}"
+        )
 
     def test_crps_zero_when_observation_at_mean(self):
         """When observation equals mean (z=0), CRPS = σ * (2*φ(0) - 1/√π)."""
