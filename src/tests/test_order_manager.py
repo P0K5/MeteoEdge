@@ -93,7 +93,7 @@ class TestReconcileTimeoutFills:
              patch("src.execution.order_manager._wallet_held_token_ids", return_value={"tok-B"}):
             om.reconcile_timeout_fills("ts-2026")
 
-        patched = [json.loads(l) for l in f.read_text().splitlines() if l.strip()]
+        patched = [json.loads(ln) for ln in f.read_text().splitlines() if ln.strip()]
         assert len(patched) == 1
         assert patched[0]["outcome"] == "filled"
         assert patched[0]["reconciled_at"] == "ts-2026"
@@ -110,7 +110,7 @@ class TestReconcileTimeoutFills:
              patch("src.execution.order_manager._wallet_held_token_ids", return_value={"tok-other"}):
             om.reconcile_timeout_fills("ts-3")
 
-        lines = [json.loads(l) for l in f.read_text().splitlines() if l.strip()]
+        lines = [json.loads(ln) for ln in f.read_text().splitlines() if ln.strip()]
         assert lines[0]["outcome"] == "timeout"
         assert "reconciled_at" not in lines[0]
 
@@ -128,7 +128,7 @@ class TestReconcileTimeoutFills:
              patch("src.execution.order_manager._wallet_held_token_ids", return_value={"tok-D"}):
             om.reconcile_timeout_fills("ts-4")
 
-        lines = [json.loads(l) for l in f.read_text().splitlines() if l.strip()]
+        lines = [json.loads(ln) for ln in f.read_text().splitlines() if ln.strip()]
         assert lines[0]["outcome"] == "filled"
         assert "reconciled_at" not in lines[0]
         assert lines[1]["outcome"] == "filled"
@@ -145,7 +145,7 @@ class TestReconcileTimeoutFills:
              patch("src.execution.order_manager._wallet_held_token_ids", return_value={"tok-E"}):
             om.reconcile_timeout_fills("ts-5")
 
-        lines = [json.loads(l) for l in f.read_text().splitlines() if l.strip()]
+        lines = [json.loads(ln) for ln in f.read_text().splitlines() if ln.strip()]
         assert lines[0]["outcome"] == "filled"
 
     def test_multiple_held_tokens_all_patched(self, tmp_path):
@@ -163,8 +163,8 @@ class TestReconcileTimeoutFills:
              patch("src.execution.order_manager._wallet_held_token_ids", return_value={"tok-F", "tok-H"}):
             om.reconcile_timeout_fills("ts-6")
 
-        lines = [json.loads(l) for l in f.read_text().splitlines() if l.strip()]
-        outcomes = {l["asset_id"]: l["outcome"] for l in lines}
+        lines = [json.loads(ln) for ln in f.read_text().splitlines() if ln.strip()]
+        outcomes = {ln["asset_id"]: ln["outcome"] for ln in lines}
         assert outcomes["tok-F"] == "filled"
         assert outcomes["tok-G"] == "timeout"  # not held
         assert outcomes["tok-H"] == "filled"
@@ -194,7 +194,7 @@ class TestReconcileTimeoutFills:
             om.reconcile_timeout_fills("ts-7")
 
         content = f.read_text()
-        non_blank = [l for l in content.splitlines() if l.strip()]
+        non_blank = [ln for ln in content.splitlines() if ln.strip()]
         assert len(non_blank) == 1
         assert json.loads(non_blank[0])["outcome"] == "filled"
 
@@ -414,15 +414,20 @@ class TestCheckTakeProfitExits:
         """best_bid >= predicted_price - buffer → sell is placed."""
         token = "tok-tp-1"
         fill = _make_fill(token, predicted_price=95)
+        fill["side"] = "NO"  # required for DB-based position lookup
         # target = 95 - 2 = 93; bid 95 > 93 → should sell (bid clearly above target)
         trader = self._make_trader(sell_result=("sell-tp-1", 95))
+        # Use mock_db so _load_open_no_positions takes the DB path (avoids lazy-import
+        # mock timing issues in Python 3.10 where the JSONL fallback returns []).
+        mock_db = MagicMock()
+        mock_db.get_open_positions.return_value = [fill]
+        mock_db.close_positions_by_token.return_value = 1
 
         with patch("src.data.polymarket.get_orderbook",
                    return_value={"bids": [{"price": "0.95"}]}), \
-             patch("src.scripts.run._load_open_no_positions", return_value=[fill]), \
              patch("src.scripts.run._record_sell_in_db") as mock_record, \
              patch("src.scripts.run._append_live_trade") as mock_append:
-            self.om.check_take_profit_exits(trader, "ts-tp", db=None)
+            self.om.check_take_profit_exits(trader, "ts-tp", db=mock_db)
 
         trader.sell_position.assert_called_once()
         call_args = trader.sell_position.call_args[0]
