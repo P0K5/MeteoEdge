@@ -124,6 +124,24 @@ def poll_once(
     # Capture previous poll timestamp before overwriting (poll-missed alert needs the gap).
     prev_poll_ts_str = _dashboard_module.last_poll_ts
 
+    def _finalize_poll() -> None:
+        """Mark this poll as completed and run the periodic alert checks.
+
+        Runs on every path that genuinely polled -- including the
+        weather-outage path -- so the poll-missed alert keeps measuring real
+        gaps instead of being silently skipped by an early return.
+        """
+        _dashboard_module.last_poll_ts = ts
+        if alert_manager is not None:
+            _trades = _load_trades()
+            _win_rate_20 = _compute_win_rate(_trades, n=20)
+            prev_poll_dt = dtparse.parse(prev_poll_ts_str) if prev_poll_ts_str else None
+            alert_manager.check(
+                daily_pnl=risk_manager._daily_pnl,
+                win_rate_20=_win_rate_20,
+                last_poll_time=prev_poll_dt,
+            )
+
     if live_trader:
         order_manager.reconcile_timeout_fills(ts)
         order_manager.sync_open_orders(live_trader, db=db)
@@ -132,16 +150,27 @@ def poll_once(
     if live_trader:
         order_manager.check_take_profit_exits(live_trader, ts, db=db, risk_manager=risk_manager)
 
-    weather = _build_weather(db=db)
-    if not weather:
-        log.warning("[run] No weather data for any station -- skipping market scan")
-        return
+    weather_health: list = []
+    weather = _build_weather(db=db, health_out=weather_health)
+    _dashboard_module.weather_health = weather_health  # surface feed health to the dashboard banner
 
+    # Snapshots run every poll regardless of weather: the market-bid line is
+    # weather-independent (orderbook), so the dashboard chart keeps updating and
+    # a weather outage shows as a visible pause in the model fair-value line
+    # rather than a silently stale chart.  Stop-loss stays weather-gated -- the
+    # model-confidence stop needs a live WeatherState; decoupling it from
+    # weather is a separate strategy change (deferred).
     if live_trader:
         position_states = _log_open_position_snapshots(weather, ts, db=db)
-        _check_stop_loss_exits(live_trader, ts, position_states, db=db, risk_manager=risk_manager)
+        if weather:
+            _check_stop_loss_exits(live_trader, ts, position_states, db=db, risk_manager=risk_manager)
         # _check_metar_exits disabled 2026-05-29: 7/12 false positives, net -15.49 vs hold.
         # _check_metar_exits(weather, live_trader, ts, db=db)
+
+    if not weather:
+        log.warning("[run] No weather data for any station -- skipping market scan")
+        _finalize_poll()  # poll DID run -- keep poll-missed alert and chart timestamp live
+        return
 
     try:
         markets = get_weather_markets()
@@ -238,17 +267,7 @@ def poll_once(
         len(markets), len(snapshots), len(candidates), n_acted,
     )
 
-    _dashboard_module.last_poll_ts = ts
-
-    if alert_manager is not None:
-        _trades = _load_trades()
-        _win_rate_20 = _compute_win_rate(_trades, n=20)
-        prev_poll_dt = dtparse.parse(prev_poll_ts_str) if prev_poll_ts_str else None
-        alert_manager.check(
-            daily_pnl=risk_manager._daily_pnl,
-            win_rate_20=_win_rate_20,
-            last_poll_time=prev_poll_dt,
-        )
+    _finalize_poll()
 
 
 def _start_collector_thread(collector_fn, name: str) -> None:

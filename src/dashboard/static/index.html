@@ -379,6 +379,15 @@ a,button,input,select{transition:color var(--transition),background var(--transi
 }
 .error-banner.visible{display:flex;}
 
+/* ── WEATHER-FEED WARNING BANNER ── */
+.warn-banner{
+  background:#3a2e00;border:1px solid #8a6d00;color:#ffcc55;
+  border-radius:var(--radius-md);padding:var(--space-3) var(--space-4);
+  font-size:var(--text-xs);font-weight:600;margin-bottom:var(--space-4);
+  display:none;align-items:center;gap:var(--space-2);
+}
+.warn-banner.visible{display:flex;}
+
 /* ── STATION CARDS ── */
 .station-card{
   background:var(--surface);border:1px solid var(--border);
@@ -576,6 +585,11 @@ a,button,input,select{transition:color var(--transition),background var(--transi
   <div class="error-banner" id="error-banner">
     <i data-lucide="alert-circle"></i>
     <span id="error-text">Could not reach /api/portfolio — retrying…</span>
+  </div>
+
+  <div class="warn-banner" id="weather-banner">
+    <i data-lucide="cloud-off"></i>
+    <span id="weather-text"></span>
   </div>
 
   <!-- WALLET ROW -->
@@ -973,6 +987,31 @@ async function fetchPortfolio() {
   }
 }
 
+async function fetchWeatherHealth() {
+  const banner = document.getElementById('weather-banner');
+  const text = document.getElementById('weather-text');
+  try {
+    const r = await fetch('/api/weather-health');
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json();
+    const degraded = data.degraded || [];
+    if (degraded.length === 0) {
+      banner.classList.remove('visible');
+      return;
+    }
+    const reasons = degraded.map(d => `${d.station}: ${d.reason}`).join(' · ');
+    const lead = data.all_degraded
+      ? 'No weather data for any station — model fair-value paused, stop-loss not evaluating'
+      : 'Weather feed degraded';
+    text.textContent = `${lead} — ${reasons}`;
+    banner.classList.add('visible');
+    lucide.createIcons();
+  } catch (e) {
+    // Endpoint unreachable is already covered by the portfolio error banner.
+    console.error('Weather-health fetch failed:', e);
+  }
+}
+
 async function fetchBotLog() {
   const box = document.getElementById('bot-log');
   const countEl = document.getElementById('log-count');
@@ -1024,11 +1063,11 @@ function toggleTheme() {
 
 function _autoLoadCharts(positions) {
   positions.forEach(p => {
-    if (p.token_id) _renderChart(p.token_id, p.entry_price, p.my_prob);
+    if (p.token_id) _renderChart(p.token_id, p.entry_price, p.my_prob, p.market_prob);
   });
 }
 
-async function _renderChart(tokenId, entryPrice, myProb) {
+async function _renderChart(tokenId, entryPrice, myProb, marketProb) {
   const canvasId = 'canvas-' + tokenId;
   const wrap = document.getElementById(canvasId)?.parentElement;
   if (!wrap) return;
@@ -1050,6 +1089,12 @@ async function _renderChart(tokenId, entryPrice, myProb) {
     return;
   }
 
+  // Append a live "now" point using the current market price from the portfolio card.
+  // This bridges the gap when snapshots are stale (bot not polling).
+  if (marketProb != null) {
+    rows = [...rows, { ts: new Date().toISOString(), market_bid: marketProb, fair_value: null, _live: true }];
+  }
+
   wrap.innerHTML = '<canvas id="' + canvasId + '"></canvas>';
   const canvas = document.getElementById(canvasId);
 
@@ -1058,8 +1103,11 @@ async function _renderChart(tokenId, entryPrice, myProb) {
 
   const labels = rows.map(d => {
     const t = new Date(d.ts);
-    return t.getUTCHours().toString().padStart(2, '0') + ':' + t.getUTCMinutes().toString().padStart(2, '0') + ' UTC';
+    return t.getHours().toString().padStart(2, '0') + ':' + t.getMinutes().toString().padStart(2, '0');
   });
+
+  const liveIdx = rows.length - 1;
+  const marketBidRadii = rows.map((_, i) => i === liveIdx && rows[i]._live ? 5 : 0);
 
   new Chart(canvas, {
     type: 'line',
@@ -1072,12 +1120,15 @@ async function _renderChart(tokenId, entryPrice, myProb) {
           borderColor: clr('--primary'),
           backgroundColor: 'transparent',
           borderWidth: 2,
-          pointRadius: 0,
+          pointRadius: marketBidRadii,
+          pointBackgroundColor: clr('--primary'),
           tension: 0.25,
           spanGaps: true,
           fill: false,
         },
         {
+          // spanGaps:false so a weather outage (null fair_value) renders as a
+          // visible break in the model line instead of silently bridging over.
           label: 'Model fair value',
           data: rows.map(d => d.fair_value),
           borderColor: clr('--edge'),
@@ -1085,7 +1136,7 @@ async function _renderChart(tokenId, entryPrice, myProb) {
           borderWidth: 2,
           pointRadius: 0,
           tension: 0.25,
-          spanGaps: true,
+          spanGaps: false,
           fill: false,
         },
         {
@@ -1192,7 +1243,7 @@ async function _renderClosedChart(tokenId, entryPrice, exitPrice) {
 
   const labels = rows.map(d => {
     const t = new Date(d.ts);
-    return t.getUTCHours().toString().padStart(2,'0') + ':' + t.getUTCMinutes().toString().padStart(2,'0') + ' UTC';
+    return t.getHours().toString().padStart(2,'0') + ':' + t.getMinutes().toString().padStart(2,'0');
   });
 
   new Chart(canvas, {
@@ -1938,8 +1989,10 @@ window.addEventListener('DOMContentLoaded', () => {
   lucide.createIcons();
   fetchPortfolio();
   fetchBotLog();
+  fetchWeatherHealth();
   portfolioIntervalId = setInterval(fetchPortfolio, 30_000);
   botLogIntervalId = setInterval(fetchBotLog, 30_000);
+  setInterval(fetchWeatherHealth, 30_000);
 });
 </script>
 </body>

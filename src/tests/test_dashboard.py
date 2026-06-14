@@ -1047,3 +1047,43 @@ class TestEmosMarkReadyEndpoint:
             assert resp2.json()["shadow"]["ready_for_promotion"] is False
         finally:
             dash_api.set_db(original)
+
+
+# ---------------------------------------------------------------------------
+# /api/weather-health
+# ---------------------------------------------------------------------------
+
+class TestWeatherHealthEndpoint:
+    def test_no_data_returns_empty(self, client):
+        dash_api.weather_health = None
+        resp = client.get("/api/weather-health")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["degraded"] == []
+        assert body["ok_count"] == 0
+        assert body["all_degraded"] is False
+
+    def test_partial_degraded_listed(self, client):
+        dash_api.weather_health = [
+            {"station": "Tokyo", "status": "ok", "reason": ""},
+            {"station": "Seoul", "status": "degraded", "reason": "no METAR data"},
+        ]
+        resp = client.get("/api/weather-health")
+        body = resp.json()
+        assert body["ok_count"] == 1
+        assert body["all_degraded"] is False
+        assert len(body["degraded"]) == 1
+        assert body["degraded"][0]["station"] == "Seoul"
+        dash_api.weather_health = None
+
+    def test_all_degraded_flag(self, client):
+        dash_api.weather_health = [
+            {"station": "Tokyo", "status": "degraded", "reason": "outside active window 06:00-23:00"},
+            {"station": "Seoul", "status": "degraded", "reason": "no METAR data"},
+        ]
+        resp = client.get("/api/weather-health")
+        body = resp.json()
+        assert body["ok_count"] == 0
+        assert body["all_degraded"] is True
+        assert len(body["degraded"]) == 2
+        dash_api.weather_health = None

@@ -70,6 +70,11 @@ _START_TIME = time.monotonic()
 # src/monitoring/dashboard.py so run.py does not need to be changed.
 last_poll_ts: str | None = None
 
+# Per-station weather-feed health from the most recent poll's _build_weather().
+# A list of {station, status, reason}; written via the bridge stub in
+# src/monitoring/dashboard.py so run.py does not need to import api directly.
+weather_health: list | None = None
+
 logger = logging.getLogger(__name__)
 
 
@@ -1156,6 +1161,26 @@ def position_snapshots(token_id: str) -> list[dict]:
     except OSError as e:
         logger.warning("position_snapshots.jsonl read error: %s", e)
     return result
+
+
+@app.get("/api/weather-health")
+def weather_health_status() -> dict:
+    """Report the weather feed health captured by the most recent poll.
+
+    Lets the dashboard show a banner naming which stations are degraded and
+    why (outside active window, no METAR, parse error...).  When every station
+    is degraded, _build_weather() returns empty and the per-position model
+    (fair-value) line pauses while the market-bid line keeps updating.
+    """
+    health = weather_health or []
+    degraded = [h for h in health if h.get("status") != "ok"]
+    ok_count = len(health) - len(degraded)
+    return {
+        "ok_count": ok_count,
+        "degraded": degraded,
+        "all_degraded": bool(health) and ok_count == 0,
+        "last_poll_ts": last_poll_ts,
+    }
 
 
 # ---------------------------------------------------------------------------

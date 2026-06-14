@@ -46,6 +46,10 @@ def _get_api():
 # Last poll timestamp written by run.py after each poll cycle.
 last_poll_ts: str | None = None
 
+# Per-station weather-feed health from the most recent _build_weather() call.
+# Mirrored into src.dashboard.api so the /api/weather-health endpoint sees it.
+weather_health: list | None = None
+
 # Database instance injected by run.py via set_db().
 _db = None
 
@@ -146,7 +150,7 @@ class _BridgeModule(_types.ModuleType):
     - app is forwarded from src.dashboard.api via __getattr__.
     """
 
-    _MIRRORED = frozenset({"last_poll_ts", "_db"})
+    _MIRRORED = frozenset({"last_poll_ts", "_db", "weather_health"})
 
     def __setattr__(self, name: str, value) -> None:
         if name in self._MIRRORED:
