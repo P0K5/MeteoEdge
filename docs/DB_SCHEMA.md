@@ -107,7 +107,7 @@ CREATE INDEX idx_cand_ticker ON candidates(ticker);
 | `actual_price` | INTEGER NOT NULL | ¢ | No | Actual fill price on the exchange |
 | `slippage` | INTEGER | ¢ | Yes | Difference between predicted and actual (may be negative) |
 | `predicted_edge` | REAL NOT NULL | ¢ | No | Edge at entry (fair_value - market_price) |
-| `mode` | TEXT NOT NULL CHECK(mode IN ('paper','live')) | categorical | No | 'paper' for simulated, 'live' for real executed |
+| `mode` | TEXT NOT NULL CHECK(mode IN ('paper','live','shadow')) | categorical | No | 'paper' for simulated, 'live' for real executed, 'shadow' for YES candidates logged when ENABLE_YES_TRADES=False |
 | `order_id` | TEXT | Polymarket order ID | Yes | Exchange order ID (only set for live trades) |
 | `outcome` | TEXT | categorical | Yes | Trade exit reason: 'filled' (held to expiry), 'sold' (early exit), 'cancelled', 'timeout' |
 | `pnl` | REAL | € | Yes | Realized P&L in euros (set after settlement or early exit) |
@@ -127,6 +127,7 @@ CREATE INDEX idx_trades_mode ON trades(mode);
 - For NO trades that are early-exited: `pnl = (sell_price - entry_price) / 100 * shares`.
 - For filled trades: `pnl = (100 - entry_price) / 100 * shares` if YES bracket hit (or NO bracket miss), else `pnl = -(entry_price / 100) * shares`.
 - **SELL records in live_trades.jsonl**: the `shares` field reflects the *remaining* shares sold in that specific exit attempt, not the full original position size. When a stop-loss IOC order partially fills across multiple poll cycles, each retry records only the unfilled remainder (see `_partial_fill_shares` tracking in `src/scripts/run.py`). The `size_eur` field still reflects the original position notional for context.
+- **Shadow rows** (`mode='shadow'`): inserted when a YES candidate passes all selection gates but `ENABLE_YES_TRADES=False`. No order is placed; `capital_before=0.0`, `order_id=NULL`. `actual_price` holds the observed yes_ask_cents at logging time. Settlement uses a $1 notional stake: `pnl = (100 - actual_price) / 100` if YES bracket hit, else `pnl = -actual_price / 100`. These rows are excluded from live P&L accounting — they are an observational dataset for validating YES-side edge.
 
 ---
 

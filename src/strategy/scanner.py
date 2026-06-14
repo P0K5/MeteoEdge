@@ -227,6 +227,7 @@ class Candidate:
     minutes_to_settlement: float
     market: dict        # raw market dict (for logging, do not mutate)
     taf_disruption: bool = field(default=False)  # TEMPO/PROB TS/SH/FG overlap
+    shadow: bool = field(default=False)           # True when ENABLE_YES_TRADES=False
 
 
 def no_entry_margin_gap(bracket: Bracket, state: WeatherState) -> float | None:
@@ -416,7 +417,7 @@ def scan_markets(
                 log.debug("[%s] -- SKIPPED %s: station excluded from entries (DISABLED_STATIONS)",
                           station, skipped_reason)
                 skip_reason_counts[skipped_reason] += 1
-            elif ENABLE_YES_TRADES and ev_yes >= MIN_EDGE_CENTS and p_yes >= MIN_CONFIDENCE_YES and bracket.yes_ask_cents >= MIN_PRICE_CENTS:
+            elif ev_yes >= MIN_EDGE_CENTS and p_yes >= MIN_CONFIDENCE_YES and bracket.yes_ask_cents >= MIN_PRICE_CENTS:
                 if ev_yes > MAX_EDGE_CENTS:
                     skipped_reason = "max_edge"
                     log.debug("[%s] -- SKIPPED %s: %s edge=%.2f¢ > MAX=%.2f¢",
@@ -429,6 +430,7 @@ def scan_markets(
                         confidence=p_yes, p_yes=p_yes,
                         ev_yes=ev_yes, ev_no=ev_no,
                         minutes_to_settlement=mins_left, market=market,
+                        shadow=not ENABLE_YES_TRADES,
                     )
             elif ev_no >= MIN_EDGE_CENTS and p_yes <= MAX_CONFIDENCE_YES_FOR_NO and bracket.no_ask_cents >= MIN_PRICE_CENTS:
                 margin_gap = no_entry_margin_gap(bracket, state)
@@ -452,24 +454,10 @@ def scan_markets(
                         minutes_to_settlement=mins_left, market=market,
                     )
             else:
-                # Failed one of the gates — determine which one
-                # Check YES side gates first
-                if ev_yes >= MIN_EDGE_CENTS:
-                    if not ENABLE_YES_TRADES:
-                        skipped_reason = "confidence_gate"
-                        log.debug("[%s] -- SKIPPED %s: YES side disabled (ENABLE_YES_TRADES=False)",
-                                  station, skipped_reason)
-                    elif p_yes < MIN_CONFIDENCE_YES:
-                        skipped_reason = "confidence_gate"
-                        log.debug("[%s] -- SKIPPED %s: p_yes=%.4f < MIN=%.4f",
-                                  station, skipped_reason, p_yes, MIN_CONFIDENCE_YES)
-                    elif bracket.yes_ask_cents < MIN_PRICE_CENTS:
-                        skipped_reason = "min_edge"
-                        log.debug("[%s] -- SKIPPED %s: YES price=%.0f¢ < MIN=%.0f¢",
-                                  station, skipped_reason, bracket.yes_ask_cents, MIN_PRICE_CENTS)
-                    skip_reason_counts[skipped_reason] += 1
-                # Check NO side gates
-                elif ev_no >= MIN_EDGE_CENTS:
+                # YES gates passed but NO gate failed (or both edges below MIN_EDGE_CENTS).
+                # YES branch is now handled above unconditionally, so only NO failures
+                # and low-edge cases reach here.
+                if ev_no >= MIN_EDGE_CENTS:
                     if p_yes > MAX_CONFIDENCE_YES_FOR_NO:
                         skipped_reason = "confidence_gate"
                         log.debug("[%s] -- SKIPPED %s: p_yes=%.4f > MAX=%.4f",
@@ -478,9 +466,11 @@ def scan_markets(
                         skipped_reason = "min_edge"
                         log.debug("[%s] -- SKIPPED %s: NO price=%.0f¢ < MIN=%.0f¢",
                                   station, skipped_reason, bracket.no_ask_cents, MIN_PRICE_CENTS)
+                    else:
+                        skipped_reason = "min_edge"
                     skip_reason_counts[skipped_reason] += 1
-                # Both edges below MIN_EDGE_CENTS
                 else:
+                    # Both edges below MIN_EDGE_CENTS
                     skipped_reason = "min_edge"
                     log.debug("[%s] -- SKIPPED %s: max(%.2f¢, %.2f¢) < MIN=%.2f¢",
                               station, skipped_reason, ev_yes, ev_no, MIN_EDGE_CENTS)

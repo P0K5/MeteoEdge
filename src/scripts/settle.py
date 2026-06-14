@@ -59,6 +59,65 @@ def fetch_daily_climate_high(station: str, target_date: date) -> float | None:
     return best
 
 
+def settle_shadow_trades(target: date, truth: dict, db=None) -> None:
+    """Settle shadow YES trades for *target* using real outcomes from *truth*.
+
+    Shadow rows were inserted with ``mode='shadow'``, ``capital_before=0.0``,
+    and ``actual_price=yes_ask_cents`` (the observed ask at logging time).
+    Settlement uses a $1 notional stake so results are normalised for
+    cross-period comparison:
+
+        pnl = (100 - yes_ask) / 100   if YES bracket was hit (won)
+        pnl = -(yes_ask) / 100        if YES bracket was missed (lost)
+
+    Idempotent: rows already having ``settled_at IS NOT NULL`` are skipped.
+    Does not touch risk_manager state — shadow trades are observation-only.
+    """
+    if db is None:
+        return
+
+    rows = db.get_unsettled_shadow_trades(target.isoformat())
+    if not rows:
+        log.info("[settle] no unsettled shadow trades for %s", target)
+        return
+
+    n_settled = 0
+    now_iso = datetime.now(timezone.utc).isoformat()
+    for r in rows:
+        station = r.get("station", "")
+        if station not in truth:
+            log.debug("[settle] [shadow] no truth for station %s — skipping row %s", station, r["id"])
+            continue
+
+        actual = truth[station]
+        lo, hi = float(r["bracket_low"]), float(r["bracket_high"])
+        yes_won = lo <= actual <= hi
+        yes_ask = float(r["actual_price"])  # observed ask stored at insert time
+
+        if yes_won:
+            pnl = (100 - yes_ask) / 100
+        else:
+            pnl = -yes_ask / 100
+
+        try:
+            db.update_trade_by_id(
+                r["id"],
+                outcome="filled",
+                pnl=round(pnl, 6),
+                capital_after=round(pnl, 6),  # capital_before=0 + pnl
+                settled_at=now_iso,
+            )
+            n_settled += 1
+            log.debug(
+                "[settle] [shadow] id=%s station=%s yes_won=%s pnl=%.4f",
+                r["id"], station, yes_won, pnl,
+            )
+        except Exception as e:
+            log.warning("[settle] [shadow] update failed for row %s: %s", r["id"], e)
+
+    log.info("[settle] settled %s shadow trade(s) for %s", n_settled, target)
+
+
 def settle_yesterday():
     """For each candidate from yesterday, record whether it would have won."""
     if not CANDIDATES_CSV.exists():
@@ -109,7 +168,9 @@ def settle_yesterday():
     else:
         log.info("[settle] No candidates matched %s in %s -- nothing written.", yesterday, CANDIDATES_CSV)
 
-    settle_live_trades(yesterday, truth, db=_open_db())
+    db = _open_db()
+    settle_live_trades(yesterday, truth, db=db)
+    settle_shadow_trades(yesterday, truth, db=db)
 
 
 def _write_db_settlements(records: list[dict], target: date, truth: dict[str, float], db) -> None:
@@ -305,6 +366,8 @@ if __name__ == "__main__":
             log.info("[settle] Wrote settlements to %s", SETTLEMENTS_CSV)
         else:
             log.info("[settle] No candidates matched %s -- nothing written.", target)
-        settle_live_trades(target, truth, db=_open_db())
+        _db = _open_db()
+        settle_live_trades(target, truth, db=_db)
+        settle_shadow_trades(target, truth, db=_db)
     else:
         settle_yesterday()
