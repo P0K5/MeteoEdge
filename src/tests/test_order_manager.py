@@ -720,6 +720,22 @@ class TestManualSellPosition:
         assert result["status"] == "already_sold"
         trader.sell_position_immediate.assert_not_called()
 
+    def test_cross_process_not_found_when_db_row_gone(self):
+        """Fresh process (_sold_positions empty) but the bot already closed the DB
+        row: the DB lookup is the real cross-process guard, so we return not_found
+        instead of attempting a duplicate sell."""
+        token = "tok-m-5"
+        assert token not in self.om._sold_positions  # fresh process
+        trader = self._make_trader()
+        mock_db = MagicMock()
+        mock_db.get_open_positions.return_value = []  # row already removed by the bot
+
+        result = self.om.manual_sell_position(trader, token, "ts-m", db=mock_db)
+
+        assert result["status"] == "not_found"
+        trader.sell_position_immediate.assert_not_called()
+        mock_db.close_positions_by_token.assert_not_called()
+
     def test_no_fill_records_partial_and_returns_no_fill(self):
         """An unmatched/cancelled order returns no_fill and tracks any partial fill."""
         token = "tok-m-3"

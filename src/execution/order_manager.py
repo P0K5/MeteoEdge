@@ -436,9 +436,18 @@ class OrderManager:
         if token_id in self._sold_positions:
             return {"status": "already_sold", "detail": "Position already sold this session."}
 
+        # Cross-process guard: if another process (e.g. the bot's exit loop) has
+        # already sold this position, close_positions_by_token() will have removed
+        # the DB row, so _load_open_fills_for_token returns empty and we land on
+        # not_found here rather than attempting a duplicate sell. _sold_positions
+        # only guards a same-process replay, so the DB lookup is the real
+        # cross-process coordination gate -- do not bypass it.
         fills = _load_open_fills_for_token(token_id, today, db=db)
         if not fills:
-            return {"status": "not_found", "detail": "No open position found for this token."}
+            return {
+                "status": "not_found",
+                "detail": "No open position found for this token (it may have already been sold).",
+            }
 
         total_shares = sum(f["size_eur"] / (f["price_cents"] / 100) for f in fills)
         total_eur = sum(f["size_eur"] for f in fills)
