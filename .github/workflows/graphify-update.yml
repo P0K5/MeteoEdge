@@ -1,0 +1,66 @@
+name: Graphify Knowledge Graph Update
+
+on:
+  push:
+    branches: [ master ]
+    paths-ignore:
+      - 'graphify-out/**'
+      - '.github/workflows/graphify-update.yml'
+
+jobs:
+  update-graph:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install Graphify
+        run: pip install graphifyy openai
+
+      - name: Create .graphifyignore
+        run: |
+          cat > .graphifyignore << 'EOF'
+          data/
+          backtest_results/
+          archive/
+          *.csv
+          *.parquet
+          *.pkl
+          __pycache__/
+          .env
+          EOF
+
+      - name: Run Graphify extract
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+        run: |
+          graphify extract . \
+            --backend deepseek \
+            --max-concurrency 4 \
+            --token-budget 32000 \
+            --no-cluster
+
+      - name: Run Graphify cluster
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+        run: graphify cluster-only . --backend deepseek
+
+      - name: Commit updated graph
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add graphify-out/graph.json \
+                  graphify-out/GRAPH_REPORT.md \
+                  graphify-out/.graphify_analysis.json
+          git diff --staged --quiet || git commit -m "chore(graph): auto-update knowledge graph [skip ci]"
+          git push
