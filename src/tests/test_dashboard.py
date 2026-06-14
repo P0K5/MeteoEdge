@@ -1087,3 +1087,63 @@ class TestWeatherHealthEndpoint:
         assert body["all_degraded"] is True
         assert len(body["degraded"]) == 2
         dash_api.weather_health = None
+
+
+class TestSellPositionEndpoint:
+    """POST /api/positions/{token_id}/sell — operator-triggered manual sell."""
+
+    def test_sell_success(self, client):
+        from unittest.mock import MagicMock
+        dash_api._db = MagicMock()
+        sell_result = {
+            "status": "sold", "order_id": "sell-x", "sell_price_cents": 90,
+            "shares": 6.25, "pnl": 0.62,
+        }
+        with patch("src.execution.auth.get_clob_client", return_value=MagicMock()), \
+             patch("src.dashboard.api.LiveTrader", return_value=MagicMock()), \
+             patch.object(dash_api.order_manager, "manual_sell_position",
+                          return_value=sell_result) as msp:
+            resp = client.post("/api/positions/tok-1/sell")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "sold"
+        assert body["sell_price_cents"] == 90
+        assert body["pnl"] == 0.62
+        msp.assert_called_once()
+        assert msp.call_args[0][1] == "tok-1"
+
+    def test_sell_no_fill_returns_200(self, client):
+        from unittest.mock import MagicMock
+        dash_api._db = MagicMock()
+        with patch("src.execution.auth.get_clob_client", return_value=MagicMock()), \
+             patch("src.dashboard.api.LiveTrader", return_value=MagicMock()), \
+             patch.object(dash_api.order_manager, "manual_sell_position",
+                          return_value={"status": "no_fill", "detail": "retry"}):
+            resp = client.post("/api/positions/tok-2/sell")
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "no_fill"
+
+    def test_sell_not_found_returns_404(self, client):
+        from unittest.mock import MagicMock
+        dash_api._db = MagicMock()
+        with patch("src.execution.auth.get_clob_client", return_value=MagicMock()), \
+             patch("src.dashboard.api.LiveTrader", return_value=MagicMock()), \
+             patch.object(dash_api.order_manager, "manual_sell_position",
+                          return_value={"status": "not_found", "detail": "gone"}):
+            resp = client.post("/api/positions/missing/sell")
+        assert resp.status_code == 404
+
+    def test_sell_already_sold_returns_409(self, client):
+        from unittest.mock import MagicMock
+        dash_api._db = MagicMock()
+        with patch("src.execution.auth.get_clob_client", return_value=MagicMock()), \
+             patch("src.dashboard.api.LiveTrader", return_value=MagicMock()), \
+             patch.object(dash_api.order_manager, "manual_sell_position",
+                          return_value={"status": "already_sold", "detail": "dup"}):
+            resp = client.post("/api/positions/tok-3/sell")
+        assert resp.status_code == 409
+
+    def test_sell_503_when_db_missing(self, client):
+        dash_api._db = None
+        resp = client.post("/api/positions/tok-4/sell")
+        assert resp.status_code == 503

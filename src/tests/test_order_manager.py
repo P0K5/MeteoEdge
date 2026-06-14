@@ -652,3 +652,103 @@ class TestCheckTakeProfitExits:
             self.om.check_take_profit_exits(trader, "ts-tp", db=None)
 
         assert token not in self.om._sold_positions
+
+
+# ===========================================================================
+# manual_sell_position
+# ===========================================================================
+
+class TestManualSellPosition:
+    """Operator-triggered immediate sell of an open position."""
+
+    @pytest.fixture(autouse=True)
+    def _reset_om(self):
+        self.om = _make_om()
+
+    def _make_trader(self, sell_result=("sell-id-1", 68)):
+        trader = MagicMock()
+        trader.sell_position_immediate.return_value = sell_result
+        return trader
+
+    def test_sells_full_size_and_records(self):
+        """A fill closes the DB rows, marks the token sold, and records a manual trade."""
+        token = "tok-m-1"
+        fill = _make_fill(token, price_cents=80)
+        fill["side"] = "NO"
+        trader = self._make_trader(sell_result=("sell-m-1", 90))
+        mock_db = MagicMock()
+        mock_db.get_open_positions.return_value = [fill]
+        mock_db.close_positions_by_token.return_value = 1
+
+        with patch("src.execution.order_manager._record_sell_in_db"), \
+             patch.object(src.scripts.run, "_append_live_trade") as appended:
+            result = self.om.manual_sell_position(trader, token, "ts-m", db=mock_db)
+
+        assert result["status"] == "sold"
+        assert result["order_id"] == "sell-m-1"
+        assert result["sell_price_cents"] == 90
+        trader.sell_position_immediate.assert_called_once()
+        assert trader.sell_position_immediate.call_args[0][0] == token
+        assert token in self.om._sold_positions
+        mock_db.close_positions_by_token.assert_called_with(token)
+        # PnL = (90 - 80)/100 * (5/0.80 shares) = 0.10 * 6.25 = 0.625
+        assert result["pnl"] == pytest.approx(0.625)
+        record = appended.call_args[0][0]
+        assert record["outcome"] == "sold"
+        assert record["trigger"].startswith("manual@")
+        assert record["entry_side"] == "NO"
+
+    def test_not_found_when_no_open_fills(self):
+        """No open fills for the token → not_found, no sell attempted."""
+        trader = self._make_trader()
+        mock_db = MagicMock()
+        mock_db.get_open_positions.return_value = []
+
+        result = self.om.manual_sell_position(trader, "missing", "ts-m", db=mock_db)
+
+        assert result["status"] == "not_found"
+        trader.sell_position_immediate.assert_not_called()
+
+    def test_already_sold_token_is_skipped(self):
+        """A token already in _sold_positions is not sold again."""
+        token = "tok-m-2"
+        self.om._sold_positions.add(token)
+        trader = self._make_trader()
+
+        result = self.om.manual_sell_position(trader, token, "ts-m", db=MagicMock())
+
+        assert result["status"] == "already_sold"
+        trader.sell_position_immediate.assert_not_called()
+
+    def test_no_fill_records_partial_and_returns_no_fill(self):
+        """An unmatched/cancelled order returns no_fill and tracks any partial fill."""
+        token = "tok-m-3"
+        fill = _make_fill(token)
+        fill["side"] = "NO"
+        trader = self._make_trader(sell_result=(None, "cancelled-order-7"))
+        trader.get_order_fill_size.return_value = 2.0
+        mock_db = MagicMock()
+        mock_db.get_open_positions.return_value = [fill]
+
+        result = self.om.manual_sell_position(trader, token, "ts-m", db=mock_db)
+
+        assert result["status"] == "no_fill"
+        assert token not in self.om._sold_positions
+        assert self.om._partial_fill_shares[token] == 2.0
+        mock_db.close_positions_by_token.assert_not_called()
+
+    def test_yes_position_carries_entry_side(self):
+        """A YES holding records entry_side=YES so the closed list labels it correctly."""
+        token = "tok-m-4"
+        fill = _make_fill(token, price_cents=40)
+        fill["side"] = "YES"
+        trader = self._make_trader(sell_result=("sell-m-4", 55))
+        mock_db = MagicMock()
+        mock_db.get_open_positions.return_value = [fill]
+
+        with patch("src.execution.order_manager._record_sell_in_db"), \
+             patch.object(src.scripts.run, "_append_live_trade") as appended:
+            result = self.om.manual_sell_position(trader, token, "ts-m", db=mock_db)
+
+        assert result["status"] == "sold"
+        assert appended.call_args[0][0]["entry_side"] == "YES"

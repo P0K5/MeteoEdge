@@ -61,6 +61,47 @@ def _load_open_no_positions(today: str, db=None) -> list:
     return [r for r in records if r.get("no_token_id") not in sold_tokens]
 
 
+def _load_open_fills_for_token(token_id: str, today: str, db=None) -> list:
+    """Return today's filled, not-yet-sold fills for *token_id* (any side).
+
+    Unlike _load_open_no_positions this does not restrict to NO positions, so
+    it can size a manual sell of either a YES or a NO holding.  Prefers the DB;
+    falls back to live_trades.jsonl when no DB is available.
+    """
+    if db is not None:
+        try:
+            return [
+                p for p in db.get_open_positions()
+                if p.get("no_token_id") == token_id
+            ]
+        except Exception as e:
+            log.warning("[manual] DB read failed: %s", e)
+    if not LIVE_TRADES_JSONL.exists():
+        return []
+    records: list = []
+    sold = False
+    try:
+        with open(LIVE_TRADES_JSONL) as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    r = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                tok = r.get("no_token_id") or r.get("asset_id") or ""
+                if tok != token_id:
+                    continue
+                if r.get("outcome") == "sold":
+                    sold = True
+                elif r.get("outcome") == "filled":
+                    records.append(r)
+    except OSError:
+        return []
+    return [] if sold else records
+
+
 def _record_sell_in_db(fills: list, sell_price_cents: int, ts: str, db=None) -> None:
     """Mark the BUY trade row of each fill as sold with its realised PnL."""
     if db is None:
@@ -363,6 +404,108 @@ class OrderManager:
                     )
                 else:
                     log.warning("  [tp] sell failed for [%s] %.0f-%.0fF: %s", station, bracket_low, bracket_high, e)
+
+    def manual_sell_position(
+        self, live_trader, token_id: str, ts: str, db=None, risk_manager=None,
+    ) -> dict:
+        """Operator-triggered immediate sell of one open position.
+
+        Fired on demand from the dashboard rather than by a price trigger, but
+        records the exit identically to check_take_profit_exits: sells the full
+        remaining size at the current best bid (immediate-or-cancel via
+        sell_position_immediate), closes the DB rows, marks the token sold so
+        the bot's exit loops skip it, and appends a 'sold' trade with a
+        ``manual@`` trigger so the position moves to the closed list.
+
+        Returns a result dict with a ``status`` of:
+          - "sold"        — filled; includes order_id, sell_price_cents, shares, pnl
+          - "no_fill"     — order did not cross at market and was cancelled
+          - "not_found"   — no open fills for this token
+          - "already_sold" — token already sold this session
+        """
+        from src.scripts.run import _append_live_trade  # noqa: PLC0415
+
+        today = datetime.now(timezone.utc).date().isoformat()
+        if token_id in self._sold_positions:
+            return {"status": "already_sold", "detail": "Position already sold this session."}
+
+        fills = _load_open_fills_for_token(token_id, today, db=db)
+        if not fills:
+            return {"status": "not_found", "detail": "No open position found for this token."}
+
+        total_shares = sum(f["size_eur"] / (f["price_cents"] / 100) for f in fills)
+        total_eur = sum(f["size_eur"] for f in fills)
+        bracket_low = fills[0].get("bracket_low")
+        bracket_high = fills[0].get("bracket_high")
+        station = fills[0].get("station", "")
+        question = fills[0].get("question", "")
+        side = fills[0].get("side", "NO")
+
+        log.info(
+            "  [manual] operator sell [%s] %s %s... -- %.1f shares",
+            station, side, token_id[:14], total_shares,
+        )
+        sell_id, sell_price_or_order = live_trader.sell_position_immediate(token_id, total_shares)
+        if sell_id is None:
+            # Not matched at market and cancelled -- record any partial fill so a
+            # retry sells only the true remainder, then ask the caller to retry.
+            cancelled_order_id = sell_price_or_order
+            if cancelled_order_id:
+                partial = live_trader.get_order_fill_size(cancelled_order_id)
+                if partial > 0:
+                    self._partial_fill_shares[token_id] = (
+                        self._partial_fill_shares.get(token_id, 0.0) + partial
+                    )
+            return {"status": "no_fill", "detail": "Order did not fill at market -- try again."}
+
+        sell_price_cents = sell_price_or_order
+        self._sold_positions.add(token_id)
+        self._stop_loss_strikes.pop(token_id, None)
+        self._partial_fill_shares.pop(token_id, None)
+        if db is not None:
+            db.close_positions_by_token(token_id)
+        avg_entry_cents = sum(
+            f["price_cents"] * (f["size_eur"] / (f["price_cents"] / 100))
+            for f in fills
+        ) / total_shares
+        pnl = round((sell_price_cents - avg_entry_cents) / 100 * total_shares, 4)
+        _record_sell_in_db(fills, sell_price_cents, ts, db=db)
+        if risk_manager is not None:
+            risk_manager.record_pnl(pnl)
+        _append_live_trade({
+            "ts": ts,
+            "order_id": sell_id,
+            "station": station,
+            "question": question,
+            "end_date": today,
+            "ticker": fills[0].get("ticker", ""),
+            "no_token_id": token_id,
+            "bracket_low": bracket_low,
+            "bracket_high": bracket_high,
+            "side": "SELL",
+            "entry_side": side,
+            "price_cents": sell_price_cents,
+            "entry_price_cents": round(avg_entry_cents),
+            "shares": round(total_shares, 4),
+            "size_eur": total_eur,
+            "edge_cents": 0,
+            "pnl": pnl,
+            "outcome": "sold",
+            "actual_fee_cents": None,
+            "trigger": f"manual@{sell_price_cents}c_entry{round(avg_entry_cents)}c",
+        }, db=db)
+        log.info(
+            "  [manual] sell %s... filled @ %sc -- [%s] %.0f-%.0fF %s  pnl=%+.2f",
+            sell_id[:12], sell_price_cents, station,
+            bracket_low or 0, bracket_high or 0, side, pnl,
+        )
+        return {
+            "status": "sold",
+            "order_id": sell_id,
+            "sell_price_cents": sell_price_cents,
+            "shares": round(total_shares, 4),
+            "pnl": pnl,
+        }
 
 
 # Module-level singleton: imported by run.py, position_tracker, and order_executor
