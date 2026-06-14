@@ -184,3 +184,16 @@ In those cases:
 - Post a comment on the issue describing what you understand so far.
 - List the risks you see.
 - Suggest what the Tech Lead PM should decide before you proceed.
+
+---
+
+## 9. Knowledge graph usage
+
+Follow the Graphify rules in `/CLAUDE.md`.
+
+Before broad file reads or grep/glob exploration:
+- Prefer `graphify query "<question>"` for codebase questions
+- Use `graphify path "<A>" "<B>"` for relationships between modules
+- Use `graphify explain "<concept>"` for focused understanding of an area
+
+If `graphify` is not available on PATH in the current environment, install it with `pip install graphifyy` and use the committed `graphify-out/graph.json`. Do not run `graphify extract` unless explicitly instructed.

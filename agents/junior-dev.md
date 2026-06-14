@@ -179,7 +179,20 @@ Do not ask vague questions like "How do I do this?" — be specific about what y
 
 ---
 
-## 8. Limits
+## 8. Knowledge graph usage
+
+Follow the Graphify rules in `/CLAUDE.md`.
+
+Before scanning files with grep or glob to find similar implementations:
+- Use `graphify query "<question>"` to locate relevant files and symbols first
+- Use `graphify path "<A>" "<B>"` to understand how modules relate
+- Use `graphify explain "<concept>"` when you need focused context on a specific area
+
+If `graphify` is not available on PATH in the current environment, install it with `pip install graphifyy` and use the committed `graphify-out/graph.json`. Do not run `graphify extract` unless explicitly instructed.
+
+---
+
+## 9. Limits
 
 You must **never**:
 

@@ -290,3 +290,16 @@ At natural milestones (batch of related issues completed, blocker raised, epic n
 - Spawn agents without the correct `model` parameter.
 
 When in doubt, ask a clarifying question rather than making an assumption.
+
+---
+
+## 8. Knowledge graph usage
+
+Follow the Graphify rules in `/CLAUDE.md`.
+
+Before broad file reads or grep/glob exploration:
+- Prefer `graphify query "<question>"` for codebase questions
+- Use `graphify path "<A>" "<B>"` for relationships between modules
+- Use `graphify explain "<concept>"` for focused understanding of an area
+
+If `graphify` is not available on PATH in the current environment, install it with `pip install graphifyy` and use the committed `graphify-out/graph.json`. Do not run `graphify extract` unless explicitly instructed.
