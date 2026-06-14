@@ -48,7 +48,7 @@ def _execute_live(
             log.info("  [live] skip %s %s... -- GTC order already open on exchange", candidate.side, candidate.bracket.ticker[:16])
             risk_manager.close_position()
             return
-        __order_manager._open_orders.add(order_key)
+        _order_manager._open_orders.add(order_key)
 
     predicted_price = round(candidate.confidence * 100)
 
@@ -113,4 +113,4 @@ def _execute_live(
         log.info("  [live] %s %s...", outcome, order_id[:12])
     finally:
         with _order_manager._open_orders_lock:
-            __order_manager._open_orders.discard(order_key)
+            _order_manager._open_orders.discard(order_key)

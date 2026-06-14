@@ -251,7 +251,6 @@ def poll_once(
         )
 
 
-
 def _start_collector_thread(collector_fn, name: str) -> None:
     """Start a collector in a daemon thread; log WARNING on any startup exception."""
     def _run():
