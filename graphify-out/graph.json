@@ -1098,7 +1098,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "src_config",
-      "community": 16,
+      "community": 17,
       "norm_label": "config.py"
     },
     {
@@ -1148,7 +1148,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "src_config_rationale_1",
-      "community": 16,
+      "community": 17,
       "norm_label": "unified config for polymarket weather arbitrage. environment vars override defau"
     },
     {
@@ -1298,7 +1298,7 @@
       "source_location": "L207",
       "_origin": "ast",
       "id": "dashboard_api_closedpositionout",
-      "community": 48,
+      "community": 84,
       "norm_label": "closedpositionout"
     },
     {
@@ -1438,7 +1438,7 @@
       "source_location": "L425",
       "_origin": "ast",
       "id": "dashboard_api_stopped_positions",
-      "community": 48,
+      "community": 84,
       "norm_label": "_stopped_positions()"
     },
     {
@@ -1938,7 +1938,7 @@
       "source_location": "L426",
       "_origin": "ast",
       "id": "dashboard_api_rationale_426",
-      "community": 48,
+      "community": 84,
       "norm_label": "return positions closed before settlement (metar stop-loss or take-profit)."
     },
     {
@@ -2378,7 +2378,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "execution_auth",
-      "community": 55,
+      "community": 17,
       "norm_label": "auth.py"
     },
     {
@@ -2388,7 +2388,7 @@
       "source_location": "L21",
       "_origin": "ast",
       "id": "execution_auth_get_clob_client",
-      "community": 55,
+      "community": 17,
       "norm_label": "get_clob_client()"
     },
     {
@@ -2398,7 +2398,7 @@
       "source_location": "L21",
       "_origin": "ast",
       "id": "src_execution_auth_py_clobclient",
-      "community": 55,
+      "community": 17,
       "norm_label": "clobclient"
     },
     {
@@ -2418,7 +2418,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "execution_auth_rationale_1",
-      "community": 55,
+      "community": 17,
       "norm_label": "polymarket clob v2 client initialisation.  required env vars:   polymarket_api_k"
     },
     {
@@ -2438,7 +2438,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "execution_live_trader",
-      "community": 46,
+      "community": 85,
       "norm_label": "live_trader.py"
     },
     {
@@ -2448,7 +2448,7 @@
       "source_location": "L14",
       "_origin": "ast",
       "id": "execution_live_trader_livetrader",
-      "community": 46,
+      "community": 85,
       "norm_label": "livetrader"
     },
     {
@@ -2458,7 +2458,7 @@
       "source_location": "L15",
       "_origin": "ast",
       "id": "execution_live_trader_livetrader_init",
-      "community": 46,
+      "community": 85,
       "norm_label": ".__init__()"
     },
     {
@@ -2468,7 +2468,7 @@
       "source_location": "L15",
       "_origin": "ast",
       "id": "src_execution_live_trader_py_clobclient",
-      "community": 46,
+      "community": 85,
       "norm_label": "clobclient"
     },
     {
@@ -2478,7 +2478,7 @@
       "source_location": "L19",
       "_origin": "ast",
       "id": "execution_live_trader_livetrader_get_usdc_balance",
-      "community": 46,
+      "community": 85,
       "norm_label": ".get_usdc_balance()"
     },
     {
@@ -2488,7 +2488,7 @@
       "source_location": "L24",
       "_origin": "ast",
       "id": "execution_live_trader_livetrader_place_order",
-      "community": 46,
+      "community": 85,
       "norm_label": ".place_order()"
     },
     {
@@ -2498,7 +2498,7 @@
       "source_location": "L90",
       "_origin": "ast",
       "id": "execution_live_trader_livetrader_sell_position",
-      "community": 46,
+      "community": 85,
       "norm_label": ".sell_position()"
     },
     {
@@ -2508,7 +2508,7 @@
       "source_location": "L116",
       "_origin": "ast",
       "id": "execution_live_trader_livetrader_get_order_fill_size",
-      "community": 46,
+      "community": 85,
       "norm_label": ".get_order_fill_size()"
     },
     {
@@ -2518,7 +2518,7 @@
       "source_location": "L133",
       "_origin": "ast",
       "id": "execution_live_trader_livetrader_sell_position_immediate",
-      "community": 46,
+      "community": 162,
       "norm_label": ".sell_position_immediate()"
     },
     {
@@ -2528,7 +2528,7 @@
       "source_location": "L190",
       "_origin": "ast",
       "id": "execution_live_trader_livetrader_cancel_order",
-      "community": 46,
+      "community": 162,
       "norm_label": ".cancel_order()"
     },
     {
@@ -2538,7 +2538,7 @@
       "source_location": "L202",
       "_origin": "ast",
       "id": "execution_live_trader_livetrader_check_fill",
-      "community": 46,
+      "community": 162,
       "norm_label": ".check_fill()"
     },
     {
@@ -2548,7 +2548,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "execution_live_trader_rationale_1",
-      "community": 46,
+      "community": 85,
       "norm_label": "live order execution via polymarket clob."
     },
     {
@@ -2558,7 +2558,7 @@
       "source_location": "L20",
       "_origin": "ast",
       "id": "execution_live_trader_rationale_20",
-      "community": 46,
+      "community": 85,
       "norm_label": "return available usdc in the clob (internal balance, not on-chain)."
     },
     {
@@ -2568,7 +2568,7 @@
       "source_location": "L37",
       "_origin": "ast",
       "id": "execution_live_trader_rationale_37",
-      "community": 46,
+      "community": 85,
       "norm_label": "place a gtc limit order. returns order_id string."
     },
     {
@@ -2578,7 +2578,7 @@
       "source_location": "L91",
       "_origin": "ast",
       "id": "execution_live_trader_rationale_91",
-      "community": 46,
+      "community": 85,
       "norm_label": "sell no tokens at the current best bid price.          used for metar-triggered"
     },
     {
@@ -2588,7 +2588,7 @@
       "source_location": "L117",
       "_origin": "ast",
       "id": "execution_live_trader_rationale_117",
-      "community": 46,
+      "community": 85,
       "norm_label": "return the shares matched/filled for *order_id* so far (0.0 on error)."
     },
     {
@@ -2598,7 +2598,7 @@
       "source_location": "L136",
       "_origin": "ast",
       "id": "execution_live_trader_rationale_136",
-      "community": 46,
+      "community": 162,
       "norm_label": "sell no tokens immediately or not at all \u2014 never leaves a resting order."
     },
     {
@@ -2608,7 +2608,7 @@
       "source_location": "L191",
       "_origin": "ast",
       "id": "execution_live_trader_rationale_191",
-      "community": 46,
+      "community": 162,
       "norm_label": "cancel an open order. returns true if cancelled."
     },
     {
@@ -2618,7 +2618,7 @@
       "source_location": "L203",
       "_origin": "ast",
       "id": "execution_live_trader_rationale_203",
-      "community": 46,
+      "community": 162,
       "norm_label": "return current status of an order. never raises."
     },
     {
@@ -2848,7 +2848,7 @@
       "source_location": "L49",
       "_origin": "ast",
       "id": "execution_position_tracker_log_open_position_snapshots",
-      "community": 17,
+      "community": 16,
       "norm_label": "_log_open_position_snapshots()"
     },
     {
@@ -2858,7 +2858,7 @@
       "source_location": "L158",
       "_origin": "ast",
       "id": "execution_position_tracker_check_stop_loss_exits",
-      "community": 17,
+      "community": 16,
       "norm_label": "_check_stop_loss_exits()"
     },
     {
@@ -2888,7 +2888,7 @@
       "source_location": "L50",
       "_origin": "ast",
       "id": "execution_position_tracker_rationale_50",
-      "community": 17,
+      "community": 16,
       "norm_label": "write one snapshot per open no position per poll, capturing weather +     orderb"
     },
     {
@@ -2898,7 +2898,7 @@
       "source_location": "L160",
       "_origin": "ast",
       "id": "execution_position_tracker_rationale_160",
-      "community": 17,
+      "community": 16,
       "norm_label": "exit no positions when the live model itself no longer supports the entry."
     },
     {
@@ -3308,7 +3308,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "model_deb_weighting",
-      "community": 14,
+      "community": 89,
       "norm_label": "deb_weighting.py"
     },
     {
@@ -3328,7 +3328,7 @@
       "source_location": "L40",
       "_origin": "ast",
       "id": "model_deb_weighting_log_forecast",
-      "community": 14,
+      "community": 89,
       "norm_label": "log_forecast()"
     },
     {
@@ -3348,7 +3348,7 @@
       "source_location": "L115",
       "_origin": "ast",
       "id": "model_deb_weighting_refresh_weights",
-      "community": 14,
+      "community": 89,
       "norm_label": "refresh_weights()"
     },
     {
@@ -3358,7 +3358,7 @@
       "source_location": "L148",
       "_origin": "ast",
       "id": "model_deb_weighting_get_weights",
-      "community": 14,
+      "community": 89,
       "norm_label": "get_weights()"
     },
     {
@@ -3368,7 +3368,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "model_deb_weighting_rationale_1",
-      "community": 14,
+      "community": 89,
       "norm_label": "deb (dynamic error balancing) weight computation module.  computes per-model for"
     },
     {
@@ -3388,7 +3388,7 @@
       "source_location": "L41",
       "_origin": "ast",
       "id": "model_deb_weighting_rationale_41",
-      "community": 14,
+      "community": 89,
       "norm_label": "write a forecast to model_forecast_log via db.upsert_forecast_log().      no-op"
     },
     {
@@ -3408,7 +3408,7 @@
       "source_location": "L116",
       "_origin": "ast",
       "id": "model_deb_weighting_rationale_116",
-      "community": 14,
+      "community": 89,
       "norm_label": "recompute and persist model weights for *city* / *station*.      skips when:"
     },
     {
@@ -3418,7 +3418,7 @@
       "source_location": "L149",
       "_origin": "ast",
       "id": "model_deb_weighting_rationale_149",
-      "community": 14,
+      "community": 89,
       "norm_label": "return the most-recent persisted weights for *city*.      returns equal_weights"
     },
     {
@@ -4348,7 +4348,7 @@
       "source_location": "L68",
       "_origin": "ast",
       "id": "monitoring_dashboard_load_trades",
-      "community": 17,
+      "community": 87,
       "norm_label": "_load_trades()"
     },
     {
@@ -4358,7 +4358,7 @@
       "source_location": "L78",
       "_origin": "ast",
       "id": "monitoring_dashboard_compute_win_rate",
-      "community": 17,
+      "community": 87,
       "norm_label": "_compute_win_rate()"
     },
     {
@@ -4378,7 +4378,7 @@
       "source_location": "L88",
       "_origin": "ast",
       "id": "monitoring_dashboard_read_jsonl",
-      "community": 135,
+      "community": 81,
       "norm_label": "_read_jsonl()"
     },
     {
@@ -4388,7 +4388,7 @@
       "source_location": "L88",
       "_origin": "ast",
       "id": "src_monitoring_dashboard_py_path",
-      "community": 135,
+      "community": 81,
       "norm_label": "path"
     },
     {
@@ -4398,7 +4398,7 @@
       "source_location": "L94",
       "_origin": "ast",
       "id": "monitoring_dashboard_start_dashboard",
-      "community": 87,
+      "community": 17,
       "norm_label": "start_dashboard()"
     },
     {
@@ -4478,7 +4478,7 @@
       "source_location": "L69",
       "_origin": "ast",
       "id": "monitoring_dashboard_rationale_69",
-      "community": 17,
+      "community": 87,
       "norm_label": "return all trade records, newest first.      delegates to src.dashboard.api._das"
     },
     {
@@ -4488,7 +4488,7 @@
       "source_location": "L79",
       "_origin": "ast",
       "id": "monitoring_dashboard_rationale_79",
-      "community": 17,
+      "community": 87,
       "norm_label": "compute win rate over the last *n* settled trades."
     },
     {
@@ -4508,7 +4508,7 @@
       "source_location": "L89",
       "_origin": "ast",
       "id": "monitoring_dashboard_rationale_89",
-      "community": 135,
+      "community": 81,
       "norm_label": "read a jsonl file; delegates to the shared data layer."
     },
     {
@@ -4518,7 +4518,7 @@
       "source_location": "L95",
       "_origin": "ast",
       "id": "monitoring_dashboard_rationale_95",
-      "community": 87,
+      "community": 17,
       "norm_label": "start the consolidated fastapi dashboard in a background daemon thread.      ret"
     },
     {
@@ -4878,7 +4878,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "scripts_intraday_correction_backtest",
-      "community": 13,
+      "community": 17,
       "norm_label": "intraday_correction_backtest.py"
     },
     {
@@ -4928,7 +4928,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "scripts_intraday_correction_backtest_rationale_1",
-      "community": 13,
+      "community": 17,
       "norm_label": "backtest script for intraday bias correction.  compares corrected forecast rmse"
     },
     {
@@ -4978,7 +4978,7 @@
       "source_location": "L59",
       "_origin": "ast",
       "id": "scripts_run_append_snapshot",
-      "community": 17,
+      "community": 14,
       "norm_label": "_append_snapshot()"
     },
     {
@@ -4988,7 +4988,7 @@
       "source_location": "L65",
       "_origin": "ast",
       "id": "scripts_run_append_candidate",
-      "community": 17,
+      "community": 14,
       "norm_label": "_append_candidate()"
     },
     {
@@ -5008,14 +5008,14 @@
       "source_location": "L113",
       "_origin": "ast",
       "id": "scripts_run_poll_once",
-      "community": 17,
+      "community": 14,
       "norm_label": "poll_once()"
     },
     {
       "label": "_start_collector_thread()",
       "file_type": "code",
       "source_file": "src/scripts/run.py",
-      "source_location": "L273",
+      "source_location": "L307",
       "_origin": "ast",
       "id": "scripts_run_start_collector_thread",
       "community": 17,
@@ -5025,7 +5025,7 @@
       "label": "main()",
       "file_type": "code",
       "source_file": "src/scripts/run.py",
-      "source_location": "L285",
+      "source_location": "L319",
       "_origin": "ast",
       "id": "scripts_run_main",
       "community": 17,
@@ -5048,16 +5048,16 @@
       "source_location": "L119",
       "_origin": "ast",
       "id": "scripts_run_rationale_119",
-      "community": 17,
+      "community": 14,
       "norm_label": "run one full poll: build weather states, fetch markets, scan, log candidates."
     },
     {
       "label": "Start a collector in a daemon thread; log WARNING on any startup exception.",
       "file_type": "rationale",
       "source_file": "src/scripts/run.py",
-      "source_location": "L274",
+      "source_location": "L308",
       "_origin": "ast",
-      "id": "scripts_run_rationale_274",
+      "id": "scripts_run_rationale_308",
       "community": 17,
       "norm_label": "start a collector in a daemon thread; log warning on any startup exception."
     },
@@ -5098,14 +5098,24 @@
       "source_location": "L24",
       "_origin": "ast",
       "id": "date",
-      "community": 38,
+      "community": 161,
       "norm_label": "date"
+    },
+    {
+      "label": "settle_shadow_trades()",
+      "file_type": "code",
+      "source_file": "src/scripts/settle.py",
+      "source_location": "L62",
+      "_origin": "ast",
+      "id": "scripts_settle_settle_shadow_trades",
+      "community": 127,
+      "norm_label": "settle_shadow_trades()"
     },
     {
       "label": "settle_yesterday()",
       "file_type": "code",
       "source_file": "src/scripts/settle.py",
-      "source_location": "L62",
+      "source_location": "L121",
       "_origin": "ast",
       "id": "scripts_settle_settle_yesterday",
       "community": 127,
@@ -5115,7 +5125,7 @@
       "label": "_write_db_settlements()",
       "file_type": "code",
       "source_file": "src/scripts/settle.py",
-      "source_location": "L115",
+      "source_location": "L176",
       "_origin": "ast",
       "id": "scripts_settle_write_db_settlements",
       "community": 127,
@@ -5125,7 +5135,7 @@
       "label": "settle_live_trades()",
       "file_type": "code",
       "source_file": "src/scripts/settle.py",
-      "source_location": "L164",
+      "source_location": "L225",
       "_origin": "ast",
       "id": "scripts_settle_settle_live_trades",
       "community": 127,
@@ -5162,12 +5172,22 @@
       "norm_label": "pull the actual daily high for a station on target_date using 48h metar history."
     },
     {
-      "label": "For each candidate from yesterday, record whether it would have won.",
+      "label": "Settle shadow YES trades for *target* using real outcomes from *truth*.      Sha",
       "file_type": "rationale",
       "source_file": "src/scripts/settle.py",
       "source_location": "L63",
       "_origin": "ast",
       "id": "scripts_settle_rationale_63",
+      "community": 127,
+      "norm_label": "settle shadow yes trades for *target* using real outcomes from *truth*.      sha"
+    },
+    {
+      "label": "For each candidate from yesterday, record whether it would have won.",
+      "file_type": "rationale",
+      "source_file": "src/scripts/settle.py",
+      "source_location": "L122",
+      "_origin": "ast",
+      "id": "scripts_settle_rationale_122",
       "community": 127,
       "norm_label": "for each candidate from yesterday, record whether it would have won."
     },
@@ -5175,9 +5195,9 @@
       "label": "Upsert one settlement row per market resolved on *target*.      Market identity",
       "file_type": "rationale",
       "source_file": "src/scripts/settle.py",
-      "source_location": "L116",
+      "source_location": "L177",
       "_origin": "ast",
-      "id": "scripts_settle_rationale_116",
+      "id": "scripts_settle_rationale_177",
       "community": 127,
       "norm_label": "upsert one settlement row per market resolved on *target*.      market identity"
     },
@@ -5185,9 +5205,9 @@
       "label": "Write actual P&L back to live_trades.jsonl for a given date.      Two cases:",
       "file_type": "rationale",
       "source_file": "src/scripts/settle.py",
-      "source_location": "L165",
+      "source_location": "L226",
       "_origin": "ast",
-      "id": "scripts_settle_rationale_165",
+      "id": "scripts_settle_rationale_226",
       "community": 127,
       "norm_label": "write actual p&l back to live_trades.jsonl for a given date.      two cases:"
     },
@@ -5248,7 +5268,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "strategy_scanner",
-      "community": 8,
+      "community": 7,
       "norm_label": "scanner.py"
     },
     {
@@ -5258,7 +5278,7 @@
       "source_location": "L44",
       "_origin": "ast",
       "id": "strategy_scanner_is_highest_temp_market",
-      "community": 10,
+      "community": 7,
       "norm_label": "is_highest_temp_market()"
     },
     {
@@ -5298,7 +5318,7 @@
       "source_location": "L166",
       "_origin": "ast",
       "id": "strategy_scanner_minutes_to_settlement",
-      "community": 8,
+      "community": 7,
       "norm_label": "minutes_to_settlement()"
     },
     {
@@ -5308,7 +5328,7 @@
       "source_location": "L184",
       "_origin": "ast",
       "id": "strategy_scanner_enrich_from_clob",
-      "community": 8,
+      "community": 7,
       "norm_label": "_enrich_from_clob()"
     },
     {
@@ -5328,14 +5348,14 @@
       "source_location": "L216",
       "_origin": "ast",
       "id": "strategy_scanner_candidate",
-      "community": 18,
+      "community": 138,
       "norm_label": "candidate"
     },
     {
       "label": "no_entry_margin_gap()",
       "file_type": "code",
       "source_file": "src/strategy/scanner.py",
-      "source_location": "L232",
+      "source_location": "L233",
       "_origin": "ast",
       "id": "strategy_scanner_no_entry_margin_gap",
       "community": 47,
@@ -5345,17 +5365,17 @@
       "label": "WeatherState",
       "file_type": "code",
       "source_file": "src/strategy/scanner.py",
-      "source_location": "L232",
+      "source_location": "L233",
       "_origin": "ast",
       "id": "src_strategy_scanner_py_weatherstate",
-      "community": 21,
+      "community": 47,
       "norm_label": "weatherstate"
     },
     {
       "label": "scan_markets()",
       "file_type": "code",
       "source_file": "src/strategy/scanner.py",
-      "source_location": "L258",
+      "source_location": "L259",
       "_origin": "ast",
       "id": "strategy_scanner_scan_markets",
       "community": 29,
@@ -5368,7 +5388,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "strategy_scanner_rationale_1",
-      "community": 8,
+      "community": 7,
       "norm_label": "market scanner \u2014 identifies mispriced polymarket temperature brackets.  for each"
     },
     {
@@ -5378,7 +5398,7 @@
       "source_location": "L45",
       "_origin": "ast",
       "id": "strategy_scanner_rationale_45",
-      "community": 10,
+      "community": 7,
       "norm_label": "return (true, station_code) if this is a 'will the highest temperature in     <c"
     },
     {
@@ -5418,7 +5438,7 @@
       "source_location": "L185",
       "_origin": "ast",
       "id": "strategy_scanner_rationale_185",
-      "community": 8,
+      "community": 7,
       "norm_label": "overwrite bracket ask prices with live clob data.      only called when enable_c"
     },
     {
@@ -5428,16 +5448,16 @@
       "source_location": "L217",
       "_origin": "ast",
       "id": "strategy_scanner_rationale_217",
-      "community": 18,
+      "community": 138,
       "norm_label": "a market where our model sees a tradeable edge."
     },
     {
       "label": "Distance in \u00b0F between the bracket and the expected daily high, for NO entries.",
       "file_type": "rationale",
       "source_file": "src/strategy/scanner.py",
-      "source_location": "L233",
+      "source_location": "L234",
       "_origin": "ast",
-      "id": "strategy_scanner_rationale_233",
+      "id": "strategy_scanner_rationale_234",
       "community": 47,
       "norm_label": "distance in \u00b0f between the bracket and the expected daily high, for no entries."
     },
@@ -5445,9 +5465,9 @@
       "label": "Scan all Polymarket markets against current weather states.      Args:         w",
       "file_type": "rationale",
       "source_file": "src/strategy/scanner.py",
-      "source_location": "L263",
+      "source_location": "L264",
       "_origin": "ast",
-      "id": "strategy_scanner_rationale_263",
+      "id": "strategy_scanner_rationale_264",
       "community": 29,
       "norm_label": "scan all polymarket markets against current weather states.      args:         w"
     },
@@ -8228,7 +8248,7 @@
       "source_location": "L264",
       "_origin": "ast",
       "id": "tests_test_dashboard_testreadjsonl",
-      "community": 135,
+      "community": 81,
       "norm_label": "testreadjsonl"
     },
     {
@@ -8238,7 +8258,7 @@
       "source_location": "L265",
       "_origin": "ast",
       "id": "tests_test_dashboard_testreadjsonl_test_returns_empty_list_for_missing_file",
-      "community": 135,
+      "community": 81,
       "norm_label": ".test_returns_empty_list_for_missing_file()"
     },
     {
@@ -8248,7 +8268,7 @@
       "source_location": "L269",
       "_origin": "ast",
       "id": "tests_test_dashboard_testreadjsonl_test_skips_malformed_lines",
-      "community": 135,
+      "community": 81,
       "norm_label": ".test_skips_malformed_lines()"
     },
     {
@@ -8848,7 +8868,7 @@
       "source_location": "L1056",
       "_origin": "ast",
       "id": "tests_test_dashboard_testweatherhealthendpoint",
-      "community": 41,
+      "community": 164,
       "norm_label": "testweatherhealthendpoint"
     },
     {
@@ -8858,7 +8878,7 @@
       "source_location": "L1057",
       "_origin": "ast",
       "id": "tests_test_dashboard_testweatherhealthendpoint_test_no_data_returns_empty",
-      "community": 41,
+      "community": 164,
       "norm_label": ".test_no_data_returns_empty()"
     },
     {
@@ -8868,7 +8888,7 @@
       "source_location": "L1066",
       "_origin": "ast",
       "id": "tests_test_dashboard_testweatherhealthendpoint_test_partial_degraded_listed",
-      "community": 41,
+      "community": 164,
       "norm_label": ".test_partial_degraded_listed()"
     },
     {
@@ -8878,7 +8898,7 @@
       "source_location": "L1079",
       "_origin": "ast",
       "id": "tests_test_dashboard_testweatherhealthendpoint_test_all_degraded_flag",
-      "community": 41,
+      "community": 164,
       "norm_label": ".test_all_degraded_flag()"
     },
     {
@@ -10112,6 +10132,296 @@
       "norm_label": "multiple (city, model_mode) pairs must be stored independently."
     },
     {
+      "label": "test_db_shadow.py",
+      "file_type": "code",
+      "source_file": "src/tests/test_db_shadow.py",
+      "source_location": "L1",
+      "_origin": "ast",
+      "id": "tests_test_db_shadow",
+      "community": 68,
+      "norm_label": "test_db_shadow.py"
+    },
+    {
+      "label": "_fresh_db()",
+      "file_type": "code",
+      "source_file": "src/tests/test_db_shadow.py",
+      "source_location": "L24",
+      "_origin": "ast",
+      "id": "tests_test_db_shadow_fresh_db",
+      "community": 68,
+      "norm_label": "_fresh_db()"
+    },
+    {
+      "label": "Path",
+      "file_type": "code",
+      "source_file": "src/tests/test_db_shadow.py",
+      "source_location": "L24",
+      "_origin": "ast",
+      "id": "src_tests_test_db_shadow_py_path",
+      "community": 68,
+      "norm_label": "path"
+    },
+    {
+      "label": "Database",
+      "file_type": "code",
+      "source_file": "src/tests/test_db_shadow.py",
+      "source_location": "L24",
+      "_origin": "ast",
+      "id": "src_tests_test_db_shadow_py_database",
+      "community": 68,
+      "norm_label": "database"
+    },
+    {
+      "label": "_old_db()",
+      "file_type": "code",
+      "source_file": "src/tests/test_db_shadow.py",
+      "source_location": "L29",
+      "_origin": "ast",
+      "id": "tests_test_db_shadow_old_db",
+      "community": 68,
+      "norm_label": "_old_db()"
+    },
+    {
+      "label": "TestShadowMigration",
+      "file_type": "code",
+      "source_file": "src/tests/test_db_shadow.py",
+      "source_location": "L88",
+      "_origin": "ast",
+      "id": "tests_test_db_shadow_testshadowmigration",
+      "community": 68,
+      "norm_label": "testshadowmigration"
+    },
+    {
+      "label": ".test_migration_upgrades_old_db_to_accept_shadow()",
+      "file_type": "code",
+      "source_file": "src/tests/test_db_shadow.py",
+      "source_location": "L89",
+      "_origin": "ast",
+      "id": "tests_test_db_shadow_testshadowmigration_test_migration_upgrades_old_db_to_accept_shadow",
+      "community": 68,
+      "norm_label": ".test_migration_upgrades_old_db_to_accept_shadow()"
+    },
+    {
+      "label": ".test_migration_preserves_existing_data()",
+      "file_type": "code",
+      "source_file": "src/tests/test_db_shadow.py",
+      "source_location": "L109",
+      "_origin": "ast",
+      "id": "tests_test_db_shadow_testshadowmigration_test_migration_preserves_existing_data",
+      "community": 68,
+      "norm_label": ".test_migration_preserves_existing_data()"
+    },
+    {
+      "label": ".test_migration_is_idempotent()",
+      "file_type": "code",
+      "source_file": "src/tests/test_db_shadow.py",
+      "source_location": "L118",
+      "_origin": "ast",
+      "id": "tests_test_db_shadow_testshadowmigration_test_migration_is_idempotent",
+      "community": 68,
+      "norm_label": ".test_migration_is_idempotent()"
+    },
+    {
+      "label": ".test_fresh_db_accepts_shadow_mode()",
+      "file_type": "code",
+      "source_file": "src/tests/test_db_shadow.py",
+      "source_location": "L126",
+      "_origin": "ast",
+      "id": "tests_test_db_shadow_testshadowmigration_test_fresh_db_accepts_shadow_mode",
+      "community": 68,
+      "norm_label": ".test_fresh_db_accepts_shadow_mode()"
+    },
+    {
+      "label": ".test_fresh_db_still_rejects_invalid_mode()",
+      "file_type": "code",
+      "source_file": "src/tests/test_db_shadow.py",
+      "source_location": "L145",
+      "_origin": "ast",
+      "id": "tests_test_db_shadow_testshadowmigration_test_fresh_db_still_rejects_invalid_mode",
+      "community": 68,
+      "norm_label": ".test_fresh_db_still_rejects_invalid_mode()"
+    },
+    {
+      "label": "TestUpdateTradeById",
+      "file_type": "code",
+      "source_file": "src/tests/test_db_shadow.py",
+      "source_location": "L169",
+      "_origin": "ast",
+      "id": "tests_test_db_shadow_testupdatetradebyid",
+      "community": 68,
+      "norm_label": "testupdatetradebyid"
+    },
+    {
+      "label": "._insert_shadow()",
+      "file_type": "code",
+      "source_file": "src/tests/test_db_shadow.py",
+      "source_location": "L170",
+      "_origin": "ast",
+      "id": "tests_test_db_shadow_testupdatetradebyid_insert_shadow",
+      "community": 68,
+      "norm_label": "._insert_shadow()"
+    },
+    {
+      "label": ".test_updates_pnl_and_settled_at()",
+      "file_type": "code",
+      "source_file": "src/tests/test_db_shadow.py",
+      "source_location": "L185",
+      "_origin": "ast",
+      "id": "tests_test_db_shadow_testupdatetradebyid_test_updates_pnl_and_settled_at",
+      "community": 68,
+      "norm_label": ".test_updates_pnl_and_settled_at()"
+    },
+    {
+      "label": ".test_returns_zero_for_nonexistent_id()",
+      "file_type": "code",
+      "source_file": "src/tests/test_db_shadow.py",
+      "source_location": "L203",
+      "_origin": "ast",
+      "id": "tests_test_db_shadow_testupdatetradebyid_test_returns_zero_for_nonexistent_id",
+      "community": 68,
+      "norm_label": ".test_returns_zero_for_nonexistent_id()"
+    },
+    {
+      "label": ".test_no_op_when_all_none()",
+      "file_type": "code",
+      "source_file": "src/tests/test_db_shadow.py",
+      "source_location": "L209",
+      "_origin": "ast",
+      "id": "tests_test_db_shadow_testupdatetradebyid_test_no_op_when_all_none",
+      "community": 68,
+      "norm_label": ".test_no_op_when_all_none()"
+    },
+    {
+      "label": "TestGetUnsettledShadowTrades",
+      "file_type": "code",
+      "source_file": "src/tests/test_db_shadow.py",
+      "source_location": "L221",
+      "_origin": "ast",
+      "id": "tests_test_db_shadow_testgetunsettledshadowtrades",
+      "community": 68,
+      "norm_label": "testgetunsettledshadowtrades"
+    },
+    {
+      "label": ".test_returns_shadow_rows_for_date()",
+      "file_type": "code",
+      "source_file": "src/tests/test_db_shadow.py",
+      "source_location": "L222",
+      "_origin": "ast",
+      "id": "tests_test_db_shadow_testgetunsettledshadowtrades_test_returns_shadow_rows_for_date",
+      "community": 68,
+      "norm_label": ".test_returns_shadow_rows_for_date()"
+    },
+    {
+      "label": ".test_excludes_already_settled_rows()",
+      "file_type": "code",
+      "source_file": "src/tests/test_db_shadow.py",
+      "source_location": "L242",
+      "_origin": "ast",
+      "id": "tests_test_db_shadow_testgetunsettledshadowtrades_test_excludes_already_settled_rows",
+      "community": 68,
+      "norm_label": ".test_excludes_already_settled_rows()"
+    },
+    {
+      "label": ".test_excludes_live_and_paper_rows()",
+      "file_type": "code",
+      "source_file": "src/tests/test_db_shadow.py",
+      "source_location": "L262",
+      "_origin": "ast",
+      "id": "tests_test_db_shadow_testgetunsettledshadowtrades_test_excludes_live_and_paper_rows",
+      "community": 68,
+      "norm_label": ".test_excludes_live_and_paper_rows()"
+    },
+    {
+      "label": ".test_excludes_different_date()",
+      "file_type": "code",
+      "source_file": "src/tests/test_db_shadow.py",
+      "source_location": "L282",
+      "_origin": "ast",
+      "id": "tests_test_db_shadow_testgetunsettledshadowtrades_test_excludes_different_date",
+      "community": 68,
+      "norm_label": ".test_excludes_different_date()"
+    },
+    {
+      "label": "Unit tests for shadow-mode schema migration in src/data/db.py.  Covers: - _migra",
+      "file_type": "rationale",
+      "source_file": "src/tests/test_db_shadow.py",
+      "source_location": "L1",
+      "_origin": "ast",
+      "id": "tests_test_db_shadow_rationale_1",
+      "community": 68,
+      "norm_label": "unit tests for shadow-mode schema migration in src/data/db.py.  covers: - _migra"
+    },
+    {
+      "label": "Return a fresh Database backed by a temp file.",
+      "file_type": "rationale",
+      "source_file": "src/tests/test_db_shadow.py",
+      "source_location": "L25",
+      "_origin": "ast",
+      "id": "tests_test_db_shadow_rationale_25",
+      "community": 68,
+      "norm_label": "return a fresh database backed by a temp file."
+    },
+    {
+      "label": "Return a Database that starts with the old CHECK constraint (no 'shadow').",
+      "file_type": "rationale",
+      "source_file": "src/tests/test_db_shadow.py",
+      "source_location": "L30",
+      "_origin": "ast",
+      "id": "tests_test_db_shadow_rationale_30",
+      "community": 68,
+      "norm_label": "return a database that starts with the old check constraint (no 'shadow')."
+    },
+    {
+      "label": "After migration, an old DB accepts mode='shadow' inserts.",
+      "file_type": "rationale",
+      "source_file": "src/tests/test_db_shadow.py",
+      "source_location": "L90",
+      "_origin": "ast",
+      "id": "tests_test_db_shadow_rationale_90",
+      "community": 68,
+      "norm_label": "after migration, an old db accepts mode='shadow' inserts."
+    },
+    {
+      "label": "Existing live rows survive the migration without data loss.",
+      "file_type": "rationale",
+      "source_file": "src/tests/test_db_shadow.py",
+      "source_location": "L110",
+      "_origin": "ast",
+      "id": "tests_test_db_shadow_rationale_110",
+      "community": 68,
+      "norm_label": "existing live rows survive the migration without data loss."
+    },
+    {
+      "label": "Running _migrate() twice on a new-schema DB causes no error and no duplicate dat",
+      "file_type": "rationale",
+      "source_file": "src/tests/test_db_shadow.py",
+      "source_location": "L119",
+      "_origin": "ast",
+      "id": "tests_test_db_shadow_rationale_119",
+      "community": 68,
+      "norm_label": "running _migrate() twice on a new-schema db causes no error and no duplicate dat"
+    },
+    {
+      "label": "A DB created from scratch (via _DDL) already accepts mode='shadow'.",
+      "file_type": "rationale",
+      "source_file": "src/tests/test_db_shadow.py",
+      "source_location": "L127",
+      "_origin": "ast",
+      "id": "tests_test_db_shadow_rationale_127",
+      "community": 68,
+      "norm_label": "a db created from scratch (via _ddl) already accepts mode='shadow'."
+    },
+    {
+      "label": "The CHECK constraint rejects unknown mode values.",
+      "file_type": "rationale",
+      "source_file": "src/tests/test_db_shadow.py",
+      "source_location": "L146",
+      "_origin": "ast",
+      "id": "tests_test_db_shadow_rationale_146",
+      "community": 68,
+      "norm_label": "the check constraint rejects unknown mode values."
+    },
+    {
       "label": "test_db_thread_safety.py",
       "file_type": "code",
       "source_file": "src/tests/test_db_thread_safety.py",
@@ -11318,7 +11628,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "tests_test_emos_mode",
-      "community": 7,
+      "community": 21,
       "norm_label": "test_emos_mode.py"
     },
     {
@@ -11358,7 +11668,7 @@
       "source_location": "L43",
       "_origin": "ast",
       "id": "tests_test_emos_mode_make_bracket",
-      "community": 7,
+      "community": 21,
       "norm_label": "_make_bracket()"
     },
     {
@@ -11378,7 +11688,7 @@
       "source_location": "L55",
       "_origin": "ast",
       "id": "tests_test_emos_mode_make_state",
-      "community": 7,
+      "community": 21,
       "norm_label": "_make_state()"
     },
     {
@@ -11398,7 +11708,7 @@
       "source_location": "L77",
       "_origin": "ast",
       "id": "tests_test_emos_mode_testgetcitymodelegacydefault",
-      "community": 7,
+      "community": 21,
       "norm_label": "testgetcitymodelegacydefault"
     },
     {
@@ -11438,7 +11748,7 @@
       "source_location": "L101",
       "_origin": "ast",
       "id": "tests_test_emos_mode_testgetcitymodeshadow",
-      "community": 7,
+      "community": 21,
       "norm_label": "testgetcitymodeshadow"
     },
     {
@@ -11468,7 +11778,7 @@
       "source_location": "L121",
       "_origin": "ast",
       "id": "tests_test_emos_mode_testgetcitymodeprimaryunready",
-      "community": 7,
+      "community": 21,
       "norm_label": "testgetcitymodeprimaryunready"
     },
     {
@@ -11508,7 +11818,7 @@
       "source_location": "L150",
       "_origin": "ast",
       "id": "tests_test_emos_mode_testgetcitymodeprimaryready",
-      "community": 7,
+      "community": 21,
       "norm_label": "testgetcitymodeprimaryready"
     },
     {
@@ -11548,7 +11858,7 @@
       "source_location": "L178",
       "_origin": "ast",
       "id": "tests_test_emos_mode_testapplyemoscorrect",
-      "community": 7,
+      "community": 21,
       "norm_label": "testapplyemoscorrect"
     },
     {
@@ -11618,7 +11928,7 @@
       "source_location": "L235",
       "_origin": "ast",
       "id": "tests_test_emos_mode_testlegacyunchangedoutput",
-      "community": 7,
+      "community": 21,
       "norm_label": "testlegacyunchangedoutput"
     },
     {
@@ -11628,7 +11938,7 @@
       "source_location": "L236",
       "_origin": "ast",
       "id": "tests_test_emos_mode_testlegacyunchangedoutput_test_emos_default_mode_legacy_identical_output",
-      "community": 7,
+      "community": 21,
       "norm_label": ".test_emos_default_mode_legacy_identical_output()"
     },
     {
@@ -11638,7 +11948,7 @@
       "source_location": "L254",
       "_origin": "ast",
       "id": "tests_test_emos_mode_testlegacyunchangedoutput_test_no_emos_row_in_db_identical_to_baseline",
-      "community": 7,
+      "community": 21,
       "norm_label": ".test_no_emos_row_in_db_identical_to_baseline()"
     },
     {
@@ -11648,7 +11958,7 @@
       "source_location": "L269",
       "_origin": "ast",
       "id": "tests_test_emos_mode_testlegacyunchangedoutput_test_emos_shadow_does_not_change_output_probability",
-      "community": 7,
+      "community": 21,
       "norm_label": ".test_emos_shadow_does_not_change_output_probability()"
     },
     {
@@ -11658,7 +11968,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "tests_test_emos_mode_rationale_1",
-      "community": 7,
+      "community": 21,
       "norm_label": "unit tests for src/model/emos_mode.py \u2014 emos mode switching helpers.  all tests"
     },
     {
@@ -11848,7 +12158,7 @@
       "source_location": "L237",
       "_origin": "ast",
       "id": "tests_test_emos_mode_rationale_237",
-      "community": 7,
+      "community": 21,
       "norm_label": "emos_default_mode=legacy and no db \u2192 true_probability_yes output byte-identical"
     },
     {
@@ -11858,7 +12168,7 @@
       "source_location": "L255",
       "_origin": "ast",
       "id": "tests_test_emos_mode_rationale_255",
-      "community": 7,
+      "community": 21,
       "norm_label": "db with no emos row \u2192 get_city_mode returns 'legacy' \u2192 probability unchanged."
     },
     {
@@ -11868,7 +12178,7 @@
       "source_location": "L270",
       "_origin": "ast",
       "id": "tests_test_emos_mode_rationale_270",
-      "community": 7,
+      "community": 21,
       "norm_label": "emos_shadow mode: calibrated params logged but p_yes served from legacy path unc"
     },
     {
@@ -15598,7 +15908,7 @@
       "source_location": "L47",
       "_origin": "ast",
       "id": "tests_test_order_manager_make_om",
-      "community": 33,
+      "community": 62,
       "norm_label": "_make_om()"
     },
     {
@@ -15608,7 +15918,7 @@
       "source_location": "L47",
       "_origin": "ast",
       "id": "ordermanager",
-      "community": 33,
+      "community": 62,
       "norm_label": "ordermanager"
     },
     {
@@ -15628,7 +15938,7 @@
       "source_location": "L51",
       "_origin": "ast",
       "id": "src_tests_test_order_manager_py_path",
-      "community": 171,
+      "community": 62,
       "norm_label": "path"
     },
     {
@@ -15748,7 +16058,7 @@
       "source_location": "L209",
       "_origin": "ast",
       "id": "tests_test_order_manager_testsyncopenorders_test_open_exchange_orders_added_to_guard",
-      "community": 171,
+      "community": 62,
       "norm_label": ".test_open_exchange_orders_added_to_guard()"
     },
     {
@@ -15778,7 +16088,7 @@
       "source_location": "L259",
       "_origin": "ast",
       "id": "tests_test_order_manager_testsyncopenorders_test_only_today_positions_from_jsonl",
-      "community": 33,
+      "community": 62,
       "norm_label": ".test_only_today_positions_from_jsonl()"
     },
     {
@@ -15798,7 +16108,7 @@
       "source_location": "L303",
       "_origin": "ast",
       "id": "tests_test_order_manager_testsyncopenorders_test_open_orders_cleared_on_each_call",
-      "community": 171,
+      "community": 62,
       "norm_label": ".test_open_orders_cleared_on_each_call()"
     },
     {
@@ -15868,7 +16178,7 @@
       "source_location": "L404",
       "_origin": "ast",
       "id": "tests_test_order_manager_testchecktakeprofitexits_reset_om",
-      "community": 33,
+      "community": 62,
       "norm_label": "._reset_om()"
     },
     {
@@ -16158,7 +16468,7 @@
       "source_location": "L210",
       "_origin": "ast",
       "id": "tests_test_order_manager_rationale_210",
-      "community": 171,
+      "community": 62,
       "norm_label": "exchange open orders are added to _open_orders."
     },
     {
@@ -16188,7 +16498,7 @@
       "source_location": "L260",
       "_origin": "ast",
       "id": "tests_test_order_manager_rationale_260",
-      "community": 33,
+      "community": 62,
       "norm_label": "jsonl positions from other dates are not added to the guard."
     },
     {
@@ -16208,7 +16518,7 @@
       "source_location": "L304",
       "_origin": "ast",
       "id": "tests_test_order_manager_rationale_304",
-      "community": 171,
+      "community": 62,
       "norm_label": "_open_orders is reset on each sync call \u2014 stale entries do not persist."
     },
     {
@@ -16268,7 +16578,7 @@
       "source_location": "L405",
       "_origin": "ast",
       "id": "tests_test_order_manager_rationale_405",
-      "community": 33,
+      "community": 62,
       "norm_label": "fresh ordermanager per test (avoids _sold_positions leaking)."
     },
     {
@@ -17458,7 +17768,7 @@
       "source_location": "L67",
       "_origin": "ast",
       "id": "tests_test_risk_testdailylosslimit",
-      "community": 3,
+      "community": 163,
       "norm_label": "testdailylosslimit"
     },
     {
@@ -17468,7 +17778,7 @@
       "source_location": "L70",
       "_origin": "ast",
       "id": "tests_test_risk_testdailylosslimit_test_blocks_when_loss_equals_limit",
-      "community": 3,
+      "community": 163,
       "norm_label": ".test_blocks_when_loss_equals_limit()"
     },
     {
@@ -17478,7 +17788,7 @@
       "source_location": "L77",
       "_origin": "ast",
       "id": "tests_test_risk_testdailylosslimit_test_blocks_when_loss_exceeds_limit",
-      "community": 3,
+      "community": 163,
       "norm_label": ".test_blocks_when_loss_exceeds_limit()"
     },
     {
@@ -17488,7 +17798,7 @@
       "source_location": "L84",
       "_origin": "ast",
       "id": "tests_test_risk_testdailylosslimit_test_reason_contains_actual_pnl",
-      "community": 3,
+      "community": 163,
       "norm_label": ".test_reason_contains_actual_pnl()"
     },
     {
@@ -17498,7 +17808,7 @@
       "source_location": "L90",
       "_origin": "ast",
       "id": "tests_test_risk_testdailylosslimit_test_does_not_block_just_above_limit",
-      "community": 3,
+      "community": 163,
       "norm_label": ".test_does_not_block_just_above_limit()"
     },
     {
@@ -17858,7 +18168,7 @@
       "source_location": "L68",
       "_origin": "ast",
       "id": "tests_test_risk_rationale_68",
-      "community": 3,
+      "community": 163,
       "norm_label": "block when _daily_pnl <= -daily_loss_limit_eur."
     },
     {
@@ -17948,7 +18258,7 @@
       "source_location": "L12",
       "_origin": "ast",
       "id": "tests_test_risk_db_rm_with_db",
-      "community": 26,
+      "community": 108,
       "norm_label": "_rm_with_db()"
     },
     {
@@ -18018,7 +18328,7 @@
       "source_location": "L95",
       "_origin": "ast",
       "id": "tests_test_risk_db_testnodbmode",
-      "community": 138,
+      "community": 26,
       "norm_label": "testnodbmode"
     },
     {
@@ -18028,7 +18338,7 @@
       "source_location": "L98",
       "_origin": "ast",
       "id": "tests_test_risk_db_testnodbmode_test_no_db_mode_accumulates_pnl",
-      "community": 138,
+      "community": 26,
       "norm_label": ".test_no_db_mode_accumulates_pnl()"
     },
     {
@@ -18038,7 +18348,7 @@
       "source_location": "L105",
       "_origin": "ast",
       "id": "tests_test_risk_db_testnodbmode_test_no_db_mode_no_exception",
-      "community": 138,
+      "community": 26,
       "norm_label": ".test_no_db_mode_no_exception()"
     },
     {
@@ -18048,7 +18358,7 @@
       "source_location": "L113",
       "_origin": "ast",
       "id": "tests_test_risk_db_testnodbmode_test_no_db_mode_allow_trade_works",
-      "community": 138,
+      "community": 26,
       "norm_label": ".test_no_db_mode_allow_trade_works()"
     },
     {
@@ -18068,7 +18378,7 @@
       "source_location": "L124",
       "_origin": "ast",
       "id": "tests_test_risk_db_testrecordpnlwritestodb_test_record_pnl_writes_to_db",
-      "community": 26,
+      "community": 108,
       "norm_label": ".test_record_pnl_writes_to_db()"
     },
     {
@@ -18078,7 +18388,7 @@
       "source_location": "L136",
       "_origin": "ast",
       "id": "tests_test_risk_db_testrecordpnlwritestodb_test_record_pnl_accumulates_in_db",
-      "community": 26,
+      "community": 108,
       "norm_label": ".test_record_pnl_accumulates_in_db()"
     },
     {
@@ -18098,7 +18408,7 @@
       "source_location": "L154",
       "_origin": "ast",
       "id": "tests_test_risk_db_testnewdayreset_test_new_day_reset_with_db",
-      "community": 26,
+      "community": 108,
       "norm_label": ".test_new_day_reset_with_db()"
     },
     {
@@ -18108,7 +18418,7 @@
       "source_location": "L166",
       "_origin": "ast",
       "id": "tests_test_risk_db_testnewdayreset_test_new_day_reset_writes_zero_to_db",
-      "community": 26,
+      "community": 108,
       "norm_label": ".test_new_day_reset_writes_zero_to_db()"
     },
     {
@@ -18188,7 +18498,7 @@
       "source_location": "L13",
       "_origin": "ast",
       "id": "tests_test_risk_db_rationale_13",
-      "community": 26,
+      "community": 108,
       "norm_label": "create a riskmanager with an in-memory database and explicit limits."
     },
     {
@@ -18248,7 +18558,7 @@
       "source_location": "L96",
       "_origin": "ast",
       "id": "tests_test_risk_db_rationale_96",
-      "community": 138,
+      "community": 26,
       "norm_label": "riskmanager(db=none) works identically to current behavior \u2014 no db access."
     },
     {
@@ -18258,7 +18568,7 @@
       "source_location": "L99",
       "_origin": "ast",
       "id": "tests_test_risk_db_rationale_99",
-      "community": 138,
+      "community": 26,
       "norm_label": "record_pnl() accumulates in memory when db=none."
     },
     {
@@ -18268,7 +18578,7 @@
       "source_location": "L106",
       "_origin": "ast",
       "id": "tests_test_risk_db_rationale_106",
-      "community": 138,
+      "community": 26,
       "norm_label": "record_pnl() does not raise when db=none."
     },
     {
@@ -18278,7 +18588,7 @@
       "source_location": "L114",
       "_origin": "ast",
       "id": "tests_test_risk_db_rationale_114",
-      "community": 138,
+      "community": 26,
       "norm_label": "allow_trade() works correctly when db=none."
     },
     {
@@ -18298,7 +18608,7 @@
       "source_location": "L125",
       "_origin": "ast",
       "id": "tests_test_risk_db_rationale_125",
-      "community": 26,
+      "community": 108,
       "norm_label": "call record_pnl(), verify the db row is updated."
     },
     {
@@ -18308,7 +18618,7 @@
       "source_location": "L137",
       "_origin": "ast",
       "id": "tests_test_risk_db_rationale_137",
-      "community": 26,
+      "community": 108,
       "norm_label": "multiple record_pnl() calls accumulate in the db."
     },
     {
@@ -18328,7 +18638,7 @@
       "source_location": "L155",
       "_origin": "ast",
       "id": "tests_test_risk_db_rationale_155",
-      "community": 26,
+      "community": 108,
       "norm_label": "seed pnl for yesterday, create rm on 'today', assert _daily_pnl == 0."
     },
     {
@@ -18338,7 +18648,7 @@
       "source_location": "L167",
       "_origin": "ast",
       "id": "tests_test_risk_db_rationale_167",
-      "community": 26,
+      "community": 108,
       "norm_label": "when _reset_if_new_day() fires, it writes a 0.0 pnl row for the new day."
     },
     {
@@ -18528,7 +18838,7 @@
       "source_location": "L169",
       "_origin": "ast",
       "id": "tests_test_run_wiring_testpolloncepassesdb_test_scan_markets_receives_db",
-      "community": 17,
+      "community": 14,
       "norm_label": ".test_scan_markets_receives_db()"
     },
     {
@@ -18758,7 +19068,7 @@
       "source_location": "L534",
       "_origin": "ast",
       "id": "tests_test_run_wiring_testpollonceweatheroutage_test_empty_weather_keeps_snapshots_and_alerts_but_skips_stop_loss",
-      "community": 17,
+      "community": 14,
       "norm_label": ".test_empty_weather_keeps_snapshots_and_alerts_but_skips_stop_loss()"
     },
     {
@@ -18778,7 +19088,7 @@
       "source_location": "L586",
       "_origin": "ast",
       "id": "tests_test_run_wiring_testbuildweatherhealthout_test_outside_active_window_reported",
-      "community": 14,
+      "community": 89,
       "norm_label": ".test_outside_active_window_reported()"
     },
     {
@@ -18898,7 +19208,7 @@
       "source_location": "L170",
       "_origin": "ast",
       "id": "tests_test_run_wiring_rationale_170",
-      "community": 17,
+      "community": 14,
       "norm_label": "poll_once() must forward the db parameter to scan_markets(db=db)."
     },
     {
@@ -19972,6 +20282,256 @@
       "norm_label": "a no candidate 10f clear of the forecast passes the default 2.5f gate."
     },
     {
+      "label": "test_scanner_shadow.py",
+      "file_type": "code",
+      "source_file": "src/tests/test_scanner_shadow.py",
+      "source_location": "L1",
+      "_origin": "ast",
+      "id": "tests_test_scanner_shadow",
+      "community": 138,
+      "norm_label": "test_scanner_shadow.py"
+    },
+    {
+      "label": "_now_iso()",
+      "file_type": "code",
+      "source_file": "src/tests/test_scanner_shadow.py",
+      "source_location": "L22",
+      "_origin": "ast",
+      "id": "tests_test_scanner_shadow_now_iso",
+      "community": 138,
+      "norm_label": "_now_iso()"
+    },
+    {
+      "label": "_make_weather_state()",
+      "file_type": "code",
+      "source_file": "src/tests/test_scanner_shadow.py",
+      "source_location": "L26",
+      "_origin": "ast",
+      "id": "tests_test_scanner_shadow_make_weather_state",
+      "community": 21,
+      "norm_label": "_make_weather_state()"
+    },
+    {
+      "label": "WeatherState",
+      "file_type": "code",
+      "source_file": "src/tests/test_scanner_shadow.py",
+      "source_location": "L26",
+      "_origin": "ast",
+      "id": "src_tests_test_scanner_shadow_py_weatherstate",
+      "community": 21,
+      "norm_label": "weatherstate"
+    },
+    {
+      "label": "_make_bracket()",
+      "file_type": "code",
+      "source_file": "src/tests/test_scanner_shadow.py",
+      "source_location": "L41",
+      "_origin": "ast",
+      "id": "tests_test_scanner_shadow_make_bracket",
+      "community": 138,
+      "norm_label": "_make_bracket()"
+    },
+    {
+      "label": "Bracket",
+      "file_type": "code",
+      "source_file": "src/tests/test_scanner_shadow.py",
+      "source_location": "L41",
+      "_origin": "ast",
+      "id": "src_tests_test_scanner_shadow_py_bracket",
+      "community": 138,
+      "norm_label": "bracket"
+    },
+    {
+      "label": "_make_market()",
+      "file_type": "code",
+      "source_file": "src/tests/test_scanner_shadow.py",
+      "source_location": "L59",
+      "_origin": "ast",
+      "id": "tests_test_scanner_shadow_make_market",
+      "community": 138,
+      "norm_label": "_make_market()"
+    },
+    {
+      "label": "_run_scan()",
+      "file_type": "code",
+      "source_file": "src/tests/test_scanner_shadow.py",
+      "source_location": "L86",
+      "_origin": "ast",
+      "id": "tests_test_scanner_shadow_run_scan",
+      "community": 138,
+      "norm_label": "_run_scan()"
+    },
+    {
+      "label": "TestShadowDetection",
+      "file_type": "code",
+      "source_file": "src/tests/test_scanner_shadow.py",
+      "source_location": "L117",
+      "_origin": "ast",
+      "id": "tests_test_scanner_shadow_testshadowdetection",
+      "community": 138,
+      "norm_label": "testshadowdetection"
+    },
+    {
+      "label": ".setup_method()",
+      "file_type": "code",
+      "source_file": "src/tests/test_scanner_shadow.py",
+      "source_location": "L118",
+      "_origin": "ast",
+      "id": "tests_test_scanner_shadow_testshadowdetection_setup_method",
+      "community": 138,
+      "norm_label": ".setup_method()"
+    },
+    {
+      "label": ".test_enable_yes_false_produces_shadow_candidate()",
+      "file_type": "code",
+      "source_file": "src/tests/test_scanner_shadow.py",
+      "source_location": "L122",
+      "_origin": "ast",
+      "id": "tests_test_scanner_shadow_testshadowdetection_test_enable_yes_false_produces_shadow_candidate",
+      "community": 138,
+      "norm_label": ".test_enable_yes_false_produces_shadow_candidate()"
+    },
+    {
+      "label": ".test_enable_yes_true_produces_non_shadow_candidate()",
+      "file_type": "code",
+      "source_file": "src/tests/test_scanner_shadow.py",
+      "source_location": "L129",
+      "_origin": "ast",
+      "id": "tests_test_scanner_shadow_testshadowdetection_test_enable_yes_true_produces_non_shadow_candidate",
+      "community": 138,
+      "norm_label": ".test_enable_yes_true_produces_non_shadow_candidate()"
+    },
+    {
+      "label": ".test_shadow_candidate_has_correct_side_and_ticker()",
+      "file_type": "code",
+      "source_file": "src/tests/test_scanner_shadow.py",
+      "source_location": "L136",
+      "_origin": "ast",
+      "id": "tests_test_scanner_shadow_testshadowdetection_test_shadow_candidate_has_correct_side_and_ticker",
+      "community": 138,
+      "norm_label": ".test_shadow_candidate_has_correct_side_and_ticker()"
+    },
+    {
+      "label": "TestCandidateDataclassDefaults",
+      "file_type": "code",
+      "source_file": "src/tests/test_scanner_shadow.py",
+      "source_location": "L145",
+      "_origin": "ast",
+      "id": "tests_test_scanner_shadow_testcandidatedataclassdefaults",
+      "community": 138,
+      "norm_label": "testcandidatedataclassdefaults"
+    },
+    {
+      "label": ".test_shadow_defaults_to_false()",
+      "file_type": "code",
+      "source_file": "src/tests/test_scanner_shadow.py",
+      "source_location": "L148",
+      "_origin": "ast",
+      "id": "tests_test_scanner_shadow_testcandidatedataclassdefaults_test_shadow_defaults_to_false",
+      "community": 138,
+      "norm_label": ".test_shadow_defaults_to_false()"
+    },
+    {
+      "label": ".test_shadow_can_be_set_true()",
+      "file_type": "code",
+      "source_file": "src/tests/test_scanner_shadow.py",
+      "source_location": "L165",
+      "_origin": "ast",
+      "id": "tests_test_scanner_shadow_testcandidatedataclassdefaults_test_shadow_can_be_set_true",
+      "community": 138,
+      "norm_label": ".test_shadow_can_be_set_true()"
+    },
+    {
+      "label": "Unit tests for shadow candidate detection in src/strategy/scanner.py.  Tests the",
+      "file_type": "rationale",
+      "source_file": "src/tests/test_scanner_shadow.py",
+      "source_location": "L1",
+      "_origin": "ast",
+      "id": "tests_test_scanner_shadow_rationale_1",
+      "community": 138,
+      "norm_label": "unit tests for shadow candidate detection in src/strategy/scanner.py.  tests the"
+    },
+    {
+      "label": "A minimal WeatherState with a deterministic forecast high.",
+      "file_type": "rationale",
+      "source_file": "src/tests/test_scanner_shadow.py",
+      "source_location": "L27",
+      "_origin": "ast",
+      "id": "tests_test_scanner_shadow_rationale_27",
+      "community": 21,
+      "norm_label": "a minimal weatherstate with a deterministic forecast high."
+    },
+    {
+      "label": "A bracket where YES passes all gates (yes_ask=72\u00a2, p_yes=0.90 \u2192 ev=17\u00a2).      Th",
+      "file_type": "rationale",
+      "source_file": "src/tests/test_scanner_shadow.py",
+      "source_location": "L42",
+      "_origin": "ast",
+      "id": "tests_test_scanner_shadow_rationale_42",
+      "community": 138,
+      "norm_label": "a bracket where yes passes all gates (yes_ask=72\u00a2, p_yes=0.90 \u2192 ev=17\u00a2).      th"
+    },
+    {
+      "label": "A minimal Polymarket-style market dict for a highest-temp market.",
+      "file_type": "rationale",
+      "source_file": "src/tests/test_scanner_shadow.py",
+      "source_location": "L60",
+      "_origin": "ast",
+      "id": "tests_test_scanner_shadow_rationale_60",
+      "community": 138,
+      "norm_label": "a minimal polymarket-style market dict for a highest-temp market."
+    },
+    {
+      "label": "Run scan_markets with the given ENABLE_YES_TRADES setting.",
+      "file_type": "rationale",
+      "source_file": "src/tests/test_scanner_shadow.py",
+      "source_location": "L87",
+      "_origin": "ast",
+      "id": "tests_test_scanner_shadow_rationale_87",
+      "community": 138,
+      "norm_label": "run scan_markets with the given enable_yes_trades setting."
+    },
+    {
+      "label": "With ENABLE_YES_TRADES=False and a YES-eligible market, get shadow=True.",
+      "file_type": "rationale",
+      "source_file": "src/tests/test_scanner_shadow.py",
+      "source_location": "L123",
+      "_origin": "ast",
+      "id": "tests_test_scanner_shadow_rationale_123",
+      "community": 138,
+      "norm_label": "with enable_yes_trades=false and a yes-eligible market, get shadow=true."
+    },
+    {
+      "label": "With ENABLE_YES_TRADES=True and a YES-eligible market, get shadow=False.",
+      "file_type": "rationale",
+      "source_file": "src/tests/test_scanner_shadow.py",
+      "source_location": "L130",
+      "_origin": "ast",
+      "id": "tests_test_scanner_shadow_rationale_130",
+      "community": 138,
+      "norm_label": "with enable_yes_trades=true and a yes-eligible market, get shadow=false."
+    },
+    {
+      "label": "Shadow candidate carries the correct metadata.",
+      "file_type": "rationale",
+      "source_file": "src/tests/test_scanner_shadow.py",
+      "source_location": "L137",
+      "_origin": "ast",
+      "id": "tests_test_scanner_shadow_rationale_137",
+      "community": 138,
+      "norm_label": "shadow candidate carries the correct metadata."
+    },
+    {
+      "label": "The Candidate dataclass default for shadow must be False.",
+      "file_type": "rationale",
+      "source_file": "src/tests/test_scanner_shadow.py",
+      "source_location": "L146",
+      "_origin": "ast",
+      "id": "tests_test_scanner_shadow_rationale_146",
+      "community": 138,
+      "norm_label": "the candidate dataclass default for shadow must be false."
+    },
+    {
       "label": "test_sell_position_immediate.py",
       "file_type": "code",
       "source_file": "src/tests/test_sell_position_immediate.py",
@@ -20132,6 +20692,276 @@
       "norm_label": "happy path: cancel succeeds \u2192 returns none for caller to retry next poll."
     },
     {
+      "label": "test_settle_shadow.py",
+      "file_type": "code",
+      "source_file": "src/tests/test_settle_shadow.py",
+      "source_location": "L1",
+      "_origin": "ast",
+      "id": "tests_test_settle_shadow",
+      "community": 135,
+      "norm_label": "test_settle_shadow.py"
+    },
+    {
+      "label": "_fresh_db()",
+      "file_type": "code",
+      "source_file": "src/tests/test_settle_shadow.py",
+      "source_location": "L21",
+      "_origin": "ast",
+      "id": "tests_test_settle_shadow_fresh_db",
+      "community": 135,
+      "norm_label": "_fresh_db()"
+    },
+    {
+      "label": "Path",
+      "file_type": "code",
+      "source_file": "src/tests/test_settle_shadow.py",
+      "source_location": "L21",
+      "_origin": "ast",
+      "id": "src_tests_test_settle_shadow_py_path",
+      "community": 135,
+      "norm_label": "path"
+    },
+    {
+      "label": "Database",
+      "file_type": "code",
+      "source_file": "src/tests/test_settle_shadow.py",
+      "source_location": "L21",
+      "_origin": "ast",
+      "id": "src_tests_test_settle_shadow_py_database",
+      "community": 135,
+      "norm_label": "database"
+    },
+    {
+      "label": "_insert_shadow()",
+      "file_type": "code",
+      "source_file": "src/tests/test_settle_shadow.py",
+      "source_location": "L25",
+      "_origin": "ast",
+      "id": "tests_test_settle_shadow_insert_shadow",
+      "community": 135,
+      "norm_label": "_insert_shadow()"
+    },
+    {
+      "label": "TestSettleShadowTradesWon",
+      "file_type": "code",
+      "source_file": "src/tests/test_settle_shadow.py",
+      "source_location": "L53",
+      "_origin": "ast",
+      "id": "tests_test_settle_shadow_testsettleshadowtradeswon",
+      "community": 135,
+      "norm_label": "testsettleshadowtradeswon"
+    },
+    {
+      "label": ".test_pnl_formula_yes_won()",
+      "file_type": "code",
+      "source_file": "src/tests/test_settle_shadow.py",
+      "source_location": "L56",
+      "_origin": "ast",
+      "id": "tests_test_settle_shadow_testsettleshadowtradeswon_test_pnl_formula_yes_won",
+      "community": 135,
+      "norm_label": ".test_pnl_formula_yes_won()"
+    },
+    {
+      "label": ".test_capital_after_equals_pnl_when_capital_before_zero()",
+      "file_type": "code",
+      "source_file": "src/tests/test_settle_shadow.py",
+      "source_location": "L76",
+      "_origin": "ast",
+      "id": "tests_test_settle_shadow_testsettleshadowtradeswon_test_capital_after_equals_pnl_when_capital_before_zero",
+      "community": 135,
+      "norm_label": ".test_capital_after_equals_pnl_when_capital_before_zero()"
+    },
+    {
+      "label": "TestSettleShadowTradesLost",
+      "file_type": "code",
+      "source_file": "src/tests/test_settle_shadow.py",
+      "source_location": "L92",
+      "_origin": "ast",
+      "id": "tests_test_settle_shadow_testsettleshadowtradeslost",
+      "community": 135,
+      "norm_label": "testsettleshadowtradeslost"
+    },
+    {
+      "label": ".test_pnl_formula_yes_lost()",
+      "file_type": "code",
+      "source_file": "src/tests/test_settle_shadow.py",
+      "source_location": "L95",
+      "_origin": "ast",
+      "id": "tests_test_settle_shadow_testsettleshadowtradeslost_test_pnl_formula_yes_lost",
+      "community": 135,
+      "norm_label": ".test_pnl_formula_yes_lost()"
+    },
+    {
+      "label": "TestSettleShadowIdempotency",
+      "file_type": "code",
+      "source_file": "src/tests/test_settle_shadow.py",
+      "source_location": "L115",
+      "_origin": "ast",
+      "id": "tests_test_settle_shadow_testsettleshadowidempotency",
+      "community": 135,
+      "norm_label": "testsettleshadowidempotency"
+    },
+    {
+      "label": ".test_already_settled_rows_are_skipped()",
+      "file_type": "code",
+      "source_file": "src/tests/test_settle_shadow.py",
+      "source_location": "L116",
+      "_origin": "ast",
+      "id": "tests_test_settle_shadow_testsettleshadowidempotency_test_already_settled_rows_are_skipped",
+      "community": 135,
+      "norm_label": ".test_already_settled_rows_are_skipped()"
+    },
+    {
+      "label": "TestSettleShadowEdgeCases",
+      "file_type": "code",
+      "source_file": "src/tests/test_settle_shadow.py",
+      "source_location": "L141",
+      "_origin": "ast",
+      "id": "tests_test_settle_shadow_testsettleshadowedgecases",
+      "community": 135,
+      "norm_label": "testsettleshadowedgecases"
+    },
+    {
+      "label": ".test_no_op_when_db_none()",
+      "file_type": "code",
+      "source_file": "src/tests/test_settle_shadow.py",
+      "source_location": "L142",
+      "_origin": "ast",
+      "id": "tests_test_settle_shadow_testsettleshadowedgecases_test_no_op_when_db_none",
+      "community": 135,
+      "norm_label": ".test_no_op_when_db_none()"
+    },
+    {
+      "label": ".test_skips_station_not_in_truth()",
+      "file_type": "code",
+      "source_file": "src/tests/test_settle_shadow.py",
+      "source_location": "L147",
+      "_origin": "ast",
+      "id": "tests_test_settle_shadow_testsettleshadowedgecases_test_skips_station_not_in_truth",
+      "community": 135,
+      "norm_label": ".test_skips_station_not_in_truth()"
+    },
+    {
+      "label": ".test_multiple_stations_settled_independently()",
+      "file_type": "code",
+      "source_file": "src/tests/test_settle_shadow.py",
+      "source_location": "L162",
+      "_origin": "ast",
+      "id": "tests_test_settle_shadow_testsettleshadowedgecases_test_multiple_stations_settled_independently",
+      "community": 135,
+      "norm_label": ".test_multiple_stations_settled_independently()"
+    },
+    {
+      "label": "Unit tests for settle_shadow_trades() in src/scripts/settle.py.  Covers: - Shado",
+      "file_type": "rationale",
+      "source_file": "src/tests/test_settle_shadow.py",
+      "source_location": "L1",
+      "_origin": "ast",
+      "id": "tests_test_settle_shadow_rationale_1",
+      "community": 135,
+      "norm_label": "unit tests for settle_shadow_trades() in src/scripts/settle.py.  covers: - shado"
+    },
+    {
+      "label": "Insert a shadow YES trade for the given station and date.",
+      "file_type": "rationale",
+      "source_file": "src/tests/test_settle_shadow.py",
+      "source_location": "L27",
+      "_origin": "ast",
+      "id": "tests_test_settle_shadow_rationale_27",
+      "community": 135,
+      "norm_label": "insert a shadow yes trade for the given station and date."
+    },
+    {
+      "label": "YES bracket was hit \u2014 trade won.",
+      "file_type": "rationale",
+      "source_file": "src/tests/test_settle_shadow.py",
+      "source_location": "L54",
+      "_origin": "ast",
+      "id": "tests_test_settle_shadow_rationale_54",
+      "community": 135,
+      "norm_label": "yes bracket was hit \u2014 trade won."
+    },
+    {
+      "label": "pnl = (100 - yes_ask) / 100 when the YES bracket is hit.",
+      "file_type": "rationale",
+      "source_file": "src/tests/test_settle_shadow.py",
+      "source_location": "L57",
+      "_origin": "ast",
+      "id": "tests_test_settle_shadow_rationale_57",
+      "community": 135,
+      "norm_label": "pnl = (100 - yes_ask) / 100 when the yes bracket is hit."
+    },
+    {
+      "label": "capital_after = 0 + pnl (capital_before is 0 for shadow rows).",
+      "file_type": "rationale",
+      "source_file": "src/tests/test_settle_shadow.py",
+      "source_location": "L77",
+      "_origin": "ast",
+      "id": "tests_test_settle_shadow_rationale_77",
+      "community": 135,
+      "norm_label": "capital_after = 0 + pnl (capital_before is 0 for shadow rows)."
+    },
+    {
+      "label": "YES bracket was NOT hit \u2014 trade lost.",
+      "file_type": "rationale",
+      "source_file": "src/tests/test_settle_shadow.py",
+      "source_location": "L93",
+      "_origin": "ast",
+      "id": "tests_test_settle_shadow_rationale_93",
+      "community": 135,
+      "norm_label": "yes bracket was not hit \u2014 trade lost."
+    },
+    {
+      "label": "pnl = -(yes_ask) / 100 when the YES bracket is not hit.",
+      "file_type": "rationale",
+      "source_file": "src/tests/test_settle_shadow.py",
+      "source_location": "L96",
+      "_origin": "ast",
+      "id": "tests_test_settle_shadow_rationale_96",
+      "community": 135,
+      "norm_label": "pnl = -(yes_ask) / 100 when the yes bracket is not hit."
+    },
+    {
+      "label": "Running settle_shadow_trades twice does not change pnl on rows already settled.",
+      "file_type": "rationale",
+      "source_file": "src/tests/test_settle_shadow.py",
+      "source_location": "L117",
+      "_origin": "ast",
+      "id": "tests_test_settle_shadow_rationale_117",
+      "community": 135,
+      "norm_label": "running settle_shadow_trades twice does not change pnl on rows already settled."
+    },
+    {
+      "label": "settle_shadow_trades with db=None returns without error.",
+      "file_type": "rationale",
+      "source_file": "src/tests/test_settle_shadow.py",
+      "source_location": "L143",
+      "_origin": "ast",
+      "id": "tests_test_settle_shadow_rationale_143",
+      "community": 135,
+      "norm_label": "settle_shadow_trades with db=none returns without error."
+    },
+    {
+      "label": "Rows for stations not in truth dict are skipped (outcome remains NULL).",
+      "file_type": "rationale",
+      "source_file": "src/tests/test_settle_shadow.py",
+      "source_location": "L148",
+      "_origin": "ast",
+      "id": "tests_test_settle_shadow_rationale_148",
+      "community": 135,
+      "norm_label": "rows for stations not in truth dict are skipped (outcome remains null)."
+    },
+    {
+      "label": "Multiple stations are each settled from their own truth value.",
+      "file_type": "rationale",
+      "source_file": "src/tests/test_settle_shadow.py",
+      "source_location": "L163",
+      "_origin": "ast",
+      "id": "tests_test_settle_shadow_rationale_163",
+      "community": 135,
+      "norm_label": "multiple stations are each settled from their own truth value."
+    },
+    {
       "label": "test_settlement_pipeline.py",
       "file_type": "code",
       "source_file": "src/tests/test_settlement_pipeline.py",
@@ -20258,7 +21088,7 @@
       "source_location": "L104",
       "_origin": "ast",
       "id": "tests_test_settlement_pipeline_filled_record",
-      "community": 38,
+      "community": 161,
       "norm_label": "_filled_record()"
     },
     {
@@ -20268,7 +21098,7 @@
       "source_location": "L123",
       "_origin": "ast",
       "id": "tests_test_settlement_pipeline_testsettlelivetradesdb",
-      "community": 38,
+      "community": 161,
       "norm_label": "testsettlelivetradesdb"
     },
     {
@@ -20278,7 +21108,7 @@
       "source_location": "L124",
       "_origin": "ast",
       "id": "tests_test_settlement_pipeline_testsettlelivetradesdb_setup",
-      "community": 38,
+      "community": 161,
       "norm_label": "._setup()"
     },
     {
@@ -20288,7 +21118,7 @@
       "source_location": "L130",
       "_origin": "ast",
       "id": "tests_test_settlement_pipeline_testsettlelivetradesdb_test_writes_pnl_settlement_and_risk",
-      "community": 38,
+      "community": 161,
       "norm_label": ".test_writes_pnl_settlement_and_risk()"
     },
     {
@@ -20298,7 +21128,7 @@
       "source_location": "L154",
       "_origin": "ast",
       "id": "tests_test_settlement_pipeline_testsettlelivetradesdb_test_rerun_is_idempotent",
-      "community": 38,
+      "community": 161,
       "norm_label": ".test_rerun_is_idempotent()"
     },
     {
@@ -20308,7 +21138,7 @@
       "source_location": "L169",
       "_origin": "ast",
       "id": "tests_test_settlement_pipeline_testsettlelivetradesdb_test_synthetic_ticker_maps_to_market_hash",
-      "community": 38,
+      "community": 161,
       "norm_label": ".test_synthetic_ticker_maps_to_market_hash()"
     },
     {
@@ -20318,7 +21148,7 @@
       "source_location": "L182",
       "_origin": "ast",
       "id": "tests_test_settlement_pipeline_testsettlelivetradesdb_test_no_db_does_not_crash",
-      "community": 38,
+      "community": 161,
       "norm_label": ".test_no_db_does_not_crash()"
     },
     {
@@ -21258,7 +22088,7 @@
       "source_location": "L99",
       "_origin": "ast",
       "id": "tests_test_stop_loss_position_state",
-      "community": 68,
+      "community": 63,
       "norm_label": "_position_state()"
     },
     {
@@ -21298,7 +22128,7 @@
       "source_location": "L156",
       "_origin": "ast",
       "id": "tests_test_stop_loss_testcheckstoplossexits",
-      "community": 68,
+      "community": 63,
       "norm_label": "testcheckstoplossexits"
     },
     {
@@ -21308,7 +22138,7 @@
       "source_location": "L157",
       "_origin": "ast",
       "id": "tests_test_stop_loss_testcheckstoplossexits_test_fair_above_entry_no_action_and_resets_strikes",
-      "community": 68,
+      "community": 63,
       "norm_label": ".test_fair_above_entry_no_action_and_resets_strikes()"
     },
     {
@@ -21318,7 +22148,7 @@
       "source_location": "L164",
       "_origin": "ast",
       "id": "tests_test_stop_loss_testcheckstoplossexits_test_first_strike_does_not_sell",
-      "community": 68,
+      "community": 63,
       "norm_label": ".test_first_strike_does_not_sell()"
     },
     {
@@ -21328,7 +22158,7 @@
       "source_location": "L170",
       "_origin": "ast",
       "id": "tests_test_stop_loss_testcheckstoplossexits_test_strike_resets_on_recovery",
-      "community": 68,
+      "community": 63,
       "norm_label": ".test_strike_resets_on_recovery()"
     },
     {
@@ -21338,7 +22168,7 @@
       "source_location": "L178",
       "_origin": "ast",
       "id": "tests_test_stop_loss_testcheckstoplossexits_test_consecutive_strikes_trigger_sell",
-      "community": 68,
+      "community": 63,
       "norm_label": ".test_consecutive_strikes_trigger_sell()"
     },
     {
@@ -21348,7 +22178,7 @@
       "source_location": "L196",
       "_origin": "ast",
       "id": "tests_test_stop_loss_testcheckstoplossexits_test_bid_below_floor_holds",
-      "community": 68,
+      "community": 63,
       "norm_label": ".test_bid_below_floor_holds()"
     },
     {
@@ -21358,7 +22188,7 @@
       "source_location": "L205",
       "_origin": "ast",
       "id": "tests_test_stop_loss_testcheckstoplossexits_test_thin_depth_skips_poll",
-      "community": 68,
+      "community": 63,
       "norm_label": ".test_thin_depth_skips_poll()"
     },
     {
@@ -21368,7 +22198,7 @@
       "source_location": "L214",
       "_origin": "ast",
       "id": "tests_test_stop_loss_testcheckstoplossexits_test_unfilled_sell_retries_next_poll",
-      "community": 68,
+      "community": 63,
       "norm_label": ".test_unfilled_sell_retries_next_poll()"
     },
     {
@@ -21378,7 +22208,7 @@
       "source_location": "L232",
       "_origin": "ast",
       "id": "tests_test_stop_loss_testcheckstoplossexits_test_already_sold_token_is_skipped",
-      "community": 68,
+      "community": 63,
       "norm_label": ".test_already_sold_token_is_skipped()"
     },
     {
@@ -21388,7 +22218,7 @@
       "source_location": "L240",
       "_origin": "ast",
       "id": "tests_test_stop_loss_testcheckstoplossexits_test_missing_fair_value_is_skipped",
-      "community": 68,
+      "community": 63,
       "norm_label": ".test_missing_fair_value_is_skipped()"
     },
     {
@@ -21398,7 +22228,7 @@
       "source_location": "L247",
       "_origin": "ast",
       "id": "tests_test_stop_loss_testcheckstoplossexits_test_sell_exception_logs_warning_and_retries",
-      "community": 68,
+      "community": 63,
       "norm_label": ".test_sell_exception_logs_warning_and_retries()"
     },
     {
@@ -21418,7 +22248,7 @@
       "source_location": "L265",
       "_origin": "ast",
       "id": "tests_test_stop_loss_teststoplosssafetyguards_test_proximity_guard_blocks_when_temp_far_below_bracket",
-      "community": 161,
+      "community": 63,
       "norm_label": ".test_proximity_guard_blocks_when_temp_far_below_bracket()"
     },
     {
@@ -21428,7 +22258,7 @@
       "source_location": "L277",
       "_origin": "ast",
       "id": "tests_test_stop_loss_teststoplosssafetyguards_test_proximity_guard_allows_when_temp_at_bracket",
-      "community": 162,
+      "community": 63,
       "norm_label": ".test_proximity_guard_allows_when_temp_at_bracket()"
     },
     {
@@ -21448,7 +22278,7 @@
       "source_location": "L301",
       "_origin": "ast",
       "id": "tests_test_stop_loss_teststoplosssafetyguards_test_proximity_guard_disabled_when_current_high_missing",
-      "community": 163,
+      "community": 63,
       "norm_label": ".test_proximity_guard_disabled_when_current_high_missing()"
     },
     {
@@ -21528,7 +22358,7 @@
       "source_location": "L402",
       "_origin": "ast",
       "id": "tests_test_stop_loss_teststoplosssafetyguards_test_today_jun13_scenario_katl_blocked",
-      "community": 164,
+      "community": 63,
       "norm_label": ".test_today_jun13_scenario_katl_blocked()"
     },
     {
@@ -21588,7 +22418,7 @@
       "source_location": "L197",
       "_origin": "ast",
       "id": "tests_test_stop_loss_rationale_197",
-      "community": 68,
+      "community": 63,
       "norm_label": "triggered but bid under stop_loss_min_bid_cents \u2014 hold, keep strikes."
     },
     {
@@ -21598,7 +22428,7 @@
       "source_location": "L206",
       "_origin": "ast",
       "id": "tests_test_stop_loss_rationale_206",
-      "community": 68,
+      "community": 63,
       "norm_label": "triggered but best-bid depth too thin \u2014 skip this poll, keep strikes."
     },
     {
@@ -21608,7 +22438,7 @@
       "source_location": "L215",
       "_origin": "ast",
       "id": "tests_test_stop_loss_rationale_215",
-      "community": 68,
+      "community": 63,
       "norm_label": "sell_position_immediate -> none (cancelled unfilled): no resting order,"
     },
     {
@@ -21618,7 +22448,7 @@
       "source_location": "L241",
       "_origin": "ast",
       "id": "tests_test_stop_loss_rationale_241",
-      "community": 68,
+      "community": 63,
       "norm_label": "model eval failed (fair none) \u2014 never strike or sell on missing data."
     },
     {
@@ -21628,7 +22458,7 @@
       "source_location": "L248",
       "_origin": "ast",
       "id": "tests_test_stop_loss_rationale_248",
-      "community": 68,
+      "community": 63,
       "norm_label": "generic sell exception \u2192 warning logged, position not marked sold (will retry ne"
     },
     {
@@ -21648,7 +22478,7 @@
       "source_location": "L266",
       "_origin": "ast",
       "id": "tests_test_stop_loss_rationale_266",
-      "community": 161,
+      "community": 63,
       "norm_label": "current_high 1.8f below bracket_low (>0.5f buffer) -- hold, keep strikes."
     },
     {
@@ -21658,7 +22488,7 @@
       "source_location": "L278",
       "_origin": "ast",
       "id": "tests_test_stop_loss_rationale_278",
-      "community": 162,
+      "community": 63,
       "norm_label": "current_high within 0.5f of bracket_low -- guard passes, sell fires."
     },
     {
@@ -21678,7 +22508,7 @@
       "source_location": "L302",
       "_origin": "ast",
       "id": "tests_test_stop_loss_rationale_302",
-      "community": 163,
+      "community": 63,
       "norm_label": "no current_high in snap -- can't apply proximity guard, fall through to sell."
     },
     {
@@ -21758,7 +22588,7 @@
       "source_location": "L403",
       "_origin": "ast",
       "id": "tests_test_stop_loss_rationale_403",
-      "community": 164,
+      "community": 63,
       "norm_label": "reproduces today's katl 90-91f false fire (forecast 93 > bracket high 91)."
     },
     {
@@ -22628,7 +23458,7 @@
       "source_location": "L28",
       "_origin": "ast",
       "id": "src_tests_test_taf_disruption_injection_py_weatherstate",
-      "community": 18,
+      "community": 21,
       "norm_label": "weatherstate"
     },
     {
@@ -22668,7 +23498,7 @@
       "source_location": "L86",
       "_origin": "ast",
       "id": "tests_test_taf_disruption_injection_testcandidatedataclass",
-      "community": 18,
+      "community": 21,
       "norm_label": "testcandidatedataclass"
     },
     {
@@ -22678,7 +23508,7 @@
       "source_location": "L87",
       "_origin": "ast",
       "id": "tests_test_taf_disruption_injection_testcandidatedataclass_test_taf_disruption_defaults_to_false",
-      "community": 18,
+      "community": 21,
       "norm_label": ".test_taf_disruption_defaults_to_false()"
     },
     {
@@ -22688,7 +23518,7 @@
       "source_location": "L106",
       "_origin": "ast",
       "id": "tests_test_taf_disruption_injection_testcandidatedataclass_test_taf_disruption_can_be_set_true",
-      "community": 18,
+      "community": 21,
       "norm_label": ".test_taf_disruption_can_be_set_true()"
     },
     {
@@ -22868,7 +23698,7 @@
       "source_location": "L88",
       "_origin": "ast",
       "id": "tests_test_taf_disruption_injection_rationale_88",
-      "community": 18,
+      "community": 21,
       "norm_label": "candidate.taf_disruption defaults to false when not specified."
     },
     {
@@ -22878,7 +23708,7 @@
       "source_location": "L107",
       "_origin": "ast",
       "id": "tests_test_taf_disruption_injection_rationale_107",
-      "community": 18,
+      "community": 21,
       "norm_label": "candidate.taf_disruption can be explicitly set."
     },
     {
@@ -24028,7 +24858,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "weather_builder",
-      "community": 14,
+      "community": 89,
       "norm_label": "builder.py"
     },
     {
@@ -24048,7 +24878,7 @@
       "source_location": "L32",
       "_origin": "ast",
       "id": "weather_builder_build_weather",
-      "community": 14,
+      "community": 89,
       "norm_label": "_build_weather()"
     },
     {
@@ -24058,7 +24888,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "weather_builder_rationale_1",
-      "community": 14,
+      "community": 89,
       "norm_label": "stateless. assembles weatherstate from nwp sources. no side effects."
     },
     {
@@ -24068,7 +24898,7 @@
       "source_location": "L33",
       "_origin": "ast",
       "id": "weather_builder_rationale_33",
-      "community": 14,
+      "community": 89,
       "norm_label": "assemble per-station weatherstate.      when *health_out* is a list, one ``{\"sta"
     },
     {
@@ -25305,7 +26135,7 @@
       "label": "settlements",
       "file_type": "document",
       "source_file": "docs/DB_SCHEMA.md",
-      "source_location": "L133",
+      "source_location": "L134",
       "_origin": "ast",
       "id": "docs_db_schema_settlements",
       "community": 37,
@@ -25315,7 +26145,7 @@
       "label": "open_positions",
       "file_type": "document",
       "source_file": "docs/DB_SCHEMA.md",
-      "source_location": "L165",
+      "source_location": "L166",
       "_origin": "ast",
       "id": "docs_db_schema_open_positions",
       "community": 37,
@@ -25325,7 +26155,7 @@
       "label": "risk_state",
       "file_type": "document",
       "source_file": "docs/DB_SCHEMA.md",
-      "source_location": "L199",
+      "source_location": "L200",
       "_origin": "ast",
       "id": "docs_db_schema_risk_state",
       "community": 37,
@@ -25335,7 +26165,7 @@
       "label": "taf_windows",
       "file_type": "document",
       "source_file": "docs/DB_SCHEMA.md",
-      "source_location": "L220",
+      "source_location": "L221",
       "_origin": "ast",
       "id": "docs_db_schema_taf_windows",
       "community": 37,
@@ -25345,7 +26175,7 @@
       "label": "model_weights",
       "file_type": "document",
       "source_file": "docs/DB_SCHEMA.md",
-      "source_location": "L251",
+      "source_location": "L252",
       "_origin": "ast",
       "id": "docs_db_schema_model_weights",
       "community": 37,
@@ -25355,7 +26185,7 @@
       "label": "model_forecast_log",
       "file_type": "document",
       "source_file": "docs/DB_SCHEMA.md",
-      "source_location": "L282",
+      "source_location": "L283",
       "_origin": "ast",
       "id": "docs_db_schema_model_forecast_log",
       "community": 37,
@@ -25365,7 +26195,7 @@
       "label": "intraday_corrections",
       "file_type": "document",
       "source_file": "docs/DB_SCHEMA.md",
-      "source_location": "L309",
+      "source_location": "L310",
       "_origin": "ast",
       "id": "docs_db_schema_intraday_corrections",
       "community": 37,
@@ -25375,7 +26205,7 @@
       "label": "emos_calibration",
       "file_type": "document",
       "source_file": "docs/DB_SCHEMA.md",
-      "source_location": "L344",
+      "source_location": "L345",
       "_origin": "ast",
       "id": "docs_db_schema_emos_calibration",
       "community": 37,
@@ -25385,7 +26215,7 @@
       "label": "bot_config",
       "file_type": "document",
       "source_file": "docs/DB_SCHEMA.md",
-      "source_location": "L377",
+      "source_location": "L378",
       "_origin": "ast",
       "id": "docs_db_schema_bot_config",
       "community": 37,
@@ -25395,7 +26225,7 @@
       "label": "Data Flow Diagram",
       "file_type": "document",
       "source_file": "docs/DB_SCHEMA.md",
-      "source_location": "L409",
+      "source_location": "L410",
       "_origin": "ast",
       "id": "docs_db_schema_data_flow_diagram",
       "community": 82,
@@ -25405,7 +26235,7 @@
       "label": "Query Examples",
       "file_type": "document",
       "source_file": "docs/DB_SCHEMA.md",
-      "source_location": "L457",
+      "source_location": "L458",
       "_origin": "ast",
       "id": "docs_db_schema_query_examples",
       "community": 82,
@@ -25415,7 +26245,7 @@
       "label": "Find all trades for a station on a date",
       "file_type": "document",
       "source_file": "docs/DB_SCHEMA.md",
-      "source_location": "L459",
+      "source_location": "L460",
       "_origin": "ast",
       "id": "docs_db_schema_find_all_trades_for_a_station_on_a_date",
       "community": 82,
@@ -25425,7 +26255,7 @@
       "label": "Compute daily P&L from settlements",
       "file_type": "document",
       "source_file": "docs/DB_SCHEMA.md",
-      "source_location": "L468",
+      "source_location": "L469",
       "_origin": "ast",
       "id": "docs_db_schema_compute_daily_p_l_from_settlements",
       "community": 82,
@@ -25435,7 +26265,7 @@
       "label": "Check open positions",
       "file_type": "document",
       "source_file": "docs/DB_SCHEMA.md",
-      "source_location": "L484",
+      "source_location": "L485",
       "_origin": "ast",
       "id": "docs_db_schema_check_open_positions",
       "community": 82,
@@ -25445,7 +26275,7 @@
       "label": "Find candidates that weren't traded",
       "file_type": "document",
       "source_file": "docs/DB_SCHEMA.md",
-      "source_location": "L494",
+      "source_location": "L495",
       "_origin": "ast",
       "id": "docs_db_schema_find_candidates_that_weren_t_traded",
       "community": 82,
@@ -25455,7 +26285,7 @@
       "label": "Analyze win rate",
       "file_type": "document",
       "source_file": "docs/DB_SCHEMA.md",
-      "source_location": "L505",
+      "source_location": "L506",
       "_origin": "ast",
       "id": "docs_db_schema_analyze_win_rate",
       "community": 82,
@@ -25465,7 +26295,7 @@
       "label": "Performance Considerations",
       "file_type": "document",
       "source_file": "docs/DB_SCHEMA.md",
-      "source_location": "L521",
+      "source_location": "L522",
       "_origin": "ast",
       "id": "docs_db_schema_performance_considerations",
       "community": 82,
@@ -25475,7 +26305,7 @@
       "label": "Backup & Recovery",
       "file_type": "document",
       "source_file": "docs/DB_SCHEMA.md",
-      "source_location": "L538",
+      "source_location": "L539",
       "_origin": "ast",
       "id": "docs_db_schema_backup_recovery",
       "community": 82,
@@ -31577,9 +32407,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L1167",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api",
-      "target": "dashboard_api_weather_health_status",
-      "confidence_score": 1.0
+      "target": "dashboard_api_weather_health_status"
     },
     {
       "relation": "contains",
@@ -31706,9 +32536,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L82",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_82",
-      "target": "dashboard_api_set_db",
-      "confidence_score": 1.0
+      "target": "dashboard_api_set_db"
     },
     {
       "relation": "calls",
@@ -31727,9 +32557,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L92",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_92",
-      "target": "dashboard_api_today_utc",
-      "confidence_score": 1.0
+      "target": "dashboard_api_today_utc"
     },
     {
       "relation": "calls",
@@ -31780,9 +32610,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L97",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_97",
-      "target": "dashboard_api_dashboard_load_trades",
-      "confidence_score": 1.0
+      "target": "dashboard_api_dashboard_load_trades"
     },
     {
       "relation": "calls",
@@ -31823,9 +32653,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L110",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_110",
-      "target": "dashboard_api_compute_win_rate",
-      "confidence_score": 1.0
+      "target": "dashboard_api_compute_win_rate"
     },
     {
       "relation": "calls",
@@ -31855,9 +32685,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L126",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_126",
-      "target": "dashboard_api_today_pnl",
-      "confidence_score": 1.0
+      "target": "dashboard_api_today_pnl"
     },
     {
       "relation": "calls",
@@ -31887,9 +32717,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L137",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_137",
-      "target": "dashboard_api_today_trade_count",
-      "confidence_score": 1.0
+      "target": "dashboard_api_today_trade_count"
     },
     {
       "relation": "calls",
@@ -31908,9 +32738,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L143",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_143",
-      "target": "dashboard_api_latest_capital",
-      "confidence_score": 1.0
+      "target": "dashboard_api_latest_capital"
     },
     {
       "relation": "calls",
@@ -31929,9 +32759,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L158",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_158",
-      "target": "dashboard_api_open_positions_count",
-      "confidence_score": 1.0
+      "target": "dashboard_api_open_positions_count"
     },
     {
       "relation": "calls",
@@ -32360,9 +33190,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L341",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_341",
-      "target": "dashboard_api_read_state",
-      "confidence_score": 1.0
+      "target": "dashboard_api_read_state"
     },
     {
       "relation": "calls",
@@ -32392,9 +33222,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L351",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_351",
-      "target": "dashboard_api_state_enrichment",
-      "confidence_score": 1.0
+      "target": "dashboard_api_state_enrichment"
     },
     {
       "relation": "calls",
@@ -32423,9 +33253,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L356",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_356",
-      "target": "dashboard_api_latest_model_probs",
-      "confidence_score": 1.0
+      "target": "dashboard_api_latest_model_probs"
     },
     {
       "relation": "calls",
@@ -32444,9 +33274,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L390",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_390",
-      "target": "dashboard_api_trades_file_enrichment",
-      "confidence_score": 1.0
+      "target": "dashboard_api_trades_file_enrichment"
     },
     {
       "relation": "calls",
@@ -32465,9 +33295,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L426",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_426",
-      "target": "dashboard_api_stopped_positions",
-      "confidence_score": 1.0
+      "target": "dashboard_api_stopped_positions"
     },
     {
       "relation": "imports",
@@ -32519,9 +33349,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L481",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_481",
-      "target": "dashboard_api_settled_jsonl_positions",
-      "confidence_score": 1.0
+      "target": "dashboard_api_settled_jsonl_positions"
     },
     {
       "relation": "imports",
@@ -32584,9 +33414,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L541",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_541",
-      "target": "dashboard_api_nws_forecast_for_title",
-      "confidence_score": 1.0
+      "target": "dashboard_api_nws_forecast_for_title"
     },
     {
       "relation": "rationale_for",
@@ -32594,9 +33424,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L553",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_553",
-      "target": "dashboard_api_midpoint_cents",
-      "confidence_score": 1.0
+      "target": "dashboard_api_midpoint_cents"
     },
     {
       "relation": "calls",
@@ -32615,9 +33445,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L568",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_568",
-      "target": "dashboard_api_batch_midpoints",
-      "confidence_score": 1.0
+      "target": "dashboard_api_batch_midpoints"
     },
     {
       "relation": "rationale_for",
@@ -32625,9 +33455,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L597",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_597",
-      "target": "dashboard_api_market_question",
-      "confidence_score": 1.0
+      "target": "dashboard_api_market_question"
     },
     {
       "relation": "calls",
@@ -32690,9 +33520,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L628",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_628",
-      "target": "dashboard_api_positions_from_wallet",
-      "confidence_score": 1.0
+      "target": "dashboard_api_positions_from_wallet"
     },
     {
       "relation": "rationale_for",
@@ -32700,9 +33530,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L761",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_761",
-      "target": "dashboard_api_health_monitor",
-      "confidence_score": 1.0
+      "target": "dashboard_api_health_monitor"
     },
     {
       "relation": "rationale_for",
@@ -32710,9 +33540,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L775",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_775",
-      "target": "dashboard_api_status",
-      "confidence_score": 1.0
+      "target": "dashboard_api_status"
     },
     {
       "relation": "calls",
@@ -32731,9 +33561,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L797",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_797",
-      "target": "dashboard_api_trades_list",
-      "confidence_score": 1.0
+      "target": "dashboard_api_trades_list"
     },
     {
       "relation": "rationale_for",
@@ -32741,9 +33571,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L803",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_803",
-      "target": "dashboard_api_stations",
-      "confidence_score": 1.0
+      "target": "dashboard_api_stations"
     },
     {
       "relation": "references",
@@ -32794,9 +33624,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L836",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_836",
-      "target": "dashboard_api_bot_log",
-      "confidence_score": 1.0
+      "target": "dashboard_api_bot_log"
     },
     {
       "relation": "calls",
@@ -32815,9 +33645,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L894",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_894",
-      "target": "dashboard_api_get_city_taf",
-      "confidence_score": 1.0
+      "target": "dashboard_api_get_city_taf"
     },
     {
       "relation": "rationale_for",
@@ -32825,9 +33655,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L916",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_916",
-      "target": "dashboard_api_get_city_deb",
-      "confidence_score": 1.0
+      "target": "dashboard_api_get_city_deb"
     },
     {
       "relation": "rationale_for",
@@ -32835,9 +33665,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L949",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_949",
-      "target": "dashboard_api_get_city_analysis",
-      "confidence_score": 1.0
+      "target": "dashboard_api_get_city_analysis"
     },
     {
       "relation": "rationale_for",
@@ -32845,9 +33675,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L1003",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_1003",
-      "target": "dashboard_api_derive_station_status",
-      "confidence_score": 1.0
+      "target": "dashboard_api_derive_station_status"
     },
     {
       "relation": "calls",
@@ -32866,9 +33696,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L1051",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_1051",
-      "target": "dashboard_api_stations_overview",
-      "confidence_score": 1.0
+      "target": "dashboard_api_stations_overview"
     },
     {
       "relation": "rationale_for",
@@ -32876,9 +33706,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L1134",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_1134",
-      "target": "dashboard_api_position_snapshots",
-      "confidence_score": 1.0
+      "target": "dashboard_api_position_snapshots"
     },
     {
       "relation": "rationale_for",
@@ -32886,9 +33716,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L1168",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_1168",
-      "target": "dashboard_api_weather_health_status",
-      "confidence_score": 1.0
+      "target": "dashboard_api_weather_health_status"
     },
     {
       "relation": "rationale_for",
@@ -32896,9 +33726,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L1192",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_1192",
-      "target": "dashboard_api_emos_status",
-      "confidence_score": 1.0
+      "target": "dashboard_api_emos_status"
     },
     {
       "relation": "calls",
@@ -32939,9 +33769,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L1216",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_1216",
-      "target": "dashboard_api_resolve_city",
-      "confidence_score": 1.0
+      "target": "dashboard_api_resolve_city"
     },
     {
       "relation": "rationale_for",
@@ -32949,9 +33779,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L1230",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_1230",
-      "target": "dashboard_api_emos_promote",
-      "confidence_score": 1.0
+      "target": "dashboard_api_emos_promote"
     },
     {
       "relation": "rationale_for",
@@ -32959,9 +33789,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L1285",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_1285",
-      "target": "dashboard_api_emos_demote",
-      "confidence_score": 1.0
+      "target": "dashboard_api_emos_demote"
     },
     {
       "relation": "rationale_for",
@@ -32969,9 +33799,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L1308",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_1308",
-      "target": "dashboard_api_emos_mark_ready",
-      "confidence_score": 1.0
+      "target": "dashboard_api_emos_mark_ready"
     },
     {
       "relation": "rationale_for",
@@ -32979,9 +33809,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L1344",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_1344",
-      "target": "dashboard_api_station_toggle",
-      "confidence_score": 1.0
+      "target": "dashboard_api_station_toggle"
     },
     {
       "relation": "uses",
@@ -33021,9 +33851,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L1532",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_1532",
-      "target": "dashboard_api_validate_config_value",
-      "confidence_score": 1.0
+      "target": "dashboard_api_validate_config_value"
     },
     {
       "relation": "calls",
@@ -33042,9 +33872,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L1588",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_1588",
-      "target": "dashboard_api_typed_value",
-      "confidence_score": 1.0
+      "target": "dashboard_api_typed_value"
     },
     {
       "relation": "calls",
@@ -33074,9 +33904,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L1607",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_1607",
-      "target": "dashboard_api_build_param_entry",
-      "confidence_score": 1.0
+      "target": "dashboard_api_build_param_entry"
     },
     {
       "relation": "rationale_for",
@@ -33084,9 +33914,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L1625",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_1625",
-      "target": "dashboard_api_get_config",
-      "confidence_score": 1.0
+      "target": "dashboard_api_get_config"
     },
     {
       "relation": "rationale_for",
@@ -33094,9 +33924,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L1643",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_1643",
-      "target": "dashboard_api_patch_config",
-      "confidence_score": 1.0
+      "target": "dashboard_api_patch_config"
     },
     {
       "relation": "contains",
@@ -34428,9 +35258,9 @@
       "source_file": "src/execution/position_tracker.py",
       "source_location": "L160",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "execution_position_tracker_rationale_160",
-      "target": "execution_position_tracker_check_stop_loss_exits",
-      "confidence_score": 1.0
+      "target": "execution_position_tracker_check_stop_loss_exits"
     },
     {
       "relation": "imports",
@@ -34482,9 +35312,9 @@
       "source_file": "src/execution/position_tracker.py",
       "source_location": "L358",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "execution_position_tracker_rationale_358",
-      "target": "execution_position_tracker_check_metar_exits",
-      "confidence_score": 1.0
+      "target": "execution_position_tracker_check_metar_exits"
     },
     {
       "relation": "imports",
@@ -37405,6 +38235,26 @@
     {
       "relation": "uses",
       "confidence": "INFERRED",
+      "source_file": "src/tests/test_scanner_shadow.py",
+      "source_location": "L15",
+      "weight": 0.8,
+      "source": "src_tests_test_scanner_shadow_py_bracket",
+      "target": "model_envelope_weatherstate",
+      "confidence_score": 0.5
+    },
+    {
+      "relation": "uses",
+      "confidence": "INFERRED",
+      "source_file": "src/tests/test_scanner_shadow.py",
+      "source_location": "L15",
+      "weight": 0.8,
+      "source": "src_tests_test_scanner_shadow_py_weatherstate",
+      "target": "model_envelope_weatherstate",
+      "confidence_score": 0.5
+    },
+    {
+      "relation": "uses",
+      "confidence": "INFERRED",
       "source_file": "src/tests/test_taf_disruption_injection.py",
       "source_location": "L20",
       "weight": 0.8,
@@ -37624,9 +38474,9 @@
       "source_file": "src/tests/test_run_wiring.py",
       "source_location": "L454",
       "weight": 0.8,
+      "confidence_score": 0.5,
       "source": "tests_test_run_wiring_testbuildweatherhealthout",
-      "target": "model_envelope_weatherstate",
-      "confidence_score": 0.5
+      "target": "model_envelope_weatherstate"
     },
     {
       "relation": "uses",
@@ -37706,9 +38556,9 @@
       "source_file": "src/tests/test_run_wiring.py",
       "source_location": "L454",
       "weight": 0.8,
+      "confidence_score": 0.5,
       "source": "tests_test_run_wiring_testpollonceweatheroutage",
-      "target": "model_envelope_weatherstate",
-      "confidence_score": 0.5
+      "target": "model_envelope_weatherstate"
     },
     {
       "relation": "uses",
@@ -37740,6 +38590,48 @@
       "confidence_score": 1.0,
       "source": "tests_test_scanner",
       "target": "model_envelope_weatherstate"
+    },
+    {
+      "relation": "imports",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_scanner_shadow.py",
+      "source_location": "L15",
+      "weight": 1.0,
+      "source": "tests_test_scanner_shadow",
+      "target": "model_envelope_weatherstate",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_scanner_shadow.py",
+      "source_location": "L29",
+      "weight": 1.0,
+      "source": "tests_test_scanner_shadow_make_weather_state",
+      "target": "model_envelope_weatherstate",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "uses",
+      "confidence": "INFERRED",
+      "source_file": "src/tests/test_scanner_shadow.py",
+      "source_location": "L15",
+      "weight": 0.8,
+      "source": "tests_test_scanner_shadow_testcandidatedataclassdefaults",
+      "target": "model_envelope_weatherstate",
+      "confidence_score": 0.5
+    },
+    {
+      "relation": "uses",
+      "confidence": "INFERRED",
+      "source_file": "src/tests/test_scanner_shadow.py",
+      "source_location": "L15",
+      "weight": 0.8,
+      "source": "tests_test_scanner_shadow_testshadowdetection",
+      "target": "model_envelope_weatherstate",
+      "confidence_score": 0.5
     },
     {
       "relation": "calls",
@@ -37990,6 +38882,26 @@
     {
       "relation": "uses",
       "confidence": "INFERRED",
+      "source_file": "src/tests/test_scanner_shadow.py",
+      "source_location": "L15",
+      "weight": 0.8,
+      "source": "src_tests_test_scanner_shadow_py_bracket",
+      "target": "model_envelope_bracket",
+      "confidence_score": 0.5
+    },
+    {
+      "relation": "uses",
+      "confidence": "INFERRED",
+      "source_file": "src/tests/test_scanner_shadow.py",
+      "source_location": "L15",
+      "weight": 0.8,
+      "source": "src_tests_test_scanner_shadow_py_weatherstate",
+      "target": "model_envelope_bracket",
+      "confidence_score": 0.5
+    },
+    {
+      "relation": "uses",
+      "confidence": "INFERRED",
       "source_file": "src/tests/test_taf_disruption_injection.py",
       "source_location": "L108",
       "weight": 0.8,
@@ -38220,9 +39132,9 @@
       "source_file": "src/tests/test_run_wiring.py",
       "source_location": "L454",
       "weight": 0.8,
+      "confidence_score": 0.5,
       "source": "tests_test_run_wiring_testbuildweatherhealthout",
-      "target": "model_envelope_bracket",
-      "confidence_score": 0.5
+      "target": "model_envelope_bracket"
     },
     {
       "relation": "uses",
@@ -38302,9 +39214,9 @@
       "source_file": "src/tests/test_run_wiring.py",
       "source_location": "L454",
       "weight": 0.8,
+      "confidence_score": 0.5,
       "source": "tests_test_run_wiring_testpollonceweatheroutage",
-      "target": "model_envelope_bracket",
-      "confidence_score": 0.5
+      "target": "model_envelope_bracket"
     },
     {
       "relation": "uses",
@@ -38347,6 +39259,48 @@
       "confidence_score": 1.0,
       "source": "tests_test_scanner_bracket",
       "target": "model_envelope_bracket"
+    },
+    {
+      "relation": "imports",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_scanner_shadow.py",
+      "source_location": "L15",
+      "weight": 1.0,
+      "source": "tests_test_scanner_shadow",
+      "target": "model_envelope_bracket",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_scanner_shadow.py",
+      "source_location": "L48",
+      "weight": 1.0,
+      "source": "tests_test_scanner_shadow_make_bracket",
+      "target": "model_envelope_bracket",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "uses",
+      "confidence": "INFERRED",
+      "source_file": "src/tests/test_scanner_shadow.py",
+      "source_location": "L15",
+      "weight": 0.8,
+      "source": "tests_test_scanner_shadow_testcandidatedataclassdefaults",
+      "target": "model_envelope_bracket",
+      "confidence_score": 0.5
+    },
+    {
+      "relation": "uses",
+      "confidence": "INFERRED",
+      "source_file": "src/tests/test_scanner_shadow.py",
+      "source_location": "L15",
+      "weight": 0.8,
+      "source": "tests_test_scanner_shadow_testshadowdetection",
+      "target": "model_envelope_bracket",
+      "confidence_score": 0.5
     },
     {
       "relation": "uses",
@@ -40553,9 +41507,9 @@
       "source_file": "src/monitoring/dashboard.py",
       "source_location": "L62",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "monitoring_dashboard_rationale_62",
-      "target": "monitoring_dashboard_set_db",
-      "confidence_score": 1.0
+      "target": "monitoring_dashboard_set_db"
     },
     {
       "relation": "rationale_for",
@@ -40563,9 +41517,9 @@
       "source_file": "src/monitoring/dashboard.py",
       "source_location": "L69",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "monitoring_dashboard_rationale_69",
-      "target": "monitoring_dashboard_load_trades",
-      "confidence_score": 1.0
+      "target": "monitoring_dashboard_load_trades"
     },
     {
       "relation": "imports",
@@ -40595,9 +41549,9 @@
       "source_file": "src/monitoring/dashboard.py",
       "source_location": "L79",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "monitoring_dashboard_rationale_79",
-      "target": "monitoring_dashboard_compute_win_rate",
-      "confidence_score": 1.0
+      "target": "monitoring_dashboard_compute_win_rate"
     },
     {
       "relation": "imports",
@@ -40627,9 +41581,9 @@
       "source_file": "src/monitoring/dashboard.py",
       "source_location": "L84",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "monitoring_dashboard_rationale_84",
-      "target": "monitoring_dashboard_latest_capital",
-      "confidence_score": 1.0
+      "target": "monitoring_dashboard_latest_capital"
     },
     {
       "relation": "rationale_for",
@@ -40637,9 +41591,9 @@
       "source_file": "src/monitoring/dashboard.py",
       "source_location": "L89",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "monitoring_dashboard_rationale_89",
-      "target": "monitoring_dashboard_read_jsonl",
-      "confidence_score": 1.0
+      "target": "monitoring_dashboard_read_jsonl"
     },
     {
       "relation": "references",
@@ -40680,9 +41634,9 @@
       "source_file": "src/monitoring/dashboard.py",
       "source_location": "L95",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "monitoring_dashboard_rationale_95",
-      "target": "monitoring_dashboard_start_dashboard",
-      "confidence_score": 1.0
+      "target": "monitoring_dashboard_start_dashboard"
     },
     {
       "relation": "imports",
@@ -40742,9 +41696,9 @@
       "source_file": "src/monitoring/dashboard.py",
       "source_location": "L145",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "monitoring_dashboard_rationale_145",
-      "target": "monitoring_dashboard_bridgemodule",
-      "confidence_score": 1.0
+      "target": "monitoring_dashboard_bridgemodule"
     },
     {
       "relation": "contains",
@@ -41426,9 +42380,9 @@
       "source_file": "src/tests/test_run_wiring.py",
       "source_location": "L561",
       "weight": 0.8,
+      "confidence_score": 0.5,
       "source": "tests_test_run_wiring_testbuildweatherhealthout",
-      "target": "risk_manager_riskmanager",
-      "confidence_score": 0.5
+      "target": "risk_manager_riskmanager"
     },
     {
       "relation": "uses",
@@ -41486,9 +42440,9 @@
       "source_file": "src/tests/test_run_wiring.py",
       "source_location": "L561",
       "weight": 0.8,
+      "confidence_score": 0.5,
       "source": "tests_test_run_wiring_testpollonceweatheroutage",
-      "target": "risk_manager_riskmanager",
-      "confidence_score": 0.5
+      "target": "risk_manager_riskmanager"
     },
     {
       "relation": "uses",
@@ -42141,9 +43095,9 @@
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/run.py",
-      "source_location": "L274",
+      "source_location": "L308",
       "weight": 1.0,
-      "source": "scripts_run_rationale_274",
+      "source": "scripts_run_rationale_308",
       "target": "scripts_run_start_collector_thread",
       "confidence_score": 1.0
     },
@@ -42260,6 +43214,16 @@
       "source_file": "src/scripts/settle.py",
       "source_location": "L62",
       "weight": 1.0,
+      "source": "scripts_settle",
+      "target": "scripts_settle_settle_shadow_trades",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "src/scripts/settle.py",
+      "source_location": "L62",
+      "weight": 1.0,
       "confidence_score": 1.0,
       "source": "scripts_settle",
       "target": "scripts_settle_settle_yesterday"
@@ -42364,6 +43328,17 @@
       "context": "parameter_type",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/settle.py",
+      "source_location": "L62",
+      "weight": 1.0,
+      "source": "scripts_settle_settle_shadow_trades",
+      "target": "date",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "references",
+      "context": "parameter_type",
+      "confidence": "EXTRACTED",
+      "source_file": "src/scripts/settle.py",
       "source_location": "L115",
       "weight": 1.0,
       "confidence_score": 1.0,
@@ -42428,6 +43403,83 @@
     {
       "relation": "calls",
       "context": "call",
+      "confidence": "INFERRED",
+      "confidence_score": 0.8,
+      "source_file": "src/tests/test_settle_shadow.py",
+      "source_location": "L165",
+      "weight": 1.0,
+      "source": "tests_test_settle_shadow_testsettleshadowedgecases_test_multiple_stations_settled_independently",
+      "target": "date"
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "INFERRED",
+      "confidence_score": 0.8,
+      "source_file": "src/tests/test_settle_shadow.py",
+      "source_location": "L145",
+      "weight": 1.0,
+      "source": "tests_test_settle_shadow_testsettleshadowedgecases_test_no_op_when_db_none",
+      "target": "date"
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "INFERRED",
+      "confidence_score": 0.8,
+      "source_file": "src/tests/test_settle_shadow.py",
+      "source_location": "L150",
+      "weight": 1.0,
+      "source": "tests_test_settle_shadow_testsettleshadowedgecases_test_skips_station_not_in_truth",
+      "target": "date"
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "INFERRED",
+      "confidence_score": 0.8,
+      "source_file": "src/tests/test_settle_shadow.py",
+      "source_location": "L119",
+      "weight": 1.0,
+      "source": "tests_test_settle_shadow_testsettleshadowidempotency_test_already_settled_rows_are_skipped",
+      "target": "date"
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "INFERRED",
+      "confidence_score": 0.8,
+      "source_file": "src/tests/test_settle_shadow.py",
+      "source_location": "L98",
+      "weight": 1.0,
+      "source": "tests_test_settle_shadow_testsettleshadowtradeslost_test_pnl_formula_yes_lost",
+      "target": "date"
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "INFERRED",
+      "confidence_score": 0.8,
+      "source_file": "src/tests/test_settle_shadow.py",
+      "source_location": "L79",
+      "weight": 1.0,
+      "source": "tests_test_settle_shadow_testsettleshadowtradeswon_test_capital_after_equals_pnl_when_capital_before_zero",
+      "target": "date"
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "INFERRED",
+      "confidence_score": 0.8,
+      "source_file": "src/tests/test_settle_shadow.py",
+      "source_location": "L59",
+      "weight": 1.0,
+      "source": "tests_test_settle_shadow_testsettleshadowtradeswon_test_pnl_formula_yes_won",
+      "target": "date"
+    },
+    {
+      "relation": "calls",
+      "context": "call",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "src/tests/test_settlement_pipeline.py",
@@ -42475,6 +43527,125 @@
       "source_file": "src/scripts/settle.py",
       "source_location": "L63",
       "weight": 1.0,
+      "source": "scripts_settle_rationale_63",
+      "target": "scripts_settle_settle_shadow_trades",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "src/scripts/settle.py",
+      "source_location": "L173",
+      "weight": 1.0,
+      "source": "scripts_settle_settle_yesterday",
+      "target": "scripts_settle_settle_shadow_trades",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "imports",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_settle_shadow.py",
+      "source_location": "L14",
+      "weight": 1.0,
+      "source": "tests_test_settle_shadow",
+      "target": "scripts_settle_settle_shadow_trades",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "src/tests/test_settle_shadow.py",
+      "source_location": "L175",
+      "weight": 1.0,
+      "source": "tests_test_settle_shadow_testsettleshadowedgecases_test_multiple_stations_settled_independently",
+      "target": "scripts_settle_settle_shadow_trades"
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "src/tests/test_settle_shadow.py",
+      "source_location": "L145",
+      "weight": 1.0,
+      "source": "tests_test_settle_shadow_testsettleshadowedgecases_test_no_op_when_db_none",
+      "target": "scripts_settle_settle_shadow_trades"
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "src/tests/test_settle_shadow.py",
+      "source_location": "L154",
+      "weight": 1.0,
+      "source": "tests_test_settle_shadow_testsettleshadowedgecases_test_skips_station_not_in_truth",
+      "target": "scripts_settle_settle_shadow_trades"
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "src/tests/test_settle_shadow.py",
+      "source_location": "L126",
+      "weight": 1.0,
+      "source": "tests_test_settle_shadow_testsettleshadowidempotency_test_already_settled_rows_are_skipped",
+      "target": "scripts_settle_settle_shadow_trades"
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "src/tests/test_settle_shadow.py",
+      "source_location": "L105",
+      "weight": 1.0,
+      "source": "tests_test_settle_shadow_testsettleshadowtradeslost_test_pnl_formula_yes_lost",
+      "target": "scripts_settle_settle_shadow_trades"
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "src/tests/test_settle_shadow.py",
+      "source_location": "L83",
+      "weight": 1.0,
+      "source": "tests_test_settle_shadow_testsettleshadowtradeswon_test_capital_after_equals_pnl_when_capital_before_zero",
+      "target": "scripts_settle_settle_shadow_trades"
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "src/tests/test_settle_shadow.py",
+      "source_location": "L66",
+      "weight": 1.0,
+      "source": "tests_test_settle_shadow_testsettleshadowtradeswon_test_pnl_formula_yes_won",
+      "target": "scripts_settle_settle_shadow_trades"
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "src/scripts/settle.py",
+      "source_location": "L122",
+      "weight": 1.0,
+      "source": "scripts_settle_rationale_122",
+      "target": "scripts_settle_settle_yesterday",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "src/scripts/settle.py",
+      "source_location": "L63",
+      "weight": 1.0,
       "confidence_score": 1.0,
       "source": "scripts_settle_rationale_63",
       "target": "scripts_settle_settle_yesterday"
@@ -42494,11 +43665,11 @@
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/settle.py",
-      "source_location": "L116",
+      "source_location": "L177",
       "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "scripts_settle_rationale_116",
-      "target": "scripts_settle_write_db_settlements"
+      "source": "scripts_settle_rationale_177",
+      "target": "scripts_settle_write_db_settlements",
+      "confidence_score": 1.0
     },
     {
       "relation": "calls",
@@ -42515,11 +43686,11 @@
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/settle.py",
-      "source_location": "L165",
+      "source_location": "L226",
       "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "scripts_settle_rationale_165",
-      "target": "scripts_settle_settle_live_trades"
+      "source": "scripts_settle_rationale_226",
+      "target": "scripts_settle_settle_live_trades",
+      "confidence_score": 1.0
     },
     {
       "relation": "contains",
@@ -42749,6 +43920,17 @@
       "confidence_score": 1.0,
       "source": "strategy_scanner_rationale_1",
       "target": "strategy_scanner"
+    },
+    {
+      "relation": "imports_from",
+      "context": "submodule_import",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_scanner_shadow.py",
+      "source_location": "L88",
+      "weight": 1.0,
+      "source": "tests_test_scanner_shadow",
+      "target": "strategy_scanner",
+      "confidence_score": 1.0
     },
     {
       "relation": "rationale_for",
@@ -43067,6 +44249,26 @@
     {
       "relation": "uses",
       "confidence": "INFERRED",
+      "source_file": "src/tests/test_scanner_shadow.py",
+      "source_location": "L14",
+      "weight": 0.8,
+      "source": "src_tests_test_scanner_shadow_py_bracket",
+      "target": "strategy_scanner_candidate",
+      "confidence_score": 0.5
+    },
+    {
+      "relation": "uses",
+      "confidence": "INFERRED",
+      "source_file": "src/tests/test_scanner_shadow.py",
+      "source_location": "L14",
+      "weight": 0.8,
+      "source": "src_tests_test_scanner_shadow_py_weatherstate",
+      "target": "strategy_scanner_candidate",
+      "confidence_score": 0.5
+    },
+    {
+      "relation": "uses",
+      "confidence": "INFERRED",
       "source_file": "src/tests/test_taf_disruption_injection.py",
       "source_location": "L21",
       "weight": 0.8,
@@ -43104,6 +44306,59 @@
       "confidence_score": 1.0,
       "source": "strategy_scanner_scan_markets",
       "target": "strategy_scanner_candidate"
+    },
+    {
+      "relation": "imports",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_scanner_shadow.py",
+      "source_location": "L14",
+      "weight": 1.0,
+      "source": "tests_test_scanner_shadow",
+      "target": "strategy_scanner_candidate",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "uses",
+      "confidence": "INFERRED",
+      "source_file": "src/tests/test_scanner_shadow.py",
+      "source_location": "L14",
+      "weight": 0.8,
+      "source": "tests_test_scanner_shadow_testcandidatedataclassdefaults",
+      "target": "strategy_scanner_candidate",
+      "confidence_score": 0.5
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "src/tests/test_scanner_shadow.py",
+      "source_location": "L167",
+      "weight": 1.0,
+      "source": "tests_test_scanner_shadow_testcandidatedataclassdefaults_test_shadow_can_be_set_true",
+      "target": "strategy_scanner_candidate"
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "src/tests/test_scanner_shadow.py",
+      "source_location": "L150",
+      "weight": 1.0,
+      "source": "tests_test_scanner_shadow_testcandidatedataclassdefaults_test_shadow_defaults_to_false",
+      "target": "strategy_scanner_candidate"
+    },
+    {
+      "relation": "uses",
+      "confidence": "INFERRED",
+      "source_file": "src/tests/test_scanner_shadow.py",
+      "source_location": "L14",
+      "weight": 0.8,
+      "source": "tests_test_scanner_shadow_testshadowdetection",
+      "target": "strategy_scanner_candidate",
+      "confidence_score": 0.5
     },
     {
       "relation": "imports",
@@ -43193,11 +44448,11 @@
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/strategy/scanner.py",
-      "source_location": "L233",
+      "source_location": "L234",
       "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "strategy_scanner_rationale_233",
-      "target": "strategy_scanner_no_entry_margin_gap"
+      "source": "strategy_scanner_rationale_234",
+      "target": "strategy_scanner_no_entry_margin_gap",
+      "confidence_score": 1.0
     },
     {
       "relation": "calls",
@@ -43335,11 +44590,11 @@
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/strategy/scanner.py",
-      "source_location": "L263",
+      "source_location": "L264",
       "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "strategy_scanner_rationale_263",
-      "target": "strategy_scanner_scan_markets"
+      "source": "strategy_scanner_rationale_264",
+      "target": "strategy_scanner_scan_markets",
+      "confidence_score": 1.0
     },
     {
       "relation": "imports",
@@ -43351,6 +44606,28 @@
       "confidence_score": 1.0,
       "source": "tests_test_scanner",
       "target": "strategy_scanner_scan_markets"
+    },
+    {
+      "relation": "imports",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_scanner_shadow.py",
+      "source_location": "L108",
+      "weight": 1.0,
+      "source": "tests_test_scanner_shadow",
+      "target": "strategy_scanner_scan_markets",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_scanner_shadow.py",
+      "source_location": "L109",
+      "weight": 1.0,
+      "source": "tests_test_scanner_shadow_run_scan",
+      "target": "strategy_scanner_scan_markets",
+      "confidence_score": 1.0
     },
     {
       "relation": "calls",
@@ -46975,9 +48252,9 @@
       "source_file": "src/tests/test_dashboard.py",
       "source_location": "L1056",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_dashboard",
-      "target": "tests_test_dashboard_testweatherhealthendpoint",
-      "confidence_score": 1.0
+      "target": "tests_test_dashboard_testweatherhealthendpoint"
     },
     {
       "relation": "contains",
@@ -48826,9 +50103,9 @@
       "source_file": "src/tests/test_dashboard.py",
       "source_location": "L1079",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_dashboard_testweatherhealthendpoint",
-      "target": "tests_test_dashboard_testweatherhealthendpoint_test_all_degraded_flag",
-      "confidence_score": 1.0
+      "target": "tests_test_dashboard_testweatherhealthendpoint_test_all_degraded_flag"
     },
     {
       "relation": "method",
@@ -48836,9 +50113,9 @@
       "source_file": "src/tests/test_dashboard.py",
       "source_location": "L1057",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_dashboard_testweatherhealthendpoint",
-      "target": "tests_test_dashboard_testweatherhealthendpoint_test_no_data_returns_empty",
-      "confidence_score": 1.0
+      "target": "tests_test_dashboard_testweatherhealthendpoint_test_no_data_returns_empty"
     },
     {
       "relation": "method",
@@ -48846,9 +50123,9 @@
       "source_file": "src/tests/test_dashboard.py",
       "source_location": "L1066",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_dashboard_testweatherhealthendpoint",
-      "target": "tests_test_dashboard_testweatherhealthendpoint_test_partial_degraded_listed",
-      "confidence_score": 1.0
+      "target": "tests_test_dashboard_testweatherhealthendpoint_test_partial_degraded_listed"
     },
     {
       "relation": "contains",
@@ -49913,6 +51190,475 @@
       "confidence_score": 1.0,
       "source": "tests_test_db_rationale_562",
       "target": "tests_test_db_testemoscalibrationtable_test_multiple_cities_and_modes"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_db_shadow.py",
+      "source_location": "L24",
+      "weight": 1.0,
+      "source": "tests_test_db_shadow",
+      "target": "tests_test_db_shadow_fresh_db",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_db_shadow.py",
+      "source_location": "L29",
+      "weight": 1.0,
+      "source": "tests_test_db_shadow",
+      "target": "tests_test_db_shadow_old_db",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_db_shadow.py",
+      "source_location": "L221",
+      "weight": 1.0,
+      "source": "tests_test_db_shadow",
+      "target": "tests_test_db_shadow_testgetunsettledshadowtrades",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_db_shadow.py",
+      "source_location": "L88",
+      "weight": 1.0,
+      "source": "tests_test_db_shadow",
+      "target": "tests_test_db_shadow_testshadowmigration",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_db_shadow.py",
+      "source_location": "L169",
+      "weight": 1.0,
+      "source": "tests_test_db_shadow",
+      "target": "tests_test_db_shadow_testupdatetradebyid",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_db_shadow.py",
+      "source_location": "L1",
+      "weight": 1.0,
+      "source": "tests_test_db_shadow_rationale_1",
+      "target": "tests_test_db_shadow",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "references",
+      "context": "return_type",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_db_shadow.py",
+      "source_location": "L24",
+      "weight": 1.0,
+      "source": "tests_test_db_shadow_fresh_db",
+      "target": "src_tests_test_db_shadow_py_database",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "references",
+      "context": "parameter_type",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_db_shadow.py",
+      "source_location": "L24",
+      "weight": 1.0,
+      "source": "tests_test_db_shadow_fresh_db",
+      "target": "src_tests_test_db_shadow_py_path",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_db_shadow.py",
+      "source_location": "L25",
+      "weight": 1.0,
+      "source": "tests_test_db_shadow_rationale_25",
+      "target": "tests_test_db_shadow_fresh_db",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_db_shadow.py",
+      "source_location": "L243",
+      "weight": 1.0,
+      "source": "tests_test_db_shadow_testgetunsettledshadowtrades_test_excludes_already_settled_rows",
+      "target": "tests_test_db_shadow_fresh_db",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_db_shadow.py",
+      "source_location": "L283",
+      "weight": 1.0,
+      "source": "tests_test_db_shadow_testgetunsettledshadowtrades_test_excludes_different_date",
+      "target": "tests_test_db_shadow_fresh_db",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_db_shadow.py",
+      "source_location": "L263",
+      "weight": 1.0,
+      "source": "tests_test_db_shadow_testgetunsettledshadowtrades_test_excludes_live_and_paper_rows",
+      "target": "tests_test_db_shadow_fresh_db",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_db_shadow.py",
+      "source_location": "L223",
+      "weight": 1.0,
+      "source": "tests_test_db_shadow_testgetunsettledshadowtrades_test_returns_shadow_rows_for_date",
+      "target": "tests_test_db_shadow_fresh_db",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_db_shadow.py",
+      "source_location": "L128",
+      "weight": 1.0,
+      "source": "tests_test_db_shadow_testshadowmigration_test_fresh_db_accepts_shadow_mode",
+      "target": "tests_test_db_shadow_fresh_db",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_db_shadow.py",
+      "source_location": "L147",
+      "weight": 1.0,
+      "source": "tests_test_db_shadow_testshadowmigration_test_fresh_db_still_rejects_invalid_mode",
+      "target": "tests_test_db_shadow_fresh_db",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_db_shadow.py",
+      "source_location": "L210",
+      "weight": 1.0,
+      "source": "tests_test_db_shadow_testupdatetradebyid_test_no_op_when_all_none",
+      "target": "tests_test_db_shadow_fresh_db",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_db_shadow.py",
+      "source_location": "L204",
+      "weight": 1.0,
+      "source": "tests_test_db_shadow_testupdatetradebyid_test_returns_zero_for_nonexistent_id",
+      "target": "tests_test_db_shadow_fresh_db",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_db_shadow.py",
+      "source_location": "L186",
+      "weight": 1.0,
+      "source": "tests_test_db_shadow_testupdatetradebyid_test_updates_pnl_and_settled_at",
+      "target": "tests_test_db_shadow_fresh_db",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "references",
+      "context": "parameter_type",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_db_shadow.py",
+      "source_location": "L29",
+      "weight": 1.0,
+      "source": "tests_test_db_shadow_old_db",
+      "target": "src_tests_test_db_shadow_py_path",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "references",
+      "context": "return_type",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_db_shadow.py",
+      "source_location": "L29",
+      "weight": 1.0,
+      "source": "tests_test_db_shadow_old_db",
+      "target": "src_tests_test_db_shadow_py_database",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "references",
+      "context": "parameter_type",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_db_shadow.py",
+      "source_location": "L170",
+      "weight": 1.0,
+      "source": "tests_test_db_shadow_testupdatetradebyid_insert_shadow",
+      "target": "src_tests_test_db_shadow_py_database",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_db_shadow.py",
+      "source_location": "L30",
+      "weight": 1.0,
+      "source": "tests_test_db_shadow_rationale_30",
+      "target": "tests_test_db_shadow_old_db",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_db_shadow.py",
+      "source_location": "L120",
+      "weight": 1.0,
+      "source": "tests_test_db_shadow_testshadowmigration_test_migration_is_idempotent",
+      "target": "tests_test_db_shadow_old_db",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_db_shadow.py",
+      "source_location": "L111",
+      "weight": 1.0,
+      "source": "tests_test_db_shadow_testshadowmigration_test_migration_preserves_existing_data",
+      "target": "tests_test_db_shadow_old_db",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_db_shadow.py",
+      "source_location": "L91",
+      "weight": 1.0,
+      "source": "tests_test_db_shadow_testshadowmigration_test_migration_upgrades_old_db_to_accept_shadow",
+      "target": "tests_test_db_shadow_old_db",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_db_shadow.py",
+      "source_location": "L126",
+      "weight": 1.0,
+      "source": "tests_test_db_shadow_testshadowmigration",
+      "target": "tests_test_db_shadow_testshadowmigration_test_fresh_db_accepts_shadow_mode",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_db_shadow.py",
+      "source_location": "L145",
+      "weight": 1.0,
+      "source": "tests_test_db_shadow_testshadowmigration",
+      "target": "tests_test_db_shadow_testshadowmigration_test_fresh_db_still_rejects_invalid_mode",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_db_shadow.py",
+      "source_location": "L118",
+      "weight": 1.0,
+      "source": "tests_test_db_shadow_testshadowmigration",
+      "target": "tests_test_db_shadow_testshadowmigration_test_migration_is_idempotent",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_db_shadow.py",
+      "source_location": "L109",
+      "weight": 1.0,
+      "source": "tests_test_db_shadow_testshadowmigration",
+      "target": "tests_test_db_shadow_testshadowmigration_test_migration_preserves_existing_data",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_db_shadow.py",
+      "source_location": "L89",
+      "weight": 1.0,
+      "source": "tests_test_db_shadow_testshadowmigration",
+      "target": "tests_test_db_shadow_testshadowmigration_test_migration_upgrades_old_db_to_accept_shadow",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_db_shadow.py",
+      "source_location": "L90",
+      "weight": 1.0,
+      "source": "tests_test_db_shadow_rationale_90",
+      "target": "tests_test_db_shadow_testshadowmigration_test_migration_upgrades_old_db_to_accept_shadow",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_db_shadow.py",
+      "source_location": "L110",
+      "weight": 1.0,
+      "source": "tests_test_db_shadow_rationale_110",
+      "target": "tests_test_db_shadow_testshadowmigration_test_migration_preserves_existing_data",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_db_shadow.py",
+      "source_location": "L119",
+      "weight": 1.0,
+      "source": "tests_test_db_shadow_rationale_119",
+      "target": "tests_test_db_shadow_testshadowmigration_test_migration_is_idempotent",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_db_shadow.py",
+      "source_location": "L127",
+      "weight": 1.0,
+      "source": "tests_test_db_shadow_rationale_127",
+      "target": "tests_test_db_shadow_testshadowmigration_test_fresh_db_accepts_shadow_mode",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_db_shadow.py",
+      "source_location": "L146",
+      "weight": 1.0,
+      "source": "tests_test_db_shadow_rationale_146",
+      "target": "tests_test_db_shadow_testshadowmigration_test_fresh_db_still_rejects_invalid_mode",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_db_shadow.py",
+      "source_location": "L170",
+      "weight": 1.0,
+      "source": "tests_test_db_shadow_testupdatetradebyid",
+      "target": "tests_test_db_shadow_testupdatetradebyid_insert_shadow",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_db_shadow.py",
+      "source_location": "L209",
+      "weight": 1.0,
+      "source": "tests_test_db_shadow_testupdatetradebyid",
+      "target": "tests_test_db_shadow_testupdatetradebyid_test_no_op_when_all_none",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_db_shadow.py",
+      "source_location": "L203",
+      "weight": 1.0,
+      "source": "tests_test_db_shadow_testupdatetradebyid",
+      "target": "tests_test_db_shadow_testupdatetradebyid_test_returns_zero_for_nonexistent_id",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_db_shadow.py",
+      "source_location": "L185",
+      "weight": 1.0,
+      "source": "tests_test_db_shadow_testupdatetradebyid",
+      "target": "tests_test_db_shadow_testupdatetradebyid_test_updates_pnl_and_settled_at",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_db_shadow.py",
+      "source_location": "L211",
+      "weight": 1.0,
+      "source": "tests_test_db_shadow_testupdatetradebyid_test_no_op_when_all_none",
+      "target": "tests_test_db_shadow_testupdatetradebyid_insert_shadow",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_db_shadow.py",
+      "source_location": "L187",
+      "weight": 1.0,
+      "source": "tests_test_db_shadow_testupdatetradebyid_test_updates_pnl_and_settled_at",
+      "target": "tests_test_db_shadow_testupdatetradebyid_insert_shadow",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_db_shadow.py",
+      "source_location": "L242",
+      "weight": 1.0,
+      "source": "tests_test_db_shadow_testgetunsettledshadowtrades",
+      "target": "tests_test_db_shadow_testgetunsettledshadowtrades_test_excludes_already_settled_rows",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_db_shadow.py",
+      "source_location": "L282",
+      "weight": 1.0,
+      "source": "tests_test_db_shadow_testgetunsettledshadowtrades",
+      "target": "tests_test_db_shadow_testgetunsettledshadowtrades_test_excludes_different_date",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_db_shadow.py",
+      "source_location": "L262",
+      "weight": 1.0,
+      "source": "tests_test_db_shadow_testgetunsettledshadowtrades",
+      "target": "tests_test_db_shadow_testgetunsettledshadowtrades_test_excludes_live_and_paper_rows",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_db_shadow.py",
+      "source_location": "L222",
+      "weight": 1.0,
+      "source": "tests_test_db_shadow_testgetunsettledshadowtrades",
+      "target": "tests_test_db_shadow_testgetunsettledshadowtrades_test_returns_shadow_rows_for_date",
+      "confidence_score": 1.0
     },
     {
       "relation": "contains",
@@ -62226,9 +63972,9 @@
       "source_file": "src/tests/test_run_wiring.py",
       "source_location": "L583",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_run_wiring",
-      "target": "tests_test_run_wiring_testbuildweatherhealthout",
-      "confidence_score": 1.0
+      "target": "tests_test_run_wiring_testbuildweatherhealthout"
     },
     {
       "relation": "contains",
@@ -62286,9 +64032,9 @@
       "source_file": "src/tests/test_run_wiring.py",
       "source_location": "L529",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_run_wiring",
-      "target": "tests_test_run_wiring_testpollonceweatheroutage",
-      "confidence_score": 1.0
+      "target": "tests_test_run_wiring_testpollonceweatheroutage"
     },
     {
       "relation": "contains",
@@ -62943,9 +64689,9 @@
       "source_file": "src/tests/test_run_wiring.py",
       "source_location": "L530",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_run_wiring_rationale_530",
-      "target": "tests_test_run_wiring_testpollonceweatheroutage",
-      "confidence_score": 1.0
+      "target": "tests_test_run_wiring_testpollonceweatheroutage"
     },
     {
       "relation": "method",
@@ -62953,9 +64699,9 @@
       "source_file": "src/tests/test_run_wiring.py",
       "source_location": "L534",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_run_wiring_testpollonceweatheroutage",
-      "target": "tests_test_run_wiring_testpollonceweatheroutage_test_empty_weather_keeps_snapshots_and_alerts_but_skips_stop_loss",
-      "confidence_score": 1.0
+      "target": "tests_test_run_wiring_testpollonceweatheroutage_test_empty_weather_keeps_snapshots_and_alerts_but_skips_stop_loss"
     },
     {
       "relation": "rationale_for",
@@ -62963,9 +64709,9 @@
       "source_file": "src/tests/test_run_wiring.py",
       "source_location": "L584",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_run_wiring_rationale_584",
-      "target": "tests_test_run_wiring_testbuildweatherhealthout",
-      "confidence_score": 1.0
+      "target": "tests_test_run_wiring_testbuildweatherhealthout"
     },
     {
       "relation": "method",
@@ -62973,9 +64719,9 @@
       "source_file": "src/tests/test_run_wiring.py",
       "source_location": "L586",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_run_wiring_testbuildweatherhealthout",
-      "target": "tests_test_run_wiring_testbuildweatherhealthout_test_outside_active_window_reported",
-      "confidence_score": 1.0
+      "target": "tests_test_run_wiring_testbuildweatherhealthout_test_outside_active_window_reported"
     },
     {
       "relation": "calls",
@@ -64568,6 +66314,358 @@
     {
       "relation": "contains",
       "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_scanner_shadow.py",
+      "source_location": "L41",
+      "weight": 1.0,
+      "source": "tests_test_scanner_shadow",
+      "target": "tests_test_scanner_shadow_make_bracket",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_scanner_shadow.py",
+      "source_location": "L59",
+      "weight": 1.0,
+      "source": "tests_test_scanner_shadow",
+      "target": "tests_test_scanner_shadow_make_market",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_scanner_shadow.py",
+      "source_location": "L26",
+      "weight": 1.0,
+      "source": "tests_test_scanner_shadow",
+      "target": "tests_test_scanner_shadow_make_weather_state",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_scanner_shadow.py",
+      "source_location": "L22",
+      "weight": 1.0,
+      "source": "tests_test_scanner_shadow",
+      "target": "tests_test_scanner_shadow_now_iso",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_scanner_shadow.py",
+      "source_location": "L86",
+      "weight": 1.0,
+      "source": "tests_test_scanner_shadow",
+      "target": "tests_test_scanner_shadow_run_scan",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_scanner_shadow.py",
+      "source_location": "L145",
+      "weight": 1.0,
+      "source": "tests_test_scanner_shadow",
+      "target": "tests_test_scanner_shadow_testcandidatedataclassdefaults",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_scanner_shadow.py",
+      "source_location": "L117",
+      "weight": 1.0,
+      "source": "tests_test_scanner_shadow",
+      "target": "tests_test_scanner_shadow_testshadowdetection",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_scanner_shadow.py",
+      "source_location": "L1",
+      "weight": 1.0,
+      "source": "tests_test_scanner_shadow_rationale_1",
+      "target": "tests_test_scanner_shadow",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "references",
+      "context": "return_type",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_scanner_shadow.py",
+      "source_location": "L26",
+      "weight": 1.0,
+      "source": "tests_test_scanner_shadow_make_weather_state",
+      "target": "src_tests_test_scanner_shadow_py_weatherstate",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_scanner_shadow.py",
+      "source_location": "L27",
+      "weight": 1.0,
+      "source": "tests_test_scanner_shadow_rationale_27",
+      "target": "tests_test_scanner_shadow_make_weather_state",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_scanner_shadow.py",
+      "source_location": "L119",
+      "weight": 1.0,
+      "source": "tests_test_scanner_shadow_testshadowdetection_setup_method",
+      "target": "tests_test_scanner_shadow_make_weather_state",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "references",
+      "context": "return_type",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_scanner_shadow.py",
+      "source_location": "L41",
+      "weight": 1.0,
+      "source": "tests_test_scanner_shadow_make_bracket",
+      "target": "src_tests_test_scanner_shadow_py_bracket",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_scanner_shadow.py",
+      "source_location": "L42",
+      "weight": 1.0,
+      "source": "tests_test_scanner_shadow_rationale_42",
+      "target": "tests_test_scanner_shadow_make_bracket",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_scanner_shadow.py",
+      "source_location": "L90",
+      "weight": 1.0,
+      "source": "tests_test_scanner_shadow_run_scan",
+      "target": "tests_test_scanner_shadow_make_bracket",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_scanner_shadow.py",
+      "source_location": "L166",
+      "weight": 1.0,
+      "source": "tests_test_scanner_shadow_testcandidatedataclassdefaults_test_shadow_can_be_set_true",
+      "target": "tests_test_scanner_shadow_make_bracket",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_scanner_shadow.py",
+      "source_location": "L149",
+      "weight": 1.0,
+      "source": "tests_test_scanner_shadow_testcandidatedataclassdefaults_test_shadow_defaults_to_false",
+      "target": "tests_test_scanner_shadow_make_bracket",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_scanner_shadow.py",
+      "source_location": "L120",
+      "weight": 1.0,
+      "source": "tests_test_scanner_shadow_testshadowdetection_setup_method",
+      "target": "tests_test_scanner_shadow_make_bracket",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "references",
+      "context": "parameter_type",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_scanner_shadow.py",
+      "source_location": "L59",
+      "weight": 1.0,
+      "source": "tests_test_scanner_shadow_make_market",
+      "target": "src_tests_test_scanner_shadow_py_bracket",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_scanner_shadow.py",
+      "source_location": "L60",
+      "weight": 1.0,
+      "source": "tests_test_scanner_shadow_rationale_60",
+      "target": "tests_test_scanner_shadow_make_market",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_scanner_shadow.py",
+      "source_location": "L120",
+      "weight": 1.0,
+      "source": "tests_test_scanner_shadow_testshadowdetection_setup_method",
+      "target": "tests_test_scanner_shadow_make_market",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_scanner_shadow.py",
+      "source_location": "L87",
+      "weight": 1.0,
+      "source": "tests_test_scanner_shadow_rationale_87",
+      "target": "tests_test_scanner_shadow_run_scan",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_scanner_shadow.py",
+      "source_location": "L124",
+      "weight": 1.0,
+      "source": "tests_test_scanner_shadow_testshadowdetection_test_enable_yes_false_produces_shadow_candidate",
+      "target": "tests_test_scanner_shadow_run_scan",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_scanner_shadow.py",
+      "source_location": "L131",
+      "weight": 1.0,
+      "source": "tests_test_scanner_shadow_testshadowdetection_test_enable_yes_true_produces_non_shadow_candidate",
+      "target": "tests_test_scanner_shadow_run_scan",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_scanner_shadow.py",
+      "source_location": "L138",
+      "weight": 1.0,
+      "source": "tests_test_scanner_shadow_testshadowdetection_test_shadow_candidate_has_correct_side_and_ticker",
+      "target": "tests_test_scanner_shadow_run_scan",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_scanner_shadow.py",
+      "source_location": "L118",
+      "weight": 1.0,
+      "source": "tests_test_scanner_shadow_testshadowdetection",
+      "target": "tests_test_scanner_shadow_testshadowdetection_setup_method",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_scanner_shadow.py",
+      "source_location": "L122",
+      "weight": 1.0,
+      "source": "tests_test_scanner_shadow_testshadowdetection",
+      "target": "tests_test_scanner_shadow_testshadowdetection_test_enable_yes_false_produces_shadow_candidate",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_scanner_shadow.py",
+      "source_location": "L129",
+      "weight": 1.0,
+      "source": "tests_test_scanner_shadow_testshadowdetection",
+      "target": "tests_test_scanner_shadow_testshadowdetection_test_enable_yes_true_produces_non_shadow_candidate",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_scanner_shadow.py",
+      "source_location": "L136",
+      "weight": 1.0,
+      "source": "tests_test_scanner_shadow_testshadowdetection",
+      "target": "tests_test_scanner_shadow_testshadowdetection_test_shadow_candidate_has_correct_side_and_ticker",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_scanner_shadow.py",
+      "source_location": "L123",
+      "weight": 1.0,
+      "source": "tests_test_scanner_shadow_rationale_123",
+      "target": "tests_test_scanner_shadow_testshadowdetection_test_enable_yes_false_produces_shadow_candidate",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_scanner_shadow.py",
+      "source_location": "L130",
+      "weight": 1.0,
+      "source": "tests_test_scanner_shadow_rationale_130",
+      "target": "tests_test_scanner_shadow_testshadowdetection_test_enable_yes_true_produces_non_shadow_candidate",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_scanner_shadow.py",
+      "source_location": "L137",
+      "weight": 1.0,
+      "source": "tests_test_scanner_shadow_rationale_137",
+      "target": "tests_test_scanner_shadow_testshadowdetection_test_shadow_candidate_has_correct_side_and_ticker",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_scanner_shadow.py",
+      "source_location": "L146",
+      "weight": 1.0,
+      "source": "tests_test_scanner_shadow_rationale_146",
+      "target": "tests_test_scanner_shadow_testcandidatedataclassdefaults",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_scanner_shadow.py",
+      "source_location": "L165",
+      "weight": 1.0,
+      "source": "tests_test_scanner_shadow_testcandidatedataclassdefaults",
+      "target": "tests_test_scanner_shadow_testcandidatedataclassdefaults_test_shadow_can_be_set_true",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_scanner_shadow.py",
+      "source_location": "L148",
+      "weight": 1.0,
+      "source": "tests_test_scanner_shadow_testcandidatedataclassdefaults",
+      "target": "tests_test_scanner_shadow_testcandidatedataclassdefaults_test_shadow_defaults_to_false",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
       "source_file": "src/tests/test_sell_position_immediate.py",
       "source_location": "L20",
       "weight": 1.0,
@@ -64824,6 +66922,411 @@
       "confidence_score": 1.0,
       "source": "tests_test_sell_position_immediate_rationale_103",
       "target": "tests_test_sell_position_immediate_testsellpositionimmediatecancelpaths_test_cancel_succeeds_returns_none_for_retry"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_settle_shadow.py",
+      "source_location": "L21",
+      "weight": 1.0,
+      "source": "tests_test_settle_shadow",
+      "target": "tests_test_settle_shadow_fresh_db",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_settle_shadow.py",
+      "source_location": "L25",
+      "weight": 1.0,
+      "source": "tests_test_settle_shadow",
+      "target": "tests_test_settle_shadow_insert_shadow",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_settle_shadow.py",
+      "source_location": "L141",
+      "weight": 1.0,
+      "source": "tests_test_settle_shadow",
+      "target": "tests_test_settle_shadow_testsettleshadowedgecases",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_settle_shadow.py",
+      "source_location": "L115",
+      "weight": 1.0,
+      "source": "tests_test_settle_shadow",
+      "target": "tests_test_settle_shadow_testsettleshadowidempotency",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_settle_shadow.py",
+      "source_location": "L92",
+      "weight": 1.0,
+      "source": "tests_test_settle_shadow",
+      "target": "tests_test_settle_shadow_testsettleshadowtradeslost",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_settle_shadow.py",
+      "source_location": "L53",
+      "weight": 1.0,
+      "source": "tests_test_settle_shadow",
+      "target": "tests_test_settle_shadow_testsettleshadowtradeswon",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_settle_shadow.py",
+      "source_location": "L1",
+      "weight": 1.0,
+      "source": "tests_test_settle_shadow_rationale_1",
+      "target": "tests_test_settle_shadow",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "references",
+      "context": "return_type",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_settle_shadow.py",
+      "source_location": "L21",
+      "weight": 1.0,
+      "source": "tests_test_settle_shadow_fresh_db",
+      "target": "src_tests_test_settle_shadow_py_database",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "references",
+      "context": "parameter_type",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_settle_shadow.py",
+      "source_location": "L21",
+      "weight": 1.0,
+      "source": "tests_test_settle_shadow_fresh_db",
+      "target": "src_tests_test_settle_shadow_py_path",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_settle_shadow.py",
+      "source_location": "L164",
+      "weight": 1.0,
+      "source": "tests_test_settle_shadow_testsettleshadowedgecases_test_multiple_stations_settled_independently",
+      "target": "tests_test_settle_shadow_fresh_db",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_settle_shadow.py",
+      "source_location": "L149",
+      "weight": 1.0,
+      "source": "tests_test_settle_shadow_testsettleshadowedgecases_test_skips_station_not_in_truth",
+      "target": "tests_test_settle_shadow_fresh_db",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_settle_shadow.py",
+      "source_location": "L118",
+      "weight": 1.0,
+      "source": "tests_test_settle_shadow_testsettleshadowidempotency_test_already_settled_rows_are_skipped",
+      "target": "tests_test_settle_shadow_fresh_db",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_settle_shadow.py",
+      "source_location": "L97",
+      "weight": 1.0,
+      "source": "tests_test_settle_shadow_testsettleshadowtradeslost_test_pnl_formula_yes_lost",
+      "target": "tests_test_settle_shadow_fresh_db",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_settle_shadow.py",
+      "source_location": "L78",
+      "weight": 1.0,
+      "source": "tests_test_settle_shadow_testsettleshadowtradeswon_test_capital_after_equals_pnl_when_capital_before_zero",
+      "target": "tests_test_settle_shadow_fresh_db",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_settle_shadow.py",
+      "source_location": "L58",
+      "weight": 1.0,
+      "source": "tests_test_settle_shadow_testsettleshadowtradeswon_test_pnl_formula_yes_won",
+      "target": "tests_test_settle_shadow_fresh_db",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "references",
+      "context": "parameter_type",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_settle_shadow.py",
+      "source_location": "L25",
+      "weight": 1.0,
+      "source": "tests_test_settle_shadow_insert_shadow",
+      "target": "src_tests_test_settle_shadow_py_database",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_settle_shadow.py",
+      "source_location": "L27",
+      "weight": 1.0,
+      "source": "tests_test_settle_shadow_rationale_27",
+      "target": "tests_test_settle_shadow_insert_shadow",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_settle_shadow.py",
+      "source_location": "L168",
+      "weight": 1.0,
+      "source": "tests_test_settle_shadow_testsettleshadowedgecases_test_multiple_stations_settled_independently",
+      "target": "tests_test_settle_shadow_insert_shadow",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_settle_shadow.py",
+      "source_location": "L151",
+      "weight": 1.0,
+      "source": "tests_test_settle_shadow_testsettleshadowedgecases_test_skips_station_not_in_truth",
+      "target": "tests_test_settle_shadow_insert_shadow",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_settle_shadow.py",
+      "source_location": "L121",
+      "weight": 1.0,
+      "source": "tests_test_settle_shadow_testsettleshadowidempotency_test_already_settled_rows_are_skipped",
+      "target": "tests_test_settle_shadow_insert_shadow",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_settle_shadow.py",
+      "source_location": "L100",
+      "weight": 1.0,
+      "source": "tests_test_settle_shadow_testsettleshadowtradeslost_test_pnl_formula_yes_lost",
+      "target": "tests_test_settle_shadow_insert_shadow",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_settle_shadow.py",
+      "source_location": "L81",
+      "weight": 1.0,
+      "source": "tests_test_settle_shadow_testsettleshadowtradeswon_test_capital_after_equals_pnl_when_capital_before_zero",
+      "target": "tests_test_settle_shadow_insert_shadow",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_settle_shadow.py",
+      "source_location": "L61",
+      "weight": 1.0,
+      "source": "tests_test_settle_shadow_testsettleshadowtradeswon_test_pnl_formula_yes_won",
+      "target": "tests_test_settle_shadow_insert_shadow",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_settle_shadow.py",
+      "source_location": "L54",
+      "weight": 1.0,
+      "source": "tests_test_settle_shadow_rationale_54",
+      "target": "tests_test_settle_shadow_testsettleshadowtradeswon",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_settle_shadow.py",
+      "source_location": "L76",
+      "weight": 1.0,
+      "source": "tests_test_settle_shadow_testsettleshadowtradeswon",
+      "target": "tests_test_settle_shadow_testsettleshadowtradeswon_test_capital_after_equals_pnl_when_capital_before_zero",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_settle_shadow.py",
+      "source_location": "L56",
+      "weight": 1.0,
+      "source": "tests_test_settle_shadow_testsettleshadowtradeswon",
+      "target": "tests_test_settle_shadow_testsettleshadowtradeswon_test_pnl_formula_yes_won",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_settle_shadow.py",
+      "source_location": "L57",
+      "weight": 1.0,
+      "source": "tests_test_settle_shadow_rationale_57",
+      "target": "tests_test_settle_shadow_testsettleshadowtradeswon_test_pnl_formula_yes_won",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_settle_shadow.py",
+      "source_location": "L77",
+      "weight": 1.0,
+      "source": "tests_test_settle_shadow_rationale_77",
+      "target": "tests_test_settle_shadow_testsettleshadowtradeswon_test_capital_after_equals_pnl_when_capital_before_zero",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_settle_shadow.py",
+      "source_location": "L93",
+      "weight": 1.0,
+      "source": "tests_test_settle_shadow_rationale_93",
+      "target": "tests_test_settle_shadow_testsettleshadowtradeslost",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_settle_shadow.py",
+      "source_location": "L95",
+      "weight": 1.0,
+      "source": "tests_test_settle_shadow_testsettleshadowtradeslost",
+      "target": "tests_test_settle_shadow_testsettleshadowtradeslost_test_pnl_formula_yes_lost",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_settle_shadow.py",
+      "source_location": "L96",
+      "weight": 1.0,
+      "source": "tests_test_settle_shadow_rationale_96",
+      "target": "tests_test_settle_shadow_testsettleshadowtradeslost_test_pnl_formula_yes_lost",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_settle_shadow.py",
+      "source_location": "L116",
+      "weight": 1.0,
+      "source": "tests_test_settle_shadow_testsettleshadowidempotency",
+      "target": "tests_test_settle_shadow_testsettleshadowidempotency_test_already_settled_rows_are_skipped",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_settle_shadow.py",
+      "source_location": "L117",
+      "weight": 1.0,
+      "source": "tests_test_settle_shadow_rationale_117",
+      "target": "tests_test_settle_shadow_testsettleshadowidempotency_test_already_settled_rows_are_skipped",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_settle_shadow.py",
+      "source_location": "L162",
+      "weight": 1.0,
+      "source": "tests_test_settle_shadow_testsettleshadowedgecases",
+      "target": "tests_test_settle_shadow_testsettleshadowedgecases_test_multiple_stations_settled_independently",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_settle_shadow.py",
+      "source_location": "L142",
+      "weight": 1.0,
+      "source": "tests_test_settle_shadow_testsettleshadowedgecases",
+      "target": "tests_test_settle_shadow_testsettleshadowedgecases_test_no_op_when_db_none",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_settle_shadow.py",
+      "source_location": "L147",
+      "weight": 1.0,
+      "source": "tests_test_settle_shadow_testsettleshadowedgecases",
+      "target": "tests_test_settle_shadow_testsettleshadowedgecases_test_skips_station_not_in_truth",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_settle_shadow.py",
+      "source_location": "L143",
+      "weight": 1.0,
+      "source": "tests_test_settle_shadow_rationale_143",
+      "target": "tests_test_settle_shadow_testsettleshadowedgecases_test_no_op_when_db_none",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_settle_shadow.py",
+      "source_location": "L148",
+      "weight": 1.0,
+      "source": "tests_test_settle_shadow_rationale_148",
+      "target": "tests_test_settle_shadow_testsettleshadowedgecases_test_skips_station_not_in_truth",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_settle_shadow.py",
+      "source_location": "L163",
+      "weight": 1.0,
+      "source": "tests_test_settle_shadow_rationale_163",
+      "target": "tests_test_settle_shadow_testsettleshadowedgecases_test_multiple_stations_settled_independently",
+      "confidence_score": 1.0
     },
     {
       "relation": "contains",
@@ -70764,9 +73267,9 @@
       "source_file": "src/weather/builder.py",
       "source_location": "L33",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "weather_builder_rationale_33",
-      "target": "weather_builder_build_weather",
-      "confidence_score": 1.0
+      "target": "weather_builder_build_weather"
     },
     {
       "relation": "contains",
@@ -75730,5 +78233,5 @@
     }
   ],
   "hyperedges": [],
-  "built_at_commit": "66f7d07c5b18ea56e83fe73679ba15d3d446d104"
+  "built_at_commit": "bcb6546495d774c99e650fa14dd2cad78101daef"
 }
