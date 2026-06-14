@@ -1024,11 +1024,11 @@ function toggleTheme() {
 
 function _autoLoadCharts(positions) {
   positions.forEach(p => {
-    if (p.token_id) _renderChart(p.token_id, p.entry_price, p.my_prob);
+    if (p.token_id) _renderChart(p.token_id, p.entry_price, p.my_prob, p.market_prob);
   });
 }
 
-async function _renderChart(tokenId, entryPrice, myProb) {
+async function _renderChart(tokenId, entryPrice, myProb, marketProb) {
   const canvasId = 'canvas-' + tokenId;
   const wrap = document.getElementById(canvasId)?.parentElement;
   if (!wrap) return;
@@ -1050,6 +1050,12 @@ async function _renderChart(tokenId, entryPrice, myProb) {
     return;
   }
 
+  // Append a live "now" point using the current market price from the portfolio card.
+  // This bridges the gap when snapshots are stale (bot not polling).
+  if (marketProb != null) {
+    rows = [...rows, { ts: new Date().toISOString(), market_bid: marketProb, fair_value: null, _live: true }];
+  }
+
   wrap.innerHTML = '<canvas id="' + canvasId + '"></canvas>';
   const canvas = document.getElementById(canvasId);
 
@@ -1058,8 +1064,11 @@ async function _renderChart(tokenId, entryPrice, myProb) {
 
   const labels = rows.map(d => {
     const t = new Date(d.ts);
-    return t.getUTCHours().toString().padStart(2, '0') + ':' + t.getUTCMinutes().toString().padStart(2, '0') + ' UTC';
+    return t.getHours().toString().padStart(2, '0') + ':' + t.getMinutes().toString().padStart(2, '0');
   });
+
+  const liveIdx = rows.length - 1;
+  const marketBidRadii = rows.map((_, i) => i === liveIdx && rows[i]._live ? 5 : 0);
 
   new Chart(canvas, {
     type: 'line',
@@ -1072,7 +1081,8 @@ async function _renderChart(tokenId, entryPrice, myProb) {
           borderColor: clr('--primary'),
           backgroundColor: 'transparent',
           borderWidth: 2,
-          pointRadius: 0,
+          pointRadius: marketBidRadii,
+          pointBackgroundColor: clr('--primary'),
           tension: 0.25,
           spanGaps: true,
           fill: false,
@@ -1192,7 +1202,7 @@ async function _renderClosedChart(tokenId, entryPrice, exitPrice) {
 
   const labels = rows.map(d => {
     const t = new Date(d.ts);
-    return t.getUTCHours().toString().padStart(2,'0') + ':' + t.getUTCMinutes().toString().padStart(2,'0') + ' UTC';
+    return t.getHours().toString().padStart(2,'0') + ':' + t.getMinutes().toString().padStart(2,'0');
   });
 
   new Chart(canvas, {
