@@ -238,9 +238,9 @@ a,button,input,select{transition:color var(--transition),background var(--transi
   padding:var(--space-3) var(--space-5);
   border-top:1px solid var(--divider);
   display:flex;align-items:center;justify-content:space-between;
-  gap:var(--space-4);
+  gap:var(--space-4);flex-wrap:wrap;
 }
-.pos-footer-left{display:flex;align-items:center;gap:var(--space-4);}
+.pos-footer-left{display:flex;align-items:center;gap:var(--space-4);flex-wrap:wrap;}
 .footer-stat{font-size:var(--text-xs);color:var(--muted);}
 .footer-stat strong{color:var(--text);font-weight:600;}
 .footer-bracket{
@@ -485,16 +485,24 @@ a,button,input,select{transition:color var(--transition),background var(--transi
 }
 .btn-sell i{width:13px;height:13px;}
 .btn-sell:hover:not(:disabled){background:var(--no-dim);}
-.btn-sell.confirm{background:var(--no);color:var(--inverse);border-color:var(--no);}
-.btn-sell.confirm:hover:not(:disabled){opacity:.85;}
+/* Confirm state drains opacity over the 4s arming window so the closing
+   timeout is visually communicated (matches the JS setTimeout in sellPosition). */
+.btn-sell.confirm{background:var(--no);color:var(--inverse);border-color:var(--no);animation:sell-expire 4s linear forwards;}
+.btn-sell.confirm:hover:not(:disabled){animation-play-state:paused;}
+@keyframes sell-expire{from{opacity:1;}to{opacity:.5;}}
 .btn-sell:disabled{opacity:.5;cursor:default;}
 .btn-sell .spinner{
   width:10px;height:10px;border-radius:50%;
   border:2px solid currentColor;border-top-color:transparent;
   animation:spin 0.6s linear infinite;display:none;
 }
+.btn-sell.loading{opacity:1;}
 .btn-sell.loading .spinner{display:inline-block;}
 .btn-sell.loading .btn-sell-label,.btn-sell.loading i{display:none;}
+/* Transient inline note for the no-fill case — keeps the user on the card
+   instead of a blocking alert(). */
+.pos-footer-sell{display:inline-flex;align-items:center;gap:8px;}
+.sell-note{font-size:var(--text-xs);font-weight:700;color:var(--no);}
 
 /* ── EMOS CARDS ── */
 .emos-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-xl);margin-bottom:var(--space-4);box-shadow:var(--sh-sm);overflow:hidden;transition:box-shadow var(--transition);border-left:3px solid transparent;}
@@ -896,9 +904,14 @@ function renderOpen(positions) {
           <div class="footer-stat"><strong>${p.shares}</strong> shares @ $${(p.entry_price / 100).toFixed(2)}</div>
           ${(p.bracket_low || p.bracket_high) ? `<div class="footer-bracket">bracket: ${p.bracket_low}°F – ${p.bracket_high}°F</div>` : ''}
         </div>
-        ${p.token_id ? `<button class="btn-sell" id="sell-btn-${p.token_id}" onclick="sellPosition('${p.token_id}', this)" title="Sell this position now at the best available bid">
-          <span class="spinner"></span><i data-lucide="hand-coins"></i><span class="btn-sell-label">Sell now</span>
-        </button>` : `<div class="pos-ts">${p.station}</div>`}
+        ${p.token_id ? `<div class="pos-footer-sell">
+          <span class="sell-note" id="sell-note-${p.token_id}" role="status" aria-live="polite"></span>
+          <button class="btn-sell" id="sell-btn-${p.token_id}" onclick="sellPosition('${p.token_id}', this)"
+                  title="Sell this position now at the best available bid"
+                  aria-label="Sell this position now at the best available bid">
+            <span class="spinner"></span><i data-lucide="hand-coins"></i><span class="btn-sell-label">Sell now</span>
+          </button>
+        </div>` : `<div class="pos-ts">${p.station}</div>`}
       </div>
     </div>`;
   }).join('');
@@ -910,51 +923,86 @@ function renderOpen(positions) {
 /* Tokens awaiting a confirmation click before a manual sell fires. */
 const _sellConfirm = new Set();
 
+const _SELL_LABEL = 'Sell this position now at the best available bid';
+
+function _resetSellButton(btn) {
+  btn.disabled = false;
+  btn.classList.remove('loading', 'confirm');
+  btn.removeAttribute('aria-busy');
+  btn.setAttribute('aria-label', _SELL_LABEL);
+  btn.title = _SELL_LABEL;
+  const lbl = btn.querySelector('.btn-sell-label');
+  if (lbl) lbl.textContent = 'Sell now';
+}
+
+/* Surface a hard sell error through the existing portfolio error banner
+   (consistent with the rest of the dashboard) rather than a blocking alert(). */
+function _showSellError(msg) {
+  const banner = document.getElementById('error-banner');
+  const text = document.getElementById('error-text');
+  if (text) text.textContent = msg;
+  if (banner) {
+    banner.classList.add('visible');
+    setTimeout(() => banner.classList.remove('visible'), 6000);
+  }
+}
+
 async function sellPosition(tokenId, btn) {
   if (btn.disabled) return;
+  const lbl = btn.querySelector('.btn-sell-label');
+  const note = document.getElementById('sell-note-' + tokenId);
 
   // First click arms a confirmation; a second click within 4s executes the sell.
+  // The .confirm class runs a 4s opacity animation so the closing window is visible.
   if (!_sellConfirm.has(tokenId)) {
     _sellConfirm.add(tokenId);
     btn.classList.add('confirm');
-    btn.querySelector('.btn-sell-label').textContent = 'Confirm sell?';
+    if (lbl) lbl.textContent = 'Confirm sell?';
+    btn.setAttribute('aria-label', 'Confirm sell — click again, or wait to cancel');
+    btn.title = 'Click again to confirm — wait to cancel';
     setTimeout(() => {
       if (_sellConfirm.has(tokenId)) {
         _sellConfirm.delete(tokenId);
-        btn.classList.remove('confirm');
-        const lbl = btn.querySelector('.btn-sell-label');
-        if (lbl) lbl.textContent = 'Sell now';
+        _resetSellButton(btn);
       }
     }, 4000);
     return;
   }
 
   _sellConfirm.delete(tokenId);
+  if (note) note.textContent = '';
   btn.disabled = true;
   btn.classList.remove('confirm');
   btn.classList.add('loading');
+  btn.setAttribute('aria-busy', 'true');
+  btn.setAttribute('aria-label', 'Selling position…');
   try {
     const r = await fetch('/api/positions/' + encodeURIComponent(tokenId) + '/sell', { method: 'POST' });
     const body = await r.json().catch(() => ({}));
     if (!r.ok) {
       const detail = body.detail || `HTTP ${r.status}`;
       console.warn(`Sell ${tokenId} failed: ${detail}`);
-      alert(`Could not sell position: ${detail}`);
+      _showSellError(`Could not sell position: ${detail}`);
+      _resetSellButton(btn);
     } else if (body.status === 'no_fill') {
-      alert(body.detail || 'Order did not fill at market — please try again.');
+      // Position is unchanged — re-enable the button and show a transient inline
+      // note instead of a blocking alert or a full re-render that drops context.
+      console.info(`Sell ${tokenId}: no fill at market`);
+      _resetSellButton(btn);
+      if (note) {
+        note.textContent = "Didn't fill — try again";
+        setTimeout(() => { if (note) note.textContent = ''; }, 5000);
+      }
     } else {
       const pnl = body.pnl != null ? ` (P&L ${body.pnl >= 0 ? '+' : ''}$${body.pnl.toFixed(2)})` : '';
       console.info(`Sold ${tokenId} at ${body.sell_price_cents}¢${pnl}`);
+      // Refresh so the position moves to the closed list.
+      await fetchPortfolio();
     }
-    // Refresh so the position moves to the closed list (or reflects the new state).
-    await fetchPortfolio();
   } catch (e) {
     console.error('Sell failed:', e);
-    alert(`Sell request failed: ${e.message}`);
-    btn.disabled = false;
-    btn.classList.remove('loading');
-    const lbl = btn.querySelector('.btn-sell-label');
-    if (lbl) lbl.textContent = 'Sell now';
+    _showSellError(`Sell request failed: ${e.message}`);
+    _resetSellButton(btn);
   }
 }
 
