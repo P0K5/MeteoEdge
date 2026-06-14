@@ -7,8 +7,28 @@ on:
       - 'graphify-out/**'
       - '.github/workflows/graphify-update.yml'
 
+  schedule:
+    - cron: '0 3 * * 1'  # Every Monday at 03:00 UTC
+
+  workflow_dispatch:
+    inputs:
+      force_full:
+        description: 'Force full semantic rebuild'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+
 jobs:
-  update-graph:
+  # -------------------------------------------------------
+  # JOB 1: Incremental update — runs on every push to master
+  # Only re-processes changed code files. AST pass is free.
+  # Skipped on scheduled runs (full rebuild handles those).
+  # -------------------------------------------------------
+  incremental-update:
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -40,7 +60,58 @@ jobs:
           .env
           EOF
 
-      - name: Run Graphify extract
+      - name: Incremental graph update (code only, free)
+        run: graphify update . --force
+
+      - name: Commit updated graph
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add graphify-out/graph.json \
+                  graphify-out/.graphify_analysis.json
+          git diff --staged --quiet || git commit -m "chore(graph): incremental graph update [skip ci]"
+          git push
+
+  # -------------------------------------------------------
+  # JOB 2: Full rebuild — runs weekly (Monday 03:00 UTC)
+  # or manually via workflow_dispatch.
+  # Re-extracts all docs semantically + re-clusters communities.
+  # Cost: ~$0.02 per run.
+  # -------------------------------------------------------
+  full-rebuild:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install Graphify
+        run: pip install graphifyy openai
+
+      - name: Create .graphifyignore
+        run: |
+          cat > .graphifyignore << 'EOF'
+          data/
+          backtest_results/
+          archive/
+          *.csv
+          *.parquet
+          *.pkl
+          __pycache__/
+          .env
+          EOF
+
+      - name: Full semantic extraction
         env:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
         run: |
@@ -50,17 +121,17 @@ jobs:
             --token-budget 32000 \
             --no-cluster
 
-      - name: Run Graphify cluster
+      - name: Cluster and label communities
         env:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
         run: graphify cluster-only . --backend deepseek
 
-      - name: Commit updated graph
+      - name: Commit full graph rebuild
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add graphify-out/graph.json \
                   graphify-out/GRAPH_REPORT.md \
                   graphify-out/.graphify_analysis.json
-          git diff --staged --quiet || git commit -m "chore(graph): auto-update knowledge graph [skip ci]"
+          git diff --staged --quiet || git commit -m "chore(graph): weekly full graph rebuild [skip ci]"
           git push
