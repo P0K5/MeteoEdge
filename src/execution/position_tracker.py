@@ -76,10 +76,17 @@ def _log_open_position_snapshots(weather: dict, ts: str, db=None) -> list:
         station = first.get("station", "")
         bracket_low = first.get("bracket_low")
         bracket_high = first.get("bracket_high")
-        if station not in weather or bracket_low is None or bracket_high is None:
+        if bracket_low is None or bracket_high is None:
             continue
 
-        state = weather[station]
+        # When weather is missing for this station the model line cannot be
+        # computed, but the market bid (orderbook) is weather-independent -- we
+        # still write a snapshot so the dashboard chart keeps updating and the
+        # gap is visible (fair_value paused, weather_missing flagged) rather
+        # than the chart silently going stale.  See issue: weather failure
+        # silencing stop-loss / the 8h chart gap.
+        state = weather.get(station)
+        weather_missing = state is None
 
         # Fetch live orderbook for the NO token
         no_no_bid = no_no_ask = None
@@ -101,21 +108,25 @@ def _log_open_position_snapshots(weather: dict, ts: str, db=None) -> list:
                 continue
             log.warning("  [snap] orderbook %s... error: %s", token_id[:14], e)
 
-        # Live p_yes by re-running the envelope model with current state
-        try:
-            bracket_stub = Bracket(
-                ticker=first.get("ticker", ""),
-                low_f=float(bracket_low),
-                high_f=float(bracket_high),
-                yes_ask_cents=50, yes_ask_size=0,
-                no_ask_cents=50, no_ask_size=0,
-            )
-            p_yes_now = true_probability_yes(bracket_stub, state)
-            fair_value_now = max(1, min(99, round((1 - p_yes_now) * 100)))
-        except Exception as e:
-            log.warning("  [snap] model eval %s %s-%s error: %s", station, bracket_low, bracket_high, e)
-            p_yes_now = None
-            fair_value_now = None
+        # Live p_yes by re-running the envelope model with current state.
+        # Skipped when weather is missing -- fair_value pauses on the chart.
+        p_yes_now = None
+        fair_value_now = None
+        if state is not None:
+            try:
+                bracket_stub = Bracket(
+                    ticker=first.get("ticker", ""),
+                    low_f=float(bracket_low),
+                    high_f=float(bracket_high),
+                    yes_ask_cents=50, yes_ask_size=0,
+                    no_ask_cents=50, no_ask_size=0,
+                )
+                p_yes_now = true_probability_yes(bracket_stub, state)
+                fair_value_now = max(1, min(99, round((1 - p_yes_now) * 100)))
+            except Exception as e:
+                log.warning("  [snap] model eval %s %s-%s error: %s", station, bracket_low, bracket_high, e)
+                p_yes_now = None
+                fair_value_now = None
 
         snap = {
             "ts": ts,
@@ -126,15 +137,16 @@ def _log_open_position_snapshots(weather: dict, ts: str, db=None) -> list:
             "bracket_high": bracket_high,
             "entry_price": first.get("price_cents"),
             "predicted_price": first.get("predicted_price"),
-            "current_high": state.current_high_f,
-            "latest_temp": state.latest_temp_f,
-            "forecast_nws": state.forecast_high_f,
-            "forecast_secondary": state.secondary_forecast_f,
+            "current_high": state.current_high_f if state is not None else None,
+            "latest_temp": state.latest_temp_f if state is not None else None,
+            "forecast_nws": state.forecast_high_f if state is not None else None,
+            "forecast_secondary": state.secondary_forecast_f if state is not None else None,
             "no_best_bid": no_no_bid,
             "no_best_bid_size": no_best_bid_size,
             "no_best_ask": no_no_ask,
             "p_yes_now": round(p_yes_now, 4) if p_yes_now is not None else None,
             "fair_value_now": fair_value_now,
+            "weather_missing": weather_missing,
         }
         with _write_lock:
             with open(POSITION_SNAPSHOTS_JSONL, "a") as f:

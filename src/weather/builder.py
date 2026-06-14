@@ -29,7 +29,18 @@ def _station_in_active_window(station: str) -> bool:
     return active_start <= now_local_dt.hour < active_end
 
 
-def _build_weather(db=None) -> dict:
+def _build_weather(db=None, health_out=None) -> dict:
+    """Assemble per-station WeatherState.
+
+    When *health_out* is a list, one ``{"station", "status", "reason"}`` entry
+    is appended per station so callers (the dashboard) can surface *what* is
+    failing and *why* -- e.g. outside active window, no METAR, parse error.
+    ``status`` is ``"ok"`` for stations that produced a WeatherState.
+    """
+    def _degraded(station: str, reason: str) -> None:
+        if health_out is not None:
+            health_out.append({"station": station, "status": "degraded", "reason": reason})
+
     weather: dict[str, WeatherState] = {}
     for station, lat, lon, city, *_ in STATIONS:
         now_local_dt = datetime.now(pytz.timezone(STATION_TZ[station]))
@@ -39,16 +50,19 @@ def _build_weather(db=None) -> dict:
                 "[%s] local %s outside active window %02d:00-%02d:00 -- skipping",
                 station, now_local_dt.strftime('%H:%M'), active_start, active_end,
             )
+            _degraded(station, f"outside active window {active_start:02d}:00-{active_end:02d}:00 (local {now_local_dt.strftime('%H:%M')})")
             continue
 
         metars = fetch_all_metars_today(station)
         if not metars:
             log.info("[%s] no METAR data, skipping", station)
+            _degraded(station, "no METAR data")
             continue
 
         result = compute_daily_high(metars, STATION_TZ[station], min_local_hour=active_start)
         if not result:
             log.info("[%s] could not compute daily high, skipping", station)
+            _degraded(station, "could not compute daily high")
             continue
         high_f, high_time = result
 
@@ -56,11 +70,13 @@ def _build_weather(db=None) -> dict:
         latest_temp_c = latest.get("temp")
         if latest_temp_c is None:
             log.info("[%s] latest METAR missing temp, skipping", station)
+            _degraded(station, "latest METAR missing temperature")
             continue
 
         obs_str = latest.get("reportTime") or latest.get("obsTime")
         if not obs_str:
             log.info("[%s] latest METAR missing time, skipping", station)
+            _degraded(station, "latest METAR missing timestamp")
             continue
 
         try:
@@ -70,6 +86,7 @@ def _build_weather(db=None) -> dict:
                 latest_time = latest_time.replace(tzinfo=timezone.utc)
         except Exception as e:
             log.warning("[%s] METAR parse error: %s, skipping", station, e)
+            _degraded(station, f"METAR parse error: {e}")
             continue
 
         # Persist the latest METAR so the freshness monitor and intraday
@@ -149,4 +166,6 @@ def _build_weather(db=None) -> dict:
                 weather[station].corrected_mu_f = corrected
                 log.debug("[%s] corrected_mu_f=%.1fF (delta=%+.1fF)", station, corrected, corrected - deb_mu_f)
         log.info("[%s] high=%.1fF latest=%.1fF nws=%s", station, high_f, latest_temp_f, forecast_nws)
+        if health_out is not None:
+            health_out.append({"station": station, "status": "ok", "reason": ""})
     return weather

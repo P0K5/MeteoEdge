@@ -379,6 +379,15 @@ a,button,input,select{transition:color var(--transition),background var(--transi
 }
 .error-banner.visible{display:flex;}
 
+/* ── WEATHER-FEED WARNING BANNER ── */
+.warn-banner{
+  background:#3a2e00;border:1px solid #8a6d00;color:#ffcc55;
+  border-radius:var(--radius-md);padding:var(--space-3) var(--space-4);
+  font-size:var(--text-xs);font-weight:600;margin-bottom:var(--space-4);
+  display:none;align-items:center;gap:var(--space-2);
+}
+.warn-banner.visible{display:flex;}
+
 /* ── STATION CARDS ── */
 .station-card{
   background:var(--surface);border:1px solid var(--border);
@@ -576,6 +585,11 @@ a,button,input,select{transition:color var(--transition),background var(--transi
   <div class="error-banner" id="error-banner">
     <i data-lucide="alert-circle"></i>
     <span id="error-text">Could not reach /api/portfolio — retrying…</span>
+  </div>
+
+  <div class="warn-banner" id="weather-banner">
+    <i data-lucide="cloud-off"></i>
+    <span id="weather-text"></span>
   </div>
 
   <!-- WALLET ROW -->
@@ -973,6 +987,31 @@ async function fetchPortfolio() {
   }
 }
 
+async function fetchWeatherHealth() {
+  const banner = document.getElementById('weather-banner');
+  const text = document.getElementById('weather-text');
+  try {
+    const r = await fetch('/api/weather-health');
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json();
+    const degraded = data.degraded || [];
+    if (degraded.length === 0) {
+      banner.classList.remove('visible');
+      return;
+    }
+    const reasons = degraded.map(d => `${d.station}: ${d.reason}`).join(' · ');
+    const lead = data.all_degraded
+      ? 'No weather data for any station — model fair-value paused, stop-loss not evaluating'
+      : 'Weather feed degraded';
+    text.textContent = `${lead} — ${reasons}`;
+    banner.classList.add('visible');
+    lucide.createIcons();
+  } catch (e) {
+    // Endpoint unreachable is already covered by the portfolio error banner.
+    console.error('Weather-health fetch failed:', e);
+  }
+}
+
 async function fetchBotLog() {
   const box = document.getElementById('bot-log');
   const countEl = document.getElementById('log-count');
@@ -1088,6 +1127,8 @@ async function _renderChart(tokenId, entryPrice, myProb, marketProb) {
           fill: false,
         },
         {
+          // spanGaps:false so a weather outage (null fair_value) renders as a
+          // visible break in the model line instead of silently bridging over.
           label: 'Model fair value',
           data: rows.map(d => d.fair_value),
           borderColor: clr('--edge'),
@@ -1095,7 +1136,7 @@ async function _renderChart(tokenId, entryPrice, myProb, marketProb) {
           borderWidth: 2,
           pointRadius: 0,
           tension: 0.25,
-          spanGaps: true,
+          spanGaps: false,
           fill: false,
         },
         {
@@ -1948,8 +1989,10 @@ window.addEventListener('DOMContentLoaded', () => {
   lucide.createIcons();
   fetchPortfolio();
   fetchBotLog();
+  fetchWeatherHealth();
   portfolioIntervalId = setInterval(fetchPortfolio, 30_000);
   botLogIntervalId = setInterval(fetchBotLog, 30_000);
+  setInterval(fetchWeatherHealth, 30_000);
 });
 </script>
 </body>

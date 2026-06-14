@@ -519,3 +519,92 @@ class TestIntradayCorrectionWiring:
             source="metar",
         )
         assert isinstance(row_id, int)
+
+
+# ---------------------------------------------------------------------------
+# Weather-outage visibility — poll_once keeps the chart and alerting alive
+# while stop-loss stays weather-gated (issue: weather failure silences SL).
+# ---------------------------------------------------------------------------
+
+class TestPollOnceWeatherOutage:
+    """When _build_weather() returns empty, poll_once() must still log position
+    snapshots (chart keeps updating) and finalize the poll (poll-missed alert
+    stays live), but must NOT run the weather-gated stop-loss check."""
+
+    def test_empty_weather_keeps_snapshots_and_alerts_but_skips_stop_loss(self):
+        import src.scripts.run as run_module
+        import src.monitoring.dashboard as _dash
+
+        def _fake_build_weather(db=None, health_out=None):
+            if health_out is not None:
+                health_out.append(
+                    {"station": "Tokyo", "status": "degraded", "reason": "no METAR data"}
+                )
+            return {}
+
+        live_trader = MagicMock()
+
+        with (
+            patch("src.scripts.run._build_weather", side_effect=_fake_build_weather),
+            patch("src.scripts.run._log_open_position_snapshots", return_value=[]) as mock_snap,
+            patch("src.scripts.run._check_stop_loss_exits") as mock_sl,
+            patch("src.scripts.run._load_trades", return_value=[]),
+            patch("src.scripts.run._compute_win_rate", return_value=1.0),
+            patch.object(run_module.order_manager, "reconcile_timeout_fills"),
+            patch.object(run_module.order_manager, "sync_open_orders"),
+            patch.object(run_module.order_manager, "check_take_profit_exits"),
+            patch("src.scripts.run.get_weather_markets") as mock_markets,
+            patch.object(_dash, "last_poll_ts", None, create=True),
+            patch.object(_dash, "weather_health", None, create=True),
+        ):
+            from src.scripts.run import poll_once
+            from src.risk.manager import RiskManager
+
+            mock_risk = MagicMock(spec=RiskManager)
+            alert_manager = MagicMock()
+
+            poll_once(mock_risk, live_trader=live_trader, alert_manager=alert_manager, db=MagicMock())
+
+            # Chart keeps updating: snapshots are written even with no weather.
+            assert mock_snap.called, "snapshots must be logged on the weather-outage path"
+            # Stop-loss stays weather-gated: not evaluated when weather is empty.
+            assert not mock_sl.called, "stop-loss must NOT run when weather is empty"
+            # Market scan is skipped (no weather to scan against).
+            assert not mock_markets.called, "market scan must be skipped on empty weather"
+            # Poll is finalized: poll-missed alert stays live and timestamp advances.
+            assert alert_manager.check.called, "alert check must run on the outage path"
+            assert _dash.last_poll_ts is not None, "last_poll_ts must advance on the outage path"
+            # Feed health is surfaced for the dashboard banner.
+            assert _dash.weather_health == [
+                {"station": "Tokyo", "status": "degraded", "reason": "no METAR data"}
+            ]
+
+
+class TestBuildWeatherHealthOut:
+    """_build_weather() must report a per-station degraded reason via health_out."""
+
+    def test_outside_active_window_reported(self):
+        from datetime import datetime
+        import pytz
+        from src.weather.builder import _build_weather
+
+        # Force a local hour outside the active window so the station is skipped.
+        tz = pytz.timezone("Asia/Singapore")
+        outside = tz.localize(datetime(2026, 6, 14, 3, 0))  # 03:00 local
+
+        health: list = []
+        with (
+            patch("src.weather.builder.STATIONS",
+                  [("WSSS", 1.3644, 103.9915, "Singapore", "WSSS", "C", "Asia/Singapore")]),
+            patch("src.weather.builder.STATION_TZ", {"WSSS": "Asia/Singapore"}),
+            patch("src.weather.builder.STATION_ACTIVE_HOURS", {"WSSS": (6, 23)}),
+            patch("src.weather.builder.datetime") as mock_dt,
+        ):
+            mock_dt.now.return_value = outside
+            result = _build_weather(db=None, health_out=health)
+
+        assert result == {}, "station outside active window must produce no weather"
+        assert len(health) == 1
+        assert health[0]["station"] == "WSSS"
+        assert health[0]["status"] == "degraded"
+        assert "active window" in health[0]["reason"]
