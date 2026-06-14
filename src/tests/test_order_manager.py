@@ -752,3 +752,61 @@ class TestManualSellPosition:
 
         assert result["status"] == "sold"
         assert appended.call_args[0][0]["entry_side"] == "YES"
+
+
+# ===========================================================================
+# _load_open_fills_for_token
+# ===========================================================================
+
+class TestLoadOpenFillsForToken:
+    """The token-fills loader used to size a manual sell."""
+
+    def test_db_path_returns_matching_fills_any_side(self):
+        from src.execution.order_manager import _load_open_fills_for_token
+        mock_db = MagicMock()
+        mock_db.get_open_positions.return_value = [
+            {"no_token_id": "tok-a", "side": "YES", "price_cents": 40, "size_eur": 5.0},
+            {"no_token_id": "tok-b", "side": "NO", "price_cents": 80, "size_eur": 5.0},
+        ]
+        fills = _load_open_fills_for_token("tok-a", "2026-06-14", db=mock_db)
+        assert len(fills) == 1
+        assert fills[0]["side"] == "YES"
+
+    def test_jsonl_fallback_returns_todays_filled(self, tmp_path):
+        from src.execution.order_manager import _load_open_fills_for_token
+        today = datetime.now(timezone.utc).date().isoformat()
+        f = tmp_path / "lt.jsonl"
+        _write_jsonl(f, [
+            {"no_token_id": "tok-x", "end_date": today, "outcome": "filled",
+             "price_cents": 80, "size_eur": 5.0},
+        ])
+        with patch("src.execution.order_manager.LIVE_TRADES_JSONL", f):
+            fills = _load_open_fills_for_token("tok-x", today, db=None)
+        assert len(fills) == 1
+
+    def test_jsonl_fallback_excludes_prior_day_record(self, tmp_path):
+        """A settled prior-day 'filled' record must not be returned as sellable today."""
+        from src.execution.order_manager import _load_open_fills_for_token
+        today = datetime.now(timezone.utc).date().isoformat()
+        f = tmp_path / "lt.jsonl"
+        _write_jsonl(f, [
+            {"no_token_id": "tok-old", "end_date": "2020-01-01", "outcome": "filled",
+             "price_cents": 80, "size_eur": 5.0},
+        ])
+        with patch("src.execution.order_manager.LIVE_TRADES_JSONL", f):
+            fills = _load_open_fills_for_token("tok-old", today, db=None)
+        assert fills == []
+
+    def test_jsonl_fallback_excludes_sold_token(self, tmp_path):
+        from src.execution.order_manager import _load_open_fills_for_token
+        today = datetime.now(timezone.utc).date().isoformat()
+        f = tmp_path / "lt.jsonl"
+        _write_jsonl(f, [
+            {"no_token_id": "tok-s", "end_date": today, "outcome": "filled",
+             "price_cents": 80, "size_eur": 5.0},
+            {"no_token_id": "tok-s", "end_date": today, "outcome": "sold",
+             "price_cents": 90, "size_eur": 5.0},
+        ])
+        with patch("src.execution.order_manager.LIVE_TRADES_JSONL", f):
+            fills = _load_open_fills_for_token("tok-s", today, db=None)
+        assert fills == []

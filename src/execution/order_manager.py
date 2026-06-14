@@ -93,6 +93,13 @@ def _load_open_fills_for_token(token_id: str, today: str, db=None) -> list:
                 tok = r.get("no_token_id") or r.get("asset_id") or ""
                 if tok != token_id:
                     continue
+                # Scope to today's market, mirroring _load_open_no_positions:
+                # token_ids are unique per daily market, but a settled prior-day
+                # 'filled' record (hold-to-expiry, never 'sold') would otherwise
+                # be returned as sellable and trigger a sell of tokens we no
+                # longer hold.
+                if r.get("end_date", "")[:10] != today:
+                    continue
                 if r.get("outcome") == "sold":
                     sold = True
                 elif r.get("outcome") == "filled":
@@ -459,6 +466,16 @@ class OrderManager:
             return {"status": "no_fill", "detail": "Order did not fill at market -- try again."}
 
         sell_price_cents = sell_price_or_order
+        # Cross-process coordination contract: when the dashboard runs as its
+        # own process (run_dashboard.py), this _sold_positions set is NOT shared
+        # with the bot process -- it only guards a same-process replay. The real
+        # gate that stops the bot re-selling is close_positions_by_token(): all
+        # of the bot's exit loops (check_take_profit_exits, _check_stop_loss_exits,
+        # _check_metar_exits) source open positions from db.get_open_positions(),
+        # so once these rows are gone the token disappears from their view. The
+        # only residual race -- bot already loaded the token this poll, dashboard
+        # sells concurrently -- ends in a balance-zero sell error the bot's exit
+        # paths catch; no order is stranded and no position is double-sold.
         self._sold_positions.add(token_id)
         self._stop_loss_strikes.pop(token_id, None)
         self._partial_fill_shares.pop(token_id, None)
