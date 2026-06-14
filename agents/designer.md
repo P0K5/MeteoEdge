@@ -193,3 +193,15 @@ Apply these principles in order of priority when making design decisions:
 - Use labels for status tracking — status is ONLY on the project board.
 
 When in doubt, default to the simpler design that solves the user's problem.
+
+---
+
+## 8. Knowledge graph usage
+
+Follow the Graphify rules in `/CLAUDE.md`.
+
+For architecture context or navigating the codebase before reading source files:
+- Use `graphify query "<question>"` to understand what exists and where
+- Use `graphify path "<A>" "<B>"` to understand relationships between frontend modules
+
+Prioritize `/docs/design/` specs and design system docs over graph output for UX decisions. If `graphify` is not available on PATH, install it with `pip install graphifyy`. Do not run `graphify extract` unless explicitly instructed.
