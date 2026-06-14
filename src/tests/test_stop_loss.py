@@ -23,6 +23,7 @@ sys.modules.setdefault("py_clob_client_v2.clob_types", _clob_types_stub)
 
 from src.execution.live_trader import LiveTrader  # noqa: E402
 import src.scripts.run as run  # noqa: E402
+import src.execution.position_tracker as position_tracker  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -134,19 +135,21 @@ def _clean_state():
 
 @pytest.fixture(autouse=True)
 def _fixed_thresholds():
-    with patch.object(run, "STOP_LOSS_MIN_BID_CENTS", 40), \
-            patch.object(run, "STOP_LOSS_CONSECUTIVE_POLLS", 2), \
-            patch.object(run, "STOP_LOSS_MIN_DEPTH_SHARES", 10.0), \
-            patch.object(run, "STOP_LOSS_SELL_AGGRESSION_CENTS", 2), \
-            patch.object(run, "STOP_LOSS_MIN_BRACKET_PROXIMITY_F", 0.5), \
-            patch.object(run, "STOP_LOSS_RESPECT_FORECAST_OVERSHOOT", True):
+    with patch.object(position_tracker, "STOP_LOSS_MIN_BID_CENTS", 40), \
+            patch.object(position_tracker, "STOP_LOSS_CONSECUTIVE_POLLS", 2), \
+            patch.object(position_tracker, "STOP_LOSS_MIN_DEPTH_SHARES", 10.0), \
+            patch.object(position_tracker, "STOP_LOSS_SELL_AGGRESSION_CENTS", 2), \
+            patch.object(position_tracker, "STOP_LOSS_MIN_BRACKET_PROXIMITY_F", 0.5), \
+            patch.object(position_tracker, "STOP_LOSS_RESPECT_FORECAST_OVERSHOOT", True):
         yield
 
 
 @pytest.fixture()
 def _no_side_effects():
-    with patch.object(run, "_append_live_trade") as append_mock, \
-            patch.object(run, "_record_sell_in_db") as record_mock:
+    # Use string-form patch so we target whatever is current in sys.modules["src.scripts.run"]
+    # at patch time, matching the lazy import inside _check_stop_loss_exits.
+    with patch("src.scripts.run._append_live_trade") as append_mock, \
+            patch("src.execution.position_tracker._record_sell_in_db") as record_mock:
         yield append_mock, record_mock
 
 
@@ -366,7 +369,7 @@ class TestStopLossSafetyGuards:
             current_high=86.5,
             forecast_nws=93.0,
         )
-        with patch.object(run, "STOP_LOSS_RESPECT_FORECAST_OVERSHOOT", False):
+        with patch.object(position_tracker, "STOP_LOSS_RESPECT_FORECAST_OVERSHOOT", False):
             run._check_stop_loss_exits(trader, "ts", [ps])
             run._check_stop_loss_exits(trader, "ts", [ps])
         trader.sell_position_immediate.assert_called_once()
@@ -379,7 +382,7 @@ class TestStopLossSafetyGuards:
             fair=70, bid=75, depth=50.0,
             current_high=70.0,  # very far from bracket, normally blocked
         )
-        with patch.object(run, "STOP_LOSS_MIN_BRACKET_PROXIMITY_F", -1.0):
+        with patch.object(position_tracker, "STOP_LOSS_MIN_BRACKET_PROXIMITY_F", -1.0):
             run._check_stop_loss_exits(trader, "ts", [ps])
             run._check_stop_loss_exits(trader, "ts", [ps])
         trader.sell_position_immediate.assert_called_once()

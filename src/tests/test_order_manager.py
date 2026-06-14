@@ -421,11 +421,11 @@ class TestCheckTakeProfitExits:
         mock_db.get_open_positions.return_value = [fill]
         mock_db.close_positions_by_token.return_value = 1
 
-        # Use patch.object with the already-imported module to avoid lazy-import
-        # name-binding issues in Python 3.10.
+        # Use patch with the module path to avoid lazy-import name-binding issues.
+        # _record_sell_in_db lives in order_manager; _append_live_trade is in run.
         with patch("src.data.polymarket.get_orderbook",
                    return_value={"bids": [{"price": "0.95"}]}), \
-             patch.object(src.scripts.run, "_record_sell_in_db"), \
+             patch("src.execution.order_manager._record_sell_in_db"), \
              patch.object(src.scripts.run, "_append_live_trade"):
             self.om.check_take_profit_exits(trader, "ts-tp", db=mock_db)
 
@@ -443,7 +443,7 @@ class TestCheckTakeProfitExits:
 
         with patch("src.data.polymarket.get_orderbook",
                    return_value={"bids": [{"price": "0.90"}]}), \
-             patch("src.scripts.run._load_open_no_positions", return_value=[fill]):
+             patch("src.execution.order_manager._load_open_no_positions", return_value=[fill]):
             self.om.check_take_profit_exits(trader, "ts-tp", db=None)
 
         trader.sell_position.assert_not_called()
@@ -457,7 +457,7 @@ class TestCheckTakeProfitExits:
         trader = self._make_trader()
 
         with patch("src.data.polymarket.get_orderbook") as mock_ob, \
-             patch("src.scripts.run._load_open_no_positions", return_value=[fill]):
+             patch("src.execution.order_manager._load_open_no_positions", return_value=[fill]):
             self.om.check_take_profit_exits(trader, "ts-tp", db=None)
 
         mock_ob.assert_not_called()
@@ -467,7 +467,7 @@ class TestCheckTakeProfitExits:
         """Empty position list → nothing happens."""
         trader = self._make_trader()
 
-        with patch("src.scripts.run._load_open_no_positions", return_value=[]):
+        with patch("src.execution.order_manager._load_open_no_positions", return_value=[]):
             self.om.check_take_profit_exits(trader, "ts-tp", db=None)
 
         trader.sell_position.assert_not_called()
@@ -479,7 +479,7 @@ class TestCheckTakeProfitExits:
         fill["predicted_price"] = None
         trader = self._make_trader()
 
-        with patch("src.scripts.run._load_open_no_positions", return_value=[fill]), \
+        with patch("src.execution.order_manager._load_open_no_positions", return_value=[fill]), \
              patch("src.data.polymarket.get_orderbook"):
             self.om.check_take_profit_exits(trader, "ts-tp", db=None)
 
@@ -493,7 +493,7 @@ class TestCheckTakeProfitExits:
 
         with patch("src.data.polymarket.get_orderbook",
                    return_value={"bids": []}), \
-             patch("src.scripts.run._load_open_no_positions", return_value=[fill]):
+             patch("src.execution.order_manager._load_open_no_positions", return_value=[fill]):
             self.om.check_take_profit_exits(trader, "ts-tp", db=None)
 
         trader.sell_position.assert_not_called()
@@ -508,7 +508,7 @@ class TestCheckTakeProfitExits:
 
         with patch("src.data.polymarket.get_orderbook",
                    side_effect=Exception("404 not found")), \
-             patch("src.scripts.run._load_open_no_positions", return_value=[fill]):
+             patch("src.execution.order_manager._load_open_no_positions", return_value=[fill]):
             self.om.check_take_profit_exits(trader, "ts-tp", db=db)
 
         db.close_positions_by_token.assert_called_once_with(token)
@@ -525,7 +525,7 @@ class TestCheckTakeProfitExits:
 
         with patch("src.data.polymarket.get_orderbook",
                    return_value={"bids": [{"price": "0.93"}]}), \
-             patch("src.scripts.run._load_open_no_positions", return_value=[fill]):
+             patch("src.execution.order_manager._load_open_no_positions", return_value=[fill]):
             self.om.check_take_profit_exits(trader, "ts-tp", db=db)
 
         assert token in self.om._sold_positions
@@ -541,8 +541,8 @@ class TestCheckTakeProfitExits:
 
         with patch("src.data.polymarket.get_orderbook",
                    return_value={"bids": [{"price": "0.88"}]}), \
-             patch("src.scripts.run._load_open_no_positions", return_value=[fill]), \
-             patch("src.scripts.run._record_sell_in_db") as mock_record, \
+             patch("src.execution.order_manager._load_open_no_positions", return_value=[fill]), \
+             patch("src.execution.order_manager._record_sell_in_db") as mock_record,\
              patch("src.scripts.run._append_live_trade") as mock_append:
             self.om.check_take_profit_exits(trader, "ts-tp", db=db)
 
@@ -560,8 +560,8 @@ class TestCheckTakeProfitExits:
 
         with patch("src.data.polymarket.get_orderbook",
                    return_value={"bids": [{"price": "0.93"}]}), \
-             patch("src.scripts.run._load_open_no_positions", return_value=[fill]), \
-             patch("src.scripts.run._record_sell_in_db"), \
+             patch("src.execution.order_manager._load_open_no_positions", return_value=[fill]), \
+             patch("src.execution.order_manager._record_sell_in_db"), \
              patch("src.scripts.run._append_live_trade"):
             self.om.check_take_profit_exits(trader, "ts-tp", db=None, risk_manager=risk)
 
@@ -578,8 +578,8 @@ class TestCheckTakeProfitExits:
 
         with patch("src.data.polymarket.get_orderbook",
                    return_value={"bids": [{"price": "0.93"}]}), \
-             patch("src.scripts.run._load_open_no_positions", return_value=[fill]), \
-             patch("src.scripts.run._record_sell_in_db"), \
+             patch("src.execution.order_manager._load_open_no_positions", return_value=[fill]), \
+             patch("src.execution.order_manager._record_sell_in_db"), \
              patch("src.scripts.run._append_live_trade") as mock_append:
             self.om.check_take_profit_exits(trader, "ts-tp", db=None)
 
@@ -598,8 +598,8 @@ class TestCheckTakeProfitExits:
 
         with patch("src.data.polymarket.get_orderbook",
                    return_value={"bids": [{"price": "0.93"}]}), \
-             patch("src.scripts.run._load_open_no_positions", return_value=fills), \
-             patch("src.scripts.run._record_sell_in_db"), \
+             patch("src.execution.order_manager._load_open_no_positions", return_value=fills), \
+             patch("src.execution.order_manager._record_sell_in_db"), \
              patch("src.scripts.run._append_live_trade"):
             self.om.check_take_profit_exits(trader, "ts-tp", db=None)
 
@@ -617,7 +617,7 @@ class TestCheckTakeProfitExits:
 
         with patch("src.data.polymarket.get_orderbook",
                    side_effect=Exception("connection timeout")), \
-             patch("src.scripts.run._load_open_no_positions", return_value=[fill]):
+             patch("src.execution.order_manager._load_open_no_positions", return_value=[fill]):
             self.om.check_take_profit_exits(trader, "ts-tp", db=None)
 
         trader.sell_position.assert_not_called()
@@ -632,8 +632,8 @@ class TestCheckTakeProfitExits:
 
         with patch("src.data.polymarket.get_orderbook",
                    return_value={"bids": [{"price": "0.001"}]}), \
-             patch("src.scripts.run._load_open_no_positions", return_value=[fill]), \
-             patch("src.scripts.run._record_sell_in_db"), \
+             patch("src.execution.order_manager._load_open_no_positions", return_value=[fill]), \
+             patch("src.execution.order_manager._record_sell_in_db"), \
              patch("src.scripts.run._append_live_trade"):
             self.om.check_take_profit_exits(trader, "ts-tp", db=None)
 
@@ -648,7 +648,7 @@ class TestCheckTakeProfitExits:
 
         with patch("src.data.polymarket.get_orderbook",
                    return_value={"bids": [{"price": "0.93"}]}), \
-             patch("src.scripts.run._load_open_no_positions", return_value=[fill]):
+             patch("src.execution.order_manager._load_open_no_positions", return_value=[fill]):
             self.om.check_take_profit_exits(trader, "ts-tp", db=None)
 
         assert token not in self.om._sold_positions

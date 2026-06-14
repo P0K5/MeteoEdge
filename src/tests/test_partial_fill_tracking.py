@@ -137,7 +137,7 @@ class TestCheckStopLossPartialFillTracking:
 
         with patch("src.scripts.run.STOP_LOSS_MIN_LOT_SHARES", 0.5, create=True), \
              patch("src.scripts.run._append_live_trade"), \
-             patch("src.scripts.run._record_sell_in_db"):
+             patch("src.execution.position_tracker._record_sell_in_db"):
             run_mod._check_stop_loss_exits(trader, "2026-06-12T10:01:00Z", [ps])
 
         # Should have called sell with remaining shares (not the full total)
@@ -191,7 +191,7 @@ class TestCheckStopLossPartialFillTracking:
         trader.sell_position_immediate.return_value = ("sell-ord-full", 65)
 
         with patch("src.scripts.run._append_live_trade"), \
-             patch("src.scripts.run._record_sell_in_db"):
+             patch("src.execution.position_tracker._record_sell_in_db"):
             run_mod._check_stop_loss_exits(trader, "2026-06-12T10:00:00Z", [ps])
 
         assert token_id in run_mod.order_manager._sold_positions
