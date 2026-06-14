@@ -12,6 +12,7 @@ Endpoints:
     GET /api/cities/{city}/deb      — DEB model weights and RMSE
     GET /api/cities/{city}/analysis — intraday correction analysis
     GET /api/positions/{token_id}/snapshots — per-position price/model snapshots
+    POST /api/positions/{token_id}/sell — operator-triggered immediate sell of a position
     POST /api/stations/{metar}/toggle — toggle station enable/disable (DB-persisted)
     GET /               — serves static/index.html (mounted last)
 
@@ -56,6 +57,8 @@ from src.data.db import Database
 from src.data.nws import fetch_nws_forecast_high
 from src.data.polymarket import get_orderbook
 from src.data.taf_disruption import check_taf_disruption
+from src.execution.live_trader import LiveTrader
+from src.execution.order_manager import order_manager
 from src.dashboard.data import read_jsonl, load_live_trades, load_snapshots, load_position_snapshots
 
 STATE_PATH = Path("logs/live_state.json")
@@ -216,7 +219,7 @@ class ClosedPositionOut(BaseModel):
     shares: float
     closed_at: str = ""
     token_id: str = ""   # NO token id — used to fetch snapshot history for charting
-    exit_reason: Literal["take_profit", "stop_loss", "won", "lost"] = "won"
+    exit_reason: Literal["take_profit", "stop_loss", "manual", "won", "lost"] = "won"
 
 
 class PortfolioOut(BaseModel):
@@ -224,6 +227,16 @@ class PortfolioOut(BaseModel):
     open_positions: list[PositionOut]
     closed_positions: list[ClosedPositionOut]
     updated_at: str
+
+
+class SellPositionOut(BaseModel):
+    token_id: str
+    status: Literal["sold", "no_fill"]
+    order_id: str | None = None
+    sell_price_cents: int | None = None
+    shares: float | None = None
+    pnl: float | None = None
+    detail: str = ""
 
 
 class DebWeightOut(BaseModel):
@@ -456,12 +469,18 @@ def _stopped_positions() -> list[ClosedPositionOut]:
                     exit_reason = "take_profit"
                 elif trigger.startswith("stop_loss@"):
                     exit_reason = "stop_loss"
+                elif trigger.startswith("manual@"):
+                    exit_reason = "manual"
                 else:
                     exit_reason = "won" if pnl > 0 else "lost"
+                # METAR/take-profit exits are always NO; manual sells carry the
+                # original side under entry_side so YES positions label correctly.
+                entry_side = str(r.get("entry_side") or "NO").upper()
+                side = "YES" if entry_side == "YES" else "NO"
                 result.append(ClosedPositionOut(
                     question=str(r.get("question") or ""),
                     station=str(r.get("station") or ""),
-                    side="NO",  # METAR exits are always NO positions
+                    side=side,
                     bracket_low=float(r.get("bracket_low") or 0.0),
                     bracket_high=float(r.get("bracket_high") or 0.0),
                     entry_price=entry_cents,
@@ -875,6 +894,54 @@ def portfolio() -> PortfolioOut:
         open_positions=open_pos,
         closed_positions=closed_pos,
         updated_at=datetime.now(timezone.utc).isoformat(),
+    )
+
+
+@app.post("/api/positions/{token_id}/sell", response_model=SellPositionOut)
+def sell_position(token_id: str) -> SellPositionOut:
+    """Operator-triggered immediate sell of an open position.
+
+    Sells the full remaining size at the current best bid (immediate-or-cancel),
+    mirroring the bot's take-profit / stop-loss exit recording.  On a fill the
+    position is closed in the DB, a 'sold' trade is recorded (so it moves to the
+    closed list), and the bot's exit loops skip the token for the rest of the
+    session.  Returns ``status='no_fill'`` (HTTP 200) when the order did not
+    cross at market so the UI can offer a retry rather than surface an error.
+    """
+    if not token_id:
+        raise HTTPException(status_code=400, detail="token_id required")
+    if _db is None:
+        raise HTTPException(status_code=503, detail="Database not initialised")
+
+    try:
+        from src.execution.auth import get_clob_client
+        trader = LiveTrader(get_clob_client(), _db)
+    except Exception as e:
+        logger.error("[manual-sell] trading client unavailable: %s", e)
+        raise HTTPException(status_code=503, detail="Trading client unavailable")
+
+    ts = datetime.now(timezone.utc).isoformat()
+    try:
+        result = order_manager.manual_sell_position(trader, token_id, ts, db=_db)
+    except Exception as e:
+        logger.warning("[manual-sell] failed for %s...: %s", token_id[:14], e)
+        raise HTTPException(status_code=502, detail=f"Sell failed: {e}")
+
+    status = result.get("status")
+    if status == "not_found":
+        raise HTTPException(status_code=404, detail=result.get("detail", "No open position found"))
+    if status == "already_sold":
+        raise HTTPException(status_code=409, detail=result.get("detail", "Position already sold"))
+    if status == "no_fill":
+        return SellPositionOut(token_id=token_id, status="no_fill", detail=result.get("detail", ""))
+
+    return SellPositionOut(
+        token_id=token_id,
+        status="sold",
+        order_id=result.get("order_id"),
+        sell_price_cents=result.get("sell_price_cents"),
+        shares=result.get("shares"),
+        pnl=result.get("pnl"),
     )
 
 
