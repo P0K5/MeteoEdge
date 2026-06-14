@@ -175,7 +175,7 @@ All configuration is controlled via environment variables (defaults in `src/conf
 | `MIN_EDGE_CENTS` | 15.0 | ¢ | Minimum edge in cents to flag a candidate | No |
 | `MAX_EDGE_CENTS` | 20.0 | ¢ | Maximum edge; higher edges may indicate adverse selection | No |
 | `MIN_PRICE_CENTS` | 60 | ¢ | Reject trades below this price; below 60¢ ROI is negative | No |
-| `ENABLE_YES_TRADES` | false | boolean | Enable YES-side trades (disabled until 7+ days validation complete) | No |
+| `ENABLE_YES_TRADES` | false | boolean | Enable YES-side live/paper trades. When false, YES candidates that pass all gates are still logged as `mode='shadow'` rows in the trades table (no order placed, no capital at risk) so outcomes can be tracked for later validation. | No |
 | `MAX_CONFIDENCE_YES_FOR_NO` | 0.05 | probability | Confidence threshold for NO-side trades; only enter when p(YES) ≤ this | No |
 | `MAX_MINUTES_TO_SETTLEMENT` | 1440 | minutes | Reject markets further than this from resolution | No |
 | `POLL_INTERVAL_SECONDS` | 300 | seconds | How often to poll Polymarket for new markets (5 min default) | No |

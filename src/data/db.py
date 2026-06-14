@@ -51,7 +51,7 @@ CREATE TABLE IF NOT EXISTS trades (
     actual_price    INTEGER NOT NULL,
     slippage        INTEGER,
     predicted_edge  REAL NOT NULL,
-    mode            TEXT NOT NULL CHECK(mode IN ('paper','live')),
+    mode            TEXT NOT NULL CHECK(mode IN ('paper','live','shadow')),
     order_id        TEXT,
     outcome         TEXT,
     pnl             REAL,
@@ -212,6 +212,67 @@ class Database:
                 self._conn.commit()
             except sqlite3.OperationalError:
                 pass  # column already exists
+
+        # Migration: extend trades.mode CHECK to include 'shadow'.
+        # SQLite cannot ALTER a CHECK constraint in place — requires table rebuild.
+        # Detect whether the old constraint (without 'shadow') is still present by
+        # inspecting sqlite_master for the CREATE TABLE source text.
+        row = self._conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='trades'"
+        ).fetchone()
+        if row and "'shadow'" not in row[0]:
+            # Temporarily disable FK checks so the DROP TABLE does not violate
+            # the open_positions.trade_id → trades(id) foreign key.
+            self._conn.execute("PRAGMA foreign_keys=OFF")
+            try:
+                with self._conn:
+                    self._conn.execute("DROP TABLE IF EXISTS trades_new")
+                    self._conn.execute(
+                        """
+                        CREATE TABLE trades_new (
+                            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                            ts              TEXT NOT NULL,
+                            station         TEXT NOT NULL,
+                            ticker          TEXT NOT NULL,
+                            bracket_low     REAL NOT NULL,
+                            bracket_high    REAL NOT NULL,
+                            side            TEXT NOT NULL CHECK(side IN ('YES','NO')),
+                            predicted_price INTEGER NOT NULL,
+                            actual_price    INTEGER NOT NULL,
+                            slippage        INTEGER,
+                            predicted_edge  REAL NOT NULL,
+                            mode            TEXT NOT NULL CHECK(mode IN ('paper','live','shadow')),
+                            order_id        TEXT,
+                            outcome         TEXT,
+                            pnl             REAL,
+                            capital_before  REAL NOT NULL,
+                            capital_after   REAL,
+                            settled_at      TEXT,
+                            actual_fee_cents REAL
+                        )
+                        """
+                    )
+                    self._conn.execute(
+                        "INSERT INTO trades_new SELECT "
+                        "id,ts,station,ticker,bracket_low,bracket_high,side,"
+                        "predicted_price,actual_price,slippage,predicted_edge,mode,"
+                        "order_id,outcome,pnl,capital_before,capital_after,settled_at,"
+                        "actual_fee_cents "
+                        "FROM trades"
+                    )
+                    self._conn.execute("DROP TABLE trades")
+                    self._conn.execute(
+                        "ALTER TABLE trades_new RENAME TO trades"
+                    )
+                    self._conn.execute(
+                        "CREATE INDEX IF NOT EXISTS idx_trades_station_ts "
+                        "ON trades(station, ts)"
+                    )
+                    self._conn.execute(
+                        "CREATE INDEX IF NOT EXISTS idx_trades_mode ON trades(mode)"
+                    )
+            finally:
+                self._conn.execute("PRAGMA foreign_keys=ON")
 
     def close(self) -> None:
         """Close the underlying SQLite connection."""
@@ -417,6 +478,38 @@ class Database:
                 )
         return cur.rowcount
 
+    def update_trade_by_id(
+        self,
+        trade_id: int,
+        *,
+        outcome: "str | None" = None,
+        pnl: "float | None" = None,
+        capital_after: "float | None" = None,
+        settled_at: "str | None" = None,
+    ) -> int:
+        """Update the trade row matching *trade_id* by primary key.
+
+        Used for shadow trade settlement where no order_id exists.
+        Only non-None fields are written.  Returns the number of rows updated.
+        """
+        fields = {
+            "outcome": outcome,
+            "pnl": pnl,
+            "capital_after": capital_after,
+            "settled_at": settled_at,
+        }
+        updates = {k: v for k, v in fields.items() if v is not None}
+        if not updates:
+            return 0
+        set_clause = ", ".join(f"{col}=?" for col in updates)
+        with self._lock:
+            with self._conn:
+                cur = self._conn.execute(
+                    f"UPDATE trades SET {set_clause} WHERE id=?",
+                    (*updates.values(), trade_id),
+                )
+        return cur.rowcount
+
     def get_trades(self, limit: "int | None" = 50, mode: "str | None" = None) -> list:
         """Return trades ordered by most-recent-first.
 
@@ -433,6 +526,15 @@ class Database:
         if limit is not None:
             sql += f" LIMIT {int(limit)}"
         cur = self._conn.execute(sql, params)
+        return [dict(row) for row in cur.fetchall()]
+
+    def get_unsettled_shadow_trades(self, target_date: str) -> list:
+        """Return shadow trades for *target_date* (YYYY-MM-DD) that are not yet settled."""
+        cur = self._conn.execute(
+            "SELECT * FROM trades "
+            "WHERE mode='shadow' AND settled_at IS NULL AND DATE(ts)=?",
+            (target_date,),
+        )
         return [dict(row) for row in cur.fetchall()]
 
     # ------------------------------------------------------------------

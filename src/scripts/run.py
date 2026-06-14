@@ -204,22 +204,8 @@ def poll_once(
 
     approved: list = []
     n_acted = 0
+    n_shadow = 0
     for cand in candidates:
-        raw_liquidity = cand.bracket.yes_ask_size + cand.bracket.no_ask_size
-        liquidity = raw_liquidity if raw_liquidity > 0 else 9999
-        allowed, reason = risk_manager.allow_trade(
-            capital=STARTING_CAPITAL_EUR,
-            liquidity_contracts=liquidity,
-        )
-        if not allowed:
-            log.info("  [risk] blocked: %s", reason)
-            continue
-
-        if live_trader and available_usdc < POSITION_SIZE_WITH_FEES:
-            log.info("  [balance] insufficient (%.2f USDC < %.2f needed incl. fees), skipping remaining", available_usdc, POSITION_SIZE_WITH_FEES)
-            break
-
-        n_acted += 1
         row = {
             "ts": ts,
             "station": cand.station,
@@ -240,6 +226,54 @@ def poll_once(
             "minutes_to_settlement": round(cand.minutes_to_settlement, 1),
         }
         _append_candidate(row)
+
+        # Shadow candidates: log to trades table as observation only.
+        # No capital reserved, no order placed, no risk_manager gates checked.
+        if cand.shadow:
+            n_shadow += 1
+            if db is not None:
+                try:
+                    db.insert_trade(
+                        ts=ts,
+                        station=cand.station,
+                        ticker=cand.bracket.ticker,
+                        bracket_low=cand.bracket.low_f,
+                        bracket_high=cand.bracket.high_f,
+                        side=cand.side,
+                        predicted_price=int(round(cand.p_yes * 100)),
+                        actual_price=cand.bracket.yes_ask_cents,
+                        predicted_edge=cand.edge_cents,
+                        mode="shadow",
+                        capital_before=0.0,
+                        order_id=None,
+                        outcome=None,
+                        pnl=None,
+                        capital_after=None,
+                        settled_at=None,
+                    )
+                    log.info(
+                        "  [shadow] logged YES candidate %s @ %sc (no order placed)",
+                        cand.bracket.ticker[:14], cand.bracket.yes_ask_cents,
+                    )
+                except Exception as e:
+                    log.warning("  [shadow] DB insert failed: %s", e)
+            continue
+
+        raw_liquidity = cand.bracket.yes_ask_size + cand.bracket.no_ask_size
+        liquidity = raw_liquidity if raw_liquidity > 0 else 9999
+        allowed, reason = risk_manager.allow_trade(
+            capital=STARTING_CAPITAL_EUR,
+            liquidity_contracts=liquidity,
+        )
+        if not allowed:
+            log.info("  [risk] blocked: %s", reason)
+            continue
+
+        if live_trader and available_usdc < POSITION_SIZE_WITH_FEES:
+            log.info("  [balance] insufficient (%.2f USDC < %.2f needed incl. fees), skipping remaining", available_usdc, POSITION_SIZE_WITH_FEES)
+            break
+
+        n_acted += 1
 
         if live_trader:
             risk_manager.open_position()  # Reserve slot before spawning thread
@@ -263,8 +297,8 @@ def poll_once(
                     log.error("  [live] thread error: %s", e, exc_info=True)
 
     log.info(
-        "[scan] %s markets, %s evaluated, %s candidates, %s acted on",
-        len(markets), len(snapshots), len(candidates), n_acted,
+        "[scan] %s markets, %s evaluated, %s candidates, %s acted on, %s shadow",
+        len(markets), len(snapshots), len(candidates), n_acted, n_shadow,
     )
 
     _finalize_poll()
