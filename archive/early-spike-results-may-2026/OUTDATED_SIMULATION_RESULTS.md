@@ -1,3 +1,11 @@
+⚠️ **OUTDATED - Historical Reference Only**
+
+**Date Archived**: 2026-06-14  
+**Original Date**: 2026-05-07  
+**Status**: From initial spike testing phase; application has evolved significantly since then.
+
+---
+
 # MeteoEdge Improved Spike - Paper Trading Simulation Results
 
 **Date**: 2026-05-07  
