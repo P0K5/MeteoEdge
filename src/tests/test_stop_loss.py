@@ -146,7 +146,9 @@ def _fixed_thresholds():
 
 @pytest.fixture()
 def _no_side_effects():
-    with patch.object(run, "_append_live_trade") as append_mock, \
+    # Use string-form patch so we target whatever is current in sys.modules["src.scripts.run"]
+    # at patch time, matching the lazy import inside _check_stop_loss_exits.
+    with patch("src.scripts.run._append_live_trade") as append_mock, \
             patch("src.execution.position_tracker._record_sell_in_db") as record_mock:
         yield append_mock, record_mock
 

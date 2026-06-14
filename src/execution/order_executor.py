@@ -9,6 +9,7 @@ import time
 
 from src.config import POSITION_SIZE_EUR
 from src.execution.live_trader import LiveTrader
+from src.execution.order_manager import order_manager as _order_manager
 
 log = logging.getLogger(__name__)
 
@@ -28,12 +29,7 @@ def _execute_live(
     Each thread creates its own LiveTrader/ClobClient to avoid HTTP/2 stream
     collisions when multiple orders are placed concurrently.
     """
-    import sys  # noqa: PLC0415
-    _run = sys.modules.get("src.scripts.run")
-    if _run is None:
-        import src.scripts.run as _run  # noqa: PLC0415
-    order_manager = _run.order_manager
-    _append_live_trade = _run._append_live_trade
+    from src.scripts.run import _append_live_trade  # noqa: PLC0415
 
     trader = LiveTrader(clob_client_factory(), db)
 
@@ -47,17 +43,17 @@ def _execute_live(
         return
 
     order_key = token_id
-    with order_manager._open_orders_lock:
-        if order_key in order_manager._open_orders:
+    with _order_manager._open_orders_lock:
+        if order_key in _order_manager._open_orders:
             log.info("  [live] skip %s %s... -- GTC order already open on exchange", candidate.side, candidate.bracket.ticker[:16])
             risk_manager.close_position()
             return
-        order_manager._open_orders.add(order_key)
+        __order_manager._open_orders.add(order_key)
 
     predicted_price = round(candidate.confidence * 100)
 
     try:
-        with order_manager._order_lock:  # Serialize HTTP/2 placements; fill-monitoring remains parallel
+        with _order_manager._order_lock:  # Serialize HTTP/2 placements; fill-monitoring remains parallel
             try:
                 order_id = trader.place_order(
                     token_id=token_id,
@@ -116,5 +112,5 @@ def _execute_live(
         }, db=db)
         log.info("  [live] %s %s...", outcome, order_id[:12])
     finally:
-        with order_manager._open_orders_lock:
-            order_manager._open_orders.discard(order_key)
+        with _order_manager._open_orders_lock:
+            __order_manager._open_orders.discard(order_key)

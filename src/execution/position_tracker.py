@@ -17,6 +17,7 @@ Design notes:
 import json
 import logging
 import os
+import threading
 from collections import defaultdict
 from datetime import datetime, timezone
 
@@ -34,7 +35,13 @@ from src.config import (
 from src.data.polymarket import get_orderbook
 from src.model.envelope import Bracket, true_probability_yes
 from src.model.climb_rates import expected_additional_rise
-from src.execution.order_manager import _load_open_no_positions, _record_sell_in_db
+from src.execution.order_manager import (
+    _load_open_no_positions, _record_sell_in_db, order_manager as _order_manager,
+)
+
+# Separate lock for POSITION_SNAPSHOTS_JSONL writes (not shared with run._write_lock
+# which protects CANDIDATES_CSV and LIVE_TRADES_JSONL).
+_write_lock = threading.Lock()
 
 log = logging.getLogger(__name__)
 
@@ -53,14 +60,6 @@ def _log_open_position_snapshots(weather: dict, ts: str, db=None) -> list:
     the stop-loss check can reuse the orderbook + model evaluation without a
     second round of API calls.
     """
-    # Lazy import to avoid circular dependency (run imports position_tracker,
-    # position_tracker needs _write_lock which is in run). Using module-level
-    # access (sys.modules) rather than a from-import so that test_alerts.py's
-    # sys.modules manipulation does not break the reference.
-    import sys  # noqa: PLC0415
-    _run = sys.modules.get("src.scripts.run")
-    _write_lock = _run._write_lock if _run is not None else None
-
     today = datetime.now(timezone.utc).date().isoformat()
     open_positions = _load_open_no_positions(today, db=db)
     if not open_positions:
@@ -137,11 +136,7 @@ def _log_open_position_snapshots(weather: dict, ts: str, db=None) -> list:
             "p_yes_now": round(p_yes_now, 4) if p_yes_now is not None else None,
             "fair_value_now": fair_value_now,
         }
-        if _write_lock is not None:
-            with _write_lock:
-                with open(POSITION_SNAPSHOTS_JSONL, "a") as f:
-                    f.write(json.dumps(snap, default=str) + "\n")
-        else:
+        with _write_lock:
             with open(POSITION_SNAPSHOTS_JSONL, "a") as f:
                 f.write(json.dumps(snap, default=str) + "\n")
         position_states.append({"token_id": token_id, "fills": fills, "snap": snap})
@@ -174,21 +169,16 @@ def _check_stop_loss_exits(live_trader, ts: str, position_states: list,
     falling market could strand unfilled -- unfilled attempts simply retry on
     the next poll while strikes persist.
     """
-    # Use sys.modules to access run.py globals without creating a stale reference
-    # that breaks when test_alerts.py removes src.scripts.run from sys.modules.
-    import sys  # noqa: PLC0415
-    _run = sys.modules.get("src.scripts.run")
-    if _run is None:
-        import src.scripts.run as _run  # noqa: PLC0415
-    _append_live_trade = _run._append_live_trade
-    order_manager = _run.order_manager
+    # Lazy import to avoid a module-level circular dependency
+    # (run → position_tracker → run). By call time run.py is fully loaded.
+    from src.scripts.run import _append_live_trade  # noqa: PLC0415
 
     today = datetime.now(timezone.utc).date().isoformat()
     for ps in position_states:
         token_id = ps["token_id"]
         fills = ps["fills"]
         snap = ps["snap"]
-        if token_id in order_manager._sold_positions:
+        if token_id in _order_manager._sold_positions:
             continue
 
         fair = snap.get("fair_value_now")
@@ -204,11 +194,11 @@ def _check_stop_loss_exits(live_trader, ts: str, position_states: list,
         ) / total_shares
 
         if fair >= avg_entry_cents:
-            order_manager._stop_loss_strikes.pop(token_id, None)
+            _order_manager._stop_loss_strikes.pop(token_id, None)
             continue
 
-        strikes = order_manager._stop_loss_strikes.get(token_id, 0) + 1
-        order_manager._stop_loss_strikes[token_id] = strikes
+        strikes = _order_manager._stop_loss_strikes.get(token_id, 0) + 1
+        _order_manager._stop_loss_strikes[token_id] = strikes
         station = fills[0]["station"]
         bracket_low = fills[0]["bracket_low"]
         bracket_high = fills[0]["bracket_high"]
@@ -271,7 +261,7 @@ def _check_stop_loss_exits(live_trader, ts: str, position_states: list,
         question = fills[0].get("question", "")
 
         # Account for any shares already sold via previous partial fills.
-        already_sold = order_manager._partial_fill_shares.get(token_id, 0.0)
+        already_sold = _order_manager._partial_fill_shares.get(token_id, 0.0)
         remaining_shares = total_shares - already_sold
         min_lot = float(os.environ.get("STOP_LOSS_MIN_LOT_SHARES", "0.5"))
         if remaining_shares < min_lot:
@@ -280,9 +270,9 @@ def _check_stop_loss_exits(live_trader, ts: str, position_states: list,
                 " -- skipping dust sell",
                 station, bracket_low, bracket_high, remaining_shares, min_lot,
             )
-            order_manager._sold_positions.add(token_id)
-            order_manager._stop_loss_strikes.pop(token_id, None)
-            order_manager._partial_fill_shares.pop(token_id, None)
+            _order_manager._sold_positions.add(token_id)
+            _order_manager._stop_loss_strikes.pop(token_id, None)
+            _order_manager._partial_fill_shares.pop(token_id, None)
             if db is not None:
                 db.close_positions_by_token(token_id)
             continue
@@ -305,7 +295,7 @@ def _check_stop_loss_exits(live_trader, ts: str, position_states: list,
                 if cancelled_order_id:
                     partial = live_trader.get_order_fill_size(cancelled_order_id)
                     if partial > 0:
-                        order_manager._partial_fill_shares[token_id] = already_sold + partial
+                        _order_manager._partial_fill_shares[token_id] = already_sold + partial
                         log.info(
                             "  [sl] partial fill %.4f shares on %s... -- tracking remainder",
                             partial, cancelled_order_id[:12],
@@ -314,9 +304,9 @@ def _check_stop_loss_exits(live_trader, ts: str, position_states: list,
                 continue
             sell_price_cents = sell_price_or_order
             sold_shares = remaining_shares
-            order_manager._sold_positions.add(token_id)
-            order_manager._stop_loss_strikes.pop(token_id, None)
-            order_manager._partial_fill_shares.pop(token_id, None)
+            _order_manager._sold_positions.add(token_id)
+            _order_manager._stop_loss_strikes.pop(token_id, None)
+            _order_manager._partial_fill_shares.pop(token_id, None)
             if db is not None:
                 db.close_positions_by_token(token_id)
             pnl = round((sell_price_cents - avg_entry_cents) / 100 * sold_shares, 4)
@@ -368,13 +358,7 @@ def _check_metar_exits(weather: dict, live_trader, ts: str, db=None, risk_manage
     pessimistic estimate already exceeds bracket_high, the temperature is
     most likely passing through and NO will still win at settlement.
     """
-    # Use sys.modules to access run.py globals without creating a stale reference.
-    import sys  # noqa: PLC0415
-    _run = sys.modules.get("src.scripts.run")
-    if _run is None:
-        import src.scripts.run as _run  # noqa: PLC0415
-    _append_live_trade = _run._append_live_trade
-    order_manager = _run.order_manager
+    from src.scripts.run import _append_live_trade  # noqa: PLC0415
 
     today = datetime.now(timezone.utc).date().isoformat()
     open_positions = _load_open_no_positions(today, db=db)
@@ -386,7 +370,7 @@ def _check_metar_exits(weather: dict, live_trader, ts: str, db=None, risk_manage
         by_token[pos["no_token_id"]].append(pos)
 
     for token_id, fills in by_token.items():
-        if token_id in order_manager._sold_positions:
+        if token_id in _order_manager._sold_positions:
             continue
 
         bracket_low = fills[0]["bracket_low"]
@@ -439,7 +423,7 @@ def _check_metar_exits(weather: dict, live_trader, ts: str, db=None, risk_manage
         )
         try:
             sell_id, sell_price_cents = live_trader.sell_position(token_id, total_shares)
-            order_manager._sold_positions.add(token_id)
+            _order_manager._sold_positions.add(token_id)
             if db is not None:
                 # open_positions rows are keyed by the BUY order_id, not the
                 # sell order — remove every fill for this token.
@@ -483,7 +467,7 @@ def _check_metar_exits(weather: dict, live_trader, ts: str, db=None, risk_manage
             err = str(e)
             if "balance" in err.lower() and ("0" in err or "not enough" in err.lower()):
                 n = db.close_positions_by_token(token_id) if db is not None else 0
-                order_manager._sold_positions.add(token_id)
+                _order_manager._sold_positions.add(token_id)
                 log.info(
                     "  [exit] [%s] %.0f-%.0fF balance=0 -- tokens already gone, removed %s row(s) from open_positions",
                     station, bracket_low, bracket_high, n,

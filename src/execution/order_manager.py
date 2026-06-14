@@ -363,3 +363,8 @@ class OrderManager:
                     )
                 else:
                     log.warning("  [tp] sell failed for [%s] %.0f-%.0fF: %s", station, bracket_low, bracket_high, e)
+
+
+# Module-level singleton: imported by run.py, position_tracker, and order_executor
+# so all modules share the same instance without sys.modules indirection.
+order_manager = OrderManager()

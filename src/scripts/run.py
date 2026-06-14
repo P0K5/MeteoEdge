@@ -37,7 +37,7 @@ from src.risk.manager import RiskManager
 from src.strategy.scanner import scan_markets
 from src.weather.builder import _build_weather, _station_in_active_window
 from src.execution.live_trader import LiveTrader
-from src.execution.order_manager import OrderManager
+from src.execution.order_manager import OrderManager, order_manager
 from src.execution.order_executor import _execute_live
 from src.execution.position_tracker import (
     _log_open_position_snapshots,
@@ -51,9 +51,9 @@ log = logging.getLogger(__name__)
 
 _write_lock = threading.Lock()
 
-# Module-level OrderManager instance: owns _open_orders, _open_orders_lock,
-# _order_lock, _sold_positions, _stop_loss_strikes, _partial_fill_shares.
-order_manager = OrderManager()
+# order_manager singleton is defined and exported by src.execution.order_manager
+# to allow position_tracker and order_executor to import it directly without
+# going through sys.modules.
 
 
 def _append_snapshot(snap: dict) -> None:
