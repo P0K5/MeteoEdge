@@ -668,5 +668,125 @@
     "mtime": 1781381601.7849362,
     "ast_hash": "d7f1232ad9ecb80281b23fce084245f2",
     "semantic_hash": "d7f1232ad9ecb80281b23fce084245f2"
+  },
+  ".github/workflows/ci.yml": {
+    "mtime": 1781381601.7549376,
+    "ast_hash": "9166977b33e02f663622ec1e42a918b4",
+    "semantic_hash": ""
+  },
+  "CLAUDE.md": {
+    "mtime": 1781425593.2930477,
+    "ast_hash": "19b44ac9b5702e280e0bf4920f28bffd",
+    "semantic_hash": ""
+  },
+  "README.md": {
+    "mtime": 1781425133.2567098,
+    "ast_hash": "816ca89e187b3caf05f87f701ed913ca",
+    "semantic_hash": ""
+  },
+  "agents/designer.md": {
+    "mtime": 1776552683.1602714,
+    "ast_hash": "ae9f7d2d2a689a4c05ef862f4e515007",
+    "semantic_hash": ""
+  },
+  "agents/junior-dev.md": {
+    "mtime": 1776552683.1609466,
+    "ast_hash": "cfc14f29d4efdc3c86aab4becb81e94f",
+    "semantic_hash": ""
+  },
+  "agents/mid-dev.md": {
+    "mtime": 1776552683.1624613,
+    "ast_hash": "4205d445587f2a9a8452c8babb23ba2b",
+    "semantic_hash": ""
+  },
+  "agents/project-manager.md": {
+    "mtime": 1781163950.2908936,
+    "ast_hash": "b5c653d2062ca50d73c837202c6a1ab4",
+    "semantic_hash": ""
+  },
+  "archive/early-spike-results-may-2026/OUTDATED_BACKTEST_SUMMARY.md": {
+    "mtime": 1781425127.2816803,
+    "ast_hash": "de1511f28c7c0e44ac0fd677a2727b4d",
+    "semantic_hash": ""
+  },
+  "archive/early-spike-results-may-2026/OUTDATED_SIMULATION_RESULTS.md": {
+    "mtime": 1781425111.6472526,
+    "ast_hash": "316fe334972c038cde7bcc4b5c1ac618",
+    "semantic_hash": ""
+  },
+  "archive/polymarket-shadow/README.md": {
+    "mtime": 1779954395.5379033,
+    "ast_hash": "e6c59f15cedf1fea9bc436a1716c7344",
+    "semantic_hash": ""
+  },
+  "archive/polymarket-shadow/requirements.txt": {
+    "mtime": 1779903286.3051486,
+    "ast_hash": "e22dc33ce8c4fdb2aab5d8bfc3fdfcb6",
+    "semantic_hash": ""
+  },
+  "archive/polymarket-spike/requirements.txt": {
+    "mtime": 1777534459.9369674,
+    "ast_hash": "a528f70a9517f88bae03fb228285b631",
+    "semantic_hash": ""
+  },
+  "config/source_priority.yaml": {
+    "mtime": 1780902570.7583687,
+    "ast_hash": "b00804dbf44ea6b30f4302ecb35e930c",
+    "semantic_hash": ""
+  },
+  "docs/DB_SCHEMA.md": {
+    "mtime": 1781381601.7569385,
+    "ast_hash": "757818d847a329c6323792d99b7a371e",
+    "semantic_hash": ""
+  },
+  "docs/IMPLEMENTATION_PLAN.md": {
+    "mtime": 1778259427.511696,
+    "ast_hash": "19040b85e656249470a9c8b19b76332b",
+    "semantic_hash": ""
+  },
+  "docs/OPERATIONS.md": {
+    "mtime": 1781425034.316454,
+    "ast_hash": "8d92587e2095217bcf846fd670a2fa7f",
+    "semantic_hash": ""
+  },
+  "docs/README.md": {
+    "mtime": 1778140015.753922,
+    "ast_hash": "1d4652d7a60394ef546fea9cf781d2a1",
+    "semantic_hash": ""
+  },
+  "docs/SPIKE_DOCUMENTATION.md": {
+    "mtime": 1778139989.3239741,
+    "ast_hash": "ad464dea73957df34faf5166756effdd",
+    "semantic_hash": ""
+  },
+  "docs/TECHNICAL_SPECIFICATION.md": {
+    "mtime": 1778139943.4127822,
+    "ast_hash": "2e89cefc92059366a96fdd6025bf8e2c",
+    "semantic_hash": ""
+  },
+  "docs/climb_rate_spike.md": {
+    "mtime": 1781163950.2928934,
+    "ast_hash": "75dc5540bb5f6591ce46fb2ec483a899",
+    "semantic_hash": ""
+  },
+  "docs/live-observation-report.md": {
+    "mtime": 1778485929.496468,
+    "ast_hash": "c2e61b5347ff095b950ed78e8c6d58ac",
+    "semantic_hash": ""
+  },
+  "requirements.txt": {
+    "mtime": 1781381601.7579367,
+    "ast_hash": "6bc488dfb05647a03c689dfe9b631beb",
+    "semantic_hash": ""
+  },
+  "src/dashboard/static/index.html": {
+    "mtime": 1781425034.321969,
+    "ast_hash": "635119a95105307653faad3a47225b61",
+    "semantic_hash": ""
+  },
+  "src/dashboard/static/logo.png": {
+    "mtime": 1779577383.8345742,
+    "ast_hash": "f3d480c772eb2e7ad2eed29dbabc7bb0",
+    "semantic_hash": ""
   }
 }
