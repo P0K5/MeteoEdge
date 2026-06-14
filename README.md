@@ -248,6 +248,15 @@ For deeper specifications and implementation details, see:
 - **[SPIKE_DOCUMENTATION.md](docs/SPIKE_DOCUMENTATION.md)** — Implementation decisions, backtest analysis
 - **[IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md)** — Planned features and enhancements
 
+## Historical Testing & Archives
+
+Early spike testing results from May 2026 have been archived in [`archive/early-spike-results-may-2026/`](archive/early-spike-results-may-2026/) as the application has evolved significantly. These include:
+
+- **OUTDATED_SIMULATION_RESULTS.md** — Paper trading simulation (108.8% ROI on synthetic data)
+- **OUTDATED_BACKTEST_SUMMARY.md** — Backtest on real May 2026 Polymarket data (88.4% win rate)
+
+These results are preserved for historical reference but should not be used for current decision-making, as the model, risk parameters, and station selection have been refined since then.
+
 ## Testing
 
 Run the test suite to validate your installation:
