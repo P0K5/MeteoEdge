@@ -15,6 +15,70 @@ from src.config import (
 log = logging.getLogger(__name__)
 
 
+# ---------------------------------------------------------------------------
+# Position data helpers (module-level; no dependency on OrderManager instance)
+# ---------------------------------------------------------------------------
+
+def _load_open_no_positions(today: str, db=None) -> list:
+    """Return filled NO positions for today that have not yet been sold.
+
+    Reads from DB when available; falls back to live_trades.jsonl.
+    A token is considered sold if any record with outcome='sold' exists for it today.
+    """
+    if db is not None:
+        try:
+            positions = db.get_open_positions()
+            return [p for p in positions if p.get("side") == "NO"]
+        except Exception as e:
+            log.warning("[positions] DB read failed: %s", e)
+    # Fallback: existing JSONL path
+    if not LIVE_TRADES_JSONL.exists():
+        return []
+    records: list = []
+    sold_tokens: set = set()
+    try:
+        with open(LIVE_TRADES_JSONL) as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    r = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if r.get("end_date", "")[:10] != today:
+                    continue
+                if r.get("outcome") == "sold":
+                    sold_tokens.add(r.get("no_token_id", ""))
+                elif (r.get("outcome") == "filled"
+                        and r.get("side") == "NO"
+                        and r.get("no_token_id")
+                        and r.get("bracket_low") is not None
+                        and r.get("bracket_high") is not None):
+                    records.append(r)
+    except OSError:
+        return []
+    return [r for r in records if r.get("no_token_id") not in sold_tokens]
+
+
+def _record_sell_in_db(fills: list, sell_price_cents: int, ts: str, db=None) -> None:
+    """Mark the BUY trade row of each fill as sold with its realised PnL."""
+    if db is None:
+        return
+    for f in fills:
+        order_id = f.get("order_id")
+        if not order_id:
+            continue
+        try:
+            shares = f["size_eur"] / (f["price_cents"] / 100)
+            fill_pnl = round((sell_price_cents - f["price_cents"]) / 100 * shares, 4)
+            db.update_trade_by_order(
+                order_id, outcome="sold", pnl=fill_pnl, settled_at=ts,
+            )
+        except Exception as e:
+            log.warning("[run] DB sell update failed for %s...: %s", str(order_id)[:12], e)
+
+
 def _wallet_held_token_ids() -> set:
     """Return non-redeemable token_ids currently held in the wallet (size > 0.01).
 
@@ -194,11 +258,13 @@ class OrderManager:
         condition (only fire in the final hour of trading, once temperature is
         locked in and recovery is impossible).
         """
-        # Lazy imports to avoid circular dependency with src.scripts.run at module load time.
+        # Lazy import for get_orderbook (avoids heavy network module at load time).
+        # _load_open_no_positions and _record_sell_in_db live in this module now.
+        # _append_live_trade stays in run.py (coordinator); lazy-import is fine here
+        # because the circular-import problem was the back-import of *position helpers*
+        # from run.py, not the forward import of a logging helper.
         from src.data.polymarket import get_orderbook
-        from src.scripts.run import (  # noqa: PLC0415
-            _load_open_no_positions, _record_sell_in_db, _append_live_trade,
-        )
+        from src.scripts.run import _append_live_trade  # noqa: PLC0415
 
         today = datetime.now(timezone.utc).date().isoformat()
         open_positions = _load_open_no_positions(today, db=db)
