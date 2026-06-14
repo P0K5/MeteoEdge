@@ -1,7 +1,7 @@
 # Epic — Per-Station Shadow Tier & Unified Promotion Pipeline
 
 **Date:** 2026-06-14
-**Status:** Planned (Ready for issue creation)
+**Status:** Planned (Issues created — #271 through #277)
 **Owner:** Tech Lead PM
 **Branch:** `claude/pm-agent-shadow-tags-s520eh`
 
@@ -28,8 +28,9 @@ This is fragile:
 ## Goal
 
 Fold candidate-city data collection into the **main execution** as a first-class,
-per-station **shadow** tier, surfaced on the existing stations page, with real-vs-shadow
-performance tracked separately per side so it can drive promotion decisions.
+per-station, **per-side shadow** tier, surfaced on the existing stations page, with
+real-vs-shadow performance tracked separately per side so it can drive promotion
+decisions.
 
 ---
 
@@ -51,44 +52,51 @@ These already exist and must not be confused. This epic builds on (1) and (2):
 
 ---
 
-## Decision — binary per-station status
+## Decision — per-side, per-station status (Option A: two bool columns)
 
-Per-station status collapses to a **binary toggle: `enabled` ↔ `shadow`**.
+**Confirmed 2026-06-14.** Per-station status is tracked as **two independent booleans**:
+`yes_enabled` and `no_enabled` on `station_overrides`. This replaces the original
+binary per-station `enabled ↔ shadow` design.
 
-| Status | Polls / observes | Live orders | Shadow trades logged (YES + NO) |
+| `yes_enabled` | `no_enabled` | YES side | NO side |
 |---|---|---|---|
-| **enabled** | ✅ | ✅ (within active hours) | only YES when `ENABLE_YES_TRADES=false` |
-| **shadow**  | ✅ | ❌ | ✅ both sides |
+| 1 | 1 | Live orders | Live orders |
+| 0 | 1 | Shadow-log only | Live orders |
+| 1 | 0 | Live orders | Shadow-log only |
+| 0 | 0 | Shadow-log only | Shadow-log only |
 
 A truly dark station (no polling at all) is achieved by **removing it from `STATIONS`** —
 no DB state required.
 
-### Why no `disabled` tier
+### Shadow-per-side rule
 
-The previously-considered third tier (`disabled` = observe but never trade) is redundant
-once `shadow` exists, and **strictly worse** for our purposes:
-
-- Demoting a bad station (e.g. RKSI) is now `enabled → shadow`. That keeps the data warm
-  **and** keeps the win-rate signal alive, so we can see if/when it recovers and re-promote.
-  The old `disabled` went dark on the trade signal.
-- The only thing `disabled` did that `shadow` does not is "stop simulating too" — handled
-  by dropping the station from `STATIONS`.
-
-### Candidate-is-shadow rule
-
-```
-shadow = (station.status == 'shadow') OR (side == 'YES' AND not ENABLE_YES_TRADES)
+```python
+shadow_yes = (station.yes_enabled == False) or (not ENABLE_YES_TRADES)
+shadow_no  = (station.no_enabled == False)
 ```
 
-This generalizes the existing YES-only behavior: an **enabled** station still shadow-logs
-its YES side while `ENABLE_YES_TRADES=false`; a **shadow** station shadow-logs both sides.
+`ENABLE_YES_TRADES=False` remains a global override that forces YES shadow on all
+stations regardless of `yes_enabled` — existing global override is preserved.
 
-### Implementation: reuse the existing bool
+### Schema change
 
-Redefine `station_overrides.enabled`: `1` = live (**enabled**), `0` = **shadow**. No new
-enum, minimal schema churn. The env seed `DISABLED_STATIONS` migrates to `SHADOW_STATIONS`
-(keep `DISABLED_STATIONS` as a back-compat alias). DB override wins over the env baseline,
-as today.
+Add `yes_enabled BOOL DEFAULT 1` and `no_enabled BOOL DEFAULT 1` to `station_overrides`.
+The legacy `enabled` bool is deprecated but retained for back-compat migration:
+translate `enabled=0` → `yes_enabled=0, no_enabled=0`.
+
+### Env var seeding
+
+- `DISABLED_STATIONS` (back-compat alias) → shadows both sides
+- `SHADOW_STATIONS` → shadows both sides
+- `SHADOW_STATIONS_YES` → shadows YES side only
+- `SHADOW_STATIONS_NO` → shadows NO side only
+- DB override wins over env baseline, as today.
+
+### Why not a `disabled` tier
+
+The previously-considered third tier (`disabled` = observe but never trade) is redundant.
+Demoting a bad station is now `yes_enabled=0, no_enabled=0`. That keeps the data warm
+**and** keeps both win-rate signals alive so we can see if/when either side recovers.
 
 ---
 
@@ -110,6 +118,10 @@ They never mix. Average entry price is a first-class metric because it is the ga
 removed Shanghai (entries below `MIN_PRICE_CENTS=60` are unprofitable in live conditions
 even at a high shadow win rate).
 
+> **Mixed-mode note:** a station may have live rows on one side and shadow rows on the
+> other in the same time window. The filter is always on the *row's* `mode` column,
+> never on the station's current status.
+
 ---
 
 ## Settlement — NO-side shadow
@@ -123,31 +135,29 @@ live P&L.
 
 ## Issue breakdown
 
-| # | Issue | Area | Complexity | Depends on |
-|---|---|---|---|---|
-| 1 | **Binary station status (enabled ↔ shadow) + scanner.** Redefine `station_overrides.enabled` (1=live, 0=shadow). Migrate `DISABLED_STATIONS` → `SHADOW_STATIONS` shadow seed (alias kept). Scanner shadow-logs **both** YES + NO candidates on shadow stations; drop the old no-trade branch. | backend | Mid | — |
-| 2 | **Exclude `mode='shadow'` from live P&L & win-rate.** Filter shadow out of `status()` capital, `_today_pnl`, `_compute_win_rate`, and `stations()` totals. Correctness prerequisite for surfacing shadow stations. | backend | Simple | 1 |
-| 3 | **NO-side shadow settlement.** Branch shadow settlement on `side`; $1 notional both sides. Extend `test_settle_shadow.py` / `test_db_shadow.py`. | backend | Mid | 1 |
-| 4 | **Bulk-import 39 archive cities as shadow.** Port station tuples + IANA TZ + active hours from `archive/polymarket-shadow/config.py` into `src/config.py` `STATIONS` at shadow; verify °C bracket parsing; handle the Hong Kong omission; deprecate `archive/polymarket-shadow` once parity confirmed. | backend | Mid | 1 |
-| 5 | **Promotion metrics — 2×2 mode×side endpoint.** Per-station `{real,shadow}×{YES,NO}`: count, win rate, P&L, avg entry price, days of data. Extend `/api/stations/overview`. | backend | Mid | 1, 2, 3 |
-| 6 | **Stations page: enabled/shadow toggle + 2×2 perf table.** Status badge, live toggle (PATCH → DB override, no restart), real/shadow × YES/NO performance columns, promotion-readiness indicator. **Designer review required (frontend).** | frontend | Mid | 5 |
+| # | Issue | GitHub | Area | Complexity | Depends on |
+|---|---|---|---|---|---|
+| 1 | **Per-side station status (yes_enabled / no_enabled) + scanner.** Add `yes_enabled` and `no_enabled` bool columns. Migrate legacy `enabled`. Env vars `SHADOW_STATIONS`, `SHADOW_STATIONS_YES`, `SHADOW_STATIONS_NO`. Scanner shadow-logs per-side. | [#271](https://github.com/P0K5/MeteoEdge/issues/271) | backend | Mid | — |
+| 2 | **Exclude `mode='shadow'` from live P&L & win-rate.** Filter shadow out of `status()` capital, `_today_pnl`, `_compute_win_rate`, and `stations()` totals. Mixed-mode stations handled by row-level mode filter. | [#272](https://github.com/P0K5/MeteoEdge/issues/272) | backend | Simple | #271 |
+| 3 | **NO-side shadow settlement.** Branch shadow settlement on `side`; $1 notional both sides. Extend `test_settle_shadow.py` / `test_db_shadow.py`. | [#273](https://github.com/P0K5/MeteoEdge/issues/273) | backend | Mid | #271 |
+| 4 | **Bulk-import 39 archive cities as shadow.** Port station tuples + IANA TZ + active hours from `archive/polymarket-shadow/config.py` into `src/config.py` `STATIONS` at `yes_enabled=0, no_enabled=0`; verify °C bracket parsing; handle the Hong Kong omission; deprecate `archive/polymarket-shadow` once parity confirmed. | [#274](https://github.com/P0K5/MeteoEdge/issues/274) | backend | Mid | #271 |
+| 5 | **Promotion metrics — 2×2 mode×side endpoint.** Per-station `{real,shadow}×{YES,NO}`: count, win rate, P&L, avg entry price, days of data. Extend `/api/stations/overview`. | [#275](https://github.com/P0K5/MeteoEdge/issues/275) | backend | Mid | #271, #272, #273 |
+| 6 | **Stations page: per-side YES/NO toggles + 2×2 perf table.** Independent status badges and live toggles for YES and NO sides. Mixed-state display. Real/shadow × YES/NO performance columns, promotion-readiness indicator per side. **Designer review required (frontend).** | [#276](https://github.com/P0K5/MeteoEdge/issues/276) | frontend | Mid | #275 |
+| 7 | **[Backlog] Deprecate remaining archive artifacts.** Review and remove `archive/improved_spike.py`, `archive/early-spike-results-may-2026/`, `archive/polymarket-spike/` after epic merges. | [#277](https://github.com/P0K5/MeteoEdge/issues/277) | backend | — | after #276 |
 
-**Sequencing:** #1 → #2 → (#3, #4 in parallel) → #5 → #6.
+**Sequencing:** #271 → #272 → (#273, #274 in parallel) → #275 → #276. #277 is post-epic backlog.
 
 ---
 
 ## Acceptance criteria (epic-level)
 
-- [ ] A station's status is `enabled` or `shadow`, settable from the dashboard with no restart.
-- [ ] Shadow stations collect observations and log **both** YES and NO shadow trades; they
-      place no orders.
+- [ ] Each station has independent `yes_enabled` and `no_enabled` flags, settable from the dashboard with no restart.
+- [ ] Shadow stations/sides collect observations and log shadow trades; they place no orders.
 - [ ] No `mode='shadow'` row ever affects live capital, today's P&L, or live win rate.
 - [ ] NO-side shadow rows settle correctly ($1 notional, win on bracket miss).
-- [ ] The stations page shows, per station, a 2×2 `{real,shadow}×{YES,NO}` breakdown of
-      count, win rate, P&L, and avg entry price.
-- [ ] The 39 non-US cities run in-app as shadow stations; `archive/polymarket-shadow` is
-      deprecated.
-- [ ] Demoting a station is `enabled → shadow`; it keeps collecting data and signal.
+- [ ] The stations page shows per-side YES/NO status badges, independent toggles, and a 2×2 `{real,shadow}×{YES,NO}` breakdown of count, win rate, P&L, and avg entry price.
+- [ ] The 39 non-US cities run in-app as full-shadow stations (`yes_enabled=0, no_enabled=0`); `archive/polymarket-shadow` is deprecated.
+- [ ] Demoting a station side is a single toggle; it keeps collecting data and signal.
 
 ---
 
@@ -156,8 +166,10 @@ live P&L.
 - **EMOS feed (fast-follow epic).** A shadow station produces exactly what EMOS calibration
   needs — (forecast, realized-obs) pairs per city — independent of whether trades are real.
   A city can be EMOS-calibrated *while in shadow*, so its `emos_shadow → emos_primary`
-  promotion runs in parallel with `shadow → enabled` station promotion. Guardrail: EMOS
-  trains on **forecast error, not trade P&L**; the hypothetical shadow P&L must never feed
-  it (they are already separated). Logged in Backlog so it is not forgotten.
-- `archive/improved_spike.py` and `archive/early-spike-results-may-2026/` are older artifacts
-  unrelated to the shadow loop and are left untouched.
+  promotion runs in parallel with station promotion. Guardrail: EMOS trains on
+  **forecast error, not trade P&L**; the hypothetical shadow P&L must never feed it.
+  Logged in Backlog so it is not forgotten.
+- **Archive cleanup (post-epic).** `archive/improved_spike.py`, `archive/early-spike-results-may-2026/`,
+  and `archive/polymarket-spike/` are reviewed for removal after the epic merges (#277).
+  `archive/improved_spike.py` and `archive/early-spike-results-may-2026/` are older artifacts
+  unrelated to the shadow loop and are left untouched until then.
