@@ -293,8 +293,8 @@ class TestShadowYesGates:
     def test_no_candidates_unaffected_by_shadow_yes_gates(self):
         """NO candidates are produced with original gates; shadow YES params don't change them."""
         from src.strategy import scanner as _scanner_mod
-        # yes_ask high (no YES candidate), no_ask=30 → ev_no = (1-0.3)*100 - 30 - 1 = 39c
-        bracket = _make_bracket(yes_ask=95, no_ask=30)
+        # yes_ask high (no YES candidate), no_ask=75, p_yes=0.05 → ev_no = (1-0.05)*100 - 75 - 1 = 18c
+        bracket = _make_bracket(yes_ask=95, no_ask=75)
         gates = {
             "SHADOW_MIN_EDGE_CENTS_YES": 0.1,
             "SHADOW_MIN_CONFIDENCE_YES": 0.10,
@@ -309,7 +309,7 @@ class TestShadowYesGates:
             patch("src.strategy.scanner.get_city_mode", return_value="legacy"),
             patch("src.strategy.scanner.apply_emos", side_effect=lambda *a, **kw: None),
             patch("src.strategy.scanner._check_ready_for_promotion", return_value=False),
-            patch("src.strategy.scanner.true_probability_yes", return_value=0.30),
+            patch("src.strategy.scanner.true_probability_yes", return_value=0.05),
             patch("src.strategy.scanner.estimate_fee_cents", return_value=1.0),
             patch("src.strategy.scanner.get_live_config", return_value=gates),
         ):
@@ -323,5 +323,5 @@ class TestShadowYesGates:
         no_cands = [c for c in candidates if c.side == "NO"]
         yes_cands = [c for c in candidates if c.side == "YES"]
         # NO candidates should exist; YES may or may not — key check is NO is unaffected
-        assert len(no_cands) >= 0  # NO gate is independent
+        assert len(no_cands) >= 1  # NO gate produces candidate with parameters in valid range
         assert all(c.shadow is False for c in no_cands), "NO candidates must never be shadow"
