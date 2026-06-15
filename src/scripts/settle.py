@@ -326,12 +326,28 @@ def settle_live_trades(target: date, truth: dict[str, float], db=None) -> None:
 
     if n_updated == 0:
         log.info("[settle] no live trades to update for %s", target)
-        return
+    else:
+        with open(LIVE_TRADES_JSONL, "w") as f:
+            for r in records:
+                f.write(json.dumps(r, default=str) + "\n")
+        log.info("[settle] updated %s live trade(s) with P&L for %s", n_updated, target)
 
-    with open(LIVE_TRADES_JSONL, "w") as f:
-        for r in records:
-            f.write(json.dumps(r, default=str) + "\n")
-    log.info("[settle] updated %s live trade(s) with P&L for %s", n_updated, target)
+    # Detect stuck trades: live mode, outcome IS NULL, older than 36 hours, no open_position
+    if db is not None:
+        stuck = db._conn.execute(
+            """
+            SELECT t.id, t.ticker, t.side, t.ts FROM trades t
+            WHERE t.mode = 'live'
+              AND t.outcome IS NULL
+              AND t.ts < datetime('now', '-36 hours')
+              AND NOT EXISTS (SELECT 1 FROM open_positions p WHERE p.trade_id = t.id)
+            """
+        ).fetchall()
+        if stuck:
+            log.warning(
+                "[settle] %d stuck trade(s) outcome IS NULL > 36h: ids=%s",
+                len(stuck), [r['id'] for r in stuck]
+            )
 
 
 if __name__ == "__main__":
