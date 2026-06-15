@@ -476,6 +476,45 @@ a,button,input,select{transition:color var(--transition),background var(--transi
 .btn-toggle.loading .spinner{display:inline-block;}
 .btn-toggle.loading .btn-toggle-label{display:none;}
 @keyframes spin{to{transform:rotate(360deg);}}
+
+/* ── PER-SIDE MODE BADGES ── */
+.side-mode-badge{
+  display:inline-flex;align-items:center;gap:4px;
+  padding:3px 8px;border-radius:var(--radius-full);
+  font-size:var(--text-xs);font-weight:700;letter-spacing:.05em;
+  flex-shrink:0;
+}
+.side-mode-live{background:var(--yes-bg);color:var(--yes);}
+.side-mode-shadow{background:var(--warn-bg);color:var(--warn);}
+.station-side-badges{display:flex;gap:var(--space-2);flex-wrap:wrap;}
+
+/* Per-side accent: live/live=green, mixed=blue, shadow/shadow=amber */
+.station-card.accent-live-live{border-left-color:var(--yes);}
+.station-card.accent-live-shadow{border-left-color:var(--primary);}
+.station-card.accent-shadow-live{border-left-color:var(--primary);}
+.station-card.accent-shadow-shadow{border-left-color:var(--warn);}
+
+/* ── PERFORMANCE TABLE ── */
+.station-perf{padding:var(--space-3) var(--space-5);border-top:1px solid var(--divider);}
+.perf-table{width:100%;border-collapse:collapse;font-size:var(--text-xs);font-variant-numeric:tabular-nums;}
+.perf-th-mode{width:72px;}
+.perf-th-side{text-align:left;padding:0 0 var(--space-2) var(--space-3);font-weight:700;letter-spacing:.05em;}
+.perf-th-side:nth-child(2){color:var(--yes);}
+.perf-th-side:nth-child(3){color:var(--no);}
+.perf-row-label{font-size:var(--text-xs);font-weight:600;color:var(--muted);padding:var(--space-2) 0;vertical-align:top;}
+.perf-row:first-child .perf-row-label{color:var(--text);}
+.perf-cell{padding:var(--space-2) var(--space-3);vertical-align:top;border-left:1px solid var(--divider);}
+.perf-cell-line1{color:var(--text);font-weight:600;}
+.perf-cell-line2{color:var(--muted);margin-top:2px;}
+.perf-cell-pnl.pos{color:var(--yes);}
+.perf-cell-pnl.neg{color:var(--no);}
+.perf-cell-empty{color:var(--faint);text-align:center;padding:var(--space-2) var(--space-3);}
+.perf-ready-tag{display:inline-flex;align-items:center;gap:3px;margin-top:3px;color:var(--yes);font-size:10px;font-weight:700;cursor:default;}
+
+/* ── TOGGLE ROW (two per-side buttons) ── */
+.station-toggle-row{display:flex;gap:var(--space-2);flex-wrap:wrap;}
+/* Operational status badge demoted to header-right — smaller */
+.status-badge-small{font-size:10px;color:var(--muted);margin-top:2px;}
 .btn-sell{
   padding:5px 14px;border-radius:var(--radius-md);
   font-size:var(--text-xs);font-weight:700;
@@ -1509,23 +1548,92 @@ function fmtRelTime(ts) {
   }
 }
 
+function isPromotionReady(c) {
+  if (!c || c.count === 0) return false;
+  return c.avg_entry_price >= 60
+    && c.count >= 5
+    && c.win_rate != null && c.win_rate >= 0.80
+    && c.days_of_data >= 3;
+}
+
+function perfCellHTML(c) {
+  if (!c || c.count === 0) {
+    return `<td class="perf-cell"><span class="perf-cell-empty">—</span></td>`;
+  }
+  const wr = c.win_rate != null ? (c.win_rate * 100).toFixed(0) + '%' : '—%';
+  const pnl = c.pnl != null ? c.pnl : 0;
+  const pnlSign = pnl >= 0 ? '+' : '';
+  const pnlCls = pnl >= 0 ? 'pos' : 'neg';
+  const ep = c.avg_entry_price != null ? c.avg_entry_price.toFixed(0) + '¢' : '—¢';
+  const dd = c.days_of_data != null ? c.days_of_data + 'd' : '—d';
+  const ready = isPromotionReady(c)
+    ? `<div class="perf-ready-tag" title="All promotion criteria met: avg entry ≥ 60¢, 5+ trades, ≥ 80% win rate, 3+ days of data">★ Ready to promote</div>`
+    : '';
+  return `<td class="perf-cell">
+    <div class="perf-cell-line1">${c.count} &nbsp;${wr}&nbsp; <span class="perf-cell-pnl ${pnlCls}">${pnlSign}$${Math.abs(pnl).toFixed(2)}</span></div>
+    <div class="perf-cell-line2">${ep} &nbsp;${dd}</div>
+    ${ready}
+  </td>`;
+}
+
+function perfTableHTML(metar, perf) {
+  const p = perf || { real: { YES: {count:0}, NO: {count:0} }, shadow: { YES: {count:0}, NO: {count:0} } };
+  return `<div class="station-perf">
+    <table class="perf-table" role="table" aria-label="Performance for ${metar}">
+      <thead>
+        <tr>
+          <th class="perf-th-mode"></th>
+          <th class="perf-th-side">YES</th>
+          <th class="perf-th-side">NO</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr class="perf-row">
+          <td class="perf-row-label">Real</td>
+          ${perfCellHTML(p.real && p.real.YES)}
+          ${perfCellHTML(p.real && p.real.NO)}
+        </tr>
+        <tr class="perf-row">
+          <td class="perf-row-label">Shadow</td>
+          ${perfCellHTML(p.shadow && p.shadow.YES)}
+          ${perfCellHTML(p.shadow && p.shadow.NO)}
+        </tr>
+      </tbody>
+    </table>
+  </div>`;
+}
+
 function renderStationCard(s) {
-  const accentClass = (s.status === 'outside_hours') ? '' : ` accent-${s.status}`;
+  const yesLive = s.yes_enabled !== false;
+  const noLive  = s.no_enabled  !== false;
+  let accentClass;
+  if (yesLive && noLive)        accentClass = ' accent-live-live';
+  else if (yesLive && !noLive)  accentClass = ' accent-live-shadow';
+  else if (!yesLive && noLive)  accentClass = ' accent-shadow-live';
+  else                          accentClass = ' accent-shadow-shadow';
+
   const localTime = fmtLocalTime(s.timezone);
   const activeHours = s.active_hours_local && s.active_hours_local.length === 2
     ? `${String(s.active_hours_local[0]).padStart(2,'0')}–${String(s.active_hours_local[1]).padStart(2,'0')} Local`
     : '—';
-  const toggleLabel = s.enabled ? 'Disable entries' : 'Enable entries';
-  const toggleClass = s.enabled ? 'disable' : 'enable';
-  const pnlFmt = fmtPnl(s.total_pnl);
-  const pnlColor = s.total_pnl >= 0 ? 'var(--yes)' : 'var(--no)';
+
+  const yesBadge = `<span class="side-mode-badge ${yesLive ? 'side-mode-live' : 'side-mode-shadow'}" aria-label="YES side: ${yesLive ? 'live' : 'shadow'}">YES: ${yesLive ? 'LIVE' : 'SHADOW'}</span>`;
+  const noBadge  = `<span class="side-mode-badge ${noLive  ? 'side-mode-live' : 'side-mode-shadow'}" aria-label="NO side: ${noLive  ? 'live' : 'shadow'}">NO: ${noLive  ? 'LIVE' : 'SHADOW'}</span>`;
+
+  const yesToggleLabel = yesLive ? 'YES: Disable' : 'YES: Enable';
+  const noToggleLabel  = noLive  ? 'NO: Disable'  : 'NO: Enable';
+  const yesToggleClass = yesLive ? 'disable' : 'enable';
+  const noToggleClass  = noLive  ? 'disable' : 'enable';
+
   const openPos = s.open_positions_count || 0;
   const lastTrade = fmtRelTime(s.last_trade_ts);
+
+  const opBadge = `<span class="status-badge-small">${s.status.replace('_', ' ')}</span>`;
 
   return `<div class="station-card${accentClass}" id="station-card-${s.metar}">
     <div class="station-header">
       <div class="station-header-left">
-        ${statusBadgeHTML(s.status)}
+        <div class="station-side-badges">${yesBadge}${noBadge}</div>
         <div class="station-codes">
           <div class="station-metar">${s.metar}</div>
           <div class="station-city">${s.city}</div>
@@ -1534,18 +1642,13 @@ function renderStationCard(s) {
       <div class="station-header-right">
         <div class="station-local-time" id="stime-${s.metar}" data-tz="${s.timezone}">${localTime}</div>
         <div class="station-time-tz">${s.timezone}</div>
+        ${opBadge}
       </div>
     </div>
 
-    <div class="station-stats">
-      <span class="station-stat">Trades: <strong>${s.trade_count}</strong></span>
-      <span class="station-stat-sep">·</span>
-      <span class="station-stat">Win rate: <strong>${fmtWinRate(s.win_rate)}</strong></span>
-      <span class="station-stat-sep">·</span>
-      <span class="station-stat">PnL: <strong style="color:${pnlColor}">${pnlFmt}</strong></span>
-    </div>
+    ${perfTableHTML(s.metar, s.perf)}
 
-    <div class="station-stats" style="padding-top:0;padding-bottom:var(--space-4);">
+    <div class="station-stats" style="padding-top:var(--space-3);">
       <span class="station-stat">${openPos} open position${openPos !== 1 ? 's' : ''}</span>
       <span class="station-stat-sep">·</span>
       <span class="station-stat">Last trade: <strong>${lastTrade}</strong></span>
@@ -1557,11 +1660,20 @@ function renderStationCard(s) {
         <span>Unit: <strong>${s.unit || '—'}</strong></span>
         <span>TZ: <strong>${s.timezone}</strong></span>
       </div>
-      <button class="btn-toggle ${toggleClass}" id="toggle-btn-${s.metar}"
-              onclick="toggleStation('${s.metar}', this)">
-        <span class="spinner"></span>
-        <span class="btn-toggle-label">${toggleLabel}</span>
-      </button>
+      <div class="station-toggle-row">
+        <button class="btn-toggle ${yesToggleClass}" id="toggle-yes-${s.metar}"
+                aria-label="Toggle YES side for ${s.metar} — currently ${yesLive ? 'live' : 'shadow'}"
+                onclick="toggleSide('${s.metar}', 'yes', this)">
+          <span class="spinner"></span>
+          <span class="btn-toggle-label">${yesToggleLabel}</span>
+        </button>
+        <button class="btn-toggle ${noToggleClass}" id="toggle-no-${s.metar}"
+                aria-label="Toggle NO side for ${s.metar} — currently ${noLive ? 'live' : 'shadow'}"
+                onclick="toggleSide('${s.metar}', 'no', this)">
+          <span class="spinner"></span>
+          <span class="btn-toggle-label">${noToggleLabel}</span>
+        </button>
+      </div>
     </div>
   </div>`;
 }
@@ -1610,10 +1722,16 @@ function _startStationClocks(stations) {
 async function fetchStations() {
   const banner = document.getElementById('stations-error-banner');
   try {
-    const r = await fetch('/api/stations/overview');
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    const data = await r.json();
-    renderStations(data);
+    const [ovResp, perfResp] = await Promise.all([
+      fetch('/api/stations/overview'),
+      fetch('/api/stations/perf'),
+    ]);
+    if (!ovResp.ok) throw new Error(`HTTP ${ovResp.status}`);
+    const stations = await ovResp.json();
+    const perf = perfResp.ok ? await perfResp.json() : {};
+    // Merge perf data into each station object
+    stations.forEach(s => { s.perf = perf[s.metar] || null; });
+    renderStations(stations);
   } catch (e) {
     banner.classList.add('visible');
     document.getElementById('stations-error-text').textContent =
@@ -1622,7 +1740,37 @@ async function fetchStations() {
   }
 }
 
+async function toggleSide(metar, side, btn) {
+  if (btn.disabled) return;
+  btn.disabled = true;
+  btn.classList.add('loading');
+  btn.setAttribute('aria-busy', 'true');
+  try {
+    const r = await fetch(`/api/stations/${metar}/toggle/${side}`, { method: 'POST' });
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({}));
+      const detail = body.detail || `HTTP ${r.status}`;
+      console.warn(`Toggle ${metar} ${side} failed: ${detail}`);
+      const errorBanner = document.getElementById('stations-error-banner');
+      document.getElementById('stations-error-text').textContent =
+        `Could not toggle ${metar} ${side.toUpperCase()} side — please retry.`;
+      errorBanner.classList.add('visible');
+      return;
+    }
+    const updated = await r.json(); // {metar, yes_enabled, no_enabled}
+    // In-place update: re-fetch to get full data including perf
+    await fetchStations();
+  } catch (e) {
+    console.error('Toggle side failed:', e);
+  } finally {
+    btn.disabled = false;
+    btn.classList.remove('loading');
+    btn.removeAttribute('aria-busy');
+  }
+}
+
 async function toggleStation(metar, btn) {
+  // Back-compat: delegates to the old /toggle endpoint (flips both sides)
   if (btn.disabled) return;
   btn.disabled = true;
   btn.classList.add('loading');
@@ -1632,11 +1780,7 @@ async function toggleStation(metar, btn) {
       const body = await r.json().catch(() => ({}));
       const detail = body.detail || `HTTP ${r.status}`;
       console.warn(`Toggle ${metar} failed: ${detail}`);
-      if (r.status === 501) {
-        console.info('Toggle endpoint not yet implemented — ignoring.');
-      }
     }
-    // Refresh regardless of response to show new state
     await fetchStations();
   } catch (e) {
     console.error('Toggle failed:', e);
