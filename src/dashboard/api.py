@@ -50,8 +50,8 @@ from py_clob_client_v2.clob_types import BookParams
 from src.config import (
     POLYMARKET_GAMMA_API, STATIONS, LIVE_TRADES_JSONL, SNAPSHOTS_JSONL,
     POSITION_SNAPSHOTS_JSONL, LOG_DIR, STARTING_CAPITAL_EUR,
-    STATION_ACTIVE_HOURS, DISABLED_STATIONS, EMOS_DEFAULT_MODE,
-    CONFIG_DEFAULTS, get_live_config,
+    STATION_ACTIVE_HOURS, DISABLED_STATIONS, SHADOW_STATIONS_YES, SHADOW_STATIONS_NO,
+    EMOS_DEFAULT_MODE, CONFIG_DEFAULTS, get_live_config,
 )
 from src.data.db import Database
 from src.data.nws import fetch_nws_forecast_high
