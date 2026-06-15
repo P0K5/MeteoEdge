@@ -20,6 +20,7 @@ def _make_mock_db():
     mock_db = MagicMock()
     mock_db.get_all_config.return_value = {}
     mock_db.get_config.return_value = None
+    mock_db.get_latest_observation.return_value = None
     return mock_db
 
 
