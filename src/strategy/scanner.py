@@ -20,6 +20,7 @@ from src.config import (
     STATIONS, MIN_EDGE_CENTS, MAX_EDGE_CENTS, MIN_PRICE_CENTS, MIN_CONFIDENCE_YES,
     MAX_CONFIDENCE_YES_FOR_NO, ENABLE_YES_TRADES, MIN_MINUTES_TO_SETTLEMENT,
     ENABLE_CLOB_ENRICHMENT, MIN_FORECAST_BRACKET_MARGIN_F, DISABLED_STATIONS,
+    SHADOW_STATIONS, SHADOW_STATIONS_YES, SHADOW_STATIONS_NO,
 )
 from src.model.envelope import Bracket, WeatherState, true_probability_yes, compute_envelope
 from src.model.emos_mode import get_city_mode, apply_emos, _check_ready_for_promotion
@@ -412,12 +413,21 @@ def scan_markets(
             skipped_reason = None
             label = market.get("groupItemTitle") or f"{bracket.low_f:.0f}-{bracket.high_f:.0f}°F"
 
-            if station in DISABLED_STATIONS:
-                skipped_reason = "station_disabled"
-                log.debug("[%s] -- SKIPPED %s: station excluded from entries (DISABLED_STATIONS)",
-                          station, skipped_reason)
-                skip_reason_counts[skipped_reason] += 1
-            elif ev_yes >= MIN_EDGE_CENTS and p_yes >= MIN_CONFIDENCE_YES and bracket.yes_ask_cents >= MIN_PRICE_CENTS:
+            # Determine per-side shadow status from DB override or env fallback
+            station_override = db.get_station_override(station) if db else None
+            if station_override is not None:
+                yes_enabled = station_override["yes_enabled"]
+                no_enabled = station_override["no_enabled"]
+            else:
+                # Fall back to env vars: shadow if in SHADOW_STATIONS or per-side set
+                yes_enabled = (station not in SHADOW_STATIONS) and (station not in SHADOW_STATIONS_YES)
+                no_enabled = (station not in SHADOW_STATIONS) and (station not in SHADOW_STATIONS_NO)
+
+            # ENABLE_YES_TRADES=False forces YES shadow on all stations regardless of yes_enabled
+            shadow_yes = (not yes_enabled) or (not ENABLE_YES_TRADES)
+            shadow_no = not no_enabled
+
+            if ev_yes >= MIN_EDGE_CENTS and p_yes >= MIN_CONFIDENCE_YES and bracket.yes_ask_cents >= MIN_PRICE_CENTS:
                 if ev_yes > MAX_EDGE_CENTS:
                     skipped_reason = "max_edge"
                     log.debug("[%s] -- SKIPPED %s: %s edge=%.2f¢ > MAX=%.2f¢",
@@ -430,7 +440,7 @@ def scan_markets(
                         confidence=p_yes, p_yes=p_yes,
                         ev_yes=ev_yes, ev_no=ev_no,
                         minutes_to_settlement=mins_left, market=market,
-                        shadow=not ENABLE_YES_TRADES,
+                        shadow=shadow_yes,
                     )
             elif ev_no >= MIN_EDGE_CENTS and p_yes <= MAX_CONFIDENCE_YES_FOR_NO and bracket.no_ask_cents >= MIN_PRICE_CENTS:
                 margin_gap = no_entry_margin_gap(bracket, state)
@@ -452,6 +462,7 @@ def scan_markets(
                         confidence=1 - p_yes, p_yes=p_yes,
                         ev_yes=ev_yes, ev_no=ev_no,
                         minutes_to_settlement=mins_left, market=market,
+                        shadow=shadow_no,
                     )
             else:
                 # YES gates passed but NO gate failed (or both edges below MIN_EDGE_CENTS).
