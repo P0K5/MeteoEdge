@@ -51,6 +51,12 @@ log = logging.getLogger(__name__)
 
 _write_lock = threading.Lock()
 
+# Balance-check circuit-breaker state (issue #286)
+_balance_fail_count: int = 0
+_wallet_cooldown_until: float = 0.0
+_BALANCE_FAIL_ALERT_THRESHOLD: int = 3   # fire alert after this many consecutive failures
+_WALLET_EMPTY_COOLDOWN_SECONDS: float = 1800.0  # 30 min
+
 # order_manager singleton is defined and exported by src.execution.order_manager
 # to allow position_tracker and order_executor to import it directly without
 # going through sys.modules.
@@ -194,13 +200,31 @@ def poll_once(
             ]
             _freshness_monitor.check_all(db, active_sources)
 
+    global _balance_fail_count, _wallet_cooldown_until
+
+    # Wallet-empty cooldown: skip the entire candidate loop until the window passes.
+    if live_trader and time.time() < _wallet_cooldown_until:
+        log.info("[balance] wallet-empty cooldown active (%.0fs remaining) — skipping placement",
+                 _wallet_cooldown_until - time.time())
+        _finalize_poll()
+        return
+
     available_usdc = float("inf")
     if live_trader:
         try:
             available_usdc = live_trader.get_usdc_balance()
             log.info("[balance] %.2f USDC available", available_usdc)
+            _balance_fail_count = 0  # reset on success
         except Exception as e:
-            log.warning("[balance] check failed: %s -- proceeding without balance gate", e)
+            _balance_fail_count += 1
+            log.error("[balance] check failed: %s -- skipping order placement this cycle", e)
+            available_usdc = 0.0  # explicit zero → downstream 'if available_usdc < POSITION_SIZE' skips
+            if alert_manager is not None and _balance_fail_count >= _BALANCE_FAIL_ALERT_THRESHOLD:
+                alert_manager._fire(
+                    "balance_check_failure",
+                    f"ERROR: balance check failed {_balance_fail_count} consecutive times",
+                    f"Last error: {e}",
+                )
 
     approved: list = []
     n_acted = 0
@@ -259,6 +283,11 @@ def poll_once(
                     log.warning("  [shadow] DB insert failed: %s", e)
             continue
 
+        if live_trader and available_usdc < POSITION_SIZE_WITH_FEES:
+            log.info("  [balance] insufficient (%.2f USDC < %.2f needed incl. fees), skipping remaining", available_usdc, POSITION_SIZE_WITH_FEES)
+            _wallet_cooldown_until = time.time() + _WALLET_EMPTY_COOLDOWN_SECONDS
+            break
+
         raw_liquidity = cand.bracket.yes_ask_size + cand.bracket.no_ask_size
         liquidity = raw_liquidity if raw_liquidity > 0 else 9999
         allowed, reason = risk_manager.allow_trade(
@@ -268,10 +297,6 @@ def poll_once(
         if not allowed:
             log.info("  [risk] blocked: %s", reason)
             continue
-
-        if live_trader and available_usdc < POSITION_SIZE_WITH_FEES:
-            log.info("  [balance] insufficient (%.2f USDC < %.2f needed incl. fees), skipping remaining", available_usdc, POSITION_SIZE_WITH_FEES)
-            break
 
         n_acted += 1
 
