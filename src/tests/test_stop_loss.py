@@ -16,7 +16,7 @@ import pytest
 _clob_stub = ModuleType("py_clob_client_v2")
 _clob_stub.ClobClient = MagicMock  # type: ignore[attr-defined]
 _clob_types_stub = ModuleType("py_clob_client_v2.clob_types")
-for _name in ("AssetType", "BalanceAllowanceParams", "CreateOrderOptions", "OrderArgs"):
+for _name in ("AssetType", "BalanceAllowanceParams", "CreateOrderOptions", "OrderArgs", "OrderPayload"):
     setattr(_clob_types_stub, _name, MagicMock)
 sys.modules.setdefault("py_clob_client_v2", _clob_stub)
 sys.modules.setdefault("py_clob_client_v2.clob_types", _clob_types_stub)
@@ -52,13 +52,13 @@ class TestSellPositionImmediate:
         trader = _trader()
         trader.client.create_and_post_order.return_value = {"orderID": "s-2", "status": "live"}
         trader.client.get_order.return_value = {"status": "live"}
-        trader.client.cancel.return_value = {"canceled": ["s-2"]}
+        trader.client.cancel_order.return_value = {}
         with patch("src.execution.live_trader.get_orderbook", return_value=_orderbook("0.70")):
             result = trader.sell_position_immediate("tok-b", 6.25)
         sell_id, cancelled_order_id = result
         assert sell_id is None
         assert cancelled_order_id == "s-2"
-        trader.client.cancel.assert_called_once_with("s-2")
+        trader.client.cancel_order.assert_called_once()
 
     def test_cancel_refused_with_fill_confirmed_means_filled_in_flight(self):
         """Cancel refused + check_fill confirms filled → treat as sold."""
@@ -69,7 +69,7 @@ class TestSellPositionImmediate:
             {"status": "live"},    # pre-cancel check_fill → open
             {"status": "matched"}, # post-cancel-refused check_fill → filled
         ]
-        trader.client.cancel.return_value = {"canceled": []}
+        trader.client.cancel_order.return_value = None
         with patch("src.execution.live_trader.get_orderbook", return_value=_orderbook("0.50")):
             result = trader.sell_position_immediate("tok-c", 6.25)
         assert result == ("s-3", 48)
