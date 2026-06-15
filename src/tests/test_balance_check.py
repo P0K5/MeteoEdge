@@ -158,6 +158,21 @@ class TestWalletEmptyCooldown:
 
         mock_cand = MagicMock()
         mock_cand.shadow = False
+        mock_cand.station = "RJTT"
+        mock_cand.side = "YES"
+        mock_cand.p_yes = 0.6
+        mock_cand.ev_yes = 10.0
+        mock_cand.ev_no = -5.0
+        mock_cand.edge_cents = 10.0
+        mock_cand.price_cents = 60
+        mock_cand.confidence = 0.8
+        mock_cand.minutes_to_settlement = 60.0
+        mock_cand.market = {"question": "test q", "endDate": "2026-06-15", "groupItemTitle": "g"}
+        mock_cand.bracket.ticker = "TEST-TICKER"
+        mock_cand.bracket.low_f = 70.0
+        mock_cand.bracket.high_f = 72.0
+        mock_cand.bracket.yes_ask_cents = 60
+        mock_cand.bracket.no_ask_cents = 40
         mock_cand.bracket.yes_ask_size = 100.0
         mock_cand.bracket.no_ask_size = 100.0
 
