@@ -1558,7 +1558,7 @@ function isPromotionReady(c) {
 
 function perfCellHTML(c) {
   if (!c || c.count === 0) {
-    return `<td class="perf-cell"><span class="perf-cell-empty">—</span></td>`;
+    return `<td class="perf-cell perf-cell-empty">—</td>`;
   }
   const wr = c.win_rate != null ? (c.win_rate * 100).toFixed(0) + '%' : '—%';
   const pnl = c.pnl != null ? c.pnl : 0;
@@ -1740,11 +1740,62 @@ async function fetchStations() {
   }
 }
 
+function _updateStationCardInPlace(metar, yesEnabled, noEnabled) {
+  const card = document.getElementById(`station-card-${metar}`);
+  if (!card) return;
+
+  // Update border accent
+  card.classList.remove('accent-live-live', 'accent-live-shadow', 'accent-shadow-live', 'accent-shadow-shadow');
+  if (yesEnabled && noEnabled)        card.classList.add('accent-live-live');
+  else if (yesEnabled && !noEnabled)  card.classList.add('accent-live-shadow');
+  else if (!yesEnabled && noEnabled)  card.classList.add('accent-shadow-live');
+  else                                card.classList.add('accent-shadow-shadow');
+
+  // Update YES badge
+  const yesBadge = card.querySelector('[aria-label^="YES side"]');
+  if (yesBadge) {
+    yesBadge.className = `side-mode-badge ${yesEnabled ? 'side-mode-live' : 'side-mode-shadow'}`;
+    yesBadge.setAttribute('aria-label', `YES side: ${yesEnabled ? 'live' : 'shadow'}`);
+    yesBadge.textContent = `YES: ${yesEnabled ? 'LIVE' : 'SHADOW'}`;
+  }
+
+  // Update NO badge
+  const noBadge = card.querySelector('[aria-label^="NO side"]');
+  if (noBadge) {
+    noBadge.className = `side-mode-badge ${noEnabled ? 'side-mode-live' : 'side-mode-shadow'}`;
+    noBadge.setAttribute('aria-label', `NO side: ${noEnabled ? 'live' : 'shadow'}`);
+    noBadge.textContent = `NO: ${noEnabled ? 'LIVE' : 'SHADOW'}`;
+  }
+
+  // Update YES toggle button label and class
+  const yesBtn = document.getElementById(`toggle-yes-${metar}`);
+  if (yesBtn) {
+    yesBtn.className = `btn-toggle ${yesEnabled ? 'disable' : 'enable'}`;
+    yesBtn.setAttribute('aria-label', `Toggle YES side for ${metar} — currently ${yesEnabled ? 'live' : 'shadow'}`);
+    const lbl = yesBtn.querySelector('.btn-toggle-label');
+    if (lbl) lbl.textContent = yesEnabled ? 'YES: Disable' : 'YES: Enable';
+  }
+
+  // Update NO toggle button label and class
+  const noBtn = document.getElementById(`toggle-no-${metar}`);
+  if (noBtn) {
+    noBtn.className = `btn-toggle ${noEnabled ? 'disable' : 'enable'}`;
+    noBtn.setAttribute('aria-label', `Toggle NO side for ${metar} — currently ${noEnabled ? 'live' : 'shadow'}`);
+    const lbl = noBtn.querySelector('.btn-toggle-label');
+    if (lbl) lbl.textContent = noEnabled ? 'NO: Disable' : 'NO: Enable';
+  }
+}
+
 async function toggleSide(metar, side, btn) {
   if (btn.disabled) return;
   btn.disabled = true;
   btn.classList.add('loading');
   btn.setAttribute('aria-busy', 'true');
+  // Snapshot current badge/button state for rollback on error
+  const yesBadge = document.querySelector(`#station-card-${metar} [aria-label^="YES side"]`);
+  const noBadge  = document.querySelector(`#station-card-${metar} [aria-label^="NO side"]`);
+  const prevYesEnabled = yesBadge ? yesBadge.classList.contains('side-mode-live') : null;
+  const prevNoEnabled  = noBadge  ? noBadge.classList.contains('side-mode-live')  : null;
   try {
     const r = await fetch(`/api/stations/${metar}/toggle/${side}`, { method: 'POST' });
     if (!r.ok) {
@@ -1755,11 +1806,12 @@ async function toggleSide(metar, side, btn) {
       document.getElementById('stations-error-text').textContent =
         `Could not toggle ${metar} ${side.toUpperCase()} side — please retry.`;
       errorBanner.classList.add('visible');
+      // Rollback to previous state
+      if (prevYesEnabled !== null) _updateStationCardInPlace(metar, prevYesEnabled, prevNoEnabled);
       return;
     }
     const updated = await r.json(); // {metar, yes_enabled, no_enabled}
-    // In-place update: re-fetch to get full data including perf
-    await fetchStations();
+    _updateStationCardInPlace(updated.metar, updated.yes_enabled, updated.no_enabled);
   } catch (e) {
     console.error('Toggle side failed:', e);
   } finally {
