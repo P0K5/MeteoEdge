@@ -394,18 +394,25 @@ class TestEntryGates:
         market["outcomePrices"] = outcome_prices
         return market
 
-    def test_disabled_station_skipped(self, caplog):
-        """'station_disabled' gate: stations in DISABLED_STATIONS never produce candidates."""
+    def test_disabled_station_produces_shadow_candidates(self, caplog):
+        """Stations in SHADOW_STATIONS/DISABLED_STATIONS produce shadow candidates (not skipped).
+
+        Legacy 'station_disabled' hard-skip is replaced by per-side shadow logic:
+        SHADOW_STATIONS shadows both sides, so candidates are produced with shadow=True.
+        """
         weather = {"KMIA": self._weather_state()}
         market = self._miami_market("90-95°F", '["0.20", "0.80"]')
 
         with patch("src.strategy.scanner.DISABLED_STATIONS", {"KMIA"}), \
+                patch("src.strategy.scanner.SHADOW_STATIONS", {"KMIA"}), \
+                patch("src.strategy.scanner.SHADOW_STATIONS_YES", set()), \
+                patch("src.strategy.scanner.SHADOW_STATIONS_NO", set()), \
                 patch("src.strategy.scanner.MIN_MINUTES_TO_SETTLEMENT", 0):
-            with caplog.at_level(logging.DEBUG):
-                candidates, _ = scan_markets(weather, [market])
+            candidates, _ = scan_markets(weather, [market])
 
-        assert candidates == []
-        assert any("station_disabled" in r.message for r in caplog.records)
+        # Station is shadowed — candidate is produced but with shadow=True
+        assert len(candidates) > 0
+        assert all(c.shadow is True for c in candidates)
 
     def test_margin_gate_blocks_thin_margin_no_entry(self, caplog):
         """'margin_gate': NO candidate with bracket too close to expected high is skipped."""

@@ -213,10 +213,20 @@ EMOS_DEFAULT_MODE: str = os.environ.get("EMOS_DEFAULT_MODE", "legacy")
 # Stations excluded from new entries (observations keep collecting).
 # RKSI: June forecast busts of +5.4 to +12.4F produced 4 losses (10W/4L,
 # -7.16 EUR net) -- the worst station of the month. See issue #201.
-DISABLED_STATIONS = {
-    s.strip().upper()
-    for s in os.getenv("DISABLED_STATIONS", "RKSI").split(",")
-    if s.strip()
+#
+# SHADOW_STATIONS: shadow both sides (DISABLED_STATIONS kept as alias for back-compat).
+_shadow_both_raw = os.getenv("SHADOW_STATIONS") or os.getenv("DISABLED_STATIONS", "RKSI")
+SHADOW_STATIONS: "set[str]" = {s.strip().upper() for s in _shadow_both_raw.split(",") if s.strip()}
+
+# Alias kept so existing code referencing DISABLED_STATIONS still works.
+DISABLED_STATIONS: "set[str]" = SHADOW_STATIONS
+
+# Per-side shadow env vars: only shadow the named side.
+SHADOW_STATIONS_YES: "set[str]" = {
+    s.strip().upper() for s in os.getenv("SHADOW_STATIONS_YES", "").split(",") if s.strip()
+}
+SHADOW_STATIONS_NO: "set[str]" = {
+    s.strip().upper() for s in os.getenv("SHADOW_STATIONS_NO", "").split(",") if s.strip()
 }
 
 # HTTP

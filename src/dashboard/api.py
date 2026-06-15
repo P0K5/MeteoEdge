@@ -50,8 +50,8 @@ from py_clob_client_v2.clob_types import BookParams
 from src.config import (
     POLYMARKET_GAMMA_API, STATIONS, LIVE_TRADES_JSONL, SNAPSHOTS_JSONL,
     POSITION_SNAPSHOTS_JSONL, LOG_DIR, STARTING_CAPITAL_EUR,
-    STATION_ACTIVE_HOURS, DISABLED_STATIONS, EMOS_DEFAULT_MODE,
-    CONFIG_DEFAULTS, get_live_config,
+    STATION_ACTIVE_HOURS, DISABLED_STATIONS, SHADOW_STATIONS_YES, SHADOW_STATIONS_NO,
+    EMOS_DEFAULT_MODE, CONFIG_DEFAULTS, get_live_config,
 )
 from src.data.db import Database
 from src.data.nws import fetch_nws_forecast_high
@@ -1148,9 +1148,9 @@ def stations_overview() -> list[StationOverviewOut]:
 
     # Read DISABLED_STATIONS at request time (env var may change between restarts).
     # Merge with DB overrides: a station is disabled when it is in DISABLED_STATIONS
-    # OR when station_overrides.enabled = 0.  A DB override with enabled=True lifts
-    # the env-var disable (explicit DB state wins over the env baseline).
-    db_overrides: dict[str, bool] = {}
+    # OR when station_overrides.yes_enabled=0 AND no_enabled=0.  A DB override with
+    # yes_enabled=True or no_enabled=True lifts the env-var disable for that side.
+    db_overrides: "dict[str, dict]" = {}
     if _db is not None:
         try:
             db_overrides = _db.get_all_station_overrides()
@@ -1161,7 +1161,9 @@ def stations_overview() -> list[StationOverviewOut]:
     for station_cfg in STATIONS:
         metar, lat, lon, city, _res_station, unit, tz = station_cfg
         if metar in db_overrides:
-            enabled = db_overrides[metar]
+            # "enabled" for the overview = at least one side is live
+            override = db_overrides[metar]
+            enabled = override["yes_enabled"] or override["no_enabled"]
         else:
             enabled = metar not in DISABLED_STATIONS
         last_obs_ts = last_obs_map.get(metar)
@@ -1408,11 +1410,11 @@ _KNOWN_METARS: frozenset[str] = frozenset(s[0] for s in STATIONS)
 
 @app.post("/api/stations/{metar}/toggle")
 def station_toggle(metar: str) -> dict:
-    """Toggle the enabled/disabled state for *metar* (DB-persisted).
+    """Toggle both yes_enabled and no_enabled for *metar* (DB-persisted, back-compat).
 
     - Returns 404 for METAR codes not present in the STATIONS config.
     - Reads the current effective enabled state (env baseline merged with DB
-      overrides), flips it, and writes the new value to station_overrides.
+      overrides), flips BOTH sides together, and writes the new value.
     - Invalidates the stations overview cache so the next GET sees the new state.
 
     Response: {"metar": str, "enabled": bool}
@@ -1424,21 +1426,87 @@ def station_toggle(metar: str) -> dict:
     if _db is None:
         raise HTTPException(status_code=503, detail="Database not initialised")
 
-    # Determine current effective enabled state
+    # Determine current effective enabled state (both sides)
     db_override = _db.get_station_override(metar_upper)
     if db_override is not None:
-        current_enabled = db_override
+        current_enabled = db_override["yes_enabled"] and db_override["no_enabled"]
     else:
         current_enabled = metar_upper not in DISABLED_STATIONS
 
     new_enabled = not current_enabled
-    _db.set_station_override(metar_upper, new_enabled)
+    _db.set_station_override(metar_upper, yes_enabled=new_enabled, no_enabled=new_enabled)
 
     # Invalidate the overview cache so the next request reflects the change.
     _stations_overview_cache["ts"] = 0.0
     _stations_overview_cache["data"] = None
 
     return {"metar": metar_upper, "enabled": new_enabled}
+
+
+@app.post("/api/stations/{metar}/toggle/yes")
+def station_toggle_yes(metar: str) -> dict:
+    """Toggle yes_enabled for *metar* (DB-persisted).
+
+    Flips only the YES side, leaving NO side unchanged.
+
+    Response: {"metar": str, "yes_enabled": bool, "no_enabled": bool}
+    """
+    metar_upper = metar.upper()
+    if metar_upper not in _KNOWN_METARS:
+        raise HTTPException(status_code=404, detail=f"Unknown METAR code: {metar!r}")
+
+    if _db is None:
+        raise HTTPException(status_code=503, detail="Database not initialised")
+
+    db_override = _db.get_station_override(metar_upper)
+    if db_override is not None:
+        current_yes = db_override["yes_enabled"]
+        current_no = db_override["no_enabled"]
+    else:
+        base_enabled = metar_upper not in DISABLED_STATIONS
+        current_yes = base_enabled and (metar_upper not in SHADOW_STATIONS_YES)
+        current_no = base_enabled and (metar_upper not in SHADOW_STATIONS_NO)
+
+    new_yes = not current_yes
+    _db.set_station_override(metar_upper, yes_enabled=new_yes, no_enabled=current_no)
+
+    _stations_overview_cache["ts"] = 0.0
+    _stations_overview_cache["data"] = None
+
+    return {"metar": metar_upper, "yes_enabled": new_yes, "no_enabled": current_no}
+
+
+@app.post("/api/stations/{metar}/toggle/no")
+def station_toggle_no(metar: str) -> dict:
+    """Toggle no_enabled for *metar* (DB-persisted).
+
+    Flips only the NO side, leaving YES side unchanged.
+
+    Response: {"metar": str, "yes_enabled": bool, "no_enabled": bool}
+    """
+    metar_upper = metar.upper()
+    if metar_upper not in _KNOWN_METARS:
+        raise HTTPException(status_code=404, detail=f"Unknown METAR code: {metar!r}")
+
+    if _db is None:
+        raise HTTPException(status_code=503, detail="Database not initialised")
+
+    db_override = _db.get_station_override(metar_upper)
+    if db_override is not None:
+        current_yes = db_override["yes_enabled"]
+        current_no = db_override["no_enabled"]
+    else:
+        base_enabled = metar_upper not in DISABLED_STATIONS
+        current_yes = base_enabled and (metar_upper not in SHADOW_STATIONS_YES)
+        current_no = base_enabled and (metar_upper not in SHADOW_STATIONS_NO)
+
+    new_no = not current_no
+    _db.set_station_override(metar_upper, yes_enabled=current_yes, no_enabled=new_no)
+
+    _stations_overview_cache["ts"] = 0.0
+    _stations_overview_cache["data"] = None
+
+    return {"metar": metar_upper, "yes_enabled": current_yes, "no_enabled": new_no}
 
 
 # ---------------------------------------------------------------------------
