@@ -166,6 +166,156 @@ class TestStatusEndpoint:
 # /trades
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Shadow mode filtering (issue #272)
+# ---------------------------------------------------------------------------
+
+class TestShadowModeFiltering:
+    """Test that shadow mode trades are excluded from live metrics."""
+
+    def test_dashboard_load_trades_excludes_shadow(self, tmp_path):
+        """_dashboard_load_trades() must filter out shadow rows."""
+        today = _today()
+        records = [
+            {"ts": f"{today}T10:00:00+00:00", "outcome": "filled", "pnl": 5.0, "station": "KORD", "mode": "live"},
+            {"ts": f"{today}T11:00:00+00:00", "outcome": "filled", "pnl": 2.0, "station": "KORD", "mode": "shadow"},
+            {"ts": f"{today}T12:00:00+00:00", "outcome": "filled", "pnl": 3.0, "station": "KORD", "mode": "live"},
+        ]
+        _write_jsonl(tmp_path / "trades.jsonl", records)
+        with patch("src.dashboard.data.LIVE_TRADES_JSONL", tmp_path / "trades.jsonl"):
+            trades = dash_api._dashboard_load_trades()
+        # Should have 2 trades (shadow excluded)
+        assert len(trades) == 2
+        assert all(t.get("mode") != "shadow" for t in trades)
+        # Verify modes are as expected
+        modes = [t.get("mode") for t in trades]
+        assert modes.count("live") == 2
+
+    def test_compute_win_rate_excludes_shadow(self, tmp_path):
+        """_compute_win_rate() must exclude shadow rows from calculation."""
+        today = _today()
+        records = [
+            {"ts": f"{today}T10:00:00+00:00", "outcome": "filled", "pnl": 10.0, "station": "KORD", "mode": "live"},
+            {"ts": f"{today}T11:00:00+00:00", "outcome": "filled", "pnl": -10.0, "station": "KORD", "mode": "shadow"},
+            {"ts": f"{today}T12:00:00+00:00", "outcome": "filled", "pnl": 10.0, "station": "KORD", "mode": "live"},
+        ]
+        _write_jsonl(tmp_path / "trades.jsonl", records)
+        with patch("src.dashboard.data.LIVE_TRADES_JSONL", tmp_path / "trades.jsonl"):
+            trades = dash_api._dashboard_load_trades()
+            win_rate = dash_api._compute_win_rate(trades)
+        # With shadow excluded: 2 live trades, both winners → win_rate = 1.0
+        assert win_rate == pytest.approx(1.0)
+
+    def test_today_pnl_excludes_shadow(self, tmp_path):
+        """_today_pnl() must exclude shadow rows from P&L sum."""
+        today = _today()
+        records = [
+            {"ts": f"{today}T10:00:00+00:00", "pnl": 10.0, "mode": "live"},
+            {"ts": f"{today}T11:00:00+00:00", "pnl": -100.0, "mode": "shadow"},  # Large shadow loss
+            {"ts": f"{today}T12:00:00+00:00", "pnl": 5.0, "mode": "live"},
+        ]
+        _write_jsonl(tmp_path / "trades.jsonl", records)
+        with patch("src.dashboard.data.LIVE_TRADES_JSONL", tmp_path / "trades.jsonl"):
+            trades = dash_api._dashboard_load_trades()
+            today_pnl = dash_api._today_pnl(trades)
+        # With shadow excluded: 10.0 + 5.0 = 15.0
+        assert today_pnl == pytest.approx(15.0)
+
+    def test_stations_total_pnl_excludes_shadow(self, client, tmp_path):
+        """stations() endpoint must exclude shadow rows from total_pnl."""
+        records = [
+            {"ts": "2024-01-01T10:00:00+00:00", "outcome": "filled", "pnl": 5.0, "station": "KORD", "mode": "live"},
+            {"ts": "2024-01-01T11:00:00+00:00", "outcome": "filled", "pnl": -50.0, "station": "KORD", "mode": "shadow"},
+            {"ts": "2024-01-01T12:00:00+00:00", "outcome": "filled", "pnl": 3.0, "station": "KORD", "mode": "live"},
+        ]
+        _write_jsonl(tmp_path / "trades.jsonl", records)
+        with patch("src.dashboard.data.LIVE_TRADES_JSONL", tmp_path / "trades.jsonl"):
+            resp = client.get("/stations")
+        data = resp.json()
+        # With shadow excluded: 5.0 + 3.0 = 8.0
+        assert data["KORD"]["total_pnl"] == pytest.approx(8.0)
+
+    def test_status_today_pnl_excludes_shadow(self, client, tmp_path):
+        """status() endpoint must report today_pnl without shadow trades."""
+        today = _today()
+        records = [
+            {"ts": f"{today}T10:00:00+00:00", "pnl": 10.0, "mode": "live", "outcome": "filled"},
+            {"ts": f"{today}T11:00:00+00:00", "pnl": -1000.0, "mode": "shadow", "outcome": "filled"},
+        ]
+        _write_jsonl(tmp_path / "trades.jsonl", records)
+        _write_jsonl(tmp_path / "snaps.jsonl", [])
+        with patch("src.dashboard.data.LIVE_TRADES_JSONL", tmp_path / "trades.jsonl"):
+            with patch("src.dashboard.data.SNAPSHOTS_JSONL", tmp_path / "snaps.jsonl"):
+                resp = client.get("/status")
+        # With shadow excluded: today_pnl = 10.0
+        assert resp.json()["today_pnl"] == pytest.approx(10.0)
+
+    def test_status_win_rate_excludes_shadow(self, client, tmp_path):
+        """status() endpoint must report win_rate without shadow trades."""
+        today = _today()
+        records = [
+            {"ts": f"{today}T10:00:00+00:00", "pnl": 5.0, "outcome": "filled", "mode": "live"},
+            {"ts": f"{today}T11:00:00+00:00", "pnl": -5.0, "outcome": "filled", "mode": "shadow"},  # Excluded
+            {"ts": f"{today}T12:00:00+00:00", "pnl": 5.0, "outcome": "filled", "mode": "live"},
+        ]
+        _write_jsonl(tmp_path / "trades.jsonl", records)
+        _write_jsonl(tmp_path / "snaps.jsonl", [])
+        with patch("src.dashboard.data.LIVE_TRADES_JSONL", tmp_path / "trades.jsonl"):
+            with patch("src.dashboard.data.SNAPSHOTS_JSONL", tmp_path / "snaps.jsonl"):
+                resp = client.get("/status")
+        # With shadow excluded: 2 live trades, both winners → win_rate = 1.0
+        assert resp.json()["win_rate"] == pytest.approx(1.0)
+
+    def test_mixed_mode_station(self, client, tmp_path):
+        """A station with both live and shadow trades sees only live trades (shadow filtered at source)."""
+        records = [
+            {"ts": "2024-01-01T10:00:00+00:00", "outcome": "filled", "pnl": 10.0, "station": "KORD", "mode": "live"},
+            {"ts": "2024-01-01T11:00:00+00:00", "outcome": "filled", "pnl": -100.0, "station": "KORD", "mode": "shadow"},
+            {"ts": "2024-01-01T12:00:00+00:00", "outcome": "filled", "pnl": 5.0, "station": "KORD", "mode": "live"},
+        ]
+        _write_jsonl(tmp_path / "trades.jsonl", records)
+        with patch("src.dashboard.data.LIVE_TRADES_JSONL", tmp_path / "trades.jsonl"):
+            resp = client.get("/stations")
+        station_data = resp.json()["KORD"]
+        # Shadow row filtered at _dashboard_load_trades(), so only 2 live trades counted
+        assert station_data["trade_count"] == 2
+        assert station_data["total_pnl"] == pytest.approx(15.0)
+
+    def test_latest_capital_excludes_shadow(self, client, tmp_path):
+        """_latest_capital() must find capital from non-shadow row."""
+        from src.data.db import Database
+        db = Database(":memory:")
+        # Insert shadow row then live row
+        db.insert_trade(
+            ts="2024-01-01T10:00:00Z", station="KORD",
+            ticker="KORD-s", bracket_low=32.0, bracket_high=36.0,
+            side="NO", predicted_price=70, actual_price=71,
+            predicted_edge=0.08, mode="shadow",
+            capital_before=500.0, capital_after=400.0,
+        )
+        db.insert_trade(
+            ts="2024-01-01T11:00:00Z", station="KORD",
+            ticker="KORD-l", bracket_low=32.0, bracket_high=36.0,
+            side="NO", predicted_price=70, actual_price=71,
+            predicted_edge=0.08, mode="live",
+            capital_before=500.0, capital_after=450.0,
+        )
+        original = dash_api._db
+        try:
+            dash_api.set_db(db)
+            with patch("src.dashboard.data.LIVE_TRADES_JSONL", tmp_path / "missing.jsonl"):
+                with patch("src.dashboard.data.SNAPSHOTS_JSONL", tmp_path / "missing2.jsonl"):
+                    resp = client.get("/status")
+            # Should report capital from live row (450), not shadow row (400)
+            assert resp.json()["capital"] == pytest.approx(450.0)
+        finally:
+            dash_api.set_db(original)
+
+
+# ---------------------------------------------------------------------------
+# /trades
+# ---------------------------------------------------------------------------
+
 class TestTradesEndpoint:
     def test_returns_list(self, client, tmp_path):
         _write_jsonl(tmp_path / "trades.jsonl", [])
