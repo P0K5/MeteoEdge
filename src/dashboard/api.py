@@ -278,6 +278,8 @@ class StationOverviewOut(BaseModel):
     timezone: str
     active_hours_local: list[int]
     enabled: bool
+    yes_enabled: bool
+    no_enabled: bool
     trade_count: int
     filled_count: int
     win_rate: float | None
@@ -1192,9 +1194,13 @@ def stations_overview() -> list[StationOverviewOut]:
         if metar in db_overrides:
             # "enabled" for the overview = at least one side is live
             override = db_overrides[metar]
-            enabled = override["yes_enabled"] or override["no_enabled"]
+            yes_enabled = override["yes_enabled"]
+            no_enabled = override["no_enabled"]
+            enabled = yes_enabled or no_enabled
         else:
-            enabled = metar not in DISABLED_STATIONS
+            yes_enabled = metar not in DISABLED_STATIONS
+            no_enabled = yes_enabled
+            enabled = yes_enabled
         last_obs_ts = last_obs_map.get(metar)
         open_positions_count = open_pos_map.get(metar, 0)
         stats = trade_stats_map.get(metar, {})
@@ -1212,6 +1218,8 @@ def stations_overview() -> list[StationOverviewOut]:
             timezone=tz,
             active_hours_local=list(active_hours),
             enabled=enabled,
+            yes_enabled=yes_enabled,
+            no_enabled=no_enabled,
             trade_count=stats.get("trade_count", 0),
             filled_count=stats.get("filled_count", 0),
             win_rate=stats.get("win_rate"),

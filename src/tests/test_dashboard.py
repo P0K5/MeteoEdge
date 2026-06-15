@@ -846,6 +846,51 @@ class TestStationsOverviewEndpoint:
         assert resp1.status_code == 200
         assert resp1.json() == resp2.json()
 
+    def test_station_record_includes_yes_no_enabled(self, client):
+        """Each record must include yes_enabled and no_enabled fields."""
+        resp = client.get("/api/stations/overview")
+        item = resp.json()[0]
+        assert "yes_enabled" in item
+        assert "no_enabled" in item
+        assert isinstance(item["yes_enabled"], bool)
+        assert isinstance(item["no_enabled"], bool)
+
+    def test_yes_no_enabled_reflect_db_override(self, client):
+        """yes_enabled and no_enabled must reflect the DB per-side override."""
+        from src.config import STATIONS
+        db = self._setup_db()
+        first_metar = STATIONS[0][0]
+        original = dash_api._db
+        try:
+            self._inject_db(db)
+            db.set_station_override(first_metar, yes_enabled=False, no_enabled=True)
+            resp = client.get("/api/stations/overview")
+            data = resp.json()
+            item = next(s for s in data if s["metar"] == first_metar)
+            assert item["yes_enabled"] is False
+            assert item["no_enabled"] is True
+            assert item["enabled"] is True  # at least one side live
+        finally:
+            dash_api.set_db(original)
+
+    def test_both_disabled_sets_enabled_false(self, client):
+        """When both yes_enabled=False and no_enabled=False, enabled must be False."""
+        from src.config import STATIONS
+        db = self._setup_db()
+        first_metar = STATIONS[0][0]
+        original = dash_api._db
+        try:
+            self._inject_db(db)
+            db.set_station_override(first_metar, yes_enabled=False, no_enabled=False)
+            resp = client.get("/api/stations/overview")
+            data = resp.json()
+            item = next(s for s in data if s["metar"] == first_metar)
+            assert item["yes_enabled"] is False
+            assert item["no_enabled"] is False
+            assert item["enabled"] is False
+        finally:
+            dash_api.set_db(original)
+
 
 # ---------------------------------------------------------------------------
 # EMOS management API endpoints (issue #232)
