@@ -443,8 +443,8 @@ def scan_markets(
 
             # Use looser shadow thresholds on the YES shadow path so the
             # shadow loop can collect data.  The NO branch is untouched.
-            _yes_edge  = shadow_yes_edge_min  if shadow_yes else MIN_EDGE_CENTS
-            _yes_conf  = shadow_yes_conf_min  if shadow_yes else MIN_CONFIDENCE_YES
+            _yes_edge = shadow_yes_edge_min if shadow_yes else MIN_EDGE_CENTS
+            _yes_conf = shadow_yes_conf_min if shadow_yes else MIN_CONFIDENCE_YES
             _yes_price = shadow_yes_price_min if shadow_yes else MIN_PRICE_CENTS
 
             if ev_yes >= _yes_edge and p_yes >= _yes_conf and bracket.yes_ask_cents >= _yes_price:
