@@ -1297,3 +1297,318 @@ class TestSellPositionEndpoint:
         dash_api._db = None
         resp = client.post("/api/positions/tok-4/sell")
         assert resp.status_code == 503
+
+
+# ---------------------------------------------------------------------------
+# GET /api/stations/perf — 2×2 performance matrix (issue #275)
+# ---------------------------------------------------------------------------
+
+class TestStationsPerfEndpoint:
+    """Tests for GET /api/stations/perf: {real, shadow} × {YES, NO} quadrants."""
+
+    def _setup_db(self):
+        from src.data.db import Database
+        return Database(":memory:")
+
+    def _insert_trade(self, db, *, station, side, mode, pnl=None, actual_price=80,
+                      ts="2024-01-15T12:00:00Z", outcome="filled"):
+        """Helper: insert a trade and update outcome/pnl."""
+        trade_id = db.insert_trade(
+            ts=ts, station=station,
+            ticker=f"{station}-{side}-{mode}",
+            bracket_low=70.0, bracket_high=74.0,
+            side=side, predicted_price=80, actual_price=actual_price,
+            predicted_edge=0.10, mode=mode,
+            capital_before=500.0, capital_after=500.0 + (pnl or 0.0),
+        )
+        if pnl is not None:
+            db.update_trade_by_id(
+                trade_id,
+                outcome=outcome,
+                pnl=pnl,
+                capital_after=500.0 + pnl,
+            )
+        return trade_id
+
+    # --- structure ---
+
+    def test_returns_200_and_dict(self, client):
+        resp = client.get("/api/stations/perf")
+        assert resp.status_code == 200
+        assert isinstance(resp.json(), dict)
+
+    def test_empty_db_returns_empty_dict(self, client):
+        db = self._setup_db()
+        original = dash_api._db
+        try:
+            dash_api.set_db(db)
+            resp = client.get("/api/stations/perf")
+            assert resp.status_code == 200
+            assert resp.json() == {}
+        finally:
+            dash_api.set_db(original)
+
+    def test_station_absent_when_no_trades(self, client):
+        """A station with no trades must not appear in the response."""
+        db = self._setup_db()
+        # Insert a trade for KORD only
+        self._insert_trade(db, station="KORD", side="YES", mode="live", pnl=1.0)
+        original = dash_api._db
+        try:
+            dash_api.set_db(db)
+            resp = client.get("/api/stations/perf")
+            data = resp.json()
+            assert "KORD" in data
+            assert "KMIA" not in data
+        finally:
+            dash_api.set_db(original)
+
+    def test_response_structure_per_station(self, client):
+        """Each station entry must have real and shadow, each with YES and NO quadrants."""
+        db = self._setup_db()
+        self._insert_trade(db, station="KORD", side="YES", mode="live", pnl=1.0)
+        original = dash_api._db
+        try:
+            dash_api.set_db(db)
+            resp = client.get("/api/stations/perf")
+            data = resp.json()
+            assert "KORD" in data
+            kord = data["KORD"]
+            for mode_key in ("real", "shadow"):
+                assert mode_key in kord, f"Missing key: {mode_key}"
+                for side_key in ("YES", "NO"):
+                    assert side_key in kord[mode_key], f"Missing key: {mode_key}.{side_key}"
+                    quadrant = kord[mode_key][side_key]
+                    for field in ("count", "win_rate", "pnl", "avg_entry_price", "days_of_data"):
+                        assert field in quadrant, f"Missing field: {mode_key}.{side_key}.{field}"
+        finally:
+            dash_api.set_db(original)
+
+    # --- empty quadrant ---
+
+    def test_empty_quadrant_returns_nulls_and_zeros(self, client):
+        """An empty quadrant must return count=0, win_rate=null, pnl=0.0,
+        avg_entry_price=null, days_of_data=0."""
+        db = self._setup_db()
+        # Only real YES trade — shadow YES, real NO, shadow NO should be empty
+        self._insert_trade(db, station="KORD", side="YES", mode="live", pnl=1.0)
+        original = dash_api._db
+        try:
+            dash_api.set_db(db)
+            resp = client.get("/api/stations/perf")
+            data = resp.json()
+            kord = data["KORD"]
+            # real NO — empty
+            real_no = kord["real"]["NO"]
+            assert real_no["count"] == 0
+            assert real_no["win_rate"] is None
+            assert real_no["pnl"] == pytest.approx(0.0)
+            assert real_no["avg_entry_price"] is None
+            assert real_no["days_of_data"] == 0
+            # shadow YES — empty
+            shadow_yes = kord["shadow"]["YES"]
+            assert shadow_yes["count"] == 0
+            assert shadow_yes["win_rate"] is None
+            assert shadow_yes["avg_entry_price"] is None
+            # shadow NO — empty
+            shadow_no = kord["shadow"]["NO"]
+            assert shadow_no["count"] == 0
+        finally:
+            dash_api.set_db(original)
+
+    # --- metric correctness ---
+
+    def test_real_yes_metrics_correct(self, client):
+        """Real YES quadrant computes metrics correctly from live-mode YES trades."""
+        db = self._setup_db()
+        # 2 wins, 1 loss for KORD real YES across 2 days
+        self._insert_trade(db, station="KORD", side="YES", mode="live",
+                           pnl=2.0, actual_price=70, ts="2024-01-10T10:00:00Z")
+        self._insert_trade(db, station="KORD", side="YES", mode="live",
+                           pnl=1.0, actual_price=75, ts="2024-01-10T11:00:00Z")
+        self._insert_trade(db, station="KORD", side="YES", mode="live",
+                           pnl=-0.5, actual_price=80, ts="2024-01-11T10:00:00Z")
+        original = dash_api._db
+        try:
+            dash_api.set_db(db)
+            resp = client.get("/api/stations/perf")
+            data = resp.json()
+            q = data["KORD"]["real"]["YES"]
+            assert q["count"] == 3
+            assert q["win_rate"] == pytest.approx(2 / 3)
+            assert q["pnl"] == pytest.approx(2.5)
+            assert q["avg_entry_price"] == pytest.approx((70 + 75 + 80) / 3)
+            assert q["days_of_data"] == 2
+        finally:
+            dash_api.set_db(original)
+
+    def test_real_no_metrics_correct(self, client):
+        """Real NO quadrant is computed independently of real YES."""
+        db = self._setup_db()
+        self._insert_trade(db, station="KORD", side="YES", mode="live",
+                           pnl=1.0, actual_price=72, ts="2024-01-10T10:00:00Z")
+        self._insert_trade(db, station="KORD", side="NO", mode="live",
+                           pnl=-1.0, actual_price=65, ts="2024-01-10T10:00:00Z")
+        self._insert_trade(db, station="KORD", side="NO", mode="live",
+                           pnl=3.0, actual_price=60, ts="2024-01-10T11:00:00Z")
+        original = dash_api._db
+        try:
+            dash_api.set_db(db)
+            resp = client.get("/api/stations/perf")
+            data = resp.json()
+            q_no = data["KORD"]["real"]["NO"]
+            assert q_no["count"] == 2
+            assert q_no["win_rate"] == pytest.approx(0.5)
+            assert q_no["pnl"] == pytest.approx(2.0)
+            assert q_no["avg_entry_price"] == pytest.approx((65 + 60) / 2)
+        finally:
+            dash_api.set_db(original)
+
+    def test_shadow_quadrant_metrics_correct(self, client):
+        """Shadow YES quadrant is computed from mode='shadow' trades only."""
+        db = self._setup_db()
+        self._insert_trade(db, station="KORD", side="YES", mode="shadow",
+                           pnl=0.5, actual_price=68, ts="2024-02-01T10:00:00Z")
+        self._insert_trade(db, station="KORD", side="YES", mode="shadow",
+                           pnl=0.8, actual_price=72, ts="2024-02-02T10:00:00Z")
+        original = dash_api._db
+        try:
+            dash_api.set_db(db)
+            resp = client.get("/api/stations/perf")
+            data = resp.json()
+            q = data["KORD"]["shadow"]["YES"]
+            assert q["count"] == 2
+            assert q["win_rate"] == pytest.approx(1.0)
+            assert q["pnl"] == pytest.approx(1.3)
+            assert q["avg_entry_price"] == pytest.approx((68 + 72) / 2)
+            assert q["days_of_data"] == 2
+        finally:
+            dash_api.set_db(original)
+
+    # --- real/shadow isolation ---
+
+    def test_real_and_shadow_never_mix(self, client):
+        """Real and shadow trades must land in separate buckets and never cross."""
+        db = self._setup_db()
+        # real YES: 1 win with pnl=5.0
+        self._insert_trade(db, station="KORD", side="YES", mode="live",
+                           pnl=5.0, actual_price=70, ts="2024-01-01T10:00:00Z")
+        # shadow YES: 1 loss with pnl=-2.0
+        self._insert_trade(db, station="KORD", side="YES", mode="shadow",
+                           pnl=-2.0, actual_price=75, ts="2024-01-01T10:00:00Z")
+        original = dash_api._db
+        try:
+            dash_api.set_db(db)
+            resp = client.get("/api/stations/perf")
+            data = resp.json()
+            real_yes = data["KORD"]["real"]["YES"]
+            shadow_yes = data["KORD"]["shadow"]["YES"]
+            # Real must only see the win
+            assert real_yes["count"] == 1
+            assert real_yes["pnl"] == pytest.approx(5.0)
+            assert real_yes["win_rate"] == pytest.approx(1.0)
+            # Shadow must only see the loss
+            assert shadow_yes["count"] == 1
+            assert shadow_yes["pnl"] == pytest.approx(-2.0)
+            assert shadow_yes["win_rate"] == pytest.approx(0.0)
+        finally:
+            dash_api.set_db(original)
+
+    def test_paper_mode_goes_to_real_bucket(self, client):
+        """Trades with mode='paper' (not 'shadow') must appear in the real bucket."""
+        db = self._setup_db()
+        self._insert_trade(db, station="KORD", side="NO", mode="paper",
+                           pnl=1.0, actual_price=65, ts="2024-01-05T10:00:00Z")
+        original = dash_api._db
+        try:
+            dash_api.set_db(db)
+            resp = client.get("/api/stations/perf")
+            data = resp.json()
+            real_no = data["KORD"]["real"]["NO"]
+            shadow_no = data["KORD"]["shadow"]["NO"]
+            assert real_no["count"] == 1
+            assert shadow_no["count"] == 0
+        finally:
+            dash_api.set_db(original)
+
+    # --- win_rate with no settled trades ---
+
+    def test_win_rate_null_when_no_settled_trades(self, client):
+        """win_rate must be null when all trades have no settled pnl outcome."""
+        db = self._setup_db()
+        # Insert a trade with no pnl (not yet settled)
+        db.insert_trade(
+            ts="2024-01-15T12:00:00Z", station="KORD",
+            ticker="KORD-unsettled", bracket_low=70.0, bracket_high=74.0,
+            side="YES", predicted_price=80, actual_price=80,
+            predicted_edge=0.10, mode="live", capital_before=500.0,
+        )
+        original = dash_api._db
+        try:
+            dash_api.set_db(db)
+            resp = client.get("/api/stations/perf")
+            data = resp.json()
+            q = data["KORD"]["real"]["YES"]
+            assert q["count"] == 1
+            assert q["win_rate"] is None
+            assert q["avg_entry_price"] is None  # no settled trades → no avg_entry_price
+        finally:
+            dash_api.set_db(original)
+
+    # --- multi-station ---
+
+    def test_multiple_stations_independent(self, client):
+        """Multiple stations must each have their own isolated quadrants."""
+        db = self._setup_db()
+        self._insert_trade(db, station="KORD", side="YES", mode="live",
+                           pnl=3.0, actual_price=70, ts="2024-01-10T10:00:00Z")
+        self._insert_trade(db, station="KMIA", side="NO", mode="shadow",
+                           pnl=1.5, actual_price=65, ts="2024-01-10T10:00:00Z")
+        original = dash_api._db
+        try:
+            dash_api.set_db(db)
+            resp = client.get("/api/stations/perf")
+            data = resp.json()
+            assert "KORD" in data
+            assert "KMIA" in data
+            # KORD: real YES has the trade
+            assert data["KORD"]["real"]["YES"]["count"] == 1
+            assert data["KORD"]["real"]["YES"]["pnl"] == pytest.approx(3.0)
+            # KORD: shadow is empty
+            assert data["KORD"]["shadow"]["YES"]["count"] == 0
+            # KMIA: shadow NO has the trade
+            assert data["KMIA"]["shadow"]["NO"]["count"] == 1
+            assert data["KMIA"]["shadow"]["NO"]["pnl"] == pytest.approx(1.5)
+            # KMIA: real is empty
+            assert data["KMIA"]["real"]["NO"]["count"] == 0
+        finally:
+            dash_api.set_db(original)
+
+    # --- JSONL fallback ---
+
+    def test_jsonl_fallback_when_db_none(self, client, tmp_path):
+        """When _db is None, endpoint falls back to JSONL and returns real trades only."""
+        records = [
+            {
+                "ts": "2024-01-15T10:00:00Z",
+                "station": "KORD",
+                "side": "YES",
+                "mode": "live",
+                "outcome": "filled",
+                "pnl": 2.0,
+                "actual_price": 72,
+            }
+        ]
+        _write_jsonl(tmp_path / "trades.jsonl", records)
+        original = dash_api._db
+        try:
+            dash_api._db = None
+            with patch("src.dashboard.data.LIVE_TRADES_JSONL", tmp_path / "trades.jsonl"):
+                resp = client.get("/api/stations/perf")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert "KORD" in data
+            # JSONL trades have no shadow mode, so real YES gets the trade
+            assert data["KORD"]["real"]["YES"]["count"] == 1
+        finally:
+            dash_api.set_db(original)

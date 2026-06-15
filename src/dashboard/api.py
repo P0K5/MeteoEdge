@@ -288,6 +288,27 @@ class StationOverviewOut(BaseModel):
     status: Literal["active", "outside_hours", "no_data", "disabled"]
 
 
+class PerfQuadrantOut(BaseModel):
+    """Metrics for one (mode, side) quadrant of the performance matrix."""
+    count: int
+    win_rate: float | None
+    pnl: float
+    avg_entry_price: float | None
+    days_of_data: int
+
+
+class StationSidePerfOut(BaseModel):
+    """Per-side breakdown for one mode (real or shadow)."""
+    YES: PerfQuadrantOut
+    NO: PerfQuadrantOut
+
+
+class StationPerfOut(BaseModel):
+    """2×2 performance matrix for a single station: {real, shadow} × {YES, NO}."""
+    real: StationSidePerfOut
+    shadow: StationSidePerfOut
+
+
 class EmosCoefficients(BaseModel):
     a: float
     b: float
@@ -1203,6 +1224,113 @@ def stations_overview() -> list[StationOverviewOut]:
 
     _stations_overview_cache["ts"] = now
     _stations_overview_cache["data"] = result
+    return result
+
+
+def _build_perf_quadrant(trades: list[dict]) -> PerfQuadrantOut:
+    """Compute the 5 metrics for a single (mode, side) quadrant.
+
+    Args:
+        trades: Pre-filtered list of trade dicts for this quadrant.
+
+    Returns:
+        PerfQuadrantOut with count, win_rate, pnl, avg_entry_price, days_of_data.
+    """
+    count = len(trades)
+    if count == 0:
+        return PerfQuadrantOut(
+            count=0,
+            win_rate=None,
+            pnl=0.0,
+            avg_entry_price=None,
+            days_of_data=0,
+        )
+
+    total_pnl = sum(float(t.get("pnl") or 0.0) for t in trades)
+
+    # win_rate: fraction of settled trades (outcome='filled' and pnl != 0) where pnl > 0
+    settled = [t for t in trades if t.get("outcome") == "filled" and float(t.get("pnl") or 0.0) != 0.0]
+    if settled:
+        wins = sum(1 for t in settled if float(t.get("pnl") or 0.0) > 0)
+        win_rate: float | None = wins / len(settled)
+    else:
+        win_rate = None
+
+    # avg_entry_price: average actual_price for settled trades
+    settled_prices = [float(t["actual_price"]) for t in settled if t.get("actual_price") is not None]
+    avg_entry_price: float | None = sum(settled_prices) / len(settled_prices) if settled_prices else None
+
+    # days_of_data: distinct calendar days (UTC date of ts)
+    days: set[str] = set()
+    for t in trades:
+        ts = t.get("ts", "")
+        if isinstance(ts, str) and len(ts) >= 10:
+            days.add(ts[:10])
+    days_of_data = len(days)
+
+    return PerfQuadrantOut(
+        count=count,
+        win_rate=win_rate,
+        pnl=total_pnl,
+        avg_entry_price=avg_entry_price,
+        days_of_data=days_of_data,
+    )
+
+
+@app.get("/api/stations/perf", response_model=dict[str, StationPerfOut])
+def stations_perf() -> dict[str, StationPerfOut]:
+    """Return a 2×2 performance matrix per station: {real, shadow} × {YES, NO}.
+
+    Real quadrant contains trades where mode != 'shadow'.
+    Shadow quadrant contains trades where mode == 'shadow'.
+    Each quadrant reports: count, win_rate, pnl, avg_entry_price, days_of_data.
+
+    Only stations with at least one trade in ANY quadrant are included.
+    Falls back to load_live_trades() (JSONL) when the database is unavailable.
+    """
+    # Load all trades from DB (all modes), fall back to JSONL
+    if _db is not None:
+        try:
+            all_trades = _db.get_trades(limit=None, mode=None)
+        except Exception:
+            logger.warning("[stations/perf] failed to load trades from DB", exc_info=True)
+            all_trades = list(reversed(load_live_trades()))
+    else:
+        all_trades = list(reversed(load_live_trades()))
+
+    # Group trades by station then by mode-bucket then by side
+    # mode-bucket: 'shadow' if mode=='shadow', else 'real'
+    by_station: dict[str, dict[str, dict[str, list[dict]]]] = defaultdict(
+        lambda: {
+            "real":   {"YES": [], "NO": []},
+            "shadow": {"YES": [], "NO": []},
+        }
+    )
+
+    for trade in all_trades:
+        station = trade.get("station")
+        if not station:
+            continue
+        side = trade.get("side", "").upper()
+        if side not in ("YES", "NO"):
+            continue
+        mode_val = trade.get("mode", "")
+        bucket = "shadow" if mode_val == "shadow" else "real"
+        by_station[station][bucket][side].append(trade)
+
+    result: dict[str, StationPerfOut] = {}
+    for station, buckets in by_station.items():
+        result[station] = StationPerfOut(
+            real=StationSidePerfOut(
+                YES=_build_perf_quadrant(buckets["real"]["YES"]),
+                NO=_build_perf_quadrant(buckets["real"]["NO"]),
+            ),
+            shadow=StationSidePerfOut(
+                YES=_build_perf_quadrant(buckets["shadow"]["YES"]),
+                NO=_build_perf_quadrant(buckets["shadow"]["NO"]),
+            ),
+        )
+
     return result
 
 
