@@ -97,27 +97,31 @@ def _today_utc() -> str:
 
 
 def _dashboard_load_trades() -> list[dict]:
-    """Return all trade records, newest first. Prefers DB when available."""
+    """Return all trade records (excluding shadow), newest first. Prefers DB when available."""
     if _db is not None:
         try:
             rows = _db.get_trades(limit=None, mode=None)
             if rows:
+                # Filter out shadow rows for live metrics
+                rows = [t for t in rows if t.get("mode") != "shadow"]
                 return rows
         except Exception:
             logger.warning("[dashboard] failed to load trades from DB", exc_info=True)
     records = load_live_trades()
+    # Filter out shadow rows from JSONL fallback
+    records = [t for t in records if t.get("mode") != "shadow"]
     return list(reversed(records))
 
 
 def _compute_win_rate(trades: list[dict], n: int = 50) -> float:
-    """Compute win rate over the last *n* settled trades.
+    """Compute win rate over the last *n* settled trades (excluding shadow).
 
     Only trades with a non-zero pnl are considered settled.
     Returns 0.0 when no settled trades exist.
     """
     settled = [
         t for t in trades
-        if t.get("outcome") == "filled" and float(t.get("pnl") or 0) != 0.0
+        if t.get("mode") != "shadow" and t.get("outcome") == "filled" and float(t.get("pnl") or 0) != 0.0
     ][:n]
     if not settled:
         return 0.0
@@ -126,12 +130,12 @@ def _compute_win_rate(trades: list[dict], n: int = 50) -> float:
 
 
 def _today_pnl(trades: list[dict]) -> float:
-    """Sum PnL for trades whose timestamp falls on today (UTC)."""
+    """Sum PnL for trades whose timestamp falls on today (UTC), excluding shadow rows."""
     today = _today_utc()
     total = 0.0
     for t in trades:
         ts = t.get("ts", "")
-        if isinstance(ts, str) and ts.startswith(today):
+        if t.get("mode") != "shadow" and isinstance(ts, str) and ts.startswith(today):
             total += float(t.get("pnl", 0))
     return total
 
@@ -143,12 +147,15 @@ def _today_trade_count(trades: list[dict]) -> int:
 
 
 def _latest_capital(snapshots: list[dict]) -> float:
-    """Return the most recent capital value. Prefers DB; falls back to snapshots."""
+    """Return the most recent capital value (excluding shadow). Prefers DB; falls back to snapshots."""
     if _db is not None:
         try:
-            rows = _db.get_trades(limit=1, mode=None)
-            if rows and rows[0].get("capital_after") is not None:
-                return float(rows[0]["capital_after"])
+            rows = _db.get_trades(limit=None, mode=None)
+            if rows:
+                # Find most recent non-shadow row with capital_after
+                for row in rows:
+                    if row.get("mode") != "shadow" and row.get("capital_after") is not None:
+                        return float(row["capital_after"])
         except Exception:
             logger.warning("[dashboard] failed to read latest capital from DB", exc_info=True)
     if not snapshots:
@@ -819,7 +826,7 @@ def trades_list() -> list[dict]:
 
 @app.get("/stations")
 def stations() -> dict[str, Any]:
-    """Per-station trade count, win rate, and total PnL."""
+    """Per-station trade count, win rate, and total PnL (excluding shadow rows)."""
     all_trades = _dashboard_load_trades()
     by_station: dict[str, list[dict]] = defaultdict(list)
     for t in all_trades:
@@ -831,7 +838,8 @@ def stations() -> dict[str, Any]:
         filled = [t for t in station_trades if t.get("outcome") == "filled"]
         wins = sum(1 for t in filled if float(t.get("pnl", 0)) > 0)
         win_rate = wins / len(filled) if filled else 0.0
-        total_pnl = sum(float(t.get("pnl", 0)) for t in station_trades)
+        # Exclude shadow rows from total_pnl
+        total_pnl = sum(float(t.get("pnl", 0)) for t in station_trades if t.get("mode") != "shadow")
         result[station] = {
             "trade_count": len(station_trades),
             "filled_count": len(filled),
