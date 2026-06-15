@@ -9,7 +9,7 @@ import pytest
 _clob_stub = ModuleType("py_clob_client_v2")
 _clob_stub.ClobClient = MagicMock  # type: ignore[attr-defined]
 _clob_types_stub = ModuleType("py_clob_client_v2.clob_types")
-for _name in ("AssetType", "BalanceAllowanceParams", "CreateOrderOptions", "OrderArgs"):
+for _name in ("AssetType", "BalanceAllowanceParams", "CreateOrderOptions", "OrderArgs", "OrderPayload"):
     setattr(_clob_types_stub, _name, MagicMock)
 sys.modules.setdefault("py_clob_client_v2", _clob_stub)
 sys.modules.setdefault("py_clob_client_v2.clob_types", _clob_types_stub)
@@ -29,34 +29,28 @@ def _mock_orderbook():
 class TestSellPositionImmediateCancelPaths:
     """#203 — cancel_order False must not mark position sold without fill confirmation."""
 
-    def test_cancel_api_errors_order_still_live_returns_none(self):
-        """cancel_order() raises (network error) → check_fill shows 'open' → returns (None, order_id)."""
+    def test_cancel_api_errors_order_still_live_raises(self):
+        """cancel_order() raises (network error) → exception propagates to caller."""
         trader = _make_trader()
         # Order placed OK
         trader.client.create_and_post_order.return_value = {
             "orderID": "sell-ord-001", "status": "live"
         }
-        # cancel raises an exception (network blip) → cancel_order() catches and returns False
-        trader.client.cancel.side_effect = Exception("connection reset")
-        # check_fill shows the order is still open (not filled)
-        trader.client.get_order.return_value = {"status": "live"}
+        # v2 API: cancel_order() now raises on errors (no try-catch in live_trader.py)
+        trader.client.cancel_order.side_effect = Exception("connection reset")
 
         with patch("src.execution.live_trader.get_orderbook", return_value=_mock_orderbook()):
-            result = trader.sell_position_immediate("tok-001", shares=10.0)
-
-        sell_id, _ = result
-        assert sell_id is None, (
-            "When cancel errors AND order is not filled, position must NOT be marked sold"
-        )
+            with pytest.raises(Exception, match="connection reset"):
+                trader.sell_position_immediate("tok-001", shares=10.0)
 
     def test_cancel_returns_false_check_fill_confirms_filled_returns_order_id(self):
-        """cancel_order() returns False + check_fill confirms filled → returns (order_id, price)."""
+        """cancel_order() returns False (error response) + check_fill confirms filled → returns (order_id, price)."""
         trader = _make_trader()
         trader.client.create_and_post_order.return_value = {
             "orderID": "sell-ord-002", "status": "live"
         }
-        # cancel returns False (exchange refused cancel — order matched in-flight)
-        trader.client.cancel.return_value = {"canceled": []}  # empty → False
+        # v2 API: cancel_order returns False when response has error field
+        trader.client.cancel_order.return_value = {"error": "order already filled"}
         # check_fill confirms it is filled
         trader.client.get_order.return_value = {"status": "matched"}
 
@@ -74,7 +68,8 @@ class TestSellPositionImmediateCancelPaths:
         trader.client.create_and_post_order.return_value = {
             "orderID": "sell-ord-003", "status": "live"
         }
-        trader.client.cancel.return_value = {"canceled": []}
+        # v2 API: cancel_order returns False when response has error field
+        trader.client.cancel_order.return_value = {"error": "cancel failed"}
         trader.client.get_order.return_value = {"status": "open"}
 
         with patch("src.execution.live_trader.get_orderbook", return_value=_mock_orderbook()):
@@ -96,8 +91,8 @@ class TestSellPositionImmediateCancelPaths:
         assert result is not None
         order_id, price_cents = result
         assert order_id == "sell-ord-004"
-        # cancel was never called since status=matched was detected from resp
-        trader.client.cancel.assert_not_called()
+        # v2 API: cancel was never called since status=matched was detected from resp
+        trader.client.cancel_order.assert_not_called()
 
     def test_cancel_succeeds_returns_none_for_retry(self):
         """Happy path: cancel succeeds → returns None for caller to retry next poll."""
@@ -105,7 +100,8 @@ class TestSellPositionImmediateCancelPaths:
         trader.client.create_and_post_order.return_value = {
             "orderID": "sell-ord-005", "status": "live"
         }
-        trader.client.cancel.return_value = {"canceled": ["sell-ord-005"]}
+        # v2 API: cancel_order returns empty/success response on success
+        trader.client.cancel_order.return_value = {}
 
         with patch("src.execution.live_trader.get_orderbook", return_value=_mock_orderbook()):
             result = trader.sell_position_immediate("tok-005", shares=10.0)
