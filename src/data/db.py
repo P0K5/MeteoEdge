@@ -174,9 +174,11 @@ CREATE TABLE IF NOT EXISTS bot_config (
 );
 
 CREATE TABLE IF NOT EXISTS station_overrides (
-    station    TEXT PRIMARY KEY,
-    enabled    INTEGER NOT NULL DEFAULT 1,
-    updated_at TEXT NOT NULL
+    station     TEXT PRIMARY KEY,
+    enabled     INTEGER NOT NULL DEFAULT 1,   -- deprecated, kept for back-compat
+    yes_enabled INTEGER NOT NULL DEFAULT 1,
+    no_enabled  INTEGER NOT NULL DEFAULT 1,
+    updated_at  TEXT NOT NULL
 );
 """
 
@@ -204,6 +206,8 @@ class Database:
             ("observations", "cadence_min", "INTEGER"),
             ("observations", "is_official", "INTEGER DEFAULT 1"),
             ("trades", "actual_fee_cents", "REAL"),
+            ("station_overrides", "yes_enabled", "INTEGER NOT NULL DEFAULT 1"),
+            ("station_overrides", "no_enabled", "INTEGER NOT NULL DEFAULT 1"),
         ]:
             try:
                 self._conn.execute(
@@ -212,6 +216,12 @@ class Database:
                 self._conn.commit()
             except sqlite3.OperationalError:
                 pass  # column already exists
+
+        # Back-compat: rows where legacy enabled=0 → shadow both sides
+        self._conn.execute(
+            "UPDATE station_overrides SET yes_enabled=0, no_enabled=0 WHERE enabled=0"
+        )
+        self._conn.commit()
 
         # Migration: extend trades.mode CHECK to include 'shadow'.
         # SQLite cannot ALTER a CHECK constraint in place — requires table rebuild.
@@ -1023,25 +1033,35 @@ class Database:
     # station_overrides
     # ------------------------------------------------------------------
 
-    def get_station_override(self, station: str) -> "bool | None":
-        """Return the DB-persisted enabled state for *station*, or None if no override exists."""
+    def get_station_override(self, station: str) -> "dict | None":
+        """Return {yes_enabled, no_enabled} for *station*, or None if no override exists."""
         cur = self._conn.execute(
-            "SELECT enabled FROM station_overrides WHERE station=?", (station,)
+            "SELECT yes_enabled, no_enabled FROM station_overrides WHERE station=?", (station,)
         )
         row = cur.fetchone()
-        return bool(row[0]) if row is not None else None
+        if row is None:
+            return None
+        return {"yes_enabled": bool(row[0]), "no_enabled": bool(row[1])}
 
-    def set_station_override(self, station: str, enabled: bool) -> None:
-        """Upsert the enabled flag for *station*. Thread-safe via the existing RLock."""
+    def set_station_override(self, station: str, yes_enabled: bool, no_enabled: bool) -> None:
+        """Upsert yes_enabled and no_enabled for *station*. Thread-safe via the existing RLock."""
         with self._lock:
             self._conn.execute(
-                "INSERT INTO station_overrides(station, enabled, updated_at) VALUES(?,?,?) "
-                "ON CONFLICT(station) DO UPDATE SET enabled=excluded.enabled, updated_at=excluded.updated_at",
-                (station, int(enabled), self._now()),
+                "INSERT INTO station_overrides(station, yes_enabled, no_enabled, updated_at) "
+                "VALUES(?,?,?,?) "
+                "ON CONFLICT(station) DO UPDATE SET "
+                "yes_enabled=excluded.yes_enabled, no_enabled=excluded.no_enabled, "
+                "updated_at=excluded.updated_at",
+                (station, int(yes_enabled), int(no_enabled), self._now()),
             )
             self._conn.commit()
 
-    def get_all_station_overrides(self) -> "dict[str, bool]":
-        """Return all station_overrides rows as a plain {station: enabled} dict."""
-        cur = self._conn.execute("SELECT station, enabled FROM station_overrides")
-        return {row[0]: bool(row[1]) for row in cur.fetchall()}
+    def get_all_station_overrides(self) -> "dict[str, dict]":
+        """Return all station_overrides rows as {station: {yes_enabled, no_enabled}}."""
+        cur = self._conn.execute(
+            "SELECT station, yes_enabled, no_enabled FROM station_overrides"
+        )
+        return {
+            row[0]: {"yes_enabled": bool(row[1]), "no_enabled": bool(row[2])}
+            for row in cur.fetchall()
+        }
