@@ -171,6 +171,7 @@ class TestWalletEmptyCooldown:
             patch.object(run_module.order_manager, "sync_open_orders"),
             patch.object(run_module.order_manager, "check_take_profit_exits"),
             patch("src.scripts.run._log_open_position_snapshots"),
+            patch("src.scripts.run._check_stop_loss_exits"),
             patch("src.scripts.run.FreshnessMonitor"),
             patch("src.scripts.run.get_source_priority", return_value=[]),
             patch("src.monitoring.dashboard.last_poll_ts", None, create=True),
