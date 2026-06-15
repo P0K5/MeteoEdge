@@ -176,6 +176,7 @@ class TestWalletEmptyCooldown:
             patch("src.monitoring.dashboard.last_poll_ts", None, create=True),
             patch("src.scripts.run._append_candidate"),
             patch("src.scripts.run._append_snapshot"),
+            patch("src.scripts.run.POSITION_SIZE_WITH_FEES", 10.0),
         ):
             poll_once(mock_risk, live_trader=mock_trader, alert_manager=None, db=mock_db)
 
