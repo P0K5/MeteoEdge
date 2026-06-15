@@ -21,6 +21,7 @@ from src.config import (
     MAX_CONFIDENCE_YES_FOR_NO, ENABLE_YES_TRADES, MIN_MINUTES_TO_SETTLEMENT,
     ENABLE_CLOB_ENRICHMENT, MIN_FORECAST_BRACKET_MARGIN_F, DISABLED_STATIONS,
     SHADOW_STATIONS, SHADOW_STATIONS_YES, SHADOW_STATIONS_NO,
+    CONFIG_DEFAULTS, get_live_config,
 )
 from src.model.envelope import Bracket, WeatherState, true_probability_yes, compute_envelope
 from src.model.emos_mode import get_city_mode, apply_emos, _check_ready_for_promotion
@@ -279,6 +280,19 @@ def scan_markets(
     ts = datetime.now(timezone.utc).isoformat()
     skip_reason_counts: Counter = Counter()  # Track skip reasons for final summary
 
+    # Read shadow YES thresholds from live config (DB-backed) so they can be
+    # tuned via the dashboard without restarting the bot.  Fall back to
+    # CONFIG_DEFAULTS when db is unavailable (tests, CLI runs without a DB).
+    if db is not None:
+        _live = get_live_config(db)
+        shadow_yes_edge_min  = float(_live.get("SHADOW_MIN_EDGE_CENTS_YES",  CONFIG_DEFAULTS["SHADOW_MIN_EDGE_CENTS_YES"]))
+        shadow_yes_conf_min  = float(_live.get("SHADOW_MIN_CONFIDENCE_YES",  CONFIG_DEFAULTS["SHADOW_MIN_CONFIDENCE_YES"]))
+        shadow_yes_price_min = int(_live.get("SHADOW_MIN_PRICE_CENTS_YES", CONFIG_DEFAULTS["SHADOW_MIN_PRICE_CENTS_YES"]))
+    else:
+        shadow_yes_edge_min  = float(CONFIG_DEFAULTS["SHADOW_MIN_EDGE_CENTS_YES"])
+        shadow_yes_conf_min  = float(CONFIG_DEFAULTS["SHADOW_MIN_CONFIDENCE_YES"])
+        shadow_yes_price_min = int(CONFIG_DEFAULTS["SHADOW_MIN_PRICE_CENTS_YES"])
+
     for market in markets:
         try:
             is_temp, station = is_highest_temp_market(market)
@@ -427,7 +441,13 @@ def scan_markets(
             shadow_yes = (not yes_enabled) or (not ENABLE_YES_TRADES)
             shadow_no = not no_enabled
 
-            if ev_yes >= MIN_EDGE_CENTS and p_yes >= MIN_CONFIDENCE_YES and bracket.yes_ask_cents >= MIN_PRICE_CENTS:
+            # Use looser shadow thresholds on the YES shadow path so the
+            # shadow loop can collect data.  The NO branch is untouched.
+            _yes_edge = shadow_yes_edge_min if shadow_yes else MIN_EDGE_CENTS
+            _yes_conf = shadow_yes_conf_min if shadow_yes else MIN_CONFIDENCE_YES
+            _yes_price = shadow_yes_price_min if shadow_yes else MIN_PRICE_CENTS
+
+            if ev_yes >= _yes_edge and p_yes >= _yes_conf and bracket.yes_ask_cents >= _yes_price:
                 if ev_yes > MAX_EDGE_CENTS:
                     skipped_reason = "max_edge"
                     log.debug("[%s] -- SKIPPED %s: %s edge=%.2f¢ > MAX=%.2f¢",

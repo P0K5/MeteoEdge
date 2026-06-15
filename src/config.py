@@ -379,6 +379,12 @@ CONFIG_DEFAULTS: "dict[str, str | int | float | bool]" = {
     "POLL_INTERVAL_SECONDS": 300,
     "MAX_MINUTES_TO_SETTLEMENT": 1440,
     "MIN_MINUTES_TO_SETTLEMENT": 15,
+    # Shadow-only YES thresholds — applied on the YES shadow path only.
+    # These are intentionally looser than the live YES gates so the shadow loop
+    # can collect data without risking live orders.  The NO side is unaffected.
+    "SHADOW_MIN_EDGE_CENTS_YES": 3.0,
+    "SHADOW_MIN_CONFIDENCE_YES": 0.55,
+    "SHADOW_MIN_PRICE_CENTS_YES": 20,
 }
 
 
