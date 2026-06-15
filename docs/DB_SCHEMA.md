@@ -407,6 +407,49 @@ CREATE TABLE IF NOT EXISTS bot_config (
 
 ---
 
+### station_overrides
+
+**Purpose:** Per-station, per-side shadow/live flag overrides. Controls whether YES or NO candidates for a given station are executed live or logged as shadow trades.
+
+**Writer:** `POST /api/stations/{metar}/toggle` (both sides), `POST /api/stations/{metar}/toggle/yes`, `POST /api/stations/{metar}/toggle/no` (dashboard API)
+**Reader:** Market scanner (`src/strategy/scanner.py`) and stations overview (`GET /api/stations/overview`)
+
+| Column | Type | Units | Nullable | Description |
+|--------|------|-------|----------|-------------|
+| `station` | TEXT PRIMARY KEY | METAR code | No | Station code (e.g., `KORD`, `RKSI`) |
+| `enabled` | INTEGER NOT NULL DEFAULT 1 | boolean (0/1) | No | **Deprecated** — kept for back-compat. Legacy rows with `enabled=0` are migrated to `yes_enabled=0, no_enabled=0`. |
+| `yes_enabled` | INTEGER NOT NULL DEFAULT 1 | boolean (0/1) | No | 1 = YES side is live (orders placed); 0 = YES side is shadow (logged at $1 notional, no order) |
+| `no_enabled` | INTEGER NOT NULL DEFAULT 1 | boolean (0/1) | No | 1 = NO side is live (orders placed); 0 = NO side is shadow (logged at $1 notional, no order) |
+| `updated_at` | TEXT NOT NULL | ISO 8601 timestamp (UTC) | No | Last update timestamp |
+
+**DDL:**
+```sql
+CREATE TABLE IF NOT EXISTS station_overrides (
+    station     TEXT PRIMARY KEY,
+    enabled     INTEGER NOT NULL DEFAULT 1,
+    yes_enabled INTEGER NOT NULL DEFAULT 1,
+    no_enabled  INTEGER NOT NULL DEFAULT 1,
+    updated_at  TEXT NOT NULL
+);
+```
+
+**Four states:**
+
+| `yes_enabled` | `no_enabled` | Behaviour |
+|---|---|---|
+| 1 | 1 | Fully live — both sides trade |
+| 0 | 1 | YES shadow, NO live |
+| 1 | 0 | YES live, NO shadow |
+| 0 | 0 | Fully shadow — both sides logged only |
+
+**Notes:**
+- `enabled` is deprecated but retained for backwards compatibility. New code should read/write `yes_enabled` and `no_enabled` directly.
+- Migration: existing rows with `enabled=0` are automatically back-populated to `yes_enabled=0, no_enabled=0` on first startup after upgrade.
+- `ENABLE_YES_TRADES=False` (env var) still forces YES shadow on ALL stations regardless of `yes_enabled`.
+- If no DB override exists for a station, the scanner falls back to the env vars `SHADOW_STATIONS`, `SHADOW_STATIONS_YES`, `SHADOW_STATIONS_NO`.
+
+---
+
 ## Data Flow Diagram
 
 ```

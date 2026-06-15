@@ -175,7 +175,7 @@ CREATE TABLE IF NOT EXISTS bot_config (
 
 CREATE TABLE IF NOT EXISTS station_overrides (
     station     TEXT PRIMARY KEY,
-    enabled     INTEGER NOT NULL DEFAULT 1,   -- deprecated, kept for back-compat
+    enabled     INTEGER NOT NULL DEFAULT 1,
     yes_enabled INTEGER NOT NULL DEFAULT 1,
     no_enabled  INTEGER NOT NULL DEFAULT 1,
     updated_at  TEXT NOT NULL

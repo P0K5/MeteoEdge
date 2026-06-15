@@ -3,6 +3,7 @@
 Covers:
   - DB: get_station_override, set_station_override, get_all_station_overrides
   - API: POST /api/stations/{metar}/toggle (on→off, off→on, 404 for unknown)
+  - API: POST /api/stations/{metar}/toggle/yes and /toggle/no (per-side)
   - API: GET /api/stations/overview reflects DB overrides
 """
 from __future__ import annotations
@@ -54,24 +55,41 @@ class TestStationOverrideDb:
         result = db.get_station_override("KORD")
         assert result is None
 
-    def test_set_then_get_enabled(self):
-        """set_station_override(enabled=True) persists; get returns True."""
+    def test_set_then_get_both_enabled(self):
+        """set_station_override(yes=True, no=True) persists; get returns both True."""
         db = _mem_db()
-        db.set_station_override("KORD", True)
-        assert db.get_station_override("KORD") is True
+        db.set_station_override("KORD", yes_enabled=True, no_enabled=True)
+        result = db.get_station_override("KORD")
+        assert result == {"yes_enabled": True, "no_enabled": True}
 
-    def test_set_then_get_disabled(self):
-        """set_station_override(enabled=False) persists; get returns False."""
+    def test_set_then_get_both_disabled(self):
+        """set_station_override(yes=False, no=False) persists; get returns both False."""
         db = _mem_db()
-        db.set_station_override("KORD", False)
-        assert db.get_station_override("KORD") is False
+        db.set_station_override("KORD", yes_enabled=False, no_enabled=False)
+        result = db.get_station_override("KORD")
+        assert result == {"yes_enabled": False, "no_enabled": False}
+
+    def test_set_yes_shadow_no_live(self):
+        """set_station_override(yes=False, no=True) yields YES shadow, NO live."""
+        db = _mem_db()
+        db.set_station_override("KORD", yes_enabled=False, no_enabled=True)
+        result = db.get_station_override("KORD")
+        assert result == {"yes_enabled": False, "no_enabled": True}
+
+    def test_set_yes_live_no_shadow(self):
+        """set_station_override(yes=True, no=False) yields YES live, NO shadow."""
+        db = _mem_db()
+        db.set_station_override("KORD", yes_enabled=True, no_enabled=False)
+        result = db.get_station_override("KORD")
+        assert result == {"yes_enabled": True, "no_enabled": False}
 
     def test_upsert_overrides_previous_value(self):
         """Second set_station_override call overwrites the first."""
         db = _mem_db()
-        db.set_station_override("KMIA", True)
-        db.set_station_override("KMIA", False)
-        assert db.get_station_override("KMIA") is False
+        db.set_station_override("KMIA", yes_enabled=True, no_enabled=True)
+        db.set_station_override("KMIA", yes_enabled=False, no_enabled=False)
+        result = db.get_station_override("KMIA")
+        assert result == {"yes_enabled": False, "no_enabled": False}
 
     def test_get_all_empty(self):
         """get_all_station_overrides returns empty dict when table is empty."""
@@ -79,31 +97,30 @@ class TestStationOverrideDb:
         assert db.get_all_station_overrides() == {}
 
     def test_get_all_returns_all_rows(self):
-        """get_all_station_overrides returns every inserted row."""
+        """get_all_station_overrides returns every inserted row as dicts."""
         db = _mem_db()
-        db.set_station_override("KORD", True)
-        db.set_station_override("KMIA", False)
+        db.set_station_override("KORD", yes_enabled=True, no_enabled=True)
+        db.set_station_override("KMIA", yes_enabled=False, no_enabled=False)
         result = db.get_all_station_overrides()
-        assert result == {"KORD": True, "KMIA": False}
+        assert result == {
+            "KORD": {"yes_enabled": True, "no_enabled": True},
+            "KMIA": {"yes_enabled": False, "no_enabled": False},
+        }
 
     def test_toggle_on_to_off_and_back(self):
-        """Manual toggle sequence: None → True → False → True (persistence)."""
+        """Manual toggle sequence: None → both enabled → both disabled → both enabled."""
         db = _mem_db()
-        # No override → treat as None
         assert db.get_station_override("KATL") is None
-        # Set enabled
-        db.set_station_override("KATL", True)
-        assert db.get_station_override("KATL") is True
-        # Flip to disabled
-        db.set_station_override("KATL", False)
-        assert db.get_station_override("KATL") is False
-        # Flip back
-        db.set_station_override("KATL", True)
-        assert db.get_station_override("KATL") is True
+        db.set_station_override("KATL", yes_enabled=True, no_enabled=True)
+        assert db.get_station_override("KATL") == {"yes_enabled": True, "no_enabled": True}
+        db.set_station_override("KATL", yes_enabled=False, no_enabled=False)
+        assert db.get_station_override("KATL") == {"yes_enabled": False, "no_enabled": False}
+        db.set_station_override("KATL", yes_enabled=True, no_enabled=True)
+        assert db.get_station_override("KATL") == {"yes_enabled": True, "no_enabled": True}
 
 
 # ---------------------------------------------------------------------------
-# API — POST /api/stations/{metar}/toggle
+# API — POST /api/stations/{metar}/toggle (both sides, back-compat)
 # ---------------------------------------------------------------------------
 
 class TestStationToggleEndpoint:
@@ -139,7 +156,6 @@ class TestStationToggleEndpoint:
     def test_toggle_flips_enabled_to_false(self, client_with_db):
         """KORD is enabled by default; first toggle should disable it."""
         client, db = client_with_db
-        # KORD is not in DISABLED_STATIONS by default; first toggle → False
         resp = client.post("/api/stations/KORD/toggle")
         data = resp.json()
         assert data["enabled"] is False
@@ -154,27 +170,24 @@ class TestStationToggleEndpoint:
         assert second_enabled is not first_enabled
 
     def test_toggle_persists_to_db(self, client_with_db):
-        """After toggle, DB row reflects new state."""
+        """After toggle, DB row reflects new state on both sides."""
         client, db = client_with_db
         resp = client.post("/api/stations/KORD/toggle")
         new_enabled = resp.json()["enabled"]
         db_val = db.get_station_override("KORD")
-        assert db_val == new_enabled
+        assert db_val == {"yes_enabled": new_enabled, "no_enabled": new_enabled}
 
     def test_toggle_off_then_on(self, client_with_db):
         """Toggle a station off then back on via two consecutive POST calls."""
         client, db = client_with_db
-        # First toggle (on → off for a normally-enabled station)
         r1 = client.post("/api/stations/KMIA/toggle")
         assert r1.json()["enabled"] is False
-        # Second toggle (off → on)
         r2 = client.post("/api/stations/KMIA/toggle")
         assert r2.json()["enabled"] is True
 
     def test_toggle_disabled_station_enables_it(self, client_with_db):
         """If DISABLED_STATIONS env has a station, toggle should enable it."""
         client, db = client_with_db
-        # RKSI is in DISABLED_STATIONS by default (env default "RKSI")
         with patch("src.dashboard.api.DISABLED_STATIONS", {"RKSI"}):
             resp = client.post("/api/stations/RKSI/toggle")
         assert resp.status_code == 200
@@ -183,13 +196,80 @@ class TestStationToggleEndpoint:
     def test_toggle_invalidates_overview_cache(self, client_with_db):
         """Toggle must invalidate the overview cache (ts reset to 0)."""
         client, db = client_with_db
-        # Prime the cache
         dash_api._stations_overview_cache["ts"] = 999999.0
         dash_api._stations_overview_cache["data"] = []
-        # Toggle
         client.post("/api/stations/KORD/toggle")
         assert dash_api._stations_overview_cache["ts"] == 0.0
         assert dash_api._stations_overview_cache["data"] is None
+
+
+# ---------------------------------------------------------------------------
+# API — POST /api/stations/{metar}/toggle/yes and /toggle/no
+# ---------------------------------------------------------------------------
+
+class TestStationPerSideToggleEndpoints:
+    def test_toggle_yes_returns_200(self, client_with_db):
+        """POST /api/stations/KORD/toggle/yes returns 200."""
+        client, db = client_with_db
+        resp = client.post("/api/stations/KORD/toggle/yes")
+        assert resp.status_code == 200
+
+    def test_toggle_yes_response_shape(self, client_with_db):
+        """POST /toggle/yes response includes yes_enabled and no_enabled."""
+        client, db = client_with_db
+        resp = client.post("/api/stations/KORD/toggle/yes")
+        data = resp.json()
+        assert "metar" in data
+        assert "yes_enabled" in data
+        assert "no_enabled" in data
+
+    def test_toggle_yes_only_flips_yes(self, client_with_db):
+        """POST /toggle/yes only changes yes_enabled; no_enabled unchanged."""
+        client, db = client_with_db
+        # Pre-set both sides live
+        db.set_station_override("KORD", yes_enabled=True, no_enabled=True)
+        # Toggle only YES
+        resp = client.post("/api/stations/KORD/toggle/yes")
+        data = resp.json()
+        assert data["yes_enabled"] is False
+        assert data["no_enabled"] is True  # unchanged
+
+    def test_toggle_no_only_flips_no(self, client_with_db):
+        """POST /toggle/no only changes no_enabled; yes_enabled unchanged."""
+        client, db = client_with_db
+        db.set_station_override("KORD", yes_enabled=True, no_enabled=True)
+        resp = client.post("/api/stations/KORD/toggle/no")
+        data = resp.json()
+        assert data["yes_enabled"] is True   # unchanged
+        assert data["no_enabled"] is False
+
+    def test_toggle_yes_404_unknown_metar(self, client_with_db):
+        """POST /api/stations/ZZZZ/toggle/yes returns 404."""
+        client, db = client_with_db
+        resp = client.post("/api/stations/ZZZZ/toggle/yes")
+        assert resp.status_code == 404
+
+    def test_toggle_no_404_unknown_metar(self, client_with_db):
+        """POST /api/stations/ZZZZ/toggle/no returns 404."""
+        client, db = client_with_db
+        resp = client.post("/api/stations/ZZZZ/toggle/no")
+        assert resp.status_code == 404
+
+    def test_toggle_yes_invalidates_cache(self, client_with_db):
+        """POST /toggle/yes invalidates the overview cache."""
+        client, db = client_with_db
+        dash_api._stations_overview_cache["ts"] = 999999.0
+        dash_api._stations_overview_cache["data"] = []
+        client.post("/api/stations/KORD/toggle/yes")
+        assert dash_api._stations_overview_cache["ts"] == 0.0
+
+    def test_toggle_no_invalidates_cache(self, client_with_db):
+        """POST /toggle/no invalidates the overview cache."""
+        client, db = client_with_db
+        dash_api._stations_overview_cache["ts"] = 999999.0
+        dash_api._stations_overview_cache["data"] = []
+        client.post("/api/stations/KORD/toggle/no")
+        assert dash_api._stations_overview_cache["ts"] == 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -207,10 +287,9 @@ class TestStationsOverviewWithDbOverrides:
         assert len(data) > 0
 
     def test_overview_enabled_reflects_db_override_false(self, client_with_db):
-        """After toggling KORD off, overview shows enabled=false for KORD."""
+        """After toggling KORD off (both sides), overview shows enabled=false for KORD."""
         client, db = client_with_db
-        db.set_station_override("KORD", False)
-        # Clear cache to force fresh read
+        db.set_station_override("KORD", yes_enabled=False, no_enabled=False)
         dash_api._stations_overview_cache["ts"] = 0.0
         dash_api._stations_overview_cache["data"] = None
 
@@ -220,12 +299,10 @@ class TestStationsOverviewWithDbOverrides:
         assert stations["KORD"]["enabled"] is False
 
     def test_overview_enabled_reflects_db_override_true(self, client_with_db):
-        """DB override enabled=True lifts env-based disable for a station."""
+        """DB override with both enabled lifts env-based disable for a station."""
         client, db = client_with_db
-        # Patch DISABLED_STATIONS to disable KORD via env
         with patch("src.dashboard.api.DISABLED_STATIONS", {"KORD"}):
-            # DB override: explicitly enabled
-            db.set_station_override("KORD", True)
+            db.set_station_override("KORD", yes_enabled=True, no_enabled=True)
             dash_api._stations_overview_cache["ts"] = 0.0
             dash_api._stations_overview_cache["data"] = None
 
@@ -233,7 +310,17 @@ class TestStationsOverviewWithDbOverrides:
 
         assert resp.status_code == 200
         stations = {s["metar"]: s for s in resp.json()}
-        # DB override wins over DISABLED_STATIONS
+        assert stations["KORD"]["enabled"] is True
+
+    def test_overview_partial_enabled_counts_as_enabled(self, client_with_db):
+        """Station with yes=False, no=True is counted as enabled (one side live)."""
+        client, db = client_with_db
+        db.set_station_override("KORD", yes_enabled=False, no_enabled=True)
+        dash_api._stations_overview_cache["ts"] = 0.0
+        dash_api._stations_overview_cache["data"] = None
+
+        resp = client.get("/api/stations/overview")
+        stations = {s["metar"]: s for s in resp.json()}
         assert stations["KORD"]["enabled"] is True
 
     def test_overview_no_override_uses_disabled_stations(self, client_with_db):
@@ -246,17 +333,14 @@ class TestStationsOverviewWithDbOverrides:
 
         assert resp.status_code == 200
         stations = {s["metar"]: s for s in resp.json()}
-        # No DB row → falls back to DISABLED_STATIONS
         assert stations["KORD"]["enabled"] is False
 
     def test_overview_after_toggle_shows_new_state(self, client_with_db):
         """Toggling via API endpoint and then querying overview shows updated state."""
         client, db = client_with_db
-        # Toggle KORD (should go from enabled → disabled)
         toggle_resp = client.post("/api/stations/KORD/toggle")
         new_enabled = toggle_resp.json()["enabled"]
 
-        # Overview must agree (cache was invalidated by toggle)
         overview_resp = client.get("/api/stations/overview")
         stations = {s["metar"]: s for s in overview_resp.json()}
         assert stations["KORD"]["enabled"] == new_enabled

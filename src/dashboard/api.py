@@ -1429,7 +1429,6 @@ def station_toggle(metar: str) -> dict:
     # Determine current effective enabled state (both sides)
     db_override = _db.get_station_override(metar_upper)
     if db_override is not None:
-        # Consider "enabled" as both sides currently enabled
         current_enabled = db_override["yes_enabled"] and db_override["no_enabled"]
     else:
         current_enabled = metar_upper not in DISABLED_STATIONS

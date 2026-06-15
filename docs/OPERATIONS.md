@@ -204,7 +204,10 @@ All configuration is controlled via environment variables (defaults in `src/conf
 | `STOP_LOSS_MIN_BRACKET_PROXIMITY_F` | 0.5 | °F | Don't fire while running daily high is more than this many °F below bracket_low (set ≤0 to disable) | No |
 | `STOP_LOSS_RESPECT_FORECAST_OVERSHOOT` | true | bool | Suppress stop-loss firing when forecast exceeds bracket_high (NO wins on overshoot) | No |
 | `MIN_FORECAST_BRACKET_MARGIN_F` | 2.5 | °F | Skip NO entries whose bracket is closer than this to the expected daily high | No |
-| `DISABLED_STATIONS` | RKSI | codes | Comma-separated station codes excluded from new entries | No |
+| `SHADOW_STATIONS` | RKSI | codes | Comma-separated station codes where BOTH sides are shadowed (orders logged at $1 notional, not placed). Alias: `DISABLED_STATIONS` (back-compat). | No |
+| `DISABLED_STATIONS` | RKSI | codes | Alias for `SHADOW_STATIONS` — kept for backwards compatibility. Both env vars are equivalent. | No |
+| `SHADOW_STATIONS_YES` | (unset) | codes | Comma-separated stations where only the YES side is shadowed; NO side trades normally. | No |
+| `SHADOW_STATIONS_NO` | (unset) | codes | Comma-separated stations where only the NO side is shadowed; YES side trades normally. | No |
 
 ### Operational & API
 
