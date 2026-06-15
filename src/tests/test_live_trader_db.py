@@ -9,7 +9,7 @@ import pytest
 _clob_stub = ModuleType("py_clob_client_v2")
 _clob_stub.ClobClient = MagicMock  # type: ignore[attr-defined]
 _clob_types_stub = ModuleType("py_clob_client_v2.clob_types")
-for _name in ("AssetType", "BalanceAllowanceParams", "CreateOrderOptions", "OrderArgs"):
+for _name in ("AssetType", "BalanceAllowanceParams", "CreateOrderOptions", "OrderArgs", "OrderPayload"):
     setattr(_clob_types_stub, _name, MagicMock)
 sys.modules.setdefault("py_clob_client_v2", _clob_stub)
 sys.modules.setdefault("py_clob_client_v2.clob_types", _clob_types_stub)
@@ -97,7 +97,8 @@ class TestCancelOrderClosesPosition:
             shares=7.0, entry_ts="2024-01-15T12:01:00Z",
         )
         trader = _make_trader(db)
-        trader.client.cancel.return_value = {"canceled": ["ord-to-cancel"]}
+        # v2 API: cancel_order takes OrderPayload and returns success response
+        trader.client.cancel_order.return_value = {}  # Empty response indicates success
 
         result = trader.cancel_order("ord-to-cancel")
 
@@ -106,13 +107,24 @@ class TestCancelOrderClosesPosition:
 
     def test_cancel_order_no_db_returns_true(self):
         trader = _make_trader(db=None)
-        trader.client.cancel.return_value = {"canceled": ["ord-no-db"]}
+        # v2 API: cancel_order takes OrderPayload and returns success response
+        trader.client.cancel_order.return_value = {}  # Empty response indicates success
         assert trader.cancel_order("ord-no-db") is True
 
-    def test_cancel_order_client_error_returns_false(self):
+    def test_cancel_order_client_error_raises(self):
+        """v2 API: cancel_order failures now raise exceptions (hard error)."""
         trader = _make_trader(db=None)
-        trader.client.cancel.side_effect = Exception("network error")
-        assert trader.cancel_order("ord-net-fail") is False
+        trader.client.cancel_order.side_effect = Exception("network error")
+        with pytest.raises(Exception, match="network error"):
+            trader.cancel_order("ord-net-fail")
+
+    def test_cancel_order_with_error_response_returns_false(self):
+        """v2 API: if response has an error field, cancel_order() returns False."""
+        trader = _make_trader(db=None)
+        trader.client.cancel_order.return_value = {"error": "order not found"}
+        # Success is False when error is present in response
+        result = trader.cancel_order("ord-missing")
+        assert result is False
 
 
 class TestNoLiveStateJson:

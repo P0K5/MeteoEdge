@@ -6,7 +6,7 @@ log = logging.getLogger(__name__)
 from typing import Literal
 
 from py_clob_client_v2 import ClobClient
-from py_clob_client_v2.clob_types import AssetType, BalanceAllowanceParams, CreateOrderOptions, OrderArgs
+from py_clob_client_v2.clob_types import AssetType, BalanceAllowanceParams, CreateOrderOptions, OrderArgs, OrderPayload
 
 from src.data.polymarket import get_orderbook
 
@@ -188,16 +188,19 @@ class LiveTrader:
         return None, order_id
 
     def cancel_order(self, order_id: str) -> bool:
-        """Cancel an open order. Returns True if cancelled."""
-        try:
-            resp = self.client.cancel(order_id)
-            cancelled = resp.get("canceled") == [order_id]
-            if cancelled and self._db is not None:
-                self._db.close_position(order_id)
-            return cancelled
-        except Exception as e:
-            log.warning("[live] cancel %s... error: %s", order_id[:12], e)
-            return False
+        """Cancel an open order. Returns True if cancelled.
+
+        Uses py_clob_client_v2's cancel_order API which raises exceptions
+        on failure (network errors, unauthorized, etc.).
+        """
+        payload = OrderPayload(orderID=order_id)
+        resp = self.client.cancel_order(payload)
+        # If cancel_order() doesn't raise, treat as successful
+        # Response may be None or a dict depending on exchange response
+        cancelled = resp is not None and not resp.get("error")
+        if cancelled and self._db is not None:
+            self._db.close_position(order_id)
+        return cancelled
 
     def check_fill(self, order_id: str) -> Literal["open", "filled", "cancelled"]:
         """Return current status of an order. Never raises."""

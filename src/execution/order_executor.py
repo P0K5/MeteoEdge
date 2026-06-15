@@ -10,6 +10,7 @@ import time
 from src.config import POSITION_SIZE_EUR
 from src.execution.live_trader import LiveTrader
 from src.execution.order_manager import order_manager as _order_manager
+from src.monitoring.alerts import AlertManager
 
 log = logging.getLogger(__name__)
 
@@ -86,7 +87,25 @@ def _execute_live(
                 break
 
         if outcome == "timeout":
-            trader.cancel_order(order_id)
+            try:
+                trader.cancel_order(order_id)
+            except Exception as e:
+                log.error(
+                    "  [live] CRITICAL: Failed to cancel GTC order %s after timeout: %s. "
+                    "Order is still live on exchange and may fill as a ghost trade.",
+                    order_id[:12], e, exc_info=True,
+                )
+                alert_manager = AlertManager()
+                alert_manager._fire(
+                    alert_key="gtc_cancel_failure",
+                    subject=f"CRITICAL: GTC order cancellation failed for {order_id[:12]}",
+                    body=(
+                        f"Order {order_id} reached timeout but cancellation failed with error: {e}\n"
+                        f"This order is still live on the Polymarket exchange and may fill "
+                        f"as a ghost trade long after we stop tracking it.\n"
+                        "Immediate investigation required."
+                    ),
+                )
 
         risk_manager.close_position()
         if outcome == "filled":
