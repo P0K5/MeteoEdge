@@ -1713,6 +1713,18 @@ _CONFIG_META: dict[str, dict] = {
         "group": "strategy",
         "options": ["legacy", "emos_shadow", "emos_primary"],
     },
+    "SHADOW_MIN_EDGE_CENTS_YES": {
+        "description": "Minimum YES edge for shadow-log entry (live YES uses MIN_EDGE_CENTS)",
+        "type": "float", "group": "strategy", "min": 0.5, "max": 15.0,
+    },
+    "SHADOW_MIN_CONFIDENCE_YES": {
+        "description": "Minimum p(YES) for shadow-log entry (live YES uses MIN_CONFIDENCE_YES)",
+        "type": "float", "group": "strategy", "min": 0.5, "max": 0.95,
+    },
+    "SHADOW_MIN_PRICE_CENTS_YES": {
+        "description": "Minimum YES ask for shadow-log entry (live YES uses MIN_PRICE_CENTS)",
+        "type": "int", "group": "strategy", "min": 1, "max": 60,
+    },
     "DAILY_LOSS_LIMIT_EUR": {
         "description": "Maximum daily loss before trading halts (€)",
         "type": "float",

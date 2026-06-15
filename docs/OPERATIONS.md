@@ -181,6 +181,22 @@ All configuration is controlled via environment variables (defaults in `src/conf
 | `POLL_INTERVAL_SECONDS` | 300 | seconds | How often to poll Polymarket for new markets (5 min default) | No |
 | `FORECAST_STDDEV_F` | 2.0 | °F | Forecast uncertainty (stddev) for Bayesian prior on undetermined brackets | No |
 
+### Shadow YES Gate Thresholds (issue #284)
+
+The YES gate is intentionally strict for live trading but uses looser thresholds on the shadow path so the shadow loop can collect outcome data without loosening live-order gates.
+
+These three parameters apply **only when `shadow_yes=True`** (station is in `SHADOW_STATIONS`, `SHADOW_STATIONS_YES`, or `ENABLE_YES_TRADES=false`). They have **no effect on live YES orders or the NO side**.
+
+| Key | Default | Unit | Description |
+|-----|---------|------|-------------|
+| `SHADOW_MIN_EDGE_CENTS_YES` | 3.0 | ¢ | Minimum EV to emit a shadow YES candidate (live YES uses `MIN_EDGE_CENTS=15`) |
+| `SHADOW_MIN_CONFIDENCE_YES` | 0.55 | probability | Minimum p(YES) for a shadow YES candidate (live YES uses `MIN_CONFIDENCE_YES=0.85`) |
+| `SHADOW_MIN_PRICE_CENTS_YES` | 20 | ¢ | Minimum YES ask price for a shadow candidate (live YES uses `MIN_PRICE_CENTS=60`) |
+
+All three keys are DB-backed (editable via the dashboard Config tab or `PATCH /api/config`) and support live reload without a bot restart.
+
+**NO side guarantee:** The NO branch in `src/strategy/scanner.py` uses `MIN_EDGE_CENTS`, `MAX_CONFIDENCE_YES_FOR_NO`, and `MIN_PRICE_CENTS` unconditionally. None of the `SHADOW_MIN_*_YES` keys affect NO candidate detection.
+
 ### Risk Management
 
 | Variable | Default | Unit | Description | Requires Credentials |
