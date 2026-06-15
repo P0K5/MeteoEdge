@@ -34,7 +34,7 @@ def fix_stuck_trades():
     stuck = db._conn.execute(
         """
         SELECT t.id, t.ts, t.station, t.ticker, t.side, t.bracket_low, t.bracket_high,
-               t.actual_price, t.capital_before
+               t.actual_price, t.capital_before, t.size_eur
         FROM trades t
         WHERE t.mode = 'live'
           AND t.outcome IS NULL
@@ -82,19 +82,27 @@ def fix_stuck_trades():
             else:  # side == "NO"
                 won = not resolved_yes  # NO wins if resolved_yes=0
 
-            # Calculate P&L
+            # Calculate P&L using the canonical formula from settle_live_trades()
+            # 1. Extract position size from size_eur
             actual_price = float(trade['actual_price'])
-            if won:
-                pnl = (100 - actual_price) / 100
-                outcome = "filled"
-            else:
-                pnl = -actual_price / 100
-                outcome = "filled"
+            size_eur = float(trade.get('size_eur') or 0)
+
+            # 2. Compute shares: shares = size_eur / (actual_price / 100)
+            # actual_price is in cents, so convert to dollars
+            shares = size_eur / (actual_price / 100) if actual_price else 0
+
+            # 3. Compute per-unit P&L in cents
+            pnl_per_share_cents = (100 - actual_price) if won else -actual_price
+
+            # 4. Scale to total P&L in USDC by multiplying by shares
+            pnl = round(pnl_per_share_cents / 100 * shares, 4)
+            outcome = "filled"
 
             log.info(
                 "[fix_stuck_trades] id=%s ticker=%s side=%s actual_high=%.1f "
-                "resolved_yes=%s won=%s pnl=%.4f",
-                trade_id, ticker, side, actual_high, resolved_yes, won, pnl
+                "resolved_yes=%s won=%s size_eur=%.4f shares=%.4f pnl_per_share_cents=%d pnl=%.4f",
+                trade_id, ticker, side, actual_high, resolved_yes, won,
+                size_eur, shares, pnl_per_share_cents, pnl
             )
         else:
             # No settlement found; flag for manual review
