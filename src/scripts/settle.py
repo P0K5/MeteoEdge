@@ -60,15 +60,20 @@ def fetch_daily_climate_high(station: str, target_date: date) -> float | None:
 
 
 def settle_shadow_trades(target: date, truth: dict, db=None) -> None:
-    """Settle shadow YES trades for *target* using real outcomes from *truth*.
+    """Settle shadow trades for *target* using real outcomes from *truth*.
 
     Shadow rows were inserted with ``mode='shadow'``, ``capital_before=0.0``,
-    and ``actual_price=yes_ask_cents`` (the observed ask at logging time).
+    and ``actual_price=ask_cents`` (the observed ask at logging time).
     Settlement uses a $1 notional stake so results are normalised for
     cross-period comparison:
 
+    YES side:
         pnl = (100 - yes_ask) / 100   if YES bracket was hit (won)
         pnl = -(yes_ask) / 100        if YES bracket was missed (lost)
+
+    NO side:
+        pnl = (100 - no_ask) / 100    if YES bracket was missed (NO won)
+        pnl = -(no_ask) / 100         if YES bracket was hit (NO lost)
 
     Idempotent: rows already having ``settled_at IS NOT NULL`` are skipped.
     Does not touch risk_manager state — shadow trades are observation-only.
@@ -92,12 +97,18 @@ def settle_shadow_trades(target: date, truth: dict, db=None) -> None:
         actual = truth[station]
         lo, hi = float(r["bracket_low"]), float(r["bracket_high"])
         yes_won = lo <= actual <= hi
-        yes_ask = float(r["actual_price"])  # observed ask stored at insert time
+        ask = float(r["actual_price"])  # observed ask stored at insert time
 
-        if yes_won:
-            pnl = (100 - yes_ask) / 100
+        side = r.get("side", "YES")
+        if side == "YES":
+            won = yes_won
+        else:  # NO
+            won = not yes_won
+
+        if won:
+            pnl = (100 - ask) / 100
         else:
-            pnl = -yes_ask / 100
+            pnl = -ask / 100
 
         try:
             db.update_trade_by_id(
@@ -109,8 +120,8 @@ def settle_shadow_trades(target: date, truth: dict, db=None) -> None:
             )
             n_settled += 1
             log.debug(
-                "[settle] [shadow] id=%s station=%s yes_won=%s pnl=%.4f",
-                r["id"], station, yes_won, pnl,
+                "[settle] [shadow] id=%s station=%s side=%s yes_won=%s won=%s pnl=%.4f",
+                r["id"], station, side, yes_won, won, pnl,
             )
         except Exception as e:
             log.warning("[settle] [shadow] update failed for row %s: %s", r["id"], e)

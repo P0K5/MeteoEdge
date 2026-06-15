@@ -45,6 +45,43 @@ STATIONS = [
     ("ZGSZ", 22.6393,  113.8108,  "Shenzhen",      "ZGSZ", "C", "Asia/Shanghai"),     # 12/12 100% shadow
     ("WSSS",  1.3644,  103.9915,  "Singapore",     "WSSS", "C", "Asia/Singapore"),    # 9/9 100% shadow
     ("MPMG",  8.9734,  -79.5556,  "Panama City",   "MPMG", "C", "America/Panama"),    # 10/10 100% shadow
+
+    # --- Archive shadow candidates (issue #274) — shadow-only by default.
+    # Ported from archive/polymarket-shadow/config.py (7-tuple: region and
+    # forecast_source dropped). All are included in SHADOW_STATIONS_ARCHIVE below.
+    # Hong Kong intentionally OMITTED — resolves against Hong Kong Observatory
+    # (weather.gov.hk), not a standard ICAO METAR site. Requires a custom
+    # scraper before it can be added. Track in a follow-up issue.
+
+    # Europe
+    ("EGLC", 51.5053,    0.0553,  "London",        "EGLC", "C", "Europe/London"),
+    ("LFPB", 48.9694,    2.4414,  "Paris",         "LFPB", "C", "Europe/Paris"),
+    ("LIMC", 45.6306,    8.7281,  "Milan",         "LIMC", "C", "Europe/Rome"),
+    ("EFHK", 60.3172,   24.9633,  "Helsinki",      "EFHK", "C", "Europe/Helsinki"),
+    ("EPWA", 52.1657,   20.9671,  "Warsaw",        "EPWA", "C", "Europe/Warsaw"),
+    ("LTFM", 41.2611,   28.7416,  "Istanbul",      "LTFM", "C", "Europe/Istanbul"),
+    # Ankara resolves against LTAC (Cubuk, north of city centre) per Polymarket descriptions
+    ("LTAC", 40.1378,   32.9988,  "Ankara",        "LTAC", "C", "Europe/Istanbul"),
+
+    # Asia / Pacific
+    ("RJTT", 35.5494,  139.7798,  "Tokyo",         "RJTT", "C", "Asia/Tokyo"),
+    ("RCSS", 25.0697,  121.5519,  "Taipei",        "RCSS", "C", "Asia/Taipei"),
+    ("ZSPD", 31.1443,  121.8083,  "Shanghai",      "ZSPD", "C", "Asia/Shanghai"),
+    ("ZGGG", 23.3924,  113.2988,  "Guangzhou",     "ZGGG", "C", "Asia/Shanghai"),
+    ("ZHHH", 30.7838,  114.2081,  "Wuhan",         "ZHHH", "C", "Asia/Shanghai"),
+    ("ZSJN", 36.8572,  117.2161,  "Jinan",         "ZSJN", "C", "Asia/Shanghai"),
+    ("ZHCC", 34.5197,  113.8408,  "Zhengzhou",     "ZHCC", "C", "Asia/Shanghai"),
+    ("RPLL", 14.5086,  121.0194,  "Manila",        "RPLL", "C", "Asia/Manila"),
+
+    # MENA
+    ("LLBG", 32.0114,   34.8867,  "Tel Aviv",      "LLBG", "C", "Asia/Jerusalem"),
+    ("OEJN", 21.6796,   39.1565,  "Jeddah",        "OEJN", "C", "Asia/Riyadh"),
+
+    # Latin America
+    ("SBGR",-23.4356,  -46.4731,  "Sao Paulo",     "SBGR", "C", "America/Sao_Paulo"),
+
+    # Oceania
+    ("NZWN",-41.3272,  174.8053,  "Wellington",    "NZWN", "C", "Pacific/Auckland"),
 ]
 
 # Station timezone mapping (used for local time conversions at each location)
@@ -60,6 +97,26 @@ STATION_TZ = {
     "ZGSZ": "Asia/Shanghai",
     "WSSS": "Asia/Singapore",
     "MPMG": "America/Panama",
+    # Archive shadow candidates (issue #274)
+    "EGLC": "Europe/London",
+    "LFPB": "Europe/Paris",
+    "LIMC": "Europe/Rome",
+    "EFHK": "Europe/Helsinki",
+    "EPWA": "Europe/Warsaw",
+    "LTFM": "Europe/Istanbul",
+    "LTAC": "Europe/Istanbul",
+    "RJTT": "Asia/Tokyo",
+    "RCSS": "Asia/Taipei",
+    "ZSPD": "Asia/Shanghai",
+    "ZGGG": "Asia/Shanghai",
+    "ZHHH": "Asia/Shanghai",
+    "ZSJN": "Asia/Shanghai",
+    "ZHCC": "Asia/Shanghai",
+    "RPLL": "Asia/Manila",
+    "LLBG": "Asia/Jerusalem",
+    "OEJN": "Asia/Riyadh",
+    "SBGR": "America/Sao_Paulo",
+    "NZWN": "Pacific/Auckland",
 }
 
 # Per-station active local-hour window [start, end). Outside this window the
@@ -84,6 +141,26 @@ STATION_ACTIVE_HOURS = {
     "ZGSZ": (11, 23),   # delayed from 6: narrow 1C brackets cause blanketing (same as RKSI)
     "WSSS": (6, 23),
     "MPMG": (6, 23),
+    # Archive shadow candidates (issue #274) — default 6-23 local window
+    "EGLC": (6, 23),
+    "LFPB": (6, 23),
+    "LIMC": (6, 23),
+    "EFHK": (6, 23),
+    "EPWA": (6, 23),
+    "LTFM": (6, 23),
+    "LTAC": (6, 23),
+    "RJTT": (6, 23),
+    "RCSS": (6, 23),
+    "ZSPD": (11, 23),   # same narrow-bracket rationale as ZGSZ (Asia/Shanghai)
+    "ZGGG": (11, 23),   # same narrow-bracket rationale as ZGSZ (Asia/Shanghai)
+    "ZHHH": (11, 23),   # same narrow-bracket rationale as ZGSZ (Asia/Shanghai)
+    "ZSJN": (11, 23),   # same narrow-bracket rationale as ZGSZ (Asia/Shanghai)
+    "ZHCC": (11, 23),   # same narrow-bracket rationale as ZGSZ (Asia/Shanghai)
+    "RPLL": (6, 23),
+    "LLBG": (6, 23),
+    "OEJN": (6, 23),
+    "SBGR": (6, 23),
+    "NZWN": (6, 23),
 }
 
 # Strategy thresholds (env var overrides)
@@ -217,6 +294,27 @@ EMOS_DEFAULT_MODE: str = os.environ.get("EMOS_DEFAULT_MODE", "legacy")
 # SHADOW_STATIONS: shadow both sides (DISABLED_STATIONS kept as alias for back-compat).
 _shadow_both_raw = os.getenv("SHADOW_STATIONS") or os.getenv("DISABLED_STATIONS", "RKSI")
 SHADOW_STATIONS: "set[str]" = {s.strip().upper() for s in _shadow_both_raw.split(",") if s.strip()}
+
+# Archive shadow candidates added in issue #274.  These cities were ported from
+# archive/polymarket-shadow/config.py as shadow-only stations — no live orders
+# until their shadow performance is validated.  Add their ICAO codes to
+# SHADOW_STATIONS (via the env var) to suppress live trading, or use
+# SHADOW_STATIONS_ARCHIVE directly in scripts that need to enumerate them.
+# Hong Kong was intentionally omitted from the archive import — it resolves
+# against Hong Kong Observatory (weather.gov.hk), which requires a custom
+# scraper. It will be added in a dedicated follow-up issue.
+SHADOW_STATIONS_ARCHIVE: "frozenset[str]" = frozenset({
+    # Europe
+    "EGLC", "LFPB", "LIMC", "EFHK", "EPWA", "LTFM", "LTAC",
+    # Asia / Pacific
+    "RJTT", "RCSS", "ZSPD", "ZGGG", "ZHHH", "ZSJN", "ZHCC", "RPLL",
+    # MENA
+    "LLBG", "OEJN",
+    # Latin America
+    "SBGR",
+    # Oceania
+    "NZWN",
+})
 
 # Alias kept so existing code referencing DISABLED_STATIONS still works.
 DISABLED_STATIONS: "set[str]" = SHADOW_STATIONS
