@@ -206,6 +206,7 @@ class Database:
             ("observations", "cadence_min", "INTEGER"),
             ("observations", "is_official", "INTEGER DEFAULT 1"),
             ("trades", "actual_fee_cents", "REAL"),
+            ("trades", "size_eur", "REAL"),
             ("station_overrides", "yes_enabled", "INTEGER NOT NULL DEFAULT 1"),
             ("station_overrides", "no_enabled", "INTEGER NOT NULL DEFAULT 1"),
         ]:
@@ -258,7 +259,8 @@ class Database:
                             capital_before  REAL NOT NULL,
                             capital_after   REAL,
                             settled_at      TEXT,
-                            actual_fee_cents REAL
+                            actual_fee_cents REAL,
+                            size_eur        REAL
                         )
                         """
                     )
@@ -267,7 +269,7 @@ class Database:
                         "id,ts,station,ticker,bracket_low,bracket_high,side,"
                         "predicted_price,actual_price,slippage,predicted_edge,mode,"
                         "order_id,outcome,pnl,capital_before,capital_after,settled_at,"
-                        "actual_fee_cents "
+                        "actual_fee_cents,size_eur "
                         "FROM trades"
                     )
                     self._conn.execute("DROP TABLE trades")
@@ -439,6 +441,7 @@ class Database:
         pnl: "float | None" = None,
         capital_after: "float | None" = None,
         settled_at: "str | None" = None,
+        size_eur: "float | None" = None,
     ) -> int:
         """Insert a trade record; returns the new row id."""
         with self._lock:
@@ -446,12 +449,12 @@ class Database:
                 "INSERT INTO trades"
                 "(ts,station,ticker,bracket_low,bracket_high,side,"
                 "predicted_price,actual_price,slippage,predicted_edge,mode,order_id,"
-                "outcome,pnl,capital_before,capital_after,settled_at) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "outcome,pnl,capital_before,capital_after,settled_at,size_eur) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     ts, station, ticker, bracket_low, bracket_high, side,
                     predicted_price, actual_price, slippage, predicted_edge, mode,
-                    order_id, outcome, pnl, capital_before, capital_after, settled_at,
+                    order_id, outcome, pnl, capital_before, capital_after, settled_at, size_eur,
                 ),
             )
             self._conn.commit()
