@@ -77,6 +77,7 @@ def _load_open_fills_for_token(token_id: str, today: str, db=None) -> list:
         return []
     records: list = []
     sold = False
+    partial_shares: float = 0.0
     try:
         with open(LIVE_TRADES_JSONL) as f:
             for line in f:
@@ -99,11 +100,29 @@ def _load_open_fills_for_token(token_id: str, today: str, db=None) -> list:
                     continue
                 if r.get("outcome") == "sold":
                     sold = True
+                elif r.get("outcome") == "partial_fill":
+                    partial_shares += float(r.get("shares") or 0.0)
                 elif r.get("outcome") == "filled":
                     records.append(r)
     except OSError:
         return []
-    return [] if sold else records
+    if sold:
+        return []
+    if partial_shares > 0 and records:
+        # Distribute the already-sold partial shares across fills proportionally.
+        total_fill_shares = sum(
+            f["size_eur"] / (f["price_cents"] / 100) for f in records
+            if f.get("price_cents")
+        )
+        if total_fill_shares > partial_shares:
+            ratio = 1.0 - partial_shares / total_fill_shares
+            records = [
+                {**f, "size_eur": round(f["size_eur"] * ratio, 4)}
+                for f in records
+            ]
+        else:
+            return []  # entire position already partially sold
+    return records
 
 
 def _record_sell_in_db(fills: list, sell_price_cents: int, ts: str, db=None) -> None:
@@ -469,6 +488,21 @@ class OrderManager:
                     self._partial_fill_shares[token_id] = (
                         self._partial_fill_shares.get(token_id, 0.0) + partial
                     )
+                    _append_live_trade({
+                        "ts": ts,
+                        "order_id": cancelled_order_id,
+                        "station": station,
+                        "end_date": today,
+                        "ticker": fills[0].get("ticker", ""),
+                        "no_token_id": token_id,
+                        "bracket_low": bracket_low,
+                        "bracket_high": bracket_high,
+                        "side": "SELL",
+                        "entry_side": side,
+                        "shares": partial,
+                        "price_cents": 0,
+                        "outcome": "partial_fill",
+                    }, db=db)
             return {"status": "no_fill", "detail": "Order did not fill at market -- try again."}
 
         sell_price_cents = sell_price_or_order

@@ -917,3 +917,108 @@ class TestGetOpenPositionByToken:
         assert results[0]["bracket_low"] == 32.0
         assert results[0]["bracket_high"] == 36.0
         assert results[0]["predicted_price"] == 70
+
+
+# ===========================================================================
+# Partial Fill Persistence
+# ===========================================================================
+
+class TestPartialFillPersistence:
+    """Persist partial fills on no_fill path to survive process restart."""
+
+    @pytest.fixture(autouse=True)
+    def _reset_om(self):
+        self.om = _make_om()
+
+    def _make_trader(self, sell_result=(None, "cancelled-1")):
+        trader = MagicMock()
+        trader.sell_position_immediate.return_value = sell_result
+        return trader
+
+    def test_partial_fill_persisted_to_jsonl_on_no_fill(self, tmp_path):
+        """When order is no_fill with partial > 0, append partial_fill record to JSONL."""
+        from src.execution.order_manager import _load_open_fills_for_token
+        token = "tok-pf-1"
+        fill = _make_fill(token, price_cents=80)
+        fill["side"] = "NO"
+        today = datetime.now(timezone.utc).date().isoformat()
+        f = tmp_path / "lt.jsonl"
+        f.write_text("")  # empty file
+        trader = self._make_trader(sell_result=(None, "cancelled-order-1"))
+        trader.get_order_fill_size.return_value = 2.5
+        mock_db = MagicMock()
+        mock_db.get_open_position_by_token.return_value = [fill]
+
+        with patch("src.execution.order_manager.LIVE_TRADES_JSONL", f), \
+             patch.object(src.scripts.run, "_append_live_trade") as mock_append:
+            result = self.om.manual_sell_position(trader, token, "ts-pf", db=mock_db)
+
+        assert result["status"] == "no_fill"
+        # Verify _append_live_trade was called with partial_fill outcome
+        mock_append.assert_called_once()
+        record = mock_append.call_args[0][0]
+        assert record["outcome"] == "partial_fill"
+        assert record["shares"] == 2.5
+        assert record["no_token_id"] == token
+
+    def test_partial_fills_reduce_next_retry_size(self, tmp_path):
+        """_load_open_fills_for_token accounts for partial_fill records when sizing."""
+        from src.execution.order_manager import _load_open_fills_for_token
+        today = datetime.now(timezone.utc).date().isoformat()
+        f = tmp_path / "lt.jsonl"
+        # Original fill: 10 EUR at 80c = 12.5 shares
+        # Partial sell: 5 shares already sold
+        # Expected next retry: 7.5 shares = 6.0 EUR
+        _write_jsonl(f, [
+            {"no_token_id": "tok-pf", "end_date": today, "outcome": "filled",
+             "price_cents": 80, "size_eur": 10.0},
+            {"no_token_id": "tok-pf", "end_date": today, "outcome": "partial_fill",
+             "shares": 5.0},
+        ])
+        with patch("src.execution.order_manager.LIVE_TRADES_JSONL", f):
+            fills = _load_open_fills_for_token("tok-pf", today, db=None)
+
+        assert len(fills) == 1
+        # size_eur should be reduced: 10.0 * (1 - 5/12.5) = 10.0 * 0.6 = 6.0
+        assert fills[0]["size_eur"] == pytest.approx(6.0, abs=0.01)
+
+    def test_full_partial_fill_returns_empty(self, tmp_path):
+        """When partial shares equal or exceed total shares, return empty list."""
+        from src.execution.order_manager import _load_open_fills_for_token
+        today = datetime.now(timezone.utc).date().isoformat()
+        f = tmp_path / "lt.jsonl"
+        # Fill: 10 EUR at 80c = 12.5 shares
+        # Partial: 13 shares (more than total available)
+        _write_jsonl(f, [
+            {"no_token_id": "tok-full", "end_date": today, "outcome": "filled",
+             "price_cents": 80, "size_eur": 10.0},
+            {"no_token_id": "tok-full", "end_date": today, "outcome": "partial_fill",
+             "shares": 13.0},
+        ])
+        with patch("src.execution.order_manager.LIVE_TRADES_JSONL", f):
+            fills = _load_open_fills_for_token("tok-full", today, db=None)
+
+        assert fills == []
+
+    def test_multiple_partial_fills_accumulated(self, tmp_path):
+        """Multiple partial_fill records accumulate before being subtracted from size."""
+        from src.execution.order_manager import _load_open_fills_for_token
+        today = datetime.now(timezone.utc).date().isoformat()
+        f = tmp_path / "lt.jsonl"
+        # Fill: 10 EUR at 100c = 10 shares
+        # Partial 1: 3 shares
+        # Partial 2: 2 shares
+        # Expected remainder: 5 shares = 5 EUR
+        _write_jsonl(f, [
+            {"no_token_id": "tok-multi", "end_date": today, "outcome": "filled",
+             "price_cents": 100, "size_eur": 10.0},
+            {"no_token_id": "tok-multi", "end_date": today, "outcome": "partial_fill",
+             "shares": 3.0},
+            {"no_token_id": "tok-multi", "end_date": today, "outcome": "partial_fill",
+             "shares": 2.0},
+        ])
+        with patch("src.execution.order_manager.LIVE_TRADES_JSONL", f):
+            fills = _load_open_fills_for_token("tok-multi", today, db=None)
+
+        assert len(fills) == 1
+        assert fills[0]["size_eur"] == pytest.approx(5.0, abs=0.01)
