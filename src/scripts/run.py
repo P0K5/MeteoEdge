@@ -22,7 +22,7 @@ from src.config import (
     RISK_DAILY_LOSS_LIMIT_EUR, RISK_MAX_OPEN_POSITIONS,
     RISK_DRAWDOWN_STOP_PCT, RISK_MIN_LIQUIDITY, STARTING_CAPITAL_EUR,
     POSITION_SIZE_WITH_FEES,
-    get_source_priority,
+    get_source_priority, seed_config, seed_station_overrides,
 )
 from src.data.db import Database
 from src.data.polymarket import get_weather_markets
@@ -362,6 +362,8 @@ def main() -> None:
         parser.error("--live and --paper are mutually exclusive")
 
     db = Database()
+    seed_config(db)
+    seed_station_overrides(db)
     open_positions = db.get_open_positions()
     if open_positions:
         log.info("[startup] recovered %s open position(s) from DB", len(open_positions))
