@@ -405,6 +405,21 @@ def seed_config(db) -> None:
             db.set_config(key, value)
 
 
+def seed_station_overrides(db) -> None:
+    """Seed station_overrides for RKSI on first run, if missing.
+
+    RKSI is seeded with: enabled=1, yes_enabled=0, no_enabled=0
+    (shadows both YES and NO sides).
+
+    Idempotent: if a row already exists, it is never overwritten —
+    DB is authoritative. Only called once per startup.
+
+    See issue #288.
+    """
+    if db.get_station_override("RKSI") is None:
+        db.set_station_override("RKSI", yes_enabled=False, no_enabled=False)
+
+
 def get_live_config(db) -> dict:
     """Return current bot_config values as a typed dict.
 
