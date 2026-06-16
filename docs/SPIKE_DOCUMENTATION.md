@@ -433,7 +433,7 @@ D. Deeper analysis of why they fail
 - **Backtest Results**: [BACKTEST_SUMMARY.md](../BACKTEST_SUMMARY.md)
 - **Technical Spec**: [TECHNICAL_SPECIFICATION.md](TECHNICAL_SPECIFICATION.md)
 - **Main Code**: [src/](../../src/)
-- **Original Spike**: [archive/polymarket-spike/](../../archive/polymarket-spike/)
+- **Original Spike** (DEPRECATED): See [archive/polymarket-spike/DEPRECATION.md](../../archive/polymarket-spike/DEPRECATION.md) — code has been promoted to src/
 
 ---
 

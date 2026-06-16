@@ -1,4 +1,0 @@
-httpx
-python-dateutil
-pytz
-astral
