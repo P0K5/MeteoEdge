@@ -30,6 +30,7 @@ for _name in (
     "CreateOrderOptions",
     "OrderArgs",
     "OpenOrderParams",
+    "OrderPayload",
 ):
     setattr(_clob_types_stub, _name, MagicMock)
 sys.modules.setdefault("py_clob_client_v2", _clob_stub)
@@ -677,7 +678,7 @@ class TestManualSellPosition:
         fill["side"] = "NO"
         trader = self._make_trader(sell_result=("sell-m-1", 90))
         mock_db = MagicMock()
-        mock_db.get_open_positions.return_value = [fill]
+        mock_db.get_open_position_by_token.return_value = [fill]
         mock_db.close_positions_by_token.return_value = 1
 
         with patch("src.execution.order_manager._record_sell_in_db"), \
@@ -702,7 +703,7 @@ class TestManualSellPosition:
         """No open fills for the token → not_found, no sell attempted."""
         trader = self._make_trader()
         mock_db = MagicMock()
-        mock_db.get_open_positions.return_value = []
+        mock_db.get_open_position_by_token.return_value = []
 
         result = self.om.manual_sell_position(trader, "missing", "ts-m", db=mock_db)
 
@@ -728,7 +729,7 @@ class TestManualSellPosition:
         assert token not in self.om._sold_positions  # fresh process
         trader = self._make_trader()
         mock_db = MagicMock()
-        mock_db.get_open_positions.return_value = []  # row already removed by the bot
+        mock_db.get_open_position_by_token.return_value = []  # row already removed by the bot
 
         result = self.om.manual_sell_position(trader, token, "ts-m", db=mock_db)
 
@@ -744,7 +745,7 @@ class TestManualSellPosition:
         trader = self._make_trader(sell_result=(None, "cancelled-order-7"))
         trader.get_order_fill_size.return_value = 2.0
         mock_db = MagicMock()
-        mock_db.get_open_positions.return_value = [fill]
+        mock_db.get_open_position_by_token.return_value = [fill]
 
         result = self.om.manual_sell_position(trader, token, "ts-m", db=mock_db)
 
@@ -760,7 +761,7 @@ class TestManualSellPosition:
         fill["side"] = "YES"
         trader = self._make_trader(sell_result=("sell-m-4", 55))
         mock_db = MagicMock()
-        mock_db.get_open_positions.return_value = [fill]
+        mock_db.get_open_position_by_token.return_value = [fill]
 
         with patch("src.execution.order_manager._record_sell_in_db"), \
              patch.object(src.scripts.run, "_append_live_trade") as appended:
@@ -780,13 +781,13 @@ class TestLoadOpenFillsForToken:
     def test_db_path_returns_matching_fills_any_side(self):
         from src.execution.order_manager import _load_open_fills_for_token
         mock_db = MagicMock()
-        mock_db.get_open_positions.return_value = [
+        mock_db.get_open_position_by_token.return_value = [
             {"no_token_id": "tok-a", "side": "YES", "price_cents": 40, "size_eur": 5.0},
-            {"no_token_id": "tok-b", "side": "NO", "price_cents": 80, "size_eur": 5.0},
         ]
         fills = _load_open_fills_for_token("tok-a", "2026-06-14", db=mock_db)
         assert len(fills) == 1
         assert fills[0]["side"] == "YES"
+        mock_db.get_open_position_by_token.assert_called_once_with("tok-a")
 
     def test_jsonl_fallback_returns_todays_filled(self, tmp_path):
         from src.execution.order_manager import _load_open_fills_for_token
@@ -826,3 +827,93 @@ class TestLoadOpenFillsForToken:
         with patch("src.execution.order_manager.LIVE_TRADES_JSONL", f):
             fills = _load_open_fills_for_token("tok-s", today, db=None)
         assert fills == []
+
+
+# ===========================================================================
+# get_open_position_by_token
+# ===========================================================================
+
+class TestGetOpenPositionByToken:
+    """Database method for targeted token_id lookup to avoid full table scan."""
+
+    def test_get_open_position_by_token_returns_matching_row(self):
+        """Happy path: returns rows for the specified token_id."""
+        from src.data.db import Database
+        db = Database(":memory:")
+        # Insert a trade first
+        trade_id = db.insert_trade(
+            ts="2026-06-14T12:00:00Z", station="KORD",
+            ticker="KORD-2026-06-14-HIGH-32-36",
+            bracket_low=32.0, bracket_high=36.0,
+            side="NO", predicted_price=70, actual_price=71,
+            predicted_edge=0.08, mode="live", capital_before=1000.0,
+        )
+        # Insert open positions
+        db.open_position(
+            trade_id=trade_id, station="KORD",
+            ticker="KORD-2026-06-14-HIGH-32-36",
+            token_id="tok-match", side="NO",
+            order_id="ord-001", entry_price=70,
+            shares=7.0, entry_ts="2026-06-14T12:01:00Z",
+        )
+        db.open_position(
+            trade_id=trade_id, station="KORD",
+            ticker="KORD-2026-06-14-HIGH-32-36",
+            token_id="tok-other", side="YES",
+            order_id="ord-002", entry_price=30,
+            shares=10.0, entry_ts="2026-06-14T12:02:00Z",
+        )
+        # Query for specific token
+        results = db.get_open_position_by_token("tok-match")
+        assert len(results) == 1
+        assert results[0]["token_id"] == "tok-match"
+        assert results[0]["side"] == "NO"
+        assert results[0]["order_id"] == "ord-001"
+
+    def test_get_open_position_by_token_returns_empty_list_on_no_match(self):
+        """No-match case: returns empty list when token_id does not exist."""
+        from src.data.db import Database
+        db = Database(":memory:")
+        # Insert a trade
+        trade_id = db.insert_trade(
+            ts="2026-06-14T12:00:00Z", station="KORD",
+            ticker="KORD-2026-06-14-HIGH-32-36",
+            bracket_low=32.0, bracket_high=36.0,
+            side="NO", predicted_price=70, actual_price=71,
+            predicted_edge=0.08, mode="live", capital_before=1000.0,
+        )
+        # Insert one position
+        db.open_position(
+            trade_id=trade_id, station="KORD",
+            ticker="KORD-2026-06-14-HIGH-32-36",
+            token_id="tok-exists", side="NO",
+            order_id="ord-001", entry_price=70,
+            shares=7.0, entry_ts="2026-06-14T12:01:00Z",
+        )
+        # Query for non-existent token
+        results = db.get_open_position_by_token("tok-does-not-exist")
+        assert results == []
+
+    def test_get_open_position_by_token_includes_trade_join_fields(self):
+        """Result includes bracket_low, bracket_high, predicted_price from trades join."""
+        from src.data.db import Database
+        db = Database(":memory:")
+        trade_id = db.insert_trade(
+            ts="2026-06-14T12:00:00Z", station="KORD",
+            ticker="KORD-2026-06-14-HIGH-32-36",
+            bracket_low=32.0, bracket_high=36.0,
+            side="NO", predicted_price=70, actual_price=71,
+            predicted_edge=0.08, mode="live", capital_before=1000.0,
+        )
+        db.open_position(
+            trade_id=trade_id, station="KORD",
+            ticker="KORD-2026-06-14-HIGH-32-36",
+            token_id="tok-join-test", side="NO",
+            order_id="ord-001", entry_price=70,
+            shares=7.0, entry_ts="2026-06-14T12:01:00Z",
+        )
+        results = db.get_open_position_by_token("tok-join-test")
+        assert len(results) == 1
+        assert results[0]["bracket_low"] == 32.0
+        assert results[0]["bracket_high"] == 36.0
+        assert results[0]["predicted_price"] == 70

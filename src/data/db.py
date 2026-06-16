@@ -673,6 +673,37 @@ class Database:
         )
         return [dict(row) for row in cur.fetchall()]
 
+    def get_open_position_by_token(self, token_id: str) -> list[dict]:
+        """Return open positions for a single token_id (parameterised WHERE clause).
+
+        Avoids full table scan by filtering at the SQL level for the manual sell path.
+        """
+        cur = self._conn.execute(
+            """
+            SELECT
+                op.id, op.trade_id, op.station,
+                op.ticker, op.token_id,
+                op.token_id          AS no_token_id,
+                op.side, op.order_id,
+                op.entry_price,
+                op.entry_price       AS price_cents,
+                op.shares,
+                ROUND(op.shares * op.entry_price / 100.0, 4) AS size_eur,
+                op.entry_ts,
+                op.stop_loss_cents,
+                op.take_profit_cents,
+                t.bracket_low,
+                t.bracket_high,
+                t.predicted_price
+            FROM open_positions op
+            LEFT JOIN trades t ON t.id = op.trade_id
+            WHERE op.token_id = ?
+            ORDER BY op.entry_ts ASC
+            """,
+            (token_id,),
+        )
+        return [dict(row) for row in cur.fetchall()]
+
     # ------------------------------------------------------------------
     # risk_state
     # ------------------------------------------------------------------
