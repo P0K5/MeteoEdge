@@ -18,7 +18,7 @@ Usage — writers::
 
     from src.utils.log_rotation import rotated_path
     with open(rotated_path(SNAPSHOTS_JSONL), "a") as f:
-        f.write(json.dumps(row) + "\\n")
+        f.write(json.dumps(row) + "\n")
 
 Usage — readers::
 

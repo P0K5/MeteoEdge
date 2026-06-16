@@ -1,7 +1,7 @@
 """Stateless. Assembles WeatherState from NWP sources. No side effects."""
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 import pytz
 from dateutil import parser as dtparse
@@ -19,6 +19,68 @@ from src.model.intraday_correction import compute_correction
 from src.model.envelope import WeatherState
 
 log = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Delta-logging state: suppress per-poll weather log lines when values are
+# stable. Only log when any value changes >0.5°F or once per hour (heartbeat).
+# Trade/order/flag events are NOT deduped — this only applies to weather lines.
+# ---------------------------------------------------------------------------
+
+_WEATHER_LOG_THRESHOLD_F: float = 0.5        # °F change that forces a log
+_WEATHER_HEARTBEAT_INTERVAL_S: float = 3600  # 1 hour
+
+# Per-station: {"high_f": float, "latest_f": float, "nws": float|None, "last_logged": datetime}
+_weather_log_state: dict[str, dict] = {}
+
+
+def _should_log_weather(station: str, high_f: float, latest_temp_f: float,
+                         forecast_nws: float | None) -> bool:
+    """Return True if this poll's weather should be logged at INFO level.
+
+    Logs when:
+    - Station has never been logged before.
+    - Any tracked value changed by more than _WEATHER_LOG_THRESHOLD_F.
+    - More than _WEATHER_HEARTBEAT_INTERVAL_S seconds have passed since last log.
+    """
+    now = datetime.now(timezone.utc)
+    prev = _weather_log_state.get(station)
+    if prev is None:
+        _weather_log_state[station] = {
+            "high_f": high_f,
+            "latest_f": latest_temp_f,
+            "nws": forecast_nws,
+            "last_logged": now,
+        }
+        return True
+
+    # Heartbeat: always log once per hour
+    elapsed = (now - prev["last_logged"]).total_seconds()
+    if elapsed >= _WEATHER_HEARTBEAT_INTERVAL_S:
+        _weather_log_state[station].update(
+            high_f=high_f, latest_f=latest_temp_f, nws=forecast_nws, last_logged=now
+        )
+        return True
+
+    # Delta check: log if any value changed beyond threshold
+    def _nws_changed() -> bool:
+        old_nws = prev["nws"]
+        if old_nws is None and forecast_nws is None:
+            return False
+        if old_nws is None or forecast_nws is None:
+            return True
+        return abs(forecast_nws - old_nws) > _WEATHER_LOG_THRESHOLD_F
+
+    if (
+        abs(high_f - prev["high_f"]) > _WEATHER_LOG_THRESHOLD_F
+        or abs(latest_temp_f - prev["latest_f"]) > _WEATHER_LOG_THRESHOLD_F
+        or _nws_changed()
+    ):
+        _weather_log_state[station].update(
+            high_f=high_f, latest_f=latest_temp_f, nws=forecast_nws, last_logged=now
+        )
+        return True
+
+    return False
 
 
 def _station_in_active_window(station: str) -> bool:
@@ -165,7 +227,10 @@ def _build_weather(db=None, health_out=None) -> dict:
             if corrected is not None:
                 weather[station].corrected_mu_f = corrected
                 log.debug("[%s] corrected_mu_f=%.1fF (delta=%+.1fF)", station, corrected, corrected - deb_mu_f)
-        log.info("[%s] high=%.1fF latest=%.1fF nws=%s", station, high_f, latest_temp_f, forecast_nws)
+        if _should_log_weather(station, high_f, latest_temp_f, forecast_nws):
+            log.info("[%s] high=%.1fF latest=%.1fF nws=%s", station, high_f, latest_temp_f, forecast_nws)
+        else:
+            log.debug("[%s] high=%.1fF latest=%.1fF nws=%s (no change)", station, high_f, latest_temp_f, forecast_nws)
         if health_out is not None:
             health_out.append({"station": station, "status": "ok", "reason": ""})
     return weather

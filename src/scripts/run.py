@@ -16,13 +16,15 @@ from datetime import datetime, timezone
 
 from dateutil import parser as dtparse
 
+from src.utils.log_rotation import rotated_path, housekeep
+
 from src.config import (
     POLL_INTERVAL_SECONDS, LOG_DIR,
     CANDIDATES_CSV, SNAPSHOTS_JSONL, LIVE_TRADES_JSONL,
     RISK_DAILY_LOSS_LIMIT_EUR, RISK_MAX_OPEN_POSITIONS,
     RISK_DRAWDOWN_STOP_PCT, RISK_MIN_LIQUIDITY, STARTING_CAPITAL_EUR,
     POSITION_SIZE_WITH_FEES,
-    get_source_priority,
+    get_source_priority, seed_config, seed_station_overrides,
 )
 from src.data.db import Database
 from src.data.polymarket import get_weather_markets
@@ -64,15 +66,19 @@ _WALLET_EMPTY_COOLDOWN_SECONDS: float = 1800.0  # 30 min
 
 def _append_snapshot(snap: dict) -> None:
     LOG_DIR.mkdir(exist_ok=True)
-    with open(SNAPSHOTS_JSONL, "a") as f:
+    dest = rotated_path(SNAPSHOTS_JSONL)
+    housekeep(SNAPSHOTS_JSONL)
+    with open(dest, "a") as f:
         f.write(json.dumps(snap, default=str) + "\n")
 
 
 def _append_candidate(row: dict) -> None:
     LOG_DIR.mkdir(exist_ok=True)
     with _write_lock:
-        new_file = not CANDIDATES_CSV.exists()
-        with open(CANDIDATES_CSV, "a", newline="") as f:
+        dest = rotated_path(CANDIDATES_CSV)
+        housekeep(CANDIDATES_CSV)
+        new_file = dest.stat().st_size == 0
+        with open(dest, "a", newline="") as f:
             w = csv.DictWriter(f, fieldnames=list(row.keys()))
             if new_file:
                 w.writeheader()
@@ -82,7 +88,9 @@ def _append_candidate(row: dict) -> None:
 def _append_live_trade(record: dict, db=None) -> None:
     LOG_DIR.mkdir(exist_ok=True)
     with _write_lock:
-        with open(LIVE_TRADES_JSONL, "a") as f:
+        dest = rotated_path(LIVE_TRADES_JSONL)
+        housekeep(LIVE_TRADES_JSONL)
+        with open(dest, "a") as f:
             f.write(json.dumps(record, default=str) + "\n")
     if db is None:
         return
@@ -362,6 +370,8 @@ def main() -> None:
         parser.error("--live and --paper are mutually exclusive")
 
     db = Database()
+    seed_config(db)
+    seed_station_overrides(db)
     open_positions = db.get_open_positions()
     if open_positions:
         log.info("[startup] recovered %s open position(s) from DB", len(open_positions))
