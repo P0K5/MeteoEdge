@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from src.config import (
     LIVE_TRADES_JSONL,
     TAKE_PROFIT_BUFFER_CENTS,
+    get_take_profit_buffer_cents,
 )
 
 log = logging.getLogger(__name__)
@@ -125,8 +126,20 @@ def _load_open_fills_for_token(token_id: str, today: str, db=None) -> list:
     return records
 
 
-def _record_sell_in_db(fills: list, sell_price_cents: int, ts: str, db=None) -> None:
-    """Mark the BUY trade row of each fill as sold with its realised PnL."""
+def _record_sell_in_db(
+    fills: list,
+    sell_price_cents: int,
+    ts: str,
+    db=None,
+    close_reason: "str | None" = None,
+    minutes_to_settlement: "float | None" = None,
+    bid_depth: "int | None" = None,
+) -> None:
+    """Mark the BUY trade row of each fill as sold with its realised PnL.
+
+    When close_reason/minutes_to_settlement/bid_depth are provided, also writes
+    the close telemetry columns via update_trade_close_telemetry().
+    """
     if db is None:
         return
     for f in fills:
@@ -139,6 +152,16 @@ def _record_sell_in_db(fills: list, sell_price_cents: int, ts: str, db=None) -> 
             db.update_trade_by_order(
                 order_id, outcome="sold", pnl=fill_pnl, settled_at=ts,
             )
+            if close_reason is not None or minutes_to_settlement is not None or bid_depth is not None:
+                try:
+                    db.update_trade_close_telemetry(
+                        order_id,
+                        close_reason=close_reason,
+                        minutes_to_settlement_at_close=minutes_to_settlement,
+                        bid_depth_at_close=bid_depth,
+                    )
+                except Exception as te:
+                    log.warning("[run] DB close telemetry update failed for %s...: %s", str(order_id)[:12], te)
         except Exception as e:
             log.warning("[run] DB sell update failed for %s...: %s", str(order_id)[:12], e)
 
@@ -346,14 +369,18 @@ class OrderManager:
             predicted_price = fills[0].get("predicted_price")
             if not predicted_price:
                 continue
-            target_cents = int(predicted_price) - TAKE_PROFIT_BUFFER_CENTS
+            station_code = fills[0].get("station", "")
+            buffer_cents = get_take_profit_buffer_cents(station_code)
+            target_cents = int(predicted_price) - buffer_cents
 
             try:
                 ob = get_orderbook(token_id)
                 bids = ob.get("bids") or []
                 if not bids:
                     continue
-                best_bid_cents = max(1, min(99, round(max(float(b["price"]) for b in bids) * 100)))
+                best_bid_entry = max(bids, key=lambda b: float(b["price"]))
+                best_bid_cents = max(1, min(99, round(float(best_bid_entry["price"]) * 100)))
+                best_bid_depth = int(float(best_bid_entry.get("size") or 0))
             except Exception as e:
                 if "404" in str(e):
                     n = db.close_positions_by_token(token_id) if db is not None else 0
@@ -371,6 +398,7 @@ class OrderManager:
             total_shares = sum(f["size_eur"] / (f["price_cents"] / 100) for f in fills)
             total_eur = sum(f["size_eur"] for f in fills)
             question = fills[0].get("question", "")
+            minutes_to_settlement = fills[0].get("minutes_to_settlement")
 
             log.info(
                 "  [tp] [%s] %.0f-%.0fF NO bid %sc >= target %sc (predicted %sc) -- selling %.1f shares",
@@ -388,7 +416,12 @@ class OrderManager:
                     for f in fills
                 ) / total_shares
                 pnl = round((sell_price_cents - avg_entry_cents) / 100 * total_shares, 4)
-                _record_sell_in_db(fills, sell_price_cents, ts, db=db)
+                _record_sell_in_db(
+                    fills, sell_price_cents, ts, db=db,
+                    close_reason="take_profit",
+                    minutes_to_settlement=minutes_to_settlement,
+                    bid_depth=best_bid_depth,
+                )
                 if risk_manager is not None:
                     risk_manager.record_pnl(pnl)
                 _append_live_trade({
@@ -410,6 +443,7 @@ class OrderManager:
                     "pnl": pnl,
                     "outcome": "sold",
                     "actual_fee_cents": None,
+                    "close_reason": "take_profit",
                     "trigger": f"take_profit@{best_bid_cents}c_target{target_cents}c_predicted{predicted_price}c",
                 }, db=db)
                 log.info(

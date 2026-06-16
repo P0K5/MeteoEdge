@@ -32,6 +32,7 @@ from src.config import (
     STOP_LOSS_SELL_AGGRESSION_CENTS,
     STOP_LOSS_MIN_BRACKET_PROXIMITY_F,
     STOP_LOSS_RESPECT_FORECAST_OVERSHOOT,
+    FORCE_EXIT_MINUTES_TO_SETTLEMENT,
 )
 from src.data.polymarket import get_orderbook
 from src.model.envelope import Bracket, true_probability_yes
@@ -344,7 +345,11 @@ def _check_stop_loss_exits(live_trader, ts: str, position_states: list,
             if db is not None:
                 db.close_positions_by_token(token_id)
             pnl = round((sell_price_cents - avg_entry_cents) / 100 * sold_shares, 4)
-            _record_sell_in_db(fills, sell_price_cents, ts, db=db)
+            _record_sell_in_db(
+                fills, sell_price_cents, ts, db=db,
+                close_reason="stop_loss",
+                bid_depth=int(depth) if depth is not None else None,
+            )
             if risk_manager is not None:
                 risk_manager.record_pnl(pnl)
             _append_live_trade({
@@ -366,6 +371,7 @@ def _check_stop_loss_exits(live_trader, ts: str, position_states: list,
                 "pnl": pnl,
                 "outcome": "sold",
                 "actual_fee_cents": None,
+                "close_reason": "stop_loss",
                 "trigger": f"stop_loss@{bid}c_fair{fair}c_entry{round(avg_entry_cents)}c",
             }, db=db)
             log.info(
@@ -374,6 +380,181 @@ def _check_stop_loss_exits(live_trader, ts: str, position_states: list,
             )
         except Exception as e:
             log.warning("  [sl] sell failed for [%s] %.0f-%.0fF: %s", station, bracket_low, bracket_high, e)
+
+
+def _check_forced_exits(
+    live_trader,
+    ts: str,
+    position_states: list,
+    db=None,
+    risk_manager=None,
+    force_exit_minutes: "int | None" = None,
+) -> None:
+    """Force-close NO positions within *force_exit_minutes* of settlement.
+
+    When a position's settlement is within FORCE_EXIT_MINUTES_TO_SETTLEMENT
+    minutes AND the NO bid has depth >= STOP_LOSS_MIN_DEPTH_SHARES, cross the
+    spread and close rather than holding to settlement.
+
+    Rationale: live data (2026-06-07..06-16) shows hold-to-settlement is
+    net-negative (−€1.72 at 64% win rate) vs early exits (+€29.79 at 90%).
+    This function runs in poll_once() BEFORE _check_stop_loss_exits so it has
+    priority over the model-confidence stop.
+
+    When FORCE_EXIT_MINUTES_TO_SETTLEMENT=0 this function is a no-op, exactly
+    reproducing today's behaviour.
+
+    Args:
+        live_trader: LiveTrader instance (None in paper mode → this is a no-op).
+        ts: ISO timestamp for this poll.
+        position_states: list of {token_id, fills, snap} from
+            _log_open_position_snapshots (reuses already-fetched orderbook data).
+        db: Database instance (optional).
+        risk_manager: RiskManager instance (optional).
+        force_exit_minutes: Override the config value (used in tests).
+    """
+    from src.scripts.run import _append_live_trade  # noqa: PLC0415
+
+    if live_trader is None:
+        return
+
+    threshold = force_exit_minutes if force_exit_minutes is not None else FORCE_EXIT_MINUTES_TO_SETTLEMENT
+    if threshold <= 0:
+        return
+
+    today = datetime.now(timezone.utc).date().isoformat()
+
+    for ps in position_states:
+        token_id = ps["token_id"]
+        fills = ps["fills"]
+        snap = ps["snap"]
+
+        if token_id in _order_manager._sold_positions:
+            continue
+
+        # Determine minutes to settlement from the open_positions record.
+        # The entry_ts and market end_date are both stored in the fills.
+        # We compute minutes remaining using the open_positions.take_profit_cents
+        # field doesn't carry settlement time — we need to derive it from market
+        # context.  The snap dict doesn't have settlement time either; it comes
+        # from the market fetch in scan_markets.  The simplest reliable source is
+        # the `entry_ts` and knowing settlement is the market end_date at 23:59 UTC.
+        #
+        # However open_positions does NOT store end_date.  The safe fallback is
+        # to look at fills[0].get("entry_ts") and compute days since entry.
+        # Since all positions in MeteoEdge are same-day markets (resolve same UTC
+        # day they're created), we estimate minutes to settlement as:
+        #   minutes_remaining = (end-of-today-UTC in mins) - (current UTC minute)
+        #
+        # This is approximate but correct for same-day markets and avoids
+        # needing the settlement time in every open_positions row.
+        now_utc = datetime.now(timezone.utc)
+        # Settlement is end of current UTC day (23:59:59 UTC, approx midnight)
+        from datetime import date as _date
+        eod_utc = datetime(
+            now_utc.year, now_utc.month, now_utc.day, 23, 59, 59,
+            tzinfo=timezone.utc,
+        )
+        minutes_remaining = (eod_utc - now_utc).total_seconds() / 60.0
+
+        if minutes_remaining > threshold:
+            continue
+
+        # Check depth at best bid from snapshot data
+        depth = snap.get("no_best_bid_size")
+        bid = snap.get("no_best_bid")
+        if depth is None or depth < STOP_LOSS_MIN_DEPTH_SHARES:
+            station_log = fills[0]["station"]
+            bracket_low_log = fills[0]["bracket_low"]
+            bracket_high_log = fills[0]["bracket_high"]
+            log.info(
+                "  [fe] [%s] %.0f-%.0fF within %.0f min of settlement but bid depth %s < %s"
+                " -- holding (thin book)",
+                station_log, bracket_low_log, bracket_high_log,
+                minutes_remaining, depth, STOP_LOSS_MIN_DEPTH_SHARES,
+            )
+            continue
+
+        if bid is None:
+            continue
+
+        station = fills[0]["station"]
+        bracket_low = fills[0]["bracket_low"]
+        bracket_high = fills[0]["bracket_high"]
+        question = fills[0].get("question", "")
+        total_shares = sum(f["size_eur"] / (f["price_cents"] / 100) for f in fills)
+        total_eur = sum(f["size_eur"] for f in fills)
+        avg_entry_cents = sum(
+            f["price_cents"] * (f["size_eur"] / (f["price_cents"] / 100))
+            for f in fills
+        ) / total_shares
+
+        log.info(
+            "  [fe] [%s] %.0f-%.0fF within %.0f min of settlement (threshold %d min)"
+            " bid %sc depth %.0f -- forced exit %.4f shares",
+            station, bracket_low, bracket_high, minutes_remaining, threshold,
+            bid, depth, total_shares,
+        )
+
+        try:
+            sell_id, sell_price_cents = live_trader.sell_position(token_id, total_shares)
+            _order_manager._sold_positions.add(token_id)
+            _order_manager._stop_loss_strikes.pop(token_id, None)
+            if db is not None:
+                db.close_positions_by_token(token_id)
+            pnl = round((sell_price_cents - avg_entry_cents) / 100 * total_shares, 4)
+            _record_sell_in_db(
+                fills, sell_price_cents, ts, db=db,
+                close_reason="forced_exit",
+                minutes_to_settlement=round(minutes_remaining, 2),
+                bid_depth=int(depth),
+            )
+            if risk_manager is not None:
+                risk_manager.record_pnl(pnl)
+            _append_live_trade({
+                "ts": ts,
+                "order_id": sell_id,
+                "station": station,
+                "question": question,
+                "end_date": today,
+                "ticker": fills[0].get("ticker", ""),
+                "no_token_id": token_id,
+                "bracket_low": bracket_low,
+                "bracket_high": bracket_high,
+                "side": "SELL",
+                "price_cents": sell_price_cents,
+                "entry_price_cents": round(avg_entry_cents),
+                "shares": round(total_shares, 4),
+                "size_eur": total_eur,
+                "edge_cents": 0,
+                "pnl": pnl,
+                "outcome": "sold",
+                "actual_fee_cents": None,
+                "close_reason": "forced_exit",
+                "minutes_to_settlement_at_close": round(minutes_remaining, 2),
+                "trigger": (
+                    f"forced_exit@{sell_price_cents}c_bid{bid}c"
+                    f"_depth{int(depth)}_mts{minutes_remaining:.0f}min"
+                ),
+            }, db=db)
+            log.info(
+                "  [fe] sell %s... filled @ %sc -- [%s] %.0f-%.0fF NO  pnl=%+.2f",
+                sell_id[:12], sell_price_cents, station, bracket_low, bracket_high, pnl,
+            )
+        except Exception as e:
+            err = str(e)
+            if "balance" in err.lower() and ("0" in err or "not enough" in err.lower()):
+                n = db.close_positions_by_token(token_id) if db is not None else 0
+                _order_manager._sold_positions.add(token_id)
+                log.info(
+                    "  [fe] [%s] %.0f-%.0fF balance=0 -- tokens already gone, removed %s row(s)",
+                    station, bracket_low, bracket_high, n,
+                )
+            else:
+                log.warning(
+                    "  [fe] sell failed for [%s] %.0f-%.0fF: %s",
+                    station, bracket_low, bracket_high, e,
+                )
 
 
 def _check_metar_exits(weather: dict, live_trader, ts: str, db=None, risk_manager=None) -> None:

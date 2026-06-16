@@ -43,6 +43,7 @@ from src.execution.order_manager import OrderManager, order_manager, _load_open_
 from src.execution.order_executor import _execute_live
 from src.execution.position_tracker import (
     _log_open_position_snapshots,
+    _check_forced_exits,
     _check_stop_loss_exits,
     _check_metar_exits,
 )
@@ -236,6 +237,9 @@ def poll_once(
         position_states = _log_open_position_snapshots(
             weather, ts, db=db, orderbooks=shared_orderbooks,
         )
+        # Forced pre-settlement exit runs BEFORE stop-loss so it has priority.
+        # No-op when FORCE_EXIT_MINUTES_TO_SETTLEMENT=0 (today's behaviour).
+        _check_forced_exits(live_trader, ts, position_states, db=db, risk_manager=risk_manager)
         if weather:
             _check_stop_loss_exits(live_trader, ts, position_states, db=db, risk_manager=risk_manager)
         # _check_metar_exits disabled 2026-05-29: 7/12 false positives, net -15.49 vs hold.

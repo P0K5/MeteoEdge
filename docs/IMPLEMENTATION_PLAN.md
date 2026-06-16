@@ -380,6 +380,12 @@ Hypothesis: the daily high at KBKF is not at the airport — it's at the referen
 
 ---
 
+## Interim guardrails
+
+**`MODEL_PROB_CAP` (issue #305):** `p_yes` is clamped to `[1-cap, cap]` (default 0.95) before EV and edge computation, preventing the system from treating any bracket as a certainty. Live data showed 63 `predicted_price=100` NO trades won only 84% vs 89% for the 95–99¢ bucket — textbook overconfidence. This guardrail is temporary and should be removed or loosened once EMOS (#70) is promoted and per-station calibration is available.
+
+---
+
 ## Key decisions already made
 
 | Decision | Choice | Rationale |

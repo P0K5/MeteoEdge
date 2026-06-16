@@ -234,6 +234,35 @@ POSITION_SIZE_WITH_FEES = POSITION_SIZE_EUR * 1.02
 # movement, so we lock in the captured edge and recycle capital into the next trade.
 TAKE_PROFIT_BUFFER_CENTS = int(os.getenv("TAKE_PROFIT_BUFFER_CENTS", "2"))
 
+# Per-station take-profit buffer overrides.  Keys are ICAO codes; values are
+# integers (¢).  Set via env: TAKE_PROFIT_BUFFER_CENTS_KORD=3 etc.
+# Falls back to TAKE_PROFIT_BUFFER_CENTS when no station-specific override exists.
+def get_take_profit_buffer_cents(station: str) -> int:
+    """Return the take-profit buffer (¢) for *station*.
+
+    Checks for a station-specific env var (TAKE_PROFIT_BUFFER_CENTS_{STATION})
+    first; falls back to the global TAKE_PROFIT_BUFFER_CENTS.
+    """
+    env_key = f"TAKE_PROFIT_BUFFER_CENTS_{station.upper()}"
+    raw = os.getenv(env_key)
+    if raw is not None:
+        try:
+            return int(raw)
+        except (ValueError, TypeError):
+            pass
+    return TAKE_PROFIT_BUFFER_CENTS
+
+# Forced pre-settlement exit: when a position is within this many minutes of
+# settlement resolution AND the NO bid has depth >= STOP_LOSS_MIN_DEPTH_SHARES,
+# cross the spread and close rather than holding to settlement.
+# Live data (2026-06-07..06-16) shows hold-to-settlement is net-negative
+# (−€1.72 at 64% win rate) while early exits are strongly positive
+# (+€29.79 at 90% win rate).
+# Set to 0 to reproduce today's behaviour (disabled).
+FORCE_EXIT_MINUTES_TO_SETTLEMENT = int(
+    os.getenv("FORCE_EXIT_MINUTES_TO_SETTLEMENT", "60")
+)
+
 # Stop-loss: model-based, NOT price-based. Backtest of 130 settled positions
 # (May 27 - Jun 11, position_snapshots.jsonl replay) showed every bid-threshold
 # stop is net harmful (bid<=entry-15: -65.6 EUR; bid<=55c: -58.3 EUR vs hold)
@@ -281,6 +310,11 @@ STOP_LOSS_RESPECT_FORECAST_OVERSHOOT = (
 # -11.62 EUR; 2-4F margin = 4% loss rate, +20.69 EUR. With ~+1 EUR wins vs
 # -5 EUR losses, the <2.5F zone is pure bleed. See issue #200.
 MIN_FORECAST_BRACKET_MARGIN_F = float(os.getenv("MIN_FORECAST_BRACKET_MARGIN_F", "2.5"))
+
+# Interim overconfidence guardrail (issue #305). Clamps p_yes to [1-cap, cap]
+# so the system never treats a bracket as a certainty. Setting to 1.0 reproduces
+# pre-guardrail behaviour exactly. Remove/loosen once EMOS (#70) is promoted.
+MODEL_PROB_CAP = float(os.getenv("MODEL_PROB_CAP", "0.95"))
 
 # EMOS deployment mode: 'legacy' | 'emos_shadow' | 'emos_primary'
 # Per-city mode is read from the emos_calibration table; this is the fallback
@@ -379,12 +413,20 @@ CONFIG_DEFAULTS: "dict[str, str | int | float | bool]" = {
     "POLL_INTERVAL_SECONDS": 300,
     "MAX_MINUTES_TO_SETTLEMENT": 1440,
     "MIN_MINUTES_TO_SETTLEMENT": 15,
+    "FORCE_EXIT_MINUTES_TO_SETTLEMENT": 60,
     # Shadow-only YES thresholds — applied on the YES shadow path only.
     # These are intentionally looser than the live YES gates so the shadow loop
     # can collect data without risking live orders.  The NO side is unaffected.
     "SHADOW_MIN_EDGE_CENTS_YES": 3.0,
     "SHADOW_MIN_CONFIDENCE_YES": 0.55,
     "SHADOW_MIN_PRICE_CENTS_YES": 20,
+    "MODEL_PROB_CAP": 0.95,
+    # Residual bias correction (issue #307)
+    "MAX_RESIDUAL_MAE_F_FOR_LIVE": 8.0,
+    "RESIDUAL_WINDOW_DAYS": 30,
+    "RESIDUAL_MIN_SAMPLES": 10,
+    "RESIDUAL_MAX_CORRECTION_F": 5.0,
+    "RESIDUAL_CORRECTION_ENABLED": True,
 }
 
 
