@@ -13108,7 +13108,7 @@
       "source_location": "L43",
       "_origin": "ast",
       "id": "src_tests_test_emos_mode_py_bracket",
-      "community": 2,
+      "community": 83,
       "norm_label": "bracket"
     },
     {
@@ -13128,7 +13128,7 @@
       "source_location": "L55",
       "_origin": "ast",
       "id": "src_tests_test_emos_mode_py_weatherstate",
-      "community": 2,
+      "community": 83,
       "norm_label": "weatherstate"
     },
     {
@@ -18058,7 +18058,7 @@
       "source_location": "L404",
       "_origin": "ast",
       "id": "tests_test_order_manager_testchecktakeprofitexits_reset_om",
-      "community": 26,
+      "community": 20,
       "norm_label": "._reset_om()"
     },
     {
@@ -18108,7 +18108,7 @@
       "source_location": "L466",
       "_origin": "ast",
       "id": "tests_test_order_manager_testchecktakeprofitexits_test_no_positions_is_noop",
-      "community": 20,
+      "community": 75,
       "norm_label": ".test_no_positions_is_noop()"
     },
     {
@@ -18248,7 +18248,7 @@
       "source_location": "L668",
       "_origin": "ast",
       "id": "tests_test_order_manager_testmanualsellposition_make_trader",
-      "community": 20,
+      "community": 75,
       "norm_label": "._make_trader()"
     },
     {
@@ -18598,7 +18598,7 @@
       "source_location": "L405",
       "_origin": "ast",
       "id": "tests_test_order_manager_rationale_405",
-      "community": 26,
+      "community": 20,
       "norm_label": "fresh ordermanager per test (avoids _sold_positions leaking)."
     },
     {
@@ -18638,7 +18638,7 @@
       "source_location": "L467",
       "_origin": "ast",
       "id": "tests_test_order_manager_rationale_467",
-      "community": 20,
+      "community": 75,
       "norm_label": "empty position list \u2192 nothing happens."
     },
     {
@@ -21328,7 +21328,7 @@
       "source_location": "L396",
       "_origin": "ast",
       "id": "tests_test_run_wiring_testintradaycorrectionwiring",
-      "community": 83,
+      "community": 191,
       "norm_label": "testintradaycorrectionwiring"
     },
     {
@@ -21338,7 +21338,7 @@
       "source_location": "L399",
       "_origin": "ast",
       "id": "tests_test_run_wiring_testintradaycorrectionwiring_test_corrected_mu_f_takes_priority_over_deb_mu_f",
-      "community": 83,
+      "community": 191,
       "norm_label": ".test_corrected_mu_f_takes_priority_over_deb_mu_f()"
     },
     {
@@ -21348,7 +21348,7 @@
       "source_location": "L452",
       "_origin": "ast",
       "id": "tests_test_run_wiring_testintradaycorrectionwiring_test_corrected_mu_f_none_falls_through_to_deb",
-      "community": 83,
+      "community": 191,
       "norm_label": ".test_corrected_mu_f_none_falls_through_to_deb()"
     },
     {
@@ -21358,7 +21358,7 @@
       "source_location": "L484",
       "_origin": "ast",
       "id": "tests_test_run_wiring_testintradaycorrectionwiring_test_on_insert_callback_fires_after_commit",
-      "community": 83,
+      "community": 191,
       "norm_label": ".test_on_insert_callback_fires_after_commit()"
     },
     {
@@ -21368,7 +21368,7 @@
       "source_location": "L508",
       "_origin": "ast",
       "id": "tests_test_run_wiring_testintradaycorrectionwiring_test_on_insert_callback_none_does_not_raise",
-      "community": 83,
+      "community": 191,
       "norm_label": ".test_on_insert_callback_none_does_not_raise()"
     },
     {
@@ -21568,7 +21568,7 @@
       "source_location": "L397",
       "_origin": "ast",
       "id": "tests_test_run_wiring_rationale_397",
-      "community": 83,
+      "community": 191,
       "norm_label": "weatherstate.corrected_mu_f and on_insert_callback wiring."
     },
     {
@@ -21578,7 +21578,7 @@
       "source_location": "L400",
       "_origin": "ast",
       "id": "tests_test_run_wiring_rationale_400",
-      "community": 83,
+      "community": 191,
       "norm_label": "when corrected_mu_f is set, true_probability_yes uses it over deb_mu_f."
     },
     {
@@ -21588,7 +21588,7 @@
       "source_location": "L453",
       "_origin": "ast",
       "id": "tests_test_run_wiring_rationale_453",
-      "community": 83,
+      "community": 191,
       "norm_label": "when corrected_mu_f is none and deb_enabled, deb_mu_f is used."
     },
     {
@@ -21598,7 +21598,7 @@
       "source_location": "L485",
       "_origin": "ast",
       "id": "tests_test_run_wiring_rationale_485",
-      "community": 83,
+      "community": 191,
       "norm_label": "on_insert_callback must be called after insert_observation commits."
     },
     {
@@ -21608,7 +21608,7 @@
       "source_location": "L509",
       "_origin": "ast",
       "id": "tests_test_run_wiring_rationale_509",
-      "community": 83,
+      "community": 191,
       "norm_label": "calling insert_observation without callback must not raise."
     },
     {
@@ -29622,20 +29622,20 @@
       "norm_label": "documentation"
     },
     {
-      "label": "Historical Testing & Archives",
+      "label": "Historical Testing & Archives (Deprecated)",
       "file_type": "document",
       "source_file": "README.md",
       "source_location": "L251",
       "_origin": "ast",
-      "id": "readme_historical_testing_archives",
+      "id": "readme_historical_testing_archives_deprecated",
       "community": 156,
-      "norm_label": "historical testing & archives"
+      "norm_label": "historical testing & archives (deprecated)"
     },
     {
       "label": "Testing",
       "file_type": "document",
       "source_file": "README.md",
-      "source_location": "L260",
+      "source_location": "L259",
       "_origin": "ast",
       "id": "readme_testing",
       "community": 156,
@@ -29645,7 +29645,7 @@
       "label": "Project Status",
       "file_type": "document",
       "source_file": "README.md",
-      "source_location": "L268",
+      "source_location": "L267",
       "_origin": "ast",
       "id": "readme_project_status",
       "community": 156,
@@ -29655,7 +29655,7 @@
       "label": "License",
       "file_type": "document",
       "source_file": "README.md",
-      "source_location": "L280",
+      "source_location": "L279",
       "_origin": "ast",
       "id": "readme_license",
       "community": 156,
@@ -30702,20 +30702,20 @@
       "norm_label": "epics"
     },
     {
-      "label": "Epic 0 \u2014 Repository consolidation (1\u20132 days)",
+      "label": "Epic 0 \u2014 Repository consolidation (COMPLETED)",
       "file_type": "document",
       "source_file": "docs/IMPLEMENTATION_PLAN.md",
       "source_location": "L94",
       "_origin": "ast",
-      "id": "docs_implementation_plan_epic_0_repository_consolidation_1_2_days",
+      "id": "docs_implementation_plan_epic_0_repository_consolidation_completed",
       "community": 85,
-      "norm_label": "epic 0 \u2014 repository consolidation (1\u20132 days)"
+      "norm_label": "epic 0 \u2014 repository consolidation (completed)"
     },
     {
       "label": "Epic 1 \u2014 Risk management (1 day)",
       "file_type": "document",
       "source_file": "docs/IMPLEMENTATION_PLAN.md",
-      "source_location": "L135",
+      "source_location": "L137",
       "_origin": "ast",
       "id": "docs_implementation_plan_epic_1_risk_management_1_day",
       "community": 85,
@@ -30725,7 +30725,7 @@
       "label": "Epic 2 \u2014 Live observation run (2\u20133 days, starting week of May 12)",
       "file_type": "document",
       "source_file": "docs/IMPLEMENTATION_PLAN.md",
-      "source_location": "L165",
+      "source_location": "L167",
       "_origin": "ast",
       "id": "docs_implementation_plan_epic_2_live_observation_run_2_3_days_starting_week_of_may_12",
       "community": 85,
@@ -30735,7 +30735,7 @@
       "label": "Epic 3 \u2014 Live execution (1 week, starting ~May 19)",
       "file_type": "document",
       "source_file": "docs/IMPLEMENTATION_PLAN.md",
-      "source_location": "L186",
+      "source_location": "L188",
       "_origin": "ast",
       "id": "docs_implementation_plan_epic_3_live_execution_1_week_starting_may_19",
       "community": 85,
@@ -30745,7 +30745,7 @@
       "label": "3.1 Polymarket authentication",
       "file_type": "document",
       "source_file": "docs/IMPLEMENTATION_PLAN.md",
-      "source_location": "L190",
+      "source_location": "L192",
       "_origin": "ast",
       "id": "docs_implementation_plan_3_1_polymarket_authentication",
       "community": 85,
@@ -30755,7 +30755,7 @@
       "label": "3.2 Order lifecycle",
       "file_type": "document",
       "source_file": "docs/IMPLEMENTATION_PLAN.md",
-      "source_location": "L216",
+      "source_location": "L218",
       "_origin": "ast",
       "id": "docs_implementation_plan_3_2_order_lifecycle",
       "community": 85,
@@ -30765,7 +30765,7 @@
       "label": "3.3 Week 1 metrics (live gate to continue)",
       "file_type": "document",
       "source_file": "docs/IMPLEMENTATION_PLAN.md",
-      "source_location": "L234",
+      "source_location": "L236",
       "_origin": "ast",
       "id": "docs_implementation_plan_3_3_week_1_metrics_live_gate_to_continue",
       "community": 85,
@@ -30775,7 +30775,7 @@
       "label": "Epic 4 \u2014 Monitoring (1 week, parallel to Epic 3)",
       "file_type": "document",
       "source_file": "docs/IMPLEMENTATION_PLAN.md",
-      "source_location": "L247",
+      "source_location": "L249",
       "_origin": "ast",
       "id": "docs_implementation_plan_epic_4_monitoring_1_week_parallel_to_epic_3",
       "community": 85,
@@ -30785,7 +30785,7 @@
       "label": "FastAPI dashboard (minimal)",
       "file_type": "document",
       "source_file": "docs/IMPLEMENTATION_PLAN.md",
-      "source_location": "L253",
+      "source_location": "L255",
       "_origin": "ast",
       "id": "docs_implementation_plan_fastapi_dashboard_minimal",
       "community": 85,
@@ -30795,7 +30795,7 @@
       "label": "Alerts (`src/monitoring/alerts.py`)",
       "file_type": "document",
       "source_file": "docs/IMPLEMENTATION_PLAN.md",
-      "source_location": "L261",
+      "source_location": "L263",
       "_origin": "ast",
       "id": "docs_implementation_plan_alerts_src_monitoring_alerts_py",
       "community": 85,
@@ -30805,7 +30805,7 @@
       "label": "Epic 5 \u2014 Model improvements (ongoing, weeks 3+)",
       "file_type": "document",
       "source_file": "docs/IMPLEMENTATION_PLAN.md",
-      "source_location": "L278",
+      "source_location": "L280",
       "_origin": "ast",
       "id": "docs_implementation_plan_epic_5_model_improvements_ongoing_weeks_3",
       "community": 85,
@@ -30815,7 +30815,7 @@
       "label": "5.1 Model calibration (Platt scaling)",
       "file_type": "document",
       "source_file": "docs/IMPLEMENTATION_PLAN.md",
-      "source_location": "L282",
+      "source_location": "L284",
       "_origin": "ast",
       "id": "docs_implementation_plan_5_1_model_calibration_platt_scaling",
       "community": 85,
@@ -30825,7 +30825,7 @@
       "label": "5.2 Kelly criterion position sizing",
       "file_type": "document",
       "source_file": "docs/IMPLEMENTATION_PLAN.md",
-      "source_location": "L290",
+      "source_location": "L292",
       "_origin": "ast",
       "id": "docs_implementation_plan_5_2_kelly_criterion_position_sizing",
       "community": 85,
@@ -30835,7 +30835,7 @@
       "label": "5.3 Station-specific climb rates",
       "file_type": "document",
       "source_file": "docs/IMPLEMENTATION_PLAN.md",
-      "source_location": "L303",
+      "source_location": "L305",
       "_origin": "ast",
       "id": "docs_implementation_plan_5_3_station_specific_climb_rates",
       "community": 85,
@@ -30845,7 +30845,7 @@
       "label": "5.4 Denver / Dallas root cause analysis",
       "file_type": "document",
       "source_file": "docs/IMPLEMENTATION_PLAN.md",
-      "source_location": "L311",
+      "source_location": "L313",
       "_origin": "ast",
       "id": "docs_implementation_plan_5_4_denver_dallas_root_cause_analysis",
       "community": 85,
@@ -30855,7 +30855,7 @@
       "label": "Timeline",
       "file_type": "document",
       "source_file": "docs/IMPLEMENTATION_PLAN.md",
-      "source_location": "L319",
+      "source_location": "L321",
       "_origin": "ast",
       "id": "docs_implementation_plan_timeline",
       "community": 85,
@@ -30865,7 +30865,7 @@
       "label": "Risk register",
       "file_type": "document",
       "source_file": "docs/IMPLEMENTATION_PLAN.md",
-      "source_location": "L334",
+      "source_location": "L336",
       "_origin": "ast",
       "id": "docs_implementation_plan_risk_register",
       "community": 85,
@@ -30875,7 +30875,7 @@
       "label": "Go / No-Go gates",
       "file_type": "document",
       "source_file": "docs/IMPLEMENTATION_PLAN.md",
-      "source_location": "L349",
+      "source_location": "L351",
       "_origin": "ast",
       "id": "docs_implementation_plan_go_no_go_gates",
       "community": 85,
@@ -30885,7 +30885,7 @@
       "label": "What we are NOT building (explicitly out of scope)",
       "file_type": "document",
       "source_file": "docs/IMPLEMENTATION_PLAN.md",
-      "source_location": "L371",
+      "source_location": "L373",
       "_origin": "ast",
       "id": "docs_implementation_plan_what_we_are_not_building_explicitly_out_of_scope",
       "community": 85,
@@ -30895,7 +30895,7 @@
       "label": "Key decisions already made",
       "file_type": "document",
       "source_file": "docs/IMPLEMENTATION_PLAN.md",
-      "source_location": "L381",
+      "source_location": "L383",
       "_origin": "ast",
       "id": "docs_implementation_plan_key_decisions_already_made",
       "community": 85,
@@ -35770,9 +35770,9 @@
       "source_file": "src/config.py",
       "source_location": "L408",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "src_config",
-      "target": "src_config_seed_station_overrides",
-      "confidence_score": 1.0
+      "target": "src_config_seed_station_overrides"
     },
     {
       "relation": "rationale_for",
@@ -35835,9 +35835,9 @@
       "source_file": "src/tests/test_seed_station_overrides.py",
       "source_location": "L16",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_seed_station_overrides",
-      "target": "src_config",
-      "confidence_score": 1.0
+      "target": "src_config"
     },
     {
       "relation": "imports_from",
@@ -36143,9 +36143,9 @@
       "source_file": "src/scripts/run.py",
       "source_location": "L21",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "scripts_run",
-      "target": "src_config_seed_config",
-      "confidence_score": 1.0
+      "target": "src_config_seed_config"
     },
     {
       "relation": "calls",
@@ -36154,9 +36154,9 @@
       "source_file": "src/scripts/run.py",
       "source_location": "L373",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "scripts_run_main",
-      "target": "src_config_seed_config",
-      "confidence_score": 1.0
+      "target": "src_config_seed_config"
     },
     {
       "relation": "rationale_for",
@@ -36296,9 +36296,9 @@
       "source_file": "src/scripts/run.py",
       "source_location": "L21",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "scripts_run",
-      "target": "src_config_seed_station_overrides",
-      "confidence_score": 1.0
+      "target": "src_config_seed_station_overrides"
     },
     {
       "relation": "calls",
@@ -36307,9 +36307,9 @@
       "source_file": "src/scripts/run.py",
       "source_location": "L374",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "scripts_run_main",
-      "target": "src_config_seed_station_overrides",
-      "confidence_score": 1.0
+      "target": "src_config_seed_station_overrides"
     },
     {
       "relation": "rationale_for",
@@ -36317,9 +36317,9 @@
       "source_file": "src/config.py",
       "source_location": "L409",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "src_config_rationale_409",
-      "target": "src_config_seed_station_overrides",
-      "confidence_score": 1.0
+      "target": "src_config_seed_station_overrides"
     },
     {
       "relation": "imports",
@@ -36328,9 +36328,9 @@
       "source_file": "src/tests/test_seed_station_overrides.py",
       "source_location": "L16",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_seed_station_overrides",
-      "target": "src_config_seed_station_overrides",
-      "confidence_score": 1.0
+      "target": "src_config_seed_station_overrides"
     },
     {
       "relation": "calls",
@@ -36458,9 +36458,9 @@
       "source_file": "src/config.py",
       "source_location": "L424",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "src_config_rationale_424",
-      "target": "src_config_get_live_config",
-      "confidence_score": 1.0
+      "target": "src_config_get_live_config"
     },
     {
       "relation": "imports",
@@ -40380,9 +40380,9 @@
       "source_file": "src/execution/position_tracker.py",
       "source_location": "L24",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "execution_position_tracker",
-      "target": "utils_log_rotation_housekeep",
-      "confidence_score": 1.0
+      "target": "utils_log_rotation_housekeep"
     },
     {
       "relation": "imports",
@@ -40391,9 +40391,9 @@
       "source_file": "src/execution/position_tracker.py",
       "source_location": "L24",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "execution_position_tracker",
-      "target": "utils_log_rotation_rotated_path",
-      "confidence_score": 1.0
+      "target": "utils_log_rotation_rotated_path"
     },
     {
       "relation": "rationale_for",
@@ -40434,9 +40434,9 @@
       "source_file": "src/execution/position_tracker.py",
       "source_location": "L154",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "execution_position_tracker_log_open_position_snapshots",
-      "target": "utils_log_rotation_housekeep",
-      "confidence_score": 1.0
+      "target": "utils_log_rotation_housekeep"
     },
     {
       "relation": "calls",
@@ -40445,9 +40445,9 @@
       "source_file": "src/execution/position_tracker.py",
       "source_location": "L153",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "execution_position_tracker_log_open_position_snapshots",
-      "target": "utils_log_rotation_rotated_path",
-      "confidence_score": 1.0
+      "target": "utils_log_rotation_rotated_path"
     },
     {
       "relation": "rationale_for",
@@ -40455,9 +40455,9 @@
       "source_file": "src/execution/position_tracker.py",
       "source_location": "L51",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "execution_position_tracker_rationale_51",
-      "target": "execution_position_tracker_log_open_position_snapshots",
-      "confidence_score": 1.0
+      "target": "execution_position_tracker_log_open_position_snapshots"
     },
     {
       "relation": "imports",
@@ -40498,9 +40498,9 @@
       "source_file": "src/execution/position_tracker.py",
       "source_location": "L163",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "execution_position_tracker_rationale_163",
-      "target": "execution_position_tracker_check_stop_loss_exits",
-      "confidence_score": 1.0
+      "target": "execution_position_tracker_check_stop_loss_exits"
     },
     {
       "relation": "imports",
@@ -40552,9 +40552,9 @@
       "source_file": "src/execution/position_tracker.py",
       "source_location": "L361",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "execution_position_tracker_rationale_361",
-      "target": "execution_position_tracker_check_metar_exits",
-      "confidence_score": 1.0
+      "target": "execution_position_tracker_check_metar_exits"
     },
     {
       "relation": "imports",
@@ -48484,9 +48484,9 @@
       "source_file": "src/scripts/run.py",
       "source_location": "L19",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "scripts_run",
-      "target": "utils_log_rotation_housekeep",
-      "confidence_score": 1.0
+      "target": "utils_log_rotation_housekeep"
     },
     {
       "relation": "imports",
@@ -48495,9 +48495,9 @@
       "source_file": "src/scripts/run.py",
       "source_location": "L19",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "scripts_run",
-      "target": "utils_log_rotation_rotated_path",
-      "confidence_score": 1.0
+      "target": "utils_log_rotation_rotated_path"
     },
     {
       "relation": "imports",
@@ -48538,9 +48538,9 @@
       "source_file": "src/scripts/run.py",
       "source_location": "L70",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "scripts_run_append_snapshot",
-      "target": "utils_log_rotation_housekeep",
-      "confidence_score": 1.0
+      "target": "utils_log_rotation_housekeep"
     },
     {
       "relation": "calls",
@@ -48549,9 +48549,9 @@
       "source_file": "src/scripts/run.py",
       "source_location": "L69",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "scripts_run_append_snapshot",
-      "target": "utils_log_rotation_rotated_path",
-      "confidence_score": 1.0
+      "target": "utils_log_rotation_rotated_path"
     },
     {
       "relation": "calls",
@@ -48571,9 +48571,9 @@
       "source_file": "src/scripts/run.py",
       "source_location": "L79",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "scripts_run_append_candidate",
-      "target": "utils_log_rotation_housekeep",
-      "confidence_score": 1.0
+      "target": "utils_log_rotation_housekeep"
     },
     {
       "relation": "calls",
@@ -48582,9 +48582,9 @@
       "source_file": "src/scripts/run.py",
       "source_location": "L78",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "scripts_run_append_candidate",
-      "target": "utils_log_rotation_rotated_path",
-      "confidence_score": 1.0
+      "target": "utils_log_rotation_rotated_path"
     },
     {
       "relation": "calls",
@@ -48604,9 +48604,9 @@
       "source_file": "src/scripts/run.py",
       "source_location": "L92",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "scripts_run_append_live_trade",
-      "target": "utils_log_rotation_housekeep",
-      "confidence_score": 1.0
+      "target": "utils_log_rotation_housekeep"
     },
     {
       "relation": "calls",
@@ -48615,9 +48615,9 @@
       "source_file": "src/scripts/run.py",
       "source_location": "L91",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "scripts_run_append_live_trade",
-      "target": "utils_log_rotation_rotated_path",
-      "confidence_score": 1.0
+      "target": "utils_log_rotation_rotated_path"
     },
     {
       "relation": "calls",
@@ -48669,9 +48669,9 @@
       "source_file": "src/scripts/run.py",
       "source_location": "L133",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "scripts_run_rationale_133",
-      "target": "scripts_run_poll_once",
-      "confidence_score": 1.0
+      "target": "scripts_run_poll_once"
     },
     {
       "relation": "imports",
@@ -48811,9 +48811,9 @@
       "source_file": "src/scripts/run.py",
       "source_location": "L341",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "scripts_run_rationale_341",
-      "target": "scripts_run_start_collector_thread",
-      "confidence_score": 1.0
+      "target": "scripts_run_start_collector_thread"
     },
     {
       "relation": "imports",
@@ -49001,9 +49001,9 @@
       "source_file": "src/scripts/settle.py",
       "source_location": "L24",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "scripts_settle_fetch_daily_climate_high",
-      "target": "src_scripts_settle_py_date",
-      "confidence_score": 1.0
+      "target": "src_scripts_settle_py_date"
     },
     {
       "relation": "rationale_for",
@@ -49033,9 +49033,9 @@
       "source_file": "src/scripts/settle.py",
       "source_location": "L236",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "scripts_settle_settle_live_trades",
-      "target": "src_scripts_settle_py_date",
-      "confidence_score": 1.0
+      "target": "src_scripts_settle_py_date"
     },
     {
       "relation": "references",
@@ -49044,9 +49044,9 @@
       "source_file": "src/scripts/settle.py",
       "source_location": "L62",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "scripts_settle_settle_shadow_trades",
-      "target": "src_scripts_settle_py_date",
-      "confidence_score": 1.0
+      "target": "src_scripts_settle_py_date"
     },
     {
       "relation": "references",
@@ -49055,9 +49055,9 @@
       "source_file": "src/scripts/settle.py",
       "source_location": "L187",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "scripts_settle_write_db_settlements",
-      "target": "src_scripts_settle_py_date",
-      "confidence_score": 1.0
+      "target": "src_scripts_settle_py_date"
     },
     {
       "relation": "calls",
@@ -50540,9 +50540,9 @@
       "source_file": "src/tests/test_seed_station_overrides.py",
       "source_location": "L18",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_seed_station_overrides",
-      "target": "strategy_scanner_scan_markets",
-      "confidence_score": 1.0
+      "target": "strategy_scanner_scan_markets"
     },
     {
       "relation": "imports",
@@ -65394,9 +65394,9 @@
       "source_file": "src/tests/test_log_rotation.py",
       "source_location": "L50",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_log_rotation",
-      "target": "tests_test_log_rotation_testdatedpath",
-      "confidence_score": 1.0
+      "target": "tests_test_log_rotation_testdatedpath"
     },
     {
       "relation": "contains",
@@ -65404,9 +65404,9 @@
       "source_file": "src/tests/test_log_rotation.py",
       "source_location": "L128",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_log_rotation",
-      "target": "tests_test_log_rotation_testhousekeep",
-      "confidence_score": 1.0
+      "target": "tests_test_log_rotation_testhousekeep"
     },
     {
       "relation": "contains",
@@ -65414,9 +65414,9 @@
       "source_file": "src/tests/test_log_rotation.py",
       "source_location": "L179",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_log_rotation",
-      "target": "tests_test_log_rotation_testiterrotatedjsonl",
-      "confidence_score": 1.0
+      "target": "tests_test_log_rotation_testiterrotatedjsonl"
     },
     {
       "relation": "contains",
@@ -65424,9 +65424,9 @@
       "source_file": "src/tests/test_log_rotation.py",
       "source_location": "L74",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_log_rotation",
-      "target": "tests_test_log_rotation_testrotatedpath",
-      "confidence_score": 1.0
+      "target": "tests_test_log_rotation_testrotatedpath"
     },
     {
       "relation": "contains",
@@ -65434,9 +65434,9 @@
       "source_file": "src/tests/test_log_rotation.py",
       "source_location": "L226",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_log_rotation",
-      "target": "tests_test_log_rotation_testweatherdeltalogging",
-      "confidence_score": 1.0
+      "target": "tests_test_log_rotation_testweatherdeltalogging"
     },
     {
       "relation": "contains",
@@ -65444,9 +65444,9 @@
       "source_file": "src/tests/test_log_rotation.py",
       "source_location": "L39",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_log_rotation",
-      "target": "tests_test_log_rotation_write_jsonl",
-      "confidence_score": 1.0
+      "target": "tests_test_log_rotation_write_jsonl"
     },
     {
       "relation": "imports",
@@ -65455,9 +65455,9 @@
       "source_file": "src/tests/test_log_rotation.py",
       "source_location": "L23",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_log_rotation",
-      "target": "utils_log_rotation_dated_path",
-      "confidence_score": 1.0
+      "target": "utils_log_rotation_dated_path"
     },
     {
       "relation": "imports",
@@ -65466,9 +65466,9 @@
       "source_file": "src/tests/test_log_rotation.py",
       "source_location": "L23",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_log_rotation",
-      "target": "utils_log_rotation_housekeep",
-      "confidence_score": 1.0
+      "target": "utils_log_rotation_housekeep"
     },
     {
       "relation": "imports",
@@ -65477,9 +65477,9 @@
       "source_file": "src/tests/test_log_rotation.py",
       "source_location": "L23",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_log_rotation",
-      "target": "utils_log_rotation_iter_rotated_jsonl",
-      "confidence_score": 1.0
+      "target": "utils_log_rotation_iter_rotated_jsonl"
     },
     {
       "relation": "imports",
@@ -65488,9 +65488,9 @@
       "source_file": "src/tests/test_log_rotation.py",
       "source_location": "L23",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_log_rotation",
-      "target": "utils_log_rotation_resolve_current",
-      "confidence_score": 1.0
+      "target": "utils_log_rotation_resolve_current"
     },
     {
       "relation": "imports",
@@ -65499,9 +65499,9 @@
       "source_file": "src/tests/test_log_rotation.py",
       "source_location": "L23",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_log_rotation",
-      "target": "utils_log_rotation_rotated_path",
-      "confidence_score": 1.0
+      "target": "utils_log_rotation_rotated_path"
     },
     {
       "relation": "imports",
@@ -65510,9 +65510,9 @@
       "source_file": "src/tests/test_log_rotation.py",
       "source_location": "L23",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_log_rotation",
-      "target": "utils_log_rotation_today_utc",
-      "confidence_score": 1.0
+      "target": "utils_log_rotation_today_utc"
     },
     {
       "relation": "imports_from",
@@ -65521,9 +65521,9 @@
       "source_file": "src/tests/test_log_rotation.py",
       "source_location": "L231",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_log_rotation",
-      "target": "weather_builder",
-      "confidence_score": 1.0
+      "target": "weather_builder"
     },
     {
       "relation": "imports",
@@ -65532,9 +65532,9 @@
       "source_file": "src/tests/test_log_rotation.py",
       "source_location": "L235",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_log_rotation",
-      "target": "weather_builder_should_log_weather",
-      "confidence_score": 1.0
+      "target": "weather_builder_should_log_weather"
     },
     {
       "relation": "rationale_for",
@@ -65542,9 +65542,9 @@
       "source_file": "src/tests/test_log_rotation.py",
       "source_location": "L1",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_log_rotation_rationale_1",
-      "target": "tests_test_log_rotation",
-      "confidence_score": 1.0
+      "target": "tests_test_log_rotation"
     },
     {
       "relation": "calls",
@@ -65553,9 +65553,9 @@
       "source_file": "src/tests/test_log_rotation.py",
       "source_location": "L195",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_log_rotation_testiterrotatedjsonl_test_falls_back_to_bare_file",
-      "target": "tests_test_log_rotation_write_jsonl",
-      "confidence_score": 1.0
+      "target": "tests_test_log_rotation_write_jsonl"
     },
     {
       "relation": "calls",
@@ -65564,9 +65564,9 @@
       "source_file": "src/tests/test_log_rotation.py",
       "source_location": "L185",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_log_rotation_testiterrotatedjsonl_test_reads_multiple_dated_files_in_order",
-      "target": "tests_test_log_rotation_write_jsonl",
-      "confidence_score": 1.0
+      "target": "tests_test_log_rotation_write_jsonl"
     },
     {
       "relation": "references",
@@ -65575,9 +65575,9 @@
       "source_file": "src/tests/test_log_rotation.py",
       "source_location": "L39",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_log_rotation_write_jsonl",
-      "target": "src_tests_test_log_rotation_py_path",
-      "confidence_score": 1.0
+      "target": "src_tests_test_log_rotation_py_path"
     },
     {
       "relation": "references",
@@ -65586,9 +65586,9 @@
       "source_file": "src/tests/test_log_rotation.py",
       "source_location": "L129",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_log_rotation_testhousekeep_make_dated",
-      "target": "src_tests_test_log_rotation_py_path",
-      "confidence_score": 1.0
+      "target": "src_tests_test_log_rotation_py_path"
     },
     {
       "relation": "calls",
@@ -65597,9 +65597,9 @@
       "source_file": "src/tests/test_log_rotation.py",
       "source_location": "L143",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_log_rotation_testhousekeep_test_compresses_old_file",
-      "target": "src_tests_test_log_rotation_py_path",
-      "confidence_score": 1.0
+      "target": "src_tests_test_log_rotation_py_path"
     },
     {
       "relation": "calls",
@@ -65608,9 +65608,9 @@
       "source_file": "src/tests/test_log_rotation.py",
       "source_location": "L156",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_log_rotation_testhousekeep_test_deletes_file_beyond_retain_limit",
-      "target": "src_tests_test_log_rotation_py_path",
-      "confidence_score": 1.0
+      "target": "src_tests_test_log_rotation_py_path"
     },
     {
       "relation": "method",
@@ -65618,9 +65618,9 @@
       "source_file": "src/tests/test_log_rotation.py",
       "source_location": "L57",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_log_rotation_testdatedpath",
-      "target": "tests_test_log_rotation_testdatedpath_test_csv_stem",
-      "confidence_score": 1.0
+      "target": "tests_test_log_rotation_testdatedpath_test_csv_stem"
     },
     {
       "relation": "method",
@@ -65628,9 +65628,9 @@
       "source_file": "src/tests/test_log_rotation.py",
       "source_location": "L63",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_log_rotation_testdatedpath",
-      "target": "tests_test_log_rotation_testdatedpath_test_defaults_to_today",
-      "confidence_score": 1.0
+      "target": "tests_test_log_rotation_testdatedpath_test_defaults_to_today"
     },
     {
       "relation": "method",
@@ -65638,9 +65638,9 @@
       "source_file": "src/tests/test_log_rotation.py",
       "source_location": "L51",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_log_rotation_testdatedpath",
-      "target": "tests_test_log_rotation_testdatedpath_test_jsonl_stem",
-      "confidence_score": 1.0
+      "target": "tests_test_log_rotation_testdatedpath_test_jsonl_stem"
     },
     {
       "relation": "calls",
@@ -65649,9 +65649,9 @@
       "source_file": "src/tests/test_log_rotation.py",
       "source_location": "L53",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_log_rotation_testdatedpath_test_jsonl_stem",
-      "target": "src_tests_test_log_rotation_py_date",
-      "confidence_score": 1.0
+      "target": "src_tests_test_log_rotation_py_date"
     },
     {
       "relation": "calls",
@@ -65671,9 +65671,9 @@
       "source_file": "src/tests/test_log_rotation.py",
       "source_location": "L59",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_log_rotation_testdatedpath_test_csv_stem",
-      "target": "src_tests_test_log_rotation_py_date",
-      "confidence_score": 1.0
+      "target": "src_tests_test_log_rotation_py_date"
     },
     {
       "relation": "calls",
@@ -65714,9 +65714,9 @@
       "source_file": "src/tests/test_log_rotation.py",
       "source_location": "L75",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_log_rotation_testrotatedpath",
-      "target": "tests_test_log_rotation_testrotatedpath_test_creates_dated_file",
-      "confidence_score": 1.0
+      "target": "tests_test_log_rotation_testrotatedpath_test_creates_dated_file"
     },
     {
       "relation": "method",
@@ -65724,9 +65724,9 @@
       "source_file": "src/tests/test_log_rotation.py",
       "source_location": "L82",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_log_rotation_testrotatedpath",
-      "target": "tests_test_log_rotation_testrotatedpath_test_creates_symlink",
-      "confidence_score": 1.0
+      "target": "tests_test_log_rotation_testrotatedpath_test_creates_symlink"
     },
     {
       "relation": "method",
@@ -65734,9 +65734,9 @@
       "source_file": "src/tests/test_log_rotation.py",
       "source_location": "L97",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_log_rotation_testrotatedpath",
-      "target": "tests_test_log_rotation_testrotatedpath_test_no_file_grows_without_bound",
-      "confidence_score": 1.0
+      "target": "tests_test_log_rotation_testrotatedpath_test_no_file_grows_without_bound"
     },
     {
       "relation": "method",
@@ -65744,9 +65744,9 @@
       "source_file": "src/tests/test_log_rotation.py",
       "source_location": "L91",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_log_rotation_testrotatedpath",
-      "target": "tests_test_log_rotation_testrotatedpath_test_returns_same_path_on_second_call",
-      "confidence_score": 1.0
+      "target": "tests_test_log_rotation_testrotatedpath_test_returns_same_path_on_second_call"
     },
     {
       "relation": "calls",
@@ -65809,9 +65809,9 @@
       "source_file": "src/tests/test_log_rotation.py",
       "source_location": "L98",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_log_rotation_rationale_98",
-      "target": "tests_test_log_rotation_testrotatedpath_test_no_file_grows_without_bound",
-      "confidence_score": 1.0
+      "target": "tests_test_log_rotation_testrotatedpath_test_no_file_grows_without_bound"
     },
     {
       "relation": "calls",
@@ -65820,9 +65820,9 @@
       "source_file": "src/tests/test_log_rotation.py",
       "source_location": "L101",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_log_rotation_testrotatedpath_test_no_file_grows_without_bound",
-      "target": "src_tests_test_log_rotation_py_date",
-      "confidence_score": 1.0
+      "target": "src_tests_test_log_rotation_py_date"
     },
     {
       "relation": "calls",
@@ -65841,9 +65841,9 @@
       "source_file": "src/tests/test_log_rotation.py",
       "source_location": "L129",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_log_rotation_testhousekeep",
-      "target": "tests_test_log_rotation_testhousekeep_make_dated",
-      "confidence_score": 1.0
+      "target": "tests_test_log_rotation_testhousekeep_make_dated"
     },
     {
       "relation": "method",
@@ -65851,9 +65851,9 @@
       "source_file": "src/tests/test_log_rotation.py",
       "source_location": "L136",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_log_rotation_testhousekeep",
-      "target": "tests_test_log_rotation_testhousekeep_test_compresses_old_file",
-      "confidence_score": 1.0
+      "target": "tests_test_log_rotation_testhousekeep_test_compresses_old_file"
     },
     {
       "relation": "method",
@@ -65861,9 +65861,9 @@
       "source_file": "src/tests/test_log_rotation.py",
       "source_location": "L150",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_log_rotation_testhousekeep",
-      "target": "tests_test_log_rotation_testhousekeep_test_deletes_file_beyond_retain_limit",
-      "confidence_score": 1.0
+      "target": "tests_test_log_rotation_testhousekeep_test_deletes_file_beyond_retain_limit"
     },
     {
       "relation": "method",
@@ -65871,9 +65871,9 @@
       "source_file": "src/tests/test_log_rotation.py",
       "source_location": "L162",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_log_rotation_testhousekeep",
-      "target": "tests_test_log_rotation_testhousekeep_test_does_not_touch_today",
-      "confidence_score": 1.0
+      "target": "tests_test_log_rotation_testhousekeep_test_does_not_touch_today"
     },
     {
       "relation": "method",
@@ -65881,9 +65881,9 @@
       "source_file": "src/tests/test_log_rotation.py",
       "source_location": "L169",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_log_rotation_testhousekeep",
-      "target": "tests_test_log_rotation_testhousekeep_test_noop_when_directory_missing",
-      "confidence_score": 1.0
+      "target": "tests_test_log_rotation_testhousekeep_test_noop_when_directory_missing"
     },
     {
       "relation": "references",
@@ -65892,9 +65892,9 @@
       "source_file": "src/tests/test_log_rotation.py",
       "source_location": "L129",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_log_rotation_testhousekeep_make_dated",
-      "target": "src_tests_test_log_rotation_py_date",
-      "confidence_score": 1.0
+      "target": "src_tests_test_log_rotation_py_date"
     },
     {
       "relation": "calls",
@@ -65903,9 +65903,9 @@
       "source_file": "src/tests/test_log_rotation.py",
       "source_location": "L140",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_log_rotation_testhousekeep_test_compresses_old_file",
-      "target": "tests_test_log_rotation_testhousekeep_make_dated",
-      "confidence_score": 1.0
+      "target": "tests_test_log_rotation_testhousekeep_make_dated"
     },
     {
       "relation": "calls",
@@ -65914,9 +65914,9 @@
       "source_file": "src/tests/test_log_rotation.py",
       "source_location": "L154",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_log_rotation_testhousekeep_test_deletes_file_beyond_retain_limit",
-      "target": "tests_test_log_rotation_testhousekeep_make_dated",
-      "confidence_score": 1.0
+      "target": "tests_test_log_rotation_testhousekeep_make_dated"
     },
     {
       "relation": "calls",
@@ -65925,9 +65925,9 @@
       "source_file": "src/tests/test_log_rotation.py",
       "source_location": "L165",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_log_rotation_testhousekeep_test_does_not_touch_today",
-      "target": "tests_test_log_rotation_testhousekeep_make_dated",
-      "confidence_score": 1.0
+      "target": "tests_test_log_rotation_testhousekeep_make_dated"
     },
     {
       "relation": "calls",
@@ -65936,9 +65936,9 @@
       "source_file": "src/tests/test_log_rotation.py",
       "source_location": "L182",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_log_rotation_testiterrotatedjsonl_test_reads_multiple_dated_files_in_order",
-      "target": "src_tests_test_log_rotation_py_date",
-      "confidence_score": 1.0
+      "target": "src_tests_test_log_rotation_py_date"
     },
     {
       "relation": "calls",
@@ -66023,9 +66023,9 @@
       "source_file": "src/tests/test_log_rotation.py",
       "source_location": "L216",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_log_rotation_testiterrotatedjsonl",
-      "target": "tests_test_log_rotation_testiterrotatedjsonl_test_empty_directory",
-      "confidence_score": 1.0
+      "target": "tests_test_log_rotation_testiterrotatedjsonl_test_empty_directory"
     },
     {
       "relation": "method",
@@ -66033,9 +66033,9 @@
       "source_file": "src/tests/test_log_rotation.py",
       "source_location": "L193",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_log_rotation_testiterrotatedjsonl",
-      "target": "tests_test_log_rotation_testiterrotatedjsonl_test_falls_back_to_bare_file",
-      "confidence_score": 1.0
+      "target": "tests_test_log_rotation_testiterrotatedjsonl_test_falls_back_to_bare_file"
     },
     {
       "relation": "method",
@@ -66043,9 +66043,9 @@
       "source_file": "src/tests/test_log_rotation.py",
       "source_location": "L200",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_log_rotation_testiterrotatedjsonl",
-      "target": "tests_test_log_rotation_testiterrotatedjsonl_test_reads_compressed_files",
-      "confidence_score": 1.0
+      "target": "tests_test_log_rotation_testiterrotatedjsonl_test_reads_compressed_files"
     },
     {
       "relation": "method",
@@ -66053,9 +66053,9 @@
       "source_file": "src/tests/test_log_rotation.py",
       "source_location": "L180",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_log_rotation_testiterrotatedjsonl",
-      "target": "tests_test_log_rotation_testiterrotatedjsonl_test_reads_multiple_dated_files_in_order",
-      "confidence_score": 1.0
+      "target": "tests_test_log_rotation_testiterrotatedjsonl_test_reads_multiple_dated_files_in_order"
     },
     {
       "relation": "method",
@@ -66063,9 +66063,9 @@
       "source_file": "src/tests/test_log_rotation.py",
       "source_location": "L208",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_log_rotation_testiterrotatedjsonl",
-      "target": "tests_test_log_rotation_testiterrotatedjsonl_test_skips_corrupt_lines",
-      "confidence_score": 1.0
+      "target": "tests_test_log_rotation_testiterrotatedjsonl_test_skips_corrupt_lines"
     },
     {
       "relation": "calls",
@@ -66128,9 +66128,9 @@
       "source_file": "src/tests/test_log_rotation.py",
       "source_location": "L227",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_log_rotation_rationale_227",
-      "target": "tests_test_log_rotation_testweatherdeltalogging",
-      "confidence_score": 1.0
+      "target": "tests_test_log_rotation_testweatherdeltalogging"
     },
     {
       "relation": "method",
@@ -66138,9 +66138,9 @@
       "source_file": "src/tests/test_log_rotation.py",
       "source_location": "L234",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_log_rotation_testweatherdeltalogging",
-      "target": "tests_test_log_rotation_testweatherdeltalogging_call",
-      "confidence_score": 1.0
+      "target": "tests_test_log_rotation_testweatherdeltalogging_call"
     },
     {
       "relation": "method",
@@ -66148,9 +66148,9 @@
       "source_file": "src/tests/test_log_rotation.py",
       "source_location": "L229",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_log_rotation_testweatherdeltalogging",
-      "target": "tests_test_log_rotation_testweatherdeltalogging_setup_method",
-      "confidence_score": 1.0
+      "target": "tests_test_log_rotation_testweatherdeltalogging_setup_method"
     },
     {
       "relation": "method",
@@ -66158,9 +66158,9 @@
       "source_file": "src/tests/test_log_rotation.py",
       "source_location": "L238",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_log_rotation_testweatherdeltalogging",
-      "target": "tests_test_log_rotation_testweatherdeltalogging_test_first_call_always_logs",
-      "confidence_score": 1.0
+      "target": "tests_test_log_rotation_testweatherdeltalogging_test_first_call_always_logs"
     },
     {
       "relation": "method",
@@ -66168,9 +66168,9 @@
       "source_file": "src/tests/test_log_rotation.py",
       "source_location": "L273",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_log_rotation_testweatherdeltalogging",
-      "target": "tests_test_log_rotation_testweatherdeltalogging_test_heartbeat_after_interval",
-      "confidence_score": 1.0
+      "target": "tests_test_log_rotation_testweatherdeltalogging_test_heartbeat_after_interval"
     },
     {
       "relation": "method",
@@ -66178,9 +66178,9 @@
       "source_file": "src/tests/test_log_rotation.py",
       "source_location": "L258",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_log_rotation_testweatherdeltalogging",
-      "target": "tests_test_log_rotation_testweatherdeltalogging_test_high_f_change_logged",
-      "confidence_score": 1.0
+      "target": "tests_test_log_rotation_testweatherdeltalogging_test_high_f_change_logged"
     },
     {
       "relation": "method",
@@ -66188,9 +66188,9 @@
       "source_file": "src/tests/test_log_rotation.py",
       "source_location": "L283",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_log_rotation_testweatherdeltalogging",
-      "target": "tests_test_log_rotation_testweatherdeltalogging_test_independent_stations",
-      "confidence_score": 1.0
+      "target": "tests_test_log_rotation_testweatherdeltalogging_test_independent_stations"
     },
     {
       "relation": "method",
@@ -66198,9 +66198,9 @@
       "source_file": "src/tests/test_log_rotation.py",
       "source_location": "L252",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_log_rotation_testweatherdeltalogging",
-      "target": "tests_test_log_rotation_testweatherdeltalogging_test_large_change_logged",
-      "confidence_score": 1.0
+      "target": "tests_test_log_rotation_testweatherdeltalogging_test_large_change_logged"
     },
     {
       "relation": "method",
@@ -66208,9 +66208,9 @@
       "source_file": "src/tests/test_log_rotation.py",
       "source_location": "L241",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_log_rotation_testweatherdeltalogging",
-      "target": "tests_test_log_rotation_testweatherdeltalogging_test_no_change_suppressed",
-      "confidence_score": 1.0
+      "target": "tests_test_log_rotation_testweatherdeltalogging_test_no_change_suppressed"
     },
     {
       "relation": "method",
@@ -66218,9 +66218,9 @@
       "source_file": "src/tests/test_log_rotation.py",
       "source_location": "L263",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_log_rotation_testweatherdeltalogging",
-      "target": "tests_test_log_rotation_testweatherdeltalogging_test_nws_change_logged",
-      "confidence_score": 1.0
+      "target": "tests_test_log_rotation_testweatherdeltalogging_test_nws_change_logged"
     },
     {
       "relation": "method",
@@ -66228,9 +66228,9 @@
       "source_file": "src/tests/test_log_rotation.py",
       "source_location": "L268",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_log_rotation_testweatherdeltalogging",
-      "target": "tests_test_log_rotation_testweatherdeltalogging_test_nws_none_to_value",
-      "confidence_score": 1.0
+      "target": "tests_test_log_rotation_testweatherdeltalogging_test_nws_none_to_value"
     },
     {
       "relation": "method",
@@ -66238,9 +66238,9 @@
       "source_file": "src/tests/test_log_rotation.py",
       "source_location": "L246",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_log_rotation_testweatherdeltalogging",
-      "target": "tests_test_log_rotation_testweatherdeltalogging_test_small_change_suppressed",
-      "confidence_score": 1.0
+      "target": "tests_test_log_rotation_testweatherdeltalogging_test_small_change_suppressed"
     },
     {
       "relation": "method",
@@ -66248,9 +66248,9 @@
       "source_file": "src/tests/test_log_rotation.py",
       "source_location": "L289",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_log_rotation_testweatherdeltalogging",
-      "target": "tests_test_log_rotation_testweatherdeltalogging_test_suppression_does_not_mutate_state",
-      "confidence_score": 1.0
+      "target": "tests_test_log_rotation_testweatherdeltalogging_test_suppression_does_not_mutate_state"
     },
     {
       "relation": "calls",
@@ -66270,9 +66270,9 @@
       "source_file": "src/tests/test_log_rotation.py",
       "source_location": "L239",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_log_rotation_testweatherdeltalogging_test_first_call_always_logs",
-      "target": "tests_test_log_rotation_testweatherdeltalogging_call",
-      "confidence_score": 1.0
+      "target": "tests_test_log_rotation_testweatherdeltalogging_call"
     },
     {
       "relation": "calls",
@@ -66281,9 +66281,9 @@
       "source_file": "src/tests/test_log_rotation.py",
       "source_location": "L275",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_log_rotation_testweatherdeltalogging_test_heartbeat_after_interval",
-      "target": "tests_test_log_rotation_testweatherdeltalogging_call",
-      "confidence_score": 1.0
+      "target": "tests_test_log_rotation_testweatherdeltalogging_call"
     },
     {
       "relation": "calls",
@@ -66292,9 +66292,9 @@
       "source_file": "src/tests/test_log_rotation.py",
       "source_location": "L259",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_log_rotation_testweatherdeltalogging_test_high_f_change_logged",
-      "target": "tests_test_log_rotation_testweatherdeltalogging_call",
-      "confidence_score": 1.0
+      "target": "tests_test_log_rotation_testweatherdeltalogging_call"
     },
     {
       "relation": "calls",
@@ -66303,9 +66303,9 @@
       "source_file": "src/tests/test_log_rotation.py",
       "source_location": "L284",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_log_rotation_testweatherdeltalogging_test_independent_stations",
-      "target": "tests_test_log_rotation_testweatherdeltalogging_call",
-      "confidence_score": 1.0
+      "target": "tests_test_log_rotation_testweatherdeltalogging_call"
     },
     {
       "relation": "calls",
@@ -66314,9 +66314,9 @@
       "source_file": "src/tests/test_log_rotation.py",
       "source_location": "L253",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_log_rotation_testweatherdeltalogging_test_large_change_logged",
-      "target": "tests_test_log_rotation_testweatherdeltalogging_call",
-      "confidence_score": 1.0
+      "target": "tests_test_log_rotation_testweatherdeltalogging_call"
     },
     {
       "relation": "calls",
@@ -66325,9 +66325,9 @@
       "source_file": "src/tests/test_log_rotation.py",
       "source_location": "L242",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_log_rotation_testweatherdeltalogging_test_no_change_suppressed",
-      "target": "tests_test_log_rotation_testweatherdeltalogging_call",
-      "confidence_score": 1.0
+      "target": "tests_test_log_rotation_testweatherdeltalogging_call"
     },
     {
       "relation": "calls",
@@ -66336,9 +66336,9 @@
       "source_file": "src/tests/test_log_rotation.py",
       "source_location": "L264",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_log_rotation_testweatherdeltalogging_test_nws_change_logged",
-      "target": "tests_test_log_rotation_testweatherdeltalogging_call",
-      "confidence_score": 1.0
+      "target": "tests_test_log_rotation_testweatherdeltalogging_call"
     },
     {
       "relation": "calls",
@@ -66347,9 +66347,9 @@
       "source_file": "src/tests/test_log_rotation.py",
       "source_location": "L269",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_log_rotation_testweatherdeltalogging_test_nws_none_to_value",
-      "target": "tests_test_log_rotation_testweatherdeltalogging_call",
-      "confidence_score": 1.0
+      "target": "tests_test_log_rotation_testweatherdeltalogging_call"
     },
     {
       "relation": "calls",
@@ -66358,9 +66358,9 @@
       "source_file": "src/tests/test_log_rotation.py",
       "source_location": "L247",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_log_rotation_testweatherdeltalogging_test_small_change_suppressed",
-      "target": "tests_test_log_rotation_testweatherdeltalogging_call",
-      "confidence_score": 1.0
+      "target": "tests_test_log_rotation_testweatherdeltalogging_call"
     },
     {
       "relation": "calls",
@@ -66369,9 +66369,9 @@
       "source_file": "src/tests/test_log_rotation.py",
       "source_location": "L292",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_log_rotation_testweatherdeltalogging_test_suppression_does_not_mutate_state",
-      "target": "tests_test_log_rotation_testweatherdeltalogging_call",
-      "confidence_score": 1.0
+      "target": "tests_test_log_rotation_testweatherdeltalogging_call"
     },
     {
       "relation": "rationale_for",
@@ -66379,9 +66379,9 @@
       "source_file": "src/tests/test_log_rotation.py",
       "source_location": "L290",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_log_rotation_rationale_290",
-      "target": "tests_test_log_rotation_testweatherdeltalogging_test_suppression_does_not_mutate_state",
-      "confidence_score": 1.0
+      "target": "tests_test_log_rotation_testweatherdeltalogging_test_suppression_does_not_mutate_state"
     },
     {
       "relation": "contains",
@@ -76222,9 +76222,9 @@
       "source_file": "src/tests/test_seed_station_overrides.py",
       "source_location": "L25",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_seed_station_overrides",
-      "target": "tests_test_seed_station_overrides_mem_db",
-      "confidence_score": 1.0
+      "target": "tests_test_seed_station_overrides_mem_db"
     },
     {
       "relation": "contains",
@@ -76232,9 +76232,9 @@
       "source_file": "src/tests/test_seed_station_overrides.py",
       "source_location": "L97",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_seed_station_overrides",
-      "target": "tests_test_seed_station_overrides_testenvvardoesnotclobberdbonstartup",
-      "confidence_score": 1.0
+      "target": "tests_test_seed_station_overrides_testenvvardoesnotclobberdbonstartup"
     },
     {
       "relation": "contains",
@@ -76242,9 +76242,9 @@
       "source_file": "src/tests/test_seed_station_overrides.py",
       "source_location": "L160",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_seed_station_overrides",
-      "target": "tests_test_seed_station_overrides_testscannerusesdbasauthoritative",
-      "confidence_score": 1.0
+      "target": "tests_test_seed_station_overrides_testscannerusesdbasauthoritative"
     },
     {
       "relation": "contains",
@@ -76252,9 +76252,9 @@
       "source_file": "src/tests/test_seed_station_overrides.py",
       "source_location": "L34",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_seed_station_overrides",
-      "target": "tests_test_seed_station_overrides_testseedstationoverrides",
-      "confidence_score": 1.0
+      "target": "tests_test_seed_station_overrides_testseedstationoverrides"
     },
     {
       "relation": "rationale_for",
@@ -76262,9 +76262,9 @@
       "source_file": "src/tests/test_seed_station_overrides.py",
       "source_location": "L1",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_seed_station_overrides_rationale_1",
-      "target": "tests_test_seed_station_overrides",
-      "confidence_score": 1.0
+      "target": "tests_test_seed_station_overrides"
     },
     {
       "relation": "references",
@@ -76273,9 +76273,9 @@
       "source_file": "src/tests/test_seed_station_overrides.py",
       "source_location": "L25",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_seed_station_overrides_mem_db",
-      "target": "src_tests_test_seed_station_overrides_py_database",
-      "confidence_score": 1.0
+      "target": "src_tests_test_seed_station_overrides_py_database"
     },
     {
       "relation": "rationale_for",
@@ -76283,9 +76283,9 @@
       "source_file": "src/tests/test_seed_station_overrides.py",
       "source_location": "L26",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_seed_station_overrides_rationale_26",
-      "target": "tests_test_seed_station_overrides_mem_db",
-      "confidence_score": 1.0
+      "target": "tests_test_seed_station_overrides_mem_db"
     },
     {
       "relation": "calls",
@@ -76294,9 +76294,9 @@
       "source_file": "src/tests/test_seed_station_overrides.py",
       "source_location": "L129",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_seed_station_overrides_testenvvardoesnotclobberdbonstartup_test_env_change_does_not_retroactively_apply_to_db_row",
-      "target": "tests_test_seed_station_overrides_mem_db",
-      "confidence_score": 1.0
+      "target": "tests_test_seed_station_overrides_mem_db"
     },
     {
       "relation": "calls",
@@ -76305,9 +76305,9 @@
       "source_file": "src/tests/test_seed_station_overrides.py",
       "source_location": "L107",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_seed_station_overrides_testenvvardoesnotclobberdbonstartup_test_env_shadow_stations_does_not_override_db",
-      "target": "tests_test_seed_station_overrides_mem_db",
-      "confidence_score": 1.0
+      "target": "tests_test_seed_station_overrides_mem_db"
     },
     {
       "relation": "calls",
@@ -76316,9 +76316,9 @@
       "source_file": "src/tests/test_seed_station_overrides.py",
       "source_location": "L141",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_seed_station_overrides_testenvvardoesnotclobberdbonstartup_test_multiple_restarts_preserve_manual_edits",
-      "target": "tests_test_seed_station_overrides_mem_db",
-      "confidence_score": 1.0
+      "target": "tests_test_seed_station_overrides_mem_db"
     },
     {
       "relation": "calls",
@@ -76327,9 +76327,9 @@
       "source_file": "src/tests/test_seed_station_overrides.py",
       "source_location": "L207",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_seed_station_overrides_testscannerusesdbasauthoritative_test_db_takes_precedence_over_shadow_stations_env",
-      "target": "tests_test_seed_station_overrides_mem_db",
-      "confidence_score": 1.0
+      "target": "tests_test_seed_station_overrides_mem_db"
     },
     {
       "relation": "calls",
@@ -76338,9 +76338,9 @@
       "source_file": "src/tests/test_seed_station_overrides.py",
       "source_location": "L185",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_seed_station_overrides_testscannerusesdbasauthoritative_test_scanner_falls_back_to_env_when_no_db_row",
-      "target": "tests_test_seed_station_overrides_mem_db",
-      "confidence_score": 1.0
+      "target": "tests_test_seed_station_overrides_mem_db"
     },
     {
       "relation": "calls",
@@ -76349,9 +76349,9 @@
       "source_file": "src/tests/test_seed_station_overrides.py",
       "source_location": "L170",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_seed_station_overrides_testscannerusesdbasauthoritative_test_scanner_uses_db_row_when_present",
-      "target": "tests_test_seed_station_overrides_mem_db",
-      "confidence_score": 1.0
+      "target": "tests_test_seed_station_overrides_mem_db"
     },
     {
       "relation": "calls",
@@ -76360,9 +76360,9 @@
       "source_file": "src/tests/test_seed_station_overrides.py",
       "source_location": "L39",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_seed_station_overrides_testseedstationoverrides_test_seed_creates_missing_rksi_row",
-      "target": "tests_test_seed_station_overrides_mem_db",
-      "confidence_score": 1.0
+      "target": "tests_test_seed_station_overrides_mem_db"
     },
     {
       "relation": "calls",
@@ -76371,9 +76371,9 @@
       "source_file": "src/tests/test_seed_station_overrides.py",
       "source_location": "L81",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_seed_station_overrides_testseedstationoverrides_test_seed_does_not_change_other_stations",
-      "target": "tests_test_seed_station_overrides_mem_db",
-      "confidence_score": 1.0
+      "target": "tests_test_seed_station_overrides_mem_db"
     },
     {
       "relation": "calls",
@@ -76382,9 +76382,9 @@
       "source_file": "src/tests/test_seed_station_overrides.py",
       "source_location": "L69",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_seed_station_overrides_testseedstationoverrides_test_seed_does_not_overwrite_existing_row",
-      "target": "tests_test_seed_station_overrides_mem_db",
-      "confidence_score": 1.0
+      "target": "tests_test_seed_station_overrides_mem_db"
     },
     {
       "relation": "calls",
@@ -76393,9 +76393,9 @@
       "source_file": "src/tests/test_seed_station_overrides.py",
       "source_location": "L58",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_seed_station_overrides_testseedstationoverrides_test_seed_is_idempotent",
-      "target": "tests_test_seed_station_overrides_mem_db",
-      "confidence_score": 1.0
+      "target": "tests_test_seed_station_overrides_mem_db"
     },
     {
       "relation": "calls",
@@ -76404,9 +76404,9 @@
       "source_file": "src/tests/test_seed_station_overrides.py",
       "source_location": "L51",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_seed_station_overrides_testseedstationoverrides_test_seed_rksi_enabled_field_is_true",
-      "target": "tests_test_seed_station_overrides_mem_db",
-      "confidence_score": 1.0
+      "target": "tests_test_seed_station_overrides_mem_db"
     },
     {
       "relation": "rationale_for",
@@ -76414,9 +76414,9 @@
       "source_file": "src/tests/test_seed_station_overrides.py",
       "source_location": "L35",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_seed_station_overrides_rationale_35",
-      "target": "tests_test_seed_station_overrides_testseedstationoverrides",
-      "confidence_score": 1.0
+      "target": "tests_test_seed_station_overrides_testseedstationoverrides"
     },
     {
       "relation": "method",
@@ -76424,9 +76424,9 @@
       "source_file": "src/tests/test_seed_station_overrides.py",
       "source_location": "L37",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_seed_station_overrides_testseedstationoverrides",
-      "target": "tests_test_seed_station_overrides_testseedstationoverrides_test_seed_creates_missing_rksi_row",
-      "confidence_score": 1.0
+      "target": "tests_test_seed_station_overrides_testseedstationoverrides_test_seed_creates_missing_rksi_row"
     },
     {
       "relation": "method",
@@ -76434,9 +76434,9 @@
       "source_file": "src/tests/test_seed_station_overrides.py",
       "source_location": "L79",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_seed_station_overrides_testseedstationoverrides",
-      "target": "tests_test_seed_station_overrides_testseedstationoverrides_test_seed_does_not_change_other_stations",
-      "confidence_score": 1.0
+      "target": "tests_test_seed_station_overrides_testseedstationoverrides_test_seed_does_not_change_other_stations"
     },
     {
       "relation": "method",
@@ -76444,9 +76444,9 @@
       "source_file": "src/tests/test_seed_station_overrides.py",
       "source_location": "L67",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_seed_station_overrides_testseedstationoverrides",
-      "target": "tests_test_seed_station_overrides_testseedstationoverrides_test_seed_does_not_overwrite_existing_row",
-      "confidence_score": 1.0
+      "target": "tests_test_seed_station_overrides_testseedstationoverrides_test_seed_does_not_overwrite_existing_row"
     },
     {
       "relation": "method",
@@ -76454,9 +76454,9 @@
       "source_file": "src/tests/test_seed_station_overrides.py",
       "source_location": "L56",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_seed_station_overrides_testseedstationoverrides",
-      "target": "tests_test_seed_station_overrides_testseedstationoverrides_test_seed_is_idempotent",
-      "confidence_score": 1.0
+      "target": "tests_test_seed_station_overrides_testseedstationoverrides_test_seed_is_idempotent"
     },
     {
       "relation": "method",
@@ -76464,9 +76464,9 @@
       "source_file": "src/tests/test_seed_station_overrides.py",
       "source_location": "L49",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_seed_station_overrides_testseedstationoverrides",
-      "target": "tests_test_seed_station_overrides_testseedstationoverrides_test_seed_rksi_enabled_field_is_true",
-      "confidence_score": 1.0
+      "target": "tests_test_seed_station_overrides_testseedstationoverrides_test_seed_rksi_enabled_field_is_true"
     },
     {
       "relation": "rationale_for",
@@ -76474,9 +76474,9 @@
       "source_file": "src/tests/test_seed_station_overrides.py",
       "source_location": "L38",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_seed_station_overrides_rationale_38",
-      "target": "tests_test_seed_station_overrides_testseedstationoverrides_test_seed_creates_missing_rksi_row",
-      "confidence_score": 1.0
+      "target": "tests_test_seed_station_overrides_testseedstationoverrides_test_seed_creates_missing_rksi_row"
     },
     {
       "relation": "rationale_for",
@@ -76484,9 +76484,9 @@
       "source_file": "src/tests/test_seed_station_overrides.py",
       "source_location": "L50",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_seed_station_overrides_rationale_50",
-      "target": "tests_test_seed_station_overrides_testseedstationoverrides_test_seed_rksi_enabled_field_is_true",
-      "confidence_score": 1.0
+      "target": "tests_test_seed_station_overrides_testseedstationoverrides_test_seed_rksi_enabled_field_is_true"
     },
     {
       "relation": "rationale_for",
@@ -76494,9 +76494,9 @@
       "source_file": "src/tests/test_seed_station_overrides.py",
       "source_location": "L57",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_seed_station_overrides_rationale_57",
-      "target": "tests_test_seed_station_overrides_testseedstationoverrides_test_seed_is_idempotent",
-      "confidence_score": 1.0
+      "target": "tests_test_seed_station_overrides_testseedstationoverrides_test_seed_is_idempotent"
     },
     {
       "relation": "rationale_for",
@@ -76504,9 +76504,9 @@
       "source_file": "src/tests/test_seed_station_overrides.py",
       "source_location": "L68",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_seed_station_overrides_rationale_68",
-      "target": "tests_test_seed_station_overrides_testseedstationoverrides_test_seed_does_not_overwrite_existing_row",
-      "confidence_score": 1.0
+      "target": "tests_test_seed_station_overrides_testseedstationoverrides_test_seed_does_not_overwrite_existing_row"
     },
     {
       "relation": "rationale_for",
@@ -76514,9 +76514,9 @@
       "source_file": "src/tests/test_seed_station_overrides.py",
       "source_location": "L80",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_seed_station_overrides_rationale_80",
-      "target": "tests_test_seed_station_overrides_testseedstationoverrides_test_seed_does_not_change_other_stations",
-      "confidence_score": 1.0
+      "target": "tests_test_seed_station_overrides_testseedstationoverrides_test_seed_does_not_change_other_stations"
     },
     {
       "relation": "rationale_for",
@@ -76524,9 +76524,9 @@
       "source_file": "src/tests/test_seed_station_overrides.py",
       "source_location": "L98",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_seed_station_overrides_rationale_98",
-      "target": "tests_test_seed_station_overrides_testenvvardoesnotclobberdbonstartup",
-      "confidence_score": 1.0
+      "target": "tests_test_seed_station_overrides_testenvvardoesnotclobberdbonstartup"
     },
     {
       "relation": "method",
@@ -76534,9 +76534,9 @@
       "source_file": "src/tests/test_seed_station_overrides.py",
       "source_location": "L122",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_seed_station_overrides_testenvvardoesnotclobberdbonstartup",
-      "target": "tests_test_seed_station_overrides_testenvvardoesnotclobberdbonstartup_test_env_change_does_not_retroactively_apply_to_db_row",
-      "confidence_score": 1.0
+      "target": "tests_test_seed_station_overrides_testenvvardoesnotclobberdbonstartup_test_env_change_does_not_retroactively_apply_to_db_row"
     },
     {
       "relation": "method",
@@ -76544,9 +76544,9 @@
       "source_file": "src/tests/test_seed_station_overrides.py",
       "source_location": "L100",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_seed_station_overrides_testenvvardoesnotclobberdbonstartup",
-      "target": "tests_test_seed_station_overrides_testenvvardoesnotclobberdbonstartup_test_env_shadow_stations_does_not_override_db",
-      "confidence_score": 1.0
+      "target": "tests_test_seed_station_overrides_testenvvardoesnotclobberdbonstartup_test_env_shadow_stations_does_not_override_db"
     },
     {
       "relation": "method",
@@ -76554,9 +76554,9 @@
       "source_file": "src/tests/test_seed_station_overrides.py",
       "source_location": "L139",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_seed_station_overrides_testenvvardoesnotclobberdbonstartup",
-      "target": "tests_test_seed_station_overrides_testenvvardoesnotclobberdbonstartup_test_multiple_restarts_preserve_manual_edits",
-      "confidence_score": 1.0
+      "target": "tests_test_seed_station_overrides_testenvvardoesnotclobberdbonstartup_test_multiple_restarts_preserve_manual_edits"
     },
     {
       "relation": "rationale_for",
@@ -76564,9 +76564,9 @@
       "source_file": "src/tests/test_seed_station_overrides.py",
       "source_location": "L101",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_seed_station_overrides_rationale_101",
-      "target": "tests_test_seed_station_overrides_testenvvardoesnotclobberdbonstartup_test_env_shadow_stations_does_not_override_db",
-      "confidence_score": 1.0
+      "target": "tests_test_seed_station_overrides_testenvvardoesnotclobberdbonstartup_test_env_shadow_stations_does_not_override_db"
     },
     {
       "relation": "rationale_for",
@@ -76574,9 +76574,9 @@
       "source_file": "src/tests/test_seed_station_overrides.py",
       "source_location": "L123",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_seed_station_overrides_rationale_123",
-      "target": "tests_test_seed_station_overrides_testenvvardoesnotclobberdbonstartup_test_env_change_does_not_retroactively_apply_to_db_row",
-      "confidence_score": 1.0
+      "target": "tests_test_seed_station_overrides_testenvvardoesnotclobberdbonstartup_test_env_change_does_not_retroactively_apply_to_db_row"
     },
     {
       "relation": "rationale_for",
@@ -76584,9 +76584,9 @@
       "source_file": "src/tests/test_seed_station_overrides.py",
       "source_location": "L140",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_seed_station_overrides_rationale_140",
-      "target": "tests_test_seed_station_overrides_testenvvardoesnotclobberdbonstartup_test_multiple_restarts_preserve_manual_edits",
-      "confidence_score": 1.0
+      "target": "tests_test_seed_station_overrides_testenvvardoesnotclobberdbonstartup_test_multiple_restarts_preserve_manual_edits"
     },
     {
       "relation": "rationale_for",
@@ -76594,9 +76594,9 @@
       "source_file": "src/tests/test_seed_station_overrides.py",
       "source_location": "L161",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_seed_station_overrides_rationale_161",
-      "target": "tests_test_seed_station_overrides_testscannerusesdbasauthoritative",
-      "confidence_score": 1.0
+      "target": "tests_test_seed_station_overrides_testscannerusesdbasauthoritative"
     },
     {
       "relation": "method",
@@ -76604,9 +76604,9 @@
       "source_file": "src/tests/test_seed_station_overrides.py",
       "source_location": "L200",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_seed_station_overrides_testscannerusesdbasauthoritative",
-      "target": "tests_test_seed_station_overrides_testscannerusesdbasauthoritative_test_db_takes_precedence_over_shadow_stations_env",
-      "confidence_score": 1.0
+      "target": "tests_test_seed_station_overrides_testscannerusesdbasauthoritative_test_db_takes_precedence_over_shadow_stations_env"
     },
     {
       "relation": "method",
@@ -76614,9 +76614,9 @@
       "source_file": "src/tests/test_seed_station_overrides.py",
       "source_location": "L179",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_seed_station_overrides_testscannerusesdbasauthoritative",
-      "target": "tests_test_seed_station_overrides_testscannerusesdbasauthoritative_test_scanner_falls_back_to_env_when_no_db_row",
-      "confidence_score": 1.0
+      "target": "tests_test_seed_station_overrides_testscannerusesdbasauthoritative_test_scanner_falls_back_to_env_when_no_db_row"
     },
     {
       "relation": "method",
@@ -76624,9 +76624,9 @@
       "source_file": "src/tests/test_seed_station_overrides.py",
       "source_location": "L163",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_seed_station_overrides_testscannerusesdbasauthoritative",
-      "target": "tests_test_seed_station_overrides_testscannerusesdbasauthoritative_test_scanner_uses_db_row_when_present",
-      "confidence_score": 1.0
+      "target": "tests_test_seed_station_overrides_testscannerusesdbasauthoritative_test_scanner_uses_db_row_when_present"
     },
     {
       "relation": "rationale_for",
@@ -76634,9 +76634,9 @@
       "source_file": "src/tests/test_seed_station_overrides.py",
       "source_location": "L164",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_seed_station_overrides_rationale_164",
-      "target": "tests_test_seed_station_overrides_testscannerusesdbasauthoritative_test_scanner_uses_db_row_when_present",
-      "confidence_score": 1.0
+      "target": "tests_test_seed_station_overrides_testscannerusesdbasauthoritative_test_scanner_uses_db_row_when_present"
     },
     {
       "relation": "rationale_for",
@@ -76644,9 +76644,9 @@
       "source_file": "src/tests/test_seed_station_overrides.py",
       "source_location": "L180",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_seed_station_overrides_rationale_180",
-      "target": "tests_test_seed_station_overrides_testscannerusesdbasauthoritative_test_scanner_falls_back_to_env_when_no_db_row",
-      "confidence_score": 1.0
+      "target": "tests_test_seed_station_overrides_testscannerusesdbasauthoritative_test_scanner_falls_back_to_env_when_no_db_row"
     },
     {
       "relation": "rationale_for",
@@ -76654,9 +76654,9 @@
       "source_file": "src/tests/test_seed_station_overrides.py",
       "source_location": "L201",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_seed_station_overrides_rationale_201",
-      "target": "tests_test_seed_station_overrides_testscannerusesdbasauthoritative_test_db_takes_precedence_over_shadow_stations_env",
-      "confidence_score": 1.0
+      "target": "tests_test_seed_station_overrides_testscannerusesdbasauthoritative_test_db_takes_precedence_over_shadow_stations_env"
     },
     {
       "relation": "contains",
@@ -85355,9 +85355,9 @@
       "source_file": "src/utils/log_rotation.py",
       "source_location": "L182",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "utils_log_rotation",
-      "target": "utils_log_rotation_compress",
-      "confidence_score": 1.0
+      "target": "utils_log_rotation_compress"
     },
     {
       "relation": "contains",
@@ -85365,9 +85365,9 @@
       "source_file": "src/utils/log_rotation.py",
       "source_location": "L64",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "utils_log_rotation",
-      "target": "utils_log_rotation_dated_path",
-      "confidence_score": 1.0
+      "target": "utils_log_rotation_dated_path"
     },
     {
       "relation": "contains",
@@ -85375,9 +85375,9 @@
       "source_file": "src/utils/log_rotation.py",
       "source_location": "L142",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "utils_log_rotation",
-      "target": "utils_log_rotation_housekeep",
-      "confidence_score": 1.0
+      "target": "utils_log_rotation_housekeep"
     },
     {
       "relation": "contains",
@@ -85385,9 +85385,9 @@
       "source_file": "src/utils/log_rotation.py",
       "source_location": "L200",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "utils_log_rotation",
-      "target": "utils_log_rotation_iter_rotated_jsonl",
-      "confidence_score": 1.0
+      "target": "utils_log_rotation_iter_rotated_jsonl"
     },
     {
       "relation": "contains",
@@ -85395,9 +85395,9 @@
       "source_file": "src/utils/log_rotation.py",
       "source_location": "L245",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "utils_log_rotation",
-      "target": "utils_log_rotation_read_jsonl_file",
-      "confidence_score": 1.0
+      "target": "utils_log_rotation_read_jsonl_file"
     },
     {
       "relation": "contains",
@@ -85405,9 +85405,9 @@
       "source_file": "src/utils/log_rotation.py",
       "source_location": "L99",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "utils_log_rotation",
-      "target": "utils_log_rotation_resolve_current",
-      "confidence_score": 1.0
+      "target": "utils_log_rotation_resolve_current"
     },
     {
       "relation": "contains",
@@ -85415,9 +85415,9 @@
       "source_file": "src/utils/log_rotation.py",
       "source_location": "L80",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "utils_log_rotation",
-      "target": "utils_log_rotation_rotated_path",
-      "confidence_score": 1.0
+      "target": "utils_log_rotation_rotated_path"
     },
     {
       "relation": "contains",
@@ -85425,9 +85425,9 @@
       "source_file": "src/utils/log_rotation.py",
       "source_location": "L187",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "utils_log_rotation",
-      "target": "utils_log_rotation_safe_remove",
-      "confidence_score": 1.0
+      "target": "utils_log_rotation_safe_remove"
     },
     {
       "relation": "contains",
@@ -85435,9 +85435,9 @@
       "source_file": "src/utils/log_rotation.py",
       "source_location": "L60",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "utils_log_rotation",
-      "target": "utils_log_rotation_today_utc",
-      "confidence_score": 1.0
+      "target": "utils_log_rotation_today_utc"
     },
     {
       "relation": "contains",
@@ -85445,9 +85445,9 @@
       "source_file": "src/utils/log_rotation.py",
       "source_location": "L113",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "utils_log_rotation",
-      "target": "utils_log_rotation_update_symlink",
-      "confidence_score": 1.0
+      "target": "utils_log_rotation_update_symlink"
     },
     {
       "relation": "rationale_for",
@@ -85455,9 +85455,9 @@
       "source_file": "src/utils/log_rotation.py",
       "source_location": "L1",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "utils_log_rotation_rationale_1",
-      "target": "utils_log_rotation",
-      "confidence_score": 1.0
+      "target": "utils_log_rotation"
     },
     {
       "relation": "calls",
@@ -85466,9 +85466,9 @@
       "source_file": "src/utils/log_rotation.py",
       "source_location": "L74",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "utils_log_rotation_dated_path",
-      "target": "utils_log_rotation_today_utc",
-      "confidence_score": 1.0
+      "target": "utils_log_rotation_today_utc"
     },
     {
       "relation": "calls",
@@ -85477,9 +85477,9 @@
       "source_file": "src/utils/log_rotation.py",
       "source_location": "L148",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "utils_log_rotation_housekeep",
-      "target": "utils_log_rotation_today_utc",
-      "confidence_score": 1.0
+      "target": "utils_log_rotation_today_utc"
     },
     {
       "relation": "references",
@@ -85488,9 +85488,9 @@
       "source_file": "src/utils/log_rotation.py",
       "source_location": "L60",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "utils_log_rotation_today_utc",
-      "target": "src_utils_log_rotation_py_date",
-      "confidence_score": 1.0
+      "target": "src_utils_log_rotation_py_date"
     },
     {
       "relation": "references",
@@ -85499,9 +85499,9 @@
       "source_file": "src/utils/log_rotation.py",
       "source_location": "L64",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "utils_log_rotation_dated_path",
-      "target": "src_utils_log_rotation_py_date",
-      "confidence_score": 1.0
+      "target": "src_utils_log_rotation_py_date"
     },
     {
       "relation": "references",
@@ -85510,9 +85510,9 @@
       "source_file": "src/utils/log_rotation.py",
       "source_location": "L80",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "utils_log_rotation_rotated_path",
-      "target": "src_utils_log_rotation_py_date",
-      "confidence_score": 1.0
+      "target": "src_utils_log_rotation_py_date"
     },
     {
       "relation": "references",
@@ -85521,9 +85521,9 @@
       "source_file": "src/utils/log_rotation.py",
       "source_location": "L64",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "utils_log_rotation_dated_path",
-      "target": "src_utils_log_rotation_py_path",
-      "confidence_score": 1.0
+      "target": "src_utils_log_rotation_py_path"
     },
     {
       "relation": "rationale_for",
@@ -85531,9 +85531,9 @@
       "source_file": "src/utils/log_rotation.py",
       "source_location": "L65",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "utils_log_rotation_rationale_65",
-      "target": "utils_log_rotation_dated_path",
-      "confidence_score": 1.0
+      "target": "utils_log_rotation_dated_path"
     },
     {
       "relation": "calls",
@@ -85542,9 +85542,9 @@
       "source_file": "src/utils/log_rotation.py",
       "source_location": "L105",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "utils_log_rotation_resolve_current",
-      "target": "utils_log_rotation_dated_path",
-      "confidence_score": 1.0
+      "target": "utils_log_rotation_dated_path"
     },
     {
       "relation": "calls",
@@ -85553,9 +85553,9 @@
       "source_file": "src/utils/log_rotation.py",
       "source_location": "L87",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "utils_log_rotation_rotated_path",
-      "target": "utils_log_rotation_dated_path",
-      "confidence_score": 1.0
+      "target": "utils_log_rotation_dated_path"
     },
     {
       "relation": "references",
@@ -85564,9 +85564,9 @@
       "source_file": "src/utils/log_rotation.py",
       "source_location": "L182",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "utils_log_rotation_compress",
-      "target": "src_utils_log_rotation_py_path",
-      "confidence_score": 1.0
+      "target": "src_utils_log_rotation_py_path"
     },
     {
       "relation": "references",
@@ -85575,9 +85575,9 @@
       "source_file": "src/utils/log_rotation.py",
       "source_location": "L142",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "utils_log_rotation_housekeep",
-      "target": "src_utils_log_rotation_py_path",
-      "confidence_score": 1.0
+      "target": "src_utils_log_rotation_py_path"
     },
     {
       "relation": "references",
@@ -85586,9 +85586,9 @@
       "source_file": "src/utils/log_rotation.py",
       "source_location": "L200",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "utils_log_rotation_iter_rotated_jsonl",
-      "target": "src_utils_log_rotation_py_path",
-      "confidence_score": 1.0
+      "target": "src_utils_log_rotation_py_path"
     },
     {
       "relation": "references",
@@ -85597,9 +85597,9 @@
       "source_file": "src/utils/log_rotation.py",
       "source_location": "L245",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "utils_log_rotation_read_jsonl_file",
-      "target": "src_utils_log_rotation_py_path",
-      "confidence_score": 1.0
+      "target": "src_utils_log_rotation_py_path"
     },
     {
       "relation": "references",
@@ -85608,9 +85608,9 @@
       "source_file": "src/utils/log_rotation.py",
       "source_location": "L99",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "utils_log_rotation_resolve_current",
-      "target": "src_utils_log_rotation_py_path",
-      "confidence_score": 1.0
+      "target": "src_utils_log_rotation_py_path"
     },
     {
       "relation": "references",
@@ -85619,9 +85619,9 @@
       "source_file": "src/utils/log_rotation.py",
       "source_location": "L80",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "utils_log_rotation_rotated_path",
-      "target": "src_utils_log_rotation_py_path",
-      "confidence_score": 1.0
+      "target": "src_utils_log_rotation_py_path"
     },
     {
       "relation": "references",
@@ -85630,9 +85630,9 @@
       "source_file": "src/utils/log_rotation.py",
       "source_location": "L187",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "utils_log_rotation_safe_remove",
-      "target": "src_utils_log_rotation_py_path",
-      "confidence_score": 1.0
+      "target": "src_utils_log_rotation_py_path"
     },
     {
       "relation": "references",
@@ -85641,9 +85641,9 @@
       "source_file": "src/utils/log_rotation.py",
       "source_location": "L113",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "utils_log_rotation_update_symlink",
-      "target": "src_utils_log_rotation_py_path",
-      "confidence_score": 1.0
+      "target": "src_utils_log_rotation_py_path"
     },
     {
       "relation": "rationale_for",
@@ -85651,9 +85651,9 @@
       "source_file": "src/utils/log_rotation.py",
       "source_location": "L81",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "utils_log_rotation_rationale_81",
-      "target": "utils_log_rotation_rotated_path",
-      "confidence_score": 1.0
+      "target": "utils_log_rotation_rotated_path"
     },
     {
       "relation": "calls",
@@ -85662,9 +85662,9 @@
       "source_file": "src/utils/log_rotation.py",
       "source_location": "L94",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "utils_log_rotation_rotated_path",
-      "target": "utils_log_rotation_update_symlink",
-      "confidence_score": 1.0
+      "target": "utils_log_rotation_update_symlink"
     },
     {
       "relation": "rationale_for",
@@ -85672,9 +85672,9 @@
       "source_file": "src/utils/log_rotation.py",
       "source_location": "L100",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "utils_log_rotation_rationale_100",
-      "target": "utils_log_rotation_resolve_current",
-      "confidence_score": 1.0
+      "target": "utils_log_rotation_resolve_current"
     },
     {
       "relation": "rationale_for",
@@ -85682,9 +85682,9 @@
       "source_file": "src/utils/log_rotation.py",
       "source_location": "L114",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "utils_log_rotation_rationale_114",
-      "target": "utils_log_rotation_update_symlink",
-      "confidence_score": 1.0
+      "target": "utils_log_rotation_update_symlink"
     },
     {
       "relation": "calls",
@@ -85693,9 +85693,9 @@
       "source_file": "src/utils/log_rotation.py",
       "source_location": "L177",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "utils_log_rotation_housekeep",
-      "target": "utils_log_rotation_compress",
-      "confidence_score": 1.0
+      "target": "utils_log_rotation_compress"
     },
     {
       "relation": "calls",
@@ -85704,9 +85704,9 @@
       "source_file": "src/utils/log_rotation.py",
       "source_location": "L170",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "utils_log_rotation_housekeep",
-      "target": "utils_log_rotation_safe_remove",
-      "confidence_score": 1.0
+      "target": "utils_log_rotation_safe_remove"
     },
     {
       "relation": "rationale_for",
@@ -85714,9 +85714,9 @@
       "source_file": "src/utils/log_rotation.py",
       "source_location": "L143",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "utils_log_rotation_rationale_143",
-      "target": "utils_log_rotation_housekeep",
-      "confidence_score": 1.0
+      "target": "utils_log_rotation_housekeep"
     },
     {
       "relation": "calls",
@@ -85725,9 +85725,9 @@
       "source_file": "src/utils/log_rotation.py",
       "source_location": "L238",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "utils_log_rotation_iter_rotated_jsonl",
-      "target": "utils_log_rotation_read_jsonl_file",
-      "confidence_score": 1.0
+      "target": "utils_log_rotation_read_jsonl_file"
     },
     {
       "relation": "rationale_for",
@@ -85735,9 +85735,9 @@
       "source_file": "src/utils/log_rotation.py",
       "source_location": "L201",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "utils_log_rotation_rationale_201",
-      "target": "utils_log_rotation_iter_rotated_jsonl",
-      "confidence_score": 1.0
+      "target": "utils_log_rotation_iter_rotated_jsonl"
     },
     {
       "relation": "contains",
@@ -85755,9 +85755,9 @@
       "source_file": "src/weather/builder.py",
       "source_location": "L36",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "weather_builder",
-      "target": "weather_builder_should_log_weather",
-      "confidence_score": 1.0
+      "target": "weather_builder_should_log_weather"
     },
     {
       "relation": "contains",
@@ -85786,9 +85786,9 @@
       "source_file": "src/weather/builder.py",
       "source_location": "L230",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "weather_builder_build_weather",
-      "target": "weather_builder_should_log_weather",
-      "confidence_score": 1.0
+      "target": "weather_builder_should_log_weather"
     },
     {
       "relation": "rationale_for",
@@ -85796,9 +85796,9 @@
       "source_file": "src/weather/builder.py",
       "source_location": "L38",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "weather_builder_rationale_38",
-      "target": "weather_builder_should_log_weather",
-      "confidence_score": 1.0
+      "target": "weather_builder_should_log_weather"
     },
     {
       "relation": "rationale_for",
@@ -85806,9 +85806,9 @@
       "source_file": "src/weather/builder.py",
       "source_location": "L95",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "weather_builder_rationale_95",
-      "target": "weather_builder_build_weather",
-      "confidence_score": 1.0
+      "target": "weather_builder_build_weather"
     },
     {
       "relation": "references",
@@ -86176,9 +86176,9 @@
       "source_file": "README.md",
       "source_location": "L251",
       "weight": 1.0,
-      "confidence_score": 1.0,
       "source": "readme_meteoedge_polymarket_weather_arbitrage",
-      "target": "readme_historical_testing_archives"
+      "target": "readme_historical_testing_archives_deprecated",
+      "confidence_score": 1.0
     },
     {
       "relation": "contains",
@@ -87526,9 +87526,9 @@
       "source_file": "docs/IMPLEMENTATION_PLAN.md",
       "source_location": "L94",
       "weight": 1.0,
-      "confidence_score": 1.0,
       "source": "docs_implementation_plan_epics",
-      "target": "docs_implementation_plan_epic_0_repository_consolidation_1_2_days"
+      "target": "docs_implementation_plan_epic_0_repository_consolidation_completed",
+      "confidence_score": 1.0
     },
     {
       "relation": "contains",
@@ -90442,5 +90442,5 @@
     }
   ],
   "hyperedges": [],
-  "built_at_commit": "e88fc8b8fc7004283917fe87ec307ee738d64b18"
+  "built_at_commit": "0f1583ab52c757b7387c8f8673de2472d9b84fc6"
 }
