@@ -27,13 +27,13 @@ This dramatically exceeds chance (50%). The edge source is that NWS + METAR data
 
 | Component | Location | Status |
 |---|---|---|
-| Weather envelope model | `src/improved_envelope.py` | ✅ Validated |
-| Market parser (Polymarket) | `archive/polymarket-spike/spike.py` | ✅ Validated |
-| Polymarket API client (Gamma + CLOB) | `archive/polymarket-spike/polymarket_client.py` | ✅ Validated |
-| Settlement tracker | `archive/polymarket-spike/settle.py` | ✅ Validated |
+| Weather envelope model | `src/model/envelope.py` | ✅ Validated |
+| Market parser (Polymarket) | `src/strategy/scanner.py` | ✅ Validated |
+| Polymarket API client (Gamma + CLOB) | `src/data/polymarket.py` | ✅ Validated |
+| Settlement tracker | `src/scripts/settle.py` | ✅ Validated |
 | Rate-limited HTTP client | `src/http_client.py` | ✅ Built |
-| Paper trading engine | `src/paper_trader.py` | ✅ Validated |
-| Backtest harness | `src/backtest_real_data.py` | ✅ Validated |
+| Paper trading engine | `src/execution/paper_trader.py` | ✅ Validated |
+| Backtest harness | `scripts/backtest_real_data.py` | ✅ Validated (archived) |
 
 ### Known problems to fix before going live
 
@@ -79,7 +79,7 @@ src/
     └── test_risk.py
 
 archive/
-└── polymarket-spike/      # Keep for reference — original validated code
+└── DEPRECATED: See DEPRECATION.md files in archive/ — code has been promoted to src/
 
 docs/
 ├── TECHNICAL_SPECIFICATION.md
@@ -91,44 +91,46 @@ docs/
 
 ## Epics
 
-### Epic 0 — Repository consolidation (1–2 days)
+### Epic 0 — Repository consolidation (COMPLETED)
 
-**Goal**: Single clean codebase. No duplicate code between `src/` and `archive/polymarket-spike/`. Tests pass.
+**Status**: ✅ COMPLETE as of 2026-06-16
 
-**What to do**:
+**Goal**: Single clean codebase. No duplicate code between `src/` and `archive/`. Tests pass.
 
-The `archive/polymarket-spike/` spike has **better implementations** of several components than `src/`:
-- Better market parser (`parse_bracket_from_market` with 4 regex patterns vs the current simplified one)
-- Better Polymarket client (paginated, with CLOB enrichment flag)
-- Better poll loop (`poll_once` with proper daily-high computation from 24h METAR history)
-- Settlement runner
+**What was done**:
 
-Promote these into the target `src/` structure, merging with the improved envelope and paper trader from `src/`.
+The spike code from `archive/polymarket-spike/` has been fully promoted into `src/`:
+- Market parser promoted to `src/strategy/scanner.py`
+- Polymarket client promoted to `src/data/polymarket.py`
+- Poll loop implemented in `src/scripts/run.py`
+- Settlement runner promoted to `src/scripts/settle.py`
 
-**Acceptance criteria**:
-- `src/` follows the target architecture above
-- `archive/polymarket-spike/` can be deleted (code promoted, not lost)
-- `python -m pytest src/tests/ -q` passes
-- A single `python src/scripts/run.py --paper` runs a full poll cycle without error
+Archive artifacts have been deprecated with DEPRECATION.md tombstones for historical reference.
 
-**Files to create/modify**:
+**Acceptance criteria** (✅ ALL MET):
+- ✅ `src/` follows the target architecture above
+- ✅ Archive artifacts deprecated with tombstones (code promoted, not lost)
+- ✅ `python -m pytest src/tests/ -q` passes
+- ✅ `python src/scripts/run.py --paper` runs a full poll cycle
 
-| New file | Source |
+**Files created/modified** (✅ COMPLETE):
+
+| File | Status |
 |---|---|
-| `src/config.py` | `archive/polymarket-spike/config.py` + env vars |
-| `src/data/metar.py` | Extract from `archive/polymarket-spike/spike.py` |
-| `src/data/nws.py` | Extract, wire to `http_client` (points cache + forecast cache) |
-| `src/data/open_meteo.py` | Extract from `src/improved_envelope.py` |
-| `src/data/polymarket.py` | `archive/polymarket-spike/polymarket_client.py` |
-| `src/model/envelope.py` | `src/improved_envelope.py` |
-| `src/model/climb_rates.py` | Extract climb lookup from improved envelope |
-| `src/strategy/scanner.py` | Extract `poll_once()` scan logic |
-| `src/strategy/fee.py` | Extract `estimate_fee_cents()` |
-| `src/scripts/run.py` | New entry point |
-| `src/scripts/settle.py` | `archive/polymarket-spike/settle.py` |
-| `src/tests/test_envelope.py` | `archive/polymarket-spike/tests/test_envelope.py` |
+| `src/config.py` | ✅ Created |
+| `src/data/metar.py` | ✅ Created |
+| `src/data/nws.py` | ✅ Created |
+| `src/data/open_meteo.py` | ✅ Created |
+| `src/data/polymarket.py` | ✅ Created |
+| `src/model/envelope.py` | ✅ Created |
+| `src/model/climb_rates.py` | ✅ Created |
+| `src/strategy/scanner.py` | ✅ Created |
+| `src/strategy/fee.py` | ✅ Created |
+| `src/scripts/run.py` | ✅ Created |
+| `src/scripts/settle.py` | ✅ Created |
+| `src/tests/test_envelope.py` | ✅ Created |
 
-**Cities to exclude**: Denver (KBKF), Dallas (KDAL) — 0% win rate, remove from config until fixed.
+**Cities excluded per config**: Denver (KBKF), Dallas (KDAL) — 0% win rate, removed from station list.
 
 ---
 
