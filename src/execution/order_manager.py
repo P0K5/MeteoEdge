@@ -70,10 +70,7 @@ def _load_open_fills_for_token(token_id: str, today: str, db=None) -> list:
     """
     if db is not None:
         try:
-            return [
-                p for p in db.get_open_positions()
-                if p.get("no_token_id") == token_id
-            ]
+            return db.get_open_position_by_token(token_id)
         except Exception as e:
             log.warning("[manual] DB read failed: %s", e)
     if not LIVE_TRADES_JSONL.exists():
