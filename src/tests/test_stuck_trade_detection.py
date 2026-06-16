@@ -27,7 +27,7 @@ def _fresh_db(tmp_path: Path) -> Database:
 def _insert_stuck_trade(
     db: Database,
     trade_id_hint: int = 1,
-    ts_offset_hours: int = -48,
+    ts_offset_hours: int = -96,
 ) -> int:
     """Insert a live trade with outcome IS NULL and no open_position.
 
@@ -112,7 +112,7 @@ class TestStuckTradeDetection:
     def test_detect_single_stuck_trade(self, tmp_path, caplog):
         """Single stuck trade (> 36h old, no outcome, no open_position) is detected."""
         db = _fresh_db(tmp_path)
-        stuck_id = _insert_stuck_trade(db, trade_id_hint=1, ts_offset_hours=-48)
+        stuck_id = _insert_stuck_trade(db, trade_id_hint=1, ts_offset_hours=-96)
 
         stuck = _query_stuck_trades(db)
         assert len(stuck) == 1
@@ -121,7 +121,7 @@ class TestStuckTradeDetection:
     def test_detect_multiple_stuck_trades(self, tmp_path):
         """Multiple stuck trades are detected."""
         db = _fresh_db(tmp_path)
-        stuck_id_1 = _insert_stuck_trade(db, trade_id_hint=1, ts_offset_hours=-48)
+        stuck_id_1 = _insert_stuck_trade(db, trade_id_hint=1, ts_offset_hours=-96)
         stuck_id_2 = _insert_stuck_trade(db, trade_id_hint=2, ts_offset_hours=-72)
 
         stuck = _query_stuck_trades(db)
@@ -133,7 +133,7 @@ class TestStuckTradeDetection:
     def test_skip_settled_trades(self, tmp_path):
         """Settled trades (outcome IS NOT NULL) are not detected as stuck."""
         db = _fresh_db(tmp_path)
-        stuck_id = _insert_stuck_trade(db, trade_id_hint=1, ts_offset_hours=-48)
+        stuck_id = _insert_stuck_trade(db, trade_id_hint=1, ts_offset_hours=-96)
         settled_id = _insert_settled_trade(db, trade_id_hint=2)
 
         stuck = _query_stuck_trades(db)
@@ -170,7 +170,7 @@ class TestStuckTradeDetection:
     def test_skip_trades_with_open_position(self, tmp_path):
         """Trades that DO have an open_position are not flagged as stuck."""
         db = _fresh_db(tmp_path)
-        ts = (datetime.now(timezone.utc) + timedelta(hours=-48)).isoformat()
+        ts = (datetime.now(timezone.utc) + timedelta(hours=-96)).isoformat()
         trade_id = db.insert_trade(
             ts=ts,
             station="KORD",
@@ -208,7 +208,7 @@ class TestStuckTradeDetection:
     def test_skip_shadow_trades(self, tmp_path):
         """Shadow mode trades are not flagged as stuck (only live mode)."""
         db = _fresh_db(tmp_path)
-        ts = (datetime.now(timezone.utc) + timedelta(hours=-48)).isoformat()
+        ts = (datetime.now(timezone.utc) + timedelta(hours=-96)).isoformat()
         shadow_id = db.insert_trade(
             ts=ts,
             station="KORD",
@@ -234,7 +234,7 @@ class TestStuckTradeDetection:
     def test_idempotent_detection(self, tmp_path):
         """Running the query multiple times yields the same result."""
         db = _fresh_db(tmp_path)
-        stuck_id = _insert_stuck_trade(db, trade_id_hint=1, ts_offset_hours=-48)
+        stuck_id = _insert_stuck_trade(db, trade_id_hint=1, ts_offset_hours=-96)
 
         stuck1 = _query_stuck_trades(db)
         stuck2 = _query_stuck_trades(db)
@@ -250,7 +250,7 @@ class TestStuckTradeDetectionLogging:
     def test_warning_logged_when_stuck_found(self, tmp_path, caplog):
         """A warning is logged when stuck trades are detected."""
         db = _fresh_db(tmp_path)
-        stuck_id = _insert_stuck_trade(db, trade_id_hint=1, ts_offset_hours=-48)
+        stuck_id = _insert_stuck_trade(db, trade_id_hint=1, ts_offset_hours=-96)
 
         stuck = _query_stuck_trades(db)
         assert len(stuck) > 0

@@ -179,6 +179,7 @@ class TestWalletEmptyCooldown:
         before = time.time()
 
         caught_exc = None
+        captured_cooldown = 0.0
         with (
             patch("src.scripts.run._build_weather", return_value={"Tokyo": MagicMock()}),
             patch("src.scripts.run.get_weather_markets", return_value=[]),
@@ -201,10 +202,14 @@ class TestWalletEmptyCooldown:
             except Exception as exc:
                 import traceback
                 caught_exc = traceback.format_exc()
+            captured_cooldown = run_module._wallet_cooldown_until
 
         if caught_exc:
             raise AssertionError(f"poll_once raised unexpectedly:\n{caught_exc}")
-        assert run_module._wallet_cooldown_until > before + 1700
+        assert captured_cooldown > before + 1700, (
+            f"_wallet_cooldown_until={captured_cooldown} not set (before={before}); "
+            f"POSITION_SIZE_WITH_FEES={run_module.__dict__.get('POSITION_SIZE_WITH_FEES', 'MISSING')}"
+        )
 
     def test_cooldown_active_skips_balance_check_and_candidates(self):
         """When cooldown is active, poll_once returns early without calling get_usdc_balance."""
