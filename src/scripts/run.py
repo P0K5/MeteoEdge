@@ -16,6 +16,8 @@ from datetime import datetime, timezone
 
 from dateutil import parser as dtparse
 
+from src.utils.log_rotation import rotated_path, housekeep
+
 from src.config import (
     POLL_INTERVAL_SECONDS, LOG_DIR,
     CANDIDATES_CSV, SNAPSHOTS_JSONL, LIVE_TRADES_JSONL,
@@ -64,15 +66,19 @@ _WALLET_EMPTY_COOLDOWN_SECONDS: float = 1800.0  # 30 min
 
 def _append_snapshot(snap: dict) -> None:
     LOG_DIR.mkdir(exist_ok=True)
-    with open(SNAPSHOTS_JSONL, "a") as f:
+    dest = rotated_path(SNAPSHOTS_JSONL)
+    housekeep(SNAPSHOTS_JSONL)
+    with open(dest, "a") as f:
         f.write(json.dumps(snap, default=str) + "\n")
 
 
 def _append_candidate(row: dict) -> None:
     LOG_DIR.mkdir(exist_ok=True)
     with _write_lock:
-        new_file = not CANDIDATES_CSV.exists()
-        with open(CANDIDATES_CSV, "a", newline="") as f:
+        dest = rotated_path(CANDIDATES_CSV)
+        housekeep(CANDIDATES_CSV)
+        new_file = dest.stat().st_size == 0
+        with open(dest, "a", newline="") as f:
             w = csv.DictWriter(f, fieldnames=list(row.keys()))
             if new_file:
                 w.writeheader()
@@ -82,7 +88,9 @@ def _append_candidate(row: dict) -> None:
 def _append_live_trade(record: dict, db=None) -> None:
     LOG_DIR.mkdir(exist_ok=True)
     with _write_lock:
-        with open(LIVE_TRADES_JSONL, "a") as f:
+        dest = rotated_path(LIVE_TRADES_JSONL)
+        housekeep(LIVE_TRADES_JSONL)
+        with open(dest, "a") as f:
             f.write(json.dumps(record, default=str) + "\n")
     if db is None:
         return
