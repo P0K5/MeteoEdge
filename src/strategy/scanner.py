@@ -183,17 +183,27 @@ def minutes_to_settlement(market: dict) -> float:
         return 9999
 
 
-def _enrich_from_clob(bracket: Bracket) -> None:
+def _enrich_from_clob(bracket: Bracket, orderbooks: "dict[str, dict] | None" = None) -> None:
     """Overwrite bracket ask prices with live CLOB data.
 
-    Only called when ENABLE_CLOB_ENRICHMENT=True. Adds ~2 API calls per bracket.
+    Only called when ENABLE_CLOB_ENRICHMENT=True.
+
+    Args:
+        bracket: The bracket to enrich in-place.
+        orderbooks: Optional pre-fetched dict mapping token_id → orderbook.
+            When provided the cached result is used directly (no HTTP call).
+            When ``None`` (default) a fresh ``get_orderbook()`` call is made
+            per token, preserving backward-compatible single-market behaviour.
     """
     if not ENABLE_CLOB_ENRICHMENT:
         return
 
     if bracket.yes_token_id:
         try:
-            ob = get_orderbook(bracket.yes_token_id)
+            if orderbooks is not None:
+                ob = orderbooks.get(bracket.yes_token_id) or {}
+            else:
+                ob = get_orderbook(bracket.yes_token_id)
             asks = ob.get("asks") or []
             if asks:
                 best = min(float(a["price"]) for a in asks)
@@ -204,7 +214,10 @@ def _enrich_from_clob(bracket: Bracket) -> None:
 
     if bracket.no_token_id:
         try:
-            ob = get_orderbook(bracket.no_token_id)
+            if orderbooks is not None:
+                ob = orderbooks.get(bracket.no_token_id) or {}
+            else:
+                ob = get_orderbook(bracket.no_token_id)
             asks = ob.get("asks") or []
             if asks:
                 best = min(float(a["price"]) for a in asks)
@@ -259,16 +272,21 @@ def no_entry_margin_gap(bracket: Bracket, state: WeatherState) -> float | None:
 
 
 def scan_markets(
-    weather: dict[str, WeatherState],
-    markets: list[dict],
+    weather: "dict[str, WeatherState]",
+    markets: list,
     db=None,
-) -> tuple[list[Candidate], list[dict]]:
+    orderbooks: "dict[str, dict] | None" = None,
+) -> "tuple[list[Candidate], list[dict]]":
     """Scan all Polymarket markets against current weather states.
 
     Args:
         weather: dict mapping station code → WeatherState (only stations we have data for)
         markets: list of raw market dicts from get_weather_markets()
         db: optional Database instance — when provided, TAF disruption is checked per candidate
+        orderbooks: optional pre-fetched dict mapping token_id → orderbook dict.
+            When provided, CLOB enrichment reads from this dict instead of
+            making individual HTTP calls (one call per token, batched upstream).
+            When ``None``, falls back to per-bracket ``get_orderbook()`` calls.
 
     Returns:
         (candidates, all_snapshots) where:
@@ -345,7 +363,7 @@ def scan_markets(
                 continue
 
             if ENABLE_CLOB_ENRICHMENT:
-                _enrich_from_clob(bracket)
+                _enrich_from_clob(bracket, orderbooks=orderbooks)
 
             state = weather[station]
             city = STATION_TO_CITY.get(station, station)
