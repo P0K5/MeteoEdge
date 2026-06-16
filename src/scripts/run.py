@@ -23,11 +23,11 @@ from src.config import (
     CANDIDATES_CSV, SNAPSHOTS_JSONL, LIVE_TRADES_JSONL,
     RISK_DAILY_LOSS_LIMIT_EUR, RISK_MAX_OPEN_POSITIONS,
     RISK_DRAWDOWN_STOP_PCT, RISK_MIN_LIQUIDITY, STARTING_CAPITAL_EUR,
-    POSITION_SIZE_WITH_FEES,
+    POSITION_SIZE_WITH_FEES, ENABLE_CLOB_ENRICHMENT,
     get_source_priority, seed_config, seed_station_overrides,
 )
 from src.data.db import Database
-from src.data.polymarket import get_weather_markets
+from src.data.polymarket import get_weather_markets, fetch_orderbooks_batch
 from src.data.taf_collector import TafCollector
 from src.data.collectors.jma_ameidas import JmaAmedasCollector
 from src.data.collectors.amos import AmosCollector
@@ -39,7 +39,7 @@ from src.risk.manager import RiskManager
 from src.strategy.scanner import scan_markets
 from src.weather.builder import _build_weather, _station_in_active_window
 from src.execution.live_trader import LiveTrader
-from src.execution.order_manager import OrderManager, order_manager
+from src.execution.order_manager import OrderManager, order_manager, _load_open_no_positions
 from src.execution.order_executor import _execute_live
 from src.execution.position_tracker import (
     _log_open_position_snapshots,
@@ -168,20 +168,23 @@ def poll_once(
     weather = _build_weather(db=db, health_out=weather_health)
     _dashboard_module.weather_health = weather_health  # surface feed health to the dashboard banner
 
-    # Snapshots run every poll regardless of weather: the market-bid line is
-    # weather-independent (orderbook), so the dashboard chart keeps updating and
-    # a weather outage shows as a visible pause in the model fair-value line
-    # rather than a silently stale chart.  Stop-loss stays weather-gated -- the
-    # model-confidence stop needs a live WeatherState; decoupling it from
-    # weather is a separate strategy change (deferred).
+    # Collect open-position token IDs early so they can be included in the
+    # batch orderbook fetch below (together with the scanner's YES/NO tokens).
+    _open_token_ids: list = []
     if live_trader:
-        position_states = _log_open_position_snapshots(weather, ts, db=db)
-        if weather:
-            _check_stop_loss_exits(live_trader, ts, position_states, db=db, risk_manager=risk_manager)
-        # _check_metar_exits disabled 2026-05-29: 7/12 false positives, net -15.49 vs hold.
-        # _check_metar_exits(weather, live_trader, ts, db=db)
+        _today = datetime.now(timezone.utc).date().isoformat()
+        _open_positions = _load_open_no_positions(_today, db=db)
+        _open_token_ids = [p["no_token_id"] for p in _open_positions if p.get("no_token_id")]
 
     if not weather:
+        # No weather data: still run snapshots (bid line is weather-independent)
+        # then bail out of the market scan.
+        if live_trader:
+            _snap_ob: dict = {}
+            if _open_token_ids:
+                _snap_ob = fetch_orderbooks_batch(_open_token_ids)
+            position_states = _log_open_position_snapshots(weather, ts, db=db, orderbooks=_snap_ob)
+            # Stop-loss needs weather — skip.
         log.warning("[run] No weather data for any station -- skipping market scan")
         _finalize_poll()  # poll DID run -- keep poll-missed alert and chart timestamp live
         return
@@ -190,10 +193,55 @@ def poll_once(
         markets = get_weather_markets()
     except Exception as e:
         log.error("[polymarket] error: %s -- skipping this poll", e, exc_info=True)
+        # Still run snapshots before bailing so the chart doesn't go stale.
+        if live_trader:
+            _snap_ob2: dict = {}
+            if _open_token_ids:
+                _snap_ob2 = fetch_orderbooks_batch(_open_token_ids)
+            position_states = _log_open_position_snapshots(weather, ts, db=db, orderbooks=_snap_ob2)
         return
     log.info("[polymarket] %s weather markets fetched", len(markets))
 
-    candidates, snapshots = scan_markets(weather, markets, db=db)
+    # Build one shared orderbook dict for all tokens needed this poll:
+    # - YES + NO tokens from every candidate market (for CLOB enrichment in scan_markets)
+    # - NO tokens for every open position (for position snapshot + stop-loss)
+    # This eliminates duplicate HTTP round-trips when the same token appears in
+    # multiple markets or in both the scanner and the position snapshot path.
+    _market_token_ids: list = []
+    if ENABLE_CLOB_ENRICHMENT:
+        for _m in markets:
+            try:
+                _tids = json.loads(_m.get("clobTokenIds") or "[]") if isinstance(_m.get("clobTokenIds"), str) else (_m.get("clobTokenIds") or [])
+                _market_token_ids.extend([t for t in _tids if t])
+            except Exception:
+                pass
+
+    _all_token_ids = list(dict.fromkeys(_market_token_ids + _open_token_ids))
+    _t_batch_start = time.monotonic()
+    shared_orderbooks = fetch_orderbooks_batch(_all_token_ids) if _all_token_ids else {}
+    _t_batch_end = time.monotonic()
+    if _all_token_ids:
+        log.info(
+            "[clob-batch] fetched %d orderbooks (%d unique tokens) in %.2fs",
+            len(shared_orderbooks), len(_all_token_ids), _t_batch_end - _t_batch_start,
+        )
+
+    # Snapshots run every poll regardless of weather: the market-bid line is
+    # weather-independent (orderbook), so the dashboard chart keeps updating and
+    # a weather outage shows as a visible pause in the model fair-value line
+    # rather than a silently stale chart.  Stop-loss stays weather-gated -- the
+    # model-confidence stop needs a live WeatherState; decoupling it from
+    # weather is a separate strategy change (deferred).
+    if live_trader:
+        position_states = _log_open_position_snapshots(
+            weather, ts, db=db, orderbooks=shared_orderbooks,
+        )
+        if weather:
+            _check_stop_loss_exits(live_trader, ts, position_states, db=db, risk_manager=risk_manager)
+        # _check_metar_exits disabled 2026-05-29: 7/12 false positives, net -15.49 vs hold.
+        # _check_metar_exits(weather, live_trader, ts, db=db)
+
+    candidates, snapshots = scan_markets(weather, markets, db=db, orderbooks=shared_orderbooks)
 
     for snap in snapshots:
         _append_snapshot(snap)

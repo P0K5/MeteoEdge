@@ -47,7 +47,12 @@ _write_lock = threading.Lock()
 log = logging.getLogger(__name__)
 
 
-def _log_open_position_snapshots(weather: dict, ts: str, db=None) -> list:
+def _log_open_position_snapshots(
+    weather: dict,
+    ts: str,
+    db=None,
+    orderbooks: "dict[str, dict] | None" = None,
+) -> list:
     """Write one snapshot per open NO position per poll, capturing weather +
     orderbook + live model probability.
 
@@ -56,6 +61,16 @@ def _log_open_position_snapshots(weather: dict, ts: str, db=None) -> list:
     every open position regardless of market scan state -- gives us continuous
     intra-day data (especially the 14-22 UTC peak window) needed to backtest
     exit strategies against real intra-day orderbook movement.
+
+    Args:
+        weather: dict mapping station code → WeatherState.
+        ts: ISO timestamp string for this poll.
+        db: optional Database instance.
+        orderbooks: optional pre-fetched dict mapping token_id → orderbook dict.
+            When provided, the cached result is used instead of calling
+            ``get_orderbook()`` per token, avoiding duplicate HTTP requests
+            within a single poll cycle. When ``None``, falls back to per-token
+            ``get_orderbook()`` calls (original behaviour).
 
     Returns a list of per-token position states ({token_id, fills, snap}) so
     the stop-loss check can reuse the orderbook + model evaluation without a
@@ -89,11 +104,15 @@ def _log_open_position_snapshots(weather: dict, ts: str, db=None) -> list:
         state = weather.get(station)
         weather_missing = state is None
 
-        # Fetch live orderbook for the NO token
+        # Fetch live orderbook for the NO token — use the shared pre-fetched
+        # dict when available to avoid a redundant HTTP request per token.
         no_no_bid = no_no_ask = None
         no_best_bid_size = None
         try:
-            ob = get_orderbook(token_id)
+            if orderbooks is not None:
+                ob = orderbooks.get(token_id) or {}
+            else:
+                ob = get_orderbook(token_id)
             bids = ob.get("bids") or []
             asks = ob.get("asks") or []
             if bids:

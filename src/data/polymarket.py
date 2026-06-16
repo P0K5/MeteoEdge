@@ -1,5 +1,6 @@
 """Polymarket API client. No authentication required for read-only access."""
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from src.http_client import cached_fetch_json, fetch
 
@@ -55,3 +56,41 @@ def get_orderbook(token_id: str) -> dict:
         return r.json()
     except Exception as e:
         raise RuntimeError(f"Polymarket CLOB request failed for token {token_id}: {e}") from e
+
+
+def fetch_orderbooks_batch(
+    token_ids: list,
+    max_workers: int = 8,
+) -> dict:
+    """Fetch orderbooks for multiple tokens in parallel.
+
+    Each token is fetched independently using a thread pool bounded by
+    ``max_workers``. A failed fetch for any single token returns ``{}`` for
+    that token so the poll can continue with the remaining results.
+
+    Args:
+        token_ids: List of CLOB token IDs to fetch.
+        max_workers: Maximum concurrent HTTP requests (default 8).
+
+    Returns:
+        dict mapping token_id → orderbook dict. Missing/failed tokens map
+        to an empty dict ``{}``.
+    """
+    if not token_ids:
+        return {}
+
+    # Deduplicate while preserving order so we make exactly one request per
+    # unique token regardless of how many markets share a token.
+    unique_ids = list(dict.fromkeys(token_ids))
+
+    results: dict = {}
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        futures = {pool.submit(get_orderbook, tid): tid for tid in unique_ids}
+        for fut in as_completed(futures):
+            tid = futures[fut]
+            try:
+                results[tid] = fut.result()
+            except Exception as e:
+                log.warning("[clob-batch] %s...: %s", tid[:14], e)
+                results[tid] = {}
+    return results
