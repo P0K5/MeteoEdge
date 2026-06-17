@@ -114,6 +114,9 @@ CREATE INDEX idx_cand_ticker ON candidates(ticker);
 | `capital_before` | REAL NOT NULL | € | No | Capital/position size at entry |
 | `capital_after` | REAL | € | Yes | Capital after exit (for paper trades, = capital_before + pnl) |
 | `settled_at` | TEXT | ISO 8601 timestamp (UTC) | Yes | Timestamp when settlement P&L was written |
+| `close_reason` | TEXT | categorical | Yes | Why position was closed early: `take_profit`, `forced_exit`, `stop_loss`. NULL = held to settlement. |
+| `minutes_to_settlement_at_close` | REAL | minutes | Yes | Minutes remaining until settlement when position was exited early |
+| `bid_depth_at_close` | INTEGER | shares | Yes | Best-bid depth at the moment of early exit (for liquidity analysis) |
 
 **Indexes:**
 ```sql

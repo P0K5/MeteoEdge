@@ -2,7 +2,7 @@
 
 **Issue:** #307 — Per-city warm-bias residual correction + monitoring
 **Endpoint:** `GET /api/residual-stats`
-**Status:** Draft — awaiting Tech Lead PM feasibility review
+**Status:** Approved — Tech Lead PM feasibility review complete; backend API implemented and tested in PR #311
 
 ---
 

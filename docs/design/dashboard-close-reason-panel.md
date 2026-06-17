@@ -2,7 +2,7 @@
 
 **Issue:** #304 — Exit discipline: forced pre-settlement exit + take-profit tuning
 **Endpoint:** `GET /api/close-reason-stats`
-**Status:** Draft — awaiting Tech Lead PM feasibility review
+**Status:** Approved — Tech Lead PM feasibility review complete; backend API implemented and tested in PR #311
 
 ---
 
