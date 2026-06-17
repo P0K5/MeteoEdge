@@ -40,6 +40,7 @@ from src.model.climb_rates import expected_additional_rise
 from src.execution.order_manager import (
     _load_open_no_positions, _record_sell_in_db, order_manager as _order_manager,
 )
+from src.strategy.fee import estimate_fee_cents
 
 # Separate lock for POSITION_SNAPSHOTS_JSONL writes (not shared with run._write_lock
 # which protects CANDIDATES_CSV and LIVE_TRADES_JSONL).
@@ -370,7 +371,7 @@ def _check_stop_loss_exits(live_trader, ts: str, position_states: list,
                 "edge_cents": 0,
                 "pnl": pnl,
                 "outcome": "sold",
-                "actual_fee_cents": None,
+                "actual_fee_cents": estimate_fee_cents(sell_price_cents),
                 "close_reason": "stop_loss",
                 "trigger": f"stop_loss@{bid}c_fair{fair}c_entry{round(avg_entry_cents)}c",
             }, db=db)
@@ -529,7 +530,7 @@ def _check_forced_exits(
                 "edge_cents": 0,
                 "pnl": pnl,
                 "outcome": "sold",
-                "actual_fee_cents": None,
+                "actual_fee_cents": estimate_fee_cents(sell_price_cents),
                 "close_reason": "forced_exit",
                 "minutes_to_settlement_at_close": round(minutes_remaining, 2),
                 "trigger": (
@@ -671,7 +672,7 @@ def _check_metar_exits(weather: dict, live_trader, ts: str, db=None, risk_manage
                 "edge_cents": 0,
                 "pnl": pnl,
                 "outcome": "sold",
-                "actual_fee_cents": None,
+                "actual_fee_cents": estimate_fee_cents(sell_price_cents),
                 "trigger": f"metar_high={current_high:.1f}F_expected={expected_high:.1f}F_nws={nws_forecast}",
             }, db=db)
             log.info(
