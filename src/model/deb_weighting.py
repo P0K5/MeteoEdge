@@ -95,7 +95,7 @@ def compute_weights(
 
     # Count raw log rows per model (before filtering against actuals).
     # A model with zero rows in the window is a phantom contributor and must
-    # be excluded from the blend entirely — regardless of MIN_SAMPLES.
+    # be excluded from the blend entirely -- regardless of MIN_SAMPLES.
     raw_row_counts: dict[str, int] = {m: 0 for m in MODELS}
     for row in log_rows:
         m = row.get("model")
@@ -123,7 +123,7 @@ def compute_weights(
         )
         return dict(EQUAL_WEIGHTS), _zero_rmse
 
-    # Group (days_ago, abs_error) pairs by model — only for active models.
+    # Group (days_ago, abs_error) pairs by model -- only for active models.
     errors: dict[str, list[tuple[int, float]]] = {m: [] for m in active_models}
     today = date_cls.today()
     for row in log_rows:
@@ -226,3 +226,50 @@ def get_weights(db, city: str) -> dict[str, float]:
         return dict(EQUAL_WEIGHTS)
 
     return latest
+
+
+def check_weight_quality(db, station: str, city: str, window_days: int = 30) -> list[str]:
+    """Data-quality check: return a list of violation strings for *city*/*station*.
+
+    A violation is raised when a model carries non-zero weight in model_weights
+    but has zero model_forecast_log rows in the trailing *window_days* window.
+    Returns an empty list when everything is consistent.
+
+    Intended to be called on startup after DEB weights have been refreshed.
+    Each violation is also logged at WARNING level.
+    """
+    violations: list[str] = []
+
+    rows = db.get_model_weights(city)
+    if not rows:
+        return violations
+
+    # Build the latest weight per model from persisted model_weights.
+    latest_weight: dict[str, float] = {}
+    for row in rows:
+        m = row["model"]
+        if m not in latest_weight:
+            latest_weight[m] = row["weight"]
+        if len(latest_weight) == len(MODELS):
+            break
+
+    since_date = (date_cls.today() - timedelta(days=window_days)).isoformat()
+    log_rows = db.get_forecast_log(station, since_date)
+
+    # Count log rows per model in the trailing window.
+    row_counts: dict[str, int] = {m: 0 for m in MODELS}
+    for row in log_rows:
+        m = row.get("model")
+        if m in row_counts:
+            row_counts[m] += 1
+
+    for m, weight in latest_weight.items():
+        if weight > 0.0 and row_counts.get(m, 0) == 0:
+            msg = (
+                f"[deb] city={city} model={m} carries weight={weight:.4f} "
+                f"but has no forecast rows in the trailing {window_days}-day window"
+            )
+            log.warning(msg)
+            violations.append(msg)
+
+    return violations

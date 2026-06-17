@@ -20,6 +20,7 @@ from src.data.open_meteo import fetch_secondary_forecast, fetch_hourly_temp_now,
 from src.model.deb_weighting import log_forecast, refresh_weights, get_weights
 from src.model.deb_hourly_consensus import compute_deb_mu_f
 from src.model.intraday_correction import compute_correction
+from src.model.residual_correction import apply_residual_correction
 from src.model.envelope import WeatherState
 
 log = logging.getLogger(__name__)
@@ -259,6 +260,16 @@ def _build_weather(db=None, health_out=None) -> dict:
             if corrected is not None:
                 weather[station].corrected_mu_f = corrected
                 log.debug("[%s] corrected_mu_f=%.1fF (delta=%+.1fF)", station, corrected, corrected - deb_mu_f)
+            # Apply per-city rolling residual bias correction (issue #307)
+            base_mu = weather[station].corrected_mu_f if weather[station].corrected_mu_f is not None else deb_mu_f
+            if base_mu is not None:
+                residual_mu, _res_stats = apply_residual_correction(city, base_mu, db)
+                if residual_mu != base_mu:
+                    weather[station].corrected_mu_f = residual_mu
+                    log.debug(
+                        "[%s] residual_correction applied: %.1fF → %.1fF",
+                        station, base_mu, residual_mu,
+                    )
         if _should_log_weather(station, high_f, latest_temp_f, forecast_nws):
             log.info("[%s] high=%.1fF latest=%.1fF nws=%s", station, high_f, latest_temp_f, forecast_nws)
         else:
