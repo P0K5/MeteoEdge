@@ -38,20 +38,42 @@ def compute_deb_mu_f(
     forecast_nws: float | None,
     forecast_open_meteo: float | None,
     weights: dict[str, float],
+    forecast_gfs: float | None = None,
 ) -> float | None:
     """Return DEB-weighted forecast high (°F).
 
     Replaces the static 60/40 ensemble_forecast() blend when DEB_ENABLED=true.
-    When only one source is available (e.g. non-US stations have no NWS),
-    that source is used at full weight rather than returning None.
-    Returns None only when both inputs are None.
+    Supports three models: nws, open_meteo, gfs.
+
+    When a model forecast is None its contribution is dropped and the remaining
+    available forecasts are renormalised to sum to 1.0.  This means:
+    - International stations without NWS data automatically use a two-model
+      (open_meteo + gfs) blend.
+    - Any station where only one source is available receives that source at
+      full weight rather than returning None.
+
+    Returns None only when all three inputs are None.
     """
-    if forecast_nws is None and forecast_open_meteo is None:
+    # Build the set of available (weight, value) pairs.
+    available: list[tuple[float, float]] = []
+    pairs = [
+        ("nws", forecast_nws),
+        ("open_meteo", forecast_open_meteo),
+        ("gfs", forecast_gfs),
+    ]
+    for key, value in pairs:
+        if value is not None:
+            w = weights.get(key, 0.0)
+            available.append((w, value))
+
+    if not available:
         return None
-    if forecast_nws is None:
-        return forecast_open_meteo
-    if forecast_open_meteo is None:
-        return forecast_nws
-    w_nws = weights.get("nws", 0.5)
-    w_om = weights.get("open_meteo", 0.5)
-    return w_nws * forecast_nws + w_om * forecast_open_meteo
+
+    # If weights are all zero (e.g. fallback equal-weight dict doesn't carry gfs),
+    # treat as equal weight among available models.
+    total_w = sum(w for w, _ in available)
+    if total_w == 0.0:
+        return sum(v for _, v in available) / len(available)
+
+    # Weighted average, renormalised so available models sum to 1.0.
+    return sum(w * v for w, v in available) / total_w

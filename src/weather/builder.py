@@ -16,7 +16,7 @@ from src.data.metar import (
     now_local, sunset_local,
 )
 from src.data.nws import fetch_nws_forecast_high
-from src.data.open_meteo import fetch_secondary_forecast, fetch_hourly_temp_now
+from src.data.open_meteo import fetch_secondary_forecast, fetch_hourly_temp_now, fetch_gfs_forecast_high
 from src.model.deb_weighting import log_forecast, refresh_weights, get_weights
 from src.model.deb_hourly_consensus import compute_deb_mu_f
 from src.model.intraday_correction import compute_correction
@@ -226,6 +226,7 @@ def _build_weather(db=None, health_out=None) -> dict:
 
         forecast_nws = fetch_nws_forecast_high(lat, lon)
         forecast_secondary = fetch_secondary_forecast(lat, lon)
+        forecast_gfs = fetch_gfs_forecast_high(lat, lon)
 
         today_str = datetime.now(timezone.utc).date().isoformat()
         if db is not None:
@@ -233,11 +234,17 @@ def _build_weather(db=None, health_out=None) -> dict:
                 log_forecast(db, station, "nws", today_str, forecast_nws)
             if forecast_secondary is not None:
                 log_forecast(db, station, "open_meteo", today_str, forecast_secondary)
+            if forecast_gfs is not None:
+                log_forecast(db, station, "gfs", today_str, forecast_gfs)
             refresh_weights(db, station, city)
-        weights = get_weights(db, city) if db is not None else {"nws": 0.5, "open_meteo": 0.5}
-        deb_mu_f = compute_deb_mu_f(forecast_nws, forecast_secondary, weights)
+        weights = get_weights(db, city) if db is not None else {"nws": 0.5, "open_meteo": 0.5, "gfs": 0.0}
+        deb_mu_f = compute_deb_mu_f(forecast_nws, forecast_secondary, weights, forecast_gfs=forecast_gfs)
         if deb_mu_f is not None:
-            log.debug("[%s] deb_mu_f=%.1fF weights=nws:%.2f/om:%.2f", station, deb_mu_f, weights['nws'], weights['open_meteo'])
+            log.debug(
+                "[%s] deb_mu_f=%.1fF weights=nws:%.2f/om:%.2f/gfs:%.2f",
+                station, deb_mu_f,
+                weights.get('nws', 0), weights.get('open_meteo', 0), weights.get('gfs', 0),
+            )
 
         weather[station] = WeatherState(
             station=station,
