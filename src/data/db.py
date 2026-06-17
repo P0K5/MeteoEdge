@@ -207,6 +207,9 @@ class Database:
             ("observations", "is_official", "INTEGER DEFAULT 1"),
             ("trades", "actual_fee_cents", "REAL"),
             ("trades", "size_eur", "REAL"),
+            ("trades", "close_reason", "TEXT"),
+            ("trades", "minutes_to_settlement_at_close", "REAL"),
+            ("trades", "bid_depth_at_close", "INTEGER"),
             ("station_overrides", "yes_enabled", "INTEGER NOT NULL DEFAULT 1"),
             ("station_overrides", "no_enabled", "INTEGER NOT NULL DEFAULT 1"),
         ]:
@@ -522,6 +525,74 @@ class Database:
                     (*updates.values(), trade_id),
                 )
         return cur.rowcount
+
+    def update_trade_close_telemetry(
+        self,
+        order_id: str,
+        *,
+        close_reason: "str | None" = None,
+        minutes_to_settlement_at_close: "float | None" = None,
+        bid_depth_at_close: "int | None" = None,
+    ) -> int:
+        """Write close telemetry columns onto the trade row matching *order_id*.
+
+        Called after every position close to record: close_reason
+        (take_profit/forced_exit/stop_loss/settled/manual), minutes remaining to
+        settlement at the time of close, and the best-bid depth that was present.
+        Returns the number of rows updated (0 if no match).
+        """
+        fields = {
+            "close_reason": close_reason,
+            "minutes_to_settlement_at_close": minutes_to_settlement_at_close,
+            "bid_depth_at_close": bid_depth_at_close,
+        }
+        updates = {k: v for k, v in fields.items() if v is not None}
+        if not updates:
+            return 0
+        set_clause = ", ".join(f"{col}=?" for col in updates)
+        with self._lock:
+            with self._conn:
+                cur = self._conn.execute(
+                    f"UPDATE trades SET {set_clause} WHERE order_id=?",
+                    (*updates.values(), order_id),
+                )
+        return cur.rowcount
+
+    def get_close_reason_stats(self) -> list[dict]:
+        """Return P&L, win rate, count, avg PnL, and worst PnL grouped by close_reason.
+
+        Covers live and paper trades (excludes shadow).  Trades where close_reason
+        is NULL are grouped under 'settled' (legacy rows without telemetry).
+        """
+        cur = self._conn.execute(
+            """
+            SELECT
+                COALESCE(close_reason, 'settled')                           AS close_reason,
+                COUNT(*)                                                     AS count,
+                ROUND(SUM(COALESCE(pnl, 0)), 2)                             AS total_pnl,
+                ROUND(AVG(COALESCE(pnl, 0)), 4)                             AS avg_pnl,
+                ROUND(MIN(COALESCE(pnl, 0)), 4)                             AS worst_pnl,
+                SUM(CASE WHEN COALESCE(pnl, 0) > 0 THEN 1 ELSE 0 END)      AS win_count
+            FROM trades
+            WHERE mode != 'shadow'
+              AND pnl IS NOT NULL
+            GROUP BY COALESCE(close_reason, 'settled')
+            ORDER BY total_pnl DESC
+            """
+        )
+        rows = []
+        for row in cur.fetchall():
+            count = row["count"] or 0
+            win_count = row["win_count"] or 0
+            rows.append({
+                "close_reason": row["close_reason"],
+                "count": count,
+                "total_pnl": float(row["total_pnl"] or 0.0),
+                "avg_pnl": float(row["avg_pnl"] or 0.0),
+                "worst_pnl": float(row["worst_pnl"] or 0.0),
+                "win_rate": round(win_count / count, 4) if count else None,
+            })
+        return rows
 
     def get_trades(self, limit: "int | None" = 50, mode: "str | None" = None) -> list:
         """Return trades ordered by most-recent-first.

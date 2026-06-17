@@ -56,6 +56,7 @@ from src.config import (
     STATION_ACTIVE_HOURS, DISABLED_STATIONS, SHADOW_STATIONS_YES, SHADOW_STATIONS_NO,
     EMOS_DEFAULT_MODE, CONFIG_DEFAULTS, get_live_config,
 )
+from src.model.residual_correction import compute_residual_stats
 from src.data.db import Database
 from src.data.nws import fetch_nws_forecast_high
 from src.data.polymarket import get_orderbook
@@ -2045,6 +2046,96 @@ def patch_config(req: ConfigPatchRequest) -> dict:
     _db.set_config(key, serialised)
 
     return _build_param_entry(key, serialised)
+
+
+# ---------------------------------------------------------------------------
+# Residual stats endpoint (issue #307)
+# ---------------------------------------------------------------------------
+
+class ResidualStatsOut(BaseModel):
+    """Rolling residual bias statistics for a single city."""
+    city: str
+    mean_signed_error: float | None
+    rolling_mae: float | None
+    sample_count: int
+    correction_applied: bool
+    live_suppressed: bool
+
+
+@app.get("/api/residual-stats", response_model=list[ResidualStatsOut])
+def residual_stats() -> list[ResidualStatsOut]:
+    """Return rolling residual bias stats per city.
+
+    For each configured city, returns:
+    - mean_signed_error: mean(delta_f) over the trailing window (positive = warm bias)
+    - rolling_mae: mean(|delta_f|) over the trailing window
+    - sample_count: number of correction rows used
+    - correction_applied: True when bias term was applied to corrected_mu_f
+    - live_suppressed: True when MAE exceeds MAX_RESIDUAL_MAE_F_FOR_LIVE
+
+    Returns an entry for every city, with null mean_signed_error/rolling_mae
+    when insufficient data is available (< RESIDUAL_MIN_SAMPLES corrections).
+    """
+    if _db is None:
+        raise HTTPException(status_code=503, detail="Database not initialised")
+
+    result: list[ResidualStatsOut] = []
+    seen_cities: set[str] = set()
+
+    for _station, _lat, _lon, city, *_ in STATIONS:
+        if city in seen_cities:
+            continue
+        seen_cities.add(city)
+
+        try:
+            stats = compute_residual_stats(city, _db)
+        except Exception as exc:
+            logger.warning("[residual-stats] failed for city=%s: %s", city, exc)
+            stats = None
+
+        if stats is not None:
+            result.append(ResidualStatsOut(
+                city=city,
+                mean_signed_error=round(stats.mean_signed_error, 3),
+                rolling_mae=round(stats.rolling_mae, 3),
+                sample_count=stats.sample_count,
+                correction_applied=stats.correction_applied,
+                live_suppressed=stats.live_suppressed,
+            ))
+        else:
+            result.append(ResidualStatsOut(
+                city=city,
+                mean_signed_error=None,
+                rolling_mae=None,
+                sample_count=0,
+                correction_applied=False,
+                live_suppressed=False,
+            ))
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Close-reason stats endpoint (issue #304)
+# ---------------------------------------------------------------------------
+
+@app.get("/api/close-reason-stats")
+def close_reason_stats() -> list[dict]:
+    """Return P&L, win rate, count, avg, and worst PnL grouped by close reason.
+
+    Close reasons: take_profit, forced_exit, stop_loss, settled (legacy rows
+    where close_reason IS NULL are grouped under 'settled').
+
+    Reproduces the live version of the table from the 2026-06-16 analysis:
+      | Close type | n | Win rate | Total P&L | Avg | Worst |
+    """
+    if _db is None:
+        raise HTTPException(status_code=503, detail="Database not initialised")
+    try:
+        return _db.get_close_reason_stats()
+    except Exception as e:
+        logger.warning("[close-reason-stats] query failed: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # Mount static files last so /api routes take priority

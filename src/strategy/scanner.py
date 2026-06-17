@@ -21,10 +21,11 @@ from src.config import (
     MAX_CONFIDENCE_YES_FOR_NO, ENABLE_YES_TRADES, MIN_MINUTES_TO_SETTLEMENT,
     ENABLE_CLOB_ENRICHMENT, MIN_FORECAST_BRACKET_MARGIN_F, DISABLED_STATIONS,
     SHADOW_STATIONS, SHADOW_STATIONS_YES, SHADOW_STATIONS_NO,
-    CONFIG_DEFAULTS, get_live_config,
+    CONFIG_DEFAULTS, get_live_config, MODEL_PROB_CAP,
 )
 from src.model.envelope import Bracket, WeatherState, true_probability_yes, compute_envelope
 from src.model.emos_mode import get_city_mode, apply_emos, _check_ready_for_promotion
+from src.model.residual_correction import compute_residual_stats
 from src.data.polymarket import get_orderbook
 from src.data.taf_disruption import check_taf_disruption
 from src.strategy.fee import estimate_fee_cents
@@ -423,6 +424,11 @@ def scan_markets(
                 p_yes = true_probability_yes(bracket, state, mins_left, forecast_stddev=emos_stddev_override)
             else:
                 p_yes = true_probability_yes(bracket, state, mins_left)
+            raw_p_yes = p_yes
+            # round() avoids IEEE 754 creep: 1.0-0.95 = 0.050000000000000044
+            # which would silently fail the p_yes <= MAX_CONFIDENCE_YES_FOR_NO=0.05 gate.
+            _cap_lower = round(1.0 - MODEL_PROB_CAP, 10)
+            p_yes = min(max(p_yes, _cap_lower), MODEL_PROB_CAP)
             fee = estimate_fee_cents(min(bracket.yes_ask_cents, bracket.no_ask_cents))
 
             ev_yes = p_yes * 100 - bracket.yes_ask_cents - fee
@@ -434,6 +440,7 @@ def scan_markets(
                 "yes_ask": bracket.yes_ask_cents, "no_ask": bracket.no_ask_cents,
                 "current_high": state.current_high_f, "latest_temp": state.latest_temp_f,
                 "forecast_high": state.forecast_high_f, "p_yes": round(p_yes, 4),
+                "raw_p_yes": round(raw_p_yes, 4), "capped_p_yes": round(p_yes, 4),
                 "ev_yes": round(ev_yes, 2), "ev_no": round(ev_no, 2),
                 "minutes_to_settlement": round(mins_left, 1),
                 "emos_mode": emos_mode_used,
@@ -494,6 +501,20 @@ def scan_markets(
                               margin_gap, MIN_FORECAST_BRACKET_MARGIN_F)
                     skip_reason_counts[skipped_reason] += 1
                 else:
+                    # MAE gate (issue #307): suppress live NO entries when rolling MAE
+                    # exceeds MAX_RESIDUAL_MAE_F_FOR_LIVE. Shadow continues so data
+                    # keeps accumulating while the station is gated.
+                    _mae_suppressed = False
+                    if db is not None and not shadow_no:
+                        _res_stats = compute_residual_stats(city, db)
+                        if _res_stats is not None and _res_stats.live_suppressed:
+                            shadow_no = True
+                            _mae_suppressed = True
+                            log.info(
+                                "[%s] MAE gate: rolling_mae=%.2f°F > threshold → "
+                                "forcing NO to shadow (live suppressed)",
+                                station, _res_stats.rolling_mae,
+                            )
                     candidate = Candidate(
                         station=station, bracket=bracket, side="NO",
                         edge_cents=ev_no, price_cents=bracket.no_ask_cents,

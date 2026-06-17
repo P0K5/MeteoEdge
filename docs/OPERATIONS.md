@@ -197,6 +197,24 @@ All three keys are DB-backed (editable via the dashboard Config tab or `PATCH /a
 
 **NO side guarantee:** The NO branch in `src/strategy/scanner.py` uses `MIN_EDGE_CENTS`, `MAX_CONFIDENCE_YES_FOR_NO`, and `MIN_PRICE_CENTS` unconditionally. None of the `SHADOW_MIN_*_YES` keys affect NO candidate detection.
 
+### Model Guardrails
+
+| Variable | Default | Unit | Description | Requires Credentials |
+|----------|---------|------|-------------|----------------------|
+| `MODEL_PROB_CAP` | 0.95 | probability | Symmetric cap applied to `p_yes` after `true_probability_yes()`: clamps to `[1-cap, cap]`. Interim guard against overconfidence until EMOS (#70) is promoted. Set to `1.0` to disable. | No |
+
+### Residual Bias Correction
+
+Per-city rolling bias correction derived from `intraday_corrections.delta_f` (observed − model). Controlled entirely by env vars; DB-backed via `CONFIG_DEFAULTS`.
+
+| Variable | Default | Unit | Description | Requires Credentials |
+|----------|---------|------|-------------|----------------------|
+| `RESIDUAL_CORRECTION_ENABLED` | true | boolean | Master on/off switch for per-city bias correction | No |
+| `RESIDUAL_WINDOW_DAYS` | 30 | days | Trailing window of delta_f rows used for rolling bias estimate | No |
+| `RESIDUAL_MIN_SAMPLES` | 10 | count | Minimum rows before bias is applied (too few = noise) | No |
+| `RESIDUAL_MAX_CORRECTION_F` | 5.0 | °F | Hard clamp on applied bias — correction is clamped to ±this value | No |
+| `MAX_RESIDUAL_MAE_F_FOR_LIVE` | 8.0 | °F | Rolling MAE above this suppresses live NO entries for that city (forces shadow) | No |
+
 ### Risk Management
 
 | Variable | Default | Unit | Description | Requires Credentials |
@@ -213,6 +231,8 @@ All three keys are DB-backed (editable via the dashboard Config tab or `PATCH /a
 |----------|---------|------|-------------|----------------------|
 | `POSITION_SIZE_EUR` | 5.0 | € | EUR staked per trade | No |
 | `TAKE_PROFIT_BUFFER_CENTS` | 2 | ¢ | Exit when market bid reaches (predicted_price - buffer) | No |
+| `TAKE_PROFIT_BUFFER_CENTS_{STATION}` | (uses default) | ¢ | Per-station take-profit override, e.g. `TAKE_PROFIT_BUFFER_CENTS_KMIA=3` | No |
+| `FORCE_EXIT_MINUTES_TO_SETTLEMENT` | 60 | min | Force-exit open positions this many minutes before settlement. Set to 0 to disable. | No |
 | `STOP_LOSS_MIN_BID_CENTS` | 40 | ¢ | Model-confidence stop-loss only sells while the NO bid is at or above this floor | No |
 | `STOP_LOSS_CONSECUTIVE_POLLS` | 2 | polls | Consecutive polls with model fair value below entry before the stop fires | No |
 | `STOP_LOSS_MIN_DEPTH_SHARES` | 10 | shares | Minimum best-bid depth required before selling into it | No |
