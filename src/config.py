@@ -386,6 +386,48 @@ def get_source_priority(city: str) -> list[dict]:
     return _load_source_priority().get(city, [])
 
 
+def get_canonical_station_feeds(station: str) -> list[str]:
+    """Return all DB ``station`` keys under which *station*'s observations are stored.
+
+    High-cadence collectors (MSS, AMOS, JMA) persist rows under the Polymarket
+    city name (e.g. ``"Singapore"``), while METAR persists under the ICAO code
+    (e.g. ``"WSSS"``).  Querying only the ICAO key misses the denser city-keyed
+    rows, leading to daily-high computations that can miss intra-30-min peaks.
+
+    This helper resolves a station ICAO to the full list of DB keys that may
+    contain observations for that physical station.  The list is ordered
+    high-cadence first (city name) so callers can iterate in priority order.
+
+    For stations without a city-keyed high-cadence feed the list contains only
+    the ICAO code itself — no behaviour change for those stations.
+
+    Example::
+
+        get_canonical_station_feeds("WSSS")  # → ["Singapore", "WSSS"]
+        get_canonical_station_feeds("KORD")  # → ["KORD"]
+
+    Args:
+        station: ICAO code (e.g. ``"WSSS"``).
+
+    Returns:
+        Ordered list of DB station keys, high-cadence (city-named) first.
+    """
+    # Build the ICAO → city mapping once from STATIONS (tuple index 0 = ICAO, index 3 = city).
+    _icao_to_city: dict[str, str] = {s[0]: s[3] for s in STATIONS}
+    city = _icao_to_city.get(station)
+    if city is None:
+        return [station]
+
+    # Check whether a non-metar (high-cadence) source is configured for this city.
+    # If source_priority.yaml has an entry for the city and any source is NOT metar,
+    # a city-keyed feed exists → prepend the city name.
+    sources = get_source_priority(city)
+    has_hf_feed = any(s["source"] != "metar" for s in sources)
+    if has_hf_feed:
+        return [city, station]
+    return [station]
+
+
 # ------------------------------------------------------------------
 # DB-backed parameter store — config keys, defaults, and live access
 # ------------------------------------------------------------------

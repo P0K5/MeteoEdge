@@ -366,6 +366,30 @@ class Database:
         )
         return [dict(row) for row in cur.fetchall()]
 
+    def get_observations_multi_station(self, stations: "list[str]", since: str) -> list:
+        """Return observations for *stations* (multiple DB keys) at or after *since*, oldest first.
+
+        Used to union city-keyed (high-cadence) and ICAO-keyed (METAR) rows for
+        the same physical station so daily-high computation sees all available data.
+        Duplicate timestamps across sources are kept — the caller (daily-high logic)
+        takes the peak temp, so duplicates are harmless.
+
+        Args:
+            stations: List of DB ``station`` values to query (e.g. ``["Singapore", "WSSS"]``).
+            since: ISO timestamp lower bound (inclusive).
+
+        Returns:
+            List of observation dicts ordered by ts ascending.
+        """
+        if not stations:
+            return []
+        placeholders = ",".join("?" * len(stations))
+        cur = self._conn.execute(
+            f"SELECT * FROM observations WHERE station IN ({placeholders}) AND ts>=? ORDER BY ts ASC",
+            (*stations, since),
+        )
+        return [dict(row) for row in cur.fetchall()]
+
     def get_latest_observation(self, source: str, station: str) -> "dict | None":
         """Return the most recent observation for a source and station, or None if none exists."""
         cur = self._conn.execute(

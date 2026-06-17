@@ -8,9 +8,13 @@ from dateutil import parser as dtparse
 
 from src.config import (
     STATIONS, STATION_TZ, STATION_ACTIVE_HOURS,
-    get_source_priority,
+    get_source_priority, get_canonical_station_feeds,
 )
-from src.data.metar import fetch_all_metars_today, compute_daily_high, now_local, sunset_local
+from src.data.metar import (
+    fetch_all_metars_today, compute_daily_high,
+    compute_daily_high_from_db_observations,
+    now_local, sunset_local,
+)
 from src.data.nws import fetch_nws_forecast_high
 from src.data.open_meteo import fetch_secondary_forecast, fetch_hourly_temp_now
 from src.model.deb_weighting import log_forecast, refresh_weights, get_weights
@@ -128,6 +132,31 @@ def _build_weather(db=None, health_out=None) -> dict:
             _degraded(station, "could not compute daily high")
             continue
         high_f, high_time = result
+
+        # Upgrade daily high from densest feed: union all canonical station keys
+        # (city-keyed high-cadence feed + ICAO-keyed METAR rows) stored in the DB.
+        # High-cadence feeds (MSS 1-min, AMOS/JMA 10-min) can catch intra-30-min
+        # peaks that 30-min METAR would miss.  We only upgrade — never lower — the
+        # METAR-derived high_f so METAR remains the authoritative baseline.
+        if db is not None:
+            feed_keys = get_canonical_station_feeds(station)
+            if len(feed_keys) > 1:
+                # At least one city-keyed feed exists; query the union of keys.
+                since_today = datetime.now(
+                    pytz.timezone(STATION_TZ[station])
+                ).date().isoformat() + "T00:00:00+00:00"
+                db_obs = db.get_observations_multi_station(feed_keys, since=since_today)
+                db_result = compute_daily_high_from_db_observations(
+                    db_obs, STATION_TZ[station], min_local_hour=active_start
+                )
+                if db_result is not None:
+                    db_high_f, db_high_time = db_result
+                    if db_high_f > high_f:
+                        log.debug(
+                            "[%s] daily high upgraded by dense feed: %.1fF → %.1fF",
+                            station, high_f, db_high_f,
+                        )
+                        high_f, high_time = db_high_f, db_high_time
 
         latest = metars[0]
         latest_temp_c = latest.get("temp")
