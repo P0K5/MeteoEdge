@@ -34,8 +34,6 @@ import sys
 import datetime
 from pathlib import Path
 
-import requests
-
 # Ensure project root is importable
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -218,6 +216,7 @@ def fetch_open_meteo(icao: str, lat: float, lon: float,
             "timezone": "UTC",
         }
         try:
+            import requests  # noqa: PLC0415
             resp = requests.get(
                 "https://archive-api.open-meteo.com/v1/archive",
                 params=params, timeout=60
