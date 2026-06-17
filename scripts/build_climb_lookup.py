@@ -34,8 +34,6 @@ import sys
 import datetime
 from pathlib import Path
 
-import requests
-
 # Ensure project root is importable
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -218,6 +216,7 @@ def fetch_open_meteo(icao: str, lat: float, lon: float,
             "timezone": "UTC",
         }
         try:
+            import requests  # noqa: PLC0415
             resp = requests.get(
                 "https://archive-api.open-meteo.com/v1/archive",
                 params=params, timeout=60
@@ -381,7 +380,147 @@ def write_lookup_file(lookup: dict[str, dict[int, dict[int, float]]],
 # ---------------------------------------------------------------------------
 
 
+def compute_from_db(
+    db_path: str,
+    existing_lookup: "dict[str, dict[int, dict[int, float]]]",
+) -> "tuple[dict[str, dict[int, dict[int, float]]], dict[str, str]]":
+    """Replace synthetic values with p95-derived values from real collected observations.
+
+    For each station in STATIONS, fetches all observations from the DB via
+    get_hourly_obs_for_climb and computes p95 climb rates. Cells with fewer than
+    MIN_DAYS_PER_CELL distinct dates fall back to the existing synthetic value.
+
+    Args:
+        db_path: Path to the SQLite database file.
+        existing_lookup: The current (synthetic or previously-built) lookup dict.
+
+    Returns:
+        (updated_lookup, sources) where sources maps station → data-source string.
+    """
+    from collections import defaultdict
+    sys.path.insert(0, str(Path(__file__).parent.parent))
+    from src.data.db import Database  # noqa: E402
+
+    lookup: "dict[str, dict[int, dict[int, float]]]" = {}
+    sources: "dict[str, str]" = {}
+
+    with Database(db_path) as db:
+        for icao, _lat, _lon, _city, _res, _unit, _tz in STATIONS:
+            obs = db.get_hourly_obs_for_climb(icao)
+
+            if not obs:
+                # No DB observations — keep existing synthetic values
+                if icao in existing_lookup:
+                    lookup[icao] = existing_lookup[icao]
+                    sources[icao] = "synthetic (no DB observations)"
+                continue
+
+            # Group observations: key = (month, hour_utc), value = list of (date, temp_f)
+            cell_obs: "dict[tuple[int, int], list[tuple[str, float]]]" = defaultdict(list)
+            for row in obs:
+                month = int(row["date"][5:7])  # "YYYY-MM-DD" → month int
+                hour = row["hour_local"]        # UTC hour (named hour_local per schema)
+                cell_obs[(month, hour)].append((row["date"], row["temp_f"]))
+
+            # For each cell, compute daily highs then p95 of (daily_high - temp_at_hour)
+            cell_p95: "dict[tuple[int, int], float]" = {}
+            for (month, hour), entries in cell_obs.items():
+                # Group by date to find distinct dates and daily highs
+                date_temps: "dict[str, list[float]]" = defaultdict(list)
+                for date, temp_f in entries:
+                    date_temps[date].append(temp_f)
+
+                distinct_dates = set(date_temps.keys())
+                if len(distinct_dates) < MIN_DAYS_PER_CELL:
+                    continue  # insufficient data — keep synthetic
+
+                # Compute daily high per date
+                daily_highs: "dict[str, float]" = {d: max(temps) for d, temps in date_temps.items()}
+
+                # Compute deltas: daily_high - temp_at_this_hour for each observation
+                deltas: list[float] = []
+                for date, temp_f in entries:
+                    delta = max(0.0, daily_highs[date] - temp_f)
+                    deltas.append(delta)
+
+                cell_p95[(month, hour)] = round(quantile(deltas, P95_QUANTILE), 2)
+
+            # Build the updated month×hour table, falling back to synthetic for sparse cells
+            synthetic = existing_lookup.get(icao, {})
+            updated: "dict[int, dict[int, float]]" = {}
+            db_cells = 0
+            for month in range(1, 13):
+                updated[month] = {}
+                for hour in range(24):
+                    if (month, hour) in cell_p95:
+                        updated[month][hour] = cell_p95[(month, hour)]
+                        db_cells += 1
+                    else:
+                        # Fall back to synthetic for this cell
+                        updated[month][hour] = synthetic.get(month, {}).get(hour, 0.0)
+
+            total_cells = 12 * 24
+            lookup[icao] = updated
+            sources[icao] = (
+                f"DB observations ({len(obs):,} rows, "
+                f"{db_cells}/{total_cells} cells from DB, rest synthetic fallback)"
+            )
+
+            print(f"  [{icao}] {len(obs):,} obs → {db_cells}/{total_cells} cells updated from DB")
+
+    # Ensure every STATIONS entry has an entry in lookup and sources
+    for icao, _lat, _lon, _city, _res, _unit, _tz in STATIONS:
+        if icao not in lookup:
+            if icao in existing_lookup:
+                lookup[icao] = existing_lookup[icao]
+                sources[icao] = "synthetic (no DB observations)"
+            # stations not in existing_lookup are simply omitted
+
+    return lookup, sources
+
+
 def main() -> None:
+    import argparse
+    parser = argparse.ArgumentParser(description="Build per-station p95 climb-rate lookup table.")
+    parser.add_argument(
+        "--from-db",
+        action="store_true",
+        help="Replace synthetic values with p95-derived values from real collected DB observations.",
+    )
+    parser.add_argument(
+        "--db-path",
+        default="data/meteoedge.db",
+        help="Path to the SQLite database file (default: data/meteoedge.db). Used with --from-db.",
+    )
+    args = parser.parse_args()
+
+    out_path = Path(__file__).parent.parent / "src" / "data" / "climb_lookup.py"
+
+    if args.from_db:
+        # Load existing lookup as synthetic baseline
+        from src.data.climb_lookup import CLIMB_LOOKUP as _existing  # noqa: E402
+        existing_lookup: "dict[str, dict[int, dict[int, float]]]" = dict(_existing)
+
+        print(f"Loading DB observations from {args.db_path} ...")
+        lookup, sources = compute_from_db(args.db_path, existing_lookup)
+
+        write_lookup_file(lookup, sources, out_path)
+
+        # Summary table
+        print("\n=== Per-station hour-6 p95 climb (°F) by month (--from-db) ===")
+        header = f"{'Station':<8} " + " ".join(f"M{m:02d}" for m in range(1, 13))
+        print(header)
+        for station in sorted(lookup.keys()):
+            months = lookup[station]
+            if not months:
+                row_str = f"{station:<8} " + " ".join("   ?" for _ in range(1, 13))
+            else:
+                row_str = f"{station:<8} " + " ".join(
+                    f"{months.get(m, {}).get(6, 0.0):4.1f}" for m in range(1, 13)
+                )
+            print(row_str)
+        return
+
     end_dt = datetime.datetime(datetime.date.today().year, 1, 1)
     start_dt = datetime.datetime(end_dt.year - YEARS_BACK, 1, 1)
     print(f"Fetching {start_dt.year}–{end_dt.year - 1} data for {len(STATIONS)} stations")
@@ -414,7 +553,6 @@ def main() -> None:
         )
 
     # Write output
-    out_path = Path(__file__).parent.parent / "src" / "data" / "climb_lookup.py"
     write_lookup_file(lookup, sources, out_path)
 
     # Summary table
