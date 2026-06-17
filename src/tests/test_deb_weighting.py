@@ -79,7 +79,13 @@ class TestDebWeighting:
         assert rmse["nws"] < rmse["open_meteo"]
 
     def test_single_model_gets_weight_one(self):
-        """When one model has zero samples, fallback to EQUAL_WEIGHTS."""
+        """When only one model has forecast rows (others are phantom), it receives
+        weight=1.0 and the phantom models receive 0.0.
+
+        This is the correct behaviour after the phantom-model guard was introduced:
+        models with zero rows in the trailing window are excluded from the blend
+        entirely and the remaining model(s) are renormalised to sum to 1.0.
+        """
         db = MagicMock()
         db.get_forecast_log.return_value = [
             {"date": f"2024-01-{i:02d}", "model": "nws", "forecast_high_f": 80.0 + i * 0.1}
@@ -91,5 +97,12 @@ class TestDebWeighting:
         ]
 
         weights, rmse = compute_weights(db, "KLAX", "Los Angeles")
-        assert weights == EQUAL_WEIGHTS
-        assert all(v == 0.0 for v in rmse.values())
+        # NWS is the only active model; phantom models (open_meteo, gfs) get 0.0.
+        assert weights["nws"] == 1.0
+        assert weights["open_meteo"] == 0.0
+        assert weights["gfs"] == 0.0
+        # Total must still sum to 1.0
+        assert abs(sum(weights.values()) - 1.0) < 1e-9
+        # RMSE dict only has the active model key(s); no entry for phantom models.
+        assert "nws" in rmse
+        assert rmse["nws"] > 0.0
