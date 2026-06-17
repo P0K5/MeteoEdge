@@ -1310,7 +1310,6 @@ class Database:
         )
         return [{"date": row[0], "hour_local": row[1], "temp_f": float(row[2])} for row in cur.fetchall()]
 
-
     # ------------------------------------------------------------------
     # emos_crps_log / deb_weight_log
     # ------------------------------------------------------------------
