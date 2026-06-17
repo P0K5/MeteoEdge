@@ -429,6 +429,10 @@ def scan_markets(
             # which would silently fail the p_yes <= MAX_CONFIDENCE_YES_FOR_NO=0.05 gate.
             _cap_lower = round(1.0 - MODEL_PROB_CAP, 10)
             p_yes = min(max(p_yes, _cap_lower), MODEL_PROB_CAP)
+            if raw_p_yes != p_yes and db is not None:
+                db.log_guardrail_event(
+                    ts, station, "cap_applied", raw_p_yes, p_yes, bracket.ticker
+                )
             fee = estimate_fee_cents(min(bracket.yes_ask_cents, bracket.no_ask_cents))
 
             ev_yes = p_yes * 100 - bracket.yes_ask_cents - fee

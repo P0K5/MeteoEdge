@@ -738,6 +738,58 @@ Before going live, verify:
 
 ---
 
+## Guardrail Telemetry
+
+Three Stage-1 guardrails are instrumented and queryable via `GET /api/guardrail-events`:
+
+### Forced exits (`close_reason = 'forced_exit'`)
+
+Fires when a NO position is closed early because settlement is within
+`FORCE_EXIT_MINUTES_TO_SETTLEMENT` minutes and bid depth is adequate.
+
+- Queried from the `trades` table directly.
+- **Alert threshold**: >5 forced exits per day suggests the exit window
+  (`FORCE_EXIT_MINUTES_TO_SETTLEMENT`) may be too wide, or that markets are
+  regularly held too close to settlement. Investigate position entry timing.
+
+### Cap events (`event_type = 'cap_applied'`)
+
+Fires when the model probability `p_yes` is clamped to the `[1−MODEL_PROB_CAP,
+MODEL_PROB_CAP]` interval (default 5%–95%).
+
+- Stored in `guardrail_events`.
+- **Alert threshold**: >5 cap events per day per station suggests the model is
+  frequently overconfident, which may indicate data quality issues or that
+  `MODEL_PROB_CAP` is too tight for current market conditions.
+  Consider raising `MODEL_PROB_CAP` or investigating the model inputs.
+
+### Correction events (`event_type = 'correction_applied'`)
+
+Fires when the rolling residual bias correction (`apply_residual_correction`)
+shifts the ensemble mean by more than 0°F.
+
+- Stored in `guardrail_events`.
+- **Alert threshold**: `avg_delta_f` (average °F shift) persistently above ±3°F
+  suggests the model has a systematic bias for that station. This is expected
+  early in deployment; if it persists after 30+ settled days, review the
+  forecast source weights via the DEB panel.
+
+### Example query
+
+```bash
+curl http://localhost:8000/api/guardrail-events | python3 -m json.tool
+```
+
+```json
+{
+  "forced_exits": {"total": 12, "last_7d": 3, "by_station": {"KLAX": 5, "KORD": 7}},
+  "cap_events":   {"total": 8,  "last_7d": 2, "avg_delta_p": -0.0312},
+  "correction_events": {"total": 41, "last_7d": 9, "avg_delta_f": -1.4}
+}
+```
+
+---
+
 ## Support & Escalation
 
 For issues beyond this runbook, escalate to:
