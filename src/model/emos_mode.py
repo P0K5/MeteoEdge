@@ -13,6 +13,9 @@ def get_city_mode(city: str, db=None) -> str:
 
     Reads from emos_calibration table. Falls back to EMOS_DEFAULT_MODE env var (default 'legacy').
     Returns 'legacy' when db is None.
+
+    Promotion guard: if the city has fewer than EMOS_MIN_SAMPLES CRPS log entries,
+    returns 'emos_shadow' even if a primary row is marked ready_for_promotion=1.
     """
     if db is None:
         return os.environ.get("EMOS_DEFAULT_MODE", "legacy")
@@ -22,6 +25,18 @@ def get_city_mode(city: str, db=None) -> str:
     # Check if emos_primary is available and ready
     primary = db.get_emos_coefficients(city, "emos_primary")
     if primary and primary.get("ready_for_promotion") == 1:
+        # Promotion guard: require minimum number of CRPS samples before promoting
+        emos_min_samples = int(os.environ.get("EMOS_MIN_SAMPLES", "20"))
+        n = db.get_emos_crps_count(city)
+        if n < emos_min_samples:
+            log.info(
+                "[emos] city=%s: %d/%d samples, promotion blocked",
+                city, n, emos_min_samples,
+            )
+            shadow = db.get_emos_coefficients(city, "emos_shadow")
+            if shadow:
+                return "emos_shadow"
+            return os.environ.get("EMOS_DEFAULT_MODE", "legacy")
         return "emos_primary"
     shadow = db.get_emos_coefficients(city, "emos_shadow")
     if shadow:

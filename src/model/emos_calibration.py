@@ -136,17 +136,11 @@ def fetch_training_data(
     result: list[tuple[float, float, float]] = []
 
     for date_str, mu_f in date_to_mu.items():
-        # daily high = MAX(temp_f) for this station on this date, source='metar'
-        cur = db._conn.execute(
-            "SELECT MAX(temp_f) FROM observations "
-            "WHERE station=? AND source='metar' AND DATE(ts)=?",
-            (station, date_str),
-        )
-        row = cur.fetchone()
-        if row is None or row[0] is None:
-            continue  # no METAR observation for this date — skip
-        actual_high_f = float(row[0])
-        result.append((mu_f, sigma, actual_high_f))
+        # daily high = MAX(temp_f) for this station on this date
+        obs_high = db.get_daily_obs_high(station, date_str)
+        if obs_high is None:
+            continue  # no observation for this date — skip
+        result.append((mu_f, sigma, obs_high))
 
     if len(result) < min_samples:
         raise InsufficientDataError(

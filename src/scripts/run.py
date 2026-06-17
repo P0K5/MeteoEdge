@@ -54,6 +54,25 @@ log = logging.getLogger(__name__)
 
 _write_lock = threading.Lock()
 
+# EMOS shadow daily calibration gate
+_last_emos_shadow_date: str = ""
+
+
+def _maybe_run_emos_shadow(db) -> None:
+    """Run the EMOS shadow calibration once per calendar day."""
+    global _last_emos_shadow_date
+    from datetime import date
+    today = date.today().isoformat()
+    if today == _last_emos_shadow_date:
+        return
+    _last_emos_shadow_date = today
+    try:
+        import scripts.run_emos_shadow as _emos_runner
+        _emos_runner.main_with_db(db)
+    except Exception as e:
+        log.warning("[emos_shadow] daily run failed: %s", e)
+
+
 # Balance-check circuit-breaker state (issue #286)
 _balance_fail_count: int = 0
 _wallet_cooldown_until: float = 0.0
@@ -135,6 +154,10 @@ def poll_once(
     ts = datetime.now(timezone.utc).isoformat()
     mode_label = "LIVE" if live_trader else "PAPER"
     log.info("=== Poll [%s] at %s ===", mode_label, ts)
+
+    # Run EMOS shadow calibration once per day (no-op on subsequent polls same day)
+    if db is not None:
+        _maybe_run_emos_shadow(db)
 
     # Capture previous poll timestamp before overwriting (poll-missed alert needs the gap).
     prev_poll_ts_str = _dashboard_module.last_poll_ts

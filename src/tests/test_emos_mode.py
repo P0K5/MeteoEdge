@@ -149,9 +149,12 @@ class TestGetCityModePrimaryUnready:
 
 class TestGetCityModePrimaryReady:
     def test_primary_ready_returns_emos_primary(self):
-        """emos_primary row with ready_for_promotion=1 → returns 'emos_primary'."""
+        """emos_primary row with ready_for_promotion=1 and enough CRPS samples → 'emos_primary'."""
         db = _db()
         _upsert(db, "Chicago", "emos_primary", ready_for_promotion=1)
+        # Populate enough CRPS log entries to satisfy the promotion guard (default 20)
+        for i in range(20):
+            db.log_crps("Chicago", f"2026-05-{i + 1:02d}", 1.5)
         result = get_city_mode("Chicago", db=db)
         assert result == "emos_primary"
 
@@ -163,10 +166,13 @@ class TestGetCityModePrimaryReady:
         assert result is True
 
     def test_primary_ready_takes_precedence_over_shadow(self):
-        """Both shadow and ready primary → 'emos_primary' wins."""
+        """Both shadow and ready primary + enough CRPS samples → 'emos_primary' wins."""
         db = _db()
         _upsert(db, "Los Angeles", "emos_shadow", ready_for_promotion=0)
         _upsert(db, "Los Angeles", "emos_primary", ready_for_promotion=1)
+        # Populate enough CRPS log entries to satisfy the promotion guard (default 20)
+        for i in range(20):
+            db.log_crps("Los Angeles", f"2026-05-{i + 1:02d}", 1.5)
         result = get_city_mode("Los Angeles", db=db)
         assert result == "emos_primary"
 

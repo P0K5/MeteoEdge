@@ -180,6 +180,23 @@ CREATE TABLE IF NOT EXISTS station_overrides (
     no_enabled  INTEGER NOT NULL DEFAULT 1,
     updated_at  TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS emos_crps_log (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    city       TEXT NOT NULL,
+    date       TEXT NOT NULL,
+    crps_score REAL NOT NULL,
+    model_mode TEXT NOT NULL DEFAULT 'emos_shadow',
+    logged_at  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS deb_weight_log (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    city        TEXT NOT NULL,
+    date        TEXT NOT NULL,
+    weights_json TEXT NOT NULL,
+    logged_at   TEXT NOT NULL
+);
 """
 
 
@@ -1211,3 +1228,46 @@ class Database:
             row[0]: {"yes_enabled": bool(row[1]), "no_enabled": bool(row[2])}
             for row in cur.fetchall()
         }
+
+    # ------------------------------------------------------------------
+    # emos_crps_log / deb_weight_log
+    # ------------------------------------------------------------------
+
+    def get_daily_obs_high(self, station: str, date: str) -> "float | None":
+        """Return MAX(temp_f) from observations for *station* on *date* (YYYY-MM-DD)."""
+        cur = self._conn.execute(
+            "SELECT MAX(temp_f) FROM observations WHERE station=? AND DATE(ts)=?",
+            (station, date),
+        )
+        row = cur.fetchone()
+        return float(row[0]) if row and row[0] is not None else None
+
+    def log_crps(self, city: str, date: str, crps_score: float, model_mode: str = "emos_shadow") -> None:
+        """Insert a CRPS score record for *city* on *date*."""
+        from datetime import datetime, timezone
+        logged_at = datetime.now(timezone.utc).isoformat()
+        with self._lock:
+            with self._conn:
+                self._conn.execute(
+                    "INSERT INTO emos_crps_log(city,date,crps_score,model_mode,logged_at) VALUES(?,?,?,?,?)",
+                    (city, date, crps_score, model_mode, logged_at),
+                )
+
+    def get_emos_crps_count(self, city: str) -> int:
+        """Return the number of CRPS log entries for *city*."""
+        cur = self._conn.execute(
+            "SELECT COUNT(*) FROM emos_crps_log WHERE city=?", (city,)
+        )
+        row = cur.fetchone()
+        return int(row[0]) if row else 0
+
+    def log_deb_weights(self, city: str, date: str, weights_json: str) -> None:
+        """Insert a DEB weights snapshot for *city* on *date*."""
+        from datetime import datetime, timezone
+        logged_at = datetime.now(timezone.utc).isoformat()
+        with self._lock:
+            with self._conn:
+                self._conn.execute(
+                    "INSERT INTO deb_weight_log(city,date,weights_json,logged_at) VALUES(?,?,?,?)",
+                    (city, date, weights_json, logged_at),
+                )
