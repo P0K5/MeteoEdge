@@ -1655,6 +1655,47 @@ def emos_mark_ready(city: str) -> EmosCityStatus:
 
 
 # ---------------------------------------------------------------------------
+# EMOS shadow scaffolding status endpoint
+# ---------------------------------------------------------------------------
+
+@app.get("/api/emos-shadow/status")
+def emos_shadow_status() -> list[dict]:
+    """Per-city EMOS shadow status: sample count, mean CRPS, ready_for_promotion."""
+    if _db is None:
+        raise HTTPException(status_code=503, detail="Database not initialised")
+    try:
+        results = []
+        for station_cfg in STATIONS:
+            city = station_cfg[3] if isinstance(station_cfg, (list, tuple)) else station_cfg
+            n_samples = _db.get_emos_crps_count(city)
+            # mean_crps from log
+            cur = _db._conn.execute(
+                "SELECT AVG(crps_score) FROM emos_crps_log WHERE city=?", (city,)
+            )
+            row = cur.fetchone()
+            mean_crps = float(row[0]) if row and row[0] is not None else None
+            # deb weights snapshot
+            cur2 = _db._conn.execute(
+                "SELECT weights_json FROM deb_weight_log WHERE city=? ORDER BY logged_at DESC LIMIT 1",
+                (city,),
+            )
+            row2 = cur2.fetchone()
+            deb_weights = row2[0] if row2 else None
+            # ready_for_promotion is ALWAYS False for automated queries (never set to 1)
+            results.append({
+                "city": city,
+                "n_samples": n_samples,
+                "mean_crps": mean_crps,
+                "deb_weights_snapshot": deb_weights,
+                "ready_for_promotion": False,
+            })
+        return results
+    except Exception as e:
+        logger.warning("[emos-shadow] status query failed: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
 # Station toggle — enable/disable via DB-persisted overrides
 # ---------------------------------------------------------------------------
 

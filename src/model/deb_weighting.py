@@ -35,6 +35,9 @@ MODELS: tuple[str, ...] = ("nws", "open_meteo", "gfs")
 EQUAL_WEIGHTS: dict[str, float] = {m: round(1.0 / len(MODELS), 10) for m in MODELS}
 MIN_SAMPLES: int = _MIN_SAMPLES
 
+# Track (city, date) pairs already logged today to avoid duplicate DEB weight entries.
+_logged_today: set = set()
+
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -203,7 +206,11 @@ def get_weights(db, city: str) -> dict[str, float]:
     Returns EQUAL_WEIGHTS when:
     - DEB_ENABLED is not "true"
     - No rows exist in model_weights for *city*
+
+    Once per day, logs the current weights to deb_weight_log (if db is provided).
     """
+    import json as _json
+
     if os.getenv("DEB_ENABLED", "false").lower() != "true":
         return dict(EQUAL_WEIGHTS)
 
@@ -224,6 +231,17 @@ def get_weights(db, city: str) -> dict[str, float]:
     # If any tracked model is missing from the table, fall back to equal weights.
     if any(m not in latest for m in MODELS):
         return dict(EQUAL_WEIGHTS)
+
+    # Once-per-day DEB weight logging
+    if db is not None:
+        today_str = date_cls.today().isoformat()
+        log_key = (city, today_str)
+        if log_key not in _logged_today:
+            try:
+                db.log_deb_weights(city, today_str, _json.dumps(latest))
+                _logged_today.add(log_key)
+            except Exception as _e:
+                log.warning("[deb] failed to log weights for %s: %s", city, _e)
 
     return latest
 
