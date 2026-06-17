@@ -1,12 +1,24 @@
 """DEB (Dynamic Error Balancing) weight computation module.
 
 Computes per-model forecast weights based on exponential-decay RMSE over a
-rolling window of forecast-vs-actual pairs.  Two models are tracked:
-  - "nws"        : NWS daily-high forecast
-  - "open_meteo" : Open-Meteo daily-high forecast
+rolling window of forecast-vs-actual pairs.  Three models are tracked:
+  - "nws"        : NWS daily-high forecast (US stations only)
+  - "open_meteo" : Open-Meteo best-match daily-high forecast (global)
+  - "gfs"        : Open-Meteo GFS seamless daily-high forecast (global)
+
+NWS is unavailable for international stations (those stations only accumulate
+"open_meteo" and "gfs" rows in model_forecast_log).  The phantom-model guard
+below excludes models with zero rows from the blend, so international stations
+naturally receive a two-model (open_meteo + gfs) ensemble once enough data
+accumulates.
+
+Phantom-model guard: a model that has zero model_forecast_log rows in the
+trailing window (e.g. NWS at international stations) is excluded from the
+blend entirely.  Remaining weights are renormalised to sum to 1.0.  A
+WARNING is logged for each excluded phantom contributor.
 
 When DEB_ENABLED is false (default) or when fewer than MIN_SAMPLES pairs
-exist for any model, equal weights (0.5 / 0.5) are returned silently.
+exist for any model, equal weights (1/3 each) are returned silently.
 """
 import math
 import os
@@ -19,8 +31,8 @@ _MIN_SAMPLES = int(os.getenv("DEB_MIN_SAMPLES", "10"))
 _REFRESH_CADENCE_H = float(os.getenv("DEB_REFRESH_CADENCE_HOURS", "24"))
 _DECAY_RATE = 0.05  # per day; e^(-0.05*k) weights errors k days ago
 
-EQUAL_WEIGHTS: dict[str, float] = {"nws": 0.5, "open_meteo": 0.5}
-MODELS: tuple[str, ...] = ("nws", "open_meteo")
+MODELS: tuple[str, ...] = ("nws", "open_meteo", "gfs")
+EQUAL_WEIGHTS: dict[str, float] = {m: round(1.0 / len(MODELS), 10) for m in MODELS}
 MIN_SAMPLES: int = _MIN_SAMPLES
 
 
@@ -65,8 +77,11 @@ def compute_weights(
         (weights, rmse) where both are dicts keyed by model name.
         weights sums to 1.0.  rmse values are 0.0 on equal-weights fallback.
 
-    Falls back to EQUAL_WEIGHTS (logged at DEBUG) when any model has fewer
-    than _MIN_SAMPLES valid pairs.
+    Phantom-model guard: models with zero log rows in the window are excluded
+    before any weight computation.  A WARNING is emitted per phantom model.
+    If only one model has rows, it receives weight=1.0.
+    Falls back to EQUAL_WEIGHTS (logged at DEBUG) when all candidate models
+    have fewer than _MIN_SAMPLES valid pairs.
     """
     since_date = (date_cls.today() - timedelta(days=window_days)).isoformat()
     log_rows = db.get_forecast_log(station, since_date)
@@ -78,20 +93,53 @@ def compute_weights(
         d = row["ts"][:10]
         actuals[d] = row["actual_high_f"]
 
-    # Group (days_ago, abs_error) pairs by model
-    errors: dict[str, list[tuple[int, float]]] = {m: [] for m in MODELS}
+    # Count raw log rows per model (before filtering against actuals).
+    # A model with zero rows in the window is a phantom contributor and must
+    # be excluded from the blend entirely — regardless of MIN_SAMPLES.
+    raw_row_counts: dict[str, int] = {m: 0 for m in MODELS}
+    for row in log_rows:
+        m = row.get("model")
+        if m in raw_row_counts:
+            raw_row_counts[m] += 1
+
+    # Drop phantom models (zero log rows) and warn.
+    active_models = []
+    for m in MODELS:
+        if raw_row_counts[m] == 0:
+            log.warning(
+                "[deb] city=%s model=%s has no forecast rows — excluded from blend",
+                city, m,
+            )
+        else:
+            active_models.append(m)
+
+    _zero_rmse = {m: 0.0 for m in MODELS}
+
+    # If no models have any rows at all, fall back to equal weights.
+    if not active_models:
+        log.debug(
+            "[deb] no forecast rows for %s in trailing %d-day window -- using equal weights",
+            city, window_days,
+        )
+        return dict(EQUAL_WEIGHTS), _zero_rmse
+
+    # Group (days_ago, abs_error) pairs by model — only for active models.
+    errors: dict[str, list[tuple[int, float]]] = {m: [] for m in active_models}
     today = date_cls.today()
     for row in log_rows:
+        m = row.get("model")
+        if m not in errors:
+            continue
         d = row["date"]
         if d not in actuals:
             continue
         days_ago = (today - date_cls.fromisoformat(d)).days
         err = abs(row["forecast_high_f"] - actuals[d])
-        errors[row["model"]].append((days_ago, err))
+        errors[m].append((days_ago, err))
 
-    # Check minimum samples for every model
-    _zero_rmse = {m: 0.0 for m in MODELS}
-    for m in MODELS:
+    # Check minimum samples for each active model; fall back to equal weights
+    # if any active model is below the threshold.
+    for m in active_models:
         if len(errors[m]) < _MIN_SAMPLES:
             log.debug(
                 "[deb] insufficient samples for %s/%s (%d < %d) -- using equal weights",
@@ -99,17 +147,21 @@ def compute_weights(
             )
             return dict(EQUAL_WEIGHTS), _zero_rmse
 
-    # Compute decay-weighted RMSE per model
+    # Compute decay-weighted RMSE per active model.
     rmse: dict[str, float] = {}
-    for m in MODELS:
+    for m in active_models:
         total_w = sum(_decay_weight(k) for k, _ in errors[m])
         weighted_mse = sum(_decay_weight(k) * e ** 2 for k, e in errors[m]) / total_w
         rmse[m] = math.sqrt(weighted_mse)
 
-    # Inverse-error weights, normalised to sum to 1.0
-    raw = {m: 1.0 / rmse[m] for m in MODELS}
+    # Inverse-error weights, normalised to sum to 1.0.
+    # Only active models receive weight; phantom models get 0.0.
+    raw = {m: 1.0 / rmse[m] for m in active_models}
     total = sum(raw.values())
-    return {m: raw[m] / total for m in MODELS}, rmse
+    weights = {m: 0.0 for m in MODELS}
+    for m in active_models:
+        weights[m] = raw[m] / total
+    return weights, rmse
 
 
 def refresh_weights(db, station: str, city: str) -> None:

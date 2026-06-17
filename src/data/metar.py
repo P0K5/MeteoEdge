@@ -63,6 +63,51 @@ def sunset_local(station: str, lat: float, lon: float) -> datetime:
     return s["sunset"]
 
 
+def compute_daily_high_from_db_observations(
+    observations: list[dict], tz_name: str, min_local_hour: int = 6
+) -> "tuple[float, datetime] | None":
+    """Compute today's daily high temperature from DB observation rows.
+
+    Like :func:`compute_daily_high` but accepts the ``observations`` table row
+    format (dicts with ``ts`` and ``temp_f`` keys) instead of the raw METAR API
+    response format.  This allows computing the daily high from a union of
+    city-keyed high-cadence feeds and ICAO-keyed METAR rows.
+
+    Args:
+        observations: List of DB observation dicts, each containing at least
+            ``ts`` (ISO timestamp string) and ``temp_f`` (float, already in °F).
+        tz_name: Timezone name (e.g. ``'Asia/Singapore'``).
+        min_local_hour: Skip observations before this local hour (default 6).
+
+    Returns:
+        Tuple of (high_temp_f, obs_time_local) or None if no valid observations.
+    """
+    tz = pytz.timezone(tz_name)
+    today_local_date = datetime.now(tz).date()
+    best_temp, best_time = None, None
+    for row in observations:
+        temp_f = row.get("temp_f")
+        ts_str = row.get("ts")
+        if temp_f is None or ts_str is None:
+            continue
+        try:
+            obs_time = dtparse.parse(ts_str)
+            if obs_time.tzinfo is None:
+                obs_time = obs_time.replace(tzinfo=timezone.utc)
+            obs_local = obs_time.astimezone(tz)
+            if obs_local.date() != today_local_date:
+                continue
+            if obs_local.hour < min_local_hour:
+                continue
+            if best_temp is None or float(temp_f) > best_temp:
+                best_temp, best_time = float(temp_f), obs_local
+        except Exception:
+            continue
+    if best_temp is None:
+        return None
+    return best_temp, best_time
+
+
 def compute_daily_high(
     metars: list[dict], tz_name: str, min_local_hour: int = 6
 ) -> tuple[float, datetime] | None:

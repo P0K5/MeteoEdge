@@ -2,6 +2,14 @@
 
 Used as a weighted secondary input (40%) alongside NWS (60%) in the ensemble.
 Cached 30 min — Open-Meteo updates hourly and the free tier caps at 10,000 req/day.
+
+GFS model:
+The Open-Meteo API also exposes NOAA's Global Forecast System (GFS) as a distinct
+model via the `models=gfs_seamless` parameter.  GFS is globally available (unlike
+NWS, which is US-only) and gives international stations a genuine second NWP source
+for DEB/EMOS ensemble weighting.  It is fetched as a separate call so its forecast
+is always logged under model="gfs" in model_forecast_log, independent of the
+default best-match open_meteo entry.
 """
 from datetime import datetime, timezone
 
@@ -27,6 +35,26 @@ def _fetch_open_meteo_hourly(lat: float, lon: float) -> dict | None:
     return cached_fetch_json(url, ttl_minutes=30)
 
 
+def _fetch_open_meteo_gfs_hourly(lat: float, lon: float) -> dict | None:
+    """Fetch raw Open-Meteo GFS hourly payload for the given coordinates.
+
+    Uses Open-Meteo's ``models=gfs_seamless`` parameter, which requests NOAA's
+    Global Forecast System.  GFS is globally available (unlike NWS), making it
+    the preferred second model for international stations.
+
+    Cached 30 min per coordinate pair.
+    Returns None if unavailable.
+    """
+    url = (
+        f"https://api.open-meteo.com/v1/forecast"
+        f"?latitude={lat}&longitude={lon}"
+        f"&hourly=temperature_2m"
+        f"&models=gfs_seamless"
+        f"&temperature_unit=fahrenheit&timezone=auto"
+    )
+    return cached_fetch_json(url, ttl_minutes=30)
+
+
 def fetch_secondary_forecast(lat: float, lon: float) -> float | None:
     """Fetch forecast daily high (°F) from Open-Meteo for the given coordinates.
 
@@ -41,6 +69,29 @@ def fetch_secondary_forecast(lat: float, lon: float) -> float | None:
         return max(temps) if temps else None
     except Exception as e:
         log.warning("[open-meteo] parse error for (%s,%s): %s", lat, lon, e)
+        return None
+
+
+def fetch_gfs_forecast_high(lat: float, lon: float) -> float | None:
+    """Fetch GFS forecast daily high (°F) from Open-Meteo for the given coordinates.
+
+    Requests the Open-Meteo GFS seamless model (``models=gfs_seamless``).  This
+    is a globally-available NWP source that works for international stations where
+    NWS data is unavailable, giving DEB/EMOS a genuine second model to compare
+    against the default open_meteo (best-match) forecast.
+
+    Cached 30 min per coordinate pair.
+    Returns None if unavailable.
+    """
+    data = _fetch_open_meteo_gfs_hourly(lat, lon)
+    if not data:
+        return None
+    try:
+        temps = data["hourly"]["temperature_2m"][:24]
+        valid = [t for t in temps if t is not None]
+        return max(valid) if valid else None
+    except Exception as e:
+        log.warning("[open-meteo/gfs] parse error for (%s,%s): %s", lat, lon, e)
         return None
 
 
