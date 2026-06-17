@@ -1296,6 +1296,21 @@ class Database:
             for row in cur.fetchall()
         }
 
+    def get_hourly_obs_for_climb(self, station: str) -> list[dict]:
+        """Return all observations for *station* with date and local hour.
+
+        Used by build_climb_lookup.py --from-db to derive p95 climb rates from
+        real collected observations. Returns rows with keys: date, hour_local, temp_f.
+        Hour is in UTC (caller converts to local time using station timezone config).
+        """
+        cur = self._conn.execute(
+            "SELECT DATE(ts) AS date, CAST(strftime('%H', ts) AS INTEGER) AS hour_utc, "
+            "temp_f FROM observations WHERE station=? AND temp_f IS NOT NULL ORDER BY ts ASC",
+            (station,),
+        )
+        return [{"date": row[0], "hour_local": row[1], "temp_f": float(row[2])} for row in cur.fetchall()]
+
+
     # ------------------------------------------------------------------
     # emos_crps_log / deb_weight_log
     # ------------------------------------------------------------------
