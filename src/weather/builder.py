@@ -22,6 +22,7 @@ from src.model.deb_hourly_consensus import compute_deb_mu_f
 from src.model.intraday_correction import compute_correction
 from src.model.residual_correction import apply_residual_correction
 from src.model.envelope import WeatherState
+from src.data.obs_consensus import compute_consensus_high
 
 log = logging.getLogger(__name__)
 
@@ -133,30 +134,26 @@ def _build_weather(db=None, health_out=None) -> dict:
             continue
         high_f, high_time = result
 
-        # Upgrade daily high from densest feed: union all canonical station keys
-        # (city-keyed high-cadence feed + ICAO-keyed METAR rows) stored in the DB.
+        # Upgrade daily high from densest feed with cross-source outlier rejection.
         # High-cadence feeds (MSS 1-min, AMOS/JMA 10-min) can catch intra-30-min
-        # peaks that 30-min METAR would miss.  We only upgrade — never lower — the
-        # METAR-derived high_f so METAR remains the authoritative baseline.
+        # peaks that 30-min METAR would miss, but bad ticks are rejected when they
+        # exceed the METAR running high by more than CONSENSUS_OUTLIER_SIGMA_F.
         if db is not None:
             feed_keys = get_canonical_station_feeds(station)
             if len(feed_keys) > 1:
-                # At least one city-keyed feed exists; query the union of keys.
                 since_today = datetime.now(
                     pytz.timezone(STATION_TZ[station])
                 ).date().isoformat() + "T00:00:00+00:00"
                 db_obs = db.get_observations_multi_station(feed_keys, since=since_today)
-                db_result = compute_daily_high_from_db_observations(
-                    db_obs, STATION_TZ[station], min_local_hour=active_start
-                )
-                if db_result is not None:
-                    db_high_f, db_high_time = db_result
-                    if db_high_f > high_f:
-                        log.debug(
-                            "[%s] daily high upgraded by dense feed: %.1fF → %.1fF",
-                            station, high_f, db_high_f,
-                        )
-                        high_f, high_time = db_high_f, db_high_time
+                for o in db_obs:
+                    o.setdefault("station", station)
+                consensus_high = compute_consensus_high(db_obs)
+                if consensus_high is not None and consensus_high > high_f:
+                    log.debug(
+                        "[%s] daily high upgraded by obs consensus: %.1fF → %.1fF",
+                        station, high_f, consensus_high,
+                    )
+                    high_f = consensus_high
 
         latest = metars[0]
         latest_temp_c = latest.get("temp")
