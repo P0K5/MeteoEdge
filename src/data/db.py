@@ -221,6 +221,12 @@ class Database:
             except sqlite3.OperationalError:
                 pass  # column already exists
 
+        # Index on trades.close_reason — added after migration ensures column exists
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_trades_close_reason ON trades(close_reason)"
+        )
+        self._conn.commit()
+
         # Back-compat: rows where legacy enabled=0 → shadow both sides
         self._conn.execute(
             "UPDATE station_overrides SET yes_enabled=0, no_enabled=0 WHERE enabled=0"
@@ -960,6 +966,17 @@ class Database:
             (city, date),
         )
         return [dict(r) for r in cur.fetchall()]
+
+    def get_trailing_deltas(self, city: str, window_days: int) -> list[float]:
+        """Return delta_f values for city over the trailing window_days calendar days."""
+        from datetime import date as _date, timedelta
+        since_date = (_date.today() - timedelta(days=window_days)).isoformat()
+        cur = self._conn.execute(
+            "SELECT delta_f FROM intraday_corrections "
+            "WHERE city=? AND date>=? ORDER BY date ASC, obs_time ASC",
+            (city, since_date),
+        )
+        return [float(row[0]) for row in cur.fetchall()]
 
     # ------------------------------------------------------------------
     # emos_calibration

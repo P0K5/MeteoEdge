@@ -15,7 +15,6 @@ Main entry points:
 import logging
 import os
 from dataclasses import dataclass
-from datetime import date, timedelta
 
 log = logging.getLogger(__name__)
 
@@ -72,21 +71,10 @@ class ResidualStats:
 def _query_trailing_deltas(city: str, db, window_days: int) -> list[float]:
     """Return delta_f values for *city* in the trailing *window_days* calendar days.
 
-    Performs a parameterised SQL query directly on the underlying SQLite connection
-    so we don't need to add a new DB method just for this window query.
-    Uses ``DISTINCT (date, obs_time)`` semantics via the PRIMARY KEY — no dedup
-    needed because the table has a ``(city, date, obs_time)`` primary key.
-
     Returns an empty list when the DB is unavailable or the query fails.
     """
-    since_date: str = (date.today() - timedelta(days=window_days)).isoformat()
     try:
-        cur = db._conn.execute(
-            "SELECT delta_f FROM intraday_corrections "
-            "WHERE city=? AND date>=? ORDER BY date ASC, obs_time ASC",
-            (city, since_date),
-        )
-        return [float(row[0]) for row in cur.fetchall()]
+        return db.get_trailing_deltas(city, window_days)
     except Exception as exc:
         log.warning("[residual] DB query failed for city=%s: %s", city, exc)
         return []
