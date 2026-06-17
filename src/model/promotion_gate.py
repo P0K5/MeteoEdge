@@ -146,14 +146,10 @@ def _has_secondary_observation_source(db, station: str) -> bool:
 
 def _has_settled_loss(db, station: str) -> bool:
     """Check if there's at least one settled loss in the station's history."""
-    # Get all settlements for the station
     settlements = db.get_settlements(station, since="2000-01-01T00:00:00")
 
-    # Get all shadow trades for the station
-    shadow_trades = db._conn.execute(
-        "SELECT * FROM trades WHERE station=? AND mode='shadow' ORDER BY ts ASC",
-        (station,)
-    ).fetchall()
+    all_shadow = db.get_trades(mode="shadow", limit=None)
+    shadow_trades = [t for t in all_shadow if t.get("station") == station]
 
     if not shadow_trades:
         return False
