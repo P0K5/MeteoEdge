@@ -370,6 +370,19 @@ class StationPerfOut(BaseModel):
     shadow: StationSidePerfOut
 
 
+class PromotionPrerequisitesOut(BaseModel):
+    """Promotion gate status for a shadow station."""
+    station: str
+    city: str
+    climb_rate: bool
+    model_count: bool
+    taf_coverage: bool
+    secondary_obs: bool
+    has_settled_loss: bool
+    promotable: bool
+    reason: str = ""
+
+
 class EmosCoefficients(BaseModel):
     a: float
     b: float
@@ -1748,6 +1761,50 @@ def station_toggle_no(metar: str) -> dict:
     _stations_overview_cache["data"] = None
 
     return {"metar": metar_upper, "yes_enabled": current_yes, "no_enabled": new_no}
+
+
+# ---------------------------------------------------------------------------
+# Promotion prerequisites API
+# ---------------------------------------------------------------------------
+
+@app.get("/api/promotion-prerequisites", response_model=list[PromotionPrerequisitesOut])
+def promotion_prerequisites() -> list[PromotionPrerequisitesOut]:
+    """Return promotion gate status for all shadow stations.
+
+    Checks each shadow station for data-coverage prerequisites before promotion to live:
+    1. Climb-rate history for current month
+    2. ≥2 distinct forecast models (trailing window)
+    3. ≥60 TAF windows (trailing 30 days, configurable)
+    4. Secondary observation source (non-metar)
+    5. At least one settled loss (rejects pure wins)
+
+    Returns a list of stations with their gate status and promotability.
+    """
+    if _db is None:
+        raise HTTPException(status_code=503, detail="Database not initialised")
+
+    from src.model.promotion_gate import check_promotion_prerequisites
+
+    result = []
+
+    for station_tuple in STATIONS:
+        station = station_tuple[0]
+        city = station_tuple[3]
+
+        gate_status = check_promotion_prerequisites(_db, station, city)
+        result.append(PromotionPrerequisitesOut(
+            station=station,
+            city=city,
+            climb_rate=gate_status['climb_rate'],
+            model_count=gate_status['model_count'],
+            taf_coverage=gate_status['taf_coverage'],
+            secondary_obs=gate_status['secondary_obs'],
+            has_settled_loss=gate_status['has_settled_loss'],
+            promotable=gate_status['promotable'],
+            reason=gate_status['reason'],
+        ))
+
+    return result
 
 
 # ---------------------------------------------------------------------------
