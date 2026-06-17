@@ -167,6 +167,17 @@ CREATE TABLE IF NOT EXISTS emos_mode_override (
     updated_at      TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS guardrail_events (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts          TEXT NOT NULL,
+    station     TEXT NOT NULL,
+    event_type  TEXT NOT NULL,
+    raw_value   REAL,
+    adj_value   REAL,
+    delta       REAL,
+    ticker      TEXT
+);
+
 CREATE TABLE IF NOT EXISTS bot_config (
     key         TEXT PRIMARY KEY,
     value       TEXT NOT NULL,
@@ -1231,6 +1242,60 @@ class Database:
             )
             self._conn.commit()
         return new_val
+
+    # ------------------------------------------------------------------
+    # guardrail_events
+    # ------------------------------------------------------------------
+
+    def log_guardrail_event(
+        self,
+        ts: str,
+        station: str,
+        event_type: str,
+        raw_value: float,
+        adj_value: float,
+        ticker: "str | None" = None,
+    ) -> None:
+        """Insert a guardrail event row."""
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO guardrail_events(ts, station, event_type, raw_value, adj_value, delta, ticker) "
+                "VALUES(?, ?, ?, ?, ?, ?, ?)",
+                (ts, station, event_type, raw_value, adj_value, adj_value - raw_value, ticker),
+            )
+            self._conn.commit()
+
+    def get_guardrail_stats(self) -> dict:
+        """Return summary counts and averages for each guardrail event type.
+
+        Returns:
+            Dict with keys 'cap_events', 'correction_events', each containing
+            {'total': int, 'last_7d': int, 'avg_delta': float}.
+        """
+        cutoff = (
+            __import__("datetime").datetime.now(__import__("datetime").timezone.utc)
+            - __import__("datetime").timedelta(days=7)
+        ).isoformat()
+
+        def _query(event_type: str) -> dict:
+            row_total = self._conn.execute(
+                "SELECT COUNT(*), AVG(delta) FROM guardrail_events WHERE event_type=?",
+                (event_type,),
+            ).fetchone()
+            row_7d = self._conn.execute(
+                "SELECT COUNT(*) FROM guardrail_events WHERE event_type=? AND ts>=?",
+                (event_type, cutoff),
+            ).fetchone()
+            return {
+                "total": int(row_total[0] or 0),
+                "last_7d": int(row_7d[0] or 0),
+                "avg_delta": round(float(row_total[1] or 0.0), 4),
+            }
+
+        return {
+            "cap_events": _query("cap_applied"),
+            "correction_events": _query("correction_applied"),
+        }
 
     # ------------------------------------------------------------------
     # bot_config

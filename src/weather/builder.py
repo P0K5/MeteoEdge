@@ -271,6 +271,10 @@ def _build_weather(db=None, health_out=None) -> dict:
                         "[%s] residual_correction applied: %.1fF → %.1fF",
                         station, base_mu, residual_mu,
                     )
+                    db.log_guardrail_event(
+                        datetime.now(timezone.utc).isoformat(),
+                        station, "correction_applied", base_mu, residual_mu,
+                    )
         if _should_log_weather(station, high_f, latest_temp_f, forecast_nws):
             log.info("[%s] high=%.1fF latest=%.1fF nws=%s", station, high_f, latest_temp_f, forecast_nws)
         else:

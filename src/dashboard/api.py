@@ -2254,6 +2254,58 @@ def trade_cost_summary(days: int = 30) -> dict:
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/guardrail-events")
+def guardrail_events() -> dict:
+    """Return summary counts for forced-exit, cap, and bias-correction guardrail events.
+
+    Forced exits come from trades.close_reason='forced_exit'; cap and correction
+    events come from the guardrail_events table.  All counts are zero-safe.
+    """
+    if _db is None:
+        raise HTTPException(status_code=503, detail="Database not initialised")
+    try:
+        stats = _db.get_guardrail_stats()
+        fe_stats = _db.get_close_reason_stats()
+        forced = next((r for r in fe_stats if r.get("close_reason") == "forced_exit"), None)
+        forced_total = int(forced["count"]) if forced else 0
+
+        cutoff_7d = (
+            __import__("datetime").datetime.now(__import__("datetime").timezone.utc)
+            - __import__("datetime").timedelta(days=7)
+        ).isoformat()
+        fe_7d_row = _db._conn.execute(
+            "SELECT COUNT(*) FROM trades WHERE close_reason='forced_exit' AND ts>=?",
+            (cutoff_7d,),
+        ).fetchone()
+        fe_7d = int(fe_7d_row[0]) if fe_7d_row else 0
+
+        by_station_row = _db._conn.execute(
+            "SELECT station, COUNT(*) FROM trades WHERE close_reason='forced_exit' GROUP BY station"
+        ).fetchall()
+        by_station = {r[0]: int(r[1]) for r in by_station_row}
+
+        return {
+            "forced_exits": {
+                "total": forced_total,
+                "last_7d": fe_7d,
+                "by_station": by_station,
+            },
+            "cap_events": {
+                "total": stats["cap_events"]["total"],
+                "last_7d": stats["cap_events"]["last_7d"],
+                "avg_delta_p": stats["cap_events"]["avg_delta"],
+            },
+            "correction_events": {
+                "total": stats["correction_events"]["total"],
+                "last_7d": stats["correction_events"]["last_7d"],
+                "avg_delta_f": stats["correction_events"]["avg_delta"],
+            },
+        }
+    except Exception as e:
+        logger.warning("[guardrail-events] query failed: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # Mount static files last so /api routes take priority
 if STATIC.exists():
     app.mount("/", StaticFiles(directory=STATIC, html=True), name="static")
