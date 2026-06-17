@@ -7,6 +7,7 @@ Covers:
 """
 from __future__ import annotations
 
+import sys
 import time
 from unittest.mock import MagicMock, patch
 
@@ -64,6 +65,9 @@ def _common_ctx(scan_return=([], []), live_trader=None):
 
 class TestBalanceCheckException:
     def setup_method(self):
+        import src.scripts
+        sys.modules["src.scripts.run"] = run_module
+        src.scripts.run = run_module
         run_module._balance_fail_count = 0
         run_module._wallet_cooldown_until = 0.0
 
@@ -147,6 +151,9 @@ class TestBalanceCheckException:
 
 class TestWalletEmptyCooldown:
     def setup_method(self):
+        import src.scripts
+        sys.modules["src.scripts.run"] = run_module
+        src.scripts.run = run_module
         run_module._balance_fail_count = 0
         run_module._wallet_cooldown_until = 0.0
 
@@ -225,6 +232,9 @@ class TestBalanceFailAlertThreshold:
     """After BALANCE_CHECK_FAIL_ALERT_THRESHOLD consecutive failures, AlertManager._fire is called."""
 
     def setup_method(self):
+        import src.scripts
+        sys.modules["src.scripts.run"] = run_module
+        src.scripts.run = run_module
         run_module._balance_fail_count = 0
         run_module._wallet_cooldown_until = 0.0
 

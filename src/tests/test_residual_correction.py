@@ -29,13 +29,9 @@ from src.model.residual_correction import (
 # ---------------------------------------------------------------------------
 
 def _make_db_with_deltas(deltas: list[float], city: str = "Busan") -> MagicMock:
-    """Return a mock DB whose _conn.execute yields the given delta_f values."""
+    """Return a mock DB whose get_trailing_deltas yields the given delta_f values."""
     mock_db = MagicMock()
-    mock_conn = MagicMock()
-    mock_db._conn = mock_conn
-
-    rows = [(d,) for d in deltas]
-    mock_conn.execute.return_value.fetchall.return_value = rows
+    mock_db.get_trailing_deltas.return_value = list(deltas)
     return mock_db
 
 
