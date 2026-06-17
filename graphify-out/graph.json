@@ -4715,7 +4715,7 @@
       "label": "ResidualStats",
       "file_type": "code",
       "source_file": "src/model/residual_correction.py",
-      "source_location": "L50",
+      "source_location": "L49",
       "_origin": "ast",
       "id": "model_residual_correction_residualstats",
       "community": 33,
@@ -4725,7 +4725,7 @@
       "label": ".clamped_correction()",
       "file_type": "code",
       "source_file": "src/model/residual_correction.py",
-      "source_location": "L60",
+      "source_location": "L59",
       "_origin": "ast",
       "id": "model_residual_correction_residualstats_clamped_correction",
       "community": 33,
@@ -4735,7 +4735,7 @@
       "label": "_query_trailing_deltas()",
       "file_type": "code",
       "source_file": "src/model/residual_correction.py",
-      "source_location": "L72",
+      "source_location": "L71",
       "_origin": "ast",
       "id": "model_residual_correction_query_trailing_deltas",
       "community": 33,
@@ -4745,7 +4745,7 @@
       "label": "compute_residual_stats()",
       "file_type": "code",
       "source_file": "src/model/residual_correction.py",
-      "source_location": "L99",
+      "source_location": "L87",
       "_origin": "ast",
       "id": "model_residual_correction_compute_residual_stats",
       "community": 33,
@@ -4755,7 +4755,7 @@
       "label": "apply_residual_correction()",
       "file_type": "code",
       "source_file": "src/model/residual_correction.py",
-      "source_location": "L155",
+      "source_location": "L143",
       "_origin": "ast",
       "id": "model_residual_correction_apply_residual_correction",
       "community": 83,
@@ -4775,9 +4775,9 @@
       "label": "Rolling residual statistics for a single city.",
       "file_type": "rationale",
       "source_file": "src/model/residual_correction.py",
-      "source_location": "L51",
+      "source_location": "L50",
       "_origin": "ast",
-      "id": "model_residual_correction_rationale_51",
+      "id": "model_residual_correction_rationale_50",
       "community": 33,
       "norm_label": "rolling residual statistics for a single city."
     },
@@ -4785,9 +4785,9 @@
       "label": "Correction actually applied (clamped to \u00b1RESIDUAL_MAX_CORRECTION_F).",
       "file_type": "rationale",
       "source_file": "src/model/residual_correction.py",
-      "source_location": "L61",
+      "source_location": "L60",
       "_origin": "ast",
-      "id": "model_residual_correction_rationale_61",
+      "id": "model_residual_correction_rationale_60",
       "community": 33,
       "norm_label": "correction actually applied (clamped to \u00b1residual_max_correction_f)."
     },
@@ -4795,9 +4795,9 @@
       "label": "Return delta_f values for *city* in the trailing *window_days* calendar days.",
       "file_type": "rationale",
       "source_file": "src/model/residual_correction.py",
-      "source_location": "L73",
+      "source_location": "L72",
       "_origin": "ast",
-      "id": "model_residual_correction_rationale_73",
+      "id": "model_residual_correction_rationale_72",
       "community": 33,
       "norm_label": "return delta_f values for *city* in the trailing *window_days* calendar days."
     },
@@ -4805,9 +4805,9 @@
       "label": "Compute rolling residual stats for *city*.      Returns ``None`` when the featur",
       "file_type": "rationale",
       "source_file": "src/model/residual_correction.py",
-      "source_location": "L108",
+      "source_location": "L96",
       "_origin": "ast",
-      "id": "model_residual_correction_rationale_108",
+      "id": "model_residual_correction_rationale_96",
       "community": 33,
       "norm_label": "compute rolling residual stats for *city*.      returns ``none`` when the featur"
     },
@@ -4815,9 +4815,9 @@
       "label": "Apply residual bias correction to *mu_f* for *city*.      Returns ``(corrected_m",
       "file_type": "rationale",
       "source_file": "src/model/residual_correction.py",
-      "source_location": "L165",
+      "source_location": "L153",
       "_origin": "ast",
-      "id": "model_residual_correction_rationale_165",
+      "id": "model_residual_correction_rationale_153",
       "community": 83,
       "norm_label": "apply residual bias correction to *mu_f* for *city*.      returns ``(corrected_m"
     },
@@ -5718,7 +5718,7 @@
       "source_location": "L44",
       "_origin": "ast",
       "id": "scripts_intraday_correction_backtest_station_for_city",
-      "community": 48,
+      "community": 158,
       "norm_label": "_station_for_city()"
     },
     {
@@ -5728,7 +5728,7 @@
       "source_location": "L52",
       "_origin": "ast",
       "id": "scripts_intraday_correction_backtest_build_daily_stats",
-      "community": 158,
+      "community": 48,
       "norm_label": "_build_daily_stats()"
     },
     {
@@ -5768,7 +5768,7 @@
       "source_location": "L45",
       "_origin": "ast",
       "id": "scripts_intraday_correction_backtest_rationale_45",
-      "community": 48,
+      "community": 158,
       "norm_label": "return the metar station code for *city* from stations config, or none."
     },
     {
@@ -5778,7 +5778,7 @@
       "source_location": "L56",
       "_origin": "ast",
       "id": "scripts_intraday_correction_backtest_rationale_56",
-      "community": 158,
+      "community": 48,
       "norm_label": "compute per-day corrected and baseline errors from correction rows.      uses th"
     },
     {
@@ -6268,7 +6268,7 @@
       "source_location": "L249",
       "_origin": "ast",
       "id": "src_strategy_scanner_py_weatherstate",
-      "community": 1,
+      "community": 29,
       "norm_label": "weatherstate"
     },
     {
@@ -7605,7 +7605,7 @@
       "label": "_make_mock_db()",
       "file_type": "code",
       "source_file": "src/tests/test_balance_check.py",
-      "source_location": "L19",
+      "source_location": "L20",
       "_origin": "ast",
       "id": "tests_test_balance_check_make_mock_db",
       "community": 7,
@@ -7615,7 +7615,7 @@
       "label": "_make_mock_risk()",
       "file_type": "code",
       "source_file": "src/tests/test_balance_check.py",
-      "source_location": "L27",
+      "source_location": "L28",
       "_origin": "ast",
       "id": "tests_test_balance_check_make_mock_risk",
       "community": 7,
@@ -7625,7 +7625,7 @@
       "label": "_make_live_trader()",
       "file_type": "code",
       "source_file": "src/tests/test_balance_check.py",
-      "source_location": "L34",
+      "source_location": "L35",
       "_origin": "ast",
       "id": "tests_test_balance_check_make_live_trader",
       "community": 7,
@@ -7635,7 +7635,7 @@
       "label": "_common_ctx()",
       "file_type": "code",
       "source_file": "src/tests/test_balance_check.py",
-      "source_location": "L43",
+      "source_location": "L44",
       "_origin": "ast",
       "id": "tests_test_balance_check_common_ctx",
       "community": 7,
@@ -7645,7 +7645,7 @@
       "label": "TestBalanceCheckException",
       "file_type": "code",
       "source_file": "src/tests/test_balance_check.py",
-      "source_location": "L65",
+      "source_location": "L66",
       "_origin": "ast",
       "id": "tests_test_balance_check_testbalancecheckexception",
       "community": 7,
@@ -7655,7 +7655,7 @@
       "label": ".setup_method()",
       "file_type": "code",
       "source_file": "src/tests/test_balance_check.py",
-      "source_location": "L66",
+      "source_location": "L67",
       "_origin": "ast",
       "id": "tests_test_balance_check_testbalancecheckexception_setup_method",
       "community": 7,
@@ -7665,7 +7665,7 @@
       "label": ".test_exception_prevents_allow_trade_call()",
       "file_type": "code",
       "source_file": "src/tests/test_balance_check.py",
-      "source_location": "L70",
+      "source_location": "L74",
       "_origin": "ast",
       "id": "tests_test_balance_check_testbalancecheckexception_test_exception_prevents_allow_trade_call",
       "community": 7,
@@ -7675,7 +7675,7 @@
       "label": ".test_exception_increments_fail_count()",
       "file_type": "code",
       "source_file": "src/tests/test_balance_check.py",
-      "source_location": "L99",
+      "source_location": "L103",
       "_origin": "ast",
       "id": "tests_test_balance_check_testbalancecheckexception_test_exception_increments_fail_count",
       "community": 7,
@@ -7685,7 +7685,7 @@
       "label": ".test_success_resets_fail_count()",
       "file_type": "code",
       "source_file": "src/tests/test_balance_check.py",
-      "source_location": "L123",
+      "source_location": "L127",
       "_origin": "ast",
       "id": "tests_test_balance_check_testbalancecheckexception_test_success_resets_fail_count",
       "community": 7,
@@ -7695,7 +7695,7 @@
       "label": "TestWalletEmptyCooldown",
       "file_type": "code",
       "source_file": "src/tests/test_balance_check.py",
-      "source_location": "L148",
+      "source_location": "L152",
       "_origin": "ast",
       "id": "tests_test_balance_check_testwalletemptycooldown",
       "community": 7,
@@ -7705,7 +7705,7 @@
       "label": ".setup_method()",
       "file_type": "code",
       "source_file": "src/tests/test_balance_check.py",
-      "source_location": "L149",
+      "source_location": "L153",
       "_origin": "ast",
       "id": "tests_test_balance_check_testwalletemptycooldown_setup_method",
       "community": 7,
@@ -7715,7 +7715,7 @@
       "label": ".test_cooldown_set_when_wallet_empty()",
       "file_type": "code",
       "source_file": "src/tests/test_balance_check.py",
-      "source_location": "L153",
+      "source_location": "L160",
       "_origin": "ast",
       "id": "tests_test_balance_check_testwalletemptycooldown_test_cooldown_set_when_wallet_empty",
       "community": 7,
@@ -7725,7 +7725,7 @@
       "label": ".test_cooldown_active_skips_balance_check_and_candidates()",
       "file_type": "code",
       "source_file": "src/tests/test_balance_check.py",
-      "source_location": "L173",
+      "source_location": "L180",
       "_origin": "ast",
       "id": "tests_test_balance_check_testwalletemptycooldown_test_cooldown_active_skips_balance_check_and_candidates",
       "community": 7,
@@ -7735,7 +7735,7 @@
       "label": ".test_cooldown_expired_allows_normal_scan()",
       "file_type": "code",
       "source_file": "src/tests/test_balance_check.py",
-      "source_location": "L197",
+      "source_location": "L204",
       "_origin": "ast",
       "id": "tests_test_balance_check_testwalletemptycooldown_test_cooldown_expired_allows_normal_scan",
       "community": 7,
@@ -7745,7 +7745,7 @@
       "label": "TestBalanceFailAlertThreshold",
       "file_type": "code",
       "source_file": "src/tests/test_balance_check.py",
-      "source_location": "L224",
+      "source_location": "L231",
       "_origin": "ast",
       "id": "tests_test_balance_check_testbalancefailalertthreshold",
       "community": 7,
@@ -7755,7 +7755,7 @@
       "label": ".setup_method()",
       "file_type": "code",
       "source_file": "src/tests/test_balance_check.py",
-      "source_location": "L227",
+      "source_location": "L234",
       "_origin": "ast",
       "id": "tests_test_balance_check_testbalancefailalertthreshold_setup_method",
       "community": 7,
@@ -7765,7 +7765,7 @@
       "label": "._run_once_fail()",
       "file_type": "code",
       "source_file": "src/tests/test_balance_check.py",
-      "source_location": "L231",
+      "source_location": "L241",
       "_origin": "ast",
       "id": "tests_test_balance_check_testbalancefailalertthreshold_run_once_fail",
       "community": 7,
@@ -7775,7 +7775,7 @@
       "label": ".test_alert_fired_after_threshold()",
       "file_type": "code",
       "source_file": "src/tests/test_balance_check.py",
-      "source_location": "L252",
+      "source_location": "L262",
       "_origin": "ast",
       "id": "tests_test_balance_check_testbalancefailalertthreshold_test_alert_fired_after_threshold",
       "community": 7,
@@ -7785,7 +7785,7 @@
       "label": ".test_alert_not_fired_below_threshold()",
       "file_type": "code",
       "source_file": "src/tests/test_balance_check.py",
-      "source_location": "L263",
+      "source_location": "L273",
       "_origin": "ast",
       "id": "tests_test_balance_check_testbalancefailalertthreshold_test_alert_not_fired_below_threshold",
       "community": 7,
@@ -7795,7 +7795,7 @@
       "label": ".test_success_resets_counter_no_alert_refired()",
       "file_type": "code",
       "source_file": "src/tests/test_balance_check.py",
-      "source_location": "L271",
+      "source_location": "L281",
       "_origin": "ast",
       "id": "tests_test_balance_check_testbalancefailalertthreshold_test_success_resets_counter_no_alert_refired",
       "community": 7,
@@ -7815,9 +7815,9 @@
       "label": "Return the context managers needed to run poll_once without real I/O.",
       "file_type": "rationale",
       "source_file": "src/tests/test_balance_check.py",
-      "source_location": "L44",
+      "source_location": "L45",
       "_origin": "ast",
-      "id": "tests_test_balance_check_rationale_44",
+      "id": "tests_test_balance_check_rationale_45",
       "community": 7,
       "norm_label": "return the context managers needed to run poll_once without real i/o."
     },
@@ -7825,9 +7825,9 @@
       "label": "When balance check raises, no candidate should reach risk_manager.allow_trade.",
       "file_type": "rationale",
       "source_file": "src/tests/test_balance_check.py",
-      "source_location": "L71",
+      "source_location": "L75",
       "_origin": "ast",
-      "id": "tests_test_balance_check_rationale_71",
+      "id": "tests_test_balance_check_rationale_75",
       "community": 7,
       "norm_label": "when balance check raises, no candidate should reach risk_manager.allow_trade."
     },
@@ -7835,9 +7835,9 @@
       "label": "_wallet_cooldown_until is set ~1800s ahead when balance falls below position siz",
       "file_type": "rationale",
       "source_file": "src/tests/test_balance_check.py",
-      "source_location": "L154",
+      "source_location": "L161",
       "_origin": "ast",
-      "id": "tests_test_balance_check_rationale_154",
+      "id": "tests_test_balance_check_rationale_161",
       "community": 7,
       "norm_label": "_wallet_cooldown_until is set ~1800s ahead when balance falls below position siz"
     },
@@ -7845,9 +7845,9 @@
       "label": "When cooldown is active, poll_once returns early without calling get_usdc_balanc",
       "file_type": "rationale",
       "source_file": "src/tests/test_balance_check.py",
-      "source_location": "L174",
+      "source_location": "L181",
       "_origin": "ast",
-      "id": "tests_test_balance_check_rationale_174",
+      "id": "tests_test_balance_check_rationale_181",
       "community": 7,
       "norm_label": "when cooldown is active, poll_once returns early without calling get_usdc_balanc"
     },
@@ -7855,9 +7855,9 @@
       "label": "Once the cooldown window passes, normal scanning resumes.",
       "file_type": "rationale",
       "source_file": "src/tests/test_balance_check.py",
-      "source_location": "L198",
+      "source_location": "L205",
       "_origin": "ast",
-      "id": "tests_test_balance_check_rationale_198",
+      "id": "tests_test_balance_check_rationale_205",
       "community": 7,
       "norm_label": "once the cooldown window passes, normal scanning resumes."
     },
@@ -7865,9 +7865,9 @@
       "label": "After BALANCE_CHECK_FAIL_ALERT_THRESHOLD consecutive failures, AlertManager._fir",
       "file_type": "rationale",
       "source_file": "src/tests/test_balance_check.py",
-      "source_location": "L225",
+      "source_location": "L232",
       "_origin": "ast",
-      "id": "tests_test_balance_check_rationale_225",
+      "id": "tests_test_balance_check_rationale_232",
       "community": 7,
       "norm_label": "after balance_check_fail_alert_threshold consecutive failures, alertmanager._fir"
     },
@@ -7875,9 +7875,9 @@
       "label": "AlertManager._fire must be called once the failure counter reaches default thres",
       "file_type": "rationale",
       "source_file": "src/tests/test_balance_check.py",
-      "source_location": "L253",
+      "source_location": "L263",
       "_origin": "ast",
-      "id": "tests_test_balance_check_rationale_253",
+      "id": "tests_test_balance_check_rationale_263",
       "community": 7,
       "norm_label": "alertmanager._fire must be called once the failure counter reaches default thres"
     },
@@ -7885,9 +7885,9 @@
       "label": "AlertManager._fire must NOT be called before the threshold is reached.",
       "file_type": "rationale",
       "source_file": "src/tests/test_balance_check.py",
-      "source_location": "L264",
+      "source_location": "L274",
       "_origin": "ast",
-      "id": "tests_test_balance_check_rationale_264",
+      "id": "tests_test_balance_check_rationale_274",
       "community": 7,
       "norm_label": "alertmanager._fire must not be called before the threshold is reached."
     },
@@ -7895,9 +7895,9 @@
       "label": "After a successful balance check, failure counter resets and N new failures are",
       "file_type": "rationale",
       "source_file": "src/tests/test_balance_check.py",
-      "source_location": "L272",
+      "source_location": "L282",
       "_origin": "ast",
-      "id": "tests_test_balance_check_rationale_272",
+      "id": "tests_test_balance_check_rationale_282",
       "community": 7,
       "norm_label": "after a successful balance check, failure counter resets and n new failures are"
     },
@@ -14568,7 +14568,7 @@
       "source_location": "L43",
       "_origin": "ast",
       "id": "tests_test_emos_mode_make_bracket",
-      "community": 29,
+      "community": 1,
       "norm_label": "_make_bracket()"
     },
     {
@@ -14588,7 +14588,7 @@
       "source_location": "L55",
       "_origin": "ast",
       "id": "tests_test_emos_mode_make_state",
-      "community": 29,
+      "community": 1,
       "norm_label": "_make_state()"
     },
     {
@@ -14828,7 +14828,7 @@
       "source_location": "L235",
       "_origin": "ast",
       "id": "tests_test_emos_mode_testlegacyunchangedoutput",
-      "community": 29,
+      "community": 1,
       "norm_label": "testlegacyunchangedoutput"
     },
     {
@@ -14838,7 +14838,7 @@
       "source_location": "L236",
       "_origin": "ast",
       "id": "tests_test_emos_mode_testlegacyunchangedoutput_test_emos_default_mode_legacy_identical_output",
-      "community": 29,
+      "community": 1,
       "norm_label": ".test_emos_default_mode_legacy_identical_output()"
     },
     {
@@ -14848,7 +14848,7 @@
       "source_location": "L254",
       "_origin": "ast",
       "id": "tests_test_emos_mode_testlegacyunchangedoutput_test_no_emos_row_in_db_identical_to_baseline",
-      "community": 29,
+      "community": 1,
       "norm_label": ".test_no_emos_row_in_db_identical_to_baseline()"
     },
     {
@@ -15058,7 +15058,7 @@
       "source_location": "L237",
       "_origin": "ast",
       "id": "tests_test_emos_mode_rationale_237",
-      "community": 29,
+      "community": 1,
       "norm_label": "emos_default_mode=legacy and no db \u2192 true_probability_yes output byte-identical"
     },
     {
@@ -15068,7 +15068,7 @@
       "source_location": "L255",
       "_origin": "ast",
       "id": "tests_test_emos_mode_rationale_255",
-      "community": 29,
+      "community": 1,
       "norm_label": "db with no emos row \u2192 get_city_mode returns 'legacy' \u2192 probability unchanged."
     },
     {
@@ -15108,7 +15108,7 @@
       "source_location": "L26",
       "_origin": "ast",
       "id": "src_tests_test_envelope_py_weatherstate",
-      "community": 1,
+      "community": 37,
       "norm_label": "weatherstate"
     },
     {
@@ -15128,7 +15128,7 @@
       "source_location": "L49",
       "_origin": "ast",
       "id": "src_tests_test_envelope_py_bracket",
-      "community": 1,
+      "community": 37,
       "norm_label": "bracket"
     },
     {
@@ -17468,7 +17468,7 @@
       "source_location": "L146",
       "_origin": "ast",
       "id": "tests_test_intraday_correction_backtest_testrmsecalculation_test_build_daily_stats_errors",
-      "community": 158,
+      "community": 48,
       "norm_label": ".test_build_daily_stats_errors()"
     },
     {
@@ -17478,7 +17478,7 @@
       "source_location": "L162",
       "_origin": "ast",
       "id": "tests_test_intraday_correction_backtest_testrmsecalculation_test_build_daily_stats_uses_last_row",
-      "community": 158,
+      "community": 48,
       "norm_label": ".test_build_daily_stats_uses_last_row()"
     },
     {
@@ -17488,7 +17488,7 @@
       "source_location": "L175",
       "_origin": "ast",
       "id": "tests_test_intraday_correction_backtest_testrmsecalculation_test_build_daily_stats_empty_returns_none",
-      "community": 158,
+      "community": 48,
       "norm_label": ".test_build_daily_stats_empty_returns_none()"
     },
     {
@@ -17498,7 +17498,7 @@
       "source_location": "L179",
       "_origin": "ast",
       "id": "tests_test_intraday_correction_backtest_testrmsecalculation_test_station_for_known_city",
-      "community": 48,
+      "community": 158,
       "norm_label": ".test_station_for_known_city()"
     },
     {
@@ -17508,7 +17508,7 @@
       "source_location": "L184",
       "_origin": "ast",
       "id": "tests_test_intraday_correction_backtest_testrmsecalculation_test_station_for_unknown_city",
-      "community": 48,
+      "community": 158,
       "norm_label": ".test_station_for_unknown_city()"
     },
     {
@@ -17688,7 +17688,7 @@
       "source_location": "L147",
       "_origin": "ast",
       "id": "tests_test_intraday_correction_backtest_rationale_147",
-      "community": 158,
+      "community": 48,
       "norm_label": "_build_daily_stats produces correct corrected and baseline errors."
     },
     {
@@ -17698,7 +17698,7 @@
       "source_location": "L163",
       "_origin": "ast",
       "id": "tests_test_intraday_correction_backtest_rationale_163",
-      "community": 158,
+      "community": 48,
       "norm_label": "when multiple correction rows exist, the last one is used."
     },
     {
@@ -17708,7 +17708,7 @@
       "source_location": "L176",
       "_origin": "ast",
       "id": "tests_test_intraday_correction_backtest_rationale_176",
-      "community": 158,
+      "community": 48,
       "norm_label": "_build_daily_stats returns none for empty corrections list."
     },
     {
@@ -17718,7 +17718,7 @@
       "source_location": "L180",
       "_origin": "ast",
       "id": "tests_test_intraday_correction_backtest_rationale_180",
-      "community": 48,
+      "community": 158,
       "norm_label": "_station_for_city returns correct metar code for known city."
     },
     {
@@ -17728,7 +17728,7 @@
       "source_location": "L185",
       "_origin": "ast",
       "id": "tests_test_intraday_correction_backtest_rationale_185",
-      "community": 48,
+      "community": 158,
       "norm_label": "_station_for_city returns none for unknown city."
     },
     {
@@ -23085,7 +23085,7 @@
       "label": "_make_stats()",
       "file_type": "code",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L42",
+      "source_location": "L38",
       "_origin": "ast",
       "id": "tests_test_residual_correction_make_stats",
       "community": 182,
@@ -23095,7 +23095,7 @@
       "label": "ResidualStats",
       "file_type": "code",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L42",
+      "source_location": "L38",
       "_origin": "ast",
       "id": "residualstats",
       "community": 182,
@@ -23105,7 +23105,7 @@
       "label": "TestResidualStatsClamped",
       "file_type": "code",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L64",
+      "source_location": "L60",
       "_origin": "ast",
       "id": "tests_test_residual_correction_testresidualstatsclamped",
       "community": 182,
@@ -23115,7 +23115,7 @@
       "label": ".test_no_clamp_needed()",
       "file_type": "code",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L65",
+      "source_location": "L61",
       "_origin": "ast",
       "id": "tests_test_residual_correction_testresidualstatsclamped_test_no_clamp_needed",
       "community": 182,
@@ -23125,7 +23125,7 @@
       "label": ".test_clamp_positive_exceeds_max()",
       "file_type": "code",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L69",
+      "source_location": "L65",
       "_origin": "ast",
       "id": "tests_test_residual_correction_testresidualstatsclamped_test_clamp_positive_exceeds_max",
       "community": 182,
@@ -23135,7 +23135,7 @@
       "label": ".test_clamp_negative_exceeds_max()",
       "file_type": "code",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L74",
+      "source_location": "L70",
       "_origin": "ast",
       "id": "tests_test_residual_correction_testresidualstatsclamped_test_clamp_negative_exceeds_max",
       "community": 182,
@@ -23145,7 +23145,7 @@
       "label": ".test_zero_signed_error()",
       "file_type": "code",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L79",
+      "source_location": "L75",
       "_origin": "ast",
       "id": "tests_test_residual_correction_testresidualstatsclamped_test_zero_signed_error",
       "community": 182,
@@ -23155,7 +23155,7 @@
       "label": ".test_exact_boundary()",
       "file_type": "code",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L83",
+      "source_location": "L79",
       "_origin": "ast",
       "id": "tests_test_residual_correction_testresidualstatsclamped_test_exact_boundary",
       "community": 182,
@@ -23165,7 +23165,7 @@
       "label": "TestComputeResidualStatsDisabled",
       "file_type": "code",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L93",
+      "source_location": "L89",
       "_origin": "ast",
       "id": "tests_test_residual_correction_testcomputeresidualstatsdisabled",
       "community": 33,
@@ -23175,7 +23175,7 @@
       "label": ".test_disabled_returns_none()",
       "file_type": "code",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L94",
+      "source_location": "L90",
       "_origin": "ast",
       "id": "tests_test_residual_correction_testcomputeresidualstatsdisabled_test_disabled_returns_none",
       "community": 33,
@@ -23185,7 +23185,7 @@
       "label": ".test_enabled_by_default()",
       "file_type": "code",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L113",
+      "source_location": "L109",
       "_origin": "ast",
       "id": "tests_test_residual_correction_testcomputeresidualstatsdisabled_test_enabled_by_default",
       "community": 33,
@@ -23195,7 +23195,7 @@
       "label": "TestMinSamplesGuard",
       "file_type": "code",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L130",
+      "source_location": "L126",
       "_origin": "ast",
       "id": "tests_test_residual_correction_testminsamplesguard",
       "community": 33,
@@ -23205,7 +23205,7 @@
       "label": ".test_below_min_returns_none()",
       "file_type": "code",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L131",
+      "source_location": "L127",
       "_origin": "ast",
       "id": "tests_test_residual_correction_testminsamplesguard_test_below_min_returns_none",
       "community": 33,
@@ -23215,7 +23215,7 @@
       "label": ".test_exactly_at_min_applies()",
       "file_type": "code",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L143",
+      "source_location": "L139",
       "_origin": "ast",
       "id": "tests_test_residual_correction_testminsamplesguard_test_exactly_at_min_applies",
       "community": 33,
@@ -23225,7 +23225,7 @@
       "label": ".test_above_min_applies()",
       "file_type": "code",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L156",
+      "source_location": "L152",
       "_origin": "ast",
       "id": "tests_test_residual_correction_testminsamplesguard_test_above_min_applies",
       "community": 33,
@@ -23235,7 +23235,7 @@
       "label": ".test_empty_deltas_returns_none()",
       "file_type": "code",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L169",
+      "source_location": "L165",
       "_origin": "ast",
       "id": "tests_test_residual_correction_testminsamplesguard_test_empty_deltas_returns_none",
       "community": 33,
@@ -23245,7 +23245,7 @@
       "label": "TestResidualStatsAccuracy",
       "file_type": "code",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L186",
+      "source_location": "L182",
       "_origin": "ast",
       "id": "tests_test_residual_correction_testresidualstatsaccuracy",
       "community": 33,
@@ -23255,7 +23255,7 @@
       "label": "._run()",
       "file_type": "code",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L187",
+      "source_location": "L183",
       "_origin": "ast",
       "id": "tests_test_residual_correction_testresidualstatsaccuracy_run",
       "community": 33,
@@ -23265,7 +23265,7 @@
       "label": ".test_mean_signed_error_positive()",
       "file_type": "code",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L202",
+      "source_location": "L198",
       "_origin": "ast",
       "id": "tests_test_residual_correction_testresidualstatsaccuracy_test_mean_signed_error_positive",
       "community": 33,
@@ -23275,7 +23275,7 @@
       "label": ".test_mean_signed_error_mixed()",
       "file_type": "code",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L208",
+      "source_location": "L204",
       "_origin": "ast",
       "id": "tests_test_residual_correction_testresidualstatsaccuracy_test_mean_signed_error_mixed",
       "community": 33,
@@ -23285,7 +23285,7 @@
       "label": ".test_rolling_mae_all_positive()",
       "file_type": "code",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L214",
+      "source_location": "L210",
       "_origin": "ast",
       "id": "tests_test_residual_correction_testresidualstatsaccuracy_test_rolling_mae_all_positive",
       "community": 33,
@@ -23295,7 +23295,7 @@
       "label": ".test_rolling_mae_absolute_value()",
       "file_type": "code",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L220",
+      "source_location": "L216",
       "_origin": "ast",
       "id": "tests_test_residual_correction_testresidualstatsaccuracy_test_rolling_mae_absolute_value",
       "community": 33,
@@ -23305,7 +23305,7 @@
       "label": ".test_sample_count()",
       "file_type": "code",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L226",
+      "source_location": "L222",
       "_origin": "ast",
       "id": "tests_test_residual_correction_testresidualstatsaccuracy_test_sample_count",
       "community": 33,
@@ -23315,7 +23315,7 @@
       "label": ".test_correction_applied_when_nonzero()",
       "file_type": "code",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L230",
+      "source_location": "L226",
       "_origin": "ast",
       "id": "tests_test_residual_correction_testresidualstatsaccuracy_test_correction_applied_when_nonzero",
       "community": 33,
@@ -23325,7 +23325,7 @@
       "label": ".test_correction_applied_zero()",
       "file_type": "code",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L235",
+      "source_location": "L231",
       "_origin": "ast",
       "id": "tests_test_residual_correction_testresidualstatsaccuracy_test_correction_applied_zero",
       "community": 33,
@@ -23335,7 +23335,7 @@
       "label": "TestClampBehaviour",
       "file_type": "code",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L248",
+      "source_location": "L244",
       "_origin": "ast",
       "id": "tests_test_residual_correction_testclampbehaviour",
       "community": 33,
@@ -23345,7 +23345,7 @@
       "label": "._run()",
       "file_type": "code",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L249",
+      "source_location": "L245",
       "_origin": "ast",
       "id": "tests_test_residual_correction_testclampbehaviour_run",
       "community": 33,
@@ -23355,7 +23355,7 @@
       "label": ".test_clamp_binds_positive()",
       "file_type": "code",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L263",
+      "source_location": "L259",
       "_origin": "ast",
       "id": "tests_test_residual_correction_testclampbehaviour_test_clamp_binds_positive",
       "community": 33,
@@ -23365,7 +23365,7 @@
       "label": ".test_clamp_binds_negative()",
       "file_type": "code",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L269",
+      "source_location": "L265",
       "_origin": "ast",
       "id": "tests_test_residual_correction_testclampbehaviour_test_clamp_binds_negative",
       "community": 33,
@@ -23375,7 +23375,7 @@
       "label": ".test_clamp_not_needed_small_value()",
       "file_type": "code",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L275",
+      "source_location": "L271",
       "_origin": "ast",
       "id": "tests_test_residual_correction_testclampbehaviour_test_clamp_not_needed_small_value",
       "community": 33,
@@ -23385,7 +23385,7 @@
       "label": ".test_custom_clamp_range()",
       "file_type": "code",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L281",
+      "source_location": "L277",
       "_origin": "ast",
       "id": "tests_test_residual_correction_testclampbehaviour_test_custom_clamp_range",
       "community": 33,
@@ -23395,7 +23395,7 @@
       "label": "TestMaeGate",
       "file_type": "code",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L307",
+      "source_location": "L303",
       "_origin": "ast",
       "id": "tests_test_residual_correction_testmaegate",
       "community": 33,
@@ -23405,7 +23405,7 @@
       "label": "._run()",
       "file_type": "code",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L308",
+      "source_location": "L304",
       "_origin": "ast",
       "id": "tests_test_residual_correction_testmaegate_run",
       "community": 33,
@@ -23415,7 +23415,7 @@
       "label": ".test_mae_above_threshold_suppresses_live()",
       "file_type": "code",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L322",
+      "source_location": "L318",
       "_origin": "ast",
       "id": "tests_test_residual_correction_testmaegate_test_mae_above_threshold_suppresses_live",
       "community": 33,
@@ -23425,7 +23425,7 @@
       "label": ".test_mae_below_threshold_does_not_suppress()",
       "file_type": "code",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L330",
+      "source_location": "L326",
       "_origin": "ast",
       "id": "tests_test_residual_correction_testmaegate_test_mae_below_threshold_does_not_suppress",
       "community": 33,
@@ -23435,7 +23435,7 @@
       "label": ".test_mae_exactly_at_threshold_does_not_suppress()",
       "file_type": "code",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L337",
+      "source_location": "L333",
       "_origin": "ast",
       "id": "tests_test_residual_correction_testmaegate_test_mae_exactly_at_threshold_does_not_suppress",
       "community": 33,
@@ -23445,7 +23445,7 @@
       "label": ".test_mae_just_above_threshold_suppresses()",
       "file_type": "code",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L343",
+      "source_location": "L339",
       "_origin": "ast",
       "id": "tests_test_residual_correction_testmaegate_test_mae_just_above_threshold_suppresses",
       "community": 33,
@@ -23455,7 +23455,7 @@
       "label": "TestApplyResidualCorrection",
       "file_type": "code",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L354",
+      "source_location": "L350",
       "_origin": "ast",
       "id": "tests_test_residual_correction_testapplyresidualcorrection",
       "community": 33,
@@ -23465,7 +23465,7 @@
       "label": "._enable()",
       "file_type": "code",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L355",
+      "source_location": "L351",
       "_origin": "ast",
       "id": "tests_test_residual_correction_testapplyresidualcorrection_enable",
       "community": 33,
@@ -23475,7 +23475,7 @@
       "label": ".test_returns_corrected_mu_f()",
       "file_type": "code",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L359",
+      "source_location": "L355",
       "_origin": "ast",
       "id": "tests_test_residual_correction_testapplyresidualcorrection_test_returns_corrected_mu_f",
       "community": 33,
@@ -23485,7 +23485,7 @@
       "label": ".test_returns_none_stats_when_disabled()",
       "file_type": "code",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L372",
+      "source_location": "L368",
       "_origin": "ast",
       "id": "tests_test_residual_correction_testapplyresidualcorrection_test_returns_none_stats_when_disabled",
       "community": 33,
@@ -23495,7 +23495,7 @@
       "label": ".test_returns_original_when_below_min_samples()",
       "file_type": "code",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L385",
+      "source_location": "L381",
       "_origin": "ast",
       "id": "tests_test_residual_correction_testapplyresidualcorrection_test_returns_original_when_below_min_samples",
       "community": 33,
@@ -23505,7 +23505,7 @@
       "label": ".test_clamped_correction_applied()",
       "file_type": "code",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L398",
+      "source_location": "L394",
       "_origin": "ast",
       "id": "tests_test_residual_correction_testapplyresidualcorrection_test_clamped_correction_applied",
       "community": 33,
@@ -23515,7 +23515,7 @@
       "label": ".test_zero_correction_returns_unchanged()",
       "file_type": "code",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L413",
+      "source_location": "L409",
       "_origin": "ast",
       "id": "tests_test_residual_correction_testapplyresidualcorrection_test_zero_correction_returns_unchanged",
       "community": 33,
@@ -23525,7 +23525,7 @@
       "label": "TestScannerMaeGate",
       "file_type": "code",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L432",
+      "source_location": "L428",
       "_origin": "ast",
       "id": "tests_test_residual_correction_testscannermaegate",
       "community": 182,
@@ -23535,7 +23535,7 @@
       "label": "._make_scanner_inputs()",
       "file_type": "code",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L441",
+      "source_location": "L437",
       "_origin": "ast",
       "id": "tests_test_residual_correction_testscannermaegate_make_scanner_inputs",
       "community": 182,
@@ -23545,7 +23545,7 @@
       "label": ".test_mae_gate_suppresses_live_no_to_shadow()",
       "file_type": "code",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L485",
+      "source_location": "L481",
       "_origin": "ast",
       "id": "tests_test_residual_correction_testscannermaegate_test_mae_gate_suppresses_live_no_to_shadow",
       "community": 182,
@@ -23555,7 +23555,7 @@
       "label": ".test_mae_gate_does_not_suppress_when_below_threshold()",
       "file_type": "code",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L510",
+      "source_location": "L506",
       "_origin": "ast",
       "id": "tests_test_residual_correction_testscannermaegate_test_mae_gate_does_not_suppress_when_below_threshold",
       "community": 182,
@@ -23565,7 +23565,7 @@
       "label": ".test_mae_gate_does_not_affect_yes_candidates()",
       "file_type": "code",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L536",
+      "source_location": "L532",
       "_origin": "ast",
       "id": "tests_test_residual_correction_testscannermaegate_test_mae_gate_does_not_affect_yes_candidates",
       "community": 182,
@@ -23582,22 +23582,22 @@
       "norm_label": "unit tests for src/model/residual_correction.py (issue #307).  covers: - correct"
     },
     {
-      "label": "Return a mock DB whose _conn.execute yields the given delta_f values.",
+      "label": "Return a mock DB whose get_trailing_deltas yields the given delta_f values.",
       "file_type": "rationale",
       "source_file": "src/tests/test_residual_correction.py",
       "source_location": "L32",
       "_origin": "ast",
       "id": "tests_test_residual_correction_rationale_32",
       "community": 33,
-      "norm_label": "return a mock db whose _conn.execute yields the given delta_f values."
+      "norm_label": "return a mock db whose get_trailing_deltas yields the given delta_f values."
     },
     {
       "label": "mean_signed_error=+8.0 with max=5.0 \u2192 clamped to +5.0.",
       "file_type": "rationale",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L70",
+      "source_location": "L66",
       "_origin": "ast",
-      "id": "tests_test_residual_correction_rationale_70",
+      "id": "tests_test_residual_correction_rationale_66",
       "community": 182,
       "norm_label": "mean_signed_error=+8.0 with max=5.0 \u2192 clamped to +5.0."
     },
@@ -23605,9 +23605,9 @@
       "label": "mean_signed_error=-7.5 with max=5.0 \u2192 clamped to -5.0.",
       "file_type": "rationale",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L75",
+      "source_location": "L71",
       "_origin": "ast",
-      "id": "tests_test_residual_correction_rationale_75",
+      "id": "tests_test_residual_correction_rationale_71",
       "community": 182,
       "norm_label": "mean_signed_error=-7.5 with max=5.0 \u2192 clamped to -5.0."
     },
@@ -23615,9 +23615,9 @@
       "label": "Exactly at the boundary is not clamped.",
       "file_type": "rationale",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L84",
+      "source_location": "L80",
       "_origin": "ast",
-      "id": "tests_test_residual_correction_rationale_84",
+      "id": "tests_test_residual_correction_rationale_80",
       "community": 182,
       "norm_label": "exactly at the boundary is not clamped."
     },
@@ -23625,9 +23625,9 @@
       "label": "RESIDUAL_CORRECTION_ENABLED=False \u2192 always returns None.",
       "file_type": "rationale",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L95",
+      "source_location": "L91",
       "_origin": "ast",
-      "id": "tests_test_residual_correction_rationale_95",
+      "id": "tests_test_residual_correction_rationale_91",
       "community": 33,
       "norm_label": "residual_correction_enabled=false \u2192 always returns none."
     },
@@ -23635,9 +23635,9 @@
       "label": "With sufficient samples, returns stats when feature is on.",
       "file_type": "rationale",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L114",
+      "source_location": "L110",
       "_origin": "ast",
-      "id": "tests_test_residual_correction_rationale_114",
+      "id": "tests_test_residual_correction_rationale_110",
       "community": 33,
       "norm_label": "with sufficient samples, returns stats when feature is on."
     },
@@ -23645,9 +23645,9 @@
       "label": "Fewer than min_samples rows \u2192 returns None silently.",
       "file_type": "rationale",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L132",
+      "source_location": "L128",
       "_origin": "ast",
-      "id": "tests_test_residual_correction_rationale_132",
+      "id": "tests_test_residual_correction_rationale_128",
       "community": 33,
       "norm_label": "fewer than min_samples rows \u2192 returns none silently."
     },
@@ -23655,9 +23655,9 @@
       "label": "Exactly min_samples rows \u2192 correction is applied.",
       "file_type": "rationale",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L144",
+      "source_location": "L140",
       "_origin": "ast",
-      "id": "tests_test_residual_correction_rationale_144",
+      "id": "tests_test_residual_correction_rationale_140",
       "community": 33,
       "norm_label": "exactly min_samples rows \u2192 correction is applied."
     },
@@ -23665,9 +23665,9 @@
       "label": "More than min_samples rows \u2192 correction applies.",
       "file_type": "rationale",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L157",
+      "source_location": "L153",
       "_origin": "ast",
-      "id": "tests_test_residual_correction_rationale_157",
+      "id": "tests_test_residual_correction_rationale_153",
       "community": 33,
       "norm_label": "more than min_samples rows \u2192 correction applies."
     },
@@ -23675,9 +23675,9 @@
       "label": "Zero rows \u2192 returns None (no error).",
       "file_type": "rationale",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L170",
+      "source_location": "L166",
       "_origin": "ast",
-      "id": "tests_test_residual_correction_rationale_170",
+      "id": "tests_test_residual_correction_rationale_166",
       "community": 33,
       "norm_label": "zero rows \u2192 returns none (no error)."
     },
@@ -23685,9 +23685,9 @@
       "label": "All positive deltas: warm bias.",
       "file_type": "rationale",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L203",
+      "source_location": "L199",
       "_origin": "ast",
-      "id": "tests_test_residual_correction_rationale_203",
+      "id": "tests_test_residual_correction_rationale_199",
       "community": 33,
       "norm_label": "all positive deltas: warm bias."
     },
@@ -23695,9 +23695,9 @@
       "label": "Mixed deltas: mean should be correct.",
       "file_type": "rationale",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L209",
+      "source_location": "L205",
       "_origin": "ast",
-      "id": "tests_test_residual_correction_rationale_209",
+      "id": "tests_test_residual_correction_rationale_205",
       "community": 33,
       "norm_label": "mixed deltas: mean should be correct."
     },
@@ -23705,9 +23705,9 @@
       "label": "MAE of all-positive deltas equals mean.",
       "file_type": "rationale",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L215",
+      "source_location": "L211",
       "_origin": "ast",
-      "id": "tests_test_residual_correction_rationale_215",
+      "id": "tests_test_residual_correction_rationale_211",
       "community": 33,
       "norm_label": "mae of all-positive deltas equals mean."
     },
@@ -23715,9 +23715,9 @@
       "label": "MAE uses absolute values: [-4, +6] \u2192 MAE=(4+6)/2=5.",
       "file_type": "rationale",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L221",
+      "source_location": "L217",
       "_origin": "ast",
-      "id": "tests_test_residual_correction_rationale_221",
+      "id": "tests_test_residual_correction_rationale_217",
       "community": 33,
       "norm_label": "mae uses absolute values: [-4, +6] \u2192 mae=(4+6)/2=5."
     },
@@ -23725,9 +23725,9 @@
       "label": "correction_applied=True when clamped_correction != 0.",
       "file_type": "rationale",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L231",
+      "source_location": "L227",
       "_origin": "ast",
-      "id": "tests_test_residual_correction_rationale_231",
+      "id": "tests_test_residual_correction_rationale_227",
       "community": 33,
       "norm_label": "correction_applied=true when clamped_correction != 0."
     },
@@ -23735,9 +23735,9 @@
       "label": "correction_applied=True even if mean is exactly 0 (clamped=0).",
       "file_type": "rationale",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L236",
+      "source_location": "L232",
       "_origin": "ast",
-      "id": "tests_test_residual_correction_rationale_236",
+      "id": "tests_test_residual_correction_rationale_232",
       "community": 33,
       "norm_label": "correction_applied=true even if mean is exactly 0 (clamped=0)."
     },
@@ -23745,9 +23745,9 @@
       "label": "Mean = +10\u00b0F clamped to +5\u00b0F.",
       "file_type": "rationale",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L264",
+      "source_location": "L260",
       "_origin": "ast",
-      "id": "tests_test_residual_correction_rationale_264",
+      "id": "tests_test_residual_correction_rationale_260",
       "community": 33,
       "norm_label": "mean = +10\u00b0f clamped to +5\u00b0f."
     },
@@ -23755,9 +23755,9 @@
       "label": "Mean = -8\u00b0F clamped to -5\u00b0F.",
       "file_type": "rationale",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L270",
+      "source_location": "L266",
       "_origin": "ast",
-      "id": "tests_test_residual_correction_rationale_270",
+      "id": "tests_test_residual_correction_rationale_266",
       "community": 33,
       "norm_label": "mean = -8\u00b0f clamped to -5\u00b0f."
     },
@@ -23765,9 +23765,9 @@
       "label": "Mean = +2\u00b0F within \u00b15 \u2192 no clamp.",
       "file_type": "rationale",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L276",
+      "source_location": "L272",
       "_origin": "ast",
-      "id": "tests_test_residual_correction_rationale_276",
+      "id": "tests_test_residual_correction_rationale_272",
       "community": 33,
       "norm_label": "mean = +2\u00b0f within \u00b15 \u2192 no clamp."
     },
@@ -23775,9 +23775,9 @@
       "label": "Custom max_correction_f=3.0 \u2192 mean=+4.6 applied correction clamped to +3.0.",
       "file_type": "rationale",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L282",
+      "source_location": "L278",
       "_origin": "ast",
-      "id": "tests_test_residual_correction_rationale_282",
+      "id": "tests_test_residual_correction_rationale_278",
       "community": 33,
       "norm_label": "custom max_correction_f=3.0 \u2192 mean=+4.6 applied correction clamped to +3.0."
     },
@@ -23785,9 +23785,9 @@
       "label": "MAE=10.1 > threshold=8.0 \u2192 live_suppressed=True.",
       "file_type": "rationale",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L323",
+      "source_location": "L319",
       "_origin": "ast",
-      "id": "tests_test_residual_correction_rationale_323",
+      "id": "tests_test_residual_correction_rationale_319",
       "community": 33,
       "norm_label": "mae=10.1 > threshold=8.0 \u2192 live_suppressed=true."
     },
@@ -23795,9 +23795,9 @@
       "label": "MAE=3.7 < threshold=8.0 \u2192 live_suppressed=False.",
       "file_type": "rationale",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L331",
+      "source_location": "L327",
       "_origin": "ast",
-      "id": "tests_test_residual_correction_rationale_331",
+      "id": "tests_test_residual_correction_rationale_327",
       "community": 33,
       "norm_label": "mae=3.7 < threshold=8.0 \u2192 live_suppressed=false."
     },
@@ -23805,9 +23805,9 @@
       "label": "MAE exactly equal to threshold \u2192 NOT suppressed (strictly >).",
       "file_type": "rationale",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L338",
+      "source_location": "L334",
       "_origin": "ast",
-      "id": "tests_test_residual_correction_rationale_338",
+      "id": "tests_test_residual_correction_rationale_334",
       "community": 33,
       "norm_label": "mae exactly equal to threshold \u2192 not suppressed (strictly >)."
     },
@@ -23815,9 +23815,9 @@
       "label": "MAE=8.01 > 8.0 \u2192 suppressed.",
       "file_type": "rationale",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L344",
+      "source_location": "L340",
       "_origin": "ast",
-      "id": "tests_test_residual_correction_rationale_344",
+      "id": "tests_test_residual_correction_rationale_340",
       "community": 33,
       "norm_label": "mae=8.01 > 8.0 \u2192 suppressed."
     },
@@ -23825,9 +23825,9 @@
       "label": "Correction = +2\u00b0F \u2192 mu_f 80.0 becomes 82.0.",
       "file_type": "rationale",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L360",
+      "source_location": "L356",
       "_origin": "ast",
-      "id": "tests_test_residual_correction_rationale_360",
+      "id": "tests_test_residual_correction_rationale_356",
       "community": 33,
       "norm_label": "correction = +2\u00b0f \u2192 mu_f 80.0 becomes 82.0."
     },
@@ -23835,9 +23835,9 @@
       "label": "Feature disabled \u2192 mu_f unchanged, stats=None.",
       "file_type": "rationale",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L373",
+      "source_location": "L369",
       "_origin": "ast",
-      "id": "tests_test_residual_correction_rationale_373",
+      "id": "tests_test_residual_correction_rationale_369",
       "community": 33,
       "norm_label": "feature disabled \u2192 mu_f unchanged, stats=none."
     },
@@ -23845,9 +23845,9 @@
       "label": "Insufficient data \u2192 mu_f unchanged, stats=None.",
       "file_type": "rationale",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L386",
+      "source_location": "L382",
       "_origin": "ast",
-      "id": "tests_test_residual_correction_rationale_386",
+      "id": "tests_test_residual_correction_rationale_382",
       "community": 33,
       "norm_label": "insufficient data \u2192 mu_f unchanged, stats=none."
     },
@@ -23855,9 +23855,9 @@
       "label": "Correction clamped to \u00b15 \u2192 mu_f shifts by at most \u00b15.",
       "file_type": "rationale",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L399",
+      "source_location": "L395",
       "_origin": "ast",
-      "id": "tests_test_residual_correction_rationale_399",
+      "id": "tests_test_residual_correction_rationale_395",
       "community": 33,
       "norm_label": "correction clamped to \u00b15 \u2192 mu_f shifts by at most \u00b15."
     },
@@ -23865,9 +23865,9 @@
       "label": "Zero mean error \u2192 mu_f unchanged, stats returned.",
       "file_type": "rationale",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L414",
+      "source_location": "L410",
       "_origin": "ast",
-      "id": "tests_test_residual_correction_rationale_414",
+      "id": "tests_test_residual_correction_rationale_410",
       "community": 33,
       "norm_label": "zero mean error \u2192 mu_f unchanged, stats returned."
     },
@@ -23875,9 +23875,9 @@
       "label": "Integration-style tests that verify the MAE gate inside scan_markets()     force",
       "file_type": "rationale",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L433",
+      "source_location": "L429",
       "_origin": "ast",
-      "id": "tests_test_residual_correction_rationale_433",
+      "id": "tests_test_residual_correction_rationale_429",
       "community": 182,
       "norm_label": "integration-style tests that verify the mae gate inside scan_markets()     force"
     },
@@ -23885,9 +23885,9 @@
       "label": "Build minimal weather, markets, and db objects for a NO scan.",
       "file_type": "rationale",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L442",
+      "source_location": "L438",
       "_origin": "ast",
-      "id": "tests_test_residual_correction_rationale_442",
+      "id": "tests_test_residual_correction_rationale_438",
       "community": 182,
       "norm_label": "build minimal weather, markets, and db objects for a no scan."
     },
@@ -23895,9 +23895,9 @@
       "label": "When rolling MAE > threshold, NO candidate shadow flag is True.",
       "file_type": "rationale",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L486",
+      "source_location": "L482",
       "_origin": "ast",
-      "id": "tests_test_residual_correction_rationale_486",
+      "id": "tests_test_residual_correction_rationale_482",
       "community": 182,
       "norm_label": "when rolling mae > threshold, no candidate shadow flag is true."
     },
@@ -23905,9 +23905,9 @@
       "label": "When rolling MAE <= threshold, NO candidate shadow flag is False.",
       "file_type": "rationale",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L511",
+      "source_location": "L507",
       "_origin": "ast",
-      "id": "tests_test_residual_correction_rationale_511",
+      "id": "tests_test_residual_correction_rationale_507",
       "community": 182,
       "norm_label": "when rolling mae <= threshold, no candidate shadow flag is false."
     },
@@ -23915,9 +23915,9 @@
       "label": "MAE gate only affects NO side; YES candidates are unaffected.",
       "file_type": "rationale",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L537",
+      "source_location": "L533",
       "_origin": "ast",
-      "id": "tests_test_residual_correction_rationale_537",
+      "id": "tests_test_residual_correction_rationale_533",
       "community": 182,
       "norm_label": "mae gate only affects no side; yes candidates are unaffected."
     },
@@ -27118,7 +27118,7 @@
       "source_location": "L86",
       "_origin": "ast",
       "id": "tests_test_scanner_shadow_run_scan",
-      "community": 1,
+      "community": 203,
       "norm_label": "_run_scan()"
     },
     {
@@ -27148,7 +27148,7 @@
       "source_location": "L122",
       "_origin": "ast",
       "id": "tests_test_scanner_shadow_testshadowdetection_test_enable_yes_false_produces_shadow_candidate",
-      "community": 1,
+      "community": 203,
       "norm_label": ".test_enable_yes_false_produces_shadow_candidate()"
     },
     {
@@ -27158,7 +27158,7 @@
       "source_location": "L129",
       "_origin": "ast",
       "id": "tests_test_scanner_shadow_testshadowdetection_test_enable_yes_true_produces_non_shadow_candidate",
-      "community": 1,
+      "community": 203,
       "norm_label": ".test_enable_yes_true_produces_non_shadow_candidate()"
     },
     {
@@ -27168,7 +27168,7 @@
       "source_location": "L136",
       "_origin": "ast",
       "id": "tests_test_scanner_shadow_testshadowdetection_test_shadow_candidate_has_correct_side_and_ticker",
-      "community": 1,
+      "community": 203,
       "norm_label": ".test_shadow_candidate_has_correct_side_and_ticker()"
     },
     {
@@ -27318,7 +27318,7 @@
       "source_location": "L87",
       "_origin": "ast",
       "id": "tests_test_scanner_shadow_rationale_87",
-      "community": 1,
+      "community": 203,
       "norm_label": "run scan_markets with the given enable_yes_trades setting."
     },
     {
@@ -27328,7 +27328,7 @@
       "source_location": "L123",
       "_origin": "ast",
       "id": "tests_test_scanner_shadow_rationale_123",
-      "community": 1,
+      "community": 203,
       "norm_label": "with enable_yes_trades=false and a yes-eligible market, get shadow=true."
     },
     {
@@ -27338,7 +27338,7 @@
       "source_location": "L130",
       "_origin": "ast",
       "id": "tests_test_scanner_shadow_rationale_130",
-      "community": 1,
+      "community": 203,
       "norm_label": "with enable_yes_trades=true and a yes-eligible market, get shadow=false."
     },
     {
@@ -27348,7 +27348,7 @@
       "source_location": "L137",
       "_origin": "ast",
       "id": "tests_test_scanner_shadow_rationale_137",
-      "community": 1,
+      "community": 203,
       "norm_label": "shadow candidate carries the correct metadata."
     },
     {
@@ -42604,9 +42604,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L1771",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api",
-      "target": "dashboard_api_promotion_prerequisites",
-      "confidence_score": 1.0
+      "target": "dashboard_api_promotion_prerequisites"
     },
     {
       "relation": "contains",
@@ -42614,9 +42614,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L373",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api",
-      "target": "dashboard_api_promotionprerequisitesout",
-      "confidence_score": 1.0
+      "target": "dashboard_api_promotionprerequisitesout"
     },
     {
       "relation": "contains",
@@ -42981,9 +42981,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L1786",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api",
-      "target": "model_promotion_gate_check_promotion_prerequisites",
-      "confidence_score": 1.0
+      "target": "model_promotion_gate_check_promotion_prerequisites"
     },
     {
       "relation": "imports",
@@ -43497,9 +43497,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L373",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_promotionprerequisitesout",
-      "target": "basemodel",
-      "confidence_score": 1.0
+      "target": "basemodel"
     },
     {
       "relation": "inherits",
@@ -43902,9 +43902,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L1771",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_promotion_prerequisites",
-      "target": "dashboard_api_promotionprerequisitesout",
-      "confidence_score": 1.0
+      "target": "dashboard_api_promotionprerequisitesout"
     },
     {
       "relation": "uses",
@@ -43912,9 +43912,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L759",
       "weight": 0.8,
+      "confidence_score": 0.5,
       "source": "dashboard_api_promotionprerequisitesout",
-      "target": "execution_live_trader_livetrader",
-      "confidence_score": 0.5
+      "target": "execution_live_trader_livetrader"
     },
     {
       "relation": "rationale_for",
@@ -43922,9 +43922,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L374",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_374",
-      "target": "dashboard_api_promotionprerequisitesout",
-      "confidence_score": 1.0
+      "target": "dashboard_api_promotionprerequisitesout"
     },
     {
       "relation": "references",
@@ -44073,9 +44073,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L456",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_456",
-      "target": "dashboard_api_read_state",
-      "confidence_score": 1.0
+      "target": "dashboard_api_read_state"
     },
     {
       "relation": "calls",
@@ -44105,9 +44105,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L466",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_466",
-      "target": "dashboard_api_state_enrichment",
-      "confidence_score": 1.0
+      "target": "dashboard_api_state_enrichment"
     },
     {
       "relation": "rationale_for",
@@ -44115,9 +44115,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L471",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_471",
-      "target": "dashboard_api_parse_snapshots",
-      "confidence_score": 1.0
+      "target": "dashboard_api_parse_snapshots"
     },
     {
       "relation": "calls",
@@ -44136,9 +44136,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L500",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_500",
-      "target": "dashboard_api_latest_model_probs",
-      "confidence_score": 1.0
+      "target": "dashboard_api_latest_model_probs"
     },
     {
       "relation": "rationale_for",
@@ -44146,9 +44146,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L519",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_519",
-      "target": "dashboard_api_parse_live_trades",
-      "confidence_score": 1.0
+      "target": "dashboard_api_parse_live_trades"
     },
     {
       "relation": "imports",
@@ -44266,9 +44266,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L611",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_611",
-      "target": "dashboard_api_cached_live_trades",
-      "confidence_score": 1.0
+      "target": "dashboard_api_cached_live_trades"
     },
     {
       "relation": "calls",
@@ -44364,9 +44364,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L622",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_622",
-      "target": "dashboard_api_trades_file_enrichment",
-      "confidence_score": 1.0
+      "target": "dashboard_api_trades_file_enrichment"
     },
     {
       "relation": "imports",
@@ -44407,9 +44407,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L641",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_641",
-      "target": "dashboard_api_stopped_positions",
-      "confidence_score": 1.0
+      "target": "dashboard_api_stopped_positions"
     },
     {
       "relation": "imports",
@@ -44483,9 +44483,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L656",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_656",
-      "target": "dashboard_api_settled_jsonl_positions",
-      "confidence_score": 1.0
+      "target": "dashboard_api_settled_jsonl_positions"
     },
     {
       "relation": "imports",
@@ -44570,9 +44570,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L675",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_675",
-      "target": "dashboard_api_nws_forecast_for_title",
-      "confidence_score": 1.0
+      "target": "dashboard_api_nws_forecast_for_title"
     },
     {
       "relation": "imports",
@@ -44591,9 +44591,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L692",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_692",
-      "target": "dashboard_api_midpoint_cents",
-      "confidence_score": 1.0
+      "target": "dashboard_api_midpoint_cents"
     },
     {
       "relation": "calls",
@@ -44612,9 +44612,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L707",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_707",
-      "target": "dashboard_api_batch_midpoints",
-      "confidence_score": 1.0
+      "target": "dashboard_api_batch_midpoints"
     },
     {
       "relation": "rationale_for",
@@ -44622,9 +44622,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L736",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_736",
-      "target": "dashboard_api_market_question",
-      "confidence_score": 1.0
+      "target": "dashboard_api_market_question"
     },
     {
       "relation": "calls",
@@ -44687,9 +44687,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L767",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_767",
-      "target": "dashboard_api_positions_from_wallet",
-      "confidence_score": 1.0
+      "target": "dashboard_api_positions_from_wallet"
     },
     {
       "relation": "rationale_for",
@@ -44697,9 +44697,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L920",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_920",
-      "target": "dashboard_api_health_monitor",
-      "confidence_score": 1.0
+      "target": "dashboard_api_health_monitor"
     },
     {
       "relation": "rationale_for",
@@ -44707,9 +44707,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L934",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_934",
-      "target": "dashboard_api_status",
-      "confidence_score": 1.0
+      "target": "dashboard_api_status"
     },
     {
       "relation": "calls",
@@ -44728,9 +44728,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L956",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_956",
-      "target": "dashboard_api_trades_list",
-      "confidence_score": 1.0
+      "target": "dashboard_api_trades_list"
     },
     {
       "relation": "rationale_for",
@@ -44738,9 +44738,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L962",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_962",
-      "target": "dashboard_api_stations",
-      "confidence_score": 1.0
+      "target": "dashboard_api_stations"
     },
     {
       "relation": "references",
@@ -44791,9 +44791,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L996",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_996",
-      "target": "dashboard_api_bot_log",
-      "confidence_score": 1.0
+      "target": "dashboard_api_bot_log"
     },
     {
       "relation": "rationale_for",
@@ -44801,9 +44801,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L1043",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_1043",
-      "target": "dashboard_api_sell_position",
-      "confidence_score": 1.0
+      "target": "dashboard_api_sell_position"
     },
     {
       "relation": "calls",
@@ -44844,9 +44844,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L1102",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_1102",
-      "target": "dashboard_api_get_city_taf",
-      "confidence_score": 1.0
+      "target": "dashboard_api_get_city_taf"
     },
     {
       "relation": "rationale_for",
@@ -44854,9 +44854,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L1124",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_1124",
-      "target": "dashboard_api_get_city_deb",
-      "confidence_score": 1.0
+      "target": "dashboard_api_get_city_deb"
     },
     {
       "relation": "rationale_for",
@@ -44864,9 +44864,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L1157",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_1157",
-      "target": "dashboard_api_get_city_analysis",
-      "confidence_score": 1.0
+      "target": "dashboard_api_get_city_analysis"
     },
     {
       "relation": "rationale_for",
@@ -44874,9 +44874,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L1211",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_1211",
-      "target": "dashboard_api_derive_station_status",
-      "confidence_score": 1.0
+      "target": "dashboard_api_derive_station_status"
     },
     {
       "relation": "calls",
@@ -44895,9 +44895,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L1259",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_1259",
-      "target": "dashboard_api_stations_overview",
-      "confidence_score": 1.0
+      "target": "dashboard_api_stations_overview"
     },
     {
       "relation": "rationale_for",
@@ -44905,9 +44905,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L1349",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_1349",
-      "target": "dashboard_api_build_perf_quadrant",
-      "confidence_score": 1.0
+      "target": "dashboard_api_build_perf_quadrant"
     },
     {
       "relation": "calls",
@@ -44926,9 +44926,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L1400",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_1400",
-      "target": "dashboard_api_stations_perf",
-      "confidence_score": 1.0
+      "target": "dashboard_api_stations_perf"
     },
     {
       "relation": "calls",
@@ -44947,9 +44947,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L1457",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_1457",
-      "target": "dashboard_api_position_snapshots",
-      "confidence_score": 1.0
+      "target": "dashboard_api_position_snapshots"
     },
     {
       "relation": "rationale_for",
@@ -44957,9 +44957,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L1491",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_1491",
-      "target": "dashboard_api_weather_health_status",
-      "confidence_score": 1.0
+      "target": "dashboard_api_weather_health_status"
     },
     {
       "relation": "rationale_for",
@@ -44967,9 +44967,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L1515",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_1515",
-      "target": "dashboard_api_emos_status",
-      "confidence_score": 1.0
+      "target": "dashboard_api_emos_status"
     },
     {
       "relation": "calls",
@@ -45010,9 +45010,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L1539",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_1539",
-      "target": "dashboard_api_resolve_city",
-      "confidence_score": 1.0
+      "target": "dashboard_api_resolve_city"
     },
     {
       "relation": "rationale_for",
@@ -45020,9 +45020,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L1553",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_1553",
-      "target": "dashboard_api_emos_promote",
-      "confidence_score": 1.0
+      "target": "dashboard_api_emos_promote"
     },
     {
       "relation": "rationale_for",
@@ -45030,9 +45030,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L1608",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_1608",
-      "target": "dashboard_api_emos_demote",
-      "confidence_score": 1.0
+      "target": "dashboard_api_emos_demote"
     },
     {
       "relation": "rationale_for",
@@ -45040,9 +45040,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L1631",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_1631",
-      "target": "dashboard_api_emos_mark_ready",
-      "confidence_score": 1.0
+      "target": "dashboard_api_emos_mark_ready"
     },
     {
       "relation": "rationale_for",
@@ -45050,9 +45050,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L1667",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_1667",
-      "target": "dashboard_api_station_toggle",
-      "confidence_score": 1.0
+      "target": "dashboard_api_station_toggle"
     },
     {
       "relation": "rationale_for",
@@ -45060,9 +45060,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L1702",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_1702",
-      "target": "dashboard_api_station_toggle_yes",
-      "confidence_score": 1.0
+      "target": "dashboard_api_station_toggle_yes"
     },
     {
       "relation": "rationale_for",
@@ -45070,9 +45070,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L1735",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_1735",
-      "target": "dashboard_api_station_toggle_no",
-      "confidence_score": 1.0
+      "target": "dashboard_api_station_toggle_no"
     },
     {
       "relation": "calls",
@@ -45091,9 +45091,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L1772",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_1772",
-      "target": "dashboard_api_promotion_prerequisites",
-      "confidence_score": 1.0
+      "target": "dashboard_api_promotion_prerequisites"
     },
     {
       "relation": "uses",
@@ -45133,9 +45133,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L1977",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_1977",
-      "target": "dashboard_api_validate_config_value",
-      "confidence_score": 1.0
+      "target": "dashboard_api_validate_config_value"
     },
     {
       "relation": "calls",
@@ -45154,9 +45154,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L2033",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_2033",
-      "target": "dashboard_api_typed_value",
-      "confidence_score": 1.0
+      "target": "dashboard_api_typed_value"
     },
     {
       "relation": "calls",
@@ -45186,9 +45186,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L2052",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_2052",
-      "target": "dashboard_api_build_param_entry",
-      "confidence_score": 1.0
+      "target": "dashboard_api_build_param_entry"
     },
     {
       "relation": "rationale_for",
@@ -45196,9 +45196,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L2070",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_2070",
-      "target": "dashboard_api_get_config",
-      "confidence_score": 1.0
+      "target": "dashboard_api_get_config"
     },
     {
       "relation": "rationale_for",
@@ -45206,9 +45206,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L2088",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_2088",
-      "target": "dashboard_api_patch_config",
-      "confidence_score": 1.0
+      "target": "dashboard_api_patch_config"
     },
     {
       "relation": "rationale_for",
@@ -45216,9 +45216,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L2113",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_2113",
-      "target": "dashboard_api_residualstatsout",
-      "confidence_score": 1.0
+      "target": "dashboard_api_residualstatsout"
     },
     {
       "relation": "references",
@@ -45247,9 +45247,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L2124",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_2124",
-      "target": "dashboard_api_residual_stats",
-      "confidence_score": 1.0
+      "target": "dashboard_api_residual_stats"
     },
     {
       "relation": "calls",
@@ -45278,9 +45278,9 @@
       "source_file": "src/dashboard/api.py",
       "source_location": "L2181",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "dashboard_api_rationale_2181",
-      "target": "dashboard_api_close_reason_stats",
-      "confidence_score": 1.0
+      "target": "dashboard_api_close_reason_stats"
     },
     {
       "relation": "contains",
@@ -53332,9 +53332,9 @@
       "source_file": "src/model/promotion_gate.py",
       "source_location": "L98",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "model_promotion_gate",
-      "target": "model_promotion_gate_check_climb_rate",
-      "confidence_score": 1.0
+      "target": "model_promotion_gate_check_climb_rate"
     },
     {
       "relation": "contains",
@@ -53342,9 +53342,9 @@
       "source_file": "src/model/promotion_gate.py",
       "source_location": "L14",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "model_promotion_gate",
-      "target": "model_promotion_gate_check_promotion_prerequisites",
-      "confidence_score": 1.0
+      "target": "model_promotion_gate_check_promotion_prerequisites"
     },
     {
       "relation": "contains",
@@ -53352,9 +53352,9 @@
       "source_file": "src/model/promotion_gate.py",
       "source_location": "L110",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "model_promotion_gate",
-      "target": "model_promotion_gate_count_distinct_models",
-      "confidence_score": 1.0
+      "target": "model_promotion_gate_count_distinct_models"
     },
     {
       "relation": "contains",
@@ -53362,9 +53362,9 @@
       "source_file": "src/model/promotion_gate.py",
       "source_location": "L124",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "model_promotion_gate",
-      "target": "model_promotion_gate_count_taf_windows",
-      "confidence_score": 1.0
+      "target": "model_promotion_gate_count_taf_windows"
     },
     {
       "relation": "contains",
@@ -53372,9 +53372,9 @@
       "source_file": "src/model/promotion_gate.py",
       "source_location": "L134",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "model_promotion_gate",
-      "target": "model_promotion_gate_has_secondary_observation_source",
-      "confidence_score": 1.0
+      "target": "model_promotion_gate_has_secondary_observation_source"
     },
     {
       "relation": "contains",
@@ -53382,9 +53382,9 @@
       "source_file": "src/model/promotion_gate.py",
       "source_location": "L147",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "model_promotion_gate",
-      "target": "model_promotion_gate_has_settled_loss",
-      "confidence_score": 1.0
+      "target": "model_promotion_gate_has_settled_loss"
     },
     {
       "relation": "rationale_for",
@@ -53392,9 +53392,9 @@
       "source_file": "src/model/promotion_gate.py",
       "source_location": "L1",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "model_promotion_gate_rationale_1",
-      "target": "model_promotion_gate",
-      "confidence_score": 1.0
+      "target": "model_promotion_gate"
     },
     {
       "relation": "calls",
@@ -53403,9 +53403,9 @@
       "source_file": "src/model/promotion_gate.py",
       "source_location": "L54",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "model_promotion_gate_check_promotion_prerequisites",
-      "target": "model_promotion_gate_check_climb_rate",
-      "confidence_score": 1.0
+      "target": "model_promotion_gate_check_climb_rate"
     },
     {
       "relation": "calls",
@@ -53414,9 +53414,9 @@
       "source_file": "src/model/promotion_gate.py",
       "source_location": "L57",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "model_promotion_gate_check_promotion_prerequisites",
-      "target": "model_promotion_gate_count_distinct_models",
-      "confidence_score": 1.0
+      "target": "model_promotion_gate_count_distinct_models"
     },
     {
       "relation": "calls",
@@ -53425,9 +53425,9 @@
       "source_file": "src/model/promotion_gate.py",
       "source_location": "L61",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "model_promotion_gate_check_promotion_prerequisites",
-      "target": "model_promotion_gate_count_taf_windows",
-      "confidence_score": 1.0
+      "target": "model_promotion_gate_count_taf_windows"
     },
     {
       "relation": "calls",
@@ -53436,9 +53436,9 @@
       "source_file": "src/model/promotion_gate.py",
       "source_location": "L65",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "model_promotion_gate_check_promotion_prerequisites",
-      "target": "model_promotion_gate_has_secondary_observation_source",
-      "confidence_score": 1.0
+      "target": "model_promotion_gate_has_secondary_observation_source"
     },
     {
       "relation": "calls",
@@ -53447,9 +53447,9 @@
       "source_file": "src/model/promotion_gate.py",
       "source_location": "L68",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "model_promotion_gate_check_promotion_prerequisites",
-      "target": "model_promotion_gate_has_settled_loss",
-      "confidence_score": 1.0
+      "target": "model_promotion_gate_has_settled_loss"
     },
     {
       "relation": "rationale_for",
@@ -53457,9 +53457,9 @@
       "source_file": "src/model/promotion_gate.py",
       "source_location": "L17",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "model_promotion_gate_rationale_17",
-      "target": "model_promotion_gate_check_promotion_prerequisites",
-      "confidence_score": 1.0
+      "target": "model_promotion_gate_check_promotion_prerequisites"
     },
     {
       "relation": "imports",
@@ -53468,9 +53468,9 @@
       "source_file": "src/tests/test_promotion_gate.py",
       "source_location": "L6",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_promotion_gate",
-      "target": "model_promotion_gate_check_promotion_prerequisites",
-      "confidence_score": 1.0
+      "target": "model_promotion_gate_check_promotion_prerequisites"
     },
     {
       "relation": "calls",
@@ -53643,9 +53643,9 @@
       "source_file": "src/model/promotion_gate.py",
       "source_location": "L99",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "model_promotion_gate_rationale_99",
-      "target": "model_promotion_gate_check_climb_rate",
-      "confidence_score": 1.0
+      "target": "model_promotion_gate_check_climb_rate"
     },
     {
       "relation": "rationale_for",
@@ -53653,9 +53653,9 @@
       "source_file": "src/model/promotion_gate.py",
       "source_location": "L111",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "model_promotion_gate_rationale_111",
-      "target": "model_promotion_gate_count_distinct_models",
-      "confidence_score": 1.0
+      "target": "model_promotion_gate_count_distinct_models"
     },
     {
       "relation": "rationale_for",
@@ -53663,9 +53663,9 @@
       "source_file": "src/model/promotion_gate.py",
       "source_location": "L125",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "model_promotion_gate_rationale_125",
-      "target": "model_promotion_gate_count_taf_windows",
-      "confidence_score": 1.0
+      "target": "model_promotion_gate_count_taf_windows"
     },
     {
       "relation": "rationale_for",
@@ -53673,9 +53673,9 @@
       "source_file": "src/model/promotion_gate.py",
       "source_location": "L135",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "model_promotion_gate_rationale_135",
-      "target": "model_promotion_gate_has_secondary_observation_source",
-      "confidence_score": 1.0
+      "target": "model_promotion_gate_has_secondary_observation_source"
     },
     {
       "relation": "rationale_for",
@@ -53683,9 +53683,9 @@
       "source_file": "src/model/promotion_gate.py",
       "source_location": "L148",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "model_promotion_gate_rationale_148",
-      "target": "model_promotion_gate_has_settled_loss",
-      "confidence_score": 1.0
+      "target": "model_promotion_gate_has_settled_loss"
     },
     {
       "relation": "contains",
@@ -53752,11 +53752,11 @@
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/model/residual_correction.py",
-      "source_location": "L51",
+      "source_location": "L50",
       "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "model_residual_correction_rationale_51",
-      "target": "model_residual_correction_residualstats"
+      "source": "model_residual_correction_rationale_50",
+      "target": "model_residual_correction_residualstats",
+      "confidence_score": 1.0
     },
     {
       "relation": "method",
@@ -53884,11 +53884,11 @@
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/model/residual_correction.py",
-      "source_location": "L61",
+      "source_location": "L60",
       "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "model_residual_correction_rationale_61",
-      "target": "model_residual_correction_residualstats_clamped_correction"
+      "source": "model_residual_correction_rationale_60",
+      "target": "model_residual_correction_residualstats_clamped_correction",
+      "confidence_score": 1.0
     },
     {
       "relation": "calls",
@@ -53905,11 +53905,11 @@
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/model/residual_correction.py",
-      "source_location": "L73",
+      "source_location": "L72",
       "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "model_residual_correction_rationale_73",
-      "target": "model_residual_correction_query_trailing_deltas"
+      "source": "model_residual_correction_rationale_72",
+      "target": "model_residual_correction_query_trailing_deltas",
+      "confidence_score": 1.0
     },
     {
       "relation": "imports",
@@ -53937,11 +53937,11 @@
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/model/residual_correction.py",
-      "source_location": "L108",
+      "source_location": "L96",
       "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "model_residual_correction_rationale_108",
-      "target": "model_residual_correction_compute_residual_stats"
+      "source": "model_residual_correction_rationale_96",
+      "target": "model_residual_correction_compute_residual_stats",
+      "confidence_score": 1.0
     },
     {
       "relation": "imports",
@@ -54079,11 +54079,11 @@
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/model/residual_correction.py",
-      "source_location": "L165",
+      "source_location": "L153",
       "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "model_residual_correction_rationale_165",
-      "target": "model_residual_correction_apply_residual_correction"
+      "source": "model_residual_correction_rationale_153",
+      "target": "model_residual_correction_apply_residual_correction",
+      "confidence_score": 1.0
     },
     {
       "relation": "imports",
@@ -61214,11 +61214,11 @@
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_balance_check.py",
-      "source_location": "L44",
+      "source_location": "L45",
       "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "tests_test_balance_check_rationale_44",
-      "target": "tests_test_balance_check_common_ctx"
+      "source": "tests_test_balance_check_rationale_45",
+      "target": "tests_test_balance_check_common_ctx",
+      "confidence_score": 1.0
     },
     {
       "relation": "method",
@@ -61264,11 +61264,11 @@
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_balance_check.py",
-      "source_location": "L71",
+      "source_location": "L75",
       "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "tests_test_balance_check_rationale_71",
-      "target": "tests_test_balance_check_testbalancecheckexception_test_exception_prevents_allow_trade_call"
+      "source": "tests_test_balance_check_rationale_75",
+      "target": "tests_test_balance_check_testbalancecheckexception_test_exception_prevents_allow_trade_call",
+      "confidence_score": 1.0
     },
     {
       "relation": "method",
@@ -61314,41 +61314,41 @@
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_balance_check.py",
-      "source_location": "L154",
+      "source_location": "L161",
       "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "tests_test_balance_check_rationale_154",
-      "target": "tests_test_balance_check_testwalletemptycooldown_test_cooldown_set_when_wallet_empty"
+      "source": "tests_test_balance_check_rationale_161",
+      "target": "tests_test_balance_check_testwalletemptycooldown_test_cooldown_set_when_wallet_empty",
+      "confidence_score": 1.0
     },
     {
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_balance_check.py",
-      "source_location": "L174",
+      "source_location": "L181",
       "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "tests_test_balance_check_rationale_174",
-      "target": "tests_test_balance_check_testwalletemptycooldown_test_cooldown_active_skips_balance_check_and_candidates"
+      "source": "tests_test_balance_check_rationale_181",
+      "target": "tests_test_balance_check_testwalletemptycooldown_test_cooldown_active_skips_balance_check_and_candidates",
+      "confidence_score": 1.0
     },
     {
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_balance_check.py",
-      "source_location": "L198",
+      "source_location": "L205",
       "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "tests_test_balance_check_rationale_198",
-      "target": "tests_test_balance_check_testwalletemptycooldown_test_cooldown_expired_allows_normal_scan"
+      "source": "tests_test_balance_check_rationale_205",
+      "target": "tests_test_balance_check_testwalletemptycooldown_test_cooldown_expired_allows_normal_scan",
+      "confidence_score": 1.0
     },
     {
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_balance_check.py",
-      "source_location": "L225",
+      "source_location": "L232",
       "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "tests_test_balance_check_rationale_225",
-      "target": "tests_test_balance_check_testbalancefailalertthreshold"
+      "source": "tests_test_balance_check_rationale_232",
+      "target": "tests_test_balance_check_testbalancefailalertthreshold",
+      "confidence_score": 1.0
     },
     {
       "relation": "method",
@@ -61437,31 +61437,31 @@
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_balance_check.py",
-      "source_location": "L253",
+      "source_location": "L263",
       "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "tests_test_balance_check_rationale_253",
-      "target": "tests_test_balance_check_testbalancefailalertthreshold_test_alert_fired_after_threshold"
+      "source": "tests_test_balance_check_rationale_263",
+      "target": "tests_test_balance_check_testbalancefailalertthreshold_test_alert_fired_after_threshold",
+      "confidence_score": 1.0
     },
     {
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_balance_check.py",
-      "source_location": "L264",
+      "source_location": "L274",
       "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "tests_test_balance_check_rationale_264",
-      "target": "tests_test_balance_check_testbalancefailalertthreshold_test_alert_not_fired_below_threshold"
+      "source": "tests_test_balance_check_rationale_274",
+      "target": "tests_test_balance_check_testbalancefailalertthreshold_test_alert_not_fired_below_threshold",
+      "confidence_score": 1.0
     },
     {
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_balance_check.py",
-      "source_location": "L272",
+      "source_location": "L282",
       "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "tests_test_balance_check_rationale_272",
-      "target": "tests_test_balance_check_testbalancefailalertthreshold_test_success_resets_counter_no_alert_refired"
+      "source": "tests_test_balance_check_rationale_282",
+      "target": "tests_test_balance_check_testbalancefailalertthreshold_test_success_resets_counter_no_alert_refired",
+      "confidence_score": 1.0
     },
     {
       "relation": "contains",
@@ -83058,9 +83058,9 @@
       "source_file": "src/tests/test_promotion_gate.py",
       "source_location": "L9",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_promotion_gate",
-      "target": "tests_test_promotion_gate_db",
-      "confidence_score": 1.0
+      "target": "tests_test_promotion_gate_db"
     },
     {
       "relation": "contains",
@@ -83068,9 +83068,9 @@
       "source_file": "src/tests/test_promotion_gate.py",
       "source_location": "L52",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_promotion_gate",
-      "target": "tests_test_promotion_gate_testclimbrategate",
-      "confidence_score": 1.0
+      "target": "tests_test_promotion_gate_testclimbrategate"
     },
     {
       "relation": "contains",
@@ -83078,9 +83078,9 @@
       "source_file": "src/tests/test_promotion_gate.py",
       "source_location": "L293",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_promotion_gate",
-      "target": "tests_test_promotion_gate_testdatabasenone",
-      "confidence_score": 1.0
+      "target": "tests_test_promotion_gate_testdatabasenone"
     },
     {
       "relation": "contains",
@@ -83088,9 +83088,9 @@
       "source_file": "src/tests/test_promotion_gate.py",
       "source_location": "L79",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_promotion_gate",
-      "target": "tests_test_promotion_gate_testmodelcountgate",
-      "confidence_score": 1.0
+      "target": "tests_test_promotion_gate_testmodelcountgate"
     },
     {
       "relation": "contains",
@@ -83098,9 +83098,9 @@
       "source_file": "src/tests/test_promotion_gate.py",
       "source_location": "L304",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_promotion_gate",
-      "target": "tests_test_promotion_gate_testmultiplegatefail",
-      "confidence_score": 1.0
+      "target": "tests_test_promotion_gate_testmultiplegatefail"
     },
     {
       "relation": "contains",
@@ -83108,9 +83108,9 @@
       "source_file": "src/tests/test_promotion_gate.py",
       "source_location": "L15",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_promotion_gate",
-      "target": "tests_test_promotion_gate_testpromotiongateallpass",
-      "confidence_score": 1.0
+      "target": "tests_test_promotion_gate_testpromotiongateallpass"
     },
     {
       "relation": "contains",
@@ -83118,9 +83118,9 @@
       "source_file": "src/tests/test_promotion_gate.py",
       "source_location": "L200",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_promotion_gate",
-      "target": "tests_test_promotion_gate_testsecondaryobsgate",
-      "confidence_score": 1.0
+      "target": "tests_test_promotion_gate_testsecondaryobsgate"
     },
     {
       "relation": "contains",
@@ -83128,9 +83128,9 @@
       "source_file": "src/tests/test_promotion_gate.py",
       "source_location": "L253",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_promotion_gate",
-      "target": "tests_test_promotion_gate_testsettledlossgate",
-      "confidence_score": 1.0
+      "target": "tests_test_promotion_gate_testsettledlossgate"
     },
     {
       "relation": "contains",
@@ -83138,9 +83138,9 @@
       "source_file": "src/tests/test_promotion_gate.py",
       "source_location": "L145",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_promotion_gate",
-      "target": "tests_test_promotion_gate_testtafcoveragegate",
-      "confidence_score": 1.0
+      "target": "tests_test_promotion_gate_testtafcoveragegate"
     },
     {
       "relation": "rationale_for",
@@ -83148,9 +83148,9 @@
       "source_file": "src/tests/test_promotion_gate.py",
       "source_location": "L1",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_promotion_gate_rationale_1",
-      "target": "tests_test_promotion_gate",
-      "confidence_score": 1.0
+      "target": "tests_test_promotion_gate"
     },
     {
       "relation": "rationale_for",
@@ -83158,9 +83158,9 @@
       "source_file": "src/tests/test_promotion_gate.py",
       "source_location": "L10",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_promotion_gate_rationale_10",
-      "target": "tests_test_promotion_gate_db",
-      "confidence_score": 1.0
+      "target": "tests_test_promotion_gate_db"
     },
     {
       "relation": "rationale_for",
@@ -83168,9 +83168,9 @@
       "source_file": "src/tests/test_promotion_gate.py",
       "source_location": "L16",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_promotion_gate_rationale_16",
-      "target": "tests_test_promotion_gate_testpromotiongateallpass",
-      "confidence_score": 1.0
+      "target": "tests_test_promotion_gate_testpromotiongateallpass"
     },
     {
       "relation": "method",
@@ -83178,9 +83178,9 @@
       "source_file": "src/tests/test_promotion_gate.py",
       "source_location": "L18",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_promotion_gate_testpromotiongateallpass",
-      "target": "tests_test_promotion_gate_testpromotiongateallpass_test_all_gates_pass",
-      "confidence_score": 1.0
+      "target": "tests_test_promotion_gate_testpromotiongateallpass_test_all_gates_pass"
     },
     {
       "relation": "rationale_for",
@@ -83188,9 +83188,9 @@
       "source_file": "src/tests/test_promotion_gate.py",
       "source_location": "L19",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_promotion_gate_rationale_19",
-      "target": "tests_test_promotion_gate_testpromotiongateallpass_test_all_gates_pass",
-      "confidence_score": 1.0
+      "target": "tests_test_promotion_gate_testpromotiongateallpass_test_all_gates_pass"
     },
     {
       "relation": "rationale_for",
@@ -83198,9 +83198,9 @@
       "source_file": "src/tests/test_promotion_gate.py",
       "source_location": "L53",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_promotion_gate_rationale_53",
-      "target": "tests_test_promotion_gate_testclimbrategate",
-      "confidence_score": 1.0
+      "target": "tests_test_promotion_gate_testclimbrategate"
     },
     {
       "relation": "method",
@@ -83208,9 +83208,9 @@
       "source_file": "src/tests/test_promotion_gate.py",
       "source_location": "L55",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_promotion_gate_testclimbrategate",
-      "target": "tests_test_promotion_gate_testclimbrategate_test_climb_rate_no_data",
-      "confidence_score": 1.0
+      "target": "tests_test_promotion_gate_testclimbrategate_test_climb_rate_no_data"
     },
     {
       "relation": "rationale_for",
@@ -83218,9 +83218,9 @@
       "source_file": "src/tests/test_promotion_gate.py",
       "source_location": "L56",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_promotion_gate_rationale_56",
-      "target": "tests_test_promotion_gate_testclimbrategate_test_climb_rate_no_data",
-      "confidence_score": 1.0
+      "target": "tests_test_promotion_gate_testclimbrategate_test_climb_rate_no_data"
     },
     {
       "relation": "rationale_for",
@@ -83228,9 +83228,9 @@
       "source_file": "src/tests/test_promotion_gate.py",
       "source_location": "L80",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_promotion_gate_rationale_80",
-      "target": "tests_test_promotion_gate_testmodelcountgate",
-      "confidence_score": 1.0
+      "target": "tests_test_promotion_gate_testmodelcountgate"
     },
     {
       "relation": "method",
@@ -83238,9 +83238,9 @@
       "source_file": "src/tests/test_promotion_gate.py",
       "source_location": "L123",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_promotion_gate_testmodelcountgate",
-      "target": "tests_test_promotion_gate_testmodelcountgate_test_exactly_two_models_pass",
-      "confidence_score": 1.0
+      "target": "tests_test_promotion_gate_testmodelcountgate_test_exactly_two_models_pass"
     },
     {
       "relation": "method",
@@ -83248,9 +83248,9 @@
       "source_file": "src/tests/test_promotion_gate.py",
       "source_location": "L82",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_promotion_gate_testmodelcountgate",
-      "target": "tests_test_promotion_gate_testmodelcountgate_test_only_one_model",
-      "confidence_score": 1.0
+      "target": "tests_test_promotion_gate_testmodelcountgate_test_only_one_model"
     },
     {
       "relation": "method",
@@ -83258,9 +83258,9 @@
       "source_file": "src/tests/test_promotion_gate.py",
       "source_location": "L104",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_promotion_gate_testmodelcountgate",
-      "target": "tests_test_promotion_gate_testmodelcountgate_test_zero_models",
-      "confidence_score": 1.0
+      "target": "tests_test_promotion_gate_testmodelcountgate_test_zero_models"
     },
     {
       "relation": "rationale_for",
@@ -83268,9 +83268,9 @@
       "source_file": "src/tests/test_promotion_gate.py",
       "source_location": "L83",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_promotion_gate_rationale_83",
-      "target": "tests_test_promotion_gate_testmodelcountgate_test_only_one_model",
-      "confidence_score": 1.0
+      "target": "tests_test_promotion_gate_testmodelcountgate_test_only_one_model"
     },
     {
       "relation": "rationale_for",
@@ -83278,9 +83278,9 @@
       "source_file": "src/tests/test_promotion_gate.py",
       "source_location": "L105",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_promotion_gate_rationale_105",
-      "target": "tests_test_promotion_gate_testmodelcountgate_test_zero_models",
-      "confidence_score": 1.0
+      "target": "tests_test_promotion_gate_testmodelcountgate_test_zero_models"
     },
     {
       "relation": "rationale_for",
@@ -83288,9 +83288,9 @@
       "source_file": "src/tests/test_promotion_gate.py",
       "source_location": "L124",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_promotion_gate_rationale_124",
-      "target": "tests_test_promotion_gate_testmodelcountgate_test_exactly_two_models_pass",
-      "confidence_score": 1.0
+      "target": "tests_test_promotion_gate_testmodelcountgate_test_exactly_two_models_pass"
     },
     {
       "relation": "rationale_for",
@@ -83298,9 +83298,9 @@
       "source_file": "src/tests/test_promotion_gate.py",
       "source_location": "L146",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_promotion_gate_rationale_146",
-      "target": "tests_test_promotion_gate_testtafcoveragegate",
-      "confidence_score": 1.0
+      "target": "tests_test_promotion_gate_testtafcoveragegate"
     },
     {
       "relation": "method",
@@ -83308,9 +83308,9 @@
       "source_file": "src/tests/test_promotion_gate.py",
       "source_location": "L185",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_promotion_gate_testtafcoveragegate",
-      "target": "tests_test_promotion_gate_testtafcoveragegate_test_exactly_min_taf_windows_pass",
-      "confidence_score": 1.0
+      "target": "tests_test_promotion_gate_testtafcoveragegate_test_exactly_min_taf_windows_pass"
     },
     {
       "relation": "method",
@@ -83318,9 +83318,9 @@
       "source_file": "src/tests/test_promotion_gate.py",
       "source_location": "L170",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_promotion_gate_testtafcoveragegate",
-      "target": "tests_test_promotion_gate_testtafcoveragegate_test_insufficient_taf_windows",
-      "confidence_score": 1.0
+      "target": "tests_test_promotion_gate_testtafcoveragegate_test_insufficient_taf_windows"
     },
     {
       "relation": "method",
@@ -83328,9 +83328,9 @@
       "source_file": "src/tests/test_promotion_gate.py",
       "source_location": "L148",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_promotion_gate_testtafcoveragegate",
-      "target": "tests_test_promotion_gate_testtafcoveragegate_test_zero_taf_windows",
-      "confidence_score": 1.0
+      "target": "tests_test_promotion_gate_testtafcoveragegate_test_zero_taf_windows"
     },
     {
       "relation": "rationale_for",
@@ -83338,9 +83338,9 @@
       "source_file": "src/tests/test_promotion_gate.py",
       "source_location": "L149",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_promotion_gate_rationale_149",
-      "target": "tests_test_promotion_gate_testtafcoveragegate_test_zero_taf_windows",
-      "confidence_score": 1.0
+      "target": "tests_test_promotion_gate_testtafcoveragegate_test_zero_taf_windows"
     },
     {
       "relation": "rationale_for",
@@ -83348,9 +83348,9 @@
       "source_file": "src/tests/test_promotion_gate.py",
       "source_location": "L171",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_promotion_gate_rationale_171",
-      "target": "tests_test_promotion_gate_testtafcoveragegate_test_insufficient_taf_windows",
-      "confidence_score": 1.0
+      "target": "tests_test_promotion_gate_testtafcoveragegate_test_insufficient_taf_windows"
     },
     {
       "relation": "rationale_for",
@@ -83358,9 +83358,9 @@
       "source_file": "src/tests/test_promotion_gate.py",
       "source_location": "L186",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_promotion_gate_rationale_186",
-      "target": "tests_test_promotion_gate_testtafcoveragegate_test_exactly_min_taf_windows_pass",
-      "confidence_score": 1.0
+      "target": "tests_test_promotion_gate_testtafcoveragegate_test_exactly_min_taf_windows_pass"
     },
     {
       "relation": "rationale_for",
@@ -83368,9 +83368,9 @@
       "source_file": "src/tests/test_promotion_gate.py",
       "source_location": "L201",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_promotion_gate_rationale_201",
-      "target": "tests_test_promotion_gate_testsecondaryobsgate",
-      "confidence_score": 1.0
+      "target": "tests_test_promotion_gate_testsecondaryobsgate"
     },
     {
       "relation": "method",
@@ -83378,9 +83378,9 @@
       "source_file": "src/tests/test_promotion_gate.py",
       "source_location": "L238",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_promotion_gate_testsecondaryobsgate",
-      "target": "tests_test_promotion_gate_testsecondaryobsgate_test_empty_observations",
-      "confidence_score": 1.0
+      "target": "tests_test_promotion_gate_testsecondaryobsgate_test_empty_observations"
     },
     {
       "relation": "method",
@@ -83388,9 +83388,9 @@
       "source_file": "src/tests/test_promotion_gate.py",
       "source_location": "L222",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_promotion_gate_testsecondaryobsgate",
-      "target": "tests_test_promotion_gate_testsecondaryobsgate_test_has_amos_source",
-      "confidence_score": 1.0
+      "target": "tests_test_promotion_gate_testsecondaryobsgate_test_has_amos_source"
     },
     {
       "relation": "method",
@@ -83398,9 +83398,9 @@
       "source_file": "src/tests/test_promotion_gate.py",
       "source_location": "L203",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_promotion_gate_testsecondaryobsgate",
-      "target": "tests_test_promotion_gate_testsecondaryobsgate_test_no_secondary_obs",
-      "confidence_score": 1.0
+      "target": "tests_test_promotion_gate_testsecondaryobsgate_test_no_secondary_obs"
     },
     {
       "relation": "rationale_for",
@@ -83408,9 +83408,9 @@
       "source_file": "src/tests/test_promotion_gate.py",
       "source_location": "L204",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_promotion_gate_rationale_204",
-      "target": "tests_test_promotion_gate_testsecondaryobsgate_test_no_secondary_obs",
-      "confidence_score": 1.0
+      "target": "tests_test_promotion_gate_testsecondaryobsgate_test_no_secondary_obs"
     },
     {
       "relation": "rationale_for",
@@ -83418,9 +83418,9 @@
       "source_file": "src/tests/test_promotion_gate.py",
       "source_location": "L223",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_promotion_gate_rationale_223",
-      "target": "tests_test_promotion_gate_testsecondaryobsgate_test_has_amos_source",
-      "confidence_score": 1.0
+      "target": "tests_test_promotion_gate_testsecondaryobsgate_test_has_amos_source"
     },
     {
       "relation": "rationale_for",
@@ -83428,9 +83428,9 @@
       "source_file": "src/tests/test_promotion_gate.py",
       "source_location": "L239",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_promotion_gate_rationale_239",
-      "target": "tests_test_promotion_gate_testsecondaryobsgate_test_empty_observations",
-      "confidence_score": 1.0
+      "target": "tests_test_promotion_gate_testsecondaryobsgate_test_empty_observations"
     },
     {
       "relation": "rationale_for",
@@ -83438,9 +83438,9 @@
       "source_file": "src/tests/test_promotion_gate.py",
       "source_location": "L254",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_promotion_gate_rationale_254",
-      "target": "tests_test_promotion_gate_testsettledlossgate",
-      "confidence_score": 1.0
+      "target": "tests_test_promotion_gate_testsettledlossgate"
     },
     {
       "relation": "method",
@@ -83448,9 +83448,9 @@
       "source_file": "src/tests/test_promotion_gate.py",
       "source_location": "L274",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_promotion_gate_testsettledlossgate",
-      "target": "tests_test_promotion_gate_testsettledlossgate_test_has_at_least_one_loss",
-      "confidence_score": 1.0
+      "target": "tests_test_promotion_gate_testsettledlossgate_test_has_at_least_one_loss"
     },
     {
       "relation": "method",
@@ -83458,9 +83458,9 @@
       "source_file": "src/tests/test_promotion_gate.py",
       "source_location": "L256",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_promotion_gate_testsettledlossgate",
-      "target": "tests_test_promotion_gate_testsettledlossgate_test_no_settled_loss_pure_wins",
-      "confidence_score": 1.0
+      "target": "tests_test_promotion_gate_testsettledlossgate_test_no_settled_loss_pure_wins"
     },
     {
       "relation": "rationale_for",
@@ -83468,9 +83468,9 @@
       "source_file": "src/tests/test_promotion_gate.py",
       "source_location": "L257",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_promotion_gate_rationale_257",
-      "target": "tests_test_promotion_gate_testsettledlossgate_test_no_settled_loss_pure_wins",
-      "confidence_score": 1.0
+      "target": "tests_test_promotion_gate_testsettledlossgate_test_no_settled_loss_pure_wins"
     },
     {
       "relation": "rationale_for",
@@ -83478,9 +83478,9 @@
       "source_file": "src/tests/test_promotion_gate.py",
       "source_location": "L275",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_promotion_gate_rationale_275",
-      "target": "tests_test_promotion_gate_testsettledlossgate_test_has_at_least_one_loss",
-      "confidence_score": 1.0
+      "target": "tests_test_promotion_gate_testsettledlossgate_test_has_at_least_one_loss"
     },
     {
       "relation": "rationale_for",
@@ -83488,9 +83488,9 @@
       "source_file": "src/tests/test_promotion_gate.py",
       "source_location": "L294",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_promotion_gate_rationale_294",
-      "target": "tests_test_promotion_gate_testdatabasenone",
-      "confidence_score": 1.0
+      "target": "tests_test_promotion_gate_testdatabasenone"
     },
     {
       "relation": "method",
@@ -83498,9 +83498,9 @@
       "source_file": "src/tests/test_promotion_gate.py",
       "source_location": "L296",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_promotion_gate_testdatabasenone",
-      "target": "tests_test_promotion_gate_testdatabasenone_test_db_none_returns_failure",
-      "confidence_score": 1.0
+      "target": "tests_test_promotion_gate_testdatabasenone_test_db_none_returns_failure"
     },
     {
       "relation": "rationale_for",
@@ -83508,9 +83508,9 @@
       "source_file": "src/tests/test_promotion_gate.py",
       "source_location": "L297",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_promotion_gate_rationale_297",
-      "target": "tests_test_promotion_gate_testdatabasenone_test_db_none_returns_failure",
-      "confidence_score": 1.0
+      "target": "tests_test_promotion_gate_testdatabasenone_test_db_none_returns_failure"
     },
     {
       "relation": "rationale_for",
@@ -83518,9 +83518,9 @@
       "source_file": "src/tests/test_promotion_gate.py",
       "source_location": "L305",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_promotion_gate_rationale_305",
-      "target": "tests_test_promotion_gate_testmultiplegatefail",
-      "confidence_score": 1.0
+      "target": "tests_test_promotion_gate_testmultiplegatefail"
     },
     {
       "relation": "method",
@@ -83528,9 +83528,9 @@
       "source_file": "src/tests/test_promotion_gate.py",
       "source_location": "L307",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_promotion_gate_testmultiplegatefail",
-      "target": "tests_test_promotion_gate_testmultiplegatefail_test_multiple_gates_fail",
-      "confidence_score": 1.0
+      "target": "tests_test_promotion_gate_testmultiplegatefail_test_multiple_gates_fail"
     },
     {
       "relation": "rationale_for",
@@ -83538,9 +83538,9 @@
       "source_file": "src/tests/test_promotion_gate.py",
       "source_location": "L308",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_promotion_gate_rationale_308",
-      "target": "tests_test_promotion_gate_testmultiplegatefail_test_multiple_gates_fail",
-      "confidence_score": 1.0
+      "target": "tests_test_promotion_gate_testmultiplegatefail_test_multiple_gates_fail"
     },
     {
       "relation": "contains",
@@ -83980,31 +83980,31 @@
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L70",
+      "source_location": "L66",
       "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "tests_test_residual_correction_rationale_70",
-      "target": "tests_test_residual_correction_testresidualstatsclamped_test_clamp_positive_exceeds_max"
+      "source": "tests_test_residual_correction_rationale_66",
+      "target": "tests_test_residual_correction_testresidualstatsclamped_test_clamp_positive_exceeds_max",
+      "confidence_score": 1.0
     },
     {
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L75",
+      "source_location": "L71",
       "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "tests_test_residual_correction_rationale_75",
-      "target": "tests_test_residual_correction_testresidualstatsclamped_test_clamp_negative_exceeds_max"
+      "source": "tests_test_residual_correction_rationale_71",
+      "target": "tests_test_residual_correction_testresidualstatsclamped_test_clamp_negative_exceeds_max",
+      "confidence_score": 1.0
     },
     {
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L84",
+      "source_location": "L80",
       "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "tests_test_residual_correction_rationale_84",
-      "target": "tests_test_residual_correction_testresidualstatsclamped_test_exact_boundary"
+      "source": "tests_test_residual_correction_rationale_80",
+      "target": "tests_test_residual_correction_testresidualstatsclamped_test_exact_boundary",
+      "confidence_score": 1.0
     },
     {
       "relation": "method",
@@ -84030,21 +84030,21 @@
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L95",
+      "source_location": "L91",
       "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "tests_test_residual_correction_rationale_95",
-      "target": "tests_test_residual_correction_testcomputeresidualstatsdisabled_test_disabled_returns_none"
+      "source": "tests_test_residual_correction_rationale_91",
+      "target": "tests_test_residual_correction_testcomputeresidualstatsdisabled_test_disabled_returns_none",
+      "confidence_score": 1.0
     },
     {
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L114",
+      "source_location": "L110",
       "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "tests_test_residual_correction_rationale_114",
-      "target": "tests_test_residual_correction_testcomputeresidualstatsdisabled_test_enabled_by_default"
+      "source": "tests_test_residual_correction_rationale_110",
+      "target": "tests_test_residual_correction_testcomputeresidualstatsdisabled_test_enabled_by_default",
+      "confidence_score": 1.0
     },
     {
       "relation": "method",
@@ -84090,41 +84090,41 @@
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L132",
+      "source_location": "L128",
       "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "tests_test_residual_correction_rationale_132",
-      "target": "tests_test_residual_correction_testminsamplesguard_test_below_min_returns_none"
+      "source": "tests_test_residual_correction_rationale_128",
+      "target": "tests_test_residual_correction_testminsamplesguard_test_below_min_returns_none",
+      "confidence_score": 1.0
     },
     {
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L144",
+      "source_location": "L140",
       "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "tests_test_residual_correction_rationale_144",
-      "target": "tests_test_residual_correction_testminsamplesguard_test_exactly_at_min_applies"
+      "source": "tests_test_residual_correction_rationale_140",
+      "target": "tests_test_residual_correction_testminsamplesguard_test_exactly_at_min_applies",
+      "confidence_score": 1.0
     },
     {
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L157",
+      "source_location": "L153",
       "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "tests_test_residual_correction_rationale_157",
-      "target": "tests_test_residual_correction_testminsamplesguard_test_above_min_applies"
+      "source": "tests_test_residual_correction_rationale_153",
+      "target": "tests_test_residual_correction_testminsamplesguard_test_above_min_applies",
+      "confidence_score": 1.0
     },
     {
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L170",
+      "source_location": "L166",
       "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "tests_test_residual_correction_rationale_170",
-      "target": "tests_test_residual_correction_testminsamplesguard_test_empty_deltas_returns_none"
+      "source": "tests_test_residual_correction_rationale_166",
+      "target": "tests_test_residual_correction_testminsamplesguard_test_empty_deltas_returns_none",
+      "confidence_score": 1.0
     },
     {
       "relation": "method",
@@ -84210,11 +84210,11 @@
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L203",
+      "source_location": "L199",
       "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "tests_test_residual_correction_rationale_203",
-      "target": "tests_test_residual_correction_testresidualstatsaccuracy_test_mean_signed_error_positive"
+      "source": "tests_test_residual_correction_rationale_199",
+      "target": "tests_test_residual_correction_testresidualstatsaccuracy_test_mean_signed_error_positive",
+      "confidence_score": 1.0
     },
     {
       "relation": "calls",
@@ -84231,11 +84231,11 @@
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L209",
+      "source_location": "L205",
       "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "tests_test_residual_correction_rationale_209",
-      "target": "tests_test_residual_correction_testresidualstatsaccuracy_test_mean_signed_error_mixed"
+      "source": "tests_test_residual_correction_rationale_205",
+      "target": "tests_test_residual_correction_testresidualstatsaccuracy_test_mean_signed_error_mixed",
+      "confidence_score": 1.0
     },
     {
       "relation": "calls",
@@ -84252,11 +84252,11 @@
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L215",
+      "source_location": "L211",
       "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "tests_test_residual_correction_rationale_215",
-      "target": "tests_test_residual_correction_testresidualstatsaccuracy_test_rolling_mae_all_positive"
+      "source": "tests_test_residual_correction_rationale_211",
+      "target": "tests_test_residual_correction_testresidualstatsaccuracy_test_rolling_mae_all_positive",
+      "confidence_score": 1.0
     },
     {
       "relation": "calls",
@@ -84273,11 +84273,11 @@
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L221",
+      "source_location": "L217",
       "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "tests_test_residual_correction_rationale_221",
-      "target": "tests_test_residual_correction_testresidualstatsaccuracy_test_rolling_mae_absolute_value"
+      "source": "tests_test_residual_correction_rationale_217",
+      "target": "tests_test_residual_correction_testresidualstatsaccuracy_test_rolling_mae_absolute_value",
+      "confidence_score": 1.0
     },
     {
       "relation": "calls",
@@ -84305,11 +84305,11 @@
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L231",
+      "source_location": "L227",
       "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "tests_test_residual_correction_rationale_231",
-      "target": "tests_test_residual_correction_testresidualstatsaccuracy_test_correction_applied_when_nonzero"
+      "source": "tests_test_residual_correction_rationale_227",
+      "target": "tests_test_residual_correction_testresidualstatsaccuracy_test_correction_applied_when_nonzero",
+      "confidence_score": 1.0
     },
     {
       "relation": "calls",
@@ -84326,11 +84326,11 @@
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L236",
+      "source_location": "L232",
       "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "tests_test_residual_correction_rationale_236",
-      "target": "tests_test_residual_correction_testresidualstatsaccuracy_test_correction_applied_zero"
+      "source": "tests_test_residual_correction_rationale_232",
+      "target": "tests_test_residual_correction_testresidualstatsaccuracy_test_correction_applied_zero",
+      "confidence_score": 1.0
     },
     {
       "relation": "calls",
@@ -84397,11 +84397,11 @@
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L264",
+      "source_location": "L260",
       "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "tests_test_residual_correction_rationale_264",
-      "target": "tests_test_residual_correction_testclampbehaviour_test_clamp_binds_positive"
+      "source": "tests_test_residual_correction_rationale_260",
+      "target": "tests_test_residual_correction_testclampbehaviour_test_clamp_binds_positive",
+      "confidence_score": 1.0
     },
     {
       "relation": "calls",
@@ -84418,11 +84418,11 @@
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L270",
+      "source_location": "L266",
       "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "tests_test_residual_correction_rationale_270",
-      "target": "tests_test_residual_correction_testclampbehaviour_test_clamp_binds_negative"
+      "source": "tests_test_residual_correction_rationale_266",
+      "target": "tests_test_residual_correction_testclampbehaviour_test_clamp_binds_negative",
+      "confidence_score": 1.0
     },
     {
       "relation": "calls",
@@ -84439,11 +84439,11 @@
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L276",
+      "source_location": "L272",
       "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "tests_test_residual_correction_rationale_276",
-      "target": "tests_test_residual_correction_testclampbehaviour_test_clamp_not_needed_small_value"
+      "source": "tests_test_residual_correction_rationale_272",
+      "target": "tests_test_residual_correction_testclampbehaviour_test_clamp_not_needed_small_value",
+      "confidence_score": 1.0
     },
     {
       "relation": "calls",
@@ -84460,11 +84460,11 @@
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L282",
+      "source_location": "L278",
       "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "tests_test_residual_correction_rationale_282",
-      "target": "tests_test_residual_correction_testclampbehaviour_test_custom_clamp_range"
+      "source": "tests_test_residual_correction_rationale_278",
+      "target": "tests_test_residual_correction_testclampbehaviour_test_custom_clamp_range",
+      "confidence_score": 1.0
     },
     {
       "relation": "method",
@@ -84564,41 +84564,41 @@
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L323",
+      "source_location": "L319",
       "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "tests_test_residual_correction_rationale_323",
-      "target": "tests_test_residual_correction_testmaegate_test_mae_above_threshold_suppresses_live"
+      "source": "tests_test_residual_correction_rationale_319",
+      "target": "tests_test_residual_correction_testmaegate_test_mae_above_threshold_suppresses_live",
+      "confidence_score": 1.0
     },
     {
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L331",
+      "source_location": "L327",
       "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "tests_test_residual_correction_rationale_331",
-      "target": "tests_test_residual_correction_testmaegate_test_mae_below_threshold_does_not_suppress"
+      "source": "tests_test_residual_correction_rationale_327",
+      "target": "tests_test_residual_correction_testmaegate_test_mae_below_threshold_does_not_suppress",
+      "confidence_score": 1.0
     },
     {
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L338",
+      "source_location": "L334",
       "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "tests_test_residual_correction_rationale_338",
-      "target": "tests_test_residual_correction_testmaegate_test_mae_exactly_at_threshold_does_not_suppress"
+      "source": "tests_test_residual_correction_rationale_334",
+      "target": "tests_test_residual_correction_testmaegate_test_mae_exactly_at_threshold_does_not_suppress",
+      "confidence_score": 1.0
     },
     {
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L344",
+      "source_location": "L340",
       "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "tests_test_residual_correction_rationale_344",
-      "target": "tests_test_residual_correction_testmaegate_test_mae_just_above_threshold_suppresses"
+      "source": "tests_test_residual_correction_rationale_340",
+      "target": "tests_test_residual_correction_testmaegate_test_mae_just_above_threshold_suppresses",
+      "confidence_score": 1.0
     },
     {
       "relation": "method",
@@ -84664,61 +84664,61 @@
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L360",
+      "source_location": "L356",
       "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "tests_test_residual_correction_rationale_360",
-      "target": "tests_test_residual_correction_testapplyresidualcorrection_test_returns_corrected_mu_f"
+      "source": "tests_test_residual_correction_rationale_356",
+      "target": "tests_test_residual_correction_testapplyresidualcorrection_test_returns_corrected_mu_f",
+      "confidence_score": 1.0
     },
     {
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L373",
+      "source_location": "L369",
       "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "tests_test_residual_correction_rationale_373",
-      "target": "tests_test_residual_correction_testapplyresidualcorrection_test_returns_none_stats_when_disabled"
+      "source": "tests_test_residual_correction_rationale_369",
+      "target": "tests_test_residual_correction_testapplyresidualcorrection_test_returns_none_stats_when_disabled",
+      "confidence_score": 1.0
     },
     {
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L386",
+      "source_location": "L382",
       "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "tests_test_residual_correction_rationale_386",
-      "target": "tests_test_residual_correction_testapplyresidualcorrection_test_returns_original_when_below_min_samples"
+      "source": "tests_test_residual_correction_rationale_382",
+      "target": "tests_test_residual_correction_testapplyresidualcorrection_test_returns_original_when_below_min_samples",
+      "confidence_score": 1.0
     },
     {
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L399",
+      "source_location": "L395",
       "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "tests_test_residual_correction_rationale_399",
-      "target": "tests_test_residual_correction_testapplyresidualcorrection_test_clamped_correction_applied"
+      "source": "tests_test_residual_correction_rationale_395",
+      "target": "tests_test_residual_correction_testapplyresidualcorrection_test_clamped_correction_applied",
+      "confidence_score": 1.0
     },
     {
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L414",
+      "source_location": "L410",
       "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "tests_test_residual_correction_rationale_414",
-      "target": "tests_test_residual_correction_testapplyresidualcorrection_test_zero_correction_returns_unchanged"
+      "source": "tests_test_residual_correction_rationale_410",
+      "target": "tests_test_residual_correction_testapplyresidualcorrection_test_zero_correction_returns_unchanged",
+      "confidence_score": 1.0
     },
     {
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L433",
+      "source_location": "L429",
       "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "tests_test_residual_correction_rationale_433",
-      "target": "tests_test_residual_correction_testscannermaegate"
+      "source": "tests_test_residual_correction_rationale_429",
+      "target": "tests_test_residual_correction_testscannermaegate",
+      "confidence_score": 1.0
     },
     {
       "relation": "method",
@@ -84764,11 +84764,11 @@
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L442",
+      "source_location": "L438",
       "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "tests_test_residual_correction_rationale_442",
-      "target": "tests_test_residual_correction_testscannermaegate_make_scanner_inputs"
+      "source": "tests_test_residual_correction_rationale_438",
+      "target": "tests_test_residual_correction_testscannermaegate_make_scanner_inputs",
+      "confidence_score": 1.0
     },
     {
       "relation": "calls",
@@ -84807,31 +84807,31 @@
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L486",
+      "source_location": "L482",
       "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "tests_test_residual_correction_rationale_486",
-      "target": "tests_test_residual_correction_testscannermaegate_test_mae_gate_suppresses_live_no_to_shadow"
+      "source": "tests_test_residual_correction_rationale_482",
+      "target": "tests_test_residual_correction_testscannermaegate_test_mae_gate_suppresses_live_no_to_shadow",
+      "confidence_score": 1.0
     },
     {
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L511",
+      "source_location": "L507",
       "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "tests_test_residual_correction_rationale_511",
-      "target": "tests_test_residual_correction_testscannermaegate_test_mae_gate_does_not_suppress_when_below_threshold"
+      "source": "tests_test_residual_correction_rationale_507",
+      "target": "tests_test_residual_correction_testscannermaegate_test_mae_gate_does_not_suppress_when_below_threshold",
+      "confidence_score": 1.0
     },
     {
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_residual_correction.py",
-      "source_location": "L537",
+      "source_location": "L533",
       "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "tests_test_residual_correction_rationale_537",
-      "target": "tests_test_residual_correction_testscannermaegate_test_mae_gate_does_not_affect_yes_candidates"
+      "source": "tests_test_residual_correction_rationale_533",
+      "target": "tests_test_residual_correction_testscannermaegate_test_mae_gate_does_not_affect_yes_candidates",
+      "confidence_score": 1.0
     },
     {
       "relation": "contains",
@@ -105342,5 +105342,5 @@
     }
   ],
   "hyperedges": [],
-  "built_at_commit": "de7ca0a0ab4e774009e676879967e711dc847552"
+  "built_at_commit": "4968da9899b86509dbdda5ca66c62430971ec51e"
 }
