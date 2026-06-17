@@ -12,6 +12,7 @@ from src.config import (
     TAKE_PROFIT_BUFFER_CENTS,
     get_take_profit_buffer_cents,
 )
+from src.strategy.fee import estimate_fee_cents
 
 log = logging.getLogger(__name__)
 
@@ -152,6 +153,14 @@ def _record_sell_in_db(
             db.update_trade_by_order(
                 order_id, outcome="sold", pnl=fill_pnl, settled_at=ts,
             )
+            try:
+                db.update_trade_costs(
+                    order_id,
+                    actual_fee_cents=estimate_fee_cents(sell_price_cents),
+                    size_eur=f.get("size_eur"),
+                )
+            except Exception as ce:
+                log.warning("[run] DB trade cost update failed for %s...: %s", str(order_id)[:12], ce)
             if close_reason is not None or minutes_to_settlement is not None or bid_depth is not None:
                 try:
                     db.update_trade_close_telemetry(
@@ -442,7 +451,7 @@ class OrderManager:
                     "edge_cents": 0,
                     "pnl": pnl,
                     "outcome": "sold",
-                    "actual_fee_cents": None,
+                    "actual_fee_cents": estimate_fee_cents(sell_price_cents),
                     "close_reason": "take_profit",
                     "trigger": f"take_profit@{best_bid_cents}c_target{target_cents}c_predicted{predicted_price}c",
                 }, db=db)
@@ -582,7 +591,8 @@ class OrderManager:
             "edge_cents": 0,
             "pnl": pnl,
             "outcome": "sold",
-            "actual_fee_cents": None,
+            "actual_fee_cents": estimate_fee_cents(sell_price_cents),
+            "slippage": sell_price_cents - round(avg_entry_cents),
             "trigger": f"manual@{sell_price_cents}c_entry{round(avg_entry_cents)}c",
         }, db=db)
         log.info(

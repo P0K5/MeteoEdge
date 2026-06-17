@@ -2195,6 +2195,24 @@ def close_reason_stats() -> list[dict]:
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/trade-costs/summary")
+def trade_cost_summary(days: int = 30) -> dict:
+    """Return cost-accounting totals for live closed trades over the trailing *days*.
+
+    Fields:
+      - period_days, trade_count, fee_populated_count
+      - total_fee_eur, avg_fee_eur  (actual_fee_cents summed/averaged, converted to EUR)
+      - total_size_eur, total_pnl
+    """
+    if _db is None:
+        raise HTTPException(status_code=503, detail="Database not initialised")
+    try:
+        return _db.get_trade_cost_summary(days=days)
+    except Exception as e:
+        logger.warning("[trade-costs] query failed: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # Mount static files last so /api routes take priority
 if STATIC.exists():
     app.mount("/", StaticFiles(directory=STATIC, html=True), name="static")

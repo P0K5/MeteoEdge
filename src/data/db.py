@@ -588,6 +588,73 @@ class Database:
                 )
         return cur.rowcount
 
+    def update_trade_costs(
+        self,
+        order_id: str,
+        *,
+        actual_fee_cents: "float | None" = None,
+        size_eur: "float | None" = None,
+    ) -> int:
+        """Backfill cost accounting columns on the trade row matching *order_id*.
+
+        Only non-None values are written; returns rows updated (0 = no match).
+        """
+        fields = {"actual_fee_cents": actual_fee_cents, "size_eur": size_eur}
+        updates = {k: v for k, v in fields.items() if v is not None}
+        if not updates:
+            return 0
+        set_clause = ", ".join(f"{col}=?" for col in updates)
+        with self._lock:
+            with self._conn:
+                cur = self._conn.execute(
+                    f"UPDATE trades SET {set_clause} WHERE order_id=?",
+                    (*updates.values(), order_id),
+                )
+        return cur.rowcount
+
+    def get_trade_cost_summary(self, days: int = 30) -> dict:
+        """Return cost-accounting totals for live trades over the trailing *days*.
+
+        Covers only live, closed trades so paper/shadow noise is excluded.
+        """
+        from datetime import date as _date, timedelta
+        since = (_date.today() - timedelta(days=days)).isoformat()
+        cur = self._conn.execute(
+            """
+            SELECT
+                COUNT(*)                                          AS trade_count,
+                SUM(CASE WHEN actual_fee_cents IS NOT NULL
+                         THEN 1 ELSE 0 END)                      AS fee_populated_count,
+                ROUND(SUM(COALESCE(actual_fee_cents, 0)) / 100.0, 4)
+                                                                  AS total_fee_eur,
+                ROUND(AVG(COALESCE(actual_fee_cents, 0)) / 100.0, 4)
+                                                                  AS avg_fee_eur,
+                ROUND(SUM(COALESCE(size_eur, 0)), 4)              AS total_size_eur,
+                ROUND(SUM(COALESCE(pnl, 0)), 4)                   AS total_pnl
+            FROM trades
+            WHERE mode = 'live'
+              AND outcome = 'sold'
+              AND ts >= ?
+            """,
+            (since,),
+        )
+        row = cur.fetchone()
+        if row is None:
+            return {
+                "period_days": days, "trade_count": 0, "fee_populated_count": 0,
+                "total_fee_eur": 0.0, "avg_fee_eur": 0.0,
+                "total_size_eur": 0.0, "total_pnl": 0.0,
+            }
+        return {
+            "period_days": days,
+            "trade_count": int(row["trade_count"] or 0),
+            "fee_populated_count": int(row["fee_populated_count"] or 0),
+            "total_fee_eur": float(row["total_fee_eur"] or 0.0),
+            "avg_fee_eur": float(row["avg_fee_eur"] or 0.0),
+            "total_size_eur": float(row["total_size_eur"] or 0.0),
+            "total_pnl": float(row["total_pnl"] or 0.0),
+        }
+
     def get_close_reason_stats(self) -> list[dict]:
         """Return P&L, win rate, count, avg PnL, and worst PnL grouped by close_reason.
 
