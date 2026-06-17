@@ -407,7 +407,8 @@ class TestEntryGates:
                 patch("src.strategy.scanner.SHADOW_STATIONS", {"KMIA"}), \
                 patch("src.strategy.scanner.SHADOW_STATIONS_YES", set()), \
                 patch("src.strategy.scanner.SHADOW_STATIONS_NO", set()), \
-                patch("src.strategy.scanner.MIN_MINUTES_TO_SETTLEMENT", 0):
+                patch("src.strategy.scanner.MIN_MINUTES_TO_SETTLEMENT", 0), \
+                patch("src.strategy.scanner.MODEL_PROB_CAP", 1.0):
             candidates, _ = scan_markets(weather, [market])
 
         # Station is shadowed — candidate is produced but with shadow=True
@@ -422,7 +423,8 @@ class TestEntryGates:
         market = self._miami_market("90-95°F", '["0.20", "0.80"]')
 
         with patch("src.strategy.scanner.MIN_FORECAST_BRACKET_MARGIN_F", 15.0), \
-                patch("src.strategy.scanner.MIN_MINUTES_TO_SETTLEMENT", 0):
+                patch("src.strategy.scanner.MIN_MINUTES_TO_SETTLEMENT", 0), \
+                patch("src.strategy.scanner.MODEL_PROB_CAP", 1.0):
             with caplog.at_level(logging.DEBUG):
                 candidates, _ = scan_markets(weather, [market])
 
@@ -434,7 +436,8 @@ class TestEntryGates:
         weather = {"KMIA": self._weather_state()}
         market = self._miami_market("90-95°F", '["0.20", "0.80"]')
 
-        with patch("src.strategy.scanner.MIN_MINUTES_TO_SETTLEMENT", 0):
+        with patch("src.strategy.scanner.MIN_MINUTES_TO_SETTLEMENT", 0), \
+                patch("src.strategy.scanner.MODEL_PROB_CAP", 1.0):
             with caplog.at_level(logging.DEBUG):
                 candidates, _ = scan_markets(weather, [market])
 

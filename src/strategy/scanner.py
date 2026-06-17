@@ -425,7 +425,10 @@ def scan_markets(
             else:
                 p_yes = true_probability_yes(bracket, state, mins_left)
             raw_p_yes = p_yes
-            p_yes = min(max(p_yes, 1.0 - MODEL_PROB_CAP), MODEL_PROB_CAP)
+            # round() avoids IEEE 754 creep: 1.0-0.95 = 0.050000000000000044
+            # which would silently fail the p_yes <= MAX_CONFIDENCE_YES_FOR_NO=0.05 gate.
+            _cap_lower = round(1.0 - MODEL_PROB_CAP, 10)
+            p_yes = min(max(p_yes, _cap_lower), MODEL_PROB_CAP)
             fee = estimate_fee_cents(min(bracket.yes_ask_cents, bracket.no_ask_cents))
 
             ev_yes = p_yes * 100 - bracket.yes_ask_cents - fee

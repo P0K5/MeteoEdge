@@ -181,7 +181,7 @@ def apply_residual_correction(
     if stats is None:
         return mu_f, None
 
-    correction = stats.clamped_correction
+    correction = max(-max_correction_f, min(max_correction_f, stats.mean_signed_error))
     if correction == 0.0:
         return mu_f, stats
 
