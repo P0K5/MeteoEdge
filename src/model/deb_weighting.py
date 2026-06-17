@@ -18,7 +18,10 @@ blend entirely.  Remaining weights are renormalised to sum to 1.0.  A
 WARNING is logged for each excluded phantom contributor.
 
 When DEB_ENABLED is false (default) or when fewer than MIN_SAMPLES pairs
-exist for any model, equal weights (1/3 each) are returned silently.
+exist for any model, equal weights (0.5 / 0.5 / 0.0) are returned silently.
+The gfs slot carries 0.0 until PR #309 lands the updated compute_deb_mu_f
+that renormalises available inputs; at that point EQUAL_WEIGHTS will be
+updated to 1/3 each.
 """
 import math
 import os
@@ -32,7 +35,7 @@ _REFRESH_CADENCE_H = float(os.getenv("DEB_REFRESH_CADENCE_HOURS", "24"))
 _DECAY_RATE = 0.05  # per day; e^(-0.05*k) weights errors k days ago
 
 MODELS: tuple[str, ...] = ("nws", "open_meteo", "gfs")
-EQUAL_WEIGHTS: dict[str, float] = {m: round(1.0 / len(MODELS), 10) for m in MODELS}
+EQUAL_WEIGHTS: dict[str, float] = {"nws": 0.5, "open_meteo": 0.5, "gfs": 0.0}
 MIN_SAMPLES: int = _MIN_SAMPLES
 
 
@@ -95,7 +98,7 @@ def compute_weights(
 
     # Count raw log rows per model (before filtering against actuals).
     # A model with zero rows in the window is a phantom contributor and must
-    # be excluded from the blend entirely — regardless of MIN_SAMPLES.
+    # be excluded from the blend entirely -- regardless of MIN_SAMPLES.
     raw_row_counts: dict[str, int] = {m: 0 for m in MODELS}
     for row in log_rows:
         m = row.get("model")
@@ -123,7 +126,7 @@ def compute_weights(
         )
         return dict(EQUAL_WEIGHTS), _zero_rmse
 
-    # Group (days_ago, abs_error) pairs by model — only for active models.
+    # Group (days_ago, abs_error) pairs by model -- only for active models.
     errors: dict[str, list[tuple[int, float]]] = {m: [] for m in active_models}
     today = date_cls.today()
     for row in log_rows:
