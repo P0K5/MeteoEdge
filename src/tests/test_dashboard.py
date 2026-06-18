@@ -173,6 +173,19 @@ class TestStatusEndpoint:
 class TestShadowModeFiltering:
     """Test that shadow mode trades are excluded from live metrics."""
 
+    @pytest.fixture(autouse=True)
+    def _isolate_db(self):
+        """Force the JSONL fallback path: _dashboard_load_trades() prefers the
+        DB when ``dash_api._db`` is set, which would bypass the LIVE_TRADES_JSONL
+        patch these tests rely on.  Reset to None for the duration of each test.
+        """
+        original = dash_api._db
+        dash_api._db = None
+        try:
+            yield
+        finally:
+            dash_api._db = original
+
     def test_dashboard_load_trades_excludes_shadow(self, tmp_path):
         """_dashboard_load_trades() must filter out shadow rows."""
         today = _today()
