@@ -28,18 +28,7 @@ def main() -> None:
     args = parser.parse_args()
 
     db = Database(args.db_path)
-    cur = db._conn.execute(
-        """
-        SELECT id, order_id, actual_price, size_eur
-        FROM trades
-        WHERE mode = 'live'
-          AND outcome = 'sold'
-          AND actual_fee_cents IS NULL
-          AND order_id IS NOT NULL
-        ORDER BY ts ASC
-        """
-    )
-    rows = cur.fetchall()
+    rows = db.get_trades_missing_fee_costs()
 
     if not rows:
         print("[backfill_trade_costs] nothing to backfill — all live closed trades have actual_fee_cents")

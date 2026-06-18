@@ -2,7 +2,7 @@
 import os
 import sqlite3
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 _DEFAULT_PATH = os.getenv("DB_PATH", "data/meteoedge.db")
@@ -1272,10 +1272,7 @@ class Database:
             Dict with keys 'cap_events', 'correction_events', each containing
             {'total': int, 'last_7d': int, 'avg_delta': float}.
         """
-        cutoff = (
-            __import__("datetime").datetime.now(__import__("datetime").timezone.utc)
-            - __import__("datetime").timedelta(days=7)
-        ).isoformat()
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
 
         def _query(event_type: str) -> dict:
             row_total = self._conn.execute(
@@ -1296,6 +1293,56 @@ class Database:
             "cap_events": _query("cap_applied"),
             "correction_events": _query("correction_applied"),
         }
+
+    def get_forced_exit_stats(self, cutoff_7d: str) -> dict:
+        """Return forced-exit trade counts: total, last_7d, and by_station dict."""
+        total_row = self._conn.execute(
+            "SELECT COUNT(*) FROM trades WHERE close_reason='forced_exit'"
+        ).fetchone()
+        seven_day_row = self._conn.execute(
+            "SELECT COUNT(*) FROM trades WHERE close_reason='forced_exit' AND ts>=?",
+            (cutoff_7d,),
+        ).fetchone()
+        by_station_rows = self._conn.execute(
+            "SELECT station, COUNT(*) FROM trades WHERE close_reason='forced_exit' GROUP BY station"
+        ).fetchall()
+        return {
+            "total": int(total_row[0] or 0),
+            "last_7d": int(seven_day_row[0] or 0),
+            "by_station": {r[0]: int(r[1]) for r in by_station_rows},
+        }
+
+    def get_emos_shadow_city_status(self, city: str) -> dict:
+        """Return EMOS shadow status for a single city: mean_crps and latest deb_weights."""
+        crps_row = self._conn.execute(
+            "SELECT AVG(crps_score) FROM emos_crps_log WHERE city=?", (city,)
+        ).fetchone()
+        deb_row = self._conn.execute(
+            "SELECT weights_json FROM deb_weight_log WHERE city=? ORDER BY logged_at DESC LIMIT 1",
+            (city,),
+        ).fetchone()
+        return {
+            "mean_crps": float(crps_row[0]) if crps_row and crps_row[0] is not None else None,
+            "deb_weights_snapshot": deb_row[0] if deb_row else None,
+        }
+
+    def get_trades_missing_fee_costs(self) -> list:
+        """Return live closed trades where actual_fee_cents is NULL.
+
+        Used by backfill_trade_costs.py. Each row has: id, order_id, actual_price, size_eur.
+        """
+        cur = self._conn.execute(
+            """
+            SELECT id, order_id, actual_price, size_eur
+            FROM trades
+            WHERE mode = 'live'
+              AND outcome = 'sold'
+              AND actual_fee_cents IS NULL
+              AND order_id IS NOT NULL
+            ORDER BY ts ASC
+            """
+        )
+        return cur.fetchall()
 
     # ------------------------------------------------------------------
     # bot_config
