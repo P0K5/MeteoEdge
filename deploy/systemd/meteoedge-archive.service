@@ -1,0 +1,14 @@
+[Unit]
+Description=MeteoEdge daily archival
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=p0k5
+WorkingDirectory=/home/p0k5/MeteoEdge
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=/home/p0k5/MeteoEdge/.env
+ExecStart=/home/p0k5/MeteoEdge/.venv/bin/python -u -m src.scripts.archive_snapshots
+StandardOutput=append:/home/p0k5/MeteoEdge/logs/archive.log
+StandardError=append:/home/p0k5/MeteoEdge/logs/archive.log
