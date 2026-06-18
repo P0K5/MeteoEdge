@@ -11,7 +11,6 @@ Covers:
 - MAE gate integration in scanner: NO candidate forced to shadow when suppressed
 """
 import os
-from datetime import date, timedelta
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -20,7 +19,7 @@ from src.model.residual_correction import (
     ResidualStats,
     apply_residual_correction,
     compute_residual_stats,
-    _query_trailing_deltas,
+    compute_residual_stats_per_pair,
 )
 
 
@@ -437,7 +436,7 @@ class TestScannerMaeGate:
     def _make_scanner_inputs(self):
         """Build minimal weather, markets, and db objects for a NO scan."""
         from datetime import datetime, timezone, timedelta
-        from src.model.envelope import Bracket, WeatherState
+        from src.model.envelope import WeatherState
 
         now = datetime.now(timezone.utc)
         end_time = (now + timedelta(hours=3)).isoformat()
@@ -552,3 +551,188 @@ class TestScannerMaeGate:
         # is determined by ENABLE_YES_TRADES and yes_enabled, not MAE.
         # Just verify the gate doesn't crash when YES candidates are present.
         _ = yes_candidates  # No assertion on shadow — YES has its own logic
+
+
+# ---------------------------------------------------------------------------
+# Test: scope field and pair-scoped logic (issue #340)
+# ---------------------------------------------------------------------------
+
+def _enable_residual():
+    """Context manager helper: set RESIDUAL_CORRECTION_ENABLED = True."""
+    import src.model.residual_correction as rc_mod
+    orig = rc_mod.RESIDUAL_CORRECTION_ENABLED
+    rc_mod.RESIDUAL_CORRECTION_ENABLED = True
+    return rc_mod, orig
+
+
+class TestResidualStatsScopeField:
+    """Ensure ResidualStats has the new scope/station/source fields."""
+
+    def test_default_scope_city_fallback(self):
+        """Default scope is city_fallback."""
+        stats = ResidualStats(
+            city="Busan",
+            mean_signed_error=1.0,
+            rolling_mae=1.5,
+            sample_count=10,
+            correction_applied=True,
+            live_suppressed=False,
+        )
+        assert stats.scope == "city_fallback"
+        assert stats.station == ""
+        assert stats.source == ""
+
+    def test_pair_scope(self):
+        """Setting scope='pair' with station+source is preserved."""
+        stats = ResidualStats(
+            city="Busan",
+            mean_signed_error=1.0,
+            rolling_mae=1.5,
+            sample_count=10,
+            correction_applied=True,
+            live_suppressed=False,
+            scope="pair",
+            station="Busan",
+            source="amos",
+        )
+        assert stats.scope == "pair"
+        assert stats.station == "Busan"
+        assert stats.source == "amos"
+
+
+class TestComputeResidualStatsPairScoped:
+    """compute_residual_stats uses top-priority pair when it has enough samples."""
+
+    def _make_db_pair(self, city_deltas, pair_deltas, pair_station="Busan", pair_source="amos"):
+        """Return a mock DB that returns different deltas based on station/source filters."""
+        mock_db = MagicMock()
+
+        def _get_trailing_deltas(city, window_days, *, station=None, source=None):
+            if station == pair_station and source == pair_source:
+                return list(pair_deltas)
+            return list(city_deltas)
+
+        mock_db.get_trailing_deltas.side_effect = _get_trailing_deltas
+        return mock_db
+
+    def test_uses_pair_scope_when_pair_has_enough_samples(self):
+        """When top-priority pair has >= min_samples, scope='pair'."""
+        rc_mod, orig = _enable_residual()
+        try:
+            db = self._make_db_pair(city_deltas=[1.0] * 20, pair_deltas=[2.0] * 15)
+            with patch("src.model.residual_correction._get_top_priority_pair",
+                       return_value=("Busan", "amos")):
+                stats = compute_residual_stats("Busan", db, min_samples=10)
+            assert stats is not None
+            assert stats.scope == "pair"
+            assert stats.station == "Busan"
+            assert stats.source == "amos"
+            assert stats.sample_count == 15
+        finally:
+            rc_mod.RESIDUAL_CORRECTION_ENABLED = orig
+
+    def test_falls_back_to_city_when_pair_insufficient(self):
+        """When pair has < min_samples, falls back to city-wide with scope='city_fallback'."""
+        rc_mod, orig = _enable_residual()
+        try:
+            # pair has only 5 rows, city-wide has 20
+            db = self._make_db_pair(city_deltas=[1.0] * 20, pair_deltas=[2.0] * 5)
+            with patch("src.model.residual_correction._get_top_priority_pair",
+                       return_value=("Busan", "amos")):
+                stats = compute_residual_stats("Busan", db, min_samples=10)
+            assert stats is not None
+            assert stats.scope == "city_fallback"
+            assert stats.station == ""
+            assert stats.source == ""
+            assert stats.sample_count == 20
+        finally:
+            rc_mod.RESIDUAL_CORRECTION_ENABLED = orig
+
+    def test_no_top_pair_falls_back_to_city(self):
+        """When get_source_priority returns nothing, city-wide fallback applies."""
+        rc_mod, orig = _enable_residual()
+        try:
+            db = _make_db_with_deltas([3.0] * 15)
+            with patch("src.model.residual_correction._get_top_priority_pair",
+                       return_value=None):
+                stats = compute_residual_stats("Busan", db, min_samples=10)
+            assert stats is not None
+            assert stats.scope == "city_fallback"
+        finally:
+            rc_mod.RESIDUAL_CORRECTION_ENABLED = orig
+
+
+class TestComputeResidualStatsPerPair:
+    """compute_residual_stats_per_pair returns one entry per qualified pair."""
+
+    def _make_db_with_pairs(self, pairs_data):
+        """pairs_data: list of (station, source, [delta_f, ...])."""
+        mock_db = MagicMock()
+
+        # Simulate DISTINCT station/source query
+        mock_db._conn.execute.return_value.fetchall.return_value = [
+            (station, source) for station, source, _ in pairs_data
+        ]
+
+        def _get_trailing_deltas(city, window_days, *, station=None, source=None):
+            for s, src, deltas in pairs_data:
+                if s == station and src == source:
+                    return list(deltas)
+            return []
+
+        mock_db.get_trailing_deltas.side_effect = _get_trailing_deltas
+        return mock_db
+
+    def test_returns_one_entry_per_pair(self):
+        """One ResidualStats per (station, source) pair with sufficient samples."""
+        rc_mod, orig = _enable_residual()
+        try:
+            pairs_data = [
+                ("Busan", "amos", [2.0] * 15),
+                ("RKPK", "metar", [1.0] * 12),
+            ]
+            db = self._make_db_with_pairs(pairs_data)
+            results = compute_residual_stats_per_pair("Busan", db, min_samples=10)
+            assert len(results) == 2
+            sources = {r.source for r in results}
+            assert sources == {"amos", "metar"}
+        finally:
+            rc_mod.RESIDUAL_CORRECTION_ENABLED = orig
+
+    def test_excludes_pairs_below_min_samples(self):
+        """Pairs with < min_samples are excluded from results."""
+        rc_mod, orig = _enable_residual()
+        try:
+            pairs_data = [
+                ("Busan", "amos", [2.0] * 15),
+                ("RKPK", "metar", [1.0] * 3),  # below min_samples=10
+            ]
+            db = self._make_db_with_pairs(pairs_data)
+            results = compute_residual_stats_per_pair("Busan", db, min_samples=10)
+            assert len(results) == 1
+            assert results[0].source == "amos"
+        finally:
+            rc_mod.RESIDUAL_CORRECTION_ENABLED = orig
+
+    def test_returns_empty_when_disabled(self):
+        """Returns empty list when feature is disabled."""
+        rc_mod, orig = _enable_residual()
+        rc_mod.RESIDUAL_CORRECTION_ENABLED = False
+        try:
+            db = MagicMock()
+            results = compute_residual_stats_per_pair("Busan", db)
+            assert results == []
+        finally:
+            rc_mod.RESIDUAL_CORRECTION_ENABLED = orig
+
+    def test_scope_is_pair(self):
+        """All entries returned by per_pair have scope='pair'."""
+        rc_mod, orig = _enable_residual()
+        try:
+            pairs_data = [("Busan", "amos", [2.0] * 15)]
+            db = self._make_db_with_pairs(pairs_data)
+            results = compute_residual_stats_per_pair("Busan", db, min_samples=10)
+            assert len(results) == 1
+            assert results[0].scope == "pair"
+        finally:
+            rc_mod.RESIDUAL_CORRECTION_ENABLED = orig

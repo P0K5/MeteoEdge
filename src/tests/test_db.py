@@ -452,6 +452,184 @@ class TestIntradayCorrectionTable:
 
 
 # ---------------------------------------------------------------------------
+# Intraday corrections — station/source schema and migration
+# ---------------------------------------------------------------------------
+
+class TestIntradayCorrectionsMigration:
+    """Tests for the station/source migration of intraday_corrections."""
+
+    def test_fresh_schema_has_station_and_source_columns(self):
+        """New DB must have station and source columns in intraday_corrections."""
+        db = _db()
+        cur = db._conn.execute("PRAGMA table_info(intraday_corrections)")
+        col_names = {row[1] for row in cur.fetchall()}
+        assert "station" in col_names, "station column missing from intraday_corrections"
+        assert "source" in col_names, "source column missing from intraday_corrections"
+
+    def test_fresh_schema_pk_includes_station_and_source(self):
+        """PK columns in fresh DB must include city, station, source, date, obs_time."""
+        db = _db()
+        cur = db._conn.execute("PRAGMA table_info(intraday_corrections)")
+        pk_cols = {row[1] for row in cur.fetchall() if row[5] > 0}  # row[5] is pk position
+        assert "city" in pk_cols
+        assert "station" in pk_cols
+        assert "source" in pk_cols
+        assert "date" in pk_cols
+        assert "obs_time" in pk_cols
+
+    def test_upsert_with_station_source_round_trip(self):
+        """upsert_intraday_correction with station+source, get_intraday_corrections preserves them."""
+        db = _db()
+        db.upsert_intraday_correction(
+            city="Busan",
+            station="Busan",
+            source="amos",
+            date="2024-06-01",
+            obs_time="2024-06-01T08:00:00+00:00",
+            obs_temp_f=70.0,
+            model_temp_f=68.0,
+            delta_f=2.0,
+            corrected_mu_f=82.0,
+            decay_factor=0.9,
+        )
+        rows = db.get_intraday_corrections("Busan", "2024-06-01")
+        assert len(rows) == 1
+        r = rows[0]
+        assert r["station"] == "Busan"
+        assert r["source"] == "amos"
+        assert r["delta_f"] == pytest.approx(2.0)
+
+    def test_pk_uniqueness_different_station_source(self):
+        """Two rows with same (city, date, obs_time) but different (station, source) coexist."""
+        db = _db()
+        base = dict(
+            city="Busan", date="2024-06-01",
+            obs_time="2024-06-01T08:00:00+00:00",
+            obs_temp_f=70.0, model_temp_f=68.0,
+            delta_f=2.0, corrected_mu_f=82.0, decay_factor=0.9,
+        )
+        db.upsert_intraday_correction(**base, station="Busan", source="amos")
+        db.upsert_intraday_correction(**base, station="RKPK", source="metar")
+        rows = db.get_intraday_corrections("Busan", "2024-06-01")
+        assert len(rows) == 2, "Expected two distinct rows for different (station, source)"
+
+    def test_upsert_replaces_on_same_pk(self):
+        """Upserting same (city, station, source, date, obs_time) replaces the row."""
+        db = _db()
+        base = dict(
+            city="Busan", station="Busan", source="amos",
+            date="2024-06-01", obs_time="2024-06-01T08:00:00+00:00",
+            obs_temp_f=70.0, model_temp_f=68.0, corrected_mu_f=82.0, decay_factor=0.9,
+        )
+        db.upsert_intraday_correction(**base, delta_f=2.0)
+        db.upsert_intraday_correction(**base, delta_f=3.5)
+        rows = db.get_intraday_corrections("Busan", "2024-06-01")
+        assert len(rows) == 1
+        assert rows[0]["delta_f"] == pytest.approx(3.5)
+
+    def test_get_intraday_corrections_for_pair(self):
+        """get_intraday_corrections_for_pair filters by (city, station, source)."""
+        db = _db()
+        base = dict(
+            date="2024-06-01", obs_time="2024-06-01T08:00:00+00:00",
+            obs_temp_f=70.0, model_temp_f=68.0, delta_f=2.0,
+            corrected_mu_f=82.0, decay_factor=0.9,
+        )
+        db.upsert_intraday_correction(city="Busan", station="Busan", source="amos", **base)
+        db.upsert_intraday_correction(city="Busan", station="RKPK", source="metar", **base)
+
+        rows = db.get_intraday_corrections_for_pair("Busan", "Busan", "amos", "2024-01-01")
+        assert len(rows) == 1
+        assert rows[0]["source"] == "amos"
+
+    def test_get_trailing_deltas_with_station_source_filter(self):
+        """get_trailing_deltas with station+source returns only matching rows."""
+        db = _db()
+        from datetime import date
+        today = date.today().isoformat()
+        base = dict(
+            date=today, obs_time=f"{today}T08:00:00+00:00",
+            obs_temp_f=70.0, model_temp_f=68.0,
+            corrected_mu_f=82.0, decay_factor=0.9,
+        )
+        db.upsert_intraday_correction(
+            city="Busan", station="Busan", source="amos", delta_f=2.0, **base
+        )
+        db.upsert_intraday_correction(
+            city="Busan", station="RKPK", source="metar", delta_f=5.0, **base
+        )
+
+        amos_deltas = db.get_trailing_deltas("Busan", 30, station="Busan", source="amos")
+        assert amos_deltas == [pytest.approx(2.0)]
+
+        metar_deltas = db.get_trailing_deltas("Busan", 30, station="RKPK", source="metar")
+        assert metar_deltas == [pytest.approx(5.0)]
+
+        all_deltas = db.get_trailing_deltas("Busan", 30)
+        assert len(all_deltas) == 2
+
+    def test_migration_old_schema_adds_station_source(self):
+        """Migration converts old (city, date, obs_time) PK to new 5-column PK."""
+        import sqlite3
+        import tempfile
+        import os
+
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tf:
+            path = tf.name
+
+        try:
+            # Build an old-schema DB directly (no station/source columns)
+            conn = sqlite3.connect(path)
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("""
+                CREATE TABLE intraday_corrections (
+                    city           TEXT NOT NULL,
+                    date           TEXT NOT NULL,
+                    obs_time       TEXT NOT NULL,
+                    obs_temp_f     REAL NOT NULL,
+                    model_temp_f   REAL NOT NULL,
+                    delta_f        REAL NOT NULL,
+                    corrected_mu_f REAL NOT NULL,
+                    decay_factor   REAL NOT NULL,
+                    PRIMARY KEY (city, date, obs_time)
+                )
+            """)
+            conn.execute("""
+                INSERT INTO intraday_corrections
+                    (city, date, obs_time, obs_temp_f, model_temp_f, delta_f, corrected_mu_f, decay_factor)
+                VALUES ('Busan', '2024-06-01', '2024-06-01T08:00:00+00:00',
+                        70.0, 68.0, 2.0, 82.0, 0.9)
+            """)
+            conn.commit()
+            conn.close()
+
+            # Now open with Database() which should run the migration
+            db = Database(path)
+
+            try:
+                # Check new columns exist
+                cur = db._conn.execute("PRAGMA table_info(intraday_corrections)")
+                col_names = {row[1] for row in cur.fetchall()}
+                assert "station" in col_names
+                assert "source" in col_names
+
+                # Check data was preserved with empty station/source
+                rows = db.get_intraday_corrections("Busan", "2024-06-01")
+                assert len(rows) == 1
+                assert rows[0]["station"] == ""
+                assert rows[0]["source"] == ""
+                assert rows[0]["delta_f"] == pytest.approx(2.0)
+            finally:
+                db.close()
+        finally:
+            for fname in [path] + [path + ext for ext in ("-wal", "-shm")]:
+                try:
+                    os.unlink(fname)
+                except (FileNotFoundError, PermissionError):
+                    pass
+
+
+# ---------------------------------------------------------------------------
 # EMOS calibration
 # ---------------------------------------------------------------------------
 

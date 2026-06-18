@@ -205,7 +205,9 @@ All three keys are DB-backed (editable via the dashboard Config tab or `PATCH /a
 
 ### Residual Bias Correction
 
-Per-city rolling bias correction derived from `intraday_corrections.delta_f` (observed − model). Controlled entirely by env vars; DB-backed via `CONFIG_DEFAULTS`.
+Per-city rolling bias correction derived from `intraday_corrections.delta_f` (observed − model). As of issue #340, the residual correction module is **pair-scoped**: it first tries to compute stats from the top-priority `(station, source)` pair for the city (per `source_priority.yaml`). If that pair has fewer than `RESIDUAL_MIN_SAMPLES` rows in the trailing window, it falls back to city-wide aggregation. The `ResidualStats.scope` field indicates which path was taken (`"pair"` or `"city_fallback"`).
+
+Controlled entirely by env vars; DB-backed via `CONFIG_DEFAULTS`.
 
 | Variable | Default | Unit | Description | Requires Credentials |
 |----------|---------|------|-------------|----------------------|
@@ -214,6 +216,25 @@ Per-city rolling bias correction derived from `intraday_corrections.delta_f` (ob
 | `RESIDUAL_MIN_SAMPLES` | 10 | count | Minimum rows before bias is applied (too few = noise) | No |
 | `RESIDUAL_MAX_CORRECTION_F` | 5.0 | °F | Hard clamp on applied bias — correction is clamped to ±this value | No |
 | `MAX_RESIDUAL_MAE_F_FOR_LIVE` | 8.0 | °F | Rolling MAE above this suppresses live NO entries for that city (forces shadow) | No |
+
+#### Per-Station Residual API
+
+`GET /api/stations/{metar}/residual` returns a list of residual stats entries, one per distinct `(station, source)` pair that has qualified data (≥ `RESIDUAL_MIN_SAMPLES` rows) in the trailing `RESIDUAL_WINDOW_DAYS`. Each entry includes:
+
+| Field | Description |
+|-------|-------------|
+| `station` | Station identifier (e.g. `"Busan"`, `"RKPK"`) |
+| `source` | Data source (e.g. `"amos"`, `"metar"`) |
+| `mean_signed_error` | Mean bias in °F (positive = warm bias) |
+| `rolling_mae` | Rolling MAE in °F |
+| `sample_count` | Number of delta_f rows used |
+| `clamped_correction` | Correction actually applied, clamped to ±`RESIDUAL_MAX_CORRECTION_F` |
+| `correction_applied` | True when clamped correction is non-zero |
+| `live_suppressed` | True when MAE exceeds `MAX_RESIDUAL_MAE_F_FOR_LIVE` |
+| `last_obs_time` | ISO timestamp of the most recent obs for this pair (last 30 days) |
+| `scope` | Always `"pair"` for this endpoint |
+
+Returns 404 when the METAR is not in the STATIONS config.
 
 ### Risk Management
 

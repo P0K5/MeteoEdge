@@ -127,13 +127,15 @@ def compute_correction(
     now_utc = datetime.now(timezone.utc)
 
     # --- Fetch observation ---
+    src_cfg: "dict | None" = None
     if obs is None:
         sources = get_source_priority(city)
-        for src_cfg in sources:
-            candidate = db.get_latest_observation(src_cfg["source"], src_cfg["station"])
+        for _src_cfg in sources:
+            candidate = db.get_latest_observation(_src_cfg["source"], _src_cfg["station"])
             if candidate is not None:
                 obs = candidate
-                cadence_min = src_cfg.get("cadence_min")
+                src_cfg = _src_cfg
+                cadence_min = _src_cfg.get("cadence_min")
                 break
         else:
             return None
@@ -193,6 +195,8 @@ def compute_correction(
     obs_time_str = obs_dt.isoformat()
     db.upsert_intraday_correction(
         city=city,
+        station=src_cfg["station"] if src_cfg else "",
+        source=src_cfg["source"] if src_cfg else "",
         date=date_str,
         obs_time=obs_time_str,
         obs_temp_f=obs_temp_f,
