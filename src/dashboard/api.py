@@ -180,7 +180,7 @@ def _compute_win_rate(trades: list[dict], n: int = 50) -> float:
     """
     settled = [
         t for t in trades
-        if t.get("mode") != "shadow" and t.get("outcome") == "filled" and float(t.get("pnl") or 0) != 0.0
+        if t.get("mode") != "shadow" and t.get("outcome") in ("filled", "sold") and float(t.get("pnl") or 0) != 0.0
     ][:n]
     if not settled:
         return 0.0
@@ -968,7 +968,7 @@ def stations() -> dict[str, Any]:
 
     result: dict[str, Any] = {}
     for station, station_trades in sorted(by_station.items()):
-        filled = [t for t in station_trades if t.get("outcome") == "filled"]
+        filled = [t for t in station_trades if t.get("outcome") in ("filled", "sold")]
         wins = sum(1 for t in filled if float(t.get("pnl", 0)) > 0)
         win_rate = wins / len(filled) if filled else 0.0
         # Exclude shadow rows from total_pnl
@@ -1366,8 +1366,8 @@ def _build_perf_quadrant(trades: list[dict]) -> PerfQuadrantOut:
 
     total_pnl = sum(float(t.get("pnl") or 0.0) for t in trades)
 
-    # win_rate: fraction of settled trades (outcome='filled' and pnl != 0) where pnl > 0
-    settled = [t for t in trades if t.get("outcome") == "filled" and float(t.get("pnl") or 0.0) != 0.0]
+    # win_rate: fraction of settled trades (outcome='filled'/'sold' and pnl != 0) where pnl > 0
+    settled = [t for t in trades if t.get("outcome") in ("filled", "sold") and float(t.get("pnl") or 0.0) != 0.0]
     if settled:
         wins = sum(1 for t in settled if float(t.get("pnl") or 0.0) > 0)
         win_rate: float | None = wins / len(settled)

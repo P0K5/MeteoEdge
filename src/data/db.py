@@ -1133,8 +1133,8 @@ class Database:
             SELECT
                 station,
                 COUNT(*)                                                                        AS trade_count,
-                SUM(CASE WHEN outcome='filled' AND COALESCE(pnl,0) != 0 THEN 1 ELSE 0 END)    AS filled_count,
-                SUM(CASE WHEN outcome='filled' AND pnl > 0 THEN 1 ELSE 0 END)                  AS win_count,
+                SUM(CASE WHEN outcome IN ('filled','sold') AND COALESCE(pnl,0) != 0 THEN 1 ELSE 0 END)    AS filled_count,
+                SUM(CASE WHEN outcome IN ('filled','sold') AND pnl > 0 THEN 1 ELSE 0 END)                  AS win_count,
                 SUM(COALESCE(pnl, 0))                                                           AS total_pnl,
                 MAX(ts)                                                                         AS last_trade_ts
             FROM trades
