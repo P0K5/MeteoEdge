@@ -149,3 +149,87 @@ class TestArchiveDatabase:
         assert not hasattr(mod, "Database"), (
             "archive_db must not re-export the trading Database class"
         )
+
+
+class TestQueryHelpers:
+    """Tests for get_snapshot_series and get_position_snapshot_series."""
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    def _make_snap(self, ts: str, station: str, ticker: str) -> dict:
+        return {**_SNAP_ROW, "ts": ts, "station": station, "ticker": ticker}
+
+    def _make_pos_snap(self, ts: str, ticker: str, no_token_id: str) -> dict:
+        return {**_POS_SNAP_ROW, "ts": ts, "ticker": ticker, "no_token_id": no_token_id}
+
+    # ------------------------------------------------------------------
+    # get_snapshot_series
+    # ------------------------------------------------------------------
+
+    def test_get_snapshot_series_returns_ordered_rows(self, tmp_path):
+        """Seed 3 KORD rows + 1 KMSP; query returns exactly 3 KORD rows in ts order."""
+        db_path = tmp_path / "analytics.db"
+        rows = [
+            self._make_snap("2026-06-15T08:00:00+00:00", "KORD", "TICKER-A"),
+            self._make_snap("2026-06-15T10:00:00+00:00", "KORD", "TICKER-B"),
+            self._make_snap("2026-06-15T12:00:00+00:00", "KORD", "TICKER-C"),
+            self._make_snap("2026-06-15T09:00:00+00:00", "KMSP", "TICKER-D"),
+        ]
+        with ArchiveDatabase(db_path) as db:
+            db.insert_snapshots(rows)
+            result = db.get_snapshot_series("KORD", "2026-06-15")
+        assert len(result) == 3
+        assert [r["ts"] for r in result] == [
+            "2026-06-15T08:00:00+00:00",
+            "2026-06-15T10:00:00+00:00",
+            "2026-06-15T12:00:00+00:00",
+        ]
+        assert all(r["station"] == "KORD" for r in result)
+
+    def test_get_snapshot_series_empty_for_unknown(self, tmp_path):
+        """Returns [] for a station that has no data."""
+        db_path = tmp_path / "analytics.db"
+        with ArchiveDatabase(db_path) as db:
+            result = db.get_snapshot_series("KXYZ", "2026-06-15")
+        assert result == []
+
+    def test_get_snapshot_series_date_boundary(self, tmp_path):
+        """Rows from 2026-06-16 are NOT returned when querying 2026-06-15."""
+        db_path = tmp_path / "analytics.db"
+        rows = [
+            self._make_snap("2026-06-15T23:00:00+00:00", "KORD", "TICKER-A"),
+            self._make_snap("2026-06-16T00:00:00+00:00", "KORD", "TICKER-B"),
+        ]
+        with ArchiveDatabase(db_path) as db:
+            db.insert_snapshots(rows)
+            result = db.get_snapshot_series("KORD", "2026-06-15")
+        assert len(result) == 1
+        assert result[0]["ts"] == "2026-06-15T23:00:00+00:00"
+
+    # ------------------------------------------------------------------
+    # get_position_snapshot_series
+    # ------------------------------------------------------------------
+
+    def test_get_position_snapshot_series_returns_ordered_rows(self, tmp_path):
+        """Seed 2 position snapshots for a ticker; assert returns 2 in ts order."""
+        db_path = tmp_path / "analytics.db"
+        ticker = "HIGH-TEMP-KORD-2026-06-15-90-94"
+        rows = [
+            self._make_pos_snap("2026-06-15T14:00:00+00:00", ticker, "tok-1"),
+            self._make_pos_snap("2026-06-15T16:00:00+00:00", ticker, "tok-2"),
+        ]
+        with ArchiveDatabase(db_path) as db:
+            db.insert_position_snapshots(rows)
+            result = db.get_position_snapshot_series(ticker, "2026-06-15")
+        assert len(result) == 2
+        assert result[0]["ts"] == "2026-06-15T14:00:00+00:00"
+        assert result[1]["ts"] == "2026-06-15T16:00:00+00:00"
+
+    def test_get_position_snapshot_series_empty(self, tmp_path):
+        """Returns [] for a ticker with no data."""
+        db_path = tmp_path / "analytics.db"
+        with ArchiveDatabase(db_path) as db:
+            result = db.get_position_snapshot_series("UNKNOWN-TICKER", "2026-06-15")
+        assert result == []

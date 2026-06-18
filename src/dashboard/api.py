@@ -14,6 +14,7 @@ Endpoints:
     GET /api/positions/{token_id}/snapshots — per-position price/model snapshots
     POST /api/positions/{token_id}/sell — operator-triggered immediate sell of a position
     POST /api/stations/{metar}/toggle — toggle station enable/disable (DB-persisted)
+    GET /analytics/intraday — intra-day snapshot series for station × date from analytics.db
     GET /               — serves static/index.html (mounted last)
 
 Data source (priority order):
@@ -60,6 +61,7 @@ from src.model.residual_correction import (
     compute_residual_stats,
     compute_residual_stats_per_pair,
 )
+from src.data.archive_db import ArchiveDatabase
 from src.data.db import Database
 from src.data.nws import fetch_nws_forecast_high
 from src.data.polymarket import get_orderbook
@@ -1536,6 +1538,21 @@ def position_snapshots(token_id: str) -> list[dict]:
     except OSError as e:
         logger.warning("position_snapshots.jsonl read error: %s", e)
     return result
+
+
+@app.get("/analytics/intraday")
+def analytics_intraday(station: str, date: str) -> list[dict]:
+    """Return the intra-day snapshot series for *station* × *date* from analytics.db.
+
+    Query params:
+        station: METAR code (e.g. KORD)
+        date: ISO date YYYY-MM-DD (e.g. 2026-06-15)
+
+    Returns [] when no data exists for the requested station/date (200, not 404).
+    Sources data exclusively from data/analytics.db via ArchiveDatabase.
+    """
+    with ArchiveDatabase() as db:
+        return db.get_snapshot_series(station, date)
 
 
 @app.get("/api/weather-health")
