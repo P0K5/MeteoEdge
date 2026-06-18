@@ -459,6 +459,99 @@ CREATE TABLE IF NOT EXISTS station_overrides (
 
 ---
 
+## Analytics Database (data/analytics.db)
+
+**Purpose:** Durable, queryable archive of intra-day snapshot telemetry (EPIC #345). Isolated from the live trading database (data/meteoedge.db). Managed by `src/data/archive_db.py` and updated daily via `src/scripts/archive_snapshots.py`.
+
+### snapshot_archive
+
+Stores scanner snapshots at each poll cycle. One row per (ts, ticker) pair.
+
+| Column | Type | Nullable | Description |
+|--------|------|----------|---------|
+| `ts` | TEXT | No | ISO 8601 timestamp (poll cycle time, UTC) |
+| `station` | TEXT | No | METAR station code |
+| `ticker` | TEXT | No | Polymarket market ticker |
+| `bracket_low` | REAL | Yes | Bracket lower boundary (°F or °C) |
+| `bracket_high` | REAL | Yes | Bracket upper boundary |
+| `yes_ask` | INTEGER | Yes | Market ask price for YES side (cents) |
+| `no_ask` | INTEGER | Yes | Market ask price for NO side (cents) |
+| `current_high` | REAL | Yes | Running daily high temperature |
+| `latest_temp` | REAL | Yes | Most recent observation temperature |
+| `forecast_high` | REAL | Yes | Ensemble forecast high (blended) |
+| `p_yes` | REAL | Yes | Model probability of bracket hit [0,1] |
+| `raw_p_yes` | REAL | Yes | P(YES) before clipping |
+| `capped_p_yes` | REAL | Yes | P(YES) after clipping |
+| `ev_yes` | REAL | Yes | Expected value for YES entry (fair - market) |
+| `ev_no` | REAL | Yes | Expected value for NO entry |
+| `minutes_to_settlement` | REAL | Yes | Time until market closes |
+| `emos_mode` | TEXT | Yes | EMOS calibration mode in effect |
+
+**Unique Constraint:**
+```sql
+UNIQUE(ts, ticker)
+```
+
+**Indexes:**
+```sql
+CREATE INDEX idx_sa_station_ts ON snapshot_archive(station, ts);
+CREATE INDEX idx_sa_ticker_ts ON snapshot_archive(ticker, ts);
+```
+
+**Writer:** ETL script (src/scripts/archive_snapshots.py)  
+**Reader:** Dashboard, historical analysis, backtesting
+
+**Notes:**
+- Snapshots are logged by run.py every poll cycle to `logs/snapshots.jsonl` (JSONL files retained 30 days)
+- ETL ingests to this table daily (scheduled at 12:30 UTC via systemd timer)
+- Idempotent via INSERT OR IGNORE + high-water-mark filtering
+
+### position_snapshot_archive
+
+Stores snapshots of open positions at each poll cycle. One row per (ts, no_token_id) pair.
+
+| Column | Type | Nullable | Description |
+|--------|------|----------|---------|
+| `ts` | TEXT | No | Poll timestamp (UTC) |
+| `ticker` | TEXT | Yes | Market ticker |
+| `no_token_id` | TEXT | No | Unique position identifier (NO token contract address) |
+| `station` | TEXT | Yes | Station code |
+| `bracket_low` | REAL | Yes | Bracket lower boundary |
+| `bracket_high` | REAL | Yes | Bracket upper boundary |
+| `entry_price` | INTEGER | Yes | Entry fill price (cents) |
+| `predicted_price` | INTEGER | Yes | Fair value at snapshot time |
+| `current_high` | REAL | Yes | Running daily high |
+| `latest_temp` | REAL | Yes | Latest observation |
+| `forecast_nws` | REAL | Yes | NWS forecast high |
+| `forecast_secondary` | REAL | Yes | Secondary forecast (Open Meteo, etc.) |
+| `no_best_bid` | INTEGER | Yes | Current best bid for NO side |
+| `no_best_bid_size` | REAL | Yes | Bid-side depth (shares) |
+| `no_best_ask` | INTEGER | Yes | Current best ask for NO side |
+| `p_yes_now` | REAL | Yes | Model probability at snapshot time |
+| `fair_value_now` | INTEGER | Yes | Fair value at snapshot time (cents) |
+| `weather_missing` | INTEGER | Yes | Boolean: weather data missing? |
+
+**Unique Constraint:**
+```sql
+UNIQUE(ts, no_token_id)
+```
+
+**Indexes:**
+```sql
+CREATE INDEX idx_psa_station_ts ON position_snapshot_archive(station, ts);
+CREATE INDEX idx_psa_ticker_ts ON position_snapshot_archive(ticker, ts);
+```
+
+**Writer:** ETL script (src/scripts/archive_snapshots.py)  
+**Reader:** Dashboard, position analysis, backtesting
+
+**Notes:**
+- Position snapshots are logged to `logs/position_snapshots.jsonl` on each poll cycle (retained 30 days)
+- ETL ingests to this table daily
+- Idempotent via INSERT OR IGNORE + high-water-mark filtering
+
+---
+
 ## Data Flow Diagram
 
 ```

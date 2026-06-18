@@ -190,6 +190,48 @@ This command:
 - Logs final P&L for each trade
 - Cleans up closed positions
 
+### Snapshot Archive
+
+MeteoEdge automatically archives intra-day snapshot telemetry to a durable SQLite analytics database (`data/analytics.db`), separate from the live trading database. Snapshots are logged on each poll cycle to JSONL files (retained 30 days) and archived daily via a systemd timer at 12:30 UTC.
+
+**What it does:**
+- Records market prices, model probabilities, and weather state at each poll cycle
+- Stores scanner and position snapshots for multi-year historical analysis
+- Enables debugging of trading decisions and backtesting
+
+**Manual trigger:**
+```bash
+# Incremental archival (respects high-water-mark, skips already-archived records)
+python -m src.scripts.archive_snapshots
+
+# Preview without writing
+python -m src.scripts.archive_snapshots --dry-run
+
+# Re-ingest a historical date range (e.g., after recovery or backfill)
+python -m src.scripts.archive_snapshots --from-date 2026-06-01 --to-date 2026-06-15
+```
+
+**Database location:** `data/analytics.db`  
+**Retention:** JSONL source files retained 365 days; analytics.db retains indefinitely  
+**Query helper:** `ArchiveDatabase` in `src/data/archive_db.py`
+
+**Example queries:**
+```sql
+-- Snapshots for a station and date
+SELECT ts, ticker, p_yes, forecast_high, latest_temp
+FROM snapshot_archive
+WHERE station = 'KORD' AND DATE(ts) = '2026-06-15'
+ORDER BY ts;
+
+-- Position snapshots for a specific position
+SELECT ts, entry_price, no_best_bid, no_best_ask, weather_missing
+FROM position_snapshot_archive
+WHERE no_token_id = 'abc123' AND DATE(ts) = '2026-06-15'
+ORDER BY ts;
+```
+
+See [docs/design/snapshot-archival.md](docs/design/snapshot-archival.md) for full architecture and [docs/DB_SCHEMA.md#analytics-database](docs/DB_SCHEMA.md#analytics-database-dataanalyticsdb) for schema reference.
+
 ## Environment Variables
 
 All configuration is controlled via environment variables (or defaults in `src/config.py`). See `.env.example` for secrets. Here are the strategy and operational variables:
