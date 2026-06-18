@@ -2253,8 +2253,7 @@ def guardrail_events() -> dict:
         raise HTTPException(status_code=503, detail="Database not initialised")
     try:
         stats = _db.get_guardrail_stats()
-        cutoff_7d = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
-        fe = _db.get_forced_exit_stats(cutoff_7d)
+        fe = _db.get_forced_exit_stats()
 
         return {
             "forced_exits": {

@@ -1294,8 +1294,9 @@ class Database:
             "correction_events": _query("correction_applied"),
         }
 
-    def get_forced_exit_stats(self, cutoff_7d: str) -> dict:
+    def get_forced_exit_stats(self) -> dict:
         """Return forced-exit trade counts: total, last_7d, and by_station dict."""
+        cutoff_7d = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
         total_row = self._conn.execute(
             "SELECT COUNT(*) FROM trades WHERE close_reason='forced_exit'"
         ).fetchone()
@@ -1342,7 +1343,7 @@ class Database:
             ORDER BY ts ASC
             """
         )
-        return cur.fetchall()
+        return [dict(row) for row in cur.fetchall()]
 
     # ------------------------------------------------------------------
     # bot_config
