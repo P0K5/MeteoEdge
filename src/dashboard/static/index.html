@@ -1639,6 +1639,7 @@ function biasPanelHTML(metar, residuals) {
     <td class="bias-td">${r.sample_count}</td>
     <td class="bias-td">${r.mean_signed_error != null ? (r.mean_signed_error >= 0 ? '+' : '') + r.mean_signed_error.toFixed(2) + '°F' : '—'}</td>
     <td class="bias-td">${r.rolling_mae != null ? r.rolling_mae.toFixed(2) + '°F' : '—'}</td>
+    <td class="bias-td">${r.clamped_correction != null ? (() => { const clamped = Math.abs(r.mean_signed_error) > Math.abs(r.clamped_correction) + 0.001; const val = (r.clamped_correction >= 0 ? '+' : '') + r.clamped_correction.toFixed(2) + '°F' + (clamped ? '*' : ''); return clamped ? `<span title="Clamped from ${r.mean_signed_error.toFixed(2)}°F">${val}</span>` : val; })() : '—'}</td>
     <td class="bias-td">${biasBadgeHTML(r)}</td>
   </tr>`).join('');
   return `<div class="bias-panel">
@@ -1649,6 +1650,7 @@ function biasPanelHTML(metar, residuals) {
         <th class="bias-th">Samples</th>
         <th class="bias-th">Signed mean</th>
         <th class="bias-th">Rolling MAE</th>
+        <th class="bias-th">Correction</th>
         <th class="bias-th">Status</th>
       </tr></thead>
       <tbody>${rows}</tbody>
