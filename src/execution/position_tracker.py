@@ -21,7 +21,7 @@ import threading
 from collections import defaultdict
 from datetime import datetime, timezone
 
-from src.utils.log_rotation import rotated_path, housekeep
+from src.utils.log_rotation import rotated_path, housekeep, SNAPSHOT_RETAIN_DAYS
 from src.config import (
     LOG_DIR,
     POSITION_SNAPSHOTS_JSONL,
@@ -172,7 +172,7 @@ def _log_open_position_snapshots(
         }
         with _write_lock:
             dest = rotated_path(POSITION_SNAPSHOTS_JSONL)
-            housekeep(POSITION_SNAPSHOTS_JSONL)
+            housekeep(POSITION_SNAPSHOTS_JSONL, retain_days=SNAPSHOT_RETAIN_DAYS)
             with open(dest, "a") as f:
                 f.write(json.dumps(snap, default=str) + "\n")
         position_states.append({"token_id": token_id, "fills": fills, "snap": snap})

@@ -293,3 +293,94 @@ class TestWeatherDeltaLogging:
         first_logged = builder._weather_log_state["RJTT"]["last_logged"]
         self._call("RJTT", 85.0, 80.0, 84.0)  # suppress
         assert builder._weather_log_state["RJTT"]["last_logged"] == first_logged
+
+
+# ---------------------------------------------------------------------------
+# TestHousekeepRetainOverride — per-file retention override tests
+# ---------------------------------------------------------------------------
+
+class TestHousekeepRetainOverride:
+    """Tests for the optional retain_days override added for per-file retention."""
+
+    def _make_dated_file(self, directory: Path, base_name: str, suffix: str, days_ago: int, today: date) -> Path:
+        """Create a dated file at directory/base_name.YYYY-MM-DD.suffix."""
+        file_date = today - timedelta(days=days_ago)
+        path = directory / f"{base_name}.{file_date.isoformat()}{suffix}"
+        path.write_text("{}")
+        return path
+
+    def test_retain_override_keeps_40day_old_file(self, tmp_path):
+        """With retain_days=365, a 40-day-old file is NOT deleted (may be compressed)."""
+        # Use a fixed date for predictability
+        today = date(2026, 6, 18)
+        base = tmp_path / "logs" / "snapshots.jsonl"
+        base.parent.mkdir()
+        old_file = self._make_dated_file(base.parent, "snapshots", ".jsonl", 40, today)
+        with patch("src.utils.log_rotation._today_utc", return_value=today):
+            housekeep(base, retain_days=365)
+        # 40-day-old file is compressed but not deleted; check either form exists
+        gz_file = Path(str(old_file) + ".gz")
+        assert old_file.exists() or gz_file.exists(), "40-day-old file must survive (plain or compressed) with retain_days=365"
+
+    def test_default_deletes_40day_old_file(self, tmp_path):
+        """Without override (default 30 days), a 40-day-old file IS deleted."""
+        # Use a fixed date for predictability
+        today = date(2026, 6, 18)
+        base = tmp_path / "logs" / "snapshots.jsonl"
+        base.parent.mkdir()
+        old_file = self._make_dated_file(base.parent, "snapshots", ".jsonl", 40, today)
+        with patch("src.utils.log_rotation._today_utc", return_value=today):
+            housekeep(base)
+        assert not old_file.exists(), "40-day-old file must be deleted with default 30-day retain"
+
+    def test_2day_old_file_compressed_with_override(self, tmp_path):
+        """With retain_days=365 override, a 2-day-old file is still gzip-compressed."""
+        from src.utils.log_rotation import LOG_ROTATION_COMPRESS_AFTER_DAYS
+        # Use a fixed date for predictability
+        today = date(2026, 6, 18)
+        base = tmp_path / "logs" / "snapshots.jsonl"
+        base.parent.mkdir()
+        file_2d = self._make_dated_file(base.parent, "snapshots", ".jsonl", 2, today)
+        with patch("src.utils.log_rotation._today_utc", return_value=today):
+            housekeep(base, retain_days=365)
+        gz = Path(str(file_2d) + ".gz")
+        # 2-day-old file should be compressed (age >= LOG_ROTATION_COMPRESS_AFTER_DAYS=1)
+        assert gz.exists(), "2-day-old file must be compressed even with retain_days=365"
+        assert not file_2d.exists(), "original file removed after compression"
+
+    def test_2day_old_file_compressed_without_override(self, tmp_path):
+        """Without override, a 2-day-old file is compressed (no regression)."""
+        # Use a fixed date for predictability
+        today = date(2026, 6, 18)
+        base = tmp_path / "logs" / "snapshots.jsonl"
+        base.parent.mkdir()
+        file_2d = self._make_dated_file(base.parent, "snapshots", ".jsonl", 2, today)
+        with patch("src.utils.log_rotation._today_utc", return_value=today):
+            housekeep(base)
+        gz = Path(str(file_2d) + ".gz")
+        assert gz.exists(), "2-day-old file must be compressed with default settings"
+        assert not file_2d.exists()
+
+    def test_no_override_preserves_30day_cutoff(self, tmp_path):
+        """Regression guard: housekeep with no override still uses 30-day global default."""
+        from src.utils.log_rotation import LOG_ROTATION_RETAIN_DAYS
+        # Use a fixed date for predictability
+        today = date(2026, 6, 18)
+        base = tmp_path / "logs" / "snapshots.jsonl"
+        base.parent.mkdir()
+        # Create a file exactly at the boundary (retain_days + 1 = 31 days old)
+        old_file = self._make_dated_file(base.parent, "snapshots", ".jsonl", LOG_ROTATION_RETAIN_DAYS + 1, today)
+        with patch("src.utils.log_rotation._today_utc", return_value=today):
+            housekeep(base)
+        assert not old_file.exists(), f"File older than {LOG_ROTATION_RETAIN_DAYS} days must be deleted with default"
+
+    def test_other_log_files_unaffected(self, tmp_path):
+        """Callers that don't pass retain_days (e.g. candidates.csv) keep 30-day cutoff."""
+        # Use a fixed date for predictability
+        today = date(2026, 6, 18)
+        base = tmp_path / "logs" / "candidates.csv"
+        base.parent.mkdir()
+        old_file = self._make_dated_file(base.parent, "candidates", ".csv", 40, today)
+        with patch("src.utils.log_rotation._today_utc", return_value=today):
+            housekeep(base)  # no retain_days — uses global 30-day default
+        assert not old_file.exists(), "candidates.csv uses 30-day default, 40-day-old file deleted"

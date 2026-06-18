@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 
 from dateutil import parser as dtparse
 
-from src.utils.log_rotation import rotated_path, housekeep
+from src.utils.log_rotation import rotated_path, housekeep, SNAPSHOT_RETAIN_DAYS
 
 from src.config import (
     POLL_INTERVAL_SECONDS, LOG_DIR,
@@ -87,7 +87,7 @@ _WALLET_EMPTY_COOLDOWN_SECONDS: float = 1800.0  # 30 min
 def _append_snapshot(snap: dict) -> None:
     LOG_DIR.mkdir(exist_ok=True)
     dest = rotated_path(SNAPSHOTS_JSONL)
-    housekeep(SNAPSHOTS_JSONL)
+    housekeep(SNAPSHOTS_JSONL, retain_days=SNAPSHOT_RETAIN_DAYS)
     with open(dest, "a") as f:
         f.write(json.dumps(snap, default=str) + "\n")
 

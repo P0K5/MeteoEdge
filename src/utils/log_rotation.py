@@ -52,6 +52,9 @@ LOG_ROTATION_COMPRESS_AFTER_DAYS: int = int(os.getenv("LOG_ROTATION_COMPRESS_AFT
 # Number of days to retain dated files before deletion
 LOG_ROTATION_RETAIN_DAYS: int = int(os.getenv("LOG_ROTATION_RETAIN_DAYS", "30"))
 
+# Per-file retention override for snapshot logs (default 365 days — irreproducible data)
+SNAPSHOT_RETAIN_DAYS: int = int(os.getenv("SNAPSHOT_RETAIN_DAYS", "365"))
+
 
 # ---------------------------------------------------------------------------
 # Core helpers
@@ -139,13 +142,19 @@ def _update_symlink(base: Path, target: Path) -> None:
 # Housekeeping: compression + deletion of old dated files
 # ---------------------------------------------------------------------------
 
-def housekeep(base: Path) -> None:
+def housekeep(base: Path, retain_days: int | None = None) -> None:
     """Compress and/or delete old dated files for *base*.
 
     Called by writers on first open each day.  Should be cheap (no-op if
     nothing has aged out).
+
+    Args:
+        base: The bare (non-dated) path for this log file, e.g. Path("logs/snapshots.jsonl").
+        retain_days: Optional override for the deletion cutoff. When None, falls back to
+            the global LOG_ROTATION_RETAIN_DAYS (unchanged behaviour for all existing callers).
     """
     today = _today_utc()
+    _retain = retain_days if retain_days is not None else LOG_ROTATION_RETAIN_DAYS
     stem = base.stem
     suffix = base.suffix
     directory = base.parent
@@ -165,7 +174,7 @@ def housekeep(base: Path) -> None:
         if age_days <= 0:
             continue  # today's file — skip
 
-        if age_days > LOG_ROTATION_RETAIN_DAYS:
+        if age_days > _retain:
             # Delete (also remove .gz if present)
             _safe_remove(path)
             _safe_remove(Path(str(path) + ".gz"))
