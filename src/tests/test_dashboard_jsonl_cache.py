@@ -31,6 +31,7 @@ from src.dashboard.api import (
     _settled_jsonl_positions,
     ClosedPositionOut,
 )
+from src.utils.log_rotation import iter_rotated_jsonl
 
 
 # ---------------------------------------------------------------------------
@@ -190,7 +191,7 @@ class TestParseLiveTrades:
     def test_empty_file_returns_empty_structures(self, tmp_path):
         path = tmp_path / "lt.jsonl"
         path.write_text("")
-        enr, stopped, settled = _parse_live_trades(path)
+        enr, stopped, settled = _parse_live_trades(iter_rotated_jsonl(path))
         assert enr == {}
         assert stopped == []
         assert settled == []
@@ -198,7 +199,7 @@ class TestParseLiveTrades:
     def test_filled_without_pnl_goes_to_enrichment_only(self, tmp_path):
         path = tmp_path / "lt.jsonl"
         _write_jsonl(path, [_make_filled_record("tok-A")])
-        enr, stopped, settled = _parse_live_trades(path)
+        enr, stopped, settled = _parse_live_trades(iter_rotated_jsonl(path))
         assert "tok-A" in enr
         assert stopped == []
         assert settled == []
@@ -206,7 +207,7 @@ class TestParseLiveTrades:
     def test_filled_with_pnl_goes_to_both_enrichment_and_settled(self, tmp_path):
         path = tmp_path / "lt.jsonl"
         _write_jsonl(path, [_make_filled_record("tok-A", pnl=1.23)])
-        enr, stopped, settled = _parse_live_trades(path)
+        enr, stopped, settled = _parse_live_trades(iter_rotated_jsonl(path))
         assert "tok-A" in enr
         assert len(settled) == 1
         assert settled[0].token_id == "tok-A"
@@ -216,7 +217,7 @@ class TestParseLiveTrades:
     def test_sold_goes_to_stopped(self, tmp_path):
         path = tmp_path / "lt.jsonl"
         _write_jsonl(path, [_make_sold_record("tok-B", trigger="stop_loss@45c")])
-        enr, stopped, settled = _parse_live_trades(path)
+        enr, stopped, settled = _parse_live_trades(iter_rotated_jsonl(path))
         assert enr == {}
         assert len(stopped) == 1
         assert stopped[0].token_id == "tok-B"
@@ -225,7 +226,7 @@ class TestParseLiveTrades:
     def test_take_profit_trigger_sets_exit_reason(self, tmp_path):
         path = tmp_path / "lt.jsonl"
         _write_jsonl(path, [_make_sold_record("tok-C", trigger="take_profit@85c")])
-        _, stopped, _ = _parse_live_trades(path)
+        _, stopped, _ = _parse_live_trades(iter_rotated_jsonl(path))
         assert stopped[0].exit_reason == "take_profit"
 
     def test_mixed_records_separated_correctly(self, tmp_path):
@@ -235,7 +236,7 @@ class TestParseLiveTrades:
             _make_filled_record("tok-B", pnl=0.5),  # enrichment + settled
             _make_sold_record("tok-C"),              # stopped
         ])
-        enr, stopped, settled = _parse_live_trades(path)
+        enr, stopped, settled = _parse_live_trades(iter_rotated_jsonl(path))
         assert set(enr.keys()) == {"tok-A", "tok-B"}
         assert len(stopped) == 1
         assert stopped[0].token_id == "tok-C"
@@ -250,7 +251,7 @@ class TestParseLiveTrades:
         r2 = _make_filled_record("tok-A")
         r2["predicted_price"] = 55
         _write_jsonl(path, [r1, r2])
-        enr, _, _ = _parse_live_trades(path)
+        enr, _, _ = _parse_live_trades(iter_rotated_jsonl(path))
         assert enr["tok-A"]["predicted_price"] == 55
 
     def test_malformed_lines_are_skipped(self, tmp_path):
@@ -259,7 +260,7 @@ class TestParseLiveTrades:
             f.write("not json\n")
             f.write(json.dumps(_make_filled_record("tok-A")) + "\n")
             f.write("{broken\n")
-        enr, _, _ = _parse_live_trades(path)
+        enr, _, _ = _parse_live_trades(iter_rotated_jsonl(path))
         assert "tok-A" in enr
 
 
