@@ -197,48 +197,66 @@ def _safe_remove(path: Path) -> None:
 # Multi-file reader helpers
 # ---------------------------------------------------------------------------
 
-def iter_rotated_jsonl(base: Path, include_compressed: bool = True) -> Iterator[dict]:
-    """Yield every JSON record across all retained dated JSONL files for *base*.
+def rotated_sources(base: Path, include_compressed: bool = True) -> list[Path]:
+    """Return all readable source files for *base* in chronological order.
 
-    Files are yielded in chronological order (oldest first).  Compressed
-    .gz variants are decompressed on-the-fly when *include_compressed* is True.
-
-    Falls back to reading *base* directly if no dated files exist (graceful
-    degradation for environments that haven't rotated yet).
+    Includes the legacy plain file (when it exists as a real file, not a
+    symlink to today's dated file) at the head of the list, followed by all
+    dated .jsonl and .jsonl.gz files sorted oldest-first.  Use this to drive
+    a multi-file cache key (max mtime across sources).
     """
     stem = base.stem
     suffix = base.suffix
     directory = base.parent
 
-    dated_files: list[tuple[date, Path, bool]] = []  # (date, path, is_gz)
+    sources: list[Path] = []
 
+    # Legacy plain file: only include when it's a real file (not the symlink
+    # pointing into the rotation, which would double-count today's data).
+    if base.exists() and not base.is_symlink():
+        sources.append(base)
+
+    dated_files: list[tuple[date, Path]] = []
     if directory.exists():
         for path in directory.glob(f"{stem}.????-??-??{suffix}"):
             date_part = path.stem[len(stem) + 1:]
             try:
                 file_date = date.fromisoformat(date_part)
-                dated_files.append((file_date, path, False))
+                dated_files.append((file_date, path))
             except ValueError:
                 pass
 
         if include_compressed:
             for path in directory.glob(f"{stem}.????-??-??{suffix}.gz"):
-                # stem of "snapshots.2026-06-01.jsonl.gz" → "snapshots.2026-06-01.jsonl"
-                inner_stem = path.name[: -len(suffix + ".gz")]  # "snapshots.2026-06-01"
+                inner_stem = path.name[: -len(suffix + ".gz")]
                 date_part = inner_stem[len(stem) + 1:]
                 try:
                     file_date = date.fromisoformat(date_part)
-                    dated_files.append((file_date, path, True))
+                    dated_files.append((file_date, path))
                 except ValueError:
                     pass
 
-    if not dated_files:
-        # Legacy fallback: bare filename
-        if base.exists():
-            yield from _read_jsonl_file(base, is_gz=False)
-        return
+    for _, path in sorted(dated_files, key=lambda t: t[0]):
+        sources.append(path)
+    return sources
 
-    for _, path, is_gz in sorted(dated_files, key=lambda t: t[0]):
+
+def iter_rotated_jsonl(base: Path, include_compressed: bool = True) -> Iterator[dict]:
+    """Yield every JSON record across the legacy plain file plus all retained
+    dated JSONL files for *base*.
+
+    Files are yielded oldest-first.  The legacy plain file (if present as a
+    real file rather than a symlink) is yielded BEFORE any dated file, so
+    historical data from before rotation was introduced is preserved.
+
+    Compressed .gz variants are decompressed on-the-fly when
+    *include_compressed* is True.
+    """
+    sources = rotated_sources(base, include_compressed=include_compressed)
+    if not sources:
+        return
+    for path in sources:
+        is_gz = path.suffix == ".gz"
         yield from _read_jsonl_file(path, is_gz=is_gz)
 
 
