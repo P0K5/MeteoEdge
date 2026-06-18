@@ -28,7 +28,7 @@ def main() -> None:
     args = parser.parse_args()
 
     from src.data.db import Database
-    from src.config import STATIONS
+    from src.config import STATIONS, station_city
     from src.model.emos_calibration import (
         fetch_training_data,
         fit_emos,
@@ -41,7 +41,7 @@ def main() -> None:
     skipped = 0
 
     for station_cfg in STATIONS:
-        city = station_cfg[3] if isinstance(station_cfg, (list, tuple)) else station_cfg
+        city = station_city(station_cfg)
         try:
             training_data = fetch_training_data(city, db)
             a, b, c, d = fit_emos(training_data)
@@ -71,7 +71,7 @@ def main_with_db(db) -> None:
         log.debug("[emos_shadow] EMOS_SHADOW_ENABLED=false — skipping")
         return
 
-    from src.config import STATIONS
+    from src.config import STATIONS, station_city
     from src.model.emos_calibration import (
         fetch_training_data,
         fit_emos,
@@ -83,7 +83,7 @@ def main_with_db(db) -> None:
     skipped = 0
 
     for station_cfg in STATIONS:
-        city = station_cfg[3] if isinstance(station_cfg, (list, tuple)) else station_cfg
+        city = station_city(station_cfg)
         try:
             training_data = fetch_training_data(city, db)
             a, b, c, d = fit_emos(training_data)

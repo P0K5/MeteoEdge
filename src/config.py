@@ -84,6 +84,12 @@ STATIONS = [
     ("NZWN",-41.3272,  174.8053,  "Wellington",    "NZWN", "C", "Pacific/Auckland"),
 ]
 
+
+def station_city(cfg) -> str:
+    """Return the Polymarket city name from a STATIONS entry (index 3)."""
+    return cfg[3]
+
+
 # Station timezone mapping (used for local time conversions at each location)
 STATION_TZ = {
     "KORD": "America/Chicago",

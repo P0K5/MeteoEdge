@@ -1,6 +1,7 @@
 """Tests for guardrail telemetry (issue #325)."""
 from __future__ import annotations
 
+import pytest
 from unittest.mock import MagicMock, patch, call
 from fastapi.testclient import TestClient
 
@@ -89,11 +90,9 @@ class TestGuardrailEventsEndpoint:
             "cap_events": {"total": 0, "last_7d": 0, "avg_delta": 0.0},
             "correction_events": {"total": 0, "last_7d": 0, "avg_delta": 0.0},
         }
-        mock_db.get_close_reason_stats.return_value = [
-            {"close_reason": "forced_exit", "count": 5, "win_rate": 0.8, "total_pnl": 1.2}
-        ]
-        mock_db._conn.execute.return_value.fetchone.return_value = (2,)
-        mock_db._conn.execute.return_value.fetchall.return_value = [("KORD", 3), ("KLAX", 2)]
+        mock_db.get_forced_exit_stats.return_value = {
+            "total": 5, "last_7d": 2, "by_station": {"KORD": 3, "KLAX": 2},
+        }
 
         with patch("src.dashboard.api._db", mock_db):
             resp = client.get("/api/guardrail-events")
@@ -108,9 +107,9 @@ class TestGuardrailEventsEndpoint:
             "cap_events": {"total": 8, "last_7d": 2, "avg_delta": -0.03},
             "correction_events": {"total": 0, "last_7d": 0, "avg_delta": 0.0},
         }
-        mock_db.get_close_reason_stats.return_value = []
-        mock_db._conn.execute.return_value.fetchone.return_value = (0,)
-        mock_db._conn.execute.return_value.fetchall.return_value = []
+        mock_db.get_forced_exit_stats.return_value = {
+            "total": 0, "last_7d": 0, "by_station": {},
+        }
 
         with patch("src.dashboard.api._db", mock_db):
             resp = client.get("/api/guardrail-events")
@@ -126,9 +125,9 @@ class TestGuardrailEventsEndpoint:
             "cap_events": {"total": 0, "last_7d": 0, "avg_delta": 0.0},
             "correction_events": {"total": 0, "last_7d": 0, "avg_delta": 0.0},
         }
-        mock_db.get_close_reason_stats.return_value = []
-        mock_db._conn.execute.return_value.fetchone.return_value = (0,)
-        mock_db._conn.execute.return_value.fetchall.return_value = []
+        mock_db.get_forced_exit_stats.return_value = {
+            "total": 0, "last_7d": 0, "by_station": {},
+        }
 
         with patch("src.dashboard.api._db", mock_db):
             resp = client.get("/api/guardrail-events")
@@ -138,6 +137,3 @@ class TestGuardrailEventsEndpoint:
         assert data["forced_exits"]["total"] == 0
         assert data["cap_events"]["total"] == 0
         assert data["correction_events"]["total"] == 0
-
-
-import pytest

@@ -54,7 +54,7 @@ from src.config import (
     POLYMARKET_GAMMA_API, STATIONS, LIVE_TRADES_JSONL, SNAPSHOTS_JSONL,
     POSITION_SNAPSHOTS_JSONL, LOG_DIR, STARTING_CAPITAL_EUR,
     STATION_ACTIVE_HOURS, DISABLED_STATIONS, SHADOW_STATIONS_YES, SHADOW_STATIONS_NO,
-    EMOS_DEFAULT_MODE, CONFIG_DEFAULTS, get_live_config,
+    EMOS_DEFAULT_MODE, CONFIG_DEFAULTS, get_live_config, station_city,
 )
 from src.model.residual_correction import compute_residual_stats
 from src.data.db import Database
@@ -1666,27 +1666,15 @@ def emos_shadow_status() -> list[dict]:
     try:
         results = []
         for station_cfg in STATIONS:
-            city = station_cfg[3] if isinstance(station_cfg, (list, tuple)) else station_cfg
+            city = station_city(station_cfg)
             n_samples = _db.get_emos_crps_count(city)
-            # mean_crps from log
-            cur = _db._conn.execute(
-                "SELECT AVG(crps_score) FROM emos_crps_log WHERE city=?", (city,)
-            )
-            row = cur.fetchone()
-            mean_crps = float(row[0]) if row and row[0] is not None else None
-            # deb weights snapshot
-            cur2 = _db._conn.execute(
-                "SELECT weights_json FROM deb_weight_log WHERE city=? ORDER BY logged_at DESC LIMIT 1",
-                (city,),
-            )
-            row2 = cur2.fetchone()
-            deb_weights = row2[0] if row2 else None
+            status = _db.get_emos_shadow_city_status(city)
             # ready_for_promotion is ALWAYS False for automated queries (never set to 1)
             results.append({
                 "city": city,
                 "n_samples": n_samples,
-                "mean_crps": mean_crps,
-                "deb_weights_snapshot": deb_weights,
+                "mean_crps": status["mean_crps"],
+                "deb_weights_snapshot": status["deb_weights_snapshot"],
                 "ready_for_promotion": False,
             })
         return results
@@ -2265,30 +2253,13 @@ def guardrail_events() -> dict:
         raise HTTPException(status_code=503, detail="Database not initialised")
     try:
         stats = _db.get_guardrail_stats()
-        fe_stats = _db.get_close_reason_stats()
-        forced = next((r for r in fe_stats if r.get("close_reason") == "forced_exit"), None)
-        forced_total = int(forced["count"]) if forced else 0
-
-        cutoff_7d = (
-            __import__("datetime").datetime.now(__import__("datetime").timezone.utc)
-            - __import__("datetime").timedelta(days=7)
-        ).isoformat()
-        fe_7d_row = _db._conn.execute(
-            "SELECT COUNT(*) FROM trades WHERE close_reason='forced_exit' AND ts>=?",
-            (cutoff_7d,),
-        ).fetchone()
-        fe_7d = int(fe_7d_row[0]) if fe_7d_row else 0
-
-        by_station_row = _db._conn.execute(
-            "SELECT station, COUNT(*) FROM trades WHERE close_reason='forced_exit' GROUP BY station"
-        ).fetchall()
-        by_station = {r[0]: int(r[1]) for r in by_station_row}
+        fe = _db.get_forced_exit_stats()
 
         return {
             "forced_exits": {
-                "total": forced_total,
-                "last_7d": fe_7d,
-                "by_station": by_station,
+                "total": fe["total"],
+                "last_7d": fe["last_7d"],
+                "by_station": fe["by_station"],
             },
             "cap_events": {
                 "total": stats["cap_events"]["total"],
