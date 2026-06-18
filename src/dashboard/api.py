@@ -64,6 +64,7 @@ from src.data.taf_disruption import check_taf_disruption
 from src.execution.live_trader import LiveTrader
 from src.execution.order_manager import order_manager
 from src.dashboard.data import read_jsonl, load_live_trades, load_snapshots, load_position_snapshots
+from src.utils.log_rotation import iter_rotated_jsonl, rotated_sources
 
 STATE_PATH = Path("logs/live_state.json")
 
@@ -136,6 +137,52 @@ def _jsonl_cache_get(path: "Path | str", parse_fn):
         data = parse_fn(path)
         entry.mtime = mtime
         entry.size = size
+        entry.data = data
+        return data
+
+
+def _jsonl_cache_get_rotated(base: "Path", parse_fn):
+    """Cache wrapper for a multi-file (rotated) JSONL source.
+
+    Reads via the rotation helpers so the legacy plain file AND every dated
+    .jsonl / .jsonl.gz are considered.  Cache key is the combined max-mtime
+    plus total size across all source files — re-parses when ANY source
+    changes.
+
+    Args:
+        base: The bare (legacy) path; rotation helpers expand it to all sources.
+        parse_fn: Callable(iter_records) → data.  Receives an iterator that
+            yields parsed JSON dicts in chronological order across all sources.
+    """
+    key = f"rotated::{base}"
+    with _JSONL_CACHES_LOCK:
+        if key not in _JSONL_CACHES:
+            _JSONL_CACHES[key] = _JsonlCache()
+    entry = _JSONL_CACHES[key]
+
+    sources = rotated_sources(base)
+    if not sources:
+        return parse_fn(iter([]))
+
+    max_mtime = 0.0
+    total_size = 0
+    for p in sources:
+        try:
+            st = os.stat(p)
+        except OSError:
+            continue
+        if st.st_mtime > max_mtime:
+            max_mtime = st.st_mtime
+        total_size += st.st_size
+
+    with entry.lock:
+        if (entry.mtime == max_mtime
+                and entry.size == total_size
+                and entry.data is not None):
+            return entry.data
+        data = parse_fn(iter_rotated_jsonl(base))
+        entry.mtime = max_mtime
+        entry.size = total_size
         entry.data = data
         return data
 
@@ -467,30 +514,23 @@ def _state_enrichment() -> dict[str, dict]:
     return {t["token_id"]: t for t in (_read_state().get("open_trades") or []) if t.get("token_id")}
 
 
-def _parse_snapshots(path) -> "dict[tuple[str, float, float], float]":
-    """Parse snapshots.jsonl into a (station, bracket_low, bracket_high) → p_yes dict.
+def _parse_snapshots(records) -> "dict[tuple[str, float, float], float]":
+    """Parse snapshots into a (station, bracket_low, bracket_high) → p_yes dict.
 
     snapshots.jsonl is append-only and chronologically ordered, so iterating
     forward and overwriting the dict yields the most-recent p_yes for each
-    (station, bracket) pair.
+    (station, bracket) pair.  *records* is an iterator over already-parsed
+    JSON dicts spanning every rotated source file.
     """
     result: dict[tuple[str, float, float], float] = {}
     try:
-        with open(path) as fh:
-            for line in fh:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    r = json.loads(line)
-                except Exception:
-                    continue
-                station = r.get("station") or ""
-                bl = r.get("bracket_low")
-                bh = r.get("bracket_high")
-                py = r.get("p_yes")
-                if station and bl is not None and bh is not None and py is not None:
-                    result[(station, float(bl), float(bh))] = float(py)
+        for r in records:
+            station = r.get("station") or ""
+            bl = r.get("bracket_low")
+            bh = r.get("bracket_high")
+            py = r.get("p_yes")
+            if station and bl is not None and bh is not None and py is not None:
+                result[(station, float(bl), float(bh))] = float(py)
     except OSError as e:
         logger.warning("snapshots.jsonl read error: %s", e)
     return result
@@ -499,12 +539,10 @@ def _parse_snapshots(path) -> "dict[tuple[str, float, float], float]":
 def _latest_model_probs() -> "dict[tuple[str, float, float], float]":
     """Latest model p_yes per (station, bracket_low, bracket_high).
 
-    Re-parses snapshots.jsonl only when mtime or size has changed since the
-    last call (mtime-keyed cache).
+    Reads across every rotated snapshots file (legacy plain + dated) and
+    re-parses only when any source's mtime or size changes.
     """
-    if not SNAPSHOTS_JSONL.exists():
-        return {}
-    return _jsonl_cache_get(SNAPSHOTS_JSONL, _parse_snapshots)
+    return _jsonl_cache_get_rotated(SNAPSHOTS_JSONL, _parse_snapshots)
 
 
 # ---------------------------------------------------------------------------
@@ -515,8 +553,11 @@ def _latest_model_probs() -> "dict[tuple[str, float, float], float]":
 # data structures, and the result is cached by mtime/size.
 # ---------------------------------------------------------------------------
 
-def _parse_live_trades(path) -> "tuple[dict, list, list]":
-    """Single pass over live_trades.jsonl.
+def _parse_live_trades(records) -> "tuple[dict, list, list]":
+    """Single pass over live_trades records across every rotated source.
+
+    Args:
+        records: iterator of already-parsed JSON dicts (chronological order).
 
     Returns:
         (enrichment_dict, stopped_list, settled_list) where:
@@ -528,94 +569,84 @@ def _parse_live_trades(path) -> "tuple[dict, list, list]":
     stopped: list[ClosedPositionOut] = []
     settled: list[ClosedPositionOut] = []
     try:
-        with open(path) as fh:
-            for line in fh:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    r = json.loads(line)
-                except Exception:
-                    continue
+        for r in records:
+            outcome = r.get("outcome")
 
-                outcome = r.get("outcome")
+            if outcome == "filled":
+                # enrichment dict: last filled record per asset_id wins
+                asset_id = r.get("asset_id") or r.get("no_token_id") or ""
+                if asset_id:
+                    enrichment[asset_id] = r
 
-                if outcome == "filled":
-                    # enrichment dict: last filled record per asset_id wins
-                    asset_id = r.get("asset_id") or r.get("no_token_id") or ""
-                    if asset_id:
-                        enrichment[asset_id] = r
-
-                    # settled positions: filled + pnl present
-                    if "pnl" in r:
-                        token_id = str(r.get("no_token_id") or r.get("asset_id") or "")
-                        entry_cents = int(r.get("price_cents") or r.get("entry_price_cents") or 50)
-                        pnl = float(r["pnl"])
-                        is_win = pnl > 0
-                        exit_cents = 100 if is_win else 0
-                        size_eur = float(r.get("size_eur") or 0)
-                        shares = float(r.get("shares") or (
-                            size_eur / (entry_cents / 100) if entry_cents else 0
-                        ))
-                        settled.append(ClosedPositionOut(
-                            question=str(r.get("question") or ""),
-                            station=str(r.get("station") or ""),
-                            side=str(r.get("side") or "NO"),
-                            bracket_low=float(r.get("bracket_low") or 0.0),
-                            bracket_high=float(r.get("bracket_high") or 0.0),
-                            entry_price=entry_cents,
-                            exit_price=exit_cents,
-                            pnl=pnl,
-                            shares=round(shares, 4),
-                            closed_at=str(r.get("end_date") or r.get("ts") or ""),
-                            token_id=token_id,
-                            exit_reason="won" if pnl > 0 else "lost",
-                        ))
-
-                elif outcome == "sold":
-                    exit_cents = int(r.get("price_cents") or 0)
-                    entry_cents = int(r.get("entry_price_cents") or exit_cents)
-                    shares = float(r.get("shares") or 0)
-                    pnl = float(r.get("pnl") or 0)
-                    trigger = str(r.get("trigger") or "")
-                    if trigger.startswith("take_profit@"):
-                        exit_reason = "take_profit"
-                    elif trigger.startswith("stop_loss@"):
-                        exit_reason = "stop_loss"
-                    elif trigger.startswith("manual@"):
-                        exit_reason = "manual"
-                    else:
-                        exit_reason = "won" if pnl > 0 else "lost"
-                    entry_side = str(r.get("entry_side") or "NO").upper()
-                    side = "YES" if entry_side == "YES" else "NO"
-                    stopped.append(ClosedPositionOut(
+                # settled positions: filled + pnl present
+                if "pnl" in r:
+                    token_id = str(r.get("no_token_id") or r.get("asset_id") or "")
+                    entry_cents = int(r.get("price_cents") or r.get("entry_price_cents") or 50)
+                    pnl = float(r["pnl"])
+                    is_win = pnl > 0
+                    exit_cents = 100 if is_win else 0
+                    size_eur = float(r.get("size_eur") or 0)
+                    shares = float(r.get("shares") or (
+                        size_eur / (entry_cents / 100) if entry_cents else 0
+                    ))
+                    settled.append(ClosedPositionOut(
                         question=str(r.get("question") or ""),
                         station=str(r.get("station") or ""),
-                        side=side,
+                        side=str(r.get("side") or "NO"),
                         bracket_low=float(r.get("bracket_low") or 0.0),
                         bracket_high=float(r.get("bracket_high") or 0.0),
                         entry_price=entry_cents,
                         exit_price=exit_cents,
                         pnl=pnl,
                         shares=round(shares, 4),
-                        closed_at=str(r.get("ts") or ""),
-                        token_id=str(r.get("no_token_id") or r.get("asset_id") or ""),
-                        exit_reason=exit_reason,
+                        closed_at=str(r.get("end_date") or r.get("ts") or ""),
+                        token_id=token_id,
+                        exit_reason="won" if pnl > 0 else "lost",
                     ))
+
+            elif outcome == "sold":
+                exit_cents = int(r.get("price_cents") or 0)
+                entry_cents = int(r.get("entry_price_cents") or exit_cents)
+                shares = float(r.get("shares") or 0)
+                pnl = float(r.get("pnl") or 0)
+                trigger = str(r.get("trigger") or "")
+                if trigger.startswith("take_profit@"):
+                    exit_reason = "take_profit"
+                elif trigger.startswith("stop_loss@"):
+                    exit_reason = "stop_loss"
+                elif trigger.startswith("manual@"):
+                    exit_reason = "manual"
+                else:
+                    exit_reason = "won" if pnl > 0 else "lost"
+                entry_side = str(r.get("entry_side") or "NO").upper()
+                side = "YES" if entry_side == "YES" else "NO"
+                stopped.append(ClosedPositionOut(
+                    question=str(r.get("question") or ""),
+                    station=str(r.get("station") or ""),
+                    side=side,
+                    bracket_low=float(r.get("bracket_low") or 0.0),
+                    bracket_high=float(r.get("bracket_high") or 0.0),
+                    entry_price=entry_cents,
+                    exit_price=exit_cents,
+                    pnl=pnl,
+                    shares=round(shares, 4),
+                    closed_at=str(r.get("ts") or ""),
+                    token_id=str(r.get("no_token_id") or r.get("asset_id") or ""),
+                    exit_reason=exit_reason,
+                ))
     except Exception as e:
         logger.warning("live_trades.jsonl parse error: %s", e)
     return enrichment, stopped, settled
 
 
 def _cached_live_trades() -> "tuple[dict, list, list]":
-    """Return cached (enrichment, stopped, settled) from live_trades.jsonl.
+    """Return cached (enrichment, stopped, settled) from live_trades.
 
-    Re-parses only when the file's mtime or size has changed.
-    Returns (enrichment={}, stopped=[], settled=[]) when the file doesn't exist.
+    Reads across every rotated source for live_trades.jsonl (legacy plain
+    file + dated .jsonl / .jsonl.gz) and re-parses whenever any source's
+    mtime or size changes.
     """
-    if not LIVE_TRADES_JSONL.exists():
-        return {}, [], []
-    return _jsonl_cache_get(LIVE_TRADES_JSONL, _parse_live_trades)
+    return _jsonl_cache_get_rotated(LIVE_TRADES_JSONL, _parse_live_trades)
 
 
 def _trades_file_enrichment() -> dict[str, dict]:
@@ -823,6 +854,19 @@ def _positions_from_wallet() -> tuple[list[PositionOut], list[ClosedPositionOut]
     open_positions: list[PositionOut] = []
     closed_positions: list[ClosedPositionOut] = []
 
+    # JSONL-driven outcomes (stopped + settled) are authoritative for win/loss
+    # because settle.py records the realised pnl against actual_high vs the
+    # bracket.  The Polymarket Data API reports curPrice=0 for BOTH winning
+    # and losing redeemable tokens once the orderbook is gone, which would
+    # otherwise label every unredeemed winner as a -initial_value loss.
+    # Build the JSONL-covered token set up front so the wallet redeemable
+    # branch can defer to it.
+    jsonl_settled_tokens: set[str] = {
+        p.token_id for p in stopped_list if p.token_id
+    } | {
+        p.token_id for p in settled_list if p.token_id
+    }
+
     for row in rows:
         token_id = str(row.get("asset") or "")
         if not token_id:
@@ -839,8 +883,17 @@ def _positions_from_wallet() -> tuple[list[PositionOut], list[ClosedPositionOut]
         my_prob = int(enrich.get("predicted_price", avg_entry_cents))
 
         if row.get("redeemable"):
-            # Market resolved. Both winning ($1) and losing ($0) tokens are "redeemable"
-            # in Polymarket's CTF — the API sets curPrice=1 for the winning side only.
+            # Resolved market.  Skip if JSONL already carries an authoritative
+            # outcome for this token — that record will be appended below and
+            # gets the correct win/loss + pnl from settle.py.
+            if token_id in jsonl_settled_tokens:
+                continue
+            # No JSONL record (e.g. manual trade not made by the bot): fall
+            # back to Polymarket Data API.  Note: curPrice is unreliable for
+            # resolved markets without an active orderbook — it's 0 even for
+            # winning tokens — so this branch may still misclassify rare
+            # non-bot winners.  Logging the limitation here in case future
+            # work needs a better signal (resolution event or redemption).
             initial_value = float(row.get("initialValue") or shares * avg_price)
             cur_price = float(row.get("curPrice") or 0)
             is_win = cur_price >= 0.99
@@ -891,14 +944,19 @@ def _positions_from_wallet() -> tuple[list[PositionOut], list[ClosedPositionOut]
                 token_id=token_id,
             ))
 
-    # Use the stopped/settled lists from the shared cached parse above (no
-    # additional file read needed — they come from the same _cached_live_trades()
-    # call that produced jsonl_enrichment).
-    closed_positions.extend(stopped_list)
-
-    # Merge settled JSONL positions — catches trades already redeemed from the wallet.
-    # Deduplicate by token_id: wallet API record takes priority when both exist.
+    # Append JSONL-authoritative outcomes.  The wallet loop above already
+    # skipped any redeemable row whose token_id is in jsonl_settled_tokens,
+    # so there are no token_id collisions with the wallet-produced entries.
+    # Stopped (sold) and settled (held-to-expiry with pnl) can themselves
+    # overlap for a single token: settle.py skips writing pnl back to filled
+    # records that have a sibling sold record, so in practice each token
+    # appears in at most one of the two lists.  Still dedup defensively.
     seen_token_ids = {p.token_id for p in closed_positions if p.token_id}
+    for p in stopped_list:
+        if not p.token_id or p.token_id not in seen_token_ids:
+            closed_positions.append(p)
+            if p.token_id:
+                seen_token_ids.add(p.token_id)
     for p in settled_list:
         if not p.token_id or p.token_id not in seen_token_ids:
             closed_positions.append(p)
@@ -1457,30 +1515,21 @@ def position_snapshots(token_id: str) -> list[dict]:
     """Return time-series price/model snapshots for a position identified by its NO token_id.
 
     Each record contains: ts, market_bid, fair_value, current_high, latest_temp.
-    Sourced from position_snapshots.jsonl written every poll by run.py.
+    Reads across every rotated source for position_snapshots.jsonl (legacy
+    plain file + dated .jsonl / .jsonl.gz) so charts keep working after log
+    rotation creates the dated daily files.
     """
-    if not POSITION_SNAPSHOTS_JSONL.exists():
-        return []
-    import json as _json
     result = []
     try:
-        with open(POSITION_SNAPSHOTS_JSONL) as fh:
-            for line in fh:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    r = _json.loads(line)
-                except Exception:
-                    continue
-                if r.get("no_token_id") == token_id:
-                    result.append({
-                        "ts": r.get("ts", ""),
-                        "market_bid": r.get("no_best_bid"),
-                        "fair_value": r.get("fair_value_now"),
-                        "current_high": r.get("current_high"),
-                        "latest_temp": r.get("latest_temp"),
-                    })
+        for r in iter_rotated_jsonl(POSITION_SNAPSHOTS_JSONL):
+            if r.get("no_token_id") == token_id:
+                result.append({
+                    "ts": r.get("ts", ""),
+                    "market_bid": r.get("no_best_bid"),
+                    "fair_value": r.get("fair_value_now"),
+                    "current_high": r.get("current_high"),
+                    "latest_temp": r.get("latest_temp"),
+                })
     except OSError as e:
         logger.warning("position_snapshots.jsonl read error: %s", e)
     return result
