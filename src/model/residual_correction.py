@@ -11,10 +11,13 @@ distribution shifts toward where real highs tend to fall.
 Main entry points:
     compute_residual_stats(city, db) → ResidualStats | None
     apply_residual_correction(city, mu_f, db) → (float, ResidualStats | None)
+    compute_residual_stats_per_pair(city, db) → list[ResidualStats]
 """
 import logging
 import os
 from dataclasses import dataclass
+from datetime import date as _date, timedelta
+from typing import Literal
 
 log = logging.getLogger(__name__)
 
@@ -47,13 +50,16 @@ RESIDUAL_CORRECTION_ENABLED: bool = (
 
 @dataclass
 class ResidualStats:
-    """Rolling residual statistics for a single city."""
+    """Rolling residual statistics for a single city (or city+station+source pair)."""
     city: str
     mean_signed_error: float    # mean(delta_f) over window — positive = warm bias
     rolling_mae: float          # mean(|delta_f|) over window
     sample_count: int           # number of rows used
     correction_applied: bool    # True when bias was added to corrected_mu_f
     live_suppressed: bool       # True when MAE exceeds MAX_RESIDUAL_MAE_F_FOR_LIVE
+    scope: Literal["pair", "city_fallback"] = "city_fallback"
+    station: str = ""           # source station identifier (empty = city-wide)
+    source: str = ""            # source name (empty = city-wide)
 
     @property
     def clamped_correction(self) -> float:
@@ -68,16 +74,56 @@ class ResidualStats:
 # Core query
 # ---------------------------------------------------------------------------
 
-def _query_trailing_deltas(city: str, db, window_days: int) -> list[float]:
+def _query_trailing_deltas(
+    city: str,
+    db,
+    window_days: int,
+    *,
+    station: "str | None" = None,
+    source: "str | None" = None,
+) -> list[float]:
     """Return delta_f values for *city* in the trailing *window_days* calendar days.
+
+    Optional *station* and *source* narrow results to a specific (station, source)
+    pair.  When both are None the query is city-wide.
 
     Returns an empty list when the DB is unavailable or the query fails.
     """
     try:
-        return db.get_trailing_deltas(city, window_days)
+        return db.get_trailing_deltas(city, window_days, station=station, source=source)
     except Exception as exc:
         log.warning("[residual] DB query failed for city=%s: %s", city, exc)
         return []
+
+
+def _build_stats(
+    city: str,
+    deltas: list[float],
+    *,
+    max_correction_f: float,
+    mae_threshold: float,
+    scope: Literal["pair", "city_fallback"],
+    station: str = "",
+    source: str = "",
+) -> ResidualStats:
+    """Build a ResidualStats from a list of deltas."""
+    n = len(deltas)
+    mean_signed = sum(deltas) / n
+    rolling_mae = sum(abs(d) for d in deltas) / n
+    clamped = max(-max_correction_f, min(max_correction_f, mean_signed))
+    correction_applied = clamped != 0.0
+    live_suppressed = rolling_mae > mae_threshold
+    return ResidualStats(
+        city=city,
+        mean_signed_error=mean_signed,
+        rolling_mae=rolling_mae,
+        sample_count=n,
+        correction_applied=correction_applied,
+        live_suppressed=live_suppressed,
+        scope=scope,
+        station=station,
+        source=source,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -95,13 +141,17 @@ def compute_residual_stats(
 ) -> "ResidualStats | None":
     """Compute rolling residual stats for *city*.
 
+    Tries to scope the computation to the top-priority (station, source) pair
+    for the city.  Falls back to city-wide when the pair has fewer than
+    *min_samples* entries.  Sets ``ResidualStats.scope`` accordingly.
+
     Returns ``None`` when the feature is disabled (``RESIDUAL_CORRECTION_ENABLED``
     is False) or when there are fewer than *min_samples* observations in the
     trailing window (silently — do not raise, do not apply).
 
     Args:
         city:            Polymarket city name (e.g. "Busan").
-        db:              Database instance with ``_conn`` attribute.
+        db:              Database instance.
         window_days:     Trailing calendar-day window (default: RESIDUAL_WINDOW_DAYS).
         min_samples:     Minimum row count required before applying (default: RESIDUAL_MIN_SAMPLES).
         max_correction_f: Clamp limit (default: RESIDUAL_MAX_CORRECTION_F).
@@ -113,6 +163,28 @@ def compute_residual_stats(
     if not RESIDUAL_CORRECTION_ENABLED:
         return None
 
+    # --- Try pair-scoped query first ---
+    top_pair = _get_top_priority_pair(city)
+    if top_pair is not None:
+        pair_station, pair_source = top_pair
+        pair_deltas = _query_trailing_deltas(
+            city, db, window_days, station=pair_station, source=pair_source
+        )
+        if len(pair_deltas) >= min_samples:
+            return _build_stats(
+                city, pair_deltas,
+                max_correction_f=max_correction_f,
+                mae_threshold=mae_threshold,
+                scope="pair",
+                station=pair_station,
+                source=pair_source,
+            )
+        log.debug(
+            "[residual] %s: pair (%s/%s) only %d samples — falling back to city-wide",
+            city, pair_station, pair_source, len(pair_deltas),
+        )
+
+    # --- City-wide fallback ---
     deltas = _query_trailing_deltas(city, db, window_days)
 
     if len(deltas) < min_samples:
@@ -122,22 +194,76 @@ def compute_residual_stats(
         )
         return None
 
-    n = len(deltas)
-    mean_signed = sum(deltas) / n
-    rolling_mae = sum(abs(d) for d in deltas) / n
-
-    clamped = max(-max_correction_f, min(max_correction_f, mean_signed))
-    correction_applied = clamped != 0.0
-    live_suppressed = rolling_mae > mae_threshold
-
-    return ResidualStats(
-        city=city,
-        mean_signed_error=mean_signed,
-        rolling_mae=rolling_mae,
-        sample_count=n,
-        correction_applied=correction_applied,
-        live_suppressed=live_suppressed,
+    return _build_stats(
+        city, deltas,
+        max_correction_f=max_correction_f,
+        mae_threshold=mae_threshold,
+        scope="city_fallback",
     )
+
+
+def compute_residual_stats_per_pair(
+    city: str,
+    db,
+    *,
+    window_days: int = RESIDUAL_WINDOW_DAYS,
+    min_samples: int = RESIDUAL_MIN_SAMPLES,
+    max_correction_f: float = RESIDUAL_MAX_CORRECTION_F,
+    mae_threshold: float = MAX_RESIDUAL_MAE_F_FOR_LIVE,
+) -> "list[ResidualStats]":
+    """Return one ResidualStats per distinct (station, source) pair in the trailing window.
+
+    Only pairs with at least *min_samples* entries are returned.  Empty list when
+    the feature is disabled or no qualified pairs exist.
+
+    Args:
+        city:            Polymarket city name.
+        db:              Database instance.
+        window_days:     Trailing calendar-day window (default: RESIDUAL_WINDOW_DAYS).
+        min_samples:     Minimum row count per pair (default: RESIDUAL_MIN_SAMPLES).
+        max_correction_f: Clamp limit (default: RESIDUAL_MAX_CORRECTION_F).
+        mae_threshold:   MAE suppression threshold (default: MAX_RESIDUAL_MAE_F_FOR_LIVE).
+
+    Returns:
+        List of ResidualStats, one per qualified (station, source) pair.
+    """
+    if not RESIDUAL_CORRECTION_ENABLED:
+        return []
+
+    since_date = (_date.today() - timedelta(days=window_days)).isoformat()
+
+    # Query distinct pairs that have data in the trailing window
+    try:
+        rows = db._conn.execute(
+            "SELECT DISTINCT station, source "
+            "FROM intraday_corrections "
+            "WHERE city=? AND date>=?",
+            (city, since_date),
+        ).fetchall()
+    except Exception as exc:
+        log.warning("[residual] DB query failed for city=%s: %s", city, exc)
+        return []
+
+    results: list[ResidualStats] = []
+    for row in rows:
+        pair_station = row[0]
+        pair_source = row[1]
+        deltas = _query_trailing_deltas(
+            city, db, window_days, station=pair_station, source=pair_source
+        )
+        if len(deltas) < min_samples:
+            continue
+        results.append(
+            _build_stats(
+                city, deltas,
+                max_correction_f=max_correction_f,
+                mae_threshold=mae_threshold,
+                scope="pair",
+                station=pair_station,
+                source=pair_source,
+            )
+        )
+    return results
 
 
 def apply_residual_correction(
@@ -176,11 +302,28 @@ def apply_residual_correction(
     corrected = mu_f + correction
     log.info(
         "[residual] %s: applying bias correction %+.2f°F "
-        "(mean_err=%+.2f, clamped=%+.2f, n=%d, MAE=%.2f) "
+        "(mean_err=%+.2f, clamped=%+.2f, n=%d, MAE=%.2f, scope=%s) "
         "mu_f %.1f → %.1f",
         city, correction,
         stats.mean_signed_error, correction,
-        stats.sample_count, stats.rolling_mae,
+        stats.sample_count, stats.rolling_mae, stats.scope,
         mu_f, corrected,
     )
     return corrected, stats
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+def _get_top_priority_pair(city: str) -> "tuple[str, str] | None":
+    """Return (station, source) for the top-priority source for *city*, or None."""
+    try:
+        from src.config import get_source_priority
+        sources = get_source_priority(city)
+        if sources:
+            top = sources[0]
+            return top["station"], top["source"]
+    except Exception:
+        pass
+    return None

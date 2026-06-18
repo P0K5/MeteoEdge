@@ -312,14 +312,16 @@ CREATE UNIQUE INDEX idx_mfl_station_model_date ON model_forecast_log(station, mo
 
 ### intraday_corrections
 
-**Purpose:** Store temperature corrections applied to the ensemble forecast during the day as new METAR observations arrive.
+**Purpose:** Store temperature corrections applied to the ensemble forecast during the day as new METAR observations arrive. Each row is scoped to the specific `(station, source)` pair that produced the observation.
 
 **Writer:** Intraday correction model (src/model/intraday_correction.py)  
-**Reader:** Weather state builder, envelope model
+**Reader:** Weather state builder, envelope model, residual correction module
 
 | Column | Type | Units | Nullable | Description |
 |--------|------|-------|----------|-------------|
 | `city` | TEXT NOT NULL | city name | No | City (e.g., "Chicago") |
+| `station` | TEXT NOT NULL DEFAULT '' | station key | No | Station identifier used by the observation source (e.g., "Busan", "RKPK") |
+| `source` | TEXT NOT NULL DEFAULT '' | source name | No | Data source name (e.g., "amos", "metar", "mss") |
 | `date` | TEXT NOT NULL | YYYY-MM-DD | No | Forecast date (what day?) |
 | `obs_time` | TEXT NOT NULL | ISO 8601 timestamp (UTC) | No | Observation time (when was the observation made?) |
 | `obs_temp_f` | REAL NOT NULL | °F | No | Observed temperature (from METAR or other source) |
@@ -330,18 +332,22 @@ CREATE UNIQUE INDEX idx_mfl_station_model_date ON model_forecast_log(station, mo
 
 **Primary Key:**
 ```sql
-PRIMARY KEY (city, date, obs_time)
+PRIMARY KEY (city, station, source, date, obs_time)
 ```
 
 **Indexes:**
 ```sql
 CREATE INDEX idx_ic_city_date ON intraday_corrections(city, date);
+CREATE INDEX idx_ic_city_station_source_date ON intraday_corrections(city, station, source, date);
 ```
+
+**Migration (issue #340):** Pre-existing databases with the old `(city, date, obs_time)` PK are automatically migrated on first `Database()` construction. Legacy rows receive `station=''` and `source=''` defaults.
 
 **Notes:**
 - Updated as new observations arrive during the day.
 - `corrected_mu_f` converges to the actual daily high as the day progresses.
 - Used to improve bracket probability estimates in real-time.
+- The residual correction module queries per-(station, source) pair before falling back to city-wide aggregation.
 
 ---
 

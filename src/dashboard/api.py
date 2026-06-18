@@ -56,7 +56,10 @@ from src.config import (
     STATION_ACTIVE_HOURS, DISABLED_STATIONS, SHADOW_STATIONS_YES, SHADOW_STATIONS_NO,
     EMOS_DEFAULT_MODE, CONFIG_DEFAULTS, get_live_config, station_city,
 )
-from src.model.residual_correction import compute_residual_stats
+from src.model.residual_correction import (
+    compute_residual_stats,
+    compute_residual_stats_per_pair,
+)
 from src.data.db import Database
 from src.data.nws import fetch_nws_forecast_high
 from src.data.polymarket import get_orderbook
@@ -2247,6 +2250,91 @@ def residual_stats() -> list[ResidualStatsOut]:
                 live_suppressed=False,
             ))
 
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Per-station residual endpoint (issue #340)
+# ---------------------------------------------------------------------------
+
+class StationResidualOut(BaseModel):
+    """Residual bias stats for one (station, source) pair within a METAR city."""
+    station: str
+    source: str
+    mean_signed_error: float
+    rolling_mae: float
+    sample_count: int
+    clamped_correction: float
+    correction_applied: bool
+    live_suppressed: bool
+    last_obs_time: "str | None"
+    scope: str
+
+
+@app.get("/api/stations/{metar}/residual", response_model=list[StationResidualOut])
+def station_residual(metar: str) -> list[StationResidualOut]:
+    """Return per-(station, source) residual bias stats for the city behind *metar*.
+
+    Finds the city name from the STATIONS config, calls
+    ``compute_residual_stats_per_pair``, and enriches each entry with the most
+    recent ``obs_time`` seen for that pair in the last 30 days.
+
+    Returns 404 when the METAR code is not in the STATIONS config.
+    Returns an empty list when no qualified pairs exist (no data / below
+    min_samples).
+    """
+    if _db is None:
+        raise HTTPException(status_code=503, detail="Database not initialised")
+
+    # Resolve city from METAR
+    city: "str | None" = None
+    for row in STATIONS:
+        if row[0] == metar:
+            city = row[3]
+            break
+    if city is None:
+        raise HTTPException(status_code=404, detail=f"Unknown METAR: {metar}")
+
+    try:
+        pairs = compute_residual_stats_per_pair(city, _db)
+    except Exception as exc:
+        logger.warning("[station-residual] failed for city=%s: %s", city, exc)
+        pairs = []
+
+    if not pairs:
+        return []
+
+    # Fetch the most recent obs_time per (station, source) pair in the last 30 days
+    from datetime import date as _date, timedelta as _timedelta
+    since_date = (_date.today() - _timedelta(days=30)).isoformat()
+    last_obs_map: dict[tuple[str, str], "str | None"] = {}
+    try:
+        rows = _db._conn.execute(
+            "SELECT station, source, MAX(obs_time) AS last_obs "
+            "FROM intraday_corrections "
+            "WHERE city=? AND date>=? "
+            "GROUP BY station, source",
+            (city, since_date),
+        ).fetchall()
+        for r in rows:
+            last_obs_map[(r[0], r[1])] = r[2]
+    except Exception as exc:
+        logger.warning("[station-residual] last_obs query failed for city=%s: %s", city, exc)
+
+    result: list[StationResidualOut] = []
+    for stats in pairs:
+        result.append(StationResidualOut(
+            station=stats.station,
+            source=stats.source,
+            mean_signed_error=round(stats.mean_signed_error, 3),
+            rolling_mae=round(stats.rolling_mae, 3),
+            sample_count=stats.sample_count,
+            clamped_correction=round(stats.clamped_correction, 3),
+            correction_applied=stats.correction_applied,
+            live_suppressed=stats.live_suppressed,
+            last_obs_time=last_obs_map.get((stats.station, stats.source)),
+            scope=stats.scope,
+        ))
     return result
 
 

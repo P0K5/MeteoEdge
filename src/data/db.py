@@ -136,6 +136,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_mfl_station_model_date
 
 CREATE TABLE IF NOT EXISTS intraday_corrections (
     city           TEXT NOT NULL,
+    station        TEXT NOT NULL DEFAULT '',
+    source         TEXT NOT NULL DEFAULT '',
     date           TEXT NOT NULL,
     obs_time       TEXT NOT NULL,
     obs_temp_f     REAL NOT NULL,
@@ -143,7 +145,7 @@ CREATE TABLE IF NOT EXISTS intraday_corrections (
     delta_f        REAL NOT NULL,
     corrected_mu_f REAL NOT NULL,
     decay_factor   REAL NOT NULL,
-    PRIMARY KEY (city, date, obs_time)
+    PRIMARY KEY (city, station, source, date, obs_time)
 );
 CREATE INDEX IF NOT EXISTS idx_ic_city_date ON intraday_corrections(city, date);
 
@@ -254,6 +256,60 @@ class Database:
             "CREATE INDEX IF NOT EXISTS idx_trades_close_reason ON trades(close_reason)"
         )
         self._conn.commit()
+
+        # Migration: add station + source columns to intraday_corrections and
+        # update PK to (city, station, source, date, obs_time).
+        # SQLite cannot modify a PRIMARY KEY in place — requires table rebuild.
+        # Detect old schema by checking whether 'station' column is absent.
+        ic_info = self._conn.execute(
+            "PRAGMA table_info(intraday_corrections)"
+        ).fetchall()
+        ic_cols = {row[1] for row in ic_info}
+        if "station" not in ic_cols:
+            with self._conn:
+                self._conn.execute("DROP TABLE IF EXISTS intraday_corrections_new")
+                self._conn.execute(
+                    """
+                    CREATE TABLE intraday_corrections_new (
+                        city           TEXT NOT NULL,
+                        station        TEXT NOT NULL DEFAULT '',
+                        source         TEXT NOT NULL DEFAULT '',
+                        date           TEXT NOT NULL,
+                        obs_time       TEXT NOT NULL,
+                        obs_temp_f     REAL NOT NULL,
+                        model_temp_f   REAL NOT NULL,
+                        delta_f        REAL NOT NULL,
+                        corrected_mu_f REAL NOT NULL,
+                        decay_factor   REAL NOT NULL,
+                        PRIMARY KEY (city, station, source, date, obs_time)
+                    )
+                    """
+                )
+                self._conn.execute(
+                    """
+                    INSERT INTO intraday_corrections_new
+                        (city, station, source, date, obs_time,
+                         obs_temp_f, model_temp_f, delta_f,
+                         corrected_mu_f, decay_factor)
+                    SELECT city, '' AS station, '' AS source, date, obs_time,
+                           obs_temp_f, model_temp_f, delta_f,
+                           corrected_mu_f, decay_factor
+                    FROM intraday_corrections
+                    """
+                )
+                self._conn.execute("DROP TABLE intraday_corrections")
+                self._conn.execute(
+                    "ALTER TABLE intraday_corrections_new "
+                    "RENAME TO intraday_corrections"
+                )
+                self._conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_ic_city_date "
+                    "ON intraday_corrections(city, date)"
+                )
+                self._conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_ic_city_station_source_date "
+                    "ON intraday_corrections(city, station, source, date)"
+                )
 
         # Back-compat: rows where legacy enabled=0 → shadow both sides
         self._conn.execute(
@@ -1036,6 +1092,8 @@ class Database:
         self,
         *,
         city: str,
+        station: str = "",
+        source: str = "",
         date: str,
         obs_time: str,
         obs_temp_f: float,
@@ -1044,14 +1102,16 @@ class Database:
         corrected_mu_f: float,
         decay_factor: float,
     ) -> None:
-        """Upsert an intraday correction record (unique on city, date, obs_time)."""
+        """Upsert an intraday correction record (unique on city, station, source, date, obs_time)."""
         with self._lock:
             with self._conn:
                 self._conn.execute(
                     "INSERT OR REPLACE INTO intraday_corrections"
-                    "(city,date,obs_time,obs_temp_f,model_temp_f,delta_f,corrected_mu_f,decay_factor) "
-                    "VALUES(?,?,?,?,?,?,?,?)",
-                    (city, date, obs_time, obs_temp_f, model_temp_f, delta_f, corrected_mu_f, decay_factor),
+                    "(city,station,source,date,obs_time,"
+                    "obs_temp_f,model_temp_f,delta_f,corrected_mu_f,decay_factor) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,?)",
+                    (city, station, source, date, obs_time,
+                     obs_temp_f, model_temp_f, delta_f, corrected_mu_f, decay_factor),
                 )
 
     def get_intraday_corrections(self, city: str, date: str) -> list[dict]:
@@ -1062,16 +1122,62 @@ class Database:
         )
         return [dict(r) for r in cur.fetchall()]
 
-    def get_trailing_deltas(self, city: str, window_days: int) -> list[float]:
-        """Return delta_f values for city over the trailing window_days calendar days."""
+    def get_trailing_deltas(
+        self,
+        city: str,
+        window_days: int,
+        *,
+        station: "str | None" = None,
+        source: "str | None" = None,
+    ) -> list[float]:
+        """Return delta_f values for city over the trailing window_days calendar days.
+
+        Optional *station* and *source* filters narrow the query to a specific
+        (station, source) pair.  When both are None the query is city-wide (legacy
+        behaviour).
+        """
         from datetime import date as _date, timedelta
         since_date = (_date.today() - timedelta(days=window_days)).isoformat()
-        cur = self._conn.execute(
-            "SELECT delta_f FROM intraday_corrections "
-            "WHERE city=? AND date>=? ORDER BY date ASC, obs_time ASC",
-            (city, since_date),
-        )
+        if station is not None and source is not None:
+            cur = self._conn.execute(
+                "SELECT delta_f FROM intraday_corrections "
+                "WHERE city=? AND station=? AND source=? AND date>=? "
+                "ORDER BY date ASC, obs_time ASC",
+                (city, station, source, since_date),
+            )
+        else:
+            cur = self._conn.execute(
+                "SELECT delta_f FROM intraday_corrections "
+                "WHERE city=? AND date>=? ORDER BY date ASC, obs_time ASC",
+                (city, since_date),
+            )
         return [float(row[0]) for row in cur.fetchall()]
+
+    def get_intraday_corrections_for_pair(
+        self,
+        city: str,
+        station: str,
+        source: str,
+        since_date: str,
+    ) -> list[dict]:
+        """Return intraday correction rows for a specific (city, station, source) pair.
+
+        Args:
+            city:       City name.
+            station:    Station identifier (e.g. "Busan", "RKPK").
+            source:     Data source name (e.g. "amos", "metar").
+            since_date: Lower bound on date (inclusive, YYYY-MM-DD).
+
+        Returns:
+            List of row dicts ordered by date, obs_time ascending.
+        """
+        cur = self._conn.execute(
+            "SELECT * FROM intraday_corrections "
+            "WHERE city=? AND station=? AND source=? AND date>=? "
+            "ORDER BY date ASC, obs_time ASC",
+            (city, station, source, since_date),
+        )
+        return [dict(r) for r in cur.fetchall()]
 
     # ------------------------------------------------------------------
     # emos_calibration
