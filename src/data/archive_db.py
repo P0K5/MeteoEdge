@@ -144,6 +144,52 @@ class ArchiveDatabase:
                 cur = self._conn.executemany(sql, params)
         return cur.rowcount
 
+    def get_snapshot_series(self, station: str, date: str) -> list[dict]:
+        """Return all snapshot_archive rows for *station* on *date*, ordered by ts.
+
+        Args:
+            station: METAR station code (e.g. "KORD").
+            date: ISO date string "YYYY-MM-DD".
+
+        Returns:
+            List of row dicts ordered by ts ascending.  Empty list when no rows
+            match (station unknown or date has no data).
+        """
+        from datetime import date as dt_date, timedelta
+        d = dt_date.fromisoformat(date)
+        next_d = (d + timedelta(days=1)).isoformat()
+        sql = (
+            "SELECT * FROM snapshot_archive "
+            "WHERE station = ? AND ts >= ? AND ts < ? "
+            "ORDER BY ts"
+        )
+        with self._lock:
+            cur = self._conn.execute(sql, (station, date, next_d))
+            return [dict(row) for row in cur.fetchall()]
+
+    def get_position_snapshot_series(self, ticker: str, date: str) -> list[dict]:
+        """Return all position_snapshot_archive rows for *ticker* on *date*, ordered by ts.
+
+        Args:
+            ticker: Market ticker string (e.g. "HIGH-TEMP-KORD-2026-06-15-90-94").
+            date: ISO date string "YYYY-MM-DD".
+
+        Returns:
+            List of row dicts ordered by ts ascending.  Empty list when no rows
+            match (ticker unknown or date has no data).
+        """
+        from datetime import date as dt_date, timedelta
+        d = dt_date.fromisoformat(date)
+        next_d = (d + timedelta(days=1)).isoformat()
+        sql = (
+            "SELECT * FROM position_snapshot_archive "
+            "WHERE ticker = ? AND ts >= ? AND ts < ? "
+            "ORDER BY ts"
+        )
+        with self._lock:
+            cur = self._conn.execute(sql, (ticker, date, next_d))
+            return [dict(row) for row in cur.fetchall()]
+
     def get_max_archived_ts(self, table: str) -> "str | None":
         """Return the maximum ts recorded in *table*, or None if the table is empty.
 
