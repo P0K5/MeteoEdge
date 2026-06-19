@@ -187,9 +187,6 @@ MIN_CONFIDENCE_YES = 0.85       # for YES-side trades
 # restricts the bot to the calibrated regime. Override via env to experiment.
 MAX_CONFIDENCE_YES_FOR_NO = float(os.getenv("MAX_CONFIDENCE_YES_FOR_NO", "0.05"))
 
-# YES trades disabled: 51.9% win rate over 3 live days (vs 94.2% for NO).
-# Re-enable once ≥7 days of settlements validate YES accuracy.
-ENABLE_YES_TRADES = os.getenv("ENABLE_YES_TRADES", "false").lower() == "true"
 MIN_MINUTES_TO_SETTLEMENT = 15
 # Daily temperature markets resolve within 24h — reject anything beyond this window.
 # Without this cap the scanner evaluates tomorrow's markets against today's METAR data,
