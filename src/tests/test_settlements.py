@@ -1,7 +1,9 @@
-"""Tests for SettlementWriter."""
+"""Tests for SettlementWriter and settlement writer integration."""
 import json
 import pytest
+from datetime import date
 from pathlib import Path
+from unittest.mock import patch
 import tempfile
 from src.data.db import Database
 from src.data.settlements import SettlementWriter
@@ -98,6 +100,109 @@ class TestSettlementWriter:
         rows = db.get_settlements("KSEA", since="2000-01-01")
         assert len(rows) == 1
         assert rows[0]["market_final_price"] is None
+
+
+class TestWriteDbSettlements:
+    """Tests for _write_db_settlements() — the settlement writer in settle.py."""
+
+    def test_market_final_price_is_populated(self):
+        """_write_db_settlements() calls fetch_market_final_price and stores the result."""
+        from src.scripts.settle import _write_db_settlements
+
+        db = _db()
+        target = date(2024, 6, 15)
+        truth = {"KORD": 78.2}
+        records = [
+            {
+                "ticker": "0xdeadbeef1234",
+                "station": "KORD",
+                "bracket_low": 76.0,
+                "bracket_high": 80.0,
+                "end_date": "2024-06-15",
+                "no_token_id": None,
+            }
+        ]
+
+        with patch(
+            "src.scripts.settle.fetch_market_final_price", return_value=97
+        ) as mock_fetch:
+            _write_db_settlements(records, target, truth, db)
+            mock_fetch.assert_called_once_with("0xdeadbeef1234")
+
+        rows = db.get_settlements("KORD", since="2000-01-01")
+        assert len(rows) == 1
+        assert rows[0]["market_final_price"] == 97
+
+    def test_market_final_price_none_when_api_fails(self):
+        """_write_db_settlements() stores NULL when the Gamma API returns None."""
+        from src.scripts.settle import _write_db_settlements
+
+        db = _db()
+        target = date(2024, 6, 15)
+        truth = {"KORD": 78.2}
+        records = [
+            {
+                "ticker": "0xdeadbeef5678",
+                "station": "KORD",
+                "bracket_low": 76.0,
+                "bracket_high": 80.0,
+                "end_date": "2024-06-15",
+                "no_token_id": None,
+            }
+        ]
+
+        with patch("src.scripts.settle.fetch_market_final_price", return_value=None):
+            _write_db_settlements(records, target, truth, db)
+
+        rows = db.get_settlements("KORD", since="2000-01-01")
+        assert len(rows) == 1
+        assert rows[0]["market_final_price"] is None
+
+    def test_non_0x_ticker_skips_api_call(self):
+        """_write_db_settlements() does not call Gamma for non-0x tickers."""
+        from src.scripts.settle import _write_db_settlements
+
+        db = _db()
+        target = date(2024, 6, 15)
+        truth = {"KORD": 78.2}
+        records = [
+            {
+                "ticker": "KORD-order-abc123",
+                "station": "KORD",
+                "bracket_low": 76.0,
+                "bracket_high": 80.0,
+                "end_date": "2024-06-15",
+                "no_token_id": "some-token-id",
+            }
+        ]
+
+        with patch("src.scripts.settle.fetch_market_final_price") as mock_fetch:
+            _write_db_settlements(records, target, truth, db)
+            mock_fetch.assert_not_called()
+
+    def test_skips_record_outside_target_date(self):
+        """_write_db_settlements() ignores records with a different end_date."""
+        from src.scripts.settle import _write_db_settlements
+
+        db = _db()
+        target = date(2024, 6, 15)
+        truth = {"KORD": 78.2}
+        records = [
+            {
+                "ticker": "0xdeadbeef9999",
+                "station": "KORD",
+                "bracket_low": 76.0,
+                "bracket_high": 80.0,
+                "end_date": "2024-06-14",  # wrong date
+                "no_token_id": None,
+            }
+        ]
+
+        with patch("src.scripts.settle.fetch_market_final_price", return_value=50):
+            _write_db_settlements(records, target, truth, db)
+
+        rows = db.get_settlements("KORD", since="2000-01-01")
+        assert len(rows) == 0
 
 
 class TestBackfillScript:

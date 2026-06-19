@@ -44,6 +44,54 @@ def get_weather_markets() -> list[dict]:
     return all_markets
 
 
+def fetch_market_final_price(ticker: str) -> int | None:
+    """Fetch the final resolved YES price (in cents) for a closed market.
+
+    Queries the Polymarket Gamma API for the market identified by *ticker*
+    (the 0x condition ID). Returns the YES ``outcomePrices`` value rounded to
+    the nearest integer cent, or ``None`` if the market is not found, not yet
+    resolved, or the API call fails.
+
+    The ``outcomePrices`` field is a JSON-encoded list of decimal strings where
+    index 0 is the YES price and index 1 is the NO price, e.g.
+    ``'["0.97", "0.03"]'``.  A resolved-YES market shows YES ~= 1.00 (100c)
+    and a resolved-NO market shows YES ~= 0.00 (0c).
+    """
+    import json as _json
+
+    url = f"{POLYMARKET_GAMMA_API}/markets/{ticker}"
+    try:
+        r = fetch(url, timeout=HTTP_TIMEOUT_SECONDS)
+        r.raise_for_status()
+        market = r.json()
+    except Exception as e:
+        print(f"[polymarket] fetch_market_final_price({ticker[:14]}...): {e}")
+        return None
+
+    raw = market.get("outcomePrices")
+    if raw is None:
+        return None
+
+    # outcomePrices may arrive as a JSON string or already a list
+    if isinstance(raw, str):
+        try:
+            prices = _json.loads(raw)
+        except Exception:
+            return None
+    else:
+        prices = raw
+
+    if not prices:
+        return None
+
+    try:
+        yes_price = float(prices[0])
+    except (ValueError, TypeError, IndexError):
+        return None
+
+    return round(yes_price * 100)
+
+
 def get_orderbook(token_id: str) -> dict:
     """Fetch live CLOB order book for a single token (YES or NO side).
 
