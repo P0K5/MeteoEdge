@@ -9,6 +9,17 @@ log = logging.getLogger(__name__)
 
 from src.config import STATIONS, LOG_DIR, CANDIDATES_CSV, SETTLEMENTS_CSV, STATION_TZ, LIVE_TRADES_JSONL
 from src.http_client import fetch
+from src.data.polymarket import fetch_market_final_price
+
+
+def _open_db():
+    """Return a Database handle, or None if the DB cannot be opened."""
+    try:
+        from src.data.db import Database
+        return Database()
+    except Exception as e:
+        print(f"[settle] DB unavailable: {e} -- skipping DB settlement")
+        return None
 
 
 def _open_db():
@@ -190,6 +201,9 @@ def _write_db_settlements(records: list[dict], target: date, truth: dict[str, fl
     Market identity is the 0x… market hash when available; records written
     with synthetic '{STATION}-order-…' tickers are mapped back to the hash
     via no_token_id when another record for the same market carries it.
+    Fetches ``market_final_price`` from the Polymarket Gamma API
+    (``outcomePrices[0]`` on the resolved market) so the column is
+    always populated instead of being left NULL.
     """
     if db is None:
         return
@@ -220,6 +234,9 @@ def _write_db_settlements(records: list[dict], target: date, truth: dict[str, fl
         seen.add(market_key)
         lo, hi = float(r["bracket_low"]), float(r["bracket_high"])
         actual = truth[station]
+        # Fetch the market's final resolved YES price from Polymarket Gamma.
+        # Returns None gracefully on network failure or if not yet resolved.
+        market_final_price = fetch_market_final_price(market_key) if market_key.startswith("0x") else None
         try:
             writer.record_settlement(
                 ticker=market_key,
@@ -228,6 +245,7 @@ def _write_db_settlements(records: list[dict], target: date, truth: dict[str, fl
                 bracket_high=hi,
                 actual_high_f=actual,
                 resolved_yes=lo <= actual <= hi,
+                market_final_price=market_final_price,
             )
         except Exception as e:
             log.warning("[settle] DB settlement write failed for %s: %s", market_key[:14], e)
