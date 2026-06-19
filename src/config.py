@@ -443,7 +443,6 @@ CONFIG_DEFAULTS: "dict[str, str | int | float | bool]" = {
     "MIN_PRICE_CENTS": 60,
     "MIN_CONFIDENCE_YES": 0.85,
     "MAX_CONFIDENCE_YES_FOR_NO": 0.05,
-    "ENABLE_YES_TRADES": False,
     "MIN_FORECAST_BRACKET_MARGIN_F": 2.5,
     "EMOS_DEFAULT_MODE": "legacy",
     "DAILY_LOSS_LIMIT_EUR": 50.0,

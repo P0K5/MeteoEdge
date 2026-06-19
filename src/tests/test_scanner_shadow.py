@@ -2,9 +2,9 @@
 
 Tests the split between YES gate detection and execution routing introduced
 in issue #261. Covers:
-- ENABLE_YES_TRADES=False → YES-passing market produces Candidate(shadow=True)
-- ENABLE_YES_TRADES=True  → YES-passing market produces Candidate(shadow=False)
-- NO candidates are never shadow regardless of ENABLE_YES_TRADES
+- yes_enabled=False → YES-passing market produces Candidate(shadow=True)
+- yes_enabled=True  → YES-passing market produces Candidate(shadow=False)
+- NO candidates are never shadow regardless of yes_enabled
 - max_edge gate still applies to shadow YES candidates
 """
 from datetime import datetime, timezone
@@ -83,13 +83,16 @@ _PATCHES = [
 ]
 
 
-def _run_scan(weather, market, *, enable_yes_trades: bool):
-    """Run scan_markets with the given ENABLE_YES_TRADES setting."""
+def _run_scan(weather, market, *, yes_enabled: bool):
+    """Run scan_markets with the given yes_enabled station override."""
     from src.strategy import scanner as _scanner_mod
-    # Override the bracket parser to return our controlled bracket
     bracket = _make_bracket()
+    mock_db = type("DB", (), {
+        "get_all_config": lambda self: {},
+        "get_config": lambda self, k: None,
+        "get_station_override": lambda self, s: {"yes_enabled": yes_enabled, "no_enabled": True},
+    })()
     with (
-        patch.object(_scanner_mod, "ENABLE_YES_TRADES", enable_yes_trades),
         patch.object(_scanner_mod, "parse_bracket_from_market", return_value=bracket),
         patch.object(_scanner_mod, "ENABLE_CLOB_ENRICHMENT", False),
         patch("src.strategy.scanner.get_orderbook", return_value={"asks": [], "bids": []}),
@@ -97,8 +100,8 @@ def _run_scan(weather, market, *, enable_yes_trades: bool):
         patch("src.strategy.scanner.get_city_mode", return_value="legacy"),
         patch("src.strategy.scanner.apply_emos", side_effect=lambda *a, **kw: None),
         patch("src.strategy.scanner._check_ready_for_promotion", return_value=False),
+        patch("src.strategy.scanner.get_live_config", return_value={}),
     ):
-        # Patch true_probability_yes so YES passes all gates.
         # yes_ask=72¢, fee=1¢, p_yes=0.90:
         #   ev_yes = 90 - 72 - 1 = 17¢  (MIN=15, MAX=20 → in range)
         #   p_yes=0.90 >= MIN_CONFIDENCE_YES=0.85
@@ -106,7 +109,7 @@ def _run_scan(weather, market, *, enable_yes_trades: bool):
         with patch("src.strategy.scanner.true_probability_yes", return_value=0.90):
             with patch("src.strategy.scanner.estimate_fee_cents", return_value=1.0):
                 from src.strategy.scanner import scan_markets
-                candidates, _ = scan_markets(weather, [market], db=None)
+                candidates, _ = scan_markets(weather, [market], db=mock_db)
     return candidates
 
 
@@ -119,23 +122,23 @@ class TestShadowDetection:
         self.weather = {"KORD": _make_weather_state()}
         self.market = _make_market(_make_bracket())
 
-    def test_enable_yes_false_produces_shadow_candidate(self):
-        """With ENABLE_YES_TRADES=False and a YES-eligible market, get shadow=True."""
-        candidates = _run_scan(self.weather, self.market, enable_yes_trades=False)
+    def test_yes_disabled_produces_shadow_candidate(self):
+        """With yes_enabled=False and a YES-eligible market, get shadow=True."""
+        candidates = _run_scan(self.weather, self.market, yes_enabled=False)
         yes_cands = [c for c in candidates if c.side == "YES"]
         assert len(yes_cands) == 1, f"Expected 1 YES candidate, got {yes_cands}"
         assert yes_cands[0].shadow is True
 
-    def test_enable_yes_true_produces_non_shadow_candidate(self):
-        """With ENABLE_YES_TRADES=True and a YES-eligible market, get shadow=False."""
-        candidates = _run_scan(self.weather, self.market, enable_yes_trades=True)
+    def test_yes_enabled_produces_non_shadow_candidate(self):
+        """With yes_enabled=True and a YES-eligible market, get shadow=False."""
+        candidates = _run_scan(self.weather, self.market, yes_enabled=True)
         yes_cands = [c for c in candidates if c.side == "YES"]
         assert len(yes_cands) == 1, f"Expected 1 YES candidate, got {yes_cands}"
         assert yes_cands[0].shadow is False
 
     def test_shadow_candidate_has_correct_side_and_ticker(self):
         """Shadow candidate carries the correct metadata."""
-        candidates = _run_scan(self.weather, self.market, enable_yes_trades=False)
+        candidates = _run_scan(self.weather, self.market, yes_enabled=False)
         yes_cands = [c for c in candidates if c.side == "YES"]
         assert yes_cands[0].side == "YES"
         assert yes_cands[0].bracket.ticker == "0xTEST"
@@ -182,7 +185,7 @@ class TestCandidateDataclassDefaults:
 
 
 def _run_scan_with_shadow_gates(weather, market, *, p_yes, yes_ask, shadow_gates=None):
-    """Run scan_markets with ENABLE_YES_TRADES=False and configurable shadow gates.
+    """Run scan_markets with yes_enabled=False and configurable shadow gates.
 
     shadow_gates: dict with keys SHADOW_MIN_EDGE_CENTS_YES, SHADOW_MIN_CONFIDENCE_YES,
                   SHADOW_MIN_PRICE_CENTS_YES — if None, uses CONFIG_DEFAULTS.
@@ -201,14 +204,13 @@ def _run_scan_with_shadow_gates(weather, market, *, p_yes, yes_ask, shadow_gates
     mock_db = type("DB", (), {
         "get_all_config": lambda self: gates,
         "get_config": lambda self, k: None,
-        "get_station_override": lambda self, s: None,
+        "get_station_override": lambda self, s: {"yes_enabled": False, "no_enabled": True},
     })()
 
     fee = 1.0
     ev_yes = p_yes * 100 - yes_ask - fee
 
     with (
-        patch.object(_scanner_mod, "ENABLE_YES_TRADES", False),
         patch.object(_scanner_mod, "parse_bracket_from_market", return_value=bracket),
         patch.object(_scanner_mod, "ENABLE_CLOB_ENRICHMENT", False),
         patch("src.strategy.scanner.get_orderbook", return_value={"asks": [], "bids": []}),
@@ -238,12 +240,11 @@ class TestShadowYesGates:
         self.market = _make_market(_make_bracket())
 
     def test_live_yes_gates_unchanged_below_shadow_threshold(self):
-        """With ENABLE_YES_TRADES=True a market at ev=4c/p=0.58/ask=25c gets NO candidate."""
+        """A market at ev=4c/p=0.58/ask=25c with yes_enabled=True gets no YES candidate."""
         from src.strategy import scanner as _scanner_mod
         bracket = _make_bracket(yes_ask=25, no_ask=30)
         # ev_yes = 0.58*100 - 25 - 1 = 32c but p_yes=0.58 < MIN_CONFIDENCE_YES=0.85 → no YES
         with (
-            patch.object(_scanner_mod, "ENABLE_YES_TRADES", True),
             patch.object(_scanner_mod, "parse_bracket_from_market", return_value=bracket),
             patch.object(_scanner_mod, "ENABLE_CLOB_ENRICHMENT", False),
             patch("src.strategy.scanner.get_orderbook", return_value={"asks": [], "bids": []}),
@@ -301,7 +302,6 @@ class TestShadowYesGates:
             "SHADOW_MIN_PRICE_CENTS_YES": 1,
         }
         with (
-            patch.object(_scanner_mod, "ENABLE_YES_TRADES", False),
             patch.object(_scanner_mod, "parse_bracket_from_market", return_value=bracket),
             patch.object(_scanner_mod, "ENABLE_CLOB_ENRICHMENT", False),
             patch("src.strategy.scanner.get_orderbook", return_value={"asks": [], "bids": []}),

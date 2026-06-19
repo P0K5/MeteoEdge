@@ -69,7 +69,6 @@ def _run_scan_with_cap(raw_p_yes: float, model_prob_cap: float,
 
     with (
         patch.object(_scanner_mod, "MODEL_PROB_CAP", model_prob_cap),
-        patch.object(_scanner_mod, "ENABLE_YES_TRADES", False),
         patch.object(_scanner_mod, "ENABLE_CLOB_ENRICHMENT", False),
         patch.object(_scanner_mod, "parse_bracket_from_market", return_value=bracket),
         patch("src.strategy.scanner.get_orderbook", return_value={"asks": [], "bids": []}),

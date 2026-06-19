@@ -144,7 +144,6 @@ class TestGetLiveConfig:
         cfg = get_live_config(db)
         assert isinstance(cfg["MIN_EDGE_CENTS"], float)
         assert isinstance(cfg["MIN_PRICE_CENTS"], int)
-        assert isinstance(cfg["ENABLE_YES_TRADES"], bool)
         assert isinstance(cfg["EMOS_DEFAULT_MODE"], str)
 
     def test_reflects_custom_db_values(self):
@@ -158,17 +157,17 @@ class TestGetLiveConfig:
         db = _db()
         seed_config(db)
         for true_val in ("true", "True", "TRUE", "1", "yes"):
-            db.set_config("ENABLE_YES_TRADES", true_val)
+            db.set_config("RESIDUAL_CORRECTION_ENABLED", true_val)
             cfg = get_live_config(db)
-            assert cfg["ENABLE_YES_TRADES"] is True, f"Expected True for {true_val!r}"
+            assert cfg["RESIDUAL_CORRECTION_ENABLED"] is True, f"Expected True for {true_val!r}"
 
     def test_bool_false_variants(self):
         db = _db()
         seed_config(db)
         for false_val in ("false", "False", "0", "no"):
-            db.set_config("ENABLE_YES_TRADES", false_val)
+            db.set_config("RESIDUAL_CORRECTION_ENABLED", false_val)
             cfg = get_live_config(db)
-            assert cfg["ENABLE_YES_TRADES"] is False, f"Expected False for {false_val!r}"
+            assert cfg["RESIDUAL_CORRECTION_ENABLED"] is False, f"Expected False for {false_val!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -233,8 +232,8 @@ class TestGetConfigEndpoint:
         assert isinstance(data["strategy"]["MIN_EDGE_CENTS"]["value"], float)
         # MIN_PRICE_CENTS should be int
         assert isinstance(data["strategy"]["MIN_PRICE_CENTS"]["value"], int)
-        # ENABLE_YES_TRADES should be bool
-        assert isinstance(data["strategy"]["ENABLE_YES_TRADES"]["value"], bool)
+        # RESIDUAL_CORRECTION_ENABLED should be bool
+        assert isinstance(data["strategy"]["RESIDUAL_CORRECTION_ENABLED"]["value"], bool)
 
 
 class TestPatchConfigEndpoint:
@@ -258,7 +257,7 @@ class TestPatchConfigEndpoint:
 
     def test_patch_bool_happy_path(self, api_client):
         client, db = api_client
-        resp = client.patch("/api/config", json={"key": "ENABLE_YES_TRADES", "value": True})
+        resp = client.patch("/api/config", json={"key": "RESIDUAL_CORRECTION_ENABLED", "value": True})
         assert resp.status_code == 200
         assert resp.json()["value"] is True
 
