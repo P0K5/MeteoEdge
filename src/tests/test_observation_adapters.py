@@ -338,7 +338,7 @@ class TestFallbackLabeling:
 
         with patch(
             "src.data.collectors.jma_ameidas.fetch",
-            side_effect=[resp_404, resp_404, om_resp],
+            side_effect=[resp_404, resp_404, resp_404, om_resp],
         ):
             result = collector.poll()
 

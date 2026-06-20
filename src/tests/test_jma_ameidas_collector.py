@@ -193,8 +193,8 @@ class TestErrorHandling:
         jma_404 = _make_response(404)
         om_resp = _make_response(200, _open_meteo_response(20.0))
 
-        # 404 on current hour triggers a previous-hour retry before Open-Meteo
-        with patch("src.data.collectors.jma_ameidas.fetch", side_effect=[jma_404, jma_404, om_resp]):
+        # 404 on current slot triggers previous-slot then previous-hour retry before Open-Meteo
+        with patch("src.data.collectors.jma_ameidas.fetch", side_effect=[jma_404, jma_404, jma_404, om_resp]):
             result = collector.poll()
 
         assert result is True
@@ -211,7 +211,7 @@ class TestErrorHandling:
 
         with patch(
             "src.data.collectors.jma_ameidas.fetch",
-            side_effect=[Exception("connection reset"), Exception("connection reset"), om_resp],
+            side_effect=[Exception("connection reset"), Exception("connection reset"), Exception("connection reset"), om_resp],
         ):
             result = collector.poll()
 
@@ -226,7 +226,7 @@ class TestErrorHandling:
 
         with patch(
             "src.data.collectors.jma_ameidas.fetch",
-            side_effect=[Exception("JMA down"), Exception("OM down")],
+            side_effect=[Exception("JMA down"), Exception("JMA down"), Exception("JMA down"), Exception("OM down")],
         ):
             result = collector.poll()
 
@@ -242,7 +242,7 @@ class TestErrorHandling:
         jma_empty = _make_response(200, {})
         om_resp = _make_response(200, _open_meteo_response(18.0))
 
-        with patch("src.data.collectors.jma_ameidas.fetch", side_effect=[jma_empty, jma_empty, om_resp]):
+        with patch("src.data.collectors.jma_ameidas.fetch", side_effect=[jma_empty, jma_empty, jma_empty, om_resp]):
             result = collector.poll()
 
         assert result is True
