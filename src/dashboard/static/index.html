@@ -355,6 +355,17 @@ a,button,input,select{transition:color var(--transition),background var(--transi
 .prob-sub.up{color:var(--yes);}
 .prob-sub.down{color:var(--warn);}
 
+/* ── MODEL FRESHNESS SUB-LINE MODIFIERS ── */
+.prob-sub-frozen{
+  color:var(--muted);
+}
+.prob-sub-stale{
+  display:inline-flex;align-items:center;gap:4px;
+  background:var(--warn-bg);color:var(--warn);
+  padding:1px 6px;border-radius:var(--radius-full);
+  font-size:10px;font-weight:600;font-family:var(--font-mono);
+}
+
 /* ── CHART ── */
 .chart-section{border-top:1px solid var(--divider);background:var(--surface-2);padding:var(--space-4) var(--space-5);}
 .chart-wrap{position:relative;height:180px;}
@@ -401,6 +412,10 @@ a,button,input,select{transition:color var(--transition),background var(--transi
 .station-card.accent-active{border-left-color:var(--yes);}
 .station-card.accent-no_data{border-left-color:var(--no);}
 .station-card.accent-disabled{border-left-color:var(--warn);}
+.station-card.accent-outside_hours{
+  border-left-color:var(--muted);
+  background:var(--surface-off);
+}
 
 .station-header{
   padding:var(--space-4) var(--space-5);
@@ -1508,6 +1523,7 @@ async function _renderClosedChart(tokenId, entryPrice, exitPrice) {
 
 let stationsLoaded = false;
 let stationsIntervalId = null;
+let stationsMap = {};  // Map[station_metar] → station object with status field
 
 const STATUS_ORDER = { active: 0, outside_hours: 1, no_data: 2, disabled: 3 };
 
@@ -1797,6 +1813,9 @@ async function fetchStations() {
         s.residuals = null;
       }
     }));
+    // Build a map of station metar code → station object for quick lookup in position rendering
+    stationsMap = {};
+    stations.forEach(s => { stationsMap[s.metar] = s; });
     renderStations(stations);
   } catch (e) {
     banner.classList.add('visible');

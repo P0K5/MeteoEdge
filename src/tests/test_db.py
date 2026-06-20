@@ -761,3 +761,132 @@ class TestEmosCalibrationTable:
         # Total count must be 3
         cur = db._conn.execute("SELECT COUNT(*) FROM emos_calibration")
         assert cur.fetchone()[0] == 3
+
+
+# ---------------------------------------------------------------------------
+# Win-rate unification tests (issue #371)
+# ---------------------------------------------------------------------------
+
+from src.data.db import compute_win_rate
+
+
+class TestComputeWinRate:
+    """Test the canonical compute_win_rate helper function."""
+
+    def test_basic_win_rate_calculation(self):
+        """compute_win_rate should return wins / filled."""
+        assert compute_win_rate(4, 2) == pytest.approx(0.5)
+        assert compute_win_rate(3, 2) == pytest.approx(2/3)
+        assert compute_win_rate(5, 5) == pytest.approx(1.0)
+        assert compute_win_rate(5, 0) == pytest.approx(0.0)
+
+    def test_filled_zero_returns_none(self):
+        """compute_win_rate should return None when filled == 0."""
+        assert compute_win_rate(0, 0) is None
+        assert compute_win_rate(0, 1) is None
+
+    def test_wins_greater_than_filled_is_invalid(self):
+        """Wins should not exceed filled, but the function doesn't validate."""
+        result = compute_win_rate(2, 3)
+        assert result == pytest.approx(1.5)
+
+
+class TestStationsTradeStatsUnification:
+    """Test that get_stations_trade_stats uses the canonical win-rate definition."""
+
+    def _insert_test_trade(self, db: Database, station: str, outcome: str, pnl: "float | None", ts: str = "2024-01-01T10:00:00+00:00") -> int:
+        """Helper to insert a trade with minimal required fields."""
+        return db.insert_trade(
+            ts=ts,
+            station=station,
+            ticker="TEST-TICK",
+            bracket_low=10.0,
+            bracket_high=20.0,
+            side="YES",
+            predicted_price=50,
+            actual_price=51,
+            predicted_edge=0.12,
+            mode="paper",
+            capital_before=1000.0,
+            outcome=outcome,
+            pnl=pnl,
+        )
+
+    def test_fixture_five_trades(self):
+        """Test with a fixture: 2 won, 1 lost, 1 timeout, 1 pnl=null filled."""
+        db = _db()
+
+        # Insert 5 trades for station "KORD":
+        # 1. Filled with pnl=+10 (won)
+        self._insert_test_trade(db, "KORD", "filled", 10.0, ts="2024-01-01T10:00:00+00:00")
+        # 2. Filled with pnl=+5 (won)
+        self._insert_test_trade(db, "KORD", "filled", 5.0, ts="2024-01-01T11:00:00+00:00")
+        # 3. Filled with pnl=-8 (lost)
+        self._insert_test_trade(db, "KORD", "filled", -8.0, ts="2024-01-01T12:00:00+00:00")
+        # 4. Timeout (not filled)
+        self._insert_test_trade(db, "KORD", "timeout", None, ts="2024-01-01T13:00:00+00:00")
+        # 5. Filled with pnl=NULL (partial fill or pending settlement)
+        self._insert_test_trade(db, "KORD", "filled", None, ts="2024-01-01T14:00:00+00:00")
+
+        # Call get_stations_trade_stats
+        stats = db.get_stations_trade_stats()
+
+        # Expected:
+        # trade_count: 5, filled_count: 3 (outcome IN ('filled','sold') AND pnl IS NOT NULL)
+        # wins: 2 (pnl > 0), win_rate: 2/3 ≈ 0.6667
+        # total_pnl: 10 + 5 - 8 + 0 + 0 = 7.0
+        assert "KORD" in stats
+        kord_stats = stats["KORD"]
+        assert kord_stats["trade_count"] == 5
+        assert kord_stats["filled_count"] == 3
+        assert kord_stats["win_rate"] == pytest.approx(round(2/3, 4))
+        assert kord_stats["total_pnl"] == pytest.approx(7.0)
+        assert kord_stats["last_trade_ts"] == "2024-01-01T14:00:00+00:00"
+
+    def test_excludes_pnl_null_from_filled_count(self):
+        """Trades with pnl=NULL should not be counted in filled_count."""
+        db = _db()
+        for i in range(3):
+            self._insert_test_trade(db, "TEST", "filled", float(i), ts=f"2024-01-01T{10+i}:00:00+00:00")
+        for i in range(2):
+            self._insert_test_trade(db, "TEST", "filled", None, ts=f"2024-01-01T{13+i}:00:00+00:00")
+        stats = db.get_stations_trade_stats()
+        assert stats["TEST"]["filled_count"] == 3
+        assert stats["TEST"]["trade_count"] == 5
+
+    def test_excludes_non_filled_outcome(self):
+        """Trades with outcome != 'filled'/'sold' should not be counted."""
+        db = _db()
+        self._insert_test_trade(db, "TEST", "filled", 5.0, ts="2024-01-01T10:00:00+00:00")
+        self._insert_test_trade(db, "TEST", "sold", 3.0, ts="2024-01-01T11:00:00+00:00")
+        self._insert_test_trade(db, "TEST", "timeout", None, ts="2024-01-01T12:00:00+00:00")
+        self._insert_test_trade(db, "TEST", "timeout", None, ts="2024-01-01T13:00:00+00:00")
+        stats = db.get_stations_trade_stats()
+        assert stats["TEST"]["filled_count"] == 2
+        assert stats["TEST"]["trade_count"] == 4
+        assert stats["TEST"]["win_rate"] == pytest.approx(1.0)
+
+    def test_last_trade_ts_excludes_timeout(self):
+        """last_trade_ts should only include filled/sold, not timeouts."""
+        db = _db()
+        self._insert_test_trade(db, "TEST", "filled", 5.0, ts="2024-01-01T10:00:00+00:00")
+        self._insert_test_trade(db, "TEST", "timeout", None, ts="2024-01-01T11:00:00+00:00")
+        stats = db.get_stations_trade_stats()
+        assert stats["TEST"]["last_trade_ts"] == "2024-01-01T10:00:00+00:00"
+
+    def test_no_trades_returns_empty_dict(self):
+        """get_stations_trade_stats on empty trades table should return empty dict."""
+        db = _db()
+        stats = db.get_stations_trade_stats()
+        assert stats == {}
+
+    def test_multiple_stations_independent(self):
+        """Multiple stations should have independent stats."""
+        db = _db()
+        self._insert_test_trade(db, "KORD", "filled", 10.0, ts="2024-01-01T10:00:00+00:00")
+        self._insert_test_trade(db, "KORD", "filled", -5.0, ts="2024-01-01T11:00:00+00:00")
+        for i in range(3):
+            self._insert_test_trade(db, "KJFK", "filled", 5.0, ts=f"2024-01-02T{10+i}:00:00+00:00")
+        stats = db.get_stations_trade_stats()
+        assert stats["KORD"]["win_rate"] == pytest.approx(0.5)  # 1/2
+        assert stats["KJFK"]["win_rate"] == pytest.approx(1.0)   # 3/3

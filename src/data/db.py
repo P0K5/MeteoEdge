@@ -216,6 +216,19 @@ CREATE TABLE IF NOT EXISTS deb_weight_log (
 """
 
 
+def compute_win_rate(filled: int, wins: int) -> "float | None":
+    """Canonical win-rate definition: wins / filled. None when filled == 0.
+
+    Args:
+        filled: Count of settled trades (outcome IN ('filled','sold') AND pnl IS NOT NULL).
+        wins: Count of profitable settled trades (outcome IN ('filled','sold') AND pnl > 0).
+
+    Returns:
+        wins / filled if filled > 0, else None.
+    """
+    return wins / filled if filled else None
+
+
 class Database:
     """Wraps a SQLite connection with typed helpers for all MeteoEdge tables."""
 
@@ -1306,10 +1319,10 @@ class Database:
             SELECT
                 station,
                 COUNT(*)                                                                        AS trade_count,
-                SUM(CASE WHEN outcome IN ('filled','sold') AND COALESCE(pnl,0) != 0 THEN 1 ELSE 0 END)    AS filled_count,
+                SUM(CASE WHEN outcome IN ('filled','sold') AND pnl IS NOT NULL THEN 1 ELSE 0 END)         AS filled_count,
                 SUM(CASE WHEN outcome IN ('filled','sold') AND pnl > 0 THEN 1 ELSE 0 END)                  AS win_count,
                 SUM(COALESCE(pnl, 0))                                                           AS total_pnl,
-                MAX(ts)                                                                         AS last_trade_ts
+                MAX(CASE WHEN outcome IN ('filled','sold') THEN ts END)                         AS last_trade_ts
             FROM trades
             GROUP BY station
             """
