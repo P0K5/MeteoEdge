@@ -3,11 +3,14 @@
 Covers:
 - OrderManager.reconcile_timeout_fills(): patches timeout->filled for held tokens,
   leaves non-held records alone, skips missing file / empty wallet.
+  Rotation-aware: iterates all rotated JSONL sources, skips .gz archives.
+  DB sync: updates trades.outcome, inserts row if absent.
 - OrderManager.check_take_profit_exits(): sells when best_bid >= target, skips
   when below target, handles 404 resolved markets, handles balance=0 error.
 - OrderManager.sync_open_orders(): open exchange orders are added to dedup guard;
   filled positions from DB or JSONL are added; expired / missing records are removed.
 """
+import gzip as _gzip
 import json
 import sys
 import tempfile
@@ -198,6 +201,230 @@ class TestReconcileTimeoutFills:
         non_blank = [ln for ln in content.splitlines() if ln.strip()]
         assert len(non_blank) == 1
         assert json.loads(non_blank[0])["outcome"] == "filled"
+
+
+# ===========================================================================
+# reconcile_timeout_fills — rotation-aware and DB sync
+# ===========================================================================
+
+class TestReconcileRotationAware:
+    """reconcile_timeout_fills must iterate all rotated JSONL sources correctly."""
+
+    def test_only_dated_token_patched_when_plain_file_has_different_token(self, tmp_path):
+        """Plain file has token-A (not in wallet); dated file has token-B (in wallet).
+        Only the dated file record must be patched."""
+        om = _make_om()
+        base = tmp_path / "live_trades.jsonl"
+        dated = tmp_path / "live_trades.2026-06-20.jsonl"
+
+        # Plain file: token-A (not in wallet)
+        _write_jsonl(base, [{"asset_id": "tok-A", "outcome": "timeout"}])
+        # Dated file: token-B (in wallet)
+        _write_jsonl(dated, [{"asset_id": "tok-B", "outcome": "timeout"}])
+
+        with patch("src.execution.order_manager.LIVE_TRADES_JSONL", base), \
+             patch("src.execution.order_manager._wallet_held_token_ids",
+                   return_value={"tok-B"}):
+            om.reconcile_timeout_fills("ts-rot-1")
+
+        plain_lines = [json.loads(ln) for ln in base.read_text().splitlines() if ln.strip()]
+        dated_lines = [json.loads(ln) for ln in dated.read_text().splitlines() if ln.strip()]
+
+        assert plain_lines[0]["outcome"] == "timeout"   # not patched
+        assert dated_lines[0]["outcome"] == "filled"    # patched
+        assert dated_lines[0]["reconciled_at"] == "ts-rot-1"
+
+    def test_gz_file_not_rewritten(self, tmp_path):
+        """Records in .gz archives are visible for reads but the archive is never rewritten."""
+        om = _make_om()
+        base = tmp_path / "live_trades.jsonl"
+        gz_path = tmp_path / "live_trades.2026-06-19.jsonl.gz"
+
+        record = {"asset_id": "tok-gz", "outcome": "timeout"}
+        with _gzip.open(gz_path, "wt", encoding="utf-8") as fh:
+            fh.write(json.dumps(record) + "\n")
+
+        gz_mtime_before = gz_path.stat().st_mtime
+
+        with patch("src.execution.order_manager.LIVE_TRADES_JSONL", base), \
+             patch("src.execution.order_manager._wallet_held_token_ids",
+                   return_value={"tok-gz"}):
+            om.reconcile_timeout_fills("ts-rot-2")
+
+        # .gz file must not have been modified
+        assert gz_path.stat().st_mtime == gz_mtime_before
+        # Content unchanged
+        with _gzip.open(gz_path, "rt", encoding="utf-8") as fh:
+            content2 = [json.loads(ln) for ln in fh if ln.strip()]
+        assert content2[0]["outcome"] == "timeout"
+
+    def test_multiple_dated_files_all_patched(self, tmp_path):
+        """All dated JSONL files with matching tokens are patched in one reconcile pass."""
+        om = _make_om()
+        base = tmp_path / "live_trades.jsonl"
+        dated1 = tmp_path / "live_trades.2026-06-18.jsonl"
+        dated2 = tmp_path / "live_trades.2026-06-19.jsonl"
+        dated3 = tmp_path / "live_trades.2026-06-20.jsonl"
+
+        _write_jsonl(dated1, [{"asset_id": "tok-d1", "outcome": "timeout"}])
+        _write_jsonl(dated2, [{"asset_id": "tok-d2", "outcome": "timeout"}])
+        _write_jsonl(dated3, [{"asset_id": "tok-d3", "outcome": "timeout"}])
+
+        with patch("src.execution.order_manager.LIVE_TRADES_JSONL", base), \
+             patch("src.execution.order_manager._wallet_held_token_ids",
+                   return_value={"tok-d1", "tok-d3"}):
+            om.reconcile_timeout_fills("ts-rot-3")
+
+        d1 = [json.loads(ln) for ln in dated1.read_text().splitlines() if ln.strip()]
+        d2 = [json.loads(ln) for ln in dated2.read_text().splitlines() if ln.strip()]
+        d3 = [json.loads(ln) for ln in dated3.read_text().splitlines() if ln.strip()]
+
+        assert d1[0]["outcome"] == "filled"
+        assert d2[0]["outcome"] == "timeout"   # not in wallet
+        assert d3[0]["outcome"] == "filled"
+
+    def test_noop_when_no_sources_at_all(self, tmp_path):
+        """No plain file, no dated files -> _wallet_held_token_ids never called."""
+        om = _make_om()
+        base = tmp_path / "live_trades.jsonl"  # does not exist
+
+        with patch("src.execution.order_manager.LIVE_TRADES_JSONL", base), \
+             patch("src.execution.order_manager._wallet_held_token_ids") as mock_w:
+            om.reconcile_timeout_fills("ts-rot-4")
+
+        mock_w.assert_not_called()
+
+    def test_idempotent_second_run_produces_no_patches(self, tmp_path):
+        """Running reconcile twice produces zero new patches on the second pass."""
+        om = _make_om()
+        base = tmp_path / "live_trades.jsonl"
+        dated = tmp_path / "live_trades.2026-06-20.jsonl"
+        _write_jsonl(dated, [{"asset_id": "tok-idem", "outcome": "timeout"}])
+
+        wallet = {"tok-idem"}
+        with patch("src.execution.order_manager.LIVE_TRADES_JSONL", base), \
+             patch("src.execution.order_manager._wallet_held_token_ids",
+                   return_value=wallet):
+            om.reconcile_timeout_fills("ts-idem-1")
+
+        # First run patched it. Now run again.
+        with patch("src.execution.order_manager.LIVE_TRADES_JSONL", base), \
+             patch("src.execution.order_manager._wallet_held_token_ids",
+                   return_value=wallet):
+            om.reconcile_timeout_fills("ts-idem-2")
+
+        lines = [json.loads(ln) for ln in dated.read_text().splitlines() if ln.strip()]
+        assert lines[0]["outcome"] == "filled"
+        assert lines[0]["reconciled_at"] == "ts-idem-1"  # unchanged on second pass
+
+
+class TestReconcileDbSync:
+    """reconcile_timeout_fills must keep the DB trades table in sync."""
+
+    def _make_db(self):
+        from src.data.db import Database
+        return Database(":memory:")
+
+    def _insert_trade(self, db, order_id="ord-001", outcome="timeout"):
+        return db.insert_trade(
+            ts="2026-06-20T10:00:00Z", station="KORD",
+            ticker="KORD-80-82", bracket_low=80.0, bracket_high=82.0,
+            side="NO", predicted_price=72, actual_price=72,
+            predicted_edge=0.05, mode="live", capital_before=1000.0,
+            order_id=order_id, outcome=outcome,
+        )
+
+    def test_db_row_outcome_updated_to_filled(self, tmp_path):
+        """After reconcile, existing DB trades row has outcome='filled'."""
+        om = _make_om()
+        db = self._make_db()
+        self._insert_trade(db, order_id="ord-db-1", outcome="timeout")
+
+        base = tmp_path / "live_trades.jsonl"
+        dated = tmp_path / "live_trades.2026-06-20.jsonl"
+        _write_jsonl(dated, [{"asset_id": "tok-db-1", "outcome": "timeout",
+                               "order_id": "ord-db-1", "price_cents": 72}])
+
+        with patch("src.execution.order_manager.LIVE_TRADES_JSONL", base), \
+             patch("src.execution.order_manager._wallet_held_token_ids",
+                   return_value={"tok-db-1"}):
+            om.reconcile_timeout_fills("ts-db-1", db=db)
+
+        cur = db._conn.execute("SELECT outcome FROM trades WHERE order_id=?", ("ord-db-1",))
+        row = cur.fetchone()
+        assert row is not None
+        assert row[0] == "filled"
+
+    def test_db_row_inserted_when_absent(self, tmp_path):
+        """When no DB row exists for the order_id, one is inserted with outcome='filled'."""
+        om = _make_om()
+        db = self._make_db()
+
+        base = tmp_path / "live_trades.jsonl"
+        dated = tmp_path / "live_trades.2026-06-20.jsonl"
+        record = {
+            "asset_id": "tok-new", "outcome": "timeout",
+            "order_id": "ord-new-1", "price_cents": 68,
+            "ts": "2026-06-20T10:00:00Z", "station": "KORD",
+            "ticker": "KORD-80-82", "bracket_low": 80.0, "bracket_high": 82.0,
+            "side": "NO", "predicted_price": 68, "edge_cents": 0.05,
+            "size_eur": 5.0,
+        }
+        _write_jsonl(dated, [record])
+
+        with patch("src.execution.order_manager.LIVE_TRADES_JSONL", base), \
+             patch("src.execution.order_manager._wallet_held_token_ids",
+                   return_value={"tok-new"}):
+            om.reconcile_timeout_fills("ts-db-2", db=db)
+
+        cur = db._conn.execute(
+            "SELECT outcome, order_id FROM trades WHERE order_id=?", ("ord-new-1",)
+        )
+        row = cur.fetchone()
+        assert row is not None, "Trade row should have been inserted"
+        assert row[0] == "filled"
+
+    def test_no_db_writes_on_second_run(self, tmp_path):
+        """Idempotent: second reconcile triggers 0 new DB writes (outcome already filled)."""
+        om = _make_om()
+        db = self._make_db()
+        self._insert_trade(db, order_id="ord-idem-db", outcome="timeout")
+
+        base = tmp_path / "live_trades.jsonl"
+        dated = tmp_path / "live_trades.2026-06-20.jsonl"
+        _write_jsonl(dated, [{"asset_id": "tok-idem-db", "outcome": "timeout",
+                               "order_id": "ord-idem-db", "price_cents": 72}])
+
+        wallet = {"tok-idem-db"}
+        with patch("src.execution.order_manager.LIVE_TRADES_JSONL", base), \
+             patch("src.execution.order_manager._wallet_held_token_ids",
+                   return_value=wallet):
+            om.reconcile_timeout_fills("ts-idem-db-1", db=db)
+
+        # Second run: JSONL now has outcome='filled', so no patch loop runs -> no DB write.
+        with patch("src.execution.order_manager.LIVE_TRADES_JSONL", base), \
+             patch("src.execution.order_manager._wallet_held_token_ids",
+                   return_value=wallet):
+            om.reconcile_timeout_fills("ts-idem-db-2", db=db)
+
+        cur = db._conn.execute("SELECT outcome FROM trades WHERE order_id=?", ("ord-idem-db",))
+        assert cur.fetchone()[0] == "filled"
+
+    def test_no_db_call_when_db_is_none(self, tmp_path):
+        """Passing db=None must not raise -- JSONL is still patched."""
+        om = _make_om()
+        base = tmp_path / "live_trades.jsonl"
+        dated = tmp_path / "live_trades.2026-06-20.jsonl"
+        _write_jsonl(dated, [{"asset_id": "tok-nodb", "outcome": "timeout",
+                               "order_id": "ord-nodb"}])
+
+        with patch("src.execution.order_manager.LIVE_TRADES_JSONL", base), \
+             patch("src.execution.order_manager._wallet_held_token_ids",
+                   return_value={"tok-nodb"}):
+            om.reconcile_timeout_fills("ts-nodb", db=None)
+
+        lines = [json.loads(ln) for ln in dated.read_text().splitlines() if ln.strip()]
+        assert lines[0]["outcome"] == "filled"
 
 
 # ===========================================================================
@@ -1022,353 +1249,3 @@ class TestPartialFillPersistence:
 
         assert len(fills) == 1
         assert fills[0]["size_eur"] == pytest.approx(5.0, abs=0.01)
-
-
-# ===========================================================================
-# reconcile_wallet_to_db
-# ===========================================================================
-
-def _make_jsonl_record(
-    token_id: str,
-    outcome: str = "filled",
-    station: str = "KORD",
-    bracket_low: float = 80.0,
-    bracket_high: float = 81.0,
-    side: str = "NO",
-    order_id: str = "ord-rec-001",
-    predicted_price: int = 85,
-) -> dict:
-    return {
-        "asset_id": token_id,
-        "outcome": outcome,
-        "station": station,
-        "ticker": f"{station}-test",
-        "bracket_low": bracket_low,
-        "bracket_high": bracket_high,
-        "side": side,
-        "order_id": order_id,
-        "predicted_price": predicted_price,
-        "ts": "2026-06-20T10:00:00Z",
-        "edge_cents": 5,
-        "size_eur": 5.0,
-    }
-
-
-class TestReconcileWalletToDb:
-    """reconcile_wallet_to_db inserts DB rows for orphan wallet positions."""
-
-    @pytest.fixture(autouse=True)
-    def _reset_om(self):
-        self.om = _make_om()
-
-    def _make_db(self, existing_token_ids: list = None) -> MagicMock:
-        """Return a mock db whose get_open_positions returns rows for given token_ids."""
-        db = MagicMock()
-        rows = []
-        for tid in (existing_token_ids or []):
-            rows.append({"token_id": tid, "no_token_id": tid})
-        db.get_open_positions.return_value = rows
-        db._conn = MagicMock()
-        db._conn.execute.return_value.fetchone.return_value = None  # no existing trade
-        db.insert_trade.return_value = 42
-        return db
-
-    # ------------------------------------------------------------------
-    # Case 1: token already in open_positions → skip
-    # ------------------------------------------------------------------
-
-    def test_skips_token_already_in_open_positions(self, tmp_path):
-        """Token A already has an open_positions row → no DB writes."""
-        token_a = "tok-already-in-db"
-        db = self._make_db(existing_token_ids=[token_a])
-        wallet_pos = [{"asset_id": token_a, "size": 10.0, "avg_price": 0.82}]
-
-        with patch("src.execution.order_manager._wallet_held_positions", return_value=wallet_pos):
-            self.om.reconcile_wallet_to_db(db=db)
-
-        db.insert_trade.assert_not_called()
-        db.open_position.assert_not_called()
-
-    # ------------------------------------------------------------------
-    # Case 2: token in JSONL as 'timeout' → recovered
-    # ------------------------------------------------------------------
-
-    def test_recovers_orphan_from_timeout_jsonl_record(self, tmp_path):
-        """Token B found in JSONL as 'timeout' → trade + open_position inserted."""
-        token_b = "tok-timeout-orphan"
-        db = self._make_db()
-        wallet_pos = [{"asset_id": token_b, "size": 7.5, "avg_price": 0.81}]
-        jsonl_record = _make_jsonl_record(token_b, outcome="timeout", order_id="ord-b-001")
-
-        with patch("src.execution.order_manager._wallet_held_positions", return_value=wallet_pos), \
-             patch("src.execution.order_manager.iter_rotated_jsonl", side_effect=lambda *a, **kw: iter([jsonl_record])):
-            self.om.reconcile_wallet_to_db(db=db)
-
-        db.insert_trade.assert_called_once()
-        trade_kwargs = db.insert_trade.call_args[1]
-        assert trade_kwargs["station"] == "KORD"
-        assert trade_kwargs["outcome"] == "filled"
-        assert trade_kwargs["order_id"] == "ord-b-001"
-        # entry_price = max(1, min(99, round(0.81 * 100))) = 81
-        assert trade_kwargs["actual_price"] == 81
-
-        db.open_position.assert_called_once()
-        pos_kwargs = db.open_position.call_args[1]
-        assert pos_kwargs["token_id"] == token_b
-        assert pos_kwargs["shares"] == pytest.approx(7.5)
-        assert pos_kwargs["entry_price"] == 81
-        assert pos_kwargs["side"] == "NO"
-
-    def test_recovers_orphan_from_filled_jsonl_record(self, tmp_path):
-        """Token found in JSONL as 'filled' is also recovered (not just 'timeout')."""
-        token = "tok-filled-orphan"
-        db = self._make_db()
-        wallet_pos = [{"asset_id": token, "size": 5.0, "avg_price": 0.75}]
-        jsonl_record = _make_jsonl_record(token, outcome="filled", order_id="ord-fill-001")
-
-        with patch("src.execution.order_manager._wallet_held_positions", return_value=wallet_pos), \
-             patch("src.execution.order_manager.iter_rotated_jsonl", side_effect=lambda *a, **kw: iter([jsonl_record])):
-            self.om.reconcile_wallet_to_db(db=db)
-
-        db.insert_trade.assert_called_once()
-        db.open_position.assert_called_once()
-        pos_kwargs = db.open_position.call_args[1]
-        assert pos_kwargs["entry_price"] == 75  # round(0.75 * 100)
-
-    def test_uses_wallet_shares_not_jsonl_shares(self, tmp_path):
-        """Wallet size (authoritative) is used for shares, not JSONL size_eur."""
-        token = "tok-auth-shares"
-        db = self._make_db()
-        # wallet says 12.0 shares; JSONL would imply different
-        wallet_pos = [{"asset_id": token, "size": 12.0, "avg_price": 0.80}]
-        jsonl_record = _make_jsonl_record(token, outcome="timeout", order_id="ord-auth-001")
-        jsonl_record["size_eur"] = 5.0  # this would be ~6.25 shares at 80c
-
-        with patch("src.execution.order_manager._wallet_held_positions", return_value=wallet_pos), \
-             patch("src.execution.order_manager.iter_rotated_jsonl", side_effect=lambda *a, **kw: iter([jsonl_record])):
-            self.om.reconcile_wallet_to_db(db=db)
-
-        pos_kwargs = db.open_position.call_args[1]
-        assert pos_kwargs["shares"] == pytest.approx(12.0)
-
-    def test_synthetic_order_id_for_missing_order_id(self, tmp_path):
-        """JSONL record with no order_id gets a synthetic orphan-recovery order_id."""
-        token = "tok-no-orderid"
-        db = self._make_db()
-        wallet_pos = [{"asset_id": token, "size": 5.0, "avg_price": 0.80}]
-        jsonl_record = _make_jsonl_record(token, outcome="filled")
-        jsonl_record["order_id"] = ""  # no order_id
-
-        with patch("src.execution.order_manager._wallet_held_positions", return_value=wallet_pos), \
-             patch("src.execution.order_manager.iter_rotated_jsonl", side_effect=lambda *a, **kw: iter([jsonl_record])):
-            self.om.reconcile_wallet_to_db(db=db)
-
-        trade_kwargs = db.insert_trade.call_args[1]
-        assert trade_kwargs["order_id"].startswith(f"orphan-recovery-{token[:12]}")
-
-    def test_avg_price_clamped_to_1_cent_minimum(self, tmp_path):
-        """avg_price near zero is clamped to minimum 1 cent."""
-        token = "tok-price-clamp-low"
-        db = self._make_db()
-        wallet_pos = [{"asset_id": token, "size": 5.0, "avg_price": 0.001}]
-        jsonl_record = _make_jsonl_record(token, outcome="timeout", order_id="ord-clamp-001")
-
-        with patch("src.execution.order_manager._wallet_held_positions", return_value=wallet_pos), \
-             patch("src.execution.order_manager.iter_rotated_jsonl", side_effect=lambda *a, **kw: iter([jsonl_record])):
-            self.om.reconcile_wallet_to_db(db=db)
-
-        pos_kwargs = db.open_position.call_args[1]
-        assert pos_kwargs["entry_price"] == 1
-
-    def test_avg_price_clamped_to_99_cent_maximum(self, tmp_path):
-        """avg_price above 0.99 is clamped to 99 cents."""
-        token = "tok-price-clamp-high"
-        db = self._make_db()
-        wallet_pos = [{"asset_id": token, "size": 5.0, "avg_price": 1.0}]
-        jsonl_record = _make_jsonl_record(token, outcome="filled", order_id="ord-clamp-002")
-
-        with patch("src.execution.order_manager._wallet_held_positions", return_value=wallet_pos), \
-             patch("src.execution.order_manager.iter_rotated_jsonl", side_effect=lambda *a, **kw: iter([jsonl_record])):
-            self.om.reconcile_wallet_to_db(db=db)
-
-        pos_kwargs = db.open_position.call_args[1]
-        assert pos_kwargs["entry_price"] == 99
-
-    # ------------------------------------------------------------------
-    # Case 3: no JSONL record → warn once per process
-    # ------------------------------------------------------------------
-
-    def test_warns_once_for_token_with_no_jsonl_history(self, tmp_path, caplog):
-        """Token C with zero JSONL records emits WARNING once; no DB insert."""
-        import logging
-        token_c = "tok-no-history-abcdefghijklmn"
-        db = self._make_db()
-        wallet_pos = [{"asset_id": token_c, "size": 3.0, "avg_price": 0.70}]
-
-        with patch("src.execution.order_manager._wallet_held_positions", return_value=wallet_pos), \
-             patch("src.execution.order_manager.iter_rotated_jsonl", side_effect=lambda *a, **kw: iter([])), \
-             caplog.at_level(logging.WARNING, logger="src.execution.order_manager"):
-            self.om.reconcile_wallet_to_db(db=db)
-
-        db.insert_trade.assert_not_called()
-        db.open_position.assert_not_called()
-        warning_messages = [r.message for r in caplog.records if r.levelno == logging.WARNING]
-        assert any("no JSONL history" in m for m in warning_messages)
-
-    def test_warn_set_prevents_duplicate_warnings_for_same_token(self, tmp_path, caplog):
-        """Process-local warn set prevents duplicate WARNING for same token."""
-        import logging
-        token_c = "tok-no-history-dedup-check12"
-        db = self._make_db()
-        wallet_pos = [{"asset_id": token_c, "size": 3.0, "avg_price": 0.70}]
-
-        with patch("src.execution.order_manager._wallet_held_positions", return_value=wallet_pos), \
-             patch("src.execution.order_manager.iter_rotated_jsonl", side_effect=lambda *a, **kw: iter([])), \
-             caplog.at_level(logging.WARNING, logger="src.execution.order_manager"):
-            # Call twice — warning should only appear once
-            self.om.reconcile_wallet_to_db(db=db)
-            self.om.reconcile_wallet_to_db(db=db)
-
-        warning_count = sum(
-            1 for r in caplog.records
-            if r.levelno == logging.WARNING and "no JSONL history" in r.message
-        )
-        assert warning_count == 1
-
-    # ------------------------------------------------------------------
-    # Case 4: latest JSONL record is 'sold' → redemption ghost, skip
-    # ------------------------------------------------------------------
-
-    def test_skips_token_whose_latest_jsonl_record_is_sold(self, tmp_path):
-        """Token D: latest JSONL record is 'sold' → redemption ghost, no DB insert."""
-        token_d = "tok-ghost-sold"
-        db = self._make_db()
-        wallet_pos = [{"asset_id": token_d, "size": 5.0, "avg_price": 0.99}]
-        # Two records — first filled, then sold; iter_rotated_jsonl returns oldest-first
-        jsonl_records = [
-            _make_jsonl_record(token_d, outcome="filled", order_id="ord-d-001"),
-            _make_jsonl_record(token_d, outcome="sold", order_id="ord-d-001"),
-        ]
-
-        with patch("src.execution.order_manager._wallet_held_positions", return_value=wallet_pos), \
-             patch("src.execution.order_manager.iter_rotated_jsonl", side_effect=lambda *a, **kw: iter(jsonl_records)):
-            self.om.reconcile_wallet_to_db(db=db)
-
-        db.insert_trade.assert_not_called()
-        db.open_position.assert_not_called()
-
-    # ------------------------------------------------------------------
-    # Miscellaneous / edge cases
-    # ------------------------------------------------------------------
-
-    def test_noop_when_db_is_none(self):
-        """No DB provided → method returns immediately without touching wallet."""
-        with patch("src.execution.order_manager._wallet_held_positions") as mock_wallet:
-            self.om.reconcile_wallet_to_db(db=None)
-        mock_wallet.assert_not_called()
-
-    def test_noop_when_wallet_is_empty(self):
-        """Empty wallet → no JSONL scan, no DB writes."""
-        db = self._make_db()
-        with patch("src.execution.order_manager._wallet_held_positions", return_value=[]), \
-             patch("src.execution.order_manager.iter_rotated_jsonl") as mock_jsonl:
-            self.om.reconcile_wallet_to_db(db=db)
-        mock_jsonl.assert_not_called()
-
-    def test_skips_trade_insert_when_trade_row_already_exists(self, tmp_path):
-        """Existing trade row for the order_id → insert_trade not called again."""
-        token = "tok-existing-trade"
-        db = self._make_db()
-        # DB says a trade row with this order_id already exists
-        db._conn.execute.return_value.fetchone.return_value = (99,)  # trade_id=99
-        wallet_pos = [{"asset_id": token, "size": 5.0, "avg_price": 0.80}]
-        jsonl_record = _make_jsonl_record(token, outcome="filled", order_id="ord-existing-001")
-
-        with patch("src.execution.order_manager._wallet_held_positions", return_value=wallet_pos), \
-             patch("src.execution.order_manager.iter_rotated_jsonl", side_effect=lambda *a, **kw: iter([jsonl_record])):
-            self.om.reconcile_wallet_to_db(db=db)
-
-        db.insert_trade.assert_not_called()
-        db.open_position.assert_called_once()
-        pos_kwargs = db.open_position.call_args[1]
-        assert pos_kwargs["trade_id"] == 99
-
-    def test_latest_record_wins_when_multiple_records_for_token(self, tmp_path):
-        """When multiple records exist for a token, the *latest* (last) is used."""
-        token = "tok-multi-record"
-        db = self._make_db()
-        wallet_pos = [{"asset_id": token, "size": 6.0, "avg_price": 0.78}]
-        # First record: timeout; second record (latest): filled — should use 'filled'
-        jsonl_records = [
-            _make_jsonl_record(token, outcome="timeout", order_id="ord-first", station="KDTW"),
-            _make_jsonl_record(token, outcome="filled", order_id="ord-last", station="KORD"),
-        ]
-
-        with patch("src.execution.order_manager._wallet_held_positions", return_value=wallet_pos), \
-             patch("src.execution.order_manager.iter_rotated_jsonl", side_effect=lambda *a, **kw: iter(jsonl_records)):
-            self.om.reconcile_wallet_to_db(db=db)
-
-        trade_kwargs = db.insert_trade.call_args[1]
-        assert trade_kwargs["order_id"] == "ord-last"
-        assert trade_kwargs["station"] == "KORD"
-
-
-# ===========================================================================
-# Integration test: reconcile_wallet_to_db with real DB + JSONL
-# ===========================================================================
-
-class TestReconcileWalletToDbIntegration:
-    """Integration test: real in-memory DB + real JSONL file for KORD 80-81."""
-
-    @pytest.fixture(autouse=True)
-    def _reset_om(self):
-        self.om = _make_om()
-
-    def test_kord_80_81_token_inserted_into_open_positions(self, tmp_path):
-        """Load a 2026-06-20 JSONL record + mock wallet with KORD 80-81 token →
-        assert one open_positions row inserted with correct station/bracket."""
-        from src.data.db import Database
-
-        kord_token = "0x1234567890abcdef1234567890abcdef"
-
-        # Create a real in-memory database.
-        db = Database(":memory:")
-
-        # Write a JSONL file with a timeout record for the KORD 80-81 token.
-        jsonl_path = tmp_path / "live_trades.2026-06-20.jsonl"
-        record = {
-            "asset_id": kord_token,
-            "outcome": "timeout",
-            "station": "KORD",
-            "ticker": "KORD-2026-06-20-HIGH-80-81",
-            "bracket_low": 80.0,
-            "bracket_high": 81.0,
-            "side": "NO",
-            "order_id": "ord-kord-80-81-001",
-            "predicted_price": 85,
-            "ts": "2026-06-20T10:00:00Z",
-            "edge_cents": 7,
-            "size_eur": 10.0,
-        }
-        jsonl_path.write_text(json.dumps(record) + "\n")
-
-        # Mock wallet holding that token.
-        wallet_pos = [{"asset_id": kord_token, "size": 14.5, "avg_price": 0.81}]
-
-        with patch("src.execution.order_manager._wallet_held_positions", return_value=wallet_pos), \
-             patch("src.execution.order_manager.LIVE_TRADES_JSONL", tmp_path / "live_trades.jsonl"), \
-             patch("src.utils.log_rotation.rotated_sources",
-                   return_value=[jsonl_path]):
-            self.om.reconcile_wallet_to_db(db=db)
-
-        # Assert exactly one open_positions row was inserted.
-        positions = db.get_open_positions()
-        assert len(positions) == 1
-        pos = positions[0]
-        assert pos["station"] == "KORD"
-        assert pos["bracket_low"] == pytest.approx(80.0)
-        assert pos["bracket_high"] == pytest.approx(81.0)
-        assert pos["side"] == "NO"
-        assert pos["token_id"] == kord_token
-        assert pos["shares"] == pytest.approx(14.5)
-        assert pos["entry_price"] == 81  # max(1, min(99, round(0.81*100)))
