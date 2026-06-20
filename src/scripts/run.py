@@ -181,7 +181,7 @@ def poll_once(
             )
 
     if live_trader:
-        order_manager.reconcile_timeout_fills(ts)
+        order_manager.reconcile_timeout_fills(ts, db=db)
         order_manager.sync_open_orders(live_trader, db=db)
 
     # Take-profit is weather-independent -- runs every poll, including pre-sunrise.
@@ -340,7 +340,7 @@ def poll_once(
             n_shadow += 1
             if db is not None:
                 try:
-                    db.insert_trade(
+                    _row_id, _created = db.upsert_shadow_trade(
                         ts=ts,
                         station=cand.station,
                         ticker=cand.bracket.ticker,
@@ -350,20 +350,20 @@ def poll_once(
                         predicted_price=int(round(cand.p_yes * 100)),
                         actual_price=cand.bracket.yes_ask_cents,
                         predicted_edge=cand.edge_cents,
-                        mode="shadow",
                         capital_before=0.0,
-                        order_id=None,
-                        outcome=None,
-                        pnl=None,
-                        capital_after=None,
-                        settled_at=None,
                     )
-                    log.info(
-                        "  [shadow] logged YES candidate %s @ %sc (no order placed)",
-                        cand.bracket.ticker[:14], cand.bracket.yes_ask_cents,
-                    )
+                    if _created:
+                        log.info(
+                            "  [shadow] logged %s candidate %s @ %sc (no order placed)",
+                            cand.side, cand.bracket.ticker[:14], cand.bracket.yes_ask_cents,
+                        )
+                    else:
+                        log.debug(
+                            "  [shadow] dedup: updated actual_price=%sc for %s %s (today already logged)",
+                            cand.bracket.yes_ask_cents, cand.side, cand.bracket.ticker[:14],
+                        )
                 except Exception as e:
-                    log.warning("  [shadow] DB insert failed: %s", e)
+                    log.warning("  [shadow] DB upsert failed: %s", e)
             continue
 
         if live_trader and available_usdc < POSITION_SIZE_WITH_FEES:

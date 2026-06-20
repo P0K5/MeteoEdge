@@ -1,7 +1,9 @@
 """Owns open-order state. Thread-safe via internal locks. Do not import _open_orders directly."""
 import json
 import logging
+import math
 import os
+import re
 import tempfile
 import threading
 from collections import defaultdict
@@ -13,8 +15,28 @@ from src.config import (
     get_take_profit_buffer_cents,
 )
 from src.strategy.fee import estimate_fee_cents
+from src.utils.log_rotation import rotated_sources
 
 log = logging.getLogger(__name__)
+
+# Polymarket encodes share quantities with 6 decimal places of precision:
+# 5_000_000 internal units == 5.000000 shares.
+_POLY_PRECISION = 1_000_000
+
+
+def _parse_polymarket_balance(err: str) -> "int | None":
+    """Extract the available balance (in Polymarket internal units) from an error string.
+
+    Polymarket reports insufficient-balance errors in a form like:
+        "balance: 5000000, order amount: 6580000"
+
+    Returns the integer value after "balance:" when parseable, else None.
+    A return value of 0 means the wallet is genuinely empty.
+    """
+    m = re.search(r"balance\s*:\s*(\d+)", err, re.IGNORECASE)
+    if m:
+        return int(m.group(1))
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -202,6 +224,75 @@ def _wallet_held_token_ids() -> set:
         return set()
 
 
+def _reconcile_db_row(record: dict, ts: str, db=None) -> None:
+    """Update (or insert) the DB trades row for a just-reconciled JSONL record.
+
+    Called once per JSONL line that was patched from outcome='timeout' to
+    outcome='filled'.  If no DB row exists for the order_id, we insert one so
+    the trade is not invisible to DB-backed views.
+
+    Also inserts an open_positions row when the token has no existing entry,
+    so downstream take-profit / stop-loss logic can see the position.
+    """
+    if db is None:
+        return
+    order_id = record.get("order_id") or ""
+    price_cents = int(record.get("price_cents") or record.get("actual_price") or 0)
+    try:
+        updated = db.update_trade_by_order(
+            order_id,
+            outcome="filled",
+        )
+        if not updated:
+            # No existing trade row — insert a minimal one so the position is tracked.
+            db.insert_trade(
+                ts=record.get("ts", ts),
+                station=record.get("station", ""),
+                ticker=record.get("ticker", ""),
+                bracket_low=float(record.get("bracket_low", 0)),
+                bracket_high=float(record.get("bracket_high", 0)),
+                side=record.get("side", "NO"),
+                predicted_price=int(record.get("predicted_price", price_cents)),
+                actual_price=price_cents,
+                predicted_edge=float(record.get("edge_cents", 0)),
+                mode="live",
+                order_id=order_id or None,
+                outcome="filled",
+                capital_before=float(record.get("size_eur", 0)),
+            )
+    except Exception as e:
+        log.warning("[reconcile] DB trade update failed for order %s...: %s", str(order_id)[:12], e)
+        return
+
+    # Ensure open_positions has an entry for this token so the position is visible.
+    token_id = record.get("asset_id") or record.get("no_token_id") or ""
+    if not token_id or not order_id:
+        return
+    try:
+        existing = [p for p in db.get_open_positions() if p.get("order_id") == order_id]
+        if not existing:
+            shares = float(record.get("size_matched") or record.get("shares") or 0)
+            # Look up the trade_id we just inserted/updated
+            cur = db._conn.execute(
+                "SELECT id FROM trades WHERE order_id=? LIMIT 1", (order_id,)
+            )
+            row = cur.fetchone()
+            trade_id = row[0] if row else 0
+            db.open_position(
+                trade_id=trade_id,
+                station=record.get("station", ""),
+                ticker=record.get("ticker", ""),
+                token_id=token_id,
+                side=record.get("side", "NO"),
+                order_id=order_id,
+                entry_price=price_cents,
+                shares=shares,
+                entry_ts=record.get("ts", ts),
+            )
+    except Exception as e:
+        log.warning("[reconcile] DB open_positions insert failed for %s...: %s", str(order_id)[:12], e)
+
+
 class OrderManager:
     """Manages open-order state for the live trading loop.
 
@@ -218,7 +309,7 @@ class OrderManager:
         self._stop_loss_strikes: dict = {}      # no_token_id -> consecutive polls with fair < entry
         self._partial_fill_shares: dict = {}    # no_token_id -> shares already sold via partial fills
 
-    def reconcile_timeout_fills(self, ts: str) -> None:
+    def reconcile_timeout_fills(self, ts: str, db=None) -> None:
         """Patch timeout JSONL records whose tokens still appear in the wallet.
 
         GTC limit orders sometimes fill after our 5-minute wait window expires.
@@ -231,55 +322,79 @@ class OrderManager:
         Rewriting these records to outcome=filled restores visibility everywhere
         that filters on outcome.  Reconciliation runs once per poll, before
         sync_open_orders so the dedup guard sees the patched records.
+
+        After log rotation (Epic #345), new records go to dated files
+        (live_trades.YYYY-MM-DD.jsonl) instead of the legacy plain file.
+        This method iterates all sources returned by rotated_sources(), skipping
+        immutable .gz archives, so no records are missed regardless of rotation
+        state.  For every JSONL record patched, the DB trades row is also updated
+        (or inserted if absent) so outcome='filled' is consistent across both
+        stores.
         """
-        if not LIVE_TRADES_JSONL.exists():
+        sources = rotated_sources(LIVE_TRADES_JSONL)
+        if not sources:
             return
         held = _wallet_held_token_ids()
         if not held:
             return
 
-        patched = 0
-        new_lines: list = []
-        try:
-            with open(LIVE_TRADES_JSONL) as f:
-                for line in f:
-                    stripped = line.strip()
-                    if not stripped:
-                        new_lines.append(line)
-                        continue
-                    try:
-                        r = json.loads(stripped)
-                    except json.JSONDecodeError:
-                        new_lines.append(line)
-                        continue
-                    token = r.get("asset_id") or r.get("no_token_id") or ""
-                    if r.get("outcome") == "timeout" and token in held:
-                        r["outcome"] = "filled"
-                        r["reconciled_at"] = ts
-                        new_lines.append(json.dumps(r, default=str) + "\n")
-                        patched += 1
-                    else:
-                        new_lines.append(line)
-        except OSError as e:
-            log.warning("[reconcile] read failed: %s", e)
-            return
+        total_patched = 0
+        files_patched = 0
 
-        if patched == 0:
-            return
+        for source in sources:
+            # .gz archives are immutable — read-only, never rewrite
+            if source.suffix == ".gz":
+                continue
 
-        try:
-            with tempfile.NamedTemporaryFile(
-                "w", dir=LIVE_TRADES_JSONL.parent, delete=False, suffix=".tmp"
-            ) as f:
-                f.writelines(new_lines)
-                tmp = f.name
-            os.replace(tmp, LIVE_TRADES_JSONL)
+            new_lines: list = []
+            file_patched = 0
+            try:
+                with open(source) as f:
+                    for line in f:
+                        stripped = line.strip()
+                        if not stripped:
+                            new_lines.append(line)
+                            continue
+                        try:
+                            r = json.loads(stripped)
+                        except json.JSONDecodeError:
+                            new_lines.append(line)
+                            continue
+                        token = r.get("asset_id") or r.get("no_token_id") or ""
+                        if r.get("outcome") == "timeout" and token in held:
+                            r["outcome"] = "filled"
+                            r["reconciled_at"] = ts
+                            new_lines.append(json.dumps(r, default=str) + "\n")
+                            file_patched += 1
+                            # Sync the DB row so both stores stay consistent
+                            _reconcile_db_row(r, ts, db)
+                        else:
+                            new_lines.append(line)
+            except OSError as e:
+                log.warning("[reconcile] read failed for %s: %s", source.name, e)
+                continue
+
+            if file_patched == 0:
+                continue
+
+            try:
+                with tempfile.NamedTemporaryFile(
+                    "w", dir=source.parent, delete=False, suffix=".tmp"
+                ) as f:
+                    f.writelines(new_lines)
+                    tmp = f.name
+                os.replace(tmp, source)
+                total_patched += file_patched
+                files_patched += 1
+            except OSError as e:
+                log.warning("[reconcile] write failed for %s: %s", source.name, e)
+
+        if total_patched > 0:
             log.info(
-                "[reconcile] patched %s timeout record(s) -> filled (token present in wallet)",
-                patched,
+                "[reconcile] patched %s timeout record(s) across %s file(s)",
+                total_patched,
+                files_patched,
             )
-        except OSError as e:
-            log.warning("[reconcile] write failed: %s", e)
 
     def sync_open_orders(self, live_trader, db=None) -> None:
         """Refresh _open_orders from exchange open orders + today's filled positions.
@@ -461,13 +576,75 @@ class OrderManager:
                 )
             except Exception as e:
                 err = str(e)
-                if "balance" in err.lower() and ("0" in err or "not enough" in err.lower()):
-                    n = db.close_positions_by_token(token_id) if db is not None else 0
-                    self._sold_positions.add(token_id)
+                if "balance" in err.lower():
+                    available = _parse_polymarket_balance(err)
+                    avail_shares = math.floor(available / _POLY_PRECISION) if available is not None else 0
                     log.info(
-                        "  [tp] [%s] %.0f-%.0fF balance=0 -- tokens already gone, removed %s row(s) from open_positions",
-                        station, bracket_low, bracket_high, n,
+                        "  [tp] [%s] %.0f-%.0fF partial balance -- wallet=%.6f requested=%.4f,"
+                        " selling %s and closing remainder",
+                        station, bracket_low, bracket_high,
+                        available / _POLY_PRECISION if available is not None else 0.0,
+                        total_shares, avail_shares,
                     )
+                    if avail_shares > 0:
+                        try:
+                            sell_id2, sell_price2 = live_trader.sell_position(token_id, avail_shares)
+                            self._sold_positions.add(token_id)
+                            if db is not None:
+                                db.close_positions_by_token(token_id)
+                            pnl2 = round((sell_price2 - avg_entry_cents) / 100 * avail_shares, 4)
+                            _record_sell_in_db(
+                                fills, sell_price2, ts, db=db,
+                                close_reason="take_profit",
+                                minutes_to_settlement=minutes_to_settlement,
+                                bid_depth=best_bid_depth,
+                            )
+                            if risk_manager is not None:
+                                risk_manager.record_pnl(pnl2)
+                            _append_live_trade({
+                                "ts": ts,
+                                "order_id": sell_id2,
+                                "station": station,
+                                "question": question,
+                                "end_date": today,
+                                "ticker": fills[0].get("ticker", ""),
+                                "no_token_id": token_id,
+                                "bracket_low": bracket_low,
+                                "bracket_high": bracket_high,
+                                "side": "SELL",
+                                "price_cents": sell_price2,
+                                "entry_price_cents": round(avg_entry_cents),
+                                "shares": avail_shares,
+                                "size_eur": total_eur,
+                                "edge_cents": 0,
+                                "pnl": pnl2,
+                                "outcome": "sold",
+                                "actual_fee_cents": estimate_fee_cents(sell_price2),
+                                "close_reason": "take_profit_partial_balance",
+                                "trigger": (
+                                    f"take_profit_partial@{sell_price2}c"
+                                    f"_wallet{avail_shares}shares"
+                                    f"_requested{total_shares:.4f}shares"
+                                ),
+                            }, db=db)
+                            log.info(
+                                "  [tp] partial sell %s... placed @ %sc -- [%s] %.0f-%.0fF NO pnl=%+.2f",
+                                sell_id2[:12], sell_price2, station, bracket_low, bracket_high, pnl2,
+                            )
+                        except Exception as e2:
+                            log.warning(
+                                "  [tp] partial-balance retry also failed for [%s] %.0f-%.0fF: %s",
+                                station, bracket_low, bracket_high, e2,
+                            )
+                            n = db.close_positions_by_token(token_id) if db is not None else 0
+                            self._sold_positions.add(token_id)
+                    else:
+                        n = db.close_positions_by_token(token_id) if db is not None else 0
+                        self._sold_positions.add(token_id)
+                        log.info(
+                            "  [tp] [%s] %.0f-%.0fF balance=0 -- tokens already gone, removed %s row(s)",
+                            station, bracket_low, bracket_high, n,
+                        )
                 else:
                     log.warning("  [tp] sell failed for [%s] %.0f-%.0fF: %s", station, bracket_low, bracket_high, e)
 
