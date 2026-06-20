@@ -997,6 +997,58 @@ class TestManualSellPosition:
         assert result["status"] == "sold"
         assert appended.call_args[0][0]["entry_side"] == "YES"
 
+    def test_balance_error_retries_with_avail_shares(self):
+        """balance error on first call → retries with avail_shares, returns sold."""
+        token = "tok-m-bal-1"
+        fill = _make_fill(token, price_cents=80)
+        fill["side"] = "NO"
+        # First call raises balance error reporting 5_000_000 units (= 5 shares)
+        trader = MagicMock()
+        trader.sell_position_immediate.side_effect = [
+            Exception("balance: 5000000, order amount: 8000000"),
+            ("sell-bal-1", 85),
+        ]
+        mock_db = MagicMock()
+        mock_db.get_open_position_by_token.return_value = [fill]
+
+        with patch("src.execution.order_manager._record_sell_in_db"), \
+             patch.object(src.scripts.run, "_append_live_trade"):
+            result = self.om.manual_sell_position(trader, token, "ts-m", db=mock_db)
+
+        assert result["status"] == "sold"
+        assert trader.sell_position_immediate.call_count == 2
+        # Second call should use avail_shares = floor(5_000_000 / 1_000_000) = 5
+        second_call_shares = trader.sell_position_immediate.call_args_list[1][0][1]
+        assert second_call_shares == 5
+
+    def test_balance_error_zero_shares_closes_position(self):
+        """balance error with 0 available shares closes the DB row, returns error."""
+        token = "tok-m-bal-2"
+        fill = _make_fill(token, price_cents=80)
+        fill["side"] = "NO"
+        trader = MagicMock()
+        trader.sell_position_immediate.side_effect = Exception("balance: 0, order amount: 8000000")
+        mock_db = MagicMock()
+        mock_db.get_open_position_by_token.return_value = [fill]
+
+        result = self.om.manual_sell_position(trader, token, "ts-m", db=mock_db)
+
+        assert result["status"] == "error"
+        mock_db.close_positions_by_token.assert_called_once_with(token)
+
+    def test_non_balance_error_propagates(self):
+        """Non-balance exceptions are re-raised unchanged."""
+        token = "tok-m-bal-3"
+        fill = _make_fill(token, price_cents=80)
+        fill["side"] = "NO"
+        trader = MagicMock()
+        trader.sell_position_immediate.side_effect = Exception("network timeout")
+        mock_db = MagicMock()
+        mock_db.get_open_position_by_token.return_value = [fill]
+
+        with pytest.raises(Exception, match="network timeout"):
+            self.om.manual_sell_position(trader, token, "ts-m", db=mock_db)
+
 
 # ===========================================================================
 # _load_open_fills_for_token

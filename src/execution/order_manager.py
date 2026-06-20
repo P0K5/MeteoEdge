@@ -879,7 +879,35 @@ class OrderManager:
             "  [manual] operator sell [%s] %s %s... -- %.1f shares",
             station, side, token_id[:14], total_shares,
         )
-        sell_id, sell_price_or_order = live_trader.sell_position_immediate(token_id, total_shares)
+        try:
+            sell_id, sell_price_or_order = live_trader.sell_position_immediate(token_id, total_shares)
+        except Exception as e:
+            err = str(e)
+            if "balance" in err.lower():
+                available = _parse_polymarket_balance(err)
+                avail_shares = math.floor(available / _POLY_PRECISION) if available is not None else 0
+                log.warning(
+                    "  [manual] [%s] balance error -- wallet=%.6f requested=%.4f, selling %s shares",
+                    station,
+                    available / _POLY_PRECISION if available is not None else 0.0,
+                    total_shares,
+                    avail_shares,
+                )
+                if avail_shares > 0:
+                    try:
+                        sell_id, sell_price_or_order = live_trader.sell_position_immediate(
+                            token_id, avail_shares,
+                        )
+                        total_shares = avail_shares
+                    except Exception as e2:
+                        log.error("  [manual] retry sell failed: %s", e2)
+                        return {"status": "error", "detail": f"Balance error, retry failed: {e2}"}
+                else:
+                    if db is not None:
+                        db.close_positions_by_token(token_id)
+                    return {"status": "error", "detail": "Balance error: no shares available to sell."}
+            else:
+                raise
         if sell_id is None:
             # Not matched at market and cancelled -- record any partial fill so a
             # retry sells only the true remainder, then ask the caller to retry.
