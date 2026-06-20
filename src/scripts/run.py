@@ -181,7 +181,7 @@ def poll_once(
             )
 
     if live_trader:
-        order_manager.reconcile_timeout_fills(ts)
+        order_manager.reconcile_timeout_fills(ts, db=db)
         order_manager.sync_open_orders(live_trader, db=db)
 
     # Take-profit is weather-independent -- runs every poll, including pre-sunrise.

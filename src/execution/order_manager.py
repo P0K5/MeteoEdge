@@ -13,6 +13,7 @@ from src.config import (
     get_take_profit_buffer_cents,
 )
 from src.strategy.fee import estimate_fee_cents
+from src.utils.log_rotation import rotated_sources
 
 log = logging.getLogger(__name__)
 
@@ -202,6 +203,75 @@ def _wallet_held_token_ids() -> set:
         return set()
 
 
+def _reconcile_db_row(record: dict, ts: str, db=None) -> None:
+    """Update (or insert) the DB trades row for a just-reconciled JSONL record.
+
+    Called once per JSONL line that was patched from outcome='timeout' to
+    outcome='filled'.  If no DB row exists for the order_id, we insert one so
+    the trade is not invisible to DB-backed views.
+
+    Also inserts an open_positions row when the token has no existing entry,
+    so downstream take-profit / stop-loss logic can see the position.
+    """
+    if db is None:
+        return
+    order_id = record.get("order_id") or ""
+    price_cents = int(record.get("price_cents") or record.get("actual_price") or 0)
+    try:
+        updated = db.update_trade_by_order(
+            order_id,
+            outcome="filled",
+        )
+        if not updated:
+            # No existing trade row — insert a minimal one so the position is tracked.
+            db.insert_trade(
+                ts=record.get("ts", ts),
+                station=record.get("station", ""),
+                ticker=record.get("ticker", ""),
+                bracket_low=float(record.get("bracket_low", 0)),
+                bracket_high=float(record.get("bracket_high", 0)),
+                side=record.get("side", "NO"),
+                predicted_price=int(record.get("predicted_price", price_cents)),
+                actual_price=price_cents,
+                predicted_edge=float(record.get("edge_cents", 0)),
+                mode="live",
+                order_id=order_id or None,
+                outcome="filled",
+                capital_before=float(record.get("size_eur", 0)),
+            )
+    except Exception as e:
+        log.warning("[reconcile] DB trade update failed for order %s...: %s", str(order_id)[:12], e)
+        return
+
+    # Ensure open_positions has an entry for this token so the position is visible.
+    token_id = record.get("asset_id") or record.get("no_token_id") or ""
+    if not token_id or not order_id:
+        return
+    try:
+        existing = [p for p in db.get_open_positions() if p.get("order_id") == order_id]
+        if not existing:
+            shares = float(record.get("size_matched") or record.get("shares") or 0)
+            # Look up the trade_id we just inserted/updated
+            cur = db._conn.execute(
+                "SELECT id FROM trades WHERE order_id=? LIMIT 1", (order_id,)
+            )
+            row = cur.fetchone()
+            trade_id = row[0] if row else 0
+            db.open_position(
+                trade_id=trade_id,
+                station=record.get("station", ""),
+                ticker=record.get("ticker", ""),
+                token_id=token_id,
+                side=record.get("side", "NO"),
+                order_id=order_id,
+                entry_price=price_cents,
+                shares=shares,
+                entry_ts=record.get("ts", ts),
+            )
+    except Exception as e:
+        log.warning("[reconcile] DB open_positions insert failed for %s...: %s", str(order_id)[:12], e)
+
+
 class OrderManager:
     """Manages open-order state for the live trading loop.
 
@@ -218,7 +288,7 @@ class OrderManager:
         self._stop_loss_strikes: dict = {}      # no_token_id -> consecutive polls with fair < entry
         self._partial_fill_shares: dict = {}    # no_token_id -> shares already sold via partial fills
 
-    def reconcile_timeout_fills(self, ts: str) -> None:
+    def reconcile_timeout_fills(self, ts: str, db=None) -> None:
         """Patch timeout JSONL records whose tokens still appear in the wallet.
 
         GTC limit orders sometimes fill after our 5-minute wait window expires.
@@ -231,55 +301,79 @@ class OrderManager:
         Rewriting these records to outcome=filled restores visibility everywhere
         that filters on outcome.  Reconciliation runs once per poll, before
         sync_open_orders so the dedup guard sees the patched records.
+
+        After log rotation (Epic #345), new records go to dated files
+        (live_trades.YYYY-MM-DD.jsonl) instead of the legacy plain file.
+        This method iterates all sources returned by rotated_sources(), skipping
+        immutable .gz archives, so no records are missed regardless of rotation
+        state.  For every JSONL record patched, the DB trades row is also updated
+        (or inserted if absent) so outcome='filled' is consistent across both
+        stores.
         """
-        if not LIVE_TRADES_JSONL.exists():
+        sources = rotated_sources(LIVE_TRADES_JSONL)
+        if not sources:
             return
         held = _wallet_held_token_ids()
         if not held:
             return
 
-        patched = 0
-        new_lines: list = []
-        try:
-            with open(LIVE_TRADES_JSONL) as f:
-                for line in f:
-                    stripped = line.strip()
-                    if not stripped:
-                        new_lines.append(line)
-                        continue
-                    try:
-                        r = json.loads(stripped)
-                    except json.JSONDecodeError:
-                        new_lines.append(line)
-                        continue
-                    token = r.get("asset_id") or r.get("no_token_id") or ""
-                    if r.get("outcome") == "timeout" and token in held:
-                        r["outcome"] = "filled"
-                        r["reconciled_at"] = ts
-                        new_lines.append(json.dumps(r, default=str) + "\n")
-                        patched += 1
-                    else:
-                        new_lines.append(line)
-        except OSError as e:
-            log.warning("[reconcile] read failed: %s", e)
-            return
+        total_patched = 0
+        files_patched = 0
 
-        if patched == 0:
-            return
+        for source in sources:
+            # .gz archives are immutable — read-only, never rewrite
+            if source.suffix == ".gz":
+                continue
 
-        try:
-            with tempfile.NamedTemporaryFile(
-                "w", dir=LIVE_TRADES_JSONL.parent, delete=False, suffix=".tmp"
-            ) as f:
-                f.writelines(new_lines)
-                tmp = f.name
-            os.replace(tmp, LIVE_TRADES_JSONL)
+            new_lines: list = []
+            file_patched = 0
+            try:
+                with open(source) as f:
+                    for line in f:
+                        stripped = line.strip()
+                        if not stripped:
+                            new_lines.append(line)
+                            continue
+                        try:
+                            r = json.loads(stripped)
+                        except json.JSONDecodeError:
+                            new_lines.append(line)
+                            continue
+                        token = r.get("asset_id") or r.get("no_token_id") or ""
+                        if r.get("outcome") == "timeout" and token in held:
+                            r["outcome"] = "filled"
+                            r["reconciled_at"] = ts
+                            new_lines.append(json.dumps(r, default=str) + "\n")
+                            file_patched += 1
+                            # Sync the DB row so both stores stay consistent
+                            _reconcile_db_row(r, ts, db)
+                        else:
+                            new_lines.append(line)
+            except OSError as e:
+                log.warning("[reconcile] read failed for %s: %s", source.name, e)
+                continue
+
+            if file_patched == 0:
+                continue
+
+            try:
+                with tempfile.NamedTemporaryFile(
+                    "w", dir=source.parent, delete=False, suffix=".tmp"
+                ) as f:
+                    f.writelines(new_lines)
+                    tmp = f.name
+                os.replace(tmp, source)
+                total_patched += file_patched
+                files_patched += 1
+            except OSError as e:
+                log.warning("[reconcile] write failed for %s: %s", source.name, e)
+
+        if total_patched > 0:
             log.info(
-                "[reconcile] patched %s timeout record(s) -> filled (token present in wallet)",
-                patched,
+                "[reconcile] patched %s timeout record(s) across %s file(s)",
+                total_patched,
+                files_patched,
             )
-        except OSError as e:
-            log.warning("[reconcile] write failed: %s", e)
 
     def sync_open_orders(self, live_trader, db=None) -> None:
         """Refresh _open_orders from exchange open orders + today's filled positions.

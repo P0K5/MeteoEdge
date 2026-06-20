@@ -3,6 +3,8 @@
 Covers:
 - OrderManager.reconcile_timeout_fills(): patches timeout->filled for held tokens,
   leaves non-held records alone, skips missing file / empty wallet.
+  Rotation-aware: iterates all rotated JSONL sources, skips .gz archives.
+  DB sync: updates trades.outcome, inserts row if absent.
 - OrderManager.check_take_profit_exits(): sells when best_bid >= target, skips
   when below target, handles 404 resolved markets, handles balance=0 error.
 - OrderManager.sync_open_orders(): open exchange orders are added to dedup guard;
@@ -198,6 +200,233 @@ class TestReconcileTimeoutFills:
         non_blank = [ln for ln in content.splitlines() if ln.strip()]
         assert len(non_blank) == 1
         assert json.loads(non_blank[0])["outcome"] == "filled"
+
+
+# ===========================================================================
+# reconcile_timeout_fills — rotation-aware and DB sync
+# ===========================================================================
+
+import gzip as _gzip
+
+
+class TestReconcileRotationAware:
+    """reconcile_timeout_fills must iterate all rotated JSONL sources correctly."""
+
+    def test_only_dated_token_patched_when_plain_file_has_different_token(self, tmp_path):
+        """Plain file has token-A (not in wallet); dated file has token-B (in wallet).
+        Only the dated file record must be patched."""
+        om = _make_om()
+        base = tmp_path / "live_trades.jsonl"
+        dated = tmp_path / "live_trades.2026-06-20.jsonl"
+
+        # Plain file: token-A (not in wallet)
+        _write_jsonl(base, [{"asset_id": "tok-A", "outcome": "timeout"}])
+        # Dated file: token-B (in wallet)
+        _write_jsonl(dated, [{"asset_id": "tok-B", "outcome": "timeout"}])
+
+        with patch("src.execution.order_manager.LIVE_TRADES_JSONL", base), \
+             patch("src.execution.order_manager._wallet_held_token_ids",
+                   return_value={"tok-B"}):
+            om.reconcile_timeout_fills("ts-rot-1")
+
+        plain_lines = [json.loads(ln) for ln in base.read_text().splitlines() if ln.strip()]
+        dated_lines = [json.loads(ln) for ln in dated.read_text().splitlines() if ln.strip()]
+
+        assert plain_lines[0]["outcome"] == "timeout"   # not patched
+        assert dated_lines[0]["outcome"] == "filled"    # patched
+        assert dated_lines[0]["reconciled_at"] == "ts-rot-1"
+
+    def test_gz_file_not_rewritten(self, tmp_path):
+        """Records in .gz archives are visible for reads but the archive is never rewritten."""
+        om = _make_om()
+        base = tmp_path / "live_trades.jsonl"
+        gz_path = tmp_path / "live_trades.2026-06-19.jsonl.gz"
+
+        record = {"asset_id": "tok-gz", "outcome": "timeout"}
+        with _gzip.open(gz_path, "wt", encoding="utf-8") as fh:
+            fh.write(json.dumps(record) + "\n")
+
+        gz_mtime_before = gz_path.stat().st_mtime
+
+        with patch("src.execution.order_manager.LIVE_TRADES_JSONL", base), \
+             patch("src.execution.order_manager._wallet_held_token_ids",
+                   return_value={"tok-gz"}):
+            om.reconcile_timeout_fills("ts-rot-2")
+
+        # .gz file must not have been modified
+        assert gz_path.stat().st_mtime == gz_mtime_before
+        # Content unchanged
+        with _gzip.open(gz_path, "rt", encoding="utf-8") as fh:
+            content2 = [json.loads(ln) for ln in fh if ln.strip()]
+        assert content2[0]["outcome"] == "timeout"
+
+    def test_multiple_dated_files_all_patched(self, tmp_path):
+        """All dated JSONL files with matching tokens are patched in one reconcile pass."""
+        om = _make_om()
+        base = tmp_path / "live_trades.jsonl"
+        dated1 = tmp_path / "live_trades.2026-06-18.jsonl"
+        dated2 = tmp_path / "live_trades.2026-06-19.jsonl"
+        dated3 = tmp_path / "live_trades.2026-06-20.jsonl"
+
+        _write_jsonl(dated1, [{"asset_id": "tok-d1", "outcome": "timeout"}])
+        _write_jsonl(dated2, [{"asset_id": "tok-d2", "outcome": "timeout"}])
+        _write_jsonl(dated3, [{"asset_id": "tok-d3", "outcome": "timeout"}])
+
+        with patch("src.execution.order_manager.LIVE_TRADES_JSONL", base), \
+             patch("src.execution.order_manager._wallet_held_token_ids",
+                   return_value={"tok-d1", "tok-d3"}):
+            om.reconcile_timeout_fills("ts-rot-3")
+
+        d1 = [json.loads(ln) for ln in dated1.read_text().splitlines() if ln.strip()]
+        d2 = [json.loads(ln) for ln in dated2.read_text().splitlines() if ln.strip()]
+        d3 = [json.loads(ln) for ln in dated3.read_text().splitlines() if ln.strip()]
+
+        assert d1[0]["outcome"] == "filled"
+        assert d2[0]["outcome"] == "timeout"   # not in wallet
+        assert d3[0]["outcome"] == "filled"
+
+    def test_noop_when_no_sources_at_all(self, tmp_path):
+        """No plain file, no dated files -> _wallet_held_token_ids never called."""
+        om = _make_om()
+        base = tmp_path / "live_trades.jsonl"  # does not exist
+
+        with patch("src.execution.order_manager.LIVE_TRADES_JSONL", base), \
+             patch("src.execution.order_manager._wallet_held_token_ids") as mock_w:
+            om.reconcile_timeout_fills("ts-rot-4")
+
+        mock_w.assert_not_called()
+
+    def test_idempotent_second_run_produces_no_patches(self, tmp_path):
+        """Running reconcile twice produces zero new patches on the second pass."""
+        om = _make_om()
+        base = tmp_path / "live_trades.jsonl"
+        dated = tmp_path / "live_trades.2026-06-20.jsonl"
+        _write_jsonl(dated, [{"asset_id": "tok-idem", "outcome": "timeout"}])
+
+        wallet = {"tok-idem"}
+        with patch("src.execution.order_manager.LIVE_TRADES_JSONL", base), \
+             patch("src.execution.order_manager._wallet_held_token_ids",
+                   return_value=wallet):
+            om.reconcile_timeout_fills("ts-idem-1")
+
+        # First run patched it. Now run again.
+        with patch("src.execution.order_manager.LIVE_TRADES_JSONL", base), \
+             patch("src.execution.order_manager._wallet_held_token_ids",
+                   return_value=wallet):
+            om.reconcile_timeout_fills("ts-idem-2")
+
+        lines = [json.loads(ln) for ln in dated.read_text().splitlines() if ln.strip()]
+        assert lines[0]["outcome"] == "filled"
+        assert lines[0]["reconciled_at"] == "ts-idem-1"  # unchanged on second pass
+
+
+class TestReconcileDbSync:
+    """reconcile_timeout_fills must keep the DB trades table in sync."""
+
+    def _make_db(self):
+        from src.data.db import Database
+        return Database(":memory:")
+
+    def _insert_trade(self, db, order_id="ord-001", outcome="timeout"):
+        return db.insert_trade(
+            ts="2026-06-20T10:00:00Z", station="KORD",
+            ticker="KORD-80-82", bracket_low=80.0, bracket_high=82.0,
+            side="NO", predicted_price=72, actual_price=72,
+            predicted_edge=0.05, mode="live", capital_before=1000.0,
+            order_id=order_id, outcome=outcome,
+        )
+
+    def test_db_row_outcome_updated_to_filled(self, tmp_path):
+        """After reconcile, existing DB trades row has outcome='filled'."""
+        om = _make_om()
+        db = self._make_db()
+        self._insert_trade(db, order_id="ord-db-1", outcome="timeout")
+
+        base = tmp_path / "live_trades.jsonl"
+        dated = tmp_path / "live_trades.2026-06-20.jsonl"
+        _write_jsonl(dated, [{"asset_id": "tok-db-1", "outcome": "timeout",
+                               "order_id": "ord-db-1", "price_cents": 72}])
+
+        with patch("src.execution.order_manager.LIVE_TRADES_JSONL", base), \
+             patch("src.execution.order_manager._wallet_held_token_ids",
+                   return_value={"tok-db-1"}):
+            om.reconcile_timeout_fills("ts-db-1", db=db)
+
+        cur = db._conn.execute("SELECT outcome FROM trades WHERE order_id=?", ("ord-db-1",))
+        row = cur.fetchone()
+        assert row is not None
+        assert row[0] == "filled"
+
+    def test_db_row_inserted_when_absent(self, tmp_path):
+        """When no DB row exists for the order_id, one is inserted with outcome='filled'."""
+        om = _make_om()
+        db = self._make_db()
+
+        base = tmp_path / "live_trades.jsonl"
+        dated = tmp_path / "live_trades.2026-06-20.jsonl"
+        record = {
+            "asset_id": "tok-new", "outcome": "timeout",
+            "order_id": "ord-new-1", "price_cents": 68,
+            "ts": "2026-06-20T10:00:00Z", "station": "KORD",
+            "ticker": "KORD-80-82", "bracket_low": 80.0, "bracket_high": 82.0,
+            "side": "NO", "predicted_price": 68, "edge_cents": 0.05,
+            "size_eur": 5.0,
+        }
+        _write_jsonl(dated, [record])
+
+        with patch("src.execution.order_manager.LIVE_TRADES_JSONL", base), \
+             patch("src.execution.order_manager._wallet_held_token_ids",
+                   return_value={"tok-new"}):
+            om.reconcile_timeout_fills("ts-db-2", db=db)
+
+        cur = db._conn.execute(
+            "SELECT outcome, order_id FROM trades WHERE order_id=?", ("ord-new-1",)
+        )
+        row = cur.fetchone()
+        assert row is not None, "Trade row should have been inserted"
+        assert row[0] == "filled"
+
+    def test_no_db_writes_on_second_run(self, tmp_path):
+        """Idempotent: second reconcile triggers 0 new DB writes (outcome already filled)."""
+        om = _make_om()
+        db = self._make_db()
+        self._insert_trade(db, order_id="ord-idem-db", outcome="timeout")
+
+        base = tmp_path / "live_trades.jsonl"
+        dated = tmp_path / "live_trades.2026-06-20.jsonl"
+        _write_jsonl(dated, [{"asset_id": "tok-idem-db", "outcome": "timeout",
+                               "order_id": "ord-idem-db", "price_cents": 72}])
+
+        wallet = {"tok-idem-db"}
+        with patch("src.execution.order_manager.LIVE_TRADES_JSONL", base), \
+             patch("src.execution.order_manager._wallet_held_token_ids",
+                   return_value=wallet):
+            om.reconcile_timeout_fills("ts-idem-db-1", db=db)
+
+        # Second run: JSONL now has outcome='filled', so no patch loop runs -> no DB write.
+        with patch("src.execution.order_manager.LIVE_TRADES_JSONL", base), \
+             patch("src.execution.order_manager._wallet_held_token_ids",
+                   return_value=wallet):
+            om.reconcile_timeout_fills("ts-idem-db-2", db=db)
+
+        cur = db._conn.execute("SELECT outcome FROM trades WHERE order_id=?", ("ord-idem-db",))
+        assert cur.fetchone()[0] == "filled"
+
+    def test_no_db_call_when_db_is_none(self, tmp_path):
+        """Passing db=None must not raise -- JSONL is still patched."""
+        om = _make_om()
+        base = tmp_path / "live_trades.jsonl"
+        dated = tmp_path / "live_trades.2026-06-20.jsonl"
+        _write_jsonl(dated, [{"asset_id": "tok-nodb", "outcome": "timeout",
+                               "order_id": "ord-nodb"}])
+
+        with patch("src.execution.order_manager.LIVE_TRADES_JSONL", base), \
+             patch("src.execution.order_manager._wallet_held_token_ids",
+                   return_value={"tok-nodb"}):
+            om.reconcile_timeout_fills("ts-nodb", db=None)
+
+        lines = [json.loads(ln) for ln in dated.read_text().splitlines() if ln.strip()]
+        assert lines[0]["outcome"] == "filled"
 
 
 # ===========================================================================
