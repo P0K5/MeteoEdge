@@ -200,6 +200,17 @@ MAX_MINUTES_TO_SETTLEMENT = int(os.getenv("MAX_MINUTES_TO_SETTLEMENT", "1440")) 
 # Polling cadence (env var override)
 POLL_INTERVAL_SECONDS = int(os.getenv("POLL_INTERVAL_SECONDS", "300"))  # 5 minutes default
 
+# Freshness thresholds by source (in seconds from last observation).
+# Used by FreshnessMonitor to determine staleness levels.
+FRESHNESS_THRESHOLDS_MIN: dict[str, int] = {
+    "metar": 180,
+    "amos": 90,
+    "mss": 15,
+    "jma_ameidas": 60,
+}
+# Default threshold (in seconds) for sources not listed above
+FRESHNESS_THRESHOLD_DEFAULT_MIN = 180
+
 # Risk management limits (all configurable via env vars)
 STARTING_CAPITAL_EUR = float(os.getenv("STARTING_CAPITAL_EUR", "500.0"))
 RISK_DAILY_LOSS_LIMIT_EUR = float(os.getenv("RISK_DAILY_LOSS_LIMIT_EUR", "50.0"))
