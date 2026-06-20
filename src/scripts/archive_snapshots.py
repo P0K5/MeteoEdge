@@ -16,7 +16,6 @@ import argparse
 import logging
 import sys
 from pathlib import Path
-from typing import Iterator
 
 from src.config import SNAPSHOTS_JSONL, POSITION_SNAPSHOTS_JSONL
 from src.data.archive_db import ArchiveDatabase
@@ -29,35 +28,6 @@ _BATCH_SIZE = 1000
 # Required fields per table — records missing any of these are malformed.
 _SNAPSHOT_REQUIRED = frozenset({"ts", "station", "ticker"})
 _POSITION_REQUIRED = frozenset({"ts", "no_token_id"})
-
-
-def _iter_filtered(
-    source: Iterator[dict],
-    hwm: str | None,
-    from_date: str | None,
-    to_date: str | None,
-) -> Iterator[tuple[dict, str]]:
-    """Yield (record, ts) pairs that pass HWM and date-window filters.
-
-    HWM filter: skip records where ts <= hwm (strict less-than-or-equal so
-    re-runs never double-insert already-archived data).
-
-    Date-window filter: when from_date or to_date is set, only yield records
-    whose ts (ISO 8601 string) falls within the half-open interval
-    [from_date, to_date].  String comparison is valid because ISO 8601 dates
-    sort lexicographically.
-    """
-    for record in source:
-        ts = record.get("ts")
-        if not ts:
-            continue
-        if hwm is not None and ts <= hwm:
-            continue
-        if from_date is not None and ts < from_date:
-            continue
-        if to_date is not None and ts > to_date:
-            continue
-        yield record, ts
 
 
 def _process_table(
