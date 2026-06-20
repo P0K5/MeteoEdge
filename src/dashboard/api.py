@@ -315,6 +315,7 @@ class PositionOut(BaseModel):
     market_prob: int     # cents — live CLOB midpoint
     my_prob: int         # cents — model prediction at entry time (from enrichment)
     my_prob_now: int | None = None  # cents — current model prediction (from latest snapshot)
+    my_prob_now_ts: str | None = None  # ISO timestamp of snapshot when my_prob_now was captured
     edge: float          # my_prob - market_prob (uses entry-time model, not live)
     shares: float
     invested: float
@@ -529,29 +530,30 @@ def _db_open_positions_enrichment() -> dict[str, dict]:
     }
 
 
-def _parse_snapshots(records) -> "dict[tuple[str, float, float], float]":
-    """Parse snapshots into a (station, bracket_low, bracket_high) → p_yes dict.
+def _parse_snapshots(records) -> "dict[tuple[str, float, float], tuple[float, str]]":
+    """Parse snapshots into a (station, bracket_low, bracket_high) → (p_yes, ts) dict.
 
     snapshots.jsonl is append-only and chronologically ordered, so iterating
-    forward and overwriting the dict yields the most-recent p_yes for each
-    (station, bracket) pair.  *records* is an iterator over already-parsed
+    forward and overwriting the dict yields the most-recent p_yes and timestamp
+    for each (station, bracket) pair.  *records* is an iterator over already-parsed
     JSON dicts spanning every rotated source file.
     """
-    result: dict[tuple[str, float, float], float] = {}
+    result: dict[tuple[str, float, float], tuple[float, str]] = {}
     try:
         for r in records:
             station = r.get("station") or ""
             bl = r.get("bracket_low")
             bh = r.get("bracket_high")
             py = r.get("p_yes")
+            ts = r.get("ts") or ""
             if station and bl is not None and bh is not None and py is not None:
-                result[(station, float(bl), float(bh))] = float(py)
+                result[(station, float(bl), float(bh))] = (float(py), ts)
     except OSError as e:
         logger.warning("snapshots.jsonl read error: %s", e)
     return result
 
 
-def _latest_model_probs() -> "dict[tuple[str, float, float], float]":
+def _latest_model_probs() -> "dict[tuple[str, float, float], tuple[float, str]]":
     """Latest model p_yes per (station, bracket_low, bracket_high).
 
     Reads across every rotated snapshots file (legacy plain + dated) and
@@ -936,11 +938,13 @@ def _positions_from_wallet() -> tuple[list[PositionOut], list[ClosedPositionOut]
             bracket_low_key = float(enrich.get("bracket_low", 0.0))
             bracket_high_key = float(enrich.get("bracket_high", 0.0))
             my_prob_now: int | None = None
+            my_prob_now_ts: str | None = None
             snap_key = (station_key, bracket_low_key, bracket_high_key)
             if station_key and snap_key in snap_probs:
-                py = snap_probs[snap_key]
+                py, ts = snap_probs[snap_key]
                 raw_now = py * 100 if side == "YES" else (1 - py) * 100
                 my_prob_now = max(1, min(99, round(raw_now)))
+                my_prob_now_ts = ts
             open_positions.append(PositionOut(
                 question=question,
                 station=station_key,
@@ -951,6 +955,7 @@ def _positions_from_wallet() -> tuple[list[PositionOut], list[ClosedPositionOut]
                 market_prob=market_prob,
                 my_prob=my_prob,
                 my_prob_now=my_prob_now,
+                my_prob_now_ts=my_prob_now_ts,
                 edge=round(my_prob - market_prob, 2),
                 shares=round(shares, 4),
                 invested=round(shares * avg_price, 2),
