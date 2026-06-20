@@ -98,45 +98,32 @@ class TestWinRateCanonical:
 
 
 # ---------------------------------------------------------------------------
-# Test 3: Freshness Monitor Does Not Emit CRITICAL for Fresh Data
+# Test 3: Freshness Monitor interface smoke tests
 # ---------------------------------------------------------------------------
 
 class TestFreshnessMonitor:
-    """Test freshness monitoring for observation staleness."""
+    """Smoke tests for FreshnessMonitor.
 
-    def test_freshness_no_critical_for_fresh_data(self, caplog):
-        """FreshnessMonitor with fresh data should not emit CRITICAL."""
+    Full behavioral coverage (fresh/stale/no-data/dedup) lives in
+    test_freshness_monitor.py. These tests only verify the public interface.
+    """
+
+    def test_freshness_monitor_no_data_returns_false(self):
+        """FreshnessMonitor.check() returns False when no observation exists."""
         db = Database(":memory:")
         monitor = FreshnessMonitor()
-
-        now = datetime.now(timezone.utc)
-        fresh_ts = (now - timedelta(minutes=5)).isoformat()
-        db.insert_observation(
-            ts=fresh_ts, station="RJTT", temp_f=72.0,
-            temp_native=22.2, unit="C", source="jma_ameidas",
-        )
-
         result = monitor.check(db, "jma_ameidas", "RJTT", cadence_min=10)
+        assert result is False
 
-        assert result is True, "Fresh observation should return True"
-        assert not any(r.levelno >= logging.CRITICAL for r in caplog.records),             "Fresh data should not emit CRITICAL"
-
-    def test_freshness_critical_for_stale_data(self, caplog):
-        """FreshnessMonitor should emit CRITICAL for stale data."""
-        db = Database(":memory:")
-        monitor = FreshnessMonitor()
-
-        now = datetime.now(timezone.utc)
-        stale_ts = (now - timedelta(minutes=30)).isoformat()
-        db.insert_observation(
-            ts=stale_ts, station="RJTT", temp_f=72.0,
-            temp_native=22.2, unit="C", source="jma_ameidas",
-        )
-
-        result = monitor.check(db, "jma_ameidas", "RJTT", cadence_min=10)
-
-        assert result is False, "Stale observation should return False"
-        assert any("Stale observation" in r.message for r in caplog.records),             "Stale data should emit CRITICAL log with 'Stale observation'"
+    def test_freshness_monitor_check_interface(self):
+        """FreshnessMonitor.check accepts (db, source, station, cadence_min)."""
+        import inspect
+        sig = inspect.signature(FreshnessMonitor.check)
+        params = list(sig.parameters.keys())
+        assert "db" in params
+        assert "source" in params
+        assert "station" in params
+        assert "cadence_min" in params
 
 
 # ---------------------------------------------------------------------------
