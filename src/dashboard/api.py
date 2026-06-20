@@ -62,7 +62,7 @@ from src.model.residual_correction import (
     compute_residual_stats_per_pair,
 )
 from src.data.archive_db import ArchiveDatabase
-from src.data.db import Database
+from src.data.db import Database, compute_win_rate
 from src.data.nws import fetch_nws_forecast_high
 from src.data.polymarket import get_orderbook
 from src.data.taf_disruption import check_taf_disruption
