@@ -4,9 +4,9 @@ Fetches real-time temperature from the JMA AMeDAS public JSON feed and
 persists it to the observations table.
 
 JMA AMeDAS endpoint:
-  https://www.jma.go.jp/bosai/amedas/data/point/{station_code}/{YYYYMMDD_HH}.json
+  https://www.jma.go.jp/bosai/amedas/data/point/{station_code}/{YYYYMMDDHHMMSS}.json
 
-Response structure (one measurement per 10-minute slot within the hour):
+Response structure (one measurement per 10-minute slot within the file):
   {
     "HHMMss": {
       "temp": [22.4, 0],      # [value, quality_flag]  0 = good
@@ -46,7 +46,7 @@ _JMA_STATION = os.getenv("JMA_STATION_CODE", "44132")  # Tokyo Haneda
 _JST = timezone(timedelta(hours=9))  # Japan Standard Time = UTC+9
 
 _JMA_URL_TEMPLATE = (
-    "https://www.jma.go.jp/bosai/amedas/data/point/{station}/{date}{hour}.json"
+    "https://www.jma.go.jp/bosai/amedas/data/point/{station}/{timestamp}.json"
 )
 
 # Open-Meteo fallback: Haneda airport coordinates
@@ -125,25 +125,36 @@ class JmaAmedasCollector:
     def _fetch_jma(self) -> "tuple[datetime, float, dict] | None":
         """Fetch the most recent 10-minute reading from the JMA AMeDAS API.
 
-        JMA serves one JSON file per hour, keyed by 6-digit time strings (HHMMss).
-        We request the current JST hour; in the first minutes of an hour the
-        file may not be published yet (404), so we retry with the previous
-        hour before giving up.
+        JMA serves one JSON file per 10-minute slot, keyed by 6-digit time strings (HHMMss).
+        Files publish every 10 minutes (00, 10, 20, 30, 40, 50) at the 14-digit timestamp.
+        We snap the current JST time to the nearest 10-minute grid and request that slot;
+        if not yet published (404), we retry with the previous 10-minute slot, then the
+        previous hour before giving up.
 
         Returns (ts_utc, temp_c, raw_dict) or None on error.
         """
         now_jst = datetime.now(_JST)
-        reading = self._fetch_jma_hour(now_jst)
+        reading = self._fetch_jma_slot(now_jst)
         if reading is None:
-            reading = self._fetch_jma_hour(now_jst - timedelta(hours=1))
+            # Retry previous 10-minute slot
+            reading = self._fetch_jma_slot(now_jst - timedelta(minutes=10))
+        if reading is None:
+            # Retry previous hour
+            reading = self._fetch_jma_slot(now_jst - timedelta(hours=1))
         return reading
 
-    def _fetch_jma_hour(self, base_jst: datetime) -> "tuple[datetime, float, dict] | None":
-        """Fetch and parse the AMeDAS hourly file for *base_jst*'s date and hour."""
+    def _fetch_jma_slot(self, base_jst: datetime) -> "tuple[datetime, float, dict] | None":
+        """Fetch and parse the AMeDAS 10-minute slot file for *base_jst*.
+
+        Snaps *base_jst* to the nearest 10-minute grid (down) before constructing the URL.
+        The resulting URL uses a 14-digit timestamp in the format YYYYMMDDHHMMSS.
+        """
+        # Snap to the nearest 10-minute grid (down)
+        snapped_jst = base_jst.replace(minute=base_jst.minute // 10 * 10, second=0, microsecond=0)
+
         url = _JMA_URL_TEMPLATE.format(
             station=_JMA_STATION,
-            date=base_jst.strftime("%Y%m%d"),
-            hour=base_jst.strftime("%H"),
+            timestamp=snapped_jst.strftime("%Y%m%d%H%M00"),
         )
 
         try:
@@ -154,8 +165,8 @@ class JmaAmedasCollector:
 
         if r.status_code == 404:
             log.warning(
-                "[jma] AMeDAS file not yet published for %s hour %s (station %s)",
-                base_jst.strftime("%Y%m%d"), base_jst.strftime("%H"), _JMA_STATION,
+                "[jma] AMeDAS file not yet published for %s (station %s)",
+                snapped_jst.strftime("%Y%m%d%H%M"), _JMA_STATION,
             )
             return None
         if r.status_code != 200:
