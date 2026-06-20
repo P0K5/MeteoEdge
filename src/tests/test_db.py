@@ -890,3 +890,49 @@ class TestStationsTradeStatsUnification:
         stats = db.get_stations_trade_stats()
         assert stats["KORD"]["win_rate"] == pytest.approx(0.5)  # 1/2
         assert stats["KJFK"]["win_rate"] == pytest.approx(1.0)   # 3/3
+
+
+# ---------------------------------------------------------------------------
+# get_trade_by_order_id
+# ---------------------------------------------------------------------------
+
+class TestGetTradeByOrderId:
+    """Test Database.get_trade_by_order_id() method."""
+
+    def test_get_trade_by_order_id_found(self):
+        """Insert a trade with a known order_id, assert method returns full row dict."""
+        db = _db()
+        trade_id = db.insert_trade(
+            ts="2026-06-20T12:00:00Z",
+            station="Boston",
+            ticker="TEMP_BOS_202606_H90",
+            bracket_low=88.0,
+            bracket_high=92.0,
+            side="YES",
+            predicted_price=65,
+            actual_price=72,
+            predicted_edge=2.5,
+            mode="live",
+            capital_before=100.0,
+            order_id="test-order-123",
+        )
+
+        # Retrieve via get_trade_by_order_id
+        row = db.get_trade_by_order_id("test-order-123")
+
+        # Verify row is not None
+        assert row is not None
+        # Verify it's a dict
+        assert isinstance(row, dict)
+        # Verify key fields match
+        assert row["id"] == trade_id
+        assert row["order_id"] == "test-order-123"
+        assert row["station"] == "Boston"
+        assert row["side"] == "YES"
+        assert row["actual_price"] == 72
+
+    def test_get_trade_by_order_id_not_found(self):
+        """Assert returns None for unknown order_id."""
+        db = _db()
+        result = db.get_trade_by_order_id("nonexistent-order-id")
+        assert result is None
