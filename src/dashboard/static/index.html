@@ -894,13 +894,44 @@ function renderOpen(positions) {
     const hasEdge = p.edge > 3;
     const edgeLbl = edgeLabel(p.edge);
     const question = p.question || buildQuestion(p.station, p.side, p.bracket_low, p.bracket_high);
-    const hasLive = p.my_prob_now != null && p.my_prob !== p.entry_price;
-    const liveDelta = hasLive ? p.my_prob_now - p.my_prob : 0;
-    const liveDeltaCls = liveDelta > 1 ? 'up' : liveDelta < -1 ? 'down' : '';
-    const liveDeltaTxt = liveDelta >= 0 ? `+${liveDelta}` : `${liveDelta}`;
-    const liveSub = hasLive
-      ? `<div class="prob-sub ${liveDeltaCls}">live: ${p.my_prob_now}¢ (${liveDeltaTxt}¢)</div>`
-      : '';
+
+    // Determine model freshness state (live/frozen/stale)
+    let liveSub = '';
+    if (p.my_prob_now != null && p.my_prob_now_ts != null) {
+      const stationObj = stationsMap[p.station];
+      const stationStatus = stationObj?.status || 'unknown';
+      const snapTime = new Date(p.my_prob_now_ts).getTime();
+      const now = Date.now();
+      const ageMs = now - snapTime;
+      const ageMinutes = ageMs / 60000;
+      const STALE_THRESHOLD_MS = 60 * 60 * 1000;  // 1 hour
+
+      // Determine state: frozen (outside_hours) → stale (>1h old) → live
+      if (stationStatus === 'outside_hours') {
+        // Frozen: station outside active window
+        liveSub = `<div class="prob-sub prob-sub-frozen"
+          title="Station is outside its active scanning window. Model fair value will resume when the next local-window poll runs."
+          aria-label="Frozen: station outside active window"
+          >❄ frozen · ${p.my_prob_now}¢</div>`;
+      } else if (ageMs > STALE_THRESHOLD_MS) {
+        // Stale: older than 1 hour but station should be active
+        const ageH = Math.round(ageMinutes / 60);
+        const ageLabel = ageMinutes >= 60 ? `${ageH}h old` : `${Math.round(ageMinutes)}m old`;
+        liveSub = `<div class="prob-sub prob-sub-stale"
+          title="Model snapshot is older than 1 hour but the station should be active. Check the scanner logs."
+          aria-label="Stale: model snapshot ${ageLabel}"
+          >⚠ model stale · ${ageLabel}</div>`;
+      } else {
+        // Live: fresh snapshot (< 1h) and station active
+        const hasLive = p.my_prob !== p.entry_price;
+        if (hasLive) {
+          const liveDelta = p.my_prob_now - p.my_prob;
+          const liveDeltaCls = liveDelta > 1 ? 'up' : liveDelta < -1 ? 'down' : '';
+          const liveDeltaTxt = liveDelta >= 0 ? `+${liveDelta}` : `${liveDelta}`;
+          liveSub = `<div class="prob-sub ${liveDeltaCls}">live: ${p.my_prob_now}¢ (${liveDeltaTxt}¢)</div>`;
+        }
+      }
+    }
 
     return `<div class="pos-card">
       <div class="pos-header">
@@ -1678,7 +1709,10 @@ function renderStationCard(s) {
   const yesLive = s.yes_enabled !== false;
   const noLive  = s.no_enabled  !== false;
   let accentClass;
-  if (yesLive && noLive)        accentClass = ' accent-live-live';
+  // Check for outside_hours status first (overrides live/shadow accent logic)
+  if (s.status === 'outside_hours') {
+    accentClass = ' accent-outside_hours';
+  } else if (yesLive && noLive)        accentClass = ' accent-live-live';
   else if (yesLive && !noLive)  accentClass = ' accent-live-shadow';
   else if (!yesLive && noLive)  accentClass = ' accent-shadow-live';
   else                          accentClass = ' accent-shadow-shadow';

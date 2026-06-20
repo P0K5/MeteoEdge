@@ -315,6 +315,7 @@ class PositionOut(BaseModel):
     market_prob: int     # cents — live CLOB midpoint
     my_prob: int         # cents — model prediction at entry time (from enrichment)
     my_prob_now: int | None = None  # cents — current model prediction (from latest snapshot)
+    my_prob_now_ts: str | None = None  # ISO timestamp of snapshot when my_prob_now was captured
     edge: float          # my_prob - market_prob (uses entry-time model, not live)
     shares: float
     invested: float
