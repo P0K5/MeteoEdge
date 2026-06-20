@@ -18,7 +18,7 @@ from dateutil import parser as dtparse
 
 from src.config import (
     STATIONS, MIN_EDGE_CENTS, MAX_EDGE_CENTS, MIN_PRICE_CENTS, MIN_CONFIDENCE_YES,
-    MAX_CONFIDENCE_YES_FOR_NO, ENABLE_YES_TRADES, MIN_MINUTES_TO_SETTLEMENT,
+    MAX_CONFIDENCE_YES_FOR_NO, MIN_MINUTES_TO_SETTLEMENT,
     ENABLE_CLOB_ENRICHMENT, MIN_FORECAST_BRACKET_MARGIN_F, DISABLED_STATIONS,
     SHADOW_STATIONS, SHADOW_STATIONS_YES, SHADOW_STATIONS_NO,
     CONFIG_DEFAULTS, get_live_config, MODEL_PROB_CAP,
@@ -243,7 +243,7 @@ class Candidate:
     minutes_to_settlement: float
     market: dict        # raw market dict (for logging, do not mutate)
     taf_disruption: bool = field(default=False)  # TEMPO/PROB TS/SH/FG overlap
-    shadow: bool = field(default=False)           # True when ENABLE_YES_TRADES=False
+    shadow: bool = field(default=False)           # True when yes_enabled=False for station
 
 
 def no_entry_margin_gap(bracket: Bracket, state: WeatherState) -> float | None:
@@ -466,8 +466,7 @@ def scan_markets(
                 yes_enabled = (station not in SHADOW_STATIONS) and (station not in SHADOW_STATIONS_YES)
                 no_enabled = (station not in SHADOW_STATIONS) and (station not in SHADOW_STATIONS_NO)
 
-            # ENABLE_YES_TRADES=False forces YES shadow on all stations regardless of yes_enabled
-            shadow_yes = (not yes_enabled) or (not ENABLE_YES_TRADES)
+            shadow_yes = not yes_enabled
             shadow_no = not no_enabled
 
             # Use looser shadow thresholds on the YES shadow path so the

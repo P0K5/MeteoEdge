@@ -1964,11 +1964,6 @@ _CONFIG_META: dict[str, dict] = {
         "min": 0.0,
         "max": 0.5,
     },
-    "ENABLE_YES_TRADES": {
-        "description": "Allow YES-side entries",
-        "type": "bool",
-        "group": "strategy",
-    },
     "MIN_FORECAST_BRACKET_MARGIN_F": {
         "description": "Minimum margin (°F) between forecast high and bracket boundary",
         "type": "float",
@@ -1981,6 +1976,11 @@ _CONFIG_META: dict[str, dict] = {
         "type": "enum",
         "group": "strategy",
         "options": ["legacy", "emos_shadow", "emos_primary"],
+    },
+    "RESIDUAL_CORRECTION_ENABLED": {
+        "description": "Apply residual bias correction to model probability estimates",
+        "type": "bool",
+        "group": "strategy",
     },
     "SHADOW_MIN_EDGE_CENTS_YES": {
         "description": "Minimum YES edge for shadow-log entry (live YES uses MIN_EDGE_CENTS)",

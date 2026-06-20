@@ -241,7 +241,6 @@ All configuration is controlled via environment variables (or defaults in `src/c
 - `MIN_EDGE_CENTS` — Minimum edge in cents to flag a candidate (default: 15.0)
 - `MAX_EDGE_CENTS` — Maximum edge; higher edges may indicate adverse selection (default: 20.0)
 - `MIN_PRICE_CENTS` — Reject trades below this price; below 60¢ ROI is negative (default: 60)
-- `ENABLE_YES_TRADES` — Enable YES-side trades; disabled by default until calibrated (default: false)
 - `MAX_CONFIDENCE_YES_FOR_NO` — Confidence threshold for NO-side trades; only enter when model's p(YES) is ≤ this (default: 0.05)
 - `MAX_MINUTES_TO_SETTLEMENT` — Reject markets further than this from resolution; prevents stale data (default: 1440 = 24 hours)
 

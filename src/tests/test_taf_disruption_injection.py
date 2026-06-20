@@ -131,7 +131,6 @@ def _scan_patched(weather, markets, db=None, extra_patches=None):
     kw = dict(
         MIN_EDGE_CENTS=1,
         MAX_EDGE_CENTS=9999,
-        ENABLE_YES_TRADES=True,
         MIN_CONFIDENCE_YES=0.0,
         MAX_CONFIDENCE_YES_FOR_NO=1.0,
         MIN_PRICE_CENTS=1,

@@ -5,7 +5,7 @@ Covers:
   - DB migration: legacy enabled=0 → yes_enabled=0, no_enabled=0 (back-compat)
   - DB: get_station_override / set_station_override round-trip with dict return
   - Scanner: per-side shadow logic for all four YES/NO combinations
-  - Scanner: ENABLE_YES_TRADES=False forces YES shadow regardless of yes_enabled
+  - Scanner: yes_enabled=False in station_overrides forces YES shadow
   - Config: SHADOW_STATIONS_YES / SHADOW_STATIONS_NO env var seeding
 """
 from __future__ import annotations
@@ -92,14 +92,13 @@ def _make_market(bracket: Bracket) -> dict:
     }
 
 
-def _run_yes_scan(weather, market, *, enable_yes_trades: bool,
+def _run_yes_scan(weather, market, *,
                   shadow_stations=None, shadow_stations_yes=None,
                   shadow_stations_no=None, db=None):
     """Run scan_markets with controlled settings; bracket yields YES candidate."""
     from src.strategy import scanner as _scanner_mod
     bracket = _make_bracket_yes()
     patches = [
-        patch.object(_scanner_mod, "ENABLE_YES_TRADES", enable_yes_trades),
         patch.object(_scanner_mod, "parse_bracket_from_market", return_value=bracket),
         patch.object(_scanner_mod, "ENABLE_CLOB_ENRICHMENT", False),
         patch.object(_scanner_mod, "SHADOW_STATIONS",
@@ -133,7 +132,6 @@ def _run_no_scan(weather, market, *, shadow_stations=None, shadow_stations_no=No
     from src.strategy import scanner as _scanner_mod
     bracket = _make_bracket_no()
     patches = [
-        patch.object(_scanner_mod, "ENABLE_YES_TRADES", True),
         patch.object(_scanner_mod, "parse_bracket_from_market", return_value=bracket),
         patch.object(_scanner_mod, "ENABLE_CLOB_ENRICHMENT", False),
         patch.object(_scanner_mod, "SHADOW_STATIONS",
@@ -372,7 +370,6 @@ class TestScannerPerSideShadow:
         db.set_station_override("KORD", yes_enabled=True, no_enabled=True)
         candidates = _run_yes_scan(
             self.weather, self.yes_market,
-            enable_yes_trades=True,
             db=db,
         )
         yes_cands = [c for c in candidates if c.side == "YES"]
@@ -385,7 +382,6 @@ class TestScannerPerSideShadow:
         db.set_station_override("KORD", yes_enabled=False, no_enabled=True)
         candidates = _run_yes_scan(
             self.weather, self.yes_market,
-            enable_yes_trades=True,
             db=db,
         )
         yes_cands = [c for c in candidates if c.side == "YES"]
@@ -416,24 +412,22 @@ class TestScannerPerSideShadow:
         assert len(no_cands) == 1
         assert no_cands[0].shadow is False
 
-    def test_enable_yes_trades_false_forces_yes_shadow_regardless(self):
-        """ENABLE_YES_TRADES=False forces YES shadow even when DB yes_enabled=True."""
+    def test_yes_enabled_true_in_db_produces_live_candidate(self):
+        """DB yes_enabled=True → YES candidate is live (shadow=False), station override is sole control."""
         db = _mem_db()
         db.set_station_override("KORD", yes_enabled=True, no_enabled=True)
         candidates = _run_yes_scan(
             self.weather, self.yes_market,
-            enable_yes_trades=False,   # global override
             db=db,
         )
         yes_cands = [c for c in candidates if c.side == "YES"]
         assert len(yes_cands) == 1
-        assert yes_cands[0].shadow is True
+        assert yes_cands[0].shadow is False
 
     def test_scanner_no_db_falls_back_to_env_all_live(self):
         """With no DB and empty SHADOW_STATIONS, both sides are live."""
         candidates = _run_yes_scan(
             self.weather, self.yes_market,
-            enable_yes_trades=True,
             shadow_stations=set(),
             shadow_stations_yes=set(),
             shadow_stations_no=set(),
@@ -459,7 +453,7 @@ class TestShadowStationsEnvVars:
         # First check YES side is shadowed
         yes_candidates = _run_yes_scan(
             self.weather, self.yes_market,
-            enable_yes_trades=True,
+
             shadow_stations_yes={"KORD"},
             shadow_stations_no=set(),
             db=None,
@@ -484,7 +478,7 @@ class TestShadowStationsEnvVars:
         # YES side is live
         yes_candidates = _run_yes_scan(
             self.weather, self.yes_market,
-            enable_yes_trades=True,
+
             shadow_stations_yes=set(),
             shadow_stations_no={"KORD"},
             db=None,
@@ -508,7 +502,7 @@ class TestShadowStationsEnvVars:
         """SHADOW_STATIONS=KORD shadows both YES and NO."""
         yes_candidates = _run_yes_scan(
             self.weather, self.yes_market,
-            enable_yes_trades=True,
+
             shadow_stations={"KORD"},
             db=None,
         )
