@@ -1666,7 +1666,7 @@ function perfTableHTML(metar, perf) {
 function biasBadgeHTML(row) {
   if (!row) return `<span class="bias-badge bias-badge-insufficient">insufficient samples</span>`;
   if (row.live_suppressed) {
-    return `<span class="bias-badge bias-badge-suppressed">suppressed — MAE > ${row.rolling_mae != null ? row.rolling_mae.toFixed(1) : '?'}°F</span>`;
+    return `<span class="bias-badge bias-badge-suppressed">suppressed (MAE=${row.rolling_mae != null ? row.rolling_mae.toFixed(1) : '?'} &gt; 8.0°F)</span>`;
   }
   if (row.correction_applied) {
     return `<span class="bias-badge bias-badge-applied">applied</span>`;
