@@ -1049,6 +1049,56 @@ class TestManualSellPosition:
         with pytest.raises(Exception, match="network timeout"):
             self.om.manual_sell_position(trader, token, "ts-m", db=mock_db)
 
+    def test_jsonl_fallback_today_filled_record(self, tmp_path):
+        """With db=None and a today-dated filled JSONL record, a sell is attempted."""
+        import json
+        from datetime import date
+        token = "tok-jsonl-1"
+        today = date.today().isoformat()
+        jsonl = tmp_path / "live_trades.jsonl"
+        record = {
+            "no_token_id": token,
+            "outcome": "filled",
+            "end_date": today,
+            "price_cents": 75,
+            "shares": 6.0,
+            "size_eur": 5.0,
+            "side": "NO",
+        }
+        jsonl.write_text(json.dumps(record) + "\n")
+        trader = self._make_trader(sell_result=("sell-j-1", 80))
+
+        with patch("src.execution.order_manager.LIVE_TRADES_JSONL", jsonl), \
+             patch("src.execution.order_manager._record_sell_in_db"), \
+             patch.object(src.scripts.run, "_append_live_trade"):
+            result = self.om.manual_sell_position(trader, token, today, db=None)
+
+        assert result["status"] == "sold"
+        trader.sell_position_immediate.assert_called_once()
+
+    def test_jsonl_fallback_cross_day_excluded(self, tmp_path):
+        """With db=None and only a prior-day filled record, not_found is returned."""
+        import json
+        token = "tok-jsonl-2"
+        jsonl = tmp_path / "live_trades.jsonl"
+        record = {
+            "no_token_id": token,
+            "outcome": "filled",
+            "end_date": "2020-01-01",
+            "price_cents": 75,
+            "shares": 6.0,
+            "size_eur": 5.0,
+            "side": "NO",
+        }
+        jsonl.write_text(json.dumps(record) + "\n")
+        trader = self._make_trader()
+
+        with patch("src.execution.order_manager.LIVE_TRADES_JSONL", jsonl):
+            result = self.om.manual_sell_position(trader, token, "2026-01-02", db=None)
+
+        assert result["status"] == "not_found"
+        trader.sell_position_immediate.assert_not_called()
+
 
 # ===========================================================================
 # _load_open_fills_for_token
