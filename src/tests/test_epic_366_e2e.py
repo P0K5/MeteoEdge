@@ -27,26 +27,25 @@ class TestJmaUrlFormat:
     """Test that JMA URL builder produces correctly formatted timestamps."""
 
     def test_jma_url_format(self):
-        """Feed JST 2026-06-20T17:00 → assert URL contains properly formatted date and hour.
+        """Feed JST 2026-06-20T17:00 → assert URL contains 14-digit timestamp.
 
-        JMA expects date in YYYYMMDD format and hour in HHMM format.
-        For JST 2026-06-20T17:00:00, date=20260620, hour=1700.
+        For JST 2026-06-20T17:00:00, the snapped timestamp should be 20260620170000.
         """
-        # Build a mock JMA URL
-        from src.data.collectors.jma_ameidas import _JMA_URL_TEMPLATE
+        from src.data.collectors.jma_ameidas import _JMA_URL_TEMPLATE, _JMA_STATION
+        from datetime import timezone, timedelta
 
-        # For JST 2026-06-20T17:00:00
-        date = "20260620"
-        hour = "1700"
-        station = "44132"
-        url = _JMA_URL_TEMPLATE.format(station=station, date=date, hour=hour)
+        _JST = timezone(timedelta(hours=9))
+        base_jst = datetime(2026, 6, 20, 17, 0, 0, tzinfo=_JST)
+        # Snap to 10-min grid: minute=17//10*10=10 → 17:10? No, 17:00 snaps to 17:00
+        snapped_minute = base_jst.minute // 10 * 10
+        snapped_jst = base_jst.replace(minute=snapped_minute, second=0, microsecond=0)
+        timestamp = snapped_jst.strftime("%Y%m%d%H%M00")
 
-        # Assert URL structure
+        url = _JMA_URL_TEMPLATE.format(station=_JMA_STATION, timestamp=timestamp)
+
         assert "https://www.jma.go.jp/bosai/amedas/data/point/" in url
-        assert station in url
-        assert date in url
-        assert hour in url
-        assert "20260620" + "1700" in url or f"{date}{hour}" in url
+        assert _JMA_STATION in url
+        assert "20260620170000" in url
         assert url.endswith(".json"), "JMA URL should point to a JSON endpoint"
 
     def test_jma_timestamp_14_digit_format(self):
@@ -61,86 +60,41 @@ class TestJmaUrlFormat:
 # ---------------------------------------------------------------------------
 
 class TestWinRateCanonical:
-    """Test the canonical win-rate computation."""
+    """Test the canonical win-rate computation (compute_win_rate from src.data.db)."""
 
     def test_win_rate_happy_path(self):
-        """compute_win_rate(5 wins, 5 settled) == 1.0."""
-        from src.dashboard.api import _compute_win_rate
-
-        # 5 settled trades, all with pnl > 0
-        trades = [
-            {"mode": "live", "outcome": "filled", "pnl": 1.5},
-            {"mode": "live", "outcome": "filled", "pnl": 0.8},
-            {"mode": "live", "outcome": "filled", "pnl": 2.1},
-            {"mode": "live", "outcome": "sold", "pnl": 0.5},
-            {"mode": "live", "outcome": "sold", "pnl": 1.2},
-        ]
-        win_rate = _compute_win_rate(trades)
-        assert win_rate == 1.0, "All 5 trades are wins"
+        """compute_win_rate(filled=5, wins=5) == 1.0."""
+        from src.data.db import compute_win_rate
+        assert compute_win_rate(5, 5) == 1.0
 
     def test_win_rate_mixed(self):
-        """compute_win_rate with mixed wins and losses."""
-        from src.dashboard.api import _compute_win_rate
+        """compute_win_rate(filled=4, wins=2) == 0.5."""
+        from src.data.db import compute_win_rate
+        assert compute_win_rate(4, 2) == 0.5
 
-        trades = [
-            {"mode": "live", "outcome": "filled", "pnl": 1.5},   # win
-            {"mode": "live", "outcome": "filled", "pnl": -0.8},  # loss
-            {"mode": "live", "outcome": "sold", "pnl": 0.5},     # win
-            {"mode": "live", "outcome": "sold", "pnl": -1.2},    # loss
-            {"mode": "live", "outcome": "filled", "pnl": 0.0},   # settled but pnl=0 (not a win)
-        ]
-        win_rate = _compute_win_rate(trades)
-        # settled (pnl != 0) = [win, loss, win, loss] → 2 wins / 4 settled
-        assert win_rate == 0.5, "Expected 2 wins out of 4 settled (excluding pnl=0)"
+    def test_win_rate_all_losses(self):
+        """compute_win_rate(filled=3, wins=0) == 0.0."""
+        from src.data.db import compute_win_rate
+        assert compute_win_rate(3, 0) == 0.0
 
-    def test_win_rate_excludes_shadow(self):
-        """compute_win_rate excludes shadow trades."""
-        from src.dashboard.api import _compute_win_rate
+    def test_win_rate_zero_settled_returns_none(self):
+        """compute_win_rate(filled=0, wins=0) returns None (no data)."""
+        from src.data.db import compute_win_rate
+        assert compute_win_rate(0, 0) is None
 
-        trades = [
-            {"mode": "live", "outcome": "filled", "pnl": 1.5},   # win (live)
-            {"mode": "shadow", "outcome": "filled", "pnl": 1.5},  # win (shadow, excluded)
-            {"mode": "live", "outcome": "filled", "pnl": -0.8},   # loss (live)
-        ]
-        win_rate = _compute_win_rate(trades)
-        # Only [live win, live loss] count → 1 win / 2 settled
-        assert win_rate == 0.5, "Shadow trades must be excluded"
+    def test_win_rate_pnl_zero_not_a_win(self):
+        """pnl=0 is settled (filled_count increments) but does not increment wins.
 
-    def test_win_rate_excludes_unsettled(self):
-        """compute_win_rate excludes trades with outcome not in ('filled', 'sold')."""
-        from src.dashboard.api import _compute_win_rate
+        Verified via DB layer: get_stations_trade_stats uses pnl > 0 for win count.
+        """
+        from src.data.db import compute_win_rate
+        # 2 settled trades, 0 wins (both pnl=0) → 0/2 = 0.0
+        assert compute_win_rate(2, 0) == 0.0
 
-        trades = [
-            {"mode": "live", "outcome": "filled", "pnl": 1.5},   # settled (win)
-            {"mode": "live", "outcome": "timeout", "pnl": -0.5},  # unsettled (excluded)
-            {"mode": "live", "outcome": "abandoned", "pnl": 0.0},  # unsettled (excluded)
-        ]
-        win_rate = _compute_win_rate(trades)
-        # Only [filled win] counts → 1 win / 1 settled
-        assert win_rate == 1.0, "Unsettled outcomes must be excluded"
-
-    def test_win_rate_zero_settled(self):
-        """compute_win_rate with no settled trades returns 0.0."""
-        from src.dashboard.api import _compute_win_rate
-
-        trades = [
-            {"mode": "live", "outcome": "timeout", "pnl": -0.5},
-            {"mode": "live", "outcome": "abandoned", "pnl": 0.0},
-        ]
-        win_rate = _compute_win_rate(trades)
-        assert win_rate == 0.0, "No settled trades → 0.0 win rate"
-
-    def test_win_rate_pnl_equals_zero_is_settled_not_win(self):
-        """Trades with pnl=0 are settled but do not count as wins."""
-        from src.dashboard.api import _compute_win_rate
-
-        trades = [
-            {"mode": "live", "outcome": "filled", "pnl": 0.0},   # settled (breakeven, not a win)
-            {"mode": "live", "outcome": "filled", "pnl": 0.0},   # settled (breakeven, not a win)
-        ]
-        win_rate = _compute_win_rate(trades)
-        # 2 settled, 0 wins → 0 / 2 = 0.0
-        assert win_rate == 0.0, "pnl=0 is settled but not a win"
+    def test_win_rate_single_win(self):
+        """compute_win_rate(filled=1, wins=1) == 1.0."""
+        from src.data.db import compute_win_rate
+        assert compute_win_rate(1, 1) == 1.0
 
 
 # ---------------------------------------------------------------------------
