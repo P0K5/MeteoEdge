@@ -16,6 +16,7 @@ Design notes:
 """
 import json
 import logging
+import math
 import os
 import threading
 from collections import defaultdict
@@ -39,6 +40,7 @@ from src.model.envelope import Bracket, true_probability_yes
 from src.model.climb_rates import expected_additional_rise
 from src.execution.order_manager import (
     _load_open_no_positions, _record_sell_in_db, order_manager as _order_manager,
+    _parse_polymarket_balance, _POLY_PRECISION,
 )
 from src.strategy.fee import estimate_fee_cents
 
@@ -380,7 +382,81 @@ def _check_stop_loss_exits(live_trader, ts: str, position_states: list,
                 sell_id[:12], sell_price_cents, station, bracket_low, bracket_high, pnl,
             )
         except Exception as e:
-            log.warning("  [sl] sell failed for [%s] %.0f-%.0fF: %s", station, bracket_low, bracket_high, e)
+            err = str(e)
+            if "balance" in err.lower():
+                available = _parse_polymarket_balance(err)
+                avail_shares = math.floor(available / _POLY_PRECISION) if available is not None else 0
+                log.info(
+                    "  [sl] [%s] %.0f-%.0fF partial balance -- wallet=%.6f requested=%.4f,"
+                    " selling %s and closing remainder",
+                    station, bracket_low, bracket_high,
+                    available / _POLY_PRECISION if available is not None else 0.0,
+                    remaining_shares, avail_shares,
+                )
+                if avail_shares > 0:
+                    try:
+                        sell_id2, sell_price2 = live_trader.sell_position_immediate(
+                            token_id, avail_shares, STOP_LOSS_SELL_AGGRESSION_CENTS,
+                        )
+                        if sell_id2 is not None:
+                            _order_manager._sold_positions.add(token_id)
+                            _order_manager._stop_loss_strikes.pop(token_id, None)
+                            _order_manager._partial_fill_shares.pop(token_id, None)
+                            if db is not None:
+                                db.close_positions_by_token(token_id)
+                            pnl2 = round((sell_price2 - avg_entry_cents) / 100 * avail_shares, 4)
+                            _record_sell_in_db(
+                                fills, sell_price2, ts, db=db,
+                                close_reason="stop_loss",
+                                bid_depth=int(depth) if depth is not None else None,
+                            )
+                            if risk_manager is not None:
+                                risk_manager.record_pnl(pnl2)
+                            _append_live_trade({
+                                "ts": ts,
+                                "order_id": sell_id2,
+                                "station": station,
+                                "question": question,
+                                "end_date": today,
+                                "ticker": fills[0].get("ticker", ""),
+                                "no_token_id": token_id,
+                                "bracket_low": bracket_low,
+                                "bracket_high": bracket_high,
+                                "side": "SELL",
+                                "price_cents": sell_price2,
+                                "entry_price_cents": round(avg_entry_cents),
+                                "shares": avail_shares,
+                                "size_eur": total_eur,
+                                "edge_cents": 0,
+                                "pnl": pnl2,
+                                "outcome": "sold",
+                                "actual_fee_cents": estimate_fee_cents(sell_price2),
+                                "close_reason": "stop_loss_partial_balance",
+                                "trigger": (
+                                    f"stop_loss_partial@{bid}c_fair{fair}c"
+                                    f"_wallet{avail_shares}shares"
+                                    f"_requested{remaining_shares:.4f}shares"
+                                ),
+                            }, db=db)
+                            log.info(
+                                "  [sl] partial sell %s... filled >= %sc -- [%s] %.0f-%.0fF NO pnl=%+.2f",
+                                sell_id2[:12], sell_price2, station, bracket_low, bracket_high, pnl2,
+                            )
+                    except Exception as e2:
+                        log.warning(
+                            "  [sl] partial-balance retry also failed for [%s] %.0f-%.0fF: %s",
+                            station, bracket_low, bracket_high, e2,
+                        )
+                else:
+                    n = db.close_positions_by_token(token_id) if db is not None else 0
+                    _order_manager._sold_positions.add(token_id)
+                    _order_manager._stop_loss_strikes.pop(token_id, None)
+                    log.info(
+                        "  [sl] [%s] %.0f-%.0fF balance=0 -- tokens already gone, removed %s row(s)",
+                        station, bracket_low, bracket_high, n,
+                    )
+            else:
+                log.warning("  [sl] sell failed for [%s] %.0f-%.0fF: %s", station, bracket_low, bracket_high, e)
 
 
 def _check_forced_exits(
@@ -544,13 +620,75 @@ def _check_forced_exits(
             )
         except Exception as e:
             err = str(e)
-            if "balance" in err.lower() and ("0" in err or "not enough" in err.lower()):
-                n = db.close_positions_by_token(token_id) if db is not None else 0
-                _order_manager._sold_positions.add(token_id)
+            if "balance" in err.lower():
+                available = _parse_polymarket_balance(err)
+                avail_shares = math.floor(available / _POLY_PRECISION) if available is not None else 0
                 log.info(
-                    "  [fe] [%s] %.0f-%.0fF balance=0 -- tokens already gone, removed %s row(s)",
-                    station, bracket_low, bracket_high, n,
+                    "  [fe] [%s] %.0f-%.0fF partial balance -- wallet=%.6f requested=%.4f,"
+                    " selling %s and closing remainder",
+                    station, bracket_low, bracket_high,
+                    available / _POLY_PRECISION if available is not None else 0.0,
+                    total_shares, avail_shares,
                 )
+                if avail_shares > 0:
+                    try:
+                        sell_id2, sell_price2 = live_trader.sell_position(token_id, avail_shares)
+                        _order_manager._sold_positions.add(token_id)
+                        _order_manager._stop_loss_strikes.pop(token_id, None)
+                        if db is not None:
+                            db.close_positions_by_token(token_id)
+                        pnl2 = round((sell_price2 - avg_entry_cents) / 100 * avail_shares, 4)
+                        _record_sell_in_db(
+                            fills, sell_price2, ts, db=db,
+                            close_reason="forced_exit",
+                            minutes_to_settlement=round(minutes_remaining, 2),
+                            bid_depth=int(depth),
+                        )
+                        if risk_manager is not None:
+                            risk_manager.record_pnl(pnl2)
+                        _append_live_trade({
+                            "ts": ts,
+                            "order_id": sell_id2,
+                            "station": station,
+                            "question": question,
+                            "end_date": today,
+                            "ticker": fills[0].get("ticker", ""),
+                            "no_token_id": token_id,
+                            "bracket_low": bracket_low,
+                            "bracket_high": bracket_high,
+                            "side": "SELL",
+                            "price_cents": sell_price2,
+                            "entry_price_cents": round(avg_entry_cents),
+                            "shares": avail_shares,
+                            "size_eur": total_eur,
+                            "edge_cents": 0,
+                            "pnl": pnl2,
+                            "outcome": "sold",
+                            "actual_fee_cents": estimate_fee_cents(sell_price2),
+                            "close_reason": "forced_exit_partial_balance",
+                            "minutes_to_settlement_at_close": round(minutes_remaining, 2),
+                            "trigger": (
+                                f"forced_exit_partial@{sell_price2}c_bid{bid}c"
+                                f"_wallet{avail_shares}shares"
+                                f"_requested{total_shares:.4f}shares"
+                            ),
+                        }, db=db)
+                        log.info(
+                            "  [fe] partial sell %s... filled @ %sc -- [%s] %.0f-%.0fF NO pnl=%+.2f",
+                            sell_id2[:12], sell_price2, station, bracket_low, bracket_high, pnl2,
+                        )
+                    except Exception as e2:
+                        log.warning(
+                            "  [fe] partial-balance retry also failed for [%s] %.0f-%.0fF: %s",
+                            station, bracket_low, bracket_high, e2,
+                        )
+                else:
+                    n = db.close_positions_by_token(token_id) if db is not None else 0
+                    _order_manager._sold_positions.add(token_id)
+                    log.info(
+                        "  [fe] [%s] %.0f-%.0fF balance=0 -- tokens already gone, removed %s row(s)",
+                        station, bracket_low, bracket_high, n,
+                    )
             else:
                 log.warning(
                     "  [fe] sell failed for [%s] %.0f-%.0fF: %s",
@@ -681,12 +819,65 @@ def _check_metar_exits(weather: dict, live_trader, ts: str, db=None, risk_manage
             )
         except Exception as e:
             err = str(e)
-            if "balance" in err.lower() and ("0" in err or "not enough" in err.lower()):
-                n = db.close_positions_by_token(token_id) if db is not None else 0
-                _order_manager._sold_positions.add(token_id)
+            if "balance" in err.lower():
+                available = _parse_polymarket_balance(err)
+                avail_shares = math.floor(available / _POLY_PRECISION) if available is not None else 0
                 log.info(
-                    "  [exit] [%s] %.0f-%.0fF balance=0 -- tokens already gone, removed %s row(s) from open_positions",
-                    station, bracket_low, bracket_high, n,
+                    "  [exit] [%s] %.0f-%.0fF partial balance -- wallet=%.6f requested=%.4f,"
+                    " selling %s and closing remainder",
+                    station, bracket_low, bracket_high,
+                    available / _POLY_PRECISION if available is not None else 0.0,
+                    total_shares, avail_shares,
                 )
+                if avail_shares > 0:
+                    try:
+                        sell_id2, sell_price2 = live_trader.sell_position(token_id, avail_shares)
+                        _order_manager._sold_positions.add(token_id)
+                        if db is not None:
+                            db.close_positions_by_token(token_id)
+                        pnl2 = round((sell_price2 - avg_entry_cents) / 100 * avail_shares, 4)
+                        _record_sell_in_db(fills, sell_price2, ts, db=db)
+                        if risk_manager is not None:
+                            risk_manager.record_pnl(pnl2)
+                        _append_live_trade({
+                            "ts": ts,
+                            "order_id": sell_id2,
+                            "station": station,
+                            "question": question,
+                            "end_date": today,
+                            "ticker": fills[0].get("ticker", ""),
+                            "no_token_id": token_id,
+                            "bracket_low": bracket_low,
+                            "bracket_high": bracket_high,
+                            "side": "SELL",
+                            "price_cents": sell_price2,
+                            "entry_price_cents": round(avg_entry_cents),
+                            "shares": avail_shares,
+                            "size_eur": total_eur,
+                            "edge_cents": 0,
+                            "pnl": pnl2,
+                            "outcome": "sold",
+                            "actual_fee_cents": estimate_fee_cents(sell_price2),
+                            "trigger": (
+                                f"metar_high={current_high:.1f}F_expected={expected_high:.1f}F"
+                                f"_nws={nws_forecast}_wallet{avail_shares}shares"
+                            ),
+                        }, db=db)
+                        log.info(
+                            "  [exit] partial sell %s... placed @ %sc -- [%s] %.0f-%.0fF NO pnl=%+.2f",
+                            sell_id2[:12], sell_price2, station, bracket_low, bracket_high, pnl2,
+                        )
+                    except Exception as e2:
+                        log.warning(
+                            "  [exit] partial-balance retry also failed for [%s] %.0f-%.0fF: %s",
+                            station, bracket_low, bracket_high, e2,
+                        )
+                else:
+                    n = db.close_positions_by_token(token_id) if db is not None else 0
+                    _order_manager._sold_positions.add(token_id)
+                    log.info(
+                        "  [exit] [%s] %.0f-%.0fF balance=0 -- tokens already gone, removed %s row(s)",
+                        station, bracket_low, bracket_high, n,
+                    )
             else:
                 log.warning("  [exit] sell failed for [%s] %.0f-%.0fF: %s", station, bracket_low, bracket_high, e)
