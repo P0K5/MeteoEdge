@@ -2022,6 +2022,12 @@ _CONFIG_META: dict[str, dict] = {
         "min": 1.0,
         "max": 500.0,
     },
+    "SIZING_MODE": {
+        "description": "Position sizing mode: flat (fixed size) or kelly (quarter-Kelly, experimental)",
+        "type": "str",
+        "group": "position",
+        "options": ["flat", "kelly"],
+    },
     "POSITION_SIZE_EUR": {
         "description": "Notional size per trade (€)",
         "type": "float",
