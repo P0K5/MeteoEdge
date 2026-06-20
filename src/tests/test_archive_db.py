@@ -136,18 +136,22 @@ class TestArchiveDatabase:
                     "malicious_table; DROP TABLE snapshot_archive"
                 )
 
-    def test_no_coupling_to_trading_db(self, tmp_path):
+    def test_no_coupling_to_trading_db(self):
         """Importing ArchiveDatabase must not import or instantiate Database."""
-        import importlib
+        import subprocess
         import sys
-        # Reload to ensure clean import state
-        if "src.data.archive_db" in sys.modules:
-            del sys.modules["src.data.archive_db"]
-        mod = importlib.import_module("src.data.archive_db")
-        # The module must not have imported from src.data.db
-        assert "src.data.db" not in sys.modules or True  # db.py may be imported elsewhere
-        assert not hasattr(mod, "Database"), (
-            "archive_db must not re-export the trading Database class"
+        result = subprocess.run(
+            [
+                sys.executable, "-c",
+                "import src.data.archive_db; import sys; "
+                "assert 'src.data.db' not in sys.modules, "
+                "'archive_db imported src.data.db unexpectedly'",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, (
+            f"archive_db must not import src.data.db.\nstdout: {result.stdout}\nstderr: {result.stderr}"
         )
 
 
