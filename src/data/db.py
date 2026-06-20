@@ -61,6 +61,9 @@ CREATE TABLE IF NOT EXISTS trades (
 );
 CREATE INDEX IF NOT EXISTS idx_trades_station_ts ON trades(station, ts);
 CREATE INDEX IF NOT EXISTS idx_trades_mode ON trades(mode);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_trades_shadow_unique
+    ON trades(station, bracket_low, bracket_high, side, substr(ts,1,10))
+    WHERE mode='shadow';
 
 CREATE TABLE IF NOT EXISTS settlements (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -314,6 +317,15 @@ class Database:
         # Back-compat: rows where legacy enabled=0 → shadow both sides
         self._conn.execute(
             "UPDATE station_overrides SET yes_enabled=0, no_enabled=0 WHERE enabled=0"
+        )
+        self._conn.commit()
+
+        # Migration: add partial UNIQUE index for shadow-trade dedup (issue #376).
+        # CREATE UNIQUE INDEX IF NOT EXISTS is idempotent — safe to run on every startup.
+        self._conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_trades_shadow_unique "
+            "ON trades(station, bracket_low, bracket_high, side, substr(ts,1,10)) "
+            "WHERE mode='shadow'"
         )
         self._conn.commit()
 
@@ -801,6 +813,61 @@ class Database:
             (target_date,),
         )
         return [dict(row) for row in cur.fetchall()]
+
+    def upsert_shadow_trade(
+        self,
+        *,
+        ts: str,
+        station: str,
+        ticker: str,
+        bracket_low: float,
+        bracket_high: float,
+        side: str,
+        predicted_price: int,
+        actual_price: int,
+        predicted_edge: float,
+        capital_before: float = 0.0,
+    ) -> tuple[int, bool]:
+        """Insert a shadow trade row, or update actual_price if one already exists today.
+
+        Dedup key: (station, bracket_low, bracket_high, side, day) where
+        day = substr(ts, 1, 10) (the YYYY-MM-DD date prefix of the ISO timestamp).
+
+        Returns (row_id, created) where created=True means a new row was inserted,
+        False means an existing row's actual_price was updated.
+        """
+        today = ts[:10]  # YYYY-MM-DD prefix
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT id FROM trades "
+                "WHERE mode='shadow' AND station=? AND bracket_low=? AND bracket_high=? "
+                "AND side=? AND substr(ts,1,10)=?",
+                (station, bracket_low, bracket_high, side, today),
+            )
+            row = cur.fetchone()
+            if row is not None:
+                # Existing row: update actual_price to the latest observed value
+                self._conn.execute(
+                    "UPDATE trades SET actual_price=? WHERE id=?",
+                    (actual_price, row[0]),
+                )
+                self._conn.commit()
+                return row[0], False
+            # No existing row: insert normally
+            cur = self._conn.execute(
+                "INSERT INTO trades"
+                "(ts,station,ticker,bracket_low,bracket_high,side,"
+                "predicted_price,actual_price,slippage,predicted_edge,mode,order_id,"
+                "outcome,pnl,capital_before,capital_after,settled_at) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    ts, station, ticker, bracket_low, bracket_high, side,
+                    predicted_price, actual_price, None, predicted_edge, "shadow",
+                    None, None, None, capital_before, None, None,
+                ),
+            )
+            self._conn.commit()
+            return cur.lastrowid, True
 
     # ------------------------------------------------------------------
     # settlements
