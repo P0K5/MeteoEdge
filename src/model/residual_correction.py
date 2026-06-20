@@ -234,12 +234,7 @@ def compute_residual_stats_per_pair(
 
     # Query distinct pairs that have data in the trailing window
     try:
-        rows = db._conn.execute(
-            "SELECT DISTINCT station, source "
-            "FROM intraday_corrections "
-            "WHERE city=? AND date>=?",
-            (city, since_date),
-        ).fetchall()
+        rows = db.get_distinct_pairs(city, since_date)
     except Exception as exc:
         log.warning("[residual] DB query failed for city=%s: %s", city, exc)
         return []

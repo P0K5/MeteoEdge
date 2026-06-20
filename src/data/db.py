@@ -1244,6 +1244,17 @@ class Database:
             )
         return [float(row[0]) for row in cur.fetchall()]
 
+    def get_distinct_pairs(self, city: str, since_date: str) -> "list[tuple[str, str]]":
+        """Return distinct (station, source) pairs from intraday_corrections since since_date."""
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT DISTINCT station, source "
+                "FROM intraday_corrections "
+                "WHERE city=? AND date>=?",
+                (city, since_date),
+            )
+            return [(row[0], row[1]) for row in cur.fetchall()]
+
     def get_intraday_corrections_for_pair(
         self,
         city: str,
