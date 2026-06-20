@@ -106,46 +106,37 @@ class TestFreshnessMonitor:
 
     def test_freshness_no_critical_for_fresh_data(self, caplog):
         """FreshnessMonitor with fresh data should not emit CRITICAL."""
-        caplog.set_level(logging.CRITICAL)
-
+        db = Database(":memory:")
         monitor = FreshnessMonitor()
-        db = MagicMock(spec=Database)
 
-        # Mock a fresh observation (within the last 10 minutes)
         now = datetime.now(timezone.utc)
         fresh_ts = (now - timedelta(minutes=5)).isoformat()
-        db.get_latest_observation.return_value = {
-            "ts": fresh_ts,
-            "source": "jma_ameidas",
-            "station": "RJTT",
-        }
+        db.insert_observation(
+            ts=fresh_ts, station="RJTT", temp_f=72.0,
+            temp_native=22.2, unit="C", source="jma_ameidas",
+        )
 
         result = monitor.check(db, "jma_ameidas", "RJTT", cadence_min=10)
 
         assert result is True, "Fresh observation should return True"
-        assert "CRITICAL" not in caplog.text, "Fresh data should not emit CRITICAL"
+        assert not any(r.levelno >= logging.CRITICAL for r in caplog.records),             "Fresh data should not emit CRITICAL"
 
     def test_freshness_critical_for_stale_data(self, caplog):
         """FreshnessMonitor should emit CRITICAL for stale data."""
-        caplog.set_level(logging.CRITICAL)
-
+        db = Database(":memory:")
         monitor = FreshnessMonitor()
-        db = MagicMock(spec=Database)
 
-        # Mock a stale observation (30 minutes old, threshold is 2*10=20 min)
         now = datetime.now(timezone.utc)
         stale_ts = (now - timedelta(minutes=30)).isoformat()
-        db.get_latest_observation.return_value = {
-            "ts": stale_ts,
-            "source": "jma_ameidas",
-            "station": "RJTT",
-        }
+        db.insert_observation(
+            ts=stale_ts, station="RJTT", temp_f=72.0,
+            temp_native=22.2, unit="C", source="jma_ameidas",
+        )
 
         result = monitor.check(db, "jma_ameidas", "RJTT", cadence_min=10)
 
         assert result is False, "Stale observation should return False"
-        assert "CRITICAL" in caplog.text, "Stale data should emit CRITICAL"
-        assert "Stale observation" in caplog.text
+        assert any("Stale observation" in r.message for r in caplog.records),             "Stale data should emit CRITICAL log with 'Stale observation'"
 
 
 # ---------------------------------------------------------------------------
