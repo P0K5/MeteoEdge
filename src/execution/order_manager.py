@@ -15,7 +15,7 @@ from src.config import (
     get_take_profit_buffer_cents,
 )
 from src.strategy.fee import estimate_fee_cents
-from src.utils.log_rotation import rotated_sources
+from src.utils.log_rotation import iter_rotated_jsonl, rotated_sources
 
 log = logging.getLogger(__name__)
 
@@ -224,6 +224,44 @@ def _wallet_held_token_ids() -> set:
         return set()
 
 
+def _wallet_held_positions() -> list:
+    """Return full position data for non-redeemable wallet tokens (size > 0.01).
+
+    Each entry is a dict with at least:
+      - ``asset_id``: the token_id string
+      - ``size``: float number of shares held (from Polymarket API ``size`` field)
+      - ``avg_price``: float price in [0, 1] (from Polymarket API ``avgPrice`` field)
+
+    Returns an empty list when the wallet env-var is unset or the API call fails.
+    This is used by reconcile_wallet_to_db() to get authoritative share/price data.
+    """
+    wallet = os.environ.get("POLYMARKET_DEPOSIT_WALLET", "")
+    if not wallet:
+        return []
+    try:
+        import httpx
+        url = f"https://data-api.polymarket.com/positions?user={wallet}&sizeThreshold=0.01&limit=100"
+        r = httpx.get(url, timeout=15)
+        r.raise_for_status()
+        rows = r.json()
+        if not isinstance(rows, list):
+            rows = rows.get("positions") or rows.get("data") or []
+        result = []
+        for row in rows:
+            asset = str(row.get("asset") or "")
+            if not asset or row.get("redeemable"):
+                continue
+            result.append({
+                "asset_id": asset,
+                "size": float(row.get("size") or 0.0),
+                "avg_price": float(row.get("avgPrice") or 0.0),
+            })
+        return result
+    except Exception as e:
+        log.warning("[reconcile] wallet fetch failed: %s -- skipping wallet reconciliation", e)
+        return []
+
+
 def _reconcile_db_row(record: dict, ts: str, db=None) -> None:
     """Update (or insert) the DB trades row for a just-reconciled JSONL record.
 
@@ -308,6 +346,7 @@ class OrderManager:
         self._sold_positions: set = set()       # no_token_ids sold this session
         self._stop_loss_strikes: dict = {}      # no_token_id -> consecutive polls with fair < entry
         self._partial_fill_shares: dict = {}    # no_token_id -> shares already sold via partial fills
+        self._reconcile_warned_tokens: set = set()  # tokens warned for missing JSONL (flood protection)
 
     def reconcile_timeout_fills(self, ts: str, db=None) -> None:
         """Patch timeout JSONL records whose tokens still appear in the wallet.
@@ -396,6 +435,148 @@ class OrderManager:
                 files_patched,
             )
 
+    def reconcile_wallet_to_db(self, db=None) -> None:
+        """Insert DB rows for wallet positions that have no open_positions entry.
+
+        Runs once per poll after reconcile_timeout_fills().  Three classes of
+        wallet tokens are handled:
+
+        1. Token already in open_positions → skip (no action needed).
+        2. Token has a JSONL record with outcome 'timeout' or 'filled' → insert
+           into trades (if not already present by order_id) and open_positions,
+           using wallet shares/avgPrice as the authoritative size and price.
+           Log at INFO: "[reconcile] recovered orphan position: STATION bracket SIDE token_id=..."
+        3. Token has no JSONL record at all → log at WARNING once per token per
+           process (flood-protected via _reconcile_warned_tokens).  No DB insert.
+        4. Token whose latest JSONL record has outcome 'sold' → skip
+           (redemption ghost; token still appears briefly in the wallet after sell).
+
+        Wallet avgPrice is converted to cents: max(1, min(99, round(avg_price * 100))).
+        For manual trades with no order_id, a synthetic order_id is used:
+        f"orphan-recovery-{token_id[:12]}-{ts}".
+        """
+        if db is None:
+            return
+
+        positions = _wallet_held_positions()
+        if not positions:
+            return
+
+        # Build set of token_ids already tracked in open_positions.
+        try:
+            existing_rows = db.get_open_positions()
+        except Exception as e:
+            log.warning("[reconcile] DB get_open_positions failed: %s -- skipping wallet reconcile", e)
+            return
+        existing_tokens: set = {str(row.get("token_id") or row.get("no_token_id") or "") for row in existing_rows}
+
+        ts = datetime.now(timezone.utc).isoformat()
+
+        for pos in positions:
+            token_id = pos["asset_id"]
+            if not token_id:
+                continue
+
+            # 1. Already tracked → skip.
+            if token_id in existing_tokens:
+                continue
+
+            # Search rotated JSONL for the latest record matching this asset_id.
+            latest_record: "dict | None" = None
+            try:
+                for record in iter_rotated_jsonl(LIVE_TRADES_JSONL):
+                    asset = str(record.get("asset_id") or record.get("no_token_id") or "")
+                    if asset == token_id:
+                        latest_record = record  # keep iterating — we want the *latest*
+            except Exception as e:
+                log.warning("[reconcile] JSONL scan failed for %s...: %s", token_id[:14], e)
+                continue
+
+            # 4. Latest record is 'sold' → redemption ghost, skip.
+            if latest_record is not None and latest_record.get("outcome") == "sold":
+                continue
+
+            # 3. No JSONL record → warn once per token per process.
+            if latest_record is None:
+                if token_id not in self._reconcile_warned_tokens:
+                    self._reconcile_warned_tokens.add(token_id)
+                    log.warning(
+                        "[reconcile] wallet token %s... has no JSONL history"
+                        " -- likely manual trade, cannot auto-recover enrichment",
+                        token_id[:14],
+                    )
+                continue
+
+            # 2. Found a 'timeout' or 'filled' record → recover the orphan position.
+            outcome = latest_record.get("outcome", "")
+            if outcome not in ("timeout", "filled"):
+                continue
+
+            wallet_shares = pos["size"]
+            avg_price_raw = pos["avg_price"]
+            entry_price_cents = max(1, min(99, round(avg_price_raw * 100)))
+
+            order_id = latest_record.get("order_id") or ""
+            if not order_id:
+                order_id = f"orphan-recovery-{token_id[:12]}-{ts}"
+
+            station = latest_record.get("station", "")
+            ticker = latest_record.get("ticker", "")
+            bracket_low = float(latest_record.get("bracket_low") or 0)
+            bracket_high = float(latest_record.get("bracket_high") or 0)
+            side = latest_record.get("side", "NO")
+            record_ts = latest_record.get("ts", ts)
+            predicted_price = int(latest_record.get("predicted_price") or entry_price_cents)
+
+            # Insert trade row if not already present.
+            try:
+                existing_trade = db._conn.execute(
+                    "SELECT id FROM trades WHERE order_id=? LIMIT 1", (order_id,)
+                ).fetchone()
+                if existing_trade:
+                    trade_id = existing_trade[0]
+                else:
+                    trade_id = db.insert_trade(
+                        ts=record_ts,
+                        station=station,
+                        ticker=ticker,
+                        bracket_low=bracket_low,
+                        bracket_high=bracket_high,
+                        side=side,
+                        predicted_price=predicted_price,
+                        actual_price=entry_price_cents,
+                        predicted_edge=float(latest_record.get("edge_cents") or 0),
+                        mode="live",
+                        order_id=order_id,
+                        outcome="filled",
+                        capital_before=float(latest_record.get("size_eur") or 0),
+                    )
+            except Exception as e:
+                log.warning("[reconcile] DB trade insert failed for %s...: %s", token_id[:14], e)
+                continue
+
+            # Insert open_positions row using wallet's authoritative shares/price.
+            try:
+                db.open_position(
+                    trade_id=trade_id,
+                    station=station,
+                    ticker=ticker,
+                    token_id=token_id,
+                    side=side,
+                    order_id=order_id,
+                    entry_price=entry_price_cents,
+                    shares=wallet_shares,
+                    entry_ts=record_ts,
+                )
+                log.info(
+                    "[reconcile] recovered orphan position: %s %s-%s %s token_id=%s...",
+                    station, bracket_low, bracket_high, side, token_id[:14],
+                )
+                # Add to local set so same-process duplicate calls are safe.
+                existing_tokens.add(token_id)
+            except Exception as e:
+                log.warning("[reconcile] DB open_position insert failed for %s...: %s", token_id[:14], e)
+
     def sync_open_orders(self, live_trader, db=None) -> None:
         """Refresh _open_orders from exchange open orders + today's filled positions.
 
@@ -450,6 +631,12 @@ class OrderManager:
                         pass
             if filled_count:
                 log.info("[orders] %s today's filled position(s) added to dedup guard", filled_count)
+
+        # Wallet-to-DB reconciliation: recover open_positions rows for wallet
+        # tokens that have no DB entry (e.g. GTC fills after timeout window,
+        # manual external trades, or historical orphans from the balance-error bug).
+        # Runs after reconcile_timeout_fills() has already patched timeout→filled.
+        self.reconcile_wallet_to_db(db=db)
 
     def check_take_profit_exits(self, live_trader, ts: str, db=None, risk_manager=None) -> None:
         """Exit NO positions where the best bid has reached predicted_price - buffer.
