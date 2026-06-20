@@ -2,7 +2,7 @@
 import os
 import sqlite3
 import threading
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 _DEFAULT_PATH = os.getenv("DB_PATH", "data/meteoedge.db")
@@ -739,8 +739,7 @@ class Database:
 
         Covers only live, closed trades so paper/shadow noise is excluded.
         """
-        from datetime import date as _date, timedelta
-        since = (_date.today() - timedelta(days=days)).isoformat()
+        since = (date.today() - timedelta(days=days)).isoformat()
         cur = self._conn.execute(
             """
             SELECT
@@ -1229,8 +1228,7 @@ class Database:
         (station, source) pair.  When both are None the query is city-wide (legacy
         behaviour).
         """
-        from datetime import date as _date, timedelta
-        since_date = (_date.today() - timedelta(days=window_days)).isoformat()
+        since_date = (date.today() - timedelta(days=window_days)).isoformat()
         if station is not None and source is not None:
             cur = self._conn.execute(
                 "SELECT delta_f FROM intraday_corrections "
@@ -1637,7 +1635,6 @@ class Database:
 
     def log_crps(self, city: str, date: str, crps_score: float, model_mode: str = "emos_shadow") -> None:
         """Insert a CRPS score record for *city* on *date*."""
-        from datetime import datetime, timezone
         logged_at = datetime.now(timezone.utc).isoformat()
         with self._lock:
             with self._conn:
@@ -1656,7 +1653,6 @@ class Database:
 
     def log_deb_weights(self, city: str, date: str, weights_json: str) -> None:
         """Insert a DEB weights snapshot for *city* on *date*."""
-        from datetime import datetime, timezone
         logged_at = datetime.now(timezone.utc).isoformat()
         with self._lock:
             with self._conn:
