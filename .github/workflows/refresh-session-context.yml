@@ -53,5 +53,6 @@ jobs:
           else
             TIMESTAMP=$(date -u +'%Y-%m-%d %H:%M UTC')
             git commit -m "chore(ci): refresh session context IDs [$TIMESTAMP]"
+            git pull --rebase origin master
             git push
           fi
