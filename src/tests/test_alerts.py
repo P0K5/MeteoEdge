@@ -371,6 +371,12 @@ class TestPollOnceAlertIntegration:
             else:
                 sys.modules[name] = orig
         sys.modules.pop("src.scripts.run", None)
+        # Restore the package attribute so patches land on the correct module object
+        import src.scripts
+        import importlib
+        run = importlib.import_module("src.scripts.run")
+        src.scripts.run = run
+        sys.modules["src.scripts.run"] = run
 
     def test_poll_missed_alert_fires_when_previous_poll_was_old(self):
         """If the previous poll ran >20 min ago, the alert must fire."""
