@@ -19,9 +19,10 @@ Endpoints:
 
 Data source (priority order):
     1. Polymarket CLOB trade history — positions and fills
-    2. live_state.json — optional enrichment for my_prob / edge / station / bracket
-    3. Gamma API — market question strings
-    4. CLOB orderbook — live mark-to-market per open position
+    2. DB open_positions table — enrichment for station / bracket / predicted_price
+    3. live_trades.jsonl — fallback enrichment for tokens settled/removed from open_positions
+    4. Gamma API — market question strings
+    5. CLOB orderbook — live mark-to-market per open position
 
 Usage (standalone):
     uvicorn src.dashboard.api:app --port 8000
@@ -70,8 +71,6 @@ from src.execution.live_trader import LiveTrader
 from src.execution.order_manager import order_manager
 from src.dashboard.data import read_jsonl, load_live_trades, load_snapshots, load_position_snapshots
 from src.utils.log_rotation import iter_rotated_jsonl, rotated_sources
-
-STATE_PATH = Path("logs/live_state.json")
 
 _db = Database()
 
@@ -504,19 +503,30 @@ def _get_emos_city_status(city: str, station: str, calibration_by_city: dict) ->
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _read_state() -> dict:
-    """Read live_state.json; return empty state if missing or corrupt."""
+def _db_open_positions_enrichment() -> dict[str, dict]:
+    """Return DB open_positions keyed by token_id for quick lookup.
+
+    Calls _db.get_open_positions() and returns a mapping of
+    {token_id: {station, bracket_low, bracket_high, predicted_price}}.
+    Returns an empty dict if _db is None or if the query fails.
+    """
+    if _db is None:
+        return {}
     try:
-        if STATE_PATH.exists():
-            return {"open_trades": [], **__import__("json").loads(STATE_PATH.read_text())}
+        rows = _db.get_open_positions()
     except Exception:
-        pass
-    return {"updated_at": "", "open_trades": []}
-
-
-def _state_enrichment() -> dict[str, dict]:
-    """Return live_state.json open trades keyed by token_id for quick lookup."""
-    return {t["token_id"]: t for t in (_read_state().get("open_trades") or []) if t.get("token_id")}
+        logger.warning("_db_open_positions_enrichment: DB query failed", exc_info=True)
+        return {}
+    return {
+        row["token_id"]: {
+            "station": row.get("station", ""),
+            "bracket_low": row.get("bracket_low", 0.0),
+            "bracket_high": row.get("bracket_high", 0.0),
+            "predicted_price": row.get("predicted_price"),
+        }
+        for row in rows
+        if row.get("token_id")
+    }
 
 
 def _parse_snapshots(records) -> "dict[tuple[str, float, float], float]":
@@ -657,8 +667,9 @@ def _cached_live_trades() -> "tuple[dict, list, list]":
 def _trades_file_enrichment() -> dict[str, dict]:
     """Return the most recent filled record per asset_id from live_trades.jsonl.
 
-    Used as a durable fallback when live_state.json is missing or stale — the JSONL
-    file persists across trader restarts and always carries predicted_price.
+    Used as a durable fallback when a token is settled and removed from open_positions
+    but still in the wallet during the redemption window — the JSONL file persists
+    across trader restarts and always carries predicted_price.
 
     Reads from the mtime-keyed cache: live_trades.jsonl is parsed at most once
     per file change across all three callers in _positions_from_wallet().
@@ -725,7 +736,7 @@ def _nws_forecast_for_title(title: str) -> float | None:
 
 
 def _midpoint_cents(token_id: str, fallback_cents: int) -> int:
-    """Single-token midpoint — used only in the live_state.json fallback path."""
+    """Single-token midpoint for a given token."""
     try:
         ob = get_orderbook(token_id)
         bids = ob.get("bids") or []
@@ -819,7 +830,7 @@ def _positions_from_wallet() -> tuple[list[PositionOut], list[ClosedPositionOut]
             break
         offset += 100
 
-    enrichment = _state_enrichment()
+    enrichment = _db_open_positions_enrichment()
     # Single cached pass over live_trades.jsonl — all three callers below share
     # this result; the file is parsed at most once per file change (issue #170).
     jsonl_enrichment, stopped_list, settled_list = _cached_live_trades()
