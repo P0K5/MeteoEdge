@@ -7,10 +7,12 @@ poll_once() can call it with no change to callers.
 import logging
 import time
 
-from src.config import POSITION_SIZE_EUR
+from src.config import POSITION_SIZE_EUR, SIZING_MODE
 from src.execution.live_trader import LiveTrader
 from src.execution.order_manager import order_manager as _order_manager
 from src.monitoring.alerts import AlertManager
+from src.strategy.fee import estimate_fee_cents
+from src.strategy.sizing import compute_position_size
 
 log = logging.getLogger(__name__)
 
@@ -24,6 +26,7 @@ def _execute_live(
     risk_manager,
     ts: str,
     db=None,
+    bankroll: float = 0.0,
 ) -> None:
     """Place one order and wait for fill/timeout. open_position() already called by caller.
 
@@ -53,6 +56,20 @@ def _execute_live(
 
     predicted_price = round(candidate.confidence * 100)
 
+    fee_cents = estimate_fee_cents(candidate.price_cents)
+    size_eur = compute_position_size(
+        p_win=candidate.confidence,
+        price_cents=float(candidate.price_cents),
+        fee_cents=fee_cents,
+        bankroll=bankroll,
+        sizing_mode=SIZING_MODE,
+        flat_size=POSITION_SIZE_EUR,
+    )
+    log.info(
+        "  [sizing] mode=%s p_win=%.3f price=%sc fee=%.2fc bankroll=%.2f -> size=%.2f EUR",
+        SIZING_MODE, candidate.confidence, candidate.price_cents, fee_cents, bankroll, size_eur,
+    )
+
     try:
         with _order_manager._order_lock:  # Serialize HTTP/2 placements; fill-monitoring remains parallel
             try:
@@ -60,7 +77,7 @@ def _execute_live(
                     token_id=token_id,
                     side=candidate.side,
                     price_cents=candidate.price_cents,
-                    size_usdc=POSITION_SIZE_EUR,
+                    size_usdc=size_eur,
                     station=candidate.station,
                     bracket_low=candidate.bracket.low_f,
                     bracket_high=candidate.bracket.high_f,
@@ -125,7 +142,8 @@ def _execute_live(
             "side": candidate.side,
             "price_cents": candidate.price_cents,
             "predicted_price": predicted_price,
-            "size_eur": POSITION_SIZE_EUR,
+            "size_eur": size_eur,
+            "sizing_mode": SIZING_MODE,
             "edge_cents": round(candidate.edge_cents, 2),
             "outcome": outcome,
         }, db=db)

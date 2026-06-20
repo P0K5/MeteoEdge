@@ -395,7 +395,7 @@ def poll_once(
     if live_trader and approved:
         with ThreadPoolExecutor(max_workers=len(approved)) as executor:
             futures = [
-                executor.submit(_execute_live, cand, live_trader._client_factory, risk_manager, ts, db)
+                executor.submit(_execute_live, cand, live_trader._client_factory, risk_manager, ts, db, available_usdc)
                 for cand in approved
             ]
             for future in as_completed(futures):
