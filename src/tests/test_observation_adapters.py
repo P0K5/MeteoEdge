@@ -271,8 +271,9 @@ class TestFreshnessMonitorWithAdapters:
 
         now = datetime.now(timezone.utc)
 
+        # jma_ameidas threshold: 60 seconds, fresh at 30 seconds
         db.insert_observation(
-            ts=(now - timedelta(minutes=5)).isoformat(),
+            ts=(now - timedelta(seconds=30)).isoformat(),
             station="Tokyo",
             temp_f=72.0,
             temp_native=22.2,
@@ -280,8 +281,9 @@ class TestFreshnessMonitorWithAdapters:
             source="jma_ameidas",
         )
 
+        # amos threshold: 90 seconds, stale at 180 seconds
         db.insert_observation(
-            ts=(now - timedelta(minutes=35)).isoformat(),
+            ts=(now - timedelta(seconds=180)).isoformat(),
             station="Seoul",
             temp_f=68.0,
             temp_native=20.0,
