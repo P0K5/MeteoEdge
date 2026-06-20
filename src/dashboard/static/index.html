@@ -917,7 +917,7 @@ function renderOpen(positions) {
         // Stale: older than 1 hour but station should be active
         const ageH = Math.round(ageMinutes / 60);
         const ageLabel = ageMinutes >= 60 ? `${ageH}h old` : `${Math.round(ageMinutes)}m old`;
-        liveSub = `<div class="prob-sub prob-sub-stale"
+        liveSub = `<div class="prob-sub prob-sub-stale" role="status"
           title="Model snapshot is older than 1 hour but the station should be active. Check the scanner logs."
           aria-label="Stale: model snapshot ${ageLabel}"
           >⚠ model stale · ${ageLabel}</div>`;

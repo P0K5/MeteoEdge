@@ -1295,8 +1295,7 @@ class TestReconcileWalletToDb:
         for tid in (existing_token_ids or []):
             rows.append({"token_id": tid, "no_token_id": tid})
         db.get_open_positions.return_value = rows
-        db._conn = MagicMock()
-        db._conn.execute.return_value.fetchone.return_value = None  # no existing trade
+        db.get_trade_by_order_id.return_value = None  # no existing trade
         db.insert_trade.return_value = 42
         return db
 
@@ -1507,7 +1506,7 @@ class TestReconcileWalletToDb:
         token = "tok-existing-trade"
         db = self._make_db()
         # DB says a trade row with this order_id already exists
-        db._conn.execute.return_value.fetchone.return_value = (99,)  # trade_id=99
+        db.get_trade_by_order_id.return_value = {"id": 99}
         wallet_pos = [{"asset_id": token, "size": 5.0, "avg_price": 0.80}]
         jsonl_record = _make_jsonl_record(token, outcome="filled", order_id="ord-existing-001")
 

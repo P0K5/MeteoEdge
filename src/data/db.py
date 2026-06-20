@@ -721,6 +721,19 @@ class Database:
                 )
         return cur.rowcount
 
+    def get_trade_by_order_id(self, order_id: str) -> "dict | None":
+        """Return the trade row matching *order_id*, or None if not found.
+
+        Returns the full trade row dict with all column fields.
+        """
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT * FROM trades WHERE order_id=? LIMIT 1",
+                (order_id,),
+            )
+            row = cur.fetchone()
+        return dict(row) if row else None
+
     def get_trade_cost_summary(self, days: int = 30) -> dict:
         """Return cost-accounting totals for live trades over the trailing *days*.
 

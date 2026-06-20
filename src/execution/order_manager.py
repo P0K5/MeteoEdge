@@ -311,11 +311,8 @@ def _reconcile_db_row(record: dict, ts: str, db=None) -> None:
         if not existing:
             shares = float(record.get("size_matched") or record.get("shares") or 0)
             # Look up the trade_id we just inserted/updated
-            cur = db._conn.execute(
-                "SELECT id FROM trades WHERE order_id=? LIMIT 1", (order_id,)
-            )
-            row = cur.fetchone()
-            trade_id = row[0] if row else 0
+            trade_row = db.get_trade_by_order_id(order_id)
+            trade_id = trade_row["id"] if trade_row else 0
             db.open_position(
                 trade_id=trade_id,
                 station=record.get("station", ""),
@@ -530,11 +527,9 @@ class OrderManager:
 
             # Insert trade row if not already present.
             try:
-                existing_trade = db._conn.execute(
-                    "SELECT id FROM trades WHERE order_id=? LIMIT 1", (order_id,)
-                ).fetchone()
+                existing_trade = db.get_trade_by_order_id(order_id)
                 if existing_trade:
-                    trade_id = existing_trade[0]
+                    trade_id = existing_trade["id"]
                 else:
                     trade_id = db.insert_trade(
                         ts=record_ts,
