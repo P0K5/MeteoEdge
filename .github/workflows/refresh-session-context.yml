@@ -1,0 +1,57 @@
+name: Refresh Session Context
+
+# Keeps .claude/session-context.env up to date with the latest
+# GitHub Project GraphQL IDs so Claude Code agents never waste
+# tool calls resolving project/field/item IDs at session start.
+#
+# Triggers:
+#   - Daily at 06:00 UTC  (catches new issues added to the board overnight)
+#   - On push to master   (immediate refresh after sprint setup)
+#   - Manual              (Actions tab → Run workflow)
+
+on:
+  schedule:
+    - cron: '0 6 * * *'
+  push:
+    branches: [master]
+    paths:
+      - 'scripts/bootstrap_session.sh'
+      - '.github/workflows/refresh-session-context.yml'
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: 'Reason for manual refresh (optional)'
+        required: false
+        default: 'Manual trigger'
+
+jobs:
+  refresh:
+    name: Refresh GraphQL IDs
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Must use a PAT with `project` scope — GITHUB_TOKEN cannot read Projects v2
+          token: ${{ secrets.GH_PROJECT_PAT }}
+
+      - name: Run bootstrap script
+        env:
+          GH_TOKEN: ${{ secrets.GH_PROJECT_PAT }}
+        run: bash scripts/bootstrap_session.sh
+
+      - name: Commit if changed
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .claude/session-context.env
+          if git diff --staged --quiet; then
+            echo "No changes to session context — skipping commit."
+          else
+            TIMESTAMP=$(date -u +'%Y-%m-%d %H:%M UTC')
+            git commit -m "chore(ci): refresh session context IDs [$TIMESTAMP]"
+            git push
+          fi
