@@ -54,19 +54,20 @@ Used for epic-by-epic development. Launch a single Claude Code session with this
 
 You (the **Tech Lead PM**, running on Sonnet) will:
 
-1. **Read** the epic, all linked design specs, requirements, and context. Also read `agents/project-manager.md` for your full role definition.
-2. **Spawn a Designer agent** (`model: "sonnet"`) to review the epic's design spec and confirm readiness. The Designer remains available throughout the epic for:
+1. **Read session context** — Before doing anything else, read `.claude/session-context.env`. This file contains pre-resolved GitHub Project IDs (project ID, Status field ID, all option IDs, and every issue's board item ID). Parse and cache these values in memory. You will inject them into every agent spawn prompt — agents must **never** run GraphQL lookups to find project, field, or item IDs. If the file has empty values, run `bash scripts/bootstrap_session.sh` before proceeding.
+2. **Read** the epic, all linked design specs, requirements, and context. Also read `agents/project-manager.md` for your full role definition.
+3. **Spawn a Designer agent** (`model: "sonnet"`) to review the epic's design spec and confirm readiness. The Designer remains available throughout the epic for:
    - Answering UX/UI questions from developers
    - Reviewing frontend PRs (mandatory — no frontend PR merge without Designer approval)
    - Validating that implementations match the design spec
-3. **Define the technical strategy** — architecture, implementation approach, risk areas, data/API changes.
-4. **Create GitHub issues** — with acceptance criteria, technical notes, complexity labels. Add all to the project board with status **Ready** (via GraphQL).
-5. **Spawn developer agents** for implementation:
+4. **Define the technical strategy** — architecture, implementation approach, risk areas, data/API changes.
+5. **Create GitHub issues** — with acceptance criteria, technical notes, complexity labels. Add all to the project board with status **Ready** (via GraphQL).
+6. **Spawn developer agents** for implementation:
    - **Mid Developer** (`model: "sonnet"`) for Mid-complexity issues
    - **Junior Developer** (`model: "haiku"`) for Simple issues
    - Complex issues: implement yourself or assign to Mid with extra guidance
-6. **Review all PRs** — You are the technical reviewer. For frontend PRs, also send to the Designer for UX review.
-7. **Track progress** — Keep the GitHub Project board accurate. Update statuses at every transition.
+7. **Review all PRs** — You are the technical reviewer. For frontend PRs, also send to the Designer for UX review.
+8. **Track progress** — Keep the GitHub Project board accurate. Update statuses at every transition.
 
 ### Chain of command
 
@@ -85,6 +86,10 @@ You directly manage all agents. There is no intermediate technical layer.
 ## Agent spawning templates
 
 When spawning agents, use these patterns. **Always include the `model` parameter and the GitHub governance reminder.**
+
+> **Before spawning any agent:** read `.claude/session-context.env` and substitute the
+> `{{PLACEHOLDER}}` values below with the actual IDs from that file. Never leave
+> placeholders in a prompt — agents must receive ready-to-use IDs.
 
 ### Designer (spawn early, keep for the full epic)
 
@@ -127,6 +132,22 @@ Agent tool:
     7. Post a comment on the issue: "PR #M submitted for review"
     8. Request review from Tech Lead PM (and Designer if frontend)
 
+    ## Pre-resolved GitHub Context (DO NOT re-query these)
+    GITHUB_PROJECT_ID={{GITHUB_PROJECT_ID}}
+    STATUS_FIELD_ID={{STATUS_FIELD_ID}}
+    STATUS_OPT_BACKLOG={{STATUS_OPT_BACKLOG}}
+    STATUS_OPT_READY={{STATUS_OPT_READY}}
+    STATUS_OPT_IN_PROGRESS={{STATUS_OPT_IN_PROGRESS}}
+    STATUS_OPT_IN_REVIEW={{STATUS_OPT_IN_REVIEW}}
+    STATUS_OPT_DONE={{STATUS_OPT_DONE}}
+
+    Your issue item IDs on the board:
+    {{ITEM_ID_ISSUE_X}}   ← use as itemId for issue #X
+    {{ITEM_ID_ISSUE_Y}}   ← use as itemId for issue #Y
+
+    Use these values directly in updateProjectV2ItemFieldValue mutations.
+    Do NOT run any GraphQL query to look up project, field, or item IDs.
+
     GITHUB GOVERNANCE (mandatory):
     - Use GITHUB_TOKEN_OPERATIONAL for all GitHub API calls
     - Status updates via GraphQL updateProjectV2ItemFieldValue — NEVER via labels
@@ -156,6 +177,21 @@ Agent tool:
     9. Move the issue to "In review" on the project board (GraphQL)
     10. Post a comment on the issue: "PR #M ready for review"
     11. Request review from Tech Lead PM (and Designer if frontend)
+
+    ## Pre-resolved GitHub Context (DO NOT re-query these)
+    GITHUB_PROJECT_ID={{GITHUB_PROJECT_ID}}
+    STATUS_FIELD_ID={{STATUS_FIELD_ID}}
+    STATUS_OPT_BACKLOG={{STATUS_OPT_BACKLOG}}
+    STATUS_OPT_READY={{STATUS_OPT_READY}}
+    STATUS_OPT_IN_PROGRESS={{STATUS_OPT_IN_PROGRESS}}
+    STATUS_OPT_IN_REVIEW={{STATUS_OPT_IN_REVIEW}}
+    STATUS_OPT_DONE={{STATUS_OPT_DONE}}
+
+    Your issue item ID on the board:
+    {{ITEM_ID_ISSUE_X}}   ← use as itemId for issue #X
+
+    Use these values directly in updateProjectV2ItemFieldValue mutations.
+    Do NOT run any GraphQL query to look up project, field, or item IDs.
 
     GITHUB GOVERNANCE (mandatory):
     - Use GITHUB_TOKEN_OPERATIONAL for all GitHub API calls
@@ -195,6 +231,9 @@ Agent tool:
 Use `gh api graphql` with the appropriate token (`GITHUB_TOKEN_SUPERVISOR` for PM, `GITHUB_TOKEN_OPERATIONAL` for others).
 
 ```bash
+# NOTE: Steps 1-3 below are only needed if .claude/session-context.env is missing or empty.
+# In normal operation, all IDs are pre-resolved — skip to step 4.
+
 # 1. Find the project (run once per session, cache result)
 gh api graphql -f query='
   query($owner: String!, $repo: String!) {
