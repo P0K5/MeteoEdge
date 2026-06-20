@@ -811,6 +811,28 @@ curl http://localhost:8000/api/guardrail-events | python3 -m json.tool
 
 ---
 
+---
+
+## Architectural Decisions
+
+### DB `open_positions` as Single Source of Truth (2026-06-20)
+
+**Decision:** The dashboard reads open position enrichment (station, bracket, predicted_price) **exclusively** from the `open_positions` DB table via the existing endpoint `/api/portfolio`. The JSONL audit trail (`logs/live_trades.*.jsonl`) is write-only and is never consulted for the dashboard read path.
+
+**Rationale:**
+- The database table is the canonical state, written by `order_manager.sync_open_orders()` at poll start
+- JSONL is for replay and debugging, not for live dashboard rendering
+- Separating concerns (DB for state, JSONL for audit) simplifies reconciliation logic and prevents fallback cascades
+
+**Impact on future agents:**
+- Do not re-introduce a JSONL fallback for `station`, `bracket_low`, `bracket_high`, or `predicted_price` in the dashboard
+- If enrichment is missing from open_positions, the root cause is in sync_open_orders or the trades table, not in JSONL
+- Any changes to position enrichment logic must update both the DB write path and the dashboard read path consistently
+
+**Reference:** See `docs/design/open-positions-source-of-truth.md` for the full architecture spec.
+
+---
+
 ## Support & Escalation
 
 For issues beyond this runbook, escalate to:
