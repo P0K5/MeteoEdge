@@ -669,8 +669,8 @@ class TestComputeResidualStatsPerPair:
         """pairs_data: list of (station, source, [delta_f, ...])."""
         mock_db = MagicMock()
 
-        # Simulate DISTINCT station/source query
-        mock_db._conn.execute.return_value.fetchall.return_value = [
+        # Simulate get_distinct_pairs() returning (station, source) tuples
+        mock_db.get_distinct_pairs.return_value = [
             (station, source) for station, source, _ in pairs_data
         ]
 
