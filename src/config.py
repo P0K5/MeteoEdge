@@ -242,6 +242,7 @@ POLYMARKET_HOST = os.getenv("POLYMARKET_HOST", "https://clob.polymarket.com")
 POSITION_SIZE_EUR = float(os.getenv("POSITION_SIZE_EUR", "5.0"))
 # 2% buffer covers Polymarket taker fees (price-dependent, highest ~2% at extreme prices)
 POSITION_SIZE_WITH_FEES = POSITION_SIZE_EUR * 1.02
+SIZING_MODE: str = os.getenv("SIZING_MODE", "flat")
 
 # Take-profit: exit when market bid reaches (predicted_price - buffer).
 # The model snapshot is frozen at entry time and cannot validate further price
@@ -461,6 +462,7 @@ CONFIG_DEFAULTS: "dict[str, str | int | float | bool]" = {
     "DRAWDOWN_STOP_PCT": 0.15,
     "MIN_MARKET_LIQUIDITY_SHARES": 50.0,
     "POSITION_SIZE_EUR": 5.0,
+    "SIZING_MODE": "flat",
     "TAKE_PROFIT_BUFFER_CENTS": 2,
     "STOP_LOSS_MIN_BID_CENTS": 40,
     "STOP_LOSS_CONSECUTIVE_POLLS": 2,
