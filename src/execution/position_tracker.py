@@ -39,7 +39,8 @@ from src.data.polymarket import get_orderbook
 from src.model.envelope import Bracket, true_probability_yes
 from src.model.climb_rates import expected_additional_rise
 from src.execution.order_manager import (
-    _load_open_no_positions, _record_sell_in_db, order_manager as _order_manager,
+    _load_open_no_positions, _load_open_all_positions,
+    _record_sell_in_db, order_manager as _order_manager,
     _parse_polymarket_balance, _POLY_PRECISION,
 )
 from src.strategy.fee import estimate_fee_cents
@@ -81,18 +82,19 @@ def _log_open_position_snapshots(
     second round of API calls.
     """
     today = datetime.now(timezone.utc).date().isoformat()
-    open_positions = _load_open_no_positions(today, db=db)
-    if not open_positions:
+    all_open = _load_open_all_positions(today, db=db)
+    if not all_open:
         return []
 
     by_token: dict = defaultdict(list)
-    for pos in open_positions:
+    for pos in all_open:
         by_token[pos["no_token_id"]].append(pos)
 
     LOG_DIR.mkdir(exist_ok=True)
     position_states: list = []
     for token_id, fills in by_token.items():
         first = fills[0]
+        side = str(first.get("side") or "NO").upper()
         station = first.get("station", "")
         bracket_low = first.get("bracket_low")
         bracket_high = first.get("bracket_high")
@@ -108,10 +110,10 @@ def _log_open_position_snapshots(
         state = weather.get(station)
         weather_missing = state is None
 
-        # Fetch live orderbook for the NO token — use the shared pre-fetched
-        # dict when available to avoid a redundant HTTP request per token.
-        no_no_bid = no_no_ask = None
-        no_best_bid_size = None
+        # Fetch live orderbook for the position's token — use the shared
+        # pre-fetched dict when available to avoid a redundant HTTP request.
+        best_bid = best_ask = None
+        best_bid_size = None
         try:
             if orderbooks is not None:
                 ob = orderbooks.get(token_id) or {}
@@ -121,10 +123,10 @@ def _log_open_position_snapshots(
             asks = ob.get("asks") or []
             if bids:
                 best = max(bids, key=lambda b: float(b["price"]))
-                no_no_bid = max(1, min(99, round(float(best["price"]) * 100)))
-                no_best_bid_size = float(best.get("size") or 0)
+                best_bid = max(1, min(99, round(float(best["price"]) * 100)))
+                best_bid_size = float(best.get("size") or 0)
             if asks:
-                no_no_ask = max(1, min(99, round(min(float(a["price"]) for a in asks) * 100)))
+                best_ask = max(1, min(99, round(min(float(a["price"]) for a in asks) * 100)))
         except Exception as e:
             if "404" in str(e):
                 n = db.close_positions_by_token(token_id) if db is not None else 0
@@ -134,6 +136,7 @@ def _log_open_position_snapshots(
 
         # Live p_yes by re-running the envelope model with current state.
         # Skipped when weather is missing -- fair_value pauses on the chart.
+        # For YES positions fair_value tracks p_yes directly; for NO it tracks (1 - p_yes).
         p_yes_now = None
         fair_value_now = None
         if state is not None:
@@ -146,16 +149,19 @@ def _log_open_position_snapshots(
                     no_ask_cents=50, no_ask_size=0,
                 )
                 p_yes_now = true_probability_yes(bracket_stub, state)
-                fair_value_now = max(1, min(99, round((1 - p_yes_now) * 100)))
+                if side == "YES":
+                    fair_value_now = max(1, min(99, round(p_yes_now * 100)))
+                else:
+                    fair_value_now = max(1, min(99, round((1 - p_yes_now) * 100)))
             except Exception as e:
                 log.warning("  [snap] model eval %s %s-%s error: %s", station, bracket_low, bracket_high, e)
                 p_yes_now = None
                 fair_value_now = None
 
-        snap = {
+        snap: dict = {
             "ts": ts,
             "ticker": first.get("ticker", ""),
-            "no_token_id": token_id,
+            "side": side,
             "station": station,
             "bracket_low": bracket_low,
             "bracket_high": bracket_high,
@@ -165,13 +171,17 @@ def _log_open_position_snapshots(
             "latest_temp": state.latest_temp_f if state is not None else None,
             "forecast_nws": state.forecast_high_f if state is not None else None,
             "forecast_secondary": state.secondary_forecast_f if state is not None else None,
-            "no_best_bid": no_no_bid,
-            "no_best_bid_size": no_best_bid_size,
-            "no_best_ask": no_no_ask,
+            "no_best_bid": best_bid,
+            "no_best_bid_size": best_bid_size,
+            "no_best_ask": best_ask,
             "p_yes_now": round(p_yes_now, 4) if p_yes_now is not None else None,
             "fair_value_now": fair_value_now,
             "weather_missing": weather_missing,
         }
+        if side == "YES":
+            snap["yes_token_id"] = token_id
+        else:
+            snap["no_token_id"] = token_id
         with _write_lock:
             dest = rotated_path(POSITION_SNAPSHOTS_JSONL)
             housekeep(POSITION_SNAPSHOTS_JSONL, retain_days=SNAPSHOT_RETAIN_DAYS)
