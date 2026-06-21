@@ -58,7 +58,7 @@ jobs:
 
     - name: Run tests with coverage
       run: |
-        python -m pytest src/tests -q \
+        python -m pytest src/tests -q -n auto --dist loadfile \
           --cov=src \
           --cov-report=term-missing \
           --cov-fail-under=60
