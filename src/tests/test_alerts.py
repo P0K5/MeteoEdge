@@ -352,9 +352,15 @@ class TestPollOnceAlertIntegration:
         active during execution and restore them afterwards.
         """
         import sys
+        # Save the ORIGINAL run module object so _restore_stubs can put the very
+        # same object back. Other test modules (e.g. test_balance_check) import
+        # `src.scripts.run` at collection time and call its `poll_once`; if we
+        # replaced it with a freshly re-imported object, their patches (which
+        # target sys.modules["src.scripts.run"]) would no longer affect the
+        # poll_once they actually call, silently re-enabling real network I/O.
+        original = {"src.scripts.run": sys.modules.get("src.scripts.run")}
         # Remove any cached version of the module so it re-executes with stubs
         sys.modules.pop("src.scripts.run", None)
-        original = {}
         for name, stub in stubs.items():
             original[name] = sys.modules.get(name)
             sys.modules[name] = stub
@@ -363,20 +369,23 @@ class TestPollOnceAlertIntegration:
 
     @staticmethod
     def _restore_stubs(original):
-        """Restore sys.modules to state before stubs were applied."""
+        """Restore sys.modules to the exact objects present before stubbing.
+
+        Critically, this puts the ORIGINAL src.scripts.run object back (saved in
+        _import_run_with_stubs) rather than re-importing a fresh one, so module
+        identity is preserved for any other test that captured a reference to it.
+        """
         import sys
         for name, orig in original.items():
             if orig is None:
                 sys.modules.pop(name, None)
             else:
                 sys.modules[name] = orig
-        sys.modules.pop("src.scripts.run", None)
-        # Restore the package attribute so patches land on the correct module object
-        import src.scripts
-        import importlib
-        run = importlib.import_module("src.scripts.run")
-        src.scripts.run = run
-        sys.modules["src.scripts.run"] = run
+        # Keep the package attribute (src.scripts.run) in sync with sys.modules.
+        restored_run = original.get("src.scripts.run")
+        if restored_run is not None:
+            import src.scripts
+            src.scripts.run = restored_run
 
     def test_poll_missed_alert_fires_when_previous_poll_was_old(self):
         """If the previous poll ran >20 min ago, the alert must fire."""
