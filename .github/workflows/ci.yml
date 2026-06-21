@@ -2,13 +2,22 @@ name: CI
 
 on:
   push:
-    branches: [ master ]
+    branches: [master]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'graphify-out/**'
   pull_request:
-    branches: [ master ]
+    branches: [master]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'graphify-out/**'
 
 jobs:
-  test:
-    runs-on: ubuntu-latest
+  lint:
+    name: Lint (flake8)
+    runs-on: ubuntu-22.04
 
     steps:
     - uses: actions/checkout@v4
@@ -17,9 +26,35 @@ jobs:
       uses: actions/setup-python@v5
       with:
         python-version: "3.10"
+        cache: 'pip'
+
+    - name: Install uv
+      run: pip install uv
+
+    - name: Install flake8
+      run: uv pip install flake8 --system
+
+    - name: Run flake8
+      run: python -m flake8 src/
+
+  test:
+    name: Test (pytest)
+    runs-on: ubuntu-22.04
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python 3.10
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.10"
+        cache: 'pip'
+
+    - name: Install uv
+      run: pip install uv
 
     - name: Install dependencies
-      run: pip install -r requirements.txt
+      run: uv pip install -r requirements.txt --system
 
     - name: Run tests with coverage
       run: |
@@ -27,6 +62,3 @@ jobs:
           --cov=src \
           --cov-report=term-missing \
           --cov-fail-under=60
-
-    - name: Run flake8
-      run: python -m flake8 src/

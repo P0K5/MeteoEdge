@@ -34,6 +34,7 @@ pydantic>=1.10.0
 # Development
 pytest>=7.0  # For testing
 pytest-cov>=4.0  # Coverage reports
+pytest-xdist>=3.0  # Parallel test execution
 black>=23.0  # Code formatting
 mypy>=1.0  # Type checking
 flake8>=6.0  # Linting
