@@ -1544,7 +1544,7 @@ def position_snapshots(token_id: str) -> list[dict]:
     result = []
     try:
         for r in iter_rotated_jsonl(POSITION_SNAPSHOTS_JSONL):
-            if r.get("no_token_id") == token_id:
+            if r.get("no_token_id") == token_id or r.get("yes_token_id") == token_id:
                 result.append({
                     "ts": r.get("ts", ""),
                     "market_bid": r.get("no_best_bid"),

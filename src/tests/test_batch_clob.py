@@ -180,7 +180,7 @@ class TestSnapshotLoggerSharedOrderbooks:
         with (
             patch("src.execution.position_tracker.get_orderbook") as mock_gob,
             patch(
-                "src.execution.position_tracker._load_open_no_positions",
+                "src.execution.position_tracker._load_open_all_positions",
                 return_value=[self._make_open_position("tok-A")],
             ),
             patch("src.execution.position_tracker.LOG_DIR", tmp_path),
@@ -210,7 +210,7 @@ class TestSnapshotLoggerSharedOrderbooks:
         with (
             patch("src.execution.position_tracker.get_orderbook", return_value=ob) as mock_gob,
             patch(
-                "src.execution.position_tracker._load_open_no_positions",
+                "src.execution.position_tracker._load_open_all_positions",
                 return_value=[self._make_open_position("tok-B")],
             ),
             patch("src.execution.position_tracker.LOG_DIR", tmp_path),
@@ -234,7 +234,7 @@ class TestSnapshotLoggerSharedOrderbooks:
         with (
             patch("src.execution.position_tracker.get_orderbook") as mock_gob,
             patch(
-                "src.execution.position_tracker._load_open_no_positions",
+                "src.execution.position_tracker._load_open_all_positions",
                 return_value=[],
             ),
         ):

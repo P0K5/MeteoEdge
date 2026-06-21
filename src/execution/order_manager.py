@@ -85,6 +85,47 @@ def _load_open_no_positions(today: str, db=None) -> list:
     return [r for r in records if r.get("no_token_id") not in sold_tokens]
 
 
+def _load_open_all_positions(today: str, db=None) -> list:
+    """Return filled YES and NO positions for today that have not yet been sold.
+
+    DB path returns all sides; JSONL fallback covers YES positions too by
+    matching on either no_token_id or asset_id.
+    """
+    if db is not None:
+        try:
+            return db.get_open_positions()
+        except Exception as e:
+            log.warning("[positions] DB read failed: %s", e)
+    # Fallback: JSONL path covering both sides
+    if not LIVE_TRADES_JSONL.exists():
+        return []
+    records: list = []
+    sold_tokens: set = set()
+    try:
+        with open(LIVE_TRADES_JSONL) as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    r = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if r.get("end_date", "")[:10] != today:
+                    continue
+                token = r.get("no_token_id") or r.get("asset_id") or ""
+                if r.get("outcome") == "sold":
+                    sold_tokens.add(token)
+                elif (r.get("outcome") == "filled"
+                        and token
+                        and r.get("bracket_low") is not None
+                        and r.get("bracket_high") is not None):
+                    records.append(r)
+    except OSError:
+        return []
+    return [r for r in records if (r.get("no_token_id") or r.get("asset_id") or "") not in sold_tokens]
+
+
 def _load_open_fills_for_token(token_id: str, today: str, db=None) -> list:
     """Return today's filled, not-yet-sold fills for *token_id* (any side).
 
