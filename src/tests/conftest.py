@@ -35,8 +35,11 @@ assign a per-process path.
 from __future__ import annotations
 
 import os
+import sys
 import tempfile
 from pathlib import Path
+
+import pytest
 
 
 def pytest_configure(config):
@@ -48,3 +51,28 @@ def pytest_configure(config):
     db_dir = Path(tempfile.gettempdir()) / "meteoedge-tests"
     db_dir.mkdir(parents=True, exist_ok=True)
     os.environ["DB_PATH"] = str(db_dir / f"test-{worker}-{os.getpid()}.db")
+
+
+@pytest.fixture(autouse=True)
+def _restore_api_db():
+    """Snapshot and restore ``src.dashboard.api._db`` around every test.
+
+    The dashboard endpoints read a module-level ``_db`` global. Several tests
+    intentionally reassign it (``set_db(...)``, ``_db = None``, ``_db = MagicMock()``)
+    to exercise the 503/no-DB paths, and not all of them restore it. A leaked value
+    would poison later tests on the same process — e.g. a left-over ``_db = None``
+    makes an unrelated endpoint test raise ``AttributeError`` instead of querying the
+    DB. This is order-dependent and was exposed once `pytest-xdist` started packing
+    multiple test files onto one worker. Restoring here makes the global hermetic per
+    test regardless of what each test does to it.
+    """
+    mod = sys.modules.get("src.dashboard.api")
+    if mod is None:
+        # API module not imported by this test — nothing to protect.
+        yield
+        return
+    saved = mod._db
+    try:
+        yield
+    finally:
+        mod._db = saved
