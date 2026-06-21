@@ -698,10 +698,16 @@ class OrderManager:
             if best_bid_cents < target_cents:
                 continue
 
+            if not fills:
+                log.warning("  [tp] empty fills for token %s... -- skipping", token_id[:14])
+                continue
             bracket_low = fills[0]["bracket_low"]
             bracket_high = fills[0]["bracket_high"]
             station = fills[0]["station"]
             total_shares = sum(f["size_eur"] / (f["price_cents"] / 100) for f in fills)
+            if total_shares <= 0:
+                log.warning("  [tp] zero total_shares for token %s... -- skipping", token_id[:14])
+                continue
             total_eur = sum(f["size_eur"] for f in fills)
             question = fills[0].get("question", "")
             minutes_to_settlement = fills[0].get("minutes_to_settlement")
@@ -758,7 +764,7 @@ class OrderManager:
                 )
             except Exception as e:
                 err = str(e)
-                if "balance" in err.lower():
+                if "balance" in err.lower() or "invalid maker amount" in err.lower():
                     available = _parse_polymarket_balance(err)
                     avail_shares = math.floor(available / _POLY_PRECISION) if available is not None else 0
                     log.info(
@@ -883,7 +889,7 @@ class OrderManager:
             sell_id, sell_price_or_order = live_trader.sell_position_immediate(token_id, total_shares)
         except Exception as e:
             err = str(e)
-            if "balance" in err.lower():
+            if "balance" in err.lower() or "invalid maker amount" in err.lower():
                 available = _parse_polymarket_balance(err)
                 avail_shares = math.floor(available / _POLY_PRECISION) if available is not None else 0
                 log.warning(
