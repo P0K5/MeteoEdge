@@ -235,7 +235,17 @@ def _check_stop_loss_exits(live_trader, ts: str, position_states: list,
         if fair is None:
             continue
 
+        # Guard against orphan rows (Issue #370 wallet-recovery can produce a
+        # position_states entry with empty/zero-shares fills); without this
+        # check the division below raises ZeroDivisionError and aborts the
+        # whole poll. Caused 122 poll crashes between 2026-06-20 and 06-21.
+        if not fills:
+            log.warning("  [sl] empty fills for token %s... -- skipping", token_id[:14])
+            continue
         total_shares = sum(f["size_eur"] / (f["price_cents"] / 100) for f in fills)
+        if total_shares <= 0:
+            log.warning("  [sl] zero total_shares for token %s... -- skipping", token_id[:14])
+            continue
         avg_entry_cents = sum(
             f["price_cents"] * (f["size_eur"] / (f["price_cents"] / 100))
             for f in fills
@@ -393,7 +403,7 @@ def _check_stop_loss_exits(live_trader, ts: str, position_states: list,
             )
         except Exception as e:
             err = str(e)
-            if "balance" in err.lower():
+            if "balance" in err.lower() or "invalid maker amount" in err.lower():
                 available = _parse_polymarket_balance(err)
                 avail_shares = math.floor(available / _POLY_PRECISION) if available is not None else 0
                 log.info(
@@ -565,11 +575,18 @@ def _check_forced_exits(
         if bid is None:
             continue
 
+        # See sl handler note: orphan rows can have empty/zero-shares fills.
+        if not fills:
+            log.warning("  [fe] empty fills for token %s... -- skipping", token_id[:14])
+            continue
         station = fills[0]["station"]
         bracket_low = fills[0]["bracket_low"]
         bracket_high = fills[0]["bracket_high"]
         question = fills[0].get("question", "")
         total_shares = sum(f["size_eur"] / (f["price_cents"] / 100) for f in fills)
+        if total_shares <= 0:
+            log.warning("  [fe] zero total_shares for token %s... -- skipping", token_id[:14])
+            continue
         total_eur = sum(f["size_eur"] for f in fills)
         avg_entry_cents = sum(
             f["price_cents"] * (f["size_eur"] / (f["price_cents"] / 100))
@@ -630,7 +647,7 @@ def _check_forced_exits(
             )
         except Exception as e:
             err = str(e)
-            if "balance" in err.lower():
+            if "balance" in err.lower() or "invalid maker amount" in err.lower():
                 available = _parse_polymarket_balance(err)
                 avail_shares = math.floor(available / _POLY_PRECISION) if available is not None else 0
                 log.info(
@@ -778,7 +795,13 @@ def _check_metar_exits(weather: dict, live_trader, ts: str, db=None, risk_manage
             )
             continue
 
+        if not fills:
+            log.warning("  [exit] empty fills for token %s... -- skipping", token_id[:14])
+            continue
         total_shares = sum(f["size_eur"] / (f["price_cents"] / 100) for f in fills)
+        if total_shares <= 0:
+            log.warning("  [exit] zero total_shares for token %s... -- skipping", token_id[:14])
+            continue
         total_eur = sum(f["size_eur"] for f in fills)
         question = fills[0].get("question", "")
         log.info(
@@ -829,7 +852,7 @@ def _check_metar_exits(weather: dict, live_trader, ts: str, db=None, risk_manage
             )
         except Exception as e:
             err = str(e)
-            if "balance" in err.lower():
+            if "balance" in err.lower() or "invalid maker amount" in err.lower():
                 available = _parse_polymarket_balance(err)
                 avail_shares = math.floor(available / _POLY_PRECISION) if available is not None else 0
                 log.info(

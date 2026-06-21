@@ -1,5 +1,6 @@
 """Live order execution via Polymarket CLOB."""
 import logging
+import math
 from datetime import datetime
 
 log = logging.getLogger(__name__)
@@ -100,10 +101,14 @@ class LiveTrader:
             raise RuntimeError(f"No bids for token {token_id[:14]}... -- cannot sell")
         best_bid = max(float(b["price"]) for b in bids)
         sell_price_cents = max(1, min(99, round(best_bid * 100)))
+        # Floor (don't round) so submitted size never exceeds available balance.
+        # round(6.325713, 2) == 6.33 > wallet 6.325713 -> "invalid maker amount".
+        # Floor to 6.32 stays safely under wallet balance.
+        size_floored = math.floor(shares * 100) / 100
         args = OrderArgs(
             token_id=token_id,
             price=round(sell_price_cents / 100, 4),
-            size=round(shares, 2),
+            size=size_floored,
             side="SELL",
         )
         options = CreateOrderOptions(tick_size="0.01", neg_risk=True)
@@ -156,10 +161,12 @@ class LiveTrader:
         best_bid = max(float(b["price"]) for b in bids)
         best_bid_cents = max(1, min(99, round(best_bid * 100)))
         limit_cents = max(1, best_bid_cents - aggression_cents)
+        # See sell_position note: floor to never exceed available balance.
+        size_floored = math.floor(shares * 100) / 100
         args = OrderArgs(
             token_id=token_id,
             price=round(limit_cents / 100, 4),
-            size=round(shares, 2),
+            size=size_floored,
             side="SELL",
         )
         options = CreateOrderOptions(tick_size="0.01", neg_risk=True)

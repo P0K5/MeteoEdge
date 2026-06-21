@@ -197,16 +197,31 @@ MAX_MINUTES_TO_SETTLEMENT = int(os.getenv("MAX_MINUTES_TO_SETTLEMENT", "1440")) 
 # Polling cadence (env var override)
 POLL_INTERVAL_SECONDS = int(os.getenv("POLL_INTERVAL_SECONDS", "300"))  # 5 minutes default
 
-# Freshness thresholds by source (in seconds from last observation).
-# Used by FreshnessMonitor to determine staleness levels.
+# Freshness thresholds by source (VALUES ARE IN SECONDS despite the _MIN suffix
+# in the name -- legacy naming. FreshnessMonitor reads these directly as seconds
+# and multiplies by 3 for the CRITICAL tier.)
+#
+# Production override: each source can be overridden via env var
+# FRESHNESS_<SOURCE>_SEC (e.g. FRESHNESS_METAR_SEC=3600) without touching the
+# in-code defaults. The defaults below are kept tight because the unit tests
+# (src/tests/test_freshness_monitor.py) hard-code them. The deployed bot
+# should set env vars to match real feed cadences -- otherwise routine
+# 5-minute METAR delays generate hundreds of CRITICAL log lines per hour
+# (observed 2026-06-21: ~100 CRITICAL/hour with default 180s metar threshold).
+#
+# Recommended production env values (all in seconds):
+#   FRESHNESS_METAR_SEC=3600         # 1h: METAR cadence ~30-60min
+#   FRESHNESS_AMOS_SEC=1800          # 30min: AMOS cadence ~30min
+#   FRESHNESS_MSS_SEC=900            # 15min: MSS cadence ~1min documented
+#   FRESHNESS_JMA_AMEIDAS_SEC=1800   # 30min: JMA AMeDAS cadence ~10min, bursts to 30
 FRESHNESS_THRESHOLDS_MIN: dict[str, int] = {
-    "metar": 180,
-    "amos": 90,
-    "mss": 15,
-    "jma_ameidas": 60,
+    "metar": int(os.getenv("FRESHNESS_METAR_SEC", "180")),
+    "amos": int(os.getenv("FRESHNESS_AMOS_SEC", "90")),
+    "mss": int(os.getenv("FRESHNESS_MSS_SEC", "15")),
+    "jma_ameidas": int(os.getenv("FRESHNESS_JMA_AMEIDAS_SEC", "60")),
 }
 # Default threshold (in seconds) for sources not listed above
-FRESHNESS_THRESHOLD_DEFAULT_MIN = 180
+FRESHNESS_THRESHOLD_DEFAULT_MIN = int(os.getenv("FRESHNESS_DEFAULT_SEC", "180"))
 
 # Risk management limits (all configurable via env vars)
 STARTING_CAPITAL_EUR = float(os.getenv("STARTING_CAPITAL_EUR", "500.0"))
