@@ -1662,6 +1662,21 @@ class Database:
         row = cur.fetchone()
         return int(row[0]) if row else 0
 
+    def emos_crps_logged_for_date(
+        self, city: str, date: str, model_mode: str = "emos_shadow"
+    ) -> bool:
+        """Return True if a CRPS row already exists for (city, date, model_mode).
+
+        Used by the daily shadow runner to avoid double-counting samples when
+        the calibration runs more than once on the same calendar day (e.g. after
+        a process restart resets the in-memory once-per-day gate).
+        """
+        cur = self._conn.execute(
+            "SELECT 1 FROM emos_crps_log WHERE city=? AND date=? AND model_mode=? LIMIT 1",
+            (city, date, model_mode),
+        )
+        return cur.fetchone() is not None
+
     def log_deb_weights(self, city: str, date: str, weights_json: str) -> None:
         """Insert a DEB weights snapshot for *city* on *date*."""
         logged_at = datetime.now(timezone.utc).isoformat()

@@ -178,6 +178,70 @@ class TestGetCityModePrimaryReady:
 
 
 # ---------------------------------------------------------------------------
+# Test 4b: operator override (dashboard promote/demote) is authoritative
+# ---------------------------------------------------------------------------
+
+class TestGetCityModeOverride:
+    def test_override_primary_with_samples_returns_primary(self):
+        """effective_mode='emos_primary' + primary row + enough CRPS → 'emos_primary'.
+
+        Mirrors the dashboard promote path, which sets ready_for_promotion=0 on
+        the primary row but records the override — the override must still win.
+        """
+        db = _db()
+        _upsert(db, "Chicago", "emos_primary", ready_for_promotion=0)
+        for i in range(20):
+            db.log_crps("Chicago", f"2026-05-{i + 1:02d}", 1.5)
+        db.set_emos_effective_mode("Chicago", "emos_primary")
+        assert get_city_mode("Chicago", db=db) == "emos_primary"
+
+    def test_override_primary_without_samples_falls_back_to_shadow(self):
+        """Override primary but CRPS guard not met → falls back to shadow."""
+        db = _db()
+        _upsert(db, "Miami", "emos_shadow", ready_for_promotion=0)
+        _upsert(db, "Miami", "emos_primary", ready_for_promotion=0)
+        db.set_emos_effective_mode("Miami", "emos_primary")
+        # No CRPS rows → guard blocks → shadow
+        assert get_city_mode("Miami", db=db) == "emos_shadow"
+
+    def test_override_primary_without_primary_row_falls_back(self):
+        """Override primary but no primary calibration row → falls back safely."""
+        db = _db()
+        _upsert(db, "Houston", "emos_shadow", ready_for_promotion=0)
+        db.set_emos_effective_mode("Houston", "emos_primary")
+        assert get_city_mode("Houston", db=db) == "emos_shadow"
+
+    def test_override_legacy_forces_legacy_over_ready_primary(self):
+        """demote (effective_mode='legacy') overrides an otherwise-ready primary."""
+        db = _db()
+        _upsert(db, "Atlanta", "emos_shadow", ready_for_promotion=1)
+        _upsert(db, "Atlanta", "emos_primary", ready_for_promotion=1)
+        for i in range(20):
+            db.log_crps("Atlanta", f"2026-05-{i + 1:02d}", 1.5)
+        db.set_emos_effective_mode("Atlanta", "legacy")
+        assert get_city_mode("Atlanta", db=db) == "legacy"
+
+    def test_override_shadow_returns_shadow(self):
+        """effective_mode='emos_shadow' with a shadow row → 'emos_shadow'."""
+        db = _db()
+        _upsert(db, "Los Angeles", "emos_shadow", ready_for_promotion=0)
+        db.set_emos_effective_mode("Los Angeles", "emos_shadow")
+        assert get_city_mode("Los Angeles", db=db) == "emos_shadow"
+
+    def test_check_ready_for_promotion_honors_override(self):
+        """_check_ready_for_promotion is True when the override is emos_primary.
+
+        Keeps the scanner's redundant re-check in sync with get_city_mode so a
+        dashboard-promoted city is not silently dropped back to legacy.
+        """
+        db = _db()
+        _upsert(db, "Chicago", "emos_primary", ready_for_promotion=0)
+        assert _check_ready_for_promotion("Chicago", db=db) is False
+        db.set_emos_effective_mode("Chicago", "emos_primary")
+        assert _check_ready_for_promotion("Chicago", db=db) is True
+
+
+# ---------------------------------------------------------------------------
 # Test 5: apply_emos — correct linear correction
 # ---------------------------------------------------------------------------
 
