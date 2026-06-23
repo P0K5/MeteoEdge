@@ -65,14 +65,16 @@ def get_city_mode(city: str, db=None) -> str:
         # 'legacy' (or any explicit rollback) is honoured unconditionally.
         return "legacy"
 
-    # 2. No override — derive from calibration rows.
-    row = db.get_emos_coefficients(city, "emos_shadow") or db.get_emos_coefficients(city, "emos_primary")
-    if row is None:
-        return os.environ.get("EMOS_DEFAULT_MODE", "legacy")
+    # 2. No override — derive from calibration rows. Fetch each row once.
+    shadow = db.get_emos_coefficients(city, "emos_shadow")
     primary = db.get_emos_coefficients(city, "emos_primary")
-    if primary and primary.get("ready_for_promotion") == 1:
-        return "emos_primary" if _primary_allowed(city, db) else _shadow_or_default(city, db)
-    return _shadow_or_default(city, db)
+    if shadow is None and primary is None:
+        return os.environ.get("EMOS_DEFAULT_MODE", "legacy")
+    if primary and primary.get("ready_for_promotion") == 1 and _primary_allowed(city, db):
+        return "emos_primary"
+    if shadow:
+        return "emos_shadow"
+    return os.environ.get("EMOS_DEFAULT_MODE", "legacy")
 
 
 def apply_emos(mu_raw: float, sigma_raw: float, city: str, db) -> tuple[float, float]:
@@ -108,6 +110,7 @@ def _check_ready_for_promotion(city: str, db) -> bool:
     so a dashboard-promoted city is not silently dropped back to legacy.
     """
     if db.get_emos_effective_mode(city) == "emos_primary":
-        return True
+        # Mirror get_city_mode exactly — the CRPS sample guard still applies.
+        return _primary_allowed(city, db)
     row = db.get_emos_coefficients(city, "emos_primary")
     return row is not None and row.get("ready_for_promotion") == 1

@@ -228,16 +228,21 @@ class TestGetCityModeOverride:
         db.set_emos_effective_mode("Los Angeles", "emos_shadow")
         assert get_city_mode("Los Angeles", db=db) == "emos_shadow"
 
-    def test_check_ready_for_promotion_honors_override(self):
-        """_check_ready_for_promotion is True when the override is emos_primary.
+    def test_check_ready_for_promotion_honors_override_with_guard(self):
+        """_check_ready_for_promotion mirrors get_city_mode: override + CRPS guard.
 
-        Keeps the scanner's redundant re-check in sync with get_city_mode so a
-        dashboard-promoted city is not silently dropped back to legacy.
+        The override alone is not enough — the CRPS sample guard still applies,
+        so the function never signals 'ready' for a city get_city_mode would
+        route to shadow.
         """
         db = _db()
         _upsert(db, "Chicago", "emos_primary", ready_for_promotion=0)
         assert _check_ready_for_promotion("Chicago", db=db) is False
         db.set_emos_effective_mode("Chicago", "emos_primary")
+        # Override set but zero CRPS samples → still not ready.
+        assert _check_ready_for_promotion("Chicago", db=db) is False
+        for i in range(20):
+            db.log_crps("Chicago", f"2026-05-{i + 1:02d}", 1.5)
         assert _check_ready_for_promotion("Chicago", db=db) is True
 
 
