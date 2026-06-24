@@ -57,6 +57,7 @@ from src.config import (
     POSITION_SNAPSHOTS_JSONL, LOG_DIR, STARTING_CAPITAL_EUR,
     STATION_ACTIVE_HOURS, DISABLED_STATIONS, SHADOW_STATIONS_YES, SHADOW_STATIONS_NO,
     EMOS_DEFAULT_MODE, CONFIG_DEFAULTS, get_live_config, station_city,
+    MODEL_PROB_CAP,
 )
 from src.model.residual_correction import (
     compute_residual_stats,
@@ -1680,6 +1681,19 @@ def emos_promote(city: str) -> EmosCityStatus:
         ready_for_promotion=0,
     )
     _db.set_emos_effective_mode(canonical_city, "emos_primary")
+
+    # Promotion-time guardrail: the interim overconfidence cap (issue #305) keeps
+    # clamping p_yes even after EMOS is primary, throttling the calibrated
+    # probabilities EMOS just produced. Surface it loudly at the moment of
+    # promotion so the post-EMOS cleanup (issue #420) is not forgotten.
+    if MODEL_PROB_CAP < 1.0:
+        logger.warning(
+            "[emos] %s promoted to emos_primary while MODEL_PROB_CAP=%.3f still "
+            "clamps p_yes to [%.3f, %.3f]. Review/loosen this interim guardrail "
+            "(#305) now that EMOS is primary — see post-EMOS cleanup issue #420.",
+            canonical_city, MODEL_PROB_CAP,
+            round(1.0 - MODEL_PROB_CAP, 4), MODEL_PROB_CAP,
+        )
 
     # Build and return updated status
     all_rows = _db.get_all_emos_calibration()

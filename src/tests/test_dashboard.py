@@ -1093,6 +1093,29 @@ class TestEmosPromoteEndpoint:
         finally:
             dash_api.set_db(original)
 
+    def test_promote_warns_when_prob_cap_active(self, client, caplog):
+        """Promoting while MODEL_PROB_CAP < 1.0 logs the post-EMOS cleanup warning.
+
+        The default cap is 0.95, so the interim guardrail (#305 / cleanup #420)
+        must be surfaced at promotion time.
+        """
+        import logging as _logging
+
+        db = self._setup_db()
+        self._insert_shadow(db, "Chicago", ready=1)
+        original = dash_api._db
+        try:
+            dash_api.set_db(db)
+            with caplog.at_level(_logging.WARNING, logger="src.dashboard.api"):
+                resp = client.post("/api/emos/Chicago/promote")
+            assert resp.status_code == 200
+            assert any(
+                "MODEL_PROB_CAP" in r.message and "#420" in r.message
+                for r in caplog.records
+            ), "Expected a promotion-time MODEL_PROB_CAP guardrail warning"
+        finally:
+            dash_api.set_db(original)
+
 
 class TestEmosDemoteEndpoint:
     """Tests for POST /api/emos/{city}/demote."""
