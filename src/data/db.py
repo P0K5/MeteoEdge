@@ -134,8 +134,6 @@ CREATE TABLE IF NOT EXISTS model_forecast_log (
     forecast_high_f REAL NOT NULL,
     logged_at       TEXT NOT NULL
 );
-CREATE UNIQUE INDEX IF NOT EXISTS idx_mfl_station_model_date
-    ON model_forecast_log(station, model, date);
 
 CREATE TABLE IF NOT EXISTS intraday_corrections (
     city           TEXT NOT NULL,
@@ -333,6 +331,15 @@ class Database:
         )
         self._conn.commit()
 
+        # Migration: extend model_forecast_log to include lead_hours, issued_at, sigma_f.
+        # Strategy (idempotent):
+        #   1. If model_forecast_log_legacy_v1 does not exist: rename current table to legacy,
+        #      create new table with full schema (including new columns and new unique index).
+        #   2. If legacy table already exists but current table has the old unique index
+        #      (station, model, date) — drop+recreate current table (partial migration).
+        #   3. If both legacy table exists and current table has the new schema — no-op.
+        self._migrate_forecast_log()
+
         # Migration: add partial UNIQUE index for shadow-trade dedup (issue #376).
         # CREATE UNIQUE INDEX IF NOT EXISTS is idempotent — safe to run on every startup.
         self._conn.execute(
@@ -418,6 +425,128 @@ class Database:
 
     def _now(self) -> str:
         return datetime.now(timezone.utc).isoformat()
+
+    def _migrate_forecast_log(self) -> None:
+        """Idempotent migration for model_forecast_log.
+
+        Decision tree (checked in order):
+
+        A) New columns already present (lead_hours, sigma_f) → ensure index exists,
+           no-op otherwise.  This covers both fresh DBs opened a second time and
+           fully-migrated production DBs.
+
+        B) New columns absent AND existing table has rows (pre-#422 production data) →
+           rename to model_forecast_log_legacy_v1 (preserving all data), then create
+           a fresh empty table with the full schema.
+
+        C) New columns absent AND existing table is empty (first-ever DB open on
+           fresh install) → ALTER TABLE to add the three new columns and create index.
+           Avoids creating a spurious empty legacy table on fresh installations.
+
+        D) Partial migration (legacy present, current table lacks new columns) →
+           rebuild current table in place (rare crash-recovery path).
+
+        The legacy table is never dropped; it is kept as a permanent read-only
+        audit trail of nowcast-snapshot rows captured before the migration.
+        """
+        # Inspect current table columns
+        mfl_info = self._conn.execute(
+            "PRAGMA table_info(model_forecast_log)"
+        ).fetchall()
+        mfl_cols = {row[1] for row in mfl_info}
+        has_new_schema = "lead_hours" in mfl_cols and "sigma_f" in mfl_cols
+
+        # Check whether legacy table exists
+        legacy_exists = self._conn.execute(
+            "SELECT name FROM sqlite_master "
+            "WHERE type='table' AND name='model_forecast_log_legacy_v1'"
+        ).fetchone() is not None
+
+        _new_table_ddl = """
+            CREATE TABLE model_forecast_log (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                station         TEXT NOT NULL,
+                model           TEXT NOT NULL,
+                date            TEXT NOT NULL,
+                forecast_high_f REAL NOT NULL,
+                logged_at       TEXT NOT NULL,
+                lead_hours      INTEGER,
+                issued_at       TEXT,
+                sigma_f         REAL
+            )
+        """
+        _new_index_ddl = (
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_mfl_station_model_date_lead "
+            "ON model_forecast_log(station, model, date, lead_hours)"
+        )
+
+        if has_new_schema:
+            # Case A: schema already correct — just ensure index exists.
+            self._conn.execute(_new_index_ddl)
+            self._conn.commit()
+            return
+
+        # Count existing rows to distinguish fresh vs pre-migration DB.
+        row_count = self._conn.execute(
+            "SELECT COUNT(*) FROM model_forecast_log"
+        ).fetchone()[0]
+
+        if not legacy_exists and row_count > 0:
+            # Case B: pre-#422 production DB with nowcast snapshots.
+            # Rename old table to legacy, drop its orphaned index, create fresh table.
+            with self._conn:
+                self._conn.execute(
+                    "ALTER TABLE model_forecast_log "
+                    "RENAME TO model_forecast_log_legacy_v1"
+                )
+                self._conn.execute(
+                    "DROP INDEX IF EXISTS idx_mfl_station_model_date"
+                )
+                self._conn.execute(_new_table_ddl)
+                self._conn.execute(_new_index_ddl)
+
+        elif not legacy_exists and row_count == 0:
+            # Case C: fresh install — add new columns to the empty table in place.
+            with self._conn:
+                for col, defn in [
+                    ("lead_hours", "INTEGER"),
+                    ("issued_at", "TEXT"),
+                    ("sigma_f", "REAL"),
+                ]:
+                    try:
+                        self._conn.execute(
+                            f"ALTER TABLE model_forecast_log ADD COLUMN {col} {defn}"
+                        )
+                    except sqlite3.OperationalError:
+                        pass  # column already exists
+                # Drop old index if it exists (single-column key won't work for v2)
+                self._conn.execute(
+                    "DROP INDEX IF EXISTS idx_mfl_station_model_date"
+                )
+                self._conn.execute(_new_index_ddl)
+
+        else:
+            # Case D: legacy exists but current table still lacks new columns
+            # (crash-recovery / partial migration path).
+            with self._conn:
+                self._conn.execute("DROP TABLE IF EXISTS model_forecast_log_new")
+                self._conn.execute(_new_table_ddl.replace(
+                    "CREATE TABLE model_forecast_log",
+                    "CREATE TABLE model_forecast_log_new",
+                ))
+                self._conn.execute(
+                    """
+                    INSERT INTO model_forecast_log_new
+                        (station, model, date, forecast_high_f, logged_at)
+                    SELECT station, model, date, forecast_high_f, logged_at
+                    FROM model_forecast_log
+                    """
+                )
+                self._conn.execute("DROP TABLE model_forecast_log")
+                self._conn.execute(
+                    "ALTER TABLE model_forecast_log_new RENAME TO model_forecast_log"
+                )
+                self._conn.execute(_new_index_ddl)
 
     # ------------------------------------------------------------------
     # observations
@@ -1159,20 +1288,86 @@ class Database:
     # ------------------------------------------------------------------
 
     def upsert_forecast_log(self, *, station: str, model: str, date: str, forecast_high_f: float) -> None:
-        """Upsert a forecast log record (unique on station, model, date)."""
+        """Upsert a forecast log record (unique on station, model, date, lead_hours=NULL).
+
+        Legacy compat: sets lead_hours=NULL. New code should use upsert_forecast_log_v2()
+        which accepts lead_hours and sigma_f for EMOS-quality captures.
+        """
         with self._lock:
             with self._conn:
                 self._conn.execute(
                     "INSERT OR REPLACE INTO model_forecast_log"
-                    "(station,model,date,forecast_high_f,logged_at) VALUES(?,?,?,?,?)",
+                    "(station,model,date,forecast_high_f,logged_at,lead_hours,issued_at,sigma_f)"
+                    " VALUES(?,?,?,?,?,NULL,NULL,NULL)",
                     (station, model, date, forecast_high_f, self._now()),
                 )
 
+    def upsert_forecast_log_v2(
+        self,
+        *,
+        station: str,
+        model: str,
+        date: str,
+        forecast_high_f: float,
+        lead_hours: int,
+        issued_at: "str | None" = None,
+        sigma_f: "float | None" = None,
+    ) -> None:
+        """Upsert a forecast log record keyed on (station, model, date, lead_hours).
+
+        This is the v2 writer used by the cron capture worker. Each (station, model,
+        date, lead_hours) combination is stored as an independent row, enabling EMOS
+        to train on forecast-vs-actual triples at fixed lead times.
+
+        Args:
+            station:        METAR station code (e.g. "KORD").
+            model:          Model name: "nws", "open_meteo", or "gfs".
+            date:           Forecast target date as YYYY-MM-DD string.
+            forecast_high_f: Forecasted daily high in °F.
+            lead_hours:     Integer lead time in hours (e.g. 24, 12, 6, 3).
+            issued_at:      UTC ISO-8601 timestamp when this capture was taken. Defaults to now.
+            sigma_f:        Ensemble spread (°F); None for sources that don't expose it.
+        """
+        now = self._now()
+        with self._lock:
+            with self._conn:
+                self._conn.execute(
+                    "INSERT OR REPLACE INTO model_forecast_log"
+                    "(station,model,date,forecast_high_f,logged_at,lead_hours,issued_at,sigma_f)"
+                    " VALUES(?,?,?,?,?,?,?,?)",
+                    (station, model, date, forecast_high_f, now,
+                     lead_hours, issued_at or now, sigma_f),
+                )
+
     def get_forecast_log(self, station: str, since_date: str) -> list[dict]:
-        """Return forecast logs for *station* on or after *since_date*, ordered by date ascending."""
+        """Return forecast logs for *station* on or after *since_date*, ordered by date ascending.
+
+        Returns all rows (all lead_hours). Callers that need a specific lead-time bin
+        should use get_forecast_log_by_lead().
+        """
         cur = self._conn.execute(
             "SELECT * FROM model_forecast_log WHERE station=? AND date>=? ORDER BY date ASC",
             (station, since_date),
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+    def get_forecast_log_by_lead(
+        self, station: str, since_date: str, lead_hours: int
+    ) -> list[dict]:
+        """Return forecast logs filtered to a specific lead-time bin.
+
+        Args:
+            station:    METAR station code.
+            since_date: Earliest date (YYYY-MM-DD) inclusive.
+            lead_hours: Lead-time bin to filter on (e.g. 24).
+
+        Returns:
+            List of row dicts ordered by date ascending.
+        """
+        cur = self._conn.execute(
+            "SELECT * FROM model_forecast_log "
+            "WHERE station=? AND date>=? AND lead_hours=? ORDER BY date ASC",
+            (station, since_date, lead_hours),
         )
         return [dict(r) for r in cur.fetchall()]
 

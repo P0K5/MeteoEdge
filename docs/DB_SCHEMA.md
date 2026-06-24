@@ -285,28 +285,51 @@ CREATE INDEX idx_mw_city_date ON model_weights(city, date);
 
 ### model_forecast_log
 
-**Purpose:** Log of model forecasts per station/model/date. Used for historical validation and weight computation.
+**Purpose:** Log of model forecasts per station/model/date/lead_hours. Used for EMOS calibration training and DEB weight computation.
 
-**Writer:** Forecast logger (src/model/deb_weighting.py)  
-**Reader:** Weight computation, forecast audit trail
+**Writer:** Cron capture worker (`src/scripts/capture_forecasts.py`) — the SOLE writer after the #422 migration. The scanner loop (`src/scripts/run.py`) no longer writes to this table.  
+**Reader:** EMOS calibration (`src/model/emos_calibration.py`), DEB weighting (`src/model/deb_weighting.py`), promotion gate
 
 | Column | Type | Units | Nullable | Description |
 |--------|------|-------|----------|-------------|
 | `id` | INTEGER PRIMARY KEY | | No | Auto-increment row ID |
-| `station` | TEXT NOT NULL | METAR code | No | Station |
-| `model` | TEXT NOT NULL | categorical | No | Model: "nws" or "open_meteo" |
-| `date` | TEXT NOT NULL | YYYY-MM-DD | No | Forecast date (what day does the forecast predict?) |
+| `station` | TEXT NOT NULL | METAR code | No | Station identifier (e.g. "KORD") |
+| `model` | TEXT NOT NULL | categorical | No | Model: "nws", "open_meteo", or "gfs" |
+| `date` | TEXT NOT NULL | YYYY-MM-DD | No | Forecast target date (what day does the forecast predict?) |
 | `forecast_high_f` | REAL NOT NULL | °F | No | Forecasted daily high in Fahrenheit |
-| `logged_at` | TEXT NOT NULL | ISO 8601 timestamp (UTC) | No | When the forecast was logged |
+| `logged_at` | TEXT NOT NULL | ISO 8601 UTC | No | When the row was written to the database |
+| `lead_hours` | INTEGER | hours | Yes | Lead time in hours (e.g. 3, 6, 12, 18, 24). NULL for legacy rows pre-#422. |
+| `issued_at` | TEXT | ISO 8601 UTC | Yes | Wall-clock UTC time the capture was fetched. NULL for legacy rows. |
+| `sigma_f` | REAL | °F | Yes | Ensemble spread (std-dev) at the time of capture. NULL when the source does not expose spread (falls back to `FORECAST_STDDEV_F` in EMOS). |
 
 **Unique Index:**
 ```sql
-CREATE UNIQUE INDEX idx_mfl_station_model_date ON model_forecast_log(station, model, date);
+CREATE UNIQUE INDEX idx_mfl_station_model_date_lead
+    ON model_forecast_log(station, model, date, lead_hours);
 ```
 
 **Notes:**
-- One row per (station, model, date) combination.
-- Multiple rows for the same date allowed if forecast is updated intra-day (uses upsert).
+- One row per `(station, model, date, lead_hours)` combination.
+- Multiple rows per `(station, model, date)` are expected once the cron worker runs: one row per scheduled lead-time bin (3h, 6h, 12h, 18h, 24h).
+- Legacy rows pre-#422 migration have `lead_hours IS NULL` and are stored in `model_forecast_log_legacy_v1`. They are not used for EMOS training.
+- `sigma_f` for NWS is a climatological approximation keyed on lead_hours (see `src/data/nws.py`). For Open-Meteo and GFS it is computed as the cross-model standard deviation.
+- EMOS reader filters rows by `lead_hours` (default 24). DEB weighting also uses lead_hours=24 slice.
+
+### model_forecast_log_legacy_v1
+
+**Purpose:** Read-only audit copy of the pre-#422 `model_forecast_log` table. Contains nowcast snapshots (logged_at ≈ 23:54-23:59 UTC, last-write-wins). Not used for EMOS training.
+
+**Writer:** None (created by the #422 migration, never written to again).  
+**Reader:** Audit trail only.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | INTEGER | Original row ID |
+| `station` | TEXT | Station |
+| `model` | TEXT | Model |
+| `date` | TEXT | Forecast date |
+| `forecast_high_f` | REAL | Forecasted daily high (°F) |
+| `logged_at` | TEXT | When the nowcast was captured |
 
 ---
 
