@@ -97,31 +97,28 @@ def _station_in_active_window(station: str) -> bool:
     return active_start <= now_local_dt.hour < active_end
 
 
-def _build_weather(db=None, health_out=None) -> dict:
-    """Assemble per-station WeatherState.
+def _build_one_station(
+    station: str,
+    lat: float,
+    lon: float,
+    city: str,
+    db=None,
+    health_out: "list | None" = None,
+) -> "WeatherState | None":
+    """Build a WeatherState for a single station.
 
-    When *health_out* is a list, one ``{"station", "status", "reason"}`` entry
-    is appended per station so callers (the dashboard) can surface *what* is
-    failing and *why* -- e.g. outside active window, no METAR, parse error.
-    ``status`` is ``"ok"`` for stations that produced a WeatherState.
+    Shared implementation helper called by both ``build_weather_for_scanning``
+    and ``build_weather_for_pricing``.  Does NOT apply the active-hours gate —
+    callers are responsible for that decision.
+
+    Returns WeatherState on success, or None when data is unavailable.
+    A ``health_out`` entry is appended on failure and on success.
     """
-    def _degraded(station: str, reason: str) -> None:
+    def _degraded(reason: str) -> None:
         if health_out is not None:
             health_out.append({"station": station, "status": "degraded", "reason": reason})
 
-    weather: dict[str, WeatherState] = {}
-    for station, lat, lon, city, *_ in STATIONS:
-        now_local_dt = datetime.now(pytz.timezone(STATION_TZ[station]))
-        active_start, active_end = STATION_ACTIVE_HOURS.get(station, (6, 23))
-        if not (active_start <= now_local_dt.hour < active_end):
-            log.info(
-                "[%s] local %s outside active window %02d:00-%02d:00 -- skipping",
-                station, now_local_dt.strftime('%H:%M'), active_start, active_end,
-            )
-            _degraded(station, f"outside active window {active_start:02d}:00-{active_end:02d}:00 (local {now_local_dt.strftime('%H:%M')})")
-            continue
-
-        metars = fetch_all_metars_today(station)
+    metars = fetch_all_metars_today(station)
         if not metars:
             log.info("[%s] no METAR data, skipping", station)
             _degraded(station, "no METAR data")
