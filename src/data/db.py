@@ -1295,8 +1295,14 @@ class Database:
         """
         with self._lock:
             with self._conn:
+                # DELETE + INSERT to handle NULL lead_hours dedup (NULL != NULL in UNIQUE index).
                 self._conn.execute(
-                    "INSERT OR REPLACE INTO model_forecast_log"
+                    "DELETE FROM model_forecast_log "
+                    "WHERE station=? AND model=? AND date=? AND lead_hours IS NULL",
+                    (station, model, date),
+                )
+                self._conn.execute(
+                    "INSERT INTO model_forecast_log"
                     "(station,model,date,forecast_high_f,logged_at,lead_hours,issued_at,sigma_f)"
                     " VALUES(?,?,?,?,?,NULL,NULL,NULL)",
                     (station, model, date, forecast_high_f, self._now()),

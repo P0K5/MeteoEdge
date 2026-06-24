@@ -20,7 +20,7 @@ class TestDebWeighting:
         """When an active model has fewer than MIN_SAMPLES paired entries, return EQUAL_WEIGHTS."""
         db = MagicMock()
         # Both models have rows but fewer than MIN_SAMPLES paired with actuals
-        db.get_forecast_log.return_value = [
+        db.get_forecast_log_by_lead.return_value = [
             {"date": "2024-01-01", "model": "nws", "forecast_high_f": 80.0},
             {"date": "2024-01-02", "model": "nws", "forecast_high_f": 81.0},
             {"date": "2024-01-03", "model": "nws", "forecast_high_f": 79.0},
@@ -47,7 +47,7 @@ class TestDebWeighting:
     def test_weights_sum_to_one(self):
         """Computed weights must sum to exactly 1.0."""
         db = MagicMock()
-        db.get_forecast_log.return_value = [
+        db.get_forecast_log_by_lead.return_value = [
             {"date": f"2024-01-{i:02d}", "model": "nws", "forecast_high_f": 80.0 + i * 0.1}
             for i in range(1, 16)
         ] + [
@@ -66,7 +66,7 @@ class TestDebWeighting:
     def test_lower_rmse_model_gets_higher_weight(self):
         """Model with lower RMSE (smaller errors) should get higher weight."""
         db = MagicMock()
-        db.get_forecast_log.return_value = (
+        db.get_forecast_log_by_lead.return_value = (
             [
                 {"date": f"2024-01-{i:02d}", "model": "nws", "forecast_high_f": 80.1}
                 for i in range(1, 16)
@@ -94,7 +94,7 @@ class TestDebWeighting:
         """
         db = MagicMock()
         # Only open_meteo has log rows — NWS is absent (international station)
-        db.get_forecast_log.return_value = [
+        db.get_forecast_log_by_lead.return_value = [
             {"date": f"2024-01-{i:02d}", "model": "open_meteo", "forecast_high_f": 30.0 + i * 0.1}
             for i in range(1, 16)
         ]
@@ -115,7 +115,7 @@ class TestDebWeighting:
     def test_phantom_model_both_absent_falls_back_to_equal_weights(self):
         """When no model has any log rows, fall back to EQUAL_WEIGHTS."""
         db = MagicMock()
-        db.get_forecast_log.return_value = []
+        db.get_forecast_log_by_lead.return_value = []
         db.get_settlements.return_value = []
 
         weights, rmse = compute_weights(db, "WSSS", "Singapore")
@@ -126,7 +126,7 @@ class TestDebWeighting:
         """NWS is phantom; open_meteo has rows but below MIN_SAMPLES → EQUAL_WEIGHTS fallback."""
         db = MagicMock()
         # open_meteo has rows but fewer than MIN_SAMPLES; nws has zero rows
-        db.get_forecast_log.return_value = [
+        db.get_forecast_log_by_lead.return_value = [
             {"date": f"2024-01-{i:02d}", "model": "open_meteo", "forecast_high_f": 30.0 + i * 0.1}
             for i in range(1, 6)  # only 5 rows, below MIN_SAMPLES=10
         ]
@@ -142,7 +142,7 @@ class TestDebWeighting:
     def test_weights_keys_always_include_all_models(self):
         """Returned weights dict must always contain keys for all MODELS (even at 0.0)."""
         db = MagicMock()
-        db.get_forecast_log.return_value = [
+        db.get_forecast_log_by_lead.return_value = [
             {"date": f"2024-01-{i:02d}", "model": "open_meteo", "forecast_high_f": 30.0 + i * 0.1}
             for i in range(1, 16)
         ]

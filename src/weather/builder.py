@@ -365,4 +365,3 @@ def _build_weather(db=None, health_out=None) -> dict:
     ``status`` is ``"ok"`` for stations that produced a WeatherState.
     """
     return build_weather_for_scanning(db=db, health_out=health_out)
-
