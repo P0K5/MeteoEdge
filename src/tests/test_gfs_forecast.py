@@ -207,7 +207,7 @@ class TestComputeWeightsPhantomGuard:
     def _make_db_with_open_meteo_and_gfs(self, n: int) -> MagicMock:
         """Build a mock DB with n days of open_meteo + gfs forecast rows."""
         db = MagicMock()
-        db.get_forecast_log.return_value = (
+        db.get_forecast_log_by_lead.return_value = (
             [
                 {"date": f"2026-05-{i:02d}", "model": "open_meteo", "forecast_high_f": 86.0 + i * 0.1}
                 for i in range(1, n + 1)
@@ -246,7 +246,7 @@ class TestComputeWeightsPhantomGuard:
         GFS gets weight=0.0 and the others sum to 1.0."""
         n = MIN_SAMPLES + 2
         db = MagicMock()
-        db.get_forecast_log.return_value = (
+        db.get_forecast_log_by_lead.return_value = (
             [
                 {"date": f"2026-05-{i:02d}", "model": "nws", "forecast_high_f": 85.0 + i * 0.1}
                 for i in range(1, n + 1)

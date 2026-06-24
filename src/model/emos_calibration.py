@@ -82,29 +82,32 @@ def fetch_training_data(
     city: str,
     db,
     min_samples: int = 60,
+    lead_hours: int = 24,
 ) -> list[tuple[float, float, float]]:
     """Build (mu_ensemble, sigma_ensemble, actual_high_f) triples for a city.
 
     Strategy:
-    1. Query model_forecast_log for (date, forecast_high_f) rows for the
-       station that corresponds to *city*.
-    2. For each date, look up the settled daily high from the observations
-       table (source='metar', MAX(temp_f) for that date).
-    3. Use FORECAST_STDDEV_F as the constant sigma_ensemble (the ensemble
-       spread is a fixed config constant in the current model).
+    1. Query model_forecast_log for rows matching *station* and *lead_hours*.
+       Each row is a forecast captured at a fixed lead time by the cron worker
+       (src/scripts/capture_forecasts.py).
+    2. For each date, average all model forecasts (nws/open_meteo/gfs) to form
+       the ensemble mean mu_f.  sigma_f is taken from the persisted ``sigma_f``
+       column when available; otherwise falls back to ``FORECAST_STDDEV_F``.
+    3. For each date, look up the settled daily high from the observations table
+       (source='metar', MAX(temp_f) for that date).
     4. Return the joined list; raise InsufficientDataError if fewer than
        min_samples triples are found.
 
-    NOTE: In early deployments where model_forecast_log is empty, this
-    function will raise InsufficientDataError immediately.  Production
-    callers should catch that exception and skip calibration until the
-    deployment has enough history.
+    NOTE: In early deployments (or after the #422 migration) model_forecast_log
+    will have zero rows at lead_hours=24.  The function will raise
+    InsufficientDataError immediately.  Production callers should catch that and
+    skip calibration until enough lead-time rows accumulate.
 
     Args:
         city:        City name (must match a STATIONS entry, e.g. "Chicago").
         db:          A src.data.db.Database instance.
-        min_samples: Minimum number of joined (forecast, actual) pairs
-                     required before fitting.  Defaults to 60.
+        min_samples: Minimum joined (forecast, actual) pairs required. Default 60.
+        lead_hours:  Lead-time bin to train on (hours). Default 24 for backward compat.
 
     Returns:
         List of (mu_f, sigma_f, actual_high_f) float triples.
@@ -118,34 +121,54 @@ def fetch_training_data(
             f"City '{city}' not found in STATIONS config; cannot fetch training data."
         )
 
-    # Fetch all forecast log entries for this station (from the beginning)
-    forecast_rows = db.get_forecast_log(station, since_date="2000-01-01")
+    # Fetch forecast rows filtered to the requested lead-time bin.
+    # get_forecast_log_by_lead() is the v2 method; fall back to get_forecast_log()
+    # for DB instances that don't yet have the method (e.g. test doubles).
+    if hasattr(db, "get_forecast_log_by_lead"):
+        forecast_rows = db.get_forecast_log_by_lead(
+            station, since_date="2000-01-01", lead_hours=lead_hours
+        )
+    else:
+        # Legacy fallback: no lead_hours filter
+        forecast_rows = db.get_forecast_log(station, since_date="2000-01-01")
+
     if not forecast_rows:
         raise InsufficientDataError(
-            f"model_forecast_log is empty for station '{station}' (city='{city}'). "
+            f"model_forecast_log is empty for station '{station}' (city='{city}') "
+            f"at lead_hours={lead_hours}. "
             f"Need {min_samples} settled days; have 0."
         )
 
-    # Build a date → mu_f lookup (latest model entry per date wins via INSERT OR REPLACE)
-    date_to_mu: dict[str, float] = {}
+    # Build a date → (mu_f, sigma_f) lookup.
+    # Average mu across all models logged for that date; use first non-NULL sigma_f.
+    default_sigma = float(FORECAST_STDDEV_F)
+    date_mu_accum: dict[str, list[float]] = {}
+    date_sigma: dict[str, "float | None"] = {}
     for row in forecast_rows:
-        date_to_mu[row["date"]] = float(row["forecast_high_f"])
+        d = row["date"]
+        mu = float(row["forecast_high_f"])
+        date_mu_accum.setdefault(d, []).append(mu)
+        # Use the first non-NULL sigma_f encountered for a given date
+        if date_sigma.get(d) is None:
+            raw_sigma = row.get("sigma_f")
+            date_sigma[d] = float(raw_sigma) if raw_sigma is not None else None
 
-    # For each forecast date, find the settled daily high from METAR observations
-    sigma = float(FORECAST_STDDEV_F)
     result: list[tuple[float, float, float]] = []
-
-    for date_str, mu_f in date_to_mu.items():
+    for date_str, mu_list in date_mu_accum.items():
+        mu_f = sum(mu_list) / len(mu_list)
+        sigma_f = date_sigma.get(date_str)
+        if sigma_f is None:
+            sigma_f = default_sigma  # fallback for rows without persisted spread
         # daily high = MAX(temp_f) for this station on this date
         obs_high = db.get_daily_obs_high(station, date_str)
         if obs_high is None:
             continue  # no observation for this date — skip
-        result.append((mu_f, sigma, obs_high))
+        result.append((mu_f, sigma_f, obs_high))
 
     if len(result) < min_samples:
         raise InsufficientDataError(
             f"Only {len(result)} joined (forecast, actual) pairs found for city='{city}' "
-            f"(station='{station}'); need at least {min_samples}."
+            f"(station='{station}') at lead_hours={lead_hours}; need at least {min_samples}."
         )
 
     return result

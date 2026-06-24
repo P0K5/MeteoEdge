@@ -87,7 +87,14 @@ def compute_weights(
     have fewer than _MIN_SAMPLES valid pairs.
     """
     since_date = (date_cls.today() - timedelta(days=window_days)).isoformat()
-    log_rows = db.get_forecast_log(station, since_date)
+    # Use the lead_hours=24 slice so DEB compares like-for-like forecasts.
+    # Explicit lead_hours avoids mixing nowcast snapshots with genuine ahead-of-event
+    # forecasts after the #422 migration.  Falls back to get_forecast_log() on
+    # DB instances that pre-date the v2 method (test doubles, etc.).
+    if hasattr(db, "get_forecast_log_by_lead"):
+        log_rows = db.get_forecast_log_by_lead(station, since_date, lead_hours=24)
+    else:
+        log_rows = db.get_forecast_log(station, since_date)
     settlements = db.get_settlements(station, since_date + "T00:00:00")
 
     # Build actual_high lookup: date_str -> actual_high_f

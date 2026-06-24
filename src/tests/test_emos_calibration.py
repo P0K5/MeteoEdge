@@ -171,13 +171,14 @@ class TestInsufficientDataError:
     def test_raises_when_below_min_samples(self):
         """Only a few forecast + observation rows → InsufficientDataError."""
         db = _db()
-        # Insert 5 forecast log entries for KORD (Chicago)
+        # Insert 5 forecast log entries for KORD (Chicago) at lead_hours=24
         for i in range(1, 6):
-            db.upsert_forecast_log(
+            db.upsert_forecast_log_v2(
                 station="KORD",
-                model="deb",
+                model="nws",
                 date=f"2025-01-{i:02d}",
                 forecast_high_f=40.0 + i,
+                lead_hours=24,
             )
             # Also insert a METAR observation for the same date
             db.insert_observation(
@@ -190,7 +191,7 @@ class TestInsufficientDataError:
             )
         # Only 5 pairs but need 60
         with pytest.raises(InsufficientDataError):
-            fetch_training_data("Chicago", db, min_samples=60)
+            fetch_training_data("Chicago", db, min_samples=60, lead_hours=24)
 
     def test_raises_for_unknown_city(self):
         """City not in STATIONS config → InsufficientDataError."""
@@ -204,11 +205,13 @@ class TestInsufficientDataError:
         n = 10  # use min_samples=10 to keep test fast
         for i in range(n):
             date_str = f"2025-01-{i + 1:02d}"
-            db.upsert_forecast_log(
+            # Use v2 upsert with lead_hours=24 so fetch_training_data can find rows
+            db.upsert_forecast_log_v2(
                 station="KORD",
-                model="deb",
+                model="nws",
                 date=date_str,
                 forecast_high_f=40.0 + i,
+                lead_hours=24,
             )
             db.insert_observation(
                 ts=f"{date_str}T18:00:00+00:00",
@@ -218,7 +221,7 @@ class TestInsufficientDataError:
                 unit="F",
                 source="metar",
             )
-        result = fetch_training_data("Chicago", db, min_samples=n)
+        result = fetch_training_data("Chicago", db, min_samples=n, lead_hours=24)
         assert len(result) == n
         for mu, sigma, actual in result:
             assert isinstance(mu, float)

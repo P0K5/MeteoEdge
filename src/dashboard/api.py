@@ -563,6 +563,34 @@ def _latest_model_probs() -> "dict[tuple[str, float, float], tuple[float, str]]"
     return _jsonl_cache_get_rotated(SNAPSHOTS_JSONL, _parse_snapshots)
 
 
+def _parse_position_snap_probs(records) -> "dict[tuple[str, float, float, str], tuple[float, str]]":
+    """Parse position_snapshots.jsonl into a prob map keyed by (station, bl, bh, side).
+
+    Used as a dashboard fallback for held positions when the station is outside
+    its STATION_ACTIVE_HOURS scanner window — the always-on re-pricer (issue #425)
+    writes to position_snapshots.jsonl 24/7, so this cache stays fresh overnight.
+    """
+    result: dict[tuple[str, float, float, str], tuple[float, str]] = {}
+    try:
+        for r in records:
+            station = r.get("station") or ""
+            bl = r.get("bracket_low")
+            bh = r.get("bracket_high")
+            py = r.get("p_yes_now")
+            ts = r.get("ts") or ""
+            side = str(r.get("side") or "NO").upper()
+            if station and bl is not None and bh is not None and py is not None:
+                result[(station, float(bl), float(bh), side)] = (float(py), ts)
+    except OSError as e:
+        logger.warning("position_snapshots.jsonl read error (prob parse): %s", e)
+    return result
+
+
+def _latest_position_snap_probs() -> "dict[tuple[str, float, float, str], tuple[float, str]]":
+    """Cached read of position_snapshots.jsonl for dashboard fallback (issue #425)."""
+    return _jsonl_cache_get_rotated(POSITION_SNAPSHOTS_JSONL, _parse_position_snap_probs)
+
+
 # ---------------------------------------------------------------------------
 # live_trades.jsonl — single-pass parser + mtime cache (issue #170)
 # Three callers (_trades_file_enrichment, _stopped_positions,
@@ -838,6 +866,10 @@ def _positions_from_wallet() -> tuple[list[PositionOut], list[ClosedPositionOut]
     # this result; the file is parsed at most once per file change (issue #170).
     jsonl_enrichment, stopped_list, settled_list = _cached_live_trades()
     snap_probs = _latest_model_probs()
+    # Fallback prob source for stations outside scanner active-hours window (#425).
+    # The always-on re-pricer writes position_snapshots.jsonl 24/7; we use it
+    # here so the dashboard shows a live model fair-value line overnight.
+    pos_snap_probs = _latest_position_snap_probs()
 
     # Per-request NWS city cache: fetch each city's forecast at most once per
     # request regardless of how many open positions mention that city (issue #170).
