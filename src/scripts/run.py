@@ -37,11 +37,7 @@ from src.logging_config import setup_logging
 from src.monitoring.alerts import AlertManager
 from src.risk.manager import RiskManager
 from src.strategy.scanner import scan_markets
-from src.weather.builder import (
-    _build_weather,
-    build_weather_for_pricing,
-    _station_in_active_window,
-)
+from src.weather.builder import _build_weather, _station_in_active_window, build_weather_for_pricing
 from src.execution.live_trader import LiveTrader
 from src.execution.order_manager import OrderManager, order_manager, _load_open_no_positions
 from src.execution.order_executor import _execute_live
@@ -196,8 +192,8 @@ def poll_once(
     weather = _build_weather(db=db, health_out=weather_health)
     _dashboard_module.weather_health = weather_health  # surface feed health to the dashboard banner
 
-    # Collect open-position token IDs and station tuples early so they can be
-    # included in the batch orderbook fetch and pricing weather build below.
+    # Collect open-position token IDs early so they can be included in the
+    # batch orderbook fetch below (together with the scanner's YES/NO tokens).
     _open_token_ids: list = []
     _open_positions: list = []
     if live_trader:
@@ -205,14 +201,14 @@ def poll_once(
         _open_positions = _load_open_no_positions(_today, db=db)
         _open_token_ids = [p["no_token_id"] for p in _open_positions if p.get("no_token_id")]
 
-    # Build always-on pricing weather for held positions, bypassing the
-    # active-hours gate.  Only query the stations that have open positions
-    # (typically 1-3) to avoid unnecessary upstream API calls.
-    # This is separate from the scanner weather (active-hours-gated) — see
-    # issue #425 (KHOU 2026-05-27: overnight carryover fooling bracket logic).
+    # Build always-on pricing weather for open positions (issue #425).
+    # The scanner weather is gated by STATION_ACTIVE_HOURS to prevent bracket-blanketing
+    # (KHOU 2026-05-27 incident).  Re-pricing held positions must work 24/7 — METARs
+    # flow around the clock and stop-loss/take-profit must not go blind overnight.
+    # Limit to open-position stations only to avoid unnecessary upstream API calls.
     _pricing_weather: dict = {}
     if live_trader and _open_positions:
-        from src.config import STATIONS as _ALL_STATIONS  # noqa: PLC0415
+        from src.config import STATIONS as _ALL_STATIONS
         _station_meta: dict = {s[0]: s for s in _ALL_STATIONS}
         _open_station_codes = {p["station"] for p in _open_positions if p.get("station")}
         _open_station_tuples = [
@@ -222,8 +218,8 @@ def poll_once(
         ]
         if _open_station_tuples:
             _pricing_weather = build_weather_for_pricing(_open_station_tuples, db=db)
-            # Merge scanner weather as a fallback: if the scanner already produced
-            # a WeatherState for this station avoid a duplicate API call.
+            # Merge scanner weather as fallback to avoid duplicate API calls for
+            # stations already active in the scanner (setdefault = pricer wins).
             for _st, _ws in weather.items():
                 _pricing_weather.setdefault(_st, _ws)
 
@@ -234,10 +230,8 @@ def poll_once(
             _snap_ob: dict = {}
             if _open_token_ids:
                 _snap_ob = fetch_orderbooks_batch(_open_token_ids)
-            position_states = _log_open_position_snapshots(
-                _pricing_weather, ts, db=db, orderbooks=_snap_ob,
-            )
-            _check_forced_exits(live_trader, ts, position_states, db=db, risk_manager=risk_manager)
+            # Use _pricing_weather (always-on) so stop-loss works overnight (#425)
+            position_states = _log_open_position_snapshots(_pricing_weather, ts, db=db, orderbooks=_snap_ob)
             if _pricing_weather:
                 _check_stop_loss_exits(live_trader, ts, position_states, db=db, risk_manager=risk_manager)
         log.warning("[run] No weather data for any station -- skipping market scan")
@@ -253,9 +247,7 @@ def poll_once(
             _snap_ob2: dict = {}
             if _open_token_ids:
                 _snap_ob2 = fetch_orderbooks_batch(_open_token_ids)
-            position_states = _log_open_position_snapshots(
-                _pricing_weather, ts, db=db, orderbooks=_snap_ob2,
-            )
+            position_states = _log_open_position_snapshots(_pricing_weather, ts, db=db, orderbooks=_snap_ob2)
         return
     log.info("[polymarket] %s weather markets fetched", len(markets))
 
