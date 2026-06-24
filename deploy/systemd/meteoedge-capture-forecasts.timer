@@ -1,0 +1,13 @@
+[Unit]
+Description=Run MeteoEdge forecast capture at 06:02, 12:02, 18:02, 21:02 UTC
+
+[Timer]
+OnCalendar=*-*-* 06:02:00 UTC
+OnCalendar=*-*-* 12:02:00 UTC
+OnCalendar=*-*-* 18:02:00 UTC
+OnCalendar=*-*-* 21:02:00 UTC
+AccuracySec=1m
+Persistent=true
+
+[Install]
+WantedBy=timers.target
