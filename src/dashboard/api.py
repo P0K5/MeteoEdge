@@ -945,6 +945,16 @@ def _positions_from_wallet() -> tuple[list[PositionOut], list[ClosedPositionOut]
                 raw_now = py * 100 if side == "YES" else (1 - py) * 100
                 my_prob_now = max(1, min(99, round(raw_now)))
                 my_prob_now_ts = ts
+            elif station_key:
+                # Fallback: position_snapshots.jsonl written by always-on re-pricer (#425).
+                # This keeps the dashboard fair-value line live overnight when the station
+                # is outside its STATION_ACTIVE_HOURS scanner window.
+                pos_key = (station_key, bracket_low_key, bracket_high_key, side)
+                if pos_key in pos_snap_probs:
+                    py, ts = pos_snap_probs[pos_key]
+                    raw_now = py * 100 if side == "YES" else (1 - py) * 100
+                    my_prob_now = max(1, min(99, round(raw_now)))
+                    my_prob_now_ts = ts
             open_positions.append(PositionOut(
                 question=question,
                 station=station_key,

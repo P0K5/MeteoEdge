@@ -1,7 +1,7 @@
 """Stateless. Assembles WeatherState from NWP sources. No side effects."""
 import json
 import logging
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 
 import pytz
 from dateutil import parser as dtparse
@@ -17,7 +17,7 @@ from src.data.metar import (
 )
 from src.data.nws import fetch_nws_forecast_high
 from src.data.open_meteo import fetch_secondary_forecast, fetch_hourly_temp_now, fetch_gfs_forecast_high
-from src.model.deb_weighting import log_forecast, refresh_weights, get_weights
+from src.model.deb_weighting import refresh_weights, get_weights
 from src.model.deb_hourly_consensus import compute_deb_mu_f
 from src.model.intraday_correction import compute_correction
 from src.model.residual_correction import apply_residual_correction
@@ -28,11 +28,11 @@ log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Delta-logging state: suppress per-poll weather log lines when values are
-# stable. Only log when any value changes >0.5°F or once per hour (heartbeat).
-# Trade/order/flag events are NOT deduped — this only applies to weather lines.
+# stable. Only log when any value changes >0.5 F or once per hour (heartbeat).
+# Trade/order/flag events are NOT deduped - this only applies to weather lines.
 # ---------------------------------------------------------------------------
 
-_WEATHER_LOG_THRESHOLD_F: float = 0.5        # °F change that forces a log
+_WEATHER_LOG_THRESHOLD_F: float = 0.5        # F change that forces a log
 _WEATHER_HEARTBEAT_INTERVAL_S: float = 3600  # 1 hour
 
 # Per-station: {"high_f": float, "latest_f": float, "nws": float|None, "last_logged": datetime}
@@ -40,14 +40,8 @@ _weather_log_state: dict[str, dict] = {}
 
 
 def _should_log_weather(station: str, high_f: float, latest_temp_f: float,
-                         forecast_nws: float | None) -> bool:
-    """Return True if this poll's weather should be logged at INFO level.
-
-    Logs when:
-    - Station has never been logged before.
-    - Any tracked value changed by more than _WEATHER_LOG_THRESHOLD_F.
-    - More than _WEATHER_HEARTBEAT_INTERVAL_S seconds have passed since last log.
-    """
+                         forecast_nws: "float | None") -> bool:
+    """Return True if this poll's weather should be logged at INFO level."""
     now = datetime.now(timezone.utc)
     prev = _weather_log_state.get(station)
     if prev is None:
@@ -59,7 +53,6 @@ def _should_log_weather(station: str, high_f: float, latest_temp_f: float,
         }
         return True
 
-    # Heartbeat: always log once per hour
     elapsed = (now - prev["last_logged"]).total_seconds()
     if elapsed >= _WEATHER_HEARTBEAT_INTERVAL_S:
         _weather_log_state[station].update(
@@ -67,7 +60,6 @@ def _should_log_weather(station: str, high_f: float, latest_temp_f: float,
         )
         return True
 
-    # Delta check: log if any value changed beyond threshold
     def _nws_changed() -> bool:
         old_nws = prev["nws"]
         if old_nws is None and forecast_nws is None:
@@ -107,175 +99,258 @@ def _build_one_station(
 ) -> "WeatherState | None":
     """Build a WeatherState for a single station.
 
-    Shared implementation helper called by both ``build_weather_for_scanning``
-    and ``build_weather_for_pricing``.  Does NOT apply the active-hours gate —
-    callers are responsible for that decision.
+    This is a shared implementation helper called by both
+    ``build_weather_for_scanning`` and ``build_weather_for_pricing``.  It does
+    NOT apply the active-hours gate -- callers are responsible for that decision.
 
-    Returns WeatherState on success, or None when data is unavailable.
-    A ``health_out`` entry is appended on failure and on success.
+    Returns the WeatherState on success, or None when data is unavailable
+    (no METAR, parse error, etc.).  A ``health_out`` entry is appended on
+    failure (and on success when health_out is provided).
     """
     def _degraded(reason: str) -> None:
         if health_out is not None:
             health_out.append({"station": station, "status": "degraded", "reason": reason})
 
     metars = fetch_all_metars_today(station)
-        if not metars:
-            log.info("[%s] no METAR data, skipping", station)
-            _degraded(station, "no METAR data")
-            continue
+    if not metars:
+        log.info("[%s] no METAR data, skipping", station)
+        _degraded("no METAR data")
+        return None
 
-        result = compute_daily_high(metars, STATION_TZ[station], min_local_hour=active_start)
-        if not result:
-            log.info("[%s] could not compute daily high, skipping", station)
-            _degraded(station, "could not compute daily high")
-            continue
-        high_f, high_time = result
+    active_start, _ = STATION_ACTIVE_HOURS.get(station, (6, 23))
+    result = compute_daily_high(metars, STATION_TZ[station], min_local_hour=active_start)
+    if not result:
+        log.info("[%s] could not compute daily high, skipping", station)
+        _degraded("could not compute daily high")
+        return None
+    high_f, high_time = result
 
-        # Upgrade daily high from densest feed with cross-source outlier rejection.
-        # High-cadence feeds (MSS 1-min, AMOS/JMA 10-min) can catch intra-30-min
-        # peaks that 30-min METAR would miss, but bad ticks are rejected when they
-        # exceed the METAR running high by more than CONSENSUS_OUTLIER_SIGMA_F.
-        if db is not None:
-            feed_keys = get_canonical_station_feeds(station)
-            if len(feed_keys) > 1:
-                since_today = datetime.now(
-                    pytz.timezone(STATION_TZ[station])
-                ).date().isoformat() + "T00:00:00+00:00"
-                db_obs = db.get_observations_multi_station(feed_keys, since=since_today)
-                for o in db_obs:
-                    o.setdefault("station", station)
-                consensus_high = compute_consensus_high(db_obs)
-                if consensus_high is not None and consensus_high > high_f:
-                    log.debug(
-                        "[%s] daily high upgraded by obs consensus: %.1fF → %.1fF",
-                        station, high_f, consensus_high,
-                    )
-                    high_f = consensus_high
-
-        latest = metars[0]
-        latest_temp_c = latest.get("temp")
-        if latest_temp_c is None:
-            log.info("[%s] latest METAR missing temp, skipping", station)
-            _degraded(station, "latest METAR missing temperature")
-            continue
-
-        obs_str = latest.get("reportTime") or latest.get("obsTime")
-        if not obs_str:
-            log.info("[%s] latest METAR missing time, skipping", station)
-            _degraded(station, "latest METAR missing timestamp")
-            continue
-
-        try:
-            latest_temp_f = (float(latest_temp_c) * 9 / 5) + 32
-            latest_time = dtparse.parse(obs_str)
-            if latest_time.tzinfo is None:
-                latest_time = latest_time.replace(tzinfo=timezone.utc)
-        except Exception as e:
-            log.warning("[%s] METAR parse error: %s, skipping", station, e)
-            _degraded(station, f"METAR parse error: {e}")
-            continue
-
-        # Persist the latest METAR so the freshness monitor and intraday
-        # correction can use it as a fallback observation source.
-        if db is not None:
-            metar_ts = latest_time.astimezone(timezone.utc).isoformat()
-            prev_metar = db.get_latest_observation("metar", station)
-            if prev_metar is None or prev_metar["ts"] != metar_ts:
-                db.insert_observation(
-                    ts=metar_ts,
-                    station=station,
-                    temp_f=latest_temp_f,
-                    temp_native=float(latest_temp_c),
-                    unit="C",
-                    source="metar",
-                    cadence_min=30,
-                    is_official=1,
-                    raw_json=json.dumps(latest),
+    # Upgrade daily high from densest feed with cross-source outlier rejection.
+    if db is not None:
+        feed_keys = get_canonical_station_feeds(station)
+        if len(feed_keys) > 1:
+            since_today = datetime.now(
+                pytz.timezone(STATION_TZ[station])
+            ).date().isoformat() + "T00:00:00+00:00"
+            db_obs = db.get_observations_multi_station(feed_keys, since=since_today)
+            for o in db_obs:
+                o.setdefault("station", station)
+            consensus_high = compute_consensus_high(db_obs)
+            if consensus_high is not None and consensus_high > high_f:
+                log.debug(
+                    "[%s] daily high upgraded by obs consensus: %.1fF -> %.1fF",
+                    station, high_f, consensus_high,
                 )
+                high_f = consensus_high
 
-        # Attempt to upgrade latest_temp_f from a fresher high-freq obs
-        obs_bias_offset_f = None
-        if db is not None:
-            for src_cfg in get_source_priority(city):
-                if src_cfg["source"] == "metar":
-                    continue
-                obs = db.get_latest_observation(src_cfg["source"], src_cfg["station"])
-                if obs is None:
-                    continue
-                try:
-                    obs_ts = dtparse.parse(obs["ts"])
-                    if obs_ts.tzinfo is None:
-                        obs_ts = obs_ts.replace(tzinfo=timezone.utc)
-                except Exception:
-                    continue
-                age_min = (datetime.now(timezone.utc) - obs_ts).total_seconds() / 60
-                if age_min > 2 * src_cfg["cadence_min"]:
-                    continue  # stale — skip
-                latest_temp_f = float(obs["temp_f"])
-                latest_time = obs_ts
-                break  # highest-priority fresh source wins
-            hourly_model_f = fetch_hourly_temp_now(lat, lon)
-            if hourly_model_f is not None:
-                obs_bias_offset_f = latest_temp_f - hourly_model_f
+    latest = metars[0]
+    latest_temp_c = latest.get("temp")
+    if latest_temp_c is None:
+        log.info("[%s] latest METAR missing temp, skipping", station)
+        _degraded("latest METAR missing temperature")
+        return None
 
-        forecast_nws = fetch_nws_forecast_high(lat, lon)
-        forecast_secondary = fetch_secondary_forecast(lat, lon)
-        forecast_gfs = fetch_gfs_forecast_high(lat, lon)
+    obs_str = latest.get("reportTime") or latest.get("obsTime")
+    if not obs_str:
+        log.info("[%s] latest METAR missing time, skipping", station)
+        _degraded("latest METAR missing timestamp")
+        return None
 
-        today_str = datetime.now(timezone.utc).date().isoformat()
-        if db is not None:
-            if forecast_nws is not None:
-                log_forecast(db, station, "nws", today_str, forecast_nws)
-            if forecast_secondary is not None:
-                log_forecast(db, station, "open_meteo", today_str, forecast_secondary)
-            if forecast_gfs is not None:
-                log_forecast(db, station, "gfs", today_str, forecast_gfs)
-            refresh_weights(db, station, city)
-        weights = get_weights(db, city) if db is not None else {"nws": 0.5, "open_meteo": 0.5, "gfs": 0.0}
-        deb_mu_f = compute_deb_mu_f(forecast_nws, forecast_secondary, weights, forecast_gfs=forecast_gfs)
-        if deb_mu_f is not None:
-            log.debug(
-                "[%s] deb_mu_f=%.1fF weights=nws:%.2f/om:%.2f/gfs:%.2f",
-                station, deb_mu_f,
-                weights.get('nws', 0), weights.get('open_meteo', 0), weights.get('gfs', 0),
+    try:
+        latest_temp_f = (float(latest_temp_c) * 9 / 5) + 32
+        latest_time = dtparse.parse(obs_str)
+        if latest_time.tzinfo is None:
+            latest_time = latest_time.replace(tzinfo=timezone.utc)
+    except Exception as e:
+        log.warning("[%s] METAR parse error: %s, skipping", station, e)
+        _degraded(f"METAR parse error: {e}")
+        return None
+
+    # Persist the latest METAR so the freshness monitor and intraday
+    # correction can use it as a fallback observation source.
+    if db is not None:
+        metar_ts = latest_time.astimezone(timezone.utc).isoformat()
+        prev_metar = db.get_latest_observation("metar", station)
+        if prev_metar is None or prev_metar["ts"] != metar_ts:
+            db.insert_observation(
+                ts=metar_ts,
+                station=station,
+                temp_f=latest_temp_f,
+                temp_native=float(latest_temp_c),
+                unit="C",
+                source="metar",
+                cadence_min=30,
+                is_official=1,
+                raw_json=json.dumps(latest),
             )
 
-        weather[station] = WeatherState(
-            station=station,
-            now_local=now_local(station),
-            sunset_local=sunset_local(station, lat, lon),
-            current_high_f=high_f,
-            current_high_time=high_time,
-            latest_temp_f=latest_temp_f,
-            latest_temp_time=latest_time,
-            forecast_high_f=forecast_nws,
-            secondary_forecast_f=forecast_secondary,
-            obs_bias_offset_f=obs_bias_offset_f,
-            deb_mu_f=deb_mu_f,
+    # Attempt to upgrade latest_temp_f from a fresher high-freq obs
+    obs_bias_offset_f = None
+    if db is not None:
+        for src_cfg in get_source_priority(city):
+            if src_cfg["source"] == "metar":
+                continue
+            obs = db.get_latest_observation(src_cfg["source"], src_cfg["station"])
+            if obs is None:
+                continue
+            try:
+                obs_ts = dtparse.parse(obs["ts"])
+                if obs_ts.tzinfo is None:
+                    obs_ts = obs_ts.replace(tzinfo=timezone.utc)
+            except Exception:
+                continue
+            age_min = (datetime.now(timezone.utc) - obs_ts).total_seconds() / 60
+            if age_min > 2 * src_cfg["cadence_min"]:
+                continue  # stale -- skip
+            latest_temp_f = float(obs["temp_f"])
+            latest_time = obs_ts
+            break  # highest-priority fresh source wins
+        hourly_model_f = fetch_hourly_temp_now(lat, lon)
+        if hourly_model_f is not None:
+            obs_bias_offset_f = latest_temp_f - hourly_model_f
+
+    forecast_nws = fetch_nws_forecast_high(lat, lon)
+    forecast_secondary = fetch_secondary_forecast(lat, lon)
+    forecast_gfs = fetch_gfs_forecast_high(lat, lon)
+
+    if db is not None:
+        # NOTE: forecast logging to model_forecast_log was removed from the scan loop.
+        # The cron capture worker (src/scripts/capture_forecasts.py) is the sole
+        # writer to model_forecast_log, logging at fixed lead-time bins so EMOS
+        # trains on genuine ahead-of-event forecasts rather than nowcast snapshots.
+        # See issues #422/#423.
+        refresh_weights(db, station, city)
+    weights = get_weights(db, city) if db is not None else {"nws": 0.5, "open_meteo": 0.5, "gfs": 0.0}
+    deb_mu_f = compute_deb_mu_f(forecast_nws, forecast_secondary, weights, forecast_gfs=forecast_gfs)
+    if deb_mu_f is not None:
+        log.debug(
+            "[%s] deb_mu_f=%.1fF weights=nws:%.2f/om:%.2f/gfs:%.2f",
+            station, deb_mu_f,
+            weights.get('nws', 0), weights.get('open_meteo', 0), weights.get('gfs', 0),
         )
-        if db is not None:
-            corrected = compute_correction(city, weather[station], db)
-            if corrected is not None:
-                weather[station].corrected_mu_f = corrected
-                log.debug("[%s] corrected_mu_f=%.1fF (delta=%+.1fF)", station, corrected, corrected - deb_mu_f)
-            # Apply per-city rolling residual bias correction (issue #307)
-            base_mu = weather[station].corrected_mu_f if weather[station].corrected_mu_f is not None else deb_mu_f
-            if base_mu is not None:
-                residual_mu, _res_stats = apply_residual_correction(city, base_mu, db)
-                if residual_mu != base_mu:
-                    weather[station].corrected_mu_f = residual_mu
-                    log.debug(
-                        "[%s] residual_correction applied: %.1fF → %.1fF",
-                        station, base_mu, residual_mu,
-                    )
-                    db.log_guardrail_event(
-                        datetime.now(timezone.utc).isoformat(),
-                        station, "correction_applied", base_mu, residual_mu,
-                    )
-        if _should_log_weather(station, high_f, latest_temp_f, forecast_nws):
-            log.info("[%s] high=%.1fF latest=%.1fF nws=%s", station, high_f, latest_temp_f, forecast_nws)
-        else:
-            log.debug("[%s] high=%.1fF latest=%.1fF nws=%s (no change)", station, high_f, latest_temp_f, forecast_nws)
+
+    state = WeatherState(
+        station=station,
+        now_local=now_local(station),
+        sunset_local=sunset_local(station, lat, lon),
+        current_high_f=high_f,
+        current_high_time=high_time,
+        latest_temp_f=latest_temp_f,
+        latest_temp_time=latest_time,
+        forecast_high_f=forecast_nws,
+        secondary_forecast_f=forecast_secondary,
+        obs_bias_offset_f=obs_bias_offset_f,
+        deb_mu_f=deb_mu_f,
+    )
+    if db is not None:
+        corrected = compute_correction(city, state, db)
+        if corrected is not None:
+            state.corrected_mu_f = corrected
+            log.debug("[%s] corrected_mu_f=%.1fF (delta=%+.1fF)", station, corrected, corrected - deb_mu_f)
+        # Apply per-city rolling residual bias correction (issue #307)
+        base_mu = state.corrected_mu_f if state.corrected_mu_f is not None else deb_mu_f
+        if base_mu is not None:
+            residual_mu, _res_stats = apply_residual_correction(city, base_mu, db)
+            if residual_mu != base_mu:
+                state.corrected_mu_f = residual_mu
+                log.debug(
+                    "[%s] residual_correction applied: %.1fF -> %.1fF",
+                    station, base_mu, residual_mu,
+                )
+                db.log_guardrail_event(
+                    datetime.now(timezone.utc).isoformat(),
+                    station, "correction_applied", base_mu, residual_mu,
+                )
+    if _should_log_weather(station, high_f, latest_temp_f, forecast_nws):
+        log.info("[%s] high=%.1fF latest=%.1fF nws=%s", station, high_f, latest_temp_f, forecast_nws)
+    else:
+        log.debug("[%s] high=%.1fF latest=%.1fF nws=%s (no change)", station, high_f, latest_temp_f, forecast_nws)
+    if health_out is not None:
+        health_out.append({"station": station, "status": "ok", "reason": ""})
+    return state
+
+
+def build_weather_for_scanning(stations=None, db=None, health_out=None) -> dict:
+    """Assemble per-station WeatherState for the SCANNER path.
+
+    Applies the active-hours gate: stations outside their configured local
+    window are excluded.  This gate is intentional -- opening new entries when
+    overnight carryover can fool bracket logic caused the KHOU 2026-05-27
+    incident and must not be regressed.
+
+    Args:
+        stations: iterable of (station, lat, lon, city, ...) tuples, or None
+            to use the full STATIONS list from config.
+        db: optional Database instance.
+        health_out: optional list; one {"station", "status", "reason"}
+            entry is appended per station for dashboard health reporting.
+
+    Returns dict mapping station code to WeatherState (only in-window stations).
+    """
+    def _degraded(station: str, reason: str) -> None:
         if health_out is not None:
-            health_out.append({"station": station, "status": "ok", "reason": ""})
+            health_out.append({"station": station, "status": "degraded", "reason": reason})
+
+    station_list = stations if stations is not None else STATIONS
+    weather: dict[str, WeatherState] = {}
+    for station, lat, lon, city, *_ in station_list:
+        now_local_dt = datetime.now(pytz.timezone(STATION_TZ[station]))
+        active_start, active_end = STATION_ACTIVE_HOURS.get(station, (6, 23))
+        if not (active_start <= now_local_dt.hour < active_end):
+            log.info(
+                "[%s] local %s outside active window %02d:00-%02d:00 -- skipping",
+                station, now_local_dt.strftime('%H:%M'), active_start, active_end,
+            )
+            _degraded(station, f"outside active window {active_start:02d}:00-{active_end:02d}:00 (local {now_local_dt.strftime('%H:%M')})")
+            continue
+
+        state = _build_one_station(station, lat, lon, city, db=db, health_out=health_out)
+        if state is not None:
+            weather[station] = state
     return weather
+
+
+def build_weather_for_pricing(stations, db=None) -> dict:
+    """Assemble per-station WeatherState for the POSITION RE-PRICER path.
+
+    Unlike ``build_weather_for_scanning``, this function has NO active-hours
+    gate.  METARs flow 24 hours a day and the data is valid even at 03:00
+    local; the active-hours gate exists only to prevent the scanner from
+    opening new entries during overnight windows.  Re-pricing means continuous
+    fair-value updates for already-held positions -- it does NOT open new
+    positions.
+
+    Callers MUST pass only the stations with open positions (typically 1-3).
+    Do NOT pass the full 30+ station list; that wastes upstream API calls.
+
+    Args:
+        stations: iterable of (station, lat, lon, city, ...) tuples for open
+            position stations only.
+        db: optional Database instance.
+
+    Returns dict mapping station code to WeatherState for every station that
+    has current METAR data (regardless of local hour).
+    """
+    weather: dict[str, WeatherState] = {}
+    for station, lat, lon, city, *_ in stations:
+        state = _build_one_station(station, lat, lon, city, db=db, health_out=None)
+        if state is not None:
+            weather[station] = state
+    return weather
+
+
+def _build_weather(db=None, health_out=None) -> dict:
+    """Assemble per-station WeatherState.
+
+    .. deprecated::
+        Use ``build_weather_for_scanning`` (scanner path) or
+        ``build_weather_for_pricing`` (position re-pricer path) instead.
+        This wrapper delegates to ``build_weather_for_scanning`` and is kept
+        for backward compatibility with existing call sites and tests.
+
+    When *health_out* is a list, one {"station", "status", "reason"} entry
+    is appended per station so callers (the dashboard) can surface what is
+    failing and why -- e.g. outside active window, no METAR, parse error.
+    ``status`` is ``"ok"`` for stations that produced a WeatherState.
+    """
+    return build_weather_for_scanning(db=db, health_out=health_out)
