@@ -19,8 +19,10 @@ install -m 0644 "$SRC_DIR/meteoedge.service"            "$UNIT_DIR/meteoedge.ser
 install -m 0644 "$SRC_DIR/meteoedge-dashboard.service"  "$UNIT_DIR/meteoedge-dashboard.service"
 install -m 0644 "$SRC_DIR/meteoedge-settle.service"     "$UNIT_DIR/meteoedge-settle.service"
 install -m 0644 "$SRC_DIR/meteoedge-settle.timer"       "$UNIT_DIR/meteoedge-settle.timer"
-install -m 0644 "$SRC_DIR/meteoedge-archive.service"    "$UNIT_DIR/meteoedge-archive.service"
-install -m 0644 "$SRC_DIR/meteoedge-archive.timer"      "$UNIT_DIR/meteoedge-archive.timer"
+install -m 0644 "$SRC_DIR/meteoedge-archive.service"               "$UNIT_DIR/meteoedge-archive.service"
+install -m 0644 "$SRC_DIR/meteoedge-archive.timer"                "$UNIT_DIR/meteoedge-archive.timer"
+install -m 0644 "$SRC_DIR/meteoedge-capture-forecasts.service"    "$UNIT_DIR/meteoedge-capture-forecasts.service"
+install -m 0644 "$SRC_DIR/meteoedge-capture-forecasts.timer"      "$UNIT_DIR/meteoedge-capture-forecasts.timer"
 
 echo "Reloading systemd..."
 systemctl daemon-reload
@@ -30,12 +32,14 @@ systemctl enable --now meteoedge.service
 systemctl enable --now meteoedge-dashboard.service
 systemctl enable --now meteoedge-settle.timer
 systemctl enable --now meteoedge-archive.timer
+systemctl enable --now meteoedge-capture-forecasts.timer
 
 echo
 echo "Done. Current status:"
-systemctl --no-pager status meteoedge.service meteoedge-dashboard.service meteoedge-settle.timer meteoedge-archive.timer || true
+systemctl --no-pager status meteoedge.service meteoedge-dashboard.service meteoedge-settle.timer meteoedge-archive.timer meteoedge-capture-forecasts.timer || true
 echo
 echo "Tail the bot log with:  journalctl -u meteoedge.service -f"
 echo "Tail dashboard log with:  journalctl -u meteoedge-dashboard.service -f"
 echo "Next settle run:  systemctl list-timers meteoedge-settle.timer"
 echo "Next archive run:  systemctl list-timers meteoedge-archive.timer"
+echo "Next capture run:  systemctl list-timers meteoedge-capture-forecasts.timer"
