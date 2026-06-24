@@ -562,6 +562,38 @@ def _latest_model_probs() -> "dict[tuple[str, float, float], tuple[float, str]]"
     return _jsonl_cache_get_rotated(SNAPSHOTS_JSONL, _parse_snapshots)
 
 
+def _parse_position_snaps(records) -> "dict[tuple[str, float, float, str], tuple[float, str]]":
+    """Parse position_snapshots.jsonl into (station, bl, bh, side) → (p_yes, ts).
+
+    Written by the always-on re-pricer (build_weather_for_pricing, issue #425).
+    Used as a dashboard fallback when a station is outside its scanner window.
+    """
+    result: dict[tuple[str, float, float, str], tuple[float, str]] = {}
+    try:
+        for r in records:
+            station = r.get("station") or ""
+            bl = r.get("bracket_low")
+            bh = r.get("bracket_high")
+            py = r.get("p_yes_now") or r.get("p_yes")
+            ts = r.get("ts") or ""
+            side = r.get("side") or "YES"
+            if station and bl is not None and bh is not None and py is not None:
+                result[(station, float(bl), float(bh), side)] = (float(py), ts)
+    except OSError as e:
+        logger.warning("position_snapshots.jsonl read error: %s", e)
+    return result
+
+
+def _latest_position_snap_probs() -> "dict[tuple[str, float, float, str], tuple[float, str]]":
+    """Latest re-pricer p_yes per (station, bracket_low, bracket_high, side).
+
+    Reads position_snapshots.jsonl, written 24/7 by build_weather_for_pricing
+    (#425). Used as a fallback when the scanner weather dict has no entry for
+    a held position's station during off-hours.
+    """
+    return _jsonl_cache_get_rotated(POSITION_SNAPSHOTS_JSONL, _parse_position_snaps)
+
+
 # ---------------------------------------------------------------------------
 # live_trades.jsonl — single-pass parser + mtime cache (issue #170)
 # Three callers (_trades_file_enrichment, _stopped_positions,
@@ -837,6 +869,7 @@ def _positions_from_wallet() -> tuple[list[PositionOut], list[ClosedPositionOut]
     # this result; the file is parsed at most once per file change (issue #170).
     jsonl_enrichment, stopped_list, settled_list = _cached_live_trades()
     snap_probs = _latest_model_probs()
+    pos_snap_probs = _latest_position_snap_probs()
 
     # Per-request NWS city cache: fetch each city's forecast at most once per
     # request regardless of how many open positions mention that city (issue #170).
