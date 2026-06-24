@@ -95,6 +95,92 @@ def fetch_gfs_forecast_high(lat: float, lon: float) -> float | None:
         return None
 
 
+def fetch_open_meteo_with_spread(
+    lat: float, lon: float, lead_hours: int
+) -> "tuple[float, float] | None":
+    """Fetch Open-Meteo forecast (mu_f, sigma_f) for the given coordinates.
+
+    Queries multiple constituent models and returns the mean daily-high as mu_f
+    and the cross-model standard deviation as sigma_f.  At least two models must
+    return valid values; otherwise returns None.
+
+    Models queried: ecmwf_ifs04, gfs_seamless, jma_seamless, best_match.
+    The `lead_hours` parameter is accepted for API consistency with other
+    with_spread fetchers; the multi-model spread is derived from the current
+    forecast horizon and is not directly keyed on lead_hours.
+
+    Args:
+        lat:        Latitude.
+        lon:        Longitude.
+        lead_hours: Lead time (hours) — used to select the forecast window.
+                    24 → tomorrow's max; ≤18 → today's remaining window.
+
+    Returns:
+        (mu_f, sigma_f) in °F, or None if fewer than two models respond.
+    """
+    import math as _math
+
+    models = ["ecmwf_ifs04", "gfs_seamless", "jma_seamless", "best_match"]
+    # Determine the day offset: lead≥20h → tomorrow, else today
+    day_offset = 1 if lead_hours >= 20 else 0
+    window_start = day_offset * 24   # index into the 168-hour hourly forecast
+    window_end = window_start + 24
+
+    highs: list[float] = []
+    for model_name in models:
+        url = (
+            f"https://api.open-meteo.com/v1/forecast"
+            f"?latitude={lat}&longitude={lon}"
+            f"&hourly=temperature_2m"
+            f"&models={model_name}"
+            f"&temperature_unit=fahrenheit&timezone=UTC"
+            f"&forecast_days=2"
+        )
+        data = cached_fetch_json(url, ttl_minutes=30)
+        if not data:
+            continue
+        try:
+            temps = data["hourly"]["temperature_2m"][window_start:window_end]
+            valid = [t for t in temps if t is not None]
+            if valid:
+                highs.append(max(valid))
+        except Exception as e:
+            log.debug("[open-meteo/spread] model=%s parse error (%s,%s): %s", model_name, lat, lon, e)
+
+    if len(highs) < 2:
+        log.warning(
+            "[open-meteo/spread] insufficient model responses (%d/4) for (%s,%s)", len(highs), lat, lon
+        )
+        return None
+
+    mu_f = sum(highs) / len(highs)
+    variance = sum((h - mu_f) ** 2 for h in highs) / (len(highs) - 1)
+    sigma_f = _math.sqrt(variance)
+    return float(mu_f), float(sigma_f)
+
+
+def fetch_gfs_with_spread(
+    lat: float, lon: float, lead_hours: int
+) -> "tuple[float, float] | None":
+    """Fetch GFS forecast (mu_f, sigma_f) using Open-Meteo multi-model spread.
+
+    Uses the same multi-model approach as fetch_open_meteo_with_spread() but
+    is registered separately so the cron worker can log it under model="gfs"
+    in model_forecast_log.
+
+    Args:
+        lat:        Latitude.
+        lon:        Longitude.
+        lead_hours: Lead time (hours).
+
+    Returns:
+        (mu_f, sigma_f) in °F, or None if unavailable.
+    """
+    # Reuse Open-Meteo multi-model spread; the GFS entry point is a semantic
+    # distinction (logged under model="gfs") rather than a different API call.
+    return fetch_open_meteo_with_spread(lat, lon, lead_hours)
+
+
 def fetch_hourly_temp_now(lat: float, lon: float) -> float | None:
     """Return Open-Meteo hourly temperature (°F) for the nearest past UTC hour.
 

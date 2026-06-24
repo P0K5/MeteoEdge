@@ -276,9 +276,10 @@ def poll_once(
         )
 
     # Snapshots and stop-loss use _pricing_weather (always-on, issue #425) so
-    # that take-profit / stop-loss fire during off-hours when conditions are met.
-    # scan_markets continues to use the active-hours-gated scanner weather so
-    # the KHOU 2026-05-27 regression is preserved.
+    # held positions get fair-value updates and stop-loss/take-profit fire even
+    # when the station is outside its STATION_ACTIVE_HOURS scanner window.
+    # scan_markets still uses `weather` (active-hours gated) — the KHOU
+    # 2026-05-27 regression guard is preserved.
     if live_trader:
         position_states = _log_open_position_snapshots(
             _pricing_weather, ts, db=db, orderbooks=shared_orderbooks,

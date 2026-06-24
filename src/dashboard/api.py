@@ -57,6 +57,7 @@ from src.config import (
     POSITION_SNAPSHOTS_JSONL, LOG_DIR, STARTING_CAPITAL_EUR,
     STATION_ACTIVE_HOURS, DISABLED_STATIONS, SHADOW_STATIONS_YES, SHADOW_STATIONS_NO,
     EMOS_DEFAULT_MODE, CONFIG_DEFAULTS, get_live_config, station_city,
+    MODEL_PROB_CAP,
 )
 from src.model.residual_correction import (
     compute_residual_stats,
@@ -562,11 +563,12 @@ def _latest_model_probs() -> "dict[tuple[str, float, float], tuple[float, str]]"
     return _jsonl_cache_get_rotated(SNAPSHOTS_JSONL, _parse_snapshots)
 
 
-def _parse_position_snaps(records) -> "dict[tuple[str, float, float, str], tuple[float, str]]":
-    """Parse position_snapshots.jsonl into (station, bl, bh, side) → (p_yes, ts).
+def _parse_position_snap_probs(records) -> "dict[tuple[str, float, float, str], tuple[float, str]]":
+    """Parse position_snapshots.jsonl into a prob map keyed by (station, bl, bh, side).
 
-    Written by the always-on re-pricer (build_weather_for_pricing, issue #425).
-    Used as a dashboard fallback when a station is outside its scanner window.
+    Used as a dashboard fallback for held positions when the station is outside
+    its STATION_ACTIVE_HOURS scanner window — the always-on re-pricer (issue #425)
+    writes to position_snapshots.jsonl 24/7, so this cache stays fresh overnight.
     """
     result: dict[tuple[str, float, float, str], tuple[float, str]] = {}
     try:
@@ -574,24 +576,19 @@ def _parse_position_snaps(records) -> "dict[tuple[str, float, float, str], tuple
             station = r.get("station") or ""
             bl = r.get("bracket_low")
             bh = r.get("bracket_high")
-            py = r.get("p_yes_now") or r.get("p_yes")
+            py = r.get("p_yes_now")
             ts = r.get("ts") or ""
-            side = r.get("side") or "YES"
+            side = str(r.get("side") or "NO").upper()
             if station and bl is not None and bh is not None and py is not None:
                 result[(station, float(bl), float(bh), side)] = (float(py), ts)
     except OSError as e:
-        logger.warning("position_snapshots.jsonl read error: %s", e)
+        logger.warning("position_snapshots.jsonl read error (prob parse): %s", e)
     return result
 
 
 def _latest_position_snap_probs() -> "dict[tuple[str, float, float, str], tuple[float, str]]":
-    """Latest re-pricer p_yes per (station, bracket_low, bracket_high, side).
-
-    Reads position_snapshots.jsonl, written 24/7 by build_weather_for_pricing
-    (#425). Used as a fallback when the scanner weather dict has no entry for
-    a held position's station during off-hours.
-    """
-    return _jsonl_cache_get_rotated(POSITION_SNAPSHOTS_JSONL, _parse_position_snaps)
+    """Cached read of position_snapshots.jsonl for dashboard fallback (issue #425)."""
+    return _jsonl_cache_get_rotated(POSITION_SNAPSHOTS_JSONL, _parse_position_snap_probs)
 
 
 # ---------------------------------------------------------------------------
@@ -869,6 +866,9 @@ def _positions_from_wallet() -> tuple[list[PositionOut], list[ClosedPositionOut]
     # this result; the file is parsed at most once per file change (issue #170).
     jsonl_enrichment, stopped_list, settled_list = _cached_live_trades()
     snap_probs = _latest_model_probs()
+    # Fallback prob source for stations outside scanner active-hours window (#425).
+    # The always-on re-pricer writes position_snapshots.jsonl 24/7; we use it
+    # here so the dashboard shows a live model fair-value line overnight.
     pos_snap_probs = _latest_position_snap_probs()
 
     # Per-request NWS city cache: fetch each city's forecast at most once per
@@ -978,16 +978,6 @@ def _positions_from_wallet() -> tuple[list[PositionOut], list[ClosedPositionOut]
                 raw_now = py * 100 if side == "YES" else (1 - py) * 100
                 my_prob_now = max(1, min(99, round(raw_now)))
                 my_prob_now_ts = ts
-            elif station_key:
-                # Fallback: position_snapshots.jsonl written by always-on re-pricer (#425).
-                # This keeps the dashboard fair-value line live overnight when the station
-                # is outside its STATION_ACTIVE_HOURS scanner window.
-                pos_key = (station_key, bracket_low_key, bracket_high_key, side)
-                if pos_key in pos_snap_probs:
-                    py, ts = pos_snap_probs[pos_key]
-                    raw_now = py * 100 if side == "YES" else (1 - py) * 100
-                    my_prob_now = max(1, min(99, round(raw_now)))
-                    my_prob_now_ts = ts
             open_positions.append(PositionOut(
                 question=question,
                 station=station_key,
@@ -1723,6 +1713,19 @@ def emos_promote(city: str) -> EmosCityStatus:
         ready_for_promotion=0,
     )
     _db.set_emos_effective_mode(canonical_city, "emos_primary")
+
+    # Promotion-time guardrail: the interim overconfidence cap (issue #305) keeps
+    # clamping p_yes even after EMOS is primary, throttling the calibrated
+    # probabilities EMOS just produced. Surface it loudly at the moment of
+    # promotion so the post-EMOS cleanup (issue #420) is not forgotten.
+    if MODEL_PROB_CAP < 1.0:
+        logger.warning(
+            "[emos] %s promoted to emos_primary while MODEL_PROB_CAP=%.3f still "
+            "clamps p_yes to [%.3f, %.3f]. Review/loosen this interim guardrail "
+            "(#305) now that EMOS is primary — see post-EMOS cleanup issue #420.",
+            canonical_city, MODEL_PROB_CAP,
+            round(1.0 - MODEL_PROB_CAP, 4), MODEL_PROB_CAP,
+        )
 
     # Build and return updated status
     all_rows = _db.get_all_emos_calibration()

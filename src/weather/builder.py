@@ -1,7 +1,7 @@
 """Stateless. Assembles WeatherState from NWP sources. No side effects."""
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 import pytz
 from dateutil import parser as dtparse
@@ -28,11 +28,11 @@ log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Delta-logging state: suppress per-poll weather log lines when values are
-# stable. Only log when any value changes >0.5 F or once per hour (heartbeat).
-# Trade/order/flag events are NOT deduped - this only applies to weather lines.
+# stable. Only log when any value changes >0.5°F or once per hour (heartbeat).
+# Trade/order/flag events are NOT deduped — this only applies to weather lines.
 # ---------------------------------------------------------------------------
 
-_WEATHER_LOG_THRESHOLD_F: float = 0.5        # F change that forces a log
+_WEATHER_LOG_THRESHOLD_F: float = 0.5        # °F change that forces a log
 _WEATHER_HEARTBEAT_INTERVAL_S: float = 3600  # 1 hour
 
 # Per-station: {"high_f": float, "latest_f": float, "nws": float|None, "last_logged": datetime}
@@ -40,8 +40,14 @@ _weather_log_state: dict[str, dict] = {}
 
 
 def _should_log_weather(station: str, high_f: float, latest_temp_f: float,
-                         forecast_nws: "float | None") -> bool:
-    """Return True if this poll's weather should be logged at INFO level."""
+                         forecast_nws: float | None) -> bool:
+    """Return True if this poll's weather should be logged at INFO level.
+
+    Logs when:
+    - Station has never been logged before.
+    - Any tracked value changed by more than _WEATHER_LOG_THRESHOLD_F.
+    - More than _WEATHER_HEARTBEAT_INTERVAL_S seconds have passed since last log.
+    """
     now = datetime.now(timezone.utc)
     prev = _weather_log_state.get(station)
     if prev is None:
@@ -53,6 +59,7 @@ def _should_log_weather(station: str, high_f: float, latest_temp_f: float,
         }
         return True
 
+    # Heartbeat: always log once per hour
     elapsed = (now - prev["last_logged"]).total_seconds()
     if elapsed >= _WEATHER_HEARTBEAT_INTERVAL_S:
         _weather_log_state[station].update(
@@ -60,6 +67,7 @@ def _should_log_weather(station: str, high_f: float, latest_temp_f: float,
         )
         return True
 
+    # Delta check: log if any value changed beyond threshold
     def _nws_changed() -> bool:
         old_nws = prev["nws"]
         if old_nws is None and forecast_nws is None:
@@ -101,7 +109,7 @@ def _build_one_station(
 
     This is a shared implementation helper called by both
     ``build_weather_for_scanning`` and ``build_weather_for_pricing``.  It does
-    NOT apply the active-hours gate -- callers are responsible for that decision.
+    NOT apply the active-hours gate — callers are responsible for that decision.
 
     Returns the WeatherState on success, or None when data is unavailable
     (no METAR, parse error, etc.).  A ``health_out`` entry is appended on
@@ -126,6 +134,9 @@ def _build_one_station(
     high_f, high_time = result
 
     # Upgrade daily high from densest feed with cross-source outlier rejection.
+    # High-cadence feeds (MSS 1-min, AMOS/JMA 10-min) can catch intra-30-min
+    # peaks that 30-min METAR would miss, but bad ticks are rejected when they
+    # exceed the METAR running high by more than CONSENSUS_OUTLIER_SIGMA_F.
     if db is not None:
         feed_keys = get_canonical_station_feeds(station)
         if len(feed_keys) > 1:
@@ -138,7 +149,7 @@ def _build_one_station(
             consensus_high = compute_consensus_high(db_obs)
             if consensus_high is not None and consensus_high > high_f:
                 log.debug(
-                    "[%s] daily high upgraded by obs consensus: %.1fF -> %.1fF",
+                    "[%s] daily high upgraded by obs consensus: %.1fF → %.1fF",
                     station, high_f, consensus_high,
                 )
                 high_f = consensus_high
@@ -201,7 +212,7 @@ def _build_one_station(
                 continue
             age_min = (datetime.now(timezone.utc) - obs_ts).total_seconds() / 60
             if age_min > 2 * src_cfg["cadence_min"]:
-                continue  # stale -- skip
+                continue  # stale — skip
             latest_temp_f = float(obs["temp_f"])
             latest_time = obs_ts
             break  # highest-priority fresh source wins
@@ -254,7 +265,7 @@ def _build_one_station(
             if residual_mu != base_mu:
                 state.corrected_mu_f = residual_mu
                 log.debug(
-                    "[%s] residual_correction applied: %.1fF -> %.1fF",
+                    "[%s] residual_correction applied: %.1fF → %.1fF",
                     station, base_mu, residual_mu,
                 )
                 db.log_guardrail_event(
@@ -274,7 +285,7 @@ def build_weather_for_scanning(stations=None, db=None, health_out=None) -> dict:
     """Assemble per-station WeatherState for the SCANNER path.
 
     Applies the active-hours gate: stations outside their configured local
-    window are excluded.  This gate is intentional -- opening new entries when
+    window are excluded.  This gate is intentional — opening new entries when
     overnight carryover can fool bracket logic caused the KHOU 2026-05-27
     incident and must not be regressed.
 
@@ -282,10 +293,10 @@ def build_weather_for_scanning(stations=None, db=None, health_out=None) -> dict:
         stations: iterable of (station, lat, lon, city, ...) tuples, or None
             to use the full STATIONS list from config.
         db: optional Database instance.
-        health_out: optional list; one {"station", "status", "reason"}
+        health_out: optional list; one ``{"station", "status", "reason"}``
             entry is appended per station for dashboard health reporting.
 
-    Returns dict mapping station code to WeatherState (only in-window stations).
+    Returns dict mapping station code → WeatherState (only in-window stations).
     """
     def _degraded(station: str, reason: str) -> None:
         if health_out is not None:
@@ -317,7 +328,7 @@ def build_weather_for_pricing(stations, db=None) -> dict:
     gate.  METARs flow 24 hours a day and the data is valid even at 03:00
     local; the active-hours gate exists only to prevent the scanner from
     opening new entries during overnight windows.  Re-pricing means continuous
-    fair-value updates for already-held positions -- it does NOT open new
+    fair-value updates for already-held positions — it does NOT open new
     positions.
 
     Callers MUST pass only the stations with open positions (typically 1-3).
@@ -328,7 +339,7 @@ def build_weather_for_pricing(stations, db=None) -> dict:
             position stations only.
         db: optional Database instance.
 
-    Returns dict mapping station code to WeatherState for every station that
+    Returns dict mapping station code → WeatherState for every station that
     has current METAR data (regardless of local hour).
     """
     weather: dict[str, WeatherState] = {}
@@ -348,9 +359,9 @@ def _build_weather(db=None, health_out=None) -> dict:
         This wrapper delegates to ``build_weather_for_scanning`` and is kept
         for backward compatibility with existing call sites and tests.
 
-    When *health_out* is a list, one {"station", "status", "reason"} entry
-    is appended per station so callers (the dashboard) can surface what is
-    failing and why -- e.g. outside active window, no METAR, parse error.
+    When *health_out* is a list, one ``{"station", "status", "reason"}`` entry
+    is appended per station so callers (the dashboard) can surface *what* is
+    failing and *why* -- e.g. outside active window, no METAR, parse error.
     ``status`` is ``"ok"`` for stations that produced a WeatherState.
     """
     return build_weather_for_scanning(db=db, health_out=health_out)

@@ -110,7 +110,11 @@ def _check_climb_rate(db, station: str) -> bool:
 def _count_distinct_models(db, station: str, trailing_days: int) -> int:
     """Count distinct models in model_forecast_log over trailing window."""
     since_date = (date_cls.today() - timedelta(days=trailing_days)).isoformat()
-    log_rows = db.get_forecast_log(station, since_date)
+    # Use lead_hours=24 slice for consistency with post-#422 schema.
+    if hasattr(db, "get_forecast_log_by_lead"):
+        log_rows = db.get_forecast_log_by_lead(station, since_date, lead_hours=24)
+    else:
+        log_rows = db.get_forecast_log(station, since_date)
 
     distinct_models = set()
     for row in log_rows:

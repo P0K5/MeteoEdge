@@ -226,6 +226,39 @@ class TestGetEmosCrpsCount:
 
 
 # ---------------------------------------------------------------------------
+# Test 7b: the daily runner logs a CRPS row per city (and dedups same-day)
+# ---------------------------------------------------------------------------
+
+class TestRunnerLogsCrps:
+    def test_run_calibration_logs_crps_once_per_day(self, monkeypatch):
+        """_run_calibration appends a CRPS row per fitted city, deduped per day.
+
+        Without this, emos_crps_log stays empty and the promotion guard
+        (get_emos_crps_count >= EMOS_MIN_SAMPLES) can never clear — so
+        emos_primary would be unreachable.
+        """
+        import scripts.run_emos_shadow as runner
+
+        db = _db()
+        canned = [(80.0, 2.0, 81.0)] * 60
+        monkeypatch.setattr(
+            "src.model.emos_calibration.fetch_training_data",
+            lambda city, db, **kw: canned,
+        )
+        monkeypatch.setattr(
+            "src.model.emos_calibration.fit_emos",
+            lambda data: (0.0, 1.0, 0.5, 1.0),
+        )
+
+        runner._run_calibration(db)
+        assert db.get_emos_crps_count("Chicago") == 1
+
+        # A same-day re-run (e.g. after a process restart) must not double-count.
+        runner._run_calibration(db)
+        assert db.get_emos_crps_count("Chicago") == 1
+
+
+# ---------------------------------------------------------------------------
 # Test 8: DEB weight log entry created
 # ---------------------------------------------------------------------------
 
