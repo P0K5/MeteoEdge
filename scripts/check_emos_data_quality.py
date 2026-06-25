@@ -36,7 +36,7 @@ LEAD_HOURS_TARGET = 24
 
 def get_city_for_station(station: str) -> str:
     """Map METAR station code to city name."""
-    for metar_code, _lat, _lon, city, _res_station, _unit, _tz in STATIONS:
+    for metar_code, _lat, _lon, city, *_ in STATIONS:
         if metar_code == station:
             return city
     return station

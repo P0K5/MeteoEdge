@@ -866,8 +866,6 @@ No trading halt is required. The reset affects only EMOS calibration; all live t
 
 ---
 
----
-
 ## Architectural Decisions
 
 ### DB `open_positions` as Single Source of Truth (2026-06-20)
