@@ -811,6 +811,59 @@ curl http://localhost:8000/api/guardrail-events | python3 -m json.tool
 
 ---
 
+## EMOS Data Reset
+
+### Background (Issues #422, #423, #424, #425)
+
+Prior to 2026-06-25, the `model_forecast_log` table accumulated "nowcast snapshots" — end-of-day forecasts at a single hardcoded σ — which could not be used for EMOS calibration. The EMOS algorithm (`src/model/emos_calibration.py`) requires:
+
+1. Forecast-vs-actual pairs at **fixed lead times** (e.g., 24-hour leads)
+2. Realistic ensemble spread (σ) from source models (NWS, Open-Meteo, GFS)
+3. At least **MIN_SAMPLES=60 triples** per city to fit meaningful calibration coefficients
+
+### Reset Timestamp
+
+When the new capture pipeline (#425) was deployed and confirmed healthy (24h of valid data), the pre-migration rows were archived to `model_forecast_log_legacy_v1` (migration #422) and a reset marker was inserted into the `bot_config` table:
+
+```sql
+-- Query the reset timestamp
+SELECT value FROM bot_config WHERE key = 'model_forecast_log_reset_at';
+```
+
+**Reset date (UTC):** 2026-06-25T15:00:14.400085+00:00
+
+### Expected Timeline to EMOS Readiness
+
+- **First 0–10 days**: New pipeline captures forecasts at multiple lead times (24h, 12h, 6h, 3h).
+- **Day 10–30**: DEB weighting (`src/model/deb_weighting.py`) falls back to equal weights (0.333 each) because only ~10 settlement rows are available.
+- **Day 30–60**: DEB gains traction as settlement count reaches `_MIN_SAMPLES=10`.
+- **Day 60+**: EMOS calibration becomes available; first cities ready for promotion are those with high daily-forecast cadence:
+  - **Singapore (WSSS)**: High-cadence mss station, typically ready first (~day 60–75)
+  - **Korean stations (RKSI, RKPK, RKPB, RKTU, RKNN)**: AMOS data, typically ready ~day 60–90
+  - **North America (KORD, KLAX, KMIA, KBOS)**: METAR only (once-daily), typically ready ~day 90–120
+
+### Data Quality Checks
+
+Use the provided script to monitor EMOS data readiness:
+
+```bash
+python scripts/check_emos_data_quality.py [--db /path/to/db]
+```
+
+This script:
+- Counts rows per (city, lead_hours, model) from `model_forecast_log`
+- Flags cities with < 60 rows at 24h lead as "at risk"
+- Projects estimated readiness date: reset_date + (60 - current_rows) days
+
+### Impact on Live Trading
+
+- **Before reset (legacy nowcasts)**: EMOS disabled; DEB uses empirical RMSE weights
+- **After reset (new pipeline, <60 days)**: EMOS still disabled; DEB uses equal weights (0.333)
+- **After 60 days**: EMOS shadow runs; coefficients calibrate; ready for promotion to active
+- **Current mode** (`EMOS_DEFAULT_MODE="legacy"`): Live envelope still uses the legacy method until manually promoted
+
+No trading halt is required. The reset affects only EMOS calibration; all live trading, risk limits, and settlement continue unchanged.
+
 ---
 
 ## Architectural Decisions
