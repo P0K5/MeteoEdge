@@ -82,6 +82,22 @@ def main() -> None:
         print("Reset timestamp: NOT SET")
     print()
 
+    # Query settled days per station (forecast date with a matching METAR observation)
+    settled_cursor = db._conn.execute(
+        """
+        SELECT mfl.station, COUNT(DISTINCT mfl.date) as settled_days
+        FROM model_forecast_log mfl
+        WHERE EXISTS (
+            SELECT 1 FROM observations o
+            WHERE o.station = mfl.station
+              AND o.source = 'metar'
+              AND DATE(o.ts) = mfl.date
+        )
+        GROUP BY mfl.station
+        """
+    )
+    settled_by_station: dict[str, int] = {r[0]: r[1] for r in settled_cursor.fetchall()}
+
     # Query model_forecast_log grouped by (station, lead_hours, model)
     cursor = db._conn.execute(
         """
@@ -122,18 +138,26 @@ def main() -> None:
     print("=" * 80)
     print(f"Summary at {LEAD_HOURS_TARGET}-hour lead time:")
     print("-" * 80)
-    print(f"{'City':<20} {'Row Count':>12} {'Status':>20}")
+    print(f"{'City':<20} {'Forecast':>10} {'Settled':>10} {'Status':>20}")
     print("-" * 80)
+
+    # Build city→station map for settled days lookup
+    city_to_station: dict[str, str] = {
+        city: metar for metar, _lat, _lon, city, *_ in STATIONS
+    }
 
     at_risk_cities = []
     for city in sorted(summary_by_city_and_lead.keys()):
-        count = summary_by_city_and_lead[city].get(LEAD_HOURS_TARGET, 0)
-        if count < MIN_SAMPLES:
-            status = f"AT RISK ({count}/{MIN_SAMPLES})"
-            at_risk_cities.append((city, count))
+        forecast_count = summary_by_city_and_lead[city].get(LEAD_HOURS_TARGET, 0)
+        station = city_to_station.get(city, "")
+        settled_count = settled_by_station.get(station, 0)
+        binding = min(forecast_count, settled_count) if settled_count > 0 else forecast_count
+        if binding < MIN_SAMPLES:
+            status = f"AT RISK ({binding}/{MIN_SAMPLES})"
+            at_risk_cities.append((city, forecast_count, settled_count))
         else:
-            status = f"OK ({count}/{MIN_SAMPLES})"
-        print(f"{city:<20} {count:>12} {status:>20}")
+            status = f"OK ({binding}/{MIN_SAMPLES})"
+        print(f"{city:<20} {forecast_count:>10} {settled_count:>10} {status:>20}")
 
     print()
     if at_risk_cities:
@@ -141,15 +165,14 @@ def main() -> None:
         print("READINESS PROJECTION:")
         print("-" * 80)
         if reset_ts:
-            for city, count in at_risk_cities:
-                rows_needed = MIN_SAMPLES - count
-                # Assume 1 row per day at lead_hours=24 (conservative estimate)
-                estimated_days = rows_needed
-                readiness_date = reset_ts + timedelta(days=estimated_days)
+            for city, forecast_count, settled_count in at_risk_cities:
+                # Binding constraint: both forecast rows AND settled days must reach 60
+                days_needed = max(MIN_SAMPLES - forecast_count, MIN_SAMPLES - settled_count)
+                readiness_date = reset_ts + timedelta(days=days_needed)
                 print(
-                    f"{city:<20} {count:>3}/{MIN_SAMPLES} rows "
+                    f"{city:<20} forecast={forecast_count:>3} settled={settled_count:>3} "
                     f"→ ready ~{readiness_date.strftime('%Y-%m-%d')} "
-                    f"(+{estimated_days} days)"
+                    f"(+{days_needed} days, bottleneck={'settled' if settled_count < forecast_count else 'forecast'})"
                 )
         else:
             print("Cannot estimate readiness without reset timestamp in bot_config.")

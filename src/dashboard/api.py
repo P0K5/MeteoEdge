@@ -454,6 +454,7 @@ class EmosCityStatus(BaseModel):
     primary: EmosCoefficients | None = None
     settled_days_available: int
     min_settled_days_required: int
+    readiness_date: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -490,6 +491,21 @@ def _get_emos_city_status(city: str, station: str, calibration_by_city: dict) ->
     settled = _db.get_settled_days_available(station) if _db is not None else 0
     override = _db.get_emos_effective_mode(city) if _db is not None else None
     effective_mode = override if override is not None else EMOS_DEFAULT_MODE
+
+    readiness_date = None
+    if settled < _EMOS_MIN_SETTLED_DAYS and _db is not None:
+        reset_ts_str = _db.get_config("model_forecast_log_reset_at")
+        if reset_ts_str:
+            try:
+                from datetime import datetime, timedelta, timezone
+                reset_ts = datetime.fromisoformat(reset_ts_str)
+                forecast_rows = _db.get_forecast_log_by_lead(station, city, since_date="2000-01-01", lead_hours=24)
+                forecast_count = len(forecast_rows)
+                days_needed = max(_EMOS_MIN_SETTLED_DAYS - forecast_count, _EMOS_MIN_SETTLED_DAYS - settled)
+                readiness_date = (reset_ts + timedelta(days=days_needed)).strftime("%Y-%m-%d")
+            except Exception:
+                pass
+
     return EmosCityStatus(
         city=city,
         metar=station,
@@ -498,6 +514,7 @@ def _get_emos_city_status(city: str, station: str, calibration_by_city: dict) ->
         primary=primary,
         settled_days_available=settled,
         min_settled_days_required=_EMOS_MIN_SETTLED_DAYS,
+        readiness_date=readiness_date,
     )
 
 
