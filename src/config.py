@@ -561,3 +561,21 @@ def get_live_config(db) -> dict:
             # str (covers EMOS_DEFAULT_MODE)
             result[key] = raw_val
     return result
+
+
+# ------------------------------------------------------------------
+# GRIB / HRRR cache configuration
+# ------------------------------------------------------------------
+# These params are intentionally minimal and kept separate from the DB-backed
+# CONFIG_DEFAULTS store because they control infrastructure (disk layout, TTL)
+# rather than trading strategy.  They follow the same env-var-override pattern
+# used throughout this file and are read live by src/data/grib_cache.py.
+
+# TTL for on-disk GRIB2 slices (hours).  HRRR runs hourly; 6h keeps two full
+# model cycles in cache while preventing unbounded disk growth.
+GRIB_CACHE_TTL_HOURS: float = float(os.getenv("GRIB_CACHE_TTL_HOURS", "6.0"))
+
+# Directory for cached GRIB2 slices.  Relative to the working directory (i.e.
+# the repo root when running normally).  Override via env to point at fast
+# local storage or a shared NFS mount.
+GRIB_CACHE_DIR: str = os.getenv("GRIB_CACHE_DIR", ".grib_cache")

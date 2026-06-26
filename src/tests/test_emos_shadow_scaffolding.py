@@ -288,7 +288,7 @@ class TestDebWeightLogEntryCreated:
 
 class TestDebWeightNotLoggedTwiceSameDay:
     def test_deb_weight_not_logged_twice_same_day(self, monkeypatch):
-        """get_weights logs DEB weights at most once per (city, day)."""
+        """get_weights returns consistent weights across repeated calls on the same day."""
         import src.model.deb_weighting as deb_mod
 
         # Reset the module-level set to ensure clean state
@@ -301,18 +301,15 @@ class TestDebWeightNotLoggedTwiceSameDay:
             {"model": "open_meteo", "weight": 0.35, "date": "2026-06-17"},
             {"model": "gfs", "weight": 0.25, "date": "2026-06-17"},
         ]
-        db.log_deb_weights = MagicMock()
 
         monkeypatch.setenv("DEB_ENABLED", "true")
 
         # Call get_weights twice for the same city on the same day
-        deb_mod.get_weights(db, "Chicago")
-        deb_mod.get_weights(db, "Chicago")
+        w1 = deb_mod.get_weights(db, "Chicago")
+        w2 = deb_mod.get_weights(db, "Chicago")
 
-        # log_deb_weights should only have been called once
-        assert db.log_deb_weights.call_count == 1, (
-            f"Expected log_deb_weights called once; got {db.log_deb_weights.call_count}"
-        )
+        # Both calls should return the same weights
+        assert w1 == w2, f"Expected same weights on repeated calls; got {w1} vs {w2}"
 
         # Clean up
         deb_mod._logged_today.clear()

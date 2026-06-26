@@ -25,6 +25,12 @@ pandas>=1.5.0  # For results analysis
 numpy>=1.24.0  # For statistical calculations
 scipy>=1.10.0  # EMOS calibration optimisation (scipy.optimize.minimize)
 
+# GRIB2 / HRRR ingestion (Epic A1, issue #432)
+# herbie-data: NOAA model-run resolution + byte-range S3 fetches via IDX sidecar (MIT)
+herbie-data>=2024.3.0
+# cfgrib: read GRIB2 slices into xarray/numpy after herbie fetches them
+cfgrib>=0.9.10
+
 # Web Dashboard (Epic 4)
 fastapi>=0.95.0
 uvicorn>=0.21.0
