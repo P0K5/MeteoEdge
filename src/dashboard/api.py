@@ -2182,6 +2182,12 @@ _CONFIG_META: dict[str, dict] = {
         "min": 0.1,
         "max": 1.0,
     },
+    "FORECAST_STACK": {
+        "description": "Active forecast stack — controls which ingestion channels are live",
+        "type": "enum",
+        "group": "forecast",
+        "options": ["baseline", "hrrr_nbm", "intl_ecmwf_icon", "full"],
+    },
 }
 
 _EMOS_VALID_MODES = frozenset({"legacy", "emos_shadow", "emos_primary"})

@@ -507,6 +507,12 @@ CONFIG_DEFAULTS: "dict[str, str | int | float | bool]" = {
     "DEB_ICON_COLD_START_FRACTION": 0.5,
     # DEB group weight cap for the noaa_us channel group (NWS + HRRR + NBM)
     "DEB_GROUP_WEIGHT_CAP": 0.7,
+    # Active forecast stack — controls which ingestion channels are live.
+    # baseline: NWS + open_meteo only
+    # hrrr_nbm: adds HRRR and NBM for US stations
+    # intl_ecmwf_icon: adds ECMWF and ICON-EU for international stations
+    # full: all channels active
+    "FORECAST_STACK": "baseline",
 }
 
 
