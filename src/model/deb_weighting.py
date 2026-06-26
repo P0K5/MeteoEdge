@@ -105,6 +105,14 @@ _NBM_COLD_START = float(os.getenv("DEB_NBM_COLD_START_FRACTION", "0.4"))
 register_model("hrrr", region="us", expected_cadence_h=1.0, group_id="noaa_us", cold_start_fraction=_HRRR_COLD_START)
 register_model("nbm",  region="us", expected_cadence_h=6.0, group_id="noaa_us", cold_start_fraction=_NBM_COLD_START)
 
+# ECMWF and ICON: international sources; correlated via ecmwf_intl group cap.
+# ECMWF is global; ICON is EU-only (ICON-EU domain).
+# cold_start_fraction is live-read from env so seed_config / dashboard overrides take effect.
+_ECMWF_COLD_START = float(os.getenv("DEB_ECMWF_COLD_START_FRACTION", "0.5"))
+_ICON_COLD_START = float(os.getenv("DEB_ICON_COLD_START_FRACTION", "0.5"))
+register_model("ecmwf", region="global", expected_cadence_h=12.0, group_id="ecmwf_intl", cold_start_fraction=_ECMWF_COLD_START)
+register_model("icon",  region="eu",     expected_cadence_h=6.0,  group_id="ecmwf_intl", cold_start_fraction=_ICON_COLD_START)
+
 
 def _models_for_region(station_region: str) -> list[_ModelEntry]:
     """Return registry entries applicable to *station_region*.

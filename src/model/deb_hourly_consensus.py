@@ -41,11 +41,14 @@ def compute_deb_mu_f(
     forecast_gfs: float | None = None,
     forecast_hrrr: float | None = None,
     forecast_nbm: float | None = None,
+    forecast_ecmwf: float | None = None,
+    forecast_icon: float | None = None,
+    station_region: str = "us",
 ) -> float | None:
     """Return DEB-weighted forecast high (°F).
 
     Replaces the static 60/40 ensemble_forecast() blend when DEB_ENABLED=true.
-    Supports up to five models: nws, open_meteo, gfs, hrrr, nbm.
+    Supports up to seven models: nws, open_meteo, gfs, hrrr, nbm, ecmwf, icon.
 
     When a model forecast is None its contribution is dropped and the remaining
     available forecasts are renormalised to sum to 1.0.  This means:
@@ -55,9 +58,24 @@ def compute_deb_mu_f(
       full weight rather than returning None.
     - 4-model consensus (nws + open_meteo + hrrr + nbm) is used when HRRR and NBM
       are both available; degrades gracefully when either is missing.
+    - ECMWF and ICON are used for international stations; ECMWF data for US stations
+      triggers a warning and is excluded.
 
     Returns None only when all inputs are None.
     """
+    import logging as _logging
+    _log = _logging.getLogger(__name__)
+
+    # Guard: ECMWF should not be used for US stations.
+    if forecast_ecmwf is not None and station_region == "us":
+        _log.warning(
+            "[deb] ECMWF forecast provided for US station (region=%r) — "
+            "ECMWF is a global model but should not be used for US stations; "
+            "excluding from ensemble.",
+            station_region,
+        )
+        forecast_ecmwf = None
+
     # Build the set of available (weight, value) pairs.
     available: list[tuple[float, float]] = []
     pairs = [
@@ -66,6 +84,8 @@ def compute_deb_mu_f(
         ("gfs", forecast_gfs),
         ("hrrr", forecast_hrrr),
         ("nbm", forecast_nbm),
+        ("ecmwf", forecast_ecmwf),
+        ("icon", forecast_icon),
     ]
     for key, value in pairs:
         if value is not None:
