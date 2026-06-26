@@ -159,7 +159,7 @@ def fetch_icon_hourly(
     results: list[HourlyTemp] = []
     for fxx in _FORECAST_HOURS:
         path = _grib_cache._fetch_grib_slice(
-            "icon-eu", "TMP_2m", cycle_dt, fxx, cache_dir, ttl_hours
+            "icon-eu", "ICON_T2M", cycle_dt, fxx, cache_dir, ttl_hours
         )
         if path is None:
             log.debug("[icon] fxx=%02d unavailable for %s", fxx, label)

@@ -328,7 +328,7 @@ def fetch_ecmwf_daily_high(
     target_end = target_start + timedelta(days=1)
 
     temps: list[float] = []
-    for fxx in range(1, 121):  # scan up to 120 h ahead
+    for fxx in range(1, 91):  # HRES Open Data publishes up to ~90h
         valid_dt = cycle_dt + timedelta(hours=fxx)
         if valid_dt < target_start:
             continue
