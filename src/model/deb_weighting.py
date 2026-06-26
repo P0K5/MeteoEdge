@@ -27,6 +27,8 @@ from dataclasses import dataclass, field
 from datetime import date as date_cls, timedelta
 from typing import Optional
 
+from src.config import get_live_config, CONFIG_DEFAULTS
+
 log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -363,7 +365,7 @@ def refresh_weights(db, station: str, city: str) -> None:
 
     When weights are written, each model row is upserted with today's date.
     """
-    if os.getenv("DEB_ENABLED", "false").lower() != "true":
+    if not get_live_config(db).get("DEB_ENABLED", CONFIG_DEFAULTS["DEB_ENABLED"]):
         return
 
     today = date_cls.today().isoformat()
@@ -392,7 +394,7 @@ def get_weights(db, city: str) -> dict[str, float]:
     - DEB_ENABLED is not "true"
     - No rows exist in model_weights for *city*
     """
-    if os.getenv("DEB_ENABLED", "false").lower() != "true":
+    if not get_live_config(db).get("DEB_ENABLED", CONFIG_DEFAULTS["DEB_ENABLED"]):
         return dict(EQUAL_WEIGHTS)
 
     rows = db.get_model_weights(city)
