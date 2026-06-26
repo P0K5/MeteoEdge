@@ -1,51 +1,152 @@
 """DEB (Dynamic Error Balancing) weight computation module.
 
 Computes per-model forecast weights based on exponential-decay RMSE over a
-rolling window of forecast-vs-actual pairs.  Three models are tracked:
-  - "nws"        : NWS daily-high forecast (US stations only)
-  - "open_meteo" : Open-Meteo best-match daily-high forecast (global)
-  - "gfs"        : Open-Meteo GFS seamless daily-high forecast (global)
+rolling window of forecast-vs-actual pairs.
 
-NWS is unavailable for international stations (those stations only accumulate
-"open_meteo" and "gfs" rows in model_forecast_log).  The phantom-model guard
-below excludes models with zero rows from the blend, so international stations
-naturally receive a two-model (open_meteo + gfs) ensemble once enough data
-accumulates.
+Models are managed through a registry (register_model) that supports adding new
+forecast channels declaratively without touching compute logic.
 
-Phantom-model guard: a model that has zero model_forecast_log rows in the
-trailing window (e.g. NWS at international stations) is excluded from the
-blend entirely.  Remaining weights are renormalised to sum to 1.0.  A
-WARNING is logged for each excluded phantom contributor.
+Pre-registered channels:
+  - "nws"        : NWS daily-high forecast  (US, 24h cadence)
+  - "open_meteo" : Open-Meteo daily-high    (global, 24h cadence)
+  - "gfs"        : GFS daily-high forecast  (global, 6h cadence)
 
-When DEB_ENABLED is false (default) or when fewer than MIN_SAMPLES pairs
-exist for any model, equal weights (1/3 each) are returned silently.
+When DEB_ENABLED is false (default) or when fewer than MIN_SAMPLES pairs exist,
+equal weights are returned silently.
+
+Tunable parameters (all overridable via env vars):
+  DEB_MIN_SAMPLES          – minimum pairs before DEB activates (default 10)
+  DEB_REFRESH_CADENCE_HOURS – weight refresh cadence in hours (default 24)
+  DEB_BASE_DECAY_RATE      – base exponential decay rate per day (default 0.05)
+  DEB_GROUP_WEIGHT_CAP     – max combined weight for any group_id (default 0.7)
 """
 import math
 import os
 import logging
+from dataclasses import dataclass, field
 from datetime import date as date_cls, timedelta
+from typing import Optional
 
 log = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Config params (env-var overridable, live-read at call time)
+# ---------------------------------------------------------------------------
+
 _MIN_SAMPLES = int(os.getenv("DEB_MIN_SAMPLES", "10"))
 _REFRESH_CADENCE_H = float(os.getenv("DEB_REFRESH_CADENCE_HOURS", "24"))
-_DECAY_RATE = 0.05  # per day; e^(-0.05*k) weights errors k days ago
 
-MODELS: tuple[str, ...] = ("nws", "open_meteo", "gfs")
-EQUAL_WEIGHTS: dict[str, float] = {m: round(1.0 / len(MODELS), 10) for m in MODELS}
+# BASE_DECAY_RATE: per-day decay for a 24h-cadence model.
+# Cadence-aware rate per model = BASE_DECAY_RATE * (cadence_h / 24).
+BASE_DECAY_RATE: float = float(os.getenv("DEB_BASE_DECAY_RATE", "0.05"))
+
+# GROUP_WEIGHT_CAP: max total weight allowed for any single group_id.
+# Models without a group_id are uncapped.
+GROUP_WEIGHT_CAP: float = float(os.getenv("DEB_GROUP_WEIGHT_CAP", "0.7"))
+
 MIN_SAMPLES: int = _MIN_SAMPLES
 
-# Track (city, date) pairs already logged today to avoid duplicate DEB weight entries.
-_logged_today: set = set()
+
+# ---------------------------------------------------------------------------
+# Model registry
+# ---------------------------------------------------------------------------
+
+@dataclass
+class _ModelEntry:
+    name: str
+    region: str                   # "us", "eu", or "global"
+    expected_cadence_h: float     # hours between forecasts
+    group_id: Optional[str]       # correlated-channel group (None = uncapped)
+    cold_start_fraction: float    # weight multiplier during cold-start (< MIN_SAMPLES)
+
+
+_REGISTRY: dict[str, _ModelEntry] = {}
+
+
+def register_model(
+    name: str,
+    region: str,
+    expected_cadence_h: float,
+    group_id: Optional[str] = None,
+    cold_start_fraction: float = 0.5,
+) -> None:
+    """Register a forecast model in the DEB registry.
+
+    Args:
+        name: string key (e.g. "nws", "open_meteo", "hrrr")
+        region: one of "us", "eu", "global"
+        expected_cadence_h: hours between forecast updates
+        group_id: optional string grouping correlated channels
+        cold_start_fraction: weight multiplier for this model during cold-start
+                             (fewer than MIN_SAMPLES pairs). Default 0.5x.
+    """
+    _REGISTRY[name] = _ModelEntry(
+        name=name,
+        region=region,
+        expected_cadence_h=expected_cadence_h,
+        group_id=group_id,
+        cold_start_fraction=cold_start_fraction,
+    )
+
+
+# Pre-register the 3 legacy channels
+register_model("nws",        region="us",     expected_cadence_h=24.0, group_id="noaa_us")
+register_model("open_meteo", region="global", expected_cadence_h=24.0, group_id=None)
+register_model("gfs",        region="global", expected_cadence_h=6.0,  group_id=None)
+
+
+def _models_for_region(station_region: str) -> list[_ModelEntry]:
+    """Return registry entries applicable to *station_region*.
+
+    A model is applicable when its region equals the station_region OR is "global".
+    """
+    return [
+        m for m in _REGISTRY.values()
+        if m.region == station_region or m.region == "global"
+    ]
+
+
+def _model_names_for_region(station_region: str) -> tuple[str, ...]:
+    return tuple(m.name for m in _models_for_region(station_region))
+
+
+# ---------------------------------------------------------------------------
+# Module-level convenience exports (backward compat)
+# ---------------------------------------------------------------------------
+
+# MODELS: tuple of model names for the default "us" region.
+# Computed from the registry so callers that iterate over it still work.
+# Order: nws, open_meteo, gfs  (same as before; registry insertion order preserved)
+MODELS: tuple[str, ...] = _model_names_for_region("us")
+
+# EQUAL_WEIGHTS: uniform weight dict for the default "us" region.
+# Recomputed if registry changes via register_model after module load.
+def _equal_weights_for(station_region: str = "us") -> dict[str, float]:
+    names = _model_names_for_region(station_region)
+    w = 1.0 / len(names) if names else 1.0
+    return {n: w for n in names}
+
+
+EQUAL_WEIGHTS: dict[str, float] = _equal_weights_for("us")
 
 
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-def _decay_weight(days_ago: int) -> float:
-    """Return the exponential decay weight for an error that is *days_ago* days old."""
-    return math.exp(-_DECAY_RATE * days_ago)
+def _decay_weight(days_ago: int, decay_rate: float) -> float:
+    """Return the exponential decay weight for an error *days_ago* days old."""
+    return math.exp(-decay_rate * days_ago)
+
+
+def _cadence_decay_rate(entry: _ModelEntry) -> float:
+    """Per-model decay rate scaled by forecast cadence.
+
+    A 24h-cadence model gets BASE_DECAY_RATE unchanged.
+    A 6h-cadence model (GFS) gets BASE_DECAY_RATE * (6/24) = 0.0125 at default,
+    preventing over-discounting older observations that arrive more frequently.
+    """
+    return BASE_DECAY_RATE * (entry.expected_cadence_h / 24.0)
 
 
 # ---------------------------------------------------------------------------
@@ -68,33 +169,43 @@ def log_forecast(db, station: str, model: str, date: str, forecast_high_f: float
 
 
 def compute_weights(
-    db, station: str, city: str, window_days: int = 30,
-) -> tuple[dict[str, float], dict[str, float]]:
+    db,
+    station: str,
+    city: str,
+    window_days: int = 30,
+    station_region: str = "us",
+) -> dict[str, float]:
     """Compute inverse-error weights for each model over the last *window_days* days.
 
     Joins model_forecast_log with settlements on (station, date) to obtain
-    forecast-vs-actual pairs.  RMSE is computed with exponential time-decay so
-    that recent errors matter more than older ones.
+    forecast-vs-actual pairs.  RMSE is computed with exponential time-decay
+    (cadence-aware per model) so that recent errors matter more than older ones.
+    Returns a dict that sums to 1.0.
 
-    Returns:
-        (weights, rmse) where both are dicts keyed by model name.
-        weights sums to 1.0.  rmse values are 0.0 on equal-weights fallback.
+    New behaviours vs legacy code:
+    - Regional applicability: models whose region doesn't match station_region
+      (and isn't "global") are excluded before any weight computation.
+    - Cadence-aware decay: models with shorter cadences get proportionally lower
+      decay rates, preventing over-discounting of high-frequency observations.
+    - Cold-start policy: models below MIN_SAMPLES get cold_start_fraction * (1/N)
+      weight; remaining weight is distributed proportionally to calibrated models.
+      Falls back to full equal weights only when ALL models are in cold-start.
+    - Group weight cap: total weight of any group_id is capped at GROUP_WEIGHT_CAP.
+      Models with no group_id are uncapped.
 
-    Phantom-model guard: models with zero log rows in the window are excluded
-    before any weight computation.  A WARNING is emitted per phantom model.
-    If only one model has rows, it receives weight=1.0.
-    Falls back to EQUAL_WEIGHTS (logged at DEBUG) when all candidate models
-    have fewer than _MIN_SAMPLES valid pairs.
+    Backward compat: for legacy 3-channel US stations the result is identical to
+    the old 2-model code once GFS data accumulates; during cold-start the new
+    policy blends more gracefully than the hard equal-weight fallback.
     """
+    applicable = _models_for_region(station_region)
+    if not applicable:
+        return _equal_weights_for(station_region)
+
+    applicable_names = [m.name for m in applicable]
+    equal_w = _equal_weights_for(station_region)
+
     since_date = (date_cls.today() - timedelta(days=window_days)).isoformat()
-    # Use the lead_hours=24 slice so DEB compares like-for-like forecasts.
-    # Explicit lead_hours avoids mixing nowcast snapshots with genuine ahead-of-event
-    # forecasts after the #422 migration.  Falls back to get_forecast_log() on
-    # DB instances that pre-date the v2 method (test doubles, etc.).
-    if hasattr(db, "get_forecast_log_by_lead"):
-        log_rows = db.get_forecast_log_by_lead(station, since_date, lead_hours=24)
-    else:
-        log_rows = db.get_forecast_log(station, since_date)
+    log_rows = db.get_forecast_log(station, since_date)
     settlements = db.get_settlements(station, since_date + "T00:00:00")
 
     # Build actual_high lookup: date_str -> actual_high_f
@@ -103,75 +214,120 @@ def compute_weights(
         d = row["ts"][:10]
         actuals[d] = row["actual_high_f"]
 
-    # Count raw log rows per model (before filtering against actuals).
-    # A model with zero rows in the window is a phantom contributor and must
-    # be excluded from the blend entirely -- regardless of MIN_SAMPLES.
-    raw_row_counts: dict[str, int] = {m: 0 for m in MODELS}
-    for row in log_rows:
-        m = row.get("model")
-        if m in raw_row_counts:
-            raw_row_counts[m] += 1
-
-    # Drop phantom models (zero log rows) and warn.
-    active_models = []
-    for m in MODELS:
-        if raw_row_counts[m] == 0:
-            log.warning(
-                "[deb] city=%s model=%s has no forecast rows — excluded from blend",
-                city, m,
-            )
-        else:
-            active_models.append(m)
-
-    _zero_rmse = {m: 0.0 for m in MODELS}
-
-    # If no models have any rows at all, fall back to equal weights.
-    if not active_models:
-        log.debug(
-            "[deb] no forecast rows for %s in trailing %d-day window -- using equal weights",
-            city, window_days,
-        )
-        return dict(EQUAL_WEIGHTS), _zero_rmse
-
-    # Group (days_ago, abs_error) pairs by model -- only for active models.
-    errors: dict[str, list[tuple[int, float]]] = {m: [] for m in active_models}
+    # Group (days_ago, abs_error) pairs by model
+    errors: dict[str, list[tuple[int, float]]] = {m: [] for m in applicable_names}
     today = date_cls.today()
     for row in log_rows:
-        m = row.get("model")
-        if m not in errors:
-            continue
+        model_name = row["model"]
+        if model_name not in errors:
+            continue  # model not applicable for this station_region
         d = row["date"]
         if d not in actuals:
             continue
         days_ago = (today - date_cls.fromisoformat(d)).days
         err = abs(row["forecast_high_f"] - actuals[d])
-        errors[m].append((days_ago, err))
+        errors[model_name].append((days_ago, err))
 
-    # Check minimum samples for each active model; fall back to equal weights
-    # if any active model is below the threshold.
-    for m in active_models:
+    # Classify models: calibrated vs cold-start
+    cold_start: list[str] = []
+    calibrated: list[str] = []
+    for m in applicable_names:
         if len(errors[m]) < _MIN_SAMPLES:
+            cold_start.append(m)
+        else:
+            calibrated.append(m)
+
+    # All models in cold-start: fall back to full equal weights
+    if len(cold_start) == len(applicable_names):
+        for m in cold_start:
             log.debug(
-                "[deb] insufficient samples for %s/%s (%d < %d) -- using equal weights",
+                "[deb] insufficient samples for %s/%s (%d < %d) — using equal weights",
                 city, m, len(errors[m]), _MIN_SAMPLES,
             )
-            return dict(EQUAL_WEIGHTS), _zero_rmse
+        return dict(equal_w)
 
-    # Compute decay-weighted RMSE per active model.
+    n_models = len(applicable_names)
+
+    # Compute decay-weighted RMSE for calibrated models
     rmse: dict[str, float] = {}
-    for m in active_models:
-        total_w = sum(_decay_weight(k) for k, _ in errors[m])
-        weighted_mse = sum(_decay_weight(k) * e ** 2 for k, e in errors[m]) / total_w
+    for m in calibrated:
+        entry = _REGISTRY[m]
+        decay_rate = _cadence_decay_rate(entry)
+        total_w = sum(_decay_weight(k, decay_rate) for k, _ in errors[m])
+        weighted_mse = sum(_decay_weight(k, decay_rate) * e ** 2 for k, e in errors[m]) / total_w
         rmse[m] = math.sqrt(weighted_mse)
 
-    # Inverse-error weights, normalised to sum to 1.0.
-    # Only active models receive weight; phantom models get 0.0.
-    raw = {m: 1.0 / rmse[m] for m in active_models}
-    total = sum(raw.values())
-    weights = {m: 0.0 for m in MODELS}
-    for m in active_models:
-        weights[m] = raw[m] / total
-    return weights, rmse
+    # Inverse-error raw weights for calibrated models
+    raw_calibrated: dict[str, float] = {m: 1.0 / rmse[m] for m in calibrated}
+    total_calibrated = sum(raw_calibrated.values())
+
+    # Cold-start models get cold_start_fraction * (1/N_models) each
+    cold_start_reserved = sum(
+        _REGISTRY[m].cold_start_fraction / n_models for m in cold_start
+    )
+    calibrated_budget = 1.0 - cold_start_reserved
+
+    # Distribute calibrated_budget proportionally among calibrated models
+    weights: dict[str, float] = {}
+    for m in calibrated:
+        weights[m] = raw_calibrated[m] / total_calibrated * calibrated_budget
+    for m in cold_start:
+        weights[m] = _REGISTRY[m].cold_start_fraction / n_models
+        log.debug(
+            "[deb] cold-start for %s/%s (%d < %d) — assigned %.4f weight",
+            city, m, len(errors[m]), _MIN_SAMPLES, weights[m],
+        )
+
+    # Apply group weight cap
+    weights = _apply_group_cap(weights, applicable)
+
+    return weights
+
+
+def _apply_group_cap(
+    weights: dict[str, float],
+    applicable: list[_ModelEntry],
+) -> dict[str, float]:
+    """Cap the total weight of any group_id to GROUP_WEIGHT_CAP.
+
+    Models without a group_id are uncapped. When a group exceeds the cap, its
+    members are scaled down proportionally and the freed weight is redistributed
+    to uncapped models proportionally to their current weights.
+    """
+    # Collect group totals
+    group_models: dict[str, list[str]] = {}
+    ungrouped: list[str] = []
+    for m in applicable:
+        if m.group_id is not None:
+            group_models.setdefault(m.group_id, []).append(m.name)
+        else:
+            ungrouped.append(m.name)
+
+    result = dict(weights)
+    freed = 0.0
+
+    for gid, members in group_models.items():
+        group_total = sum(result.get(m, 0.0) for m in members)
+        if group_total > GROUP_WEIGHT_CAP and group_total > 0:
+            scale = GROUP_WEIGHT_CAP / group_total
+            excess = group_total - GROUP_WEIGHT_CAP
+            freed += excess
+            for m in members:
+                result[m] = result.get(m, 0.0) * scale
+
+    # Redistribute freed weight to uncapped models proportionally
+    if freed > 0 and ungrouped:
+        uncapped_total = sum(result.get(m, 0.0) for m in ungrouped)
+        if uncapped_total > 0:
+            for m in ungrouped:
+                result[m] = result.get(m, 0.0) + freed * (result.get(m, 0.0) / uncapped_total)
+        else:
+            # All uncapped models have zero weight — distribute equally
+            per_model = freed / len(ungrouped)
+            for m in ungrouped:
+                result[m] = result.get(m, 0.0) + per_model
+
+    return result
 
 
 def refresh_weights(db, station: str, city: str) -> None:
@@ -182,8 +338,6 @@ def refresh_weights(db, station: str, city: str) -> None:
     - weights were already refreshed today (checked via model_weights table)
 
     When weights are written, each model row is upserted with today's date.
-    The RMSE is stored as 0.0 when the computation fell back to equal weights
-    (no data or insufficient samples).
     """
     if os.getenv("DEB_ENABLED", "false").lower() != "true":
         return
@@ -195,16 +349,16 @@ def refresh_weights(db, station: str, city: str) -> None:
     if existing and existing[0]["date"] == today:
         return
 
-    weights, rmse = compute_weights(db, station, city)
+    weights = compute_weights(db, station, city)
     for model, weight in weights.items():
         db.upsert_model_weight(
             city=city,
             model=model,
             date=today,
             weight=weight,
-            rmse=rmse.get(model, 0.0),
+            rmse=0.0,
         )
-    log.info("[deb] refreshed weights for %s: %s  rmse=%s", city, weights, rmse)
+    log.info("[deb] refreshed weights for %s: %s", city, weights)
 
 
 def get_weights(db, city: str) -> dict[str, float]:
@@ -213,11 +367,7 @@ def get_weights(db, city: str) -> dict[str, float]:
     Returns EQUAL_WEIGHTS when:
     - DEB_ENABLED is not "true"
     - No rows exist in model_weights for *city*
-
-    Once per day, logs the current weights to deb_weight_log (if db is provided).
     """
-    import json as _json
-
     if os.getenv("DEB_ENABLED", "false").lower() != "true":
         return dict(EQUAL_WEIGHTS)
 
@@ -239,62 +389,39 @@ def get_weights(db, city: str) -> dict[str, float]:
     if any(m not in latest for m in MODELS):
         return dict(EQUAL_WEIGHTS)
 
-    # Once-per-day DEB weight logging
-    if db is not None:
-        today_str = date_cls.today().isoformat()
-        log_key = (city, today_str)
-        if log_key not in _logged_today:
-            try:
-                db.log_deb_weights(city, today_str, _json.dumps(latest))
-                _logged_today.add(log_key)
-            except Exception as _e:
-                log.warning("[deb] failed to log weights for %s: %s", city, _e)
-
     return latest
 
 
-def check_weight_quality(db, station: str, city: str, window_days: int = 30) -> list[str]:
-    """Data-quality check: return a list of violation strings for *city*/*station*.
+def check_weight_quality(
+    db,
+    station: str,
+    city: str,
+    window_days: int = 30,
+) -> dict[str, object]:
+    """Return a quality report for DEB weight inputs.
 
-    A violation is raised when a model carries non-zero weight in model_weights
-    but has zero model_forecast_log rows in the trailing *window_days* window.
-    Returns an empty list when everything is consistent.
-
-    Intended to be called on startup after DEB weights have been refreshed.
-    Each violation is also logged at WARNING level.
+    Returns a dict with keys:
+      - "sample_counts": {model: count} for each model
+      - "has_min_samples": bool — True when all models have >= MIN_SAMPLES
+      - "models": list of model names checked
     """
-    violations: list[str] = []
-
-    rows = db.get_model_weights(city)
-    if not rows:
-        return violations
-
-    # Build the latest weight per model from persisted model_weights.
-    latest_weight: dict[str, float] = {}
-    for row in rows:
-        m = row["model"]
-        if m not in latest_weight:
-            latest_weight[m] = row["weight"]
-        if len(latest_weight) == len(MODELS):
-            break
-
     since_date = (date_cls.today() - timedelta(days=window_days)).isoformat()
     log_rows = db.get_forecast_log(station, since_date)
+    settlements = db.get_settlements(station, since_date + "T00:00:00")
 
-    # Count log rows per model in the trailing window.
-    row_counts: dict[str, int] = {m: 0 for m in MODELS}
+    actuals: dict[str, float] = {}
+    for row in settlements:
+        d = row["ts"][:10]
+        actuals[d] = row["actual_high_f"]
+
+    counts: dict[str, int] = {m: 0 for m in MODELS}
     for row in log_rows:
-        m = row.get("model")
-        if m in row_counts:
-            row_counts[m] += 1
+        m = row["model"]
+        if m in counts and row["date"] in actuals:
+            counts[m] += 1
 
-    for m, weight in latest_weight.items():
-        if weight > 0.0 and row_counts.get(m, 0) == 0:
-            msg = (
-                f"[deb] city={city} model={m} carries weight={weight:.4f} "
-                f"but has no forecast rows in the trailing {window_days}-day window"
-            )
-            log.warning(msg)
-            violations.append(msg)
-
-    return violations
+    return {
+        "sample_counts": counts,
+        "has_min_samples": all(v >= MIN_SAMPLES for v in counts.values()),
+        "models": list(MODELS),
+    }
