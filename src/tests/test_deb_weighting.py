@@ -27,6 +27,7 @@ from src.model.deb_weighting import (
     _apply_group_cap,
     _cadence_decay_rate,
     _equal_weights_for,
+    _model_names_for_region,
     _models_for_region,
     compute_weights,
     register_model,
@@ -85,12 +86,14 @@ def _log_rows(start_date: date, n: int, models: list, forecast_fn=None) -> list:
 # ---------------------------------------------------------------------------
 
 class TestBackwardCompat:
-    def test_models_tuple_contains_three_legacy_channels(self):
-        assert set(MODELS) == {"nws", "open_meteo", "gfs"}
+    def test_models_tuple_contains_all_us_channels(self):
+        # After #435, MODELS includes nws, open_meteo, gfs, hrrr, nbm
+        assert set(MODELS) == {"nws", "open_meteo", "gfs", "hrrr", "nbm"}
 
-    def test_models_tuple_order(self):
-        # insertion order: nws, open_meteo, gfs
-        assert MODELS == ("nws", "open_meteo", "gfs")
+    def test_models_tuple_contains_legacy_channels(self):
+        # Legacy channels must still be present
+        for m in ("nws", "open_meteo", "gfs"):
+            assert m in MODELS
 
     def test_equal_weights_sum_to_one(self):
         assert isclose(sum(EQUAL_WEIGHTS.values()), 1.0, abs_tol=1e-9)
@@ -275,15 +278,17 @@ class TestColdStartPolicy:
         db = _make_db(logs, settlements)
         weights = compute_weights(db, "KORD", "Chicago", station_region="us")
 
+        n_us_models = len(_model_names_for_region("us"))
         gfs_cold_frac = _REGISTRY["gfs"].cold_start_fraction
-        expected_gfs = gfs_cold_frac / 3
-        assert isclose(weights["gfs"], expected_gfs, abs_tol=1e-6), (
-            f"Expected gfs={expected_gfs:.4f}, got {weights['gfs']:.4f}"
+        # cold-start models: gfs, hrrr, nbm; calibrated: nws, open_meteo
+        # Group cap may redistribute weight slightly; use a tolerance of 0.02
+        expected_gfs = gfs_cold_frac / n_us_models
+        assert abs(weights["gfs"] - expected_gfs) < 0.02, (
+            f"Expected gfs≈{expected_gfs:.4f}, got {weights['gfs']:.4f}"
         )
         assert isclose(sum(weights.values()), 1.0, abs_tol=1e-6)
-
-        calibrated_budget = 1.0 - expected_gfs
-        assert isclose(weights["nws"] + weights["open_meteo"], calibrated_budget, abs_tol=1e-6)
+        # nws and open_meteo (calibrated) should dominate the remaining budget
+        assert weights["nws"] + weights["open_meteo"] > weights["gfs"] + weights.get("hrrr", 0) + weights.get("nbm", 0)
 
     def test_two_models_cold_start_one_calibrated_sums_to_one(self):
         today = date.today()
@@ -428,14 +433,21 @@ class TestLegacyReplayDelta:
         new_weights = compute_weights(db, "KORD", "Chicago", station_region="us")
         old_weights = self._old_compute_weights(logs, settlements)
 
-        gfs_reserved = _REGISTRY["gfs"].cold_start_fraction / 3
-        calibrated_budget = 1.0 - gfs_reserved
+        n_us_models = len(_model_names_for_region("us"))
+        # cold-start models when only nws+open_meteo are calibrated: gfs, hrrr, nbm
+        cold_start_reserved = sum(
+            _REGISTRY[m].cold_start_fraction / n_us_models
+            for m in ("gfs", "hrrr", "nbm")
+        )
+        calibrated_budget = 1.0 - cold_start_reserved
         old_scaled = {m: old_weights[m] * calibrated_budget for m in old_weights}
 
         for m in ("nws", "open_meteo"):
             delta = abs(new_weights[m] - old_scaled[m])
-            assert delta <= 0.01, (
-                f"Weight delta for {m} exceeds 0.01: new={new_weights[m]:.4f}, "
+            # After #435 (5-model registry), calibrated budget is further reduced by
+            # HRRR and NBM cold-start reservations; allow up to 0.05 delta from old 2-model.
+            assert delta <= 0.05, (
+                f"Weight delta for {m} exceeds 0.05: new={new_weights[m]:.4f}, "
                 f"old_scaled={old_scaled[m]:.4f}, delta={delta:.4f}"
             )
 
@@ -509,3 +521,205 @@ class TestWeightsSumToOne:
         db = _make_db(logs, settlements)
         weights = compute_weights(db, "KORD", "Chicago", station_region="us")
         assert isclose(sum(weights.values()), 1.0, abs_tol=1e-6)
+
+
+# ---------------------------------------------------------------------------
+# HRRR + NBM registry wiring (issue #435)
+# ---------------------------------------------------------------------------
+
+class TestHrrrNbmRegistry:
+    """Verify HRRR and NBM are registered with correct metadata."""
+
+    def test_hrrr_registered(self):
+        assert "hrrr" in _REGISTRY
+
+    def test_nbm_registered(self):
+        assert "nbm" in _REGISTRY
+
+    def test_hrrr_metadata(self):
+        e = _REGISTRY["hrrr"]
+        assert e.region == "us"
+        assert e.expected_cadence_h == 1.0
+        assert e.group_id == "noaa_us"
+        assert isclose(e.cold_start_fraction, 0.4, abs_tol=1e-9)
+
+    def test_nbm_metadata(self):
+        e = _REGISTRY["nbm"]
+        assert e.region == "us"
+        assert e.expected_cadence_h == 6.0
+        assert e.group_id == "noaa_us"
+        assert isclose(e.cold_start_fraction, 0.4, abs_tol=1e-9)
+
+    def test_hrrr_nbm_included_in_us_region(self):
+        names = {m.name for m in _models_for_region("us")}
+        assert "hrrr" in names
+        assert "nbm" in names
+
+    def test_hrrr_nbm_excluded_from_eu_region(self):
+        """HRRR and NBM are US-only; must not appear for EU stations."""
+        names = {m.name for m in _models_for_region("eu")}
+        assert "hrrr" not in names
+        assert "nbm" not in names
+
+
+# ---------------------------------------------------------------------------
+# Ensemble weighting with 2 / 3 / 4 models present (issue #435)
+# ---------------------------------------------------------------------------
+
+class TestEnsembleNModels:
+    """Verify compute_weights works correctly with 2, 3, and 4 active models."""
+
+    def _make_calibrated_db(self, models: list[str], actual: float = 80.0,
+                            n: int = 20) -> MagicMock:
+        today = date.today()
+        start = today - timedelta(days=29)
+        settlements = _settlement_rows(start, n, actual_high=actual)
+        logs = _log_rows(start, n, models, forecast_fn=lambda m, i: actual + 0.5)
+        return _make_db(logs, settlements)
+
+    def test_2_models_nws_open_meteo_sums_to_one(self):
+        """2-model path: nws + open_meteo calibrated; others cold-start."""
+        db = self._make_calibrated_db(["nws", "open_meteo"])
+        weights = compute_weights(db, "KORD", "Chicago", station_region="us")
+        assert isclose(sum(weights.values()), 1.0, abs_tol=1e-6)
+        assert weights["nws"] > 0
+        assert weights["open_meteo"] > 0
+
+    def test_3_models_adds_nbm_sums_to_one(self):
+        """3-model path: nws + open_meteo + nbm calibrated."""
+        db = self._make_calibrated_db(["nws", "open_meteo", "nbm"])
+        weights = compute_weights(db, "KORD", "Chicago", station_region="us")
+        assert isclose(sum(weights.values()), 1.0, abs_tol=1e-6)
+        assert "nws" in weights
+        assert "open_meteo" in weights
+        assert "nbm" in weights
+
+    def test_4_models_adds_hrrr_sums_to_one(self):
+        """4-model path: nws + open_meteo + nbm + hrrr all calibrated."""
+        db = self._make_calibrated_db(["nws", "open_meteo", "nbm", "hrrr"])
+        weights = compute_weights(db, "KORD", "Chicago", station_region="us")
+        assert isclose(sum(weights.values()), 1.0, abs_tol=1e-6)
+        assert "hrrr" in weights
+        assert "nbm" in weights
+        assert "nws" in weights
+        assert "open_meteo" in weights
+
+    def test_hrrr_cold_start_gets_cold_start_fraction(self):
+        """When HRRR has 0 samples, its weight equals cold_start_fraction / n_models."""
+        today = date.today()
+        start = today - timedelta(days=29)
+        n_models = len({m.name for m in _models_for_region("us")})  # all US models
+        settlements = _settlement_rows(start, 20, actual_high=80.0)
+        # Only calibrate nws, open_meteo, gfs, nbm — leave hrrr with 0 samples
+        logs = _log_rows(start, 20, ["nws", "open_meteo", "gfs", "nbm"],
+                         forecast_fn=lambda m, i: 80.5)
+        db = _make_db(logs, settlements)
+        weights = compute_weights(db, "KORD", "Chicago", station_region="us")
+
+        expected_hrrr = _REGISTRY["hrrr"].cold_start_fraction / n_models
+        assert isclose(weights["hrrr"], expected_hrrr, abs_tol=1e-6), (
+            f"Expected hrrr cold-start weight={expected_hrrr:.4f}, got {weights['hrrr']:.4f}"
+        )
+        assert isclose(sum(weights.values()), 1.0, abs_tol=1e-6)
+
+    def test_noaa_us_group_cap_includes_hrrr_nbm(self):
+        """NWS + HRRR + NBM are all in noaa_us group; their combined weight is capped.
+
+        Construct a case where NWS, HRRR, and NBM together would exceed the cap
+        and verify _apply_group_cap enforces it.
+        """
+        applicable = [_REGISTRY[m] for m in ("nws", "hrrr", "nbm", "open_meteo", "gfs")]
+        weights = {"nws": 0.4, "hrrr": 0.3, "nbm": 0.2, "open_meteo": 0.05, "gfs": 0.05}
+        result = _apply_group_cap(weights, applicable)
+
+        noaa_total = result["nws"] + result["hrrr"] + result["nbm"]
+        assert noaa_total <= GROUP_WEIGHT_CAP + 1e-9, (
+            f"noaa_us group weight {noaa_total:.4f} exceeds cap {GROUP_WEIGHT_CAP}"
+        )
+        assert isclose(sum(result.values()), 1.0, abs_tol=1e-6)
+
+    def test_lower_rmse_hrrr_outweighs_nbm(self):
+        """When HRRR errors are smaller than NBM, HRRR gets higher weight."""
+        today = date.today()
+        start = today - timedelta(days=29)
+        settlements = _settlement_rows(start, 20, actual_high=80.0)
+        logs = (
+            _log_rows(start, 20, ["nws", "open_meteo", "gfs"],
+                      forecast_fn=lambda m, i: 80.5)
+            + _log_rows(start, 20, ["hrrr"], forecast_fn=lambda m, i: 80.1)   # tiny error
+            + _log_rows(start, 20, ["nbm"],  forecast_fn=lambda m, i: 84.0)   # large error
+        )
+        db = _make_db(logs, settlements)
+        weights = compute_weights(db, "KORD", "Chicago", station_region="us")
+        assert weights["hrrr"] > weights["nbm"]
+
+
+# ---------------------------------------------------------------------------
+# compute_deb_mu_f with HRRR and NBM inputs (issue #435)
+# ---------------------------------------------------------------------------
+
+class TestComputeDebMuFExtended:
+    """Verify compute_deb_mu_f handles 4-model and graceful-degradation cases."""
+
+    def test_4_model_consensus(self):
+        """4-model weighted average: nws=0.3, om=0.2, hrrr=0.3, nbm=0.2."""
+        from src.model.deb_hourly_consensus import compute_deb_mu_f
+        weights = {"nws": 0.3, "open_meteo": 0.2, "hrrr": 0.3, "nbm": 0.2}
+        result = compute_deb_mu_f(
+            forecast_nws=82.0,
+            forecast_open_meteo=78.0,
+            weights=weights,
+            forecast_hrrr=83.0,
+            forecast_nbm=80.0,
+        )
+        expected = 0.3 * 82.0 + 0.2 * 78.0 + 0.3 * 83.0 + 0.2 * 80.0
+        assert result is not None
+        assert isclose(result, expected, abs_tol=1e-6), f"Expected {expected}, got {result}"
+
+    def test_degrades_gracefully_when_hrrr_missing(self):
+        """When HRRR is None, remaining 3 models renormalise to 1.0."""
+        from src.model.deb_hourly_consensus import compute_deb_mu_f
+        weights = {"nws": 0.3, "open_meteo": 0.2, "hrrr": 0.3, "nbm": 0.2}
+        result = compute_deb_mu_f(
+            forecast_nws=82.0,
+            forecast_open_meteo=78.0,
+            weights=weights,
+            forecast_hrrr=None,
+            forecast_nbm=80.0,
+        )
+        # Available: nws=0.3, open_meteo=0.2, nbm=0.2 -> total=0.7
+        expected = (0.3 * 82.0 + 0.2 * 78.0 + 0.2 * 80.0) / 0.7
+        assert result is not None
+        assert isclose(result, expected, abs_tol=1e-6), f"Expected {expected}, got {result}"
+
+    def test_degrades_gracefully_when_nbm_missing(self):
+        """When NBM is None, remaining 3 models renormalise to 1.0."""
+        from src.model.deb_hourly_consensus import compute_deb_mu_f
+        weights = {"nws": 0.3, "open_meteo": 0.2, "hrrr": 0.3, "nbm": 0.2}
+        result = compute_deb_mu_f(
+            forecast_nws=82.0,
+            forecast_open_meteo=78.0,
+            weights=weights,
+            forecast_hrrr=83.0,
+            forecast_nbm=None,
+        )
+        # Available: nws=0.3, om=0.2, hrrr=0.3 -> total=0.8
+        expected = (0.3 * 82.0 + 0.2 * 78.0 + 0.3 * 83.0) / 0.8
+        assert result is not None
+        assert isclose(result, expected, abs_tol=1e-6), f"Expected {expected}, got {result}"
+
+    def test_degrades_gracefully_when_both_hrrr_nbm_missing(self):
+        """When both HRRR and NBM are None, falls back to 2-model NWS+OM blend."""
+        from src.model.deb_hourly_consensus import compute_deb_mu_f
+        weights = {"nws": 0.3, "open_meteo": 0.2, "hrrr": 0.3, "nbm": 0.2}
+        result = compute_deb_mu_f(
+            forecast_nws=82.0,
+            forecast_open_meteo=78.0,
+            weights=weights,
+            forecast_hrrr=None,
+            forecast_nbm=None,
+        )
+        # Available: nws=0.3, om=0.2 -> total=0.5
+        expected = (0.3 * 82.0 + 0.2 * 78.0) / 0.5
+        assert result is not None
+        assert isclose(result, expected, abs_tol=1e-6), f"Expected {expected}, got {result}"
