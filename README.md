@@ -8,12 +8,13 @@ A machine learning trading system that identifies and executes profitable weathe
 
 MeteoEdge automatically:
 
-1. **Collects live weather data** from multiple sources (METAR observations, NWS forecasts, JMA AMEDAS, AMOS, MSS, TAF)
-2. **Computes daily high temperature predictions** using ensemble weather models (DEB weighting, envelope model, intraday correction)
-3. **Queries Polymarket** for daily high temperature markets at supported stations
-4. **Identifies mispricings** where market odds diverge from model predictions
-5. **Executes trades** in shadow (observe-only), paper (simulated), or live (real money) modes
-6. **Tracks positions and settlement outcomes** in real-time
+1. **Collects live weather data** from multiple sources (METAR observations, NWS forecasts, JMA AMEDAS, AMOS, MSS, TAF, Open-Meteo)
+2. **Calibrates probabilistic forecasts** using EMOS (Error Model Output Statistics) post-processing with ensemble regression
+3. **Computes daily high temperature predictions** using ensemble weather models (DEB weighting, envelope model, intraday correction)
+4. **Queries Polymarket** for daily high temperature markets at supported stations
+5. **Identifies mispricings** where market odds diverge from model predictions
+6. **Executes trades** in shadow (observe-only), paper (simulated), or live (real money) modes
+7. **Tracks positions and settlement outcomes** in real-time with detailed analytics archival
 
 ## Live Stations and Data Sources
 
@@ -44,6 +45,24 @@ MeteoEdge trades on Polymarket daily high temperature markets at these airports:
 │  - AMOS (SE Asia)                   │
 │  - MSS (China)                      │
 │  - TAF (Terminal Aerodrome Forecast)│
+│  - Open-Meteo (fallback forecast)   │
+└──────────────┬──────────────────────┘
+               │
+               ▼
+┌─────────────────────────────────────┐
+│  Forecast Capture & Persistence     │
+│  - Fixed lead-time archival         │
+│  - Per-source ensemble σ logging    │
+│  - Scheduled worker integration     │
+└──────────────┬──────────────────────┘
+               │
+               ▼
+┌─────────────────────────────────────┐
+│  EMOS Calibration Layer             │
+│  - Post-processing regression       │
+│  - Ensemble error correction        │
+│  - Coefficients database            │
+│  - Readiness promotion pipeline     │
 └──────────────┬──────────────────────┘
                │
                ▼
@@ -71,6 +90,7 @@ MeteoEdge trades on Polymarket daily high temperature markets at these airports:
 │  - Edge detection (15–20¢)          │
 │  - Confidence filtering             │
 │  - Price validation                 │
+│  - Position re-pricer (held-pos)    │
 └──────────────┬──────────────────────┘
                │
                ▼
@@ -80,6 +100,7 @@ MeteoEdge trades on Polymarket daily high temperature markets at these airports:
 │  - Capital allocation               │
 │  - Drawdown checks                  │
 │  - Trade placement (CLOB)           │
+│  - Stop-loss & take-profit logic    │
 └──────────────┬──────────────────────┘
                │
                ▼
@@ -88,6 +109,7 @@ MeteoEdge trades on Polymarket daily high temperature markets at these airports:
 │  - Position tracking                │
 │  - Market outcome recording         │
 │  - P&L calculation                  │
+│  - Snapshot archival to analytics DB│
 │  - Alerts & dashboards              │
 └─────────────────────────────────────┘
 ```
@@ -232,6 +254,23 @@ ORDER BY ts;
 
 See [docs/design/snapshot-archival.md](docs/design/snapshot-archival.md) for full architecture and [docs/DB_SCHEMA.md#analytics-database](docs/DB_SCHEMA.md#analytics-database-dataanalyticsdb) for schema reference.
 
+### Systemd Deployment (Linux/Unix)
+
+For production deployment on Linux/Unix systems with systemd:
+
+```bash
+# Install systemd units (requires root)
+sudo deploy/systemd/install.sh
+```
+
+This installs:
+- `meteoedge.service` — Main trading bot (live or paper mode)
+- `meteoedge-dashboard.service` — Web dashboard  
+- `meteoedge-settle.timer` — Daily settlement at 00:00 UTC
+- `capture_forecasts.service` — Forecast persistence worker
+
+See [OPERATIONS.md](docs/OPERATIONS.md) for detailed systemd management, logging, and recovery procedures.
+
 ## Environment Variables
 
 All configuration is controlled via environment variables (or defaults in `src/config.py`). See `.env.example` for secrets. Here are the strategy and operational variables:
@@ -279,6 +318,20 @@ See `.env.example` for:
 - `POLYMARKET_DEPOSIT_WALLET` — Your ERC-1967 proxy address
 - `POLYMARKET_CHAIN_ID` — 137 for mainnet (real), 80002 for Amoy testnet
 
+## API & Configuration
+
+### Dashboard Configuration API
+
+The web dashboard exposes live configuration and control APIs:
+- **EMOS Status** (`/api/emos/status`) — Calibration mode, promotion readiness, current coefficients
+- **EMOS Promote** (`/api/emos/promote`) — Manually promote a model from shadow to production
+- **Station Toggle** (`/api/stations/<code>/toggle`) — Enable/disable trading at a station
+- **Bot Configuration** (`/api/config`) — Read/update strategy parameters, risk limits, take-profit/stop-loss thresholds
+- **Portfolio** (`/api/portfolio`) — Open positions, cash balance, mark-to-market P&L
+- **Position Snapshots** (`/api/positions/<token_id>/snapshots`) — Historical bid/ask and weather state for a position
+
+See the dashboard source code in `src/dashboard/` for full API documentation.
+
 ## Documentation
 
 For deeper specifications and implementation details, see:
@@ -288,6 +341,11 @@ For deeper specifications and implementation details, see:
 - **[TECHNICAL_SPECIFICATION.md](docs/TECHNICAL_SPECIFICATION.md)** — System architecture, data flows, probability model
 - **[SPIKE_DOCUMENTATION.md](docs/SPIKE_DOCUMENTATION.md)** — Implementation decisions, backtest analysis
 - **[IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md)** — Planned features and enhancements
+- **[Design Docs](docs/design/)** — Detailed design decisions:
+  - [snapshot-archival.md](docs/design/snapshot-archival.md) — Analytics database architecture
+  - [374-frozen-model-indicator.md](docs/design/374-frozen-model-indicator.md) — Position freezing logic
+  - [dashboard-mae-panel.md](docs/design/dashboard-mae-panel.md) — Maximum adverse excursion tracking
+  - [open-positions-source-of-truth.md](docs/design/open-positions-source-of-truth.md) — Position reconciliation
 
 ## Historical Testing & Archives (Deprecated)
 
@@ -297,6 +355,23 @@ Early spike testing results from May 2026 have been deprecated as of 2026-06-16 
 
 See [`archive/early-spike-results-may-2026/DEPRECATION.md`](archive/early-spike-results-may-2026/DEPRECATION.md) for historical context.
 
+## EMOS Calibration
+
+MeteoEdge uses EMOS (Error Model Output Statistics) for ensemble post-processing. The system:
+
+1. **Collects ensemble forecasts** from multiple sources (NWS, AMOS, MSS, JMA, Open-Meteo)
+2. **Trains regression models** on historical forecast-observation pairs using `fit_emos()`
+3. **Stores calibrated coefficients** in SQLite (one set per station, updated daily)
+4. **Promotes models** from shadow mode to production via the dashboard API or CLI
+5. **Logs forecasts** at fixed lead times for audit trails and backtest validation
+
+Key environment variables for EMOS:
+- `EMOS_MODE` — `shadow` (observe-only), `promote` (manual approval), `auto` (automatic)
+- `EMOS_SETTLED_DAYS_REQUIRED` — Minimum observation history for readiness (default: 5)
+- `EMOS_PROMOTE_CRPS_THRESHOLD` — CRPS target for automatic promotion
+
+For EMOS implementation details, see the EMOS-related source code in `src/model/emos_calibration.py` and `src/scripts/auto_retrain_probability_calibration.py`.
+
 ## Testing
 
 Run the test suite to validate your installation:
@@ -305,17 +380,28 @@ Run the test suite to validate your installation:
 pytest src/tests/
 ```
 
+Key test categories:
+- **EMOS tests** (`test_emos_*.py`) — Calibration fitting, shadow mode, promotion pipeline
+- **Envelope tests** (`test_envelope_*.py`) — Climb rates, correction model, decay functions
+- **Market scanner tests** (`test_scan_*.py`) — Candidate detection, edge filtering, price validation
+- **Risk tests** (`test_*_risk_*.py`) — Position limits, drawdown checks, stop-loss logic
+- **Settlement tests** (`test_settle_*.py`) — Market resolution, P&L recording, position cleanup
+- **Archive tests** (`test_archive_*.py`) — Snapshot persistence, JSONL rotation, analytics DB integrity
+
 ## Project Status
 
-Sprint 1 — Core system and live trading: **Complete**
+**Sprint 1** — Core system and live trading: **Complete**
 
-Sprint 2 — Monitoring, alerts, and operational hardening: **In Progress**
+**Sprint 2** — Monitoring, alerts, and operational hardening: **In Progress**
 
-Recent validated improvements:
-- TAF (Terminal Aerodrome Forecast) integration for forecast reliability
-- Intraday temperature correction model
-- DEB hourly consensus weighting
-- Position snapshots for live trading validation
+**Recent validated improvements (June 2026):**
+- **EMOS calibration** — Post-processing regression for ensemble error correction with readiness promotion pipeline
+- **Forecast persistence** — Fixed lead-time archival and per-source ensemble standard deviation logging
+- **TAF integration** — Terminal Aerodrome Forecast disruption detection and confidence checks
+- **Position re-pricer** — Decoupled from scanner active-hours gate for held-position margin capture
+- **Systemd deployment** — Production-ready service and timer units with centralized log rotation
+- **Intraday correction** — Real-time temperature adjustment model with historical climb-rate tables
+- **DEB consensus** — Hourly ensemble weighted averaging from distributed ensemble of binary outcomes
 
 ## License
 
@@ -323,6 +409,6 @@ Proprietary — Internal use only.
 
 ---
 
-**Last Updated**: 2026-06-10  
-**Status**: Live trading in progress  
+**Last Updated**: 2026-06-26  
+**Status**: Live trading with EMOS calibration in progress  
 **Supported Stations**: 11 (5 US, 6 international)
