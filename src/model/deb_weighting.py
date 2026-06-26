@@ -46,6 +46,10 @@ GROUP_WEIGHT_CAP: float = float(os.getenv("DEB_GROUP_WEIGHT_CAP", "0.7"))
 
 MIN_SAMPLES: int = _MIN_SAMPLES
 
+# Tracks (city, date) pairs already logged this process lifetime.
+# Used by external callers that want once-per-day log semantics.
+_logged_today: set = set()
+
 
 # ---------------------------------------------------------------------------
 # Model registry

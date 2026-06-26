@@ -224,26 +224,25 @@ class TestComputeWeightsPhantomGuard:
         return db
 
     def test_nws_phantom_excluded_from_blend(self):
-        """With enough open_meteo + gfs rows but zero NWS rows, weights are computed for
-        only the two active models and they sum to 1.0."""
+        """With enough open_meteo + gfs rows but zero NWS rows, NWS gets cold-start
+        weight and the two active models dominate; all weights sum to 1.0."""
         db = self._make_db_with_open_meteo_and_gfs(MIN_SAMPLES + 2)
-        weights, rmse = compute_weights(db, "WSSS", "Singapore")
-        # nws is phantom (zero rows) — must get 0.0 weight
-        assert weights["nws"] == 0.0, f"Expected nws=0.0, got {weights['nws']}"
-        # Active models must sum to 1.0
-        active_sum = weights["open_meteo"] + weights["gfs"]
-        assert isclose(active_sum, 1.0, abs_tol=1e-9), f"Active weights sum to {active_sum}"
+        weights = compute_weights(db, "WSSS", "Singapore")
+        # nws has zero rows → cold-start → gets a small fraction, not the majority
+        assert weights["nws"] < weights["open_meteo"], "cold-start nws should be < open_meteo"
+        assert weights["nws"] < weights["gfs"], "cold-start nws should be < gfs"
+        # All weights must sum to 1.0
+        assert isclose(sum(weights.values()), 1.0, abs_tol=1e-9), f"Weights sum to {sum(weights.values())}"
 
     def test_fallback_when_insufficient_samples(self):
-        """Falls back to EQUAL_WEIGHTS when active models have < MIN_SAMPLES pairs."""
+        """Falls back to EQUAL_WEIGHTS when all models have < MIN_SAMPLES pairs."""
         db = self._make_db_with_open_meteo_and_gfs(MIN_SAMPLES - 1)
-        weights, rmse = compute_weights(db, "WSSS", "Singapore")
+        weights = compute_weights(db, "WSSS", "Singapore")
         assert weights == EQUAL_WEIGHTS
-        assert all(v == 0.0 for v in rmse.values())
 
     def test_gfs_phantom_excluded_from_blend(self):
         """If GFS rows are absent but NWS + open_meteo have enough data,
-        GFS gets weight=0.0 and the others sum to 1.0."""
+        GFS gets cold-start weight and the two active models dominate; all sum to 1.0."""
         n = MIN_SAMPLES + 2
         db = MagicMock()
         db.get_forecast_log_by_lead.return_value = (
@@ -260,7 +259,8 @@ class TestComputeWeightsPhantomGuard:
             {"ts": f"2026-05-{i:02d}T12:00:00", "actual_high_f": 85.2 + i * 0.05}
             for i in range(1, n + 1)
         ]
-        weights, rmse = compute_weights(db, "KORD", "Chicago")
-        assert weights["gfs"] == 0.0, f"Expected gfs=0.0, got {weights['gfs']}"
-        active_sum = weights["nws"] + weights["open_meteo"]
-        assert isclose(active_sum, 1.0, abs_tol=1e-9), f"Active weights sum to {active_sum}"
+        weights = compute_weights(db, "KORD", "Chicago")
+        # gfs has zero rows → cold-start → gets a small fraction
+        assert weights["gfs"] < weights["nws"], "cold-start gfs should be < nws"
+        assert weights["gfs"] < weights["open_meteo"], "cold-start gfs should be < open_meteo"
+        assert isclose(sum(weights.values()), 1.0, abs_tol=1e-9), f"Weights sum to {sum(weights.values())}"
