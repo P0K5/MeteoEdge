@@ -2144,8 +2144,8 @@ async function emosDoAction(city, action, btn) {
 let configLoaded = false;
 let _configData = {};
 
-const _CFG_GROUP_LABELS = { strategy: 'Strategy', risk: 'Risk', position: 'Position Sizing', timing: 'Timing' };
-const _CFG_GROUP_ICONS = { strategy: 'trending-up', risk: 'shield', position: 'layers', timing: 'clock' };
+const _CFG_GROUP_LABELS = { strategy: 'Strategy', risk: 'Risk', position: 'Position Sizing', timing: 'Timing', forecast: 'Forecast' };
+const _CFG_GROUP_ICONS = { strategy: 'trending-up', risk: 'shield', position: 'layers', timing: 'clock', forecast: 'cloud' };
 
 function _renderConfigParam(key, param) {
   let ctrlHTML;
@@ -2173,7 +2173,7 @@ function _renderConfigParam(key, param) {
 }
 
 function _renderConfigGroups(data) {
-  const order = ['strategy', 'risk', 'position', 'timing'];
+  const order = ['strategy', 'risk', 'position', 'timing', 'forecast'];
   let html = '';
   for (const group of order) {
     if (!data[group]) continue;
