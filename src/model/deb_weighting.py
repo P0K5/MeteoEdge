@@ -98,6 +98,10 @@ register_model("nws",        region="us",     expected_cadence_h=24.0, group_id=
 register_model("open_meteo", region="global", expected_cadence_h=24.0, group_id=None)
 register_model("gfs",        region="global", expected_cadence_h=6.0,  group_id=None)
 
+# HRRR and NBM: CONUS-only NOAA sources; correlated with NWS via noaa_us group cap
+register_model("hrrr", region="us", expected_cadence_h=1.0,  group_id="noaa_us", cold_start_fraction=0.4)
+register_model("nbm",  region="us", expected_cadence_h=6.0,  group_id="noaa_us", cold_start_fraction=0.4)
+
 
 def _models_for_region(station_region: str) -> list[_ModelEntry]:
     """Return registry entries applicable to *station_region*.
@@ -385,18 +389,19 @@ def get_weights(db, city: str) -> dict[str, float]:
         return dict(EQUAL_WEIGHTS)
 
     # Most recent date first (db.get_model_weights orders by date DESC).
-    # Read the latest weight for each tracked model.
+    # Read the latest weight for each tracked model (use dynamic registry, not stale MODELS).
+    us_models = _model_names_for_region("us")
     latest: dict[str, float] = {}
     for row in rows:
         m = row["model"]
         if m not in latest:
             latest[m] = row["weight"]
-        if len(latest) == len(MODELS):
+        if len(latest) == len(us_models):
             break
 
     # If any tracked model is missing from the table, fall back to equal weights.
-    if any(m not in latest for m in MODELS):
-        return dict(EQUAL_WEIGHTS)
+    if any(m not in latest for m in us_models):
+        return dict(_equal_weights_for("us"))
 
     return latest
 

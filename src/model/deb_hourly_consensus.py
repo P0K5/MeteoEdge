@@ -39,20 +39,24 @@ def compute_deb_mu_f(
     forecast_open_meteo: float | None,
     weights: dict[str, float],
     forecast_gfs: float | None = None,
+    forecast_hrrr: float | None = None,
+    forecast_nbm: float | None = None,
 ) -> float | None:
     """Return DEB-weighted forecast high (°F).
 
     Replaces the static 60/40 ensemble_forecast() blend when DEB_ENABLED=true.
-    Supports three models: nws, open_meteo, gfs.
+    Supports up to five models: nws, open_meteo, gfs, hrrr, nbm.
 
     When a model forecast is None its contribution is dropped and the remaining
     available forecasts are renormalised to sum to 1.0.  This means:
-    - International stations without NWS data automatically use a two-model
+    - International stations without NWS/HRRR/NBM data automatically use a two-model
       (open_meteo + gfs) blend.
     - Any station where only one source is available receives that source at
       full weight rather than returning None.
+    - 4-model consensus (nws + open_meteo + hrrr + nbm) is used when HRRR and NBM
+      are both available; degrades gracefully when either is missing.
 
-    Returns None only when all three inputs are None.
+    Returns None only when all inputs are None.
     """
     # Build the set of available (weight, value) pairs.
     available: list[tuple[float, float]] = []
@@ -60,6 +64,8 @@ def compute_deb_mu_f(
         ("nws", forecast_nws),
         ("open_meteo", forecast_open_meteo),
         ("gfs", forecast_gfs),
+        ("hrrr", forecast_hrrr),
+        ("nbm", forecast_nbm),
     ]
     for key, value in pairs:
         if value is not None:
