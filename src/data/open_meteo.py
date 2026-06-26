@@ -2,6 +2,10 @@
 
 Used as a weighted secondary input (40%) alongside NWS (60%) in the ensemble.
 Cached 30 min — Open-Meteo updates hourly and the free tier caps at 10,000 req/day.
+
+Attribution: This module uses the Open-Meteo API (https://open-meteo.com/).
+Open-Meteo provides free weather forecast data. See docs/OPERATIONS.md for
+commercial use policy and terms of service details.
 """
 from datetime import datetime, timezone
 
