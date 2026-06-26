@@ -69,6 +69,7 @@ def _get_cache_dir(db=None) -> Path:
 SUPPORTED_VARS = {
     "TMP_2m": ":TMP:2 m above ground:",
     "DPT_2m": ":DPT:2 m above ground:",
+    "ICON_T2M": ":t_2m:",  # DWD ICON-EU 2-m temperature (Kelvin)
 }
 
 # ---------------------------------------------------------------------------

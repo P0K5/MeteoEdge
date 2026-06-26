@@ -2168,6 +2168,26 @@ _CONFIG_META: dict[str, dict] = {
         "min": 0.3,
         "max": 1.0,
     },
+    "DEB_ECMWF_COLD_START_FRACTION": {
+        "description": "Weight multiplier for ECMWF during cold-start (< DEB_MIN_SAMPLES pairs)",
+        "type": "float",
+        "group": "forecast",
+        "min": 0.1,
+        "max": 1.0,
+    },
+    "DEB_ICON_COLD_START_FRACTION": {
+        "description": "Weight multiplier for ICON-EU during cold-start (< DEB_MIN_SAMPLES pairs)",
+        "type": "float",
+        "group": "forecast",
+        "min": 0.1,
+        "max": 1.0,
+    },
+    "FORECAST_STACK": {
+        "description": "Active forecast stack — controls which ingestion channels are live",
+        "type": "enum",
+        "group": "forecast",
+        "options": ["baseline", "hrrr_nbm", "intl_ecmwf_icon", "full"],
+    },
 }
 
 _EMOS_VALID_MODES = frozenset({"legacy", "emos_shadow", "emos_primary"})

@@ -502,8 +502,17 @@ CONFIG_DEFAULTS: "dict[str, str | int | float | bool]" = {
     # DEB cold-start fractions for HRRR and NBM (issue #435)
     "DEB_HRRR_COLD_START_FRACTION": 0.4,
     "DEB_NBM_COLD_START_FRACTION": 0.4,
+    # DEB cold-start fractions for ECMWF and ICON (issue #442)
+    "DEB_ECMWF_COLD_START_FRACTION": 0.5,
+    "DEB_ICON_COLD_START_FRACTION": 0.5,
     # DEB group weight cap for the noaa_us channel group (NWS + HRRR + NBM)
     "DEB_GROUP_WEIGHT_CAP": 0.7,
+    # Active forecast stack — controls which ingestion channels are live.
+    # baseline: NWS + open_meteo only
+    # hrrr_nbm: adds HRRR and NBM for US stations
+    # intl_ecmwf_icon: adds ECMWF and ICON-EU for international stations
+    # full: all channels active
+    "FORECAST_STACK": "baseline",
 }
 
 

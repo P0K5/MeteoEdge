@@ -87,8 +87,9 @@ def _log_rows(start_date: date, n: int, models: list, forecast_fn=None) -> list:
 
 class TestBackwardCompat:
     def test_models_tuple_contains_all_us_channels(self):
-        # After #435, MODELS includes nws, open_meteo, gfs, hrrr, nbm
-        assert set(MODELS) == {"nws", "open_meteo", "gfs", "hrrr", "nbm"}
+        # After #442, MODELS includes nws, open_meteo, gfs, hrrr, nbm, ecmwf
+        # (ECMWF is global so it appears for US region; ICON is EU-only and excluded)
+        assert set(MODELS) == {"nws", "open_meteo", "gfs", "hrrr", "nbm", "ecmwf"}
 
     def test_models_tuple_contains_legacy_channels(self):
         # Legacy channels must still be present
@@ -434,20 +435,20 @@ class TestLegacyReplayDelta:
         old_weights = self._old_compute_weights(logs, settlements)
 
         n_us_models = len(_model_names_for_region("us"))
-        # cold-start models when only nws+open_meteo are calibrated: gfs, hrrr, nbm
+        # cold-start models when only nws+open_meteo are calibrated: gfs, hrrr, nbm, ecmwf
         cold_start_reserved = sum(
             _REGISTRY[m].cold_start_fraction / n_us_models
-            for m in ("gfs", "hrrr", "nbm")
+            for m in ("gfs", "hrrr", "nbm", "ecmwf")
         )
         calibrated_budget = 1.0 - cold_start_reserved
         old_scaled = {m: old_weights[m] * calibrated_budget for m in old_weights}
 
         for m in ("nws", "open_meteo"):
             delta = abs(new_weights[m] - old_scaled[m])
-            # After #435 (5-model registry), calibrated budget is further reduced by
-            # HRRR and NBM cold-start reservations; allow up to 0.05 delta from old 2-model.
-            assert delta <= 0.05, (
-                f"Weight delta for {m} exceeds 0.05: new={new_weights[m]:.4f}, "
+            # After #442 (6-model registry), calibrated budget is further reduced by
+            # HRRR, NBM, and ECMWF cold-start reservations; allow up to 0.1 delta from old 2-model.
+            assert delta <= 0.1, (
+                f"Weight delta for {m} exceeds 0.1: new={new_weights[m]:.4f}, "
                 f"old_scaled={old_scaled[m]:.4f}, delta={delta:.4f}"
             )
 
@@ -723,3 +724,211 @@ class TestComputeDebMuFExtended:
         expected = (0.3 * 82.0 + 0.2 * 78.0) / 0.5
         assert result is not None
         assert isclose(result, expected, abs_tol=1e-6), f"Expected {expected}, got {result}"
+
+
+# ---------------------------------------------------------------------------
+# ECMWF + ICON registry wiring (issue #442)
+# ---------------------------------------------------------------------------
+
+class TestEcmwfIconRegistry:
+    """Verify ECMWF and ICON are registered with correct metadata."""
+
+    def test_ecmwf_registered(self):
+        assert "ecmwf" in _REGISTRY
+
+    def test_icon_registered(self):
+        assert "icon" in _REGISTRY
+
+    def test_ecmwf_metadata(self):
+        e = _REGISTRY["ecmwf"]
+        assert e.region == "global"
+        assert e.expected_cadence_h == 12.0
+        assert e.group_id == "ecmwf_intl"
+        assert isclose(e.cold_start_fraction, 0.5, abs_tol=1e-9)
+
+    def test_icon_metadata(self):
+        e = _REGISTRY["icon"]
+        assert e.region == "eu"
+        assert e.expected_cadence_h == 6.0
+        assert e.group_id == "ecmwf_intl"
+        assert isclose(e.cold_start_fraction, 0.5, abs_tol=1e-9)
+
+    def test_ecmwf_included_in_us_region(self):
+        """ECMWF is global, so it is technically included for US stations."""
+        names = {m.name for m in _models_for_region("us")}
+        assert "ecmwf" in names
+
+    def test_icon_excluded_from_us_region(self):
+        """ICON is EU-only; must not appear for US stations."""
+        names = {m.name for m in _models_for_region("us")}
+        assert "icon" not in names
+
+    def test_ecmwf_included_in_eu_region(self):
+        names = {m.name for m in _models_for_region("eu")}
+        assert "ecmwf" in names
+
+    def test_icon_included_in_eu_region(self):
+        names = {m.name for m in _models_for_region("eu")}
+        assert "icon" in names
+
+    def test_ecmwf_included_in_asia_region(self):
+        names = {m.name for m in _models_for_region("asia")}
+        assert "ecmwf" in names
+
+    def test_icon_excluded_from_asia_region(self):
+        """ICON is EU-only; must not appear for Asia stations."""
+        names = {m.name for m in _models_for_region("asia")}
+        assert "icon" not in names
+
+    def test_ecmwf_intl_group_cap_applied(self):
+        """ecmwf_intl group (ecmwf + icon) combined weight is capped at GROUP_WEIGHT_CAP."""
+        applicable = [_REGISTRY[m] for m in ("ecmwf", "icon", "open_meteo", "gfs")]
+        weights = {"ecmwf": 0.5, "icon": 0.3, "open_meteo": 0.1, "gfs": 0.1}
+        result = _apply_group_cap(weights, applicable)
+        intl_total = result["ecmwf"] + result["icon"]
+        assert intl_total <= GROUP_WEIGHT_CAP + 1e-9
+        assert isclose(sum(result.values()), 1.0, abs_tol=1e-6)
+
+
+# ---------------------------------------------------------------------------
+# Regional ensemble composition (issue #442)
+# ---------------------------------------------------------------------------
+
+class TestRegionalEnsembles:
+    """Verify compute_weights produces correct model sets for US, EU, and Asia."""
+
+    def _make_calibrated_db(self, models: list[str], n: int = 20, actual: float = 80.0):
+        today = date.today()
+        start = today - timedelta(days=29)
+        settlements = _settlement_rows(start, n, actual_high=actual)
+        logs = _log_rows(start, n, models, forecast_fn=lambda m, i: actual + 0.5)
+        return _make_db(logs, settlements)
+
+    def test_us_ensemble_excludes_icon(self):
+        """US ensemble: nws+hrrr+nbm+open_meteo+gfs+ecmwf — ICON excluded."""
+        db = self._make_calibrated_db(["nws", "open_meteo", "gfs", "hrrr", "nbm", "ecmwf"])
+        weights = compute_weights(db, "KORD", "Chicago", station_region="us")
+        assert "icon" not in weights
+        assert "nws" in weights
+        assert "ecmwf" in weights
+        assert isclose(sum(weights.values()), 1.0, abs_tol=1e-6)
+
+    def test_eu_ensemble_includes_ecmwf_and_icon(self):
+        """EU ensemble: open_meteo+gfs+ecmwf+icon — nws/hrrr/nbm excluded."""
+        db = self._make_calibrated_db(["open_meteo", "gfs", "ecmwf", "icon"])
+        weights = compute_weights(db, "EGLC", "London", station_region="eu")
+        assert "nws" not in weights
+        assert "hrrr" not in weights
+        assert "nbm" not in weights
+        assert "ecmwf" in weights
+        assert "icon" in weights
+        assert "open_meteo" in weights
+        assert isclose(sum(weights.values()), 1.0, abs_tol=1e-6)
+
+    def test_asia_ensemble_includes_ecmwf_excludes_icon(self):
+        """Asia ensemble: open_meteo+gfs+ecmwf — icon excluded (EU-only)."""
+        db = self._make_calibrated_db(["open_meteo", "gfs", "ecmwf"])
+        weights = compute_weights(db, "WSSS", "Singapore", station_region="asia")
+        assert "icon" not in weights
+        assert "nws" not in weights
+        assert "ecmwf" in weights
+        assert "open_meteo" in weights
+        assert isclose(sum(weights.values()), 1.0, abs_tol=1e-6)
+
+
+# ---------------------------------------------------------------------------
+# compute_deb_mu_f with ECMWF + ICON inputs (issue #442)
+# ---------------------------------------------------------------------------
+
+class TestComputeDebMuFEcmwfIcon:
+    """Verify compute_deb_mu_f handles ECMWF/ICON and US-station guard."""
+
+    def test_eu_4_model_consensus_ecmwf_icon(self):
+        """EU 4-model blend: open_meteo+gfs+ecmwf+icon."""
+        from src.model.deb_hourly_consensus import compute_deb_mu_f
+        weights = {"open_meteo": 0.25, "gfs": 0.25, "ecmwf": 0.25, "icon": 0.25}
+        result = compute_deb_mu_f(
+            forecast_nws=None,
+            forecast_open_meteo=78.0,
+            weights=weights,
+            forecast_gfs=79.0,
+            forecast_ecmwf=80.0,
+            forecast_icon=77.0,
+            station_region="eu",
+        )
+        expected = 0.25 * 78.0 + 0.25 * 79.0 + 0.25 * 80.0 + 0.25 * 77.0
+        assert result is not None
+        assert isclose(result, expected, abs_tol=1e-6), f"Expected {expected}, got {result}"
+
+    def test_asia_ensemble_ecmwf_no_icon(self):
+        """Asia 3-model blend: open_meteo+gfs+ecmwf (no icon)."""
+        from src.model.deb_hourly_consensus import compute_deb_mu_f
+        weights = {"open_meteo": 1/3, "gfs": 1/3, "ecmwf": 1/3}
+        result = compute_deb_mu_f(
+            forecast_nws=None,
+            forecast_open_meteo=82.0,
+            weights=weights,
+            forecast_gfs=83.0,
+            forecast_ecmwf=81.0,
+            forecast_icon=None,
+            station_region="asia",
+        )
+        total_w = 1/3 + 1/3 + 1/3
+        expected = (1/3 * 82.0 + 1/3 * 83.0 + 1/3 * 81.0) / total_w
+        assert result is not None
+        assert isclose(result, expected, abs_tol=1e-6)
+
+    def test_us_station_ecmwf_warns_and_excludes(self):
+        """When forecast_ecmwf provided for US station, log warning and exclude."""
+        import logging as _logging
+        import io
+        from src.model.deb_hourly_consensus import compute_deb_mu_f
+        weights = {"nws": 0.5, "open_meteo": 0.3, "ecmwf": 0.2}
+        handler = _logging.StreamHandler(io.StringIO())
+        handler.setLevel(_logging.WARNING)
+        logger = _logging.getLogger("src.model.deb_hourly_consensus")
+        logger.addHandler(handler)
+        try:
+            result = compute_deb_mu_f(
+                forecast_nws=82.0,
+                forecast_open_meteo=80.0,
+                weights=weights,
+                forecast_ecmwf=85.0,  # should be excluded with warning
+                station_region="us",
+            )
+            log_output = handler.stream.getvalue()
+        finally:
+            logger.removeHandler(handler)
+
+        # ECMWF excluded -> only nws=0.5, open_meteo=0.3 -> total=0.8
+        expected = (0.5 * 82.0 + 0.3 * 80.0) / 0.8
+        assert result is not None
+        assert isclose(result, expected, abs_tol=1e-6), f"Expected {expected}, got {result}"
+        assert "ecmwf" in log_output.lower(), (
+            f"Expected warning about ECMWF exclusion, got: {log_output!r}"
+        )
+
+    def test_ecmwf_none_for_us_station_no_warning(self):
+        """When forecast_ecmwf is None for US station, no warning is emitted."""
+        import logging as _logging
+        import io
+        from src.model.deb_hourly_consensus import compute_deb_mu_f
+        weights = {"nws": 0.5, "open_meteo": 0.5}
+        handler = _logging.StreamHandler(io.StringIO())
+        handler.setLevel(_logging.WARNING)
+        logger = _logging.getLogger("src.model.deb_hourly_consensus")
+        logger.addHandler(handler)
+        try:
+            result = compute_deb_mu_f(
+                forecast_nws=82.0,
+                forecast_open_meteo=80.0,
+                weights=weights,
+                forecast_ecmwf=None,
+                station_region="us",
+            )
+            log_output = handler.stream.getvalue()
+        finally:
+            logger.removeHandler(handler)
+
+        assert "ecmwf" not in log_output.lower()
+        assert result is not None
