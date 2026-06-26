@@ -205,7 +205,12 @@ def compute_weights(
     equal_w = _equal_weights_for(station_region)
 
     since_date = (date_cls.today() - timedelta(days=window_days)).isoformat()
-    log_rows = db.get_forecast_log(station, since_date)
+    # Use lead-hours-filtered log when available (introduced in #422) to avoid
+    # mixing nowcast snapshots with genuine 24h-ahead forecasts.
+    if hasattr(db, "get_forecast_log_by_lead"):
+        log_rows = db.get_forecast_log_by_lead(station, since_date, lead_hours=24)
+    else:
+        log_rows = db.get_forecast_log(station, since_date)
     settlements = db.get_settlements(station, since_date + "T00:00:00")
 
     # Build actual_high lookup: date_str -> actual_high_f

@@ -37,10 +37,29 @@ from src.model.deb_weighting import (
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _make_db(log_rows: list, settlement_rows: list) -> MagicMock:
-    db = MagicMock()
+def _make_db(log_rows: list, settlement_rows: list, with_lead_log: bool = False) -> MagicMock:
+    """Build a minimal mock db object.
+
+    By default the mock does NOT expose get_forecast_log_by_lead so that
+    compute_weights falls back to get_forecast_log (the standard path).
+    Pass with_lead_log=True to test the lead-hours guard code path.
+    """
+    # Use spec to prevent MagicMock from auto-creating get_forecast_log_by_lead,
+    # which would make hasattr() always return True.
+    spec_attrs = [
+        "get_forecast_log",
+        "get_settlements",
+        "get_model_weights",
+        "upsert_model_weight",
+        "upsert_forecast_log",
+    ]
+    if with_lead_log:
+        spec_attrs.append("get_forecast_log_by_lead")
+    db = MagicMock(spec=spec_attrs)
     db.get_forecast_log.return_value = log_rows
     db.get_settlements.return_value = settlement_rows
+    if with_lead_log:
+        db.get_forecast_log_by_lead.return_value = log_rows
     return db
 
 
@@ -437,6 +456,38 @@ class TestLegacyReplayDelta:
         assert weights["nws"] > weights["open_meteo"]
         assert weights["nws"] > weights["gfs"]
 
+
+# ---------------------------------------------------------------------------
+# Lead-hours guard (Fix 2 / issue #422)
+# ---------------------------------------------------------------------------
+
+class TestLeadHoursGuard:
+    def test_uses_get_forecast_log_by_lead_when_available(self):
+        """When db exposes get_forecast_log_by_lead, compute_weights must use it."""
+        today = date.today()
+        start = today - timedelta(days=29)
+        settlements = _settlement_rows(start, 20, actual_high=80.0)
+        logs = _log_rows(start, 20, ["nws", "open_meteo", "gfs"],
+                         forecast_fn=lambda m, i: 79.0)
+        db = _make_db(logs, settlements, with_lead_log=True)
+        weights = compute_weights(db, "KORD", "Chicago", station_region="us")
+
+        db.get_forecast_log_by_lead.assert_called_once()
+        db.get_forecast_log.assert_not_called()
+        assert isclose(sum(weights.values()), 1.0, abs_tol=1e-6)
+
+    def test_falls_back_to_get_forecast_log_when_no_lead_method(self):
+        """When db does not expose get_forecast_log_by_lead, use get_forecast_log."""
+        today = date.today()
+        start = today - timedelta(days=29)
+        settlements = _settlement_rows(start, 20, actual_high=80.0)
+        logs = _log_rows(start, 20, ["nws", "open_meteo", "gfs"],
+                         forecast_fn=lambda m, i: 79.0)
+        db = _make_db(logs, settlements, with_lead_log=False)
+        weights = compute_weights(db, "KORD", "Chicago", station_region="us")
+
+        db.get_forecast_log.assert_called_once()
+        assert isclose(sum(weights.values()), 1.0, abs_tol=1e-6)
 
 # ---------------------------------------------------------------------------
 # compute_weights: weights sum to 1 invariant
