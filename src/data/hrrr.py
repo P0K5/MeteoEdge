@@ -83,10 +83,10 @@ def fetch_hrrr_hourly(
         log.info("[hrrr] %s is outside CONUS bounds — returning empty list", label)
         return []
 
-    from src.data.grib_cache import fetch_hrrr_field, _resolve_latest_cycle
+    from src.data import grib_cache as _grib_cache
 
     # Resolve the latest available cycle (grib_cache handles fallback internally).
-    cycle_dt = _resolve_latest_cycle("hrrr")
+    cycle_dt = _grib_cache._resolve_latest_cycle("hrrr")
     if cycle_dt is None:
         log.warning("[hrrr] no available HRRR cycle found for %s", label)
         return []
@@ -95,7 +95,7 @@ def fetch_hrrr_hourly(
 
     results: list[HourlyTemp] = []
     for fxx in _FORECAST_HOURS:
-        kelvin = fetch_hrrr_field("TMP_2m", lat, lon, fxx=fxx)
+        kelvin = _grib_cache.fetch_hrrr_field("TMP_2m", lat, lon, fxx=fxx)
         if kelvin is None:
             log.debug("[hrrr] fxx=%02d unavailable for %s", fxx, label)
             continue
