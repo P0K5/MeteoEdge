@@ -499,6 +499,8 @@ CONFIG_DEFAULTS: "dict[str, str | int | float | bool]" = {
     "RESIDUAL_MIN_SAMPLES": 10,
     "RESIDUAL_MAX_CORRECTION_F": 5.0,
     "RESIDUAL_CORRECTION_ENABLED": True,
+    # DEB master switch — set True to activate DEB weight computation and consumption
+    "DEB_ENABLED": False,
     # DEB cold-start fractions for HRRR and NBM (issue #435)
     "DEB_HRRR_COLD_START_FRACTION": 0.4,
     "DEB_NBM_COLD_START_FRACTION": 0.4,

@@ -2147,6 +2147,11 @@ _CONFIG_META: dict[str, dict] = {
         "min": 1,
         "max": 60,
     },
+    "DEB_ENABLED": {
+        "description": "Master switch — enable DEB weight computation and consumption (requires restart for envelope.py)",
+        "type": "bool",
+        "group": "forecast",
+    },
     "DEB_HRRR_COLD_START_FRACTION": {
         "description": "Weight multiplier for HRRR during cold-start (< DEB_MIN_SAMPLES pairs)",
         "type": "float",
