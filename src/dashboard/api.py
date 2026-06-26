@@ -2147,6 +2147,27 @@ _CONFIG_META: dict[str, dict] = {
         "min": 1,
         "max": 60,
     },
+    "DEB_HRRR_COLD_START_FRACTION": {
+        "description": "Weight multiplier for HRRR during cold-start (< DEB_MIN_SAMPLES pairs)",
+        "type": "float",
+        "group": "forecast",
+        "min": 0.1,
+        "max": 1.0,
+    },
+    "DEB_NBM_COLD_START_FRACTION": {
+        "description": "Weight multiplier for NBM during cold-start (< DEB_MIN_SAMPLES pairs)",
+        "type": "float",
+        "group": "forecast",
+        "min": 0.1,
+        "max": 1.0,
+    },
+    "DEB_GROUP_WEIGHT_CAP": {
+        "description": "Max combined DEB weight for the noaa_us channel group (NWS + HRRR + NBM)",
+        "type": "float",
+        "group": "forecast",
+        "min": 0.3,
+        "max": 1.0,
+    },
 }
 
 _EMOS_VALID_MODES = frozenset({"legacy", "emos_shadow", "emos_primary"})

@@ -98,9 +98,12 @@ register_model("nws",        region="us",     expected_cadence_h=24.0, group_id=
 register_model("open_meteo", region="global", expected_cadence_h=24.0, group_id=None)
 register_model("gfs",        region="global", expected_cadence_h=6.0,  group_id=None)
 
-# HRRR and NBM: CONUS-only NOAA sources; correlated with NWS via noaa_us group cap
-register_model("hrrr", region="us", expected_cadence_h=1.0,  group_id="noaa_us", cold_start_fraction=0.4)
-register_model("nbm",  region="us", expected_cadence_h=6.0,  group_id="noaa_us", cold_start_fraction=0.4)
+# HRRR and NBM: CONUS-only NOAA sources; correlated with NWS via noaa_us group cap.
+# cold_start_fraction is live-read from env so seed_config / dashboard overrides take effect.
+_HRRR_COLD_START = float(os.getenv("DEB_HRRR_COLD_START_FRACTION", "0.4"))
+_NBM_COLD_START = float(os.getenv("DEB_NBM_COLD_START_FRACTION", "0.4"))
+register_model("hrrr", region="us", expected_cadence_h=1.0, group_id="noaa_us", cold_start_fraction=_HRRR_COLD_START)
+register_model("nbm",  region="us", expected_cadence_h=6.0, group_id="noaa_us", cold_start_fraction=_NBM_COLD_START)
 
 
 def _models_for_region(station_region: str) -> list[_ModelEntry]:

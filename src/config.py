@@ -499,6 +499,11 @@ CONFIG_DEFAULTS: "dict[str, str | int | float | bool]" = {
     "RESIDUAL_MIN_SAMPLES": 10,
     "RESIDUAL_MAX_CORRECTION_F": 5.0,
     "RESIDUAL_CORRECTION_ENABLED": True,
+    # DEB cold-start fractions for HRRR and NBM (issue #435)
+    "DEB_HRRR_COLD_START_FRACTION": 0.4,
+    "DEB_NBM_COLD_START_FRACTION": 0.4,
+    # DEB group weight cap for the noaa_us channel group (NWS + HRRR + NBM)
+    "DEB_GROUP_WEIGHT_CAP": 0.7,
 }
 
 
