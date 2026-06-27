@@ -39,7 +39,6 @@ CREATE TABLE IF NOT EXISTS candidates (
 );
 CREATE INDEX IF NOT EXISTS idx_cand_station_ts ON candidates(station, ts);
 CREATE INDEX IF NOT EXISTS idx_cand_ticker ON candidates(ticker);
-CREATE INDEX IF NOT EXISTS idx_cand_station_direction ON candidates(station, direction);
 
 CREATE TABLE IF NOT EXISTS trades (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -64,7 +63,6 @@ CREATE TABLE IF NOT EXISTS trades (
 );
 CREATE INDEX IF NOT EXISTS idx_trades_station_ts ON trades(station, ts);
 CREATE INDEX IF NOT EXISTS idx_trades_mode ON trades(mode);
-CREATE INDEX IF NOT EXISTS idx_trades_station_direction ON trades(station, direction);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_trades_shadow_unique
     ON trades(station, bracket_low, bracket_high, side, substr(ts,1,10))
     WHERE mode='shadow';
@@ -83,7 +81,6 @@ CREATE TABLE IF NOT EXISTS settlements (
     direction       TEXT NOT NULL DEFAULT 'high'
 );
 CREATE INDEX IF NOT EXISTS idx_settlements_station_ts ON settlements(station, ts);
-CREATE INDEX IF NOT EXISTS idx_settlements_station_direction ON settlements(station, direction);
 
 CREATE TABLE IF NOT EXISTS open_positions (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
