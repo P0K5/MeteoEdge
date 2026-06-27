@@ -320,28 +320,28 @@ class TestGetSetStationOverrideDict:
     def test_set_get_both_enabled(self):
         db = _mem_db()
         db.set_station_override("KORD", yes_enabled=True, no_enabled=True)
-        assert db.get_station_override("KORD") == {"yes_enabled": True, "no_enabled": True}
+        assert db.get_station_override("KORD") == {"yes_enabled": True, "no_enabled": True, "low_no_enabled": False}
 
     def test_set_get_yes_shadow(self):
         db = _mem_db()
         db.set_station_override("KORD", yes_enabled=False, no_enabled=True)
-        assert db.get_station_override("KORD") == {"yes_enabled": False, "no_enabled": True}
+        assert db.get_station_override("KORD") == {"yes_enabled": False, "no_enabled": True, "low_no_enabled": False}
 
     def test_set_get_no_shadow(self):
         db = _mem_db()
         db.set_station_override("KORD", yes_enabled=True, no_enabled=False)
-        assert db.get_station_override("KORD") == {"yes_enabled": True, "no_enabled": False}
+        assert db.get_station_override("KORD") == {"yes_enabled": True, "no_enabled": False, "low_no_enabled": False}
 
     def test_set_get_both_shadow(self):
         db = _mem_db()
         db.set_station_override("KORD", yes_enabled=False, no_enabled=False)
-        assert db.get_station_override("KORD") == {"yes_enabled": False, "no_enabled": False}
+        assert db.get_station_override("KORD") == {"yes_enabled": False, "no_enabled": False, "low_no_enabled": False}
 
     def test_upsert_overwrites(self):
         db = _mem_db()
         db.set_station_override("KORD", yes_enabled=True, no_enabled=True)
         db.set_station_override("KORD", yes_enabled=False, no_enabled=True)
-        assert db.get_station_override("KORD") == {"yes_enabled": False, "no_enabled": True}
+        assert db.get_station_override("KORD") == {"yes_enabled": False, "no_enabled": True, "low_no_enabled": False}
 
     def test_get_all_returns_dict_of_dicts(self):
         db = _mem_db()
@@ -349,8 +349,8 @@ class TestGetSetStationOverrideDict:
         db.set_station_override("KMIA", yes_enabled=False, no_enabled=False)
         result = db.get_all_station_overrides()
         assert result == {
-            "KORD": {"yes_enabled": True, "no_enabled": False},
-            "KMIA": {"yes_enabled": False, "no_enabled": False},
+            "KORD": {"yes_enabled": True, "no_enabled": False, "low_no_enabled": False},
+            "KMIA": {"yes_enabled": False, "no_enabled": False, "low_no_enabled": False},
         }
 
 
