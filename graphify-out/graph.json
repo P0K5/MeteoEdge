@@ -943,7 +943,7 @@
       "label": "station_city()",
       "file_type": "code",
       "source_file": "src/config.py",
-      "source_location": "L88",
+      "source_location": "L87",
       "_origin": "ast",
       "id": "src_config_station_city",
       "community": 103,
@@ -953,7 +953,7 @@
       "label": "get_take_profit_buffer_cents()",
       "file_type": "code",
       "source_file": "src/config.py",
-      "source_location": "L270",
+      "source_location": "L269",
       "_origin": "ast",
       "id": "src_config_get_take_profit_buffer_cents",
       "community": 97,
@@ -963,7 +963,7 @@
       "label": "_load_source_priority()",
       "file_type": "code",
       "source_file": "src/config.py",
-      "source_location": "L409",
+      "source_location": "L407",
       "_origin": "ast",
       "id": "src_config_load_source_priority",
       "community": 95,
@@ -973,7 +973,7 @@
       "label": "get_source_priority()",
       "file_type": "code",
       "source_file": "src/config.py",
-      "source_location": "L415",
+      "source_location": "L413",
       "_origin": "ast",
       "id": "src_config_get_source_priority",
       "community": 95,
@@ -983,7 +983,7 @@
       "label": "get_canonical_station_feeds()",
       "file_type": "code",
       "source_file": "src/config.py",
-      "source_location": "L419",
+      "source_location": "L417",
       "_origin": "ast",
       "id": "src_config_get_canonical_station_feeds",
       "community": 53,
@@ -993,7 +993,7 @@
       "label": "seed_config()",
       "file_type": "code",
       "source_file": "src/config.py",
-      "source_location": "L521",
+      "source_location": "L519",
       "_origin": "ast",
       "id": "src_config_seed_config",
       "community": 89,
@@ -1003,7 +1003,7 @@
       "label": "seed_station_overrides()",
       "file_type": "code",
       "source_file": "src/config.py",
-      "source_location": "L538",
+      "source_location": "L536",
       "_origin": "ast",
       "id": "src_config_seed_station_overrides",
       "community": 88,
@@ -1013,7 +1013,7 @@
       "label": "get_live_config()",
       "file_type": "code",
       "source_file": "src/config.py",
-      "source_location": "L553",
+      "source_location": "L551",
       "_origin": "ast",
       "id": "src_config_get_live_config",
       "community": 89,
@@ -1033,9 +1033,9 @@
       "label": "Return the Polymarket city name from a STATIONS entry (index 3).",
       "file_type": "rationale",
       "source_file": "src/config.py",
-      "source_location": "L89",
+      "source_location": "L88",
       "_origin": "ast",
-      "id": "src_config_rationale_89",
+      "id": "src_config_rationale_88",
       "community": 103,
       "norm_label": "return the polymarket city name from a stations entry (index 3)."
     },
@@ -1043,9 +1043,9 @@
       "label": "Return the take-profit buffer (\u00a2) for *station*.      Checks for a station-speci",
       "file_type": "rationale",
       "source_file": "src/config.py",
-      "source_location": "L271",
+      "source_location": "L270",
       "_origin": "ast",
-      "id": "src_config_rationale_271",
+      "id": "src_config_rationale_270",
       "community": 97,
       "norm_label": "return the take-profit buffer (\u00a2) for *station*.      checks for a station-speci"
     },
@@ -1053,9 +1053,9 @@
       "label": "Return all DB ``station`` keys under which *station*'s observations are stored.",
       "file_type": "rationale",
       "source_file": "src/config.py",
-      "source_location": "L420",
+      "source_location": "L418",
       "_origin": "ast",
-      "id": "src_config_rationale_420",
+      "id": "src_config_rationale_418",
       "community": 53,
       "norm_label": "return all db ``station`` keys under which *station*'s observations are stored."
     },
@@ -1063,9 +1063,9 @@
       "label": "Seed bot_config from env vars / hardcoded defaults on first run.      For each k",
       "file_type": "rationale",
       "source_file": "src/config.py",
-      "source_location": "L522",
+      "source_location": "L520",
       "_origin": "ast",
-      "id": "src_config_rationale_522",
+      "id": "src_config_rationale_520",
       "community": 89,
       "norm_label": "seed bot_config from env vars / hardcoded defaults on first run.      for each k"
     },
@@ -1073,9 +1073,9 @@
       "label": "Seed station_overrides for RKSI on first run, if missing.      RKSI is seeded wi",
       "file_type": "rationale",
       "source_file": "src/config.py",
-      "source_location": "L539",
+      "source_location": "L537",
       "_origin": "ast",
-      "id": "src_config_rationale_539",
+      "id": "src_config_rationale_537",
       "community": 88,
       "norm_label": "seed station_overrides for rksi on first run, if missing.      rksi is seeded wi"
     },
@@ -1083,9 +1083,9 @@
       "label": "Return current bot_config values as a typed dict.      Reads all rows from the b",
       "file_type": "rationale",
       "source_file": "src/config.py",
-      "source_location": "L554",
+      "source_location": "L552",
       "_origin": "ast",
-      "id": "src_config_rationale_554",
+      "id": "src_config_rationale_552",
       "community": 89,
       "norm_label": "return current bot_config values as a typed dict.      reads all rows from the b"
     },
@@ -6696,7 +6696,7 @@
       "source_location": "L44",
       "_origin": "ast",
       "id": "scripts_intraday_correction_backtest_station_for_city",
-      "community": 94,
+      "community": 74,
       "norm_label": "_station_for_city()"
     },
     {
@@ -6746,7 +6746,7 @@
       "source_location": "L45",
       "_origin": "ast",
       "id": "scripts_intraday_correction_backtest_rationale_45",
-      "community": 94,
+      "community": 74,
       "norm_label": "return the metar station code for *city* from stations config, or none."
     },
     {
@@ -25316,7 +25316,7 @@
       "source_location": "L179",
       "_origin": "ast",
       "id": "tests_test_intraday_correction_backtest_testrmsecalculation_test_station_for_known_city",
-      "community": 94,
+      "community": 74,
       "norm_label": ".test_station_for_known_city()"
     },
     {
@@ -25536,7 +25536,7 @@
       "source_location": "L180",
       "_origin": "ast",
       "id": "tests_test_intraday_correction_backtest_rationale_180",
-      "community": 94,
+      "community": 74,
       "norm_label": "_station_for_city returns correct metar code for known city."
     },
     {
@@ -25966,7 +25966,7 @@
       "source_location": "L236",
       "_origin": "ast",
       "id": "tests_test_jma_ameidas_testdataparsing_test_parse_network_error_returns_none",
-      "community": 35,
+      "community": 56,
       "norm_label": ".test_parse_network_error_returns_none()"
     },
     {
@@ -26196,7 +26196,7 @@
       "source_location": "L239",
       "_origin": "ast",
       "id": "tests_test_jma_ameidas_rationale_239",
-      "community": 35,
+      "community": 56,
       "norm_label": "should return none on network errors."
     },
     {
@@ -32996,7 +32996,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "tests_test_residual_correction",
-      "community": 51,
+      "community": 6,
       "norm_label": "test_residual_correction.py"
     },
     {
@@ -33646,7 +33646,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "tests_test_residual_correction_rationale_1",
-      "community": 51,
+      "community": 6,
       "norm_label": "unit tests for src/model/residual_correction.py (issue #307).  covers: - correct"
     },
     {
@@ -56828,11 +56828,11 @@
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/config.py",
-      "source_location": "L89",
+      "source_location": "L88",
       "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "src_config_rationale_89",
-      "target": "src_config_station_city"
+      "source": "src_config_rationale_88",
+      "target": "src_config_station_city",
+      "confidence_score": 1.0
     },
     {
       "relation": "imports",
@@ -56860,11 +56860,11 @@
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/config.py",
-      "source_location": "L271",
+      "source_location": "L270",
       "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "src_config_rationale_271",
-      "target": "src_config_get_take_profit_buffer_cents"
+      "source": "src_config_rationale_270",
+      "target": "src_config_get_take_profit_buffer_cents",
+      "confidence_score": 1.0
     },
     {
       "relation": "imports",
@@ -57255,11 +57255,11 @@
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/config.py",
-      "source_location": "L420",
+      "source_location": "L418",
       "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "src_config_rationale_420",
-      "target": "src_config_get_canonical_station_feeds"
+      "source": "src_config_rationale_418",
+      "target": "src_config_get_canonical_station_feeds",
+      "confidence_score": 1.0
     },
     {
       "relation": "imports",
@@ -57408,11 +57408,11 @@
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/config.py",
-      "source_location": "L522",
+      "source_location": "L520",
       "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "src_config_rationale_522",
-      "target": "src_config_seed_config"
+      "source": "src_config_rationale_520",
+      "target": "src_config_seed_config",
+      "confidence_score": 1.0
     },
     {
       "relation": "imports",
@@ -57561,11 +57561,11 @@
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/config.py",
-      "source_location": "L539",
+      "source_location": "L537",
       "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "src_config_rationale_539",
-      "target": "src_config_seed_station_overrides"
+      "source": "src_config_rationale_537",
+      "target": "src_config_seed_station_overrides",
+      "confidence_score": 1.0
     },
     {
       "relation": "imports",
@@ -57725,11 +57725,11 @@
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/config.py",
-      "source_location": "L554",
+      "source_location": "L552",
       "weight": 1.0,
-      "confidence_score": 1.0,
-      "source": "src_config_rationale_554",
-      "target": "src_config_get_live_config"
+      "source": "src_config_rationale_552",
+      "target": "src_config_get_live_config",
+      "confidence_score": 1.0
     },
     {
       "relation": "imports",
@@ -114934,9 +114934,9 @@
       "source_file": "src/tests/test_pnl_scaling.py",
       "source_location": "L13",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_pnl_scaling_rationale_13",
-      "target": "tests_test_pnl_scaling_db",
-      "confidence_score": 1.0
+      "target": "tests_test_pnl_scaling_db"
     },
     {
       "relation": "calls",
@@ -114999,9 +114999,9 @@
       "source_file": "src/tests/test_pnl_scaling.py",
       "source_location": "L18",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_pnl_scaling_rationale_18",
-      "target": "tests_test_pnl_scaling_insert_settlement",
-      "confidence_score": 1.0
+      "target": "tests_test_pnl_scaling_insert_settlement"
     },
     {
       "relation": "calls",
@@ -115064,9 +115064,9 @@
       "source_file": "src/tests/test_pnl_scaling.py",
       "source_location": "L40",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_pnl_scaling_rationale_40",
-      "target": "tests_test_pnl_scaling_insert_trade",
-      "confidence_score": 1.0
+      "target": "tests_test_pnl_scaling_insert_trade"
     },
     {
       "relation": "calls",
@@ -115129,9 +115129,9 @@
       "source_file": "src/tests/test_pnl_scaling.py",
       "source_location": "L58",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_pnl_scaling_rationale_58",
-      "target": "tests_test_pnl_scaling_testpnlscaling",
-      "confidence_score": 1.0
+      "target": "tests_test_pnl_scaling_testpnlscaling"
     },
     {
       "relation": "method",
@@ -115189,9 +115189,9 @@
       "source_file": "src/tests/test_pnl_scaling.py",
       "source_location": "L61",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_pnl_scaling_rationale_61",
-      "target": "tests_test_pnl_scaling_testpnlscaling_test_pnl_scaling_win_scenario",
-      "confidence_score": 1.0
+      "target": "tests_test_pnl_scaling_testpnlscaling_test_pnl_scaling_win_scenario"
     },
     {
       "relation": "rationale_for",
@@ -115199,9 +115199,9 @@
       "source_file": "src/tests/test_pnl_scaling.py",
       "source_location": "L97",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_pnl_scaling_rationale_97",
-      "target": "tests_test_pnl_scaling_testpnlscaling_test_pnl_scaling_loss_scenario",
-      "confidence_score": 1.0
+      "target": "tests_test_pnl_scaling_testpnlscaling_test_pnl_scaling_loss_scenario"
     },
     {
       "relation": "rationale_for",
@@ -115209,9 +115209,9 @@
       "source_file": "src/tests/test_pnl_scaling.py",
       "source_location": "L133",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_pnl_scaling_rationale_133",
-      "target": "tests_test_pnl_scaling_testpnlscaling_test_pnl_scaling_no_side",
-      "confidence_score": 1.0
+      "target": "tests_test_pnl_scaling_testpnlscaling_test_pnl_scaling_no_side"
     },
     {
       "relation": "rationale_for",
@@ -115219,9 +115219,9 @@
       "source_file": "src/tests/test_pnl_scaling.py",
       "source_location": "L170",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_pnl_scaling_rationale_170",
-      "target": "tests_test_pnl_scaling_testpnlscaling_test_pnl_scaling_rounding",
-      "confidence_score": 1.0
+      "target": "tests_test_pnl_scaling_testpnlscaling_test_pnl_scaling_rounding"
     },
     {
       "relation": "rationale_for",
@@ -115229,9 +115229,9 @@
       "source_file": "src/tests/test_pnl_scaling.py",
       "source_location": "L207",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_test_pnl_scaling_rationale_207",
-      "target": "tests_test_pnl_scaling_testpnlscaling_test_query_includes_size_eur",
-      "confidence_score": 1.0
+      "target": "tests_test_pnl_scaling_testpnlscaling_test_query_includes_size_eur"
     },
     {
       "relation": "contains",
@@ -142454,5 +142454,5 @@
     }
   ],
   "hyperedges": [],
-  "built_at_commit": "000e9340f606ccf8ed46ad01f64359fbceece6cb"
+  "built_at_commit": "7a660f0f3da55af259b4e3144d41cabe385104e5"
 }
