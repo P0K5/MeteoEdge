@@ -22,7 +22,7 @@ from src.config import (
     MAX_CONFIDENCE_YES_FOR_NO, MIN_MINUTES_TO_SETTLEMENT,
     ENABLE_CLOB_ENRICHMENT, MIN_FORECAST_BRACKET_MARGIN_F, DISABLED_STATIONS,
     SHADOW_STATIONS, SHADOW_STATIONS_YES, SHADOW_STATIONS_NO,
-    CONFIG_DEFAULTS, get_live_config, MODEL_PROB_CAP,
+    CONFIG_DEFAULTS, get_live_config, MODEL_PROB_CAP, FORECAST_STDDEV_F,
 )
 from src.model.envelope import Bracket, WeatherState, true_probability_yes, compute_envelope
 from src.model.emos_mode import get_city_mode, apply_emos, _check_ready_for_promotion
@@ -61,8 +61,8 @@ POLYMARKET_CITY_TO_STATION_LOW: dict[str, str] = {
     "singapore":     "WSSS",
     "panama city":   "MPMG",
     # Low-side markets use shortened names for some cities
-    "nyc":           "KLGA",   # Polymarket uses "NYC" on low-side markets
-    "new york":      "KLGA",
+    "nyc":           "KJFK",   # Polymarket uses "NYC" on low-side markets
+    "new york":      "KJFK",
     "london":        "EGLC",
     "paris":         "LFPB",
     "tokyo":         "RJTT",
@@ -430,7 +430,6 @@ def scan_markets(
                 if mode == "emos_shadow":
                     # Shadow: compute calibrated params for logging only; serve legacy probs.
                     # forecast_mean and sigma used by true_probability_yes are not modified.
-                    from src.config import FORECAST_STDDEV_F
                     _mu_cal, _sigma_cal = apply_emos(
                         state.corrected_mu_f or state.deb_mu_f or state.forecast_high_f or 0.0,
                         FORECAST_STDDEV_F,
@@ -455,7 +454,6 @@ def scan_markets(
                         )
                         emos_mode_used = "legacy"
                     else:
-                        from src.config import FORECAST_STDDEV_F
                         _mu_raw = (
                             state.corrected_mu_f
                             or state.deb_mu_f
@@ -677,7 +675,6 @@ def scan_markets(
                     _enrich_from_clob(bracket, orderbooks=orderbooks)
 
                 state_low = weather_low[station]
-                from src.config import FORECAST_STDDEV_F
                 p_yes = prob_low_fn(bracket, state_low, mins_left, FORECAST_STDDEV_F)
                 p_yes = min(p_yes, MODEL_PROB_CAP)
 
