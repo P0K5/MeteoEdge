@@ -1,0 +1,3 @@
+# Gitleaks configuration
+# Add [[allowlist]] entries below to suppress false positives on test fixtures.
+title = "MeteoEdge gitleaks config"
