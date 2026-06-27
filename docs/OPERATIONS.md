@@ -1162,3 +1162,9 @@ EOF_SCRIPT
 - EMOS sigma retrain (#449) follows the same procedure.
 
 - GEFS ensemble (30 members): ingested via capture-forecasts timer; `model='gefs'` rows written to `model_forecast_log` with `sigma_f` from `ensemble_sigma.py`.
+- HRRR: hourly rows fetched via `src/data/hrrr.py`; mean temp stored as `model='hrrr'` with `sigma_f=None`. Built-in CONUS check — returns empty list outside the CONUS domain (no row written).
+- NBM: daily-high forecast fetched via `src/data/nbm.py`; stored as `model='nbm'` with `sigma_f=None`. Built-in CONUS check — returns None outside the CONUS domain (no row written).
+- ECMWF (Open): daily-high forecast fetched via `src/data/ecmwf_open.py`; stored as `model='ecmwf'` with `sigma_f=None`. Global domain — no domain restriction.
+- ICON: hourly rows fetched via `src/data/icon.py`; mean temp stored as `model='icon'` with `sigma_f=None`. Built-in EU-domain check (lat 29–72, lon −25 to 45) — returns empty list outside EU (no row written).
+
+All five shadow sources (GEFS, HRRR, NBM, ECMWF, ICON) are store/log only. They have zero effect on the live envelope, FORECAST_STACK, daily-high blend, or EMOS consumption. Each source is wrapped in an independent `try/except Exception` so a single source failure never affects the others.
