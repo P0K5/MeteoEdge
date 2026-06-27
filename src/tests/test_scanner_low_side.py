@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from src.model.envelope import Bracket
-from src.model.envelope_low import WeatherStateLow
+from src.model.envelope_low import WeatherStateLow  # noqa: used in type hints only
 from src.strategy.scanner import (
     Candidate,
     is_highest_temp_market,
@@ -172,7 +172,9 @@ class TestScanMarketsLowSide:
     def test_low_candidate_emitted_when_weather_low_provided(self):
         markets = [_low_market("Chicago", "55-59°F")]
         weather_low = {"KORD": _make_weather_low("KORD", current_low_f=70.0)}
-        candidates, _ = scan_markets(weather={}, markets=markets, weather_low=weather_low)
+        prob_low_fn = lambda b, s, m, f: 0.05  # noqa: E731
+        candidates, _ = scan_markets(weather={}, markets=markets,
+                                     weather_low=weather_low, prob_low_fn=prob_low_fn)
         # With current_low_f=70 and bracket 55-59, the bracket ceiling (59) < current_low (70)
         # → running-low exclusion triggers → p_yes≈0 → only NO has edge
         low_cands = [c for c in candidates if c.direction == "low"]
@@ -185,7 +187,9 @@ class TestScanMarketsLowSide:
         """Low-side candidates must always be shadow=True regardless of station_overrides."""
         markets = [_low_market("Chicago")]
         weather_low = {"KORD": _make_weather_low("KORD")}
-        candidates, _ = scan_markets(weather={}, markets=markets, weather_low=weather_low)
+        prob_low_fn = lambda b, s, m, f: 0.05  # noqa: E731
+        candidates, _ = scan_markets(weather={}, markets=markets,
+                                     weather_low=weather_low, prob_low_fn=prob_low_fn)
         for c in candidates:
             if c.direction == "low":
                 assert c.shadow is True
@@ -200,12 +204,14 @@ class TestScanMarketsLowSide:
              "clobTokenIds": '["t1","t2"]',
              "endDate": datetime.now(timezone.utc).isoformat()},
         ]
+        prob_low_fn = lambda b, s, m, f: 0.05  # noqa: E731
         candidates_without_low, _ = scan_markets(weather={}, markets=markets, weather_low=None)
-        candidates_with_low, _    = scan_markets(weather={}, markets=markets,
-                                                  weather_low={"KORD": _make_weather_low("KORD")})
+        candidates_with_low, _ = scan_markets(weather={}, markets=markets,
+                                              weather_low={"KORD": _make_weather_low("KORD")},
+                                              prob_low_fn=prob_low_fn)
         # High-side count must be identical (both 0 because KORD not in weather dict)
         high_without = [c for c in candidates_without_low if c.direction == "high"]
-        high_with    = [c for c in candidates_with_low    if c.direction == "high"]
+        high_with = [c for c in candidates_with_low if c.direction == "high"]
         assert len(high_without) == len(high_with)
 
     def test_low_market_skipped_without_state(self):

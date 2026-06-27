@@ -3,7 +3,7 @@
 For each market fetched from Polymarket, this module:
 1. Checks if it's a 'highest temperature in <city>' or 'lowest temperature in <city>' market
 2. Parses the bracket (e.g., '82-84°F') into a Bracket object
-3. Computes true P(yes) using the weather envelope model (high) or envelope_low (low)
+3. Computes true P(yes) using the weather envelope model (high) or low-side model (low)
 4. Computes expected value for YES and NO sides
 5. Returns Candidate objects for any market with edge >= MIN_EDGE_CENTS
 """
@@ -25,7 +25,6 @@ from src.config import (
     CONFIG_DEFAULTS, get_live_config, MODEL_PROB_CAP,
 )
 from src.model.envelope import Bracket, WeatherState, true_probability_yes, compute_envelope
-from src.model.envelope_low import WeatherStateLow, true_probability_low_in_bracket
 from src.model.emos_mode import get_city_mode, apply_emos, _check_ready_for_promotion
 from src.model.residual_correction import compute_residual_stats
 from src.data.polymarket import get_orderbook
@@ -323,7 +322,8 @@ def scan_markets(
     markets: list,
     db=None,
     orderbooks: "dict[str, dict] | None" = None,
-    weather_low: "dict[str, WeatherStateLow] | None" = None,
+    weather_low: "dict | None" = None,
+    prob_low_fn=None,
 ) -> "tuple[list[Candidate], list[dict]]":
     """Scan all Polymarket markets against current weather states.
 
@@ -335,8 +335,11 @@ def scan_markets(
             When provided, CLOB enrichment reads from this dict instead of
             making individual HTTP calls (one call per token, batched upstream).
             When ``None``, falls back to per-bracket ``get_orderbook()`` calls.
-        weather_low: optional dict mapping station code → WeatherStateLow for low-side markets.
+        weather_low: optional dict mapping station → low-side weather state for low markets.
             When None, low-side markets are detected but not scored (skipped silently).
+        prob_low_fn: callable(bracket, state_low, mins_left, forecast_stddev_f) → float.
+            Required when weather_low is provided. Injected by the caller so this
+            module does not directly depend on the low-side model package.
 
     Returns:
         (candidates, all_snapshots) where:
@@ -635,7 +638,7 @@ def scan_markets(
     # All low-side candidates are emitted with shadow=True regardless of any
     # station_overrides settings (promotion to live is tracked in #458).
     # -----------------------------------------------------------------------
-    if weather_low:
+    if weather_low and prob_low_fn is not None:
         for market in markets:
             try:
                 is_low, station = is_lowest_temp_market(market)
@@ -675,9 +678,7 @@ def scan_markets(
 
                 state_low = weather_low[station]
                 from src.config import FORECAST_STDDEV_F
-                p_yes = true_probability_low_in_bracket(
-                    bracket, state_low, mins_left, FORECAST_STDDEV_F
-                )
+                p_yes = prob_low_fn(bracket, state_low, mins_left, FORECAST_STDDEV_F)
                 p_yes = min(p_yes, MODEL_PROB_CAP)
 
                 ev_yes = (p_yes * 100 - bracket.yes_ask_cents) - estimate_fee_cents(bracket.yes_ask_cents)
