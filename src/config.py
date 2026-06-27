@@ -47,8 +47,7 @@ STATIONS = [
     ("MPMG",  8.9734,  -79.5556,  "Panama City",   "MPMG", "C", "America/Panama"),    # 10/10 100% shadow
 
     # --- Archive shadow candidates (issue #274) — shadow-only by default.
-    # Ported from archive/polymarket-shadow/config.py (7-tuple: region and
-    # forecast_source dropped). All are included in SHADOW_STATIONS_ARCHIVE below.
+    # All are included in SHADOW_STATIONS_ARCHIVE below.
     # Hong Kong intentionally OMITTED — resolves against Hong Kong Observatory
     # (weather.gov.hk), not a standard ICAO METAR site. Requires a custom
     # scraper before it can be added. Track in a follow-up issue.
@@ -359,8 +358,7 @@ EMOS_DEFAULT_MODE: str = os.environ.get("EMOS_DEFAULT_MODE", "legacy")
 _shadow_both_raw = os.getenv("SHADOW_STATIONS") or os.getenv("DISABLED_STATIONS", "RKSI")
 SHADOW_STATIONS: "set[str]" = {s.strip().upper() for s in _shadow_both_raw.split(",") if s.strip()}
 
-# Archive shadow candidates added in issue #274.  These cities were ported from
-# archive/polymarket-shadow/config.py as shadow-only stations — no live orders
+# Archive shadow candidates added in issue #274.  Shadow-only stations — no live orders
 # until their shadow performance is validated.  Add their ICAO codes to
 # SHADOW_STATIONS (via the env var) to suppress live trading, or use
 # SHADOW_STATIONS_ARCHIVE directly in scripts that need to enumerate them.
@@ -499,6 +497,22 @@ CONFIG_DEFAULTS: "dict[str, str | int | float | bool]" = {
     "RESIDUAL_MIN_SAMPLES": 10,
     "RESIDUAL_MAX_CORRECTION_F": 5.0,
     "RESIDUAL_CORRECTION_ENABLED": True,
+    # DEB master switch — set True to activate DEB weight computation and consumption
+    "DEB_ENABLED": False,
+    # DEB cold-start fractions for HRRR and NBM (issue #435)
+    "DEB_HRRR_COLD_START_FRACTION": 0.4,
+    "DEB_NBM_COLD_START_FRACTION": 0.4,
+    # DEB cold-start fractions for ECMWF and ICON (issue #442)
+    "DEB_ECMWF_COLD_START_FRACTION": 0.5,
+    "DEB_ICON_COLD_START_FRACTION": 0.5,
+    # DEB group weight cap for the noaa_us channel group (NWS + HRRR + NBM)
+    "DEB_GROUP_WEIGHT_CAP": 0.7,
+    # Active forecast stack — controls which ingestion channels are live.
+    # baseline: NWS + open_meteo only
+    # hrrr_nbm: adds HRRR and NBM for US stations
+    # intl_ecmwf_icon: adds ECMWF and ICON-EU for international stations
+    # full: all channels active
+    "FORECAST_STACK": "baseline",
 }
 
 
@@ -561,3 +575,21 @@ def get_live_config(db) -> dict:
             # str (covers EMOS_DEFAULT_MODE)
             result[key] = raw_val
     return result
+
+
+# ------------------------------------------------------------------
+# GRIB / HRRR cache configuration
+# ------------------------------------------------------------------
+# These params are intentionally minimal and kept separate from the DB-backed
+# CONFIG_DEFAULTS store because they control infrastructure (disk layout, TTL)
+# rather than trading strategy.  They follow the same env-var-override pattern
+# used throughout this file and are read live by src/data/grib_cache.py.
+
+# TTL for on-disk GRIB2 slices (hours).  HRRR runs hourly; 6h keeps two full
+# model cycles in cache while preventing unbounded disk growth.
+GRIB_CACHE_TTL_HOURS: float = float(os.getenv("GRIB_CACHE_TTL_HOURS", "6.0"))
+
+# Directory for cached GRIB2 slices.  Relative to the working directory (i.e.
+# the repo root when running normally).  Override via env to point at fast
+# local storage or a shared NFS mount.
+GRIB_CACHE_DIR: str = os.getenv("GRIB_CACHE_DIR", ".grib_cache")

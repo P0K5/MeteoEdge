@@ -892,3 +892,155 @@ For issues beyond this runbook, escalate to:
 - Architecture questions: Tech Lead PM
 - Bug reports: Include full logs (bot.log, settle.log) and database state (trades/settlements from the error date)
 - Operational changes: Discuss with Tech Lead PM before modifying systemd units or core config
+
+---
+
+---
+
+## GRIB2 / HRRR Data Ingestion (Epic A1)
+
+### Overview
+
+`src/data/grib_cache.py` provides byte-range GRIB2 fetches from public NOAA AWS S3
+buckets using **herbie** (MIT-licensed).  Only `TMP_2m` and `DPT_2m` fields are
+fetched.  Full GRIB files (several hundred MB) are **never** downloaded — herbie
+reads the `.idx` sidecar to determine exact byte ranges for the requested variable.
+
+### AWS bucket paths
+
+| Model | S3 path | Auth required |
+|---|---|---|
+| HRRR | `s3://noaa-hrrr-bdp-pds/` | None (public, free egress) |
+| NBM  | `s3://noaa-nbm-grib2-pds/` | None (public, free egress) |
+
+HRRR path layout example:
+```
+s3://noaa-hrrr-bdp-pds/hrrr.20240615/conus/hrrr.t18z.wrfnatf00.grib2
+s3://noaa-hrrr-bdp-pds/hrrr.20240615/conus/hrrr.t18z.wrfnatf00.grib2.idx  ← index/sidecar
+```
+
+herbie resolves the correct path automatically given a cycle datetime and model name.
+No AWS credentials are needed.
+
+### Cache location
+
+Sliced GRIB2 messages are cached on disk at:
+
+```
+.grib_cache/          ← default (relative to repo root)
+  hrrr_TMP_2m_20240615T18Z_f000.grib2
+  hrrr_DPT_2m_20240615T18Z_f000.grib2
+  ...
+```
+
+Override via the `GRIB_CACHE_DIR` environment variable.
+
+### Eviction policy
+
+The cache uses a **time-to-live (TTL)** approach:
+
+- Default TTL: **6 hours** (configurable via `GRIB_CACHE_TTL_HOURS` env var).
+- Eviction is triggered opportunistically on every call to `fetch_hrrr_field()`.
+- Any `.grib2` file older than the TTL is deleted silently.
+- No manual cache flush is required in normal operation; a `rm -rf .grib_cache/`
+  will force a full refresh on next run.
+
+### Config parameters
+
+All GRIB config params follow the standard env-var-override pattern used throughout
+`src/config.py`:
+
+| Env var | Default | Description |
+|---|---|---|
+| `GRIB_CACHE_TTL_HOURS` | `6.0` | On-disk cache TTL in hours |
+| `GRIB_CACHE_DIR` | `.grib_cache` | Directory for cached GRIB2 slices |
+
+Set these in the `.env` file or systemd `EnvironmentFile` as needed.
+
+### Model cycle resolution
+
+`_resolve_latest_cycle()` tries the current UTC hour and steps back up to 6 hours
+to find the most recent HRRR cycle whose `.idx` file is published on S3.  HRRR
+typically publishes within 45–60 minutes of cycle time; the 6-hour lookback ensures
+the system always has a valid cycle even during NOAA upload delays.
+
+### Supported fields
+
+Only the following fields may be requested via `fetch_hrrr_field()`:
+
+| Key | GRIB2 matcher | Units |
+|---|---|---|
+| `TMP_2m` | `:TMP:2 m above ground:` | Kelvin |
+| `DPT_2m` | `:DPT:2 m above ground:` | Kelvin |
+
+HRRR is US-only.  Use a US coordinate (e.g. Denver: `lat=39.73, lon=-104.99`) for
+testing; international coordinates will produce a grid lookup outside the HRRR
+domain.
+
+### Smoke test
+
+```python
+from src.data.grib_cache import fetch_hrrr_field
+
+# Denver, CO — should return a value in 273–318 K in summer
+val = fetch_hrrr_field("TMP_2m", lat=39.73, lon=-104.99)
+print(f"TMP_2m Denver: {val} K ({val - 273.15:.1f} °C)")
+assert val is not None and 273.0 <= val <= 318.0
+```
+
+### Dependencies
+
+```
+herbie-data>=2024.3.0   # MIT — NOAA model-run resolution + S3 byte-range fetch
+cfgrib>=0.9.10          # Read GRIB2 slices into numpy/xarray
+numpy>=1.24.0           # Nearest-grid-point arithmetic
+```
+
+eccodes (the underlying C library for cfgrib) is installed automatically on most
+systems via the `cfgrib` wheel.  If it is missing, `fetch_hrrr_field()` returns
+`None` and logs a warning — it does not raise.
+
+
+---
+
+## Open-Meteo Usage
+
+### Commercial Use Policy
+
+Open-Meteo's free API tier permits non-commercial use without restriction. MeteoEdge's use of Open-Meteo qualifies as **commercial use** because:
+- Live PnL is generated on Polymarket (a real-money prediction market)
+- Forecasts directly inform trading decisions and capital allocation
+- The service generates revenue (or would, if operational)
+
+### Current Status
+
+**Commercial use is permitted as-is.** Open-Meteo's free API explicitly allows commercial use under the following conditions:
+
+1. **Attribution**: Required in your application or documentation
+2. **Rate limits**: 10,000 requests per day (soft limit, higher usage negotiable)
+3. **No commercial redistribution**: You cannot resell or republish Open-Meteo data
+
+**Cost**: Free (no payment required). Open-Meteo is entirely free for both non-commercial and commercial use.
+
+### Attribution Requirement
+
+Open-Meteo's license requires attribution. The attribution is already present in the inline documentation at `/src/data/open_meteo.py` (module docstring). No additional file-level attribution comment is required.
+
+### Paid Tier (Not Needed)
+
+Open-Meteo offers a paid plan (~€29/mo) only for:
+- **Custom SLAs** (service level agreements)
+- **Higher rate limits** (>10k requests/day)
+- **Priority support**
+
+MeteoEdge's current usage is well within the free tier:
+- ~288 requests per day (11 stations × 24-hour polling at 5-min intervals)
+- Current rate limit: 10,000 requests/day (97% headroom)
+
+### Self-Hosting
+
+Open-Meteo publishes models and infrastructure as open source. Self-hosting is technically possible but **not required** for commercial use. The free API already permits commercial trading.
+
+### Conclusion
+
+No action required. MeteoEdge may continue using Open-Meteo's free API for live trading without payment, licensing changes, or self-hosting. Attribution is already documented in the code.

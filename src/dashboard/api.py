@@ -2147,6 +2147,52 @@ _CONFIG_META: dict[str, dict] = {
         "min": 1,
         "max": 60,
     },
+    "DEB_ENABLED": {
+        "description": "Master switch — enable DEB weight computation and consumption (requires restart for envelope.py)",
+        "type": "bool",
+        "group": "forecast",
+    },
+    "DEB_HRRR_COLD_START_FRACTION": {
+        "description": "Weight multiplier for HRRR during cold-start (< DEB_MIN_SAMPLES pairs)",
+        "type": "float",
+        "group": "forecast",
+        "min": 0.1,
+        "max": 1.0,
+    },
+    "DEB_NBM_COLD_START_FRACTION": {
+        "description": "Weight multiplier for NBM during cold-start (< DEB_MIN_SAMPLES pairs)",
+        "type": "float",
+        "group": "forecast",
+        "min": 0.1,
+        "max": 1.0,
+    },
+    "DEB_GROUP_WEIGHT_CAP": {
+        "description": "Max combined DEB weight for the noaa_us channel group (NWS + HRRR + NBM)",
+        "type": "float",
+        "group": "forecast",
+        "min": 0.3,
+        "max": 1.0,
+    },
+    "DEB_ECMWF_COLD_START_FRACTION": {
+        "description": "Weight multiplier for ECMWF during cold-start (< DEB_MIN_SAMPLES pairs)",
+        "type": "float",
+        "group": "forecast",
+        "min": 0.1,
+        "max": 1.0,
+    },
+    "DEB_ICON_COLD_START_FRACTION": {
+        "description": "Weight multiplier for ICON-EU during cold-start (< DEB_MIN_SAMPLES pairs)",
+        "type": "float",
+        "group": "forecast",
+        "min": 0.1,
+        "max": 1.0,
+    },
+    "FORECAST_STACK": {
+        "description": "Active forecast stack — controls which ingestion channels are live",
+        "type": "enum",
+        "group": "forecast",
+        "options": ["baseline", "hrrr_nbm", "intl_ecmwf_icon", "full"],
+    },
 }
 
 _EMOS_VALID_MODES = frozenset({"legacy", "emos_shadow", "emos_primary"})
