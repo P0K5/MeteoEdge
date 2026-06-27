@@ -73,11 +73,13 @@ CREATE INDEX idx_obs_station_ts ON observations(station, ts);
 | `confidence` | REAL NOT NULL | probability [0,1] | No | Model confidence: p(YES) for YES side, p(NO) for NO side |
 | `minutes_to_settlement` | REAL NOT NULL | minutes | No | Time remaining until market resolution |
 | `flagged_first` | INTEGER NOT NULL DEFAULT 1 | boolean (0/1) | No | Whether this candidate was flagged on first appearance (1) or re-evaluated (0) |
+| `direction` | TEXT NOT NULL DEFAULT 'high' | categorical | No | Market direction: `'high'` for daily-high markets, `'low'` for daily-low markets (Epic C). Legacy rows default to `'high'`. |
 
 **Indexes:**
 ```sql
 CREATE INDEX idx_cand_station_ts ON candidates(station, ts);
 CREATE INDEX idx_cand_ticker ON candidates(ticker);
+CREATE INDEX idx_cand_station_direction ON candidates(station, direction);
 ```
 
 **Notes:**
@@ -117,11 +119,13 @@ CREATE INDEX idx_cand_ticker ON candidates(ticker);
 | `close_reason` | TEXT | categorical | Yes | Why position was closed early: `take_profit`, `forced_exit`, `stop_loss`. NULL = held to settlement. |
 | `minutes_to_settlement_at_close` | REAL | minutes | Yes | Minutes remaining until settlement when position was exited early |
 | `bid_depth_at_close` | INTEGER | shares | Yes | Best-bid depth at the moment of early exit (for liquidity analysis) |
+| `direction` | TEXT NOT NULL DEFAULT 'high' | categorical | No | Market direction: `'high'` for daily-high markets, `'low'` for daily-low markets. Legacy rows default to `'high'`. |
 
 **Indexes:**
 ```sql
 CREATE INDEX idx_trades_station_ts ON trades(station, ts);
 CREATE INDEX idx_trades_mode ON trades(mode);
+CREATE INDEX idx_trades_station_direction ON trades(station, direction);
 ```
 
 **Notes:**
@@ -153,10 +157,12 @@ CREATE INDEX idx_trades_mode ON trades(mode);
 | `resolved_yes` | INTEGER NOT NULL | boolean (0/1) | No | 1 if bracket was hit (YES wins), 0 if missed (NO wins) |
 | `market_final_price` | INTEGER | ¢ | Yes | Final market price at settlement (may be 100 if YES, 0 if NO) |
 | `source` | TEXT NOT NULL DEFAULT 'polymarket' | categorical | No | Source of settlement truth (currently 'polymarket') |
+| `direction` | TEXT NOT NULL DEFAULT 'high' | categorical | No | Market direction: `'high'` for daily-high, `'low'` for daily-low markets. Legacy rows default to `'high'`. |
 
 **Indexes:**
 ```sql
 CREATE INDEX idx_settlements_station_ts ON settlements(station, ts);
+CREATE INDEX idx_settlements_station_direction ON settlements(station, direction);
 ```
 
 **Notes:**
