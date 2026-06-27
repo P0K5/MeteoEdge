@@ -34,7 +34,8 @@ CREATE TABLE IF NOT EXISTS candidates (
     market_price    INTEGER NOT NULL,
     confidence      REAL NOT NULL,
     minutes_to_settlement REAL NOT NULL,
-    flagged_first   INTEGER NOT NULL DEFAULT 1
+    flagged_first   INTEGER NOT NULL DEFAULT 1,
+    direction       TEXT NOT NULL DEFAULT 'high'
 );
 CREATE INDEX IF NOT EXISTS idx_cand_station_ts ON candidates(station, ts);
 CREATE INDEX IF NOT EXISTS idx_cand_ticker ON candidates(ticker);
@@ -57,7 +58,8 @@ CREATE TABLE IF NOT EXISTS trades (
     pnl             REAL,
     capital_before  REAL NOT NULL,
     capital_after   REAL,
-    settled_at      TEXT
+    settled_at      TEXT,
+    direction       TEXT NOT NULL DEFAULT 'high'
 );
 CREATE INDEX IF NOT EXISTS idx_trades_station_ts ON trades(station, ts);
 CREATE INDEX IF NOT EXISTS idx_trades_mode ON trades(mode);
@@ -75,7 +77,8 @@ CREATE TABLE IF NOT EXISTS settlements (
     actual_high_f   REAL NOT NULL,
     resolved_yes    INTEGER NOT NULL,
     market_final_price INTEGER,
-    source          TEXT NOT NULL DEFAULT 'polymarket'
+    source          TEXT NOT NULL DEFAULT 'polymarket',
+    direction       TEXT NOT NULL DEFAULT 'high'
 );
 CREATE INDEX IF NOT EXISTS idx_settlements_station_ts ON settlements(station, ts);
 
@@ -256,6 +259,9 @@ class Database:
             ("trades", "bid_depth_at_close", "INTEGER"),
             ("station_overrides", "yes_enabled", "INTEGER NOT NULL DEFAULT 1"),
             ("station_overrides", "no_enabled", "INTEGER NOT NULL DEFAULT 1"),
+            ("candidates", "direction", "TEXT NOT NULL DEFAULT 'high'"),
+            ("trades", "direction", "TEXT NOT NULL DEFAULT 'high'"),
+            ("settlements", "direction", "TEXT NOT NULL DEFAULT 'high'"),
         ]:
             try:
                 self._conn.execute(
@@ -269,6 +275,12 @@ class Database:
         self._conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_trades_close_reason ON trades(close_reason)"
         )
+        # Composite indices on (station, direction) — added after ALTER TABLE migration
+        for tbl in ("candidates", "trades", "settlements"):
+            self._conn.execute(
+                f"CREATE INDEX IF NOT EXISTS idx_{tbl}_station_direction "
+                f"ON {tbl}(station, direction)"
+            )
         self._conn.commit()
 
         # Migration: add station + source columns to intraday_corrections and
@@ -385,16 +397,25 @@ class Database:
                             capital_after   REAL,
                             settled_at      TEXT,
                             actual_fee_cents REAL,
-                            size_eur        REAL
+                            size_eur        REAL,
+                            direction       TEXT NOT NULL DEFAULT 'high'
                         )
                         """
+                    )
+                    # direction may not exist in old table — coalesce to 'high'
+                    old_cols_q = self._conn.execute(
+                        "PRAGMA table_info(trades)"
+                    ).fetchall()
+                    old_col_names = {r[1] for r in old_cols_q}
+                    direction_expr = (
+                        "direction" if "direction" in old_col_names else "'high'"
                     )
                     self._conn.execute(
                         "INSERT INTO trades_new SELECT "
                         "id,ts,station,ticker,bracket_low,bracket_high,side,"
                         "predicted_price,actual_price,slippage,predicted_edge,mode,"
                         "order_id,outcome,pnl,capital_before,capital_after,settled_at,"
-                        "actual_fee_cents,size_eur "
+                        f"actual_fee_cents,size_eur,{direction_expr} "
                         "FROM trades"
                     )
                     self._conn.execute("DROP TABLE trades")
@@ -662,6 +683,7 @@ class Database:
         confidence: float,
         minutes_to_settlement: float,
         flagged_first: int = 1,
+        direction: str = "high",
     ) -> int:
         """Insert a trade candidate; returns the new row id."""
         with self._lock:
@@ -669,12 +691,12 @@ class Database:
                 "INSERT INTO candidates"
                 "(ts,station,ticker,bracket_low,bracket_high,side,"
                 "predicted_price,predicted_edge,market_price,confidence,"
-                "minutes_to_settlement,flagged_first) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                "minutes_to_settlement,flagged_first,direction) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     ts, station, ticker, bracket_low, bracket_high, side,
                     predicted_price, predicted_edge, market_price, confidence,
-                    minutes_to_settlement, flagged_first,
+                    minutes_to_settlement, flagged_first, direction,
                 ),
             )
             self._conn.commit()
@@ -713,6 +735,7 @@ class Database:
         capital_after: "float | None" = None,
         settled_at: "str | None" = None,
         size_eur: "float | None" = None,
+        direction: str = "high",
     ) -> int:
         """Insert a trade record; returns the new row id."""
         with self._lock:
@@ -720,12 +743,13 @@ class Database:
                 "INSERT INTO trades"
                 "(ts,station,ticker,bracket_low,bracket_high,side,"
                 "predicted_price,actual_price,slippage,predicted_edge,mode,order_id,"
-                "outcome,pnl,capital_before,capital_after,settled_at,size_eur) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "outcome,pnl,capital_before,capital_after,settled_at,size_eur,direction) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     ts, station, ticker, bracket_low, bracket_high, side,
                     predicted_price, actual_price, slippage, predicted_edge, mode,
-                    order_id, outcome, pnl, capital_before, capital_after, settled_at, size_eur,
+                    order_id, outcome, pnl, capital_before, capital_after, settled_at,
+                    size_eur, direction,
                 ),
             )
             self._conn.commit()
@@ -941,19 +965,29 @@ class Database:
             })
         return rows
 
-    def get_trades(self, limit: "int | None" = 50, mode: "str | None" = None) -> list:
+    def get_trades(
+        self,
+        limit: "int | None" = 50,
+        mode: "str | None" = None,
+        direction: "str | None" = None,
+    ) -> list:
         """Return trades ordered by most-recent-first.
 
         Args:
-            limit: Maximum rows to return (``None`` = no limit).
-            mode:  Filter to ``'paper'`` or ``'live'`` if provided.
+            limit:     Maximum rows to return (``None`` = no limit).
+            mode:      Filter to ``'paper'`` or ``'live'`` if provided.
+            direction: Filter to ``'high'`` or ``'low'`` if provided.
         """
+        conditions = []
+        params: list = []
         if mode is not None:
-            sql = "SELECT * FROM trades WHERE mode=? ORDER BY ts DESC"
-            params: tuple = (mode,)
-        else:
-            sql = "SELECT * FROM trades ORDER BY ts DESC"
-            params = ()
+            conditions.append("mode=?")
+            params.append(mode)
+        if direction is not None:
+            conditions.append("direction=?")
+            params.append(direction)
+        where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
+        sql = f"SELECT * FROM trades{where} ORDER BY ts DESC"
         if limit is not None:
             sql += f" LIMIT {int(limit)}"
         cur = self._conn.execute(sql, params)
@@ -981,11 +1015,11 @@ class Database:
         actual_price: int,
         predicted_edge: float,
         capital_before: float = 0.0,
+        direction: str = "high",
     ) -> tuple[int, bool]:
         """Insert a shadow trade row, or update actual_price if one already exists today.
 
-        Dedup key: (station, bracket_low, bracket_high, side, day) where
-        day = substr(ts, 1, 10) (the YYYY-MM-DD date prefix of the ISO timestamp).
+        Dedup key: (station, bracket_low, bracket_high, side, direction, day).
 
         Returns (row_id, created) where created=True means a new row was inserted,
         False means an existing row's actual_price was updated.
@@ -995,8 +1029,8 @@ class Database:
             cur = self._conn.execute(
                 "SELECT id FROM trades "
                 "WHERE mode='shadow' AND station=? AND bracket_low=? AND bracket_high=? "
-                "AND side=? AND substr(ts,1,10)=?",
-                (station, bracket_low, bracket_high, side, today),
+                "AND side=? AND direction=? AND substr(ts,1,10)=?",
+                (station, bracket_low, bracket_high, side, direction, today),
             )
             row = cur.fetchone()
             if row is not None:
@@ -1012,12 +1046,12 @@ class Database:
                 "INSERT INTO trades"
                 "(ts,station,ticker,bracket_low,bracket_high,side,"
                 "predicted_price,actual_price,slippage,predicted_edge,mode,order_id,"
-                "outcome,pnl,capital_before,capital_after,settled_at) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "outcome,pnl,capital_before,capital_after,settled_at,direction) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     ts, station, ticker, bracket_low, bracket_high, side,
                     predicted_price, actual_price, None, predicted_edge, "shadow",
-                    None, None, None, capital_before, None, None,
+                    None, None, None, capital_before, None, None, direction,
                 ),
             )
             self._conn.commit()
@@ -1039,27 +1073,44 @@ class Database:
         resolved_yes: int,
         market_final_price: "int | None" = None,
         source: str = "polymarket",
+        direction: str = "high",
     ) -> None:
         """Upsert a settlement record (unique on ticker)."""
         with self._lock:
             self._conn.execute(
                 "INSERT OR REPLACE INTO settlements"
                 "(ts,station,ticker,bracket_low,bracket_high,"
-                "actual_high_f,resolved_yes,market_final_price,source) "
-                "VALUES(?,?,?,?,?,?,?,?,?)",
+                "actual_high_f,resolved_yes,market_final_price,source,direction) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?)",
                 (
                     ts, station, ticker, bracket_low, bracket_high,
-                    actual_high_f, resolved_yes, market_final_price, source,
+                    actual_high_f, resolved_yes, market_final_price, source, direction,
                 ),
             )
             self._conn.commit()
 
-    def get_settlements(self, station: str, since: str) -> list:
-        """Return settlements for *station* at or after *since*, oldest first."""
-        cur = self._conn.execute(
-            "SELECT * FROM settlements WHERE station=? AND ts>=? ORDER BY ts ASC",
-            (station, since),
-        )
+    def get_settlements(
+        self,
+        station: str,
+        since: str,
+        direction: "str | None" = None,
+    ) -> list:
+        """Return settlements for *station* at or after *since*, oldest first.
+
+        Args:
+            direction: Optional filter — ``'high'`` or ``'low'``.
+        """
+        if direction is not None:
+            cur = self._conn.execute(
+                "SELECT * FROM settlements WHERE station=? AND ts>=? AND direction=?"
+                " ORDER BY ts ASC",
+                (station, since, direction),
+            )
+        else:
+            cur = self._conn.execute(
+                "SELECT * FROM settlements WHERE station=? AND ts>=? ORDER BY ts ASC",
+                (station, since),
+            )
         return [dict(row) for row in cur.fetchall()]
 
     # ------------------------------------------------------------------
