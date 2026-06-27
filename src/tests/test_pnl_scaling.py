@@ -1,20 +1,12 @@
 """Tests for P&L scaling by position size (issue #292).
 
-Verifies that the fix_stuck_trades_20260607.py script correctly scales per-unit P&L
-by the number of shares held (computed from size_eur / entry_price).
+Verifies that per-unit P&L is correctly scaled by the number of shares held
+(computed from size_eur / entry_price).
 """
-import importlib.util
 import math
 from datetime import datetime, timezone
-from pathlib import Path
 
 from src.data.db import Database
-
-# Load the fix_stuck_trades module
-_FIX_PATH = Path(__file__).resolve().parents[2] / "src" / "scripts" / "fix_stuck_trades_20260607.py"
-_spec = importlib.util.spec_from_file_location("fix_stuck_trades", _FIX_PATH)
-fix_stuck_trades_mod = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(fix_stuck_trades_mod)
 
 
 def _db() -> Database:
