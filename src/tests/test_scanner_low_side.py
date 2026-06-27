@@ -41,7 +41,7 @@ class TestIsLowestTempMarket:
         m = _market("Will the lowest temperature in NYC be 62-65°F on July 5, 2026?")
         ok, station = is_lowest_temp_market(m)
         assert ok is True
-        assert station == "KLGA"
+        assert station == "KJFK"
 
     def test_detects_london(self):
         m = _market("Will the lowest temperature in London be 12-15°C on July 5, 2026?")
