@@ -1160,3 +1160,5 @@ EOF_SCRIPT
   unique key ensures rows for different sources coexist.
 - Do NOT run `fit_emos` in the live trading loop or CI — it is an offline, operator-run step.
 - EMOS sigma retrain (#449) follows the same procedure.
+
+- GEFS ensemble (30 members): ingested via capture-forecasts timer; `model='gefs'` rows written to `model_forecast_log` with `sigma_f` from `ensemble_sigma.py`.

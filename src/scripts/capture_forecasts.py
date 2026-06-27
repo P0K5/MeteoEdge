@@ -62,10 +62,12 @@ from __future__ import annotations
 
 import argparse
 import logging
+import statistics
 from datetime import datetime, timedelta, timezone
 
 from src.config import STATIONS, STATION_TZ
 from src.data.db import Database
+from src.data.gefs import fetch_gefs_ensemble
 from src.data.nws import fetch_nws_with_spread, fetch_nws_forecast_high
 from src.data.open_meteo import (
     fetch_open_meteo_with_spread,
@@ -74,6 +76,7 @@ from src.data.open_meteo import (
     fetch_gfs_forecast_high,
 )
 from src.logging_config import setup_logging
+from src.model.ensemble_sigma import compute_ensemble_sigma
 
 log = logging.getLogger(__name__)
 
@@ -253,6 +256,35 @@ def _capture_station(
                 )
         else:
             log.debug("[capture] %s gfs unavailable (lead=%dh)", station, lead_hours)
+
+    # --- GEFS ensemble ---
+    try:
+        gefs_raw = fetch_gefs_ensemble(lat, lon, station=station)
+    except Exception as exc:
+        log.warning("[capture] %s gefs unavailable (lead=%dh): %s", station, lead_hours, exc)
+        gefs_raw = []
+
+    if gefs_raw:
+        # Convert GEFSMemberForecast.temp_k (Kelvin) → °F for downstream consumers
+        gefs_members = [(m.temp_k - 273.15) * 9.0 / 5.0 + 32.0 for m in gefs_raw]
+        gefs_mu = statistics.mean(gefs_members)
+        gefs_sigma = compute_ensemble_sigma(gefs_members, station, history_db=db)
+        log.info(
+            "[capture] %s gefs mu=%.1fF sigma=%.2fF members=%d lead=%dh date=%s",
+            station, gefs_mu, gefs_sigma, len(gefs_members), lead_hours, target_date,
+        )
+        if not dry_run and db is not None:
+            db.upsert_forecast_log_v2(
+                station=station,
+                model="gefs",
+                date=target_date,
+                forecast_high_f=gefs_mu,
+                lead_hours=lead_hours,
+                issued_at=issued_at,
+                sigma_f=gefs_sigma,
+            )
+    else:
+        log.warning("[capture] %s gefs unavailable (lead=%dh)", station, lead_hours)
 
 
 def main() -> None:
