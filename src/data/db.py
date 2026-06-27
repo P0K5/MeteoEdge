@@ -146,6 +146,25 @@ CREATE TABLE IF NOT EXISTS intraday_corrections (
     PRIMARY KEY (city, date, obs_time)
 );
 CREATE INDEX IF NOT EXISTS idx_ic_city_date ON intraday_corrections(city, date);
+
+CREATE TABLE IF NOT EXISTS emos_calibration (
+    city                TEXT NOT NULL,
+    forecast_source     TEXT NOT NULL,
+    a                   REAL NOT NULL,
+    b                   REAL NOT NULL,
+    c                   REAL NOT NULL,
+    d                   REAL NOT NULL,
+    crps_score          REAL NOT NULL,
+    model_mode          TEXT NOT NULL DEFAULT 'emos_shadow',
+    ready_for_promotion INTEGER NOT NULL DEFAULT 0,
+    fitted_at           TEXT NOT NULL,
+    PRIMARY KEY (city, forecast_source)
+);
+
+CREATE TABLE IF NOT EXISTS emos_mode (
+    city            TEXT NOT NULL PRIMARY KEY,
+    forecast_source TEXT NOT NULL
+);
 """
 
 
