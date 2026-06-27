@@ -1,9 +1,9 @@
 """Market scanner — identifies mispriced Polymarket temperature brackets.
 
 For each market fetched from Polymarket, this module:
-1. Checks if it's a 'highest temperature in <city>' market for a configured station
+1. Checks if it's a 'highest temperature in <city>' or 'lowest temperature in <city>' market
 2. Parses the bracket (e.g., '82-84°F') into a Bracket object
-3. Computes true P(yes) using the weather envelope model
+3. Computes true P(yes) using the weather envelope model (high) or envelope_low (low)
 4. Computes expected value for YES and NO sides
 5. Returns Candidate objects for any market with edge >= MIN_EDGE_CENTS
 """
@@ -14,6 +14,7 @@ import re
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from typing import Literal
 from dateutil import parser as dtparse
 
 from src.config import (
@@ -24,6 +25,7 @@ from src.config import (
     CONFIG_DEFAULTS, get_live_config, MODEL_PROB_CAP,
 )
 from src.model.envelope import Bracket, WeatherState, true_probability_yes, compute_envelope
+from src.model.envelope_low import WeatherStateLow, true_probability_low_in_bracket
 from src.model.emos_mode import get_city_mode, apply_emos, _check_ready_for_promotion
 from src.model.residual_correction import compute_residual_stats
 from src.data.polymarket import get_orderbook
@@ -43,6 +45,34 @@ STATION_TO_CITY: dict[str, str] = {
     station: city for station, _, _, city, *_ in STATIONS
 }
 
+# Low-side city alias map.  Polymarket uses different city name conventions on
+# "lowest temperature in" markets vs "highest temperature in" markets (e.g.
+# "NYC" vs "New York City", "London" vs a specific airport alias).  Build this
+# map explicitly — do NOT auto-derive from POLYMARKET_CITY_TO_STATION.
+POLYMARKET_CITY_TO_STATION_LOW: dict[str, str] = {
+    "chicago":       "KORD",
+    "miami":         "KMIA",
+    "los angeles":   "KLAX",
+    "atlanta":       "KATL",
+    "houston":       "KHOU",
+    "seoul":         "RKSI",
+    "kuala lumpur":  "WMKK",
+    "busan":         "RKPK",
+    "shenzhen":      "ZGSZ",
+    "singapore":     "WSSS",
+    "panama city":   "MPMG",
+    # Low-side markets use shortened names for some cities
+    "nyc":           "KLGA",   # Polymarket uses "NYC" on low-side markets
+    "new york":      "KLGA",
+    "london":        "EGLC",
+    "paris":         "LFPB",
+    "tokyo":         "RJTT",
+    "shanghai":      "ZSPD",
+}
+
+# Reverse map for low-side: station → city display name
+STATION_TO_CITY_LOW: dict[str, str] = {v: k.title() for k, v in POLYMARKET_CITY_TO_STATION_LOW.items()}
+
 
 def is_highest_temp_market(market: dict) -> tuple[bool, "str | None"]:
     """
@@ -56,6 +86,21 @@ def is_highest_temp_market(market: dict) -> tuple[bool, "str | None"]:
         return False, None
     for city, station in POLYMARKET_CITY_TO_STATION.items():
         if f"highest temperature in {city}" in q:
+            return True, station
+    return False, None
+
+
+def is_lowest_temp_market(market: dict) -> tuple[bool, "str | None"]:
+    """Return (True, station_code) for 'lowest temperature in <city>' markets.
+
+    Uses POLYMARKET_CITY_TO_STATION_LOW which has explicit city aliases
+    for low-side markets (Polymarket uses different names on the low side).
+    """
+    q = (market.get("question") or "").lower()
+    if "lowest temperature in" not in q:
+        return False, None
+    for city, station in POLYMARKET_CITY_TO_STATION_LOW.items():
+        if f"lowest temperature in {city}" in q:
             return True, station
     return False, None
 
@@ -244,6 +289,7 @@ class Candidate:
     market: dict        # raw market dict (for logging, do not mutate)
     taf_disruption: bool = field(default=False)  # TEMPO/PROB TS/SH/FG overlap
     shadow: bool = field(default=False)           # True when yes_enabled=False for station
+    direction: Literal["high", "low"] = field(default="high")  # daily-high or daily-low market
 
 
 def no_entry_margin_gap(bracket: Bracket, state: WeatherState) -> float | None:
@@ -277,6 +323,7 @@ def scan_markets(
     markets: list,
     db=None,
     orderbooks: "dict[str, dict] | None" = None,
+    weather_low: "dict[str, WeatherStateLow] | None" = None,
 ) -> "tuple[list[Candidate], list[dict]]":
     """Scan all Polymarket markets against current weather states.
 
@@ -288,6 +335,8 @@ def scan_markets(
             When provided, CLOB enrichment reads from this dict instead of
             making individual HTTP calls (one call per token, batched upstream).
             When ``None``, falls back to per-bracket ``get_orderbook()`` calls.
+        weather_low: optional dict mapping station code → WeatherStateLow for low-side markets.
+            When None, low-side markets are detected but not scored (skipped silently).
 
     Returns:
         (candidates, all_snapshots) where:
@@ -579,6 +628,104 @@ def scan_markets(
             mid = (market.get("conditionId") or market.get("id") or "unknown")[:16]
             log.warning("[market] error processing %s...: %s, skipping", mid, e, exc_info=True)
             continue
+
+    # -----------------------------------------------------------------------
+    # Low-side scan (Epic C, shadow-only).  Only runs when weather_low is
+    # provided — absent that dict no low-side state is available to score.
+    # All low-side candidates are emitted with shadow=True regardless of any
+    # station_overrides settings (promotion to live is tracked in #458).
+    # -----------------------------------------------------------------------
+    if weather_low:
+        for market in markets:
+            try:
+                is_low, station = is_lowest_temp_market(market)
+                if not is_low:
+                    continue
+                if station not in weather_low:
+                    skip_reason_counts["low_no_state"] += 1
+                    continue
+
+                mins_left = minutes_to_settlement(market)
+                if mins_left < MIN_MINUTES_TO_SETTLEMENT:
+                    skip_reason_counts["outside_window"] += 1
+                    continue
+
+                end_str = (
+                    market.get("endDate") or market.get("end_date_iso")
+                    or market.get("endDateIso") or market.get("close_time") or ""
+                )
+                if end_str:
+                    try:
+                        end_dt = dtparse.parse(str(end_str))
+                        if end_dt.tzinfo is None:
+                            end_dt = end_dt.replace(tzinfo=timezone.utc)
+                        if end_dt.date() != datetime.now(timezone.utc).date():
+                            skip_reason_counts["wrong_date"] += 1
+                            continue
+                    except Exception:
+                        pass
+
+                bracket = parse_bracket_from_market(market)
+                if not bracket:
+                    skip_reason_counts["bracket_parse_fail"] += 1
+                    continue
+
+                if ENABLE_CLOB_ENRICHMENT:
+                    _enrich_from_clob(bracket, orderbooks=orderbooks)
+
+                state_low = weather_low[station]
+                from src.config import FORECAST_STDDEV_F
+                p_yes = true_probability_low_in_bracket(
+                    bracket, state_low, mins_left, FORECAST_STDDEV_F
+                )
+                p_yes = min(p_yes, MODEL_PROB_CAP)
+
+                ev_yes = (p_yes * 100 - bracket.yes_ask_cents) - estimate_fee_cents(bracket.yes_ask_cents)
+                ev_no  = ((1 - p_yes) * 100 - bracket.no_ask_cents) - estimate_fee_cents(bracket.no_ask_cents)
+
+                low_candidate = None
+                if ev_no >= MIN_EDGE_CENTS and bracket.no_ask_cents >= MIN_PRICE_CENTS:
+                    if ev_no <= MAX_EDGE_CENTS:
+                        low_candidate = Candidate(
+                            station=station, bracket=bracket, side="NO",
+                            edge_cents=ev_no, price_cents=bracket.no_ask_cents,
+                            confidence=1 - p_yes, p_yes=p_yes,
+                            ev_yes=ev_yes, ev_no=ev_no,
+                            minutes_to_settlement=mins_left, market=market,
+                            shadow=True,          # low-side is shadow-only this week
+                            direction="low",
+                        )
+                    else:
+                        skip_reason_counts["max_edge"] += 1
+                elif ev_yes >= MIN_EDGE_CENTS and p_yes >= MIN_CONFIDENCE_YES and bracket.yes_ask_cents >= MIN_PRICE_CENTS:
+                    if ev_yes <= MAX_EDGE_CENTS:
+                        low_candidate = Candidate(
+                            station=station, bracket=bracket, side="YES",
+                            edge_cents=ev_yes, price_cents=bracket.yes_ask_cents,
+                            confidence=p_yes, p_yes=p_yes,
+                            ev_yes=ev_yes, ev_no=ev_no,
+                            minutes_to_settlement=mins_left, market=market,
+                            shadow=True,          # low-side is shadow-only this week
+                            direction="low",
+                        )
+                    else:
+                        skip_reason_counts["max_edge"] += 1
+                else:
+                    skip_reason_counts["min_edge"] += 1
+
+                if low_candidate:
+                    candidates.append(low_candidate)
+                    label = market.get("groupItemTitle") or f"{bracket.low_f:.0f}-{bracket.high_f:.0f}°F"
+                    log.info(
+                        "  ** FLAGGED LOW [%s] %s %s @ %sc edge=%.2fc p=%.2f%% (shadow)",
+                        station, label, low_candidate.side, low_candidate.price_cents,
+                        low_candidate.edge_cents, low_candidate.confidence * 100,
+                    )
+
+            except Exception as e:
+                mid = (market.get("conditionId") or market.get("id") or "unknown")[:16]
+                log.warning("[low-market] error processing %s...: %s, skipping", mid, e, exc_info=True)
+                continue
 
     # Log summary at INFO level
     num_flagged = len(candidates)
