@@ -60,28 +60,28 @@ class TestStationOverrideDb:
         db = _mem_db()
         db.set_station_override("KORD", yes_enabled=True, no_enabled=True)
         result = db.get_station_override("KORD")
-        assert result == {"yes_enabled": True, "no_enabled": True}
+        assert result == {"yes_enabled": True, "no_enabled": True, "low_no_enabled": False}
 
     def test_set_then_get_both_disabled(self):
         """set_station_override(yes=False, no=False) persists; get returns both False."""
         db = _mem_db()
         db.set_station_override("KORD", yes_enabled=False, no_enabled=False)
         result = db.get_station_override("KORD")
-        assert result == {"yes_enabled": False, "no_enabled": False}
+        assert result == {"yes_enabled": False, "no_enabled": False, "low_no_enabled": False}
 
     def test_set_yes_shadow_no_live(self):
         """set_station_override(yes=False, no=True) yields YES shadow, NO live."""
         db = _mem_db()
         db.set_station_override("KORD", yes_enabled=False, no_enabled=True)
         result = db.get_station_override("KORD")
-        assert result == {"yes_enabled": False, "no_enabled": True}
+        assert result == {"yes_enabled": False, "no_enabled": True, "low_no_enabled": False}
 
     def test_set_yes_live_no_shadow(self):
         """set_station_override(yes=True, no=False) yields YES live, NO shadow."""
         db = _mem_db()
         db.set_station_override("KORD", yes_enabled=True, no_enabled=False)
         result = db.get_station_override("KORD")
-        assert result == {"yes_enabled": True, "no_enabled": False}
+        assert result == {"yes_enabled": True, "no_enabled": False, "low_no_enabled": False}
 
     def test_upsert_overrides_previous_value(self):
         """Second set_station_override call overwrites the first."""
@@ -89,7 +89,7 @@ class TestStationOverrideDb:
         db.set_station_override("KMIA", yes_enabled=True, no_enabled=True)
         db.set_station_override("KMIA", yes_enabled=False, no_enabled=False)
         result = db.get_station_override("KMIA")
-        assert result == {"yes_enabled": False, "no_enabled": False}
+        assert result == {"yes_enabled": False, "no_enabled": False, "low_no_enabled": False}
 
     def test_get_all_empty(self):
         """get_all_station_overrides returns empty dict when table is empty."""
@@ -103,8 +103,8 @@ class TestStationOverrideDb:
         db.set_station_override("KMIA", yes_enabled=False, no_enabled=False)
         result = db.get_all_station_overrides()
         assert result == {
-            "KORD": {"yes_enabled": True, "no_enabled": True},
-            "KMIA": {"yes_enabled": False, "no_enabled": False},
+            "KORD": {"yes_enabled": True, "no_enabled": True, "low_no_enabled": False},
+            "KMIA": {"yes_enabled": False, "no_enabled": False, "low_no_enabled": False},
         }
 
     def test_toggle_on_to_off_and_back(self):
@@ -112,11 +112,11 @@ class TestStationOverrideDb:
         db = _mem_db()
         assert db.get_station_override("KATL") is None
         db.set_station_override("KATL", yes_enabled=True, no_enabled=True)
-        assert db.get_station_override("KATL") == {"yes_enabled": True, "no_enabled": True}
+        assert db.get_station_override("KATL") == {"yes_enabled": True, "no_enabled": True, "low_no_enabled": False}
         db.set_station_override("KATL", yes_enabled=False, no_enabled=False)
-        assert db.get_station_override("KATL") == {"yes_enabled": False, "no_enabled": False}
+        assert db.get_station_override("KATL") == {"yes_enabled": False, "no_enabled": False, "low_no_enabled": False}
         db.set_station_override("KATL", yes_enabled=True, no_enabled=True)
-        assert db.get_station_override("KATL") == {"yes_enabled": True, "no_enabled": True}
+        assert db.get_station_override("KATL") == {"yes_enabled": True, "no_enabled": True, "low_no_enabled": False}
 
 
 # ---------------------------------------------------------------------------
@@ -175,7 +175,8 @@ class TestStationToggleEndpoint:
         resp = client.post("/api/stations/KORD/toggle")
         new_enabled = resp.json()["enabled"]
         db_val = db.get_station_override("KORD")
-        assert db_val == {"yes_enabled": new_enabled, "no_enabled": new_enabled}
+        assert db_val["yes_enabled"] == new_enabled
+        assert db_val["no_enabled"] == new_enabled
 
     def test_toggle_off_then_on(self, client_with_db):
         """Toggle a station off then back on via two consecutive POST calls."""
