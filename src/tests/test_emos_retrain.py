@@ -296,6 +296,42 @@ class TestUpsertEmosCoefficientsForecastSource:
         finally:
             os.unlink(path)
 
+    def test_get_emos_coefficients_by_forecast_source(self):
+        """get_emos_coefficients returns row matching forecast_source, not another source."""
+        db, path = self._make_db()
+        try:
+            db.upsert_emos_coefficients(
+                city="Chicago", model_mode="emos_shadow",
+                a=0.0, b=1.0, c=0.5, d=1.0, forecast_source="nws_open_meteo",
+            )
+            db.upsert_emos_coefficients(
+                city="Chicago", model_mode="emos_shadow",
+                a=0.3, b=0.9, c=0.4, d=1.1, forecast_source="hrrr_nbm",
+            )
+            row_nws = db.get_emos_coefficients("Chicago", "emos_shadow", "nws_open_meteo")
+            row_hrrr = db.get_emos_coefficients("Chicago", "emos_shadow", "hrrr_nbm")
+            assert row_nws is not None
+            assert row_nws["a"] == pytest.approx(0.0)
+            assert row_hrrr is not None
+            assert row_hrrr["a"] == pytest.approx(0.3)
+            # Default param returns nws_open_meteo
+            row_default = db.get_emos_coefficients("Chicago", "emos_shadow")
+            assert row_default["a"] == pytest.approx(0.0)
+        finally:
+            os.unlink(path)
+
+    def test_get_emos_coefficients_missing_source_returns_none(self):
+        """get_emos_coefficients returns None when forecast_source has no row."""
+        db, path = self._make_db()
+        try:
+            db.upsert_emos_coefficients(
+                city="Chicago", model_mode="emos_shadow",
+                a=0.0, b=1.0, c=0.5, d=1.0, forecast_source="nws_open_meteo",
+            )
+            assert db.get_emos_coefficients("Chicago", "emos_shadow", "hrrr_nbm") is None
+        finally:
+            os.unlink(path)
+
 
 # ---------------------------------------------------------------------------
 # Migration: existing DB without forecast_source gets it added

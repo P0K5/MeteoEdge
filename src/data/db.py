@@ -1622,12 +1622,14 @@ class Database:
             }
         return result
 
-    def get_emos_coefficients(self, city: str, model_mode: str) -> "dict | None":
-        """Return EMOS coefficients dict for (city, model_mode), or None if not found."""
+    def get_emos_coefficients(
+        self, city: str, model_mode: str, forecast_source: str = "nws_open_meteo"
+    ) -> "dict | None":
+        """Return EMOS coefficients dict for (city, model_mode, forecast_source), or None."""
         cur = self._conn.execute(
             "SELECT a, b, c, d, crps_score, ready_for_promotion, trained_at "
-            "FROM emos_calibration WHERE city=? AND model_mode=?",
-            (city, model_mode),
+            "FROM emos_calibration WHERE city=? AND model_mode=? AND forecast_source=?",
+            (city, model_mode, forecast_source),
         )
         row = cur.fetchone()
         if row is None:
