@@ -47,8 +47,7 @@ STATIONS = [
     ("MPMG",  8.9734,  -79.5556,  "Panama City",   "MPMG", "C", "America/Panama"),    # 10/10 100% shadow
 
     # --- Archive shadow candidates (issue #274) — shadow-only by default.
-    # Ported from archive/polymarket-shadow/config.py (7-tuple: region and
-    # forecast_source dropped). All are included in SHADOW_STATIONS_ARCHIVE below.
+    # All are included in SHADOW_STATIONS_ARCHIVE below.
     # Hong Kong intentionally OMITTED — resolves against Hong Kong Observatory
     # (weather.gov.hk), not a standard ICAO METAR site. Requires a custom
     # scraper before it can be added. Track in a follow-up issue.
@@ -359,8 +358,7 @@ EMOS_DEFAULT_MODE: str = os.environ.get("EMOS_DEFAULT_MODE", "legacy")
 _shadow_both_raw = os.getenv("SHADOW_STATIONS") or os.getenv("DISABLED_STATIONS", "RKSI")
 SHADOW_STATIONS: "set[str]" = {s.strip().upper() for s in _shadow_both_raw.split(",") if s.strip()}
 
-# Archive shadow candidates added in issue #274.  These cities were ported from
-# archive/polymarket-shadow/config.py as shadow-only stations — no live orders
+# Archive shadow candidates added in issue #274.  Shadow-only stations — no live orders
 # until their shadow performance is validated.  Add their ICAO codes to
 # SHADOW_STATIONS (via the env var) to suppress live trading, or use
 # SHADOW_STATIONS_ARCHIVE directly in scripts that need to enumerate them.
