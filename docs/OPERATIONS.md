@@ -1044,3 +1044,119 @@ Open-Meteo publishes models and infrastructure as open source. Self-hosting is t
 ### Conclusion
 
 No action required. MeteoEdge may continue using Open-Meteo's free API for live trading without payment, licensing changes, or self-hosting. Attribution is already documented in the code.
+
+---
+
+## EMOS Retrain for New Forecast Stack
+
+**Rule: Whenever `FORECAST_STACK` changes (Epic A1/A2 promotion), retrain EMOS before switching live.**
+
+EMOS coefficients correct the raw forecast mean and spread per city. When a new forecast stack
+lands (e.g. HRRR/NBM for US, ECMWF/ICON for international), the existing coefficients are stale —
+they were fitted on a different input distribution. Retrain per `(city, forecast_source)` before
+promoting.
+
+### When to retrain
+
+- After ≥ 30 days of `model_forecast_log` rows exist for the new `forecast_source` identifier.
+- Before `check_ready_for_promotion()` returns True for any city.
+- Before calling any code that switches `FORECAST_STACK`.
+
+### Step 1 — Check data availability
+
+```bash
+python - <<'EOF_SCRIPT'
+from src.data.db import Database
+from src.model.emos_calibration import fetch_training_data, InsufficientDataError
+
+CITIES = ["Chicago", "Miami", "Los Angeles", "Atlanta", "Houston"]
+SOURCE = "hrrr_nbm"  # change to your new stack
+
+with Database() as db:
+    for city in CITIES:
+        try:
+            rows = fetch_training_data(city, db, min_samples=1, forecast_source=SOURCE)
+            print(f"  {city}: {len(rows)} rows OK")
+        except InsufficientDataError as e:
+            print(f"  {city}: INSUFFICIENT — {e}")
+EOF_SCRIPT
+```
+
+### Step 2 — Fit and save coefficients
+
+```bash
+python - <<'EOF_SCRIPT'
+from src.data.db import Database
+from src.model.emos_calibration import (
+    fetch_training_data, fit_emos, save_coefficients, InsufficientDataError
+)
+
+CITIES = ["Chicago", "Miami", "Los Angeles", "Atlanta", "Houston"]
+SOURCE = "hrrr_nbm"
+
+with Database() as db:
+    for city in CITIES:
+        try:
+            data = fetch_training_data(city, db, forecast_source=SOURCE)
+            a, b, c, d = fit_emos(data)
+            from src.model.crps_score import crps_gaussian
+            crps = sum(crps_gaussian(a + b*mu, max(c + d*sg, 1e-3), y)
+                       for mu, sg, y in data) / len(data)
+            save_coefficients(city, a, b, c, d, crps, db, forecast_source=SOURCE)
+            print(f"  {city}: saved (a={a:.3f} b={b:.3f} c={c:.3f} d={d:.3f} CRPS={crps:.4f})")
+        except InsufficientDataError as e:
+            print(f"  {city}: SKIP — {e}")
+EOF_SCRIPT
+```
+
+All rows are stored with `model_mode='emos_shadow'` and `ready_for_promotion=0`.
+
+### Step 3 — Validate and promote (manual)
+
+```bash
+python - <<'EOF_SCRIPT'
+from src.data.db import Database
+from src.model.emos_calibration import check_ready_for_promotion
+
+CITIES = ["Chicago", "Miami", "Los Angeles", "Atlanta", "Houston"]
+SOURCE = "hrrr_nbm"
+
+with Database() as db:
+    # Inspect CRPS scores
+    for row in db.get_all_emos_calibration():
+        if row["forecast_source"] == SOURCE:
+            print(f"  {row['city']}: CRPS={row['crps_score']:.4f} ready={row['ready_for_promotion']}")
+
+    # Gate check (should be False until you manually set ready_for_promotion=1)
+    ready = check_ready_for_promotion(db, SOURCE, CITIES)
+    print(f"\nPromotion gate: {'OPEN' if ready else 'BLOCKED'}")
+EOF_SCRIPT
+```
+
+After verifying CRPS and win-rate, set `ready_for_promotion=1` manually:
+
+```bash
+python - <<'EOF_SCRIPT'
+from src.data.db import Database
+
+CITIES = ["Chicago", "Miami", "Los Angeles", "Atlanta", "Houston"]
+SOURCE = "hrrr_nbm"
+
+with Database() as db:
+    for city in CITIES:
+        db._conn.execute(
+            "UPDATE emos_calibration SET ready_for_promotion=1 "
+            "WHERE city=? AND forecast_source=? AND model_mode='emos_shadow'",
+            (city, SOURCE),
+        )
+    db._conn.commit()
+    print("Done. Run check_ready_for_promotion() again to confirm gate is open.")
+EOF_SCRIPT
+```
+
+### Notes
+
+- Legacy `nws_open_meteo` coefficients are never deleted. The `(city, model_mode, forecast_source)`
+  unique key ensures rows for different sources coexist.
+- Do NOT run `fit_emos` in the live trading loop or CI — it is an offline, operator-run step.
+- EMOS sigma retrain (#449) follows the same procedure.

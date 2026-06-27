@@ -83,6 +83,7 @@ def fetch_training_data(
     db,
     min_samples: int = 60,
     lead_hours: int = 24,
+    forecast_source: str | None = None,
 ) -> list[tuple[float, float, float]]:
     """Build (mu_ensemble, sigma_ensemble, actual_high_f) triples for a city.
 
@@ -104,10 +105,14 @@ def fetch_training_data(
     skip calibration until enough lead-time rows accumulate.
 
     Args:
-        city:        City name (must match a STATIONS entry, e.g. "Chicago").
-        db:          A src.data.db.Database instance.
-        min_samples: Minimum joined (forecast, actual) pairs required. Default 60.
-        lead_hours:  Lead-time bin to train on (hours). Default 24 for backward compat.
+        city:            City name (must match a STATIONS entry, e.g. "Chicago").
+        db:              A src.data.db.Database instance.
+        min_samples:     Minimum joined (forecast, actual) pairs required. Default 60.
+        lead_hours:      Lead-time bin to train on (hours). Default 24 for backward compat.
+        forecast_source: Optional forecast stack identifier (e.g. "hrrr_nbm"). When
+                         provided, only model_forecast_log rows whose ``model`` column
+                         matches this value are included. When None, all models are used
+                         (legacy behaviour).
 
     Returns:
         List of (mu_f, sigma_f, actual_high_f) float triples.
@@ -132,10 +137,16 @@ def fetch_training_data(
         # Legacy fallback: no lead_hours filter
         forecast_rows = db.get_forecast_log(station, since_date="2000-01-01")
 
+    # Filter by forecast_source when requested — only use rows whose model column
+    # matches the requested stack identifier (e.g. "hrrr_nbm").
+    if forecast_source is not None:
+        forecast_rows = [r for r in forecast_rows if r.get("model") == forecast_source]
+
     if not forecast_rows:
+        source_info = f", forecast_source='{forecast_source}'" if forecast_source else ""
         raise InsufficientDataError(
             f"model_forecast_log is empty for station '{station}' (city='{city}') "
-            f"at lead_hours={lead_hours}. "
+            f"at lead_hours={lead_hours}{source_info}. "
             f"Need {min_samples} settled days; have 0."
         )
 
@@ -222,6 +233,7 @@ def save_coefficients(
     d: float,
     crps_score: float,
     db,
+    forecast_source: str = "nws_open_meteo",
 ) -> None:
     """Persist EMOS coefficients to the emos_calibration table.
 
@@ -229,17 +241,18 @@ def save_coefficients(
     Promotion to active use is a deliberate manual step — this function
     never sets ready_for_promotion=1.
 
-    Calling this function twice for the same (city, 'emos_shadow') pair
-    will overwrite the first record (INSERT OR REPLACE semantics in db).
+    Coefficients for different forecast_source values are stored independently
+    — saving for "hrrr_nbm" never overwrites the legacy "nws_open_meteo" row.
 
     Args:
-        city:       City name (e.g. "Chicago").
-        a:          EMOS mu intercept.
-        b:          EMOS mu slope.
-        c:          EMOS sigma intercept (must be > 0).
-        d:          EMOS sigma slope (must be > 0).
-        crps_score: Mean CRPS on the training set after fitting.
-        db:         A src.data.db.Database instance.
+        city:            City name (e.g. "Chicago").
+        a:               EMOS mu intercept.
+        b:               EMOS mu slope.
+        c:               EMOS sigma intercept (must be > 0).
+        d:               EMOS sigma slope (must be > 0).
+        crps_score:      Mean CRPS on the training set after fitting.
+        db:              A src.data.db.Database instance.
+        forecast_source: Forecast stack identifier (default "nws_open_meteo").
     """
     db.upsert_emos_coefficients(
         city=city,
@@ -251,4 +264,35 @@ def save_coefficients(
         crps_score=crps_score,
         trained_at=datetime.now(timezone.utc).isoformat(),
         ready_for_promotion=0,  # always — manual promotion only
+        forecast_source=forecast_source,
     )
+
+
+def check_ready_for_promotion(
+    db,
+    forecast_source: str,
+    cities: list[str],
+) -> bool:
+    """Return True only if every city has ready_for_promotion=1 for this source.
+
+    This is the promotion gate: FORECAST_STACK must not be switched to live
+    until every city in scope has validated EMOS coefficients retrained on
+    the new source. Callers should check this before any FORECAST_STACK change.
+
+    Args:
+        db:              A src.data.db.Database instance.
+        forecast_source: The new forecast stack identifier (e.g. "hrrr_nbm").
+        cities:          List of city names that must all be ready.
+
+    Returns:
+        True iff all cities have a row with ready_for_promotion=1 for this source.
+    """
+    if not cities:
+        return False
+    rows = db.get_all_emos_calibration()
+    promoted = {
+        r["city"]
+        for r in rows
+        if r.get("forecast_source") == forecast_source and r.get("ready_for_promotion") == 1
+    }
+    return all(city in promoted for city in cities)

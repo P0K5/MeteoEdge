@@ -157,6 +157,7 @@ CREATE TABLE IF NOT EXISTS emos_calibration (
     id                  INTEGER PRIMARY KEY AUTOINCREMENT,
     city                TEXT NOT NULL,
     model_mode          TEXT NOT NULL,
+    forecast_source     TEXT NOT NULL DEFAULT 'nws_open_meteo',
     a                   REAL NOT NULL,
     b                   REAL NOT NULL,
     c                   REAL NOT NULL,
@@ -164,7 +165,7 @@ CREATE TABLE IF NOT EXISTS emos_calibration (
     crps_score          REAL,
     ready_for_promotion INTEGER DEFAULT 0,
     trained_at          TEXT,
-    UNIQUE(city, model_mode)
+    UNIQUE(city, model_mode, forecast_source)
 );
 
 CREATE TABLE IF NOT EXISTS emos_mode_override (
@@ -264,6 +265,7 @@ class Database:
             ("trades", "direction", "TEXT NOT NULL DEFAULT 'high'"),
             ("settlements", "direction", "TEXT NOT NULL DEFAULT 'high'"),
             ("station_overrides", "low_no_enabled", "INTEGER NOT NULL DEFAULT 0"),
+            ("emos_calibration", "forecast_source", "TEXT NOT NULL DEFAULT 'nws_open_meteo'"),
         ]:
             try:
                 self._conn.execute(
@@ -1545,14 +1547,17 @@ class Database:
         crps_score: "float | None" = None,
         trained_at: "str | None" = None,
         ready_for_promotion: int = 0,
+        forecast_source: str = "nws_open_meteo",
     ) -> None:
-        """Insert or replace EMOS calibration coefficients for a city/mode pair."""
+        """Insert or replace EMOS calibration coefficients for a (city, mode, source) triple."""
         with self._lock:
             self._conn.execute(
                 """INSERT OR REPLACE INTO emos_calibration
-                   (city, model_mode, a, b, c, d, crps_score, ready_for_promotion, trained_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (city, model_mode, a, b, c, d, crps_score, ready_for_promotion, trained_at),
+                   (city, model_mode, forecast_source,
+                    a, b, c, d, crps_score, ready_for_promotion, trained_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (city, model_mode, forecast_source,
+                 a, b, c, d, crps_score, ready_for_promotion, trained_at),
             )
             self._conn.commit()
 
@@ -1633,10 +1638,11 @@ class Database:
         }
 
     def get_all_emos_calibration(self) -> list[dict]:
-        """Return all rows from emos_calibration, one dict per (city, model_mode) pair."""
+        """Return all rows from emos_calibration as dicts."""
         cur = self._conn.execute(
-            "SELECT city, model_mode, a, b, c, d, crps_score, ready_for_promotion, trained_at "
-            "FROM emos_calibration ORDER BY city, model_mode"
+            "SELECT city, model_mode, forecast_source, a, b, c, d, "
+            "crps_score, ready_for_promotion, trained_at "
+            "FROM emos_calibration ORDER BY city, model_mode, forecast_source"
         )
         return [dict(row) for row in cur.fetchall()]
 
