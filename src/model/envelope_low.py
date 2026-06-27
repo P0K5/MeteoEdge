@@ -58,9 +58,9 @@ def true_probability_low_in_bracket(
     """Compute P(daily low falls in [bracket.low_f, bracket.high_f]).
 
     Analogous to true_probability_yes in envelope.py but for the low side.
-    Running-low exclusion: if bracket.high_f < state.current_low_f, return 0.0 —
-    the running low is already above the bracket ceiling, so the daily low
-    (which is locked at or below current_low_f) cannot fall in this bracket.
+    Running-low exclusion: if bracket.low_f > state.current_low_f, return 0.0 —
+    the daily low is locked at or below current_low_f, so a bracket whose floor
+    is above that ceiling cannot contain the final low.
     """
     lo, hi = bracket.low_f, bracket.high_f
     min_env, max_env = compute_envelope_low(state)
@@ -71,10 +71,9 @@ def true_probability_low_in_bracket(
     if forecast_mean is not None and forecast_mean < min_env:
         min_env = forecast_mean
 
-    # Running-low exclusion (per spec): daily low is already at or below current_low_f;
-    # if bracket.high_f is above current_low_f (hi > current_low_f), it's in range.
-    # if bracket.high_f < current_low_f, bracket is entirely below what's been observed — 0.0
-    if hi < state.current_low_f:
+    # Running-low exclusion: daily low is locked at or below current_low_f.
+    # If the bracket floor is above the running low ceiling, the final low cannot land here.
+    if lo > state.current_low_f:
         return 0.0
 
     # Bracket floor above the envelope ceiling → 0.0

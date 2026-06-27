@@ -122,28 +122,28 @@ class TestTrueProbabilityLowInBracket:
         assert 0.0 < result < 1.0, f"Expected value in (0,1), got {result}"
 
     def test_running_low_excludes_bracket(self):
-        """bracket high_f < current_low_f → 0.0 (running low exclusion)."""
-        # current_low_f=64; bracket hi=62 < 64 → impossible, low is locked <= 64
+        """bracket low_f > current_low_f → 0.0 (running low exclusion)."""
+        # current_low_f=64; bracket lo=68 > 64 → impossible, low is locked at or below 64
         state = make_state_low(current_low_f=64.0)
-        bracket = make_bracket(low_f=58.0, high_f=62.0)
+        bracket = make_bracket(low_f=68.0, high_f=72.0)
         with patch(
             "src.model.envelope_low.expected_additional_drop", return_value=3.0
         ):
             result = true_probability_low_in_bracket(bracket, state)
         assert result == 0.0, (
-            f"bracket hi=62 < current_low_f=64: running-low exclusion should give 0.0, got {result}"
+            f"bracket lo=68 > current_low_f=64: running-low exclusion should give 0.0, got {result}"
         )
 
     def test_boundary_running_low_excludes(self):
-        """current_low_f=63, bracket high_f=62 → 0.0 (explicit from issue spec)."""
-        state = make_state_low(current_low_f=63.0)
-        bracket = make_bracket(low_f=58.0, high_f=62.0)
+        """bracket low_f=65.1 > current_low_f=65.0 → 0.0 (boundary case)."""
+        state = make_state_low(current_low_f=65.0)
+        bracket = make_bracket(low_f=65.1, high_f=70.0)
         with patch(
             "src.model.envelope_low.expected_additional_drop", return_value=3.0
         ):
             result = true_probability_low_in_bracket(bracket, state)
         assert result == 0.0, (
-            f"bracket hi=62 < current_low_f=63: should return 0.0, got {result}"
+            f"bracket lo=65.1 > current_low_f=65.0: should return 0.0, got {result}"
         )
 
     def test_bracket_floor_above_envelope_ceiling(self):
