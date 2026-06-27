@@ -77,9 +77,16 @@ SUPPORTED_VARS = {
 # Cache key & file helpers
 # ---------------------------------------------------------------------------
 
-def _cache_key(model: str, var: str, cycle_dt, fxx: int) -> str:
-    """Build a unique string key for a cached GRIB slice."""
+def _cache_key(model: str, var: str, cycle_dt, fxx: int, member: str | None = None) -> str:
+    """Build a unique string key for a cached GRIB slice.
+
+    When *member* is provided (e.g. ``"gec00"``, ``"gep01"``), it is embedded
+    between the model name and variable so that different ensemble members are
+    cached independently.
+    """
     ts = cycle_dt.strftime("%Y%m%dT%HZ")
+    if member is not None:
+        return f"{model}_{member}_{var}_{ts}_f{fxx:03d}"
     return f"{model}_{var}_{ts}_f{fxx:03d}"
 
 
@@ -121,6 +128,7 @@ def _fetch_grib_slice(
     fxx: int,
     cache_dir: Path,
     ttl_hours: float,
+    member: str | None = None,
 ) -> Optional[Path]:
     """Download (or return cached) a single GRIB2 message for *var*.
 
@@ -128,12 +136,16 @@ def _fetch_grib_slice(
     the full GRIB file.
 
     Args:
-        model:     herbie model name (e.g. "hrrr").
+        model:     herbie model name (e.g. "hrrr", "gefs").
         var:       Variable key from SUPPORTED_VARS (e.g. "TMP_2m").
         cycle_dt:  datetime of the model cycle (UTC).
         fxx:       Forecast hour offset (0 = analysis).
         cache_dir: Path to the on-disk cache directory.
         ttl_hours: Cache TTL in hours.
+        member:    Optional ensemble member identifier (e.g. "gec00", "gep01").
+                   When provided it is forwarded to Herbie so that the correct
+                   member is fetched, and it is embedded in the cache key so
+                   that each member is stored independently.
 
     Returns:
         Path to the cached .grib2 slice, or None on failure.
@@ -142,7 +154,7 @@ def _fetch_grib_slice(
         raise ValueError(f"Unsupported variable '{var}'. Choose from: {list(SUPPORTED_VARS)}")
 
     cache_dir.mkdir(parents=True, exist_ok=True)
-    key = _cache_key(model, var, cycle_dt, fxx)
+    key = _cache_key(model, var, cycle_dt, fxx, member=member)
     path = _cache_path(cache_dir, key)
 
     if _is_cache_valid(path, ttl_hours):
@@ -157,16 +169,18 @@ def _fetch_grib_slice(
         ) from exc
 
     matcher = SUPPORTED_VARS[var]
-    log.info("[grib_cache] fetching %s %s cycle=%s fxx=%d", model, var, cycle_dt, fxx)
+    log.info("[grib_cache] fetching %s %s cycle=%s fxx=%d member=%s", model, var, cycle_dt, fxx, member)
     try:
-        H = Herbie(
-            cycle_dt,
+        herbie_kwargs: dict = dict(
             model=model,
             fxx=fxx,
             save_dir=str(cache_dir),
             overwrite=False,
             verbose=False,
         )
+        if member is not None:
+            herbie_kwargs["member"] = member
+        H = Herbie(cycle_dt, **herbie_kwargs)
         # download() with searchString fetches only matching byte ranges via
         # the IDX sidecar — never the full GRIB2 file.
         downloaded = H.download(matcher, save_dir=str(cache_dir), overwrite=False)
