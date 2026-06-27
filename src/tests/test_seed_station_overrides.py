@@ -27,6 +27,20 @@ def _mem_db() -> Database:
     return Database(":memory:")
 
 
+def _assert_rksi_shadow(row):
+    """Assert RKSI is in full shadow (yes=False, no=False)."""
+    assert row is not None
+    assert row["yes_enabled"] is False
+    assert row["no_enabled"] is False
+
+
+def _assert_rksi_live(row):
+    """Assert RKSI is fully live (yes=True, no=True)."""
+    assert row is not None
+    assert row["yes_enabled"] is True
+    assert row["no_enabled"] is True
+
+
 # ---------------------------------------------------------------------------
 # Seed function tests
 # ---------------------------------------------------------------------------
@@ -51,7 +65,7 @@ class TestSeedStationOverrides:
         db = _mem_db()
         seed_station_overrides(db)
         result = db.get_station_override("RKSI")
-        assert result == {"yes_enabled": False, "no_enabled": False}
+        assert result == {"yes_enabled": False, "no_enabled": False, "low_no_enabled": False}
 
     def test_seed_is_idempotent(self):
         """seed_station_overrides is idempotent: second call doesn't change state."""
@@ -74,7 +88,8 @@ class TestSeedStationOverrides:
         seed_station_overrides(db)
 
         result = db.get_station_override("RKSI")
-        assert result == {"yes_enabled": True, "no_enabled": True}
+        assert result["yes_enabled"] is True
+        assert result["no_enabled"] is True
 
     def test_seed_does_not_change_other_stations(self):
         """Seeding only touches RKSI; other stations are unaffected."""
@@ -85,9 +100,13 @@ class TestSeedStationOverrides:
         seed_station_overrides(db)
 
         # RKSI should be seeded
-        assert db.get_station_override("RKSI") == {"yes_enabled": False, "no_enabled": False}
+        rksi = db.get_station_override("RKSI")
+        assert rksi["yes_enabled"] is False
+        assert rksi["no_enabled"] is False
         # KORD should be unchanged
-        assert db.get_station_override("KORD") == {"yes_enabled": False, "no_enabled": True}
+        kord = db.get_station_override("KORD")
+        assert kord["yes_enabled"] is False
+        assert kord["no_enabled"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -107,17 +126,17 @@ class TestEnvVarDoesNotClobberDbOnStartup:
         db = _mem_db()
         # Simulate previous startup that seeded RKSI as shadowed
         seed_station_overrides(db)
-        assert db.get_station_override("RKSI") == {"yes_enabled": False, "no_enabled": False}
+        _assert_rksi_shadow(db.get_station_override("RKSI"))
 
         # Admin manually enables RKSI in the DB
         db.set_station_override("RKSI", yes_enabled=True, no_enabled=True)
-        assert db.get_station_override("RKSI") == {"yes_enabled": True, "no_enabled": True}
+        _assert_rksi_live(db.get_station_override("RKSI"))
 
         # Second startup runs seed again (simulating a restart)
         seed_station_overrides(db)
 
         # Seed should NOT overwrite the manual edit, even if env says shadow
-        assert db.get_station_override("RKSI") == {"yes_enabled": True, "no_enabled": True}
+        _assert_rksi_live(db.get_station_override("RKSI"))
 
     def test_env_change_does_not_retroactively_apply_to_db_row(self):
         """
@@ -129,12 +148,12 @@ class TestEnvVarDoesNotClobberDbOnStartup:
         db = _mem_db()
         # Startup 1: with default env (SHADOW_STATIONS="RKSI")
         seed_station_overrides(db)
-        assert db.get_station_override("RKSI") == {"yes_enabled": False, "no_enabled": False}
+        _assert_rksi_shadow(db.get_station_override("RKSI"))
 
         # Startup 2: even if SHADOW_STATIONS is changed, seed is idempotent
         # (it will not change the existing DB row)
         seed_station_overrides(db)
-        assert db.get_station_override("RKSI") == {"yes_enabled": False, "no_enabled": False}
+        _assert_rksi_shadow(db.get_station_override("RKSI"))
 
     def test_multiple_restarts_preserve_manual_edits(self):
         """After manual edit, multiple restarts preserve the edit."""
@@ -147,10 +166,9 @@ class TestEnvVarDoesNotClobberDbOnStartup:
         # Simulate 3 restarts
         for _ in range(3):
             seed_station_overrides(db)
-            assert db.get_station_override("RKSI") == {
-                "yes_enabled": True,
-                "no_enabled": False,
-            }
+            r = db.get_station_override("RKSI")
+            assert r["yes_enabled"] is True
+            assert r["no_enabled"] is False
 
 
 # ---------------------------------------------------------------------------

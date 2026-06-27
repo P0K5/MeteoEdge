@@ -534,18 +534,24 @@ def seed_config(db) -> None:
 
 
 def seed_station_overrides(db) -> None:
-    """Seed station_overrides for RKSI on first run, if missing.
+    """Seed station_overrides on first run for shadow-mode stations.
 
-    RKSI is seeded with: enabled=1, yes_enabled=0, no_enabled=0
-    (shadows both YES and NO sides).
+    Idempotent: existing rows are never overwritten — DB is authoritative.
+    Only called once per startup.
 
-    Idempotent: if a row already exists, it is never overwritten —
-    DB is authoritative. Only called once per startup.
-
-    See issue #288.
+    RKSI — shadows both YES and NO sides (issue #288).
+    Epic-C low-side shadow cities (issue #457) — seeded with low_no_enabled=0
+    (shadow-only); promoted to 1 after ≥14 days validation per city.
     """
     if db.get_station_override("RKSI") is None:
-        db.set_station_override("RKSI", yes_enabled=False, no_enabled=False)
+        db.set_station_override("RKSI", yes_enabled=False, no_enabled=False, low_no_enabled=False)
+
+    # Epic-C low-side shadow rollout (issue #457): ensure rows exist for the 6 cities.
+    # DB migration adds low_no_enabled=0 to all existing rows automatically; this only
+    # creates missing rows so the DB tracks them explicitly.
+    for station in ("EGLC", "LFPB", "RJTT", "ZSPD", "KMIA"):
+        if db.get_station_override(station) is None:
+            db.set_station_override(station, yes_enabled=False, no_enabled=False, low_no_enabled=False)
 
 
 def get_live_config(db) -> dict:

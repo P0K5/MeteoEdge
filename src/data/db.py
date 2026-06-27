@@ -191,11 +191,12 @@ CREATE TABLE IF NOT EXISTS bot_config (
 );
 
 CREATE TABLE IF NOT EXISTS station_overrides (
-    station     TEXT PRIMARY KEY,
-    enabled     INTEGER NOT NULL DEFAULT 1,
-    yes_enabled INTEGER NOT NULL DEFAULT 1,
-    no_enabled  INTEGER NOT NULL DEFAULT 1,
-    updated_at  TEXT NOT NULL
+    station        TEXT PRIMARY KEY,
+    enabled        INTEGER NOT NULL DEFAULT 1,
+    yes_enabled    INTEGER NOT NULL DEFAULT 1,
+    no_enabled     INTEGER NOT NULL DEFAULT 1,
+    low_no_enabled INTEGER NOT NULL DEFAULT 0,
+    updated_at     TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS emos_crps_log (
@@ -262,6 +263,7 @@ class Database:
             ("candidates", "direction", "TEXT NOT NULL DEFAULT 'high'"),
             ("trades", "direction", "TEXT NOT NULL DEFAULT 'high'"),
             ("settlements", "direction", "TEXT NOT NULL DEFAULT 'high'"),
+            ("station_overrides", "low_no_enabled", "INTEGER NOT NULL DEFAULT 0"),
         ]:
             try:
                 self._conn.execute(
@@ -1837,35 +1839,52 @@ class Database:
     # ------------------------------------------------------------------
 
     def get_station_override(self, station: str) -> "dict | None":
-        """Return {yes_enabled, no_enabled} for *station*, or None if no override exists."""
+        """Return {yes_enabled, no_enabled, low_no_enabled} for *station*, or None if absent."""
         cur = self._conn.execute(
-            "SELECT yes_enabled, no_enabled FROM station_overrides WHERE station=?", (station,)
+            "SELECT yes_enabled, no_enabled, low_no_enabled "
+            "FROM station_overrides WHERE station=?",
+            (station,),
         )
         row = cur.fetchone()
         if row is None:
             return None
-        return {"yes_enabled": bool(row[0]), "no_enabled": bool(row[1])}
+        return {
+            "yes_enabled": bool(row[0]),
+            "no_enabled": bool(row[1]),
+            "low_no_enabled": bool(row[2]),
+        }
 
-    def set_station_override(self, station: str, yes_enabled: bool, no_enabled: bool) -> None:
-        """Upsert yes_enabled and no_enabled for *station*. Thread-safe via the existing RLock."""
+    def set_station_override(
+        self,
+        station: str,
+        yes_enabled: bool,
+        no_enabled: bool,
+        low_no_enabled: bool = False,
+    ) -> None:
+        """Upsert yes_enabled, no_enabled, and low_no_enabled for *station*."""
         with self._lock:
             self._conn.execute(
-                "INSERT INTO station_overrides(station, yes_enabled, no_enabled, updated_at) "
-                "VALUES(?,?,?,?) "
+                "INSERT INTO station_overrides"
+                "(station, yes_enabled, no_enabled, low_no_enabled, updated_at) "
+                "VALUES(?,?,?,?,?) "
                 "ON CONFLICT(station) DO UPDATE SET "
                 "yes_enabled=excluded.yes_enabled, no_enabled=excluded.no_enabled, "
-                "updated_at=excluded.updated_at",
-                (station, int(yes_enabled), int(no_enabled), self._now()),
+                "low_no_enabled=excluded.low_no_enabled, updated_at=excluded.updated_at",
+                (station, int(yes_enabled), int(no_enabled), int(low_no_enabled), self._now()),
             )
             self._conn.commit()
 
     def get_all_station_overrides(self) -> "dict[str, dict]":
-        """Return all station_overrides rows as {station: {yes_enabled, no_enabled}}."""
+        """Return all station_overrides rows as {station: {yes_enabled, no_enabled, low_no_enabled}}."""
         cur = self._conn.execute(
-            "SELECT station, yes_enabled, no_enabled FROM station_overrides"
+            "SELECT station, yes_enabled, no_enabled, low_no_enabled FROM station_overrides"
         )
         return {
-            row[0]: {"yes_enabled": bool(row[1]), "no_enabled": bool(row[2])}
+            row[0]: {
+                "yes_enabled": bool(row[1]),
+                "no_enabled": bool(row[2]),
+                "low_no_enabled": bool(row[3]),
+            }
             for row in cur.fetchall()
         }
 
