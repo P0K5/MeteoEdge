@@ -84,6 +84,7 @@ def fetch_training_data(
     min_samples: int = 60,
     lead_hours: int = 24,
     forecast_source: str | None = None,
+    regime: "frozenset[str] | set[str] | None" = None,
 ) -> list[tuple[float, float, float]]:
     """Build (mu_ensemble, sigma_ensemble, actual_high_f) triples for a city.
 
@@ -110,16 +111,26 @@ def fetch_training_data(
         min_samples:     Minimum joined (forecast, actual) pairs required. Default 60.
         lead_hours:      Lead-time bin to train on (hours). Default 24 for backward compat.
         forecast_source: Optional forecast stack identifier (e.g. "hrrr_nbm"). When
-                         provided, only model_forecast_log rows whose ``model`` column
-                         matches this value are included. When None, all models are used
-                         (legacy behaviour).
+                         provided (and ``regime`` is None), only model_forecast_log rows
+                         whose ``model`` column matches this value are included. When both
+                         are None, a ValueError is raised.
+        regime:          Optional set of model tags (e.g. frozenset({"nws", "open_meteo"}))
+                         to include in the ensemble μ. When provided, takes precedence over
+                         ``forecast_source`` for row filtering. When both ``regime`` and
+                         ``forecast_source`` are None, raises ValueError.
 
     Returns:
         List of (mu_f, sigma_f, actual_high_f) float triples.
 
     Raises:
         InsufficientDataError: If fewer than min_samples triples are found.
+        ValueError: If both ``regime`` and ``forecast_source`` are None.
     """
+    if regime is None and forecast_source is None:
+        raise ValueError(
+            "fetch_training_data requires either 'regime' or 'forecast_source'"
+        )
+
     station = _city_to_station(city)
     if station is None:
         raise InsufficientDataError(
@@ -137,9 +148,11 @@ def fetch_training_data(
         # Legacy fallback: no lead_hours filter
         forecast_rows = db.get_forecast_log(station, since_date="2000-01-01")
 
-    # Filter by forecast_source when requested — only use rows whose model column
-    # matches the requested stack identifier (e.g. "hrrr_nbm").
-    if forecast_source is not None:
+    # Filter rows by regime (set of model tags) or forecast_source (exact match).
+    # regime takes precedence when both are provided.
+    if regime is not None:
+        forecast_rows = [r for r in forecast_rows if r.get("model") in regime]
+    elif forecast_source is not None:
         forecast_rows = [r for r in forecast_rows if r.get("model") == forecast_source]
 
     if not forecast_rows:
