@@ -166,7 +166,7 @@ class TestInsufficientDataError:
         db = _db()
         # Chicago is in STATIONS config → station KORD
         with pytest.raises(InsufficientDataError):
-            fetch_training_data("Chicago", db, min_samples=60)
+            fetch_training_data("Chicago", db, min_samples=60, forecast_source="nws")
 
     def test_raises_when_below_min_samples(self):
         """Only a few forecast + observation rows → InsufficientDataError."""
@@ -191,13 +191,13 @@ class TestInsufficientDataError:
             )
         # Only 5 pairs but need 60
         with pytest.raises(InsufficientDataError):
-            fetch_training_data("Chicago", db, min_samples=60, lead_hours=24)
+            fetch_training_data("Chicago", db, min_samples=60, lead_hours=24, forecast_source="nws")
 
     def test_raises_for_unknown_city(self):
         """City not in STATIONS config → InsufficientDataError."""
         db = _db()
         with pytest.raises(InsufficientDataError):
-            fetch_training_data("Atlantis", db, min_samples=60)
+            fetch_training_data("Atlantis", db, min_samples=60, forecast_source="nws")
 
     def test_succeeds_when_enough_samples(self):
         """Sufficient paired data returns the correct number of triples."""
@@ -221,7 +221,7 @@ class TestInsufficientDataError:
                 unit="F",
                 source="metar",
             )
-        result = fetch_training_data("Chicago", db, min_samples=n, lead_hours=24)
+        result = fetch_training_data("Chicago", db, min_samples=n, lead_hours=24, forecast_source="nws")
         assert len(result) == n
         for mu, sigma, actual in result:
             assert isinstance(mu, float)

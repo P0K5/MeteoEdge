@@ -68,14 +68,17 @@ def _make_30_training_pairs():
 # ---------------------------------------------------------------------------
 
 class TestFetchTrainingDataForecastSource:
-    def test_no_filter_includes_all_models(self):
+    def test_no_filter_raises_value_error(self):
+        """Calling fetch_training_data without regime or forecast_source raises ValueError.
+
+        Previously this included all models (footgun); now it is an error so callers
+        must always declare which regime they intend to train on (#494).
+        """
         rows, obs = _make_30_training_pairs()
-        # Add a second-model row on an existing date (day 1)
-        rows.append(_forecast_row("2025-01-01", 61.0, model="hrrr_nbm"))
         db = _make_db_with_rows(rows, obs)
         with patch("src.config.STATIONS", [("KORD", 0, 0, "Chicago", "KORD", "F", "US/Central")]):
-            data = fetch_training_data("Chicago", db, min_samples=30)
-        assert len(data) == 30  # one per date
+            with pytest.raises(ValueError, match="fetch_training_data requires"):
+                fetch_training_data("Chicago", db, min_samples=30)
 
     def test_filter_by_forecast_source_excludes_other_models(self):
         rows = []
