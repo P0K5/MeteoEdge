@@ -116,10 +116,10 @@ def _resolve_ecmwf_cycle(fxx: int = 1) -> Optional[datetime]:
 
     for attempt in range(_ECMWF_MAX_LOOKBACK_CYCLES + 1):
         try:
-            H = Herbie(candidate, model="ifs", fxx=fxx, verbose=False)
+            H = Herbie(candidate.replace(tzinfo=None), model="ifs", fxx=fxx, verbose=False)
             _ = H.idx  # raises if cycle not yet published
             log.debug("[ecmwf] resolved cycle: %s (attempt %d)", candidate, attempt)
-            return candidate
+            return candidate.replace(tzinfo=None)
         except Exception:
             log.debug("[ecmwf] cycle %s not available, stepping back 12h", candidate)
             candidate = candidate - timedelta(hours=_ECMWF_CYCLE_STEP_H)
@@ -158,7 +158,7 @@ def _fetch_ecmwf_2t(cycle_dt: datetime, fxx: int, lat: float, lon: float) -> Opt
         return None
 
     try:
-        H = Herbie(cycle_dt, model="ifs", fxx=fxx, verbose=False)
+        H = Herbie(cycle_dt.replace(tzinfo=None), model="ifs", fxx=fxx, verbose=False)
         ds = H.xarray(_ECMWF_2T_MATCHER, remove_grib=False)
         if ds is None:
             return None

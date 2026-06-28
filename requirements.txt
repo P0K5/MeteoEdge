@@ -30,6 +30,8 @@ scipy>=1.10.0  # EMOS calibration optimisation (scipy.optimize.minimize)
 herbie-data>=2024.3.0
 # cfgrib: read GRIB2 slices into xarray/numpy after herbie fetches them
 cfgrib>=0.9.10
+# s3fs: required by herbie for S3/IDX access
+s3fs
 
 # Web Dashboard (Epic 4)
 fastapi>=0.95.0

@@ -136,10 +136,10 @@ def _resolve_nbm_cycle(fxx: int = 0) -> Optional[datetime]:
 
     for attempt in range(_NBM_MAX_LOOKBACK_CYCLES + 1):
         try:
-            H = Herbie(candidate, model="nbm", fxx=fxx, verbose=False)
+            H = Herbie(candidate.replace(tzinfo=None), model="nbm", fxx=fxx, verbose=False)
             _ = H.idx  # raises if cycle not yet published
             log.debug("[nbm] resolved cycle: %s (attempt %d)", candidate, attempt)
-            return candidate
+            return candidate.replace(tzinfo=None)
         except Exception:
             log.debug("[nbm] cycle %s not available, stepping back 6h", candidate)
             candidate = candidate - timedelta(hours=_NBM_CYCLE_STEP_H)
@@ -186,7 +186,7 @@ def _fetch_tmax_herbie(cycle_dt: datetime, target_date: date, lat: float, lon: f
     # We probe the fxx values that cover target_date, preferring lower fxx.
     for fxx in _fxx_range_for_date(cycle_dt, target_date):
         try:
-            H = Herbie(cycle_dt, model="nbm", fxx=fxx, verbose=False)
+            H = Herbie(cycle_dt.replace(tzinfo=None), model="nbm", fxx=fxx, verbose=False)
             ds = H.xarray(":TMAX:2 m above ground:", remove_grib=False)
             if ds is None:
                 continue

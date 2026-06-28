@@ -180,7 +180,7 @@ def _fetch_grib_slice(
         )
         if member is not None:
             herbie_kwargs["member"] = member
-        H = Herbie(cycle_dt, **herbie_kwargs)
+        H = Herbie(cycle_dt.replace(tzinfo=None), **herbie_kwargs)
         # download() with searchString fetches only matching byte ranges via
         # the IDX sidecar — never the full GRIB2 file.
         downloaded = H.download(matcher, save_dir=str(cache_dir), overwrite=False)
@@ -228,12 +228,12 @@ def _resolve_latest_cycle(model: str, fxx: int = 0):
     for hours_back in range(MAX_LOOKBACK_HOURS + 1):
         candidate = now_utc - timedelta(hours=hours_back)
         try:
-            H = Herbie(candidate, model=model, fxx=fxx, verbose=False)
+            H = Herbie(candidate.replace(tzinfo=None), model=model, fxx=fxx, verbose=False)
             # Accessing .idx triggers an availability check; if it raises, cycle
             # is not yet published.
             _ = H.idx
             log.debug("[grib_cache] resolved cycle: %s", candidate)
-            return candidate
+            return candidate.replace(tzinfo=None)
         except Exception:
             log.debug("[grib_cache] cycle %s not yet available, stepping back", candidate)
             continue
