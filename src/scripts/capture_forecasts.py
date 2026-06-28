@@ -96,7 +96,7 @@ def _target_date(day_offset: int) -> str:
     return (datetime.now(timezone.utc).date() + timedelta(days=day_offset)).isoformat()
 
 
-def run_captures(db, *, dry_run: bool = False) -> None:
+def run_captures(db, *, dry_run: bool = False, force: bool = False) -> None:
     """Run all captures appropriate for the current UTC hour.
 
     For each station and each (day_offset, lead_hours) pair scheduled at the
@@ -107,17 +107,28 @@ def run_captures(db, *, dry_run: bool = False) -> None:
     Args:
         db:      Database instance (or None in dry-run mode).
         dry_run: If True, fetch but do not write to the database.
+        force:   If True, bypass the scheduled-hour gate and run captures
+                 immediately (for manual smoke tests).
     """
     utc_hour = datetime.now(timezone.utc).hour
     captures = _CAPTURE_SCHEDULE.get(utc_hour, [])
 
     if not captures:
-        log.info(
-            "[capture] UTC hour %02dZ is not a scheduled capture time. "
-            "Scheduled hours: %s",
-            utc_hour, sorted(_CAPTURE_SCHEDULE.keys()),
-        )
-        return
+        if force:
+            # Use 6Z captures as a representative set when forcing outside schedule
+            captures = _CAPTURE_SCHEDULE[6]
+            log.info(
+                "[capture] --now/--force: UTC hour %02dZ is not a scheduled time; "
+                "running 06Z capture set as smoke test",
+                utc_hour,
+            )
+        else:
+            log.info(
+                "[capture] UTC hour %02dZ is not a scheduled capture time. "
+                "Scheduled hours: %s",
+                utc_hour, sorted(_CAPTURE_SCHEDULE.keys()),
+            )
+            return
 
     log.info(
         "[capture] UTC hour %02dZ → %d capture(s): %s",
@@ -368,14 +379,20 @@ def main() -> None:
         default=False,
         help="Fetch forecasts but do not write to the database.",
     )
+    parser.add_argument(
+        "--now", "--force",
+        dest="force",
+        action="store_true",
+        help="Run captures immediately regardless of UTC hour (for manual smoke tests).",
+    )
     args = parser.parse_args()
 
     if args.dry_run:
         log.info("[capture] DRY RUN — no database writes will occur")
-        run_captures(db=None, dry_run=True)
+        run_captures(db=None, dry_run=True, force=args.force)
     else:
         db = Database()
-        run_captures(db=db, dry_run=False)
+        run_captures(db=db, dry_run=False, force=args.force)
 
     log.info("[capture] Done.")
 

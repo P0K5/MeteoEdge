@@ -112,7 +112,7 @@ from contextlib import contextmanager
 
 @contextmanager
 def _silence_base_sources():
-    """Silence NWS, Open-Meteo, GFS, and GEFS so they don't make network calls."""
+    """Silence all sources so individual tests only exercise the one under test."""
     with (
         patch("src.scripts.capture_forecasts.fetch_nws_with_spread", return_value=None),
         patch("src.scripts.capture_forecasts.fetch_open_meteo_with_spread", return_value=None),
@@ -120,6 +120,10 @@ def _silence_base_sources():
         patch("src.scripts.capture_forecasts.fetch_gfs_with_spread", return_value=None),
         patch("src.scripts.capture_forecasts.fetch_gfs_forecast_high", return_value=None),
         patch("src.scripts.capture_forecasts.fetch_gefs_ensemble", return_value=[]),
+        patch("src.data.hrrr.fetch_hrrr_hourly", return_value=[]),
+        patch("src.data.nbm.fetch_nbm_daily_high", return_value=None),
+        patch("src.data.ecmwf_open.fetch_ecmwf_daily_high", return_value=None),
+        patch("src.data.icon.fetch_icon_hourly", return_value=[]),
     ):
         yield
 
@@ -139,14 +143,9 @@ class TestGefsCapture:
         db.upsert_forecast_log_v2 = mock_upsert
 
         with (
+            _silence_base_sources(),
             patch("src.scripts.capture_forecasts.fetch_gefs_ensemble", return_value=_MEMBERS_30),
             patch("src.scripts.capture_forecasts.compute_ensemble_sigma", return_value=3.5),
-            # Silence the NWS / Open-Meteo / GFS fetches so they don't make network calls
-            patch("src.scripts.capture_forecasts.fetch_nws_with_spread", return_value=None),
-            patch("src.scripts.capture_forecasts.fetch_open_meteo_with_spread", return_value=None),
-            patch("src.scripts.capture_forecasts.fetch_secondary_forecast", return_value=None),
-            patch("src.scripts.capture_forecasts.fetch_gfs_with_spread", return_value=None),
-            patch("src.scripts.capture_forecasts.fetch_gfs_forecast_high", return_value=None),
         ):
             _capture_station(**_capture_kwargs(db=db))
 
@@ -171,15 +170,11 @@ class TestGefsCapture:
         db.upsert_forecast_log_v2 = mock_upsert
 
         with (
+            _silence_base_sources(),
             patch(
                 "src.scripts.capture_forecasts.fetch_gefs_ensemble",
                 side_effect=Exception("GEFS timeout"),
             ),
-            patch("src.scripts.capture_forecasts.fetch_nws_with_spread", return_value=None),
-            patch("src.scripts.capture_forecasts.fetch_open_meteo_with_spread", return_value=None),
-            patch("src.scripts.capture_forecasts.fetch_secondary_forecast", return_value=None),
-            patch("src.scripts.capture_forecasts.fetch_gfs_with_spread", return_value=None),
-            patch("src.scripts.capture_forecasts.fetch_gfs_forecast_high", return_value=None),
         ):
             # Must not raise
             _capture_station(**_capture_kwargs(db=db))
