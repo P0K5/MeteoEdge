@@ -286,6 +286,76 @@ def _capture_station(
     else:
         log.warning("[capture] %s gefs unavailable (lead=%dh)", station, lead_hours)
 
+    # --- HRRR ---
+    try:
+        from src.data.hrrr import fetch_hrrr_hourly
+        hrrr_rows = fetch_hrrr_hourly(lat, lon, station=station)
+        if hrrr_rows:
+            hrrr_mu = statistics.mean(r.temp_f for r in hrrr_rows)
+            log.info("[capture] %s hrrr mu=%.1fF lead=%dh date=%s", station, hrrr_mu, lead_hours, target_date)
+            if not dry_run and db is not None:
+                db.upsert_forecast_log_v2(
+                    station=station, model="hrrr", date=target_date,
+                    forecast_high_f=hrrr_mu, lead_hours=lead_hours,
+                    issued_at=issued_at, sigma_f=None,
+                )
+        else:
+            log.debug("[capture] %s hrrr unavailable or out-of-domain (lead=%dh)", station, lead_hours)
+    except Exception as exc:
+        log.warning("[capture] %s hrrr ingestion failed: %s", station, exc)
+
+    # --- NBM ---
+    try:
+        from src.data.nbm import fetch_nbm_daily_high
+        nbm_result = fetch_nbm_daily_high(lat, lon, station=station, target_date=target_date)
+        if nbm_result is not None:
+            log.info("[capture] %s nbm mu=%.1fF lead=%dh date=%s", station, nbm_result.forecast_high_f, lead_hours, target_date)
+            if not dry_run and db is not None:
+                db.upsert_forecast_log_v2(
+                    station=station, model="nbm", date=target_date,
+                    forecast_high_f=nbm_result.forecast_high_f, lead_hours=lead_hours,
+                    issued_at=issued_at, sigma_f=None,
+                )
+        else:
+            log.debug("[capture] %s nbm unavailable or out-of-domain (lead=%dh)", station, lead_hours)
+    except Exception as exc:
+        log.warning("[capture] %s nbm ingestion failed: %s", station, exc)
+
+    # --- ECMWF ---
+    try:
+        from src.data.ecmwf_open import fetch_ecmwf_daily_high
+        ecmwf_result = fetch_ecmwf_daily_high(lat, lon, station=station, target_date=target_date)
+        if ecmwf_result is not None:
+            log.info("[capture] %s ecmwf mu=%.1fF lead=%dh date=%s", station, ecmwf_result.forecast_high_f, lead_hours, target_date)
+            if not dry_run and db is not None:
+                db.upsert_forecast_log_v2(
+                    station=station, model="ecmwf", date=target_date,
+                    forecast_high_f=ecmwf_result.forecast_high_f, lead_hours=lead_hours,
+                    issued_at=issued_at, sigma_f=None,
+                )
+        else:
+            log.debug("[capture] %s ecmwf unavailable (lead=%dh)", station, lead_hours)
+    except Exception as exc:
+        log.warning("[capture] %s ecmwf ingestion failed: %s", station, exc)
+
+    # --- ICON ---
+    try:
+        from src.data.icon import fetch_icon_hourly
+        icon_rows = fetch_icon_hourly(lat, lon, station=station)
+        if icon_rows:
+            icon_mu = statistics.mean(r.temp_f for r in icon_rows)
+            log.info("[capture] %s icon mu=%.1fF lead=%dh date=%s", station, icon_mu, lead_hours, target_date)
+            if not dry_run and db is not None:
+                db.upsert_forecast_log_v2(
+                    station=station, model="icon", date=target_date,
+                    forecast_high_f=icon_mu, lead_hours=lead_hours,
+                    issued_at=issued_at, sigma_f=None,
+                )
+        else:
+            log.debug("[capture] %s icon unavailable or out-of-domain (lead=%dh)", station, lead_hours)
+    except Exception as exc:
+        log.warning("[capture] %s icon ingestion failed: %s", station, exc)
+
 
 def main() -> None:
     setup_logging()
