@@ -33,7 +33,7 @@ def _enabled() -> bool:
     return True
 
 
-def _run_calibration(db) -> None:
+def _run_calibration(db, stack: str = "baseline") -> None:
     """Fit emos_shadow coefficients for every city and log a daily CRPS row.
 
     For each city with sufficient training data:
@@ -42,7 +42,7 @@ def _run_calibration(db) -> None:
       3. Append one CRPS row to emos_crps_log for today's date — deduplicated so
          a same-day re-run (e.g. after a process restart) cannot double-count.
     """
-    from src.config import STATIONS, station_city
+    from src.config import FORECAST_STACK_MODELS, STATIONS, station_city
     from src.model.crps_score import crps_gaussian
     from src.model.emos_calibration import (
         fetch_training_data,
@@ -51,6 +51,9 @@ def _run_calibration(db) -> None:
         InsufficientDataError,
     )
 
+    regime = FORECAST_STACK_MODELS.get(stack, FORECAST_STACK_MODELS["baseline"])
+    log.info("[emos_shadow] FORECAST_STACK=%s, regime=%s", stack, sorted(regime))
+
     today = datetime.now(timezone.utc).date().isoformat()
     fitted = 0
     skipped = 0
@@ -58,14 +61,16 @@ def _run_calibration(db) -> None:
     for station_cfg in STATIONS:
         city = station_city(station_cfg)
         try:
-            training_data = fetch_training_data(city, db)
+            training_data = fetch_training_data(
+                city, db, regime=regime, forecast_source=stack,
+            )
             a, b, c, d = fit_emos(training_data)
             crps_scores = [
                 crps_gaussian(a + b * mu, c + d * sigma, y)
                 for mu, sigma, y in training_data
             ]
             mean_crps = sum(crps_scores) / len(crps_scores) if crps_scores else 0.0
-            save_coefficients(city, a, b, c, d, mean_crps, db)
+            save_coefficients(city, a, b, c, d, mean_crps, db, forecast_source=stack)
 
             # One CRPS sample per city per calendar day. The promotion guard
             # counts these rows, so logging exactly once a day gives the
@@ -95,6 +100,11 @@ def _run_calibration(db) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--db-path", default=os.environ.get("DB_PATH", "meteoedge.db"))
+    parser.add_argument(
+        "--forecast-stack",
+        default=None,
+        help="Forecast stack identifier (default: read from DB, fallback to 'baseline')",
+    )
     args = parser.parse_args()
 
     if not _enabled():
@@ -103,14 +113,16 @@ def main() -> None:
     from src.data.db import Database
 
     db = Database(args.db_path)
-    _run_calibration(db)
+    stack = args.forecast_stack or db.get_config("FORECAST_STACK") or "baseline"
+    _run_calibration(db, stack=stack)
 
 
-def main_with_db(db) -> None:
+def main_with_db(db, stack: str | None = None) -> None:
     """Entry point for callers that already have a Database instance."""
     if not _enabled():
         return
-    _run_calibration(db)
+    resolved_stack = stack or db.get_config("FORECAST_STACK") or "baseline"
+    _run_calibration(db, stack=resolved_stack)
 
 
 if __name__ == "__main__":

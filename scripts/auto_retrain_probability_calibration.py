@@ -26,7 +26,9 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from src.config import STATIONS
+import logging
+
+from src.config import FORECAST_STACK_MODELS, STATIONS
 from src.data.db import Database
 from src.model.crps_score import mean_crps
 from src.model.emos_calibration import (
@@ -68,6 +70,10 @@ def get_all_cities() -> list:
     return [cfg[3] for cfg in STATIONS]
 
 
+log = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+
+
 def main() -> None:
     """Entry point for the offline EMOS retraining script."""
     _check_not_on_vps()  # First thing — abort if running on VPS
@@ -92,9 +98,19 @@ def main() -> None:
         action="store_true",
         help="Print current DB state and exit",
     )
+    parser.add_argument(
+        "--forecast-stack",
+        default=None,
+        help="Forecast stack identifier (default: read from DB, fallback to 'baseline')",
+    )
     args = parser.parse_args()
 
     db = Database(args.db)
+
+    # Resolve active forecast stack and model regime
+    stack = getattr(args, "forecast_stack", None) or db.get_config("FORECAST_STACK") or "baseline"
+    regime = FORECAST_STACK_MODELS.get(stack, FORECAST_STACK_MODELS["baseline"])
+    log.info("[retrain] FORECAST_STACK=%s, regime=%s", stack, sorted(regime))
 
     # Handle --report-only: query DB and exit
     if args.report_only:
@@ -117,7 +133,10 @@ def main() -> None:
     for city in cities:
         print(f"Processing {city}...")
         try:
-            data = fetch_training_data(city, db, min_samples=args.min_samples)
+            data = fetch_training_data(
+                city, db, min_samples=args.min_samples,
+                regime=regime, forecast_source=stack,
+            )
         except InsufficientDataError as e:
             print(f"  {city}: SKIP — {e}")
             continue
@@ -154,7 +173,7 @@ def main() -> None:
         }
 
         if not args.dry_run:
-            save_coefficients(city, a, b, c, d, crps_holdout, db)
+            save_coefficients(city, a, b, c, d, crps_holdout, db, forecast_source=stack)
             if ready:
                 db.upsert_emos_coefficients(
                     city=city,

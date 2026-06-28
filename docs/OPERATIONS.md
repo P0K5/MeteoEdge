@@ -1168,3 +1168,7 @@ EOF_SCRIPT
 - ICON: hourly rows fetched via `src/data/icon.py`; mean temp stored as `model='icon'` with `sigma_f=None`. Built-in EU-domain check (lat 29–72, lon −25 to 45) — returns empty list outside EU (no row written).
 
 All five shadow sources (GEFS, HRRR, NBM, ECMWF, ICON) are store/log only. They have zero effect on the live envelope, FORECAST_STACK, daily-high blend, or EMOS consumption. Each source is wrapped in an independent `try/except Exception` so a single source failure never affects the others.
+
+### EMOS Retrain Scoping (issue #494)
+
+EMOS retrain is always scoped to the active FORECAST_STACK. The mapping of stack → model tags is `src/config.py:FORECAST_STACK_MODELS`. Run `scripts/auto_retrain_probability_calibration.py` (reads FORECAST_STACK from DB automatically). Never call `fetch_training_data` without `regime` or `forecast_source` — it raises ValueError.

@@ -515,6 +515,16 @@ CONFIG_DEFAULTS: "dict[str, str | int | float | bool]" = {
     "FORECAST_STACK": "baseline",
 }
 
+# Maps each FORECAST_STACK value to the set of model tags whose rows should be
+# averaged to form the ensemble μ during EMOS training. Must mirror the live
+# envelope's blend exactly. Source: config.py comments lines 511-514.
+FORECAST_STACK_MODELS: dict[str, frozenset] = {
+    "baseline":        frozenset({"nws", "open_meteo"}),
+    "hrrr_nbm":        frozenset({"nws", "open_meteo", "hrrr", "nbm"}),
+    "intl_ecmwf_icon": frozenset({"nws", "open_meteo", "ecmwf", "icon"}),
+    "full":            frozenset({"nws", "open_meteo", "hrrr", "nbm", "ecmwf", "icon", "gefs"}),
+}
+
 
 def seed_config(db) -> None:
     """Seed bot_config from env vars / hardcoded defaults on first run.

@@ -287,7 +287,9 @@ class TestEMOSReaderLeadHoursFilter:
         self._populate_db(db, "KORD", n=10, lead_hours=24)
         self._populate_db(db, "KORD", n=5, lead_hours=12)
 
-        result_24 = fetch_training_data("Chicago", db, min_samples=10, lead_hours=24)
+        result_24 = fetch_training_data(
+            "Chicago", db, min_samples=10, lead_hours=24, forecast_source="nws"
+        )
         assert len(result_24) == 10
 
     def test_different_lead_bins_dont_cross_contaminate(self):
@@ -298,7 +300,9 @@ class TestEMOSReaderLeadHoursFilter:
 
         # Requesting lead=24 should find nothing → InsufficientDataError
         with pytest.raises(InsufficientDataError):
-            fetch_training_data("Chicago", db, min_samples=1, lead_hours=24)
+            fetch_training_data(
+                "Chicago", db, min_samples=1, lead_hours=24, forecast_source="nws"
+            )
 
     def test_sigma_f_read_from_db_when_present(self):
         """When sigma_f is in the DB, fetch_training_data returns it (not the constant)."""
@@ -316,7 +320,9 @@ class TestEMOSReaderLeadHoursFilter:
             )
             _insert_obs(db, "KORD", date_str, 48.0 + i)
 
-        result = fetch_training_data("Chicago", db, min_samples=10, lead_hours=24)
+        result = fetch_training_data(
+            "Chicago", db, min_samples=10, lead_hours=24, forecast_source="nws"
+        )
         sigmas = [sigma for _mu, sigma, _y in result]
         assert all(math.isclose(s, custom_sigma) for s in sigmas), (
             f"Expected all sigma={custom_sigma}, got {sigmas}"
@@ -337,7 +343,9 @@ class TestEMOSReaderLeadHoursFilter:
             )
             _insert_obs(db, "KORD", date_str, 48.0 + i)
 
-        result = fetch_training_data("Chicago", db, min_samples=10, lead_hours=24)
+        result = fetch_training_data(
+            "Chicago", db, min_samples=10, lead_hours=24, forecast_source="nws"
+        )
         sigmas = [sigma for _mu, sigma, _y in result]
         expected = float(FORECAST_STDDEV_F)
         assert all(math.isclose(s, expected) for s in sigmas), (
