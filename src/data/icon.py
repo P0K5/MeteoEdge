@@ -11,7 +11,7 @@ _resolve_latest_cycle only covers hourly cadences, not 6h-cadence models).
 
 ICON-EU cycles: 00/06/12/18 UTC (4x daily, matching NBM/NBM cadence).
 DWD HTTP endpoint: https://opendata.dwd.de/weather/nwp/icon-eu/grib/
-Herbie model name: "icon-eu" (herbie >= 2023.3).
+Herbie model name: "icon" (herbie >= 2023.3).
 """
 
 from __future__ import annotations
@@ -87,7 +87,7 @@ def _resolve_icon_cycle(fxx: int = 1) -> Optional[datetime]:
 
     for attempt in range(_ICON_MAX_LOOKBACK_CYCLES + 1):
         try:
-            H = Herbie(candidate.replace(tzinfo=None), model="icon-eu", fxx=fxx, verbose=False)
+            H = Herbie(candidate.replace(tzinfo=None), model="icon", fxx=fxx, verbose=False)
             if H.grib is not None:
                 log.debug("[icon] resolved cycle: %s (attempt %d)", candidate, attempt)
                 return candidate.replace(tzinfo=None)
@@ -160,7 +160,7 @@ def fetch_icon_hourly(
     results: list[HourlyTemp] = []
     for fxx in _FORECAST_HOURS:
         path = _grib_cache._fetch_grib_slice(
-            "icon-eu", "ICON_T2M", cycle_dt, fxx, cache_dir, ttl_hours
+            "icon", "ICON_T2M", cycle_dt, fxx, cache_dir, ttl_hours
         )
         if path is None:
             log.debug("[icon] fxx=%02d unavailable for %s", fxx, label)

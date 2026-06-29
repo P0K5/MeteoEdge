@@ -362,13 +362,24 @@ def _read_grib_nearest(path: Path, lat: float, lon: float) -> Optional[float]:
 
     da = ds[data_vars[0]]
 
-    if "latitude" in ds.coords and "longitude" in ds.coords:
-        lats = ds.coords["latitude"].values
-        lons = ds.coords["longitude"].values
+    # Normalise coord names: some models use "lat"/"lon" instead of "latitude"/"longitude"
+    coord_names = set(ds.coords)
+    lat_name = "latitude" if "latitude" in coord_names else ("lat" if "lat" in coord_names else None)
+    lon_name = "longitude" if "longitude" in coord_names else ("lon" if "lon" in coord_names else None)
+
+    if lat_name and lon_name:
+        lats = ds.coords[lat_name].values
+        lons = ds.coords[lon_name].values
         lon_query = lon % 360
-        dist = np.sqrt((lats - lat) ** 2 + (lons - lon_query) ** 2)
-        idx = np.unravel_index(np.argmin(dist), dist.shape)
-        return float(da.values[idx])
+        if lats.ndim == 1:
+            # 1D regular grid (GEFS, NBM, ECMWF-open): use xarray nearest selection
+            val = da.sel({lat_name: lat, lon_name: lon_query}, method="nearest")
+            return float(val.values)
+        else:
+            # 2D curvilinear grid (HRRR): manual nearest-neighbour search
+            dist = np.sqrt((lats - lat) ** 2 + (lons - lon_query) ** 2)
+            idx = np.unravel_index(np.argmin(dist), dist.shape)
+            return float(da.values[idx])
     else:
         log.warning("[grib_cache] lat/lon coords not found, returning first grid point")
         return float(da.values.flat[0])

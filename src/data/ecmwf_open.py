@@ -326,14 +326,12 @@ def fetch_ecmwf_daily_high(
             pass  # fall through to fresh fetch
 
     # Determine which forecast hours cover target_date
-    target_start = datetime(
-        target_date.year, target_date.month, target_date.day, tzinfo=timezone.utc
-    )
+    target_start = datetime(target_date.year, target_date.month, target_date.day)
     target_end = target_start + timedelta(days=1)
 
     temps: list[float] = []
     for fxx in range(0, 91, 3):  # HRES Open Data publishes 3-hourly steps up to ~90h
-        valid_dt = cycle_dt + timedelta(hours=fxx)
+        valid_dt = (cycle_dt + timedelta(hours=fxx)).replace(tzinfo=None)
         if valid_dt < target_start:
             continue
         if valid_dt >= target_end:

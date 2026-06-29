@@ -160,13 +160,13 @@ def _fxx_range_for_date(cycle_dt: datetime, target_date: date) -> list[int]:
     NBM is initialised at cycle_dt; we want hourly fxx values whose valid
     time falls within target_date (UTC midnight to midnight).
     """
-    target_start = datetime(target_date.year, target_date.month, target_date.day, tzinfo=timezone.utc)
+    target_start = datetime(target_date.year, target_date.month, target_date.day)
     target_end = target_start + timedelta(days=1)
 
     fxx_values = []
     # NBM forecasts go out to ~264 h; scan up to 120 h to cover tomorrow
     for fxx in range(0, 121):
-        valid_dt = cycle_dt + timedelta(hours=fxx)
+        valid_dt = (cycle_dt + timedelta(hours=fxx)).replace(tzinfo=None)
         if target_start <= valid_dt < target_end:
             fxx_values.append(fxx)
     return fxx_values
