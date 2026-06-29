@@ -1384,7 +1384,7 @@
       "source_location": "L210",
       "_origin": "ast",
       "id": "src_dashboard_api_dashboard_load_trades",
-      "community": 200,
+      "community": 110,
       "norm_label": "_dashboard_load_trades()"
     },
     {
@@ -1804,7 +1804,7 @@
       "source_location": "L1084",
       "_origin": "ast",
       "id": "src_dashboard_api_trades_list",
-      "community": 200,
+      "community": 110,
       "norm_label": "trades_list()"
     },
     {
@@ -2264,7 +2264,7 @@
       "source_location": "L211",
       "_origin": "ast",
       "id": "src_dashboard_api_rationale_211",
-      "community": 200,
+      "community": 110,
       "norm_label": "return all trade records (excluding shadow), newest first. prefers db when avail"
     },
     {
@@ -2534,7 +2534,7 @@
       "source_location": "L1085",
       "_origin": "ast",
       "id": "src_dashboard_api_rationale_1085",
-      "community": 200,
+      "community": 110,
       "norm_label": "last 50 trade records, newest first."
     },
     {
@@ -3404,7 +3404,7 @@
       "source_location": "L241",
       "_origin": "ast",
       "id": "src_execution_order_manager_wallet_held_token_ids",
-      "community": 2,
+      "community": 363,
       "norm_label": "_wallet_held_token_ids()"
     },
     {
@@ -3424,7 +3424,7 @@
       "source_location": "L306",
       "_origin": "ast",
       "id": "src_execution_order_manager_reconcile_db_row",
-      "community": 2,
+      "community": 363,
       "norm_label": "_reconcile_db_row()"
     },
     {
@@ -3454,7 +3454,7 @@
       "source_location": "L389",
       "_origin": "ast",
       "id": "src_execution_order_manager_ordermanager_reconcile_timeout_fills",
-      "community": 2,
+      "community": 363,
       "norm_label": ".reconcile_timeout_fills()"
     },
     {
@@ -3564,7 +3564,7 @@
       "source_location": "L242",
       "_origin": "ast",
       "id": "src_execution_order_manager_rationale_242",
-      "community": 2,
+      "community": 363,
       "norm_label": "return non-redeemable token_ids currently held in the wallet (size > 0.01)."
     },
     {
@@ -3584,7 +3584,7 @@
       "source_location": "L307",
       "_origin": "ast",
       "id": "src_execution_order_manager_rationale_307",
-      "community": 2,
+      "community": 363,
       "norm_label": "update (or insert) the db trades row for a just-reconciled jsonl record.      ca"
     },
     {
@@ -3604,7 +3604,7 @@
       "source_location": "L390",
       "_origin": "ast",
       "id": "src_execution_order_manager_rationale_390",
-      "community": 2,
+      "community": 363,
       "norm_label": "patch timeout jsonl records whose tokens still appear in the wallet.          gt"
     },
     {
@@ -4504,7 +4504,7 @@
       "source_location": "L90",
       "_origin": "ast",
       "id": "src_model_decay_functions_exponential_decay",
-      "community": 112,
+      "community": 354,
       "norm_label": "exponential_decay()"
     },
     {
@@ -4514,7 +4514,7 @@
       "source_location": "L103",
       "_origin": "ast",
       "id": "src_model_decay_functions_get_decay_factor",
-      "community": 112,
+      "community": 354,
       "norm_label": "get_decay_factor()"
     },
     {
@@ -4564,7 +4564,7 @@
       "source_location": "L91",
       "_origin": "ast",
       "id": "src_model_decay_functions_rationale_91",
-      "community": 112,
+      "community": 354,
       "norm_label": "return exponential decay factor in [0.0, 1.0].      decays faster than linear. k"
     },
     {
@@ -4574,7 +4574,7 @@
       "source_location": "L104",
       "_origin": "ast",
       "id": "src_model_decay_functions_rationale_104",
-      "community": 112,
+      "community": 354,
       "norm_label": "dispatch to the correct decay function.      args:         city: city name (e.g."
     },
     {
@@ -5494,7 +5494,7 @@
       "source_location": "L77",
       "_origin": "ast",
       "id": "src_model_residual_correction_query_trailing_deltas",
-      "community": 127,
+      "community": 140,
       "norm_label": "_query_trailing_deltas()"
     },
     {
@@ -5504,7 +5504,7 @@
       "source_location": "L99",
       "_origin": "ast",
       "id": "src_model_residual_correction_build_stats",
-      "community": 127,
+      "community": 85,
       "norm_label": "_build_stats()"
     },
     {
@@ -5584,7 +5584,7 @@
       "source_location": "L85",
       "_origin": "ast",
       "id": "src_model_residual_correction_rationale_85",
-      "community": 127,
+      "community": 140,
       "norm_label": "return delta_f values for *city* in the trailing *window_days* calendar days."
     },
     {
@@ -5594,7 +5594,7 @@
       "source_location": "L109",
       "_origin": "ast",
       "id": "src_model_residual_correction_rationale_109",
-      "community": 127,
+      "community": 85,
       "norm_label": "build a residualstats from a list of deltas."
     },
     {
@@ -20174,7 +20174,7 @@
       "source_location": "L72",
       "_origin": "ast",
       "id": "src_tests_test_decay_functions_testgetdecayfactor",
-      "community": 112,
+      "community": 354,
       "norm_label": "testgetdecayfactor"
     },
     {
@@ -20184,7 +20184,7 @@
       "source_location": "L73",
       "_origin": "ast",
       "id": "src_tests_test_decay_functions_testgetdecayfactor_test_dispatches_to_linear_by_default",
-      "community": 112,
+      "community": 354,
       "norm_label": ".test_dispatches_to_linear_by_default()"
     },
     {
@@ -20194,7 +20194,7 @@
       "source_location": "L77",
       "_origin": "ast",
       "id": "src_tests_test_decay_functions_testgetdecayfactor_test_dispatches_to_exponential",
-      "community": 112,
+      "community": 354,
       "norm_label": ".test_dispatches_to_exponential()"
     },
     {
@@ -29834,7 +29834,7 @@
       "source_location": "L21",
       "_origin": "ast",
       "id": "src_tests_test_intraday_correction_backtest_make_correction_row",
-      "community": 10,
+      "community": 174,
       "norm_label": "_make_correction_row()"
     },
     {
@@ -29894,7 +29894,7 @@
       "source_location": "L121",
       "_origin": "ast",
       "id": "src_tests_test_intraday_correction_backtest_testrmsecalculation",
-      "community": 10,
+      "community": 358,
       "norm_label": "testrmsecalculation"
     },
     {
@@ -29904,7 +29904,7 @@
       "source_location": "L124",
       "_origin": "ast",
       "id": "src_tests_test_intraday_correction_backtest_testrmsecalculation_test_single_error",
-      "community": 10,
+      "community": 358,
       "norm_label": ".test_single_error()"
     },
     {
@@ -29914,7 +29914,7 @@
       "source_location": "L128",
       "_origin": "ast",
       "id": "src_tests_test_intraday_correction_backtest_testrmsecalculation_test_equal_errors",
-      "community": 10,
+      "community": 358,
       "norm_label": ".test_equal_errors()"
     },
     {
@@ -29924,7 +29924,7 @@
       "source_location": "L132",
       "_origin": "ast",
       "id": "src_tests_test_intraday_correction_backtest_testrmsecalculation_test_known_rmse",
-      "community": 10,
+      "community": 358,
       "norm_label": ".test_known_rmse()"
     },
     {
@@ -29934,7 +29934,7 @@
       "source_location": "L137",
       "_origin": "ast",
       "id": "src_tests_test_intraday_correction_backtest_testrmsecalculation_test_zero_errors",
-      "community": 10,
+      "community": 358,
       "norm_label": ".test_zero_errors()"
     },
     {
@@ -29944,7 +29944,7 @@
       "source_location": "L141",
       "_origin": "ast",
       "id": "src_tests_test_intraday_correction_backtest_testrmsecalculation_test_empty_raises",
-      "community": 10,
+      "community": 358,
       "norm_label": ".test_empty_raises()"
     },
     {
@@ -29954,7 +29954,7 @@
       "source_location": "L146",
       "_origin": "ast",
       "id": "src_tests_test_intraday_correction_backtest_testrmsecalculation_test_build_daily_stats_errors",
-      "community": 10,
+      "community": 174,
       "norm_label": ".test_build_daily_stats_errors()"
     },
     {
@@ -29964,7 +29964,7 @@
       "source_location": "L162",
       "_origin": "ast",
       "id": "src_tests_test_intraday_correction_backtest_testrmsecalculation_test_build_daily_stats_uses_last_row",
-      "community": 10,
+      "community": 174,
       "norm_label": ".test_build_daily_stats_uses_last_row()"
     },
     {
@@ -29974,7 +29974,7 @@
       "source_location": "L175",
       "_origin": "ast",
       "id": "src_tests_test_intraday_correction_backtest_testrmsecalculation_test_build_daily_stats_empty_returns_none",
-      "community": 10,
+      "community": 358,
       "norm_label": ".test_build_daily_stats_empty_returns_none()"
     },
     {
@@ -29984,7 +29984,7 @@
       "source_location": "L179",
       "_origin": "ast",
       "id": "src_tests_test_intraday_correction_backtest_testrmsecalculation_test_station_for_known_city",
-      "community": 10,
+      "community": 358,
       "norm_label": ".test_station_for_known_city()"
     },
     {
@@ -29994,7 +29994,7 @@
       "source_location": "L184",
       "_origin": "ast",
       "id": "src_tests_test_intraday_correction_backtest_testrmsecalculation_test_station_for_unknown_city",
-      "community": 10,
+      "community": 358,
       "norm_label": ".test_station_for_unknown_city()"
     },
     {
@@ -30064,7 +30064,7 @@
       "source_location": "L273",
       "_origin": "ast",
       "id": "src_tests_test_intraday_correction_backtest_testreportshowsimprovement_test_no_improvement_case",
-      "community": 10,
+      "community": 174,
       "norm_label": ".test_no_improvement_case()"
     },
     {
@@ -30114,7 +30114,7 @@
       "source_location": "L122",
       "_origin": "ast",
       "id": "src_tests_test_intraday_correction_backtest_rationale_122",
-      "community": 10,
+      "community": 358,
       "norm_label": "unit tests for compute_rmse() pure helper function."
     },
     {
@@ -30124,7 +30124,7 @@
       "source_location": "L125",
       "_origin": "ast",
       "id": "src_tests_test_intraday_correction_backtest_rationale_125",
-      "community": 10,
+      "community": 358,
       "norm_label": "rmse of a single value equals that value."
     },
     {
@@ -30134,7 +30134,7 @@
       "source_location": "L129",
       "_origin": "ast",
       "id": "src_tests_test_intraday_correction_backtest_rationale_129",
-      "community": 10,
+      "community": 358,
       "norm_label": "rmse of equal errors equals the error value."
     },
     {
@@ -30144,7 +30144,7 @@
       "source_location": "L133",
       "_origin": "ast",
       "id": "src_tests_test_intraday_correction_backtest_rationale_133",
-      "community": 10,
+      "community": 358,
       "norm_label": "manual verification: rmse([3, 4]) = sqrt((9+16)/2) = sqrt(12.5)."
     },
     {
@@ -30154,7 +30154,7 @@
       "source_location": "L138",
       "_origin": "ast",
       "id": "src_tests_test_intraday_correction_backtest_rationale_138",
-      "community": 10,
+      "community": 358,
       "norm_label": "rmse of all-zero errors is 0."
     },
     {
@@ -30164,7 +30164,7 @@
       "source_location": "L142",
       "_origin": "ast",
       "id": "src_tests_test_intraday_correction_backtest_rationale_142",
-      "community": 10,
+      "community": 358,
       "norm_label": "compute_rmse raises valueerror for empty input."
     },
     {
@@ -30174,7 +30174,7 @@
       "source_location": "L147",
       "_origin": "ast",
       "id": "src_tests_test_intraday_correction_backtest_rationale_147",
-      "community": 10,
+      "community": 174,
       "norm_label": "_build_daily_stats produces correct corrected and baseline errors."
     },
     {
@@ -30184,7 +30184,7 @@
       "source_location": "L163",
       "_origin": "ast",
       "id": "src_tests_test_intraday_correction_backtest_rationale_163",
-      "community": 10,
+      "community": 174,
       "norm_label": "when multiple correction rows exist, the last one is used."
     },
     {
@@ -30194,7 +30194,7 @@
       "source_location": "L176",
       "_origin": "ast",
       "id": "src_tests_test_intraday_correction_backtest_rationale_176",
-      "community": 10,
+      "community": 358,
       "norm_label": "_build_daily_stats returns none for empty corrections list."
     },
     {
@@ -30204,7 +30204,7 @@
       "source_location": "L180",
       "_origin": "ast",
       "id": "src_tests_test_intraday_correction_backtest_rationale_180",
-      "community": 10,
+      "community": 358,
       "norm_label": "_station_for_city returns correct metar code for known city."
     },
     {
@@ -30214,7 +30214,7 @@
       "source_location": "L185",
       "_origin": "ast",
       "id": "src_tests_test_intraday_correction_backtest_rationale_185",
-      "community": 10,
+      "community": 358,
       "norm_label": "_station_for_city returns none for unknown city."
     },
     {
@@ -30284,7 +30284,7 @@
       "source_location": "L274",
       "_origin": "ast",
       "id": "src_tests_test_intraday_correction_backtest_rationale_274",
-      "community": 10,
+      "community": 174,
       "norm_label": "when baseline is better than corrected, improvement is negative."
     },
     {
@@ -33734,7 +33734,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "src_tests_test_observation_adapters",
-      "community": 62,
+      "community": 72,
       "norm_label": "test_observation_adapters.py"
     },
     {
@@ -33774,7 +33774,7 @@
       "source_location": "L48",
       "_origin": "ast",
       "id": "src_tests_test_observation_adapters_testjmaamedasadapterintegration",
-      "community": 359,
+      "community": 72,
       "norm_label": "testjmaamedasadapterintegration"
     },
     {
@@ -33794,7 +33794,7 @@
       "source_location": "L72",
       "_origin": "ast",
       "id": "src_tests_test_observation_adapters_testjmaamedasadapterintegration_test_jma_cadence_configured",
-      "community": 359,
+      "community": 72,
       "norm_label": ".test_jma_cadence_configured()"
     },
     {
@@ -33804,7 +33804,7 @@
       "source_location": "L81",
       "_origin": "ast",
       "id": "src_tests_test_observation_adapters_testjmaamedasadapterintegration_test_jma_freshness_integration",
-      "community": 359,
+      "community": 72,
       "norm_label": ".test_jma_freshness_integration()"
     },
     {
@@ -33854,7 +33854,7 @@
       "source_location": "L171",
       "_origin": "ast",
       "id": "src_tests_test_observation_adapters_testmssadapterintegration",
-      "community": 62,
+      "community": 72,
       "norm_label": "testmssadapterintegration"
     },
     {
@@ -33874,7 +33874,7 @@
       "source_location": "L201",
       "_origin": "ast",
       "id": "src_tests_test_observation_adapters_testmssadapterintegration_test_mss_cadence_configured",
-      "community": 62,
+      "community": 72,
       "norm_label": ".test_mss_cadence_configured()"
     },
     {
@@ -33954,7 +33954,7 @@
       "source_location": "L265",
       "_origin": "ast",
       "id": "src_tests_test_observation_adapters_testfreshnessmonitorwithadapters",
-      "community": 358,
+      "community": 72,
       "norm_label": "testfreshnessmonitorwithadapters"
     },
     {
@@ -33964,7 +33964,7 @@
       "source_location": "L267",
       "_origin": "ast",
       "id": "src_tests_test_observation_adapters_testfreshnessmonitorwithadapters_test_check_all_with_multiple_sources",
-      "community": 358,
+      "community": 72,
       "norm_label": ".test_check_all_with_multiple_sources()"
     },
     {
@@ -33974,7 +33974,7 @@
       "source_location": "L299",
       "_origin": "ast",
       "id": "src_tests_test_observation_adapters_testfreshnessmonitorwithadapters_test_stale_source_reported_false",
-      "community": 358,
+      "community": 72,
       "norm_label": ".test_stale_source_reported_false()"
     },
     {
@@ -34074,7 +34074,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "src_tests_test_observation_adapters_rationale_1",
-      "community": 62,
+      "community": 72,
       "norm_label": "integration tests for observation adapters (issue #112).  verifies that each ada"
     },
     {
@@ -34104,7 +34104,7 @@
       "source_location": "L73",
       "_origin": "ast",
       "id": "src_tests_test_observation_adapters_rationale_73",
-      "community": 359,
+      "community": 72,
       "norm_label": "jma appears in source priority config with correct cadence."
     },
     {
@@ -34114,7 +34114,7 @@
       "source_location": "L82",
       "_origin": "ast",
       "id": "src_tests_test_observation_adapters_rationale_82",
-      "community": 359,
+      "community": 72,
       "norm_label": "fresh jma observation passes freshness check."
     },
     {
@@ -34164,7 +34164,7 @@
       "source_location": "L202",
       "_origin": "ast",
       "id": "src_tests_test_observation_adapters_rationale_202",
-      "community": 62,
+      "community": 72,
       "norm_label": "mss appears in source priority config with cadence_min=1."
     },
     {
@@ -34194,7 +34194,7 @@
       "source_location": "L268",
       "_origin": "ast",
       "id": "src_tests_test_observation_adapters_rationale_268",
-      "community": 358,
+      "community": 72,
       "norm_label": "check_all reports freshness correctly for multiple sources."
     },
     {
@@ -34204,7 +34204,7 @@
       "source_location": "L300",
       "_origin": "ast",
       "id": "src_tests_test_observation_adapters_rationale_300",
-      "community": 358,
+      "community": 72,
       "norm_label": "source with data older than 2\u00d7 cadence is reported false."
     },
     {
@@ -37904,7 +37904,7 @@
       "source_location": "L88",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testcomputeresidualstatsdisabled",
-      "community": 140,
+      "community": 107,
       "norm_label": "testcomputeresidualstatsdisabled"
     },
     {
@@ -37914,7 +37914,7 @@
       "source_location": "L89",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testcomputeresidualstatsdisabled_test_disabled_returns_none",
-      "community": 140,
+      "community": 107,
       "norm_label": ".test_disabled_returns_none()"
     },
     {
@@ -37924,7 +37924,7 @@
       "source_location": "L108",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testcomputeresidualstatsdisabled_test_enabled_by_default",
-      "community": 140,
+      "community": 107,
       "norm_label": ".test_enabled_by_default()"
     },
     {
@@ -38074,7 +38074,7 @@
       "source_location": "L243",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testclampbehaviour",
-      "community": 107,
+      "community": 359,
       "norm_label": "testclampbehaviour"
     },
     {
@@ -38084,7 +38084,7 @@
       "source_location": "L244",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testclampbehaviour_run",
-      "community": 107,
+      "community": 359,
       "norm_label": "._run()"
     },
     {
@@ -38094,7 +38094,7 @@
       "source_location": "L258",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testclampbehaviour_test_clamp_binds_positive",
-      "community": 107,
+      "community": 359,
       "norm_label": ".test_clamp_binds_positive()"
     },
     {
@@ -38104,7 +38104,7 @@
       "source_location": "L264",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testclampbehaviour_test_clamp_binds_negative",
-      "community": 107,
+      "community": 359,
       "norm_label": ".test_clamp_binds_negative()"
     },
     {
@@ -38114,7 +38114,7 @@
       "source_location": "L270",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testclampbehaviour_test_clamp_not_needed_small_value",
-      "community": 107,
+      "community": 359,
       "norm_label": ".test_clamp_not_needed_small_value()"
     },
     {
@@ -38124,7 +38124,7 @@
       "source_location": "L276",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testclampbehaviour_test_custom_clamp_range",
-      "community": 107,
+      "community": 359,
       "norm_label": ".test_custom_clamp_range()"
     },
     {
@@ -38314,7 +38314,7 @@
       "source_location": "L560",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_enable_residual",
-      "community": 202,
+      "community": 127,
       "norm_label": "_enable_residual()"
     },
     {
@@ -38514,7 +38514,7 @@
       "source_location": "L90",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_rationale_90",
-      "community": 140,
+      "community": 107,
       "norm_label": "residual_correction_enabled=false \u2192 always returns none."
     },
     {
@@ -38524,7 +38524,7 @@
       "source_location": "L109",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_rationale_109",
-      "community": 140,
+      "community": 107,
       "norm_label": "with sufficient samples, returns stats when feature is on."
     },
     {
@@ -38634,7 +38634,7 @@
       "source_location": "L259",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_rationale_259",
-      "community": 107,
+      "community": 359,
       "norm_label": "mean = +10\u00b0f clamped to +5\u00b0f."
     },
     {
@@ -38644,7 +38644,7 @@
       "source_location": "L265",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_rationale_265",
-      "community": 107,
+      "community": 359,
       "norm_label": "mean = -8\u00b0f clamped to -5\u00b0f."
     },
     {
@@ -38654,7 +38654,7 @@
       "source_location": "L271",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_rationale_271",
-      "community": 107,
+      "community": 359,
       "norm_label": "mean = +2\u00b0f within \u00b15 \u2192 no clamp."
     },
     {
@@ -38664,7 +38664,7 @@
       "source_location": "L277",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_rationale_277",
-      "community": 107,
+      "community": 359,
       "norm_label": "custom max_correction_f=3.0 \u2192 mean=+4.6 applied correction clamped to +3.0."
     },
     {
@@ -38814,7 +38814,7 @@
       "source_location": "L561",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_rationale_561",
-      "community": 202,
+      "community": 127,
       "norm_label": "context manager helper: set residual_correction_enabled = true."
     },
     {
@@ -52011,7 +52011,7 @@
       "label": "3.4 Collaborating with the Designer",
       "file_type": "document",
       "source_file": "agents/project-manager.md",
-      "source_location": "L121",
+      "source_location": "L122",
       "_origin": "ast",
       "id": "agents_project_manager_3_4_collaborating_with_the_designer",
       "community": 91,
@@ -52021,7 +52021,7 @@
       "label": "4. Code review",
       "file_type": "document",
       "source_file": "agents/project-manager.md",
-      "source_location": "L130",
+      "source_location": "L131",
       "_origin": "ast",
       "id": "agents_project_manager_4_code_review",
       "community": 91,
@@ -52031,7 +52031,7 @@
       "label": "Review dimensions",
       "file_type": "document",
       "source_file": "agents/project-manager.md",
-      "source_location": "L134",
+      "source_location": "L135",
       "_origin": "ast",
       "id": "agents_project_manager_review_dimensions",
       "community": 91,
@@ -52041,7 +52041,7 @@
       "label": "Review output format",
       "file_type": "document",
       "source_file": "agents/project-manager.md",
-      "source_location": "L169",
+      "source_location": "L170",
       "_origin": "ast",
       "id": "agents_project_manager_review_output_format",
       "community": 91,
@@ -52051,7 +52051,7 @@
       "label": "CI gate \u2014 approval requires green checks (NON-NEGOTIABLE)",
       "file_type": "document",
       "source_file": "agents/project-manager.md",
-      "source_location": "L179",
+      "source_location": "L180",
       "_origin": "ast",
       "id": "agents_project_manager_ci_gate_approval_requires_green_checks_non_negotiable",
       "community": 91,
@@ -52061,7 +52061,7 @@
       "label": "Frontend PRs \u2014 Designer review (MANDATORY)",
       "file_type": "document",
       "source_file": "agents/project-manager.md",
-      "source_location": "L198",
+      "source_location": "L199",
       "_origin": "ast",
       "id": "agents_project_manager_frontend_prs_designer_review_mandatory",
       "community": 91,
@@ -52071,7 +52071,7 @@
       "label": "Post-review actions (MANDATORY \u2014 review is NOT complete until these are done)",
       "file_type": "document",
       "source_file": "agents/project-manager.md",
-      "source_location": "L204",
+      "source_location": "L205",
       "_origin": "ast",
       "id": "agents_project_manager_post_review_actions_mandatory_review_is_not_complete_until_these_are_done",
       "community": 91,
@@ -52081,7 +52081,7 @@
       "label": "5. GitHub Projects management",
       "file_type": "document",
       "source_file": "agents/project-manager.md",
-      "source_location": "L224",
+      "source_location": "L225",
       "_origin": "ast",
       "id": "agents_project_manager_5_github_projects_management",
       "community": 91,
@@ -52091,7 +52091,7 @@
       "label": "6. Progress tracking and reporting",
       "file_type": "document",
       "source_file": "agents/project-manager.md",
-      "source_location": "L237",
+      "source_location": "L238",
       "_origin": "ast",
       "id": "agents_project_manager_6_progress_tracking_and_reporting",
       "community": 91,
@@ -52101,7 +52101,7 @@
       "label": "To the user",
       "file_type": "document",
       "source_file": "agents/project-manager.md",
-      "source_location": "L239",
+      "source_location": "L240",
       "_origin": "ast",
       "id": "agents_project_manager_to_the_user",
       "community": 91,
@@ -52111,7 +52111,7 @@
       "label": "During execution",
       "file_type": "document",
       "source_file": "agents/project-manager.md",
-      "source_location": "L257",
+      "source_location": "L258",
       "_origin": "ast",
       "id": "agents_project_manager_during_execution",
       "community": 91,
@@ -52121,7 +52121,7 @@
       "label": "7. Behavioural rules",
       "file_type": "document",
       "source_file": "agents/project-manager.md",
-      "source_location": "L266",
+      "source_location": "L267",
       "_origin": "ast",
       "id": "agents_project_manager_7_behavioural_rules",
       "community": 91,
@@ -52131,7 +52131,7 @@
       "label": "8. Knowledge graph usage",
       "file_type": "document",
       "source_file": "agents/project-manager.md",
-      "source_location": "L296",
+      "source_location": "L298",
       "_origin": "ast",
       "id": "agents_project_manager_8_knowledge_graph_usage",
       "community": 91,
@@ -148918,7 +148918,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "agents/project-manager.md",
-      "source_location": "L130",
+      "source_location": "L131",
       "weight": 1.0,
       "source": "agents_project_manager_agents_tech_lead_project_manager_orchestrator",
       "target": "agents_project_manager_4_code_review",
@@ -148928,7 +148928,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "agents/project-manager.md",
-      "source_location": "L224",
+      "source_location": "L225",
       "weight": 1.0,
       "source": "agents_project_manager_agents_tech_lead_project_manager_orchestrator",
       "target": "agents_project_manager_5_github_projects_management",
@@ -148938,7 +148938,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "agents/project-manager.md",
-      "source_location": "L237",
+      "source_location": "L238",
       "weight": 1.0,
       "source": "agents_project_manager_agents_tech_lead_project_manager_orchestrator",
       "target": "agents_project_manager_6_progress_tracking_and_reporting",
@@ -148948,7 +148948,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "agents/project-manager.md",
-      "source_location": "L266",
+      "source_location": "L267",
       "weight": 1.0,
       "source": "agents_project_manager_agents_tech_lead_project_manager_orchestrator",
       "target": "agents_project_manager_7_behavioural_rules",
@@ -148958,7 +148958,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "agents/project-manager.md",
-      "source_location": "L296",
+      "source_location": "L298",
       "weight": 1.0,
       "source": "agents_project_manager_agents_tech_lead_project_manager_orchestrator",
       "target": "agents_project_manager_8_knowledge_graph_usage",
@@ -148998,7 +148998,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "agents/project-manager.md",
-      "source_location": "L121",
+      "source_location": "L122",
       "weight": 1.0,
       "source": "agents_project_manager_3_workflow",
       "target": "agents_project_manager_3_4_collaborating_with_the_designer",
@@ -149008,7 +149008,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "agents/project-manager.md",
-      "source_location": "L179",
+      "source_location": "L180",
       "weight": 1.0,
       "source": "agents_project_manager_4_code_review",
       "target": "agents_project_manager_ci_gate_approval_requires_green_checks_non_negotiable",
@@ -149018,7 +149018,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "agents/project-manager.md",
-      "source_location": "L198",
+      "source_location": "L199",
       "weight": 1.0,
       "source": "agents_project_manager_4_code_review",
       "target": "agents_project_manager_frontend_prs_designer_review_mandatory",
@@ -149028,7 +149028,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "agents/project-manager.md",
-      "source_location": "L204",
+      "source_location": "L205",
       "weight": 1.0,
       "source": "agents_project_manager_4_code_review",
       "target": "agents_project_manager_post_review_actions_mandatory_review_is_not_complete_until_these_are_done",
@@ -149038,7 +149038,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "agents/project-manager.md",
-      "source_location": "L134",
+      "source_location": "L135",
       "weight": 1.0,
       "source": "agents_project_manager_4_code_review",
       "target": "agents_project_manager_review_dimensions",
@@ -149048,7 +149048,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "agents/project-manager.md",
-      "source_location": "L169",
+      "source_location": "L170",
       "weight": 1.0,
       "source": "agents_project_manager_4_code_review",
       "target": "agents_project_manager_review_output_format",
@@ -149058,7 +149058,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "agents/project-manager.md",
-      "source_location": "L257",
+      "source_location": "L258",
       "weight": 1.0,
       "source": "agents_project_manager_6_progress_tracking_and_reporting",
       "target": "agents_project_manager_during_execution",
@@ -149068,7 +149068,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "agents/project-manager.md",
-      "source_location": "L239",
+      "source_location": "L240",
       "weight": 1.0,
       "source": "agents_project_manager_6_progress_tracking_and_reporting",
       "target": "agents_project_manager_to_the_user",
@@ -153212,5 +153212,5 @@
       "source_file": "docs/IMPLEMENTATION_PLAN.md"
     }
   ],
-  "built_at_commit": "407eee1d018ea55e86cf88c19e77377216fb24e3"
+  "built_at_commit": "a01743398155aaa07a092de10829298131f8409e"
 }
