@@ -159,6 +159,7 @@ class TestFetchIconHourlyHappyPath:
         for r in results:
             assert isinstance(r, HourlyTemp)
             assert isinstance(r.ts_utc, datetime)
+            assert r.ts_utc.tzinfo is not None  # must be timezone-aware
             assert isinstance(r.temp_f, float)
 
     def test_valid_times_are_cycle_plus_fxx(self):

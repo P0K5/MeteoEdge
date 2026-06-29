@@ -110,7 +110,7 @@ def _resolve_icon_cycle() -> Optional[datetime]:
             r = httpx.head(url, timeout=10, follow_redirects=True)
             if r.status_code == 200:
                 log.debug("[icon] resolved cycle: %s (attempt %d)", candidate, attempt)
-                return candidate
+                return candidate.replace(tzinfo=timezone.utc)
             log.debug("[icon] cycle %s not yet published (HTTP %d), stepping back", candidate, r.status_code)
         except Exception as exc:
             log.debug("[icon] cycle %s HEAD failed: %s, stepping back", candidate, exc)
@@ -156,8 +156,8 @@ def _fetch_icon_grib(
         with httpx.Client(timeout=60, follow_redirects=True) as client:
             resp = client.get(url)
             resp.raise_for_status()
-        raw_bz2 = resp.content
-        grib_bytes = bz2.decompress(raw_bz2)
+            raw_bz2 = resp.content
+            grib_bytes = bz2.decompress(raw_bz2)
         path.write_bytes(grib_bytes)
         log.info("[icon] cached fxx=%03d → %s (%d bytes)", fxx, path, len(grib_bytes))
         return path

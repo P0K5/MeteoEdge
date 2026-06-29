@@ -145,7 +145,7 @@ class TestGribNoneStepBack:
             sys.modules.pop("httpx", None)
 
         assert result is not None
-        assert result.tzinfo is None
+        assert result.tzinfo is not None  # _resolve_icon_cycle returns tz-aware UTC
         assert call_count >= 2
 
     def test_returns_none_when_all_grib_none(self):

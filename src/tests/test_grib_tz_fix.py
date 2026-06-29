@@ -107,7 +107,7 @@ class TestHerbieReceivesTzNaive:
             sys.modules.pop("httpx", None)
 
         assert result is not None
-        assert result.tzinfo is None, f"Expected tz-naive, got tzinfo={result.tzinfo}"
+        assert result.tzinfo is not None, "Expected tz-aware UTC from _resolve_icon_cycle"
 
 
 class TestResolverStepBack:
