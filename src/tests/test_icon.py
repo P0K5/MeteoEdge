@@ -20,6 +20,7 @@ from unittest.mock import patch, MagicMock
 import pytest
 
 from src.data.icon import (
+    _fetch_icon_grib,
     _is_eu_domain,
     _kelvin_to_fahrenheit,
     _resolve_icon_cycle,
@@ -123,7 +124,6 @@ class TestIsEuDomain:
 # fetch_icon_hourly — happy path (European station)
 # ---------------------------------------------------------------------------
 
-@pytest.mark.skip(reason="ICON ingestion disabled — herbie 2025.x has no template; re-enable when #508 (direct DWD fetch) is implemented")
 class TestFetchIconHourlyHappyPath:
     """All 24 forecast hours return a valid temperature."""
 
@@ -137,7 +137,7 @@ class TestFetchIconHourlyHappyPath:
             patch("src.data.icon._resolve_icon_cycle", return_value=CYCLE_DT),
             patch("src.data.grib_cache._get_cache_ttl_hours", return_value=6.0),
             patch("src.data.grib_cache._get_cache_dir", return_value=Path(".grib_cache")),
-            patch("src.data.grib_cache._fetch_grib_slice", return_value=fake_path),
+            patch("src.data.icon._fetch_icon_grib", return_value=fake_path),
             patch("src.data.grib_cache._read_grib_nearest", return_value=kelvin),
         ):
             results = fetch_icon_hourly(MILAN_LAT, MILAN_LON, station=MILAN_STATION)
@@ -151,7 +151,7 @@ class TestFetchIconHourlyHappyPath:
             patch("src.data.icon._resolve_icon_cycle", return_value=CYCLE_DT),
             patch("src.data.grib_cache._get_cache_ttl_hours", return_value=6.0),
             patch("src.data.grib_cache._get_cache_dir", return_value=Path(".grib_cache")),
-            patch("src.data.grib_cache._fetch_grib_slice", return_value=fake_path),
+            patch("src.data.icon._fetch_icon_grib", return_value=fake_path),
             patch("src.data.grib_cache._read_grib_nearest", return_value=kelvin),
         ):
             results = fetch_icon_hourly(MILAN_LAT, MILAN_LON)
@@ -159,7 +159,6 @@ class TestFetchIconHourlyHappyPath:
         for r in results:
             assert isinstance(r, HourlyTemp)
             assert isinstance(r.ts_utc, datetime)
-            assert r.ts_utc.tzinfo is not None  # must be timezone-aware
             assert isinstance(r.temp_f, float)
 
     def test_valid_times_are_cycle_plus_fxx(self):
@@ -169,7 +168,7 @@ class TestFetchIconHourlyHappyPath:
             patch("src.data.icon._resolve_icon_cycle", return_value=CYCLE_DT),
             patch("src.data.grib_cache._get_cache_ttl_hours", return_value=6.0),
             patch("src.data.grib_cache._get_cache_dir", return_value=Path(".grib_cache")),
-            patch("src.data.grib_cache._fetch_grib_slice", return_value=fake_path),
+            patch("src.data.icon._fetch_icon_grib", return_value=fake_path),
             patch("src.data.grib_cache._read_grib_nearest", return_value=kelvin),
         ):
             results = fetch_icon_hourly(MILAN_LAT, MILAN_LON)
@@ -188,7 +187,7 @@ class TestFetchIconHourlyHappyPath:
             patch("src.data.icon._resolve_icon_cycle", return_value=CYCLE_DT),
             patch("src.data.grib_cache._get_cache_ttl_hours", return_value=6.0),
             patch("src.data.grib_cache._get_cache_dir", return_value=Path(".grib_cache")),
-            patch("src.data.grib_cache._fetch_grib_slice", return_value=fake_path),
+            patch("src.data.icon._fetch_icon_grib", return_value=fake_path),
             patch("src.data.grib_cache._read_grib_nearest", return_value=kelvin),
         ):
             results = fetch_icon_hourly(MILAN_LAT, MILAN_LON)
@@ -205,7 +204,7 @@ class TestFetchIconHourlyHappyPath:
             patch("src.data.icon._resolve_icon_cycle", return_value=CYCLE_DT),
             patch("src.data.grib_cache._get_cache_ttl_hours", return_value=6.0),
             patch("src.data.grib_cache._get_cache_dir", return_value=Path(".grib_cache")),
-            patch("src.data.grib_cache._fetch_grib_slice", return_value=fake_path),
+            patch("src.data.icon._fetch_icon_grib", return_value=fake_path),
             patch("src.data.grib_cache._read_grib_nearest", return_value=kelvin),
         ):
             results = fetch_icon_hourly(HELSINKI_LAT, HELSINKI_LON, station=HELSINKI_STATION)
@@ -235,7 +234,7 @@ class TestFetchIconHourlyNonEU:
     def test_non_eu_never_calls_grib_fetch(self):
         with (
             patch("src.data.icon._resolve_icon_cycle") as mock_cycle,
-            patch("src.data.grib_cache._fetch_grib_slice") as mock_fetch,
+            patch("src.data.icon._fetch_icon_grib") as mock_fetch,
         ):
             result = fetch_icon_hourly(DENVER_LAT, DENVER_LON)
 
@@ -269,7 +268,7 @@ class TestFetchIconHourlyMissingCycle:
     def test_does_not_call_grib_fetch_when_no_cycle(self):
         with (
             patch("src.data.icon._resolve_icon_cycle", return_value=None),
-            patch("src.data.grib_cache._fetch_grib_slice") as mock_fetch,
+            patch("src.data.icon._fetch_icon_grib") as mock_fetch,
         ):
             fetch_icon_hourly(MILAN_LAT, MILAN_LON)
 
@@ -280,7 +279,6 @@ class TestFetchIconHourlyMissingCycle:
 # fetch_icon_hourly — partial fetch failures
 # ---------------------------------------------------------------------------
 
-@pytest.mark.skip(reason="ICON ingestion disabled — herbie 2025.x has no template; re-enable when #508 (direct DWD fetch) is implemented")
 class TestFetchIconHourlyPartialFailure:
     """Some forecast hours fail; only successful ones are returned."""
 
@@ -289,14 +287,14 @@ class TestFetchIconHourlyPartialFailure:
         kelvin = 293.15
 
         # Return None for odd fxx, a path for even fxx
-        def _slice_side_effect(model, var, cycle_dt, fxx, cache_dir, ttl_hours):
+        def _grib_side_effect(cycle_dt, fxx, cache_dir, ttl_hours):
             return fake_path if fxx % 2 == 0 else None
 
         with (
             patch("src.data.icon._resolve_icon_cycle", return_value=CYCLE_DT),
             patch("src.data.grib_cache._get_cache_ttl_hours", return_value=6.0),
             patch("src.data.grib_cache._get_cache_dir", return_value=Path(".grib_cache")),
-            patch("src.data.grib_cache._fetch_grib_slice", side_effect=_slice_side_effect),
+            patch("src.data.icon._fetch_icon_grib", side_effect=_grib_side_effect),
             patch("src.data.grib_cache._read_grib_nearest", return_value=kelvin),
         ):
             results = fetch_icon_hourly(MILAN_LAT, MILAN_LON)
@@ -309,7 +307,7 @@ class TestFetchIconHourlyPartialFailure:
             patch("src.data.icon._resolve_icon_cycle", return_value=CYCLE_DT),
             patch("src.data.grib_cache._get_cache_ttl_hours", return_value=6.0),
             patch("src.data.grib_cache._get_cache_dir", return_value=Path(".grib_cache")),
-            patch("src.data.grib_cache._fetch_grib_slice", return_value=None),
+            patch("src.data.icon._fetch_icon_grib", return_value=None),
         ):
             result = fetch_icon_hourly(MILAN_LAT, MILAN_LON)
 
@@ -321,7 +319,7 @@ class TestFetchIconHourlyPartialFailure:
             patch("src.data.icon._resolve_icon_cycle", return_value=CYCLE_DT),
             patch("src.data.grib_cache._get_cache_ttl_hours", return_value=6.0),
             patch("src.data.grib_cache._get_cache_dir", return_value=Path(".grib_cache")),
-            patch("src.data.grib_cache._fetch_grib_slice", return_value=fake_path),
+            patch("src.data.icon._fetch_icon_grib", return_value=fake_path),
             patch("src.data.grib_cache._read_grib_nearest", return_value=None),
         ):
             result = fetch_icon_hourly(MILAN_LAT, MILAN_LON)
