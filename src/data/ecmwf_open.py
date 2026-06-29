@@ -117,12 +117,13 @@ def _resolve_ecmwf_cycle(fxx: int = 1) -> Optional[datetime]:
     for attempt in range(_ECMWF_MAX_LOOKBACK_CYCLES + 1):
         try:
             H = Herbie(candidate.replace(tzinfo=None), model="ifs", fxx=fxx, verbose=False)
-            _ = H.idx  # raises if cycle not yet published
-            log.debug("[ecmwf] resolved cycle: %s (attempt %d)", candidate, attempt)
-            return candidate.replace(tzinfo=None)
+            if H.grib is not None:
+                log.debug("[ecmwf] resolved cycle: %s (attempt %d)", candidate, attempt)
+                return candidate.replace(tzinfo=None)
+            log.debug("[ecmwf] cycle %s grib=None (not yet published), stepping back 12h", candidate)
         except Exception:
             log.debug("[ecmwf] cycle %s not available, stepping back 12h", candidate)
-            candidate = candidate - timedelta(hours=_ECMWF_CYCLE_STEP_H)
+        candidate = candidate - timedelta(hours=_ECMWF_CYCLE_STEP_H)
 
     log.warning(
         "[ecmwf] no available ECMWF cycle found in last %dh",

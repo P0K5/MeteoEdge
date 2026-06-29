@@ -137,12 +137,13 @@ def _resolve_nbm_cycle(fxx: int = 0) -> Optional[datetime]:
     for attempt in range(_NBM_MAX_LOOKBACK_CYCLES + 1):
         try:
             H = Herbie(candidate.replace(tzinfo=None), model="nbm", fxx=fxx, verbose=False)
-            _ = H.idx  # raises if cycle not yet published
-            log.debug("[nbm] resolved cycle: %s (attempt %d)", candidate, attempt)
-            return candidate.replace(tzinfo=None)
+            if H.grib is not None:
+                log.debug("[nbm] resolved cycle: %s (attempt %d)", candidate, attempt)
+                return candidate.replace(tzinfo=None)
+            log.debug("[nbm] cycle %s grib=None (not yet published), stepping back 6h", candidate)
         except Exception:
             log.debug("[nbm] cycle %s not available, stepping back 6h", candidate)
-            candidate = candidate - timedelta(hours=_NBM_CYCLE_STEP_H)
+        candidate = candidate - timedelta(hours=_NBM_CYCLE_STEP_H)
 
     log.warning("[nbm] no available NBM cycle found in last %dh", _NBM_MAX_LOOKBACK_CYCLES * _NBM_CYCLE_STEP_H)
     return None

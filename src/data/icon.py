@@ -88,12 +88,13 @@ def _resolve_icon_cycle(fxx: int = 1) -> Optional[datetime]:
     for attempt in range(_ICON_MAX_LOOKBACK_CYCLES + 1):
         try:
             H = Herbie(candidate.replace(tzinfo=None), model="icon-eu", fxx=fxx, verbose=False)
-            _ = H.idx  # raises if cycle not yet published
-            log.debug("[icon] resolved cycle: %s (attempt %d)", candidate, attempt)
-            return candidate.replace(tzinfo=None)
+            if H.grib is not None:
+                log.debug("[icon] resolved cycle: %s (attempt %d)", candidate, attempt)
+                return candidate.replace(tzinfo=None)
+            log.debug("[icon] cycle %s grib=None (not yet published), stepping back 6h", candidate)
         except Exception:
             log.debug("[icon] cycle %s not available, stepping back 6h", candidate)
-            candidate = candidate - timedelta(hours=_ICON_CYCLE_STEP_H)
+        candidate = candidate - timedelta(hours=_ICON_CYCLE_STEP_H)
 
     log.warning(
         "[icon] no available ICON-EU cycle found in last %dh",
