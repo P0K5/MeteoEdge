@@ -95,7 +95,7 @@ def fetch_hrrr_hourly(
 
     results: list[HourlyTemp] = []
     for fxx in _FORECAST_HOURS:
-        kelvin = _grib_cache.fetch_hrrr_field("TMP_2m", lat, lon, fxx=fxx)
+        kelvin = _grib_cache.fetch_hrrr_field("TMP_2m", lat, lon, fxx=fxx, cycle_dt=cycle_dt)
         if kelvin is None:
             log.debug("[hrrr] fxx=%02d unavailable for %s", fxx, label)
             continue

@@ -205,11 +205,17 @@ def _resolve_latest_cycle(model: str, fxx: int = 0):
     """Return the most recent available model cycle datetime (UTC).
 
     Tries the current UTC hour, then steps back in 1-hour increments up to
-    MAX_LOOKBACK_HOURS to find a cycle that herbie can resolve (i.e. whose
-    IDX file is already published on S3).
+    MAX_LOOKBACK_HOURS to find a cycle whose H.grib is not None (i.e. the
+    GRIB file is published on S3).  Using H.grib instead of H.idx catches
+    the herbie 2025.12.0 behaviour where .idx returns None (rather than
+    raising) for an unpublished cycle.
+
+    GEFS publishes at 6-hour cadence with 4–6h latency, so its look-back
+    window is widened to 24 h so that non-cycle hours (where grib=None) and
+    publication lag are both crossed naturally.
 
     Args:
-        model: herbie model name (e.g. "hrrr").
+        model: herbie model name (e.g. "hrrr", "gefs").
         fxx:   Forecast hour (default 0 = analysis).
 
     Returns:
@@ -217,7 +223,8 @@ def _resolve_latest_cycle(model: str, fxx: int = 0):
     """
     from datetime import datetime, timezone, timedelta
 
-    MAX_LOOKBACK_HOURS = 6
+    # GEFS cycles at 6 h with up to 6 h publication lag → need 24 h window.
+    MAX_LOOKBACK_HOURS = 24 if model == "gefs" else 6
 
     try:
         from herbie import Herbie  # type: ignore[import]
@@ -229,14 +236,12 @@ def _resolve_latest_cycle(model: str, fxx: int = 0):
         candidate = now_utc - timedelta(hours=hours_back)
         try:
             H = Herbie(candidate.replace(tzinfo=None), model=model, fxx=fxx, verbose=False)
-            # Accessing .idx triggers an availability check; if it raises, cycle
-            # is not yet published.
-            _ = H.idx
-            log.debug("[grib_cache] resolved cycle: %s", candidate)
-            return candidate.replace(tzinfo=None)
+            if H.grib is not None:
+                log.debug("[grib_cache] resolved cycle: %s", candidate)
+                return candidate.replace(tzinfo=None)
+            log.debug("[grib_cache] cycle %s grib=None (not yet published), stepping back", candidate)
         except Exception:
             log.debug("[grib_cache] cycle %s not yet available, stepping back", candidate)
-            continue
 
     log.warning("[grib_cache] no available cycle found for %s in last %dh", model, MAX_LOOKBACK_HOURS)
     return None
@@ -252,19 +257,25 @@ def fetch_hrrr_field(
     lon: float,
     fxx: int = 0,
     db=None,
+    cycle_dt=None,
 ) -> Optional[float]:
     """Fetch a single scalar HRRR field value at (lat, lon).
 
-    Resolves the latest available HRRR cycle, fetches only the matching GRIB2
-    message (byte-range via IDX sidecar), caches it on disk, and returns the
-    value at the nearest grid point.
+    Resolves the latest available HRRR cycle (or uses a pre-resolved one),
+    fetches only the matching GRIB2 message (byte-range via IDX sidecar),
+    caches it on disk, and returns the value at the nearest grid point.
+
+    Pass *cycle_dt* when calling in a loop over multiple fxx values so that
+    cycle resolution happens once rather than once per forecast hour.
 
     Args:
-        var:  Variable key — "TMP_2m" or "DPT_2m".
-        lat:  Latitude (WGS-84).
-        lon:  Longitude (WGS-84).
-        fxx:  Forecast hour offset (default 0 = analysis/F00).
-        db:   Optional DB handle for live config reads.
+        var:      Variable key — "TMP_2m" or "DPT_2m".
+        lat:      Latitude (WGS-84).
+        lon:      Longitude (WGS-84).
+        fxx:      Forecast hour offset (default 0 = analysis/F00).
+        db:       Optional DB handle for live config reads.
+        cycle_dt: Pre-resolved cycle datetime.  When None (default),
+                  _resolve_latest_cycle is called internally.
 
     Returns:
         Scalar field value at the nearest HRRR grid point (Kelvin for temperature),
@@ -276,7 +287,8 @@ def fetch_hrrr_field(
     # Opportunistic eviction on every fetch call (cheap glob scan)
     _evict_expired(cache_dir, ttl_hours)
 
-    cycle_dt = _resolve_latest_cycle("hrrr", fxx=fxx)
+    if cycle_dt is None:
+        cycle_dt = _resolve_latest_cycle("hrrr", fxx=fxx)
     if cycle_dt is None:
         log.warning("[grib_cache] could not resolve HRRR cycle")
         return None
