@@ -88,6 +88,10 @@ Thumbs.db
 # Claude Code agent worktrees (temporary, never commit)
 .claude/worktrees/
 
+# Backend model config (active session config — local only, never commit)
+# Use .claude/model-config.anthropic.env or .claude/model-config.nvidia.env as presets
+.claude/model-config.env
+
 # Graphify timestamped snapshots and cache (keep graph.json, GRAPH_REPORT.md, manifest.json)
 graphify-out/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/
 graphify-out/cache/
