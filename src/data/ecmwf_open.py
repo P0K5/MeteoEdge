@@ -172,9 +172,12 @@ def _fetch_ecmwf_2t(cycle_dt: datetime, fxx: int, lat: float, lon: float) -> Opt
             lats = ds.coords["latitude"].values
             lons = ds.coords["longitude"].values
             lon_q = lon % 360
-            dist = np.sqrt((lats - lat) ** 2 + (lons - lon_q) ** 2)
-            idx = np.unravel_index(np.argmin(dist), dist.shape)
-            val = float(da.values[idx])
+            if lats.ndim == 1:
+                val = float(da.sel(latitude=lat, longitude=lon_q, method="nearest").values)
+            else:
+                dist = np.sqrt((lats - lat) ** 2 + (lons - lon_q) ** 2)
+                idx = np.unravel_index(np.argmin(dist), dist.shape)
+                val = float(da.values[idx])
         else:
             val = float(da.values.flat[0])
 

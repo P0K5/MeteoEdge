@@ -198,9 +198,12 @@ def _fetch_tmax_herbie(cycle_dt: datetime, target_date: date, lat: float, lon: f
             lats = ds.coords["latitude"].values
             lons = ds.coords["longitude"].values
             lon_q = lon % 360
-            dist = np.sqrt((lats - lat) ** 2 + (lons - lon_q) ** 2)
-            idx = np.unravel_index(np.argmin(dist), dist.shape)
-            val = float(da.values[idx])
+            if lats.ndim == 1:
+                val = float(da.sel(latitude=lat, longitude=lon_q, method="nearest").values)
+            else:
+                dist = np.sqrt((lats - lat) ** 2 + (lons - lon_q) ** 2)
+                idx = np.unravel_index(np.argmin(dist), dist.shape)
+                val = float(da.values[idx])
             log.info("[nbm] TMAX_2m at (%.4f,%.4f) fxx=%d = %.2f K", lat, lon, fxx, val)
             return val
         except Exception as exc:
