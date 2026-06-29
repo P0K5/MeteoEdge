@@ -5204,7 +5204,7 @@
       "source_location": "L24",
       "_origin": "ast",
       "id": "src_model_intraday_correction_get_lat_lon",
-      "community": 103,
+      "community": 114,
       "norm_label": "_get_lat_lon()"
     },
     {
@@ -5214,7 +5214,7 @@
       "source_location": "L34",
       "_origin": "ast",
       "id": "src_model_intraday_correction_city_stations",
-      "community": 103,
+      "community": 140,
       "norm_label": "_city_stations()"
     },
     {
@@ -5254,7 +5254,7 @@
       "source_location": "L103",
       "_origin": "ast",
       "id": "src_model_intraday_correction_compute_correction",
-      "community": 163,
+      "community": 114,
       "norm_label": "compute_correction()"
     },
     {
@@ -5274,7 +5274,7 @@
       "source_location": "L25",
       "_origin": "ast",
       "id": "src_model_intraday_correction_rationale_25",
-      "community": 103,
+      "community": 114,
       "norm_label": "return (lat, lon) for city, checking overrides first then stations."
     },
     {
@@ -5284,7 +5284,7 @@
       "source_location": "L35",
       "_origin": "ast",
       "id": "src_model_intraday_correction_rationale_35",
-      "community": 103,
+      "community": 140,
       "norm_label": "return all station codes associated with a city from stations."
     },
     {
@@ -5314,7 +5314,7 @@
       "source_location": "L109",
       "_origin": "ast",
       "id": "src_model_intraday_correction_rationale_109",
-      "community": 163,
+      "community": 114,
       "norm_label": "compute intraday-corrected forecast mean for city.      args:         city:  cit"
     },
     {
@@ -6284,7 +6284,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "src_risk_manager",
-      "community": 87,
+      "community": 155,
       "norm_label": "manager.py"
     },
     {
@@ -6364,7 +6364,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "src_risk_manager_rationale_1",
-      "community": 87,
+      "community": 155,
       "norm_label": "risk manager \u2014 gates every trade before execution.  all limits are read from src"
     },
     {
@@ -6791,7 +6791,7 @@
       "label": "check_range()",
       "file_type": "code",
       "source_file": "src/scripts/check_shadow_health.py",
-      "source_location": "L116",
+      "source_location": "L131",
       "_origin": "ast",
       "id": "src_scripts_check_shadow_health_check_range",
       "community": 67,
@@ -6801,7 +6801,7 @@
       "label": "check_divergence()",
       "file_type": "code",
       "source_file": "src/scripts/check_shadow_health.py",
-      "source_location": "L170",
+      "source_location": "L185",
       "_origin": "ast",
       "id": "src_scripts_check_shadow_health_check_divergence",
       "community": 67,
@@ -6811,7 +6811,7 @@
       "label": "check_calibration()",
       "file_type": "code",
       "source_file": "src/scripts/check_shadow_health.py",
-      "source_location": "L220",
+      "source_location": "L235",
       "_origin": "ast",
       "id": "src_scripts_check_shadow_health_check_calibration",
       "community": 67,
@@ -6821,7 +6821,7 @@
       "label": "main()",
       "file_type": "code",
       "source_file": "src/scripts/check_shadow_health.py",
-      "source_location": "L304",
+      "source_location": "L323",
       "_origin": "ast",
       "id": "src_scripts_check_shadow_health_main",
       "community": 67,
@@ -6851,9 +6851,9 @@
       "label": "Flag forecast_high_f values outside [-60\u00b0F, 130\u00b0F].",
       "file_type": "rationale",
       "source_file": "src/scripts/check_shadow_health.py",
-      "source_location": "L122",
+      "source_location": "L137",
       "_origin": "ast",
-      "id": "src_scripts_check_shadow_health_rationale_122",
+      "id": "src_scripts_check_shadow_health_rationale_137",
       "community": 67,
       "norm_label": "flag forecast_high_f values outside [-60\u00b0f, 130\u00b0f]."
     },
@@ -6861,9 +6861,9 @@
       "label": "Flag (station, date) pairs where max\u2013min across models > threshold.",
       "file_type": "rationale",
       "source_file": "src/scripts/check_shadow_health.py",
-      "source_location": "L175",
+      "source_location": "L190",
       "_origin": "ast",
-      "id": "src_scripts_check_shadow_health_rationale_175",
+      "id": "src_scripts_check_shadow_health_rationale_190",
       "community": 67,
       "norm_label": "flag (station, date) pairs where max\u2013min across models > threshold."
     },
@@ -6871,9 +6871,9 @@
       "label": "Shadow trade win-rate calibration + per-model MAE vs actuals.",
       "file_type": "rationale",
       "source_file": "src/scripts/check_shadow_health.py",
-      "source_location": "L221",
+      "source_location": "L236",
       "_origin": "ast",
-      "id": "src_scripts_check_shadow_health_rationale_221",
+      "id": "src_scripts_check_shadow_health_rationale_236",
       "community": 67,
       "norm_label": "shadow trade win-rate calibration + per-model mae vs actuals."
     },
@@ -29704,7 +29704,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "src_tests_test_intraday_correction",
-      "community": 103,
+      "community": 114,
       "norm_label": "test_intraday_correction.py"
     },
     {
@@ -29714,7 +29714,7 @@
       "source_location": "L15",
       "_origin": "ast",
       "id": "src_tests_test_intraday_correction_make_state",
-      "community": 163,
+      "community": 114,
       "norm_label": "_make_state()"
     },
     {
@@ -29724,7 +29724,7 @@
       "source_location": "L22",
       "_origin": "ast",
       "id": "src_tests_test_intraday_correction_fresh_obs",
-      "community": 163,
+      "community": 114,
       "norm_label": "_fresh_obs()"
     },
     {
@@ -29784,7 +29784,7 @@
       "source_location": "L61",
       "_origin": "ast",
       "id": "src_tests_test_intraday_correction_testgetlatlon",
-      "community": 103,
+      "community": 114,
       "norm_label": "testgetlatlon"
     },
     {
@@ -29794,7 +29794,7 @@
       "source_location": "L62",
       "_origin": "ast",
       "id": "src_tests_test_intraday_correction_testgetlatlon_test_known_city",
-      "community": 103,
+      "community": 114,
       "norm_label": ".test_known_city()"
     },
     {
@@ -29804,7 +29804,7 @@
       "source_location": "L69",
       "_origin": "ast",
       "id": "src_tests_test_intraday_correction_testgetlatlon_test_unknown_city_returns_none",
-      "community": 103,
+      "community": 114,
       "norm_label": ".test_unknown_city_returns_none()"
     },
     {
@@ -29814,7 +29814,7 @@
       "source_location": "L73",
       "_origin": "ast",
       "id": "src_tests_test_intraday_correction_testcitystations",
-      "community": 103,
+      "community": 140,
       "norm_label": "testcitystations"
     },
     {
@@ -29824,7 +29824,7 @@
       "source_location": "L74",
       "_origin": "ast",
       "id": "src_tests_test_intraday_correction_testcitystations_test_seoul_has_station",
-      "community": 103,
+      "community": 140,
       "norm_label": ".test_seoul_has_station()"
     },
     {
@@ -29834,7 +29834,7 @@
       "source_location": "L78",
       "_origin": "ast",
       "id": "src_tests_test_intraday_correction_testcitystations_test_unknown_city_empty",
-      "community": 103,
+      "community": 140,
       "norm_label": ".test_unknown_city_empty()"
     },
     {
@@ -29844,7 +29844,7 @@
       "source_location": "L82",
       "_origin": "ast",
       "id": "src_tests_test_intraday_correction_testcomputecorrection",
-      "community": 163,
+      "community": 114,
       "norm_label": "testcomputecorrection"
     },
     {
@@ -29854,7 +29854,7 @@
       "source_location": "L83",
       "_origin": "ast",
       "id": "src_tests_test_intraday_correction_testcomputecorrection_patch_consensus",
-      "community": 163,
+      "community": 114,
       "norm_label": "._patch_consensus()"
     },
     {
@@ -29874,7 +29874,7 @@
       "source_location": "L88",
       "_origin": "ast",
       "id": "src_tests_test_intraday_correction_testcomputecorrection_test_returns_float_on_valid_inputs",
-      "community": 163,
+      "community": 114,
       "norm_label": ".test_returns_float_on_valid_inputs()"
     },
     {
@@ -29884,7 +29884,7 @@
       "source_location": "L108",
       "_origin": "ast",
       "id": "src_tests_test_intraday_correction_testcomputecorrection_test_disabled_env_returns_none",
-      "community": 163,
+      "community": 114,
       "norm_label": ".test_disabled_env_returns_none()"
     },
     {
@@ -29894,7 +29894,7 @@
       "source_location": "L115",
       "_origin": "ast",
       "id": "src_tests_test_intraday_correction_testcomputecorrection_test_no_deb_mu_f_returns_none",
-      "community": 163,
+      "community": 114,
       "norm_label": ".test_no_deb_mu_f_returns_none()"
     },
     {
@@ -29904,7 +29904,7 @@
       "source_location": "L123",
       "_origin": "ast",
       "id": "src_tests_test_intraday_correction_testcomputecorrection_test_upsert_called_on_success",
-      "community": 163,
+      "community": 114,
       "norm_label": ".test_upsert_called_on_success()"
     },
     {
@@ -29914,7 +29914,7 @@
       "source_location": "L146",
       "_origin": "ast",
       "id": "src_tests_test_intraday_correction_testcomputecorrection_test_decay_zero_returns_deb_mu_f",
-      "community": 163,
+      "community": 114,
       "norm_label": ".test_decay_zero_returns_deb_mu_f()"
     },
     {
@@ -29924,7 +29924,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "src_tests_test_intraday_correction_rationale_1",
-      "community": 103,
+      "community": 114,
       "norm_label": "unit tests for src/model/intraday_correction.py."
     },
     {
@@ -29944,7 +29944,7 @@
       "source_location": "L147",
       "_origin": "ast",
       "id": "src_tests_test_intraday_correction_rationale_147",
-      "community": 163,
+      "community": 114,
       "norm_label": "when decay=0.0 (inside peak window), corrected_mu_f == deb_mu_f."
     },
     {
@@ -30774,7 +30774,7 @@
       "source_location": "L236",
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_testdataparsing_test_parse_network_error_returns_none",
-      "community": 70,
+      "community": 116,
       "norm_label": ".test_parse_network_error_returns_none()"
     },
     {
@@ -31004,7 +31004,7 @@
       "source_location": "L239",
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_rationale_239",
-      "community": 70,
+      "community": 116,
       "norm_label": "should return none on network errors."
     },
     {
@@ -33924,7 +33924,7 @@
       "source_location": "L72",
       "_origin": "ast",
       "id": "src_tests_test_observation_adapters_testjmaamedasadapterintegration_test_jma_cadence_configured",
-      "community": 62,
+      "community": 72,
       "norm_label": ".test_jma_cadence_configured()"
     },
     {
@@ -34234,7 +34234,7 @@
       "source_location": "L73",
       "_origin": "ast",
       "id": "src_tests_test_observation_adapters_rationale_73",
-      "community": 62,
+      "community": 72,
       "norm_label": "jma appears in source priority config with correct cadence."
     },
     {
@@ -40164,7 +40164,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "src_tests_test_risk_db",
-      "community": 87,
+      "community": 155,
       "norm_label": "test_risk_db.py"
     },
     {
@@ -40274,7 +40274,7 @@
       "source_location": "L121",
       "_origin": "ast",
       "id": "src_tests_test_risk_db_testrecordpnlwritestodb",
-      "community": 87,
+      "community": 127,
       "norm_label": "testrecordpnlwritestodb"
     },
     {
@@ -40284,7 +40284,7 @@
       "source_location": "L124",
       "_origin": "ast",
       "id": "src_tests_test_risk_db_testrecordpnlwritestodb_test_record_pnl_writes_to_db",
-      "community": 87,
+      "community": 127,
       "norm_label": ".test_record_pnl_writes_to_db()"
     },
     {
@@ -40294,7 +40294,7 @@
       "source_location": "L136",
       "_origin": "ast",
       "id": "src_tests_test_risk_db_testrecordpnlwritestodb_test_record_pnl_accumulates_in_db",
-      "community": 87,
+      "community": 127,
       "norm_label": ".test_record_pnl_accumulates_in_db()"
     },
     {
@@ -40304,7 +40304,7 @@
       "source_location": "L151",
       "_origin": "ast",
       "id": "src_tests_test_risk_db_testnewdayreset",
-      "community": 87,
+      "community": 139,
       "norm_label": "testnewdayreset"
     },
     {
@@ -40314,7 +40314,7 @@
       "source_location": "L154",
       "_origin": "ast",
       "id": "src_tests_test_risk_db_testnewdayreset_test_new_day_reset_with_db",
-      "community": 87,
+      "community": 139,
       "norm_label": ".test_new_day_reset_with_db()"
     },
     {
@@ -40324,7 +40324,7 @@
       "source_location": "L166",
       "_origin": "ast",
       "id": "src_tests_test_risk_db_testnewdayreset_test_new_day_reset_writes_zero_to_db",
-      "community": 87,
+      "community": 139,
       "norm_label": ".test_new_day_reset_writes_zero_to_db()"
     },
     {
@@ -40384,7 +40384,7 @@
       "source_location": "L275",
       "_origin": "ast",
       "id": "src_tests_test_risk_db_testopenpositionstracking_test_no_db_no_error",
-      "community": 155,
+      "community": 87,
       "norm_label": ".test_no_db_no_error()"
     },
     {
@@ -40394,7 +40394,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "src_tests_test_risk_db_rationale_1",
-      "community": 87,
+      "community": 155,
       "norm_label": "unit tests for riskmanager with database persistence.  tests the seeding of _dai"
     },
     {
@@ -40504,7 +40504,7 @@
       "source_location": "L122",
       "_origin": "ast",
       "id": "src_tests_test_risk_db_rationale_122",
-      "community": 87,
+      "community": 127,
       "norm_label": "record_pnl() persists changes to db when db is set."
     },
     {
@@ -40514,7 +40514,7 @@
       "source_location": "L125",
       "_origin": "ast",
       "id": "src_tests_test_risk_db_rationale_125",
-      "community": 87,
+      "community": 127,
       "norm_label": "call record_pnl(), verify the db row is updated."
     },
     {
@@ -40524,7 +40524,7 @@
       "source_location": "L137",
       "_origin": "ast",
       "id": "src_tests_test_risk_db_rationale_137",
-      "community": 87,
+      "community": 127,
       "norm_label": "multiple record_pnl() calls accumulate in the db."
     },
     {
@@ -40534,7 +40534,7 @@
       "source_location": "L152",
       "_origin": "ast",
       "id": "src_tests_test_risk_db_rationale_152",
-      "community": 87,
+      "community": 139,
       "norm_label": "_reset_if_new_day() clears pnl and resets the db when the day changes."
     },
     {
@@ -40544,7 +40544,7 @@
       "source_location": "L155",
       "_origin": "ast",
       "id": "src_tests_test_risk_db_rationale_155",
-      "community": 87,
+      "community": 139,
       "norm_label": "seed pnl for yesterday, create rm on 'today', assert _daily_pnl == 0."
     },
     {
@@ -40554,7 +40554,7 @@
       "source_location": "L167",
       "_origin": "ast",
       "id": "src_tests_test_risk_db_rationale_167",
-      "community": 87,
+      "community": 139,
       "norm_label": "when _reset_if_new_day() fires, it writes a 0.0 pnl row for the new day."
     },
     {
@@ -40614,7 +40614,7 @@
       "source_location": "L276",
       "_origin": "ast",
       "id": "src_tests_test_risk_db_rationale_276",
-      "community": 155,
+      "community": 87,
       "norm_label": "open_position() and close_position() do not raise when db=none."
     },
     {
@@ -52574,7 +52574,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "docs_implementation_plan",
-      "community": 254,
+      "community": 85,
       "norm_label": "implementation_plan.md"
     },
     {
@@ -53254,7 +53254,7 @@
       "source_location": "L577",
       "_origin": "ast",
       "id": "docs_operations_monitoring_alerts",
-      "community": 114,
+      "community": 204,
       "norm_label": "monitoring & alerts"
     },
     {
@@ -53264,7 +53264,7 @@
       "source_location": "L579",
       "_origin": "ast",
       "id": "docs_operations_dashboard",
-      "community": 114,
+      "community": 204,
       "norm_label": "dashboard"
     },
     {
@@ -53274,7 +53274,7 @@
       "source_location": "L587",
       "_origin": "ast",
       "id": "docs_operations_email_alerts",
-      "community": 114,
+      "community": 204,
       "norm_label": "email alerts"
     },
     {
@@ -53284,7 +53284,7 @@
       "source_location": "L596",
       "_origin": "ast",
       "id": "docs_operations_manual_monitoring",
-      "community": 114,
+      "community": 204,
       "norm_label": "manual monitoring"
     },
     {
@@ -53354,7 +53354,7 @@
       "source_location": "L694",
       "_origin": "ast",
       "id": "docs_operations_maintenance",
-      "community": 204,
+      "community": 153,
       "norm_label": "maintenance"
     },
     {
@@ -53364,7 +53364,7 @@
       "source_location": "L696",
       "_origin": "ast",
       "id": "docs_operations_rotating_logs",
-      "community": 204,
+      "community": 153,
       "norm_label": "rotating logs"
     },
     {
@@ -53374,7 +53374,7 @@
       "source_location": "L720",
       "_origin": "ast",
       "id": "docs_operations_database_maintenance",
-      "community": 204,
+      "community": 153,
       "norm_label": "database maintenance"
     },
     {
@@ -53384,7 +53384,7 @@
       "source_location": "L728",
       "_origin": "ast",
       "id": "docs_operations_archive_old_data",
-      "community": 204,
+      "community": 153,
       "norm_label": "archive old data"
     },
     {
@@ -55014,7 +55014,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "docs_design_374_frozen_model_indicator",
-      "community": 254,
+      "community": 125,
       "norm_label": "374-frozen-model-indicator.md"
     },
     {
@@ -55284,7 +55284,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "docs_design_dashboard_mae_panel",
-      "community": 254,
+      "community": 165,
       "norm_label": "dashboard-mae-panel.md"
     },
     {
@@ -80665,7 +80665,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/check_shadow_health.py",
-      "source_location": "L220",
+      "source_location": "L235",
       "weight": 1.0,
       "source": "src_scripts_check_shadow_health",
       "target": "src_scripts_check_shadow_health_check_calibration",
@@ -80685,7 +80685,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/check_shadow_health.py",
-      "source_location": "L170",
+      "source_location": "L185",
       "weight": 1.0,
       "source": "src_scripts_check_shadow_health",
       "target": "src_scripts_check_shadow_health_check_divergence",
@@ -80695,7 +80695,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/check_shadow_health.py",
-      "source_location": "L116",
+      "source_location": "L131",
       "weight": 1.0,
       "source": "src_scripts_check_shadow_health",
       "target": "src_scripts_check_shadow_health_check_range",
@@ -80705,7 +80705,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/check_shadow_health.py",
-      "source_location": "L304",
+      "source_location": "L323",
       "weight": 1.0,
       "source": "src_scripts_check_shadow_health",
       "target": "src_scripts_check_shadow_health_main",
@@ -80736,7 +80736,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/check_shadow_health.py",
-      "source_location": "L352",
+      "source_location": "L371",
       "weight": 1.0,
       "source": "src_scripts_check_shadow_health_main",
       "target": "src_scripts_check_shadow_health_open_conn",
@@ -80758,7 +80758,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/check_shadow_health.py",
-      "source_location": "L371",
+      "source_location": "L390",
       "weight": 1.0,
       "source": "src_scripts_check_shadow_health_main",
       "target": "src_scripts_check_shadow_health_check_coverage",
@@ -80779,7 +80779,7 @@
       "context": "parameter_type",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/check_shadow_health.py",
-      "source_location": "L220",
+      "source_location": "L235",
       "weight": 1.0,
       "source": "src_scripts_check_shadow_health_check_calibration",
       "target": "src_scripts_check_shadow_health_py_connection",
@@ -80790,7 +80790,7 @@
       "context": "parameter_type",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/check_shadow_health.py",
-      "source_location": "L170",
+      "source_location": "L185",
       "weight": 1.0,
       "source": "src_scripts_check_shadow_health_check_divergence",
       "target": "src_scripts_check_shadow_health_py_connection",
@@ -80801,7 +80801,7 @@
       "context": "parameter_type",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/check_shadow_health.py",
-      "source_location": "L116",
+      "source_location": "L131",
       "weight": 1.0,
       "source": "src_scripts_check_shadow_health_check_range",
       "target": "src_scripts_check_shadow_health_py_connection",
@@ -80812,7 +80812,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/check_shadow_health.py",
-      "source_location": "L383",
+      "source_location": "L402",
       "weight": 1.0,
       "source": "src_scripts_check_shadow_health_main",
       "target": "src_scripts_check_shadow_health_check_range",
@@ -80822,9 +80822,9 @@
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/check_shadow_health.py",
-      "source_location": "L122",
+      "source_location": "L137",
       "weight": 1.0,
-      "source": "src_scripts_check_shadow_health_rationale_122",
+      "source": "src_scripts_check_shadow_health_rationale_137",
       "target": "src_scripts_check_shadow_health_check_range",
       "confidence_score": 1.0
     },
@@ -80833,7 +80833,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/check_shadow_health.py",
-      "source_location": "L397",
+      "source_location": "L416",
       "weight": 1.0,
       "source": "src_scripts_check_shadow_health_main",
       "target": "src_scripts_check_shadow_health_check_divergence",
@@ -80843,9 +80843,9 @@
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/check_shadow_health.py",
-      "source_location": "L175",
+      "source_location": "L190",
       "weight": 1.0,
-      "source": "src_scripts_check_shadow_health_rationale_175",
+      "source": "src_scripts_check_shadow_health_rationale_190",
       "target": "src_scripts_check_shadow_health_check_divergence",
       "confidence_score": 1.0
     },
@@ -80854,7 +80854,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/check_shadow_health.py",
-      "source_location": "L405",
+      "source_location": "L424",
       "weight": 1.0,
       "source": "src_scripts_check_shadow_health_main",
       "target": "src_scripts_check_shadow_health_check_calibration",
@@ -80864,9 +80864,9 @@
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/check_shadow_health.py",
-      "source_location": "L221",
+      "source_location": "L236",
       "weight": 1.0,
-      "source": "src_scripts_check_shadow_health_rationale_221",
+      "source": "src_scripts_check_shadow_health_rationale_236",
       "target": "src_scripts_check_shadow_health_check_calibration",
       "confidence_score": 1.0
     },
@@ -153529,5 +153529,5 @@
       "source_file": "docs/IMPLEMENTATION_PLAN.md"
     }
   ],
-  "built_at_commit": "51df10acd987277df20c3847e1bfd7d15d3a0413"
+  "built_at_commit": "0175a988cf3baace47fcf86c48ed21d05e85f25d"
 }
