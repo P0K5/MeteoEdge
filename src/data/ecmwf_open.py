@@ -170,7 +170,9 @@ def _fetch_ecmwf_2t(cycle_dt: datetime, fxx: int, lat: float, lon: float) -> Opt
         if "latitude" in ds.coords and "longitude" in ds.coords:
             lats = ds.coords["latitude"].values
             lons = ds.coords["longitude"].values
-            lon_q = lon % 360
+            # Normalise longitude query to match the DataArray's convention:
+            # ECMWF Open Data uses –180…+180; HRRR/GEFS use 0…360.
+            lon_q = lon % 360 if lons.min() >= 0 else lon
             if lats.ndim == 1:
                 val = float(da.sel({"latitude": lat, "longitude": lon_q}, method="nearest").values)
             else:
