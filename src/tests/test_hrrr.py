@@ -101,7 +101,7 @@ class TestFetchHrrrHourlyHappyPath:
 
     def _make_fetch_side_effect(self, kelvin: float):
         """Always return the same Kelvin value regardless of fxx."""
-        def _side_effect(var, lat, lon, fxx=0, db=None):
+        def _side_effect(var, lat, lon, fxx=0, db=None, **kwargs):
             return kelvin
         return _side_effect
 
@@ -234,7 +234,7 @@ class TestFetchHrrrHourlyPartialFailure:
 
     def test_partial_results_returned(self):
         # Return a value for even fxx, None for odd
-        def _side_effect(var, lat, lon, fxx=0, db=None):
+        def _side_effect(var, lat, lon, fxx=0, db=None, **kwargs):
             return 295.15 if fxx % 2 == 0 else None
 
         with (
