@@ -23,6 +23,7 @@ import pytest
 from src.data.gefs import (
     GEFS_MEMBERS,
     GEFSMemberForecast,
+    _member_label,
     fetch_gefs_ensemble,
 )
 
@@ -44,15 +45,31 @@ class TestGEFSMembers:
     def test_31_members_total(self):
         assert len(GEFS_MEMBERS) == 31
 
-    def test_control_member_is_first(self):
-        assert GEFS_MEMBERS[0] == "gec00"
+    def test_control_member_is_int_zero(self):
+        """herbie 2025.12.0 requires integer members; control is 0."""
+        assert GEFS_MEMBERS[0] == 0
 
-    def test_perturbed_members_gep01_to_gep30(self):
-        expected = [f"gep{i:02d}" for i in range(1, 31)]
-        assert GEFS_MEMBERS[1:] == expected
+    def test_perturbed_members_are_ints_1_to_30(self):
+        assert GEFS_MEMBERS[1:] == list(range(1, 31))
 
     def test_all_members_unique(self):
         assert len(set(GEFS_MEMBERS)) == 31
+
+    def test_all_members_are_ints(self):
+        assert all(isinstance(m, int) for m in GEFS_MEMBERS)
+
+
+class TestMemberLabel:
+    def test_control_label(self):
+        assert _member_label(0) == "gec00"
+
+    def test_perturbed_labels(self):
+        assert _member_label(1) == "gep01"
+        assert _member_label(10) == "gep10"
+        assert _member_label(30) == "gep30"
+
+    def test_all_labels_are_strings(self):
+        assert all(isinstance(_member_label(i), str) for i in range(31))
 
 
 # ---------------------------------------------------------------------------
@@ -140,13 +157,15 @@ class TestFetchGefsDistinctMemberKwargs:
         ):
             fetch_gefs_ensemble(DENVER_LAT, DENVER_LON, "KDEN", fxx=6)
 
+        # member kwarg to _fetch_grib_slice is the string label (cache key)
         called_members = [c.kwargs["member"] for c in mock_fetch.call_args_list]
         assert len(set(called_members)) == 31, (
             f"Expected 31 distinct member kwargs; got {len(set(called_members))}: "
             f"{sorted(set(called_members))}"
         )
 
-    def test_member_kwargs_match_GEFS_MEMBERS(self, tmp_path):
+    def test_member_kwargs_are_string_labels(self, tmp_path):
+        """_fetch_grib_slice receives string labels (e.g. 'gec00') for cache keys."""
         fake_path = tmp_path / "fake.grib2"
         fake_path.write_bytes(b"fake")
 
@@ -157,8 +176,30 @@ class TestFetchGefsDistinctMemberKwargs:
         ):
             fetch_gefs_ensemble(DENVER_LAT, DENVER_LON, fxx=6)
 
-        called_members = sorted(c.kwargs["member"] for c in mock_fetch.call_args_list)
-        assert called_members == sorted(GEFS_MEMBERS)
+        called_members = [c.kwargs["member"] for c in mock_fetch.call_args_list]
+        assert all(isinstance(m, str) for m in called_members), (
+            "member kwarg to _fetch_grib_slice must be a string label"
+        )
+        expected_labels = sorted(_member_label(i) for i in GEFS_MEMBERS)
+        assert sorted(called_members) == expected_labels
+
+    def test_herbie_member_kwargs_are_ints(self, tmp_path):
+        """herbie_member kwarg passed to _fetch_grib_slice must be an int."""
+        fake_path = tmp_path / "fake.grib2"
+        fake_path.write_bytes(b"fake")
+
+        with (
+            patch("src.data.grib_cache._resolve_latest_cycle", return_value=CYCLE_DT),
+            patch("src.data.grib_cache._fetch_grib_slice", return_value=fake_path) as mock_fetch,
+            patch("src.data.grib_cache._read_grib_nearest", return_value=SUMMER_K),
+        ):
+            fetch_gefs_ensemble(DENVER_LAT, DENVER_LON, fxx=6)
+
+        herbie_members = [c.kwargs["herbie_member"] for c in mock_fetch.call_args_list]
+        assert all(isinstance(m, int) for m in herbie_members), (
+            "herbie_member kwarg must be int for herbie 2025.12.0 GEFS"
+        )
+        assert sorted(herbie_members) == list(range(31))
 
 
 # ---------------------------------------------------------------------------
@@ -179,7 +220,8 @@ class TestFetchGefsHappyPath:
 
         assert len(result) == 31
 
-    def test_result_members_match_GEFS_MEMBERS(self, tmp_path):
+    def test_result_members_are_string_labels(self, tmp_path):
+        """GEFSMemberForecast.member must be human-readable string labels."""
         fake_path = tmp_path / "fake.grib2"
         fake_path.write_bytes(b"fake")
 
@@ -190,7 +232,11 @@ class TestFetchGefsHappyPath:
         ):
             result = fetch_gefs_ensemble(DENVER_LAT, DENVER_LON, fxx=6)
 
-        assert sorted(r.member for r in result) == sorted(GEFS_MEMBERS)
+        result_members = sorted(r.member for r in result)
+        expected_labels = sorted(_member_label(i) for i in GEFS_MEMBERS)
+        assert result_members == expected_labels
+        # Spot-check: control member label
+        assert "gec00" in result_members
 
     def test_temp_k_preserved(self, tmp_path):
         fake_path = tmp_path / "fake.grib2"
@@ -255,7 +301,8 @@ class TestFetchGefsPartialFailures:
         fake_path.write_bytes(b"fake")
         call_count = {"n": 0}
 
-        def selective_fetch(model, var, cycle_dt, fxx, cache_dir, ttl_hours, member=None):
+        def selective_fetch(model, var, cycle_dt, fxx, cache_dir, ttl_hours,
+                            member=None, herbie_member=None):
             call_count["n"] += 1
             return fake_path if call_count["n"] % 2 == 0 else None
 
@@ -306,3 +353,77 @@ class TestGribCacheSupportedVars:
         from src.data.grib_cache import SUPPORTED_VARS
         assert "TMP_2m" in SUPPORTED_VARS
         assert "DPT_2m" in SUPPORTED_VARS
+
+
+# ---------------------------------------------------------------------------
+# Bug #500 — _resolve_latest_cycle passes member=0 (int) for GEFS
+# ---------------------------------------------------------------------------
+
+class TestResolveLatestCycleGefsMemberInt:
+    """_resolve_latest_cycle must pass member=0 to Herbie when model='gefs'.
+
+    Without this, herbie 2025.12.0 raises AttributeError on a memberless
+    GEFS Herbie object, causing the resolver to always return None.
+    """
+
+    def _herbie_sys_patch(self, MockHerbieClass):
+        """Context manager that injects MockHerbieClass into sys.modules['herbie']."""
+        import sys
+        import types
+        fake_module = types.ModuleType("herbie")
+        fake_module.Herbie = MockHerbieClass
+        return patch.dict(sys.modules, {"herbie": fake_module})
+
+    def test_herbie_called_with_member_zero_for_gefs(self):
+        from unittest.mock import MagicMock
+        from src.data.grib_cache import _resolve_latest_cycle
+
+        MockHerbie = MagicMock()
+        instance = MagicMock()
+        instance.grib = "s3://fake/path.grib2"
+        MockHerbie.return_value = instance
+
+        with self._herbie_sys_patch(MockHerbie):
+            _resolve_latest_cycle("gefs", fxx=6)
+
+        for c in MockHerbie.call_args_list:
+            assert c.kwargs.get("member") == 0, (
+                f"Expected member=0 (int) in Herbie kwargs for GEFS; got: {c.kwargs}"
+            )
+
+    def test_herbie_member_is_int_not_string(self):
+        """member kwarg forwarded to Herbie resolver must be int, not str."""
+        from unittest.mock import MagicMock
+        from src.data.grib_cache import _resolve_latest_cycle
+
+        MockHerbie = MagicMock()
+        instance = MagicMock()
+        instance.grib = "s3://fake/path.grib2"
+        MockHerbie.return_value = instance
+
+        with self._herbie_sys_patch(MockHerbie):
+            _resolve_latest_cycle("gefs")
+
+        for c in MockHerbie.call_args_list:
+            member_val = c.kwargs.get("member")
+            assert isinstance(member_val, int), (
+                f"member kwarg to Herbie must be int for GEFS; got {type(member_val)}"
+            )
+
+    def test_non_gefs_models_do_not_pass_member(self):
+        """Non-GEFS models must NOT have member injected."""
+        from unittest.mock import MagicMock
+        from src.data.grib_cache import _resolve_latest_cycle
+
+        MockHerbie = MagicMock()
+        instance = MagicMock()
+        instance.grib = "s3://fake/path.grib2"
+        MockHerbie.return_value = instance
+
+        with self._herbie_sys_patch(MockHerbie):
+            _resolve_latest_cycle("hrrr")
+
+        for c in MockHerbie.call_args_list:
+            assert "member" not in c.kwargs, (
+                f"Non-GEFS model should not have member kwarg; got: {c.kwargs}"
+            )

@@ -277,6 +277,9 @@ def fetch_nbm_daily_high(
         log.info("[nbm] station %s outside CONUS bounds — skipping", station_label)
         return None
 
+    if isinstance(target_date, str):
+        target_date = date.fromisoformat(target_date)
+
     if target_date is None:
         target_date = date.today() + timedelta(days=1)
 

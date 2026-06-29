@@ -1,8 +1,8 @@
 """GEFS (Global Ensemble Forecast System) 2-m temperature ingestion.
 
 Fetches 2-m temperature forecasts from all 31 GEFS ensemble members
-(gec00 — control, gep01 … gep30 — perturbed) for the forecast hours
-defined by :data:`_FORECAST_HOURS`.
+(gec00 — control, gep01 … gep30 — perturbed) at a caller-supplied
+forecast hour (``fxx``, default 6).
 
 All GRIB2 I/O is delegated to :mod:`src.data.grib_cache`; this module
 never imports herbie directly.
@@ -33,11 +33,23 @@ log = logging.getLogger(__name__)
 # GEFS member identifiers
 # ---------------------------------------------------------------------------
 
-#: Control member + 30 perturbed members (31 total).
-GEFS_MEMBERS: list[str] = ["gec00"] + [f"gep{i:02d}" for i in range(1, 31)]
+#: Control member (0) + 30 perturbed members (1–30) as integers.
+#: herbie 2025.12.0 requires integer member identifiers for GEFS.
+GEFS_MEMBERS: list[int] = list(range(0, 31))
 
-# Forecast hours to fetch (F01 … F10 by default; extend as needed).
-_FORECAST_HOURS: list[int] = list(range(1, 11))
+
+def _member_label(i: int) -> str:
+    """Return the human-readable GEFS member label for integer member *i*.
+
+    Args:
+        i: Integer member index (0 = control, 1–30 = perturbed).
+
+    Returns:
+        ``"gec00"`` for the control member, ``"gep{i:02d}"`` for perturbed.
+    """
+    if i == 0:
+        return "gec00"
+    return f"gep{i:02d}"
 
 _MODEL = "gefs"
 
@@ -113,7 +125,10 @@ def fetch_gefs_ensemble(
              cycle_dt.strftime("%Y-%m-%dT%HZ"), len(GEFS_MEMBERS), label, fxx)
 
     results: list[GEFSMemberForecast] = []
-    for member in GEFS_MEMBERS:
+    for member_int in GEFS_MEMBERS:
+        label_str = _member_label(member_int)
+        # Pass the string label as member so grib_cache builds a unique cache key
+        # per member.  The integer is forwarded to herbie via a separate kwarg.
         path = _grib_cache._fetch_grib_slice(
             model=_MODEL,
             var="TMP_2m",
@@ -121,23 +136,24 @@ def fetch_gefs_ensemble(
             fxx=fxx,
             cache_dir=cache_dir,
             ttl_hours=ttl_hours,
-            member=member,
+            member=label_str,
+            herbie_member=member_int,
         )
         if path is None:
-            log.debug("[gefs] member=%s fxx=%02d unavailable for %s", member, fxx, label)
+            log.debug("[gefs] member=%s fxx=%02d unavailable for %s", label_str, fxx, label)
             continue
 
         try:
             temp_k = _grib_cache._read_grib_nearest(path, lat, lon)
         except Exception as exc:
-            log.warning("[gefs] cfgrib read failed for member=%s: %s", member, exc)
+            log.warning("[gefs] cfgrib read failed for member=%s: %s", label_str, exc)
             continue
 
         if temp_k is None:
             continue
 
         valid_time = cycle_dt + timedelta(hours=fxx)
-        results.append(GEFSMemberForecast(member=member, ts_utc=valid_time, temp_k=temp_k))
+        results.append(GEFSMemberForecast(member=label_str, ts_utc=valid_time, temp_k=temp_k))
 
     log.info("[gefs] %s — retrieved %d/%d members", label, len(results), len(GEFS_MEMBERS))
     return results

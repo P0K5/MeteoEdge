@@ -86,7 +86,7 @@ def fetch_hrrr_hourly(
     from src.data import grib_cache as _grib_cache
 
     # Resolve the latest available cycle (grib_cache handles fallback internally).
-    cycle_dt = _grib_cache._resolve_latest_cycle("hrrr")
+    cycle_dt = _grib_cache._resolve_latest_cycle("hrrr", fxx=max(_FORECAST_HOURS))
     if cycle_dt is None:
         log.warning("[hrrr] no available HRRR cycle found for %s", label)
         return []

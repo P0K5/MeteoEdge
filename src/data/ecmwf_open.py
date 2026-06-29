@@ -37,7 +37,7 @@ log = logging.getLogger(__name__)
 _ECMWF_ATTRIBUTION = "ECMWF Open Data, CC-BY-4.0"
 _ECMWF_CYCLE_STEP_H = 12  # HRES publishes at 00Z and 12Z
 _ECMWF_MAX_LOOKBACK_CYCLES = 2  # look back up to 24 hours (2 cycles)
-_ECMWF_FORECAST_HOURS = list(range(1, 25))  # F01 … F24
+_ECMWF_FORECAST_HOURS = list(range(0, 25, 3))  # 3-hourly: F00, F03, F06, …, F24
 
 # ECMWF 2-m temperature search string for herbie / IDX sidecar
 _ECMWF_2T_MATCHER = ":2t:"  # matches "2 metre temperature" in ECMWF GRIB index
@@ -94,14 +94,14 @@ def _floor_to_ecmwf_cycle(dt: datetime) -> datetime:
 # ---------------------------------------------------------------------------
 
 
-def _resolve_ecmwf_cycle(fxx: int = 1) -> Optional[datetime]:
+def _resolve_ecmwf_cycle(fxx: int = 3) -> Optional[datetime]:
     """Return the most recent available ECMWF HRES cycle datetime (UTC).
 
     Steps back in 12-hour increments up to _ECMWF_MAX_LOOKBACK_CYCLES times,
     checking herbie IDX availability for each candidate.
 
     Args:
-        fxx: Forecast hour to test availability against (default 1).
+        fxx: Forecast hour to test availability against (default 3).
 
     Returns:
         UTC datetime of the latest available ECMWF cycle, or None if not found.
@@ -233,7 +233,7 @@ def fetch_ecmwf_hourly(
     label = station or f"({lat:.4f},{lon:.4f})"
     log.info("[ecmwf] data from %s", _ECMWF_ATTRIBUTION)
 
-    cycle_dt = _resolve_ecmwf_cycle(fxx=1)
+    cycle_dt = _resolve_ecmwf_cycle(fxx=3)
     if cycle_dt is None:
         log.warning("[ecmwf] no available ECMWF cycle found for %s", label)
         return []
@@ -289,6 +289,9 @@ def fetch_ecmwf_daily_high(
     station_label = station or f"({lat:.4f},{lon:.4f})"
     log.info("[ecmwf] data from %s", _ECMWF_ATTRIBUTION)
 
+    if isinstance(target_date, str):
+        target_date = date.fromisoformat(target_date)
+
     if target_date is None:
         target_date = (datetime.now(timezone.utc) + timedelta(days=1)).date()
 
@@ -296,7 +299,7 @@ def fetch_ecmwf_daily_high(
     cache_dir = _get_cache_dir()
     cache_dir.mkdir(parents=True, exist_ok=True)
 
-    cycle_dt = _resolve_ecmwf_cycle(fxx=1)
+    cycle_dt = _resolve_ecmwf_cycle(fxx=3)
     if cycle_dt is None:
         log.warning("[ecmwf] no ECMWF cycle available for station %s", station_label)
         return None
@@ -329,7 +332,7 @@ def fetch_ecmwf_daily_high(
     target_end = target_start + timedelta(days=1)
 
     temps: list[float] = []
-    for fxx in range(1, 91):  # HRES Open Data publishes up to ~90h
+    for fxx in range(0, 91, 3):  # HRES Open Data publishes 3-hourly steps up to ~90h
         valid_dt = cycle_dt + timedelta(hours=fxx)
         if valid_dt < target_start:
             continue

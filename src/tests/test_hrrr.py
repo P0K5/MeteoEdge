@@ -229,6 +229,38 @@ class TestFetchHrrrHourlyOutOfConus:
 # fetch_hrrr_hourly — partial fetch failures
 # ---------------------------------------------------------------------------
 
+class TestFetchHrrrResolverAtMaxFxx:
+    """fetch_hrrr_hourly must resolve the cycle at max(_FORECAST_HOURS) = 18.
+
+    Bug #500: resolving at fxx=0 accepted cycles whose forecast hours were
+    not yet published, causing all 18 fetches to fail.
+    """
+
+    def test_resolver_called_with_fxx_18(self):
+        from src.data.hrrr import _FORECAST_HOURS
+
+        with (
+            patch("src.data.grib_cache._resolve_latest_cycle", return_value=None) as mock_resolve,
+        ):
+            fetch_hrrr_hourly(DENVER_LAT, DENVER_LON)
+
+        mock_resolve.assert_called_once_with("hrrr", fxx=max(_FORECAST_HOURS))
+
+    def test_resolver_fxx_equals_18(self):
+        from src.data.hrrr import _FORECAST_HOURS
+        assert max(_FORECAST_HOURS) == 18
+
+    def test_resolver_not_called_with_fxx_zero(self):
+        """Ensure fxx=0 (the old default) is no longer used."""
+        with (
+            patch("src.data.grib_cache._resolve_latest_cycle", return_value=None) as mock_resolve,
+        ):
+            fetch_hrrr_hourly(DENVER_LAT, DENVER_LON)
+
+        call_kwargs = mock_resolve.call_args.kwargs
+        assert call_kwargs.get("fxx") != 0, "Resolver must not use fxx=0 for HRRR"
+
+
 class TestFetchHrrrHourlyPartialFailure:
     """Some forecast hours fail; only successful ones are returned."""
 
