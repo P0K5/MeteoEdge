@@ -195,10 +195,12 @@ def _fetch_ecmwf_2t(cycle_dt: datetime, fxx: int, lat: float, lon: float) -> Opt
 # ---------------------------------------------------------------------------
 
 
-def _cache_path_ecmwf_daily(cache_dir: Path, cycle_dt: datetime, target_date: date) -> Path:
+def _cache_path_ecmwf_daily(
+    cache_dir: Path, cycle_dt: datetime, target_date: date, lat: float, lon: float
+) -> Path:
     ts = cycle_dt.strftime("%Y%m%dT%HZ")
     date_str = target_date.strftime("%Y%m%d")
-    return cache_dir / f"ecmwf_2t_daily_{ts}_{date_str}.txt"
+    return cache_dir / f"ecmwf_2t_daily_{ts}_{date_str}_{lat:.4f}_{lon:.4f}.txt"
 
 
 def _is_cache_valid(path: Path, ttl_hours: float) -> bool:
@@ -309,8 +311,8 @@ def fetch_ecmwf_daily_high(
         log.warning("[ecmwf] no ECMWF cycle available for station %s", station_label)
         return None
 
-    # Check on-disk cache (keyed per cycle + target_date)
-    cache_file = _cache_path_ecmwf_daily(cache_dir, cycle_dt, target_date)
+    # Check on-disk cache (keyed per cycle + target_date + lat/lon)
+    cache_file = _cache_path_ecmwf_daily(cache_dir, cycle_dt, target_date, lat, lon)
     if _is_cache_valid(cache_file, ttl_hours):
         try:
             raw = float(cache_file.read_text().strip())

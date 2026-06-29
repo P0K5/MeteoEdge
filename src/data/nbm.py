@@ -89,11 +89,13 @@ def _get_cache_dir() -> Path:
     return Path(os.getenv("GRIB_CACHE_DIR", ".grib_cache"))
 
 
-def _cache_path_nbm(cache_dir: Path, cycle_dt: datetime, target_date: date) -> Path:
-    """Return the on-disk cache path for a (cycle, target_date) pair."""
+def _cache_path_nbm(
+    cache_dir: Path, cycle_dt: datetime, target_date: date, lat: float, lon: float
+) -> Path:
+    """Return the on-disk cache path for a (cycle, target_date, lat, lon) tuple."""
     ts = cycle_dt.strftime("%Y%m%dT%HZ")
     date_str = target_date.strftime("%Y%m%d")
-    return cache_dir / f"nbm_TMAX_{ts}_{date_str}.txt"
+    return cache_dir / f"nbm_TMAX_{ts}_{date_str}_{lat:.4f}_{lon:.4f}.txt"
 
 
 def _is_cache_valid(path: Path, ttl_hours: float) -> bool:
@@ -298,8 +300,8 @@ def fetch_nbm_daily_high(
         log.warning("[nbm] no NBM cycle available for station %s", station_label)
         return None
 
-    # Check on-disk cache (keyed per cycle + target_date)
-    cache_file = _cache_path_nbm(cache_dir, cycle_dt, target_date)
+    # Check on-disk cache (keyed per cycle + target_date + lat/lon)
+    cache_file = _cache_path_nbm(cache_dir, cycle_dt, target_date, lat, lon)
     if _is_cache_valid(cache_file, ttl_hours):
         try:
             raw = float(cache_file.read_text().strip())

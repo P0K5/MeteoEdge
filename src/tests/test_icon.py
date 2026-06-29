@@ -123,6 +123,7 @@ class TestIsEuDomain:
 # fetch_icon_hourly — happy path (European station)
 # ---------------------------------------------------------------------------
 
+@pytest.mark.skip(reason="ICON ingestion disabled — herbie 2025.x has no template; re-enable when #508 (direct DWD fetch) is implemented")
 class TestFetchIconHourlyHappyPath:
     """All 24 forecast hours return a valid temperature."""
 
@@ -279,6 +280,7 @@ class TestFetchIconHourlyMissingCycle:
 # fetch_icon_hourly — partial fetch failures
 # ---------------------------------------------------------------------------
 
+@pytest.mark.skip(reason="ICON ingestion disabled — herbie 2025.x has no template; re-enable when #508 (direct DWD fetch) is implemented")
 class TestFetchIconHourlyPartialFailure:
     """Some forecast hours fail; only successful ones are returned."""
 
