@@ -1,3 +1,11 @@
+# High-cadence feeds (AMOS, MSS, JMA) take priority over METAR where available.
+# METAR-only entries (cadence_min: 30) enable intraday bias correction for all
+# remaining stations via compute_correction() in src/model/intraday_correction.py.
+# Without an entry here, compute_correction() returns None immediately and no
+# delta_f samples ever accumulate for that city.
+
+# --- High-cadence feeds ---
+
 Tokyo:
   - source: jma_ameidas
     station: Tokyo
@@ -35,5 +43,175 @@ Singapore:
     is_official: true
   - source: metar
     station: WSSS
+    cadence_min: 30
+    is_official: true
+
+# --- US stations (METAR only) ---
+
+Chicago:
+  - source: metar
+    station: KORD
+    cadence_min: 30
+    is_official: true
+
+Miami:
+  - source: metar
+    station: KMIA
+    cadence_min: 30
+    is_official: true
+
+Los Angeles:
+  - source: metar
+    station: KLAX
+    cadence_min: 30
+    is_official: true
+
+Atlanta:
+  - source: metar
+    station: KATL
+    cadence_min: 30
+    is_official: true
+
+Houston:
+  - source: metar
+    station: KHOU
+    cadence_min: 30
+    is_official: true
+
+# --- International (METAR only) ---
+
+Kuala Lumpur:
+  - source: metar
+    station: WMKK
+    cadence_min: 30
+    is_official: true
+
+Shenzhen:
+  - source: metar
+    station: ZGSZ
+    cadence_min: 30
+    is_official: true
+
+Panama City:
+  - source: metar
+    station: MPMG
+    cadence_min: 30
+    is_official: true
+
+# Europe
+
+London:
+  - source: metar
+    station: EGLC
+    cadence_min: 30
+    is_official: true
+
+Paris:
+  - source: metar
+    station: LFPB
+    cadence_min: 30
+    is_official: true
+
+Milan:
+  - source: metar
+    station: LIMC
+    cadence_min: 30
+    is_official: true
+
+Helsinki:
+  - source: metar
+    station: EFHK
+    cadence_min: 30
+    is_official: true
+
+Warsaw:
+  - source: metar
+    station: EPWA
+    cadence_min: 30
+    is_official: true
+
+Istanbul:
+  - source: metar
+    station: LTFM
+    cadence_min: 30
+    is_official: true
+
+Ankara:
+  - source: metar
+    station: LTAC
+    cadence_min: 30
+    is_official: true
+
+# Asia / Pacific
+
+Taipei:
+  - source: metar
+    station: RCSS
+    cadence_min: 30
+    is_official: true
+
+Shanghai:
+  - source: metar
+    station: ZSPD
+    cadence_min: 30
+    is_official: true
+
+Guangzhou:
+  - source: metar
+    station: ZGGG
+    cadence_min: 30
+    is_official: true
+
+Wuhan:
+  - source: metar
+    station: ZHHH
+    cadence_min: 30
+    is_official: true
+
+Jinan:
+  - source: metar
+    station: ZSJN
+    cadence_min: 30
+    is_official: true
+
+Zhengzhou:
+  - source: metar
+    station: ZHCC
+    cadence_min: 30
+    is_official: true
+
+Manila:
+  - source: metar
+    station: RPLL
+    cadence_min: 30
+    is_official: true
+
+# MENA
+
+Tel Aviv:
+  - source: metar
+    station: LLBG
+    cadence_min: 30
+    is_official: true
+
+Jeddah:
+  - source: metar
+    station: OEJN
+    cadence_min: 30
+    is_official: true
+
+# Latin America
+
+Sao Paulo:
+  - source: metar
+    station: SBGR
+    cadence_min: 30
+    is_official: true
+
+# Oceania
+
+Wellington:
+  - source: metar
+    station: NZWN
     cadence_min: 30
     is_official: true
