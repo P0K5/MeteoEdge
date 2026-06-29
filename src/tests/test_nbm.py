@@ -264,12 +264,6 @@ class TestStrDateCoercion:
         """Result from string and date-object target_date must be equivalent."""
         from datetime import date as _date
         td = _date(2026, 7, 1)
-        common_patches = (
-            _make_mock_cycle_resolver(CYCLE_DT),
-            patch("src.data.nbm._get_cache_dir", return_value=tmp_path),
-            patch("src.data.nbm._get_cache_ttl_hours", return_value=6.0),
-            patch("src.data.nbm._fetch_tmax_herbie", return_value=TMAX_K),
-        )
         with (
             _make_mock_cycle_resolver(CYCLE_DT),
             patch("src.data.nbm._get_cache_dir", return_value=tmp_path),

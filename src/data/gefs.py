@@ -1,8 +1,8 @@
 """GEFS (Global Ensemble Forecast System) 2-m temperature ingestion.
 
 Fetches 2-m temperature forecasts from all 31 GEFS ensemble members
-(gec00 — control, gep01 … gep30 — perturbed) for the forecast hours
-defined by :data:`_FORECAST_HOURS`.
+(gec00 — control, gep01 … gep30 — perturbed) at a caller-supplied
+forecast hour (``fxx``, default 6).
 
 All GRIB2 I/O is delegated to :mod:`src.data.grib_cache`; this module
 never imports herbie directly.
@@ -50,9 +50,6 @@ def _member_label(i: int) -> str:
     if i == 0:
         return "gec00"
     return f"gep{i:02d}"
-
-# Forecast hours to fetch (F01 … F10 by default; extend as needed).
-_FORECAST_HOURS: list[int] = list(range(1, 11))
 
 _MODEL = "gefs"
 
