@@ -121,20 +121,28 @@ class TestGribNoneStepBack:
         assert call_count >= 2
 
     def test_icon_steps_back_on_grib_none(self):
+        # _resolve_icon_cycle now uses httpx.head (not herbie); first HEAD
+        # returns 404 (not published), second returns 200 (published).
+        import sys
+        import types
         from src.data.icon import _resolve_icon_cycle
 
         call_count = 0
 
-        def fake_herbie(*args, **kwargs):
+        def fake_head(url, **kwargs):
             nonlocal call_count
             call_count += 1
-            return _unpublished() if call_count == 1 else _published()
+            resp = MagicMock()
+            resp.status_code = 404 if call_count == 1 else 200
+            return resp
 
-        sys.modules["herbie"] = _make_herbie_module(fake_herbie)
+        fake_httpx = types.ModuleType("httpx")
+        fake_httpx.head = fake_head
+        sys.modules["httpx"] = fake_httpx
         try:
-            result = _resolve_icon_cycle(fxx=1)
+            result = _resolve_icon_cycle()
         finally:
-            sys.modules.pop("herbie", None)
+            sys.modules.pop("httpx", None)
 
         assert result is not None
         assert result.tzinfo is None
