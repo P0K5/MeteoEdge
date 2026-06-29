@@ -8,12 +8,15 @@ Trader software. See `/docs` for specifications and `/docs/design` for design sp
 
 This repo is developed by a multi-agent team. Agent definitions live in `/agents/`:
 
-| Role | Agent file | Model | Spawn `model` param | Responsibility |
+| Role | Agent file | Model tier | Spawn `model` param | Responsibility |
 |---|---|---|---|---|
-| Tech Lead PM | `agents/project-manager.md` | Sonnet | `"sonnet"` | Architecture, planning, issue creation, delegation, code review, progress tracking |
-| Designer | `agents/designer.md` | Sonnet | `"sonnet"` | UX/UI direction, design specs, frontend PR review |
-| Mid Developer | `agents/mid-dev.md` | Sonnet | `"sonnet"` | Moderate-complexity implementation |
-| Junior Developer | `agents/junior-dev.md` | Haiku | `"haiku"` | Simple, well-defined implementation |
+| Tech Lead PM | `agents/project-manager.md` | Strong | `{{AGENT_MODEL_STRONG}}` | Architecture, planning, issue creation, delegation, code review, progress tracking |
+| Designer | `agents/designer.md` | Strong | `{{AGENT_MODEL_STRONG}}` | UX/UI direction, design specs, frontend PR review |
+| Mid Developer | `agents/mid-dev.md` | Strong | `{{AGENT_MODEL_STRONG}}` | Moderate-complexity implementation |
+| Junior Developer | `agents/junior-dev.md` | Light | `{{AGENT_MODEL_LIGHT}}` | Simple, well-defined implementation |
+
+> `{{AGENT_MODEL_STRONG}}` and `{{AGENT_MODEL_LIGHT}}` resolve from `.claude/model-config.env` at session start (see **Session init** below).
+> On Anthropic: strong=`sonnet`, light=`haiku`. On NVIDIA NIM: strong=`nvidia_nim/z-ai/glm5`, light=`nvidia_nim/mistralai/mistral-nemo-12b-instruct`.
 
 ### Model enforcement
 
@@ -21,27 +24,40 @@ When spawning subagents via the Agent tool, you **MUST** set the `model` paramet
 
 | Agent | `model` value | Rationale |
 |---|---|---|
-| Tech Lead PM | `"sonnet"` | Strong reasoning for architecture, planning, code review |
-| Designer | `"sonnet"` | Strong UX reasoning, structured spec output |
-| Mid Developer | `"sonnet"` | Handles moderate complexity within patterns |
-| Junior Developer | `"haiku"` | Simple, well-scoped tasks with clear templates |
+| Tech Lead PM | `{{AGENT_MODEL_STRONG}}` | Strong reasoning for architecture, planning, code review |
+| Designer | `{{AGENT_MODEL_STRONG}}` | Strong UX reasoning, structured spec output |
+| Mid Developer | `{{AGENT_MODEL_STRONG}}` | Handles moderate complexity within patterns |
+| Junior Developer | `{{AGENT_MODEL_LIGHT}}` | Simple, well-scoped tasks with clear templates |
 
 **Never spawn an agent without the correct `model` parameter — this is non-negotiable.**
+**Never hardcode model names — always use `{{AGENT_MODEL_STRONG}}` or `{{AGENT_MODEL_LIGHT}}`.**
 
 ---
 
 ## Operating modes
+
+### Session init (ALWAYS — do this before anything else)
+
+Read `.claude/model-config.env` and cache these values in memory:
+
+- `AGENT_MODEL_STRONG` — model for Tech Lead PM, Designer, and Mid Dev spawns
+- `AGENT_MODEL_LIGHT` — model for Junior Dev spawns
+- `BACKEND` — `"anthropic"` or `"nvidia"` (for context only)
+
+If the file is missing or unreadable, fall back to: `AGENT_MODEL_STRONG=sonnet`, `AGENT_MODEL_LIGHT=haiku`, `BACKEND=anthropic`.
+
+Use these resolved values in **every** Agent tool spawn below. Do not hardcode model names anywhere.
 
 ### Planning mode (multi-session)
 
 Used for project planning, epic definition, and design alignment. Run separate Claude Code sessions:
 
 ```bash
-# Tech Lead PM — receives the spec, creates epics, defines architecture (Sonnet)
-claude --model claude-sonnet-4-6 --system-prompt "$(cat agents/project-manager.md)"
+# Tech Lead PM — receives the spec, creates epics, defines architecture (Strong model)
+claude --model {{AGENT_MODEL_STRONG}} --system-prompt "$(cat agents/project-manager.md)"
 
-# Designer — produces design specs, reviews UX direction (Sonnet)
-claude --model claude-sonnet-4-6 --system-prompt "$(cat agents/designer.md)"
+# Designer — produces design specs, reviews UX direction (Strong model)
+claude --model {{AGENT_MODEL_STRONG}} --system-prompt "$(cat agents/designer.md)"
 ```
 
 Coordination happens via GitHub issues and the project board. The user oversees from GitHub.
@@ -52,19 +68,19 @@ Used for epic-by-epic development. Launch a single Claude Code session with this
 
 > "Execute epic #N"
 
-You (the **Tech Lead PM**, running on Sonnet) will:
+You (the **Tech Lead PM**) will:
 
 1. **Read session context** — Before doing anything else, read `.claude/session-context.env`. This file contains pre-resolved GitHub Project IDs (project ID, Status field ID, all option IDs, and every issue's board item ID). Parse and cache these values in memory. You will inject them into every agent spawn prompt — agents must **never** run GraphQL lookups to find project, field, or item IDs. If the file has empty values, run `bash scripts/bootstrap_session.sh` before proceeding.
 2. **Read** the epic, all linked design specs, requirements, and context. Also read `agents/project-manager.md` for your full role definition.
-3. **Spawn a Designer agent** (`model: "sonnet"`) to review the epic's design spec and confirm readiness. The Designer remains available throughout the epic for:
+3. **Spawn a Designer agent** (`model: {{AGENT_MODEL_STRONG}}`) to review the epic's design spec and confirm readiness. The Designer remains available throughout the epic for:
    - Answering UX/UI questions from developers
    - Reviewing frontend PRs (mandatory — no frontend PR merge without Designer approval)
    - Validating that implementations match the design spec
 4. **Define the technical strategy** — architecture, implementation approach, risk areas, data/API changes.
 5. **Create GitHub issues** — with acceptance criteria, technical notes, complexity labels. Add all to the project board with status **Ready** (via GraphQL).
 6. **Spawn developer agents** for implementation:
-   - **Mid Developer** (`model: "sonnet"`) for Mid-complexity issues
-   - **Junior Developer** (`model: "haiku"`) for Simple issues
+   - **Mid Developer** (`model: {{AGENT_MODEL_STRONG}}`) for Mid-complexity issues
+   - **Junior Developer** (`model: {{AGENT_MODEL_LIGHT}}`) for Simple issues
    - Complex issues: implement yourself or assign to Mid with extra guidance
 7. **Review all PRs** — You are the technical reviewer. For frontend PRs, also send to the Designer for UX review.
 8. **Track progress** — Keep the GitHub Project board accurate. Update statuses at every transition.
@@ -72,10 +88,10 @@ You (the **Tech Lead PM**, running on Sonnet) will:
 ### Chain of command
 
 ```
-Tech Lead PM (you, Sonnet)
-├── Spawns & consults: Designer (Sonnet)
-├── Spawns & manages: Mid Developer(s) (Sonnet)
-├── Spawns & manages: Junior Developer(s) (Haiku)
+Tech Lead PM (you, {{AGENT_MODEL_STRONG}})
+├── Spawns & consults: Designer ({{AGENT_MODEL_STRONG}})
+├── Spawns & manages: Mid Developer(s) ({{AGENT_MODEL_STRONG}})
+├── Spawns & manages: Junior Developer(s) ({{AGENT_MODEL_LIGHT}})
 └── Reviews: ALL developer PRs
 ```
 
@@ -95,7 +111,7 @@ When spawning agents, use these patterns. **Always include the `model` parameter
 
 ```
 Agent tool:
-  model: "sonnet"
+  model: "{{AGENT_MODEL_STRONG}}"
   name: "designer"
   prompt: |
     Read and follow agents/designer.md strictly. You are the Designer for epic #N.
@@ -116,7 +132,7 @@ Agent tool:
 
 ```
 Agent tool:
-  model: "sonnet"
+  model: "{{AGENT_MODEL_STRONG}}"
   name: "mid-dev-[issue-number]"
   prompt: |
     Read and follow agents/mid-dev.md strictly. You are a Mid Developer.
@@ -159,7 +175,7 @@ Agent tool:
 
 ```
 Agent tool:
-  model: "haiku"
+  model: "{{AGENT_MODEL_LIGHT}}"
   name: "junior-dev-[issue-number]"
   prompt: |
     Read and follow agents/junior-dev.md strictly. You are a Junior Developer.
