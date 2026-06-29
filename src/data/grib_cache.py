@@ -370,9 +370,13 @@ def _read_grib_nearest(path: Path, lat: float, lon: float) -> Optional[float]:
     if lat_name and lon_name:
         lats = ds.coords[lat_name].values
         lons = ds.coords[lon_name].values
-        lon_query = lon % 360
+        # Detect longitude convention at runtime: HRRR/GEFS/NBM use 0…360;
+        # ICON-EU (DWD) and any other –180…+180 grid must NOT have lon % 360
+        # applied, or negative-longitude stations (e.g. EGLC at –0.05°) clamp
+        # to 180°E and return Pacific temperatures.
+        lon_query = lon % 360 if lons.min() >= 0 else lon
         if lats.ndim == 1:
-            # 1D regular grid (GEFS, NBM, ECMWF-open): use xarray nearest selection
+            # 1D regular grid (GEFS, NBM, ICON-EU, ECMWF-open): use xarray nearest selection
             val = da.sel({lat_name: lat, lon_name: lon_query}, method="nearest")
             return float(val.values)
         else:
