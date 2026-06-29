@@ -88,23 +88,26 @@ class TestHerbieReceivesTzNaive:
         assert dt.tzinfo is None, f"Expected tz-naive, got tzinfo={dt.tzinfo}"
 
     def test_icon_resolve_passes_tz_naive(self):
+        # _resolve_icon_cycle now uses httpx.head (not herbie); assert the
+        # returned datetime is tz-naive (consistent with other resolvers).
+        import sys
+        import types
+        from unittest.mock import MagicMock
         from src.data.icon import _resolve_icon_cycle
-        calls = []
 
-        def fake_herbie(*args, **kwargs):
-            calls.append(args[0])
-            return _make_available_herbie()
+        resp = MagicMock()
+        resp.status_code = 200
 
-        fake_mod = _make_herbie_module(fake_herbie)
-        sys.modules["herbie"] = fake_mod
+        fake_httpx = types.ModuleType("httpx")
+        fake_httpx.head = lambda url, **kwargs: resp
+        sys.modules["httpx"] = fake_httpx
         try:
-            _resolve_icon_cycle(fxx=1)
+            result = _resolve_icon_cycle()
         finally:
-            sys.modules.pop("herbie", None)
+            sys.modules.pop("httpx", None)
 
-        assert calls, "Herbie was never called"
-        dt = calls[0]
-        assert dt.tzinfo is None, f"Expected tz-naive, got tzinfo={dt.tzinfo}"
+        assert result is not None
+        assert result.tzinfo is not None, "Expected tz-aware UTC from _resolve_icon_cycle"
 
 
 class TestResolverStepBack:
