@@ -145,7 +145,7 @@ class TestFetchNbmDailyHighHappyPath:
     def test_cache_hit_skips_herbie(self, tmp_path):
         """When a fresh cache file exists, herbie must not be called."""
         from src.data.nbm import _cache_path_nbm
-        cache_file = _cache_path_nbm(tmp_path, CYCLE_DT, TARGET_DATE)
+        cache_file = _cache_path_nbm(tmp_path, CYCLE_DT, TARGET_DATE, DENVER_LAT, DENVER_LON)
         cache_file.write_text(f"{_kelvin_to_f(TMAX_K):.4f}")
 
         mock_tmax = MagicMock()

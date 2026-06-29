@@ -136,6 +136,12 @@ def fetch_icon_hourly(
     """
     label = station or f"({lat:.4f},{lon:.4f})"
 
+    # herbie 2025.x has no ICON-EU template; direct DWD fetch not yet implemented.
+    # Return empty so capture_forecasts skips ICON rather than burning time on
+    # cycle-resolution retries that always fail.  Tracked in issue #508.
+    log.warning("[icon] ICON-EU ingestion disabled — herbie 2025.x has no ICON template (see #508)")
+    return []
+
     # EU domain bounds check — ICON-EU does not cover areas outside these bounds.
     if not _is_eu_domain(lat, lon):
         log.debug(
