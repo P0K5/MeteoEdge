@@ -14,6 +14,7 @@ import pytest
 from src.data.ecmwf_open import (
     EcmwfForecast,
     _ECMWF_ATTRIBUTION,
+    _ECMWF_FORECAST_HOURS,
     _kelvin_to_f,
     _resolve_ecmwf_cycle,
     fetch_ecmwf_daily_high,
@@ -65,7 +66,8 @@ class TestFetchEcmwfHourlyHappyPath:
             return kelvin
         return _side_effect
 
-    def test_returns_24_results(self):
+    def test_returns_forecast_hours_count_results(self):
+        """Number of results equals len(_ECMWF_FORECAST_HOURS) (3-hourly steps)."""
         kelvin = 295.15
         with (
             patch(
@@ -79,7 +81,7 @@ class TestFetchEcmwfHourlyHappyPath:
         ):
             results = fetch_ecmwf_hourly(LONDON_LAT, LONDON_LON, station="EGLL")
 
-        assert len(results) == 24
+        assert len(results) == len(_ECMWF_FORECAST_HOURS)
 
     def test_result_type(self):
         kelvin = 295.15
@@ -110,7 +112,7 @@ class TestFetchEcmwfHourlyHappyPath:
             results = fetch_ecmwf_hourly(LONDON_LAT, LONDON_LON)
 
         for i, r in enumerate(results):
-            expected_fxx = i + 1  # fxx=1..24
+            expected_fxx = _ECMWF_FORECAST_HOURS[i]
             expected_ts = CYCLE_DT + timedelta(hours=expected_fxx)
             assert r.ts_utc == expected_ts
 
@@ -125,7 +127,7 @@ class TestFetchEcmwfHourlyHappyPath:
         ):
             results = fetch_ecmwf_hourly(LONDON_LAT, LONDON_LON)
 
-        assert len(results) == 24
+        assert len(results) == len(_ECMWF_FORECAST_HOURS)
         for r in results:
             assert abs(r.temp_f - 32.0) < 1e-6
 
@@ -141,7 +143,7 @@ class TestFetchEcmwfHourlyHappyPath:
         ):
             results = fetch_ecmwf_hourly(TOKYO_LAT, TOKYO_LON, station="RJTT")
 
-        assert len(results) == 24
+        assert len(results) == len(_ECMWF_FORECAST_HOURS)
 
 
 # ---------------------------------------------------------------------------
@@ -309,3 +311,90 @@ class TestAttribution:
             fetch_ecmwf_daily_high(LONDON_LAT, LONDON_LON, target_date=TOMORROW)
 
         assert any("ECMWF Open Data, CC-BY-4.0" in r.message for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# Bug #500 — ECMWF 3-hourly steps + str→date coercion
+# ---------------------------------------------------------------------------
+
+
+class TestEcmwfForecastHours3Hourly:
+    """_ECMWF_FORECAST_HOURS must contain only multiples of 3 (bug #500)."""
+
+    def test_all_forecast_hours_are_multiples_of_3(self):
+        assert all(h % 3 == 0 for h in _ECMWF_FORECAST_HOURS), (
+            f"Non-multiple-of-3 found: {[h for h in _ECMWF_FORECAST_HOURS if h % 3 != 0]}"
+        )
+
+    def test_forecast_hours_start_at_0(self):
+        assert _ECMWF_FORECAST_HOURS[0] == 0
+
+    def test_forecast_hours_end_at_24(self):
+        assert _ECMWF_FORECAST_HOURS[-1] == 24
+
+    def test_forecast_hours_step_is_3(self):
+        for a, b in zip(_ECMWF_FORECAST_HOURS, _ECMWF_FORECAST_HOURS[1:]):
+            assert b - a == 3, f"Step between {a} and {b} is not 3"
+
+
+class TestEcmwfResolverCalledWithFxx3:
+    """fetch_ecmwf_hourly and fetch_ecmwf_daily_high must call resolver with fxx=3."""
+
+    def test_hourly_resolver_called_with_fxx_3(self):
+        with (
+            patch("src.data.ecmwf_open._resolve_ecmwf_cycle", return_value=None) as mock_resolve,
+        ):
+            fetch_ecmwf_hourly(LONDON_LAT, LONDON_LON)
+
+        mock_resolve.assert_called_once_with(fxx=3)
+
+    def test_daily_high_resolver_called_with_fxx_3(self, tmp_path):
+        with (
+            patch("src.data.ecmwf_open._resolve_ecmwf_cycle", return_value=None) as mock_resolve,
+            patch("src.data.ecmwf_open._get_cache_dir", return_value=tmp_path),
+        ):
+            fetch_ecmwf_daily_high(LONDON_LAT, LONDON_LON, target_date=TOMORROW)
+
+        mock_resolve.assert_called_once_with(fxx=3)
+
+
+class TestEcmwfStrDateCoercion:
+    """fetch_ecmwf_daily_high must accept target_date as an ISO string (bug #500)."""
+
+    def _make_2t_side_effect(self, kelvin: float):
+        def _side_effect(cycle_dt, fxx, lat, lon):
+            return kelvin
+        return _side_effect
+
+    def test_string_target_date_does_not_raise(self, tmp_path):
+        kelvin = 295.0
+        with (
+            patch("src.data.ecmwf_open._resolve_ecmwf_cycle", return_value=CYCLE_DT),
+            patch(
+                "src.data.ecmwf_open._fetch_ecmwf_2t",
+                side_effect=self._make_2t_side_effect(kelvin),
+            ),
+            patch("src.data.ecmwf_open._get_cache_dir", return_value=tmp_path),
+        ):
+            result = fetch_ecmwf_daily_high(
+                LONDON_LAT, LONDON_LON, target_date="2026-07-01"
+            )
+        assert result is not None
+        from datetime import date as _date
+        assert result.valid_date == _date(2026, 7, 1)
+
+    def test_string_date_returns_ecmwf_forecast(self, tmp_path):
+        kelvin = 300.0
+        with (
+            patch("src.data.ecmwf_open._resolve_ecmwf_cycle", return_value=CYCLE_DT),
+            patch(
+                "src.data.ecmwf_open._fetch_ecmwf_2t",
+                side_effect=self._make_2t_side_effect(kelvin),
+            ),
+            patch("src.data.ecmwf_open._get_cache_dir", return_value=tmp_path),
+        ):
+            result = fetch_ecmwf_daily_high(
+                LONDON_LAT, LONDON_LON, target_date="2026-07-01"
+            )
+        assert isinstance(result, EcmwfForecast)
+        assert result.attribution == "ECMWF Open Data, CC-BY-4.0"
