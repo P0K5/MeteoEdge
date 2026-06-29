@@ -242,6 +242,51 @@ class TestNoCycleAvailable:
 # ---------------------------------------------------------------------------
 
 
+class TestStrDateCoercion:
+    """fetch_nbm_daily_high must accept target_date as an ISO string (bug #500)."""
+
+    def test_string_target_date_does_not_raise(self, tmp_path):
+        """Passing target_date as a string must not cause AttributeError."""
+        with (
+            _make_mock_cycle_resolver(CYCLE_DT),
+            patch("src.data.nbm._get_cache_dir", return_value=tmp_path),
+            patch("src.data.nbm._get_cache_ttl_hours", return_value=6.0),
+            patch("src.data.nbm._fetch_tmax_herbie", return_value=TMAX_K),
+        ):
+            result = fetch_nbm_daily_high(
+                DENVER_LAT, DENVER_LON, target_date="2026-07-01"
+            )
+        assert result is not None
+        from datetime import date as _date
+        assert result.valid_date == _date(2026, 7, 1)
+
+    def test_string_date_produces_same_result_as_date_object(self, tmp_path):
+        """Result from string and date-object target_date must be equivalent."""
+        from datetime import date as _date
+        td = _date(2026, 7, 1)
+        common_patches = (
+            _make_mock_cycle_resolver(CYCLE_DT),
+            patch("src.data.nbm._get_cache_dir", return_value=tmp_path),
+            patch("src.data.nbm._get_cache_ttl_hours", return_value=6.0),
+            patch("src.data.nbm._fetch_tmax_herbie", return_value=TMAX_K),
+        )
+        with (
+            _make_mock_cycle_resolver(CYCLE_DT),
+            patch("src.data.nbm._get_cache_dir", return_value=tmp_path),
+            patch("src.data.nbm._get_cache_ttl_hours", return_value=6.0),
+            patch("src.data.nbm._fetch_tmax_herbie", return_value=TMAX_K),
+        ):
+            result_str = fetch_nbm_daily_high(
+                DENVER_LAT, DENVER_LON, target_date="2026-07-01"
+            )
+            result_date = fetch_nbm_daily_high(
+                DENVER_LAT, DENVER_LON, target_date=td
+            )
+        assert result_str is not None
+        assert result_date is not None
+        assert result_str.valid_date == result_date.valid_date
+
+
 class TestDefaultTargetDate:
     def test_defaults_to_tomorrow(self, tmp_path):
         captured = {}

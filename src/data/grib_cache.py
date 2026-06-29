@@ -129,6 +129,7 @@ def _fetch_grib_slice(
     cache_dir: Path,
     ttl_hours: float,
     member: str | None = None,
+    herbie_member=None,
 ) -> Optional[Path]:
     """Download (or return cached) a single GRIB2 message for *var*.
 
@@ -136,16 +137,20 @@ def _fetch_grib_slice(
     the full GRIB file.
 
     Args:
-        model:     herbie model name (e.g. "hrrr", "gefs").
-        var:       Variable key from SUPPORTED_VARS (e.g. "TMP_2m").
-        cycle_dt:  datetime of the model cycle (UTC).
-        fxx:       Forecast hour offset (0 = analysis).
-        cache_dir: Path to the on-disk cache directory.
-        ttl_hours: Cache TTL in hours.
-        member:    Optional ensemble member identifier (e.g. "gec00", "gep01").
-                   When provided it is forwarded to Herbie so that the correct
-                   member is fetched, and it is embedded in the cache key so
-                   that each member is stored independently.
+        model:          herbie model name (e.g. "hrrr", "gefs").
+        var:            Variable key from SUPPORTED_VARS (e.g. "TMP_2m").
+        cycle_dt:       datetime of the model cycle (UTC).
+        fxx:            Forecast hour offset (0 = analysis).
+        cache_dir:      Path to the on-disk cache directory.
+        ttl_hours:      Cache TTL in hours.
+        member:         Optional member identifier used **only** for the cache
+                        key (e.g. ``"gec00"``, ``"gep01"``).  When provided it
+                        is embedded in the filename so each member is cached
+                        independently.
+        herbie_member:  Optional value forwarded to the ``Herbie(member=...)``
+                        constructor.  When None, *member* is used instead
+                        (backward-compatible).  Pass an ``int`` here for GEFS
+                        (herbie 2025.12.0 requires integers).
 
     Returns:
         Path to the cached .grib2 slice, or None on failure.
@@ -178,8 +183,11 @@ def _fetch_grib_slice(
             overwrite=False,
             verbose=False,
         )
-        if member is not None:
-            herbie_kwargs["member"] = member
+        # herbie_member overrides member for the Herbie constructor when provided
+        # (e.g. GEFS requires int members in herbie 2025.12.0).
+        herbie_member_val = herbie_member if herbie_member is not None else member
+        if herbie_member_val is not None:
+            herbie_kwargs["member"] = herbie_member_val
         H = Herbie(cycle_dt.replace(tzinfo=None), **herbie_kwargs)
         # download() with searchString fetches only matching byte ranges via
         # the IDX sidecar — never the full GRIB2 file.
@@ -232,10 +240,21 @@ def _resolve_latest_cycle(model: str, fxx: int = 0):
         raise ImportError("herbie-data is required: pip install herbie-data") from exc
 
     now_utc = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
+    # GEFS requires an integer member kwarg in herbie 2025.12.0; without it,
+    # constructing a GEFS Herbie raises AttributeError.
+    extra_herbie_kwargs: dict = {}
+    if model == "gefs":
+        extra_herbie_kwargs["member"] = 0
     for hours_back in range(MAX_LOOKBACK_HOURS + 1):
         candidate = now_utc - timedelta(hours=hours_back)
         try:
-            H = Herbie(candidate.replace(tzinfo=None), model=model, fxx=fxx, verbose=False)
+            H = Herbie(
+                candidate.replace(tzinfo=None),
+                model=model,
+                fxx=fxx,
+                verbose=False,
+                **extra_herbie_kwargs,
+            )
             if H.grib is not None:
                 log.debug("[grib_cache] resolved cycle: %s", candidate)
                 return candidate.replace(tzinfo=None)
