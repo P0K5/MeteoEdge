@@ -4504,7 +4504,7 @@
       "source_location": "L90",
       "_origin": "ast",
       "id": "src_model_decay_functions_exponential_decay",
-      "community": 139,
+      "community": 112,
       "norm_label": "exponential_decay()"
     },
     {
@@ -4514,7 +4514,7 @@
       "source_location": "L103",
       "_origin": "ast",
       "id": "src_model_decay_functions_get_decay_factor",
-      "community": 139,
+      "community": 112,
       "norm_label": "get_decay_factor()"
     },
     {
@@ -4564,7 +4564,7 @@
       "source_location": "L91",
       "_origin": "ast",
       "id": "src_model_decay_functions_rationale_91",
-      "community": 139,
+      "community": 112,
       "norm_label": "return exponential decay factor in [0.0, 1.0].      decays faster than linear. k"
     },
     {
@@ -4574,7 +4574,7 @@
       "source_location": "L104",
       "_origin": "ast",
       "id": "src_model_decay_functions_rationale_104",
-      "community": 139,
+      "community": 112,
       "norm_label": "dispatch to the correct decay function.      args:         city: city name (e.g."
     },
     {
@@ -4994,7 +4994,7 @@
       "source_location": "L15",
       "_origin": "ast",
       "id": "src_model_envelope_weatherstate",
-      "community": 15,
+      "community": 16,
       "norm_label": "weatherstate"
     },
     {
@@ -5494,7 +5494,7 @@
       "source_location": "L77",
       "_origin": "ast",
       "id": "src_model_residual_correction_query_trailing_deltas",
-      "community": 140,
+      "community": 127,
       "norm_label": "_query_trailing_deltas()"
     },
     {
@@ -5584,7 +5584,7 @@
       "source_location": "L85",
       "_origin": "ast",
       "id": "src_model_residual_correction_rationale_85",
-      "community": 140,
+      "community": 127,
       "norm_label": "return delta_f values for *city* in the trailing *window_days* calendar days."
     },
     {
@@ -7884,7 +7884,7 @@
       "source_location": "L320",
       "_origin": "ast",
       "id": "src_strategy_scanner_scan_markets",
-      "community": 16,
+      "community": 53,
       "norm_label": "scan_markets()"
     },
     {
@@ -7984,7 +7984,7 @@
       "source_location": "L328",
       "_origin": "ast",
       "id": "src_strategy_scanner_rationale_328",
-      "community": 16,
+      "community": 53,
       "norm_label": "scan all polymarket markets against current weather states.      args:         w"
     },
     {
@@ -20174,7 +20174,7 @@
       "source_location": "L72",
       "_origin": "ast",
       "id": "src_tests_test_decay_functions_testgetdecayfactor",
-      "community": 139,
+      "community": 112,
       "norm_label": "testgetdecayfactor"
     },
     {
@@ -20184,7 +20184,7 @@
       "source_location": "L73",
       "_origin": "ast",
       "id": "src_tests_test_decay_functions_testgetdecayfactor_test_dispatches_to_linear_by_default",
-      "community": 139,
+      "community": 112,
       "norm_label": ".test_dispatches_to_linear_by_default()"
     },
     {
@@ -20194,7 +20194,7 @@
       "source_location": "L77",
       "_origin": "ast",
       "id": "src_tests_test_decay_functions_testgetdecayfactor_test_dispatches_to_exponential",
-      "community": 139,
+      "community": 112,
       "norm_label": ".test_dispatches_to_exponential()"
     },
     {
@@ -30144,7 +30144,7 @@
       "source_location": "L119",
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_testurlformat",
-      "community": 222,
+      "community": 70,
       "norm_label": "testurlformat"
     },
     {
@@ -30154,7 +30154,7 @@
       "source_location": "L123",
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_testurlformat_test_url_format_14digit",
-      "community": 222,
+      "community": 70,
       "norm_label": ".test_url_format_14digit()"
     },
     {
@@ -30164,7 +30164,7 @@
       "source_location": "L145",
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_testurlformat_test_url_format_snap_17_to_10",
-      "community": 222,
+      "community": 70,
       "norm_label": ".test_url_format_snap_17_to_10()"
     },
     {
@@ -30174,7 +30174,7 @@
       "source_location": "L160",
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_testurlformat_test_url_format_snap_59_to_50",
-      "community": 222,
+      "community": 70,
       "norm_label": ".test_url_format_snap_59_to_50()"
     },
     {
@@ -30244,7 +30244,7 @@
       "source_location": "L248",
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_testfallbackchain",
-      "community": 70,
+      "community": 222,
       "norm_label": "testfallbackchain"
     },
     {
@@ -30254,7 +30254,7 @@
       "source_location": "L253",
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_testfallbackchain_test_fallback_to_previous_slot",
-      "community": 70,
+      "community": 222,
       "norm_label": ".test_fallback_to_previous_slot()"
     },
     {
@@ -30264,7 +30264,7 @@
       "source_location": "L277",
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_testfallbackchain_test_fallback_to_previous_hour",
-      "community": 70,
+      "community": 222,
       "norm_label": ".test_fallback_to_previous_hour()"
     },
     {
@@ -30274,7 +30274,7 @@
       "source_location": "L303",
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_testfallbackchain_test_fallback_all_fail",
-      "community": 70,
+      "community": 222,
       "norm_label": ".test_fallback_all_fail()"
     },
     {
@@ -30374,7 +30374,7 @@
       "source_location": "L120",
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_rationale_120",
-      "community": 222,
+      "community": 70,
       "norm_label": "test 14-digit timestamp url format."
     },
     {
@@ -30384,7 +30384,7 @@
       "source_location": "L126",
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_rationale_126",
-      "community": 222,
+      "community": 70,
       "norm_label": "url should contain 14-digit timestamp (yyyymmddhhmmss)."
     },
     {
@@ -30394,7 +30394,7 @@
       "source_location": "L148",
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_rationale_148",
-      "community": 222,
+      "community": 70,
       "norm_label": "url for minute 17 should snap to 10 (14-digit: ...091000)."
     },
     {
@@ -30404,7 +30404,7 @@
       "source_location": "L163",
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_rationale_163",
-      "community": 222,
+      "community": 70,
       "norm_label": "url for minute 59 should snap to 50 (14-digit: ...095000)."
     },
     {
@@ -30474,7 +30474,7 @@
       "source_location": "L249",
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_rationale_249",
-      "community": 70,
+      "community": 222,
       "norm_label": "test the fallback chain for retrying previous slots."
     },
     {
@@ -30484,7 +30484,7 @@
       "source_location": "L256",
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_rationale_256",
-      "community": 70,
+      "community": 222,
       "norm_label": "should retry previous 10-minute slot if current is not available."
     },
     {
@@ -30494,7 +30494,7 @@
       "source_location": "L280",
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_rationale_280",
-      "community": 70,
+      "community": 222,
       "norm_label": "should retry previous hour if both current and previous slot fail."
     },
     {
@@ -30504,7 +30504,7 @@
       "source_location": "L306",
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_rationale_306",
-      "community": 70,
+      "community": 222,
       "norm_label": "should return none if all fallback attempts fail."
     },
     {
@@ -34024,7 +34024,7 @@
       "source_location": "L210",
       "_origin": "ast",
       "id": "src_tests_test_order_manager_testreconcilerotationaware",
-      "community": 5,
+      "community": 216,
       "norm_label": "testreconcilerotationaware"
     },
     {
@@ -34034,7 +34034,7 @@
       "source_location": "L213",
       "_origin": "ast",
       "id": "src_tests_test_order_manager_testreconcilerotationaware_test_only_dated_token_patched_when_plain_file_has_different_token",
-      "community": 5,
+      "community": 216,
       "norm_label": ".test_only_dated_token_patched_when_plain_file_has_different_token()"
     },
     {
@@ -34044,7 +34044,7 @@
       "source_location": "L237",
       "_origin": "ast",
       "id": "src_tests_test_order_manager_testreconcilerotationaware_test_gz_file_not_rewritten",
-      "community": 5,
+      "community": 216,
       "norm_label": ".test_gz_file_not_rewritten()"
     },
     {
@@ -34064,7 +34064,7 @@
       "source_location": "L286",
       "_origin": "ast",
       "id": "src_tests_test_order_manager_testreconcilerotationaware_test_noop_when_no_sources_at_all",
-      "community": 5,
+      "community": 216,
       "norm_label": ".test_noop_when_no_sources_at_all()"
     },
     {
@@ -34074,7 +34074,7 @@
       "source_location": "L297",
       "_origin": "ast",
       "id": "src_tests_test_order_manager_testreconcilerotationaware_test_idempotent_second_run_produces_no_patches",
-      "community": 5,
+      "community": 216,
       "norm_label": ".test_idempotent_second_run_produces_no_patches()"
     },
     {
@@ -34144,7 +34144,7 @@
       "source_location": "L413",
       "_origin": "ast",
       "id": "src_tests_test_order_manager_testreconciledbsync_test_no_db_call_when_db_is_none",
-      "community": 177,
+      "community": 5,
       "norm_label": ".test_no_db_call_when_db_is_none()"
     },
     {
@@ -35074,7 +35074,7 @@
       "source_location": "L211",
       "_origin": "ast",
       "id": "src_tests_test_order_manager_rationale_211",
-      "community": 5,
+      "community": 216,
       "norm_label": "reconcile_timeout_fills must iterate all rotated jsonl sources correctly."
     },
     {
@@ -35084,7 +35084,7 @@
       "source_location": "L214",
       "_origin": "ast",
       "id": "src_tests_test_order_manager_rationale_214",
-      "community": 5,
+      "community": 216,
       "norm_label": "plain file has token-a (not in wallet); dated file has token-b (in wallet)."
     },
     {
@@ -35094,7 +35094,7 @@
       "source_location": "L238",
       "_origin": "ast",
       "id": "src_tests_test_order_manager_rationale_238",
-      "community": 5,
+      "community": 216,
       "norm_label": "records in .gz archives are visible for reads but the archive is never rewritten"
     },
     {
@@ -35114,7 +35114,7 @@
       "source_location": "L287",
       "_origin": "ast",
       "id": "src_tests_test_order_manager_rationale_287",
-      "community": 5,
+      "community": 216,
       "norm_label": "no plain file, no dated files -> _wallet_held_token_ids never called."
     },
     {
@@ -35124,7 +35124,7 @@
       "source_location": "L298",
       "_origin": "ast",
       "id": "src_tests_test_order_manager_rationale_298",
-      "community": 5,
+      "community": 216,
       "norm_label": "running reconcile twice produces zero new patches on the second pass."
     },
     {
@@ -35174,7 +35174,7 @@
       "source_location": "L414",
       "_origin": "ast",
       "id": "src_tests_test_order_manager_rationale_414",
-      "community": 177,
+      "community": 5,
       "norm_label": "passing db=none must not raise -- jsonl is still patched."
     },
     {
@@ -37434,7 +37434,7 @@
       "source_location": "L88",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testcomputeresidualstatsdisabled",
-      "community": 107,
+      "community": 140,
       "norm_label": "testcomputeresidualstatsdisabled"
     },
     {
@@ -37444,7 +37444,7 @@
       "source_location": "L89",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testcomputeresidualstatsdisabled_test_disabled_returns_none",
-      "community": 107,
+      "community": 140,
       "norm_label": ".test_disabled_returns_none()"
     },
     {
@@ -37454,7 +37454,7 @@
       "source_location": "L108",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testcomputeresidualstatsdisabled_test_enabled_by_default",
-      "community": 107,
+      "community": 140,
       "norm_label": ".test_enabled_by_default()"
     },
     {
@@ -38044,7 +38044,7 @@
       "source_location": "L90",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_rationale_90",
-      "community": 107,
+      "community": 140,
       "norm_label": "residual_correction_enabled=false \u2192 always returns none."
     },
     {
@@ -38054,7 +38054,7 @@
       "source_location": "L109",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_rationale_109",
-      "community": 107,
+      "community": 140,
       "norm_label": "with sufficient samples, returns stats when feature is on."
     },
     {
@@ -40114,7 +40114,7 @@
       "source_location": "L110",
       "_origin": "ast",
       "id": "src_tests_test_run_wiring_testmaincollectorstartup",
-      "community": 15,
+      "community": 353,
       "norm_label": "testmaincollectorstartup"
     },
     {
@@ -40124,7 +40124,7 @@
       "source_location": "L113",
       "_origin": "ast",
       "id": "src_tests_test_run_wiring_testmaincollectorstartup_test_all_four_collector_threads_are_started",
-      "community": 15,
+      "community": 353,
       "norm_label": ".test_all_four_collector_threads_are_started()"
     },
     {
@@ -40314,7 +40314,7 @@
       "source_location": "L396",
       "_origin": "ast",
       "id": "src_tests_test_run_wiring_testintradaycorrectionwiring",
-      "community": 15,
+      "community": 16,
       "norm_label": "testintradaycorrectionwiring"
     },
     {
@@ -40324,7 +40324,7 @@
       "source_location": "L399",
       "_origin": "ast",
       "id": "src_tests_test_run_wiring_testintradaycorrectionwiring_test_corrected_mu_f_takes_priority_over_deb_mu_f",
-      "community": 15,
+      "community": 16,
       "norm_label": ".test_corrected_mu_f_takes_priority_over_deb_mu_f()"
     },
     {
@@ -40334,7 +40334,7 @@
       "source_location": "L452",
       "_origin": "ast",
       "id": "src_tests_test_run_wiring_testintradaycorrectionwiring_test_corrected_mu_f_none_falls_through_to_deb",
-      "community": 15,
+      "community": 16,
       "norm_label": ".test_corrected_mu_f_none_falls_through_to_deb()"
     },
     {
@@ -40344,7 +40344,7 @@
       "source_location": "L484",
       "_origin": "ast",
       "id": "src_tests_test_run_wiring_testintradaycorrectionwiring_test_on_insert_callback_fires_after_commit",
-      "community": 15,
+      "community": 16,
       "norm_label": ".test_on_insert_callback_fires_after_commit()"
     },
     {
@@ -40354,7 +40354,7 @@
       "source_location": "L508",
       "_origin": "ast",
       "id": "src_tests_test_run_wiring_testintradaycorrectionwiring_test_on_insert_callback_none_does_not_raise",
-      "community": 15,
+      "community": 16,
       "norm_label": ".test_on_insert_callback_none_does_not_raise()"
     },
     {
@@ -40484,7 +40484,7 @@
       "source_location": "L111",
       "_origin": "ast",
       "id": "src_tests_test_run_wiring_rationale_111",
-      "community": 15,
+      "community": 353,
       "norm_label": "verify that main() starts all four collector threads after db initialisation."
     },
     {
@@ -40494,7 +40494,7 @@
       "source_location": "L114",
       "_origin": "ast",
       "id": "src_tests_test_run_wiring_rationale_114",
-      "community": 15,
+      "community": 353,
       "norm_label": "main() must call _start_collector_thread for each of the four collectors."
     },
     {
@@ -40554,7 +40554,7 @@
       "source_location": "L397",
       "_origin": "ast",
       "id": "src_tests_test_run_wiring_rationale_397",
-      "community": 15,
+      "community": 16,
       "norm_label": "weatherstate.corrected_mu_f and on_insert_callback wiring."
     },
     {
@@ -40564,7 +40564,7 @@
       "source_location": "L400",
       "_origin": "ast",
       "id": "src_tests_test_run_wiring_rationale_400",
-      "community": 15,
+      "community": 16,
       "norm_label": "when corrected_mu_f is set, true_probability_yes uses it over deb_mu_f."
     },
     {
@@ -40574,7 +40574,7 @@
       "source_location": "L453",
       "_origin": "ast",
       "id": "src_tests_test_run_wiring_rationale_453",
-      "community": 15,
+      "community": 16,
       "norm_label": "when corrected_mu_f is none and deb_enabled, deb_mu_f is used."
     },
     {
@@ -40584,7 +40584,7 @@
       "source_location": "L485",
       "_origin": "ast",
       "id": "src_tests_test_run_wiring_rationale_485",
-      "community": 15,
+      "community": 16,
       "norm_label": "on_insert_callback must be called after insert_observation commits."
     },
     {
@@ -40594,7 +40594,7 @@
       "source_location": "L509",
       "_origin": "ast",
       "id": "src_tests_test_run_wiring_rationale_509",
-      "community": 15,
+      "community": 16,
       "norm_label": "calling insert_observation without callback must not raise."
     },
     {
@@ -40624,7 +40624,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "src_tests_test_scanner",
-      "community": 67,
+      "community": 53,
       "norm_label": "test_scanner.py"
     },
     {
@@ -40754,7 +40754,7 @@
       "source_location": "L92",
       "_origin": "ast",
       "id": "src_tests_test_scanner_testscanmarkets",
-      "community": 16,
+      "community": 53,
       "norm_label": "testscanmarkets"
     },
     {
@@ -40764,7 +40764,7 @@
       "source_location": "L95",
       "_origin": "ast",
       "id": "src_tests_test_scanner_testscanmarkets_test_empty_inputs_return_empty",
-      "community": 16,
+      "community": 53,
       "norm_label": ".test_empty_inputs_return_empty()"
     },
     {
@@ -40774,7 +40774,7 @@
       "source_location": "L101",
       "_origin": "ast",
       "id": "src_tests_test_scanner_testscanmarkets_test_no_matching_markets",
-      "community": 16,
+      "community": 53,
       "norm_label": ".test_no_matching_markets()"
     },
     {
@@ -41124,7 +41124,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "src_tests_test_scanner_rationale_1",
-      "community": 67,
+      "community": 53,
       "norm_label": "unit tests for src/strategy/scanner.py \u2014 bracket parsing and market scanning."
     },
     {
@@ -41254,7 +41254,7 @@
       "source_location": "L93",
       "_origin": "ast",
       "id": "src_tests_test_scanner_rationale_93",
-      "community": 16,
+      "community": 53,
       "norm_label": "tests for scan_markets() function."
     },
     {
@@ -41264,7 +41264,7 @@
       "source_location": "L96",
       "_origin": "ast",
       "id": "src_tests_test_scanner_rationale_96",
-      "community": 16,
+      "community": 53,
       "norm_label": "scan_markets with no weather and no markets returns empty lists."
     },
     {
@@ -41274,7 +41274,7 @@
       "source_location": "L102",
       "_origin": "ast",
       "id": "src_tests_test_scanner_rationale_102",
-      "community": 16,
+      "community": 53,
       "norm_label": "markets that don't match any station return no candidates."
     },
     {
@@ -45294,7 +45294,7 @@
       "source_location": "L232",
       "_origin": "ast",
       "id": "src_tests_test_station_side_overrides_testlegacyenabledfalsemigration",
-      "community": 9,
+      "community": 16,
       "norm_label": "testlegacyenabledfalsemigration"
     },
     {
@@ -50958,18 +50958,14 @@
       "norm_label": "license"
     },
     {
-      "label": "Designer",
-      "file_type": "concept",
+      "label": "designer.md",
+      "file_type": "document",
       "source_file": "agents/designer.md",
-      "source_location": null,
+      "source_location": "L1",
       "_origin": "ast",
-      "source_url": null,
-      "captured_at": null,
-      "author": null,
-      "contributor": null,
       "id": "agents_designer",
       "community": 108,
-      "norm_label": "designer"
+      "norm_label": "designer.md"
     },
     {
       "label": "AGENTS \u2013 Designer",
@@ -54408,7 +54404,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "docs_design_374_frozen_model_indicator",
-      "community": 125,
+      "community": 254,
       "norm_label": "374-frozen-model-indicator.md"
     },
     {
@@ -54678,7 +54674,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "docs_design_dashboard_mae_panel",
-      "community": 165,
+      "community": 254,
       "norm_label": "dashboard-mae-panel.md"
     },
     {
@@ -55088,7 +55084,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "docs_design_snapshot_archival",
-      "community": 98,
+      "community": 254,
       "norm_label": "snapshot-archival.md"
     },
     {
@@ -55118,7 +55114,7 @@
       "source_location": "L13",
       "_origin": "ast",
       "id": "docs_design_snapshot_archival_architecture",
-      "community": 216,
+      "community": 98,
       "norm_label": "architecture"
     },
     {
@@ -55128,7 +55124,7 @@
       "source_location": "L15",
       "_origin": "ast",
       "id": "docs_design_snapshot_archival_data_flow",
-      "community": 216,
+      "community": 98,
       "norm_label": "data flow"
     },
     {
@@ -55138,7 +55134,7 @@
       "source_location": "L77",
       "_origin": "ast",
       "id": "docs_design_snapshot_archival_components",
-      "community": 216,
+      "community": 98,
       "norm_label": "components"
     },
     {
@@ -55148,7 +55144,7 @@
       "source_location": "L79",
       "_origin": "ast",
       "id": "docs_design_snapshot_archival_1_hot_path_src_scripts_run_py",
-      "community": 216,
+      "community": 98,
       "norm_label": "1. hot path: `src/scripts/run.py`"
     },
     {
@@ -55158,7 +55154,7 @@
       "source_location": "L93",
       "_origin": "ast",
       "id": "docs_design_snapshot_archival_2_log_rotation_src_utils_log_rotation_py",
-      "community": 216,
+      "community": 98,
       "norm_label": "2. log rotation: `src/utils/log_rotation.py`"
     },
     {
@@ -55168,7 +55164,7 @@
       "source_location": "L101",
       "_origin": "ast",
       "id": "docs_design_snapshot_archival_3_archive_database_src_data_archive_db_py",
-      "community": 216,
+      "community": 98,
       "norm_label": "3. archive database: `src/data/archive_db.py`"
     },
     {
@@ -55178,7 +55174,7 @@
       "source_location": "L119",
       "_origin": "ast",
       "id": "docs_design_snapshot_archival_4_etl_script_src_scripts_archive_snapshots_py",
-      "community": 216,
+      "community": 98,
       "norm_label": "4. etl script: `src/scripts/archive_snapshots.py`"
     },
     {
@@ -55188,7 +55184,7 @@
       "source_location": "L136",
       "_origin": "ast",
       "id": "docs_design_snapshot_archival_5_systemd_timer_deploy_systemd_meteoedge_archive_timer",
-      "community": 216,
+      "community": 98,
       "norm_label": "5. systemd timer: `deploy/systemd/meteoedge-archive.timer`"
     },
     {
@@ -55770,9 +55766,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "requirements",
       "community": 276,
-      "norm_label": "requirements.txt"
+      "norm_label": "requirements.txt",
+      "id": "requirements"
     },
     {
       "label": "CI Workflow",
@@ -55783,9 +55779,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "github_workflows_ci",
       "community": 276,
-      "norm_label": "ci workflow"
+      "norm_label": "ci workflow",
+      "id": "github_workflows_ci"
     },
     {
       "label": "Graphify Knowledge Graph Update Workflow",
@@ -55796,9 +55792,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "github_workflows_graphify_update",
       "community": 277,
-      "norm_label": "graphify knowledge graph update workflow"
+      "norm_label": "graphify knowledge graph update workflow",
+      "id": "github_workflows_graphify_update"
     },
     {
       "label": "Refresh Session Context Workflow",
@@ -55809,9 +55805,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "github_workflows_refresh_session_context",
       "community": 332,
-      "norm_label": "refresh session context workflow"
+      "norm_label": "refresh session context workflow",
+      "id": "github_workflows_refresh_session_context"
     },
     {
       "label": "Data Source Priority Configuration",
@@ -55822,9 +55818,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "config_source_priority",
       "community": 313,
-      "norm_label": "data source priority configuration"
+      "norm_label": "data source priority configuration",
+      "id": "config_source_priority"
     },
     {
       "label": "Tech Lead PM",
@@ -55835,9 +55831,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "tech_lead_pm",
       "community": 352,
-      "norm_label": "tech lead pm"
+      "norm_label": "tech lead pm",
+      "id": "tech_lead_pm"
     },
     {
       "label": "Mid Developer",
@@ -55848,9 +55844,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "mid_developer",
       "community": 338,
-      "norm_label": "mid developer"
+      "norm_label": "mid developer",
+      "id": "mid_developer"
     },
     {
       "label": "Junior Developer",
@@ -55861,9 +55857,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "junior_developer",
       "community": 333,
-      "norm_label": "junior developer"
+      "norm_label": "junior developer",
+      "id": "junior_developer"
     },
     {
       "label": "Graphify Knowledge Graph Tool",
@@ -55874,9 +55870,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "graphify",
       "community": 277,
-      "norm_label": "graphify knowledge graph tool"
+      "norm_label": "graphify knowledge graph tool",
+      "id": "graphify"
     },
     {
       "label": "MeteoEdge System",
@@ -55887,9 +55883,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "meteoedge",
       "community": 337,
-      "norm_label": "meteoedge system"
+      "norm_label": "meteoedge system",
+      "id": "meteoedge"
     },
     {
       "label": "Polymarket Prediction Market",
@@ -55900,9 +55896,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "polymarket",
       "community": 339,
-      "norm_label": "polymarket prediction market"
+      "norm_label": "polymarket prediction market",
+      "id": "polymarket"
     },
     {
       "label": "Dashboard HTML",
@@ -55913,9 +55909,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "src_dashboard_static_index_html",
       "community": 281,
-      "norm_label": "dashboard html"
+      "norm_label": "dashboard html",
+      "id": "src_dashboard_static_index_html"
     },
     {
       "label": "MeteoEdge Logo",
@@ -55926,9 +55922,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "src_dashboard_static_logo_png",
       "community": 281,
-      "norm_label": "meteoedge logo"
+      "norm_label": "meteoedge logo",
+      "id": "src_dashboard_static_logo_png"
     },
     {
       "label": "meteoedge-archive.timer",
@@ -55939,9 +55935,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "deploy_systemd_meteoedge_archive_timer",
       "community": 325,
-      "norm_label": "meteoedge-archive.timer"
+      "norm_label": "meteoedge-archive.timer",
+      "id": "deploy_systemd_meteoedge_archive_timer"
     },
     {
       "label": "meteoedge-archive.service",
@@ -55952,9 +55948,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "deploy_systemd_meteoedge_archive_service",
       "community": 324,
-      "norm_label": "meteoedge-archive.service"
+      "norm_label": "meteoedge-archive.service",
+      "id": "deploy_systemd_meteoedge_archive_service"
     },
     {
       "label": "snapshots.jsonl",
@@ -55965,9 +55961,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "logs_snapshots_jsonl",
       "community": 336,
-      "norm_label": "snapshots.jsonl"
+      "norm_label": "snapshots.jsonl",
+      "id": "logs_snapshots_jsonl"
     },
     {
       "label": "position_snapshots.jsonl",
@@ -55978,9 +55974,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "logs_position_snapshots_jsonl",
       "community": 335,
-      "norm_label": "position_snapshots.jsonl"
+      "norm_label": "position_snapshots.jsonl",
+      "id": "logs_position_snapshots_jsonl"
     },
     {
       "label": "live_trades.*.jsonl",
@@ -55991,9 +55987,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "logs_live_trades_jsonl",
       "community": 334,
-      "norm_label": "live_trades.*.jsonl"
+      "norm_label": "live_trades.*.jsonl",
+      "id": "logs_live_trades_jsonl"
     },
     {
       "label": "analytics.db",
@@ -56004,9 +56000,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "data_analytics_db",
       "community": 314,
-      "norm_label": "analytics.db"
+      "norm_label": "analytics.db",
+      "id": "data_analytics_db"
     },
     {
       "label": "meteoedge.db",
@@ -56017,9 +56013,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "data_meteoedge_db",
       "community": 315,
-      "norm_label": "meteoedge.db"
+      "norm_label": "meteoedge.db",
+      "id": "data_meteoedge_db"
     },
     {
       "label": "NO Side Trading",
@@ -56030,9 +56026,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "concept_no_side",
       "community": 300,
-      "norm_label": "no side trading"
+      "norm_label": "no side trading",
+      "id": "concept_no_side"
     },
     {
       "label": "YES Side Trading",
@@ -56043,9 +56039,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "concept_yes_side",
       "community": 312,
-      "norm_label": "yes side trading"
+      "norm_label": "yes side trading",
+      "id": "concept_yes_side"
     },
     {
       "label": "Frozen Model Fair Value",
@@ -56056,9 +56052,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "concept_mf_sub_frozen",
       "community": 297,
-      "norm_label": "frozen model fair value"
+      "norm_label": "frozen model fair value",
+      "id": "concept_mf_sub_frozen"
     },
     {
       "label": "Stale Model Fair Value",
@@ -56069,9 +56065,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "concept_mf_sub_stale",
       "community": 299,
-      "norm_label": "stale model fair value"
+      "norm_label": "stale model fair value",
+      "id": "concept_mf_sub_stale"
     },
     {
       "label": "Live Model Fair Value",
@@ -56082,9 +56078,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "concept_mf_sub_live",
       "community": 298,
-      "norm_label": "live model fair value"
+      "norm_label": "live model fair value",
+      "id": "concept_mf_sub_live"
     },
     {
       "label": "Take Profit Close Reason",
@@ -56095,9 +56091,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "concept_close_reason_take_profit",
       "community": 288,
-      "norm_label": "take profit close reason"
+      "norm_label": "take profit close reason",
+      "id": "concept_close_reason_take_profit"
     },
     {
       "label": "Settled Close Reason",
@@ -56108,9 +56104,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "concept_close_reason_settled",
       "community": 286,
-      "norm_label": "settled close reason"
+      "norm_label": "settled close reason",
+      "id": "concept_close_reason_settled"
     },
     {
       "label": "Forced Exit Close Reason",
@@ -56121,9 +56117,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "concept_close_reason_forced_exit",
       "community": 285,
-      "norm_label": "forced exit close reason"
+      "norm_label": "forced exit close reason",
+      "id": "concept_close_reason_forced_exit"
     },
     {
       "label": "Stop Loss Close Reason",
@@ -56134,9 +56130,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "concept_close_reason_stop_loss",
       "community": 287,
-      "norm_label": "stop loss close reason"
+      "norm_label": "stop loss close reason",
+      "id": "concept_close_reason_stop_loss"
     },
     {
       "label": "MAE Gate (MAX_RESIDUAL_MAE_F_FOR_LIVE)",
@@ -56147,9 +56143,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "concept_mae_gate",
       "community": 296,
-      "norm_label": "mae gate (max_residual_mae_f_for_live)"
+      "norm_label": "mae gate (max_residual_mae_f_for_live)",
+      "id": "concept_mae_gate"
     },
     {
       "label": "sync_open_orders",
@@ -56160,9 +56156,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "concept_reconciliation_sync_open_orders",
       "community": 305,
-      "norm_label": "sync_open_orders"
+      "norm_label": "sync_open_orders",
+      "id": "concept_reconciliation_sync_open_orders"
     },
     {
       "label": "reconcile_timeout_fills",
@@ -56173,9 +56169,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "concept_reconciliation_reconcile_timeout_fills",
       "community": 303,
-      "norm_label": "reconcile_timeout_fills"
+      "norm_label": "reconcile_timeout_fills",
+      "id": "concept_reconciliation_reconcile_timeout_fills"
     },
     {
       "label": "reconcile_wallet_to_db",
@@ -56186,9 +56182,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "concept_reconciliation_reconcile_wallet_to_db",
       "community": 304,
-      "norm_label": "reconcile_wallet_to_db"
+      "norm_label": "reconcile_wallet_to_db",
+      "id": "concept_reconciliation_reconcile_wallet_to_db"
     },
     {
       "label": "High-Water-Mark (HWM) Filter",
@@ -56199,9 +56195,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "concept_high_water_mark",
       "community": 294,
-      "norm_label": "high-water-mark (hwm) filter"
+      "norm_label": "high-water-mark (hwm) filter",
+      "id": "concept_high_water_mark"
     },
     {
       "label": "Win Rate Canonical Helper",
@@ -56212,9 +56208,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "concept_win_rate_canonical_helper",
       "community": 311,
-      "norm_label": "win rate canonical helper"
+      "norm_label": "win rate canonical helper",
+      "id": "concept_win_rate_canonical_helper"
     },
     {
       "label": "OPERATIONS.md",
@@ -56225,9 +56221,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "docs_operations_md",
       "community": 326,
-      "norm_label": "operations.md"
+      "norm_label": "operations.md",
+      "id": "docs_operations_md"
     },
     {
       "label": "README.md",
@@ -56238,9 +56234,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "docs_readme_md",
       "community": 327,
-      "norm_label": "readme.md"
+      "norm_label": "readme.md",
+      "id": "docs_readme_md"
     },
     {
       "label": "intraday_corrections table",
@@ -56251,9 +56247,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "db_intraday_corrections",
       "community": 318,
-      "norm_label": "intraday_corrections table"
+      "norm_label": "intraday_corrections table",
+      "id": "db_intraday_corrections"
     },
     {
       "label": "emos_calibration table",
@@ -56264,9 +56260,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "db_emos_calibration",
       "community": 317,
-      "norm_label": "emos_calibration table"
+      "norm_label": "emos_calibration table",
+      "id": "db_emos_calibration"
     },
     {
       "label": "bot_config table",
@@ -56277,9 +56273,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "db_bot_config",
       "community": 316,
-      "norm_label": "bot_config table"
+      "norm_label": "bot_config table",
+      "id": "db_bot_config"
     },
     {
       "label": "station_overrides table",
@@ -56290,9 +56286,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "db_station_overrides",
       "community": 322,
-      "norm_label": "station_overrides table"
+      "norm_label": "station_overrides table",
+      "id": "db_station_overrides"
     },
     {
       "label": "snapshot_archive table",
@@ -56303,9 +56299,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "db_snapshot_archive",
       "community": 321,
-      "norm_label": "snapshot_archive table"
+      "norm_label": "snapshot_archive table",
+      "id": "db_snapshot_archive"
     },
     {
       "label": "position_snapshot_archive table",
@@ -56316,9 +56312,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "db_position_snapshot_archive",
       "community": 320,
-      "norm_label": "position_snapshot_archive table"
+      "norm_label": "position_snapshot_archive table",
+      "id": "db_position_snapshot_archive"
     },
     {
       "label": "trades table",
@@ -56329,9 +56325,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "db_trades",
       "community": 323,
-      "norm_label": "trades table"
+      "norm_label": "trades table",
+      "id": "db_trades"
     },
     {
       "label": "open_positions table",
@@ -56342,9 +56338,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "db_open_positions",
       "community": 319,
-      "norm_label": "open_positions table"
+      "norm_label": "open_positions table",
+      "id": "db_open_positions"
     },
     {
       "label": "Edge Threshold (15\u00a2)",
@@ -56355,9 +56351,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "concept_edge_threshold",
       "community": 290,
-      "norm_label": "edge threshold (15\u00a2)"
+      "norm_label": "edge threshold (15\u00a2)",
+      "id": "concept_edge_threshold"
     },
     {
       "label": "Weather Envelope Model",
@@ -56368,9 +56364,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "concept_weather_envelope",
       "community": 310,
-      "norm_label": "weather envelope model"
+      "norm_label": "weather envelope model",
+      "id": "concept_weather_envelope"
     },
     {
       "label": "Forecast Ensemble (NWS+Open-Meteo)",
@@ -56381,9 +56377,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "concept_forecast_ensemble",
       "community": 292,
-      "norm_label": "forecast ensemble (nws+open-meteo)"
+      "norm_label": "forecast ensemble (nws+open-meteo)",
+      "id": "concept_forecast_ensemble"
     },
     {
       "label": "EMOS Calibration",
@@ -56394,9 +56390,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "concept_emos_calibration",
       "community": 291,
-      "norm_label": "emos calibration"
+      "norm_label": "emos calibration",
+      "id": "concept_emos_calibration"
     },
     {
       "label": "Residual Bias Correction",
@@ -56407,9 +56403,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "concept_residual_bias_correction",
       "community": 306,
-      "norm_label": "residual bias correction"
+      "norm_label": "residual bias correction",
+      "id": "concept_residual_bias_correction"
     },
     {
       "label": "Risk Management",
@@ -56420,9 +56416,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "concept_risk_management",
       "community": 307,
-      "norm_label": "risk management"
+      "norm_label": "risk management",
+      "id": "concept_risk_management"
     },
     {
       "label": "Live Trading",
@@ -56433,9 +56429,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "concept_live_trading",
       "community": 295,
-      "norm_label": "live trading"
+      "norm_label": "live trading",
+      "id": "concept_live_trading"
     },
     {
       "label": "Paper Trading",
@@ -56446,9 +56442,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "concept_paper_trading",
       "community": 301,
-      "norm_label": "paper trading"
+      "norm_label": "paper trading",
+      "id": "concept_paper_trading"
     },
     {
       "label": "Settlement",
@@ -56459,9 +56455,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "concept_settlement",
       "community": 308,
-      "norm_label": "settlement"
+      "norm_label": "settlement",
+      "id": "concept_settlement"
     },
     {
       "label": "Climb Rate Table",
@@ -56472,9 +56468,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "concept_climb_rate",
       "community": 284,
-      "norm_label": "climb rate table"
+      "norm_label": "climb rate table",
+      "id": "concept_climb_rate"
     },
     {
       "label": "Denver/Dallas Exclusion",
@@ -56485,9 +56481,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "concept_denver_dallas_exclusion",
       "community": 289,
-      "norm_label": "denver/dallas exclusion"
+      "norm_label": "denver/dallas exclusion",
+      "id": "concept_denver_dallas_exclusion"
     },
     {
       "label": "Platt Scaling (Calibration)",
@@ -56498,9 +56494,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "concept_platt_scaling",
       "community": 302,
-      "norm_label": "platt scaling (calibration)"
+      "norm_label": "platt scaling (calibration)",
+      "id": "concept_platt_scaling"
     },
     {
       "label": "GRIB2 Cache",
@@ -56511,9 +56507,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "concept_grib_cache",
       "community": 293,
-      "norm_label": "grib2 cache"
+      "norm_label": "grib2 cache",
+      "id": "concept_grib_cache"
     },
     {
       "label": "Source Priority YAML",
@@ -56524,9 +56520,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "concept_source_priority",
       "community": 309,
-      "norm_label": "source priority yaml"
+      "norm_label": "source priority yaml",
+      "id": "concept_source_priority"
     },
     {
       "label": "NWS API",
@@ -56537,9 +56533,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "external_nws_api",
       "community": 329,
-      "norm_label": "nws api"
+      "norm_label": "nws api",
+      "id": "external_nws_api"
     },
     {
       "label": "METAR (AviationWeather)",
@@ -56550,9 +56546,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "external_metar_source",
       "community": 328,
-      "norm_label": "metar (aviationweather)"
+      "norm_label": "metar (aviationweather)",
+      "id": "external_metar_source"
     },
     {
       "label": "Open-Meteo API",
@@ -56563,9 +56559,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "external_openmeteo_api",
       "community": 330,
-      "norm_label": "open-meteo api"
+      "norm_label": "open-meteo api",
+      "id": "external_openmeteo_api"
     },
     {
       "label": "Polymarket Gamma+CLOB API",
@@ -56576,9 +56572,9 @@
       "captured_at": null,
       "author": null,
       "contributor": null,
-      "id": "external_polymarket_api",
       "community": 331,
-      "norm_label": "polymarket gamma+clob api"
+      "norm_label": "polymarket gamma+clob api",
+      "id": "external_polymarket_api"
     }
   ],
   "links": [
@@ -152179,5 +152175,5 @@
       "source_file": "docs/IMPLEMENTATION_PLAN.md"
     }
   ],
-  "built_at_commit": "6a9505b903dbc660a40151bb702532c79a2f9418"
+  "built_at_commit": "5e80d35da46862d91d5f52548ada240e4f9669ba"
 }
