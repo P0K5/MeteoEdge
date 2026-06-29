@@ -83,20 +83,35 @@ def check_coverage(conn: sqlite3.Connection, days: int) -> tuple[list[str], bool
     lines: list[str] = []
     lines.append(f"  {'MODEL':<14}  {'FILL':>5}  ZERO DAYS")
 
+    date_set = set(date_list)
     any_zero = False
     for model in sorted(by_model.keys()):
         counts = by_model[model]
-        zero_days = [d for d in date_list if counts.get(d, 0) == 0]
-        max_n = max(counts.values(), default=0)
-        filled_days = sum(1 for d in date_list if counts.get(d, 0) > 0)
+
+        # Separate dates inside the historical window from outside it (today / future
+        # target dates written by 24h-lead captures).
+        hist_counts = {d: n for d, n in counts.items() if d in date_set}
+        outside_dates = sorted(d for d in counts if d not in date_set)
+
+        zero_days = [d for d in date_list if hist_counts.get(d, 0) == 0]
+        max_n = max(hist_counts.values(), default=0)
+        filled_days = sum(1 for d in date_list if hist_counts.get(d, 0) > 0)
         fill_pct = filled_days / days * 100 if days > 0 else 0.0
 
         if zero_days:
-            any_zero = True
-            flag = " !"
-            zero_str = ", ".join(zero_days[:5])
-            if len(zero_days) > 5:
-                zero_str += f" (+{len(zero_days) - 5} more)"
+            # Only a real failure if there is no recent data outside the window either.
+            # A model that just started capturing will have data for today/tomorrow but
+            # no historical rows yet — show "STARTED RECENTLY" rather than flagging.
+            if outside_dates and filled_days == 0:
+                flag = "  "
+                latest = max(outside_dates)
+                zero_str = f"STARTED RECENTLY (first capture: {latest})"
+            else:
+                any_zero = True
+                flag = " !"
+                zero_str = ", ".join(zero_days[:5])
+                if len(zero_days) > 5:
+                    zero_str += f" (+{len(zero_days) - 5} more)"
         else:
             flag = "  "
             zero_str = "none"
@@ -239,7 +254,11 @@ def check_calibration(conn: sqlite3.Connection, cal_days: int) -> tuple[list[str
     else:
         buckets: dict[int, list[float]] = defaultdict(list)
         for r in shadow_rows:
-            mid = (int(r["predicted_price"]) // 10) * 10 + 5
+            # Clamp to [5, 95] before bucketing: predicted_price=100 is a
+            # boundary artifact of the probability cap (MODEL_PROB_CAP=0.95)
+            # and belongs in the 90-99¢ bucket, not an impossible 100-109¢ one.
+            price = min(max(int(r["predicted_price"]), 5), 95)
+            mid = (price // 10) * 10 + 5
             buckets[mid].append(r["pnl"])
 
         lines.append(
