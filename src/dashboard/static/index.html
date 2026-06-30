@@ -2340,7 +2340,7 @@ async function loadEdgeTab() {
     fetchEdgeData(edgeSelectedStation, date).then(data => {
       const unit = edgeStationUnit();
       renderEdgeKpi(data, unit);
-      renderEdgeTable(data ? data.brackets : null, unit);
+      renderEdgeTable(data ? data.brackets : null, unit, data ? data.member_count : 0);
       renderEdgeDistChart(data ? data.distribution : null, unit);
     });
   }
@@ -2373,7 +2373,7 @@ function selectEdgeStation(metar) {
   fetchEdgeData(metar, _date).then(data => {
     const unit = edgeStationUnit();
     renderEdgeKpi(data, unit);
-    renderEdgeTable(data ? data.brackets : null, unit);
+    renderEdgeTable(data ? data.brackets : null, unit, data ? data.member_count : 0);
     renderEdgeDistChart(data ? data.distribution : null, unit);
   });
 }
@@ -2539,7 +2539,7 @@ async function renderEdgeDistChart(distribution, unit = 'F') {
   });
 }
 
-function renderEdgeTable(brackets, unit = 'F') {
+function renderEdgeTable(brackets, unit = 'F', memberCount = 0) {
   const tbody = document.getElementById('edge-table-body');
   if (!tbody) return;
 
@@ -2549,11 +2549,15 @@ function renderEdgeTable(brackets, unit = 'F') {
     return;
   }
 
-  // Find the bracket with the highest absolute edge for highlight
+  // Find the bracket with the highest absolute edge for highlight.
+  // Only consider brackets where the model probability is backed by ≥2 ensemble
+  // members; with a thin ensemble, 0% model_prob is a sampling artifact, not a signal.
+  const minModelProb = memberCount > 0 ? (2 / memberCount) * 100 : 0;
   let bestIdx = -1;
   let bestAbs = -1;
   brackets.forEach((b, i) => {
-    if (b.edge !== null && b.edge !== undefined) {
+    if (b.edge !== null && b.edge !== undefined &&
+        b.model_prob !== null && b.model_prob >= minModelProb) {
       const abs = Math.abs(b.edge);
       if (abs > bestAbs) { bestAbs = abs; bestIdx = i; }
     }
@@ -2643,9 +2647,12 @@ function renderEdgeKpi(data, unit = 'F') {
       ? `${edgeTempFmt(rng[0], unit)}–${edgeTempFmt(rng[1], unit)}` : '—',
     '5th–95th pct');
   const brackets = data.brackets || [];
+  const memberCount = data.member_count || 0;
+  const minModelProb = memberCount > 0 ? (2 / memberCount) * 100 : 0;
   let best = null;
   brackets.forEach(b => {
-    if (b.edge != null && (best === null || Math.abs(b.edge) > Math.abs(best.edge))) best = b;
+    if (b.edge != null && b.model_prob != null && b.model_prob >= minModelProb &&
+        (best === null || Math.abs(b.edge) > Math.abs(best.edge))) best = b;
   });
   setKpi('kpi-best-edge', 'kpi-best-sub',
     best && best.edge != null ? (best.edge > 0 ? '+' : '') + best.edge.toFixed(1) + 'pp' : '—',
