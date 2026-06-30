@@ -129,7 +129,28 @@ a,button,input,select{transition:color var(--transition),background var(--transi
 /* ── EDGE DISTRIBUTION CHART ── */
 .edge-dist-chart .chart-wrap{height:260px;}
 
-
+/* ── EDGE TABLE ── */
+.edge-table-section{margin-bottom:var(--space-6);}
+.edge-table{width:100%;border-collapse:collapse;font-size:var(--text-sm);font-variant-numeric:tabular-nums;}
+.edge-table th{text-align:left;padding:var(--space-2) var(--space-3);font-size:var(--text-xs);font-weight:700;letter-spacing:.05em;color:var(--muted);border-bottom:1px solid var(--divider);}
+.edge-table td{padding:var(--space-3);border-bottom:1px solid var(--divider);}
+.edge-table tr:last-child td{border-bottom:none;}
+.edge-table tr.best-edge-row{background:var(--edge-bg);}
+.edge-table-bracket{font-family:var(--font-mono);}
+.edge-prob-bar-wrap{display:flex;align-items:center;gap:var(--space-3);}
+.edge-prob-bar{flex-shrink:0;width:80px;height:16px;background:var(--surface-off);border-radius:var(--radius-sm);overflow:hidden;border:1px solid var(--divider);}
+.edge-prob-bar-fill{height:100%;background:var(--primary);transition:width 180ms ease;}
+.edge-prob-value{flex-shrink:0;min-width:45px;text-align:right;font-weight:600;}
+.edge-edge-value{font-weight:600;display:flex;align-items:center;gap:var(--space-2);}
+.edge-edge-value.positive{color:var(--yes);}
+.edge-edge-value.negative{color:var(--no);}
+.edge-edge-value.near-zero{color:var(--muted);}
+.best-edge-chip{display:inline-flex;align-items:center;gap:4px;background:var(--edge-bg);color:var(--edge);border-radius:var(--radius-full);padding:2px 8px;font-size:var(--text-xs);font-weight:600;flex-shrink:0;margin-left:var(--space-2);}
+.edge-table-skeleton tr{background:none;}
+.edge-table-skeleton tr td{padding:var(--space-3);}
+.edge-table-skeleton tr td .skeleton{width:100%;height:1.1em;display:block;}
+.edge-table-empty{text-align:center;padding:var(--space-8) var(--space-4);color:var(--muted);display:flex;flex-direction:column;align-items:center;gap:var(--space-4);}
+.edge-table-empty i{width:40px;height:40px;color:var(--faint);}
 
 /* ── MAIN CONTENT ── */
 .main{max-width:980px;margin:0 auto;padding:var(--space-6) var(--space-4) var(--space-10);}
@@ -826,6 +847,31 @@ a,button,input,select{transition:color var(--transition),background var(--transi
   <div class="edge-date-toggle">
     <button class="edge-date-btn active" id="edge-date-today" onclick="selectEdgeDate('today')">Today</button>
     <button class="edge-date-btn" id="edge-date-d1" onclick="selectEdgeDate('d1')" disabled title="No D+1 market available for this station yet">D+1</button>
+  </div>
+
+  <!-- ── EDGE TABLE (F4) ── -->
+  <div class="edge-table-section" id="edge-table-section">
+    <div class="section-hdr">
+      <div class="section-title"><i data-lucide="table-2"></i>Model vs Market</div>
+    </div>
+    <table class="edge-table" id="edge-table">
+      <thead>
+        <tr>
+          <th>Bracket</th>
+          <th>Market</th>
+          <th>Model</th>
+          <th>Edge (pp)</th>
+        </tr>
+      </thead>
+      <tbody id="edge-table-body">
+        <tr class="edge-table-skeleton">
+          <td><span class="skeleton"></span></td>
+          <td><span class="skeleton"></span></td>
+          <td><span class="skeleton"></span></td>
+          <td><span class="skeleton"></span></td>
+        </tr>
+      </tbody>
+    </table>
   </div>
   </main>
 </section>
@@ -2246,9 +2292,13 @@ async function loadEdgeTab() {
     edgeSelectedStation = edgeAllStations[0].metar;
   }
 
-  // Sync active state and log stub
+  // Sync active state and render edge table
   syncEdgePillActive();
   console.log(`[Edge] Selected station: ${edgeSelectedStation}, date: ${todayISO()}`);
+  if (edgeSelectedStation) {
+    showEdgeTableSkeleton();
+    fetchEdgeAnalysis(edgeSelectedStation, edgeSelectedDate || todayISO()).then(renderEdgeTable);
+  }
 }
 
 function renderEdgeStationPills() {
@@ -2273,6 +2323,24 @@ function selectEdgeStation(metar) {
   localStorage.setItem('edgeTab.selectedStation', metar);
   syncEdgePillActive();
   console.log(`[Edge] Selected station: ${metar}, date: ${todayISO()}`);
+  showEdgeTableSkeleton();
+  fetchEdgeAnalysis(metar, edgeSelectedDate || todayISO()).then(renderEdgeTable);
+}
+
+async function fetchEdgeAnalysis(station, date) {
+  try {
+    const resp = await fetch(`/api/analysis/${station}?date=${date}`);
+    if (!resp.ok) {
+      const body = await resp.json().catch(() => ({}));
+      console.warn(`[Edge] API ${resp.status}:`, body);
+      return null;
+    }
+    const data = await resp.json();
+    return data.brackets || null;
+  } catch (e) {
+    console.error('[Edge] fetchEdgeAnalysis error:', e);
+    return null;
+  }
 }
 
 function syncEdgePillActive() {
@@ -2432,6 +2500,52 @@ async function renderEdgeDistChart(distribution) {
       },
     },
   });
+}
+
+function renderEdgeTable(brackets) {
+  const tbody = document.getElementById('edge-table-body');
+  if (!tbody) return;
+
+  if (!brackets || brackets.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="4"><div class="edge-table-empty"><i data-lucide="inbox"></i><p>No bracket data available.</p></div></td></tr>`;
+    lucide.createIcons();
+    return;
+  }
+
+  // Find the bracket with the highest absolute edge for highlight
+  let bestIdx = -1;
+  let bestAbs = -1;
+  brackets.forEach((b, i) => {
+    if (b.edge !== null && b.edge !== undefined) {
+      const abs = Math.abs(b.edge);
+      if (abs > bestAbs) { bestAbs = abs; bestIdx = i; }
+    }
+  });
+
+  tbody.innerHTML = brackets.map((b, i) => {
+    const edgePp = b.edge !== null && b.edge !== undefined ? b.edge : null;
+    const edgeClass = edgePp === null ? '' : edgePp > 1 ? 'positive' : edgePp < -1 ? 'negative' : 'near-zero';
+    const edgeText = edgePp === null ? '—' : (edgePp > 0 ? '+' : '') + edgePp.toFixed(1) + 'pp';
+    const bestChip = i === bestIdx && edgePp !== null ? '<span class="best-edge-chip"><i data-lucide="star" style="width:10px;height:10px;"></i>Best</span>' : '';
+    const mktPct = b.polymarket_prob !== null ? (b.polymarket_prob * 100).toFixed(1) + '%' : '—';
+    const mdlPct = b.model_prob !== null ? (b.model_prob * 100).toFixed(1) + '%' : '—';
+    const barWidth = b.model_prob !== null ? Math.round(b.model_prob * 100) : 0;
+    return `<tr class="${i === bestIdx && edgePp !== null ? 'best-edge-row' : ''}">
+      <td class="edge-table-bracket">${b.range || '—'}</td>
+      <td>${mktPct}</td>
+      <td><div class="edge-prob-bar-wrap"><div class="edge-prob-bar"><div class="edge-prob-bar-fill" style="width:${barWidth}%"></div></div><span class="edge-prob-value">${mdlPct}</span></div></td>
+      <td><div class="edge-edge-value ${edgeClass}">${edgeText}${bestChip}</div></td>
+    </tr>`;
+  }).join('');
+  lucide.createIcons();
+}
+
+function showEdgeTableSkeleton() {
+  const tbody = document.getElementById('edge-table-body');
+  if (!tbody) return;
+  tbody.innerHTML = Array(5).fill(0).map(() =>
+    `<tr class="edge-table-skeleton"><td><span class="skeleton"></span></td><td><span class="skeleton"></span></td><td><span class="skeleton"></span></td><td><span class="skeleton"></span></td></tr>`
+  ).join('');
 }
 
 /* ─────────────────────────────────────────
