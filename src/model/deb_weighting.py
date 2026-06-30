@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 from datetime import date as date_cls, timedelta
 from typing import Optional
 
-from src.config import get_live_config, CONFIG_DEFAULTS
+from src.config import get_live_config, CONFIG_DEFAULTS, FORECAST_STACK_MODELS
 
 log = logging.getLogger(__name__)
 
@@ -436,6 +436,23 @@ def get_weights(db, city: str, station_region: str = "us") -> dict[str, float]:
     # If any tracked model is missing from the table, fall back to equal weights.
     if any(m not in latest for m in tracked_models):
         return dict(equal_w)
+
+    # Filter to only models in the active FORECAST_STACK so the weights returned
+    # always sum to 1.0 over the models actually used in the live blend.
+    # Out-of-stack models retain their computed rows in model_weights for future
+    # promotion; they just don't participate in the current ensemble.
+    live_cfg = get_live_config(db)
+    active_stack = live_cfg.get("FORECAST_STACK", CONFIG_DEFAULTS["FORECAST_STACK"])
+    stack_models = FORECAST_STACK_MODELS.get(active_stack, frozenset())
+    if stack_models:
+        stack_latest = {m: w for m, w in latest.items() if m in stack_models}
+        if stack_latest:
+            total = sum(stack_latest.values())
+            if total > 0:
+                return {m: w / total for m, w in stack_latest.items()}
+        # No stack models have weights yet — return equal weight for stack models
+        stack_equal = {m: 1.0 / len(stack_models) for m in stack_models}
+        return stack_equal
 
     return latest
 
