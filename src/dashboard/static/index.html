@@ -2300,6 +2300,24 @@ function hideEdgeError() {
   }
 }
 
+function selectEdgeDate(dateKey) {
+  if (dateKey === 'today') {
+    edgeSelectedDate = todayISO();
+  } else if (dateKey === 'd1') {
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    edgeSelectedDate = tomorrow.toISOString().slice(0, 10);
+  }
+
+  const todayBtn = document.getElementById('edge-date-today');
+  const d1Btn = document.getElementById('edge-date-d1');
+  if (todayBtn) todayBtn.classList.toggle('active', dateKey === 'today');
+  if (d1Btn) d1Btn.classList.toggle('active', dateKey === 'd1');
+
+  console.log(`[Edge] Selected date: ${edgeSelectedDate}`);
+  // F2-F5 wire-up: loadEdgeTab() will be called here once data fetch is integrated
+}
+
 
 async function renderEdgeDistChart(distribution) {
   const wrap = document.getElementById('edge-chart-wrap');
