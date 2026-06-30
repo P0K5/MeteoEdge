@@ -1923,6 +1923,22 @@ class Database:
         row = cur.fetchone()
         return float(row[0]) if row and row[0] is not None else None
 
+    def get_obs_highs_range(self, station: str, since_date: str) -> dict:
+        """Return {date_str: max_temp_f} for all dates >= since_date for *station*.
+
+        Used by DEB weight computation to pair model forecasts against observed
+        daily highs without depending on the settlements table (which only
+        populates from resolved live trades).
+        """
+        cur = self._conn.execute(
+            "SELECT DATE(ts) AS d, MAX(temp_f) AS high_f "
+            "FROM observations "
+            "WHERE station=? AND DATE(ts) >= ? AND temp_f IS NOT NULL "
+            "GROUP BY DATE(ts)",
+            (station, since_date),
+        )
+        return {row[0]: float(row[1]) for row in cur.fetchall()}
+
     def log_crps(self, city: str, date: str, crps_score: float, model_mode: str = "emos_shadow") -> None:
         """Insert a CRPS score record for *city* on *date*."""
         logged_at = datetime.now(timezone.utc).isoformat()

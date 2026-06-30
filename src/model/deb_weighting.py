@@ -232,13 +232,18 @@ def compute_weights(
         log_rows = db.get_forecast_log_by_lead(station, since_date, lead_hours=24)
     else:
         log_rows = db.get_forecast_log(station, since_date)
-    settlements = db.get_settlements(station, since_date + "T00:00:00")
 
-    # Build actual_high lookup: date_str -> actual_high_f
-    actuals: dict[str, float] = {}
-    for row in settlements:
-        d = row["ts"][:10]
-        actuals[d] = row["actual_high_f"]
+    # Build actual_high lookup: date_str -> actual_high_f.
+    # Use observed METAR highs (get_obs_highs_range) rather than settled trade
+    # outcomes so DEB activates even before any live trades resolve.  The
+    # settlements table is only populated by live trade resolution and would
+    # leave DEB permanently in cold-start during shadow-mode operation.
+    if hasattr(db, "get_obs_highs_range"):
+        actuals: dict[str, float] = db.get_obs_highs_range(station, since_date)
+    else:
+        # Fallback: legacy path via settlements (pre-get_obs_highs_range deployments)
+        settlements = db.get_settlements(station, since_date + "T00:00:00")
+        actuals = {row["ts"][:10]: row["actual_high_f"] for row in settlements}
 
     # Group (days_ago, abs_error) pairs by model
     errors: dict[str, list[tuple[int, float]]] = {m: [] for m in applicable_names}
