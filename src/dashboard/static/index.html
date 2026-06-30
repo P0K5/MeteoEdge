@@ -2330,6 +2330,7 @@ async function loadEdgeTab() {
     fetchEdgeData(edgeSelectedStation, date).then(data => {
       renderEdgeKpi(data);
       renderEdgeTable(data ? data.brackets : null);
+      renderEdgeDistChart(data ? data.distribution : null);
     });
   }
 }
@@ -2361,6 +2362,7 @@ function selectEdgeStation(metar) {
   fetchEdgeData(metar, _date).then(data => {
     renderEdgeKpi(data);
     renderEdgeTable(data ? data.brackets : null);
+    renderEdgeDistChart(data ? data.distribution : null);
   });
 }
 
@@ -2548,9 +2550,9 @@ function renderEdgeTable(brackets) {
     const edgeClass = edgePp === null ? '' : edgePp > 1 ? 'positive' : edgePp < -1 ? 'negative' : 'near-zero';
     const edgeText = edgePp === null ? '—' : (edgePp > 0 ? '+' : '') + edgePp.toFixed(1) + 'pp';
     const bestChip = i === bestIdx && edgePp !== null ? '<span class="best-edge-chip"><i data-lucide="star" style="width:10px;height:10px;"></i>Best</span>' : '';
-    const mktPct = b.polymarket_prob !== null ? (b.polymarket_prob * 100).toFixed(1) + '%' : '—';
-    const mdlPct = b.model_prob !== null ? (b.model_prob * 100).toFixed(1) + '%' : '—';
-    const barWidth = b.model_prob !== null ? Math.round(b.model_prob * 100) : 0;
+    const mktPct = b.polymarket_prob !== null ? b.polymarket_prob.toFixed(1) + '%' : '—';
+    const mdlPct = b.model_prob !== null ? b.model_prob.toFixed(1) + '%' : '—';
+    const barWidth = b.model_prob !== null ? Math.round(b.model_prob) : 0;
     return `<tr class="${i === bestIdx && edgePp !== null ? 'best-edge-row' : ''}">
       <td class="edge-table-bracket">${b.range || '—'}</td>
       <td>${mktPct}</td>
