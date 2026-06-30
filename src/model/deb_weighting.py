@@ -232,13 +232,18 @@ def compute_weights(
         log_rows = db.get_forecast_log_by_lead(station, since_date, lead_hours=24)
     else:
         log_rows = db.get_forecast_log(station, since_date)
-    settlements = db.get_settlements(station, since_date + "T00:00:00")
 
-    # Build actual_high lookup: date_str -> actual_high_f
-    actuals: dict[str, float] = {}
-    for row in settlements:
-        d = row["ts"][:10]
-        actuals[d] = row["actual_high_f"]
+    # Build actual_high lookup: date_str -> actual_high_f.
+    # Use observed METAR highs (get_obs_highs_range) rather than settled trade
+    # outcomes so DEB activates even before any live trades resolve.  The
+    # settlements table is only populated by live trade resolution and would
+    # leave DEB permanently in cold-start during shadow-mode operation.
+    if hasattr(db, "get_obs_highs_range"):
+        actuals: dict[str, float] = db.get_obs_highs_range(station, since_date)
+    else:
+        # Fallback: legacy path via settlements (pre-get_obs_highs_range deployments)
+        settlements = db.get_settlements(station, since_date + "T00:00:00")
+        actuals = {row["ts"][:10]: row["actual_high_f"] for row in settlements}
 
     # Group (days_ago, abs_error) pairs by model
     errors: dict[str, list[tuple[int, float]]] = {m: [] for m in applicable_names}
@@ -356,7 +361,7 @@ def _apply_group_cap(
     return result
 
 
-def refresh_weights(db, station: str, city: str) -> None:
+def refresh_weights(db, station: str, city: str, station_region: str = "us") -> None:
     """Recompute and persist model weights for *city* / *station*.
 
     Skips when:
@@ -364,6 +369,13 @@ def refresh_weights(db, station: str, city: str) -> None:
     - weights were already refreshed today (checked via model_weights table)
 
     When weights are written, each model row is upserted with today's date.
+
+    Args:
+        station_region: DEB registry region for this station — "us", "eu", or
+            "global". Determines which model set is applicable. Defaults to "us"
+            for backward compat; callers should pass the correct value so that
+            US-only models (NWS, HRRR, NBM) are not attributed cold-start weight
+            at international stations where they will never have data.
     """
     if not get_live_config(db).get("DEB_ENABLED", CONFIG_DEFAULTS["DEB_ENABLED"]):
         return
@@ -375,7 +387,7 @@ def refresh_weights(db, station: str, city: str) -> None:
     if existing and existing[0]["date"] == today:
         return
 
-    weights = compute_weights(db, station, city)
+    weights = compute_weights(db, station, city, station_region=station_region)
     for model, weight in weights.items():
         db.upsert_model_weight(
             city=city,
@@ -384,37 +396,46 @@ def refresh_weights(db, station: str, city: str) -> None:
             weight=weight,
             rmse=0.0,
         )
-    log.info("[deb] refreshed weights for %s: %s", city, weights)
+    log.info("[deb] refreshed weights for %s (%s): %s", city, station_region, weights)
 
 
-def get_weights(db, city: str) -> dict[str, float]:
+def get_weights(db, city: str, station_region: str = "us") -> dict[str, float]:
     """Return the most-recent persisted weights for *city*.
 
-    Returns EQUAL_WEIGHTS when:
+    Returns region-appropriate equal weights when:
     - DEB_ENABLED is not "true"
     - No rows exist in model_weights for *city*
+    - Any tracked model for the region is missing from the table
+
+    Args:
+        station_region: DEB registry region — "us", "eu", or "global". Must
+            match the value used when refresh_weights was last called for this
+            city, otherwise the tracked-model completeness check may fall back
+            to equal weights incorrectly.
     """
+    equal_w = _equal_weights_for(station_region)
+
     if not get_live_config(db).get("DEB_ENABLED", CONFIG_DEFAULTS["DEB_ENABLED"]):
-        return dict(EQUAL_WEIGHTS)
+        return dict(equal_w)
 
     rows = db.get_model_weights(city)
     if not rows:
-        return dict(EQUAL_WEIGHTS)
+        return dict(equal_w)
 
     # Most recent date first (db.get_model_weights orders by date DESC).
-    # Read the latest weight for each tracked model (use dynamic registry, not stale MODELS).
-    us_models = _model_names_for_region("us")
+    # Read the latest weight for each tracked model applicable to this region.
+    tracked_models = _model_names_for_region(station_region)
     latest: dict[str, float] = {}
     for row in rows:
         m = row["model"]
         if m not in latest:
             latest[m] = row["weight"]
-        if len(latest) == len(us_models):
+        if len(latest) == len(tracked_models):
             break
 
     # If any tracked model is missing from the table, fall back to equal weights.
-    if any(m not in latest for m in us_models):
-        return dict(_equal_weights_for("us"))
+    if any(m not in latest for m in tracked_models):
+        return dict(equal_w)
 
     return latest
 
