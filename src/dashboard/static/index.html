@@ -2340,7 +2340,7 @@ async function loadEdgeTab() {
     fetchEdgeData(edgeSelectedStation, date).then(data => {
       const unit = edgeStationUnit();
       renderEdgeKpi(data, unit);
-      renderEdgeTable(data ? data.brackets : null);
+      renderEdgeTable(data ? data.brackets : null, unit);
       renderEdgeDistChart(data ? data.distribution : null, unit);
     });
   }
@@ -2373,7 +2373,7 @@ function selectEdgeStation(metar) {
   fetchEdgeData(metar, _date).then(data => {
     const unit = edgeStationUnit();
     renderEdgeKpi(data, unit);
-    renderEdgeTable(data ? data.brackets : null);
+    renderEdgeTable(data ? data.brackets : null, unit);
     renderEdgeDistChart(data ? data.distribution : null, unit);
   });
 }
@@ -2539,7 +2539,7 @@ async function renderEdgeDistChart(distribution, unit = 'F') {
   });
 }
 
-function renderEdgeTable(brackets) {
+function renderEdgeTable(brackets, unit = 'F') {
   const tbody = document.getElementById('edge-table-body');
   if (!tbody) return;
 
@@ -2559,6 +2559,17 @@ function renderEdgeTable(brackets) {
     }
   });
 
+  const bracketLabel = (b) => {
+    if (unit === 'C') {
+      const lo = b.bracket_low, hi = b.bracket_high;
+      const toC = f => Math.round((f - 32) * 5 / 9);
+      if (lo <= -49) return `≤${toC(hi)}°C`;
+      if (hi >= 199) return `≥${toC(lo)}°C`;
+      return `${toC(lo)}–${toC(hi)}°C`;
+    }
+    return b.range || '—';
+  };
+
   tbody.innerHTML = brackets.map((b, i) => {
     const edgePp = b.edge !== null && b.edge !== undefined ? b.edge : null;
     const edgeClass = edgePp === null ? '' : edgePp > 1 ? 'positive' : edgePp < -1 ? 'negative' : 'near-zero';
@@ -2568,7 +2579,7 @@ function renderEdgeTable(brackets) {
     const mdlPct = b.model_prob !== null ? b.model_prob.toFixed(1) + '%' : '—';
     const barWidth = b.model_prob !== null ? Math.round(b.model_prob) : 0;
     return `<tr class="${i === bestIdx && edgePp !== null ? 'best-edge-row' : ''}">
-      <td class="edge-table-bracket">${b.range || '—'}</td>
+      <td class="edge-table-bracket">${bracketLabel(b)}</td>
       <td>${mktPct}</td>
       <td><div class="edge-prob-bar-wrap"><div class="edge-prob-bar"><div class="edge-prob-bar-fill" style="width:${barWidth}%"></div></div><span class="edge-prob-value">${mdlPct}</span></div></td>
       <td><div class="edge-edge-value ${edgeClass}">${edgeText}${bestChip}</div></td>
