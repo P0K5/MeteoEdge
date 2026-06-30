@@ -100,6 +100,18 @@ a,button,input,select{transition:color var(--transition),background var(--transi
 .tab-panel{display:none;}
 .tab-panel.active{display:block;}
 
+/* ── EDGE TAB STYLES ── */
+.edge-station-row{margin-bottom:var(--space-4);}
+.edge-station-pills{display:flex;flex-wrap:wrap;gap:var(--space-2);}
+.edge-station-pill{
+  background:var(--surface-off);color:var(--muted);
+  border:1px solid var(--border);border-radius:var(--radius-full);
+  padding:6px 14px;font-size:var(--text-xs);font-weight:600;
+  cursor:pointer;transition:color var(--transition),background var(--transition),border-color var(--transition);
+}
+.edge-station-pill:hover{color:var(--text);border-color:var(--surface-dyn);}
+.edge-station-pill.active{background:var(--primary-bg);color:var(--primary);border-color:var(--primary);}
+
 /* ── MAIN CONTENT ── */
 .main{max-width:980px;margin:0 auto;padding:var(--space-6) var(--space-4) var(--space-10);}
 
@@ -669,6 +681,7 @@ a,button,input,select{transition:color var(--transition),background var(--transi
 <nav class="tab-bar">
   <button class="tab-btn active" onclick="switchTab('portfolio')">Portfolio</button>
   <button class="tab-btn" onclick="switchTab('stations')">Stations</button>
+  <button class="tab-btn" onclick="switchTab('edge')">Edge</button>
   <button class="tab-btn" onclick="switchTab('emos')">EMOS</button>
   <button class="tab-btn" onclick="switchTab('config')">Config</button>
 </nav>
@@ -758,6 +771,26 @@ a,button,input,select{transition:color var(--transition),background var(--transi
         <p>Fetching station overview from the API.</p>
       </div>
     </div>
+  </main>
+</section>
+
+<!-- ── EDGE TAB ── -->
+<section id="tab-edge" class="tab-panel">
+  <main class="main">
+
+  <div class="error-banner" id="edge-error-banner">
+    <i data-lucide="alert-circle"></i>
+    <span id="edge-error-text">Could not load edge data.</span>
+  </div>
+
+  <!-- STATION SELECTOR PILL ROW -->
+  <div class="edge-station-row" id="edge-station-row">
+    <div class="empty">
+      <i data-lucide="loader"></i>
+      <p>Loading stations…</p>
+    </div>
+  </div>
+
   </main>
 </section>
 
@@ -1556,6 +1589,11 @@ let stationsLoaded = false;
 let stationsIntervalId = null;
 let stationsMap = {};  // Map[station_metar] → station object with status field
 
+/* ── EDGE TAB ── */
+let edgeLoaded = false;
+let edgeSelectedStation = null;  // Currently selected station in edge tab
+let edgeAllStations = [];  // List of all stations
+
 const STATUS_ORDER = { active: 0, outside_hours: 1, no_data: 2, disabled: 3 };
 
 function statusBadgeHTML(status) {
@@ -2139,6 +2177,93 @@ async function emosDoAction(city, action, btn) {
 }
 
 /* ─────────────────────────────────────────
+   EDGE TAB
+   ───────────────────────────────────────── */
+
+function todayISO() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+async function loadEdgeTab() {
+  // Fetch stations from /api/stations/overview if not already loaded
+  if (edgeAllStations.length === 0) {
+    try {
+      const resp = await fetch('/api/stations/overview');
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      edgeAllStations = await resp.json();
+    } catch (e) {
+      console.error('Failed to load edge stations:', e);
+      showEdgeError('Could not load stations.');
+      return;
+    }
+  }
+
+  // Render station pills
+  renderEdgeStationPills();
+
+  // Restore or initialize selected station
+  const saved = localStorage.getItem('edgeTab.selectedStation');
+  if (saved && edgeAllStations.some(s => s.metar === saved)) {
+    edgeSelectedStation = saved;
+  } else if (edgeAllStations.length > 0) {
+    edgeSelectedStation = edgeAllStations[0].metar;
+  }
+
+  // Sync active state and log stub
+  syncEdgePillActive();
+  console.log(`[Edge] Selected station: ${edgeSelectedStation}, date: ${todayISO()}`);
+}
+
+function renderEdgeStationPills() {
+  const container = document.getElementById('edge-station-row');
+  if (!container) return;
+
+  if (edgeAllStations.length === 0) {
+    container.innerHTML = '<div class="empty"><p>No stations configured</p></div>';
+    return;
+  }
+
+  const pillsHTML = edgeAllStations.map(station => {
+    const stationName = STATIONS[station.metar]?.name || station.metar;
+    return `<button class="edge-station-pill" data-metar="${station.metar}" onclick="selectEdgeStation('${station.metar}')">${stationName}</button>`;
+  }).join('');
+
+  container.innerHTML = `<div class="edge-station-pills">${pillsHTML}</div>`;
+}
+
+function selectEdgeStation(metar) {
+  edgeSelectedStation = metar;
+  localStorage.setItem('edgeTab.selectedStation', metar);
+  syncEdgePillActive();
+  console.log(`[Edge] Selected station: ${metar}, date: ${todayISO()}`);
+}
+
+function syncEdgePillActive() {
+  document.querySelectorAll('.edge-station-pill').forEach(pill => {
+    if (pill.dataset.metar === edgeSelectedStation) {
+      pill.classList.add('active');
+    } else {
+      pill.classList.remove('active');
+    }
+  });
+}
+
+function showEdgeError(message) {
+  const banner = document.getElementById('edge-error-banner');
+  if (banner) {
+    document.getElementById('edge-error-text').textContent = message;
+    banner.classList.add('visible');
+  }
+}
+
+function hideEdgeError() {
+  const banner = document.getElementById('edge-error-banner');
+  if (banner) {
+    banner.classList.remove('visible');
+  }
+}
+
+/* ─────────────────────────────────────────
    CONFIG TAB
    ───────────────────────────────────────── */
 let configLoaded = false;
@@ -2396,6 +2521,14 @@ function switchTab(tab) {
     }
     if (!stationsIntervalId) {
       stationsIntervalId = setInterval(fetchStations, 300_000);
+    }
+  }
+
+  // Lazy-load edge tab on first activation
+  if (tab === 'edge') {
+    if (!edgeLoaded) {
+      edgeLoaded = true;
+      loadEdgeTab();
     }
   }
 
