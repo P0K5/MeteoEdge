@@ -72,6 +72,8 @@ from src.execution.live_trader import LiveTrader
 from src.execution.order_manager import order_manager
 from src.dashboard.data import read_jsonl, load_live_trades, load_snapshots, load_position_snapshots
 from src.utils.log_rotation import iter_rotated_jsonl, rotated_sources
+from src.model.ensemble_distribution import get_ensemble_distribution
+from src.model.bracket_analysis import get_bracket_analysis
 
 _db = Database()
 
@@ -2561,6 +2563,119 @@ def guardrail_events() -> dict:
     except Exception as e:
         logger.warning("[guardrail-events] query failed: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
+# Edge Tab — GET /api/analysis/{station}
+# ---------------------------------------------------------------------------
+
+class BracketOut(BaseModel):
+    range: str
+    bracket_low: float
+    bracket_high: float
+    polymarket_prob: float | None
+    model_prob: float | None
+    edge: float | None
+
+
+class AnalysisStationOut(BaseModel):
+    station: str
+    date: str
+    ensemble_mean: float | None
+    bias_corrected: float | None
+    member_count: int
+    range: list[float | None]
+    distribution: dict[str, int]
+    brackets: list[BracketOut]
+
+
+@app.get("/api/analysis/{station}", response_model=AnalysisStationOut)
+def analysis_station(station: str, date: str | None = None) -> AnalysisStationOut:
+    """Return ensemble distribution and bracket edge analysis for a station.
+
+    Path param:
+        station: METAR code (e.g. KORD). Case-insensitive; normalised to upper.
+
+    Query param:
+        date: optional YYYY-MM-DD string. Defaults to today (UTC).
+
+    Returns:
+        200 — ensemble + bracket data
+        404 — station not in configured station list
+        422 — date is not a valid YYYY-MM-DD string (FastAPI auto-handles malformed
+              types; the explicit check below covers semantically invalid dates)
+        503 — ensemble data unavailable (DB error or no data)
+    """
+    import datetime as _dt
+
+    station_upper = station.upper()
+
+    # 404 — unknown station
+    if station_upper not in _KNOWN_METARS:
+        raise HTTPException(status_code=404, detail=f"Unknown station: {station!r}")
+
+    # Resolve / validate date
+    if date is None:
+        resolved_date_str = _dt.datetime.now(_dt.timezone.utc).date().isoformat()
+    else:
+        try:
+            _dt.date.fromisoformat(date)
+            resolved_date_str = date
+        except ValueError:
+            raise HTTPException(status_code=422, detail=f"Invalid date format: {date!r}. Expected YYYY-MM-DD.")
+
+    resolved_date = _dt.date.fromisoformat(resolved_date_str)
+
+    # Fetch ensemble distribution (B1)
+    try:
+        ensemble = get_ensemble_distribution(station_upper, resolved_date_str, _db)
+    except Exception as exc:
+        logger.warning("[analysis/%s] ensemble fetch failed: %s", station_upper, exc)
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "ensemble data unavailable", "station": station_upper, "date": resolved_date_str},
+        )
+
+    if ensemble is None:
+        raise HTTPException(
+            status_code=503,
+            detail={"error": "ensemble data unavailable", "station": station_upper, "date": resolved_date_str},
+        )
+
+    # Fetch bracket analysis (B2) — graceful degradation: missing brackets → empty list
+    try:
+        raw_brackets = get_bracket_analysis(station_upper, resolved_date, _db)
+    except Exception as exc:
+        logger.warning("[analysis/%s] bracket fetch failed: %s", station_upper, exc)
+        raw_brackets = []
+
+    brackets = [
+        BracketOut(
+            range=b["range"],
+            bracket_low=b["bracket_low"],
+            bracket_high=b["bracket_high"],
+            polymarket_prob=b.get("polymarket_prob"),
+            model_prob=b.get("model_prob"),
+            edge=b.get("edge"),
+        )
+        for b in raw_brackets
+    ]
+
+    # Distribution keys must be strings (JSON object keys)
+    distribution = {str(k): v for k, v in (ensemble.get("distribution") or {}).items()}
+
+    rng = ensemble.get("range") or (None, None)
+
+    return AnalysisStationOut(
+        station=station_upper,
+        date=resolved_date_str,
+        ensemble_mean=ensemble.get("ensemble_mean"),
+        bias_corrected=ensemble.get("bias_corrected"),
+        member_count=ensemble.get("member_count") or 0,
+        range=list(rng),
+        distribution=distribution,
+        brackets=brackets,
+    )
 
 
 # Mount static files last so /api routes take priority

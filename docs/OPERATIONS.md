@@ -217,6 +217,48 @@ Controlled entirely by env vars; DB-backed via `CONFIG_DEFAULTS`.
 | `RESIDUAL_MAX_CORRECTION_F` | 5.0 | °F | Hard clamp on applied bias — correction is clamped to ±this value | No |
 | `MAX_RESIDUAL_MAE_F_FOR_LIVE` | 8.0 | °F | Rolling MAE above this suppresses live NO entries for that city (forces shadow) | No |
 
+#### Edge Tab — Analysis API
+
+`GET /api/analysis/{station}?date=YYYY-MM-DD` returns the ensemble distribution and per-bracket Polymarket edge for a given station and date. The `date` parameter is optional and defaults to today (UTC).
+
+**HTTP status codes:**
+
+| Code | Condition |
+|------|-----------|
+| 200 | Success — data returned |
+| 404 | Unknown station (not in STATIONS config) |
+| 422 | Malformed date parameter |
+| 503 | Ensemble data unavailable (no model forecast log rows or DB error) |
+
+**Response schema (200):**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `station` | string | METAR code (upper-cased) |
+| `date` | string | YYYY-MM-DD date of the forecast |
+| `ensemble_mean` | float \| null | Weighted ensemble mean high temp (°F or °C per station unit) |
+| `bias_corrected` | float \| null | EMOS bias-corrected mean |
+| `member_count` | int | Number of model members in the distribution |
+| `range` | [float\|null, float\|null] | [min, max] of the distribution |
+| `distribution` | object | Bucketed distribution — keys are integer temp strings, values are counts |
+| `brackets` | array | Per-bracket edge analysis (see below) |
+
+**Each `brackets` element:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `range` | string | Human-readable label (e.g. `"54–55°F"`) |
+| `bracket_low` | float | Lower boundary of the bracket |
+| `bracket_high` | float | Upper boundary of the bracket |
+| `polymarket_prob` | float \| null | Current Polymarket YES probability (0–100) |
+| `model_prob` | float \| null | Model probability for the bracket (0–100) |
+| `edge` | float \| null | Signed edge in percentage points (model_prob − polymarket_prob); null when either side is missing |
+
+**503 error body:**
+```json
+{"error": "ensemble data unavailable", "station": "KORD", "date": "2026-06-29"}
+```
+
 #### Per-Station Residual API
 
 `GET /api/stations/{metar}/residual` returns a list of residual stats entries, one per distinct `(station, source)` pair that has qualified data (≥ `RESIDUAL_MIN_SAMPLES` rows) in the trailing `RESIDUAL_WINDOW_DAYS`. Each entry includes:
