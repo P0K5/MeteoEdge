@@ -221,6 +221,10 @@ class TestComputeWeightsPhantomGuard:
             {"ts": f"2026-05-{i:02d}T12:00:00", "actual_high_f": 86.2 + i * 0.05}
             for i in range(1, n + 1)
         ]
+        db.get_obs_highs_range.return_value = {
+            f"2026-05-{i:02d}": 86.2 + i * 0.05
+            for i in range(1, n + 1)
+        }
         return db
 
     def test_nws_phantom_excluded_from_blend(self):
@@ -259,6 +263,10 @@ class TestComputeWeightsPhantomGuard:
             {"ts": f"2026-05-{i:02d}T12:00:00", "actual_high_f": 85.2 + i * 0.05}
             for i in range(1, n + 1)
         ]
+        db.get_obs_highs_range.return_value = {
+            f"2026-05-{i:02d}": 85.2 + i * 0.05
+            for i in range(1, n + 1)
+        }
         weights = compute_weights(db, "KORD", "Chicago")
         # gfs has zero rows → cold-start → gets a small fraction
         assert weights["gfs"] < weights["nws"], "cold-start gfs should be < nws"
