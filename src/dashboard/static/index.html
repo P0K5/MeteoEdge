@@ -2454,9 +2454,9 @@ async function renderEdgeDistChart(distribution, unit = 'F') {
   // Create bucket labels, converting to °C for non-US stations
   const labels = buckets.map(b => {
     if (unit === 'C') {
-      const lowC = Math.round((b.temp - 32) * 5 / 9);
-      const highC = Math.round(((b.temp + 1) - 32) * 5 / 9);
-      return `${lowC}–${highC}°C`;
+      const lowC = Math.floor((b.temp - 32) * 5 / 9);
+      const highC = Math.ceil(((b.temp + 1) - 32) * 5 / 9);
+      return lowC === highC ? `${lowC}°C` : `${lowC}–${highC}°C`;
     }
     return `${Math.floor(b.temp)}–${Math.floor(b.temp + 1)}°F`;
   });
@@ -2639,8 +2639,8 @@ function renderEdgeKpi(data, unit = 'F') {
     data.active_stack_models ? data.active_stack_models.join(', ') : '—');
   const rng = data.range;
   setKpi('kpi-range', 'kpi-range-sub',
-    (rng && rng.min != null && rng.max != null)
-      ? `${edgeTempFmt(rng.min, unit)}–${edgeTempFmt(rng.max, unit)}` : '—',
+    (rng && rng[0] != null && rng[1] != null)
+      ? `${edgeTempFmt(rng[0], unit)}–${edgeTempFmt(rng[1], unit)}` : '—',
     '5th–95th pct');
   const brackets = data.brackets || [];
   let best = null;
@@ -2649,7 +2649,15 @@ function renderEdgeKpi(data, unit = 'F') {
   });
   setKpi('kpi-best-edge', 'kpi-best-sub',
     best && best.edge != null ? (best.edge > 0 ? '+' : '') + best.edge.toFixed(1) + 'pp' : '—',
-    best ? best.range : '—');
+    best ? (() => {
+      if (unit === 'C') {
+        const toC = f => Math.round((f - 32) * 5 / 9);
+        if (best.bracket_low <= -49) return `≤${toC(best.bracket_high)}°C`;
+        if (best.bracket_high >= 199) return `≥${toC(best.bracket_low)}°C`;
+        return `${toC(best.bracket_low)}–${toC(best.bracket_high)}°C`;
+      }
+      return best.range || '—';
+    })() : '—');
 }
 
 /* ─────────────────────────────────────────
