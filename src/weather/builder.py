@@ -97,11 +97,31 @@ def _station_in_active_window(station: str) -> bool:
     return active_start <= now_local_dt.hour < active_end
 
 
+# European ICAO prefixes (E* = North/Central Europe, L* = South Europe / MENA border).
+# Used to route EU stations to the "eu" DEB region so ICON weight is included.
+_EU_ICAO_PREFIXES = frozenset(("E", "L"))
+
+
+def _deb_station_region(station: str, unit: str) -> str:
+    """Map a station to its DEB registry region ("us", "eu", or "global").
+
+    - unit="F" → "us"  (NWS/HRRR/NBM are applicable)
+    - unit="C" + European ICAO prefix → "eu"  (ICON-EU is applicable)
+    - unit="C" otherwise → "global"  (Open-Meteo + GFS + ECMWF only)
+    """
+    if unit == "F":
+        return "us"
+    if station[:1] in _EU_ICAO_PREFIXES:
+        return "eu"
+    return "global"
+
+
 def _build_one_station(
     station: str,
     lat: float,
     lon: float,
     city: str,
+    unit: str = "F",
     db=None,
     health_out: "list | None" = None,
 ) -> "WeatherState | None":
@@ -230,8 +250,9 @@ def _build_one_station(
         # writer to model_forecast_log, logging at fixed lead-time bins so EMOS
         # trains on genuine ahead-of-event forecasts rather than nowcast snapshots.
         # See issues #422/#423.
-        refresh_weights(db, station, city)
-    weights = get_weights(db, city) if db is not None else {"nws": 0.5, "open_meteo": 0.5, "gfs": 0.0}
+        station_region = _deb_station_region(station, unit)
+        refresh_weights(db, station, city, station_region=station_region)
+    weights = get_weights(db, city, station_region=_deb_station_region(station, unit)) if db is not None else {"nws": 0.5, "open_meteo": 0.5, "gfs": 0.0}
     deb_mu_f = compute_deb_mu_f(forecast_nws, forecast_secondary, weights, forecast_gfs=forecast_gfs)
     if deb_mu_f is not None:
         log.debug(
@@ -304,7 +325,8 @@ def build_weather_for_scanning(stations=None, db=None, health_out=None) -> dict:
 
     station_list = stations if stations is not None else STATIONS
     weather: dict[str, WeatherState] = {}
-    for station, lat, lon, city, *_ in station_list:
+    for station, lat, lon, city, *rest in station_list:
+        unit = rest[1] if len(rest) >= 2 else "F"
         now_local_dt = datetime.now(pytz.timezone(STATION_TZ[station]))
         active_start, active_end = STATION_ACTIVE_HOURS.get(station, (6, 23))
         if not (active_start <= now_local_dt.hour < active_end):
@@ -315,7 +337,7 @@ def build_weather_for_scanning(stations=None, db=None, health_out=None) -> dict:
             _degraded(station, f"outside active window {active_start:02d}:00-{active_end:02d}:00 (local {now_local_dt.strftime('%H:%M')})")
             continue
 
-        state = _build_one_station(station, lat, lon, city, db=db, health_out=health_out)
+        state = _build_one_station(station, lat, lon, city, unit=unit, db=db, health_out=health_out)
         if state is not None:
             weather[station] = state
     return weather
@@ -343,8 +365,9 @@ def build_weather_for_pricing(stations, db=None) -> dict:
     has current METAR data (regardless of local hour).
     """
     weather: dict[str, WeatherState] = {}
-    for station, lat, lon, city, *_ in stations:
-        state = _build_one_station(station, lat, lon, city, db=db, health_out=None)
+    for station, lat, lon, city, *rest in stations:
+        unit = rest[1] if len(rest) >= 2 else "F"
+        state = _build_one_station(station, lat, lon, city, unit=unit, db=db, health_out=None)
         if state is not None:
             weather[station] = state
     return weather
