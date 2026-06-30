@@ -2296,6 +2296,16 @@ function todayISO() {
   return new Date().toISOString().slice(0, 10);
 }
 
+function edgeTempFmt(val_f, unit) {
+  if (unit === 'C') return ((val_f - 32) * 5 / 9).toFixed(1) + '°C';
+  return val_f.toFixed(1) + '°F';
+}
+
+function edgeStationUnit() {
+  const s = edgeAllStations.find(s => s.metar === edgeSelectedStation);
+  return (s && s.unit) || 'F';
+}
+
 async function loadEdgeTab() {
   // Fetch stations from /api/stations/overview if not already loaded
   if (edgeAllStations.length === 0) {
@@ -2328,9 +2338,10 @@ async function loadEdgeTab() {
     showEdgeTableSkeleton();
     const date = edgeSelectedDate || todayISO();
     fetchEdgeData(edgeSelectedStation, date).then(data => {
-      renderEdgeKpi(data);
+      const unit = edgeStationUnit();
+      renderEdgeKpi(data, unit);
       renderEdgeTable(data ? data.brackets : null);
-      renderEdgeDistChart(data ? data.distribution : null);
+      renderEdgeDistChart(data ? data.distribution : null, unit);
     });
   }
 }
@@ -2360,9 +2371,10 @@ function selectEdgeStation(metar) {
   showEdgeTableSkeleton();
   const _date = edgeSelectedDate || todayISO();
   fetchEdgeData(metar, _date).then(data => {
-    renderEdgeKpi(data);
+    const unit = edgeStationUnit();
+    renderEdgeKpi(data, unit);
     renderEdgeTable(data ? data.brackets : null);
-    renderEdgeDistChart(data ? data.distribution : null);
+    renderEdgeDistChart(data ? data.distribution : null, unit);
   });
 }
 
@@ -2410,7 +2422,7 @@ function selectEdgeDate(dateKey) {
 }
 
 
-async function renderEdgeDistChart(distribution) {
+async function renderEdgeDistChart(distribution, unit = 'F') {
   const wrap = document.getElementById('edge-chart-wrap');
   if (!wrap) return;
 
@@ -2439,12 +2451,14 @@ async function renderEdgeDistChart(distribution) {
   const maxCount = Math.max(...buckets.map(b => b.count));
   const totalMembers = buckets.reduce((sum, b) => sum + b.count, 0);
 
-  // Create bracket labels (temperature buckets in 3-degree ranges)
-  // e.g., 53 → "53–55°F", 56 → "56–58°F"
+  // Create bucket labels, converting to °C for non-US stations
   const labels = buckets.map(b => {
-    const low = b.temp;
-    const high = low + 2;
-    return `${Math.floor(low)}–${Math.floor(high)}°F`;
+    if (unit === 'C') {
+      const lowC = Math.round((b.temp - 32) * 5 / 9);
+      const highC = Math.round(((b.temp + 1) - 32) * 5 / 9);
+      return `${lowC}–${highC}°C`;
+    }
+    return `${Math.floor(b.temp)}–${Math.floor(b.temp + 1)}°F`;
   });
 
   const data = buckets.map(b => b.count);
@@ -2582,13 +2596,14 @@ async function fetchEdgeData(station, date) {
   }
 }
 
-function renderEdgeKpi(data) {
+function renderEdgeKpi(data, unit = 'F') {
   const setKpi = (id, subId, val, sub) => {
     const el = document.getElementById(id);
     const subEl = document.getElementById(subId);
     if (el) el.textContent = val;
     if (subEl) subEl.textContent = sub;
   };
+  const degSym = unit === 'C' ? '°C' : '°F';
   if (!data) {
     setKpi('kpi-ensemble-mean', 'kpi-ensemble-sub', '—', 'No data');
     setKpi('kpi-bias-corrected', 'kpi-bias-sub', '—', 'No data');
@@ -2598,19 +2613,23 @@ function renderEdgeKpi(data) {
     return;
   }
   setKpi('kpi-ensemble-mean', 'kpi-ensemble-sub',
-    data.ensemble_mean != null ? data.ensemble_mean.toFixed(1) + '°F' : '—',
+    data.ensemble_mean != null ? edgeTempFmt(data.ensemble_mean, unit) : '—',
     'raw ensemble');
-  const corrDiff = (data.bias_corrected != null && data.ensemble_mean != null)
-    ? (data.bias_corrected - data.ensemble_mean).toFixed(1) : null;
+  const corrDiff_f = (data.bias_corrected != null && data.ensemble_mean != null)
+    ? (data.bias_corrected - data.ensemble_mean) : null;
+  const corrDiff = unit === 'C' && corrDiff_f != null
+    ? (corrDiff_f * 5 / 9).toFixed(1)
+    : corrDiff_f != null ? corrDiff_f.toFixed(1) : null;
   setKpi('kpi-bias-corrected', 'kpi-bias-sub',
-    data.bias_corrected != null ? data.bias_corrected.toFixed(1) + '°F' : '—',
-    corrDiff === '0.0' ? '(uncorrected)' : corrDiff != null ? `${corrDiff > 0 ? '+' : ''}${corrDiff}°F correction` : '—');
+    data.bias_corrected != null ? edgeTempFmt(data.bias_corrected, unit) : '—',
+    corrDiff === '0.0' ? '(uncorrected)' : corrDiff != null ? `${corrDiff > 0 ? '+' : ''}${corrDiff}${degSym} correction` : '—');
   setKpi('kpi-members', 'kpi-members-sub',
     data.member_count != null ? String(data.member_count) : '—',
     data.active_stack_models ? data.active_stack_models.join(', ') : '—');
   const rng = data.range;
   setKpi('kpi-range', 'kpi-range-sub',
-    (rng && rng.min != null && rng.max != null) ? `${rng.min.toFixed(1)}–${rng.max.toFixed(1)}°F` : '—',
+    (rng && rng.min != null && rng.max != null)
+      ? `${edgeTempFmt(rng.min, unit)}–${edgeTempFmt(rng.max, unit)}` : '—',
     '5th–95th pct');
   const brackets = data.brackets || [];
   let best = null;
