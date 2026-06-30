@@ -1412,6 +1412,21 @@ class Database:
         )
         return [dict(r) for r in cur.fetchall()]
 
+    def get_forecast_log_for_date(self, station: str, date: str) -> list[dict]:
+        """Return all model_forecast_log rows for *station* on the exact *date*.
+
+        Unlike get_forecast_log(), this is an exact-date match (not >=). Used by
+        get_ensemble_distribution() (issue #511) to build the per-model snapshot
+        for a single trading day. Returns all lead_hours rows; callers that need
+        the closest-to-valid capture should group by model and keep the lowest
+        lead_hours.
+        """
+        cur = self._conn.execute(
+            "SELECT * FROM model_forecast_log WHERE station=? AND date=? ORDER BY model ASC",
+            (station, date),
+        )
+        return [dict(r) for r in cur.fetchall()]
+
     def get_forecast_log_by_lead(
         self, station: str, since_date: str, lead_hours: int
     ) -> list[dict]:
@@ -1965,3 +1980,16 @@ class Database:
                     "INSERT INTO deb_weight_log(city,date,weights_json,logged_at) VALUES(?,?,?,?)",
                     (city, date, weights_json, logged_at),
                 )
+
+    def get_latest_deb_weights(self, city: str) -> "str | None":
+        """Return the most recent weights_json snapshot for *city*, or None.
+
+        Used by get_ensemble_distribution() (issue #511) to weight the active
+        FORECAST_STACK models by DEB weight when computing ensemble_mean.
+        """
+        cur = self._conn.execute(
+            "SELECT weights_json FROM deb_weight_log WHERE city=? ORDER BY logged_at DESC LIMIT 1",
+            (city,),
+        )
+        row = cur.fetchone()
+        return row[0] if row else None
