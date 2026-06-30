@@ -112,6 +112,25 @@ a,button,input,select{transition:color var(--transition),background var(--transi
 .edge-station-pill:hover{color:var(--text);border-color:var(--surface-dyn);}
 .edge-station-pill.active{background:var(--primary-bg);color:var(--primary);border-color:var(--primary);}
 
+/* ── EDGE DATE TOGGLE ── */
+.edge-date-toggle{display:inline-flex;border:1px solid var(--border);border-radius:var(--radius-md);overflow:hidden;margin-bottom:var(--space-4);}
+.edge-date-btn{padding:var(--space-2) var(--space-4);font-size:var(--text-sm);color:var(--muted);background:var(--surface);border:none;cursor:pointer;transition:background var(--transition),color var(--transition);}
+.edge-date-btn.active{background:var(--primary-bg);color:var(--primary);font-weight:600;}
+.edge-date-btn:disabled{opacity:.35;cursor:not-allowed;color:var(--faint);}
+
+/* ── EDGE KPI ROW ── */
+.edge-kpi-row{
+  display:grid;grid-template-columns:repeat(5,1fr);gap:var(--space-4);
+  margin-bottom:var(--space-6);
+}
+@media(max-width:900px){.edge-kpi-row{grid-template-columns:repeat(3,1fr);}}
+@media(max-width:600px){.edge-kpi-row{grid-template-columns:1fr 1fr;}}
+
+/* ── EDGE DISTRIBUTION CHART ── */
+.edge-dist-chart .chart-wrap{height:260px;}
+
+
+
 /* ── MAIN CONTENT ── */
 .main{max-width:980px;margin:0 auto;padding:var(--space-6) var(--space-4) var(--space-10);}
 
@@ -791,6 +810,23 @@ a,button,input,select{transition:color var(--transition),background var(--transi
     </div>
   </div>
 
+  <!-- ── ENSEMBLE DISTRIBUTION CHART (F3) ── -->
+  <div class="chart-section" id="edge-dist-section">
+    <div class="chart-wrap" id="edge-chart-wrap">
+      <div class="empty">
+        <i data-lucide="loader"></i>
+        <p>Loading distribution…</p>
+      </div>
+    </div>
+  </div>
+
+
+
+  <!-- ── EDGE TAB DATE SELECTOR ── -->
+  <div class="edge-date-toggle">
+    <button class="edge-date-btn active" id="edge-date-today" onclick="selectEdgeDate('today')">Today</button>
+    <button class="edge-date-btn" id="edge-date-d1" onclick="selectEdgeDate('d1')" disabled title="No D+1 market available for this station yet">D+1</button>
+  </div>
   </main>
 </section>
 
@@ -1593,6 +1629,7 @@ let stationsMap = {};  // Map[station_metar] → station object with status fiel
 let edgeLoaded = false;
 let edgeSelectedStation = null;  // Currently selected station in edge tab
 let edgeAllStations = [];  // List of all stations
+let edgeSelectedDate = null;  // Currently selected date in edge tab (ISO string)
 
 const STATUS_ORDER = { active: 0, outside_hours: 1, no_data: 2, disabled: 3 };
 
@@ -2261,6 +2298,122 @@ function hideEdgeError() {
   if (banner) {
     banner.classList.remove('visible');
   }
+}
+
+
+async function renderEdgeDistChart(distribution) {
+  const wrap = document.getElementById('edge-chart-wrap');
+  if (!wrap) return;
+
+  // Handle empty/missing distribution
+  if (!distribution || Object.keys(distribution).length === 0) {
+    wrap.innerHTML = '<div class="empty"><i data-lucide="inbox"></i><p>No ensemble data available for this date.</p></div>';
+    lucide.createIcons();
+    return;
+  }
+
+  // Parse distribution: convert string keys to numbers, count members
+  const buckets = Object.entries(distribution)
+    .map(([tempStr, count]) => ({
+      temp: parseFloat(tempStr),
+      count: parseInt(count, 10) || 0
+    }))
+    .sort((a, b) => a.temp - b.temp);
+
+  if (buckets.length === 0) {
+    wrap.innerHTML = '<div class="empty"><i data-lucide="inbox"></i><p>No ensemble data available for this date.</p></div>';
+    lucide.createIcons();
+    return;
+  }
+
+  // Find peak (max count) for highlighting
+  const maxCount = Math.max(...buckets.map(b => b.count));
+  const totalMembers = buckets.reduce((sum, b) => sum + b.count, 0);
+
+  // Create bracket labels (temperature buckets in 3-degree ranges)
+  // e.g., 53 → "53–55°F", 56 → "56–58°F"
+  const labels = buckets.map(b => {
+    const low = b.temp;
+    const high = low + 2;
+    return `${Math.floor(low)}–${Math.floor(high)}°F`;
+  });
+
+  const data = buckets.map(b => b.count);
+
+  // Set up the canvas
+  wrap.innerHTML = '<canvas id="edge-dist-canvas" class="edge-dist-chart"></canvas>';
+  const canvas = document.getElementById('edge-dist-canvas');
+
+  // Get CSS color variables
+  const cs = getComputedStyle(document.documentElement);
+  const clr = k => cs.getPropertyValue(k).trim();
+
+  // Chart.js config with horizontal bars
+  new Chart(canvas, {
+    type: 'bar',
+    data: {
+      labels: labels,
+      datasets: [
+        {
+          label: 'Ensemble members',
+          data: data,
+          backgroundColor: data.map((count, i) =>
+            count === maxCount ? clr('--edge') : clr('--primary') + '99'
+          ),
+          borderColor: 'transparent',
+          borderRadius: 4,
+          barThickness: 'flex',
+        },
+      ],
+    },
+    options: {
+      indexAxis: 'y',
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: {
+          display: false,
+        },
+        tooltip: {
+          backgroundColor: clr('--surface-2'),
+          titleColor: clr('--text'),
+          bodyColor: clr('--text'),
+          borderColor: clr('--border'),
+          borderWidth: 1,
+          padding: 8,
+          displayColors: false,
+          callbacks: {
+            title: () => '',
+            label: ctx => {
+              const count = ctx.parsed.x;
+              const pct = ((count / totalMembers) * 100).toFixed(1);
+              return `${count} members (${pct}%)`;
+            },
+          },
+        },
+        datalabels: {
+          display: true,
+          color: clr('--muted'),
+          font: { size: 11, family: "JetBrains Mono, monospace" },
+          align: 'end',
+          anchor: 'end',
+          offset: 6,
+          formatter: (value) => `${value}`,
+        },
+      },
+      scales: {
+        x: {
+          beginAtZero: true,
+          ticks: { color: clr('--muted'), font: { size: 10 } },
+          grid: { color: clr('--divider') + '55', drawBorder: false },
+        },
+        y: {
+          ticks: { color: clr('--muted'), font: { size: 10, family: "JetBrains Mono, monospace" } },
+          grid: { display: false },
+        },
+      },
+    },
+  });
 }
 
 /* ─────────────────────────────────────────
