@@ -831,6 +831,35 @@ a,button,input,select{transition:color var(--transition),background var(--transi
     </div>
   </div>
 
+  <!-- ── EDGE KPI STRIP (F2) ── -->
+  <div class="edge-kpi-row" id="edge-kpi-row">
+    <div class="wallet-card">
+      <div class="wc-label">Ensemble Mean</div>
+      <div class="wc-value" id="kpi-ensemble-mean"><span class="skeleton" style="width:60px;height:1.1em;display:inline-block;"></span></div>
+      <div class="wc-sub" id="kpi-ensemble-sub">raw ensemble</div>
+    </div>
+    <div class="wallet-card">
+      <div class="wc-label">Bias-Corrected</div>
+      <div class="wc-value" id="kpi-bias-corrected"><span class="skeleton" style="width:60px;height:1.1em;display:inline-block;"></span></div>
+      <div class="wc-sub" id="kpi-bias-sub">—</div>
+    </div>
+    <div class="wallet-card">
+      <div class="wc-label">Members</div>
+      <div class="wc-value" id="kpi-members"><span class="skeleton" style="width:60px;height:1.1em;display:inline-block;"></span></div>
+      <div class="wc-sub" id="kpi-members-sub">—</div>
+    </div>
+    <div class="wallet-card">
+      <div class="wc-label">Range</div>
+      <div class="wc-value" id="kpi-range"><span class="skeleton" style="width:60px;height:1.1em;display:inline-block;"></span></div>
+      <div class="wc-sub" id="kpi-range-sub">5th–95th pct</div>
+    </div>
+    <div class="wallet-card">
+      <div class="wc-label">Best Edge</div>
+      <div class="wc-value" id="kpi-best-edge"><span class="skeleton" style="width:60px;height:1.1em;display:inline-block;"></span></div>
+      <div class="wc-sub" id="kpi-best-sub">—</div>
+    </div>
+  </div>
+
   <!-- ── ENSEMBLE DISTRIBUTION CHART (F3) ── -->
   <div class="chart-section" id="edge-dist-section">
     <div class="chart-wrap" id="edge-chart-wrap">
@@ -2297,7 +2326,11 @@ async function loadEdgeTab() {
   console.log(`[Edge] Selected station: ${edgeSelectedStation}, date: ${todayISO()}`);
   if (edgeSelectedStation) {
     showEdgeTableSkeleton();
-    fetchEdgeAnalysis(edgeSelectedStation, edgeSelectedDate || todayISO()).then(renderEdgeTable);
+    const date = edgeSelectedDate || todayISO();
+    fetchEdgeData(edgeSelectedStation, date).then(data => {
+      renderEdgeKpi(data);
+      renderEdgeTable(data ? data.brackets : null);
+    });
   }
 }
 
@@ -2324,23 +2357,11 @@ function selectEdgeStation(metar) {
   syncEdgePillActive();
   console.log(`[Edge] Selected station: ${metar}, date: ${todayISO()}`);
   showEdgeTableSkeleton();
-  fetchEdgeAnalysis(metar, edgeSelectedDate || todayISO()).then(renderEdgeTable);
-}
-
-async function fetchEdgeAnalysis(station, date) {
-  try {
-    const resp = await fetch(`/api/analysis/${station}?date=${date}`);
-    if (!resp.ok) {
-      const body = await resp.json().catch(() => ({}));
-      console.warn(`[Edge] API ${resp.status}:`, body);
-      return null;
-    }
-    const data = await resp.json();
-    return data.brackets || null;
-  } catch (e) {
-    console.error('[Edge] fetchEdgeAnalysis error:', e);
-    return null;
-  }
+  const _date = edgeSelectedDate || todayISO();
+  fetchEdgeData(metar, _date).then(data => {
+    renderEdgeKpi(data);
+    renderEdgeTable(data ? data.brackets : null);
+  });
 }
 
 function syncEdgePillActive() {
@@ -2546,6 +2567,57 @@ function showEdgeTableSkeleton() {
   tbody.innerHTML = Array(5).fill(0).map(() =>
     `<tr class="edge-table-skeleton"><td><span class="skeleton"></span></td><td><span class="skeleton"></span></td><td><span class="skeleton"></span></td><td><span class="skeleton"></span></td></tr>`
   ).join('');
+}
+
+async function fetchEdgeData(station, date) {
+  try {
+    const resp = await fetch(`/api/analysis/${station}?date=${date}`);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    return await resp.json();
+  } catch (e) {
+    console.error(`[Edge] fetchEdgeData error for ${station} on ${date}:`, e);
+    return null;
+  }
+}
+
+function renderEdgeKpi(data) {
+  const setKpi = (id, subId, val, sub) => {
+    const el = document.getElementById(id);
+    const subEl = document.getElementById(subId);
+    if (el) el.textContent = val;
+    if (subEl) subEl.textContent = sub;
+  };
+  if (!data) {
+    setKpi('kpi-ensemble-mean', 'kpi-ensemble-sub', '—', 'No data');
+    setKpi('kpi-bias-corrected', 'kpi-bias-sub', '—', 'No data');
+    setKpi('kpi-members', 'kpi-members-sub', '—', 'No data');
+    setKpi('kpi-range', 'kpi-range-sub', '—', 'No data');
+    setKpi('kpi-best-edge', 'kpi-best-sub', '—', 'No data');
+    return;
+  }
+  setKpi('kpi-ensemble-mean', 'kpi-ensemble-sub',
+    data.ensemble_mean != null ? data.ensemble_mean.toFixed(1) + '°F' : '—',
+    'raw ensemble');
+  const corrDiff = (data.bias_corrected != null && data.ensemble_mean != null)
+    ? (data.bias_corrected - data.ensemble_mean).toFixed(1) : null;
+  setKpi('kpi-bias-corrected', 'kpi-bias-sub',
+    data.bias_corrected != null ? data.bias_corrected.toFixed(1) + '°F' : '—',
+    corrDiff === '0.0' ? '(uncorrected)' : corrDiff != null ? `${corrDiff > 0 ? '+' : ''}${corrDiff}°F correction` : '—');
+  setKpi('kpi-members', 'kpi-members-sub',
+    data.member_count != null ? String(data.member_count) : '—',
+    data.active_stack_models ? data.active_stack_models.join(', ') : '—');
+  const rng = data.range;
+  setKpi('kpi-range', 'kpi-range-sub',
+    (rng && rng.min != null && rng.max != null) ? `${rng.min.toFixed(1)}–${rng.max.toFixed(1)}°F` : '—',
+    '5th–95th pct');
+  const brackets = data.brackets || [];
+  let best = null;
+  brackets.forEach(b => {
+    if (b.edge != null && (best === null || Math.abs(b.edge) > Math.abs(best.edge))) best = b;
+  });
+  setKpi('kpi-best-edge', 'kpi-best-sub',
+    best && best.edge != null ? (best.edge > 0 ? '+' : '') + best.edge.toFixed(1) + 'pp' : '—',
+    best ? best.range : '—');
 }
 
 /* ─────────────────────────────────────────
