@@ -471,9 +471,9 @@ def scan_markets(
                         emos_mode_used = "emos_primary"
 
             if emos_stddev_override is not None:
-                p_yes = true_probability_yes(bracket, state, mins_left, forecast_stddev=emos_stddev_override)
+                p_yes = true_probability_yes(bracket, state, mins_left, forecast_stddev=emos_stddev_override, db=db)
             else:
-                p_yes = true_probability_yes(bracket, state, mins_left)
+                p_yes = true_probability_yes(bracket, state, mins_left, db=db)
             raw_p_yes = p_yes
             # round() avoids IEEE 754 creep: 1.0-0.95 = 0.050000000000000044
             # which would silently fail the p_yes <= MAX_CONFIDENCE_YES_FOR_NO=0.05 gate.

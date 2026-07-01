@@ -3,12 +3,19 @@
 Promoted from src/improved_envelope.py. fetch_secondary_forecast has moved to
 src/data/open_meteo.py. Climb rates are now sourced from src/model/climb_rates.py.
 """
+import logging
 import os
 from dataclasses import dataclass
 from datetime import datetime
 from math import erf, sqrt
 
+from src.config import get_live_config, CONFIG_DEFAULTS
 from src.model.climb_rates import expected_additional_rise
+
+log = logging.getLogger(__name__)
+
+# Module-level flag to ensure DEB_ENABLED status is logged only once per process
+_deb_enabled_logged = False
 
 
 @dataclass
@@ -76,19 +83,51 @@ def compute_envelope(state: WeatherState, minutes_to_settlement: float = 9999.0)
 
 def true_probability_yes(bracket: Bracket, state: WeatherState,
                          minutes_to_settlement: float = 9999.0,
-                         forecast_stddev: float = 2.0) -> float:
+                         forecast_stddev: float = 2.0,
+                         db=None) -> float:
     """Compute P(daily high falls in this bracket).
 
     Enhanced: uses ensemble forecast and time-to-settlement boost.
+
+    Args:
+        bracket: Bracket to evaluate
+        state: WeatherState with forecasts and observations
+        minutes_to_settlement: Time until market resolves (default 9999 = far in future)
+        forecast_stddev: Forecast uncertainty (default 2.0 degrees F)
+        db: Optional database connection; if provided, reads DEB_ENABLED from live config.
+            If None, falls back to environment variable.
     """
+    global _deb_enabled_logged
+
     lo, hi = bracket.low_f, bracket.high_f
     min_env, max_env = compute_envelope(state, minutes_to_settlement)
+
+    # Determine DEB_ENABLED status: read from live config (db) if available, else env var
+    deb_enabled = False
+    deb_source = "default"
+    if db is not None:
+        try:
+            deb_enabled = get_live_config(db).get("DEB_ENABLED", CONFIG_DEFAULTS["DEB_ENABLED"])
+            deb_source = "live config"
+        except Exception as e:
+            log.warning(f"Failed to read DEB_ENABLED from live config: {e}; falling back to env var")
+            deb_enabled = os.getenv("DEB_ENABLED", "false").lower() == "true"
+            deb_source = "env var (fallback)"
+    else:
+        # No db provided: fall back to env var for backward compatibility with tests
+        deb_enabled = os.getenv("DEB_ENABLED", "false").lower() == "true"
+        deb_source = "env var"
+
+    # Log DEB_ENABLED status once at first evaluation
+    if not _deb_enabled_logged:
+        log.info(f"DEB_ENABLED={deb_enabled} (source: {deb_source})")
+        _deb_enabled_logged = True
 
     # Priority: corrected_mu_f (intraday) > deb_mu_f (DEB-enabled) > ensemble fallback.
     # Compute before early exits so a high forecast can expand max_env.
     if state.corrected_mu_f is not None:
         forecast_mean = state.corrected_mu_f
-    elif state.deb_mu_f is not None and os.getenv("DEB_ENABLED", "false").lower() == "true":
+    elif state.deb_mu_f is not None and deb_enabled:
         forecast_mean = state.deb_mu_f
     else:
         forecast_mean = ensemble_forecast(state.forecast_high_f, state.secondary_forecast_f)

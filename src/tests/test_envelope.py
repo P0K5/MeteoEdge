@@ -341,3 +341,113 @@ class TestDebMuF:
         ensemble_mean = ensemble_forecast(81.0, 81.0)   # 81.0 (both equal)
         assert result is not None
         assert 0.0 <= result <= 1.0
+
+
+# ---------------------------------------------------------------------------
+# DEB_ENABLED — live config (DB) reading
+# ---------------------------------------------------------------------------
+
+class TestDebMuFLiveConfig:
+    """Tests for reading DEB_ENABLED from live config database."""
+
+    def make_mock_db(self, deb_enabled: bool):
+        """Create a mock database with DEB_ENABLED set."""
+        class MockDb:
+            def get_all_config(self):
+                return {"DEB_ENABLED": "true" if deb_enabled else "false"}
+
+        return MockDb()
+
+    def test_deb_enabled_true_from_db(self):
+        """When db provides DEB_ENABLED=true, deb_mu_f is used."""
+        mock_db = self.make_mock_db(deb_enabled=True)
+        state_deb = make_state(current_high_f=80.0, latest_temp_f=79.0, hour=14, forecast_high_f=81.0)
+        state_deb.secondary_forecast_f = 81.0
+        state_deb.deb_mu_f = 90.0
+
+        state_no_deb = make_state(current_high_f=80.0, latest_temp_f=79.0, hour=14, forecast_high_f=81.0)
+        state_no_deb.secondary_forecast_f = 81.0
+
+        bracket = make_bracket(low_f=81.0, high_f=85.0)
+
+        p_deb = true_probability_yes(bracket, state_deb, db=mock_db)
+        p_ensemble = true_probability_yes(bracket, state_no_deb, db=mock_db)
+
+        # Probabilities should differ because DEB path uses deb_mu_f
+        assert p_deb != p_ensemble, (
+            f"DEB path must differ from ensemble path when DEB_ENABLED from db; "
+            f"got deb={p_deb:.4f}, ensemble={p_ensemble:.4f}"
+        )
+
+    def test_deb_disabled_from_db(self):
+        """When db provides DEB_ENABLED=false, deb_mu_f is ignored."""
+        mock_db = self.make_mock_db(deb_enabled=False)
+        state_with_deb = make_state(current_high_f=80.0, latest_temp_f=79.0, hour=14, forecast_high_f=81.0)
+        state_with_deb.secondary_forecast_f = 81.0
+        state_with_deb.deb_mu_f = 90.0
+
+        state_no_deb = make_state(current_high_f=80.0, latest_temp_f=79.0, hour=14, forecast_high_f=81.0)
+        state_no_deb.secondary_forecast_f = 81.0
+
+        bracket = make_bracket(low_f=81.0, high_f=85.0)
+
+        p_with_deb_field = true_probability_yes(bracket, state_with_deb, db=mock_db)
+        p_baseline = true_probability_yes(bracket, state_no_deb, db=mock_db)
+
+        assert p_with_deb_field == p_baseline, (
+            f"DEB_ENABLED=false from db must leave result identical to baseline; "
+            f"got deb_field={p_with_deb_field:.6f}, baseline={p_baseline:.6f}"
+        )
+
+    def test_db_takes_precedence_over_env(self, monkeypatch):
+        """DB value (true) takes precedence over env var (false)."""
+        monkeypatch.setenv("DEB_ENABLED", "false")
+        mock_db = self.make_mock_db(deb_enabled=True)
+
+        state_deb = make_state(current_high_f=80.0, latest_temp_f=79.0, hour=14, forecast_high_f=81.0)
+        state_deb.secondary_forecast_f = 81.0
+        state_deb.deb_mu_f = 90.0
+
+        state_no_deb = make_state(current_high_f=80.0, latest_temp_f=79.0, hour=14, forecast_high_f=81.0)
+        state_no_deb.secondary_forecast_f = 81.0
+
+        bracket = make_bracket(low_f=81.0, high_f=85.0)
+
+        p_deb = true_probability_yes(bracket, state_deb, db=mock_db)
+        p_ensemble = true_probability_yes(bracket, state_no_deb, db=mock_db)
+
+        # DB value (true) should be used, not env var (false), so probabilities differ
+        assert p_deb != p_ensemble, (
+            f"DB DEB_ENABLED=true must override env var false; "
+            f"got deb={p_deb:.4f}, ensemble={p_ensemble:.4f}"
+        )
+
+    def test_env_var_fallback_when_no_db(self, monkeypatch):
+        """When db=None, env var is used (backward compatibility)."""
+        monkeypatch.setenv("DEB_ENABLED", "true")
+        state = make_state(current_high_f=80.0, latest_temp_f=79.0, hour=14, forecast_high_f=81.0)
+        state.secondary_forecast_f = 81.0
+        state.deb_mu_f = 90.0
+
+        bracket = make_bracket(low_f=81.0, high_f=85.0)
+        result = true_probability_yes(bracket, state, db=None)
+
+        # Should use deb_mu_f because env var says DEB_ENABLED=true
+        assert result is not None
+        assert 0.0 <= result <= 1.0
+
+    def test_corrected_mu_f_precedence_over_db_deb(self):
+        """corrected_mu_f takes precedence even when DEB_ENABLED from db."""
+        mock_db = self.make_mock_db(deb_enabled=True)
+        state = make_state(current_high_f=80.0, latest_temp_f=79.0, hour=14, forecast_high_f=81.0)
+        state.secondary_forecast_f = 81.0
+        state.deb_mu_f = 90.0
+        state.corrected_mu_f = 75.0  # Lower value
+
+        bracket = make_bracket(low_f=81.0, high_f=85.0)
+        result = true_probability_yes(bracket, state, db=mock_db)
+
+        # corrected_mu_f (75.0) should be used instead of deb_mu_f (90.0),
+        # resulting in lower probability for high brackets
+        assert result is not None
+        assert 0.0 <= result <= 1.0
