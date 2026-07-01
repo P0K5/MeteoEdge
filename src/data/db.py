@@ -266,6 +266,11 @@ class Database:
             ("settlements", "direction", "TEXT NOT NULL DEFAULT 'high'"),
             ("station_overrides", "low_no_enabled", "INTEGER NOT NULL DEFAULT 0"),
             ("emos_calibration", "forecast_source", "TEXT NOT NULL DEFAULT 'nws_open_meteo'"),
+            # Issue #551 stage 1: nullable raw (pre-MODEL_PROB_CAP) probability,
+            # logged alongside the existing capped value. NULL for rows written
+            # before this migration.
+            ("candidates", "p_yes_raw", "REAL"),
+            ("trades", "p_yes_raw", "REAL"),
         ]:
             try:
                 self._conn.execute(
@@ -402,11 +407,12 @@ class Database:
                             settled_at      TEXT,
                             actual_fee_cents REAL,
                             size_eur        REAL,
-                            direction       TEXT NOT NULL DEFAULT 'high'
+                            direction       TEXT NOT NULL DEFAULT 'high',
+                            p_yes_raw       REAL
                         )
                         """
                     )
-                    # direction may not exist in old table — coalesce to 'high'
+                    # direction/p_yes_raw may not exist in old table — coalesce
                     old_cols_q = self._conn.execute(
                         "PRAGMA table_info(trades)"
                     ).fetchall()
@@ -414,12 +420,15 @@ class Database:
                     direction_expr = (
                         "direction" if "direction" in old_col_names else "'high'"
                     )
+                    p_yes_raw_expr = (
+                        "p_yes_raw" if "p_yes_raw" in old_col_names else "NULL"
+                    )
                     self._conn.execute(
                         "INSERT INTO trades_new SELECT "
                         "id,ts,station,ticker,bracket_low,bracket_high,side,"
                         "predicted_price,actual_price,slippage,predicted_edge,mode,"
                         "order_id,outcome,pnl,capital_before,capital_after,settled_at,"
-                        f"actual_fee_cents,size_eur,{direction_expr} "
+                        f"actual_fee_cents,size_eur,{direction_expr},{p_yes_raw_expr} "
                         "FROM trades"
                     )
                     self._conn.execute("DROP TABLE trades")
@@ -688,6 +697,7 @@ class Database:
         minutes_to_settlement: float,
         flagged_first: int = 1,
         direction: str = "high",
+        p_yes_raw: "float | None" = None,
     ) -> int:
         """Insert a trade candidate; returns the new row id."""
         with self._lock:
@@ -695,12 +705,12 @@ class Database:
                 "INSERT INTO candidates"
                 "(ts,station,ticker,bracket_low,bracket_high,side,"
                 "predicted_price,predicted_edge,market_price,confidence,"
-                "minutes_to_settlement,flagged_first,direction) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "minutes_to_settlement,flagged_first,direction,p_yes_raw) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     ts, station, ticker, bracket_low, bracket_high, side,
                     predicted_price, predicted_edge, market_price, confidence,
-                    minutes_to_settlement, flagged_first, direction,
+                    minutes_to_settlement, flagged_first, direction, p_yes_raw,
                 ),
             )
             self._conn.commit()
@@ -740,6 +750,7 @@ class Database:
         settled_at: "str | None" = None,
         size_eur: "float | None" = None,
         direction: str = "high",
+        p_yes_raw: "float | None" = None,
     ) -> int:
         """Insert a trade record; returns the new row id."""
         with self._lock:
@@ -747,13 +758,14 @@ class Database:
                 "INSERT INTO trades"
                 "(ts,station,ticker,bracket_low,bracket_high,side,"
                 "predicted_price,actual_price,slippage,predicted_edge,mode,order_id,"
-                "outcome,pnl,capital_before,capital_after,settled_at,size_eur,direction) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "outcome,pnl,capital_before,capital_after,settled_at,size_eur,direction,"
+                "p_yes_raw) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     ts, station, ticker, bracket_low, bracket_high, side,
                     predicted_price, actual_price, slippage, predicted_edge, mode,
                     order_id, outcome, pnl, capital_before, capital_after, settled_at,
-                    size_eur, direction,
+                    size_eur, direction, p_yes_raw,
                 ),
             )
             self._conn.commit()
@@ -1020,6 +1032,7 @@ class Database:
         predicted_edge: float,
         capital_before: float = 0.0,
         direction: str = "high",
+        p_yes_raw: "float | None" = None,
     ) -> tuple[int, bool]:
         """Insert a shadow trade row, or update actual_price if one already exists today.
 
@@ -1050,12 +1063,12 @@ class Database:
                 "INSERT INTO trades"
                 "(ts,station,ticker,bracket_low,bracket_high,side,"
                 "predicted_price,actual_price,slippage,predicted_edge,mode,order_id,"
-                "outcome,pnl,capital_before,capital_after,settled_at,direction) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "outcome,pnl,capital_before,capital_after,settled_at,direction,p_yes_raw) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     ts, station, ticker, bracket_low, bracket_high, side,
                     predicted_price, actual_price, None, predicted_edge, "shadow",
-                    None, None, None, capital_before, None, None, direction,
+                    None, None, None, capital_before, None, None, direction, p_yes_raw,
                 ),
             )
             self._conn.commit()

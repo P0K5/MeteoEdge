@@ -2059,6 +2059,11 @@ _CONFIG_META: dict[str, dict] = {
         "description": "Minimum YES ask for shadow-log entry (live YES uses MIN_PRICE_CENTS)",
         "type": "int", "group": "strategy", "min": 1, "max": 60,
     },
+    "RANK_ON_RAW_PROB": {
+        "description": "Rank/prioritize candidates by uncapped model probability instead of scan order (issue #551, stage 1). Entry gates are unaffected.",
+        "type": "bool",
+        "group": "strategy",
+    },
     "DAILY_LOSS_LIMIT_EUR": {
         "description": "Maximum daily loss before trading halts (€)",
         "type": "float",

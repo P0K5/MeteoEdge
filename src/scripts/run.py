@@ -348,8 +348,11 @@ def poll_once(
             "yes_ask": cand.bracket.yes_ask_cents,
             "no_ask": cand.bracket.no_ask_cents,
             "p_yes": round(cand.p_yes, 4),
+            "p_yes_raw": round(cand.p_yes_raw, 4) if cand.p_yes_raw is not None else None,
             "ev_yes": round(cand.ev_yes, 2),
             "ev_no": round(cand.ev_no, 2),
+            "ev_yes_raw": round(cand.ev_yes_raw, 2) if cand.ev_yes_raw is not None else None,
+            "ev_no_raw": round(cand.ev_no_raw, 2) if cand.ev_no_raw is not None else None,
             "flagged_side": cand.side,
             "flagged_edge": round(cand.edge_cents, 2),
             "flagged_price": cand.price_cents,
@@ -375,6 +378,7 @@ def poll_once(
                         actual_price=cand.bracket.yes_ask_cents,
                         predicted_edge=cand.edge_cents,
                         capital_before=0.0,
+                        p_yes_raw=cand.p_yes_raw,
                     )
                     if _created:
                         log.info(

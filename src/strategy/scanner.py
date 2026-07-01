@@ -286,6 +286,13 @@ class Candidate:
     ev_no: float        # expected value of buying NO
     minutes_to_settlement: float
     market: dict        # raw market dict (for logging, do not mutate)
+    # Pre-clamp (uncapped) model probability and its derived edges -- issue #551.
+    # Always populated by scan_markets(); equals the capped p_yes/ev_* fields when
+    # MODEL_PROB_CAP did not fire. Entry gates never read these -- only ranking
+    # (behind RANK_ON_RAW_PROB) and logging do.
+    p_yes_raw: "float | None" = field(default=None)
+    ev_yes_raw: "float | None" = field(default=None)
+    ev_no_raw: "float | None" = field(default=None)
     taf_disruption: bool = field(default=False)  # TEMPO/PROB TS/SH/FG overlap
     shadow: bool = field(default=False)           # True when yes_enabled=False for station
     direction: Literal["high", "low"] = field(default="high")  # daily-high or daily-low market
@@ -359,10 +366,12 @@ def scan_markets(
         shadow_yes_edge_min  = float(_live.get("SHADOW_MIN_EDGE_CENTS_YES",  CONFIG_DEFAULTS["SHADOW_MIN_EDGE_CENTS_YES"]))
         shadow_yes_conf_min  = float(_live.get("SHADOW_MIN_CONFIDENCE_YES",  CONFIG_DEFAULTS["SHADOW_MIN_CONFIDENCE_YES"]))
         shadow_yes_price_min = int(_live.get("SHADOW_MIN_PRICE_CENTS_YES", CONFIG_DEFAULTS["SHADOW_MIN_PRICE_CENTS_YES"]))
+        rank_on_raw_prob = bool(_live.get("RANK_ON_RAW_PROB", CONFIG_DEFAULTS["RANK_ON_RAW_PROB"]))
     else:
         shadow_yes_edge_min  = float(CONFIG_DEFAULTS["SHADOW_MIN_EDGE_CENTS_YES"])
         shadow_yes_conf_min  = float(CONFIG_DEFAULTS["SHADOW_MIN_CONFIDENCE_YES"])
         shadow_yes_price_min = int(CONFIG_DEFAULTS["SHADOW_MIN_PRICE_CENTS_YES"])
+        rank_on_raw_prob = bool(CONFIG_DEFAULTS["RANK_ON_RAW_PROB"])
 
     for market in markets:
         try:
@@ -487,6 +496,10 @@ def scan_markets(
 
             ev_yes = p_yes * 100 - bracket.yes_ask_cents - fee
             ev_no = (1 - p_yes) * 100 - bracket.no_ask_cents - fee
+            # Raw (pre-clamp) edges -- logging + optional ranking only (issue #551).
+            # Entry gates above/below always use ev_yes/ev_no (capped).
+            ev_yes_raw = raw_p_yes * 100 - bracket.yes_ask_cents - fee
+            ev_no_raw = (1 - raw_p_yes) * 100 - bracket.no_ask_cents - fee
 
             snap = {
                 "ts": ts, "station": station, "ticker": bracket.ticker,
@@ -496,6 +509,7 @@ def scan_markets(
                 "forecast_high": state.forecast_high_f, "p_yes": round(p_yes, 4),
                 "raw_p_yes": round(raw_p_yes, 4), "capped_p_yes": round(p_yes, 4),
                 "ev_yes": round(ev_yes, 2), "ev_no": round(ev_no, 2),
+                "ev_yes_raw": round(ev_yes_raw, 2), "ev_no_raw": round(ev_no_raw, 2),
                 "minutes_to_settlement": round(mins_left, 1),
                 "emos_mode": emos_mode_used,
             }
@@ -539,6 +553,7 @@ def scan_markets(
                         ev_yes=ev_yes, ev_no=ev_no,
                         minutes_to_settlement=mins_left, market=market,
                         shadow=shadow_yes,
+                        p_yes_raw=raw_p_yes, ev_yes_raw=ev_yes_raw, ev_no_raw=ev_no_raw,
                     )
             elif ev_no >= MIN_EDGE_CENTS and p_yes <= MAX_CONFIDENCE_YES_FOR_NO and bracket.no_ask_cents >= MIN_PRICE_CENTS:
                 margin_gap = no_entry_margin_gap(bracket, state)
@@ -575,6 +590,7 @@ def scan_markets(
                         ev_yes=ev_yes, ev_no=ev_no,
                         minutes_to_settlement=mins_left, market=market,
                         shadow=shadow_no,
+                        p_yes_raw=raw_p_yes, ev_yes_raw=ev_yes_raw, ev_no_raw=ev_no_raw,
                     )
             else:
                 # YES gates passed but NO gate failed (or both edges below MIN_EDGE_CENTS).
@@ -676,10 +692,14 @@ def scan_markets(
 
                 state_low = weather_low[station]
                 p_yes = prob_low_fn(bracket, state_low, mins_left, FORECAST_STDDEV_F)
+                raw_p_yes_low = p_yes
                 p_yes = min(p_yes, MODEL_PROB_CAP)
 
                 ev_yes = (p_yes * 100 - bracket.yes_ask_cents) - estimate_fee_cents(bracket.yes_ask_cents)
                 ev_no  = ((1 - p_yes) * 100 - bracket.no_ask_cents) - estimate_fee_cents(bracket.no_ask_cents)
+                # Raw (pre-clamp) edges -- logging + optional ranking only (issue #551).
+                ev_yes_raw = (raw_p_yes_low * 100 - bracket.yes_ask_cents) - estimate_fee_cents(bracket.yes_ask_cents)
+                ev_no_raw  = ((1 - raw_p_yes_low) * 100 - bracket.no_ask_cents) - estimate_fee_cents(bracket.no_ask_cents)
 
                 low_candidate = None
                 if ev_no >= MIN_EDGE_CENTS and bracket.no_ask_cents >= MIN_PRICE_CENTS:
@@ -692,6 +712,7 @@ def scan_markets(
                             minutes_to_settlement=mins_left, market=market,
                             shadow=True,          # low-side is shadow-only this week
                             direction="low",
+                            p_yes_raw=raw_p_yes_low, ev_yes_raw=ev_yes_raw, ev_no_raw=ev_no_raw,
                         )
                     else:
                         skip_reason_counts["max_edge"] += 1
@@ -705,6 +726,7 @@ def scan_markets(
                             minutes_to_settlement=mins_left, market=market,
                             shadow=True,          # low-side is shadow-only this week
                             direction="low",
+                            p_yes_raw=raw_p_yes_low, ev_yes_raw=ev_yes_raw, ev_no_raw=ev_no_raw,
                         )
                     else:
                         skip_reason_counts["max_edge"] += 1
@@ -730,5 +752,16 @@ def scan_markets(
     total_markets = len(markets)
     counts_str = ", ".join(f"{count} {reason}" for reason, count in skip_reason_counts.most_common())
     log.info("[scan] %d markets: %d flagged, %s", total_markets, num_flagged, counts_str)
+
+    # RANK_ON_RAW_PROB (issue #551, default off): re-order candidates for execution
+    # by the raw-probability-derived edge on their flagged side, instead of scan
+    # order. Entry gates above are untouched either way -- this only changes which
+    # candidate is preferred when capital/risk slots run out. Bit-identical to
+    # today's behaviour while the flag is off (no sort is applied at all).
+    if rank_on_raw_prob:
+        candidates.sort(
+            key=lambda c: c.ev_yes_raw if c.side == "YES" else c.ev_no_raw,
+            reverse=True,
+        )
 
     return candidates, snapshots
