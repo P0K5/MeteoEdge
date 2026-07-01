@@ -48,6 +48,16 @@ GROUP_WEIGHT_CAP: float = float(os.getenv("DEB_GROUP_WEIGHT_CAP", "0.7"))
 
 MIN_SAMPLES: int = _MIN_SAMPLES
 
+# GFS_DATA_VALID_FROM: cutoff date (ISO "YYYY-MM-DD") before which "gfs" rows
+# in model_forecast_log are known byte-identical duplicates of "open_meteo"
+# rows (issue #548 — fetch_gfs_with_spread() previously just returned
+# fetch_open_meteo_with_spread() verbatim, so every pre-merge "gfs" row is a
+# copy of the corresponding "open_meteo" row, not an independent signal).
+# compute_weights() excludes "gfs" matched pairs dated before this constant so
+# DEB never calibrates on the duplicated period. Scoped narrowly to the "gfs"
+# model only — other channels' historical pairs are unaffected.
+GFS_DATA_VALID_FROM: str = "2026-07-01"
+
 # Tracks (city, date) pairs already logged this process lifetime.
 # Used by external callers that want once-per-day log semantics.
 _logged_today: set = set()
@@ -253,6 +263,10 @@ def compute_weights(
         if model_name not in errors:
             continue  # model not applicable for this station_region
         d = row["date"]
+        if model_name == "gfs" and d < GFS_DATA_VALID_FROM:
+            # Duplicate-era row (issue #548) — exclude from DEB training so
+            # calibration doesn't learn from the open_meteo-duplicated period.
+            continue
         if d not in actuals:
             continue
         days_ago = (today - date_cls.fromisoformat(d)).days

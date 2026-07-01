@@ -161,24 +161,64 @@ def fetch_open_meteo_with_spread(
 
 def fetch_gfs_with_spread(
     lat: float, lon: float, lead_hours: int
-) -> "tuple[float, float] | None":
-    """Fetch GFS forecast (mu_f, sigma_f) using Open-Meteo multi-model spread.
+) -> "tuple[float, None] | None":
+    """Fetch a genuine single-model GFS forecast (mu_f) via Open-Meteo.
 
-    Uses the same multi-model approach as fetch_open_meteo_with_spread() but
-    is registered separately so the cron worker can log it under model="gfs"
-    in model_forecast_log.
+    Unlike fetch_open_meteo_with_spread() (which averages across several
+    constituent models: ecmwf_ifs04, gfs_seamless, jma_seamless, best_match),
+    this issues its own request scoped to ``models=gfs_seamless`` only, so the
+    "gfs" channel in model_forecast_log reflects NOAA's Global Forecast System
+    in isolation rather than a duplicate of the open_meteo multi-model blend
+    (see issue #548).
+
+    sigma_f is always returned as None: GFS here is a single deterministic NWP
+    run, not an ensemble, so there is no cross-member spread to compute. This
+    mirrors how the ecmwf/icon deterministic channels persist NULL sigma_f in
+    model_forecast_log (see src/scripts/capture_forecasts.py). Do not
+    synthesize a placeholder sigma here — the sigma-sourcing policy for
+    deterministic channels is tracked separately in issue #555.
 
     Args:
         lat:        Latitude.
         lon:        Longitude.
-        lead_hours: Lead time (hours).
+        lead_hours: Lead time (hours) — used to select the forecast window.
+                    24 → tomorrow's max; <20 → today's remaining window.
 
     Returns:
-        (mu_f, sigma_f) in °F, or None if unavailable.
+        (mu_f, None) in °F, or None if the GFS model is unavailable.
     """
-    # Reuse Open-Meteo multi-model spread; the GFS entry point is a semantic
-    # distinction (logged under model="gfs") rather than a different API call.
-    return fetch_open_meteo_with_spread(lat, lon, lead_hours)
+    # Determine the day offset: lead≥20h → tomorrow, else today
+    day_offset = 1 if lead_hours >= 20 else 0
+    window_start = day_offset * 24   # index into the 168-hour hourly forecast
+    window_end = window_start + 24
+
+    url = (
+        f"https://api.open-meteo.com/v1/forecast"
+        f"?latitude={lat}&longitude={lon}"
+        f"&hourly=temperature_2m"
+        f"&models=gfs_seamless"
+        f"&temperature_unit=fahrenheit&timezone=UTC"
+        f"&forecast_days=2"
+    )
+    data = cached_fetch_json(url, ttl_minutes=30)
+    if not data:
+        log.warning("[open-meteo/gfs/spread] no response for (%s,%s)", lat, lon)
+        return None
+
+    try:
+        temps = data["hourly"]["temperature_2m"][window_start:window_end]
+        valid = [t for t in temps if t is not None]
+        if not valid:
+            log.warning(
+                "[open-meteo/gfs/spread] no valid temperatures for (%s,%s)", lat, lon
+            )
+            return None
+        mu_f = max(valid)
+    except Exception as e:
+        log.debug("[open-meteo/gfs/spread] parse error (%s,%s): %s", lat, lon, e)
+        return None
+
+    return float(mu_f), None
 
 
 def fetch_hourly_temp_now(lat: float, lon: float) -> float | None:
