@@ -145,6 +145,8 @@ a,button,input,select{transition:color var(--transition),background var(--transi
 .edge-edge-value.positive{color:var(--yes);}
 .edge-edge-value.negative{color:var(--no);}
 .edge-edge-value.near-zero{color:var(--muted);}
+.edge-edge-value.thin-signal{color:var(--muted);opacity:0.5;}
+.edge-table tr.thin-signal-row{opacity:0.45;}
 .best-edge-chip{display:inline-flex;align-items:center;gap:4px;background:var(--edge-bg);color:var(--edge);border-radius:var(--radius-full);padding:2px 8px;font-size:var(--text-xs);font-weight:600;flex-shrink:0;margin-left:var(--space-2);}
 .edge-table-skeleton tr{background:none;}
 .edge-table-skeleton tr td{padding:var(--space-3);}
@@ -2576,13 +2578,14 @@ function renderEdgeTable(brackets, unit = 'F', memberCount = 0) {
 
   tbody.innerHTML = brackets.map((b, i) => {
     const edgePp = b.edge !== null && b.edge !== undefined ? b.edge : null;
-    const edgeClass = edgePp === null ? '' : edgePp > 1 ? 'positive' : edgePp < -1 ? 'negative' : 'near-zero';
+    const thinSignal = b.model_prob !== null && b.model_prob < minModelProb;
+    const edgeClass = thinSignal || edgePp === null ? 'thin-signal' : edgePp > 1 ? 'positive' : edgePp < -1 ? 'negative' : 'near-zero';
     const edgeText = edgePp === null ? '—' : (edgePp > 0 ? '+' : '') + edgePp.toFixed(1) + 'pp';
     const bestChip = i === bestIdx && edgePp !== null ? '<span class="best-edge-chip"><i data-lucide="star" style="width:10px;height:10px;"></i>Best</span>' : '';
     const mktPct = b.polymarket_prob !== null ? b.polymarket_prob.toFixed(1) + '%' : '—';
     const mdlPct = b.model_prob !== null ? b.model_prob.toFixed(1) + '%' : '—';
     const barWidth = b.model_prob !== null ? Math.round(b.model_prob) : 0;
-    return `<tr class="${i === bestIdx && edgePp !== null ? 'best-edge-row' : ''}">
+    return `<tr class="${i === bestIdx && edgePp !== null ? 'best-edge-row' : ''}${thinSignal ? ' thin-signal-row' : ''}">
       <td class="edge-table-bracket">${bracketLabel(b)}</td>
       <td>${mktPct}</td>
       <td><div class="edge-prob-bar-wrap"><div class="edge-prob-bar"><div class="edge-prob-bar-fill" style="width:${barWidth}%"></div></div><span class="edge-prob-value">${mdlPct}</span></div></td>
