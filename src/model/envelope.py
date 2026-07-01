@@ -9,7 +9,6 @@ from dataclasses import dataclass
 from datetime import datetime
 from math import erf, sqrt
 
-from src.config import get_live_config, CONFIG_DEFAULTS
 from src.model.climb_rates import expected_additional_rise
 
 log = logging.getLogger(__name__)
@@ -84,7 +83,7 @@ def compute_envelope(state: WeatherState, minutes_to_settlement: float = 9999.0)
 def true_probability_yes(bracket: Bracket, state: WeatherState,
                          minutes_to_settlement: float = 9999.0,
                          forecast_stddev: float = 2.0,
-                         db=None) -> float:
+                         deb_enabled: "bool | None" = None) -> float:
     """Compute P(daily high falls in this bracket).
 
     Enhanced: uses ensemble forecast and time-to-settlement boost.
@@ -94,33 +93,25 @@ def true_probability_yes(bracket: Bracket, state: WeatherState,
         state: WeatherState with forecasts and observations
         minutes_to_settlement: Time until market resolves (default 9999 = far in future)
         forecast_stddev: Forecast uncertainty (default 2.0 degrees F)
-        db: Optional database connection; if provided, reads DEB_ENABLED from live config.
-            If None, falls back to environment variable.
+        deb_enabled: Resolved DEB_ENABLED flag. Callers with DB access should pass
+            the value from get_live_config (read once per scan cycle, not per bracket).
+            When None, falls back to the DEB_ENABLED env var (backward compatibility).
     """
     global _deb_enabled_logged
 
     lo, hi = bracket.low_f, bracket.high_f
     min_env, max_env = compute_envelope(state, minutes_to_settlement)
 
-    # Determine DEB_ENABLED status: read from live config (db) if available, else env var
-    deb_enabled = False
-    deb_source = "default"
-    if db is not None:
-        try:
-            deb_enabled = get_live_config(db).get("DEB_ENABLED", CONFIG_DEFAULTS["DEB_ENABLED"])
-            deb_source = "live config"
-        except Exception as e:
-            log.warning(f"Failed to read DEB_ENABLED from live config: {e}; falling back to env var")
-            deb_enabled = os.getenv("DEB_ENABLED", "false").lower() == "true"
-            deb_source = "env var (fallback)"
+    # Resolve DEB_ENABLED: caller-provided (from live config) wins; env var is the fallback
+    if deb_enabled is not None:
+        deb_source = "caller"
     else:
-        # No db provided: fall back to env var for backward compatibility with tests
         deb_enabled = os.getenv("DEB_ENABLED", "false").lower() == "true"
         deb_source = "env var"
 
     # Log DEB_ENABLED status once at first evaluation
     if not _deb_enabled_logged:
-        log.info(f"DEB_ENABLED={deb_enabled} (source: {deb_source})")
+        log.info("DEB_ENABLED=%s (source: %s)", deb_enabled, deb_source)
         _deb_enabled_logged = True
 
     # Priority: corrected_mu_f (intraday) > deb_mu_f (DEB-enabled) > ensemble fallback.
