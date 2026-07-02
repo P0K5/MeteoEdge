@@ -7,18 +7,36 @@ peak window approaches.
 
 The main entry point is ``compute_correction(city, state, db)``.
 """
+import json
+import logging
 import os
 from datetime import datetime, timezone
 
 from src.config import STATIONS, get_source_priority
 from src.model.deb_hourly_consensus import build_consensus
+from src.model.deb_weighting import get_weights
 from src.model.decay_functions import get_decay_factor
+
+log = logging.getLogger(__name__)
+
+# Fallback basis used when live DEB weights are unavailable (e.g. the
+# get_weights() call fails, or the city has no STATIONS entry to resolve a
+# DEB region from). Matches the historical hardcoded basis this module used
+# before issue #572, so legacy rows and fallback rows share the same tag.
+_FALLBACK_WEIGHTS: dict[str, float] = {"open_meteo": 1.0}
 
 # Cities that use high-freq sources but have no METAR entry in STATIONS.
 # Values are (lat, lon) tuples for build_consensus() calls.
 _CITY_LAT_LON_OVERRIDES: dict[str, tuple[float, float]] = {
     "Tokyo": (35.5494, 139.7798),  # RJTT (Haneda Airport)
 }
+
+# European ICAO prefixes (E* = North/Central Europe, L* = South Europe / MENA
+# border). Mirrors src.weather.builder._EU_ICAO_PREFIXES / _deb_station_region
+# — duplicated here (rather than imported) because builder.py imports
+# compute_correction from this module, so importing builder here would create
+# a circular import.
+_EU_ICAO_PREFIXES = frozenset(("E", "L"))
 
 
 def _get_lat_lon(city: str) -> "tuple[float, float] | None":
@@ -29,6 +47,58 @@ def _get_lat_lon(city: str) -> "tuple[float, float] | None":
         if row[3] == city:
             return row[1], row[2]
     return None
+
+
+def _get_station_region(city: str) -> str:
+    """Map *city* to its DEB registry region ("us", "eu", or "global").
+
+    Mirrors ``src.weather.builder._deb_station_region``'s mapping rules:
+    - unit="F" -> "us"  (NWS/HRRR/NBM are applicable)
+    - unit="C" + European ICAO prefix -> "eu"  (ICON-EU is applicable)
+    - unit="C" otherwise -> "global"
+
+    Falls back to "global" when *city* has no STATIONS entry (e.g. cities
+    resolved only via ``_CITY_LAT_LON_OVERRIDES``).
+    """
+    for row in STATIONS:
+        if row[3] == city:
+            station_code, unit = row[0], row[5]
+            if unit == "F":
+                return "us"
+            if station_code[:1] in _EU_ICAO_PREFIXES:
+                return "eu"
+            return "global"
+    return "global"
+
+
+def _get_consensus_weights(city: str, db) -> dict[str, float]:
+    """Return the DEB weights to use as the intraday consensus basis for *city*.
+
+    Uses the city's live DEB weights (``get_weights``) so the hourly consensus
+    curve tracks whatever blend DEB is currently producing for this city,
+    rather than a hardcoded open_meteo-only basis (issue #572). Falls back to
+    ``_FALLBACK_WEIGHTS`` only when weights are genuinely unavailable (the
+    lookup raises, or returns a dict with no "open_meteo" entry at all).
+
+    Note that DEB's own cold-start / disabled equal-weight dict is a valid,
+    "available" result — it is passed through as-is, since that reflects
+    DEB's actual current basis rather than an error condition.
+    """
+    station_region = _get_station_region(city)
+    try:
+        weights = get_weights(db, city, station_region=station_region)
+    except Exception as exc:
+        log.warning(
+            "[intraday] get_weights failed for city=%s (region=%s): %s — "
+            "falling back to open_meteo-only basis",
+            city, station_region, exc,
+        )
+        return dict(_FALLBACK_WEIGHTS)
+
+    if not weights or "open_meteo" not in weights:
+        return dict(_FALLBACK_WEIGHTS)
+
+    return weights
 
 
 def _city_stations(city: str) -> list[str]:
@@ -176,7 +246,8 @@ def compute_correction(
         return None
 
     lat, lon = lat_lon
-    consensus = build_consensus(lat, lon, weights={"open_meteo": 1.0})
+    basis_weights = _get_consensus_weights(city, db)
+    consensus = build_consensus(lat, lon, weights=basis_weights)
     if not consensus:
         return None
 
@@ -204,6 +275,7 @@ def compute_correction(
         delta_f=delta_f,
         corrected_mu_f=corrected_mu_f,
         decay_factor=decay_factor,
+        basis_weights=json.dumps(basis_weights, sort_keys=True),
     )
 
     return corrected_mu_f

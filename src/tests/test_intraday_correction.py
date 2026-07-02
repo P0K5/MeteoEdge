@@ -1,4 +1,5 @@
 """Unit tests for src/model/intraday_correction.py."""
+import json
 from datetime import datetime, timezone, timedelta
 from unittest.mock import MagicMock, patch
 
@@ -8,7 +9,10 @@ from src.model.intraday_correction import (
     compute_correction,
     _interpolate_model_temp,
     _get_lat_lon,
+    _get_station_region,
+    _get_consensus_weights,
     _city_stations,
+    _FALLBACK_WEIGHTS,
 )
 
 
@@ -163,3 +167,181 @@ class TestComputeCorrection:
             result = compute_correction("Tokyo", state, db)
 
         assert result == pytest.approx(80.0)
+
+
+class TestGetStationRegion:
+    """Unit tests for the DEB region resolution used to pick the right DEB
+    weight set (issue #572)."""
+
+    def test_us_station_returns_us(self):
+        # Chicago (KORD) is unit="F" in STATIONS.
+        assert _get_station_region("Chicago") == "us"
+
+    def test_eu_station_returns_eu(self):
+        # London (EGLC) is unit="C" with an "E" ICAO prefix.
+        assert _get_station_region("London") == "eu"
+
+    def test_non_eu_international_station_returns_global(self):
+        # Seoul (RKSI) is unit="C" with an "R" ICAO prefix (not EU).
+        assert _get_station_region("Seoul") == "global"
+
+    def test_unknown_city_returns_global(self):
+        assert _get_station_region("UnknownCity_XYZ_99") == "global"
+
+
+class TestGetConsensusWeights:
+    """Unit tests for the DEB-weights basis resolution (issue #572).
+
+    Covers: calibrated weights are used as-is; fallback to open_meteo-only
+    when get_weights() is unavailable (raises or omits open_meteo).
+    """
+
+    def test_uses_live_calibrated_weights(self):
+        """When DEB has calibrated weights, they are passed through unchanged."""
+        db = MagicMock()
+        calibrated = {"nws": 0.7, "open_meteo": 0.2, "gfs": 0.1}
+        with patch(
+            "src.model.intraday_correction.get_weights", return_value=calibrated
+        ) as mock_get_weights:
+            result = _get_consensus_weights("Chicago", db)
+
+        assert result == calibrated
+        mock_get_weights.assert_called_once_with(db, "Chicago", station_region="us")
+
+    def test_passes_resolved_station_region(self):
+        """station_region passed to get_weights() matches the city's DEB region."""
+        db = MagicMock()
+        with patch(
+            "src.model.intraday_correction.get_weights",
+            return_value={"open_meteo": 0.5, "ecmwf": 0.3, "icon": 0.2},
+        ) as mock_get_weights:
+            _get_consensus_weights("London", db)
+
+        mock_get_weights.assert_called_once_with(db, "London", station_region="eu")
+
+    def test_fallback_when_get_weights_raises(self):
+        """get_weights() raising an exception falls back to the open_meteo-only basis."""
+        db = MagicMock()
+        with patch(
+            "src.model.intraday_correction.get_weights",
+            side_effect=RuntimeError("db unavailable"),
+        ):
+            result = _get_consensus_weights("Chicago", db)
+
+        assert result == _FALLBACK_WEIGHTS
+
+    def test_fallback_when_open_meteo_key_missing(self):
+        """A weights dict without an 'open_meteo' key is treated as unavailable."""
+        db = MagicMock()
+        with patch(
+            "src.model.intraday_correction.get_weights",
+            return_value={"nws": 1.0},
+        ):
+            result = _get_consensus_weights("Chicago", db)
+
+        assert result == _FALLBACK_WEIGHTS
+
+    def test_deb_equal_weight_cold_start_is_not_a_fallback(self):
+        """DEB's own equal-weight cold-start dict is a legitimate live basis —
+        it is passed through as-is rather than overridden by the hardcoded
+        fallback, since it reflects DEB's genuine current state."""
+        db = MagicMock()
+        equal_weights = {"nws": 1 / 3, "open_meteo": 1 / 3, "gfs": 1 / 3}
+        with patch(
+            "src.model.intraday_correction.get_weights", return_value=equal_weights
+        ):
+            result = _get_consensus_weights("Chicago", db)
+
+        assert result == equal_weights
+
+
+class TestComputeCorrectionBasisRegime:
+    """Tests that compute_correction() feeds live DEB weights into
+    build_consensus() and persists a basis snapshot for regime tagging
+    (issue #572)."""
+
+    def _patch_consensus(self, obs_dt: datetime) -> list:
+        before_str = (obs_dt - timedelta(hours=1)).replace(minute=0, second=0, microsecond=0).isoformat()
+        after_str = (obs_dt + timedelta(hours=1)).replace(minute=0, second=0, microsecond=0).isoformat()
+        return [(before_str, 74.0), (after_str, 76.0)]
+
+    def test_calibrated_weights_forwarded_to_build_consensus(self):
+        """build_consensus() receives the live DEB weights, not a hardcoded basis."""
+        db = MagicMock()
+        obs = _fresh_obs(temp_f=77.0)
+        state = _make_state(deb_mu_f=80.0)
+        obs_dt = datetime.now(timezone.utc)
+        consensus = self._patch_consensus(obs_dt)
+        calibrated = {"nws": 0.1, "open_meteo": 0.6, "gfs": 0.3}
+
+        with (
+            patch("src.model.intraday_correction.build_consensus", return_value=consensus) as mock_build,
+            patch("src.model.intraday_correction.get_weights", return_value=calibrated),
+            patch("src.model.intraday_correction.get_source_priority", return_value=[
+                {"source": "jma_ameidas", "station": "Tokyo", "cadence_min": 10},
+            ]),
+            patch("src.model.intraday_correction.get_decay_factor", return_value=0.5),
+            patch.dict("os.environ", {"INTRADAY_CORRECTION_ENABLED": "true"}),
+        ):
+            db.get_latest_observation.return_value = obs
+            compute_correction("Tokyo", state, db)
+
+        mock_build.assert_called_once()
+        _, kwargs = mock_build.call_args
+        assert kwargs["weights"] == calibrated
+
+    def test_basis_weights_snapshot_persisted_for_calibrated_regime(self):
+        """The exact live weights used are persisted as a JSON snapshot so the
+        residual layer can later segment regimes."""
+        db = MagicMock()
+        obs = _fresh_obs(temp_f=77.0)
+        state = _make_state(deb_mu_f=80.0)
+        obs_dt = datetime.now(timezone.utc)
+        consensus = self._patch_consensus(obs_dt)
+        calibrated = {"nws": 0.1, "open_meteo": 0.6, "gfs": 0.3}
+
+        with (
+            patch("src.model.intraday_correction.build_consensus", return_value=consensus),
+            patch("src.model.intraday_correction.get_weights", return_value=calibrated),
+            patch("src.model.intraday_correction.get_source_priority", return_value=[
+                {"source": "jma_ameidas", "station": "Tokyo", "cadence_min": 10},
+            ]),
+            patch("src.model.intraday_correction.get_decay_factor", return_value=0.5),
+            patch.dict("os.environ", {"INTRADAY_CORRECTION_ENABLED": "true"}),
+        ):
+            db.get_latest_observation.return_value = obs
+            compute_correction("Tokyo", state, db)
+
+        kwargs = db.upsert_intraday_correction.call_args.kwargs
+        assert json.loads(kwargs["basis_weights"]) == calibrated
+
+    def test_basis_weights_snapshot_tags_fallback_regime(self):
+        """When get_weights() is unavailable, the persisted basis snapshot is
+        distinguishable from a calibrated-regime snapshot (fallback tag)."""
+        db = MagicMock()
+        obs = _fresh_obs(temp_f=77.0)
+        state = _make_state(deb_mu_f=80.0)
+        obs_dt = datetime.now(timezone.utc)
+        consensus = self._patch_consensus(obs_dt)
+
+        with (
+            patch("src.model.intraday_correction.build_consensus", return_value=consensus),
+            patch(
+                "src.model.intraday_correction.get_weights",
+                side_effect=RuntimeError("db unavailable"),
+            ),
+            patch("src.model.intraday_correction.get_source_priority", return_value=[
+                {"source": "jma_ameidas", "station": "Tokyo", "cadence_min": 10},
+            ]),
+            patch("src.model.intraday_correction.get_decay_factor", return_value=0.5),
+            patch.dict("os.environ", {"INTRADAY_CORRECTION_ENABLED": "true"}),
+        ):
+            db.get_latest_observation.return_value = obs
+            compute_correction("Tokyo", state, db)
+
+        kwargs = db.upsert_intraday_correction.call_args.kwargs
+        assert json.loads(kwargs["basis_weights"]) == _FALLBACK_WEIGHTS
+        # Regime is distinguishable: fallback basis != a real calibrated basis.
+        assert kwargs["basis_weights"] != json.dumps(
+            {"nws": 0.1, "open_meteo": 0.6, "gfs": 0.3}, sort_keys=True
+        )
