@@ -1258,3 +1258,109 @@ class TestIssue550GroupCapSanityCheck:
         assert ecmwf_intl_total <= GROUP_WEIGHT_CAP + 1e-9, (
             f"ecmwf_intl group {ecmwf_intl_total:.4f} exceeds cap {GROUP_WEIGHT_CAP}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Real RMSE and sample_count logging (issue #553)
+# ---------------------------------------------------------------------------
+
+class TestComputeWeightsWithMetadata:
+    """Verify _compute_weights_with_metadata returns real RMSE and sample counts."""
+
+    def test_calibrated_model_gets_real_rmse(self):
+        """Calibrated model should return computed RMSE, not 0.0."""
+        today = date.today()
+        start = today - timedelta(days=29)
+        settlements = _settlement_rows(start, 20, actual_high=80.0)
+        logs = _log_rows(start, 20, ["nws"], forecast_fn=lambda m, i: 80.5)
+        db = _make_db(logs, settlements)
+
+        weights, rmse_dict, sample_counts = dw._compute_weights_with_metadata(
+            db, "KORD", "Chicago", station_region="us"
+        )
+
+        assert weights["nws"] > 0
+        assert rmse_dict["nws"] > 0, "Calibrated model should have real RMSE > 0"
+        assert sample_counts["nws"] >= MIN_SAMPLES, (
+            f"Calibrated model should have sample_count >= MIN_SAMPLES, got {sample_counts['nws']}"
+        )
+
+    def test_cold_start_model_gets_zero_rmse(self):
+        """Cold-start model (insufficient samples) should return rmse=0.0."""
+        today = date.today()
+        start = today - timedelta(days=29)
+        settlements = _settlement_rows(start, 20, actual_high=80.0)
+        # nws calibrated (20 samples); gfs/open_meteo cold-start (0 samples)
+        logs = _log_rows(start, 20, ["nws"], forecast_fn=lambda m, i: 80.5)
+        db = _make_db(logs, settlements)
+
+        weights, rmse_dict, sample_counts = dw._compute_weights_with_metadata(
+            db, "KORD", "Chicago", station_region="us"
+        )
+
+        # nws is calibrated, gfs/open_meteo are cold-start
+        assert sample_counts["nws"] >= MIN_SAMPLES
+        assert sample_counts["gfs"] < MIN_SAMPLES
+        assert sample_counts["open_meteo"] < MIN_SAMPLES
+        assert rmse_dict["nws"] > 0, "Calibrated model should have real RMSE > 0"
+        assert rmse_dict["gfs"] == 0.0, "Cold-start model should have rmse=0.0"
+        assert rmse_dict["open_meteo"] == 0.0, "Cold-start model should have rmse=0.0"
+
+    def test_all_cold_start_returns_sample_counts(self):
+        """When all models are cold-start, still return sample counts."""
+        today = date.today()
+        start = today - timedelta(days=29)
+        settlements = _settlement_rows(start, 20, actual_high=80.0)
+        logs = _log_rows(start, 5, ["nws"], forecast_fn=lambda m, i: 80.5)  # only 5 samples
+        db = _make_db(logs, settlements)
+
+        weights, rmse_dict, sample_counts = dw._compute_weights_with_metadata(
+            db, "KORD", "Chicago", station_region="us"
+        )
+
+        # All models should have sample_count < MIN_SAMPLES
+        for m in sample_counts:
+            assert sample_counts[m] < MIN_SAMPLES, (
+                f"Expected all models cold-start, but {m} has {sample_counts[m]} >= {MIN_SAMPLES}"
+            )
+            assert rmse_dict[m] == 0.0, f"Cold-start model {m} should have rmse=0.0"
+
+    def test_mixed_calibrated_cold_start(self):
+        """Mixed scenario: some models calibrated, others cold-start."""
+        today = date.today()
+        start = today - timedelta(days=29)
+        settlements = _settlement_rows(start, 20, actual_high=80.0)
+        # nws + open_meteo calibrated (20 samples each); gfs cold-start (0 samples)
+        logs = (
+            _log_rows(start, 20, ["nws"], forecast_fn=lambda m, i: 80.5)
+            + _log_rows(start, 20, ["open_meteo"], forecast_fn=lambda m, i: 82.0)
+        )
+        db = _make_db(logs, settlements)
+
+        weights, rmse_dict, sample_counts = dw._compute_weights_with_metadata(
+            db, "KORD", "Chicago", station_region="us"
+        )
+
+        assert sample_counts["nws"] == 20
+        assert sample_counts["open_meteo"] == 20
+        assert sample_counts["gfs"] == 0
+        # nws + open_meteo should have real RMSE
+        assert rmse_dict["nws"] > 0
+        assert rmse_dict["open_meteo"] > 0
+        # gfs cold-start should have 0.0 rmse
+        assert rmse_dict["gfs"] == 0.0
+
+    def test_compute_weights_backward_compat(self):
+        """Verify compute_weights() still returns just weights (backward compat)."""
+        today = date.today()
+        start = today - timedelta(days=29)
+        settlements = _settlement_rows(start, 20, actual_high=80.0)
+        logs = _log_rows(start, 20, ["nws"], forecast_fn=lambda m, i: 80.5)
+        db = _make_db(logs, settlements)
+
+        weights = dw.compute_weights(db, "KORD", "Chicago", station_region="us")
+
+        # Should return a dict, not a tuple
+        assert isinstance(weights, dict)
+        assert "nws" in weights
+        assert isclose(sum(weights.values()), 1.0, abs_tol=1e-6)

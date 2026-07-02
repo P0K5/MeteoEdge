@@ -9,6 +9,7 @@ from src.model.ensemble_sigma import (
     SIGMA_FLOOR_F,
     MIN_CALIBRATION_SAMPLES,
     compute_ensemble_sigma,
+    raw_member_sigma,
     _naive_sigma,
     _calibrated_sigma,
     _load_calibration_pairs,
@@ -46,6 +47,51 @@ class TestNaiveSigma:
         import statistics
         members = [70.0 + i * 0.5 for i in range(30)]
         s = _naive_sigma(members)
+        assert s == pytest.approx(statistics.stdev(members))
+        assert s > SIGMA_FLOOR_F
+
+
+# ---------------------------------------------------------------------------
+# raw_member_sigma — capture-time, UNFLOORED (issue #555)
+# ---------------------------------------------------------------------------
+
+class TestRawMemberSigma:
+    """raw_member_sigma() must return the true sample stdev with NO floor
+    applied, and None (never a placeholder number) when it cannot be
+    computed — this is what capture_forecasts.py persists to
+    model_forecast_log.sigma_f for the gefs channel."""
+
+    def test_returns_unfloored_stdev_of_members(self):
+        import statistics
+        members = [70.0, 72.0, 74.0, 76.0, 78.0]
+        s = raw_member_sigma(members)
+        assert s == pytest.approx(statistics.stdev(members))
+
+    def test_below_floor_spread_is_not_clamped(self):
+        # spread of 0.1 → true stdev well under SIGMA_FLOOR_F (1.0); unlike
+        # _naive_sigma()/compute_ensemble_sigma(), this must NOT be clamped up.
+        import statistics
+        members = [72.0, 72.1]
+        expected = statistics.stdev(members)
+        assert expected < SIGMA_FLOOR_F
+        assert raw_member_sigma(members) == pytest.approx(expected)
+
+    def test_identical_members_returns_true_zero_not_floor(self):
+        # All members identical → true stdev is 0.0 — must be logged as a
+        # genuine near-zero value, never silently clamped to SIGMA_FLOOR_F.
+        members = [72.0, 72.0, 72.0, 72.0]
+        assert raw_member_sigma(members) == pytest.approx(0.0)
+
+    def test_none_for_single_member(self):
+        assert raw_member_sigma([72.0]) is None
+
+    def test_none_for_empty_list(self):
+        assert raw_member_sigma([]) is None
+
+    def test_typical_30_member_ensemble_matches_naive_unfloored(self):
+        import statistics
+        members = [70.0 + i * 0.5 for i in range(30)]
+        s = raw_member_sigma(members)
         assert s == pytest.approx(statistics.stdev(members))
         assert s > SIGMA_FLOOR_F
 
@@ -132,6 +178,71 @@ class TestComputeEnsembleSigma:
             compute_ensemble_sigma(members, "KORD", history_db=mock_db)
         # No write calls
         mock_db._conn.execute.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Regression: compute_ensemble_sigma() (consumption-time / live path) is
+# COMPLETELY UNCHANGED by #555 — same floor, same output, for the same
+# inputs, as before raw_member_sigma() existed. #555 only changed what
+# capture_forecasts.py persists at logging time; it must not alter live
+# probability/trading behaviour.
+# ---------------------------------------------------------------------------
+
+class TestComputeEnsembleSigmaUnchangedByIssue555:
+    """Locks in pre-#555 behaviour for compute_ensemble_sigma() so a future
+    change to raw_member_sigma() (or anything else in this module) cannot
+    accidentally leak the floor removal into the live consumption path."""
+
+    def test_still_floors_zero_spread_members(self):
+        # Identical members → true spread is 0.0, but the live/consumption
+        # path must still clamp to SIGMA_FLOOR_F, exactly as before #555.
+        members = [72.0] * 30
+        result = compute_ensemble_sigma(members, "KORD", history_db=None)
+        assert result == SIGMA_FLOOR_F
+
+    def test_still_floors_below_floor_spread(self):
+        # spread of 0.1 → true stdev < SIGMA_FLOOR_F; consumption path must
+        # still clamp up to the floor (unlike raw_member_sigma(), which
+        # would return the true ~0.07 value unfloored).
+        members = [72.0, 72.1]
+        result = compute_ensemble_sigma(members, "KORD", history_db=None)
+        assert result == pytest.approx(SIGMA_FLOOR_F)
+
+    def test_naive_path_output_matches_naive_sigma_directly(self):
+        # No history_db → naive estimator, identical to calling _naive_sigma()
+        # directly — same code path as pre-#555.
+        members = [70.0 + i * 0.5 for i in range(30)]
+        assert compute_ensemble_sigma(members, "KORD", history_db=None) == pytest.approx(
+            _naive_sigma(members)
+        )
+
+    def test_does_not_import_or_depend_on_raw_member_sigma(self):
+        # compute_ensemble_sigma()'s naive fallback must equal _naive_sigma()
+        # (floored) — NOT raw_member_sigma() (unfloored) — for a spread that
+        # would differ under the two estimators, proving the two code paths
+        # are still fully independent post-#555.
+        members = [72.0, 72.05]  # true stdev << SIGMA_FLOOR_F
+        floored = compute_ensemble_sigma(members, "KORD", history_db=None)
+        unfloored = raw_member_sigma(members)
+        assert floored == SIGMA_FLOOR_F
+        assert unfloored < SIGMA_FLOOR_F
+        assert floored != pytest.approx(unfloored)
+
+    def test_calibrated_path_unaffected(self):
+        # With sufficient history, the calibrated-regression path is exactly
+        # as before — raw_member_sigma() is not involved anywhere in it.
+        members = [70.0 + i * 0.5 for i in range(30)]
+        synthetic_pairs = [
+            (float(1 + i % 5), float(2 + 2 * (i % 5))) for i in range(MIN_CALIBRATION_SAMPLES)
+        ]
+        mock_db = MagicMock()
+        with patch(
+            "src.model.ensemble_sigma._load_calibration_pairs",
+            return_value=synthetic_pairs,
+        ):
+            result = compute_ensemble_sigma(members, "KORD", history_db=mock_db)
+        expected = _calibrated_sigma(_naive_sigma(members), synthetic_pairs)
+        assert result == pytest.approx(expected)
 
 
 # ---------------------------------------------------------------------------

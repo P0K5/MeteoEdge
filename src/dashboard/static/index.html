@@ -593,6 +593,20 @@ a,button,input,select{transition:color var(--transition),background var(--transi
 .bias-badge-insufficient{background:var(--surface-off);color:var(--muted);}
 .bias-empty{font-size:var(--text-xs);color:var(--faint);padding:var(--space-1) 0;}
 
+/* ── DEB WEIGHTS PANEL ── */
+.deb-panel{padding:var(--space-3) var(--space-5);border-top:1px solid var(--divider);}
+.deb-panel-title{font-size:var(--text-xs);font-weight:700;color:var(--muted);letter-spacing:.05em;margin-bottom:var(--space-2);}
+.deb-table{width:100%;border-collapse:collapse;font-size:var(--text-xs);font-variant-numeric:tabular-nums;}
+.deb-th{text-align:left;padding:0 var(--space-2) var(--space-2) 0;font-weight:700;color:var(--muted);letter-spacing:.04em;}
+.deb-td{padding:var(--space-1) var(--space-2) var(--space-1) 0;vertical-align:middle;color:var(--text);}
+.deb-td-model{font-weight:600;}
+.deb-td-weight{color:var(--primary);}
+.deb-td-rmse{color:var(--edge);}
+.deb-td-samples{color:var(--muted);}
+.deb-td-status{font-size:10px;font-weight:700;}
+.deb-td-status span{padding:2px 6px;border-radius:var(--radius-sm);background:var(--surface-off);color:var(--muted);}
+.deb-empty{font-size:var(--text-xs);color:var(--faint);padding:var(--space-1) 0;}
+
 /* ── TOGGLE ROW (two per-side buttons) ── */
 .station-toggle-row{display:flex;gap:var(--space-2);flex-wrap:wrap;}
 /* Operational status badge demoted to header-right — smaller */
@@ -1857,6 +1871,40 @@ function biasPanelHTML(metar, residuals) {
   </div>`;
 }
 
+function debWeightsTableHTML(metar, weights) {
+  const MIN_SAMPLES = 10;
+  if (!weights || weights.length === 0) {
+    return `<div class="deb-panel">
+      <div class="deb-panel-title">DEB MODEL WEIGHTS</div>
+      <div class="deb-empty">No data — collecting observations…</div>
+    </div>`;
+  }
+  const rows = weights.map(w => {
+    const isColdStart = w.n_samples < MIN_SAMPLES;
+    const statusLabel = isColdStart ? `<span title="Cold-start: ${w.n_samples} < ${MIN_SAMPLES} samples">cold-start</span>` : 'calibrated';
+    return `<tr>
+      <td class="deb-td deb-td-model">${w.model}</td>
+      <td class="deb-td deb-td-weight">${(w.weight * 100).toFixed(1)}%</td>
+      <td class="deb-td deb-td-rmse">${w.rmse_f.toFixed(2)}°F</td>
+      <td class="deb-td deb-td-samples">${w.n_samples}</td>
+      <td class="deb-td deb-td-status">${statusLabel}</td>
+    </tr>`;
+  }).join('');
+  return `<div class="deb-panel">
+    <div class="deb-panel-title">DEB MODEL WEIGHTS</div>
+    <table class="deb-table" role="table" aria-label="DEB weights for ${metar}">
+      <thead><tr>
+        <th class="deb-th">Model</th>
+        <th class="deb-th">Weight</th>
+        <th class="deb-th">RMSE</th>
+        <th class="deb-th">Samples</th>
+        <th class="deb-th">Status</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+  </div>`;
+}
+
 function renderStationCard(s) {
   const yesLive = s.yes_enabled !== false;
   const noLive  = s.no_enabled  !== false;
@@ -1906,6 +1954,8 @@ function renderStationCard(s) {
     ${perfTableHTML(s.metar, s.perf)}
 
     ${biasPanelHTML(s.metar, s.residuals)}
+
+    ${debWeightsTableHTML(s.metar, s.deb_weights)}
 
     <div class="station-stats" style="padding-top:var(--space-3);">
       <span class="station-stat">${openPos} open position${openPos !== 1 ? 's' : ''}</span>
@@ -1990,13 +2040,20 @@ async function fetchStations() {
     const perf = perfResp.ok ? await perfResp.json() : {};
     // Merge perf data into each station object
     stations.forEach(s => { s.perf = perf[s.metar] || null; });
-    // Fetch residual data per station (best-effort — null on error)
+    // Fetch residual data and DEB weights per station (best-effort — null on error)
     await Promise.all(stations.map(async s => {
       try {
         const r = await fetch(`/api/stations/${s.metar}/residual`);
         s.residuals = r.ok ? await r.json() : null;
       } catch (_) {
         s.residuals = null;
+      }
+      // Fetch DEB weights for this city
+      try {
+        const r = await fetch(`/api/cities/${s.city}/deb`);
+        s.deb_weights = r.ok ? (await r.json()).weights : null;
+      } catch (_) {
+        s.deb_weights = null;
       }
     }));
     // Build a map of station metar code → station object for quick lookup in position rendering

@@ -53,6 +53,56 @@ Lead-time bins:
 - 18Z: log forecast for TODAY    → lead_hours ≈ 6
 - 21Z: log forecast for TODAY    → lead_hours ≈ 3
 
+sigma_f sourcing policy, by channel (issue #555):
+--------------------------------------------------
+EMOS trains ``σ_calibrated = c + d·σ_ensemble``, so ``sigma_f`` must either
+carry a genuine dispersion signal or be an honestly-NULL "we don't have
+one" — never a silently-invented number. Per-channel decision:
+
+    Channel      | Decision | Rationale
+    -------------|----------|-----------------------------------------------
+    nws          | Derive   | Climatological σ keyed on lead_hours (see
+                 |          | src/data/nws.py:_nws_sigma_for_lead) — a
+                 |          | documented static per-lead dispersion table,
+                 |          | not a raw ensemble, but a real signal.
+    open_meteo   | Derive   | Cross-model stdev across 4 constituent NWP
+                 |          | runs (ecmwf_ifs04/gfs_seamless/jma_seamless/
+                 |          | best_match) — genuine multi-model spread.
+    gfs          | NULL     | Single deterministic run (#548); no ensemble
+                 |          | or multi-model spread exists to derive from.
+    gefs         | Derive   | Raw (UNFLOORED) stdev of the ~30 GEFS members
+                 |          | — the one true ensemble-member spread we
+                 |          | capture. SIGMA_FLOOR_F is applied only at
+                 |          | consumption (src/model/ensemble_sigma.py:
+                 |          | compute_ensemble_sigma), never here.
+    hrrr         | NULL     | Single deterministic run, hourly grid only;
+                 |          | no member spread. A lagged-run spread (diff
+                 |          | between consecutive HRRR cycles) could be
+                 |          | derived but requires additional cycle-history
+                 |          | plumbing not yet built — left NULL rather
+                 |          | than inventing a static number. Revisit if a
+                 |          | future issue adds lagged-run ingestion.
+    nbm          | NULL     | NBM itself blends models internally but the
+                 |          | open endpoint used here exposes only the
+                 |          | point forecast, not its internal spread —
+                 |          | left NULL rather than a fabricated constant.
+    ecmwf        | NULL     | Single deterministic run (open-data endpoint
+                 |          | does not expose the ECMWF ensemble/EPS
+                 |          | spread) — left NULL rather than a fabricated
+                 |          | constant.
+    icon         | NULL     | Single deterministic run (open-data endpoint
+                 |          | does not expose ICON-EPS spread) — left NULL
+                 |          | rather than a fabricated constant.
+
+EMOS trains per-channel (see ``forecast_source``/``regime`` filtering in
+src/model/emos_calibration.py:fetch_training_data), so a NULL sigma_f for
+a given channel just means that channel's EMOS fit falls back to
+``FORECAST_STDDEV_F`` rather than being blocked — it does not stop other
+channels from training on their own real sigma. See also
+docs/OPERATIONS.md → "Architectural Decisions" for the committed decision
+table and scripts/check_emos_data_quality.py for floor-saturation / NULL
+reporting per channel.
+
 Usage:
     python -m src.scripts.capture_forecasts [--dry-run]
 
@@ -76,7 +126,7 @@ from src.data.open_meteo import (
     fetch_gfs_forecast_high,
 )
 from src.logging_config import setup_logging
-from src.model.ensemble_sigma import compute_ensemble_sigma
+from src.model.ensemble_sigma import raw_member_sigma
 
 log = logging.getLogger(__name__)
 
@@ -283,10 +333,17 @@ def _capture_station(
         # Convert GEFSMemberForecast.temp_k (Kelvin) → °F for downstream consumers
         gefs_members = [(m.temp_k - 273.15) * 9.0 / 5.0 + 32.0 for m in gefs_raw]
         gefs_mu = statistics.mean(gefs_members)
-        gefs_sigma = compute_ensemble_sigma(gefs_members, station, history_db=db)
+        # #555: log the RAW (unfloored) member-spread sigma — SIGMA_FLOOR_F must
+        # only be applied at consumption time (see src/model/ensemble_sigma.py),
+        # never baked into what's persisted here. raw_member_sigma() returns
+        # None when it cannot be computed (e.g. <2 members); format defensively
+        # so a None never crashes the %.2f log, mirroring the gfs channel above.
+        gefs_sigma = raw_member_sigma(gefs_members)
         log.info(
-            "[capture] %s gefs mu=%.1fF sigma=%.2fF members=%d lead=%dh date=%s",
-            station, gefs_mu, gefs_sigma, len(gefs_members), lead_hours, target_date,
+            "[capture] %s gefs mu=%.1fF sigma=%s (raw) members=%d lead=%dh date=%s",
+            station, gefs_mu,
+            "None" if gefs_sigma is None else f"{gefs_sigma:.2f}F",
+            len(gefs_members), lead_hours, target_date,
         )
         if not dry_run and db is not None:
             db.upsert_forecast_log_v2(
