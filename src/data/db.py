@@ -271,6 +271,9 @@ class Database:
             # before this migration.
             ("candidates", "p_yes_raw", "REAL"),
             ("trades", "p_yes_raw", "REAL"),
+            # Issue #553: sample count for model_weights to distinguish calibrated
+            # models (sample_count >= MIN_SAMPLES) from cold-start (sample_count < MIN_SAMPLES).
+            ("model_weights", "sample_count", "INTEGER DEFAULT 0"),
         ]:
             try:
                 self._conn.execute(
@@ -1334,13 +1337,18 @@ class Database:
     # model_weights
     # ------------------------------------------------------------------
 
-    def upsert_model_weight(self, *, city: str, model: str, date: str, weight: float, rmse: float) -> None:
-        """Upsert a model weight record (unique on city, model, date)."""
+    def upsert_model_weight(self, *, city: str, model: str, date: str, weight: float, rmse: float, sample_count: int = 0) -> None:
+        """Upsert a model weight record (unique on city, model, date).
+
+        Args:
+            sample_count: number of matched-pair samples used to compute RMSE.
+                         Values < MIN_SAMPLES indicate cold-start (fallback) weights.
+        """
         with self._lock:
             with self._conn:
                 self._conn.execute(
-                    "INSERT OR REPLACE INTO model_weights(city,model,date,weight,rmse) VALUES(?,?,?,?,?)",
-                    (city, model, date, weight, rmse),
+                    "INSERT OR REPLACE INTO model_weights(city,model,date,weight,rmse,sample_count) VALUES(?,?,?,?,?,?)",
+                    (city, model, date, weight, rmse, sample_count),
                 )
 
     def get_model_weights(self, city: str) -> list[dict]:
