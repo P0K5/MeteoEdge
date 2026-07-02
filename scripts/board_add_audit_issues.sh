@@ -29,11 +29,11 @@ source <(grep -E '^(GITHUB_PROJECT_ID|STATUS_FIELD_ID|STATUS_OPT_READY|STATUS_OP
 # Statuses reflect state as of 2026-07-03 (waves 1-2 executed):
 #   Done:        548-550, 552-557, 565, 570-572 (waves 1-2 merged)
 #   In progress: 551 (shadow window open; report ~July 9 via #570 timer)
-#   Ready:       583 (low-side forecast gap), 586 (residual basis filter)
+#   Ready:       583 (low-side forecast gap), 586 (residual basis filter), 592 (dirty-baseline guard)
 #   Backlog:     558-561, 567-568, 582, 584, 591 (blanketing re-analysis ~Sept)
 DONE_ISSUES=(548 549 550 552 553 554 555 556 557 565 570 571 572 585 587)
 IN_PROGRESS_ISSUES=(551)
-READY_ISSUES=(583 586)
+READY_ISSUES=(583 586 592)
 BACKLOG_ISSUES=(558 559 560 561 567 568 582 584 591)
 
 add_and_set_status() {
