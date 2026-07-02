@@ -24,10 +24,17 @@ CTX=".claude/session-context.env"
 
 [ -f "$CTX" ] || { echo "ERROR: $CTX not found — run scripts/bootstrap_session.sh first"; exit 1; }
 # shellcheck disable=SC1090
-source <(grep -E '^(GITHUB_PROJECT_ID|STATUS_FIELD_ID|STATUS_OPT_READY|STATUS_OPT_BACKLOG)=' "$CTX")
+source <(grep -E '^(GITHUB_PROJECT_ID|STATUS_FIELD_ID|STATUS_OPT_READY|STATUS_OPT_BACKLOG|STATUS_OPT_IN_PROGRESS|STATUS_OPT_DONE)=' "$CTX")
 
-READY_ISSUES=(548 549 550 551 552 553 554 555 556 557)
-BACKLOG_ISSUES=(558 559 560 561)
+# Statuses reflect state as of 2026-07-02 (P0 batch executed):
+#   Done:        548 (PR #563), 549 (PR #562), 565 (PR #566)
+#   In progress: 550 (dev assigned), 551 (stage 1 merged via PR #564; shadow window open)
+#   Ready:       552-557 (P1 batch)
+#   Backlog:     558-561 (P2), 567-568 (review follow-ups)
+DONE_ISSUES=(548 549 565)
+IN_PROGRESS_ISSUES=(550 551)
+READY_ISSUES=(552 553 554 555 556 557)
+BACKLOG_ISSUES=(558 559 560 561 567 568)
 
 add_and_set_status() {
   local issue=$1 option_id=$2 status_name=$3
@@ -60,7 +67,9 @@ add_and_set_status() {
   echo "#$issue -> $status_name (item: $item_id)"
 }
 
-for n in "${READY_ISSUES[@]}";   do add_and_set_status "$n" "$STATUS_OPT_READY"   "Ready";   done
-for n in "${BACKLOG_ISSUES[@]}"; do add_and_set_status "$n" "$STATUS_OPT_BACKLOG" "Backlog"; done
+for n in "${DONE_ISSUES[@]}";        do add_and_set_status "$n" "$STATUS_OPT_DONE"        "Done";        done
+for n in "${IN_PROGRESS_ISSUES[@]}"; do add_and_set_status "$n" "$STATUS_OPT_IN_PROGRESS" "In progress"; done
+for n in "${READY_ISSUES[@]}";       do add_and_set_status "$n" "$STATUS_OPT_READY"       "Ready";       done
+for n in "${BACKLOG_ISSUES[@]}";     do add_and_set_status "$n" "$STATUS_OPT_BACKLOG"     "Backlog";     done
 
 echo "Done. Now run the 'Refresh Session Context' workflow to update $CTX with the new item IDs."
