@@ -200,16 +200,21 @@ class TestRegistry:
         assert e.group_id == "noaa_us"
 
     def test_open_meteo_metadata(self):
+        # After #550: open_meteo is grouped "gfs_family" (was group_id=None) —
+        # it shares a raw gfs_seamless constituent with "gfs", and pre-#548
+        # "gfs" was literally a byte-identical duplicate of "open_meteo".
         e = _REGISTRY["open_meteo"]
         assert e.region == "global"
         assert e.expected_cadence_h == 24.0
-        assert e.group_id is None
+        assert e.group_id == "gfs_family"
 
     def test_gfs_metadata(self):
+        # After #550: gfs is grouped "gfs_family" (was group_id=None) —
+        # correlated-channel grouping with open_meteo (and eventually gefs).
         e = _REGISTRY["gfs"]
         assert e.region == "global"
         assert e.expected_cadence_h == 6.0
-        assert e.group_id is None
+        assert e.group_id == "gfs_family"
 
     def test_register_new_model(self):
         try:
@@ -798,13 +803,85 @@ class TestEcmwfIconRegistry:
         assert "icon" not in names
 
     def test_ecmwf_intl_group_cap_applied(self):
-        """ecmwf_intl group (ecmwf + icon) combined weight is capped at GROUP_WEIGHT_CAP."""
+        """ecmwf_intl group (ecmwf + icon) combined weight is capped at GROUP_WEIGHT_CAP.
+
+        Note: open_meteo/gfs are now grouped "gfs_family" (issue #550, was
+        group_id=None), so this exercises _apply_group_cap redistributing
+        freed weight to members of ANOTHER group rather than to literally
+        ungrouped models — see the fix described in _apply_group_cap's
+        docstring.
+        """
         applicable = [_REGISTRY[m] for m in ("ecmwf", "icon", "open_meteo", "gfs")]
         weights = {"ecmwf": 0.5, "icon": 0.3, "open_meteo": 0.1, "gfs": 0.1}
         result = _apply_group_cap(weights, applicable)
         intl_total = result["ecmwf"] + result["icon"]
         assert intl_total <= GROUP_WEIGHT_CAP + 1e-9
         assert isclose(sum(result.values()), 1.0, abs_tol=1e-6)
+
+
+# ---------------------------------------------------------------------------
+# GFS-family group_id honesty (issue #550)
+# ---------------------------------------------------------------------------
+
+class TestGfsFamilyRegistry:
+    """Verify open_meteo and gfs are registered under the shared "gfs_family"
+    group_id (issue #550 — both derive from Open-Meteo's API and open_meteo's
+    multi-model mean includes a gfs_seamless constituent identical to what the
+    dedicated "gfs" channel fetches)."""
+
+    def test_open_meteo_registered_gfs_family(self):
+        assert _REGISTRY["open_meteo"].group_id == "gfs_family"
+
+    def test_gfs_registered_gfs_family(self):
+        assert _REGISTRY["gfs"].group_id == "gfs_family"
+
+    def test_no_channel_left_with_undocumented_none_group(self):
+        """Every currently-registered channel has a deliberate, non-None
+        group_id. (Acceptance criterion for #550: "or a documented reason for
+        None" — no registered channel currently uses that escape hatch.)"""
+        for name, entry in _REGISTRY.items():
+            assert entry.group_id is not None, (
+                f"Channel {name!r} has group_id=None with no documented "
+                "rationale — see issue #550"
+            )
+
+    def test_gfs_family_group_cap_applied(self):
+        """gfs_family group (open_meteo + gfs) combined weight is capped at
+        GROUP_WEIGHT_CAP; freed weight redistributes to ecmwf/icon (the only
+        other applicable models), which are members of a different group."""
+        applicable = [_REGISTRY[m] for m in ("open_meteo", "gfs", "ecmwf", "icon")]
+        weights = {"open_meteo": 0.5, "gfs": 0.3, "ecmwf": 0.15, "icon": 0.05}
+        result = _apply_group_cap(weights, applicable)
+        gfs_family_total = result["open_meteo"] + result["gfs"]
+        assert gfs_family_total <= GROUP_WEIGHT_CAP + 1e-9
+        assert isclose(sum(result.values()), 1.0, abs_tol=1e-6)
+
+    def test_redistribution_when_no_ungrouped_models_remain(self):
+        """Regression test for the _apply_group_cap fix (issue #550).
+
+        Before the fix, freed weight from a capped group was only
+        redistributed to models with group_id=None. Once open_meteo/gfs
+        joined "gfs_family", an EU/global-only applicable set (open_meteo,
+        gfs, ecmwf, icon) has ZERO ungrouped models — every applicable model
+        belongs to gfs_family or ecmwf_intl. Without the fix, freed weight
+        from an over-cap group was silently dropped and weights summed to
+        less than 1.0.
+        """
+        applicable = [_REGISTRY[m] for m in ("open_meteo", "gfs", "ecmwf", "icon")]
+        assert all(m.group_id is not None for m in applicable), (
+            "test premise requires every applicable model to be grouped"
+        )
+        weights = {"open_meteo": 0.45, "gfs": 0.35, "ecmwf": 0.15, "icon": 0.05}
+        pre_sum = sum(weights.values())
+        assert isclose(pre_sum, 1.0, abs_tol=1e-9)
+
+        result = _apply_group_cap(weights, applicable)
+
+        assert isclose(sum(result.values()), 1.0, abs_tol=1e-6), (
+            f"weights must still sum to 1.0 after capping, got {sum(result.values())}"
+        )
+        assert result["open_meteo"] + result["gfs"] <= GROUP_WEIGHT_CAP + 1e-9
+        assert result["ecmwf"] + result["icon"] <= GROUP_WEIGHT_CAP + 1e-9
 
 
 # ---------------------------------------------------------------------------
@@ -1096,3 +1173,88 @@ class TestGfsDuplicateEraFilter:
         # despite all rows predating GFS_DATA_VALID_FROM -- the cutoff must not
         # apply to non-gfs channels.
         assert weights["nws"] > weights["open_meteo"]
+
+
+# ---------------------------------------------------------------------------
+# Issue #550 sanity check: US + EU/global all-calibrated group cap behavior
+# ---------------------------------------------------------------------------
+
+class TestIssue550GroupCapSanityCheck:
+    """End-to-end sanity check (issue #550 acceptance criterion): for a US
+    station and an EU/global station with every applicable channel
+    calibrated, no group_id's combined weight exceeds GROUP_WEIGHT_CAP and
+    the returned weights sum to 1.0.
+
+    Forecast errors are deliberately skewed so that the "gfs_family" group
+    (open_meteo + gfs) would dominate the ensemble on raw inverse-RMSE alone —
+    this exercises the group cap rather than merely a scenario where it never
+    triggers.
+    """
+
+    def _calibrated_db(self, models_and_forecasts: dict, actual: float = 80.0, n: int = 20):
+        today = date.today()
+        start = today - timedelta(days=29)
+        settlements = _settlement_rows(start, n, actual_high=actual)
+        logs = []
+        for model, forecast in models_and_forecasts.items():
+            logs += _log_rows(start, n, [model], forecast_fn=lambda m, i, f=forecast: f)
+        return _make_db(logs, settlements)
+
+    def test_us_station_all_calibrated_group_caps_respected(self):
+        """US station (KORD): nws, open_meteo, gfs, hrrr, nbm, ecmwf all
+        calibrated (icon excluded — EU-only). open_meteo/gfs given the
+        smallest errors so gfs_family would otherwise dominate."""
+        db = self._calibrated_db({
+            "nws": 80.5,
+            "hrrr": 80.6,
+            "nbm": 80.7,
+            "ecmwf": 80.8,
+            "open_meteo": 80.05,  # tiny error -> high raw weight
+            "gfs": 80.05,         # tiny error -> high raw weight
+        })
+        weights = compute_weights(db, "KORD", "Chicago", station_region="us")
+
+        assert isclose(sum(weights.values()), 1.0, abs_tol=1e-6)
+
+        noaa_us_total = weights["nws"] + weights["hrrr"] + weights["nbm"]
+        gfs_family_total = weights["open_meteo"] + weights["gfs"]
+        ecmwf_intl_total = weights["ecmwf"]  # icon excluded for US stations
+
+        assert noaa_us_total <= GROUP_WEIGHT_CAP + 1e-9, (
+            f"noaa_us group {noaa_us_total:.4f} exceeds cap {GROUP_WEIGHT_CAP}"
+        )
+        assert gfs_family_total <= GROUP_WEIGHT_CAP + 1e-9, (
+            f"gfs_family group {gfs_family_total:.4f} exceeds cap {GROUP_WEIGHT_CAP}"
+        )
+        assert ecmwf_intl_total <= GROUP_WEIGHT_CAP + 1e-9, (
+            f"ecmwf_intl group {ecmwf_intl_total:.4f} exceeds cap {GROUP_WEIGHT_CAP}"
+        )
+
+    def test_eu_station_all_calibrated_group_caps_respected(self):
+        """EU/global station (EGLL, London): open_meteo, gfs, ecmwf, icon all
+        calibrated (nws/hrrr/nbm excluded — US-only). This is the scenario
+        with ZERO ungrouped models — every applicable channel is in either
+        "gfs_family" or "ecmwf_intl" — so it directly exercises the
+        _apply_group_cap redistribution fix."""
+        db = self._calibrated_db({
+            "ecmwf": 80.8,
+            "icon": 80.9,
+            "open_meteo": 80.05,  # tiny error -> high raw weight
+            "gfs": 80.05,         # tiny error -> high raw weight
+        })
+        weights = compute_weights(db, "EGLL", "London", station_region="eu")
+
+        assert isclose(sum(weights.values()), 1.0, abs_tol=1e-6)
+        assert "nws" not in weights
+        assert "hrrr" not in weights
+        assert "nbm" not in weights
+
+        gfs_family_total = weights["open_meteo"] + weights["gfs"]
+        ecmwf_intl_total = weights["ecmwf"] + weights["icon"]
+
+        assert gfs_family_total <= GROUP_WEIGHT_CAP + 1e-9, (
+            f"gfs_family group {gfs_family_total:.4f} exceeds cap {GROUP_WEIGHT_CAP}"
+        )
+        assert ecmwf_intl_total <= GROUP_WEIGHT_CAP + 1e-9, (
+            f"ecmwf_intl group {ecmwf_intl_total:.4f} exceeds cap {GROUP_WEIGHT_CAP}"
+        )

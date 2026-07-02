@@ -1214,3 +1214,64 @@ All five shadow sources (GEFS, HRRR, NBM, ECMWF, ICON) are store/log only. They 
 ### EMOS Retrain Scoping (issue #494)
 
 EMOS retrain is always scoped to the active FORECAST_STACK. The mapping of stack → model tags is `src/config.py:FORECAST_STACK_MODELS`. Run `scripts/auto_retrain_probability_calibration.py` (reads FORECAST_STACK from DB automatically). Never call `fetch_training_data` without `regime` or `forecast_source` — it raises ValueError.
+
+---
+
+## DEB Channel Group Assignments (issue #550)
+
+### Background
+
+DEB (`src/model/deb_weighting.py`) computes inverse-RMSE weights per registered
+forecast channel, then caps the combined weight of any `group_id` at
+`GROUP_WEIGHT_CAP` (default 0.7) so that correlated channels can't jointly
+dominate the ensemble even though each looks independently well-calibrated.
+Prior to #550, `open_meteo` and `gfs` were registered with `group_id=None`
+("uncapped") even though both are Open-Meteo-API-derived and `open_meteo`'s
+multi-model mean literally includes a `gfs_seamless` constituent — the same
+raw model the dedicated `gfs` channel fetches. As `ecmwf`/`gefs` accumulate
+enough samples to leave cold-start, DEB would otherwise let three channels
+sharing the same underlying GFS/ECMWF signal converge into what looks like a
+diversified 3-4 channel ensemble but is actually a monoculture.
+
+### Raw-model provenance table
+
+| Channel | Raw model(s) | Fetcher | Notes |
+|---|---|---|---|
+| `nws` | NWS/NDFD gridpoint forecast | `src/data/nws.py::fetch_nws_with_spread` | US-only (`/gridpoints` API). |
+| `open_meteo` | Mean of **ecmwf_ifs04, gfs_seamless, jma_seamless, best_match** | `src/data/open_meteo.py::fetch_open_meteo_with_spread` | 4-model blend proxied through the Open-Meteo API. `best_match` picks Open-Meteo's own "best regional model" per location and is opaque/variable. |
+| `gfs` | NOAA GFS deterministic (`gfs_seamless`) | `src/data/open_meteo.py::fetch_gfs_with_spread` | Scoped to `models=gfs_seamless` only (issue #548 — previously a byte-identical duplicate of `open_meteo`). Same raw model as one of `open_meteo`'s four constituents. |
+| `hrrr` | NOAA HRRR (High-Resolution Rapid Refresh) | `src/data/hrrr.py::fetch_hrrr_hourly` | Direct GRIB via herbie. CONUS-only. |
+| `nbm` | NOAA National Blend of Models | `src/data/nbm.py::fetch_nbm_daily_high` | Direct GRIB via herbie. CONUS-only. NBM is itself a statistical blend of multiple NOAA/NCEP guidance products, ingested here as one opaque channel. |
+| `ecmwf` | ECMWF HRES IFS (deterministic, `2t`) | `src/data/ecmwf_open.py::fetch_ecmwf_daily_high` | Direct fetch from ECMWF Open Data (AWS `s3://ecmwf-forecasts/`) via herbie (`model="ifs"`). Global domain. |
+| `icon` | DWD ICON-EU (independent German model) | `src/data/icon.py::fetch_icon_hourly` | Direct GRIB2 download from DWD opendata (not ECMWF-derived). EU domain only (lat 29–72, lon -25 to 45). |
+| `gefs` | NOAA GEFS — 31-member GFS ensemble (`gec00` + `gep01`…`gep30`) | `src/data/gefs.py::fetch_gefs_ensemble` | **Not currently registered in the DEB registry.** Ingestion-only per the module's own docstring; wiring into the trading/strategy layer (and therefore into DEB) is tracked separately by issue #448. Rows are already written to `model_forecast_log` under `model="gefs"` by `capture_forecasts.py`, but `compute_weights()` silently ignores them today since no `register_model("gefs", ...)` call exists. |
+
+### group_id assignments
+
+| Channel | `group_id` | Rationale |
+|---|---|---|
+| `nws`, `hrrr`, `nbm` | `noaa_us` | Unchanged. All three are NOAA/NWS-family CONUS sources; correlated by shared observational network and model lineage. |
+| `gfs`, `open_meteo` | `gfs_family` | **Changed by #550 (was `None` for both).** `open_meteo` shares a literal `gfs_seamless` constituent with `gfs`, and pre-#548 `gfs` was a byte-identical duplicate of `open_meteo` — the strongest available evidence of how tightly coupled these two channels are. `open_meteo`'s other constituents (`ecmwf_ifs04`, `jma_seamless`) are **not** captured by this single group_id — the registry only supports one group per channel. This is a deliberate, documented trade-off: open_meteo's GFS overlap is the tightest and best-evidenced correlation, so it anchors the choice, but the residual ECMWF/JMA correlation against `ecmwf_intl` remains uncapped. A follow-up could split `open_meteo` into per-constituent channels or extend the registry to support multiple group memberships — out of scope for #550. |
+| `ecmwf`, `icon` | `ecmwf_intl` | **Reassessed, unchanged.** ICON-EU is DWD's own independently developed model, not literally ECMWF-derived, so this is not strictly a "shared raw model" grouping the way `gfs_family` is. Kept because both are non-NOAA-US, high-cadence deterministic international sources whose errors correlate in practice over the European domain (overlapping synoptic-scale observations/boundary conditions), and no evidence was found to justify decoupling them. |
+| `gefs` | *(recommended: `gfs_family`, not yet applied)* | Not currently registered in DEB (see provenance table above) — issue #448 tracks wiring it in. When it is registered, it should join `gfs_family`: GEFS members are GFS-core perturbations, sharing the same underlying NWP system as `gfs`/`open_meteo`. |
+
+Every currently-*registered* channel has a deliberate, non-`None` `group_id` — the "documented reason for `None`" escape hatch in the #550 acceptance criteria is not exercised by any channel today.
+
+### `_apply_group_cap` redistribution fix
+
+Grouping `open_meteo`/`gfs` under `gfs_family` means that for EU/global-only
+stations (`nws`/`hrrr`/`nbm` excluded), **every** applicable channel now has a
+real `group_id` — `open_meteo`/`gfs` in `gfs_family`, `ecmwf`/`icon` in
+`ecmwf_intl` — with zero models left with `group_id=None`. The pre-#550
+`_apply_group_cap` implementation only redistributed a capped group's freed
+excess weight to explicitly ungrouped models; with none available, the freed
+weight was silently dropped and the returned weights summed to **less than
+1.0** (confirmed by direct test: a naive redistribution left weights summing
+to 0.9 instead of 1.0 for a 4-channel EU scenario). `_apply_group_cap` was
+fixed to redistribute freed weight to any model **not** a member of an
+over-cap group (ungrouped models, plus members of any other group that stayed
+within cap) instead of only literally-ungrouped models. See
+`src/model/deb_weighting.py::_apply_group_cap` docstring and
+`src/tests/test_deb_weighting.py::TestGfsFamilyRegistry::test_redistribution_when_no_ungrouped_models_remain`
+for the regression test. This is a minimal, additive fix — verified against
+the full existing test suite with no other behavioral regressions.
