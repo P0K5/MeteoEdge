@@ -276,9 +276,14 @@ def save_coefficients(
 ) -> None:
     """Persist EMOS coefficients to the emos_calibration table.
 
-    Always writes model_mode='emos_shadow'. Sets ready_for_promotion=1 only if
-    sample_count >= 60 (promotion eligibility); otherwise always sets
-    ready_for_promotion=0 (shadow-only fit, reduced-sample overfitting risk).
+    Always writes model_mode='emos_shadow' and ready_for_promotion=0.
+    Promotion to active use remains a deliberate manual step (the dashboard's
+    mark-ready endpoint / Database.toggle_emos_ready_for_promotion) — this
+    function never sets ready_for_promotion=1 itself, regardless of
+    sample_count or CRPS. The <60-sample guardrail from issue #556 is
+    therefore structural: there is no code path here that could promote a
+    reduced-sample shadow fit, not merely a threshold check that could later
+    be bypassed.
 
     Coefficients for different forecast_source values are stored independently
     — saving for "hrrr_nbm" never overwrites the legacy "nws_open_meteo" row.
@@ -293,10 +298,10 @@ def save_coefficients(
         db:              A src.data.db.Database instance.
         forecast_source: Forecast stack identifier (default "nws_open_meteo").
         sample_count:    Number of training samples used to fit the coefficients.
-                         If <60, ready_for_promotion is forced to 0 (shadow-only).
+                         Recorded for caller/log context only — does not affect
+                         ready_for_promotion, which is always 0 here (see above).
     """
-    # Hard guardrail: <60 samples → shadow-only fit, not promotion-eligible
-    ready_for_promotion = 0 if (sample_count is None or sample_count < 60) else 0
+    ready_for_promotion = 0
 
     db.upsert_emos_coefficients(
         city=city,

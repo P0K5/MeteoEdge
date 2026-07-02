@@ -423,3 +423,31 @@ class TestAlwaysShadow:
         assert row["ready_for_promotion"] == 0, (
             f"Fit with 35 samples must have ready_for_promotion=0 (shadow-only), got {row['ready_for_promotion']}"
         )
+
+    def test_promotion_eligible_sample_count_still_not_auto_promoted(self):
+        """Boundary check on the other side: >=60 samples must ALSO stay 0.
+
+        save_coefficients() never auto-promotes regardless of sample_count —
+        promotion is a deliberate manual step (dashboard mark-ready /
+        Database.toggle_emos_ready_for_promotion). A fit meeting the 60-sample
+        promotion-eligibility bar is not itself sufficient to flip
+        ready_for_promotion; this locks in that a future change can't
+        accidentally wire sample_count>=60 straight to ready_for_promotion=1.
+        """
+        db = _db()
+        save_coefficients(
+            city="Tokyo",
+            a=0.5,
+            b=1.1,
+            c=0.6,
+            d=0.9,
+            crps_score=0.45,
+            db=db,
+            sample_count=90,
+        )
+        row = db.get_emos_coefficients("Tokyo", "emos_shadow")
+        assert row is not None
+        assert row["ready_for_promotion"] == 0, (
+            f"Fit with 90 samples must still have ready_for_promotion=0 "
+            f"(promotion is manual-only), got {row['ready_for_promotion']}"
+        )
