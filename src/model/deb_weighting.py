@@ -233,38 +233,30 @@ def log_forecast(db, station: str, model: str, date: str, forecast_high_f: float
     )
 
 
-def compute_weights(
+def _compute_weights_with_metadata(
     db,
     station: str,
     city: str,
     window_days: int = 30,
     station_region: str = "us",
-) -> dict[str, float]:
-    """Compute inverse-error weights for each model over the last *window_days* days.
+) -> tuple[dict[str, float], dict[str, float], dict[str, int]]:
+    """Compute weights alongside per-model RMSE and sample counts.
 
-    Joins model_forecast_log with settlements on (station, date) to obtain
-    forecast-vs-actual pairs.  RMSE is computed with exponential time-decay
-    (cadence-aware per model) so that recent errors matter more than older ones.
-    Returns a dict that sums to 1.0.
+    Returns a tuple of (weights, rmse_dict, sample_counts_dict) where:
+    - weights: dict[str, float] normalized to sum to 1.0
+    - rmse_dict: dict[str, float] per-model RMSE for calibrated models; 0.0 for cold-start
+    - sample_counts_dict: dict[str, int] number of matched pairs per model
 
-    New behaviours vs legacy code:
-    - Regional applicability: models whose region doesn't match station_region
-      (and isn't "global") are excluded before any weight computation.
-    - Cadence-aware decay: models with shorter cadences get proportionally lower
-      decay rates, preventing over-discounting of high-frequency observations.
-    - Cold-start policy: models below MIN_SAMPLES get cold_start_fraction * (1/N)
-      weight; remaining weight is distributed proportionally to calibrated models.
-      Falls back to full equal weights only when ALL models are in cold-start.
-    - Group weight cap: total weight of any group_id is capped at GROUP_WEIGHT_CAP.
-      Models with no group_id are uncapped.
-
-    Backward compat: for legacy 3-channel US stations the result is identical to
-    the old 2-model code once GFS data accumulates; during cold-start the new
-    policy blends more gracefully than the hard equal-weight fallback.
+    This is an internal function used by refresh_weights() to persist calibrated
+    RMSE values and distinguish cold-start models (sample_count < MIN_SAMPLES)
+    from calibrated ones.
     """
     applicable = _models_for_region(station_region)
     if not applicable:
-        return _equal_weights_for(station_region)
+        equal_w = _equal_weights_for(station_region)
+        empty_rmse = {m: 0.0 for m in equal_w.keys()}
+        empty_counts = {m: 0 for m in equal_w.keys()}
+        return equal_w, empty_rmse, empty_counts
 
     applicable_names = [m.name for m in applicable]
     equal_w = _equal_weights_for(station_region)
@@ -323,7 +315,10 @@ def compute_weights(
                 "[deb] insufficient samples for %s/%s (%d < %d) — using equal weights",
                 city, m, len(errors[m]), _MIN_SAMPLES,
             )
-        return dict(equal_w)
+        equal_weights_ret = dict(equal_w)
+        rmse_ret = {m: 0.0 for m in applicable_names}
+        sample_counts_ret = {m: len(errors[m]) for m in applicable_names}
+        return equal_weights_ret, rmse_ret, sample_counts_ret
 
     n_models = len(applicable_names)
 
@@ -360,6 +355,51 @@ def compute_weights(
     # Apply group weight cap
     weights = _apply_group_cap(weights, applicable)
 
+    # Build return values for RMSE and sample counts:
+    # - Calibrated models: real RMSE and sample count >= MIN_SAMPLES
+    # - Cold-start models: 0.0 RMSE and sample count < MIN_SAMPLES
+    rmse_ret: dict[str, float] = {}
+    sample_counts_ret: dict[str, int] = {}
+    for m in applicable_names:
+        sample_counts_ret[m] = len(errors[m])
+        if m in calibrated:
+            rmse_ret[m] = rmse[m]
+        else:
+            rmse_ret[m] = 0.0
+
+    return weights, rmse_ret, sample_counts_ret
+
+
+def compute_weights(
+    db,
+    station: str,
+    city: str,
+    window_days: int = 30,
+    station_region: str = "us",
+) -> dict[str, float]:
+    """Compute inverse-error weights for each model over the last *window_days* days.
+
+    Joins model_forecast_log with settlements on (station, date) to obtain
+    forecast-vs-actual pairs.  RMSE is computed with exponential time-decay
+    (cadence-aware per model) so that recent errors matter more than older ones.
+    Returns a dict that sums to 1.0.
+
+    New behaviours vs legacy code:
+    - Regional applicability: models whose region doesn't match station_region
+      (and isn't "global") are excluded before any weight computation.
+    - Cadence-aware decay: models with shorter cadences get proportionally lower
+      decay rates, preventing over-discounting of high-frequency observations.
+    - Cold-start policy: models below MIN_SAMPLES get cold_start_fraction * (1/N)
+      weight; remaining weight is distributed proportionally to calibrated models.
+      Falls back to full equal weights only when ALL models are in cold-start.
+    - Group weight cap: total weight of any group_id is capped at GROUP_WEIGHT_CAP.
+      Models with no group_id are uncapped.
+
+    Backward compat: for legacy 3-channel US stations the result is identical to
+    the old 2-model code once GFS data accumulates; during cold-start the new
+    policy blends more gracefully than the hard equal-weight fallback.
+    """
+    weights, _, _ = _compute_weights_with_metadata(db, station, city, window_days, station_region)
     return weights
 
 
@@ -441,6 +481,8 @@ def refresh_weights(db, station: str, city: str, station_region: str = "us") -> 
     - weights were already refreshed today (checked via model_weights table)
 
     When weights are written, each model row is upserted with today's date.
+    Real per-model RMSE is computed and persisted; cold-start models
+    (sample_count < MIN_SAMPLES) are marked with rmse=0.0 and sample_count < MIN_SAMPLES.
 
     Args:
         station_region: DEB registry region for this station — "us", "eu", or
@@ -459,14 +501,17 @@ def refresh_weights(db, station: str, city: str, station_region: str = "us") -> 
     if existing and existing[0]["date"] == today:
         return
 
-    weights = compute_weights(db, station, city, station_region=station_region)
+    weights, rmse_dict, sample_counts_dict = _compute_weights_with_metadata(
+        db, station, city, station_region=station_region
+    )
     for model, weight in weights.items():
         db.upsert_model_weight(
             city=city,
             model=model,
             date=today,
             weight=weight,
-            rmse=0.0,
+            rmse=rmse_dict[model],
+            sample_count=sample_counts_dict[model],
         )
     log.info("[deb] refreshed weights for %s (%s): %s", city, station_region, weights)
 
