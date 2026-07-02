@@ -1217,6 +1217,37 @@ No action required. MeteoEdge may continue using Open-Meteo's free API for live 
 
 ---
 
+## EMOS Shadow Fit Threshold (Issue #556)
+
+**Two-tier min_samples control: 35 days for shadow fits, 60 days for promotion eligibility.**
+
+The `fetch_training_data()` function requires a minimum number of settled forecast-vs-actual pairs to train EMOS. This was previously hardcoded at 60 days, blocking shadow observation during early deployments (forecast log started June 24 → first fit ~August 23, too late for summer markets).
+
+### Configuration
+
+| Parameter | Default | Purpose |
+|-----------|---------|---------|
+| `EMOS_MIN_SAMPLES_SHADOW` | 35 | Minimum samples for shadow-only fits (no live serving) |
+| `EMOS_MIN_SAMPLES_PROMOTION` | 60 | Minimum samples for promotion-eligible fits |
+
+Both are configurable via the dashboard **Config** tab under **EMOS Model Settings**.
+
+### Behavior
+
+- **Shadow fit (30–59 samples):** Runs daily on `scripts/run_emos_shadow.py`. Persists `ready_for_promotion=0` regardless of CRPS (hard guardrail, issue #556). CRPS rows logged to `emos_crps_log` for monitoring. Zero risk — nothing served live.
+- **Promotion fit (≥60 samples):** Only after 60 settled days. Operator must manually promote via database update (see **§ Step 3 — Validate and promote** in **EMOS Retrain** below). Automatic promotion is never performed.
+
+### First shadow fit timeline (June 24 deployment)
+
+The forecast log started June 24. First cities cross the shadow threshold (~35 settled days) around **late July (July 28–31)**. First shadow CRPS rows begin appearing in the dashboard shortly after.
+
+### Guardrails
+
+1. **sample_count < 60 → ready_for_promotion=0 (enforced):** Even if CRPS is excellent, fits trained on <60 samples are shadow-only and cannot be promoted. Avoids overfitting risk (#226).
+2. **GFS duplicate-era exclusion:** `fetch_training_data()` excludes "gfs" rows dated before 2026-07-02 (issue #548 duplicate-era rows are byte-identical copies of "open_meteo").
+
+---
+
 ## EMOS Retrain for New Forecast Stack
 
 **Rule: Whenever `FORECAST_STACK` changes (Epic A1/A2 promotion), retrain EMOS before switching live.**

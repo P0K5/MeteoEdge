@@ -173,7 +173,17 @@ def main() -> None:
         }
 
         if not args.dry_run:
-            save_coefficients(city, a, b, c, d, crps_holdout, db, forecast_source=stack)
+            save_coefficients(
+                city,
+                a,
+                b,
+                c,
+                d,
+                crps_holdout,
+                db,
+                forecast_source=stack,
+                sample_count=len(data),
+            )
             if ready:
                 db.upsert_emos_coefficients(
                     city=city,

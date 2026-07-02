@@ -399,3 +399,27 @@ class TestAlwaysShadow:
             "SELECT COUNT(*) FROM emos_calibration WHERE city='Chicago' AND model_mode != 'emos_shadow'"
         )
         assert cur.fetchone()[0] == 0, "No non-shadow rows should exist"
+
+    def test_reduced_sample_guardrail(self):
+        """Hard guardrail: <60 samples → ready_for_promotion=0 (shadow-only fit).
+
+        This test verifies the guardrail from issue #556: fits trained on
+        <60 settled days are strictly shadow-only, not promotion-eligible.
+        """
+        db = _db()
+        # Test with sample_count=35 (below promotion threshold of 60)
+        save_coefficients(
+            city="Seoul",
+            a=0.5,
+            b=1.1,
+            c=0.6,
+            d=0.9,
+            crps_score=0.45,
+            db=db,
+            sample_count=35,
+        )
+        row = db.get_emos_coefficients("Seoul", "emos_shadow")
+        assert row is not None
+        assert row["ready_for_promotion"] == 0, (
+            f"Fit with 35 samples must have ready_for_promotion=0 (shadow-only), got {row['ready_for_promotion']}"
+        )
