@@ -16,6 +16,8 @@ Output:
     - Per-city summary at lead_hours=24
     - Flag cities at risk (< 60 rows)
     - Estimated readiness date: reset_date + (60 - current_rows) days
+    - Sigma quality per model: % of rows at exactly SIGMA_FLOOR_F (floor
+      saturation) and % of rows with NULL sigma_f (see issue #555)
 """
 import argparse
 import os
@@ -29,6 +31,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.data.db import Database
 from src.config import STATIONS
+from src.model.ensemble_sigma import SIGMA_FLOOR_F
 
 MIN_SAMPLES = 60
 LEAD_HOURS_TARGET = 24
@@ -40,6 +43,50 @@ def get_city_for_station(station: str) -> str:
         if metar_code == station:
             return city
     return station
+
+
+def print_sigma_quality_report(db: Database) -> None:
+    """Print per-model sigma_f quality: floor-saturation and NULL rates.
+
+    #555: a floored or NULL sigma_f starves EMOS's spread coefficient ``d``
+    of signal. This flags, per model:
+      - % of rows with sigma_f exactly == SIGMA_FLOOR_F (floor-saturated —
+        only meaningful for channels that attempt to derive a sigma, e.g.
+        gefs; a high rate there means the real spread is being clamped away)
+      - % of rows with sigma_f IS NULL (channel has no sigma source at all)
+    """
+    cursor = db._conn.execute(
+        """
+        SELECT
+            model,
+            COUNT(*) as total,
+            SUM(CASE WHEN sigma_f IS NULL THEN 1 ELSE 0 END) as null_count,
+            SUM(CASE WHEN sigma_f = ? THEN 1 ELSE 0 END) as floor_count
+        FROM model_forecast_log
+        GROUP BY model
+        ORDER BY model
+        """,
+        (SIGMA_FLOOR_F,),
+    )
+    rows = cursor.fetchall()
+
+    print("=" * 80)
+    print(f"Sigma Quality by Model (SIGMA_FLOOR_F = {SIGMA_FLOOR_F:.2f}F):")
+    print("-" * 80)
+    print(f"{'Model':<15} {'Rows':>8} {'NULL sigma_f':>16} {'At floor':>16}")
+    print("-" * 80)
+
+    if not rows:
+        print("No rows in model_forecast_log yet.")
+        print()
+        return
+
+    for model, total, null_count, floor_count in rows:
+        null_pct = f"{null_count}/{total} ({100.0 * null_count / total:.0f}%)"
+        floor_pct = f"{floor_count}/{total} ({100.0 * floor_count / total:.0f}%)"
+        print(f"{model:<15} {total:>8} {null_pct:>16} {floor_pct:>16}")
+
+    print()
 
 
 def main() -> None:
@@ -185,6 +232,7 @@ def main() -> None:
         print("EMOS calibration should be ready.")
 
     print()
+    print_sigma_quality_report(db)
     db.close()
 
 

@@ -173,10 +173,12 @@ def fetch_gfs_with_spread(
 
     sigma_f is always returned as None: GFS here is a single deterministic NWP
     run, not an ensemble, so there is no cross-member spread to compute. This
-    mirrors how the ecmwf/icon deterministic channels persist NULL sigma_f in
-    model_forecast_log (see src/scripts/capture_forecasts.py). Do not
-    synthesize a placeholder sigma here — the sigma-sourcing policy for
-    deterministic channels is tracked separately in issue #555.
+    mirrors how the ecmwf/icon/hrrr/nbm deterministic channels persist NULL
+    sigma_f in model_forecast_log (see src/scripts/capture_forecasts.py). Do
+    not synthesize a placeholder sigma here — the committed per-channel
+    sigma-sourcing decision table (derive vs. NULL, with rationale) lives in
+    the module docstring of src/scripts/capture_forecasts.py and
+    docs/OPERATIONS.md → "Architectural Decisions" (issue #555).
 
     Args:
         lat:        Latitude.
