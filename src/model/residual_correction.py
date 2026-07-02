@@ -43,6 +43,21 @@ RESIDUAL_CORRECTION_ENABLED: bool = (
     os.getenv("RESIDUAL_CORRECTION_ENABLED", "true").lower() == "true"
 )
 
+# Calendar date (YYYY-MM-DD) the #576 fix for issue #572 deployed: it switched
+# the intraday consensus basis from a hardcoded open_meteo-only blend to the
+# live DEB-weighted blend, and started tagging each delta with the
+# `basis_weights` snapshot used to produce it.
+#
+# `intraday_corrections` rows dated *before* this deploy date were recorded
+# under the legacy hardcoded basis; rows on/after it reflect the live DEB
+# basis. We gate the trailing window on this date rather than comparing
+# `basis_weights` content directly because the column's DEFAULT value is
+# textually identical to the legacy hardcoded basis (`{"open_meteo": 1.0}`) —
+# a genuinely-legacy row and a post-deploy row where DEB's live weights
+# happen to equal the fallback are indistinguishable by content alone. Date
+# is the only reliable regime discriminator (issue #586).
+DEB_BASIS_DEPLOY_DATE: str = os.getenv("DEB_BASIS_DEPLOY_DATE", "2026-07-02")
+
 
 # ---------------------------------------------------------------------------
 # Data class
@@ -60,6 +75,7 @@ class ResidualStats:
     scope: Literal["pair", "city_fallback"] = "city_fallback"
     station: str = ""           # source station identifier (empty = city-wide)
     source: str = ""            # source name (empty = city-wide)
+    basis_deploy_date: str = "" # deploy-date cutoff applied to exclude mixed-basis deltas (#586)
 
     @property
     def clamped_correction(self) -> float:
@@ -81,16 +97,26 @@ def _query_trailing_deltas(
     *,
     station: "str | None" = None,
     source: "str | None" = None,
+    deploy_date: str = DEB_BASIS_DEPLOY_DATE,
 ) -> list[float]:
     """Return delta_f values for *city* in the trailing *window_days* calendar days.
 
     Optional *station* and *source* narrow results to a specific (station, source)
     pair.  When both are None the query is city-wide.
 
+    *deploy_date* excludes any row recorded before the #576 basis-regime
+    deploy date, so the rolling mean never blends legacy open_meteo-only-basis
+    deltas with live DEB-basis deltas (issue #586). Passed straight through as
+    ``min_date`` to ``db.get_trailing_deltas`` — it only raises the window's
+    lower bound, it never widens it, so city-wide fallback semantics are
+    unchanged.
+
     Returns an empty list when the DB is unavailable or the query fails.
     """
     try:
-        return db.get_trailing_deltas(city, window_days, station=station, source=source)
+        return db.get_trailing_deltas(
+            city, window_days, station=station, source=source, min_date=deploy_date
+        )
     except Exception as exc:
         log.warning("[residual] DB query failed for city=%s: %s", city, exc)
         return []
@@ -105,6 +131,7 @@ def _build_stats(
     scope: Literal["pair", "city_fallback"],
     station: str = "",
     source: str = "",
+    deploy_date: str = DEB_BASIS_DEPLOY_DATE,
 ) -> ResidualStats:
     """Build a ResidualStats from a list of deltas."""
     n = len(deltas)
@@ -123,6 +150,7 @@ def _build_stats(
         scope=scope,
         station=station,
         source=source,
+        basis_deploy_date=deploy_date,
     )
 
 
@@ -138,6 +166,7 @@ def compute_residual_stats(
     min_samples: int = RESIDUAL_MIN_SAMPLES,
     max_correction_f: float = RESIDUAL_MAX_CORRECTION_F,
     mae_threshold: float = MAX_RESIDUAL_MAE_F_FOR_LIVE,
+    deploy_date: str = DEB_BASIS_DEPLOY_DATE,
 ) -> "ResidualStats | None":
     """Compute rolling residual stats for *city*.
 
@@ -149,6 +178,18 @@ def compute_residual_stats(
     is False) or when there are fewer than *min_samples* observations in the
     trailing window (silently — do not raise, do not apply).
 
+    CRITICAL DESIGN DECISION (issue #586): rows recorded before *deploy_date*
+    are excluded from the window because they were computed under a different
+    consensus basis (see ``DEB_BASIS_DEPLOY_DATE`` docstring above). If that
+    exclusion drops the sample below *min_samples*, we deliberately do NOT
+    fall back to including the older, mixed-basis rows just to reach the
+    threshold — a stale/no-correction outcome is preferred over a correction
+    blended across two different bias regimes, since a mixed-basis mean can
+    be actively wrong in either direction rather than merely noisy. This is
+    the same "insufficient data → skip" path used for any other under-sample
+    case; no special-casing is needed beyond querying with the basis filter
+    applied up front.
+
     Args:
         city:            Polymarket city name (e.g. "Busan").
         db:              Database instance.
@@ -156,6 +197,8 @@ def compute_residual_stats(
         min_samples:     Minimum row count required before applying (default: RESIDUAL_MIN_SAMPLES).
         max_correction_f: Clamp limit (default: RESIDUAL_MAX_CORRECTION_F).
         mae_threshold:   MAE above which live NO entries are suppressed (default: MAX_RESIDUAL_MAE_F_FOR_LIVE).
+        deploy_date:     Exclude rows recorded before this date — a different
+                         consensus basis regime (default: DEB_BASIS_DEPLOY_DATE).
 
     Returns:
         ResidualStats or None.
@@ -168,7 +211,8 @@ def compute_residual_stats(
     if top_pair is not None:
         pair_station, pair_source = top_pair
         pair_deltas = _query_trailing_deltas(
-            city, db, window_days, station=pair_station, source=pair_source
+            city, db, window_days,
+            station=pair_station, source=pair_source, deploy_date=deploy_date,
         )
         if len(pair_deltas) >= min_samples:
             return _build_stats(
@@ -178,24 +222,31 @@ def compute_residual_stats(
                 scope="pair",
                 station=pair_station,
                 source=pair_source,
+                deploy_date=deploy_date,
             )
         log.debug(
-            "[residual] %s: pair (%s/%s) only %d samples — falling back to city-wide",
-            city, pair_station, pair_source, len(pair_deltas),
+            "[residual] %s: pair (%s/%s) only %d samples (post-basis-filter, "
+            "deploy_date=%s) — falling back to city-wide",
+            city, pair_station, pair_source, len(pair_deltas), deploy_date,
         )
 
     # --- City-wide fallback ---
-    deltas = _query_trailing_deltas(city, db, window_days)
+    deltas = _query_trailing_deltas(city, db, window_days, deploy_date=deploy_date)
 
     if len(deltas) < min_samples:
+        # Under-sample after basis-regime exclusion: prefer no correction
+        # over a mixed-basis one (see CRITICAL DESIGN DECISION above).
         log.debug(
-            "[residual] %s: only %d samples (need %d) — skipping correction",
-            city, len(deltas), min_samples,
+            "[residual] %s: only %d samples (need %d, post-basis-filter "
+            "deploy_date=%s) — skipping correction rather than mixing basis "
+            "regimes",
+            city, len(deltas), min_samples, deploy_date,
         )
         return None
 
     return _build_stats(
         city, deltas,
+        deploy_date=deploy_date,
         max_correction_f=max_correction_f,
         mae_threshold=mae_threshold,
         scope="city_fallback",
@@ -210,6 +261,7 @@ def compute_residual_stats_per_pair(
     min_samples: int = RESIDUAL_MIN_SAMPLES,
     max_correction_f: float = RESIDUAL_MAX_CORRECTION_F,
     mae_threshold: float = MAX_RESIDUAL_MAE_F_FOR_LIVE,
+    deploy_date: str = DEB_BASIS_DEPLOY_DATE,
 ) -> "list[ResidualStats]":
     """Return one ResidualStats per distinct (station, source) pair in the trailing window.
 
@@ -223,6 +275,8 @@ def compute_residual_stats_per_pair(
         min_samples:     Minimum row count per pair (default: RESIDUAL_MIN_SAMPLES).
         max_correction_f: Clamp limit (default: RESIDUAL_MAX_CORRECTION_F).
         mae_threshold:   MAE suppression threshold (default: MAX_RESIDUAL_MAE_F_FOR_LIVE).
+        deploy_date:     Exclude rows recorded before this date — a different
+                         consensus basis regime (default: DEB_BASIS_DEPLOY_DATE).
 
     Returns:
         List of ResidualStats, one per qualified (station, source) pair.
@@ -244,9 +298,12 @@ def compute_residual_stats_per_pair(
         pair_station = row[0]
         pair_source = row[1]
         deltas = _query_trailing_deltas(
-            city, db, window_days, station=pair_station, source=pair_source
+            city, db, window_days,
+            station=pair_station, source=pair_source, deploy_date=deploy_date,
         )
         if len(deltas) < min_samples:
+            # Under-sample after basis-regime exclusion: skip this pair
+            # rather than mixing basis regimes (see compute_residual_stats).
             continue
         results.append(
             _build_stats(
@@ -256,6 +313,7 @@ def compute_residual_stats_per_pair(
                 scope="pair",
                 station=pair_station,
                 source=pair_source,
+                deploy_date=deploy_date,
             )
         )
     return results
@@ -270,6 +328,7 @@ def apply_residual_correction(
     min_samples: int = RESIDUAL_MIN_SAMPLES,
     max_correction_f: float = RESIDUAL_MAX_CORRECTION_F,
     mae_threshold: float = MAX_RESIDUAL_MAE_F_FOR_LIVE,
+    deploy_date: str = DEB_BASIS_DEPLOY_DATE,
 ) -> "tuple[float, ResidualStats | None]":
     """Apply residual bias correction to *mu_f* for *city*.
 
@@ -285,6 +344,7 @@ def apply_residual_correction(
         min_samples=min_samples,
         max_correction_f=max_correction_f,
         mae_threshold=mae_threshold,
+        deploy_date=deploy_date,
     )
 
     if stats is None:
@@ -297,11 +357,13 @@ def apply_residual_correction(
     corrected = mu_f + correction
     log.info(
         "[residual] %s: applying bias correction %+.2f°F "
-        "(mean_err=%+.2f, clamped=%+.2f, n=%d, MAE=%.2f, scope=%s) "
+        "(mean_err=%+.2f, clamped=%+.2f, n=%d, MAE=%.2f, scope=%s, "
+        "basis=deb-since:%s) "
         "mu_f %.1f → %.1f",
         city, correction,
         stats.mean_signed_error, correction,
         stats.sample_count, stats.rolling_mae, stats.scope,
+        stats.basis_deploy_date,
         mu_f, corrected,
     )
     return corrected, stats
