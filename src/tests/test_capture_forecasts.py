@@ -232,7 +232,9 @@ class TestGefsCapture:
 
     def test_happy_path_writes_gefs_row(self):
         """When fetch_gefs_ensemble returns 30 members, upsert_forecast_log_v2
-        must be called with model='gefs' and sigma_f from compute_ensemble_sigma."""
+        must be called with model='gefs' and sigma_f from raw_member_sigma
+        (#555: capture-time sigma is the raw/unfloored member stdev, not the
+        floored compute_ensemble_sigma() value)."""
         db = _db()
         mock_upsert = MagicMock()
         db.upsert_forecast_log_v2 = mock_upsert
@@ -240,7 +242,7 @@ class TestGefsCapture:
         with (
             _silence_base_sources(),
             patch("src.scripts.capture_forecasts.fetch_gefs_ensemble", return_value=_MEMBERS_30),
-            patch("src.scripts.capture_forecasts.compute_ensemble_sigma", return_value=3.5),
+            patch("src.scripts.capture_forecasts.raw_member_sigma", return_value=3.5),
         ):
             _capture_station(**_capture_kwargs(db=db))
 
@@ -256,6 +258,34 @@ class TestGefsCapture:
         assert call_kwargs["sigma_f"] == pytest.approx(3.5)
         assert call_kwargs["station"] == "KORD"
         assert call_kwargs["lead_hours"] == 24
+
+    def test_none_sigma_logs_cleanly_and_persists_null(self, caplog):
+        """When raw_member_sigma() returns None (e.g. <2 usable members), the
+        capture log line must render 'sigma=None' without a formatting error
+        and upsert_forecast_log_v2 must be called with sigma_f=None — mirrors
+        the defensive-formatting guard already tested for the gfs channel."""
+        db = _db()
+        mock_upsert = MagicMock()
+        db.upsert_forecast_log_v2 = mock_upsert
+
+        with (
+            _silence_base_sources(),
+            patch("src.scripts.capture_forecasts.fetch_gefs_ensemble", return_value=_MEMBERS_30),
+            patch("src.scripts.capture_forecasts.raw_member_sigma", return_value=None),
+            caplog.at_level(logging.INFO, logger="src.scripts.capture_forecasts"),
+        ):
+            _capture_station(**_capture_kwargs(db=db))
+
+        messages = [r.getMessage() for r in caplog.records]
+        gefs_messages = [m for m in messages if " gefs " in m]
+        assert gefs_messages, f"Expected a gefs capture log line, got: {messages}"
+        assert any("sigma=None" in m for m in gefs_messages), (
+            f"Expected 'sigma=None' in gefs log line, got: {gefs_messages}"
+        )
+
+        gefs_calls = [c for c in mock_upsert.call_args_list if c.kwargs.get("model") == "gefs"]
+        assert len(gefs_calls) == 1, f"Expected 1 gefs upsert, got {len(gefs_calls)}"
+        assert gefs_calls[0].kwargs["sigma_f"] is None
 
     def test_fetch_failure_does_not_write_and_does_not_raise(self):
         """When fetch_gefs_ensemble raises, upsert_forecast_log_v2 must NOT be
