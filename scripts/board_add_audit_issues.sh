@@ -27,12 +27,12 @@ CTX=".claude/session-context.env"
 source <(grep -E '^(GITHUB_PROJECT_ID|STATUS_FIELD_ID|STATUS_OPT_READY|STATUS_OPT_BACKLOG|STATUS_OPT_IN_PROGRESS|STATUS_OPT_DONE)=' "$CTX")
 
 # Statuses reflect state as of 2026-07-02 (P0 batch executed):
-#   Done:        548 (PR #563), 549 (PR #562), 565 (PR #566)
-#   In progress: 550 (dev assigned), 551 (stage 1 merged via PR #564; shadow window open)
+#   Done:        548 (PR #563), 549 (PR #562), 550 (PR #569), 565 (PR #566)
+#   In progress: 551 (stage 1 merged via PR #564; shadow window open)
 #   Ready:       552-557 (P1 batch)
 #   Backlog:     558-561 (P2), 567-568 (review follow-ups)
-DONE_ISSUES=(548 549 565)
-IN_PROGRESS_ISSUES=(550 551)
+DONE_ISSUES=(548 549 550 565)
+IN_PROGRESS_ISSUES=(551)
 READY_ISSUES=(552 553 554 555 556 557)
 BACKLOG_ISSUES=(558 559 560 561 567 568)
 
