@@ -2124,7 +2124,7 @@
       "source_location": "L2301",
       "_origin": "ast",
       "id": "src_dashboard_api_get_config",
-      "community": 139,
+      "community": 127,
       "norm_label": "get_config()"
     },
     {
@@ -2834,7 +2834,7 @@
       "source_location": "L2302",
       "_origin": "ast",
       "id": "src_dashboard_api_rationale_2302",
-      "community": 139,
+      "community": 127,
       "norm_label": "return all editable bot parameters with their current db values, grouped by cate"
     },
     {
@@ -3454,7 +3454,7 @@
       "source_location": "L268",
       "_origin": "ast",
       "id": "src_execution_order_manager_wallet_held_positions",
-      "community": 5,
+      "community": 186,
       "norm_label": "_wallet_held_positions()"
     },
     {
@@ -3504,7 +3504,7 @@
       "source_location": "L476",
       "_origin": "ast",
       "id": "src_execution_order_manager_ordermanager_reconcile_wallet_to_db",
-      "community": 5,
+      "community": 186,
       "norm_label": ".reconcile_wallet_to_db()"
     },
     {
@@ -3514,7 +3514,7 @@
       "source_location": "L616",
       "_origin": "ast",
       "id": "src_execution_order_manager_ordermanager_sync_open_orders",
-      "community": 5,
+      "community": 186,
       "norm_label": ".sync_open_orders()"
     },
     {
@@ -3614,7 +3614,7 @@
       "source_location": "L269",
       "_origin": "ast",
       "id": "src_execution_order_manager_rationale_269",
-      "community": 5,
+      "community": 186,
       "norm_label": "return full position data for non-redeemable wallet tokens (size > 0.01).      e"
     },
     {
@@ -3654,7 +3654,7 @@
       "source_location": "L477",
       "_origin": "ast",
       "id": "src_execution_order_manager_rationale_477",
-      "community": 5,
+      "community": 186,
       "norm_label": "insert db rows for wallet positions that have no open_positions entry."
     },
     {
@@ -3664,7 +3664,7 @@
       "source_location": "L617",
       "_origin": "ast",
       "id": "src_execution_order_manager_rationale_617",
-      "community": 5,
+      "community": 186,
       "norm_label": "refresh _open_orders from exchange open orders + today's filled positions."
     },
     {
@@ -5824,7 +5824,7 @@
       "source_location": "L205",
       "_origin": "ast",
       "id": "src_model_residual_correction_compute_residual_stats_per_pair",
-      "community": 104,
+      "community": 73,
       "norm_label": "compute_residual_stats_per_pair()"
     },
     {
@@ -5914,7 +5914,7 @@
       "source_location": "L214",
       "_origin": "ast",
       "id": "src_model_residual_correction_rationale_214",
-      "community": 104,
+      "community": 73,
       "norm_label": "return one residualstats per distinct (station, source) pair in the trailing win"
     },
     {
@@ -6584,7 +6584,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "src_risk_manager",
-      "community": 87,
+      "community": 150,
       "norm_label": "manager.py"
     },
     {
@@ -6664,7 +6664,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "src_risk_manager_rationale_1",
-      "community": 87,
+      "community": 150,
       "norm_label": "risk manager \u2014 gates every trade before execution.  all limits are read from src"
     },
     {
@@ -8274,7 +8274,7 @@
       "source_location": "L213",
       "_origin": "ast",
       "id": "src_strategy_scanner_minutes_to_settlement",
-      "community": 1,
+      "community": 53,
       "norm_label": "minutes_to_settlement()"
     },
     {
@@ -8314,7 +8314,7 @@
       "source_location": "L320",
       "_origin": "ast",
       "id": "src_strategy_scanner_scan_markets",
-      "community": 1,
+      "community": 53,
       "norm_label": "scan_markets()"
     },
     {
@@ -8414,7 +8414,7 @@
       "source_location": "L328",
       "_origin": "ast",
       "id": "src_strategy_scanner_rationale_328",
-      "community": 1,
+      "community": 53,
       "norm_label": "scan all polymarket markets against current weather states.      args:         w"
     },
     {
@@ -10544,7 +10544,7 @@
       "source_location": "L83",
       "_origin": "ast",
       "id": "src_tests_test_archive_snapshots_count_rows",
-      "community": 77,
+      "community": 104,
       "norm_label": "_count_rows()"
     },
     {
@@ -10644,7 +10644,7 @@
       "source_location": "L208",
       "_origin": "ast",
       "id": "src_tests_test_archive_snapshots_testmalformedlineskippednotfatal",
-      "community": 183,
+      "community": 104,
       "norm_label": "testmalformedlineskippednotfatal"
     },
     {
@@ -10654,7 +10654,7 @@
       "source_location": "L211",
       "_origin": "ast",
       "id": "src_tests_test_archive_snapshots_testmalformedlineskippednotfatal_test_malformed_line_skipped_not_fatal",
-      "community": 183,
+      "community": 104,
       "norm_label": ".test_malformed_line_skipped_not_fatal()"
     },
     {
@@ -10664,7 +10664,7 @@
       "source_location": "L237",
       "_origin": "ast",
       "id": "src_tests_test_archive_snapshots_testfromdatetodatefilter",
-      "community": 77,
+      "community": 104,
       "norm_label": "testfromdatetodatefilter"
     },
     {
@@ -10674,7 +10674,7 @@
       "source_location": "L240",
       "_origin": "ast",
       "id": "src_tests_test_archive_snapshots_testfromdatetodatefilter_setup",
-      "community": 77,
+      "community": 104,
       "norm_label": "._setup()"
     },
     {
@@ -10684,7 +10684,7 @@
       "source_location": "L258",
       "_origin": "ast",
       "id": "src_tests_test_archive_snapshots_testfromdatetodatefilter_test_from_date_filter",
-      "community": 77,
+      "community": 104,
       "norm_label": ".test_from_date_filter()"
     },
     {
@@ -10694,7 +10694,7 @@
       "source_location": "L264",
       "_origin": "ast",
       "id": "src_tests_test_archive_snapshots_testfromdatetodatefilter_test_to_date_filter",
-      "community": 77,
+      "community": 104,
       "norm_label": ".test_to_date_filter()"
     },
     {
@@ -10704,7 +10704,7 @@
       "source_location": "L270",
       "_origin": "ast",
       "id": "src_tests_test_archive_snapshots_testfromdatetodatefilter_test_from_and_to_date_filter",
-      "community": 77,
+      "community": 104,
       "norm_label": ".test_from_and_to_date_filter()"
     },
     {
@@ -10854,7 +10854,7 @@
       "source_location": "L209",
       "_origin": "ast",
       "id": "src_tests_test_archive_snapshots_rationale_209",
-      "community": 183,
+      "community": 104,
       "norm_label": "corrupt jsonl lines do not abort the etl; they are counted as malformed."
     },
     {
@@ -10864,7 +10864,7 @@
       "source_location": "L238",
       "_origin": "ast",
       "id": "src_tests_test_archive_snapshots_rationale_238",
-      "community": 77,
+      "community": 104,
       "norm_label": "date-window flags filter records by ts."
     },
     {
@@ -31044,7 +31044,7 @@
       "source_location": "L21",
       "_origin": "ast",
       "id": "src_tests_test_intraday_correction_backtest_make_correction_row",
-      "community": 10,
+      "community": 174,
       "norm_label": "_make_correction_row()"
     },
     {
@@ -31164,7 +31164,7 @@
       "source_location": "L146",
       "_origin": "ast",
       "id": "src_tests_test_intraday_correction_backtest_testrmsecalculation_test_build_daily_stats_errors",
-      "community": 10,
+      "community": 174,
       "norm_label": ".test_build_daily_stats_errors()"
     },
     {
@@ -31174,7 +31174,7 @@
       "source_location": "L162",
       "_origin": "ast",
       "id": "src_tests_test_intraday_correction_backtest_testrmsecalculation_test_build_daily_stats_uses_last_row",
-      "community": 10,
+      "community": 174,
       "norm_label": ".test_build_daily_stats_uses_last_row()"
     },
     {
@@ -31274,7 +31274,7 @@
       "source_location": "L273",
       "_origin": "ast",
       "id": "src_tests_test_intraday_correction_backtest_testreportshowsimprovement_test_no_improvement_case",
-      "community": 10,
+      "community": 174,
       "norm_label": ".test_no_improvement_case()"
     },
     {
@@ -31384,7 +31384,7 @@
       "source_location": "L147",
       "_origin": "ast",
       "id": "src_tests_test_intraday_correction_backtest_rationale_147",
-      "community": 10,
+      "community": 174,
       "norm_label": "_build_daily_stats produces correct corrected and baseline errors."
     },
     {
@@ -31394,7 +31394,7 @@
       "source_location": "L163",
       "_origin": "ast",
       "id": "src_tests_test_intraday_correction_backtest_rationale_163",
-      "community": 10,
+      "community": 174,
       "norm_label": "when multiple correction rows exist, the last one is used."
     },
     {
@@ -31494,7 +31494,7 @@
       "source_location": "L274",
       "_origin": "ast",
       "id": "src_tests_test_intraday_correction_backtest_rationale_274",
-      "community": 10,
+      "community": 174,
       "norm_label": "when baseline is better than corrected, improvement is negative."
     },
     {
@@ -36324,7 +36324,7 @@
       "source_location": "L1165",
       "_origin": "ast",
       "id": "src_tests_test_order_manager_testgetopenpositionbytoken",
-      "community": 28,
+      "community": 5,
       "norm_label": "testgetopenpositionbytoken"
     },
     {
@@ -36334,7 +36334,7 @@
       "source_location": "L1168",
       "_origin": "ast",
       "id": "src_tests_test_order_manager_testgetopenpositionbytoken_test_get_open_position_by_token_returns_matching_row",
-      "community": 28,
+      "community": 5,
       "norm_label": ".test_get_open_position_by_token_returns_matching_row()"
     },
     {
@@ -36344,7 +36344,7 @@
       "source_location": "L1202",
       "_origin": "ast",
       "id": "src_tests_test_order_manager_testgetopenpositionbytoken_test_get_open_position_by_token_returns_empty_list_on_no_match",
-      "community": 28,
+      "community": 5,
       "norm_label": ".test_get_open_position_by_token_returns_empty_list_on_no_match()"
     },
     {
@@ -36354,7 +36354,7 @@
       "source_location": "L1226",
       "_origin": "ast",
       "id": "src_tests_test_order_manager_testgetopenpositionbytoken_test_get_open_position_by_token_includes_trade_join_fields",
-      "community": 28,
+      "community": 5,
       "norm_label": ".test_get_open_position_by_token_includes_trade_join_fields()"
     },
     {
@@ -37284,7 +37284,7 @@
       "source_location": "L1166",
       "_origin": "ast",
       "id": "src_tests_test_order_manager_rationale_1166",
-      "community": 28,
+      "community": 5,
       "norm_label": "database method for targeted token_id lookup to avoid full table scan."
     },
     {
@@ -37294,7 +37294,7 @@
       "source_location": "L1169",
       "_origin": "ast",
       "id": "src_tests_test_order_manager_rationale_1169",
-      "community": 28,
+      "community": 5,
       "norm_label": "happy path: returns rows for the specified token_id."
     },
     {
@@ -37304,7 +37304,7 @@
       "source_location": "L1203",
       "_origin": "ast",
       "id": "src_tests_test_order_manager_rationale_1203",
-      "community": 28,
+      "community": 5,
       "norm_label": "no-match case: returns empty list when token_id does not exist."
     },
     {
@@ -37314,7 +37314,7 @@
       "source_location": "L1227",
       "_origin": "ast",
       "id": "src_tests_test_order_manager_rationale_1227",
-      "community": 28,
+      "community": 5,
       "norm_label": "result includes bracket_low, bracket_high, predicted_price from trades join."
     },
     {
@@ -39194,7 +39194,7 @@
       "source_location": "L181",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testresidualstatsaccuracy",
-      "community": 73,
+      "community": 28,
       "norm_label": "testresidualstatsaccuracy"
     },
     {
@@ -39204,7 +39204,7 @@
       "source_location": "L182",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testresidualstatsaccuracy_run",
-      "community": 73,
+      "community": 28,
       "norm_label": "._run()"
     },
     {
@@ -39214,7 +39214,7 @@
       "source_location": "L197",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testresidualstatsaccuracy_test_mean_signed_error_positive",
-      "community": 73,
+      "community": 28,
       "norm_label": ".test_mean_signed_error_positive()"
     },
     {
@@ -39224,7 +39224,7 @@
       "source_location": "L203",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testresidualstatsaccuracy_test_mean_signed_error_mixed",
-      "community": 73,
+      "community": 28,
       "norm_label": ".test_mean_signed_error_mixed()"
     },
     {
@@ -39234,7 +39234,7 @@
       "source_location": "L209",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testresidualstatsaccuracy_test_rolling_mae_all_positive",
-      "community": 73,
+      "community": 28,
       "norm_label": ".test_rolling_mae_all_positive()"
     },
     {
@@ -39244,7 +39244,7 @@
       "source_location": "L215",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testresidualstatsaccuracy_test_rolling_mae_absolute_value",
-      "community": 73,
+      "community": 28,
       "norm_label": ".test_rolling_mae_absolute_value()"
     },
     {
@@ -39254,7 +39254,7 @@
       "source_location": "L221",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testresidualstatsaccuracy_test_sample_count",
-      "community": 73,
+      "community": 28,
       "norm_label": ".test_sample_count()"
     },
     {
@@ -39264,7 +39264,7 @@
       "source_location": "L225",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testresidualstatsaccuracy_test_correction_applied_when_nonzero",
-      "community": 73,
+      "community": 28,
       "norm_label": ".test_correction_applied_when_nonzero()"
     },
     {
@@ -39274,7 +39274,7 @@
       "source_location": "L230",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testresidualstatsaccuracy_test_correction_applied_zero",
-      "community": 73,
+      "community": 28,
       "norm_label": ".test_correction_applied_zero()"
     },
     {
@@ -39284,7 +39284,7 @@
       "source_location": "L243",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testclampbehaviour",
-      "community": 73,
+      "community": 28,
       "norm_label": "testclampbehaviour"
     },
     {
@@ -39294,7 +39294,7 @@
       "source_location": "L244",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testclampbehaviour_run",
-      "community": 73,
+      "community": 28,
       "norm_label": "._run()"
     },
     {
@@ -39304,7 +39304,7 @@
       "source_location": "L258",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testclampbehaviour_test_clamp_binds_positive",
-      "community": 73,
+      "community": 28,
       "norm_label": ".test_clamp_binds_positive()"
     },
     {
@@ -39314,7 +39314,7 @@
       "source_location": "L264",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testclampbehaviour_test_clamp_binds_negative",
-      "community": 73,
+      "community": 28,
       "norm_label": ".test_clamp_binds_negative()"
     },
     {
@@ -39324,7 +39324,7 @@
       "source_location": "L270",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testclampbehaviour_test_clamp_not_needed_small_value",
-      "community": 73,
+      "community": 28,
       "norm_label": ".test_clamp_not_needed_small_value()"
     },
     {
@@ -39334,7 +39334,7 @@
       "source_location": "L276",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testclampbehaviour_test_custom_clamp_range",
-      "community": 73,
+      "community": 28,
       "norm_label": ".test_custom_clamp_range()"
     },
     {
@@ -39344,7 +39344,7 @@
       "source_location": "L302",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testmaegate",
-      "community": 73,
+      "community": 28,
       "norm_label": "testmaegate"
     },
     {
@@ -39354,7 +39354,7 @@
       "source_location": "L303",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testmaegate_run",
-      "community": 73,
+      "community": 28,
       "norm_label": "._run()"
     },
     {
@@ -39364,7 +39364,7 @@
       "source_location": "L317",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testmaegate_test_mae_above_threshold_suppresses_live",
-      "community": 73,
+      "community": 28,
       "norm_label": ".test_mae_above_threshold_suppresses_live()"
     },
     {
@@ -39374,7 +39374,7 @@
       "source_location": "L325",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testmaegate_test_mae_below_threshold_does_not_suppress",
-      "community": 73,
+      "community": 28,
       "norm_label": ".test_mae_below_threshold_does_not_suppress()"
     },
     {
@@ -39384,7 +39384,7 @@
       "source_location": "L332",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testmaegate_test_mae_exactly_at_threshold_does_not_suppress",
-      "community": 73,
+      "community": 28,
       "norm_label": ".test_mae_exactly_at_threshold_does_not_suppress()"
     },
     {
@@ -39394,7 +39394,7 @@
       "source_location": "L338",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testmaegate_test_mae_just_above_threshold_suppresses",
-      "community": 73,
+      "community": 28,
       "norm_label": ".test_mae_just_above_threshold_suppresses()"
     },
     {
@@ -39524,7 +39524,7 @@
       "source_location": "L560",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_enable_residual",
-      "community": 104,
+      "community": 73,
       "norm_label": "_enable_residual()"
     },
     {
@@ -39564,7 +39564,7 @@
       "source_location": "L603",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testcomputeresidualstatspairscoped",
-      "community": 104,
+      "community": 73,
       "norm_label": "testcomputeresidualstatspairscoped"
     },
     {
@@ -39574,7 +39574,7 @@
       "source_location": "L606",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testcomputeresidualstatspairscoped_make_db_pair",
-      "community": 104,
+      "community": 73,
       "norm_label": "._make_db_pair()"
     },
     {
@@ -39584,7 +39584,7 @@
       "source_location": "L618",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testcomputeresidualstatspairscoped_test_uses_pair_scope_when_pair_has_enough_samples",
-      "community": 104,
+      "community": 73,
       "norm_label": ".test_uses_pair_scope_when_pair_has_enough_samples()"
     },
     {
@@ -39594,7 +39594,7 @@
       "source_location": "L634",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testcomputeresidualstatspairscoped_test_falls_back_to_city_when_pair_insufficient",
-      "community": 104,
+      "community": 73,
       "norm_label": ".test_falls_back_to_city_when_pair_insufficient()"
     },
     {
@@ -39614,7 +39614,7 @@
       "source_location": "L665",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testcomputeresidualstatsperpair",
-      "community": 104,
+      "community": 73,
       "norm_label": "testcomputeresidualstatsperpair"
     },
     {
@@ -39624,7 +39624,7 @@
       "source_location": "L668",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testcomputeresidualstatsperpair_make_db_with_pairs",
-      "community": 104,
+      "community": 73,
       "norm_label": "._make_db_with_pairs()"
     },
     {
@@ -39634,7 +39634,7 @@
       "source_location": "L686",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testcomputeresidualstatsperpair_test_returns_one_entry_per_pair",
-      "community": 104,
+      "community": 73,
       "norm_label": ".test_returns_one_entry_per_pair()"
     },
     {
@@ -39644,7 +39644,7 @@
       "source_location": "L702",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testcomputeresidualstatsperpair_test_excludes_pairs_below_min_samples",
-      "community": 104,
+      "community": 73,
       "norm_label": ".test_excludes_pairs_below_min_samples()"
     },
     {
@@ -39654,7 +39654,7 @@
       "source_location": "L717",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testcomputeresidualstatsperpair_test_returns_empty_when_disabled",
-      "community": 104,
+      "community": 73,
       "norm_label": ".test_returns_empty_when_disabled()"
     },
     {
@@ -39664,7 +39664,7 @@
       "source_location": "L728",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testcomputeresidualstatsperpair_test_scope_is_pair",
-      "community": 104,
+      "community": 73,
       "norm_label": ".test_scope_is_pair()"
     },
     {
@@ -39784,7 +39784,7 @@
       "source_location": "L198",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_rationale_198",
-      "community": 73,
+      "community": 28,
       "norm_label": "all positive deltas: warm bias."
     },
     {
@@ -39794,7 +39794,7 @@
       "source_location": "L204",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_rationale_204",
-      "community": 73,
+      "community": 28,
       "norm_label": "mixed deltas: mean should be correct."
     },
     {
@@ -39804,7 +39804,7 @@
       "source_location": "L210",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_rationale_210",
-      "community": 73,
+      "community": 28,
       "norm_label": "mae of all-positive deltas equals mean."
     },
     {
@@ -39814,7 +39814,7 @@
       "source_location": "L216",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_rationale_216",
-      "community": 73,
+      "community": 28,
       "norm_label": "mae uses absolute values: [-4, +6] \u2192 mae=(4+6)/2=5."
     },
     {
@@ -39824,7 +39824,7 @@
       "source_location": "L226",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_rationale_226",
-      "community": 73,
+      "community": 28,
       "norm_label": "correction_applied=true when clamped_correction != 0."
     },
     {
@@ -39834,7 +39834,7 @@
       "source_location": "L231",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_rationale_231",
-      "community": 73,
+      "community": 28,
       "norm_label": "correction_applied=true even if mean is exactly 0 (clamped=0)."
     },
     {
@@ -39844,7 +39844,7 @@
       "source_location": "L259",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_rationale_259",
-      "community": 73,
+      "community": 28,
       "norm_label": "mean = +10\u00b0f clamped to +5\u00b0f."
     },
     {
@@ -39854,7 +39854,7 @@
       "source_location": "L265",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_rationale_265",
-      "community": 73,
+      "community": 28,
       "norm_label": "mean = -8\u00b0f clamped to -5\u00b0f."
     },
     {
@@ -39864,7 +39864,7 @@
       "source_location": "L271",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_rationale_271",
-      "community": 73,
+      "community": 28,
       "norm_label": "mean = +2\u00b0f within \u00b15 \u2192 no clamp."
     },
     {
@@ -39874,7 +39874,7 @@
       "source_location": "L277",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_rationale_277",
-      "community": 73,
+      "community": 28,
       "norm_label": "custom max_correction_f=3.0 \u2192 mean=+4.6 applied correction clamped to +3.0."
     },
     {
@@ -39884,7 +39884,7 @@
       "source_location": "L318",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_rationale_318",
-      "community": 73,
+      "community": 28,
       "norm_label": "mae=10.1 > threshold=8.0 \u2192 live_suppressed=true."
     },
     {
@@ -39894,7 +39894,7 @@
       "source_location": "L326",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_rationale_326",
-      "community": 73,
+      "community": 28,
       "norm_label": "mae=3.7 < threshold=8.0 \u2192 live_suppressed=false."
     },
     {
@@ -39904,7 +39904,7 @@
       "source_location": "L333",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_rationale_333",
-      "community": 73,
+      "community": 28,
       "norm_label": "mae exactly equal to threshold \u2192 not suppressed (strictly >)."
     },
     {
@@ -39914,7 +39914,7 @@
       "source_location": "L339",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_rationale_339",
-      "community": 73,
+      "community": 28,
       "norm_label": "mae=8.01 > 8.0 \u2192 suppressed."
     },
     {
@@ -40024,7 +40024,7 @@
       "source_location": "L561",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_rationale_561",
-      "community": 104,
+      "community": 73,
       "norm_label": "context manager helper: set residual_correction_enabled = true."
     },
     {
@@ -40064,7 +40064,7 @@
       "source_location": "L604",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_rationale_604",
-      "community": 104,
+      "community": 73,
       "norm_label": "compute_residual_stats uses top-priority pair when it has enough samples."
     },
     {
@@ -40074,7 +40074,7 @@
       "source_location": "L607",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_rationale_607",
-      "community": 104,
+      "community": 73,
       "norm_label": "return a mock db that returns different deltas based on station/source filters."
     },
     {
@@ -40084,7 +40084,7 @@
       "source_location": "L619",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_rationale_619",
-      "community": 104,
+      "community": 73,
       "norm_label": "when top-priority pair has >= min_samples, scope='pair'."
     },
     {
@@ -40094,7 +40094,7 @@
       "source_location": "L635",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_rationale_635",
-      "community": 104,
+      "community": 73,
       "norm_label": "when pair has < min_samples, falls back to city-wide with scope='city_fallback'."
     },
     {
@@ -40114,7 +40114,7 @@
       "source_location": "L666",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_rationale_666",
-      "community": 104,
+      "community": 73,
       "norm_label": "compute_residual_stats_per_pair returns one entry per qualified pair."
     },
     {
@@ -40124,7 +40124,7 @@
       "source_location": "L669",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_rationale_669",
-      "community": 104,
+      "community": 73,
       "norm_label": "pairs_data: list of (station, source, [delta_f, ...])."
     },
     {
@@ -40134,7 +40134,7 @@
       "source_location": "L687",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_rationale_687",
-      "community": 104,
+      "community": 73,
       "norm_label": "one residualstats per (station, source) pair with sufficient samples."
     },
     {
@@ -40144,7 +40144,7 @@
       "source_location": "L703",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_rationale_703",
-      "community": 104,
+      "community": 73,
       "norm_label": "pairs with < min_samples are excluded from results."
     },
     {
@@ -40154,7 +40154,7 @@
       "source_location": "L718",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_rationale_718",
-      "community": 104,
+      "community": 73,
       "norm_label": "returns empty list when feature is disabled."
     },
     {
@@ -40164,7 +40164,7 @@
       "source_location": "L729",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_rationale_729",
-      "community": 104,
+      "community": 73,
       "norm_label": "all entries returned by per_pair have scope='pair'."
     },
     {
@@ -41244,7 +41244,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "src_tests_test_risk_db",
-      "community": 87,
+      "community": 150,
       "norm_label": "test_risk_db.py"
     },
     {
@@ -41354,7 +41354,7 @@
       "source_location": "L121",
       "_origin": "ast",
       "id": "src_tests_test_risk_db_testrecordpnlwritestodb",
-      "community": 87,
+      "community": 201,
       "norm_label": "testrecordpnlwritestodb"
     },
     {
@@ -41364,7 +41364,7 @@
       "source_location": "L124",
       "_origin": "ast",
       "id": "src_tests_test_risk_db_testrecordpnlwritestodb_test_record_pnl_writes_to_db",
-      "community": 87,
+      "community": 201,
       "norm_label": ".test_record_pnl_writes_to_db()"
     },
     {
@@ -41374,7 +41374,7 @@
       "source_location": "L136",
       "_origin": "ast",
       "id": "src_tests_test_risk_db_testrecordpnlwritestodb_test_record_pnl_accumulates_in_db",
-      "community": 87,
+      "community": 201,
       "norm_label": ".test_record_pnl_accumulates_in_db()"
     },
     {
@@ -41384,7 +41384,7 @@
       "source_location": "L151",
       "_origin": "ast",
       "id": "src_tests_test_risk_db_testnewdayreset",
-      "community": 87,
+      "community": 250,
       "norm_label": "testnewdayreset"
     },
     {
@@ -41394,7 +41394,7 @@
       "source_location": "L154",
       "_origin": "ast",
       "id": "src_tests_test_risk_db_testnewdayreset_test_new_day_reset_with_db",
-      "community": 87,
+      "community": 250,
       "norm_label": ".test_new_day_reset_with_db()"
     },
     {
@@ -41404,7 +41404,7 @@
       "source_location": "L166",
       "_origin": "ast",
       "id": "src_tests_test_risk_db_testnewdayreset_test_new_day_reset_writes_zero_to_db",
-      "community": 87,
+      "community": 250,
       "norm_label": ".test_new_day_reset_writes_zero_to_db()"
     },
     {
@@ -41464,7 +41464,7 @@
       "source_location": "L275",
       "_origin": "ast",
       "id": "src_tests_test_risk_db_testopenpositionstracking_test_no_db_no_error",
-      "community": 150,
+      "community": 87,
       "norm_label": ".test_no_db_no_error()"
     },
     {
@@ -41474,7 +41474,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "src_tests_test_risk_db_rationale_1",
-      "community": 87,
+      "community": 150,
       "norm_label": "unit tests for riskmanager with database persistence.  tests the seeding of _dai"
     },
     {
@@ -41584,7 +41584,7 @@
       "source_location": "L122",
       "_origin": "ast",
       "id": "src_tests_test_risk_db_rationale_122",
-      "community": 87,
+      "community": 201,
       "norm_label": "record_pnl() persists changes to db when db is set."
     },
     {
@@ -41594,7 +41594,7 @@
       "source_location": "L125",
       "_origin": "ast",
       "id": "src_tests_test_risk_db_rationale_125",
-      "community": 87,
+      "community": 201,
       "norm_label": "call record_pnl(), verify the db row is updated."
     },
     {
@@ -41604,7 +41604,7 @@
       "source_location": "L137",
       "_origin": "ast",
       "id": "src_tests_test_risk_db_rationale_137",
-      "community": 87,
+      "community": 201,
       "norm_label": "multiple record_pnl() calls accumulate in the db."
     },
     {
@@ -41614,7 +41614,7 @@
       "source_location": "L152",
       "_origin": "ast",
       "id": "src_tests_test_risk_db_rationale_152",
-      "community": 87,
+      "community": 250,
       "norm_label": "_reset_if_new_day() clears pnl and resets the db when the day changes."
     },
     {
@@ -41624,7 +41624,7 @@
       "source_location": "L155",
       "_origin": "ast",
       "id": "src_tests_test_risk_db_rationale_155",
-      "community": 87,
+      "community": 250,
       "norm_label": "seed pnl for yesterday, create rm on 'today', assert _daily_pnl == 0."
     },
     {
@@ -41634,7 +41634,7 @@
       "source_location": "L167",
       "_origin": "ast",
       "id": "src_tests_test_risk_db_rationale_167",
-      "community": 87,
+      "community": 250,
       "norm_label": "when _reset_if_new_day() fires, it writes a 0.0 pnl row for the new day."
     },
     {
@@ -41694,7 +41694,7 @@
       "source_location": "L276",
       "_origin": "ast",
       "id": "src_tests_test_risk_db_rationale_276",
-      "community": 150,
+      "community": 87,
       "norm_label": "open_position() and close_position() do not raise when db=none."
     },
     {
@@ -42434,7 +42434,7 @@
       "source_location": "L92",
       "_origin": "ast",
       "id": "src_tests_test_scanner_testscanmarkets",
-      "community": 51,
+      "community": 53,
       "norm_label": "testscanmarkets"
     },
     {
@@ -42444,7 +42444,7 @@
       "source_location": "L95",
       "_origin": "ast",
       "id": "src_tests_test_scanner_testscanmarkets_test_empty_inputs_return_empty",
-      "community": 51,
+      "community": 53,
       "norm_label": ".test_empty_inputs_return_empty()"
     },
     {
@@ -42454,7 +42454,7 @@
       "source_location": "L101",
       "_origin": "ast",
       "id": "src_tests_test_scanner_testscanmarkets_test_no_matching_markets",
-      "community": 51,
+      "community": 53,
       "norm_label": ".test_no_matching_markets()"
     },
     {
@@ -42934,7 +42934,7 @@
       "source_location": "L93",
       "_origin": "ast",
       "id": "src_tests_test_scanner_rationale_93",
-      "community": 51,
+      "community": 53,
       "norm_label": "tests for scan_markets() function."
     },
     {
@@ -42944,7 +42944,7 @@
       "source_location": "L96",
       "_origin": "ast",
       "id": "src_tests_test_scanner_rationale_96",
-      "community": 51,
+      "community": 53,
       "norm_label": "scan_markets with no weather and no markets returns empty lists."
     },
     {
@@ -42954,7 +42954,7 @@
       "source_location": "L102",
       "_origin": "ast",
       "id": "src_tests_test_scanner_rationale_102",
-      "community": 51,
+      "community": 53,
       "norm_label": "markets that don't match any station return no candidates."
     },
     {
@@ -51161,7 +51161,7 @@
       "label": "_db()",
       "file_type": "code",
       "source_file": "src/tests/test_trade_cost_accounting.py",
-      "source_location": "L22",
+      "source_location": "L28",
       "_origin": "ast",
       "id": "src_tests_test_trade_cost_accounting_db",
       "community": 160,
@@ -51181,7 +51181,7 @@
       "label": "_insert_live_trade()",
       "file_type": "code",
       "source_file": "src/tests/test_trade_cost_accounting.py",
-      "source_location": "L26",
+      "source_location": "L32",
       "_origin": "ast",
       "id": "src_tests_test_trade_cost_accounting_insert_live_trade",
       "community": 160,
@@ -51191,7 +51191,7 @@
       "label": "TestUpdateTradeCosts",
       "file_type": "code",
       "source_file": "src/tests/test_trade_cost_accounting.py",
-      "source_location": "L47",
+      "source_location": "L53",
       "_origin": "ast",
       "id": "src_tests_test_trade_cost_accounting_testupdatetradecosts",
       "community": 160,
@@ -51201,7 +51201,7 @@
       "label": ".test_writes_actual_fee_cents()",
       "file_type": "code",
       "source_file": "src/tests/test_trade_cost_accounting.py",
-      "source_location": "L48",
+      "source_location": "L54",
       "_origin": "ast",
       "id": "src_tests_test_trade_cost_accounting_testupdatetradecosts_test_writes_actual_fee_cents",
       "community": 160,
@@ -51211,7 +51211,7 @@
       "label": ".test_writes_size_eur()",
       "file_type": "code",
       "source_file": "src/tests/test_trade_cost_accounting.py",
-      "source_location": "L63",
+      "source_location": "L69",
       "_origin": "ast",
       "id": "src_tests_test_trade_cost_accounting_testupdatetradecosts_test_writes_size_eur",
       "community": 160,
@@ -51221,7 +51221,7 @@
       "label": ".test_skips_none_fields()",
       "file_type": "code",
       "source_file": "src/tests/test_trade_cost_accounting.py",
-      "source_location": "L72",
+      "source_location": "L78",
       "_origin": "ast",
       "id": "src_tests_test_trade_cost_accounting_testupdatetradecosts_test_skips_none_fields",
       "community": 160,
@@ -51231,7 +51231,7 @@
       "label": ".test_returns_zero_for_unknown_order()",
       "file_type": "code",
       "source_file": "src/tests/test_trade_cost_accounting.py",
-      "source_location": "L86",
+      "source_location": "L92",
       "_origin": "ast",
       "id": "src_tests_test_trade_cost_accounting_testupdatetradecosts_test_returns_zero_for_unknown_order",
       "community": 160,
@@ -51241,7 +51241,7 @@
       "label": "TestGetTradeCostSummary",
       "file_type": "code",
       "source_file": "src/tests/test_trade_cost_accounting.py",
-      "source_location": "L96",
+      "source_location": "L102",
       "_origin": "ast",
       "id": "src_tests_test_trade_cost_accounting_testgettradecostsummary",
       "community": 160,
@@ -51251,7 +51251,7 @@
       "label": "._insert_closed_live()",
       "file_type": "code",
       "source_file": "src/tests/test_trade_cost_accounting.py",
-      "source_location": "L97",
+      "source_location": "L103",
       "_origin": "ast",
       "id": "src_tests_test_trade_cost_accounting_testgettradecostsummary_insert_closed_live",
       "community": 160,
@@ -51261,7 +51261,7 @@
       "label": ".test_returns_zeros_when_no_trades()",
       "file_type": "code",
       "source_file": "src/tests/test_trade_cost_accounting.py",
-      "source_location": "L105",
+      "source_location": "L111",
       "_origin": "ast",
       "id": "src_tests_test_trade_cost_accounting_testgettradecostsummary_test_returns_zeros_when_no_trades",
       "community": 160,
@@ -51271,7 +51271,7 @@
       "label": ".test_aggregates_live_closed_trades()",
       "file_type": "code",
       "source_file": "src/tests/test_trade_cost_accounting.py",
-      "source_location": "L112",
+      "source_location": "L118",
       "_origin": "ast",
       "id": "src_tests_test_trade_cost_accounting_testgettradecostsummary_test_aggregates_live_closed_trades",
       "community": 160,
@@ -51281,7 +51281,7 @@
       "label": ".test_excludes_paper_trades()",
       "file_type": "code",
       "source_file": "src/tests/test_trade_cost_accounting.py",
-      "source_location": "L123",
+      "source_location": "L129",
       "_origin": "ast",
       "id": "src_tests_test_trade_cost_accounting_testgettradecostsummary_test_excludes_paper_trades",
       "community": 160,
@@ -51291,7 +51291,7 @@
       "label": ".test_fee_populated_count_excludes_null()",
       "file_type": "code",
       "source_file": "src/tests/test_trade_cost_accounting.py",
-      "source_location": "L137",
+      "source_location": "L143",
       "_origin": "ast",
       "id": "src_tests_test_trade_cost_accounting_testgettradecostsummary_test_fee_populated_count_excludes_null",
       "community": 160,
@@ -51301,7 +51301,7 @@
       "label": "TestRecordSellInDbCostWiring",
       "file_type": "code",
       "source_file": "src/tests/test_trade_cost_accounting.py",
-      "source_location": "L152",
+      "source_location": "L158",
       "_origin": "ast",
       "id": "src_tests_test_trade_cost_accounting_testrecordsellindbcostwiring",
       "community": 47,
@@ -51311,7 +51311,7 @@
       "label": "._make_fill()",
       "file_type": "code",
       "source_file": "src/tests/test_trade_cost_accounting.py",
-      "source_location": "L155",
+      "source_location": "L161",
       "_origin": "ast",
       "id": "src_tests_test_trade_cost_accounting_testrecordsellindbcostwiring_make_fill",
       "community": 47,
@@ -51321,7 +51321,7 @@
       "label": ".test_update_trade_costs_called()",
       "file_type": "code",
       "source_file": "src/tests/test_trade_cost_accounting.py",
-      "source_location": "L159",
+      "source_location": "L165",
       "_origin": "ast",
       "id": "src_tests_test_trade_cost_accounting_testrecordsellindbcostwiring_test_update_trade_costs_called",
       "community": 47,
@@ -51331,7 +51331,7 @@
       "label": ".test_multiple_fills_each_get_costs_updated()",
       "file_type": "code",
       "source_file": "src/tests/test_trade_cost_accounting.py",
-      "source_location": "L173",
+      "source_location": "L179",
       "_origin": "ast",
       "id": "src_tests_test_trade_cost_accounting_testrecordsellindbcostwiring_test_multiple_fills_each_get_costs_updated",
       "community": 47,
@@ -51341,7 +51341,7 @@
       "label": ".test_skips_fill_without_order_id()",
       "file_type": "code",
       "source_file": "src/tests/test_trade_cost_accounting.py",
-      "source_location": "L188",
+      "source_location": "L194",
       "_origin": "ast",
       "id": "src_tests_test_trade_cost_accounting_testrecordsellindbcostwiring_test_skips_fill_without_order_id",
       "community": 47,
@@ -51351,7 +51351,7 @@
       "label": ".test_no_db_is_a_noop()",
       "file_type": "code",
       "source_file": "src/tests/test_trade_cost_accounting.py",
-      "source_location": "L197",
+      "source_location": "L203",
       "_origin": "ast",
       "id": "src_tests_test_trade_cost_accounting_testrecordsellindbcostwiring_test_no_db_is_a_noop",
       "community": 47,
@@ -51361,7 +51361,7 @@
       "label": "TestTradeCostSummaryEndpoint",
       "file_type": "code",
       "source_file": "src/tests/test_trade_cost_accounting.py",
-      "source_location": "L208",
+      "source_location": "L214",
       "_origin": "ast",
       "id": "src_tests_test_trade_cost_accounting_testtradecostsummaryendpoint",
       "community": 160,
@@ -51371,7 +51371,7 @@
       "label": ".test_returns_summary()",
       "file_type": "code",
       "source_file": "src/tests/test_trade_cost_accounting.py",
-      "source_location": "L209",
+      "source_location": "L215",
       "_origin": "ast",
       "id": "src_tests_test_trade_cost_accounting_testtradecostsummaryendpoint_test_returns_summary",
       "community": 160,
@@ -51381,7 +51381,7 @@
       "label": ".test_503_when_db_none()",
       "file_type": "code",
       "source_file": "src/tests/test_trade_cost_accounting.py",
-      "source_location": "L233",
+      "source_location": "L239",
       "_origin": "ast",
       "id": "src_tests_test_trade_cost_accounting_testtradecostsummaryendpoint_test_503_when_db_none",
       "community": 160,
@@ -51391,7 +51391,7 @@
       "label": ".test_custom_days_param()",
       "file_type": "code",
       "source_file": "src/tests/test_trade_cost_accounting.py",
-      "source_location": "L247",
+      "source_location": "L253",
       "_origin": "ast",
       "id": "src_tests_test_trade_cost_accounting_testtradecostsummaryendpoint_test_custom_days_param",
       "community": 160,
@@ -51411,9 +51411,9 @@
       "label": "Verify that _record_sell_in_db calls db.update_trade_costs for each fill.",
       "file_type": "rationale",
       "source_file": "src/tests/test_trade_cost_accounting.py",
-      "source_location": "L153",
+      "source_location": "L159",
       "_origin": "ast",
-      "id": "src_tests_test_trade_cost_accounting_rationale_153",
+      "id": "src_tests_test_trade_cost_accounting_rationale_159",
       "community": 47,
       "norm_label": "verify that _record_sell_in_db calls db.update_trade_costs for each fill."
     },
@@ -54154,7 +54154,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "docs_implementation_plan",
-      "community": 226,
+      "community": 254,
       "norm_label": "implementation_plan.md"
     },
     {
@@ -56604,7 +56604,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "docs_design_374_frozen_model_indicator",
-      "community": 254,
+      "community": 125,
       "norm_label": "374-frozen-model-indicator.md"
     },
     {
@@ -63611,7 +63611,7 @@
       "context": "submodule_import",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_trade_cost_accounting.py",
-      "source_location": "L211",
+      "source_location": "L217",
       "weight": 1.0,
       "source": "src_tests_test_trade_cost_accounting",
       "target": "src_dashboard_api",
@@ -67914,7 +67914,7 @@
       "context": "import",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_trade_cost_accounting.py",
-      "source_location": "L160",
+      "source_location": "L166",
       "weight": 1.0,
       "source": "src_tests_test_trade_cost_accounting",
       "target": "src_execution_order_manager_record_sell_in_db",
@@ -67926,7 +67926,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "src/tests/test_trade_cost_accounting.py",
-      "source_location": "L181",
+      "source_location": "L187",
       "weight": 1.0,
       "source": "src_tests_test_trade_cost_accounting_testrecordsellindbcostwiring_test_multiple_fills_each_get_costs_updated",
       "target": "src_execution_order_manager_record_sell_in_db"
@@ -67937,7 +67937,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "src/tests/test_trade_cost_accounting.py",
-      "source_location": "L201",
+      "source_location": "L207",
       "weight": 1.0,
       "source": "src_tests_test_trade_cost_accounting_testrecordsellindbcostwiring_test_no_db_is_a_noop",
       "target": "src_execution_order_manager_record_sell_in_db"
@@ -67948,7 +67948,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "src/tests/test_trade_cost_accounting.py",
-      "source_location": "L193",
+      "source_location": "L199",
       "weight": 1.0,
       "source": "src_tests_test_trade_cost_accounting_testrecordsellindbcostwiring_test_skips_fill_without_order_id",
       "target": "src_execution_order_manager_record_sell_in_db"
@@ -67959,7 +67959,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "src/tests/test_trade_cost_accounting.py",
-      "source_location": "L164",
+      "source_location": "L170",
       "weight": 1.0,
       "source": "src_tests_test_trade_cost_accounting_testrecordsellindbcostwiring_test_update_trade_costs_called",
       "target": "src_execution_order_manager_record_sell_in_db"
@@ -86138,7 +86138,7 @@
       "context": "import",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_trade_cost_accounting.py",
-      "source_location": "L15",
+      "source_location": "L16",
       "weight": 1.0,
       "source": "src_tests_test_trade_cost_accounting",
       "target": "src_strategy_fee",
@@ -86258,7 +86258,7 @@
       "context": "import",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_trade_cost_accounting.py",
-      "source_location": "L15",
+      "source_location": "L16",
       "weight": 1.0,
       "source": "src_tests_test_trade_cost_accounting",
       "target": "src_strategy_fee_estimate_fee_cents",
@@ -86270,7 +86270,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "src/tests/test_trade_cost_accounting.py",
-      "source_location": "L166",
+      "source_location": "L172",
       "weight": 1.0,
       "source": "src_tests_test_trade_cost_accounting_testrecordsellindbcostwiring_test_update_trade_costs_called",
       "target": "src_strategy_fee_estimate_fee_cents"
@@ -150593,7 +150593,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_trade_cost_accounting.py",
-      "source_location": "L22",
+      "source_location": "L28",
       "weight": 1.0,
       "source": "src_tests_test_trade_cost_accounting",
       "target": "src_tests_test_trade_cost_accounting_db",
@@ -150603,7 +150603,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_trade_cost_accounting.py",
-      "source_location": "L26",
+      "source_location": "L32",
       "weight": 1.0,
       "source": "src_tests_test_trade_cost_accounting",
       "target": "src_tests_test_trade_cost_accounting_insert_live_trade",
@@ -150613,7 +150613,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_trade_cost_accounting.py",
-      "source_location": "L96",
+      "source_location": "L102",
       "weight": 1.0,
       "source": "src_tests_test_trade_cost_accounting",
       "target": "src_tests_test_trade_cost_accounting_testgettradecostsummary",
@@ -150623,7 +150623,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_trade_cost_accounting.py",
-      "source_location": "L152",
+      "source_location": "L158",
       "weight": 1.0,
       "source": "src_tests_test_trade_cost_accounting",
       "target": "src_tests_test_trade_cost_accounting_testrecordsellindbcostwiring",
@@ -150633,7 +150633,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_trade_cost_accounting.py",
-      "source_location": "L208",
+      "source_location": "L214",
       "weight": 1.0,
       "source": "src_tests_test_trade_cost_accounting",
       "target": "src_tests_test_trade_cost_accounting_testtradecostsummaryendpoint",
@@ -150643,7 +150643,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_trade_cost_accounting.py",
-      "source_location": "L47",
+      "source_location": "L53",
       "weight": 1.0,
       "source": "src_tests_test_trade_cost_accounting",
       "target": "src_tests_test_trade_cost_accounting_testupdatetradecosts",
@@ -150664,7 +150664,7 @@
       "context": "return_type",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_trade_cost_accounting.py",
-      "source_location": "L22",
+      "source_location": "L28",
       "weight": 1.0,
       "source": "src_tests_test_trade_cost_accounting_db",
       "target": "src_tests_test_trade_cost_accounting_py_database",
@@ -150675,7 +150675,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_trade_cost_accounting.py",
-      "source_location": "L113",
+      "source_location": "L119",
       "weight": 1.0,
       "source": "src_tests_test_trade_cost_accounting_testgettradecostsummary_test_aggregates_live_closed_trades",
       "target": "src_tests_test_trade_cost_accounting_db",
@@ -150686,7 +150686,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_trade_cost_accounting.py",
-      "source_location": "L124",
+      "source_location": "L130",
       "weight": 1.0,
       "source": "src_tests_test_trade_cost_accounting_testgettradecostsummary_test_excludes_paper_trades",
       "target": "src_tests_test_trade_cost_accounting_db",
@@ -150697,7 +150697,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_trade_cost_accounting.py",
-      "source_location": "L138",
+      "source_location": "L144",
       "weight": 1.0,
       "source": "src_tests_test_trade_cost_accounting_testgettradecostsummary_test_fee_populated_count_excludes_null",
       "target": "src_tests_test_trade_cost_accounting_db",
@@ -150708,7 +150708,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_trade_cost_accounting.py",
-      "source_location": "L106",
+      "source_location": "L112",
       "weight": 1.0,
       "source": "src_tests_test_trade_cost_accounting_testgettradecostsummary_test_returns_zeros_when_no_trades",
       "target": "src_tests_test_trade_cost_accounting_db",
@@ -150719,7 +150719,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_trade_cost_accounting.py",
-      "source_location": "L87",
+      "source_location": "L93",
       "weight": 1.0,
       "source": "src_tests_test_trade_cost_accounting_testupdatetradecosts_test_returns_zero_for_unknown_order",
       "target": "src_tests_test_trade_cost_accounting_db",
@@ -150730,7 +150730,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_trade_cost_accounting.py",
-      "source_location": "L73",
+      "source_location": "L79",
       "weight": 1.0,
       "source": "src_tests_test_trade_cost_accounting_testupdatetradecosts_test_skips_none_fields",
       "target": "src_tests_test_trade_cost_accounting_db",
@@ -150741,7 +150741,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_trade_cost_accounting.py",
-      "source_location": "L49",
+      "source_location": "L55",
       "weight": 1.0,
       "source": "src_tests_test_trade_cost_accounting_testupdatetradecosts_test_writes_actual_fee_cents",
       "target": "src_tests_test_trade_cost_accounting_db",
@@ -150752,7 +150752,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_trade_cost_accounting.py",
-      "source_location": "L64",
+      "source_location": "L70",
       "weight": 1.0,
       "source": "src_tests_test_trade_cost_accounting_testupdatetradecosts_test_writes_size_eur",
       "target": "src_tests_test_trade_cost_accounting_db",
@@ -150763,7 +150763,7 @@
       "context": "parameter_type",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_trade_cost_accounting.py",
-      "source_location": "L26",
+      "source_location": "L32",
       "weight": 1.0,
       "source": "src_tests_test_trade_cost_accounting_insert_live_trade",
       "target": "src_tests_test_trade_cost_accounting_py_database",
@@ -150774,7 +150774,7 @@
       "context": "parameter_type",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_trade_cost_accounting.py",
-      "source_location": "L97",
+      "source_location": "L103",
       "weight": 1.0,
       "source": "src_tests_test_trade_cost_accounting_testgettradecostsummary_insert_closed_live",
       "target": "src_tests_test_trade_cost_accounting_py_database",
@@ -150785,7 +150785,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_trade_cost_accounting.py",
-      "source_location": "L101",
+      "source_location": "L107",
       "weight": 1.0,
       "source": "src_tests_test_trade_cost_accounting_testgettradecostsummary_insert_closed_live",
       "target": "src_tests_test_trade_cost_accounting_insert_live_trade",
@@ -150796,7 +150796,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_trade_cost_accounting.py",
-      "source_location": "L141",
+      "source_location": "L147",
       "weight": 1.0,
       "source": "src_tests_test_trade_cost_accounting_testgettradecostsummary_test_fee_populated_count_excludes_null",
       "target": "src_tests_test_trade_cost_accounting_insert_live_trade",
@@ -150807,7 +150807,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_trade_cost_accounting.py",
-      "source_location": "L74",
+      "source_location": "L80",
       "weight": 1.0,
       "source": "src_tests_test_trade_cost_accounting_testupdatetradecosts_test_skips_none_fields",
       "target": "src_tests_test_trade_cost_accounting_insert_live_trade",
@@ -150818,7 +150818,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_trade_cost_accounting.py",
-      "source_location": "L50",
+      "source_location": "L56",
       "weight": 1.0,
       "source": "src_tests_test_trade_cost_accounting_testupdatetradecosts_test_writes_actual_fee_cents",
       "target": "src_tests_test_trade_cost_accounting_insert_live_trade",
@@ -150829,7 +150829,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_trade_cost_accounting.py",
-      "source_location": "L65",
+      "source_location": "L71",
       "weight": 1.0,
       "source": "src_tests_test_trade_cost_accounting_testupdatetradecosts_test_writes_size_eur",
       "target": "src_tests_test_trade_cost_accounting_insert_live_trade",
@@ -150839,7 +150839,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_trade_cost_accounting.py",
-      "source_location": "L86",
+      "source_location": "L92",
       "weight": 1.0,
       "source": "src_tests_test_trade_cost_accounting_testupdatetradecosts",
       "target": "src_tests_test_trade_cost_accounting_testupdatetradecosts_test_returns_zero_for_unknown_order",
@@ -150849,7 +150849,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_trade_cost_accounting.py",
-      "source_location": "L72",
+      "source_location": "L78",
       "weight": 1.0,
       "source": "src_tests_test_trade_cost_accounting_testupdatetradecosts",
       "target": "src_tests_test_trade_cost_accounting_testupdatetradecosts_test_skips_none_fields",
@@ -150859,7 +150859,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_trade_cost_accounting.py",
-      "source_location": "L48",
+      "source_location": "L54",
       "weight": 1.0,
       "source": "src_tests_test_trade_cost_accounting_testupdatetradecosts",
       "target": "src_tests_test_trade_cost_accounting_testupdatetradecosts_test_writes_actual_fee_cents",
@@ -150869,7 +150869,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_trade_cost_accounting.py",
-      "source_location": "L63",
+      "source_location": "L69",
       "weight": 1.0,
       "source": "src_tests_test_trade_cost_accounting_testupdatetradecosts",
       "target": "src_tests_test_trade_cost_accounting_testupdatetradecosts_test_writes_size_eur",
@@ -150879,7 +150879,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_trade_cost_accounting.py",
-      "source_location": "L97",
+      "source_location": "L103",
       "weight": 1.0,
       "source": "src_tests_test_trade_cost_accounting_testgettradecostsummary",
       "target": "src_tests_test_trade_cost_accounting_testgettradecostsummary_insert_closed_live",
@@ -150889,7 +150889,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_trade_cost_accounting.py",
-      "source_location": "L112",
+      "source_location": "L118",
       "weight": 1.0,
       "source": "src_tests_test_trade_cost_accounting_testgettradecostsummary",
       "target": "src_tests_test_trade_cost_accounting_testgettradecostsummary_test_aggregates_live_closed_trades",
@@ -150899,7 +150899,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_trade_cost_accounting.py",
-      "source_location": "L123",
+      "source_location": "L129",
       "weight": 1.0,
       "source": "src_tests_test_trade_cost_accounting_testgettradecostsummary",
       "target": "src_tests_test_trade_cost_accounting_testgettradecostsummary_test_excludes_paper_trades",
@@ -150909,7 +150909,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_trade_cost_accounting.py",
-      "source_location": "L137",
+      "source_location": "L143",
       "weight": 1.0,
       "source": "src_tests_test_trade_cost_accounting_testgettradecostsummary",
       "target": "src_tests_test_trade_cost_accounting_testgettradecostsummary_test_fee_populated_count_excludes_null",
@@ -150919,7 +150919,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_trade_cost_accounting.py",
-      "source_location": "L105",
+      "source_location": "L111",
       "weight": 1.0,
       "source": "src_tests_test_trade_cost_accounting_testgettradecostsummary",
       "target": "src_tests_test_trade_cost_accounting_testgettradecostsummary_test_returns_zeros_when_no_trades",
@@ -150930,7 +150930,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_trade_cost_accounting.py",
-      "source_location": "L114",
+      "source_location": "L120",
       "weight": 1.0,
       "source": "src_tests_test_trade_cost_accounting_testgettradecostsummary_test_aggregates_live_closed_trades",
       "target": "src_tests_test_trade_cost_accounting_testgettradecostsummary_insert_closed_live",
@@ -150941,7 +150941,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_trade_cost_accounting.py",
-      "source_location": "L140",
+      "source_location": "L146",
       "weight": 1.0,
       "source": "src_tests_test_trade_cost_accounting_testgettradecostsummary_test_fee_populated_count_excludes_null",
       "target": "src_tests_test_trade_cost_accounting_testgettradecostsummary_insert_closed_live",
@@ -150951,9 +150951,9 @@
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_trade_cost_accounting.py",
-      "source_location": "L153",
+      "source_location": "L159",
       "weight": 1.0,
-      "source": "src_tests_test_trade_cost_accounting_rationale_153",
+      "source": "src_tests_test_trade_cost_accounting_rationale_159",
       "target": "src_tests_test_trade_cost_accounting_testrecordsellindbcostwiring",
       "confidence_score": 1.0
     },
@@ -150961,7 +150961,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_trade_cost_accounting.py",
-      "source_location": "L155",
+      "source_location": "L161",
       "weight": 1.0,
       "source": "src_tests_test_trade_cost_accounting_testrecordsellindbcostwiring",
       "target": "src_tests_test_trade_cost_accounting_testrecordsellindbcostwiring_make_fill",
@@ -150971,7 +150971,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_trade_cost_accounting.py",
-      "source_location": "L173",
+      "source_location": "L179",
       "weight": 1.0,
       "source": "src_tests_test_trade_cost_accounting_testrecordsellindbcostwiring",
       "target": "src_tests_test_trade_cost_accounting_testrecordsellindbcostwiring_test_multiple_fills_each_get_costs_updated",
@@ -150981,7 +150981,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_trade_cost_accounting.py",
-      "source_location": "L197",
+      "source_location": "L203",
       "weight": 1.0,
       "source": "src_tests_test_trade_cost_accounting_testrecordsellindbcostwiring",
       "target": "src_tests_test_trade_cost_accounting_testrecordsellindbcostwiring_test_no_db_is_a_noop",
@@ -150991,7 +150991,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_trade_cost_accounting.py",
-      "source_location": "L188",
+      "source_location": "L194",
       "weight": 1.0,
       "source": "src_tests_test_trade_cost_accounting_testrecordsellindbcostwiring",
       "target": "src_tests_test_trade_cost_accounting_testrecordsellindbcostwiring_test_skips_fill_without_order_id",
@@ -151001,7 +151001,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_trade_cost_accounting.py",
-      "source_location": "L159",
+      "source_location": "L165",
       "weight": 1.0,
       "source": "src_tests_test_trade_cost_accounting_testrecordsellindbcostwiring",
       "target": "src_tests_test_trade_cost_accounting_testrecordsellindbcostwiring_test_update_trade_costs_called",
@@ -151012,7 +151012,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_trade_cost_accounting.py",
-      "source_location": "L178",
+      "source_location": "L184",
       "weight": 1.0,
       "source": "src_tests_test_trade_cost_accounting_testrecordsellindbcostwiring_test_multiple_fills_each_get_costs_updated",
       "target": "src_tests_test_trade_cost_accounting_testrecordsellindbcostwiring_make_fill",
@@ -151023,7 +151023,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_trade_cost_accounting.py",
-      "source_location": "L200",
+      "source_location": "L206",
       "weight": 1.0,
       "source": "src_tests_test_trade_cost_accounting_testrecordsellindbcostwiring_test_no_db_is_a_noop",
       "target": "src_tests_test_trade_cost_accounting_testrecordsellindbcostwiring_make_fill",
@@ -151034,7 +151034,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_trade_cost_accounting.py",
-      "source_location": "L163",
+      "source_location": "L169",
       "weight": 1.0,
       "source": "src_tests_test_trade_cost_accounting_testrecordsellindbcostwiring_test_update_trade_costs_called",
       "target": "src_tests_test_trade_cost_accounting_testrecordsellindbcostwiring_make_fill",
@@ -151044,7 +151044,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_trade_cost_accounting.py",
-      "source_location": "L233",
+      "source_location": "L239",
       "weight": 1.0,
       "source": "src_tests_test_trade_cost_accounting_testtradecostsummaryendpoint",
       "target": "src_tests_test_trade_cost_accounting_testtradecostsummaryendpoint_test_503_when_db_none",
@@ -151054,7 +151054,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_trade_cost_accounting.py",
-      "source_location": "L247",
+      "source_location": "L253",
       "weight": 1.0,
       "source": "src_tests_test_trade_cost_accounting_testtradecostsummaryendpoint",
       "target": "src_tests_test_trade_cost_accounting_testtradecostsummaryendpoint_test_custom_days_param",
@@ -151064,7 +151064,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_trade_cost_accounting.py",
-      "source_location": "L209",
+      "source_location": "L215",
       "weight": 1.0,
       "source": "src_tests_test_trade_cost_accounting_testtradecostsummaryendpoint",
       "target": "src_tests_test_trade_cost_accounting_testtradecostsummaryendpoint_test_returns_summary",
@@ -158149,5 +158149,5 @@
       "source_file": "docs/IMPLEMENTATION_PLAN.md"
     }
   ],
-  "built_at_commit": "6af3e7cf0e264793487c44fefa6befa47749a4d2"
+  "built_at_commit": "95987da00bdfb520dff80f43de7dbaaf09aa669c"
 }
