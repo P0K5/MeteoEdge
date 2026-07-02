@@ -1403,3 +1403,74 @@ within cap) instead of only literally-ungrouped models. See
 `src/tests/test_deb_weighting.py::TestGfsFamilyRegistry::test_redistribution_when_no_ungrouped_models_remain`
 for the regression test. This is a minimal, additive fix — verified against
 the full existing test suite with no other behavioral regressions.
+
+---
+
+## Station Promotion Record (issue #557)
+
+### ZGGG and EGLC → Live NO-Only (2026-07-02)
+
+**Decision:** Promote ZGGG and EGLC from shadow to live NO-only mode (yes_enabled=0, no_enabled=1), effective 2026-07-02. YES side remains off for both; low-side flags untouched.
+
+**Rationale:**
+- Both stations show strong shadow NO performance: ZGGG +€5.42 (11 trades), EGLC +€4.41 (7 trades) over the last 8 days
+- Both have solid observation cadence (hourly+), supporting reliable daily-high prediction
+- Issue #571 (per-station climb lookup coverage for climb-based envelopes) merged to master on 2026-06-25 — both stations now have their climb tables in place and are ready for live trading
+- Live volume dropped sharply after June 24 changes (losing stations disabled, MIN_PRICE_CENTS 60→75); promotion expected to recover volume
+- 7–11 trades is noise-level, but both stations cleared cadence/obs quality bar; hold remaining candidates until settled
+
+**Promotion SQL** (run by PM / operator, not code):
+
+```sql
+INSERT INTO station_overrides (station, yes_enabled, no_enabled, updated_at)
+VALUES ('ZGGG', 0, 1, '2026-07-02T00:00:00+00:00'),
+       ('EGLC', 0, 1, '2026-07-02T00:00:00+00:00')
+ON CONFLICT(station) DO UPDATE
+SET yes_enabled=0, no_enabled=1, updated_at='2026-07-02T00:00:00+00:00';
+```
+
+Alternatively, if rows already exist in station_overrides:
+
+```sql
+UPDATE station_overrides
+SET yes_enabled=0, no_enabled=1, updated_at='2026-07-02T00:00:00+00:00'
+WHERE station IN ('ZGGG', 'EGLC');
+```
+
+If rows do not yet exist, insert them:
+
+```sql
+INSERT OR IGNORE INTO station_overrides (station, yes_enabled, no_enabled, updated_at)
+VALUES ('ZGGG', 0, 1, '2026-07-02T00:00:00+00:00'),
+       ('EGLC', 0, 1, '2026-07-02T00:00:00+00:00');
+```
+
+**Re-review trigger:** Evaluate both ZGGG and EGLC after 2 weeks (2026-07-16) or 20 live trades, whichever comes first. Check:
+- Live NO P&L: target >€2 per station
+- Win rate: target ≥45%
+- No unexpected edge collapse or liquidity drying up
+- No new risk events (forced exits, stop-losses firing excessively)
+
+### Remaining Shadow Candidates: Hold Bar (SBGR, EFHK, RCSS)
+
+**Decision:** Do NOT promote SBGR (shadow +€4.90, 9 trades), EFHK, or RCSS until each clears the hold bar:
+- ≥20–30 **settled** shadow NO trades (current state: all below this)
+- Cumulative shadow NO P&L: positive
+- Observation cadence: hourly+ (same as ZGGG/EGLC)
+
+**Rationale:** 7–11 trades is insufficient signal; shadow data from more than 30 days or trades from a single week can be seasonally or weather-event biased. Require ~4–5 weeks of consistent shadow performance before considering promotion. The audit explicitly flagged this: "Honest caveat: 7–11 trades is noise-level."
+
+**Re-evaluation:** After SBGR, EFHK, and RCSS each accumulate ≥20–30 settled NO trades AND maintain positive cumulative P&L, re-run the audit (see issue #557 audit process) and propose promotion in a new issue.
+
+### Not Promoted (Negative Shadow Performance)
+
+**LLBG, ZSPD:** Both showed shadow-negative NO P&L. Do NOT promote. No re-evaluation trigger until market conditions or model changes.
+
+---
+
+## Support & Escalation
+
+For issues beyond this runbook, escalate to:
+- Architecture questions: Tech Lead PM
+- Bug reports: Include full logs (bot.log, settle.log) and database state (trades/settlements from the error date)
+- Operational changes: Discuss with Tech Lead PM before modifying systemd units or core config
