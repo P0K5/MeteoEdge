@@ -111,9 +111,29 @@ def register_model(
 
 
 # Pre-register the 3 legacy channels
+#
+# group_id honesty (issue #550): "open_meteo" and "gfs" are NOT independent
+# signals — both ultimately derive from Open-Meteo's API, and open_meteo's
+# multi-model mean literally includes a gfs_seamless constituent (see
+# fetch_open_meteo_with_spread() / fetch_gfs_with_spread() in
+# src/data/open_meteo.py). Before #548, "gfs" was in fact a byte-identical
+# duplicate of "open_meteo" — the single strongest piece of provenance
+# evidence for how tightly these two channels are coupled. Both are grouped
+# under "gfs_family" alongside "gefs" (NOAA's GFS ensemble) once that channel
+# is wired into DEB (tracked separately by issue #448 — "gefs" ingestion
+# exists in src/data/gefs.py but is not yet registered here).
+#
+# open_meteo's other two constituents (ecmwf_ifs04, jma_seamless) are NOT
+# captured by this single group_id — the registry only supports one group per
+# channel. This is a deliberate, documented trade-off (see docs/OPERATIONS.md
+# "Channel raw-model provenance" table): open_meteo's GFS overlap is the
+# tightest and best-evidenced correlation, so it anchors the choice, but the
+# residual ECMWF/JMA correlation against "ecmwf_intl" remains uncapped. A
+# follow-up could split open_meteo into per-constituent channels or extend the
+# registry to support multiple group memberships; out of scope for #550.
 register_model("nws",        region="us",     expected_cadence_h=24.0, group_id="noaa_us")
-register_model("open_meteo", region="global", expected_cadence_h=24.0, group_id=None)
-register_model("gfs",        region="global", expected_cadence_h=6.0,  group_id=None)
+register_model("open_meteo", region="global", expected_cadence_h=24.0, group_id="gfs_family")
+register_model("gfs",        region="global", expected_cadence_h=6.0,  group_id="gfs_family")
 
 # HRRR and NBM: CONUS-only NOAA sources; correlated with NWS via noaa_us group cap.
 # cold_start_fraction is live-read from env so seed_config / dashboard overrides take effect.
@@ -124,6 +144,15 @@ register_model("nbm",  region="us", expected_cadence_h=6.0, group_id="noaa_us", 
 
 # ECMWF and ICON: international sources; correlated via ecmwf_intl group cap.
 # ECMWF is global; ICON is EU-only (ICON-EU domain).
+#
+# group_id reassessment (issue #550): ICON-EU is DWD's own independently
+# developed model, not literally derived from ECMWF's IFS — so this grouping
+# is NOT a "shared raw model" pairing the way gfs_family is. It is kept
+# unchanged because (a) both are non-NOAA-US, high-resolution deterministic
+# NWP sources whose errors over the European domain correlate in practice
+# (overlapping synoptic-scale obs/boundary conditions), and (b) no evidence
+# was found to justify decoupling them — see docs/OPERATIONS.md for the
+# raw-model provenance table this decision is based on.
 # cold_start_fraction is live-read from env so seed_config / dashboard overrides take effect.
 _ECMWF_COLD_START = float(os.getenv("DEB_ECMWF_COLD_START_FRACTION", "0.5"))
 _ICON_COLD_START = float(os.getenv("DEB_ICON_COLD_START_FRACTION", "0.5"))
@@ -341,8 +370,20 @@ def _apply_group_cap(
     """Cap the total weight of any group_id to GROUP_WEIGHT_CAP.
 
     Models without a group_id are uncapped. When a group exceeds the cap, its
-    members are scaled down proportionally and the freed weight is redistributed
-    to uncapped models proportionally to their current weights.
+    members are scaled down proportionally and the freed weight is
+    redistributed proportionally to every model that is NOT a member of an
+    over-cap group — i.e. ungrouped models plus members of any other group
+    that stayed within its cap.
+
+    Note (issue #550): earlier versions of this function only redistributed
+    freed weight to explicitly ungrouped (group_id=None) models. Once every
+    registered channel for a region has a real group_id — which is now the
+    case, e.g. for EU/global stations where open_meteo/gfs (group "gfs_family")
+    and ecmwf/icon (group "ecmwf_intl") are the only applicable models and none
+    is left ungrouped — that fallback had nowhere to send freed weight, and it
+    was silently dropped, so the returned weights no longer summed to 1.0.
+    Redistributing to "everyone outside the over-cap group(s)" fixes that
+    while still enforcing the same GROUP_WEIGHT_CAP for the offending group.
     """
     # Collect group totals
     group_models: dict[str, list[str]] = {}
@@ -355,6 +396,7 @@ def _apply_group_cap(
 
     result = dict(weights)
     freed = 0.0
+    capped_members: set[str] = set()
 
     for gid, members in group_models.items():
         group_total = sum(result.get(m, 0.0) for m in members)
@@ -364,18 +406,29 @@ def _apply_group_cap(
             freed += excess
             for m in members:
                 result[m] = result.get(m, 0.0) * scale
+            capped_members.update(members)
 
-    # Redistribute freed weight to uncapped models proportionally
-    if freed > 0 and ungrouped:
-        uncapped_total = sum(result.get(m, 0.0) for m in ungrouped)
-        if uncapped_total > 0:
-            for m in ungrouped:
-                result[m] = result.get(m, 0.0) + freed * (result.get(m, 0.0) / uncapped_total)
-        else:
-            # All uncapped models have zero weight — distribute equally
-            per_model = freed / len(ungrouped)
-            for m in ungrouped:
-                result[m] = result.get(m, 0.0) + per_model
+    # Redistribute freed weight proportionally to every model outside the
+    # over-cap group(s): ungrouped models plus members of any group that
+    # stayed within cap.
+    if freed > 0:
+        receivers = [m.name for m in applicable if m.name not in capped_members]
+        if receivers:
+            receiver_total = sum(result.get(m, 0.0) for m in receivers)
+            if receiver_total > 0:
+                for m in receivers:
+                    result[m] = result.get(m, 0.0) + freed * (result.get(m, 0.0) / receiver_total)
+            else:
+                # All receiver models have zero weight — distribute equally
+                per_model = freed / len(receivers)
+                for m in receivers:
+                    result[m] = result.get(m, 0.0) + per_model
+        # else: every applicable model is inside an over-cap group. This can
+        # only happen with a misconfigured GROUP_WEIGHT_CAP well below 0.5 and
+        # 3+ groups (mathematically, two groups partitioning a normalized
+        # weight sum of 1.0 cannot both exceed a 0.7 cap simultaneously);
+        # freed weight has no valid receiver and is left uncapped-back rather
+        # than silently discarded or fabricated.
 
     return result
 
