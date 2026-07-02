@@ -7,6 +7,11 @@ from pathlib import Path
 
 _DEFAULT_PATH = os.getenv("DB_PATH", "data/meteoedge.db")
 
+# Issue #552: deb_weight_log rows logged before this date predate commit
+# 195f08c (the per-region DEB routing fix) and may attribute "nws" weight to
+# non-US cities. Purged on every startup (idempotent — no-op once purged).
+_DEB_WEIGHT_LOG_PURGE_CUTOFF = "2026-06-30"
+
 _DDL = """
 CREATE TABLE IF NOT EXISTS observations (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -458,6 +463,29 @@ class Database:
                     )
             finally:
                 self._conn.execute("PRAGMA foreign_keys=ON")
+
+        self._purge_stale_deb_weight_log()
+
+    def _purge_stale_deb_weight_log(self) -> None:
+        """One-time idempotent cleanup for issue #552.
+
+        deb_weight_log's writer (the once-per-day logging side effect inside
+        deb_weighting.get_weights()) was silently removed in commit 94a2ece
+        (2026-06-26) and was never restored — ensemble_distribution.py now
+        reads model_weights directly instead (single source of truth, see
+        #552). Every row still in deb_weight_log therefore predates 195f08c
+        (2026-06-30, the per-region DEB routing fix) and may attribute "nws"
+        weight to non-US cities. get_emos_shadow_city_status() still surfaces
+        the latest deb_weight_log row for EMOS shadow monitoring, so purge the
+        contaminated backlog rather than leaving it to be served stale
+        indefinitely. No-op once the backlog has been purged.
+        """
+        with self._lock:
+            with self._conn:
+                self._conn.execute(
+                    "DELETE FROM deb_weight_log WHERE logged_at < ?",
+                    (_DEB_WEIGHT_LOG_PURGE_CUTOFF,),
+                )
 
     def close(self) -> None:
         """Close the underlying SQLite connection."""
