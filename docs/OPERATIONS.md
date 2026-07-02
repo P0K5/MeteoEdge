@@ -1415,7 +1415,7 @@ the full existing test suite with no other behavioral regressions.
 **Rationale:**
 - Both stations show strong shadow NO performance: ZGGG +€5.42 (11 trades), EGLC +€4.41 (7 trades) over the last 8 days
 - Both have solid observation cadence (hourly+), supporting reliable daily-high prediction
-- Issue #571 (per-station climb lookup coverage for climb-based envelopes) merged to master on 2026-06-25 — both stations now have their climb tables in place and are ready for live trading
+- Issue #571 (per-station climb lookup coverage for climb-based envelopes) merged to master on 2026-07-02 — both stations now have their climb tables in place and are ready for live trading
 - Live volume dropped sharply after June 24 changes (losing stations disabled, MIN_PRICE_CENTS 60→75); promotion expected to recover volume
 - 7–11 trades is noise-level, but both stations cleared cadence/obs quality bar; hold remaining candidates until settled
 
