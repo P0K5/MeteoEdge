@@ -37,7 +37,11 @@ from src.logging_config import setup_logging
 from src.monitoring.alerts import AlertManager
 from src.risk.manager import RiskManager
 from src.strategy.scanner import scan_markets
-from src.weather.builder import _build_weather, _station_in_active_window, build_weather_for_pricing
+from src.weather.builder import (
+    _build_weather, _station_in_active_window, build_weather_for_pricing,
+    build_weather_low_for_scanning,
+)
+from src.model.envelope_low import true_probability_low_in_bracket
 from src.execution.live_trader import LiveTrader
 from src.execution.order_manager import OrderManager, order_manager, _load_open_no_positions
 from src.execution.order_executor import _execute_live
@@ -192,6 +196,11 @@ def poll_once(
     weather = _build_weather(db=db, health_out=weather_health)
     _dashboard_module.weather_health = weather_health  # surface feed health to the dashboard banner
 
+    # Low-side shadow scan (Epic C, issue #457) -- shadow-only, never gates live
+    # entries (see scanner.py's low-side block). Built every poll; see
+    # build_weather_low_for_scanning() for why no active-hours gate is needed.
+    weather_low = build_weather_low_for_scanning(db=db)
+
     # Collect open-position token IDs early so they can be included in the
     # batch orderbook fetch below (together with the scanner's YES/NO tokens).
     _open_token_ids: list = []
@@ -292,7 +301,10 @@ def poll_once(
         # _check_metar_exits disabled 2026-05-29: 7/12 false positives, net -15.49 vs hold.
         # _check_metar_exits(weather, live_trader, ts, db=db)
 
-    candidates, snapshots = scan_markets(weather, markets, db=db, orderbooks=shared_orderbooks)
+    candidates, snapshots = scan_markets(
+        weather, markets, db=db, orderbooks=shared_orderbooks,
+        weather_low=weather_low, prob_low_fn=true_probability_low_in_bracket,
+    )
 
     for snap in snapshots:
         _append_snapshot(snap)

@@ -179,6 +179,7 @@ class TestPollOncePassesDb:
         with (
             patch("src.scripts.run.scan_markets", side_effect=_fake_scan_markets),
             patch("src.scripts.run._build_weather", return_value={"Tokyo": MagicMock()}),
+            patch("src.scripts.run.build_weather_low_for_scanning", return_value={}),
             patch("src.scripts.run.get_weather_markets", return_value=[]),
             patch.object(run_module.order_manager, "reconcile_timeout_fills"),
             patch.object(run_module.order_manager, "sync_open_orders"),
@@ -201,6 +202,70 @@ class TestPollOncePassesDb:
         assert captured_kwargs[0]["db"] is mock_db, (
             "db passed to scan_markets must be the same object passed to poll_once"
         )
+
+
+# ---------------------------------------------------------------------------
+# scan_markets is called with weather_low= / prob_low_fn= in poll_once() —
+# regression test for issue #554.
+#
+# Root cause: build_weather_low_for_scanning() never existed and poll_once()
+# never passed weather_low/prob_low_fn to scan_markets(), so the entire
+# low-side shadow block in scanner.py (~line 660) was unreachable dead code
+# in production -- it only ran in unit tests that called scan_markets()
+# directly with weather_low provided by hand. This test fails on the
+# pre-fix code because scan_markets() was called with only weather/markets/
+# db/orderbooks kwargs and no weather_low/prob_low_fn at all.
+# ---------------------------------------------------------------------------
+
+class TestPollOncePassesWeatherLow:
+    """scan_markets() must receive weather_low= and prob_low_fn= from poll_once()."""
+
+    def test_scan_markets_receives_weather_low_and_prob_low_fn(self):
+        mock_db = MagicMock()
+        sentinel_weather_low = {"EGLC": MagicMock()}
+        captured_kwargs: list[dict] = []
+
+        def _fake_scan_markets(weather, markets, **kwargs):
+            captured_kwargs.append(kwargs)
+            return [], []
+
+        import src.scripts.run as run_module
+        with (
+            patch("src.scripts.run.scan_markets", side_effect=_fake_scan_markets),
+            patch("src.scripts.run._build_weather", return_value={"Tokyo": MagicMock()}),
+            patch("src.scripts.run.build_weather_low_for_scanning",
+                  return_value=sentinel_weather_low) as mock_build_low,
+            patch("src.scripts.run.get_weather_markets", return_value=[]),
+            patch.object(run_module.order_manager, "reconcile_timeout_fills"),
+            patch.object(run_module.order_manager, "sync_open_orders"),
+            patch.object(run_module.order_manager, "check_take_profit_exits"),
+            patch("src.scripts.run._log_open_position_snapshots"),
+            patch("src.scripts.run.FreshnessMonitor"),
+            patch("src.scripts.run.get_source_priority", return_value=[]),
+            patch("src.monitoring.dashboard.last_poll_ts", None, create=True),
+        ):
+            from src.scripts.run import poll_once
+            from src.risk.manager import RiskManager
+
+            mock_risk = MagicMock(spec=RiskManager)
+            mock_risk.allow_trade.return_value = (False, "test block")
+
+            poll_once(mock_risk, live_trader=None, alert_manager=None, db=mock_db)
+
+        assert mock_build_low.called, (
+            "poll_once() must call build_weather_low_for_scanning() every poll"
+        )
+        assert captured_kwargs, "scan_markets was never called"
+        assert "weather_low" in captured_kwargs[0], (
+            "scan_markets must be called with weather_low= kwarg -- without it the "
+            "entire low-side shadow block in scan_markets() is unreachable (issue #554)"
+        )
+        assert captured_kwargs[0]["weather_low"] is sentinel_weather_low
+        assert captured_kwargs[0].get("prob_low_fn") is not None, (
+            "scan_markets must be called with a non-None prob_low_fn= -- required "
+            "alongside weather_low for the low-side block to execute"
+        )
+        assert callable(captured_kwargs[0]["prob_low_fn"])
 
 
 # ---------------------------------------------------------------------------
