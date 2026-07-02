@@ -341,3 +341,116 @@ class TestDebMuF:
         ensemble_mean = ensemble_forecast(81.0, 81.0)   # 81.0 (both equal)
         assert result is not None
         assert 0.0 <= result <= 1.0
+
+
+# ---------------------------------------------------------------------------
+# DEB_ENABLED — resolved flag passed by the caller (from live config)
+# ---------------------------------------------------------------------------
+
+class TestDebMuFLiveConfig:
+    """Tests for the deb_enabled parameter (resolved from live config by the scanner)."""
+
+    def test_deb_enabled_true_from_caller(self):
+        """deb_enabled=True (live-config value) -> deb_mu_f is used."""
+        state_deb = make_state(current_high_f=80.0, latest_temp_f=79.0, hour=14, forecast_high_f=81.0)
+        state_deb.secondary_forecast_f = 81.0
+        state_deb.deb_mu_f = 90.0
+
+        state_no_deb = make_state(current_high_f=80.0, latest_temp_f=79.0, hour=14, forecast_high_f=81.0)
+        state_no_deb.secondary_forecast_f = 81.0
+
+        bracket = make_bracket(low_f=81.0, high_f=85.0)
+
+        p_deb = true_probability_yes(bracket, state_deb, deb_enabled=True)
+        p_ensemble = true_probability_yes(bracket, state_no_deb, deb_enabled=True)
+
+        # Probabilities should differ because DEB path uses deb_mu_f
+        assert p_deb != p_ensemble, (
+            f"DEB path must differ from ensemble path when deb_enabled=True; "
+            f"got deb={p_deb:.4f}, ensemble={p_ensemble:.4f}"
+        )
+
+    def test_deb_disabled_from_caller(self):
+        """deb_enabled=False (live-config value) -> deb_mu_f is ignored."""
+        state_with_deb = make_state(current_high_f=80.0, latest_temp_f=79.0, hour=14, forecast_high_f=81.0)
+        state_with_deb.secondary_forecast_f = 81.0
+        state_with_deb.deb_mu_f = 90.0
+
+        state_no_deb = make_state(current_high_f=80.0, latest_temp_f=79.0, hour=14, forecast_high_f=81.0)
+        state_no_deb.secondary_forecast_f = 81.0
+
+        bracket = make_bracket(low_f=81.0, high_f=85.0)
+
+        p_with_deb_field = true_probability_yes(bracket, state_with_deb, deb_enabled=False)
+        p_baseline = true_probability_yes(bracket, state_no_deb, deb_enabled=False)
+
+        assert p_with_deb_field == p_baseline, (
+            f"deb_enabled=False must leave result identical to baseline; "
+            f"got deb_field={p_with_deb_field:.6f}, baseline={p_baseline:.6f}"
+        )
+
+    def test_caller_value_takes_precedence_over_env(self, monkeypatch):
+        """Caller-passed deb_enabled=True (live config) overrides env var false."""
+        monkeypatch.setenv("DEB_ENABLED", "false")
+
+        state_deb = make_state(current_high_f=80.0, latest_temp_f=79.0, hour=14, forecast_high_f=81.0)
+        state_deb.secondary_forecast_f = 81.0
+        state_deb.deb_mu_f = 90.0
+
+        state_no_deb = make_state(current_high_f=80.0, latest_temp_f=79.0, hour=14, forecast_high_f=81.0)
+        state_no_deb.secondary_forecast_f = 81.0
+
+        bracket = make_bracket(low_f=81.0, high_f=85.0)
+
+        p_deb = true_probability_yes(bracket, state_deb, deb_enabled=True)
+        p_ensemble = true_probability_yes(bracket, state_no_deb, deb_enabled=True)
+
+        # Caller value (True) should be used, not env var (false), so probabilities differ
+        assert p_deb != p_ensemble, (
+            f"Caller deb_enabled=True must override env var false; "
+            f"got deb={p_deb:.4f}, ensemble={p_ensemble:.4f}"
+        )
+
+    def test_env_var_fallback_when_deb_enabled_none(self, monkeypatch):
+        """deb_enabled=None -> env var is used (backward compatibility)."""
+        monkeypatch.setenv("DEB_ENABLED", "true")
+        state_deb = make_state(current_high_f=80.0, latest_temp_f=79.0, hour=14, forecast_high_f=81.0)
+        state_deb.secondary_forecast_f = 81.0
+        state_deb.deb_mu_f = 90.0
+
+        state_no_deb = make_state(current_high_f=80.0, latest_temp_f=79.0, hour=14, forecast_high_f=81.0)
+        state_no_deb.secondary_forecast_f = 81.0
+
+        bracket = make_bracket(low_f=81.0, high_f=85.0)
+
+        p_deb = true_probability_yes(bracket, state_deb, deb_enabled=None)
+        p_ensemble = true_probability_yes(bracket, state_no_deb, deb_enabled=None)
+
+        # Env var says true, so the DEB path must fire and differ from baseline
+        assert p_deb != p_ensemble, (
+            f"deb_enabled=None with env DEB_ENABLED=true must use deb_mu_f; "
+            f"got deb={p_deb:.4f}, ensemble={p_ensemble:.4f}"
+        )
+
+    def test_corrected_mu_f_precedence_over_deb(self):
+        """corrected_mu_f takes precedence even when deb_enabled=True."""
+        state = make_state(current_high_f=80.0, latest_temp_f=79.0, hour=14, forecast_high_f=81.0)
+        state.secondary_forecast_f = 81.0
+        state.deb_mu_f = 90.0
+        state.corrected_mu_f = 75.0  # Lower value
+
+        state_corrected_only = make_state(current_high_f=80.0, latest_temp_f=79.0, hour=14, forecast_high_f=81.0)
+        state_corrected_only.secondary_forecast_f = 81.0
+        state_corrected_only.corrected_mu_f = 75.0  # same corrected_mu_f, no deb_mu_f
+
+        bracket = make_bracket(low_f=81.0, high_f=85.0)
+        p_both = true_probability_yes(bracket, state, deb_enabled=True)
+        p_corrected_only = true_probability_yes(bracket, state_corrected_only, deb_enabled=True)
+
+        # corrected_mu_f (75.0) must be used instead of deb_mu_f (90.0):
+        # result with both set equals result with corrected_mu_f alone
+        assert p_both == p_corrected_only, (
+            f"corrected_mu_f must win over deb_mu_f; "
+            f"got both={p_both:.6f}, corrected_only={p_corrected_only:.6f}"
+        )
+        assert 0.0 <= p_both <= 1.0

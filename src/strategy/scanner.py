@@ -359,10 +359,15 @@ def scan_markets(
         shadow_yes_edge_min  = float(_live.get("SHADOW_MIN_EDGE_CENTS_YES",  CONFIG_DEFAULTS["SHADOW_MIN_EDGE_CENTS_YES"]))
         shadow_yes_conf_min  = float(_live.get("SHADOW_MIN_CONFIDENCE_YES",  CONFIG_DEFAULTS["SHADOW_MIN_CONFIDENCE_YES"]))
         shadow_yes_price_min = int(_live.get("SHADOW_MIN_PRICE_CENTS_YES", CONFIG_DEFAULTS["SHADOW_MIN_PRICE_CENTS_YES"]))
+        # DEB_ENABLED resolved once per scan from live config (issue #549) —
+        # passed into true_probability_yes so the dashboard toggle is respected
+        # without a per-bracket DB read.
+        _deb_enabled = bool(_live.get("DEB_ENABLED", CONFIG_DEFAULTS["DEB_ENABLED"]))
     else:
         shadow_yes_edge_min  = float(CONFIG_DEFAULTS["SHADOW_MIN_EDGE_CENTS_YES"])
         shadow_yes_conf_min  = float(CONFIG_DEFAULTS["SHADOW_MIN_CONFIDENCE_YES"])
         shadow_yes_price_min = int(CONFIG_DEFAULTS["SHADOW_MIN_PRICE_CENTS_YES"])
+        _deb_enabled = None  # no DB: envelope falls back to the DEB_ENABLED env var
 
     for market in markets:
         try:
@@ -471,9 +476,9 @@ def scan_markets(
                         emos_mode_used = "emos_primary"
 
             if emos_stddev_override is not None:
-                p_yes = true_probability_yes(bracket, state, mins_left, forecast_stddev=emos_stddev_override)
+                p_yes = true_probability_yes(bracket, state, mins_left, forecast_stddev=emos_stddev_override, deb_enabled=_deb_enabled)
             else:
-                p_yes = true_probability_yes(bracket, state, mins_left)
+                p_yes = true_probability_yes(bracket, state, mins_left, deb_enabled=_deb_enabled)
             raw_p_yes = p_yes
             # round() avoids IEEE 754 creep: 1.0-0.95 = 0.050000000000000044
             # which would silently fail the p_yes <= MAX_CONFIDENCE_YES_FOR_NO=0.05 gate.
