@@ -30,6 +30,7 @@ Network requirement:
     - If blocked (403 / timeout), synthetic fallback is used automatically.
 """
 
+import logging
 import sys
 import datetime
 from pathlib import Path
@@ -38,6 +39,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.config import STATIONS  # noqa: E402
+
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -135,6 +139,157 @@ _CLIM: dict[str, dict] = {
         "diurnal_p95_by_month": {
             1: 10.0, 2: 11.0, 3: 11.0, 4: 10.0, 5:  9.0, 6:  9.0,
             7:  9.0, 8:  9.0, 9:  9.0, 10:  9.0, 11:  9.0, 12: 10.0,
+        },
+    },
+
+    # --- Added for issue #571 (international coverage gap). Parameters are
+    # rough per-station climatological estimates (WMO climate normals /
+    # regional meteorological-service normals), not fitted from observations.
+    # Intended as a per-station-shaped first cut, replacing the single
+    # US-continental hand-seeded table — NOT a substitute for the real
+    # meteostat/open-meteo/DB-derived p95 values once external network access
+    # or accumulated observation history is available in the deploy environment.
+
+    # Europe
+    "EGLC": {  # London City — maritime temperate, small-moderate range
+        "min_hour": 6, "max_hour": 15,
+        "diurnal_p95_by_month": {
+            1:  7.2, 2:  9.0, 3: 10.8, 4: 12.6, 5: 14.4, 6: 16.2,
+            7: 16.2, 8: 16.2, 9: 14.4, 10: 10.8, 11:  9.0, 12:  7.2,
+        },
+    },
+    "LFPB": {  # Paris Le Bourget — temperate continental-influenced
+        "min_hour": 6, "max_hour": 15,
+        "diurnal_p95_by_month": {
+            1:  9.0, 2: 10.8, 3: 14.4, 4: 18.0, 5: 19.8, 6: 21.6,
+            7: 21.6, 8: 21.6, 9: 18.0, 10: 14.4, 11: 10.8, 12:  9.0,
+        },
+    },
+    "LIMC": {  # Milan Malpensa — Po valley continental, larger swings
+        "min_hour": 6, "max_hour": 15,
+        "diurnal_p95_by_month": {
+            1: 10.8, 2: 12.6, 3: 16.2, 4: 18.0, 5: 19.8, 6: 21.6,
+            7: 23.4, 8: 23.4, 9: 19.8, 10: 16.2, 11: 12.6, 12: 10.8,
+        },
+    },
+    "EFHK": {  # Helsinki — cold temperate, long-daylight summer amplitude
+        "min_hour": 5, "max_hour": 15,
+        "diurnal_p95_by_month": {
+            1:  5.4, 2:  7.2, 3:  9.0, 4: 12.6, 5: 16.2, 6: 18.0,
+            7: 18.0, 8: 16.2, 9: 12.6, 10:  9.0, 11:  7.2, 12:  5.4,
+        },
+    },
+    "EPWA": {  # Warsaw — continental, larger seasonal contrast
+        "min_hour": 5, "max_hour": 15,
+        "diurnal_p95_by_month": {
+            1:  7.2, 2:  9.0, 3: 12.6, 4: 16.2, 5: 18.0, 6: 19.8,
+            7: 19.8, 8: 19.8, 9: 16.2, 10: 12.6, 11:  9.0, 12:  7.2,
+        },
+    },
+    "LTFM": {  # Istanbul (new airport) — Black Sea/Marmara transitional
+        "min_hour": 6, "max_hour": 15,
+        "diurnal_p95_by_month": {
+            1:  9.0, 2:  9.0, 3: 10.8, 4: 12.6, 5: 14.4, 6: 16.2,
+            7: 16.2, 8: 16.2, 9: 14.4, 10: 12.6, 11: 10.8, 12:  9.0,
+        },
+    },
+    "LTAC": {  # Ankara — continental plateau/steppe, dry-summer swings
+        "min_hour": 6, "max_hour": 15,
+        "diurnal_p95_by_month": {
+            1: 12.6, 2: 14.4, 3: 18.0, 4: 19.8, 5: 21.6, 6: 25.2,
+            7: 27.0, 8: 27.0, 9: 25.2, 10: 19.8, 11: 16.2, 12: 12.6,
+        },
+    },
+
+    # Asia / Pacific
+    "RJTT": {  # Tokyo Haneda — humid subtropical, coastal-moderated
+        "min_hour": 6, "max_hour": 14,
+        "diurnal_p95_by_month": {
+            1: 14.4, 2: 14.4, 3: 14.4, 4: 14.4, 5: 12.6, 6: 10.8,
+            7: 10.8, 8: 12.6, 9: 12.6, 10: 12.6, 11: 14.4, 12: 14.4,
+        },
+    },
+    "RCSS": {  # Taipei Songshan — subtropical, humid, moderate-small range
+        "min_hour": 6, "max_hour": 14,
+        "diurnal_p95_by_month": {
+            1: 10.8, 2: 10.8, 3: 10.8, 4: 10.8, 5: 10.8, 6: 10.8,
+            7: 12.6, 8: 12.6, 9: 12.6, 10: 12.6, 11: 10.8, 12: 10.8,
+        },
+    },
+    "ZSPD": {  # Shanghai Pudong — humid subtropical, moderate range
+        "min_hour": 6, "max_hour": 14,
+        "diurnal_p95_by_month": {
+            1: 12.6, 2: 12.6, 3: 12.6, 4: 12.6, 5: 12.6, 6: 10.8,
+            7: 10.8, 8: 10.8, 9: 12.6, 10: 14.4, 11: 14.4, 12: 12.6,
+        },
+    },
+    "ZGGG": {  # Guangzhou — Pearl River Delta, same climate class as ZGSZ
+        "min_hour": 6, "max_hour": 14,
+        "diurnal_p95_by_month": {
+            1: 14.0, 2: 13.0, 3: 12.0, 4: 11.0, 5: 11.0, 6: 10.0,
+            7: 10.0, 8: 10.0, 9: 11.0, 10: 12.0, 11: 13.0, 12: 14.0,
+        },
+    },
+    "ZHHH": {  # Wuhan — Yangtze basin, more continental than coastal China
+        "min_hour": 6, "max_hour": 15,
+        "diurnal_p95_by_month": {
+            1: 14.4, 2: 14.4, 3: 16.2, 4: 16.2, 5: 16.2, 6: 14.4,
+            7: 14.4, 8: 14.4, 9: 16.2, 10: 16.2, 11: 14.4, 12: 14.4,
+        },
+    },
+    "ZSJN": {  # Jinan — North China temperate continental monsoon
+        "min_hour": 6, "max_hour": 15,
+        "diurnal_p95_by_month": {
+            1: 16.2, 2: 18.0, 3: 19.8, 4: 21.6, 5: 21.6, 6: 19.8,
+            7: 16.2, 8: 16.2, 9: 19.8, 10: 19.8, 11: 18.0, 12: 16.2,
+        },
+    },
+    "ZHCC": {  # Zhengzhou — North China temperate continental, similar to Jinan
+        "min_hour": 6, "max_hour": 15,
+        "diurnal_p95_by_month": {
+            1: 16.2, 2: 18.0, 3: 19.8, 4: 21.6, 5: 21.6, 6: 19.8,
+            7: 16.2, 8: 16.2, 9: 18.0, 10: 19.8, 11: 18.0, 12: 16.2,
+        },
+    },
+    "RPLL": {  # Manila — tropical, small range
+        "min_hour": 6, "max_hour": 14,
+        "diurnal_p95_by_month": {
+            1: 10.8, 2: 10.8, 3: 12.6, 4: 12.6, 5: 10.8, 6:  9.0,
+            7:  9.0, 8:  9.0, 9:  9.0, 10:  9.0, 11:  9.0, 12: 10.8,
+        },
+    },
+
+    # MENA
+    "LLBG": {  # Tel Aviv — Mediterranean coastal, dry-summer moderate range
+        "min_hour": 6, "max_hour": 15,
+        "diurnal_p95_by_month": {
+            1: 10.8, 2: 10.8, 3: 12.6, 4: 14.4, 5: 14.4, 6: 14.4,
+            7: 12.6, 8: 12.6, 9: 14.4, 10: 14.4, 11: 12.6, 12: 10.8,
+        },
+    },
+    "OEJN": {  # Jeddah — Red Sea coastal desert, clear-sky large range
+        "min_hour": 6, "max_hour": 15,
+        "diurnal_p95_by_month": {
+            1: 18.0, 2: 18.0, 3: 18.0, 4: 16.2, 5: 16.2, 6: 14.4,
+            7: 14.4, 8: 14.4, 9: 14.4, 10: 16.2, 11: 16.2, 12: 18.0,
+        },
+    },
+
+    # Latin America
+    "SBGR": {  # Sao Paulo/Guarulhos — subtropical highland (~750m), moderate range
+        "min_hour": 6, "max_hour": 15,
+        "diurnal_p95_by_month": {
+            1: 16.2, 2: 16.2, 3: 16.2, 4: 16.2, 5: 16.2, 6: 16.2,
+            7: 16.2, 8: 18.0, 9: 18.0, 10: 16.2, 11: 16.2, 12: 16.2,
+        },
+    },
+
+    # Oceania
+    "NZWN": {  # Wellington — oceanic temperate, wind-moderated small range
+        "min_hour": 6, "max_hour": 14,
+        "diurnal_p95_by_month": {
+            1: 10.8, 2: 10.8, 3: 10.8, 4:  9.9, 5:  9.0, 6:  9.0,
+            7:  9.0, 8:  9.0, 9:  9.9, 10: 10.8, 11: 10.8, 12: 10.8,
         },
     },
 }
@@ -347,11 +502,25 @@ def _fill_missing(hour_table: dict[int, float | None]) -> None:
 def write_lookup_file(lookup: dict[str, dict[int, dict[int, float]]],
                       sources: dict[str, str],
                       out_path: Path) -> None:
+    n_synthetic = sum(1 for src in sources.values() if src.startswith("synthetic"))
+    n_derived = len(sources) - n_synthetic
     lines = [
         "# Auto-generated by scripts/build_climb_lookup.py",
         "# DO NOT EDIT MANUALLY — regenerate with: python scripts/build_climb_lookup.py",
         "#",
         "# Methodology: p95(daily_high_f - temp_f_at_hour) per station × month × hour.",
+        "#",
+        f"# Coverage: {len(sources)}/{len(sources)} configured stations present "
+        f"({n_derived} observation-derived, {n_synthetic} synthetic climatological fallback).",
+        "# Sample window per station is documented below (either the historical date range /",
+        "# DB row count used, or an explicit 'synthetic' marker with the reason). See issue #571:",
+        "# this generation extends per-station synthetic climatological coverage to all 30",
+        "# configured stations (replacing the flat US-shaped hand-seeded fallback in",
+        "# src/model/climb_rates.py for those stations). Re-run with",
+        "# `python scripts/build_climb_lookup.py --from-db` once sufficient accumulated",
+        "# METAR/city-feed observation history exists per station to replace synthetic cells",
+        "# with real p95-derived values (see MIN_DAYS_PER_CELL in this script).",
+        "#",
         "# Data sources used (per station):",
     ]
     for station, src in sorted(sources.items()):
@@ -413,6 +582,18 @@ def compute_from_db(
                 if icao in existing_lookup:
                     lookup[icao] = existing_lookup[icao]
                     sources[icao] = "synthetic (no DB observations)"
+                    logger.warning(
+                        "%s: no DB observations found — keeping synthetic climatological "
+                        "climb table (see src/data/climb_lookup.py header for methodology)",
+                        icao,
+                    )
+                else:
+                    logger.warning(
+                        "%s: no DB observations AND no existing synthetic entry — station "
+                        "will be MISSING from CLIMB_LOOKUP; expected_additional_rise() will "
+                        "fall back to the hand-seeded _DEFAULT_CLIMB_LOOKUP for this station",
+                        icao,
+                    )
                 continue
 
             # Group observations: key = (month, hour_utc), value = list of (date, temp_f)
@@ -467,6 +648,12 @@ def compute_from_db(
             )
 
             print(f"  [{icao}] {len(obs):,} obs → {db_cells}/{total_cells} cells updated from DB")
+            if db_cells < total_cells:
+                logger.warning(
+                    "%s: only %d/%d month×hour cells have >= %d days of DB history — "
+                    "remaining cells use the synthetic climatological fallback",
+                    icao, db_cells, total_cells, MIN_DAYS_PER_CELL,
+                )
 
     # Ensure every STATIONS entry has an entry in lookup and sources
     for icao, _lat, _lon, _city, _res, _unit, _tz in STATIONS:
@@ -474,7 +661,16 @@ def compute_from_db(
             if icao in existing_lookup:
                 lookup[icao] = existing_lookup[icao]
                 sources[icao] = "synthetic (no DB observations)"
-            # stations not in existing_lookup are simply omitted
+            else:
+                # Station has neither DB observations nor a synthetic baseline —
+                # it is genuinely missing from CLIMB_LOOKUP. Named warning so this
+                # is never silently swallowed (issue #571 acceptance criterion).
+                logger.warning(
+                    "%s: MISSING from CLIMB_LOOKUP (no DB observations, no synthetic "
+                    "baseline) — expected_additional_rise() will use the hand-seeded "
+                    "_DEFAULT_CLIMB_LOOKUP fallback for this station",
+                    icao,
+                )
 
     return lookup, sources
 
@@ -547,9 +743,19 @@ def main() -> None:
 
         print("API unavailable — using synthetic climatological model")
         lookup[icao] = compute_synthetic_climb(icao)
+        source_normals = (
+            "NOAA Climate Normals 1991-2020 + WMO" if icao.startswith("K")
+            else "WMO Climate Normals / regional meteorological-service normals"
+        )
         sources[icao] = (
-            "synthetic (NOAA Climate Normals 1991-2020 + WMO, "
+            f"synthetic ({source_normals}, "
             "network access to meteostat/open-meteo was blocked in this environment)"
+        )
+        logger.warning(
+            "%s: no meteostat/open-meteo access — using synthetic climatological climb "
+            "table (%s). Re-run with --from-db once accumulated observation history "
+            "exists for this station.",
+            icao, source_normals,
         )
 
     # Write output
