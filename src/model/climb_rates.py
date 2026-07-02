@@ -4,9 +4,11 @@ Keys: month number (1=Jan ... 12=Dec)
 Values: dict mapping hour-of-day (0–23) to p95 additional rise in °F.
 
 The primary lookup is CLIMB_LOOKUP from src/data/climb_lookup.py, which contains
-per-station per-month per-hour p95 values derived from historical data.
-DEFAULT_CLIMB_LOOKUP from config.py is preserved as a fallback for stations
-not present in CLIMB_LOOKUP.
+per-station per-month per-hour p95 values (DB-derived where enough historical
+observations exist, synthetic climatological normals elsewhere) covering all
+configured stations. _DEFAULT_CLIMB_LOOKUP below is a private, month-agnostic
+safety-net fallback used only if a station is ever missing from CLIMB_LOOKUP
+entirely (e.g. a newly-added station without a build_climb_lookup.py entry yet).
 
 Historical note: prior to this change, only May (month 5) was calibrated.
 All months used May values as a conservative placeholder.
@@ -15,7 +17,9 @@ from datetime import datetime
 
 from src.data.climb_lookup import CLIMB_LOOKUP
 
-# Inlined from src.config to avoid the yaml import chain; keep in sync with config.py.
+# Month-agnostic safety-net fallback — only used if a station is missing from
+# CLIMB_LOOKUP entirely. Kept private; not read from src.config (issue #571
+# removed the unused config.DEFAULT_CLIMB_LOOKUP duplicate of this table).
 _DEFAULT_CLIMB_LOOKUP: dict[int, float] = {
     0: 25.0, 1: 25.0, 2: 25.0, 3: 24.0, 4: 23.0, 5: 21.0,
     6: 18.0, 7: 15.0, 8: 12.0, 9: 10.0,

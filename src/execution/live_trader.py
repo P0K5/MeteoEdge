@@ -34,6 +34,7 @@ class LiveTrader:
         bracket_high: float = 0.0,
         predicted_price: int = 0,
         predicted_edge: float = 0.0,
+        p_yes_raw: "float | None" = None,
     ) -> str:
         """Place a GTC limit order. Returns order_id string."""
         price = round(price_cents / 100, 4)
@@ -67,6 +68,7 @@ class LiveTrader:
                     mode="live",
                     order_id=order_id,
                     capital_before=size_usdc,
+                    p_yes_raw=p_yes_raw,
                 )
                 self._db.open_position(
                     trade_id=trade_id,

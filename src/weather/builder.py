@@ -14,6 +14,7 @@ from src.data.metar import (
     fetch_all_metars_today, compute_daily_high,
     compute_daily_high_from_db_observations,
     now_local, sunset_local,
+    low_window_bounds, compute_daily_low_window,
 )
 from src.data.nws import fetch_nws_forecast_high
 from src.data.open_meteo import fetch_secondary_forecast, fetch_hourly_temp_now, fetch_gfs_forecast_high
@@ -22,6 +23,7 @@ from src.model.deb_hourly_consensus import compute_deb_mu_f
 from src.model.intraday_correction import compute_correction
 from src.model.residual_correction import apply_residual_correction
 from src.model.envelope import WeatherState
+from src.model.envelope_low import WeatherStateLow
 from src.data.obs_consensus import compute_consensus_high
 
 log = logging.getLogger(__name__)
@@ -371,6 +373,97 @@ def build_weather_for_pricing(stations, db=None) -> dict:
         if state is not None:
             weather[station] = state
     return weather
+
+
+def _build_one_station_low(station: str, lat: float, lon: float, db=None) -> "WeatherStateLow | None":
+    """Build a WeatherStateLow for a single station's overnight-low window.
+
+    Root cause of issue #554: this function (and build_weather_low_for_scanning
+    below) never existed, so scan_markets() was never given a `weather_low`
+    dict and its entire low-side shadow block (scanner.py ~660-740) was
+    unreachable dead code in production, even though it was fully unit-tested
+    in isolation.
+
+    Deliberately minimal for v1: forecast_low_f/secondary_forecast_low_f are
+    left as None (true_probability_low_in_bracket falls back to the envelope
+    midpoint when no forecast is available -- see envelope_low.py). Wiring a
+    real low-temperature forecast source is left to a follow-up issue.
+    """
+    metars = fetch_all_metars_today(station)
+    if not metars:
+        log.debug("[%s] no METAR data, skipping low-side build", station)
+        return None
+
+    window_start, window_end = low_window_bounds(station, lat, lon)
+    result = compute_daily_low_window(metars, STATION_TZ[station], window_start)
+    if not result:
+        log.debug("[%s] no observations in overnight-low window yet, skipping", station)
+        return None
+    low_f, low_time = result
+
+    latest = metars[0]
+    latest_temp_c = latest.get("temp")
+    if latest_temp_c is None:
+        log.debug("[%s] latest METAR missing temp, skipping low-side build", station)
+        return None
+    obs_str = latest.get("reportTime") or latest.get("obsTime")
+    if not obs_str:
+        log.debug("[%s] latest METAR missing time, skipping low-side build", station)
+        return None
+
+    try:
+        latest_temp_f = (float(latest_temp_c) * 9 / 5) + 32
+        latest_time = dtparse.parse(obs_str)
+        if latest_time.tzinfo is None:
+            latest_time = latest_time.replace(tzinfo=timezone.utc)
+    except Exception as e:
+        log.warning("[%s] METAR parse error (low-side): %s, skipping", station, e)
+        return None
+
+    return WeatherStateLow(
+        station=station,
+        now_local=now_local(station),
+        sunrise_local=window_end,
+        current_low_f=low_f,
+        current_low_time=low_time,
+        latest_temp_f=latest_temp_f,
+        latest_temp_time=latest_time,
+        forecast_low_f=None,
+        secondary_forecast_low_f=None,
+    )
+
+
+def build_weather_low_for_scanning(stations=None, db=None) -> dict:
+    """Assemble per-station WeatherStateLow for the SCANNER low-side path.
+
+    Epic-C low-side shadow rollout (issue #457); this is the low-side
+    counterpart of build_weather_for_scanning(). Unlike the high-side builder,
+    there is no active-hours gate here: the overnight-low observation window
+    (previous sunset -> next sunrise) is self-limiting -- compute_daily_low_window
+    returns None until the window has at least one observation -- and
+    scan_markets' own mins_left/wrong_date checks skip markets outside the
+    live low market's settlement window. See low_window_bounds() docstring.
+
+    Only stations with a known 'lowest temperature in <city>' Polymarket
+    mapping are built (POLYMARKET_CITY_TO_STATION_LOW in strategy/scanner.py);
+    imported lazily to avoid a module-load-order dependency between
+    src.weather.builder and src.strategy.scanner.
+
+    Returns dict mapping station code -> WeatherStateLow (only stations with
+    at least one observation in their current overnight-low window).
+    """
+    from src.strategy.scanner import POLYMARKET_CITY_TO_STATION_LOW
+    low_stations = set(POLYMARKET_CITY_TO_STATION_LOW.values())
+
+    station_list = stations if stations is not None else STATIONS
+    weather_low: "dict[str, WeatherStateLow]" = {}
+    for station, lat, lon, city, *rest in station_list:
+        if station not in low_stations:
+            continue
+        state = _build_one_station_low(station, lat, lon, db=db)
+        if state is not None:
+            weather_low[station] = state
+    return weather_low
 
 
 def _build_weather(db=None, health_out=None) -> dict:

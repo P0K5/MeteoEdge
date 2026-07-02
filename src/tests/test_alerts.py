@@ -402,7 +402,8 @@ class TestPollOnceAlertIntegration:
             risk_mgr = self._make_mock_risk_manager()
 
             with patch.object(dashboard_module, "last_poll_ts", old_ts):
-                with patch.object(run_module, "_build_weather", return_value={"KORD": MagicMock()}):
+                with patch.object(run_module, "_build_weather", return_value={"KORD": MagicMock()}), \
+                        patch.object(run_module, "build_weather_low_for_scanning", return_value={}):
                     with patch.object(run_module, "get_weather_markets", return_value=[]):
                         with patch.object(run_module, "scan_markets", return_value=([], [])):
                             with patch.object(dashboard_module, "_load_trades", return_value=[]):
@@ -432,7 +433,8 @@ class TestPollOnceAlertIntegration:
             risk_mgr = self._make_mock_risk_manager()
 
             with patch.object(dashboard_module, "last_poll_ts", recent_ts):
-                with patch.object(run_module, "_build_weather", return_value={"KORD": MagicMock()}):
+                with patch.object(run_module, "_build_weather", return_value={"KORD": MagicMock()}), \
+                        patch.object(run_module, "build_weather_low_for_scanning", return_value={}):
                     with patch.object(run_module, "get_weather_markets", return_value=[]):
                         with patch.object(run_module, "scan_markets", return_value=([], [])):
                             with patch.object(dashboard_module, "_load_trades", return_value=[]):
@@ -458,7 +460,8 @@ class TestPollOnceAlertIntegration:
             risk_mgr = self._make_mock_risk_manager()
 
             with patch.object(dashboard_module, "last_poll_ts", None):
-                with patch.object(run_module, "_build_weather", return_value={"KORD": MagicMock()}):
+                with patch.object(run_module, "_build_weather", return_value={"KORD": MagicMock()}), \
+                        patch.object(run_module, "build_weather_low_for_scanning", return_value={}):
                     with patch.object(run_module, "get_weather_markets", return_value=[]):
                         with patch.object(run_module, "scan_markets", return_value=([], [])):
                             with patch.object(dashboard_module, "_load_trades", return_value=[]):

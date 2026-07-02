@@ -156,6 +156,89 @@ class TestComputeEnvelope:
 
 
 # ---------------------------------------------------------------------------
+# compute_envelope — per-station coverage for previously-fallback international
+# stations (issue #571). Before this fix, EGLC and ZGGG had no CLIMB_LOOKUP
+# entry and fell back to the flat, month-agnostic, US-continental-shaped
+# _DEFAULT_CLIMB_LOOKUP. They now resolve to per-station (synthetic
+# climatological or DB-derived) values that vary by month/hour and diverge
+# sharply from the old flat default.
+# ---------------------------------------------------------------------------
+
+class TestPreviouslyFallbackInternationalStations:
+    def test_eglc_january_midnight_uses_per_station_table_not_flat_default(self):
+        """EGLC (London City), January hour=0: per-station climb is 3.6F.
+
+        The old flat _DEFAULT_CLIMB_LOOKUP[0] was 25.0F (a US-continental
+        summer diurnal range applied year-round). London's actual winter
+        diurnal range is far smaller, so the per-station value must differ
+        from the flat default by a wide margin.
+        """
+        from src.data.climb_lookup import CLIMB_LOOKUP
+        from src.model.climb_rates import _DEFAULT_CLIMB_LOOKUP
+
+        station_climb = CLIMB_LOOKUP["EGLC"][1][0]
+        assert station_climb == pytest.approx(3.6)
+
+        flat_default = _DEFAULT_CLIMB_LOOKUP[0]
+        assert flat_default == 25.0
+        assert abs(station_climb - flat_default) > 10.0, (
+            "per-station EGLC value should diverge sharply from the flat "
+            "US-shaped default"
+        )
+
+        state = WeatherState(
+            station="EGLC",
+            now_local=datetime(2026, 1, 15, 0, 30),
+            sunset_local=datetime(2026, 1, 15, 16, 0),
+            current_high_f=40.0,
+            current_high_time=datetime(2026, 1, 15, 0, 30),
+            latest_temp_f=40.0,
+            latest_temp_time=datetime(2026, 1, 15, 0, 30),
+            forecast_high_f=None,
+        )
+        min_high, max_high = compute_envelope(state)
+        assert min_high == 40.0
+        # max_high must be sourced from the per-station table (40 + 3.6),
+        # not the flat default (40 + 25.0 = 65.0).
+        assert max_high == pytest.approx(43.6)
+        assert max_high != pytest.approx(40.0 + flat_default)
+
+    def test_zggg_january_midnight_uses_per_station_table_not_flat_default(self):
+        """ZGGG (Guangzhou), January hour=0: per-station climb is 7.0F.
+
+        ZGGG is slated for live NO promotion (#557), which is blocked on
+        this station having real per-station coverage instead of the flat
+        US default.
+        """
+        from src.data.climb_lookup import CLIMB_LOOKUP
+        from src.model.climb_rates import _DEFAULT_CLIMB_LOOKUP
+
+        station_climb = CLIMB_LOOKUP["ZGGG"][1][0]
+        assert station_climb == pytest.approx(7.0)
+
+        flat_default = _DEFAULT_CLIMB_LOOKUP[0]
+        assert abs(station_climb - flat_default) > 10.0, (
+            "per-station ZGGG value should diverge sharply from the flat "
+            "US-shaped default"
+        )
+
+        state = WeatherState(
+            station="ZGGG",
+            now_local=datetime(2026, 1, 15, 0, 30),
+            sunset_local=datetime(2026, 1, 15, 18, 0),
+            current_high_f=55.0,
+            current_high_time=datetime(2026, 1, 15, 0, 30),
+            latest_temp_f=55.0,
+            latest_temp_time=datetime(2026, 1, 15, 0, 30),
+            forecast_high_f=None,
+        )
+        min_high, max_high = compute_envelope(state)
+        assert min_high == 55.0
+        assert max_high == pytest.approx(62.0)
+        assert max_high != pytest.approx(55.0 + flat_default)
+
+
+# ---------------------------------------------------------------------------
 # true_probability_yes
 # ---------------------------------------------------------------------------
 

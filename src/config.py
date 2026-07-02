@@ -229,17 +229,6 @@ RISK_MAX_OPEN_POSITIONS = int(os.getenv("RISK_MAX_OPEN_POSITIONS", "15"))
 RISK_DRAWDOWN_STOP_PCT = float(os.getenv("RISK_DRAWDOWN_STOP_PCT", "0.15"))
 RISK_MIN_LIQUIDITY = int(os.getenv("RISK_MIN_LIQUIDITY", "50"))
 
-# Historical climb rates: p95 additional rise (°F) from time-of-day to end-of-day.
-# Hand-seeded approximations. In the full build, compute from 5 years of METAR.
-# Hours 0-9 reflect the full diurnal range still ahead (daily min typically 4-7am).
-DEFAULT_CLIMB_LOOKUP = {
-    0: 25.0, 1: 25.0, 2: 25.0, 3: 24.0, 4: 23.0, 5: 21.0,
-    6: 18.0, 7: 15.0, 8: 12.0, 9: 10.0,
-    10: 8.0, 11: 7.0, 12: 6.0, 13: 5.0, 14: 4.0,
-    15: 3.0, 16: 2.0, 17: 1.0, 18: 0.5, 19: 0.0,
-    20: 0.0, 21: 0.0, 22: 0.0, 23: 0.0,
-}
-
 # Forecast uncertainty (stddev in °F) for the Bayesian prior on undetermined brackets
 FORECAST_STDDEV_F = 2.0
 
@@ -470,6 +459,8 @@ CONFIG_DEFAULTS: "dict[str, str | int | float | bool]" = {
     "MAX_CONFIDENCE_YES_FOR_NO": 0.05,
     "MIN_FORECAST_BRACKET_MARGIN_F": 2.5,
     "EMOS_DEFAULT_MODE": "legacy",
+    "EMOS_MIN_SAMPLES_SHADOW": 35,
+    "EMOS_MIN_SAMPLES_PROMOTION": 60,
     "DAILY_LOSS_LIMIT_EUR": 50.0,
     "MAX_OPEN_POSITIONS": 15,
     "DRAWDOWN_STOP_PCT": 0.15,
@@ -491,6 +482,11 @@ CONFIG_DEFAULTS: "dict[str, str | int | float | bool]" = {
     "SHADOW_MIN_CONFIDENCE_YES": 0.55,
     "SHADOW_MIN_PRICE_CENTS_YES": 20,
     "MODEL_PROB_CAP": 0.95,
+    # Stage 1 of issue #551: rank/prioritize candidates using the uncapped (raw)
+    # model probability instead of scan order. Default off -- entry gates always
+    # consume the capped p_yes regardless of this flag; only which candidate is
+    # preferred for execution (when capital/risk slots are limited) changes.
+    "RANK_ON_RAW_PROB": False,
     # Residual bias correction (issue #307)
     "MAX_RESIDUAL_MAE_F_FOR_LIVE": 8.0,
     "RESIDUAL_WINDOW_DAYS": 30,

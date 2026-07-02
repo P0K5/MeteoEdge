@@ -162,6 +162,77 @@ sudo systemctl start meteoedge-settle.service
 sudo journalctl -u meteoedge-settle.service -f
 ```
 
+#### meteoedge-prob-cap-report.service / meteoedge-prob-cap-report.timer
+
+One-shot service, run daily at **12:30 UTC** (after `meteoedge-settle.timer` at
+12:00 UTC) by `meteoedge-prob-cap-report.timer`. Runs
+`scripts/prob_cap_shadow_report.py`, the self-gating shadow report for the
+`MODEL_PROB_CAP` decision tracked by issues #551/#570.
+
+```ini
+[Unit]
+Description=MeteoEdge prob-cap shadow report (issue #570 / #551)
+After=network-online.target meteoedge-settle.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=p0k5
+WorkingDirectory=/home/p0k5/MeteoEdge
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=/home/p0k5/MeteoEdge/.env
+ExecStart=/home/p0k5/MeteoEdge/.venv/bin/python -u scripts/prob_cap_shadow_report.py
+StandardOutput=append:/home/p0k5/MeteoEdge/logs/prob_cap_report.log
+StandardError=append:/home/p0k5/MeteoEdge/logs/prob_cap_report.log
+```
+
+```ini
+[Unit]
+Description=Run MeteoEdge prob-cap shadow report daily at 12:30 UTC (after settlement)
+
+[Timer]
+OnCalendar=*-*-* 12:30:00 UTC
+AccuracySec=1m
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+```
+
+**What it does:**
+- Self-gating: counts distinct dates with non-NULL `p_yes_raw` candidate data
+  (from `logs/candidates.csv`) since PR #564 deployed. Below `--min-days`
+  (default 7) it logs one line and exits 0 — safe to run every day from the
+  moment the timer is installed, well before there is 7 days of data.
+- At/above the threshold, writes `backtest_results/prob_cap_shadow_<date>.md`:
+  clamp saturation rate, distribution of `p_yes_raw` among clamped candidates,
+  a simulated `MODEL_PROB_CAP` comparison across 0.95/0.97/0.98 (NO side only
+  — the protected side), a two-channel breakout (edge-driven vs
+  gate-headroom-driven, see the script's module docstring) with
+  `MAX_CONFIDENCE_YES_FOR_NO` held fixed per the binding PM spec on issue
+  #570, a `RANK_ON_RAW_PROB` ordering simulation, and an explicit
+  change/hold/extend-window recommendation.
+- **No live gate changes**: this script only reads `logs/candidates.csv`,
+  `logs/settlements.csv`, and `logs/snapshots.jsonl` and writes a markdown
+  report. It never touches `MODEL_PROB_CAP`, `MAX_CONFIDENCE_YES_FOR_NO`, or
+  any other live config.
+
+**Operational commands:**
+```bash
+# Check next scheduled run
+sudo systemctl list-timers meteoedge-prob-cap-report.timer
+
+# Manually trigger a run (e.g. to check gating status early)
+sudo systemctl start meteoedge-prob-cap-report.service
+
+# Or run directly without systemd (prints instead of writing a file)
+python scripts/prob_cap_shadow_report.py --dry-run
+
+# View logs
+sudo journalctl -u meteoedge-prob-cap-report.service -f
+tail -f logs/prob_cap_report.log
+```
+
 ---
 
 ## Configuration
@@ -926,6 +997,63 @@ No trading halt is required. The reset affects only EMOS calibration; all live t
 
 **Reference:** See `docs/design/open-positions-source-of-truth.md` for the full architecture spec.
 
+### Per-Channel `sigma_f` Sourcing Policy (issue #555)
+
+**Decision:** `model_forecast_log.sigma_f` must either carry a genuine dispersion
+signal or be an honestly-`NULL` "we don't have one" — never a silently-invented
+number. Prior to #555, `compute_ensemble_sigma()` (which applies
+`SIGMA_FLOOR_F=1.0°F`) was called directly at GEFS capture time and its
+*floored* return value was persisted verbatim: 240 of 345 GEFS rows sat at
+exactly the 1.00°F floor, destroying the real ensemble-spread signal EMOS
+needs to learn its spread coefficient `d` (`σ_calibrated = c + d·σ_ensemble`).
+
+The fix splits capture-time and consumption-time sigma:
+
+- **Capture time** (`src/scripts/capture_forecasts.py`): for the `gefs`
+  channel, `raw_member_sigma()` (`src/model/ensemble_sigma.py`) computes the
+  **unfloored** sample stdev of the raw ensemble members and persists it
+  as-is — including genuine near-zero spreads — or `NULL` when fewer than 2
+  members are available.
+- **Consumption time** (live probability/trading, EMOS shadow
+  self-calibration, etc.): `compute_ensemble_sigma()` is unchanged — it still
+  applies `SIGMA_FLOOR_F` (and the historical-calibration regression when
+  enough history exists). Its behavior and output are identical to
+  pre-#555 for the same inputs; no existing or future caller of that function
+  sees any behavior change.
+
+**Committed per-channel decision table:**
+
+| Channel | Decision | Rationale |
+|---|---|---|
+| `nws` | Derive | Climatological σ keyed on `lead_hours` (see `src/data/nws.py:_nws_sigma_for_lead`) — a documented static per-lead dispersion table, not a raw ensemble, but a real signal. |
+| `open_meteo` | Derive | Cross-model stdev across 4 constituent NWP runs (`ecmwf_ifs04`/`gfs_seamless`/`jma_seamless`/`best_match`) — genuine multi-model spread. |
+| `gfs` | NULL | Single deterministic run (#548); no ensemble or multi-model spread exists to derive from. |
+| `gefs` | Derive (raw, unfloored) | Raw stdev of the ~30 GEFS members — the one true ensemble-member spread captured. `SIGMA_FLOOR_F` is applied only at consumption (`src/model/ensemble_sigma.py::compute_ensemble_sigma`), never at capture. |
+| `hrrr` | NULL | Single deterministic run, hourly grid only; no member spread. A lagged-run spread (diff between consecutive HRRR cycles) could be derived but requires additional cycle-history plumbing not yet built — left NULL rather than inventing a static number. Revisit if a future issue adds lagged-run ingestion. |
+| `nbm` | NULL | NBM itself blends models internally but the open endpoint used here exposes only the point forecast, not its internal spread — left NULL rather than a fabricated constant. |
+| `ecmwf` | NULL | Single deterministic run (open-data endpoint does not expose the ECMWF ensemble/EPS spread) — left NULL rather than a fabricated constant. |
+| `icon` | NULL | Single deterministic run (open-data endpoint does not expose ICON-EPS spread) — left NULL rather than a fabricated constant. |
+
+**Impact on future agents:**
+- Do not call `compute_ensemble_sigma()` from `capture_forecasts.py` — it
+  floors its return value, which would reintroduce the bug #555 fixed. Use
+  `raw_member_sigma()` for anything persisted to `model_forecast_log.sigma_f`.
+- Do not call `raw_member_sigma()` from live probability/trading code — it
+  deliberately omits the floor and the historical-calibration regression;
+  `compute_ensemble_sigma()` remains the sanctioned consumption-time entry
+  point (integration tracked in #448, Week 3).
+- EMOS trains per-channel (see `forecast_source`/`regime` filtering in
+  `src/model/emos_calibration.py:fetch_training_data`), so a NULL `sigma_f`
+  for a given channel only means that channel's EMOS fit falls back to
+  `FORECAST_STDDEV_F` — it does not block other channels from training on
+  their own real sigma.
+- Use `scripts/check_emos_data_quality.py` (`print_sigma_quality_report()`)
+  to monitor floor-saturation and NULL-sigma rates per channel going forward.
+
+**Reference:** See `src/scripts/capture_forecasts.py` module docstring and
+`src/model/ensemble_sigma.py` module docstring for the same table maintained
+alongside the code.
+
 ---
 
 ## Support & Escalation
@@ -1089,6 +1217,37 @@ No action required. MeteoEdge may continue using Open-Meteo's free API for live 
 
 ---
 
+## EMOS Shadow Fit Threshold (Issue #556)
+
+**Two-tier min_samples control: 35 days for shadow fits, 60 days for promotion eligibility.**
+
+The `fetch_training_data()` function requires a minimum number of settled forecast-vs-actual pairs to train EMOS. This was previously hardcoded at 60 days, blocking shadow observation during early deployments (forecast log started June 24 → first fit ~August 23, too late for summer markets).
+
+### Configuration
+
+| Parameter | Default | Purpose |
+|-----------|---------|---------|
+| `EMOS_MIN_SAMPLES_SHADOW` | 35 | Minimum samples for shadow-only fits (no live serving) |
+| `EMOS_MIN_SAMPLES_PROMOTION` | 60 | Minimum samples for promotion-eligible fits |
+
+Both are configurable via the dashboard **Config** tab under **EMOS Model Settings**.
+
+### Behavior
+
+- **Shadow fit (30–59 samples):** Runs daily on `scripts/run_emos_shadow.py`. Persists `ready_for_promotion=0` regardless of CRPS (hard guardrail, issue #556). CRPS rows logged to `emos_crps_log` for monitoring. Zero risk — nothing served live.
+- **Promotion fit (≥60 samples):** Only after 60 settled days. Operator must manually promote via database update (see **§ Step 3 — Validate and promote** in **EMOS Retrain** below). Automatic promotion is never performed.
+
+### First shadow fit timeline (June 24 deployment)
+
+The forecast log started June 24. First cities cross the shadow threshold (~35 settled days) around **late July (July 28–31)**. First shadow CRPS rows begin appearing in the dashboard shortly after.
+
+### Guardrails
+
+1. **sample_count < 60 → ready_for_promotion=0 (enforced):** Even if CRPS is excellent, fits trained on <60 samples are shadow-only and cannot be promoted. Avoids overfitting risk (#226).
+2. **GFS duplicate-era exclusion:** `fetch_training_data()` excludes "gfs" rows dated before 2026-07-02 (issue #548 duplicate-era rows are byte-identical copies of "open_meteo").
+
+---
+
 ## EMOS Retrain for New Forecast Stack
 
 **Rule: Whenever `FORECAST_STACK` changes (Epic A1/A2 promotion), retrain EMOS before switching live.**
@@ -1214,3 +1373,135 @@ All five shadow sources (GEFS, HRRR, NBM, ECMWF, ICON) are store/log only. They 
 ### EMOS Retrain Scoping (issue #494)
 
 EMOS retrain is always scoped to the active FORECAST_STACK. The mapping of stack → model tags is `src/config.py:FORECAST_STACK_MODELS`. Run `scripts/auto_retrain_probability_calibration.py` (reads FORECAST_STACK from DB automatically). Never call `fetch_training_data` without `regime` or `forecast_source` — it raises ValueError.
+
+---
+
+## DEB Channel Group Assignments (issue #550)
+
+### Background
+
+DEB (`src/model/deb_weighting.py`) computes inverse-RMSE weights per registered
+forecast channel, then caps the combined weight of any `group_id` at
+`GROUP_WEIGHT_CAP` (default 0.7) so that correlated channels can't jointly
+dominate the ensemble even though each looks independently well-calibrated.
+Prior to #550, `open_meteo` and `gfs` were registered with `group_id=None`
+("uncapped") even though both are Open-Meteo-API-derived and `open_meteo`'s
+multi-model mean literally includes a `gfs_seamless` constituent — the same
+raw model the dedicated `gfs` channel fetches. As `ecmwf`/`gefs` accumulate
+enough samples to leave cold-start, DEB would otherwise let three channels
+sharing the same underlying GFS/ECMWF signal converge into what looks like a
+diversified 3-4 channel ensemble but is actually a monoculture.
+
+### Raw-model provenance table
+
+| Channel | Raw model(s) | Fetcher | Notes |
+|---|---|---|---|
+| `nws` | NWS/NDFD gridpoint forecast | `src/data/nws.py::fetch_nws_with_spread` | US-only (`/gridpoints` API). |
+| `open_meteo` | Mean of **ecmwf_ifs04, gfs_seamless, jma_seamless, best_match** | `src/data/open_meteo.py::fetch_open_meteo_with_spread` | 4-model blend proxied through the Open-Meteo API. `best_match` picks Open-Meteo's own "best regional model" per location and is opaque/variable. |
+| `gfs` | NOAA GFS deterministic (`gfs_seamless`) | `src/data/open_meteo.py::fetch_gfs_with_spread` | Scoped to `models=gfs_seamless` only (issue #548 — previously a byte-identical duplicate of `open_meteo`). Same raw model as one of `open_meteo`'s four constituents. |
+| `hrrr` | NOAA HRRR (High-Resolution Rapid Refresh) | `src/data/hrrr.py::fetch_hrrr_hourly` | Direct GRIB via herbie. CONUS-only. |
+| `nbm` | NOAA National Blend of Models | `src/data/nbm.py::fetch_nbm_daily_high` | Direct GRIB via herbie. CONUS-only. NBM is itself a statistical blend of multiple NOAA/NCEP guidance products, ingested here as one opaque channel. |
+| `ecmwf` | ECMWF HRES IFS (deterministic, `2t`) | `src/data/ecmwf_open.py::fetch_ecmwf_daily_high` | Direct fetch from ECMWF Open Data (AWS `s3://ecmwf-forecasts/`) via herbie (`model="ifs"`). Global domain. |
+| `icon` | DWD ICON-EU (independent German model) | `src/data/icon.py::fetch_icon_hourly` | Direct GRIB2 download from DWD opendata (not ECMWF-derived). EU domain only (lat 29–72, lon -25 to 45). |
+| `gefs` | NOAA GEFS — 31-member GFS ensemble (`gec00` + `gep01`…`gep30`) | `src/data/gefs.py::fetch_gefs_ensemble` | **Not currently registered in the DEB registry.** Ingestion-only per the module's own docstring; wiring into the trading/strategy layer (and therefore into DEB) is tracked separately by issue #448. Rows are already written to `model_forecast_log` under `model="gefs"` by `capture_forecasts.py`, but `compute_weights()` silently ignores them today since no `register_model("gefs", ...)` call exists. |
+
+### group_id assignments
+
+| Channel | `group_id` | Rationale |
+|---|---|---|
+| `nws`, `hrrr`, `nbm` | `noaa_us` | Unchanged. All three are NOAA/NWS-family CONUS sources; correlated by shared observational network and model lineage. |
+| `gfs`, `open_meteo` | `gfs_family` | **Changed by #550 (was `None` for both).** `open_meteo` shares a literal `gfs_seamless` constituent with `gfs`, and pre-#548 `gfs` was a byte-identical duplicate of `open_meteo` — the strongest available evidence of how tightly coupled these two channels are. `open_meteo`'s other constituents (`ecmwf_ifs04`, `jma_seamless`) are **not** captured by this single group_id — the registry only supports one group per channel. This is a deliberate, documented trade-off: open_meteo's GFS overlap is the tightest and best-evidenced correlation, so it anchors the choice, but the residual ECMWF/JMA correlation against `ecmwf_intl` remains uncapped. A follow-up could split `open_meteo` into per-constituent channels or extend the registry to support multiple group memberships — out of scope for #550. |
+| `ecmwf`, `icon` | `ecmwf_intl` | **Reassessed, unchanged.** ICON-EU is DWD's own independently developed model, not literally ECMWF-derived, so this is not strictly a "shared raw model" grouping the way `gfs_family` is. Kept because both are non-NOAA-US, high-cadence deterministic international sources whose errors correlate in practice over the European domain (overlapping synoptic-scale observations/boundary conditions), and no evidence was found to justify decoupling them. |
+| `gefs` | *(recommended: `gfs_family`, not yet applied)* | Not currently registered in DEB (see provenance table above) — issue #448 tracks wiring it in. When it is registered, it should join `gfs_family`: GEFS members are GFS-core perturbations, sharing the same underlying NWP system as `gfs`/`open_meteo`. |
+
+Every currently-*registered* channel has a deliberate, non-`None` `group_id` — the "documented reason for `None`" escape hatch in the #550 acceptance criteria is not exercised by any channel today.
+
+### `_apply_group_cap` redistribution fix
+
+Grouping `open_meteo`/`gfs` under `gfs_family` means that for EU/global-only
+stations (`nws`/`hrrr`/`nbm` excluded), **every** applicable channel now has a
+real `group_id` — `open_meteo`/`gfs` in `gfs_family`, `ecmwf`/`icon` in
+`ecmwf_intl` — with zero models left with `group_id=None`. The pre-#550
+`_apply_group_cap` implementation only redistributed a capped group's freed
+excess weight to explicitly ungrouped models; with none available, the freed
+weight was silently dropped and the returned weights summed to **less than
+1.0** (confirmed by direct test: a naive redistribution left weights summing
+to 0.9 instead of 1.0 for a 4-channel EU scenario). `_apply_group_cap` was
+fixed to redistribute freed weight to any model **not** a member of an
+over-cap group (ungrouped models, plus members of any other group that stayed
+within cap) instead of only literally-ungrouped models. See
+`src/model/deb_weighting.py::_apply_group_cap` docstring and
+`src/tests/test_deb_weighting.py::TestGfsFamilyRegistry::test_redistribution_when_no_ungrouped_models_remain`
+for the regression test. This is a minimal, additive fix — verified against
+the full existing test suite with no other behavioral regressions.
+
+---
+
+## Station Promotion Record (issue #557)
+
+### ZGGG and EGLC → Live NO-Only (2026-07-02)
+
+**Decision:** Promote ZGGG and EGLC from shadow to live NO-only mode (yes_enabled=0, no_enabled=1), effective 2026-07-02. YES side remains off for both; low-side flags untouched.
+
+**Rationale:**
+- Both stations show strong shadow NO performance: ZGGG +€5.42 (11 trades), EGLC +€4.41 (7 trades) over the last 8 days
+- Both have solid observation cadence (hourly+), supporting reliable daily-high prediction
+- Issue #571 (per-station climb lookup coverage for climb-based envelopes) merged to master on 2026-07-02 — both stations now have their climb tables in place and are ready for live trading
+- Live volume dropped sharply after June 24 changes (losing stations disabled, MIN_PRICE_CENTS 60→75); promotion expected to recover volume
+- 7–11 trades is noise-level, but both stations cleared cadence/obs quality bar; hold remaining candidates until settled
+
+**Promotion SQL** (run by PM / operator, not code):
+
+```sql
+INSERT INTO station_overrides (station, yes_enabled, no_enabled, updated_at)
+VALUES ('ZGGG', 0, 1, '2026-07-02T00:00:00+00:00'),
+       ('EGLC', 0, 1, '2026-07-02T00:00:00+00:00')
+ON CONFLICT(station) DO UPDATE
+SET yes_enabled=0, no_enabled=1, updated_at='2026-07-02T00:00:00+00:00';
+```
+
+Alternatively, if rows already exist in station_overrides:
+
+```sql
+UPDATE station_overrides
+SET yes_enabled=0, no_enabled=1, updated_at='2026-07-02T00:00:00+00:00'
+WHERE station IN ('ZGGG', 'EGLC');
+```
+
+If rows do not yet exist, insert them:
+
+```sql
+INSERT OR IGNORE INTO station_overrides (station, yes_enabled, no_enabled, updated_at)
+VALUES ('ZGGG', 0, 1, '2026-07-02T00:00:00+00:00'),
+       ('EGLC', 0, 1, '2026-07-02T00:00:00+00:00');
+```
+
+**Re-review trigger:** Evaluate both ZGGG and EGLC after 2 weeks (2026-07-16) or 20 live trades, whichever comes first. Check:
+- Live NO P&L: target >€2 per station
+- Win rate: target ≥45%
+- No unexpected edge collapse or liquidity drying up
+- No new risk events (forced exits, stop-losses firing excessively)
+
+### Remaining Shadow Candidates: Hold Bar (SBGR, EFHK, RCSS)
+
+**Decision:** Do NOT promote SBGR (shadow +€4.90, 9 trades), EFHK, or RCSS until each clears the hold bar:
+- ≥20–30 **settled** shadow NO trades (current state: all below this)
+- Cumulative shadow NO P&L: positive
+- Observation cadence: hourly+ (same as ZGGG/EGLC)
+
+**Rationale:** 7–11 trades is insufficient signal; shadow data from more than 30 days or trades from a single week can be seasonally or weather-event biased. Require ~4–5 weeks of consistent shadow performance before considering promotion. The audit explicitly flagged this: "Honest caveat: 7–11 trades is noise-level."
+
+**Re-evaluation:** After SBGR, EFHK, and RCSS each accumulate ≥20–30 settled NO trades AND maintain positive cumulative P&L, re-run the audit (see issue #557 audit process) and propose promotion in a new issue.
+
+### Not Promoted (Negative Shadow Performance)
+
+**LLBG, ZSPD:** Both showed shadow-negative NO P&L. Do NOT promote. No re-evaluation trigger until market conditions or model changes.
+
+---
+
+## Support & Escalation
+
+For issues beyond this runbook, escalate to:
+- Architecture questions: Tech Lead PM
+- Bug reports: Include full logs (bot.log, settle.log) and database state (trades/settlements from the error date)
+- Operational changes: Discuss with Tech Lead PM before modifying systemd units or core config

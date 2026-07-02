@@ -364,7 +364,7 @@ class DebWeightOut(BaseModel):
     model: str
     weight: float
     rmse_f: float
-    n_samples: int = 0
+    n_samples: int  # sample_count from database: >= MIN_SAMPLES indicates calibrated, < MIN_SAMPLES indicates cold-start
 
 
 class DebOut(BaseModel):
@@ -1260,9 +1260,9 @@ def get_city_deb(city: str) -> DebOut:
     city.
 
     ``updated_at`` is the most-recent ``date`` value across all weight rows,
-    formatted as an ISO date string.  ``n_samples`` is set to 0 because the
-    model_weights table does not carry a sample count; callers that need the
-    full forecast-log count should query the forecast-log endpoint directly.
+    formatted as an ISO date string.  ``n_samples`` is the sample count from
+    the model_weights table: >= MIN_SAMPLES indicates calibrated weights with
+    real RMSE, < MIN_SAMPLES indicates cold-start with rmse=0.0.
     """
     normalised = city.title()
     rows = _db.get_model_weights(normalised)
@@ -1277,7 +1277,7 @@ def get_city_deb(city: str) -> DebOut:
             model=row["model"],
             weight=round(float(row["weight"]), 4),
             rmse_f=round(float(row["rmse"]), 4),
-            n_samples=0,
+            n_samples=row.get("sample_count", 0) or 0,  # coerce None to 0
         )
         for row in rows
     ]
@@ -2058,6 +2058,11 @@ _CONFIG_META: dict[str, dict] = {
     "SHADOW_MIN_PRICE_CENTS_YES": {
         "description": "Minimum YES ask for shadow-log entry (live YES uses MIN_PRICE_CENTS)",
         "type": "int", "group": "strategy", "min": 1, "max": 60,
+    },
+    "RANK_ON_RAW_PROB": {
+        "description": "Rank/prioritize candidates by uncapped model probability instead of scan order (issue #551, stage 1). Entry gates are unaffected.",
+        "type": "bool",
+        "group": "strategy",
     },
     "DAILY_LOSS_LIMIT_EUR": {
         "description": "Maximum daily loss before trading halts (€)",

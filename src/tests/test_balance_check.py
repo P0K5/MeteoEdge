@@ -45,6 +45,7 @@ def _common_ctx(scan_return=([], []), live_trader=None):
     """Return the context managers needed to run poll_once without real I/O."""
     patches = [
         patch("src.scripts.run._build_weather", return_value={"Tokyo": MagicMock()}),
+        patch("src.scripts.run.build_weather_low_for_scanning", return_value={}),
         patch("src.scripts.run.get_weather_markets", return_value=[]),
         patch("src.scripts.run.scan_markets", return_value=scan_return),
         patch("src.scripts.run._append_candidate"),
@@ -81,6 +82,7 @@ class TestBalanceCheckException:
 
         with (
             patch("src.scripts.run._build_weather", return_value={"Tokyo": MagicMock()}),
+            patch("src.scripts.run.build_weather_low_for_scanning", return_value={}),
             patch("src.scripts.run.get_weather_markets", return_value=[]),
             patch("src.scripts.run.scan_markets", return_value=([mock_cand], [])),
             patch.object(run_module.order_manager, "reconcile_timeout_fills"),
@@ -105,6 +107,7 @@ class TestBalanceCheckException:
 
         with (
             patch("src.scripts.run._build_weather", return_value={"Tokyo": MagicMock()}),
+            patch("src.scripts.run.build_weather_low_for_scanning", return_value={}),
             patch("src.scripts.run.get_weather_markets", return_value=[]),
             patch("src.scripts.run.scan_markets", return_value=([], [])),
             patch.object(run_module.order_manager, "reconcile_timeout_fills"),
@@ -129,6 +132,7 @@ class TestBalanceCheckException:
 
         with (
             patch("src.scripts.run._build_weather", return_value={"Tokyo": MagicMock()}),
+            patch("src.scripts.run.build_weather_low_for_scanning", return_value={}),
             patch("src.scripts.run.get_weather_markets", return_value=[]),
             patch("src.scripts.run.scan_markets", return_value=([], [])),
             patch.object(run_module.order_manager, "reconcile_timeout_fills"),
@@ -181,6 +185,7 @@ class TestWalletEmptyCooldown:
 
         with (
             patch("src.scripts.run._build_weather", return_value={"Tokyo": MagicMock()}),
+            patch("src.scripts.run.build_weather_low_for_scanning", return_value={}),
             patch("src.scripts.run.get_weather_markets", return_value=[]),
             patch.object(run_module.order_manager, "reconcile_timeout_fills"),
             patch.object(run_module.order_manager, "sync_open_orders"),
@@ -205,6 +210,7 @@ class TestWalletEmptyCooldown:
 
         with (
             patch("src.scripts.run._build_weather", return_value={"Tokyo": MagicMock()}),
+            patch("src.scripts.run.build_weather_low_for_scanning", return_value={}),
             patch("src.scripts.run.get_weather_markets", return_value=[]),
             patch("src.scripts.run.scan_markets", return_value=([], [])),
             patch.object(run_module.order_manager, "reconcile_timeout_fills"),
@@ -236,6 +242,7 @@ class TestBalanceFailAlertThreshold:
 
         with (
             patch("src.scripts.run._build_weather", return_value={"Tokyo": MagicMock()}),
+            patch("src.scripts.run.build_weather_low_for_scanning", return_value={}),
             patch("src.scripts.run.get_weather_markets", return_value=[]),
             patch("src.scripts.run.scan_markets", return_value=([], [])),
             patch.object(run_module.order_manager, "reconcile_timeout_fills"),
@@ -282,6 +289,7 @@ class TestBalanceFailAlertThreshold:
         mock_db = _make_mock_db()
         with (
             patch("src.scripts.run._build_weather", return_value={"Tokyo": MagicMock()}),
+            patch("src.scripts.run.build_weather_low_for_scanning", return_value={}),
             patch("src.scripts.run.get_weather_markets", return_value=[]),
             patch("src.scripts.run.scan_markets", return_value=([], [])),
             patch.object(run_module.order_manager, "reconcile_timeout_fills"),

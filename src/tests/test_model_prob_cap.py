@@ -214,3 +214,25 @@ class TestEdgeGatesUsesCappedProbability:
         no_cands = [c for c in candidates if c.side == "NO"]
         assert len(no_cands) == 1, f"Expected 1 NO candidate, got {no_cands}"
         assert abs(no_cands[0].edge_cents - 19.0) < 0.01
+
+
+class TestCandidateRawProbability:
+    """Candidate.p_yes_raw / ev_yes_raw / ev_no_raw (issue #551, stage 1).
+
+    These carry the pre-clamp probability/edges alongside the existing capped
+    fields so ranking/logging can see raw model confidence without touching
+    the values that drive entry gates.
+    """
+
+    def test_candidate_p_yes_raw_equals_p_yes_when_uncapped(self):
+        """cap=1.0: no clamp fires, so p_yes_raw == p_yes and ev_no_raw == ev_no."""
+        candidates, _ = _run_scan_with_cap(
+            raw_p_yes=0.03, model_prob_cap=1.0, no_ask=77
+        )
+        no_cands = [c for c in candidates if c.side == "NO"]
+        assert len(no_cands) == 1
+        cand = no_cands[0]
+        assert cand.p_yes_raw == 0.03
+        assert cand.p_yes_raw == cand.p_yes
+        assert abs(cand.ev_no_raw - cand.ev_no) < 0.01
+        assert abs(cand.ev_no_raw - 19.0) < 0.01

@@ -7,6 +7,11 @@ from pathlib import Path
 
 _DEFAULT_PATH = os.getenv("DB_PATH", "data/meteoedge.db")
 
+# Issue #552: deb_weight_log rows logged before this date predate commit
+# 195f08c (the per-region DEB routing fix) and may attribute "nws" weight to
+# non-US cities. Purged on every startup (idempotent — no-op once purged).
+_DEB_WEIGHT_LOG_PURGE_CUTOFF = "2026-06-30"
+
 _DDL = """
 CREATE TABLE IF NOT EXISTS observations (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -149,6 +154,7 @@ CREATE TABLE IF NOT EXISTS intraday_corrections (
     delta_f        REAL NOT NULL,
     corrected_mu_f REAL NOT NULL,
     decay_factor   REAL NOT NULL,
+    basis_weights  TEXT NOT NULL DEFAULT '{"open_meteo": 1.0}',
     PRIMARY KEY (city, station, source, date, obs_time)
 );
 CREATE INDEX IF NOT EXISTS idx_ic_city_date ON intraday_corrections(city, date);
@@ -266,6 +272,22 @@ class Database:
             ("settlements", "direction", "TEXT NOT NULL DEFAULT 'high'"),
             ("station_overrides", "low_no_enabled", "INTEGER NOT NULL DEFAULT 0"),
             ("emos_calibration", "forecast_source", "TEXT NOT NULL DEFAULT 'nws_open_meteo'"),
+            # Issue #551 stage 1: nullable raw (pre-MODEL_PROB_CAP) probability,
+            # logged alongside the existing capped value. NULL for rows written
+            # before this migration.
+            ("candidates", "p_yes_raw", "REAL"),
+            ("trades", "p_yes_raw", "REAL"),
+            # Issue #553: sample count for model_weights to distinguish calibrated
+            # models (sample_count >= MIN_SAMPLES) from cold-start (sample_count < MIN_SAMPLES).
+            ("model_weights", "sample_count", "INTEGER DEFAULT 0"),
+            # Issue #572: snapshot of the DEB weights dict used to build the
+            # intraday consensus basis for this delta, so the residual layer
+            # can later segment pre/post-fix deltas instead of mixing the
+            # open_meteo-only regime and the live-DEB-weighted regime in one
+            # rolling window. Default matches the legacy hardcoded basis, so
+            # historical rows (written before this migration) are tagged
+            # consistently with genuine fallback rows.
+            ("intraday_corrections", "basis_weights", "TEXT NOT NULL DEFAULT '{\"open_meteo\": 1.0}'"),
         ]:
             try:
                 self._conn.execute(
@@ -311,6 +333,7 @@ class Database:
                         delta_f        REAL NOT NULL,
                         corrected_mu_f REAL NOT NULL,
                         decay_factor   REAL NOT NULL,
+                        basis_weights  TEXT NOT NULL DEFAULT '{"open_meteo": 1.0}',
                         PRIMARY KEY (city, station, source, date, obs_time)
                     )
                     """
@@ -320,10 +343,11 @@ class Database:
                     INSERT INTO intraday_corrections_new
                         (city, station, source, date, obs_time,
                          obs_temp_f, model_temp_f, delta_f,
-                         corrected_mu_f, decay_factor)
+                         corrected_mu_f, decay_factor, basis_weights)
                     SELECT city, '' AS station, '' AS source, date, obs_time,
                            obs_temp_f, model_temp_f, delta_f,
-                           corrected_mu_f, decay_factor
+                           corrected_mu_f, decay_factor,
+                           '{"open_meteo": 1.0}' AS basis_weights
                     FROM intraday_corrections
                     """
                 )
@@ -402,11 +426,12 @@ class Database:
                             settled_at      TEXT,
                             actual_fee_cents REAL,
                             size_eur        REAL,
-                            direction       TEXT NOT NULL DEFAULT 'high'
+                            direction       TEXT NOT NULL DEFAULT 'high',
+                            p_yes_raw       REAL
                         )
                         """
                     )
-                    # direction may not exist in old table — coalesce to 'high'
+                    # direction/p_yes_raw may not exist in old table — coalesce
                     old_cols_q = self._conn.execute(
                         "PRAGMA table_info(trades)"
                     ).fetchall()
@@ -414,12 +439,15 @@ class Database:
                     direction_expr = (
                         "direction" if "direction" in old_col_names else "'high'"
                     )
+                    p_yes_raw_expr = (
+                        "p_yes_raw" if "p_yes_raw" in old_col_names else "NULL"
+                    )
                     self._conn.execute(
                         "INSERT INTO trades_new SELECT "
                         "id,ts,station,ticker,bracket_low,bracket_high,side,"
                         "predicted_price,actual_price,slippage,predicted_edge,mode,"
                         "order_id,outcome,pnl,capital_before,capital_after,settled_at,"
-                        f"actual_fee_cents,size_eur,{direction_expr} "
+                        f"actual_fee_cents,size_eur,{direction_expr},{p_yes_raw_expr} "
                         "FROM trades"
                     )
                     self._conn.execute("DROP TABLE trades")
@@ -435,6 +463,29 @@ class Database:
                     )
             finally:
                 self._conn.execute("PRAGMA foreign_keys=ON")
+
+        self._purge_stale_deb_weight_log()
+
+    def _purge_stale_deb_weight_log(self) -> None:
+        """One-time idempotent cleanup for issue #552.
+
+        deb_weight_log's writer (the once-per-day logging side effect inside
+        deb_weighting.get_weights()) was silently removed in commit 94a2ece
+        (2026-06-26) and was never restored — ensemble_distribution.py now
+        reads model_weights directly instead (single source of truth, see
+        #552). Every row still in deb_weight_log therefore predates 195f08c
+        (2026-06-30, the per-region DEB routing fix) and may attribute "nws"
+        weight to non-US cities. get_emos_shadow_city_status() still surfaces
+        the latest deb_weight_log row for EMOS shadow monitoring, so purge the
+        contaminated backlog rather than leaving it to be served stale
+        indefinitely. No-op once the backlog has been purged.
+        """
+        with self._lock:
+            with self._conn:
+                self._conn.execute(
+                    "DELETE FROM deb_weight_log WHERE logged_at < ?",
+                    (_DEB_WEIGHT_LOG_PURGE_CUTOFF,),
+                )
 
     def close(self) -> None:
         """Close the underlying SQLite connection."""
@@ -688,6 +739,7 @@ class Database:
         minutes_to_settlement: float,
         flagged_first: int = 1,
         direction: str = "high",
+        p_yes_raw: "float | None" = None,
     ) -> int:
         """Insert a trade candidate; returns the new row id."""
         with self._lock:
@@ -695,12 +747,12 @@ class Database:
                 "INSERT INTO candidates"
                 "(ts,station,ticker,bracket_low,bracket_high,side,"
                 "predicted_price,predicted_edge,market_price,confidence,"
-                "minutes_to_settlement,flagged_first,direction) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "minutes_to_settlement,flagged_first,direction,p_yes_raw) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     ts, station, ticker, bracket_low, bracket_high, side,
                     predicted_price, predicted_edge, market_price, confidence,
-                    minutes_to_settlement, flagged_first, direction,
+                    minutes_to_settlement, flagged_first, direction, p_yes_raw,
                 ),
             )
             self._conn.commit()
@@ -740,6 +792,7 @@ class Database:
         settled_at: "str | None" = None,
         size_eur: "float | None" = None,
         direction: str = "high",
+        p_yes_raw: "float | None" = None,
     ) -> int:
         """Insert a trade record; returns the new row id."""
         with self._lock:
@@ -747,13 +800,14 @@ class Database:
                 "INSERT INTO trades"
                 "(ts,station,ticker,bracket_low,bracket_high,side,"
                 "predicted_price,actual_price,slippage,predicted_edge,mode,order_id,"
-                "outcome,pnl,capital_before,capital_after,settled_at,size_eur,direction) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "outcome,pnl,capital_before,capital_after,settled_at,size_eur,direction,"
+                "p_yes_raw) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     ts, station, ticker, bracket_low, bracket_high, side,
                     predicted_price, actual_price, slippage, predicted_edge, mode,
                     order_id, outcome, pnl, capital_before, capital_after, settled_at,
-                    size_eur, direction,
+                    size_eur, direction, p_yes_raw,
                 ),
             )
             self._conn.commit()
@@ -1020,6 +1074,7 @@ class Database:
         predicted_edge: float,
         capital_before: float = 0.0,
         direction: str = "high",
+        p_yes_raw: "float | None" = None,
     ) -> tuple[int, bool]:
         """Insert a shadow trade row, or update actual_price if one already exists today.
 
@@ -1050,12 +1105,12 @@ class Database:
                 "INSERT INTO trades"
                 "(ts,station,ticker,bracket_low,bracket_high,side,"
                 "predicted_price,actual_price,slippage,predicted_edge,mode,order_id,"
-                "outcome,pnl,capital_before,capital_after,settled_at,direction) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "outcome,pnl,capital_before,capital_after,settled_at,direction,p_yes_raw) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     ts, station, ticker, bracket_low, bracket_high, side,
                     predicted_price, actual_price, None, predicted_edge, "shadow",
-                    None, None, None, capital_before, None, None, direction,
+                    None, None, None, capital_before, None, None, direction, p_yes_raw,
                 ),
             )
             self._conn.commit()
@@ -1321,13 +1376,18 @@ class Database:
     # model_weights
     # ------------------------------------------------------------------
 
-    def upsert_model_weight(self, *, city: str, model: str, date: str, weight: float, rmse: float) -> None:
-        """Upsert a model weight record (unique on city, model, date)."""
+    def upsert_model_weight(self, *, city: str, model: str, date: str, weight: float, rmse: float, sample_count: int = 0) -> None:
+        """Upsert a model weight record (unique on city, model, date).
+
+        Args:
+            sample_count: number of matched-pair samples used to compute RMSE.
+                         Values < MIN_SAMPLES indicate cold-start (fallback) weights.
+        """
         with self._lock:
             with self._conn:
                 self._conn.execute(
-                    "INSERT OR REPLACE INTO model_weights(city,model,date,weight,rmse) VALUES(?,?,?,?,?)",
-                    (city, model, date, weight, rmse),
+                    "INSERT OR REPLACE INTO model_weights(city,model,date,weight,rmse,sample_count) VALUES(?,?,?,?,?,?)",
+                    (city, model, date, weight, rmse, sample_count),
                 )
 
     def get_model_weights(self, city: str) -> list[dict]:
@@ -1464,17 +1524,27 @@ class Database:
         delta_f: float,
         corrected_mu_f: float,
         decay_factor: float,
+        basis_weights: str = '{"open_meteo": 1.0}',
     ) -> None:
-        """Upsert an intraday correction record (unique on city, station, source, date, obs_time)."""
+        """Upsert an intraday correction record (unique on city, station, source, date, obs_time).
+
+        Args:
+            basis_weights: JSON-encoded snapshot of the DEB weights dict used to
+                build the intraday consensus basis for this delta (issue #572).
+                Defaults to the legacy open_meteo-only basis for callers that
+                don't pass one.
+        """
         with self._lock:
             with self._conn:
                 self._conn.execute(
                     "INSERT OR REPLACE INTO intraday_corrections"
                     "(city,station,source,date,obs_time,"
-                    "obs_temp_f,model_temp_f,delta_f,corrected_mu_f,decay_factor) "
-                    "VALUES(?,?,?,?,?,?,?,?,?,?)",
+                    "obs_temp_f,model_temp_f,delta_f,corrected_mu_f,decay_factor,"
+                    "basis_weights) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
                     (city, station, source, date, obs_time,
-                     obs_temp_f, model_temp_f, delta_f, corrected_mu_f, decay_factor),
+                     obs_temp_f, model_temp_f, delta_f, corrected_mu_f, decay_factor,
+                     basis_weights),
                 )
 
     def get_intraday_corrections(self, city: str, date: str) -> list[dict]:
