@@ -149,6 +149,7 @@ CREATE TABLE IF NOT EXISTS intraday_corrections (
     delta_f        REAL NOT NULL,
     corrected_mu_f REAL NOT NULL,
     decay_factor   REAL NOT NULL,
+    basis_weights  TEXT NOT NULL DEFAULT '{"open_meteo": 1.0}',
     PRIMARY KEY (city, station, source, date, obs_time)
 );
 CREATE INDEX IF NOT EXISTS idx_ic_city_date ON intraday_corrections(city, date);
@@ -274,6 +275,14 @@ class Database:
             # Issue #553: sample count for model_weights to distinguish calibrated
             # models (sample_count >= MIN_SAMPLES) from cold-start (sample_count < MIN_SAMPLES).
             ("model_weights", "sample_count", "INTEGER DEFAULT 0"),
+            # Issue #572: snapshot of the DEB weights dict used to build the
+            # intraday consensus basis for this delta, so the residual layer
+            # can later segment pre/post-fix deltas instead of mixing the
+            # open_meteo-only regime and the live-DEB-weighted regime in one
+            # rolling window. Default matches the legacy hardcoded basis, so
+            # historical rows (written before this migration) are tagged
+            # consistently with genuine fallback rows.
+            ("intraday_corrections", "basis_weights", "TEXT NOT NULL DEFAULT '{\"open_meteo\": 1.0}'"),
         ]:
             try:
                 self._conn.execute(
@@ -319,6 +328,7 @@ class Database:
                         delta_f        REAL NOT NULL,
                         corrected_mu_f REAL NOT NULL,
                         decay_factor   REAL NOT NULL,
+                        basis_weights  TEXT NOT NULL DEFAULT '{"open_meteo": 1.0}',
                         PRIMARY KEY (city, station, source, date, obs_time)
                     )
                     """
@@ -328,10 +338,11 @@ class Database:
                     INSERT INTO intraday_corrections_new
                         (city, station, source, date, obs_time,
                          obs_temp_f, model_temp_f, delta_f,
-                         corrected_mu_f, decay_factor)
+                         corrected_mu_f, decay_factor, basis_weights)
                     SELECT city, '' AS station, '' AS source, date, obs_time,
                            obs_temp_f, model_temp_f, delta_f,
-                           corrected_mu_f, decay_factor
+                           corrected_mu_f, decay_factor,
+                           '{"open_meteo": 1.0}' AS basis_weights
                     FROM intraday_corrections
                     """
                 )
@@ -1485,17 +1496,27 @@ class Database:
         delta_f: float,
         corrected_mu_f: float,
         decay_factor: float,
+        basis_weights: str = '{"open_meteo": 1.0}',
     ) -> None:
-        """Upsert an intraday correction record (unique on city, station, source, date, obs_time)."""
+        """Upsert an intraday correction record (unique on city, station, source, date, obs_time).
+
+        Args:
+            basis_weights: JSON-encoded snapshot of the DEB weights dict used to
+                build the intraday consensus basis for this delta (issue #572).
+                Defaults to the legacy open_meteo-only basis for callers that
+                don't pass one.
+        """
         with self._lock:
             with self._conn:
                 self._conn.execute(
                     "INSERT OR REPLACE INTO intraday_corrections"
                     "(city,station,source,date,obs_time,"
-                    "obs_temp_f,model_temp_f,delta_f,corrected_mu_f,decay_factor) "
-                    "VALUES(?,?,?,?,?,?,?,?,?,?)",
+                    "obs_temp_f,model_temp_f,delta_f,corrected_mu_f,decay_factor,"
+                    "basis_weights) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
                     (city, station, source, date, obs_time,
-                     obs_temp_f, model_temp_f, delta_f, corrected_mu_f, decay_factor),
+                     obs_temp_f, model_temp_f, delta_f, corrected_mu_f, decay_factor,
+                     basis_weights),
                 )
 
     def get_intraday_corrections(self, city: str, date: str) -> list[dict]:
