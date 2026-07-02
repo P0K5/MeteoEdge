@@ -162,6 +162,77 @@ sudo systemctl start meteoedge-settle.service
 sudo journalctl -u meteoedge-settle.service -f
 ```
 
+#### meteoedge-prob-cap-report.service / meteoedge-prob-cap-report.timer
+
+One-shot service, run daily at **12:30 UTC** (after `meteoedge-settle.timer` at
+12:00 UTC) by `meteoedge-prob-cap-report.timer`. Runs
+`scripts/prob_cap_shadow_report.py`, the self-gating shadow report for the
+`MODEL_PROB_CAP` decision tracked by issues #551/#570.
+
+```ini
+[Unit]
+Description=MeteoEdge prob-cap shadow report (issue #570 / #551)
+After=network-online.target meteoedge-settle.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=p0k5
+WorkingDirectory=/home/p0k5/MeteoEdge
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=/home/p0k5/MeteoEdge/.env
+ExecStart=/home/p0k5/MeteoEdge/.venv/bin/python -u scripts/prob_cap_shadow_report.py
+StandardOutput=append:/home/p0k5/MeteoEdge/logs/prob_cap_report.log
+StandardError=append:/home/p0k5/MeteoEdge/logs/prob_cap_report.log
+```
+
+```ini
+[Unit]
+Description=Run MeteoEdge prob-cap shadow report daily at 12:30 UTC (after settlement)
+
+[Timer]
+OnCalendar=*-*-* 12:30:00 UTC
+AccuracySec=1m
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+```
+
+**What it does:**
+- Self-gating: counts distinct dates with non-NULL `p_yes_raw` candidate data
+  (from `logs/candidates.csv`) since PR #564 deployed. Below `--min-days`
+  (default 7) it logs one line and exits 0 — safe to run every day from the
+  moment the timer is installed, well before there is 7 days of data.
+- At/above the threshold, writes `backtest_results/prob_cap_shadow_<date>.md`:
+  clamp saturation rate, distribution of `p_yes_raw` among clamped candidates,
+  a simulated `MODEL_PROB_CAP` comparison across 0.95/0.97/0.98 (NO side only
+  — the protected side), a two-channel breakout (edge-driven vs
+  gate-headroom-driven, see the script's module docstring) with
+  `MAX_CONFIDENCE_YES_FOR_NO` held fixed per the binding PM spec on issue
+  #570, a `RANK_ON_RAW_PROB` ordering simulation, and an explicit
+  change/hold/extend-window recommendation.
+- **No live gate changes**: this script only reads `logs/candidates.csv`,
+  `logs/settlements.csv`, and `logs/snapshots.jsonl` and writes a markdown
+  report. It never touches `MODEL_PROB_CAP`, `MAX_CONFIDENCE_YES_FOR_NO`, or
+  any other live config.
+
+**Operational commands:**
+```bash
+# Check next scheduled run
+sudo systemctl list-timers meteoedge-prob-cap-report.timer
+
+# Manually trigger a run (e.g. to check gating status early)
+sudo systemctl start meteoedge-prob-cap-report.service
+
+# Or run directly without systemd (prints instead of writing a file)
+python scripts/prob_cap_shadow_report.py --dry-run
+
+# View logs
+sudo journalctl -u meteoedge-prob-cap-report.service -f
+tail -f logs/prob_cap_report.log
+```
+
 ---
 
 ## Configuration

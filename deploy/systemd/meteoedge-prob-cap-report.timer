@@ -1,0 +1,10 @@
+[Unit]
+Description=Run MeteoEdge prob-cap shadow report daily at 12:30 UTC (after settlement)
+
+[Timer]
+OnCalendar=*-*-* 12:30:00 UTC
+AccuracySec=1m
+Persistent=true
+
+[Install]
+WantedBy=timers.target
