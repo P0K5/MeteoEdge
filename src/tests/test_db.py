@@ -568,6 +568,59 @@ class TestIntradayCorrectionsMigration:
         all_deltas = db.get_trailing_deltas("Busan", 30)
         assert len(all_deltas) == 2
 
+    def test_get_trailing_deltas_min_date_excludes_earlier_rows(self):
+        """min_date raises the window's lower bound when more recent than
+        today - window_days (issue #586: excludes pre-basis-regime rows).
+
+        All dates are computed relative to date.today() at test-run time (no
+        hardcoded calendar literals), so the test is deterministic regardless
+        of which day it actually runs.
+        """
+        from datetime import date, timedelta
+        db = _db()
+        today = date.today()
+
+        def _row_on(offset_days, delta_f):
+            d = (today - timedelta(days=offset_days)).isoformat()
+            db.upsert_intraday_correction(
+                city="Busan", station="Busan", source="amos",
+                date=d, obs_time=f"{d}T08:00:00+00:00",
+                obs_temp_f=70.0, model_temp_f=70.0 - delta_f,
+                delta_f=delta_f, corrected_mu_f=70.0 + delta_f, decay_factor=0.9,
+            )
+
+        # 20 days ago: inside the 30-day window, but before min_date (10 days ago).
+        _row_on(20, delta_f=99.0)
+        # 5 days ago: inside the window AND on/after min_date.
+        _row_on(5, delta_f=3.0)
+
+        min_date = (today - timedelta(days=10)).isoformat()
+
+        unfiltered = db.get_trailing_deltas("Busan", 30)
+        assert len(unfiltered) == 2, "sanity check: both rows are inside the 30-day window"
+
+        filtered = db.get_trailing_deltas("Busan", 30, min_date=min_date)
+        assert filtered == [pytest.approx(3.0)], (
+            "min_date should exclude the row recorded before it, even though "
+            "it is within the trailing window_days"
+        )
+
+    def test_get_trailing_deltas_min_date_noop_when_older_than_window(self):
+        """min_date older than today - window_days does not widen the window."""
+        from datetime import date, timedelta
+        db = _db()
+        today = date.today()
+        d = (today - timedelta(days=5)).isoformat()
+        db.upsert_intraday_correction(
+            city="Busan", station="Busan", source="amos",
+            date=d, obs_time=f"{d}T08:00:00+00:00",
+            obs_temp_f=70.0, model_temp_f=68.0,
+            delta_f=2.0, corrected_mu_f=72.0, decay_factor=0.9,
+        )
+        far_past_min_date = (today - timedelta(days=365)).isoformat()
+        deltas = db.get_trailing_deltas("Busan", 30, min_date=far_past_min_date)
+        assert deltas == [pytest.approx(2.0)]
+
     def test_migration_old_schema_adds_station_source(self):
         """Migration converts old (city, date, obs_time) PK to new 5-column PK."""
         import sqlite3
