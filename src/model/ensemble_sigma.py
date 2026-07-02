@@ -16,6 +16,32 @@ estimator is used as a fallback.
 
 σ floor: 1.0 °F — never return a pathologically narrow distribution.
 
+Capture vs. consumption split (issue #555)
+--------------------------------------------
+Prior to #555, ``compute_ensemble_sigma()`` was called directly by the
+capture worker (``src/scripts/capture_forecasts.py``) and its floored
+return value was persisted verbatim to ``model_forecast_log.sigma_f``.
+That destroyed the real ensemble-spread signal at logging time: 240/345
+GEFS rows sat at exactly the 1.00°F floor, starving EMOS's spread
+coefficient ``d`` (``σ_calibrated = c + d·σ_ensemble``) of any signal to
+learn from.
+
+The floor now applies **only at consumption time**, not at capture time:
+
+- ``raw_member_sigma()`` — capture-time.  Returns the *unfloored* sample
+  stdev of the raw ensemble members (or ``None`` when it cannot be
+  computed).  This is what ``src/scripts/capture_forecasts.py`` persists
+  to ``model_forecast_log.sigma_f`` for the ``gefs`` channel.  A genuine
+  near-zero spread is logged as a genuine near-zero value — never
+  silently clamped up.
+- ``compute_ensemble_sigma()`` — consumption-time.  Unchanged behaviour:
+  still applies ``SIGMA_FLOOR_F`` (and the historical-calibration
+  regression when enough history is available).  This is the sanctioned
+  entry point for anything that needs a ready-to-use, floor-safe σ for
+  live probability/trading computations (envelope, EMOS "shadow"
+  training self-calibration, etc.) — its output is unchanged by #555 so
+  no existing or future caller sees a behaviour change.
+
 This module is compute-only.  It does NOT:
 - Write any rows to the database (that is tracked in #448, Week 3).
 - Import from src/trading/, src/strategy/, or src/model/envelope.py.
@@ -45,6 +71,36 @@ def _naive_sigma(members: list[float]) -> float:
     except statistics.StatisticsError:
         return SIGMA_FLOOR_F
     return max(s, SIGMA_FLOOR_F)
+
+
+def raw_member_sigma(members: list[float]) -> "float | None":
+    """Return the UNFLOORED sample stdev of ensemble members (capture-time).
+
+    This is the raw member-spread signal EMOS needs as its σ input (#555):
+    ``σ_calibrated = c + d·σ_ensemble`` cannot learn ``d`` from a σ_ensemble
+    that has already been clamped to a floor before it was logged.
+
+    Unlike ``compute_ensemble_sigma()``, this function performs NO
+    calibration-regression and applies NO ``SIGMA_FLOOR_F`` clamp — the true
+    (possibly near-zero) spread is returned as-is. Callers that need a
+    floor-safe σ for live consumption (envelope/probability computation)
+    must go through ``compute_ensemble_sigma()`` instead; the floor must
+    never be baked into what gets persisted to ``model_forecast_log``.
+
+    Args:
+        members: List of per-member daily-high values in °F.
+
+    Returns:
+        Sample stdev (ddof=1) of ``members``, or ``None`` when fewer than 2
+        members are given (stdev is undefined) — callers should persist
+        ``NULL`` in that case rather than inventing a placeholder number.
+    """
+    if len(members) < 2:
+        return None
+    try:
+        return statistics.stdev(members)
+    except statistics.StatisticsError:
+        return None
 
 
 def _load_calibration_pairs(

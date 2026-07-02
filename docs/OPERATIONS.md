@@ -926,6 +926,63 @@ No trading halt is required. The reset affects only EMOS calibration; all live t
 
 **Reference:** See `docs/design/open-positions-source-of-truth.md` for the full architecture spec.
 
+### Per-Channel `sigma_f` Sourcing Policy (issue #555)
+
+**Decision:** `model_forecast_log.sigma_f` must either carry a genuine dispersion
+signal or be an honestly-`NULL` "we don't have one" — never a silently-invented
+number. Prior to #555, `compute_ensemble_sigma()` (which applies
+`SIGMA_FLOOR_F=1.0°F`) was called directly at GEFS capture time and its
+*floored* return value was persisted verbatim: 240 of 345 GEFS rows sat at
+exactly the 1.00°F floor, destroying the real ensemble-spread signal EMOS
+needs to learn its spread coefficient `d` (`σ_calibrated = c + d·σ_ensemble`).
+
+The fix splits capture-time and consumption-time sigma:
+
+- **Capture time** (`src/scripts/capture_forecasts.py`): for the `gefs`
+  channel, `raw_member_sigma()` (`src/model/ensemble_sigma.py`) computes the
+  **unfloored** sample stdev of the raw ensemble members and persists it
+  as-is — including genuine near-zero spreads — or `NULL` when fewer than 2
+  members are available.
+- **Consumption time** (live probability/trading, EMOS shadow
+  self-calibration, etc.): `compute_ensemble_sigma()` is unchanged — it still
+  applies `SIGMA_FLOOR_F` (and the historical-calibration regression when
+  enough history exists). Its behavior and output are identical to
+  pre-#555 for the same inputs; no existing or future caller of that function
+  sees any behavior change.
+
+**Committed per-channel decision table:**
+
+| Channel | Decision | Rationale |
+|---|---|---|
+| `nws` | Derive | Climatological σ keyed on `lead_hours` (see `src/data/nws.py:_nws_sigma_for_lead`) — a documented static per-lead dispersion table, not a raw ensemble, but a real signal. |
+| `open_meteo` | Derive | Cross-model stdev across 4 constituent NWP runs (`ecmwf_ifs04`/`gfs_seamless`/`jma_seamless`/`best_match`) — genuine multi-model spread. |
+| `gfs` | NULL | Single deterministic run (#548); no ensemble or multi-model spread exists to derive from. |
+| `gefs` | Derive (raw, unfloored) | Raw stdev of the ~30 GEFS members — the one true ensemble-member spread captured. `SIGMA_FLOOR_F` is applied only at consumption (`src/model/ensemble_sigma.py::compute_ensemble_sigma`), never at capture. |
+| `hrrr` | NULL | Single deterministic run, hourly grid only; no member spread. A lagged-run spread (diff between consecutive HRRR cycles) could be derived but requires additional cycle-history plumbing not yet built — left NULL rather than inventing a static number. Revisit if a future issue adds lagged-run ingestion. |
+| `nbm` | NULL | NBM itself blends models internally but the open endpoint used here exposes only the point forecast, not its internal spread — left NULL rather than a fabricated constant. |
+| `ecmwf` | NULL | Single deterministic run (open-data endpoint does not expose the ECMWF ensemble/EPS spread) — left NULL rather than a fabricated constant. |
+| `icon` | NULL | Single deterministic run (open-data endpoint does not expose ICON-EPS spread) — left NULL rather than a fabricated constant. |
+
+**Impact on future agents:**
+- Do not call `compute_ensemble_sigma()` from `capture_forecasts.py` — it
+  floors its return value, which would reintroduce the bug #555 fixed. Use
+  `raw_member_sigma()` for anything persisted to `model_forecast_log.sigma_f`.
+- Do not call `raw_member_sigma()` from live probability/trading code — it
+  deliberately omits the floor and the historical-calibration regression;
+  `compute_ensemble_sigma()` remains the sanctioned consumption-time entry
+  point (integration tracked in #448, Week 3).
+- EMOS trains per-channel (see `forecast_source`/`regime` filtering in
+  `src/model/emos_calibration.py:fetch_training_data`), so a NULL `sigma_f`
+  for a given channel only means that channel's EMOS fit falls back to
+  `FORECAST_STDDEV_F` — it does not block other channels from training on
+  their own real sigma.
+- Use `scripts/check_emos_data_quality.py` (`print_sigma_quality_report()`)
+  to monitor floor-saturation and NULL-sigma rates per channel going forward.
+
+**Reference:** See `src/scripts/capture_forecasts.py` module docstring and
+`src/model/ensemble_sigma.py` module docstring for the same table maintained
+alongside the code.
+
 ---
 
 ## Support & Escalation
