@@ -3,6 +3,7 @@
 
 Usage:
     python scripts/build_climb_lookup.py
+    python scripts/build_climb_lookup.py --from-db [--force]
 
 Output:
     src/data/climb_lookup.py  — CLIMB_LOOKUP dict used by envelope model
@@ -28,9 +29,22 @@ Methodology:
 Network requirement:
     - meteostat.net and archive-api.open-meteo.com must be reachable.
     - If blocked (403 / timeout), synthetic fallback is used automatically.
+
+--from-db mode safety:
+    When using --from-db to regenerate from accumulated observations, the script
+    checks that src/data/climb_lookup.py matches HEAD to ensure the fallback
+    baseline (used for sparse cells) is not poisoned by uncommitted changes. If
+    the file is dirty:
+      - Without --force: aborts with a clear message (restore with
+        'git checkout -- src/data/climb_lookup.py' or commit first).
+      - With --force: proceeds with a warning (for intentional incremental
+        refinement on a reviewed baseline).
+    If git is unavailable (not a repo / no git binary), a warning is issued but
+    execution proceeds (the check is a safety net, not a hard dependency).
 """
 
 import logging
+import subprocess
 import sys
 import datetime
 from pathlib import Path
@@ -706,6 +720,48 @@ def compute_from_db(
     return lookup, sources
 
 
+def check_climb_lookup_dirty(force: bool = False) -> None:
+    """Check if src/data/climb_lookup.py differs from HEAD.
+
+    Args:
+        force: If True, proceed with a warning even if dirty. If False, abort if dirty.
+
+    Raises:
+        SystemExit: If the file is dirty and force=False.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "diff", "--quiet", "--", "src/data/climb_lookup.py"],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            # File is dirty (git diff exits with code 1 if differences exist)
+            if force:
+                logger.warning(
+                    "climb_lookup.py has uncommitted changes — proceeding with --force. "
+                    "The fallback baseline will use the current dirty state."
+                )
+            else:
+                print(
+                    "ERROR: climb_lookup.py has uncommitted changes — the fallback baseline "
+                    "would inherit poisoned data.\n\n"
+                    "Fix options:\n"
+                    "  1. Restore the file: git checkout -- src/data/climb_lookup.py\n"
+                    "  2. Commit changes: git add src/data/climb_lookup.py && git commit -m '...'\n"
+                    "  3. Override (if you know what you're doing): --force flag\n",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+    except FileNotFoundError:
+        # git binary not found or not in a git repo
+        logger.warning(
+            "git not available or not in a git repo — skipping dirty-baseline check. "
+            "If using --from-db, ensure src/data/climb_lookup.py reflects a clean, "
+            "reviewed baseline."
+        )
+
+
 def main() -> None:
     import argparse
     parser = argparse.ArgumentParser(description="Build per-station p95 climb-rate lookup table.")
@@ -719,11 +775,18 @@ def main() -> None:
         default="data/meteoedge.db",
         help="Path to the SQLite database file (default: data/meteoedge.db). Used with --from-db.",
     )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Proceed with --from-db even if src/data/climb_lookup.py has uncommitted changes "
+             "(for intentional incremental refinement on a reviewed baseline).",
+    )
     args = parser.parse_args()
 
     out_path = Path(__file__).parent.parent / "src" / "data" / "climb_lookup.py"
 
     if args.from_db:
+        check_climb_lookup_dirty(force=args.force)
         # Load existing lookup as synthetic baseline
         from src.data.climb_lookup import CLIMB_LOOKUP as _existing  # noqa: E402
         existing_lookup: "dict[str, dict[int, dict[int, float]]]" = dict(_existing)
