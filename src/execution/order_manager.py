@@ -338,6 +338,7 @@ def _reconcile_db_row(record: dict, ts: str, db=None) -> None:
                 order_id=order_id or None,
                 outcome="filled",
                 capital_before=float(record.get("size_eur", 0)),
+                p_yes_raw=record.get("p_yes_raw"),
             )
     except Exception as e:
         log.warning("[reconcile] DB trade update failed for order %s...: %s", str(order_id)[:12], e)
