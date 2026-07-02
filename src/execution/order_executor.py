@@ -83,6 +83,7 @@ def _execute_live(
                     bracket_high=candidate.bracket.high_f,
                     predicted_price=predicted_price,
                     predicted_edge=round(candidate.edge_cents, 2),
+                    p_yes_raw=candidate.p_yes_raw,
                 )
             except Exception as e:
                 log.error("  [live] place_order failed: %s", e, exc_info=True)
@@ -145,6 +146,7 @@ def _execute_live(
             "size_eur": size_eur,
             "sizing_mode": SIZING_MODE,
             "edge_cents": round(candidate.edge_cents, 2),
+            "p_yes_raw": candidate.p_yes_raw,
             "outcome": outcome,
         }, db=db)
         log.info("  [live] %s %s...", outcome, order_id[:12])

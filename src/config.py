@@ -491,6 +491,11 @@ CONFIG_DEFAULTS: "dict[str, str | int | float | bool]" = {
     "SHADOW_MIN_CONFIDENCE_YES": 0.55,
     "SHADOW_MIN_PRICE_CENTS_YES": 20,
     "MODEL_PROB_CAP": 0.95,
+    # Stage 1 of issue #551: rank/prioritize candidates using the uncapped (raw)
+    # model probability instead of scan order. Default off -- entry gates always
+    # consume the capped p_yes regardless of this flag; only which candidate is
+    # preferred for execution (when capital/risk slots are limited) changes.
+    "RANK_ON_RAW_PROB": False,
     # Residual bias correction (issue #307)
     "MAX_RESIDUAL_MAE_F_FOR_LIVE": 8.0,
     "RESIDUAL_WINDOW_DAYS": 30,
