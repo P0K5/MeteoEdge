@@ -3,7 +3,7 @@
 All HTTP calls go through http_client for rate limiting, retry, and caching.
 STATION_TZ is imported from src.config to avoid duplication.
 """
-from datetime import datetime
+from datetime import datetime, timedelta
 from dateutil import parser as dtparse
 from datetime import timezone
 import pytz
@@ -61,6 +61,83 @@ def sunset_local(station: str, lat: float, lon: float) -> datetime:
     loc = LocationInfo(station, "US", STATION_TZ[station], lat, lon)
     s = sun(loc.observer, date=datetime.now(local_tz).date(), tzinfo=local_tz)
     return s["sunset"]
+
+
+def low_window_bounds(station: str, lat: float, lon: float) -> "tuple[datetime, datetime]":
+    """Return (window_start, window_end) for the current overnight-low observation window.
+
+    Lowest-temperature markets settle against the minimum observed roughly
+    between local sunset and the following local sunrise (~12:00 UTC
+    settlement). This returns:
+      - window_start: the most recent local sunset that has already occurred
+      - window_end:   the local sunrise that follows window_start
+
+    If ``now`` is before today's sunrise (i.e. still inside last night's
+    window), window_end is still in the future. If ``now`` is after today's
+    sunrise but before today's sunset (broad daytime), window_end is in the
+    past -- the overnight window has already closed and a new one hasn't
+    started. Callers should treat a past window_end as "no live low market
+    open for this window" -- scan_markets already skips markets whose
+    settlement date/time don't match via its own wrong_date/outside_window
+    checks, so no extra gating is required here.
+    """
+    local_tz = pytz.timezone(STATION_TZ[station])
+    loc = LocationInfo(station, "US", STATION_TZ[station], lat, lon)
+    now = datetime.now(local_tz)
+
+    s_today = sun(loc.observer, date=now.date(), tzinfo=local_tz)
+    if now >= s_today["sunset"]:
+        window_start = s_today["sunset"]
+        s_next = sun(loc.observer, date=now.date() + timedelta(days=1), tzinfo=local_tz)
+        window_end = s_next["sunrise"]
+    else:
+        s_prev = sun(loc.observer, date=now.date() - timedelta(days=1), tzinfo=local_tz)
+        window_start = s_prev["sunset"]
+        window_end = s_today["sunrise"]
+    return window_start, window_end
+
+
+def compute_daily_low_window(
+    metars: list[dict], tz_name: str, window_start_local: datetime
+) -> "tuple[float, datetime] | None":
+    """Compute the running minimum temperature observed since *window_start_local*.
+
+    Analogous to :func:`compute_daily_high` but for the overnight-low
+    observation window (previous sunset -> next sunrise) instead of the
+    calendar-day-since-sunrise window used for daily highs.
+
+    Args:
+        metars: List of METAR report dicts (each containing 'temp', 'reportTime'/'obsTime', etc.)
+        tz_name: Timezone name (e.g., 'America/Chicago')
+        window_start_local: Start of the observation window (tz-aware, local time) --
+            typically the value returned by ``low_window_bounds()[0]``.
+
+    Returns:
+        Tuple of (low_temp_f, obs_time_local) for the running low, or None if
+        no observations fall within the window yet.
+    """
+    tz = pytz.timezone(tz_name)
+    best_temp, best_time = None, None
+    for m in metars:
+        temp_c = m.get("temp")
+        obs_time_str = m.get("reportTime") or m.get("obsTime")
+        if temp_c is None or obs_time_str is None:
+            continue
+        try:
+            obs_time = dtparse.parse(obs_time_str)
+            if obs_time.tzinfo is None:
+                obs_time = obs_time.replace(tzinfo=timezone.utc)
+            obs_local = obs_time.astimezone(tz)
+            if obs_local < window_start_local:
+                continue  # before the overnight-low observation window
+            temp_f = (float(temp_c) * 9 / 5) + 32
+            if best_temp is None or temp_f < best_temp:
+                best_temp, best_time = temp_f, obs_local
+        except Exception:
+            continue
+    if best_temp is None:
+        return None
+    return best_temp, best_time
 
 
 def compute_daily_high_from_db_observations(
