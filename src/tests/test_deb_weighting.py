@@ -34,6 +34,23 @@ from src.model.deb_weighting import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _neutralize_gfs_duplicate_era_cutoff(monkeypatch):
+    """Neutralize the GFS_DATA_VALID_FROM duplicate-era filter (issue #548) for
+    every test in this module by default.
+
+    Most fixtures below build "gfs" matched pairs using dates relative to
+    date.today() (e.g. `today - timedelta(days=29)`), which predate the real
+    GFS_DATA_VALID_FROM constant and would otherwise be silently excluded from
+    training, pushing "gfs" into cold-start and breaking assertions that are
+    about registry/cold-start/decay behavior, not about the duplicate-era
+    filter itself. Push the cutoff safely into the past here; the dedicated
+    TestGfsDuplicateEraFilter class below overrides it again to test the
+    filter directly.
+    """
+    monkeypatch.setattr(dw, "GFS_DATA_VALID_FROM", "2000-01-01")
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -932,3 +949,150 @@ class TestComputeDebMuFEcmwfIcon:
 
         assert "ecmwf" not in log_output.lower()
         assert result is not None
+
+
+# ---------------------------------------------------------------------------
+# GFS duplicate-era training filter (issue #548)
+# ---------------------------------------------------------------------------
+
+class TestGfsDuplicateEraFilter:
+    """Verify compute_weights() excludes "gfs" matched pairs dated before
+    GFS_DATA_VALID_FROM, so DEB never calibrates on the pre-#548 period when
+    fetch_gfs_with_spread() was a byte-identical duplicate of
+    fetch_open_meteo_with_spread(). Other channels (nws, open_meteo, ...) must
+    be unaffected by the cutoff.
+
+    The cutoff is deployment date + 1 (2026-07-02): the old duplicated code
+    kept writing gfs rows throughout deployment day (2026-07-01), so
+    deployment-day rows are contaminated and must also be excluded.
+    """
+
+    CUTOFF = "2026-07-02"  # mirrors the real GFS_DATA_VALID_FROM (deploy day + 1)
+
+    def _rows(self, dates: list, model: str, forecast_high_f: float) -> list:
+        return [{"date": d, "model": model, "forecast_high_f": forecast_high_f} for d in dates]
+
+    def test_gfs_rows_before_cutoff_excluded_from_training(self, monkeypatch):
+        """gfs rows dated strictly before GFS_DATA_VALID_FROM don't count toward
+        MIN_SAMPLES — gfs stays cold-start even with plenty of duplicate-era
+        rows. Includes a deployment-day (2026-07-01) row, which the old code
+        was still writing and must also be excluded."""
+        monkeypatch.setattr(dw, "GFS_DATA_VALID_FROM", self.CUTOFF)
+
+        pre_cutoff_dates = [f"2026-06-{d:02d}" for d in range(1, MIN_SAMPLES + 3)]
+        pre_cutoff_dates.append("2026-07-01")  # deployment day — still contaminated
+        settlements = [
+            {"ts": f"{d}T12:00:00", "actual_high_f": 80.0} for d in pre_cutoff_dates
+        ]
+        logs = self._rows(pre_cutoff_dates, "gfs", 79.0)
+        db = MagicMock(spec=["get_forecast_log", "get_settlements"])
+        db.get_forecast_log.return_value = logs
+        db.get_settlements.return_value = settlements
+
+        weights = compute_weights(db, "KORD", "Chicago", station_region="us")
+        # All models (including gfs) have zero post-cutoff samples -> full cold-start
+        assert weights == dict(dw._equal_weights_for("us"))
+
+    def test_gfs_rows_on_or_after_cutoff_are_trained_on(self, monkeypatch):
+        """gfs rows dated on/after GFS_DATA_VALID_FROM DO count toward MIN_SAMPLES
+        and participate in calibrated RMSE weighting like any other channel.
+        The first clean date (2026-07-02, the cutoff itself) is included."""
+        monkeypatch.setattr(dw, "GFS_DATA_VALID_FROM", self.CUTOFF)
+
+        n = MIN_SAMPLES + 2
+        # Dates start AT the cutoff (2026-07-02) — inclusive boundary
+        post_cutoff_dates = [f"2026-07-{d:02d}" for d in range(2, n + 2)]
+        settlements = [
+            {"ts": f"{d}T12:00:00", "actual_high_f": 80.0} for d in post_cutoff_dates
+        ]
+        logs = (
+            self._rows(post_cutoff_dates, "gfs", 79.5)
+            + self._rows(post_cutoff_dates, "open_meteo", 79.5)
+        )
+        db = MagicMock(spec=["get_forecast_log", "get_settlements"])
+        db.get_forecast_log.return_value = logs
+        db.get_settlements.return_value = settlements
+
+        weights = compute_weights(db, "KORD", "Chicago", station_region="us")
+        # gfs is calibrated (not cold-start default fraction) -- it shares the
+        # calibrated budget with open_meteo rather than getting a lone
+        # cold-start weight, so it should exceed the plain equal-weight share.
+        equal_share = 1.0 / len(dw.MODELS)
+        assert weights["gfs"] > equal_share * 0.9
+        assert isclose(sum(weights.values()), 1.0, abs_tol=1e-6)
+
+    def test_deployment_day_row_excluded_cutoff_day_row_included(self, monkeypatch):
+        """Exact boundary: a 2026-07-01 (deployment-day) gfs row is excluded,
+        while a 2026-07-02 (cutoff-day) row is included in training."""
+        monkeypatch.setattr(dw, "GFS_DATA_VALID_FROM", self.CUTOFF)
+
+        n = MIN_SAMPLES  # exactly MIN_SAMPLES clean rows: 07-02 .. 07-11
+        clean_dates = [f"2026-07-{d:02d}" for d in range(2, n + 2)]
+        all_dates = ["2026-07-01"] + clean_dates
+        settlements = [
+            {"ts": f"{d}T12:00:00", "actual_high_f": 80.0} for d in all_dates
+        ]
+        logs = self._rows(all_dates, "gfs", 79.0)
+        db = MagicMock(spec=["get_forecast_log", "get_settlements"])
+        db.get_forecast_log.return_value = logs
+        db.get_settlements.return_value = settlements
+
+        weights = compute_weights(db, "KORD", "Chicago", station_region="us")
+        # The 07-01 row must NOT count; the n clean rows exactly reach
+        # MIN_SAMPLES, so gfs is calibrated (weights differ from equal split).
+        assert weights != dict(dw._equal_weights_for("us"))
+        assert isclose(sum(weights.values()), 1.0, abs_tol=1e-6)
+
+        # Counter-check: drop one clean row -> only MIN_SAMPLES - 1 countable
+        # rows remain (07-01 must not fill the gap) -> full cold-start.
+        db2 = MagicMock(spec=["get_forecast_log", "get_settlements"])
+        db2.get_forecast_log.return_value = self._rows(all_dates[:-1], "gfs", 79.0)
+        db2.get_settlements.return_value = settlements
+        weights2 = compute_weights(db2, "KORD", "Chicago", station_region="us")
+        assert weights2 == dict(dw._equal_weights_for("us"))
+
+    def test_mixed_pre_and_post_cutoff_only_post_cutoff_rows_counted(self, monkeypatch):
+        """A mix of pre- and post-cutoff gfs rows: only post-cutoff rows count
+        toward MIN_SAMPLES, so a duplicate-heavy history doesn't mask a thin
+        post-cutoff sample."""
+        monkeypatch.setattr(dw, "GFS_DATA_VALID_FROM", self.CUTOFF)
+
+        pre_cutoff_dates = [f"2026-06-{d:02d}" for d in range(1, 21)]  # 20 duplicate-era rows
+        pre_cutoff_dates.append("2026-07-01")  # deployment day — also duplicate-era
+        post_cutoff_dates = [f"2026-07-{d:02d}" for d in range(2, 5)]  # only 3 genuine rows
+        all_dates = pre_cutoff_dates + post_cutoff_dates
+        settlements = [
+            {"ts": f"{d}T12:00:00", "actual_high_f": 80.0} for d in all_dates
+        ]
+        logs = self._rows(all_dates, "gfs", 79.0)
+        db = MagicMock(spec=["get_forecast_log", "get_settlements"])
+        db.get_forecast_log.return_value = logs
+        db.get_settlements.return_value = settlements
+
+        weights = compute_weights(db, "KORD", "Chicago", station_region="us")
+        # Only 3 genuine post-cutoff rows < MIN_SAMPLES (10) -> still cold-start
+        # despite 24 total rows on disk.
+        assert weights == dict(dw._equal_weights_for("us"))
+
+    def test_other_channels_unaffected_by_gfs_cutoff(self, monkeypatch):
+        """The duplicate-era filter is scoped to 'gfs' only — nws/open_meteo
+        pre-cutoff rows must still be trained on normally."""
+        monkeypatch.setattr(dw, "GFS_DATA_VALID_FROM", self.CUTOFF)
+
+        pre_cutoff_dates = [f"2026-06-{d:02d}" for d in range(1, MIN_SAMPLES + 3)]
+        settlements = [
+            {"ts": f"{d}T12:00:00", "actual_high_f": 80.0} for d in pre_cutoff_dates
+        ]
+        logs = (
+            self._rows(pre_cutoff_dates, "nws", 80.2)
+            + self._rows(pre_cutoff_dates, "open_meteo", 82.0)
+        )
+        db = MagicMock(spec=["get_forecast_log", "get_settlements"])
+        db.get_forecast_log.return_value = logs
+        db.get_settlements.return_value = settlements
+
+        weights = compute_weights(db, "KORD", "Chicago", station_region="us")
+        # nws (smaller error) should be calibrated and outweigh open_meteo,
+        # despite all rows predating GFS_DATA_VALID_FROM -- the cutoff must not
+        # apply to non-gfs channels.
+        assert weights["nws"] > weights["open_meteo"]

@@ -1,12 +1,16 @@
 """Tests for forecast ingestion in capture_forecasts.py.
 
 Covers:
+- GFS single-model source (#548): (mu, None) return shape logs cleanly and
+  persists NULL sigma_f; fallback not used when primary succeeds.
 - GEFS ensemble (#490): happy path, fetch failure.
 - HRRR, NBM, ECMWF, ICON shadow sources (#492): 3 tests each —
   happy path writes row, domain/availability skip does not write,
   fetch failure does not raise.
 """
 from __future__ import annotations
+
+import logging
 
 from unittest.mock import MagicMock, patch
 
@@ -126,6 +130,97 @@ def _silence_base_sources():
         patch("src.data.icon.fetch_icon_hourly", return_value=[]),
     ):
         yield
+
+
+# ---------------------------------------------------------------------------
+# TestGfsCapture (issue #548 — single-model gfs_seamless, sigma always None)
+# ---------------------------------------------------------------------------
+
+class TestGfsCapture:
+    """GFS capture with the post-#548 (mu_f, None) return shape.
+
+    fetch_gfs_with_spread() now returns sigma=None (single deterministic
+    model, no member spread). The capture log line previously formatted sigma
+    with "%.2fF", which raises TypeError on None inside the logging machinery
+    — these tests format every emitted record to catch that regression.
+    """
+
+    def test_none_sigma_logs_cleanly_and_persists_null(self, caplog):
+        """(mu, None) must log without a formatting error and upsert sigma_f=None."""
+        db = _db()
+        mock_upsert = MagicMock()
+        db.upsert_forecast_log_v2 = mock_upsert
+
+        with (
+            _silence_base_sources(),
+            patch(
+                "src.scripts.capture_forecasts.fetch_gfs_with_spread",
+                return_value=(78.0, None),
+            ),
+            caplog.at_level(logging.INFO, logger="src.scripts.capture_forecasts"),
+        ):
+            _capture_station(**_capture_kwargs(db=db))
+
+        # Force-format every captured record: with the old "%.2fF" format this
+        # raises TypeError on the None sigma (the bug this test guards against).
+        messages = [r.getMessage() for r in caplog.records]
+        gfs_messages = [m for m in messages if " gfs " in m]
+        assert gfs_messages, f"Expected a gfs capture log line, got: {messages}"
+        assert any("sigma=None" in m for m in gfs_messages), (
+            f"Expected 'sigma=None' in gfs log line, got: {gfs_messages}"
+        )
+
+        gfs_calls = [c for c in mock_upsert.call_args_list if c.kwargs.get("model") == "gfs"]
+        assert len(gfs_calls) == 1, f"Expected 1 gfs upsert, got {len(gfs_calls)}"
+        kw = gfs_calls[0].kwargs
+        assert kw["forecast_high_f"] == pytest.approx(78.0)
+        assert kw["sigma_f"] is None
+        assert kw["station"] == "KORD"
+        assert kw["lead_hours"] == 24
+
+    def test_float_sigma_still_formats(self, caplog):
+        """Defensive: if a future sigma policy (#555) returns a float again,
+        the log line must render it as a formatted value, not crash."""
+        db = _db()
+        mock_upsert = MagicMock()
+        db.upsert_forecast_log_v2 = mock_upsert
+
+        with (
+            _silence_base_sources(),
+            patch(
+                "src.scripts.capture_forecasts.fetch_gfs_with_spread",
+                return_value=(78.0, 2.5),
+            ),
+            caplog.at_level(logging.INFO, logger="src.scripts.capture_forecasts"),
+        ):
+            _capture_station(**_capture_kwargs(db=db))
+
+        messages = [r.getMessage() for r in caplog.records]
+        assert any("sigma=2.50F" in m for m in messages), (
+            f"Expected 'sigma=2.50F' in log output, got: {messages}"
+        )
+        gfs_calls = [c for c in mock_upsert.call_args_list if c.kwargs.get("model") == "gfs"]
+        assert gfs_calls[0].kwargs["sigma_f"] == pytest.approx(2.5)
+
+    def test_primary_success_skips_fallback(self):
+        """When fetch_gfs_with_spread succeeds, the fetch_gfs_forecast_high
+        fallback must not be called."""
+        db = _db()
+        db.upsert_forecast_log_v2 = MagicMock()
+
+        with (
+            _silence_base_sources(),
+            patch(
+                "src.scripts.capture_forecasts.fetch_gfs_with_spread",
+                return_value=(78.0, None),
+            ),
+            patch(
+                "src.scripts.capture_forecasts.fetch_gfs_forecast_high",
+            ) as mock_fallback,
+        ):
+            _capture_station(**_capture_kwargs(db=db))
+
+        mock_fallback.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

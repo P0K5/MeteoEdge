@@ -7,12 +7,18 @@ Covers:
 - GET /api/trade-costs/summary endpoint
 """
 import sys
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch, call
 
 import pytest
 
 from src.data.db import Database
 from src.strategy.fee import estimate_fee_cents
+
+# get_trade_cost_summary(days=N) filters on a trailing window anchored to
+# date.today() — fixture timestamps must be relative, not hardcoded, or the
+# tests start failing once the hardcoded date ages out of the window.
+_RECENT_TS = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
 
 
 # ---------------------------------------------------------------------------
@@ -25,7 +31,7 @@ def _db() -> Database:
 
 def _insert_live_trade(db: Database, order_id: str = "ord-001", actual_price: int = 60) -> int:
     return db.insert_trade(
-        ts="2026-06-01T10:00:00+00:00",
+        ts=_RECENT_TS,
         station="KORD",
         ticker="KORD-2026-06-01-HIGH-80-84",
         bracket_low=80.0,
@@ -123,7 +129,7 @@ class TestGetTradeCostSummary:
     def test_excludes_paper_trades(self):
         db = _db()
         db.insert_trade(
-            ts="2026-06-01T10:00:00+00:00",
+            ts=_RECENT_TS,
             station="KORD",
             ticker="KORD-2026-06-01-HIGH-80-84",
             bracket_low=80.0, bracket_high=84.0, side="NO",
