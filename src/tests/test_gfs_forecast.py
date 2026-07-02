@@ -2,6 +2,8 @@
 
 Covers:
 - src/data/open_meteo.fetch_gfs_forecast_high  — parse, unit handling, None on error
+- src/data/open_meteo.fetch_gfs_with_spread     — real single-model gfs_seamless
+  fetch, distinct from the open_meteo multi-model fetch (issue #548)
 - src/model/deb_weighting.MODELS / EQUAL_WEIGHTS  — gfs now in the tuple
 - src/model/deb_hourly_consensus.compute_deb_mu_f — three-model blend logic
 - src/model/deb_weighting.compute_weights  — phantom-model exclusion for NWS-less stations
@@ -13,7 +15,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.data.open_meteo import fetch_gfs_forecast_high
+from src.data.open_meteo import (
+    fetch_gfs_forecast_high,
+    fetch_gfs_with_spread,
+    fetch_open_meteo_with_spread,
+)
 from src.model.deb_hourly_consensus import compute_deb_mu_f
 from src.model.deb_weighting import (
     EQUAL_WEIGHTS,
@@ -97,6 +103,119 @@ class TestFetchGfsForecastHigh:
         """Returns None and does not raise when the API returns unexpected JSON."""
         with patch("src.data.open_meteo.cached_fetch_json", return_value={"unexpected": True}):
             assert fetch_gfs_forecast_high(35.55, 139.78) is None
+
+
+# ---------------------------------------------------------------------------
+# fetch_gfs_with_spread — real single-model gfs_seamless fetch (issue #548)
+# ---------------------------------------------------------------------------
+
+class TestFetchGfsWithSpread:
+    """Regression tests for issue #548: fetch_gfs_with_spread() must no longer
+    be a byte-identical duplicate of fetch_open_meteo_with_spread(). It must
+    issue its own request scoped to models=gfs_seamless and return sigma_f as
+    None (single deterministic model, no ensemble spread)."""
+
+    def test_requests_gfs_seamless_only(self):
+        """The URL fetch_gfs_with_spread issues must request models=gfs_seamless
+        and must NOT request the multi-model set used by open_meteo."""
+        captured_urls = []
+
+        def _mock_fetch(url, **kwargs):
+            captured_urls.append(url)
+            return {"hourly": {"temperature_2m": [70.0] * 48}}
+
+        with patch("src.data.open_meteo.cached_fetch_json", side_effect=_mock_fetch):
+            fetch_gfs_with_spread(1.36, 103.99, lead_hours=24)
+
+        assert captured_urls, "cached_fetch_json was not called"
+        assert "models=gfs_seamless" in captured_urls[0], (
+            f"Expected 'models=gfs_seamless' in URL, got: {captured_urls[0]}"
+        )
+        assert "ecmwf_ifs04" not in captured_urls[0]
+        assert "jma_seamless" not in captured_urls[0]
+        assert "best_match" not in captured_urls[0]
+
+    def test_issues_distinct_request_from_open_meteo_multimodel_fetch(self):
+        """fetch_gfs_with_spread and fetch_open_meteo_with_spread must issue
+        different requests for the same inputs — the core #548 regression:
+        previously fetch_gfs_with_spread just called
+        fetch_open_meteo_with_spread() verbatim, which fans out to FOUR HTTP
+        requests (ecmwf_ifs04, gfs_seamless, jma_seamless, best_match). Now
+        fetch_gfs_with_spread must issue exactly ONE request, scoped to
+        gfs_seamless — proving it is no longer delegating to the multi-model
+        fetch."""
+
+        def _mock_fetch(url, **kwargs):
+            return {"hourly": {"temperature_2m": [70.0] * 48}}
+
+        with patch("src.data.open_meteo.cached_fetch_json", side_effect=_mock_fetch) as mocked:
+            fetch_gfs_with_spread(1.36, 103.99, lead_hours=24)
+            gfs_call_count = mocked.call_count
+
+        with patch("src.data.open_meteo.cached_fetch_json", side_effect=_mock_fetch) as mocked:
+            fetch_open_meteo_with_spread(1.36, 103.99, lead_hours=24)
+            om_call_count = mocked.call_count
+            om_urls = [c.args[0] for c in mocked.call_args_list]
+
+        # The #548 bug: fetch_gfs_with_spread used to make the same 4 calls as
+        # fetch_open_meteo_with_spread. It must now make exactly 1.
+        assert gfs_call_count == 1, f"Expected 1 HTTP call, got {gfs_call_count}"
+        assert om_call_count == 4, f"Expected open_meteo to still query 4 models, got {om_call_count}"
+        assert any("models=gfs_seamless" in u for u in om_urls), (
+            "open_meteo multi-model fetch should still include gfs_seamless "
+            "as one of its constituent models"
+        )
+
+    def test_sigma_is_always_none(self):
+        """A single deterministic GFS run has no ensemble spread — sigma_f
+        must always be None, never a synthesized/placeholder value."""
+        with patch(
+            "src.data.open_meteo.cached_fetch_json",
+            return_value={"hourly": {"temperature_2m": [70.0] * 48}},
+        ):
+            result = fetch_gfs_with_spread(35.55, 139.78, lead_hours=24)
+        assert result is not None
+        mu_f, sigma_f = result
+        assert sigma_f is None
+        assert isinstance(mu_f, float)
+
+    def test_lead_hours_ge_20_selects_tomorrow_window(self):
+        """lead_hours >= 20 selects the second 24h block (tomorrow)."""
+        temps = [60.0] * 24 + [90.0] * 24  # today low, tomorrow high
+        with patch(
+            "src.data.open_meteo.cached_fetch_json",
+            return_value={"hourly": {"temperature_2m": temps}},
+        ):
+            result = fetch_gfs_with_spread(35.55, 139.78, lead_hours=24)
+        assert result == (90.0, None)
+
+    def test_lead_hours_lt_20_selects_today_window(self):
+        """lead_hours < 20 selects the first 24h block (today)."""
+        temps = [60.0] * 24 + [90.0] * 24
+        with patch(
+            "src.data.open_meteo.cached_fetch_json",
+            return_value={"hourly": {"temperature_2m": temps}},
+        ):
+            result = fetch_gfs_with_spread(35.55, 139.78, lead_hours=6)
+        assert result == (60.0, None)
+
+    def test_returns_none_when_api_unavailable(self):
+        with patch("src.data.open_meteo.cached_fetch_json", return_value=None):
+            assert fetch_gfs_with_spread(35.55, 139.78, lead_hours=24) is None
+
+    def test_returns_none_on_all_null_temperatures(self):
+        temps = [None] * 48
+        with patch(
+            "src.data.open_meteo.cached_fetch_json",
+            return_value={"hourly": {"temperature_2m": temps}},
+        ):
+            assert fetch_gfs_with_spread(35.55, 139.78, lead_hours=24) is None
+
+    def test_returns_none_on_malformed_payload(self):
+        with patch(
+            "src.data.open_meteo.cached_fetch_json", return_value={"unexpected": True}
+        ):
+            assert fetch_gfs_with_spread(35.55, 139.78, lead_hours=24) is None
 
 
 # ---------------------------------------------------------------------------
@@ -205,24 +324,29 @@ class TestComputeWeightsPhantomGuard:
     """Tests that NWS (zero rows) is excluded from the blend for international stations."""
 
     def _make_db_with_open_meteo_and_gfs(self, n: int) -> MagicMock:
-        """Build a mock DB with n days of open_meteo + gfs forecast rows."""
+        """Build a mock DB with n days of open_meteo + gfs forecast rows.
+
+        Dates are pinned to July 2026 (on/after GFS_DATA_VALID_FROM, see
+        issue #548) so "gfs" matched pairs aren't excluded by the
+        duplicate-era training filter in compute_weights().
+        """
         db = MagicMock()
         db.get_forecast_log_by_lead.return_value = (
             [
-                {"date": f"2026-05-{i:02d}", "model": "open_meteo", "forecast_high_f": 86.0 + i * 0.1}
+                {"date": f"2026-07-{i:02d}", "model": "open_meteo", "forecast_high_f": 86.0 + i * 0.1}
                 for i in range(1, n + 1)
             ]
             + [
-                {"date": f"2026-05-{i:02d}", "model": "gfs", "forecast_high_f": 85.5 + i * 0.1}
+                {"date": f"2026-07-{i:02d}", "model": "gfs", "forecast_high_f": 85.5 + i * 0.1}
                 for i in range(1, n + 1)
             ]
         )
         db.get_settlements.return_value = [
-            {"ts": f"2026-05-{i:02d}T12:00:00", "actual_high_f": 86.2 + i * 0.05}
+            {"ts": f"2026-07-{i:02d}T12:00:00", "actual_high_f": 86.2 + i * 0.05}
             for i in range(1, n + 1)
         ]
         db.get_obs_highs_range.return_value = {
-            f"2026-05-{i:02d}": 86.2 + i * 0.05
+            f"2026-07-{i:02d}": 86.2 + i * 0.05
             for i in range(1, n + 1)
         }
         return db
