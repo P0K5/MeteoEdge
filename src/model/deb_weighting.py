@@ -51,12 +51,17 @@ MIN_SAMPLES: int = _MIN_SAMPLES
 # GFS_DATA_VALID_FROM: cutoff date (ISO "YYYY-MM-DD") before which "gfs" rows
 # in model_forecast_log are known byte-identical duplicates of "open_meteo"
 # rows (issue #548 — fetch_gfs_with_spread() previously just returned
-# fetch_open_meteo_with_spread() verbatim, so every pre-merge "gfs" row is a
+# fetch_open_meteo_with_spread() verbatim, so every pre-fix "gfs" row is a
 # copy of the corresponding "open_meteo" row, not an independent signal).
-# compute_weights() excludes "gfs" matched pairs dated before this constant so
-# DEB never calibrates on the duplicated period. Scoped narrowly to the "gfs"
-# model only — other channels' historical pairs are unaffected.
-GFS_DATA_VALID_FROM: str = "2026-07-01"
+# compute_weights() excludes "gfs" matched pairs dated strictly before this
+# constant so DEB never calibrates on the duplicated period.
+#
+# Set to DEPLOYMENT DATE + 1 (deployed 2026-07-01), NOT the merge date: the
+# old duplicated code kept writing "gfs" rows throughout deployment day, so
+# rows dated 2026-07-01 are still contaminated — 2026-07-02 is the first date
+# guaranteed fully clean. Scoped narrowly to the "gfs" model only — other
+# channels' historical pairs are unaffected.
+GFS_DATA_VALID_FROM: str = "2026-07-02"
 
 # Tracks (city, date) pairs already logged this process lifetime.
 # Used by external callers that want once-per-day log semantics.

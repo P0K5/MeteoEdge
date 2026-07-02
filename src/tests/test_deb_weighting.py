@@ -961,17 +961,26 @@ class TestGfsDuplicateEraFilter:
     fetch_gfs_with_spread() was a byte-identical duplicate of
     fetch_open_meteo_with_spread(). Other channels (nws, open_meteo, ...) must
     be unaffected by the cutoff.
+
+    The cutoff is deployment date + 1 (2026-07-02): the old duplicated code
+    kept writing gfs rows throughout deployment day (2026-07-01), so
+    deployment-day rows are contaminated and must also be excluded.
     """
+
+    CUTOFF = "2026-07-02"  # mirrors the real GFS_DATA_VALID_FROM (deploy day + 1)
 
     def _rows(self, dates: list, model: str, forecast_high_f: float) -> list:
         return [{"date": d, "model": model, "forecast_high_f": forecast_high_f} for d in dates]
 
     def test_gfs_rows_before_cutoff_excluded_from_training(self, monkeypatch):
         """gfs rows dated strictly before GFS_DATA_VALID_FROM don't count toward
-        MIN_SAMPLES — gfs stays cold-start even with plenty of duplicate-era rows."""
-        monkeypatch.setattr(dw, "GFS_DATA_VALID_FROM", "2026-07-01")
+        MIN_SAMPLES — gfs stays cold-start even with plenty of duplicate-era
+        rows. Includes a deployment-day (2026-07-01) row, which the old code
+        was still writing and must also be excluded."""
+        monkeypatch.setattr(dw, "GFS_DATA_VALID_FROM", self.CUTOFF)
 
         pre_cutoff_dates = [f"2026-06-{d:02d}" for d in range(1, MIN_SAMPLES + 3)]
+        pre_cutoff_dates.append("2026-07-01")  # deployment day — still contaminated
         settlements = [
             {"ts": f"{d}T12:00:00", "actual_high_f": 80.0} for d in pre_cutoff_dates
         ]
@@ -986,11 +995,13 @@ class TestGfsDuplicateEraFilter:
 
     def test_gfs_rows_on_or_after_cutoff_are_trained_on(self, monkeypatch):
         """gfs rows dated on/after GFS_DATA_VALID_FROM DO count toward MIN_SAMPLES
-        and participate in calibrated RMSE weighting like any other channel."""
-        monkeypatch.setattr(dw, "GFS_DATA_VALID_FROM", "2026-07-01")
+        and participate in calibrated RMSE weighting like any other channel.
+        The first clean date (2026-07-02, the cutoff itself) is included."""
+        monkeypatch.setattr(dw, "GFS_DATA_VALID_FROM", self.CUTOFF)
 
         n = MIN_SAMPLES + 2
-        post_cutoff_dates = [f"2026-07-{d:02d}" for d in range(1, n + 1)]
+        # Dates start AT the cutoff (2026-07-02) — inclusive boundary
+        post_cutoff_dates = [f"2026-07-{d:02d}" for d in range(2, n + 2)]
         settlements = [
             {"ts": f"{d}T12:00:00", "actual_high_f": 80.0} for d in post_cutoff_dates
         ]
@@ -1010,14 +1021,45 @@ class TestGfsDuplicateEraFilter:
         assert weights["gfs"] > equal_share * 0.9
         assert isclose(sum(weights.values()), 1.0, abs_tol=1e-6)
 
+    def test_deployment_day_row_excluded_cutoff_day_row_included(self, monkeypatch):
+        """Exact boundary: a 2026-07-01 (deployment-day) gfs row is excluded,
+        while a 2026-07-02 (cutoff-day) row is included in training."""
+        monkeypatch.setattr(dw, "GFS_DATA_VALID_FROM", self.CUTOFF)
+
+        n = MIN_SAMPLES  # exactly MIN_SAMPLES clean rows: 07-02 .. 07-11
+        clean_dates = [f"2026-07-{d:02d}" for d in range(2, n + 2)]
+        all_dates = ["2026-07-01"] + clean_dates
+        settlements = [
+            {"ts": f"{d}T12:00:00", "actual_high_f": 80.0} for d in all_dates
+        ]
+        logs = self._rows(all_dates, "gfs", 79.0)
+        db = MagicMock(spec=["get_forecast_log", "get_settlements"])
+        db.get_forecast_log.return_value = logs
+        db.get_settlements.return_value = settlements
+
+        weights = compute_weights(db, "KORD", "Chicago", station_region="us")
+        # The 07-01 row must NOT count; the n clean rows exactly reach
+        # MIN_SAMPLES, so gfs is calibrated (weights differ from equal split).
+        assert weights != dict(dw._equal_weights_for("us"))
+        assert isclose(sum(weights.values()), 1.0, abs_tol=1e-6)
+
+        # Counter-check: drop one clean row -> only MIN_SAMPLES - 1 countable
+        # rows remain (07-01 must not fill the gap) -> full cold-start.
+        db2 = MagicMock(spec=["get_forecast_log", "get_settlements"])
+        db2.get_forecast_log.return_value = self._rows(all_dates[:-1], "gfs", 79.0)
+        db2.get_settlements.return_value = settlements
+        weights2 = compute_weights(db2, "KORD", "Chicago", station_region="us")
+        assert weights2 == dict(dw._equal_weights_for("us"))
+
     def test_mixed_pre_and_post_cutoff_only_post_cutoff_rows_counted(self, monkeypatch):
         """A mix of pre- and post-cutoff gfs rows: only post-cutoff rows count
         toward MIN_SAMPLES, so a duplicate-heavy history doesn't mask a thin
         post-cutoff sample."""
-        monkeypatch.setattr(dw, "GFS_DATA_VALID_FROM", "2026-07-01")
+        monkeypatch.setattr(dw, "GFS_DATA_VALID_FROM", self.CUTOFF)
 
         pre_cutoff_dates = [f"2026-06-{d:02d}" for d in range(1, 21)]  # 20 duplicate-era rows
-        post_cutoff_dates = [f"2026-07-{d:02d}" for d in range(1, 4)]  # only 3 genuine rows
+        pre_cutoff_dates.append("2026-07-01")  # deployment day — also duplicate-era
+        post_cutoff_dates = [f"2026-07-{d:02d}" for d in range(2, 5)]  # only 3 genuine rows
         all_dates = pre_cutoff_dates + post_cutoff_dates
         settlements = [
             {"ts": f"{d}T12:00:00", "actual_high_f": 80.0} for d in all_dates
@@ -1029,13 +1071,13 @@ class TestGfsDuplicateEraFilter:
 
         weights = compute_weights(db, "KORD", "Chicago", station_region="us")
         # Only 3 genuine post-cutoff rows < MIN_SAMPLES (10) -> still cold-start
-        # despite 23 total rows on disk.
+        # despite 24 total rows on disk.
         assert weights == dict(dw._equal_weights_for("us"))
 
     def test_other_channels_unaffected_by_gfs_cutoff(self, monkeypatch):
         """The duplicate-era filter is scoped to 'gfs' only — nws/open_meteo
         pre-cutoff rows must still be trained on normally."""
-        monkeypatch.setattr(dw, "GFS_DATA_VALID_FROM", "2026-07-01")
+        monkeypatch.setattr(dw, "GFS_DATA_VALID_FROM", self.CUTOFF)
 
         pre_cutoff_dates = [f"2026-06-{d:02d}" for d in range(1, MIN_SAMPLES + 3)]
         settlements = [

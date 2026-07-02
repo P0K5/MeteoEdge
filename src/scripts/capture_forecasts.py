@@ -233,9 +233,13 @@ def _capture_station(
     gfs_result = fetch_gfs_with_spread(lat, lon, lead_hours)
     if gfs_result is not None:
         gfs_mu, gfs_sigma = gfs_result
+        # gfs_sigma is None since #548 (single deterministic model, no member
+        # spread) — format defensively so a None never crashes the %.2f log.
         log.info(
-            "[capture] %s gfs mu=%.1fF sigma=%.2fF lead=%dh date=%s",
-            station, gfs_mu, gfs_sigma, lead_hours, target_date,
+            "[capture] %s gfs mu=%.1fF sigma=%s lead=%dh date=%s",
+            station, gfs_mu,
+            "None" if gfs_sigma is None else f"{gfs_sigma:.2f}F",
+            lead_hours, target_date,
         )
         if not dry_run and db is not None:
             db.upsert_forecast_log_v2(
