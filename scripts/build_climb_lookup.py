@@ -735,8 +735,19 @@ def check_climb_lookup_dirty(force: bool = False) -> None:
             capture_output=True,
             text=True,
         )
-        if result.returncode != 0:
-            # File is dirty (git diff exits with code 1 if differences exist)
+        if result.returncode not in (0, 1):
+            # git error (e.g. exit code 128/129 when run outside a git repo) — the
+            # dirty check is a safety net, not a hard dependency, so warn and proceed.
+            # (returncode 0 = clean, 1 = dirty; anything else means git could not
+            # perform the diff, most commonly "not a git repository".)
+            logger.warning(
+                "git not available or not in a git repo — skipping dirty-baseline check. "
+                "If using --from-db, ensure src/data/climb_lookup.py reflects a clean, "
+                "reviewed baseline."
+            )
+            return
+        if result.returncode == 1:
+            # File is dirty (git diff --quiet exits with code 1 if differences exist)
             if force:
                 logger.warning(
                     "climb_lookup.py has uncommitted changes — proceeding with --force. "
@@ -754,7 +765,7 @@ def check_climb_lookup_dirty(force: bool = False) -> None:
                 )
                 sys.exit(1)
     except FileNotFoundError:
-        # git binary not found or not in a git repo
+        # git binary not found
         logger.warning(
             "git not available or not in a git repo — skipping dirty-baseline check. "
             "If using --from-db, ensure src/data/climb_lookup.py reflects a clean, "

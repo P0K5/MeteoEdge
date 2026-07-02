@@ -1,111 +1,94 @@
-"""Tests for scripts/build_climb_lookup.py dirty-baseline guard."""
+"""Tests for scripts/build_climb_lookup.py dirty-baseline guard.
+
+Each test builds its OWN temporary git repository (via the tmp_git_repo fixture)
+and monkeypatches the working directory into it, so no test depends on the real
+repo's git state (issue #592 acceptance criterion).
+"""
 import subprocess
-import sys
-import tempfile
-from pathlib import Path
-from unittest import mock
 
 import pytest
 
+from scripts.build_climb_lookup import check_climb_lookup_dirty
+
+
+def _run_git(args, cwd):
+    subprocess.run(
+        ["git", *args],
+        cwd=cwd,
+        capture_output=True,
+        check=True,
+    )
+
+
+@pytest.fixture
+def tmp_git_repo(tmp_path):
+    """Create a temporary git repo with src/data/climb_lookup.py committed clean.
+
+    Returns the repo root Path. Tests monkeypatch.chdir into it so the function's
+    relative path 'src/data/climb_lookup.py' resolves inside this tmp repo.
+    """
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+
+    _run_git(["init"], repo_path)
+    _run_git(["config", "user.email", "test@example.com"], repo_path)
+    _run_git(["config", "user.name", "Test User"], repo_path)
+
+    src_data_dir = repo_path / "src" / "data"
+    src_data_dir.mkdir(parents=True)
+    climb_lookup_file = src_data_dir / "climb_lookup.py"
+    climb_lookup_file.write_text("# Auto-generated\nCLIMB_LOOKUP: dict = {}\n")
+
+    _run_git(["add", "src/data/climb_lookup.py"], repo_path)
+    _run_git(["commit", "-m", "Initial commit"], repo_path)
+
+    return repo_path
+
 
 class TestClimbLookupDirtyGuard:
-    """Tests for check_climb_lookup_dirty function."""
+    """Tests for check_climb_lookup_dirty against a real tmp git repo."""
 
-    def test_clean_file_no_exception(self):
-        """Clean file (git diff returns 0) should not raise exception."""
-        from scripts.build_climb_lookup import check_climb_lookup_dirty
+    def test_clean_file_does_not_raise(self, tmp_git_repo, monkeypatch):
+        """Clean committed file must NOT raise SystemExit."""
+        monkeypatch.chdir(tmp_git_repo)
+        # Should return normally (no exception).
+        check_climb_lookup_dirty(force=False)
 
-        # Mock subprocess.run to simulate clean file (return code 0)
-        with mock.patch("scripts.build_climb_lookup.subprocess.run") as mock_run:
-            mock_run.return_value = mock.MagicMock(returncode=0)
-            # Should not raise
+    def test_dirty_file_without_force_aborts(self, tmp_git_repo, monkeypatch, capsys):
+        """Dirty file with force=False must raise SystemExit(1) with actionable message."""
+        climb_lookup_file = tmp_git_repo / "src" / "data" / "climb_lookup.py"
+        with climb_lookup_file.open("a") as f:
+            f.write("# poisoned garbage appended after commit\n")
+
+        monkeypatch.chdir(tmp_git_repo)
+        with pytest.raises(SystemExit) as exc_info:
             check_climb_lookup_dirty(force=False)
-            mock_run.assert_called_once()
+        assert exc_info.value.code == 1
 
-    def test_dirty_file_without_force_exits(self):
-        """Dirty file (git diff returns 1) without force should exit."""
-        from scripts.build_climb_lookup import check_climb_lookup_dirty
+        captured = capsys.readouterr()
+        assert "git checkout" in captured.err
+        assert "git commit" in captured.err
+        assert "--force" in captured.err
 
-        # Mock subprocess.run to simulate dirty file (return code 1)
-        with mock.patch("scripts.build_climb_lookup.subprocess.run") as mock_run:
-            mock_run.return_value = mock.MagicMock(returncode=1)
-            # Should raise SystemExit
-            with pytest.raises(SystemExit) as exc_info:
-                check_climb_lookup_dirty(force=False)
-            assert exc_info.value.code == 1
+    def test_dirty_file_with_force_only_warns(self, tmp_git_repo, monkeypatch, caplog):
+        """Dirty file with force=True must proceed (no raise) and log a warning."""
+        climb_lookup_file = tmp_git_repo / "src" / "data" / "climb_lookup.py"
+        with climb_lookup_file.open("a") as f:
+            f.write("# intentional refinement appended after commit\n")
 
-    def test_dirty_file_with_force_logs_warning(self, caplog):
-        """Dirty file with force=True should log warning but not exit."""
-        from scripts.build_climb_lookup import check_climb_lookup_dirty
+        monkeypatch.chdir(tmp_git_repo)
+        # Should NOT raise.
+        check_climb_lookup_dirty(force=True)
+        assert "uncommitted" in caplog.text.lower()
 
-        # Mock subprocess.run to simulate dirty file (return code 1)
-        with mock.patch("scripts.build_climb_lookup.subprocess.run") as mock_run:
-            mock_run.return_value = mock.MagicMock(returncode=1)
-            # Should not raise
-            check_climb_lookup_dirty(force=True)
-            # Should log a warning about uncommitted changes
-            assert "uncommitted" in caplog.text.lower()
-
-    def test_git_not_available_warns_and_proceeds(self, caplog):
-        """If git is not available (FileNotFoundError), should warn and proceed."""
-        from scripts.build_climb_lookup import check_climb_lookup_dirty
-
-        # Mock subprocess.run to simulate git not available
-        with mock.patch("scripts.build_climb_lookup.subprocess.run") as mock_run:
-            mock_run.side_effect = FileNotFoundError("git: command not found")
-            # Should not raise
-            check_climb_lookup_dirty(force=False)
-            # Should log a warning
-            assert "not available" in caplog.text.lower() or "WARNING" in caplog.text
-
-    def test_dirty_file_error_message_contains_fixes(self, capsys):
-        """Error message for dirty file should suggest actionable fixes."""
-        from scripts.build_climb_lookup import check_climb_lookup_dirty
-
-        # Mock subprocess.run to simulate dirty file
-        with mock.patch("scripts.build_climb_lookup.subprocess.run") as mock_run:
-            mock_run.return_value = mock.MagicMock(returncode=1)
-            # Capture stderr
-            with pytest.raises(SystemExit):
-                check_climb_lookup_dirty(force=False)
-            captured = capsys.readouterr()
-            assert "git checkout" in captured.err
-            assert "git commit" in captured.err
-            assert "--force" in captured.err
-
-
-class TestBuildClimbLookupIntegration:
-    """Integration tests using real git repo (if in MeteoEdge repo)."""
-
-    def test_git_diff_quiet_exit_codes(self):
-        """Test that git diff --quiet returns expected exit codes."""
-        # This test uses the real git repo
-        # If the file is clean, git diff --quiet returns 0
-        # If the file is dirty, git diff --quiet returns 1
-
-        result_clean = subprocess.run(
-            ["git", "diff", "--quiet", "--", "scripts/build_climb_lookup.py"],
-            cwd="/home/user/MeteoEdge",
-            capture_output=True,
+    def test_not_a_git_repo_warns_and_proceeds(self, tmp_path, monkeypatch, caplog):
+        """Outside any git repo (git diff exits 128), must warn and proceed (no raise)."""
+        non_repo = tmp_path / "plain"
+        non_repo.mkdir()
+        monkeypatch.chdir(non_repo)
+        # Should NOT raise even with force=False.
+        check_climb_lookup_dirty(force=False)
+        assert (
+            "not available" in caplog.text.lower()
+            or "not in a git repo" in caplog.text.lower()
         )
-        # We expect either 0 (clean) or 1 (dirty), not an error
-        assert result_clean.returncode in (0, 1)
-
-    def test_script_parses_correctly(self):
-        """Test that the script parses without syntax errors."""
-        result = subprocess.run(
-            [sys.executable, "-m", "py_compile", "scripts/build_climb_lookup.py"],
-            cwd="/home/user/MeteoEdge",
-            capture_output=True,
-        )
-        assert result.returncode == 0, f"Script has syntax errors: {result.stderr}"
-
-    def test_script_imports_correctly(self):
-        """Test that the script module can be imported."""
-        import sys
-        sys.path.insert(0, "/home/user/MeteoEdge")
-        try:
-            from scripts.build_climb_lookup import check_climb_lookup_dirty
-            assert callable(check_climb_lookup_dirty)
-        finally:
-            sys.path.pop(0)
