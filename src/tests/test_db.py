@@ -293,6 +293,62 @@ class TestInsertSettlementUpsert:
         assert rows[0]["market_final_price"] is None
 
 
+class TestGetAllSettlements:
+    """get_all_settlements returns rows across ALL stations in one query
+    (used by the promotion bar in src/model/promotion_gate.py to avoid N+1
+    reads when scanning every shadow station+side in one pass)."""
+
+    def test_returns_rows_across_multiple_stations(self):
+        db = _db()
+        db.insert_settlement(
+            ts="2024-01-15T20:00:00+00:00", station="KORD",
+            ticker="KORD-1", bracket_low=32.0, bracket_high=36.0,
+            actual_high_f=34.5, resolved_yes=1,
+        )
+        db.insert_settlement(
+            ts="2024-01-16T20:00:00+00:00", station="WSSS",
+            ticker="WSSS-1", bracket_low=88.0, bracket_high=90.0,
+            actual_high_f=89.0, resolved_yes=0,
+        )
+        rows = db.get_all_settlements(since="2000-01-01")
+        tickers = {r["ticker"] for r in rows}
+        assert tickers == {"KORD-1", "WSSS-1"}
+
+    def test_since_filters_out_earlier_rows(self):
+        db = _db()
+        db.insert_settlement(
+            ts="2024-01-01T00:00:00+00:00", station="KORD",
+            ticker="old", bracket_low=32.0, bracket_high=36.0,
+            actual_high_f=34.5, resolved_yes=1,
+        )
+        db.insert_settlement(
+            ts="2024-06-01T00:00:00+00:00", station="KORD",
+            ticker="new", bracket_low=32.0, bracket_high=36.0,
+            actual_high_f=34.5, resolved_yes=1,
+        )
+        rows = db.get_all_settlements(since="2024-03-01")
+        assert [r["ticker"] for r in rows] == ["new"]
+
+    def test_direction_filter(self):
+        db = _db()
+        db.insert_settlement(
+            ts="2024-01-15T00:00:00+00:00", station="KORD",
+            ticker="high-1", bracket_low=32.0, bracket_high=36.0,
+            actual_high_f=34.5, resolved_yes=1, direction="high",
+        )
+        db.insert_settlement(
+            ts="2024-01-15T00:00:00+00:00", station="KORD",
+            ticker="low-1", bracket_low=32.0, bracket_high=36.0,
+            actual_high_f=34.5, resolved_yes=1, direction="low",
+        )
+        rows = db.get_all_settlements(since="2000-01-01", direction="low")
+        assert [r["ticker"] for r in rows] == ["low-1"]
+
+    def test_empty_when_no_settlements(self):
+        db = _db()
+        assert db.get_all_settlements(since="2000-01-01") == []
+
+
 # ---------------------------------------------------------------------------
 # Connection close and context manager
 # ---------------------------------------------------------------------------
