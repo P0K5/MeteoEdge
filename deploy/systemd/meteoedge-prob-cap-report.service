@@ -1,0 +1,14 @@
+[Unit]
+Description=MeteoEdge prob-cap shadow report (issue #570 / #551)
+After=network-online.target meteoedge-settle.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=p0k5
+WorkingDirectory=/home/p0k5/MeteoEdge
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=/home/p0k5/MeteoEdge/.env
+ExecStart=/home/p0k5/MeteoEdge/.venv/bin/python -u scripts/prob_cap_shadow_report.py
+StandardOutput=append:/home/p0k5/MeteoEdge/logs/prob_cap_report.log
+StandardError=append:/home/p0k5/MeteoEdge/logs/prob_cap_report.log
