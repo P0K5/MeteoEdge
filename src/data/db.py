@@ -1982,18 +1982,22 @@ class Database:
         }
 
     def get_hourly_obs_for_climb(self, station: str) -> list[dict]:
-        """Return all observations for *station* with date and local hour.
+        """Return all observations for *station* as raw timestamps + temps.
 
         Used by build_climb_lookup.py --from-db to derive p95 climb rates from
-        real collected observations. Returns rows with keys: date, hour_local, temp_f.
-        Hour is in UTC (caller converts to local time using station timezone config).
+        real collected observations. Returns rows with keys: ts, temp_f. The
+        timestamp is returned verbatim (ISO 8601, UTC — naive values are treated
+        as UTC by the caller); the caller localizes to the station timezone
+        before binning, since the climb table is indexed by *local* month/hour
+        (issue #587 — a previous version truncated to UTC date/hour here, which
+        made local binning impossible and mislabeled the column as hour_local).
         """
         cur = self._conn.execute(
-            "SELECT DATE(ts) AS date, CAST(strftime('%H', ts) AS INTEGER) AS hour_utc, "
-            "temp_f FROM observations WHERE station=? AND temp_f IS NOT NULL ORDER BY ts ASC",
+            "SELECT ts, temp_f FROM observations "
+            "WHERE station=? AND temp_f IS NOT NULL ORDER BY ts ASC",
             (station,),
         )
-        return [{"date": row[0], "hour_local": row[1], "temp_f": float(row[2])} for row in cur.fetchall()]
+        return [{"ts": row[0], "temp_f": float(row[1])} for row in cur.fetchall()]
 
     # ------------------------------------------------------------------
     # emos_crps_log / deb_weight_log
