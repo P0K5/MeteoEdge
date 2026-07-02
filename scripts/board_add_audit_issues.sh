@@ -29,13 +29,12 @@ source <(grep -E '^(GITHUB_PROJECT_ID|STATUS_FIELD_ID|STATUS_OPT_READY|STATUS_OP
 # Statuses reflect state as of 2026-07-03 (waves 1-2 executed):
 #   Done:        548-550, 552-557, 565, 570-572 (waves 1-2 merged)
 #   In progress: 551 (shadow window open; report ~July 9 via #570 timer)
-#   Ready:       583 (low-side forecast gap), 586 (residual basis filter), 587 (climb builder bugs)
-#   Blocked:     585 (host regen — blocked by 587; run as Backlog until it merges)
+#   Ready:       583 (low-side forecast gap), 585 (host regen, unblocked), 586 (residual basis filter)
 #   Backlog:     558-561, 567-568, 582 (dup METAR calls), 584 (RMSE panel cosmetics)
-DONE_ISSUES=(548 549 550 552 553 554 555 556 557 565 570 571 572)
+DONE_ISSUES=(548 549 550 552 553 554 555 556 557 565 570 571 572 587)
 IN_PROGRESS_ISSUES=(551)
-READY_ISSUES=(583 586 587)
-BACKLOG_ISSUES=(558 559 560 561 567 568 582 584 585)
+READY_ISSUES=(583 585 586)
+BACKLOG_ISSUES=(558 559 560 561 567 568 582 584)
 
 add_and_set_status() {
   local issue=$1 option_id=$2 status_name=$3
