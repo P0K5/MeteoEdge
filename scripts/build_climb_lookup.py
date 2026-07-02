@@ -559,6 +559,12 @@ def compute_from_db(
     get_hourly_obs_for_climb and computes p95 climb rates. Cells with fewer than
     MIN_DAYS_PER_CELL distinct dates fall back to the existing synthetic value.
 
+    All binning is done in **station-local time** (issue #587): the consumer,
+    expected_additional_rise(), indexes CLIMB_LOOKUP by local month/hour, and
+    the daily high must be the high of the local calendar day computed across
+    ALL of that day's observations — not per hour-cell, which would measure
+    within-hour spread instead of climb-to-end-of-day.
+
     Args:
         db_path: Path to the SQLite database file.
         existing_lookup: The current (synthetic or previously-built) lookup dict.
@@ -567,6 +573,7 @@ def compute_from_db(
         (updated_lookup, sources) where sources maps station → data-source string.
     """
     from collections import defaultdict
+    from zoneinfo import ZoneInfo
     sys.path.insert(0, str(Path(__file__).parent.parent))
     from src.data.db import Database  # noqa: E402
 
@@ -596,35 +603,38 @@ def compute_from_db(
                     )
                 continue
 
-            # Group observations: key = (month, hour_utc), value = list of (date, temp_f)
-            cell_obs: "dict[tuple[int, int], list[tuple[str, float]]]" = defaultdict(list)
+            # Pass 1 — localize every observation to the station timezone and
+            # group by LOCAL calendar date. The daily high is the max across
+            # ALL of that local date's observations (issue #587: computing it
+            # per hour-cell measured within-hour spread, not climb).
+            tzinfo = ZoneInfo(_tz)
+            by_local_date: "dict[str, list[tuple[int, int, float]]]" = defaultdict(list)
             for row in obs:
-                month = int(row["date"][5:7])  # "YYYY-MM-DD" → month int
-                hour = row["hour_local"]        # UTC hour (named hour_local per schema)
-                cell_obs[(month, hour)].append((row["date"], row["temp_f"]))
+                dt = datetime.datetime.fromisoformat(row["ts"])
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=datetime.timezone.utc)
+                local = dt.astimezone(tzinfo)
+                by_local_date[local.date().isoformat()].append(
+                    (local.month, local.hour, row["temp_f"])
+                )
 
-            # For each cell, compute daily highs then p95 of (daily_high - temp_at_hour)
-            cell_p95: "dict[tuple[int, int], float]" = {}
-            for (month, hour), entries in cell_obs.items():
-                # Group by date to find distinct dates and daily highs
-                date_temps: "dict[str, list[float]]" = defaultdict(list)
-                for date, temp_f in entries:
-                    date_temps[date].append(temp_f)
+            daily_highs: "dict[str, float]" = {
+                d: max(t for _, _, t in entries) for d, entries in by_local_date.items()
+            }
 
-                distinct_dates = set(date_temps.keys())
-                if len(distinct_dates) < MIN_DAYS_PER_CELL:
-                    continue  # insufficient data — keep synthetic
+            # Pass 2 — bin deltas into (local month, local hour) cells.
+            cell_deltas: "dict[tuple[int, int], list[float]]" = defaultdict(list)
+            cell_dates: "dict[tuple[int, int], set[str]]" = defaultdict(set)
+            for d, entries in by_local_date.items():
+                for month, hour, temp_f in entries:
+                    cell_deltas[(month, hour)].append(max(0.0, daily_highs[d] - temp_f))
+                    cell_dates[(month, hour)].add(d)
 
-                # Compute daily high per date
-                daily_highs: "dict[str, float]" = {d: max(temps) for d, temps in date_temps.items()}
-
-                # Compute deltas: daily_high - temp_at_this_hour for each observation
-                deltas: list[float] = []
-                for date, temp_f in entries:
-                    delta = max(0.0, daily_highs[date] - temp_f)
-                    deltas.append(delta)
-
-                cell_p95[(month, hour)] = round(quantile(deltas, P95_QUANTILE), 2)
+            cell_p95: "dict[tuple[int, int], float]" = {
+                cell: round(quantile(deltas, P95_QUANTILE), 2)
+                for cell, deltas in cell_deltas.items()
+                if len(cell_dates[cell]) >= MIN_DAYS_PER_CELL
+            }
 
             # Build the updated month×hour table, falling back to synthetic for sparse cells
             synthetic = existing_lookup.get(icao, {})
@@ -654,6 +664,27 @@ def compute_from_db(
                     "remaining cells use the synthetic climatological fallback",
                     icao, db_cells, total_cells, MIN_DAYS_PER_CELL,
                 )
+
+            # Plausibility guard (issue #587): a DB-derived month whose hour-6
+            # climb craters below half of BOTH neighbouring months is the
+            # signature of a broken computation (this exact pattern shipped
+            # once: within-hour spread + UTC binning produced a June column of
+            # 0-3.6F between a 15.9F May and 17.7F July). Warn loudly.
+            for month in range(1, 13):
+                if (month, 6) not in cell_p95:
+                    continue  # synthetic cell — not our output to judge
+                prev_m = 12 if month == 1 else month - 1
+                next_m = 1 if month == 12 else month + 1
+                val = updated[month][6]
+                prev_v = updated[prev_m][6]
+                next_v = updated[next_m][6]
+                if prev_v > 0 and next_v > 0 and val < 0.5 * prev_v and val < 0.5 * next_v:
+                    logger.warning(
+                        "%s: PLAUSIBILITY — DB-derived M%02d hour-6 climb %.1fF is less "
+                        "than half of both neighbours (M%02d=%.1fF, M%02d=%.1fF). "
+                        "Inspect before committing this table.",
+                        icao, month, val, prev_m, prev_v, next_m, next_v,
+                    )
 
     # Ensure every STATIONS entry has an entry in lookup and sources
     for icao, _lat, _lon, _city, _res, _unit, _tz in STATIONS:
