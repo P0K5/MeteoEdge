@@ -27,6 +27,22 @@ from src.config import FORECAST_STDDEV_F, STATIONS
 from src.model.crps_score import crps_gaussian
 
 
+# GFS_DATA_VALID_FROM: cutoff date (ISO "YYYY-MM-DD") before which "gfs" rows
+# in model_forecast_log are known byte-identical duplicates of "open_meteo"
+# rows (issue #548 — fetch_gfs_with_spread() previously just returned
+# fetch_open_meteo_with_spread() verbatim, so every pre-fix "gfs" row is a
+# copy of the corresponding "open_meteo" row, not an independent signal).
+# fetch_training_data() excludes "gfs" matched pairs dated strictly before this
+# constant so EMOS never calibrates on the duplicated period.
+#
+# Set to DEPLOYMENT DATE + 1 (deployed 2026-07-01), NOT the merge date: the
+# old duplicated code kept writing "gfs" rows throughout deployment day, so
+# rows dated 2026-07-01 are still contaminated — 2026-07-02 is the first date
+# guaranteed fully clean. Scoped narrowly to the "gfs" model only — other
+# channels' historical pairs are unaffected.
+GFS_DATA_VALID_FROM: str = "2026-07-02"
+
+
 # ---------------------------------------------------------------------------
 # Public exception
 # ---------------------------------------------------------------------------
@@ -155,6 +171,15 @@ def fetch_training_data(
     elif forecast_source is not None:
         forecast_rows = [r for r in forecast_rows if r.get("model") == forecast_source]
 
+    # Filter out "gfs" rows dated before GFS_DATA_VALID_FROM (issue #548 duplicate-era exclusion)
+    # to avoid training on rows that are byte-identical copies of "open_meteo" rows.
+    filtered_rows = []
+    for r in forecast_rows:
+        if r.get("model") == "gfs" and r.get("date", "") < GFS_DATA_VALID_FROM:
+            continue  # Skip duplicate-era GFS rows
+        filtered_rows.append(r)
+    forecast_rows = filtered_rows
+
     if not forecast_rows:
         source_info = f", forecast_source='{forecast_source}'" if forecast_source else ""
         raise InsufficientDataError(
@@ -247,12 +272,18 @@ def save_coefficients(
     crps_score: float,
     db,
     forecast_source: str = "nws_open_meteo",
+    sample_count: int | None = None,
 ) -> None:
     """Persist EMOS coefficients to the emos_calibration table.
 
     Always writes model_mode='emos_shadow' and ready_for_promotion=0.
-    Promotion to active use is a deliberate manual step — this function
-    never sets ready_for_promotion=1.
+    Promotion to active use remains a deliberate manual step (the dashboard's
+    mark-ready endpoint / Database.toggle_emos_ready_for_promotion) — this
+    function never sets ready_for_promotion=1 itself, regardless of
+    sample_count or CRPS. The <60-sample guardrail from issue #556 is
+    therefore structural: there is no code path here that could promote a
+    reduced-sample shadow fit, not merely a threshold check that could later
+    be bypassed.
 
     Coefficients for different forecast_source values are stored independently
     — saving for "hrrr_nbm" never overwrites the legacy "nws_open_meteo" row.
@@ -266,7 +297,12 @@ def save_coefficients(
         crps_score:      Mean CRPS on the training set after fitting.
         db:              A src.data.db.Database instance.
         forecast_source: Forecast stack identifier (default "nws_open_meteo").
+        sample_count:    Number of training samples used to fit the coefficients.
+                         Recorded for caller/log context only — does not affect
+                         ready_for_promotion, which is always 0 here (see above).
     """
+    ready_for_promotion = 0
+
     db.upsert_emos_coefficients(
         city=city,
         model_mode="emos_shadow",
@@ -276,7 +312,7 @@ def save_coefficients(
         d=d,
         crps_score=crps_score,
         trained_at=datetime.now(timezone.utc).isoformat(),
-        ready_for_promotion=0,  # always — manual promotion only
+        ready_for_promotion=ready_for_promotion,
         forecast_source=forecast_source,
     )
 

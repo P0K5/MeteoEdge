@@ -70,7 +70,17 @@ def _run_calibration(db, stack: str = "baseline") -> None:
                 for mu, sigma, y in training_data
             ]
             mean_crps = sum(crps_scores) / len(crps_scores) if crps_scores else 0.0
-            save_coefficients(city, a, b, c, d, mean_crps, db, forecast_source=stack)
+            save_coefficients(
+                city,
+                a,
+                b,
+                c,
+                d,
+                mean_crps,
+                db,
+                forecast_source=stack,
+                sample_count=len(training_data),
+            )
 
             # One CRPS sample per city per calendar day. The promotion guard
             # counts these rows, so logging exactly once a day gives the
