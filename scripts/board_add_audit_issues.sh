@@ -26,15 +26,15 @@ CTX=".claude/session-context.env"
 # shellcheck disable=SC1090
 source <(grep -E '^(GITHUB_PROJECT_ID|STATUS_FIELD_ID|STATUS_OPT_READY|STATUS_OPT_BACKLOG|STATUS_OPT_IN_PROGRESS|STATUS_OPT_DONE)=' "$CTX")
 
-# Statuses reflect state as of 2026-07-02 (P0 batch executed):
-#   Done:        548 (PR #563), 549 (PR #562), 550 (PR #569), 565 (PR #566)
-#   In progress: 551 (stage 1 merged via PR #564; shadow window open)
-#   Ready:       552-557 (P1 batch), 570-572 (shadow report, climb lookup, intraday basis)
-#   Backlog:     558-561 (P2), 567-568 (review follow-ups)
-DONE_ISSUES=(548 549 550 565)
+# Statuses reflect state as of 2026-07-03 (waves 1-2 executed):
+#   Done:        548-550, 552-557, 565, 570-572 (waves 1-2 merged)
+#   In progress: 551 (shadow window open; report ~July 9 via #570 timer)
+#   Ready:       583 (low-side forecast gap), 585 (climb regen on host), 586 (residual basis filter)
+#   Backlog:     558-561, 567-568, 582 (dup METAR calls), 584 (RMSE panel cosmetics)
+DONE_ISSUES=(548 549 550 552 553 554 555 556 557 565 570 571 572)
 IN_PROGRESS_ISSUES=(551)
-READY_ISSUES=(552 553 554 555 556 557 570 571 572)
-BACKLOG_ISSUES=(558 559 560 561 567 568)
+READY_ISSUES=(583 585 586)
+BACKLOG_ISSUES=(558 559 560 561 567 568 582 584)
 
 add_and_set_status() {
   local issue=$1 option_id=$2 status_name=$3
