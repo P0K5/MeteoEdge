@@ -1562,14 +1562,23 @@ class Database:
         *,
         station: "str | None" = None,
         source: "str | None" = None,
+        min_date: "str | None" = None,
     ) -> list[float]:
         """Return delta_f values for city over the trailing window_days calendar days.
 
         Optional *station* and *source* filters narrow the query to a specific
         (station, source) pair.  When both are None the query is city-wide (legacy
         behaviour).
+
+        Optional *min_date* (YYYY-MM-DD) raises the effective lower bound of the
+        window when it is more recent than ``today - window_days`` — used by
+        callers (see ``src.model.residual_correction``) to exclude rows recorded
+        under a prior consensus basis regime without shortening the window for
+        callers that don't care (issue #586).
         """
         since_date = (date.today() - timedelta(days=window_days)).isoformat()
+        if min_date is not None and min_date > since_date:
+            since_date = min_date
         if station is not None and source is not None:
             cur = self._conn.execute(
                 "SELECT delta_f FROM intraday_corrections "

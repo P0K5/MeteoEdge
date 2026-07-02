@@ -607,7 +607,7 @@ class TestComputeResidualStatsPairScoped:
         """Return a mock DB that returns different deltas based on station/source filters."""
         mock_db = MagicMock()
 
-        def _get_trailing_deltas(city, window_days, *, station=None, source=None):
+        def _get_trailing_deltas(city, window_days, *, station=None, source=None, min_date=None):
             if station == pair_station and source == pair_source:
                 return list(pair_deltas)
             return list(city_deltas)
@@ -674,7 +674,7 @@ class TestComputeResidualStatsPerPair:
             (station, source) for station, source, _ in pairs_data
         ]
 
-        def _get_trailing_deltas(city, window_days, *, station=None, source=None):
+        def _get_trailing_deltas(city, window_days, *, station=None, source=None, min_date=None):
             for s, src, deltas in pairs_data:
                 if s == station and src == source:
                     return list(deltas)
@@ -734,5 +734,160 @@ class TestComputeResidualStatsPerPair:
             results = compute_residual_stats_per_pair("Busan", db, min_samples=10)
             assert len(results) == 1
             assert results[0].scope == "pair"
+        finally:
+            rc_mod.RESIDUAL_CORRECTION_ENABLED = orig
+
+
+# ---------------------------------------------------------------------------
+# Test: basis-regime exclusion (issue #586)
+#
+# These tests exercise the REAL DB query path (a real in-memory Database,
+# real upsert_intraday_correction / get_trailing_deltas calls) rather than
+# mocking db.get_trailing_deltas, since the bug lives in the SQL filtering
+# itself, not in the pure-Python mean/MAE math.
+#
+# All dates are computed relative to date.today() at test-run time (never a
+# hardcoded calendar literal), so the 30-day window and the deploy-date cutoff
+# behave identically no matter what day the suite actually runs on.
+# ---------------------------------------------------------------------------
+
+class TestBasisRegimeExclusion:
+    """Issue #586: the rolling window must exclude deltas recorded under a
+    prior consensus basis regime (pre-#576 legacy open_meteo-only basis)."""
+
+    def _insert_offset(self, db, city, offset_days, delta_f, today):
+        """Insert one intraday_corrections row *offset_days* before *today*."""
+        from datetime import timedelta as _td
+        d = (today - _td(days=offset_days)).isoformat()
+        db.upsert_intraday_correction(
+            city=city, station="", source="",
+            date=d, obs_time=f"{d}T08:00:00+00:00",
+            obs_temp_f=70.0, model_temp_f=70.0 - delta_f,
+            delta_f=delta_f, corrected_mu_f=70.0 + delta_f, decay_factor=1.0,
+        )
+
+    def test_under_sample_after_exclusion_prefers_no_correction(self):
+        """CRITICAL DESIGN DECISION (#586): once mixed-basis rows are excluded,
+        if the remaining post-deploy sample is below RESIDUAL_MIN_SAMPLES, the
+        function must return None (no correction) rather than reaching back
+        into the excluded legacy rows to hit the threshold.
+        """
+        from datetime import date, timedelta as _td
+        from src.data.db import Database
+
+        db = Database(":memory:")
+        today = date.today()
+        deploy_date = (today - _td(days=10)).isoformat()
+
+        # 15 legacy-basis rows, all strictly before deploy_date (offsets 11-25
+        # days ago) but still inside the 30-day trailing window. If these
+        # leaked into the mean, sample_count would be 18 (>= min_samples=10)
+        # and the correction would fire on a wildly wrong mixed-basis value.
+        for offset in range(11, 26):
+            self._insert_offset(db, "Busan", offset, delta_f=99.0, today=today)
+
+        # Only 3 post-deploy rows (offsets 0, 3, 6 -- all on/after deploy_date).
+        for offset in (0, 3, 6):
+            self._insert_offset(db, "Busan", offset, delta_f=4.0, today=today)
+
+        import src.model.residual_correction as rc_mod
+        orig = rc_mod.RESIDUAL_CORRECTION_ENABLED
+        rc_mod.RESIDUAL_CORRECTION_ENABLED = True
+        try:
+            # Sanity check: unfiltered (deploy_date far in the past) the mixed
+            # sample is >= min_samples, proving the window genuinely contains
+            # both regimes and the exclusion below is doing real work.
+            with patch("src.model.residual_correction._get_top_priority_pair", return_value=None):
+                unfiltered = rc_mod.compute_residual_stats(
+                    "Busan", db,
+                    window_days=30, min_samples=10,
+                    deploy_date="1900-01-01",
+                )
+                assert unfiltered is not None
+                assert unfiltered.sample_count == 18
+
+                # With the real deploy_date applied, only 3 post-deploy rows
+                # remain -- below min_samples=10 -> no correction.
+                stats = rc_mod.compute_residual_stats(
+                    "Busan", db,
+                    window_days=30, min_samples=10,
+                    deploy_date=deploy_date,
+                )
+            assert stats is None
+        finally:
+            rc_mod.RESIDUAL_CORRECTION_ENABLED = orig
+
+    def test_excludes_pre_deploy_deltas_when_sufficient_post_deploy_samples(self):
+        """Rolling mean must be computed only from post-deploy-date deltas,
+        even when plenty of pre-deploy (legacy-basis) rows also fall inside
+        the 30-day window."""
+        from datetime import date, timedelta as _td
+        from src.data.db import Database
+
+        db = Database(":memory:")
+        today = date.today()
+        # Use a 15-day deploy cutoff here (rather than 10, as in the test
+        # above) purely so the "12 post-deploy rows" below land on a round
+        # offset range without butting up against the cutoff boundary.
+        deploy_date = (today - _td(days=15)).isoformat()
+
+        # 15 legacy-basis rows before deploy_date with a very different delta.
+        for offset in range(16, 31):
+            self._insert_offset(db, "Busan", offset, delta_f=99.0, today=today)
+
+        # 12 post-deploy rows (>= min_samples=10) with delta_f=4.0.
+        for offset in range(0, 12):
+            self._insert_offset(db, "Busan", offset, delta_f=4.0, today=today)
+
+        import src.model.residual_correction as rc_mod
+        orig = rc_mod.RESIDUAL_CORRECTION_ENABLED
+        rc_mod.RESIDUAL_CORRECTION_ENABLED = True
+        try:
+            with patch("src.model.residual_correction._get_top_priority_pair", return_value=None):
+                stats = rc_mod.compute_residual_stats(
+                    "Busan", db,
+                    window_days=30, min_samples=10,
+                    deploy_date=deploy_date,
+                )
+            assert stats is not None
+            assert stats.sample_count == 12
+            assert stats.mean_signed_error == pytest.approx(4.0)
+            assert stats.scope == "city_fallback"
+            assert stats.basis_deploy_date == deploy_date
+        finally:
+            rc_mod.RESIDUAL_CORRECTION_ENABLED = orig
+
+    def test_apply_residual_correction_log_line_states_basis_and_sample_count(self, caplog):
+        """The 'applying bias correction' log line must state the basis
+        (deploy-date cutoff) and the sample count actually used."""
+        from datetime import date, timedelta as _td
+        from src.data.db import Database
+        import logging
+
+        db = Database(":memory:")
+        today = date.today()
+        deploy_date = (today - _td(days=15)).isoformat()
+
+        for offset in range(0, 12):
+            self._insert_offset(db, "Busan", offset, delta_f=4.0, today=today)
+
+        import src.model.residual_correction as rc_mod
+        orig = rc_mod.RESIDUAL_CORRECTION_ENABLED
+        rc_mod.RESIDUAL_CORRECTION_ENABLED = True
+        try:
+            with patch("src.model.residual_correction._get_top_priority_pair", return_value=None):
+                with caplog.at_level(logging.INFO, logger="src.model.residual_correction"):
+                    corrected, stats = rc_mod.apply_residual_correction(
+                        "Busan", 70.0, db,
+                        window_days=30, min_samples=10,
+                        deploy_date=deploy_date,
+                    )
+            assert stats is not None
+            assert stats.sample_count == 12
+            assert corrected == pytest.approx(70.0 + stats.clamped_correction)
+
+            log_text = caplog.text
+            assert f"n={stats.sample_count}" in log_text
+            assert f"basis=deb-since:{deploy_date}" in log_text
         finally:
             rc_mod.RESIDUAL_CORRECTION_ENABLED = orig
