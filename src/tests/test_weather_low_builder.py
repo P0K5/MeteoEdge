@@ -147,7 +147,7 @@ LIMC_STATION = ("LIMC", 45.6306, 8.7281, "Milan", "LIMC", "C", "Europe/Rome")
 _FAKE_METAR = [{"temp": 15.0, "reportTime": "2026-06-25T03:00:00-05:00"}]
 
 
-def _patch_low_build_deps(metar_data=None, low_result=(59.0, None)):
+def _patch_low_build_deps(metar_data=None, low_result=(59.0, None), forecast_low_f=52.0):
     if metar_data is None:
         metar_data = _FAKE_METAR
     window_start = pytz.timezone("America/Chicago").localize(datetime(2026, 6, 24, 20, 0))
@@ -162,6 +162,7 @@ def _patch_low_build_deps(metar_data=None, low_result=(59.0, None)):
         patch("src.weather.builder.compute_daily_low_window", return_value=resolved_low_result),
         patch("src.weather.builder.now_local",
               return_value=pytz.timezone("America/Chicago").localize(datetime(2026, 6, 25, 3, 5))),
+        patch("src.weather.builder.fetch_nws_forecast_low", return_value=forecast_low_f),
     ]
 
 
@@ -170,14 +171,14 @@ class TestBuildWeatherLowForScanning:
         from src.weather.builder import build_weather_low_for_scanning
 
         patches = _patch_low_build_deps()
-        with patches[0], patches[1], patches[2], patches[3]:
+        with patches[0], patches[1], patches[2], patches[3], patches[4]:
             result = build_weather_low_for_scanning(stations=[KORD_STATION])
 
         assert "KORD" in result
         state = result["KORD"]
         assert state.station == "KORD"
         assert state.current_low_f == pytest.approx(59.0)
-        assert state.forecast_low_f is None
+        assert state.forecast_low_f == pytest.approx(52.0)
         assert state.latest_temp_f == pytest.approx((15.0 * 9 / 5) + 32)
 
     def test_skips_station_without_low_market_mapping(self):
@@ -186,7 +187,7 @@ class TestBuildWeatherLowForScanning:
         from src.weather.builder import build_weather_low_for_scanning
 
         patches = _patch_low_build_deps()
-        with patches[0], patches[1], patches[2], patches[3]:
+        with patches[0], patches[1], patches[2], patches[3], patches[4]:
             result = build_weather_low_for_scanning(stations=[LIMC_STATION])
 
         assert result == {}
@@ -195,7 +196,7 @@ class TestBuildWeatherLowForScanning:
         from src.weather.builder import build_weather_low_for_scanning
 
         patches = _patch_low_build_deps(metar_data=[])
-        with patches[0], patches[1], patches[2], patches[3]:
+        with patches[0], patches[1], patches[2], patches[3], patches[4]:
             result = build_weather_low_for_scanning(stations=[KORD_STATION])
 
         assert result == {}
@@ -204,7 +205,7 @@ class TestBuildWeatherLowForScanning:
         from src.weather.builder import build_weather_low_for_scanning
 
         patches = _patch_low_build_deps(low_result=None)
-        with patches[0], patches[1], patches[2], patches[3]:
+        with patches[0], patches[1], patches[2], patches[3], patches[4]:
             result = build_weather_low_for_scanning(stations=[KORD_STATION])
 
         assert result == {}
@@ -213,7 +214,34 @@ class TestBuildWeatherLowForScanning:
         from src.weather.builder import build_weather_low_for_scanning
 
         patches = _patch_low_build_deps()
-        with patches[0], patches[1], patches[2], patches[3]:
+        with patches[0], patches[1], patches[2], patches[3], patches[4]:
             result = build_weather_low_for_scanning(stations=[KORD_STATION, LIMC_STATION])
 
         assert set(result.keys()) == {"KORD"}
+
+    def test_forecast_low_f_falls_back_to_none_when_nws_unavailable(self):
+        """When fetch_nws_forecast_low() returns None (e.g. non-US station or
+        NWS outage), forecast_low_f must stay None rather than raising --
+        true_probability_low_in_bracket already handles the None case."""
+        from src.weather.builder import build_weather_low_for_scanning
+
+        patches = _patch_low_build_deps(forecast_low_f=None)
+        with patches[0], patches[1], patches[2], patches[3], patches[4]:
+            result = build_weather_low_for_scanning(stations=[KORD_STATION])
+
+        assert "KORD" in result
+        assert result["KORD"].forecast_low_f is None
+
+    def test_forecast_low_f_sourced_from_nws_low_forecast(self):
+        """forecast_low_f must be wired from fetch_nws_forecast_low(lat, lon) --
+        the production function, not a re-implementation -- mirroring how the
+        high-side builder sources forecast_high_f from fetch_nws_forecast_high
+        (issue #583)."""
+        from src.weather.builder import build_weather_low_for_scanning
+
+        patches = _patch_low_build_deps(forecast_low_f=41.5)
+        with patches[0], patches[1], patches[2], patches[3], patches[4] as mock_fetch_low:
+            result = build_weather_low_for_scanning(stations=[KORD_STATION])
+
+        mock_fetch_low.assert_called_once_with(KORD_STATION[1], KORD_STATION[2])
+        assert result["KORD"].forecast_low_f == pytest.approx(41.5)
