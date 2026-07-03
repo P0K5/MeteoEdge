@@ -84,3 +84,32 @@ def fetch_nws_forecast_high(lat: float, lon: float) -> float | None:
     except Exception as e:
         log.warning("[nws] parse error for (%s,%s): %s", lat, lon, e)
         return None
+
+
+def fetch_nws_forecast_low(lat: float, lon: float) -> float | None:
+    """Return the upcoming overnight low forecast (°F) for lat/lon using NWS hourly forecast.
+
+    Mirrors ``fetch_nws_forecast_high`` -- same /points permanent cache and
+    30-min forecast cache, same forecast window -- but takes the minimum
+    instead of the maximum. Gives the low-side builder
+    (``build_weather_low_for_scanning`` in ``src/weather/builder.py``) a
+    forecast signal analogous to how ``forecast_high_f`` is sourced for the
+    high-side builder (issue #583).
+
+    Returns None if the forecast is unavailable.
+    """
+    forecast_url = get_nws_forecast_url(lat, lon)
+    if not forecast_url:
+        return None
+
+    data = cached_fetch_json(forecast_url, ttl_minutes=30)
+    if not data:
+        return None
+
+    try:
+        periods = data["properties"]["periods"]
+        lows = [p["temperature"] for p in periods[:18] if p.get("temperatureUnit") == "F"]
+        return min(lows) if lows else None
+    except Exception as e:
+        log.warning("[nws] low-forecast parse error for (%s,%s): %s", lat, lon, e)
+        return None
