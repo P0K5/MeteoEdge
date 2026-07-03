@@ -49,6 +49,15 @@ _JMA_URL_TEMPLATE = (
     "https://www.jma.go.jp/bosai/amedas/data/point/{station}/{timestamp}.json"
 )
 
+# Observed publication lag: JMA finishes writing a 10-minute slot file a
+# couple of minutes after the slot boundary closes. Requesting the slot the
+# instant it opens (or a few seconds after) reliably 404s, since the file
+# hasn't been published yet. We subtract this lag from "now" *before*
+# snapping to the 10-minute grid so the primary request always targets an
+# already-published slot instead of the just-opened one — this is what
+# eliminates the future-timestamp 404 spam (issue #560).
+_JMA_PUBLICATION_LAG_MIN = 2
+
 # Open-Meteo fallback: Haneda airport coordinates
 _OPEN_METEO_URL = (
     "https://api.open-meteo.com/v1/forecast"
@@ -126,21 +135,26 @@ class JmaAmedasCollector:
         """Fetch the most recent 10-minute reading from the JMA AMeDAS API.
 
         JMA serves one JSON file per 10-minute slot, keyed by 6-digit time strings (HHMMss).
-        Files publish every 10 minutes (00, 10, 20, 30, 40, 50) at the 14-digit timestamp.
-        We snap the current JST time to the nearest 10-minute grid and request that slot;
-        if not yet published (404), we retry with the previous 10-minute slot, then the
-        previous hour before giving up.
+        Files publish every 10 minutes (00, 10, 20, 30, 40, 50), but not instantaneously —
+        there's a short publication lag after each slot closes. To avoid ever requesting a
+        slot that hasn't been published yet (which manifests as future-timestamp-shaped
+        404 spam right at slot boundaries), we anchor the whole retry chain on
+        "now minus the publication lag" instead of raw "now", *then* snap to the 10-minute
+        grid. We still retry with the previous 10-minute slot, then the previous hour,
+        before giving up — the anchor shift only changes which slot is tried first, it
+        does not shorten the fallback chain.
 
         Returns (ts_utc, temp_c, raw_dict) or None on error.
         """
         now_jst = datetime.now(_JST)
-        reading = self._fetch_jma_slot(now_jst)
+        anchor_jst = now_jst - timedelta(minutes=_JMA_PUBLICATION_LAG_MIN)
+        reading = self._fetch_jma_slot(anchor_jst)
         if reading is None:
-            # Retry previous 10-minute slot
-            reading = self._fetch_jma_slot(now_jst - timedelta(minutes=10))
+            # Retry previous 10-minute slot (covers the just-published boundary case)
+            reading = self._fetch_jma_slot(anchor_jst - timedelta(minutes=10))
         if reading is None:
             # Retry previous hour
-            reading = self._fetch_jma_slot(now_jst - timedelta(hours=1))
+            reading = self._fetch_jma_slot(anchor_jst - timedelta(hours=1))
         return reading
 
     def _fetch_jma_slot(self, base_jst: datetime) -> "tuple[datetime, float, dict] | None":
