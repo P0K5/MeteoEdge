@@ -368,6 +368,12 @@ class TestEcmwfStrDateCoercion:
 
     def test_string_target_date_does_not_raise(self, tmp_path):
         kelvin = 295.0
+        # Pass the target as an ISO *string* (the bug #500 coercion path) but
+        # derive it from TOMORROW so it always falls within the 120h window
+        # relative to CYCLE_DT (now-24h). A hardcoded calendar literal here
+        # silently falls before the cycle once the real clock rolls past it,
+        # which is exactly how this test broke repo-wide on 2026-07-03.
+        target = TOMORROW
         with (
             patch("src.data.ecmwf_open._resolve_ecmwf_cycle", return_value=CYCLE_DT),
             patch(
@@ -377,14 +383,16 @@ class TestEcmwfStrDateCoercion:
             patch("src.data.ecmwf_open._get_cache_dir", return_value=tmp_path),
         ):
             result = fetch_ecmwf_daily_high(
-                LONDON_LAT, LONDON_LON, target_date="2026-07-01"
+                LONDON_LAT, LONDON_LON, target_date=target.isoformat()
             )
         assert result is not None
-        from datetime import date as _date
-        assert result.valid_date == _date(2026, 7, 1)
+        assert result.valid_date == target
 
     def test_string_date_returns_ecmwf_forecast(self, tmp_path):
         kelvin = 300.0
+        # ISO-string target derived from TOMORROW (see sibling test) so it stays
+        # inside the forecast window regardless of the wall-clock date.
+        target = TOMORROW
         with (
             patch("src.data.ecmwf_open._resolve_ecmwf_cycle", return_value=CYCLE_DT),
             patch(
@@ -394,7 +402,7 @@ class TestEcmwfStrDateCoercion:
             patch("src.data.ecmwf_open._get_cache_dir", return_value=tmp_path),
         ):
             result = fetch_ecmwf_daily_high(
-                LONDON_LAT, LONDON_LON, target_date="2026-07-01"
+                LONDON_LAT, LONDON_LON, target_date=target.isoformat()
             )
         assert isinstance(result, EcmwfForecast)
         assert result.attribution == "ECMWF Open Data, CC-BY-4.0"
