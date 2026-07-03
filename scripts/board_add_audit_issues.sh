@@ -37,11 +37,11 @@ REPO="MeteoEdge"
 # ---------------------------------------------------------------------------
 # Wave 3 (2026-07-03): all six core issues + the gfs-fallback filler + the
 # ECMWF hotfix were merged.
-DONE_ISSUES=(583 582 586 559 592 584 568 599)
+DONE_ISSUES=(583 582 586 559 592 584 568 560 599)
 
 # Backlog: follow-ups filed during Wave 3 review + the deferred JMA filler +
 # the still-open promotion-script decision.
-BACKLOG_ISSUES=(601 602 560 80)
+BACKLOG_ISSUES=(601 602 80)
 
 # Reserved for future waves — populate as needed.
 READY_ISSUES=()
