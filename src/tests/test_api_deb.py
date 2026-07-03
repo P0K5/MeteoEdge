@@ -57,6 +57,37 @@ class TestDebEndpoint:
         assert om["rmse_f"] == pytest.approx(2.3, abs=1e-4)
         assert om["n_samples"] == 12  # calibrated model
 
+    def test_deb_collapses_to_latest_row_per_model(self, client):
+        """A city with several days of history returns one row per model (#607).
+
+        model_weights keeps a row per (model, date), so get_model_weights returns
+        the full history ordered by date DESC.  The endpoint must collapse this to
+        the most-recent row per model rather than emitting every historical row.
+        """
+        rows = [
+            # newest date — the snapshot that should survive
+            {"city": "Chicago", "model": "nws", "date": "2026-06-08", "weight": 0.60, "rmse": 1.5, "sample_count": 20},
+            {"city": "Chicago", "model": "gfs", "date": "2026-06-08", "weight": 0.40, "rmse": 2.0, "sample_count": 18},
+            # older history for the same models — must be dropped
+            {"city": "Chicago", "model": "nws", "date": "2026-06-07", "weight": 0.10, "rmse": 9.9, "sample_count": 0},
+            {"city": "Chicago", "model": "gfs", "date": "2026-06-07", "weight": 0.90, "rmse": 9.9, "sample_count": 0},
+            {"city": "Chicago", "model": "nws", "date": "2026-06-06", "weight": 0.50, "rmse": 9.9, "sample_count": 0},
+        ]
+        with patch.object(api_db, "get_model_weights", return_value=rows):
+            r = client.get("/api/cities/Chicago/deb")
+
+        assert r.status_code == 200
+        data = r.json()
+        # one row per model, not one per (model, date)
+        assert len(data["weights"]) == 2
+        models = {w["model"]: w for w in data["weights"]}
+        assert set(models) == {"nws", "gfs"}
+        # the surviving rows are the newest ones
+        assert models["nws"]["weight"] == pytest.approx(0.60, abs=1e-4)
+        assert models["nws"]["n_samples"] == 20
+        assert models["gfs"]["weight"] == pytest.approx(0.40, abs=1e-4)
+        assert data["updated_at"] == "2026-06-08"
+
     def test_deb_404_no_data(self, client):
         """No rows in model_weights for city → 404 with expected detail message."""
         with patch.object(api_db, "get_model_weights", return_value=[]):
