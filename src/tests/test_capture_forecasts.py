@@ -45,25 +45,6 @@ def _capture_kwargs(**overrides) -> dict:
     return defaults
 
 
-def _silence_other_sources(model_under_test: str) -> dict:
-    """Return a dict of patches that silence all sources except the one under test."""
-    patches = {
-        "src.scripts.capture_forecasts.fetch_nws_with_spread": None,
-        "src.scripts.capture_forecasts.fetch_open_meteo_with_spread": None,
-        "src.scripts.capture_forecasts.fetch_secondary_forecast": None,
-        "src.scripts.capture_forecasts.fetch_gfs_with_spread": None,
-        "src.scripts.capture_forecasts.fetch_gfs_forecast_high": None,
-        "src.scripts.capture_forecasts.fetch_gefs_ensemble": [],
-    }
-    # Remove the entry for the model under test so its patch is not overridden
-    key_map = {
-        "gefs": "src.scripts.capture_forecasts.fetch_gefs_ensemble",
-    }
-    if model_under_test in key_map:
-        del patches[key_map[model_under_test]]
-    return patches
-
-
 # ---------------------------------------------------------------------------
 # Fake GEFSMemberForecast objects
 # ---------------------------------------------------------------------------
@@ -122,7 +103,6 @@ def _silence_base_sources():
         patch("src.scripts.capture_forecasts.fetch_open_meteo_with_spread", return_value=None),
         patch("src.scripts.capture_forecasts.fetch_secondary_forecast", return_value=None),
         patch("src.scripts.capture_forecasts.fetch_gfs_with_spread", return_value=None),
-        patch("src.scripts.capture_forecasts.fetch_gfs_forecast_high", return_value=None),
         patch("src.scripts.capture_forecasts.fetch_gefs_ensemble", return_value=[]),
         patch("src.data.hrrr.fetch_hrrr_hourly", return_value=[]),
         patch("src.data.nbm.fetch_nbm_daily_high", return_value=None),
@@ -143,6 +123,10 @@ class TestGfsCapture:
     model, no member spread). The capture log line previously formatted sigma
     with "%.2fF", which raises TypeError on None inside the logging machinery
     — these tests format every emitted record to catch that regression.
+
+    The near-redundant fetch_gfs_forecast_high fallback was removed in #568
+    because it hits the same upstream as the primary and offers no meaningful
+    recovery scenario.
     """
 
     def test_none_sigma_logs_cleanly_and_persists_null(self, caplog):
@@ -201,26 +185,6 @@ class TestGfsCapture:
         )
         gfs_calls = [c for c in mock_upsert.call_args_list if c.kwargs.get("model") == "gfs"]
         assert gfs_calls[0].kwargs["sigma_f"] == pytest.approx(2.5)
-
-    def test_primary_success_skips_fallback(self):
-        """When fetch_gfs_with_spread succeeds, the fetch_gfs_forecast_high
-        fallback must not be called."""
-        db = _db()
-        db.upsert_forecast_log_v2 = MagicMock()
-
-        with (
-            _silence_base_sources(),
-            patch(
-                "src.scripts.capture_forecasts.fetch_gfs_with_spread",
-                return_value=(78.0, None),
-            ),
-            patch(
-                "src.scripts.capture_forecasts.fetch_gfs_forecast_high",
-            ) as mock_fallback,
-        ):
-            _capture_station(**_capture_kwargs(db=db))
-
-        mock_fallback.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

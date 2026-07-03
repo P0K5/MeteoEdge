@@ -123,7 +123,6 @@ from src.data.open_meteo import (
     fetch_open_meteo_with_spread,
     fetch_gfs_with_spread,
     fetch_secondary_forecast,
-    fetch_gfs_forecast_high,
 )
 from src.logging_config import setup_logging
 from src.model.ensemble_sigma import raw_member_sigma
@@ -302,25 +301,7 @@ def _capture_station(
                 sigma_f=gfs_sigma,
             )
     else:
-        # Fallback: try single-model GFS fetch
-        gfs_mu = fetch_gfs_forecast_high(lat, lon)
-        if gfs_mu is not None:
-            log.info(
-                "[capture] %s gfs mu=%.1fF sigma=None (single-model fallback) lead=%dh date=%s",
-                station, gfs_mu, lead_hours, target_date,
-            )
-            if not dry_run and db is not None:
-                db.upsert_forecast_log_v2(
-                    station=station,
-                    model="gfs",
-                    date=target_date,
-                    forecast_high_f=gfs_mu,
-                    lead_hours=lead_hours,
-                    issued_at=issued_at,
-                    sigma_f=None,
-                )
-        else:
-            log.debug("[capture] %s gfs unavailable (lead=%dh)", station, lead_hours)
+        log.debug("[capture] %s gfs unavailable (lead=%dh)", station, lead_hours)
 
     # --- GEFS ensemble ---
     try:
