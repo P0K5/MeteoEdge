@@ -1881,11 +1881,14 @@ function debWeightsTableHTML(metar, weights) {
   }
   const rows = weights.map(w => {
     const isColdStart = w.n_samples < MIN_SAMPLES;
-    const statusLabel = isColdStart ? `<span title="Cold-start: ${w.n_samples} < ${MIN_SAMPLES} samples">cold-start</span>` : 'calibrated';
+    const statusLabel = isColdStart
+      ? `<span class="bias-badge bias-badge-suppressed" title="Cold-start: ${w.n_samples} < ${MIN_SAMPLES} samples">cold-start</span>`
+      : `<span class="bias-badge bias-badge-applied">calibrated</span>`;
+    const rmseDisplay = isColdStart ? '—' : `${w.rmse_f.toFixed(2)}°F`;
     return `<tr>
       <td class="deb-td deb-td-model">${w.model}</td>
       <td class="deb-td deb-td-weight">${(w.weight * 100).toFixed(1)}%</td>
-      <td class="deb-td deb-td-rmse">${w.rmse_f.toFixed(2)}°F</td>
+      <td class="deb-td deb-td-rmse">${rmseDisplay}</td>
       <td class="deb-td deb-td-samples">${w.n_samples}</td>
       <td class="deb-td deb-td-status">${statusLabel}</td>
     </tr>`;
