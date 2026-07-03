@@ -1499,6 +1499,84 @@ VALUES ('ZGGG', 0, 1, '2026-07-02T00:00:00+00:00'),
 
 ---
 
+## Regenerating Climb Rate Lookup (issue #592)
+
+The climb rate lookup table (`src/data/climb_lookup.py`) is used by the envelope model to estimate expected additional rise for each station at each hour of the day. The table is seeded with synthetic climatological values and can be incrementally refined with real observations accumulated in the database.
+
+### Background
+
+The lookup is indexed by station, month (1–12), and local hour (0–23). Each cell contains the p95 (95th percentile) daily temperature climb from that hour to the end of the day in °F. When external APIs (meteostat, Open-Meteo) are unavailable, the script uses synthetic climatological baselines. When running with `--from-db`, the script augments these synthetic values with p95-derived values computed from accumulated METAR/city-feed observations in the database (see issue #571).
+
+### When to Regenerate
+
+Regenerate `src/data/climb_lookup.py` after:
+- Significant accumulation of new observation data in the database (typically 2–4 weeks of operation)
+- Need to verify that sparse cells (month×hour combinations with <10 distinct dates) correctly fall back to synthetic values
+- Suspicion that the current synthetic baseline is poisoned by a prior failed run or manual edit
+
+### Regeneration Procedure
+
+**Step 1: Ensure a clean baseline**
+
+```bash
+# Verify that src/data/climb_lookup.py is committed and clean
+git diff -- src/data/climb_lookup.py
+```
+
+If the file is dirty (uncommitted changes), either:
+- Discard them: `git checkout -- src/data/climb_lookup.py`
+- Commit them: `git add src/data/climb_lookup.py && git commit -m "..."`
+
+The dirty-file guard (issue #592) is in place to prevent accidentally poisoning the fallback baseline with garbage data. The fallback is used for sparse cells, so any corruption is silent and invisible in the run output.
+
+**Step 2: Run the regeneration**
+
+```bash
+python scripts/build_climb_lookup.py --from-db [--db-path data/meteoedge.db]
+```
+
+Flags:
+- `--from-db`: Replace synthetic values with p95-derived values from database observations.
+- `--db-path PATH`: Path to the SQLite database (default: `data/meteoedge.db`).
+- `--force`: Proceed even if `src/data/climb_lookup.py` has uncommitted changes (use only if you know the file is intentionally being incrementally refined on a reviewed baseline).
+
+**Step 3: Review the output**
+
+The script prints:
+- Per-station row count of observations
+- Per-station cell count: how many month×hour cells were populated from DB vs. fallback
+- Plausibility warnings for any DB-derived columns with anomalously low climbs
+
+Example output line:
+```
+  [KORD] 15,234 obs → 288/288 cells updated from DB
+```
+
+Sparse output (cells from fallback):
+```
+  [RKPK] 3,421 obs → 156/288 cells updated from DB, rest synthetic fallback
+```
+
+**Step 4: Commit and push**
+
+```bash
+git add src/data/climb_lookup.py
+git commit -m "Regenerate climb_lookup from accumulated DB observations (issue #592)"
+git push
+```
+
+### Plausibility Guard
+
+The `--from-db` mode includes a plausibility guard (issue #587) that warns if any DB-derived month's hour-6 climb dips below half of both neighbors (signature of within-hour spread or UTC binning errors). These warnings warrant inspection before committing the table.
+
+### Troubleshooting
+
+- **"climb_lookup.py has uncommitted changes":** The file contains edits that would corrupt the fallback baseline. Restore or commit first, or use `--force` if refining on a reviewed baseline.
+- **"git not available":** The script is running outside a git repo (e.g., in a container). The dirty-file check is skipped; ensure the baseline is manually verified.
+- **Few cells from DB:** Accumulation period is too short. Wait 2–4 more weeks and re-run.
+
+---
+
 ## Support & Escalation
 
 For issues beyond this runbook, escalate to:
