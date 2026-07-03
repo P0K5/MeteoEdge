@@ -192,14 +192,23 @@ def poll_once(
     if live_trader:
         order_manager.check_take_profit_exits(live_trader, ts, db=db, risk_manager=risk_manager)
 
+    # Shared METAR fetch cache for this poll only: the high-side and low-side
+    # builders below both need METAR observations for overlapping stations.
+    # Passing the same dict into both means a station fetched by one builder
+    # is reused by the other instead of hitting aviationweather.gov twice per
+    # poll for the same station (issue #582). See _get_metars_for_station()
+    # in src/weather/builder.py.
+    _metars_cache: dict = {}
+
     weather_health: list = []
-    weather = _build_weather(db=db, health_out=weather_health)
+    weather = _build_weather(db=db, health_out=weather_health, metars_cache=_metars_cache)
     _dashboard_module.weather_health = weather_health  # surface feed health to the dashboard banner
 
     # Low-side shadow scan (Epic C, issue #457) -- shadow-only, never gates live
     # entries (see scanner.py's low-side block). Built every poll; see
     # build_weather_low_for_scanning() for why no active-hours gate is needed.
-    weather_low = build_weather_low_for_scanning(db=db)
+    # Shares _metars_cache with the high-side build above (issue #582).
+    weather_low = build_weather_low_for_scanning(db=db, metars_cache=_metars_cache)
 
     # Collect open-position token IDs early so they can be included in the
     # batch orderbook fetch below (together with the scanner's YES/NO tokens).
