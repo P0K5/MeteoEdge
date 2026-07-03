@@ -101,3 +101,93 @@ sqlite3 data/meteoedge.db "UPDATE bot_config SET value='full' WHERE key='FORECAS
 ```
 
 **Step 4 — Monitor for 7 days** after promotion. Watch per-station MAE in the dashboard DEB panel. Roll back immediately if MAE regresses by > 0.5 °F vs pre-promotion baseline.
+
+---
+
+## Station Shadow→Live Promotion (issue #559)
+
+**This is the sole promotion path for moving a shadow station+side to live trading.**
+It supersedes the ad-hoc thresholds proposed in issue #80 (`>=5 trades, 100% win
+rate, >=3 days`, taken from an old `src/config.py` comment) — that bar was gameable
+by noise (a handful of coin-flip wins reads as "100%") and never accounted for
+trading costs. Issue #80 is **not closed**; see "Relationship to issue #80" below.
+
+Do not confuse this with the **Forecast Stacks promotion gate** above — that gate
+promotes a *forecast ingestion stack* (HRRR/NBM, ECMWF/ICON) based on backtested
+MAE improvement. This section promotes a *station+side from shadow to live
+trading* based on settled shadow P&L statistics.
+
+### The rule
+
+Implemented in `src/model/promotion_gate.py` (`compute_promotion_bar()`) and
+surfaced on the dashboard's **Promotion** tab (`GET /api/promotion-bar`).
+
+For each **station+side** with settled shadow trades, the tool computes:
+
+- `n` — settled shadow trade count
+- `win_rate` — wins / n
+- `wilson_lower_bound` — the lower bound of the 95% Wilson score confidence
+  interval on the win rate (see `wilson_lower_bound()`). The Wilson interval
+  is used instead of the raw win rate specifically because it degrades
+  gracefully for small `n` — a 5/5 or 9/9 streak reports a much lower bound
+  than its headline win rate, which is what makes the #80 loophole
+  statistically indefensible.
+- `breakeven_win_rate` — the win rate required to break even at the station's
+  average settled entry price, derived from `src/strategy/fee.py`'s taker fee
+  model (`estimate_fee_cents()`), **not a bare 0.5**:
+  `breakeven = (avg_entry_price_cents + fee_cents) / 100`.
+- `days_coverage`, `avg_entry_price_cents`, `price_valid` (average entry price
+  at/above `MIN_PRICE_CENTS` — below that, shadow data may not reflect live
+  conditions; see the ZSPD comment in `src/config.py`).
+
+**A station+side is eligible ⇔** `n >= PROMOTION_MIN_SETTLED_TRADES` **AND**
+`wilson_lower_bound(wins, n) > breakeven_win_rate(avg_entry_price)`.
+
+The dashboard reports one of three statuses per row:
+
+| Status | Meaning |
+|---|---|
+| 🟢 `green` (ELIGIBLE) | Clears the bar: enough settled trades, Wilson lower bound beats break-even, and the average entry price is valid. |
+| 🟡 `amber` (WATCH) | Directionally clears break-even but either `n` is still below the minimum, or the average entry price is below `MIN_PRICE_CENTS` (data-quality caveat). |
+| 🔴 `red` (NOT YET) | No settled trades yet, or the Wilson lower bound does not clear break-even — the station+side has not demonstrated a statistically defensible edge net of costs. |
+
+### Config
+
+| Key | Default | Effect |
+|---|---|---|
+| `PROMOTION_MIN_SETTLED_TRADES` | `30` | Minimum settled shadow trades required for eligibility. |
+| `PROMOTION_WILSON_CONFIDENCE` | `0.95` | Confidence level for the Wilson score lower bound. |
+| `MIN_PRICE_CENTS` | `60` | Reused from the live entry gate to flag shadow data as price-valid. |
+
+Editable via the dashboard **Config** tab (group: `promotion`) or directly in
+the DB:
+
+```bash
+sqlite3 data/meteoedge.db "UPDATE bot_config SET value='30' WHERE key='PROMOTION_MIN_SETTLED_TRADES';"
+```
+
+### Advisory only — this tool never promotes anything
+
+`compute_promotion_bar()` and `/api/promotion-bar` are **read-only**. They do
+not write to `station_overrides`, `SHADOW_STATIONS`, or any other live-trading
+config, and no automation acts on their output. A human (operator or Tech
+Lead PM) must review the dashboard, judge whether the eligible station+side
+also passes the data-coverage prerequisites (`/api/promotion-prerequisites` —
+climb-rate history, ≥2 forecast models, TAF coverage, secondary observation
+source, at least one settled loss), and then flip the station live manually,
+e.g.:
+
+```bash
+sqlite3 data/meteoedge.db "UPDATE station_overrides SET no_enabled=1 WHERE station='WSSS';"
+```
+
+### Relationship to issue #80
+
+Issue #80 proposed `scripts/station_promotion_check.py` (a standalone script)
+plus the `>=5 trades / 100% WR / >=3 days` threshold and a
+`/analytics/station_promotions` endpoint. Issue #559 supersedes the
+*threshold* with the statistically defensible bar above, and the dashboard
+surface with `/api/promotion-bar`. Issue #80 remains open — whether its
+standalone script is still wanted (e.g. as a CLI wrapper around
+`compute_promotion_bar()` for use outside the dashboard) is left as an open
+question for the Tech Lead PM; see the comment thread on #80.

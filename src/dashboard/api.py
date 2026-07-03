@@ -438,6 +438,27 @@ class PromotionPrerequisitesOut(BaseModel):
     reason: str = ""
 
 
+class PromotionBarOut(BaseModel):
+    """Statistical promotion bar status for one shadow station+side (issue #559).
+
+    Advisory only — reflects the settled shadow-trade data against the bar;
+    it does not auto-promote and has no effect on the live entry gate.
+    """
+    station: str
+    side: str
+    n: int
+    wins: int
+    win_rate: float
+    wilson_lower_bound: float
+    breakeven_win_rate: float
+    avg_entry_price_cents: float
+    days_coverage: int
+    price_valid: bool
+    eligible: bool
+    status: str
+    reason: str
+
+
 class EmosCoefficients(BaseModel):
     a: float
     b: float
@@ -1987,6 +2008,31 @@ def promotion_prerequisites() -> list[PromotionPrerequisitesOut]:
     return result
 
 
+@app.get("/api/promotion-bar", response_model=list[PromotionBarOut])
+def promotion_bar() -> list[PromotionBarOut]:
+    """Statistical promotion bar (issue #559) — advisory only, never auto-promotes.
+
+    Per shadow station+side, reports the settled trade count, win rate, Wilson
+    score lower bound (95% by default, configurable via
+    PROMOTION_WILSON_CONFIDENCE), and the break-even win rate implied by the
+    average entry price plus the fee model (src/strategy/fee.py). A row is
+    "eligible" iff n >= PROMOTION_MIN_SETTLED_TRADES AND the Wilson lower
+    bound clears break-even.
+
+    Supersedes the ad-hoc thresholds proposed in issue #80 (>=5 trades / 100%
+    win rate / >=3 days) as the sole promotion path. This endpoint and the
+    underlying computation never write to station_overrides or any other
+    live-trading config — a human must act on the "eligible"/"status" signal.
+    """
+    if _db is None:
+        raise HTTPException(status_code=503, detail="Database not initialised")
+
+    from src.model.promotion_gate import compute_promotion_bar
+
+    rows = compute_promotion_bar(_db)
+    return [PromotionBarOut(**row) for row in rows]
+
+
 # ---------------------------------------------------------------------------
 # Config API — DB-backed parameter store
 # ---------------------------------------------------------------------------
@@ -2199,6 +2245,20 @@ _CONFIG_META: dict[str, dict] = {
         "type": "enum",
         "group": "forecast",
         "options": ["baseline", "hrrr_nbm", "intl_ecmwf_icon", "full"],
+    },
+    "PROMOTION_MIN_SETTLED_TRADES": {
+        "description": "Minimum settled shadow trades required for promotion eligibility (issue #559, supersedes #80)",
+        "type": "int",
+        "group": "promotion",
+        "min": 5,
+        "max": 200,
+    },
+    "PROMOTION_WILSON_CONFIDENCE": {
+        "description": "Confidence level for the Wilson score lower bound used by the promotion bar",
+        "type": "float",
+        "group": "promotion",
+        "min": 0.5,
+        "max": 0.999,
     },
 }
 

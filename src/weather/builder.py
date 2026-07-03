@@ -118,6 +118,25 @@ def _deb_station_region(station: str, unit: str) -> str:
     return "global"
 
 
+def _get_metars_for_station(station: str, metars_cache: "dict[str, list] | None") -> list:
+    """Fetch METAR observations for *station*, sharing a fetch across builders.
+
+    When *metars_cache* is provided, the fetch happens at most once per
+    station per cache lifetime (typically one poll cycle) -- the result is
+    memoized so a second caller (e.g. the low-side builder reusing the
+    high-side builder's cache, or vice versa) reads the already-fetched list
+    instead of issuing a duplicate HTTP call to aviationweather.gov (issue
+    #582). When *metars_cache* is None (the default for callers that don't
+    opt in, e.g. build_weather_for_pricing), behaviour is unchanged: fetch
+    every call.
+    """
+    if metars_cache is None:
+        return fetch_all_metars_today(station)
+    if station not in metars_cache:
+        metars_cache[station] = fetch_all_metars_today(station)
+    return metars_cache[station]
+
+
 def _build_one_station(
     station: str,
     lat: float,
@@ -126,12 +145,17 @@ def _build_one_station(
     unit: str = "F",
     db=None,
     health_out: "list | None" = None,
+    metars_cache: "dict[str, list] | None" = None,
 ) -> "WeatherState | None":
     """Build a WeatherState for a single station.
 
     This is a shared implementation helper called by both
     ``build_weather_for_scanning`` and ``build_weather_for_pricing``.  It does
     NOT apply the active-hours gate — callers are responsible for that decision.
+
+    ``metars_cache``, when provided, memoizes the METAR fetch per station so
+    it can be shared with the low-side builder within the same poll (issue
+    #582) -- see ``_get_metars_for_station``.
 
     Returns the WeatherState on success, or None when data is unavailable
     (no METAR, parse error, etc.).  A ``health_out`` entry is appended on
@@ -141,7 +165,7 @@ def _build_one_station(
         if health_out is not None:
             health_out.append({"station": station, "status": "degraded", "reason": reason})
 
-    metars = fetch_all_metars_today(station)
+    metars = _get_metars_for_station(station, metars_cache)
     if not metars:
         log.info("[%s] no METAR data, skipping", station)
         _degraded("no METAR data")
@@ -304,7 +328,7 @@ def _build_one_station(
     return state
 
 
-def build_weather_for_scanning(stations=None, db=None, health_out=None) -> dict:
+def build_weather_for_scanning(stations=None, db=None, health_out=None, metars_cache=None) -> dict:
     """Assemble per-station WeatherState for the SCANNER path.
 
     Applies the active-hours gate: stations outside their configured local
@@ -318,6 +342,9 @@ def build_weather_for_scanning(stations=None, db=None, health_out=None) -> dict:
         db: optional Database instance.
         health_out: optional list; one ``{"station", "status", "reason"}``
             entry is appended per station for dashboard health reporting.
+        metars_cache: optional dict shared with ``build_weather_low_for_scanning``
+            within the same poll so both builders reuse a single METAR fetch
+            per station instead of each fetching independently (issue #582).
 
     Returns dict mapping station code → WeatherState (only in-window stations).
     """
@@ -339,7 +366,10 @@ def build_weather_for_scanning(stations=None, db=None, health_out=None) -> dict:
             _degraded(station, f"outside active window {active_start:02d}:00-{active_end:02d}:00 (local {now_local_dt.strftime('%H:%M')})")
             continue
 
-        state = _build_one_station(station, lat, lon, city, unit=unit, db=db, health_out=health_out)
+        state = _build_one_station(
+            station, lat, lon, city, unit=unit, db=db, health_out=health_out,
+            metars_cache=metars_cache,
+        )
         if state is not None:
             weather[station] = state
     return weather
@@ -375,7 +405,9 @@ def build_weather_for_pricing(stations, db=None) -> dict:
     return weather
 
 
-def _build_one_station_low(station: str, lat: float, lon: float, db=None) -> "WeatherStateLow | None":
+def _build_one_station_low(
+    station: str, lat: float, lon: float, db=None, metars_cache=None,
+) -> "WeatherStateLow | None":
     """Build a WeatherStateLow for a single station's overnight-low window.
 
     Root cause of issue #554: this function (and build_weather_low_for_scanning
@@ -392,8 +424,12 @@ def _build_one_station_low(station: str, lat: float, lon: float, db=None) -> "We
     secondary source wired up yet. If forecast_low_f is unavailable (non-US
     station, NWS outage), true_probability_low_in_bracket falls back to the
     envelope midpoint -- see envelope_low.py.
+
+    ``metars_cache``, when provided, memoizes the METAR fetch per station so
+    it can be shared with the high-side builder within the same poll (issue
+    #582) -- see ``_get_metars_for_station``.
     """
-    metars = fetch_all_metars_today(station)
+    metars = _get_metars_for_station(station, metars_cache)
     if not metars:
         log.debug("[%s] no METAR data, skipping low-side build", station)
         return None
@@ -439,7 +475,7 @@ def _build_one_station_low(station: str, lat: float, lon: float, db=None) -> "We
     )
 
 
-def build_weather_low_for_scanning(stations=None, db=None) -> dict:
+def build_weather_low_for_scanning(stations=None, db=None, metars_cache=None) -> dict:
     """Assemble per-station WeatherStateLow for the SCANNER low-side path.
 
     Epic-C low-side shadow rollout (issue #457); this is the low-side
@@ -455,6 +491,17 @@ def build_weather_low_for_scanning(stations=None, db=None) -> dict:
     imported lazily to avoid a module-load-order dependency between
     src.weather.builder and src.strategy.scanner.
 
+    Args:
+        stations: iterable of (station, lat, lon, city, ...) tuples, or None
+            to use the full STATIONS list from config.
+        db: optional Database instance.
+        metars_cache: optional dict shared with ``build_weather_for_scanning``
+            within the same poll so both builders reuse a single METAR fetch
+            per station instead of each fetching independently (issue #582).
+            Pass the SAME dict instance used for the high-side builder call so
+            the poll's METAR fetches are deduplicated across both paths --
+            see ``poll_once()`` in ``src/scripts/run.py``.
+
     Returns dict mapping station code -> WeatherStateLow (only stations with
     at least one observation in their current overnight-low window).
     """
@@ -466,13 +513,13 @@ def build_weather_low_for_scanning(stations=None, db=None) -> dict:
     for station, lat, lon, city, *rest in station_list:
         if station not in low_stations:
             continue
-        state = _build_one_station_low(station, lat, lon, db=db)
+        state = _build_one_station_low(station, lat, lon, db=db, metars_cache=metars_cache)
         if state is not None:
             weather_low[station] = state
     return weather_low
 
 
-def _build_weather(db=None, health_out=None) -> dict:
+def _build_weather(db=None, health_out=None, metars_cache=None) -> dict:
     """Assemble per-station WeatherState.
 
     .. deprecated::
@@ -485,5 +532,9 @@ def _build_weather(db=None, health_out=None) -> dict:
     is appended per station so callers (the dashboard) can surface *what* is
     failing and *why* -- e.g. outside active window, no METAR, parse error.
     ``status`` is ``"ok"`` for stations that produced a WeatherState.
+
+    ``metars_cache``, when provided, is forwarded to ``build_weather_for_scanning``
+    so its METAR fetches can be shared with ``build_weather_low_for_scanning``
+    within the same poll (issue #582).
     """
-    return build_weather_for_scanning(db=db, health_out=health_out)
+    return build_weather_for_scanning(db=db, health_out=health_out, metars_cache=metars_cache)

@@ -1172,6 +1172,33 @@ class Database:
             )
         return [dict(row) for row in cur.fetchall()]
 
+    def get_all_settlements(
+        self,
+        since: str,
+        direction: "str | None" = None,
+    ) -> list:
+        """Return settlements for ALL stations at or after *since*, oldest first.
+
+        Mirrors ``get_trades(mode=..., limit=None)``'s no-station-filter style —
+        use this instead of looping ``get_settlements()`` per station when a
+        caller needs to scan every station in one pass (e.g. the promotion bar
+        in ``src/model/promotion_gate.py``), to avoid N+1 DB reads.
+
+        Args:
+            direction: Optional filter — ``'high'`` or ``'low'``.
+        """
+        if direction is not None:
+            cur = self._conn.execute(
+                "SELECT * FROM settlements WHERE ts>=? AND direction=? ORDER BY ts ASC",
+                (since, direction),
+            )
+        else:
+            cur = self._conn.execute(
+                "SELECT * FROM settlements WHERE ts>=? ORDER BY ts ASC",
+                (since,),
+            )
+        return [dict(row) for row in cur.fetchall()]
+
     # ------------------------------------------------------------------
     # open_positions
     # ------------------------------------------------------------------

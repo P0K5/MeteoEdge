@@ -600,7 +600,7 @@ class TestPollOnceWeatherOutage:
         import src.scripts.run as run_module
         import src.monitoring.dashboard as _dash
 
-        def _fake_build_weather(db=None, health_out=None):
+        def _fake_build_weather(db=None, health_out=None, metars_cache=None):
             if health_out is not None:
                 health_out.append(
                     {"station": "Tokyo", "status": "degraded", "reason": "no METAR data"}
@@ -673,3 +673,115 @@ class TestBuildWeatherHealthOut:
         assert health[0]["station"] == "WSSS"
         assert health[0]["status"] == "degraded"
         assert "active window" in health[0]["reason"]
+
+
+# ---------------------------------------------------------------------------
+# Shared METAR fetch between the high-side and low-side builders — issue #582.
+#
+# Root cause of #582: build_weather_for_scanning() (via poll_once() ->
+# _build_weather()) and build_weather_low_for_scanning() each independently
+# called fetch_all_metars_today(station) every poll, with no sharing. For a
+# station present in both the active-hours-gated high-side set and the
+# low-market POLYMARKET_CITY_TO_STATION_LOW mapping (e.g. KORD/Chicago), that
+# meant two HTTP calls to aviationweather.gov per poll for the same station.
+#
+# This test drives the REAL poll_once() with a single controlled station
+# (KORD) that is a member of both sets, and proves (a) fetch_all_metars_today
+# is called only ONCE for that station across the whole poll, and (b) the
+# high-side and low-side builders both consume the SAME fetched METAR object
+# (not two separately-fetched-but-equal copies) -- i.e. the fetch is actually
+# shared, not just accidentally deduplicated by unrelated caching.
+# ---------------------------------------------------------------------------
+
+class TestPollOnceSharesMetarFetch:
+    KORD_STATION = ("KORD", 41.9742, -87.9073, "Chicago", "KORD", "F", "America/Chicago")
+    _FAKE_METAR = [{"temp": 15.0, "reportTime": "2026-06-25T03:00:00-05:00"}]
+
+    def test_metar_fetched_once_and_shared_across_both_builders(self):
+        import src.scripts.run as run_module
+        from datetime import datetime
+        import pytz
+
+        some_time = pytz.timezone("America/Chicago").localize(datetime(2026, 6, 25, 3, 0))
+
+        fetch_calls: list[str] = []
+
+        def _fake_fetch_all_metars_today(station):
+            fetch_calls.append(station)
+            return self._FAKE_METAR
+
+        high_side_metars_seen: list = []
+
+        def _fake_compute_daily_high(metars, tz_name, min_local_hour=6):
+            high_side_metars_seen.append(metars)
+            return (85.0, some_time)
+
+        low_side_metars_seen: list = []
+
+        def _fake_compute_daily_low_window(metars, tz_name, window_start):
+            low_side_metars_seen.append(metars)
+            return (59.0, some_time)
+
+        captured_kwargs: list[dict] = []
+
+        def _fake_scan_markets(weather, markets, **kwargs):
+            captured_kwargs.append(kwargs)
+            return [], []
+
+        from contextlib import ExitStack
+
+        with ExitStack() as stack:
+            stack.enter_context(patch("src.weather.builder.STATIONS", [self.KORD_STATION]))
+            stack.enter_context(patch("src.weather.builder.STATION_ACTIVE_HOURS", {"KORD": (0, 24)}))
+            stack.enter_context(patch("src.weather.builder.STATION_TZ", {"KORD": "America/Chicago"}))
+            stack.enter_context(patch("src.strategy.scanner.POLYMARKET_CITY_TO_STATION_LOW", {"chicago": "KORD"}))
+            stack.enter_context(patch("src.weather.builder.fetch_all_metars_today",
+                                       side_effect=_fake_fetch_all_metars_today))
+            stack.enter_context(patch("src.weather.builder.compute_daily_high",
+                                       side_effect=_fake_compute_daily_high))
+            stack.enter_context(patch("src.weather.builder.compute_daily_low_window",
+                                       side_effect=_fake_compute_daily_low_window))
+            stack.enter_context(patch("src.weather.builder.low_window_bounds",
+                                       return_value=(some_time, some_time)))
+            stack.enter_context(patch("src.weather.builder.now_local", return_value=some_time))
+            stack.enter_context(patch("src.weather.builder.sunset_local", return_value=some_time))
+            stack.enter_context(patch("src.weather.builder.fetch_nws_forecast_high", return_value=84.0))
+            stack.enter_context(patch("src.weather.builder.fetch_secondary_forecast", return_value=83.0))
+            stack.enter_context(patch("src.weather.builder.fetch_gfs_forecast_high", return_value=None))
+            stack.enter_context(patch("src.weather.builder.fetch_nws_forecast_low", return_value=52.0))
+            stack.enter_context(patch("src.scripts.run.scan_markets", side_effect=_fake_scan_markets))
+            stack.enter_context(patch("src.scripts.run.get_weather_markets", return_value=[]))
+            stack.enter_context(patch.object(run_module.order_manager, "reconcile_timeout_fills"))
+            stack.enter_context(patch.object(run_module.order_manager, "sync_open_orders"))
+            stack.enter_context(patch.object(run_module.order_manager, "check_take_profit_exits"))
+            stack.enter_context(patch("src.monitoring.dashboard.last_poll_ts", None, create=True))
+            stack.enter_context(patch("src.monitoring.dashboard.weather_health", None, create=True))
+
+            from src.scripts.run import poll_once
+            from src.risk.manager import RiskManager
+
+            mock_risk = MagicMock(spec=RiskManager)
+            mock_risk.allow_trade.return_value = (False, "test block")
+
+            poll_once(mock_risk, live_trader=None, alert_manager=None, db=None)
+
+        # The core fix: exactly one HTTP-level fetch for KORD across the whole
+        # poll, even though both the high-side and low-side builder ran for it.
+        assert fetch_calls == ["KORD"], (
+            f"expected fetch_all_metars_today to be called exactly once for KORD, "
+            f"got {len(fetch_calls)} calls: {fetch_calls}"
+        )
+
+        # Both builders must have run for KORD (sanity check the scenario is real).
+        assert captured_kwargs, "scan_markets was never called"
+        assert "KORD" in captured_kwargs[0].get("weather_low", {}) or high_side_metars_seen, (
+            "low-side builder did not appear to run for KORD"
+        )
+        assert high_side_metars_seen, "high-side builder never called compute_daily_high"
+        assert low_side_metars_seen, "low-side builder never called compute_daily_low_window"
+
+        # Both builders must have consumed the SAME fetched METAR list object --
+        # proving the fetch was genuinely shared, not independently re-fetched.
+        assert high_side_metars_seen[0] is self._FAKE_METAR
+        assert low_side_metars_seen[0] is self._FAKE_METAR
+        assert high_side_metars_seen[0] is low_side_metars_seen[0]
