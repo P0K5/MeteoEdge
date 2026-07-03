@@ -1293,6 +1293,18 @@ def get_city_deb(city: str) -> DebOut:
     # updated_at = max date across all rows (rows are already ordered DESC)
     updated_at = rows[0]["date"]
 
+    # model_weights stores one row per (model, date), so a city accumulates a
+    # fresh row per model every day.  The panel is a single current snapshot, so
+    # collapse to the most-recent row per model.  Rows are ordered by date DESC,
+    # so the first occurrence of each model is its newest.  (See #607.)
+    seen: set[str] = set()
+    latest = []
+    for row in rows:
+        if row["model"] in seen:
+            continue
+        seen.add(row["model"])
+        latest.append(row)
+
     weights = [
         DebWeightOut(
             model=row["model"],
@@ -1300,7 +1312,7 @@ def get_city_deb(city: str) -> DebOut:
             rmse_f=round(float(row["rmse"]), 4),
             n_samples=row.get("sample_count", 0) or 0,  # coerce None to 0
         )
-        for row in rows
+        for row in latest
     ]
     return DebOut(city=normalised, updated_at=updated_at, weights=weights)
 
