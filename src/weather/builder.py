@@ -16,7 +16,7 @@ from src.data.metar import (
     now_local, sunset_local,
     low_window_bounds, compute_daily_low_window,
 )
-from src.data.nws import fetch_nws_forecast_high
+from src.data.nws import fetch_nws_forecast_high, fetch_nws_forecast_low
 from src.data.open_meteo import fetch_secondary_forecast, fetch_hourly_temp_now, fetch_gfs_forecast_high
 from src.model.deb_weighting import refresh_weights, get_weights
 from src.model.deb_hourly_consensus import compute_deb_mu_f
@@ -384,10 +384,14 @@ def _build_one_station_low(station: str, lat: float, lon: float, db=None) -> "We
     unreachable dead code in production, even though it was fully unit-tested
     in isolation.
 
-    Deliberately minimal for v1: forecast_low_f/secondary_forecast_low_f are
-    left as None (true_probability_low_in_bracket falls back to the envelope
-    midpoint when no forecast is available -- see envelope_low.py). Wiring a
-    real low-temperature forecast source is left to a follow-up issue.
+    forecast_low_f is sourced from NWS (fetch_nws_forecast_low), mirroring how
+    the high-side builder sources forecast_high_f from fetch_nws_forecast_high
+    (issue #583). secondary_forecast_low_f is deliberately left as None for
+    v1 -- true_probability_low_in_bracket / ensemble_forecast already handle a
+    primary-only forecast, and there is no low-side equivalent of the Open-Meteo
+    secondary source wired up yet. If forecast_low_f is unavailable (non-US
+    station, NWS outage), true_probability_low_in_bracket falls back to the
+    envelope midpoint -- see envelope_low.py.
     """
     metars = fetch_all_metars_today(station)
     if not metars:
@@ -420,6 +424,8 @@ def _build_one_station_low(station: str, lat: float, lon: float, db=None) -> "We
         log.warning("[%s] METAR parse error (low-side): %s, skipping", station, e)
         return None
 
+    forecast_low_f = fetch_nws_forecast_low(lat, lon)
+
     return WeatherStateLow(
         station=station,
         now_local=now_local(station),
@@ -428,7 +434,7 @@ def _build_one_station_low(station: str, lat: float, lon: float, db=None) -> "We
         current_low_time=low_time,
         latest_temp_f=latest_temp_f,
         latest_temp_time=latest_time,
-        forecast_low_f=None,
+        forecast_low_f=forecast_low_f,
         secondary_forecast_low_f=None,
     )
 
