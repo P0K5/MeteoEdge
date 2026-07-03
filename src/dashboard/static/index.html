@@ -678,6 +678,21 @@ a,button,input,select{transition:color var(--transition),background var(--transi
 .btn-emos.btn-cancel{background:var(--surface-off);color:var(--muted);border-color:var(--border);}
 .btn-emos.btn-cancel:hover:not(:disabled){background:var(--surface-dyn);color:var(--text);}
 
+/* ── PROMOTION BAR PANEL (issue #559, advisory only) ── */
+.promo-note{padding:var(--space-3) var(--space-5);font-size:var(--text-xs);color:var(--muted);border-bottom:1px solid var(--divider);}
+.promo-table-wrap{overflow-x:auto;}
+.promo-table{width:100%;border-collapse:collapse;font-size:var(--text-xs);font-variant-numeric:tabular-nums;}
+.promo-th{text-align:left;padding:var(--space-2) var(--space-3);font-weight:700;color:var(--muted);letter-spacing:.04em;border-bottom:1px solid var(--divider);white-space:nowrap;}
+.promo-td{padding:var(--space-2) var(--space-3);vertical-align:middle;color:var(--text);border-bottom:1px solid var(--divider);white-space:nowrap;}
+.promo-row-station{font-weight:700;}
+.promo-td-reason{white-space:normal;color:var(--muted);min-width:220px;}
+.badge-bar-green{background:var(--yes-bg);color:var(--yes);}
+.badge-bar-green .status-dot{background:var(--yes);}
+.badge-bar-amber{background:var(--warn-bg);color:var(--warn);}
+.badge-bar-amber .status-dot{background:var(--warn);}
+.badge-bar-red{background:var(--no-bg);color:var(--no);}
+.badge-bar-red .status-dot{background:var(--no);}
+
 /* ── CONFIG GROUPS ── */
 .config-hint{font-size:var(--text-xs);color:var(--muted);align-self:center;}
 .config-group{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-xl);margin-bottom:var(--space-4);overflow:hidden;}
@@ -739,6 +754,7 @@ a,button,input,select{transition:color var(--transition),background var(--transi
   <button class="tab-btn" onclick="switchTab('stations')">Stations</button>
   <button class="tab-btn" onclick="switchTab('edge')">Edge</button>
   <button class="tab-btn" onclick="switchTab('emos')">EMOS</button>
+  <button class="tab-btn" onclick="switchTab('promotion')">Promotion</button>
   <button class="tab-btn" onclick="switchTab('config')">Config</button>
 </nav>
 
@@ -937,6 +953,33 @@ a,button,input,select{transition:color var(--transition),background var(--transi
         <i data-lucide="loader"></i>
         <h3>Loading EMOS status…</h3>
         <p>Fetching calibration state from the API.</p>
+      </div>
+    </div>
+  </main>
+</section>
+
+<!-- ── PROMOTION BAR TAB (issue #559) ── -->
+<section id="tab-promotion" class="tab-panel">
+  <main class="main">
+    <div class="error-banner" id="promotion-error-banner">
+      <i data-lucide="alert-circle"></i>
+      <span id="promotion-error-text">Could not reach /api/promotion-bar — retrying…</span>
+    </div>
+    <div class="section-hdr">
+      <div class="section-title"><i data-lucide="scale"></i>Promotion Bar</div>
+      <span class="count-pill" id="promotion-count">—</span>
+    </div>
+    <div class="promo-note">
+      Advisory only — never auto-promotes and has no effect on the live entry gate.
+      Eligible ⇔ settled shadow trades ≥ min AND the Wilson 95% lower bound of win rate
+      clears the break-even rate implied by avg entry price + fees. Supersedes issue #80's
+      old thresholds (≥5 trades / 100% WR / ≥3 days).
+    </div>
+    <div id="promotion-list">
+      <div class="empty">
+        <i data-lucide="loader"></i>
+        <h3>Loading promotion bar…</h3>
+        <p>Fetching shadow station+side statistics from the API.</p>
       </div>
     </div>
   </main>
@@ -2348,6 +2391,91 @@ async function emosDoAction(city, action, btn) {
 }
 
 /* ─────────────────────────────────────────
+   PROMOTION BAR TAB (issue #559 — advisory only, never auto-promotes)
+   ───────────────────────────────────────── */
+let promotionLoaded = false;
+let promotionIntervalId = null;
+
+function _promoStatusLabel(status) {
+  if (status === 'green') return 'ELIGIBLE';
+  if (status === 'amber') return 'WATCH';
+  return 'NOT YET';
+}
+
+function _promoPct(x) {
+  return (x * 100).toFixed(1) + '%';
+}
+
+function renderPromotionRow(row) {
+  const badgeClass = `badge-bar-${row.status}`;
+  return `
+    <tr>
+      <td class="promo-td promo-row-station">${row.station}</td>
+      <td class="promo-td">${row.side}</td>
+      <td class="promo-td">${row.n} / ${row.wins}W</td>
+      <td class="promo-td">${_promoPct(row.win_rate)}</td>
+      <td class="promo-td">${_promoPct(row.wilson_lower_bound)}</td>
+      <td class="promo-td">${_promoPct(row.breakeven_win_rate)}</td>
+      <td class="promo-td">${row.avg_entry_price_cents.toFixed(1)}¢${row.price_valid ? '' : ' ⚠'}</td>
+      <td class="promo-td">${row.days_coverage}</td>
+      <td class="promo-td">
+        <span class="status-badge ${badgeClass}"><span class="status-dot"></span>${_promoStatusLabel(row.status)}</span>
+      </td>
+      <td class="promo-td promo-td-reason">${row.reason}</td>
+    </tr>`;
+}
+
+function renderPromotionBar(rows) {
+  const listEl = document.getElementById('promotion-list');
+  const countEl = document.getElementById('promotion-count');
+  document.getElementById('promotion-error-banner').classList.remove('visible');
+
+  if (!rows || !rows.length) {
+    countEl.textContent = '0';
+    listEl.innerHTML = '<div class="empty"><i data-lucide="scale"></i><h3>No shadow trades yet</h3></div>';
+    lucide.createIcons();
+    return;
+  }
+
+  countEl.textContent = rows.length;
+  listEl.innerHTML = `
+    <div class="promo-table-wrap">
+    <table class="promo-table" role="table" aria-label="Statistical promotion bar per station+side">
+      <thead>
+        <tr>
+          <th class="promo-th">Station</th>
+          <th class="promo-th">Side</th>
+          <th class="promo-th">N / Wins</th>
+          <th class="promo-th">Win rate</th>
+          <th class="promo-th">Wilson LB (95%)</th>
+          <th class="promo-th">Break-even</th>
+          <th class="promo-th">Avg entry</th>
+          <th class="promo-th">Days</th>
+          <th class="promo-th">Status</th>
+          <th class="promo-th">Reason</th>
+        </tr>
+      </thead>
+      <tbody>${rows.map(renderPromotionRow).join('')}</tbody>
+    </table>
+    </div>`;
+  lucide.createIcons();
+}
+
+async function fetchPromotionBar() {
+  const banner = document.getElementById('promotion-error-banner');
+  try {
+    const r = await fetch('/api/promotion-bar');
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    renderPromotionBar(await r.json());
+  } catch (e) {
+    banner.classList.add('visible');
+    document.getElementById('promotion-error-text').textContent =
+      `Fetch failed (${e.message}) — retrying in 5 min`;
+    console.error('Promotion bar fetch failed:', e);
+  }
+}
+
+/* ─────────────────────────────────────────
    EDGE TAB
    ───────────────────────────────────────── */
 
@@ -2967,6 +3095,12 @@ function switchTab(tab) {
     emosIntervalId = null;
   }
 
+  // Stop Promotion Bar polling when leaving Promotion tab
+  if (currentTab === 'promotion' && tab !== 'promotion') {
+    clearInterval(promotionIntervalId);
+    promotionIntervalId = null;
+  }
+
   currentTab = tab;
 
   // Start portfolio polling when entering Portfolio tab
@@ -3004,6 +3138,17 @@ function switchTab(tab) {
     }
     if (!emosIntervalId) {
       emosIntervalId = setInterval(fetchEmos, 300_000);
+    }
+  }
+
+  // Lazy-load Promotion Bar on first activation; poll every 5 minutes
+  if (tab === 'promotion') {
+    if (!promotionLoaded) {
+      promotionLoaded = true;
+      fetchPromotionBar();
+    }
+    if (!promotionIntervalId) {
+      promotionIntervalId = setInterval(fetchPromotionBar, 300_000);
     }
   }
 

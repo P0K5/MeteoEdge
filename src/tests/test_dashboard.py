@@ -1693,3 +1693,78 @@ class TestStationsPerfEndpoint:
             assert data["KORD"]["real"]["YES"]["count"] == 1
         finally:
             dash_api.set_db(original)
+
+
+# ---------------------------------------------------------------------------
+# /api/promotion-bar (issue #559 — statistical promotion bar, advisory only)
+# ---------------------------------------------------------------------------
+
+class TestPromotionBarEndpoint:
+    """Tests for GET /api/promotion-bar."""
+
+    def _setup_db(self):
+        from src.data.db import Database
+        return Database(":memory:")
+
+    def test_503_when_db_not_initialised(self, client):
+        dash_api._db = None
+        resp = client.get("/api/promotion-bar")
+        assert resp.status_code == 503
+
+    def test_empty_list_when_no_shadow_trades(self, client):
+        db = self._setup_db()
+        original = dash_api._db
+        try:
+            dash_api.set_db(db)
+            resp = client.get("/api/promotion-bar")
+            assert resp.status_code == 200
+            assert resp.json() == []
+        finally:
+            dash_api.set_db(original)
+
+    def test_reports_green_station_side(self, client):
+        """A station+side with >=30 settled wins clearing break-even is green/eligible."""
+        db = self._setup_db()
+        original = dash_api._db
+        try:
+            # upsert_shadow_trade dedups on (station, bracket_low, bracket_high,
+            # side, direction, day) -- vary bracket_low per trade so all 30 are
+            # distinct rows rather than collapsing into updates of one row.
+            for i in range(29):
+                db.upsert_shadow_trade(
+                    ts=f"2026-06-{(i % 28) + 1:02d}T12:00:00", station="WSSS", ticker=f"w{i}",
+                    bracket_low=88.0 + i, bracket_high=90.0 + i, side="NO",
+                    predicted_price=63, actual_price=65, predicted_edge=10.0,
+                )
+                db.insert_settlement(
+                    ts=f"2026-06-{(i % 28) + 1:02d}T12:00:00", station="WSSS", ticker=f"w{i}",
+                    bracket_low=88.0 + i, bracket_high=90.0 + i, actual_high_f=91.0,
+                    resolved_yes=0,
+                )
+            # 1 loss to keep it realistic
+            db.upsert_shadow_trade(
+                ts="2026-07-01T00:00:00", station="WSSS", ticker="w29",
+                bracket_low=200.0, bracket_high=202.0, side="NO",
+                predicted_price=63, actual_price=65, predicted_edge=10.0,
+            )
+            db.insert_settlement(
+                ts="2026-07-01T00:00:00", station="WSSS", ticker="w29",
+                bracket_low=200.0, bracket_high=202.0, actual_high_f=89.0,
+                resolved_yes=1,
+            )
+
+            dash_api.set_db(db)
+            resp = client.get("/api/promotion-bar")
+            assert resp.status_code == 200
+            rows = resp.json()
+            row = next(r for r in rows if r["station"] == "WSSS" and r["side"] == "NO")
+            assert row["n"] == 30
+            assert row["wins"] == 29
+            assert row["eligible"] is True
+            assert row["status"] == "green"
+            # Response keys match the advisory-only contract
+            for key in ("wilson_lower_bound", "breakeven_win_rate", "days_coverage",
+                        "price_valid", "reason"):
+                assert key in row
+        finally:
+            dash_api.set_db(original)

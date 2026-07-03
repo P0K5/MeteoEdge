@@ -509,6 +509,15 @@ CONFIG_DEFAULTS: "dict[str, str | int | float | bool]" = {
     # intl_ecmwf_icon: adds ECMWF and ICON-EU for international stations
     # full: all channels active
     "FORECAST_STACK": "baseline",
+    # Statistical promotion bar (issue #559) — advisory shadow→live tooling.
+    # Supersedes issue #80's old thresholds (>=5 trades / 100% WR / >=3 days).
+    # A station+side is "eligible" iff settled shadow trades >= this minimum
+    # AND the Wilson lower bound of its win rate exceeds the break-even win
+    # rate implied by its avg entry price + the fee model (src/strategy/fee.py).
+    # This tool is advisory only: it never auto-promotes and never touches the
+    # live entry gate.
+    "PROMOTION_MIN_SETTLED_TRADES": 30,
+    "PROMOTION_WILSON_CONFIDENCE": 0.95,
 }
 
 # Maps each FORECAST_STACK value to the set of model tags whose rows should be
