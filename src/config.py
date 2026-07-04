@@ -229,6 +229,16 @@ RISK_MAX_OPEN_POSITIONS = int(os.getenv("RISK_MAX_OPEN_POSITIONS", "15"))
 RISK_DRAWDOWN_STOP_PCT = float(os.getenv("RISK_DRAWDOWN_STOP_PCT", "0.15"))
 RISK_MIN_LIQUIDITY = int(os.getenv("RISK_MIN_LIQUIDITY", "50"))
 
+# Issue #611: intentional bracket re-entry must be an explicit config decision.
+# false (default): once ANY live order exists today for (station, ticker, side, day)
+#   -- filled, sold, or timeout attempt -- the entry gate in run.py blocks every
+#   further order on that bracket for the rest of the day. Timeout attempts count
+#   deliberately: repeated timeout retries were part of the observed stacking
+#   (7x KATL 98-99F on 07-02, 5 timeout WMKK attempts on 07-03).
+# true: re-entry after an exit is allowed, but the gate still blocks while an
+#   OPEN position exists for the token -- never stack on an open position.
+LIVE_ALLOW_BRACKET_REENTRY = os.getenv("LIVE_ALLOW_BRACKET_REENTRY", "false").lower() == "true"
+
 # Forecast uncertainty (stddev in °F) for the Bayesian prior on undetermined brackets
 FORECAST_STDDEV_F = 2.0
 

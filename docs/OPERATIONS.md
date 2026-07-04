@@ -358,6 +358,40 @@ Returns 404 when the METAR is not in the STATIONS config.
 | `RISK_MAX_OPEN_POSITIONS` | 15 | count | Maximum simultaneous open positions | No |
 | `RISK_DRAWDOWN_STOP_PCT` | 0.15 | fraction | Stop all trading if drawdown exceeds this fraction of starting capital | No |
 | `RISK_MIN_LIQUIDITY` | 50 | contracts | Minimum combined order book size to accept a trade | No |
+| `LIVE_ALLOW_BRACKET_REENTRY` | false | bool | Allow re-entering a bracket after an exit on the same day (see below). Never allows stacking on an open position. | No |
+
+#### Live entry guard (issue #611)
+
+Live mode enforces **one position max per (station, ticker, side, day)**.
+Before `risk_manager.allow_trade`, every live candidate passes an entry gate
+that blocks it when any of these hold:
+
+1. the same `(station, ticker, side, day)` key already passed the gate earlier
+   in the **same poll** (duplicate scanner flags collapse to one order);
+2. an **open position** already exists for the candidate's token
+   (`open_positions.token_id`) — this always blocks, in every configuration;
+3. `LIVE_ALLOW_BRACKET_REENTRY=false` (the default) and **any** live trade row
+   already exists today for the key — filled, sold, **or timeout attempt**.
+   Timeout attempts count deliberately: repeated timeout retries were part of
+   the observed stacking (7x KATL 98–99°F on 2026-07-02; 3 fills + 5 timeout
+   attempts on WMKK on 2026-07-03, turning a flat €5 exposure into €15–35).
+
+With `LIVE_ALLOW_BRACKET_REENTRY=true`, re-entry after an exit (sold /
+settled) is allowed, but check 2 still applies — the bot never stacks a
+second order on a token it currently holds.
+
+"Day" is the market's `end_date` when present (matching how settlement
+resolves a trade's date since #609), falling back to the UTC date of the
+trade's `ts` for legacy rows.
+
+Every block is visible in two places:
+
+- **Logs** — a WARNING line:
+  `[entry-guard] blocked KATL NO 0xkatl-98-99...: already placed a live order for this bracket today (LIVE_ALLOW_BRACKET_REENTRY=false)`
+  plus a per-poll count in the scan summary line (`... N entry-guard blocked`).
+- **Dashboard** — a counter in `GET /api/guardrail-events` under
+  `entry_guard_blocks` (`total` / `last_7d`), backed by
+  `guardrail_events.event_type='entry_guard_block'`.
 
 ### Position Management
 
@@ -622,6 +656,41 @@ Safe to run more than once — already-quarantined rows are detected and
 skipped. If any row's station/side/bracket does not match what the script
 expects, it refuses to touch that row, reports a mismatch, and exits
 non-zero so the operator can investigate before re-running.
+
+### One-off: merging duplicate open_positions rows (issue #611)
+
+Before the live entry guard landed, the bot could re-enter a bracket it
+already held on every poll, leaving multiple `open_positions` rows for the
+same `token_id` (three rows for one WMKK token on 2026-07-03).
+`src/scripts/merge_duplicate_open_positions.py` collapses each such token to
+a single row:
+
+- `shares` summed across all rows
+- `entry_price` = share-weighted average, rounded to the nearest cent
+- `entry_ts` = earliest across the rows
+- `id`/`trade_id`/`order_id` kept from the earliest-entry row
+- most protective `stop_loss_cents` (highest) / `take_profit_cents` (lowest);
+  a warning is printed whenever duplicate rows disagreed
+
+The extra `trades`-table rows from the stacked orders are deliberately left
+untouched — settlement (#609) handles those independently. Exits are
+unaffected either way: every sell path already groups fills by token and
+sells the whole position in one order.
+
+```bash
+# Preview only
+python -m src.scripts.merge_duplicate_open_positions --dry-run
+
+# Apply
+python -m src.scripts.merge_duplicate_open_positions
+
+# Against a non-default DB path (defaults to $DB_PATH or data/meteoedge.db)
+python -m src.scripts.merge_duplicate_open_positions --db-path /path/to/meteoedge.db
+```
+
+Idempotent — a second run finds no duplicates and exits 0. If rows for one
+token span different stations or sides (data corruption), the script refuses
+to merge that token and exits non-zero.
 
 ### Re-running Settlement
 
