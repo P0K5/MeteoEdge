@@ -24,6 +24,7 @@ from src.config import (
     RISK_DAILY_LOSS_LIMIT_EUR, RISK_MAX_OPEN_POSITIONS,
     RISK_DRAWDOWN_STOP_PCT, RISK_MIN_LIQUIDITY, STARTING_CAPITAL_EUR,
     POSITION_SIZE_WITH_FEES, ENABLE_CLOB_ENRICHMENT,
+    LIVE_ALLOW_BRACKET_REENTRY,
     get_source_priority, seed_config, seed_station_overrides,
 )
 from src.data.db import Database
@@ -143,6 +144,7 @@ def _append_live_trade(record: dict, db=None) -> None:
                 outcome=record.get("outcome"),
                 pnl=float(record["pnl"]) if record.get("pnl") is not None else None,
                 capital_before=float(record.get("size_eur", 5.0)),
+                end_date=record.get("end_date") or None,
             )
     except Exception as e:
         log.warning("[run] DB live trade write failed: %s", e)
@@ -357,6 +359,11 @@ def poll_once(
     approved: list = []
     n_acted = 0
     n_shadow = 0
+    n_guard_blocked = 0
+    # Entry-guard same-poll dedup (issue #611): (station, ticker, side, day)
+    # keys that already passed the gate in THIS scan. If the scanner flags the
+    # same bracket twice in one poll, only the first candidate passes.
+    _entry_keys_this_poll: set = set()
     for cand in candidates:
         row = {
             "ts": ts,
@@ -399,6 +406,7 @@ def poll_once(
                         actual_price=cand.bracket.yes_ask_cents,
                         predicted_edge=cand.edge_cents,
                         capital_before=0.0,
+                        direction=cand.direction,
                         p_yes_raw=cand.p_yes_raw,
                     )
                     if _created:
@@ -414,6 +422,67 @@ def poll_once(
                 except Exception as e:
                     log.warning("  [shadow] DB upsert failed: %s", e)
             continue
+
+        # ---- Entry gate (issue #611): never stack the same bracket ----
+        # Live mode only: shadow candidates never reach here (continue above)
+        # and paper mode places no orders. Blocks a candidate when:
+        #   1. the same (station, ticker, side, day) key already passed the
+        #      gate earlier in THIS poll (same-scan duplicate), or
+        #   2. an OPEN position exists for the candidate's token
+        #      (open_positions.token_id -- always blocks, in every config), or
+        #   3. LIVE_ALLOW_BRACKET_REENTRY is false (default) and ANY live
+        #      trade row already exists today for the key -- filled, sold,
+        #      or timeout attempt all count (repeated timeout retries were
+        #      part of the observed stacking).
+        # Day semantics: the candidate's market end_date (matching how
+        # has_live_trade_today() resolves a trade row's day, mirroring
+        # settle.resolve_trade_date from #609), falling back to today's UTC
+        # date when the market carries no endDate.
+        if live_trader:
+            _cand_day = row["end_date"] or datetime.now(timezone.utc).date().isoformat()
+            _entry_key = (cand.station, cand.bracket.ticker, cand.side, _cand_day)
+            _cand_token = (
+                cand.bracket.yes_token_id if cand.side == "YES"
+                else cand.bracket.no_token_id
+            )
+            _guard_reason = None
+            if _entry_key in _entry_keys_this_poll:
+                _guard_reason = "duplicate candidate for this bracket in the same poll"
+            elif db is not None:
+                try:
+                    if _cand_token and db.get_open_position_by_token(_cand_token):
+                        _guard_reason = "open position already exists for this token"
+                    elif not LIVE_ALLOW_BRACKET_REENTRY and db.has_live_trade_today(
+                        cand.station, cand.bracket.ticker, cand.side, _cand_day,
+                    ):
+                        _guard_reason = (
+                            "already placed a live order for this bracket today "
+                            "(LIVE_ALLOW_BRACKET_REENTRY=false)"
+                        )
+                except Exception as e:
+                    # Fail open: a DB read glitch must not freeze all trading.
+                    # order_manager._open_orders still prevents same-session
+                    # GTC stacking at the execution seam.
+                    log.warning("[entry-guard] DB check failed (allowing candidate): %s", e)
+            if _guard_reason:
+                n_guard_blocked += 1
+                log.warning(
+                    "[entry-guard] blocked %s %s %s...: %s",
+                    cand.station, cand.side, cand.bracket.ticker[:14], _guard_reason,
+                )
+                if db is not None:
+                    try:
+                        # Counter surface for the dashboard: rides the existing
+                        # guardrail_events table + /api/guardrail-events endpoint.
+                        db.log_guardrail_event(
+                            ts, cand.station, "entry_guard_block",
+                            float(cand.price_cents), float(cand.price_cents),
+                            ticker=cand.bracket.ticker,
+                        )
+                    except Exception as e:
+                        log.debug("[entry-guard] guardrail event write failed: %s", e)
+                continue
+            _entry_keys_this_poll.add(_entry_key)
 
         if live_trader and available_usdc < POSITION_SIZE_WITH_FEES:
             log.info("  [balance] insufficient (%.2f USDC < %.2f needed incl. fees), skipping remaining", available_usdc, POSITION_SIZE_WITH_FEES)
@@ -454,8 +523,8 @@ def poll_once(
                     log.error("  [live] thread error: %s", e, exc_info=True)
 
     log.info(
-        "[scan] %s markets, %s evaluated, %s candidates, %s acted on, %s shadow",
-        len(markets), len(snapshots), len(candidates), n_acted, n_shadow,
+        "[scan] %s markets, %s evaluated, %s candidates, %s acted on, %s shadow, %s entry-guard blocked",
+        len(markets), len(snapshots), len(candidates), n_acted, n_shadow, n_guard_blocked,
     )
 
     _finalize_poll()

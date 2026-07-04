@@ -120,6 +120,7 @@ CREATE INDEX idx_cand_station_direction ON candidates(station, direction);
 | `minutes_to_settlement_at_close` | REAL | minutes | Yes | Minutes remaining until settlement when position was exited early |
 | `bid_depth_at_close` | INTEGER | shares | Yes | Best-bid depth at the moment of early exit (for liquidity analysis) |
 | `direction` | TEXT NOT NULL DEFAULT 'high' | categorical | No | Market direction: `'high'` for daily-high markets, `'low'` for daily-low markets. Legacy rows default to `'high'`. |
+| `end_date` | TEXT | YYYY-MM-DD | Yes | Market resolution date, populated at insert time from the market's `endDate` (live trades only; see #609). NULL for rows written before this column existed ("legacy" rows) -- `settle.resolve_trade_date()` falls back to the station-local calendar date of `ts` (via `STATION_TZ`) for those. |
 
 **Indexes:**
 ```sql
@@ -133,6 +134,7 @@ CREATE INDEX idx_trades_station_direction ON trades(station, direction);
 - `pnl` is filled in by the settle script (if outcome='filled') or by the exit handler (if outcome='sold').
 - For NO trades that are early-exited: `pnl = (sell_price - entry_price) / 100 * shares`.
 - For filled trades: `pnl = (100 - entry_price) / 100 * shares` if YES bracket hit (or NO bracket miss), else `pnl = -(entry_price / 100) * shares`.
+- **Live settlement is DB-driven (issue #609):** `settle_live_trades()` selects `mode='live' AND outcome='filled' AND settled_at IS NULL` via `db.get_unsettled_live_trades()`, matches each row to *target* via `end_date` (or the `ts` fallback above), and computes `shares = capital_before / (actual_price/100)` -- `capital_before` holds the EUR size committed at order placement for live trades (the DB equivalent of the old `live_trades.jsonl` `size_eur` field). A sold position never appears here twice: `order_manager._record_sell_in_db()` flips the *same* row (matched by `order_id`) from `outcome='filled'` to `outcome='sold'` and sets `settled_at` at sell time, so it's naturally excluded from the unsettled-live query rather than settled again. `live_trades.jsonl` is enrichment-only for this path (best-effort dashboard display), never the source of truth.
 - **SELL records in live_trades.jsonl**: the `shares` field reflects the *remaining* shares sold in that specific exit attempt, not the full original position size. When a stop-loss IOC order partially fills across multiple poll cycles, each retry records only the unfilled remainder (see `_partial_fill_shares` tracking in `src/scripts/run.py`). The `size_eur` field still reflects the original position notional for context.
 - **Shadow rows** (`mode='shadow'`): inserted when a YES candidate passes all selection gates but `ENABLE_YES_TRADES=False`. No order is placed; `capital_before=0.0`, `order_id=NULL`. `actual_price` holds the observed yes_ask_cents at logging time. Settlement uses a $1 notional stake: `pnl = (100 - actual_price) / 100` if YES bracket hit, else `pnl = -actual_price / 100`. These rows are excluded from live P&L accounting — they are an observational dataset for validating YES-side edge.
 

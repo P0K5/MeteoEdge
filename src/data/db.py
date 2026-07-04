@@ -1,9 +1,12 @@
 """SQLite persistence layer for MeteoEdge."""
+import logging
 import os
 import sqlite3
 import threading
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+
+log = logging.getLogger(__name__)
 
 _DEFAULT_PATH = os.getenv("DB_PATH", "data/meteoedge.db")
 
@@ -288,6 +291,13 @@ class Database:
             # historical rows (written before this migration) are tagged
             # consistently with genuine fallback rows.
             ("intraday_corrections", "basis_weights", "TEXT NOT NULL DEFAULT '{\"open_meteo\": 1.0}'"),
+            # Issue #609: market end date (YYYY-MM-DD), populated at live-trade
+            # insert time from the market's endDate so settle_live_trades() can
+            # match DB rows to a settlement date without depending on
+            # live_trades.jsonl. NULL for rows written before this migration
+            # ("legacy" rows) -- settle.py falls back to the station-local date
+            # of `ts` for those.
+            ("trades", "end_date", "TEXT"),
         ]:
             try:
                 self._conn.execute(
@@ -427,11 +437,12 @@ class Database:
                             actual_fee_cents REAL,
                             size_eur        REAL,
                             direction       TEXT NOT NULL DEFAULT 'high',
-                            p_yes_raw       REAL
+                            p_yes_raw       REAL,
+                            end_date        TEXT
                         )
                         """
                     )
-                    # direction/p_yes_raw may not exist in old table — coalesce
+                    # direction/p_yes_raw/end_date may not exist in old table — coalesce
                     old_cols_q = self._conn.execute(
                         "PRAGMA table_info(trades)"
                     ).fetchall()
@@ -442,12 +453,15 @@ class Database:
                     p_yes_raw_expr = (
                         "p_yes_raw" if "p_yes_raw" in old_col_names else "NULL"
                     )
+                    end_date_expr = (
+                        "end_date" if "end_date" in old_col_names else "NULL"
+                    )
                     self._conn.execute(
                         "INSERT INTO trades_new SELECT "
                         "id,ts,station,ticker,bracket_low,bracket_high,side,"
                         "predicted_price,actual_price,slippage,predicted_edge,mode,"
                         "order_id,outcome,pnl,capital_before,capital_after,settled_at,"
-                        f"actual_fee_cents,size_eur,{direction_expr},{p_yes_raw_expr} "
+                        f"actual_fee_cents,size_eur,{direction_expr},{p_yes_raw_expr},{end_date_expr} "
                         "FROM trades"
                     )
                     self._conn.execute("DROP TABLE trades")
@@ -807,21 +821,28 @@ class Database:
         size_eur: "float | None" = None,
         direction: str = "high",
         p_yes_raw: "float | None" = None,
+        end_date: "str | None" = None,
     ) -> int:
-        """Insert a trade record; returns the new row id."""
+        """Insert a trade record; returns the new row id.
+
+        ``end_date`` (YYYY-MM-DD) is the market's resolution date, used by
+        settle_live_trades() (#609) to match a row to a settlement date
+        without depending on live_trades.jsonl. Optional -- rows without it
+        fall back to the station-local date of ``ts`` at settlement time.
+        """
         with self._lock:
             cur = self._conn.execute(
                 "INSERT INTO trades"
                 "(ts,station,ticker,bracket_low,bracket_high,side,"
                 "predicted_price,actual_price,slippage,predicted_edge,mode,order_id,"
                 "outcome,pnl,capital_before,capital_after,settled_at,size_eur,direction,"
-                "p_yes_raw) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "p_yes_raw,end_date) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     ts, station, ticker, bracket_low, bracket_high, side,
                     predicted_price, actual_price, slippage, predicted_edge, mode,
                     order_id, outcome, pnl, capital_before, capital_after, settled_at,
-                    size_eur, direction, p_yes_raw,
+                    size_eur, direction, p_yes_raw, end_date,
                 ),
             )
             self._conn.commit()
@@ -1074,6 +1095,53 @@ class Database:
         )
         return [dict(row) for row in cur.fetchall()]
 
+    def get_unsettled_live_trades(self) -> list:
+        """Return ALL live held-to-expiry trades not yet settled (issue #609).
+
+        Mirrors get_unsettled_shadow_trades() but does NOT filter by date in
+        SQL: live rows only have a target settlement date via the (nullable)
+        ``end_date`` column or a station-local fallback derived from ``ts``,
+        neither of which SQLite can resolve without STATION_TZ. Callers
+        (settle.settle_live_trades) filter to the target date in Python.
+
+        A row is "unsettled" when it was actually filled and is still
+        awaiting a resolution: mode='live', outcome='filled', settled_at IS
+        NULL. Rows that were sold early (outcome flips to 'sold' via
+        update_trade_by_order at exit time, see order_manager._record_sell_in_db)
+        are naturally excluded and never double-settled here.
+        """
+        cur = self._conn.execute(
+            "SELECT * FROM trades "
+            "WHERE mode='live' AND outcome='filled' AND settled_at IS NULL"
+        )
+        return [dict(row) for row in cur.fetchall()]
+
+    def has_live_trade_today(self, station: str, ticker: str, side: str, day: str) -> bool:
+        """Return True if a live trade already exists for (station, ticker, side, day).
+
+        Used by the run.py entry gate (issue #611) to stop the bot re-entering
+        a bracket it already holds or has already tried today. ANY outcome
+        counts -- filled, sold, and timeout attempts all block re-entry; this
+        is deliberate because repeated timeout retries were part of the
+        observed stacking (7x KATL, 3x WMKK on one bracket in a single day).
+
+        ``day`` is matched the same way resolve_trade_date() (settle.py, #609)
+        prefers a live row's target date: the ``end_date`` column when
+        present, falling back to the UTC calendar date of ``ts`` for legacy
+        rows without one. Callers should pass the *candidate's* end_date
+        (falling back to today's UTC date) so re-entry is blocked for the
+        whole life of the market day, not just the wall-clock day the poll
+        happens to run in.
+        """
+        cur = self._conn.execute(
+            "SELECT 1 FROM trades "
+            "WHERE mode='live' AND station=? AND ticker=? AND side=? "
+            "AND COALESCE(substr(end_date,1,10), substr(ts,1,10))=? "
+            "LIMIT 1",
+            (station, ticker, side, day),
+        )
+        return cur.fetchone() is not None
+
     def upsert_shadow_trade(
         self,
         *,
@@ -1232,9 +1300,27 @@ class Database:
         stop_loss_cents: "int | None" = None,
         take_profit_cents: "int | None" = None,
     ) -> None:
-        """Atomically insert an open position."""
+        """Atomically insert an open position.
+
+        Logs a loud warning if a row for the same ``token_id`` already exists
+        (issue #611 observed 3 duplicate open_positions rows stacking for one
+        WMKK token). This method stays policy-free -- it always inserts; the
+        entry gate in src/scripts/run.py (has_live_trade_today() +
+        get_open_position_by_token()) is the enforcement point that decides
+        whether a live candidate should ever reach this call.
+        """
         with self._lock:
             with self._conn:
+                existing = self._conn.execute(
+                    "SELECT COUNT(*) FROM open_positions WHERE token_id=?", (token_id,)
+                ).fetchone()[0]
+                if existing:
+                    log.warning(
+                        "[open_positions] token_id=%s... already has %d open row(s) -- "
+                        "inserting another (order_id=%s). The run.py entry gate should "
+                        "have blocked this before order placement; investigate if it did not.",
+                        token_id[:14], existing, order_id,
+                    )
                 self._conn.execute(
                     "INSERT INTO open_positions"
                     "(trade_id,station,ticker,token_id,side,"
@@ -1874,7 +1960,8 @@ class Database:
         """Return summary counts and averages for each guardrail event type.
 
         Returns:
-            Dict with keys 'cap_events', 'correction_events', each containing
+            Dict with keys 'cap_events', 'correction_events', and
+            'entry_guard_blocks' (issue #611), each containing
             {'total': int, 'last_7d': int, 'avg_delta': float}.
         """
         cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
@@ -1897,6 +1984,7 @@ class Database:
         return {
             "cap_events": _query("cap_applied"),
             "correction_events": _query("correction_applied"),
+            "entry_guard_blocks": _query("entry_guard_block"),
         }
 
     def get_forced_exit_stats(self) -> dict:

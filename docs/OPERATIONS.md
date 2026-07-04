@@ -358,6 +358,40 @@ Returns 404 when the METAR is not in the STATIONS config.
 | `RISK_MAX_OPEN_POSITIONS` | 15 | count | Maximum simultaneous open positions | No |
 | `RISK_DRAWDOWN_STOP_PCT` | 0.15 | fraction | Stop all trading if drawdown exceeds this fraction of starting capital | No |
 | `RISK_MIN_LIQUIDITY` | 50 | contracts | Minimum combined order book size to accept a trade | No |
+| `LIVE_ALLOW_BRACKET_REENTRY` | false | bool | Allow re-entering a bracket after an exit on the same day (see below). Never allows stacking on an open position. | No |
+
+#### Live entry guard (issue #611)
+
+Live mode enforces **one position max per (station, ticker, side, day)**.
+Before `risk_manager.allow_trade`, every live candidate passes an entry gate
+that blocks it when any of these hold:
+
+1. the same `(station, ticker, side, day)` key already passed the gate earlier
+   in the **same poll** (duplicate scanner flags collapse to one order);
+2. an **open position** already exists for the candidate's token
+   (`open_positions.token_id`) — this always blocks, in every configuration;
+3. `LIVE_ALLOW_BRACKET_REENTRY=false` (the default) and **any** live trade row
+   already exists today for the key — filled, sold, **or timeout attempt**.
+   Timeout attempts count deliberately: repeated timeout retries were part of
+   the observed stacking (7x KATL 98–99°F on 2026-07-02; 3 fills + 5 timeout
+   attempts on WMKK on 2026-07-03, turning a flat €5 exposure into €15–35).
+
+With `LIVE_ALLOW_BRACKET_REENTRY=true`, re-entry after an exit (sold /
+settled) is allowed, but check 2 still applies — the bot never stacks a
+second order on a token it currently holds.
+
+"Day" is the market's `end_date` when present (matching how settlement
+resolves a trade's date since #609), falling back to the UTC date of the
+trade's `ts` for legacy rows.
+
+Every block is visible in two places:
+
+- **Logs** — a WARNING line:
+  `[entry-guard] blocked KATL NO 0xkatl-98-99...: already placed a live order for this bracket today (LIVE_ALLOW_BRACKET_REENTRY=false)`
+  plus a per-poll count in the scan summary line (`... N entry-guard blocked`).
+- **Dashboard** — a counter in `GET /api/guardrail-events` under
+  `entry_guard_blocks` (`total` / `last_7d`), backed by
+  `guardrail_events.event_type='entry_guard_block'`.
 
 ### Position Management
 
@@ -501,10 +535,162 @@ python -m src.scripts.settle 2024-06-03
    - Win: `100¢ - entry_price`
    - Loss: `-entry_price`
 5. **Writes settlements.csv** with actual_high, yes_won, candidate_won, pnl_cents
-6. **Updates live_trades.jsonl** for trades with outcome='filled':
-   - Adds actual_high, yes_won, pnl fields
-   - Preserves 'sold' outcome records (already exited mid-day)
-7. **Updates open_positions in DB** if entry was in DB (marks as closed after settlement)
+6. **Settles live held-to-expiry trades from the DB** (`settle_live_trades()`, see
+   [Live-trade settlement is DB-driven](#live-trade-settlement-is-db-driven-issue-609)
+   below) and **best-effort enriches** the matching `live_trades.jsonl` record
+   (adds `actual_high`, `yes_won`, `pnl`) purely so the dashboard's
+   closed-positions panel can display it — the JSONL write is never required
+   for the DB settlement itself to succeed.
+7. **Cleans up `open_positions`** for each row settled from the DB (removes the
+   resolved position so it stops showing as "open").
+
+### Live-trade settlement is DB-driven (issue #609)
+
+`settle_live_trades()` used to rewrite `logs/live_trades.jsonl` in place. That
+file was frozen from 2026-06-16 once log rotation moved writes to dated files
+(`live_trades.YYYY-MM-DD.jsonl`), so every nightly run silently settled
+nothing while `outcome='filled'` live rows accumulated in the DB with
+`pnl=NULL, settled_at=NULL`.
+
+Settlement is now DB-driven, mirroring `settle_shadow_trades()`:
+
+- Selects `mode='live' AND outcome='filled' AND settled_at IS NULL` from the
+  `trades` table via `db.get_unsettled_live_trades()`.
+- Matches each row to the target date via the `end_date` column (populated at
+  order-placement time from the market's `endDate`) or, for legacy rows
+  written before that column existed, the station-local calendar date of
+  `ts` (`STATION_TZ` + pytz).
+- PnL: `shares = capital_before / (actual_price/100)`; full win pays
+  `(100 - actual_price)` per share, full loss pays `-actual_price` per share;
+  NO wins when the bracket is **not** hit. Identical formula to the old
+  JSONL path.
+- Sold (early-exit) positions are never double-settled: the sell path flips
+  the *same* row from `outcome='filled'` to `outcome='sold'` (matched by
+  `order_id`), so it's excluded from the unsettled-live query rather than
+  re-settled.
+- `live_trades.jsonl` is enrichment-only going forward: `_write_db_settlements()`
+  (the `settlements`-table writer) reads it via `iter_rotated_jsonl()` so it
+  still sees rotated per-day files, and any JSONL read/write failure is
+  logged and swallowed — it can never block DB settlement.
+
+Each run logs a summary line of the form:
+
+```
+[settle] settled <N> live trade(s) from DB for <date> (<M> skipped[: reason; reason; ...])
+```
+
+### One-off: backfilling stranded live settlements (issue #609)
+
+`src/scripts/backfill_live_settlements.py` settles the live trades stranded
+by the bug above (42+ rows from 2026-06-20 onward at the time of the fix). It
+calls the exact same `settle_live_trades()` function used nightly — for each
+stranded date it builds a truth dict from the DB `observations` table
+(MAX(temp_f) per station's LOCAL calendar day, since the live METAR fetch
+used for normal settlement only looks back ~48h) and hands it to
+`settle_live_trades()`, so backfill and nightly settlement logic can never
+diverge. Any (date, station) with no observations on record is **skipped and
+reported**, never guessed.
+
+```bash
+# Default range: 2026-06-20 (first stranded date) -> yesterday
+python -m src.scripts.backfill_live_settlements
+
+# Preview only -- runs against a throwaway copy of the DB; the real
+# database file is only ever opened to be copied, never written.
+python -m src.scripts.backfill_live_settlements --dry-run
+
+# Explicit range
+python -m src.scripts.backfill_live_settlements --from 2026-06-20 --to 2026-07-03
+
+# Against a non-default DB path (defaults to $DB_PATH or data/meteoedge.db)
+python -m src.scripts.backfill_live_settlements --db-path /path/to/meteoedge.db
+```
+
+Safe to run more than once: settlement only ever selects `settled_at IS NULL`
+rows, so a rerun after a successful pass finds nothing left to settle for
+dates it already covered.
+
+### Shadow-trade settlement and direction (issue #610)
+
+`settle_shadow_trades()` (part of the daily settlement run) resolves shadow
+rows against the daily HIGH fetched from METAR history. Rows with
+`direction='low'` (low-market candidates, e.g. "lowest temperature") **cannot**
+be settled against the daily high without producing spurious results, so
+they are skipped and counted rather than resolved. Each run logs a summary
+line of the form:
+
+```
+[settle] settled <N> shadow trade(s) for <date> (skipped <M> direction=low row(s))
+```
+
+`M` should track roughly the volume of low-side shadow candidates logged
+that day; a growing, never-settled backlog is expected until daily-LOW
+truth settlement lands (Epic C, issues #458/#452). This is advisory-only —
+`compute_promotion_bar()` also filters to `direction='high'` explicitly, so
+unsettled or mislabeled low-side rows cannot enter the Wilson promotion
+statistics either way.
+
+### One-off: quarantining mislabeled shadow rows
+
+`src/scripts/quarantine_mislabeled_shadow_trades.py` is a one-shot,
+idempotent script for correcting a specific set of shadow rows that were
+inserted with the wrong `direction` before the #610 fix landed (the shadow
+upsert previously dropped `direction`, defaulting every candidate — including
+low-side ones — to `'high'`). For each row it verifies the row's
+station/side/bracket match the expected values before touching it, then sets
+`direction='low'`, `settled_at=<now>`, `pnl=NULL`, and a `close_reason` note
+so the row is excluded from all shadow statistics.
+
+```bash
+# Preview only
+python -m src.scripts.quarantine_mislabeled_shadow_trades --dry-run
+
+# Apply
+python -m src.scripts.quarantine_mislabeled_shadow_trades
+
+# Against a non-default DB path
+python -m src.scripts.quarantine_mislabeled_shadow_trades --db-path /path/to/meteoedge.db
+```
+
+Safe to run more than once — already-quarantined rows are detected and
+skipped. If any row's station/side/bracket does not match what the script
+expects, it refuses to touch that row, reports a mismatch, and exits
+non-zero so the operator can investigate before re-running.
+
+### One-off: merging duplicate open_positions rows (issue #611)
+
+Before the live entry guard landed, the bot could re-enter a bracket it
+already held on every poll, leaving multiple `open_positions` rows for the
+same `token_id` (three rows for one WMKK token on 2026-07-03).
+`src/scripts/merge_duplicate_open_positions.py` collapses each such token to
+a single row:
+
+- `shares` summed across all rows
+- `entry_price` = share-weighted average, rounded to the nearest cent
+- `entry_ts` = earliest across the rows
+- `id`/`trade_id`/`order_id` kept from the earliest-entry row
+- most protective `stop_loss_cents` (highest) / `take_profit_cents` (lowest);
+  a warning is printed whenever duplicate rows disagreed
+
+The extra `trades`-table rows from the stacked orders are deliberately left
+untouched — settlement (#609) handles those independently. Exits are
+unaffected either way: every sell path already groups fills by token and
+sells the whole position in one order.
+
+```bash
+# Preview only
+python -m src.scripts.merge_duplicate_open_positions --dry-run
+
+# Apply
+python -m src.scripts.merge_duplicate_open_positions
+
+# Against a non-default DB path (defaults to $DB_PATH or data/meteoedge.db)
+python -m src.scripts.merge_duplicate_open_positions --db-path /path/to/meteoedge.db
+```
+
+Idempotent — a second run finds no duplicates and exits 0. If rows for one
+token span different stations or sides (data corruption), the script refuses
+to merge that token and exits non-zero.
 
 ### Re-running Settlement
 

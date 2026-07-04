@@ -1,5 +1,6 @@
 """Run once a day after NWS publishes the Daily Climate Report (typically ~9am local next day)."""
 import csv
+import gzip
 import json
 import logging
 from datetime import date, datetime, timedelta, timezone
@@ -10,6 +11,7 @@ log = logging.getLogger(__name__)
 from src.config import STATIONS, LOG_DIR, CANDIDATES_CSV, SETTLEMENTS_CSV, STATION_TZ, LIVE_TRADES_JSONL
 from src.http_client import fetch
 from src.data.polymarket import fetch_market_final_price
+from src.utils.log_rotation import iter_rotated_jsonl, rotated_sources
 
 
 def _open_db():
@@ -88,6 +90,11 @@ def settle_shadow_trades(target: date, truth: dict, db=None) -> None:
 
     Idempotent: rows already having ``settled_at IS NOT NULL`` are skipped.
     Does not touch risk_manager state — shadow trades are observation-only.
+
+    ``truth`` holds the daily HIGH per station, so rows with ``direction=
+    'low'`` are skipped entirely (not settled against the high) rather than
+    resolved incorrectly. See issue #610; daily-LOW truth settlement is
+    tracked separately under Epic C (#458/#452).
     """
     if db is None:
         return
@@ -98,9 +105,24 @@ def settle_shadow_trades(target: date, truth: dict, db=None) -> None:
         return
 
     n_settled = 0
+    n_skipped_low = 0
     now_iso = datetime.now(timezone.utc).isoformat()
     for r in rows:
         station = r.get("station", "")
+
+        # direction='low' rows cannot be settled against `truth`, which is the
+        # daily HIGH (see fetch_daily_climate_high). Settling a low bracket
+        # against the high produces near-guaranteed fake wins/losses and
+        # poisons shadow statistics (issue #610). Proper low-truth settlement
+        # is Epic C scope (#458/#452) — skip these rows here.
+        if r.get("direction") == "low":
+            n_skipped_low += 1
+            log.debug(
+                "[settle] [shadow] direction=low — skipping row %s (no daily-LOW truth yet)",
+                r["id"],
+            )
+            continue
+
         if station not in truth:
             log.debug("[settle] [shadow] no truth for station %s — skipping row %s", station, r["id"])
             continue
@@ -137,7 +159,10 @@ def settle_shadow_trades(target: date, truth: dict, db=None) -> None:
         except Exception as e:
             log.warning("[settle] [shadow] update failed for row %s: %s", r["id"], e)
 
-    log.info("[settle] settled %s shadow trade(s) for %s", n_settled, target)
+    log.info(
+        "[settle] settled %s shadow trade(s) for %s (skipped %s direction=low row(s))",
+        n_settled, target, n_skipped_low,
+    )
 
 
 def settle_yesterday():
@@ -251,121 +276,239 @@ def _write_db_settlements(records: list[dict], target: date, truth: dict[str, fl
             log.warning("[settle] DB settlement write failed for %s: %s", market_key[:14], e)
 
 
-def settle_live_trades(target: date, truth: dict[str, float], db=None) -> None:
-    """Write actual P&L back to live_trades.jsonl for a given date.
+def resolve_trade_date(row: dict) -> "date | None":
+    """Return the settlement date a live trade row belongs to, or None if unknown.
 
-    Two cases:
-    - outcome='filled' (held to expiry): P&L = full win or full loss based on
-      the actual daily high vs. bracket. Reads bracket_low/bracket_high from the
-      record; skips old records that predate these fields.
-    - outcome='sold' (METAR stop-loss exit): P&L already written at sell time,
-      nothing to update. The 'pnl' field is already present.
-
-    Records are rewritten in-place: the file is read entirely, updated in memory,
-    then written back. Fine for the small trade volumes we have.
+    Prefers the row's ``end_date`` column (populated at insert time from the
+    market's endDate, see #609). Legacy rows written before that migration
+    have ``end_date IS NULL`` and fall back to the station-local calendar date
+    of ``ts`` (same STATION_TZ + pytz conversion used by fetch_daily_climate_high).
     """
-    if not LIVE_TRADES_JSONL.exists():
-        log.info("[settle] live_trades.jsonl not found -- skipping financial settlement")
-        return
+    end_date = row.get("end_date")
+    if end_date:
+        try:
+            return date.fromisoformat(str(end_date)[:10])
+        except ValueError:
+            pass
 
-    records: list[dict] = []
+    station = row.get("station") or ""
+    ts = row.get("ts") or ""
+    if not station or not ts or station not in STATION_TZ:
+        return None
+
+    import pytz
+    from dateutil import parser as dtparse
     try:
-        with open(LIVE_TRADES_JSONL) as f:
-            for line in f:
-                line = line.strip()
-                if line:
+        tz = pytz.timezone(STATION_TZ[station])
+        t = dtparse.parse(ts)
+        if t.tzinfo is None:
+            t = t.replace(tzinfo=pytz.UTC)
+        return t.astimezone(tz).date()
+    except (ValueError, OverflowError):
+        return None
+
+
+def _enrich_jsonl_with_settlements(patches: dict[str, dict]) -> None:
+    """Best-effort: write pnl/actual_high/yes_won back into the rotated JSONL
+    record matching each order_id, so the dashboard's closed-positions panel
+    (src/dashboard/api.py:_settled_jsonl_positions, which still reads
+    live_trades.jsonl rather than the DB) can display DB-settled trades.
+
+    Patches the FIRST outcome='filled' record with a matching order_id and no
+    existing 'pnl' field across every rotated source (plain + dated .jsonl +
+    .jsonl.gz). Unmatched/unparseable lines are preserved verbatim -- this
+    never drops data the way the old whole-file rewrite could.
+
+    Never raises: DB settlement (the source of truth as of #609) must succeed
+    regardless of JSONL write-back failures.
+    """
+    if not patches:
+        return
+    remaining = set(patches)
+    try:
+        for path in rotated_sources(LIVE_TRADES_JSONL):
+            if not remaining:
+                break
+            is_gz = path.suffix == ".gz"
+            try:
+                opener = gzip.open(path, "rt", encoding="utf-8") if is_gz else open(path, "r", encoding="utf-8")
+                with opener as f:
+                    lines = f.readlines()
+            except OSError as e:
+                log.warning("[settle] jsonl enrichment: could not read %s: %s", path, e)
+                continue
+
+            changed = False
+            new_lines = []
+            for line in lines:
+                stripped = line.strip()
+                rec = None
+                if stripped:
                     try:
-                        records.append(json.loads(line))
+                        rec = json.loads(stripped)
                     except json.JSONDecodeError:
-                        continue
-    except OSError as e:
-        log.warning("[settle] could not read live_trades.jsonl: %s", e)
+                        rec = None
+                order_id = rec.get("order_id") if rec else None
+                if (
+                    rec is not None
+                    and order_id in remaining
+                    and rec.get("outcome") == "filled"
+                    and "pnl" not in rec
+                ):
+                    rec.update(patches[order_id])
+                    new_lines.append(json.dumps(rec, default=str) + "\n")
+                    remaining.discard(order_id)
+                    changed = True
+                else:
+                    new_lines.append(line)
+
+            if not changed:
+                continue
+            try:
+                writer = gzip.open(path, "wt", encoding="utf-8") if is_gz else open(path, "w", encoding="utf-8")
+                with writer as f:
+                    f.writelines(new_lines)
+            except OSError as e:
+                log.warning("[settle] jsonl enrichment: could not write %s: %s", path, e)
+    except Exception as e:
+        log.warning("[settle] jsonl enrichment failed (non-fatal): %s", e)
+
+
+def settle_live_trades(target: date, truth: dict[str, float], db=None) -> None:
+    """Settle live held-to-expiry trades for *target* from the DB ``trades`` table.
+
+    Issue #609: this used to rewrite ``live_trades.jsonl`` in place, but that
+    file has been frozen since log rotation moved writes to dated files
+    (``live_trades.YYYY-MM-DD.jsonl``), so every run silently settled nothing.
+    The DB is now the source of truth, mirroring settle_shadow_trades():
+
+    - Selects live ``outcome='filled'`` rows with ``settled_at IS NULL`` via
+      ``db.get_unsettled_live_trades()`` and filters to *target* in Python
+      via resolve_trade_date() (end_date column, or station-local ts fallback
+      for legacy rows).
+    - PnL: entry price = ``actual_price`` cents, shares = capital_before /
+      (actual_price/100) -- capital_before holds the EUR size committed at
+      order placement (the live-trade equivalent of the old JSONL
+      'size_eur' field; see LiveTrader.place_order). Full win pays
+      (100 - actual_price) per share, full loss pays -actual_price per share;
+      NO wins when the bracket is NOT hit. Matches the pre-#609 JSONL formula.
+    - Sold (early-exit) rows are never touched here: order_manager's
+      _record_sell_in_db() flips the SAME row's outcome to 'sold' (matched by
+      order_id) and sets settled_at at sell time, so get_unsettled_live_trades()
+      (outcome='filled') naturally excludes them -- there is no separate row
+      per order_id to double-settle.
+    - Cleans up the row's open_positions entry (matched by order_id, which is
+      shared between the trades row and its open_positions row) so resolved
+      markets don't linger as "open" after settlement.
+
+    ``live_trades.jsonl`` is enrichment only, never the source of truth:
+    - _write_db_settlements() (the `settlements` table writer) is fed from
+      iter_rotated_jsonl() so it still sees rotated per-day files; any read
+      or write failure there is logged and swallowed, never blocking DB
+      settlement below.
+    - After DB settlement, pnl/actual_high/yes_won are best-effort patched
+      back into the matching rotated JSONL record (by order_id) so the
+      dashboard's closed-positions panel, which still reads live_trades.jsonl,
+      can display these trades. See _enrich_jsonl_with_settlements().
+    """
+    try:
+        records = list(iter_rotated_jsonl(LIVE_TRADES_JSONL))
+    except Exception as e:
+        log.warning("[settle] could not read rotated live_trades JSONL: %s", e)
+        records = []
+
+    try:
+        _write_db_settlements(records, target, truth, db)
+    except Exception as e:
+        log.warning("[settle] _write_db_settlements failed (non-fatal): %s", e)
+
+    if db is None:
+        log.info("[settle] DB unavailable -- skipping live trade settlement for %s", target)
         return
 
-    _write_db_settlements(records, target, truth, db)
+    now_iso = datetime.now(timezone.utc).isoformat()
+    n_settled = 0
+    skip_reasons: list[str] = []
+    jsonl_patches: dict[str, dict] = {}
 
-    # Build a set of no_token_ids that were stop-loss exited (already have pnl)
-    sold_tokens: set[str] = {
-        r.get("no_token_id", "")
-        for r in records
-        if r.get("outcome") == "sold"
-    }
-
-    n_updated = 0
-    for r in records:
-        if r.get("outcome") != "filled":
+    for r in db.get_unsettled_live_trades():
+        row_date = resolve_trade_date(r)
+        if row_date != target:
             continue
-        if r.get("end_date", "")[:10] != target.isoformat():
+
+        row_id = r.get("id")
+        if r.get("direction", "high") == "low":
+            # Live trading only ever executes direction='high' candidates
+            # (low-side is shadow-only, see scanner.py) but guard defensively
+            # against settling a low-market row against the daily HIGH truth
+            # (same hazard fixed for shadow rows in #610).
+            skip_reasons.append(f"id={row_id} direction=low")
             continue
         if r.get("bracket_low") is None or r.get("bracket_high") is None:
-            continue  # Old record without bracket fields — skip
-        if r.get("no_token_id", "") in sold_tokens:
-            # Position was exited mid-day; pnl already written in the 'sold' record
+            skip_reasons.append(f"id={row_id} missing bracket")
             continue
-        if "pnl" in r:
-            continue  # Already settled
 
         station = r.get("station", "")
         if station not in truth:
+            skip_reasons.append(f"id={row_id} no truth for {station}")
             continue
 
         actual = truth[station]
         lo, hi = float(r["bracket_low"]), float(r["bracket_high"])
         yes_won = lo <= actual <= hi
         side = r.get("side", "NO")
-        price_cents = float(r.get("price_cents", 0))
-        size_eur = float(r.get("size_eur", 0))
+        price_cents = float(r.get("actual_price") or 0)
+        # capital_before is the EUR amount committed at order placement --
+        # the DB equivalent of the JSONL 'size_eur' field (see
+        # LiveTrader.place_order, which sets capital_before=size_usdc).
+        size_eur = float(r.get("capital_before") or 0)
         shares = size_eur / (price_cents / 100) if price_cents else 0
 
-        if side == "NO":
-            # NO wins when bracket is NOT hit
-            won = not yes_won
-            pnl_per_share_cents = (100 - price_cents) if won else -price_cents
-        else:
-            won = yes_won
-            pnl_per_share_cents = (100 - price_cents) if won else -price_cents
+        # NO wins when the bracket is NOT hit; YES wins when it is.
+        won = (not yes_won) if side == "NO" else yes_won
+        pnl_per_share_cents = (100 - price_cents) if won else -price_cents
+        pnl = round(pnl_per_share_cents / 100 * shares, 4)
 
-        r["pnl"] = round(pnl_per_share_cents / 100 * shares, 4)
-        r["actual_high"] = actual
-        r["yes_won"] = yes_won
-        n_updated += 1
+        try:
+            db.update_trade_by_id(row_id, pnl=pnl, settled_at=now_iso)
+            db.add_settled_pnl(target.isoformat(), pnl)
+            order_id = r.get("order_id")
+            if order_id:
+                db.close_position(order_id)  # drop the resolved open_positions row
+                jsonl_patches[order_id] = {
+                    "pnl": pnl, "actual_high": actual, "yes_won": yes_won,
+                }
+            n_settled += 1
+        except Exception as e:
+            skip_reasons.append(f"id={row_id} update failed: {e}")
+            log.warning("[settle] [live] DB update failed for row %s: %s", row_id, e)
 
-        if db is not None:
-            try:
-                now_iso = datetime.now(timezone.utc).isoformat()
-                db.update_trade_by_order(
-                    r.get("order_id") or "",
-                    pnl=r["pnl"], settled_at=now_iso,
-                )
-                db.add_settled_pnl(target.isoformat(), r["pnl"])
-            except Exception as e:
-                log.warning("[settle] DB trade update failed for %s...: %s",
-                            str(r.get("order_id"))[:12], e)
+    _enrich_jsonl_with_settlements(jsonl_patches)
 
-    if n_updated == 0:
+    if n_settled == 0 and not skip_reasons:
         log.info("[settle] no live trades to update for %s", target)
     else:
-        with open(LIVE_TRADES_JSONL, "w") as f:
-            for r in records:
-                f.write(json.dumps(r, default=str) + "\n")
-        log.info("[settle] updated %s live trade(s) with P&L for %s", n_updated, target)
+        log.info(
+            "[settle] settled %s live trade(s) from DB for %s (%s skipped%s)",
+            n_settled, target, len(skip_reasons),
+            f": {'; '.join(skip_reasons)}" if skip_reasons else "",
+        )
 
     # Detect stuck trades: live mode, outcome IS NULL, older than 36 hours, no open_position
-    if db is not None:
-        stuck = db._conn.execute(
-            """
-            SELECT t.id, t.ticker, t.side, t.ts FROM trades t
-            WHERE t.mode = 'live'
-              AND t.outcome IS NULL
-              AND t.ts < datetime('now', '-36 hours')
-              AND NOT EXISTS (SELECT 1 FROM open_positions p WHERE p.trade_id = t.id)
-            """
-        ).fetchall()
-        if stuck:
-            log.warning(
-                "[settle] %d stuck trade(s) outcome IS NULL > 36h: ids=%s",
-                len(stuck), [r['id'] for r in stuck]
-            )
+    stuck = db._conn.execute(
+        """
+        SELECT t.id, t.ticker, t.side, t.ts FROM trades t
+        WHERE t.mode = 'live'
+          AND t.outcome IS NULL
+          AND t.ts < datetime('now', '-36 hours')
+          AND NOT EXISTS (SELECT 1 FROM open_positions p WHERE p.trade_id = t.id)
+        """
+    ).fetchall()
+    if stuck:
+        log.warning(
+            "[settle] %d stuck trade(s) outcome IS NULL > 36h: ids=%s",
+            len(stuck), [r['id'] for r in stuck]
+        )
 
 
 if __name__ == "__main__":

@@ -423,10 +423,11 @@ class _FakeDB:
         return self._settlements
 
 
-def _trade(station, side, ticker, actual_price, ts="2026-06-01T12:00:00", mode="shadow"):
+def _trade(station, side, ticker, actual_price, ts="2026-06-01T12:00:00", mode="shadow",
+           direction="high"):
     return {
         "station": station, "side": side, "ticker": ticker,
-        "actual_price": actual_price, "ts": ts, "mode": mode,
+        "actual_price": actual_price, "ts": ts, "mode": mode, "direction": direction,
     }
 
 
@@ -556,3 +557,39 @@ class TestComputePromotionBar:
 
         assert row["eligible"] is True
         assert row["status"] == "green"
+
+
+class TestComputePromotionBarExcludesNonHighDirection:
+    """Issue #610: compute_promotion_bar must filter to direction='high' so
+    residual mislabeled low-side rows (direction dropped at insert) cannot
+    poison the Wilson promotion stats."""
+
+    def test_low_direction_rows_excluded_from_station_group(self):
+        # 30 high-direction NO trades (all wins) form a green row for LFPB.
+        # 5 additional direction='low' rows for the SAME station+side, all
+        # wins, would inflate n to 35 and change the stats if not filtered.
+        high_trades = [_trade("LFPB", "NO", f"lfpb-h{i}", 65) for i in range(30)]
+        low_trades = [
+            _trade("LFPB", "NO", f"lfpb-l{i}", 65, direction="low") for i in range(5)
+        ]
+        settlements = [_settlement(f"lfpb-h{i}", resolved_yes=0) for i in range(30)]
+        settlements += [_settlement(f"lfpb-l{i}", resolved_yes=0) for i in range(5)]
+        db = _FakeDB(high_trades + low_trades, settlements)
+
+        rows = compute_promotion_bar(db)
+        row = next(r for r in rows if r["station"] == "LFPB" and r["side"] == "NO")
+
+        assert row["n"] == 30, "direction='low' rows must not be counted"
+        assert row["wins"] == 30
+
+    def test_station_with_only_low_direction_rows_is_absent(self):
+        # A station/side pair with ONLY direction='low' shadow rows should not
+        # appear in the output at all (no direction='high' rows to group).
+        low_trades = [
+            _trade("KMIA", "NO", f"kmia-l{i}", 65, direction="low") for i in range(10)
+        ]
+        settlements = [_settlement(f"kmia-l{i}", resolved_yes=0) for i in range(10)]
+        db = _FakeDB(low_trades, settlements)
+
+        rows = compute_promotion_bar(db)
+        assert not any(r["station"] == "KMIA" for r in rows)

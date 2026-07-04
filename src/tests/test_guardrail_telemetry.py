@@ -89,6 +89,7 @@ class TestGuardrailEventsEndpoint:
         mock_db.get_guardrail_stats.return_value = {
             "cap_events": {"total": 0, "last_7d": 0, "avg_delta": 0.0},
             "correction_events": {"total": 0, "last_7d": 0, "avg_delta": 0.0},
+            "entry_guard_blocks": {"total": 0, "last_7d": 0, "avg_delta": 0.0},
         }
         mock_db.get_forced_exit_stats.return_value = {
             "total": 5, "last_7d": 2, "by_station": {"KORD": 3, "KLAX": 2},
@@ -106,6 +107,7 @@ class TestGuardrailEventsEndpoint:
         mock_db.get_guardrail_stats.return_value = {
             "cap_events": {"total": 8, "last_7d": 2, "avg_delta": -0.03},
             "correction_events": {"total": 0, "last_7d": 0, "avg_delta": 0.0},
+            "entry_guard_blocks": {"total": 0, "last_7d": 0, "avg_delta": 0.0},
         }
         mock_db.get_forced_exit_stats.return_value = {
             "total": 0, "last_7d": 0, "by_station": {},
@@ -124,6 +126,7 @@ class TestGuardrailEventsEndpoint:
         mock_db.get_guardrail_stats.return_value = {
             "cap_events": {"total": 0, "last_7d": 0, "avg_delta": 0.0},
             "correction_events": {"total": 0, "last_7d": 0, "avg_delta": 0.0},
+            "entry_guard_blocks": {"total": 0, "last_7d": 0, "avg_delta": 0.0},
         }
         mock_db.get_forced_exit_stats.return_value = {
             "total": 0, "last_7d": 0, "by_station": {},
@@ -137,3 +140,4 @@ class TestGuardrailEventsEndpoint:
         assert data["forced_exits"]["total"] == 0
         assert data["cap_events"]["total"] == 0
         assert data["correction_events"]["total"] == 0
+        assert data["entry_guard_blocks"]["total"] == 0  # issue #611 counter

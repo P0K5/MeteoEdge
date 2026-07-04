@@ -345,8 +345,14 @@ def compute_promotion_bar(db) -> list:
         s["ticker"]: s.get("resolved_yes", 0) for s in settlements
     }
 
+    # Restrict to direction='high': the bar's truth source (daily high) and
+    # settlement path only cover high-side markets. Filtering explicitly here
+    # (rather than trusting every row's direction to be correct) keeps this
+    # advisory statistic robust to any residual mislabeled rows (issue #610).
     groups: "dict[tuple[str, str], list]" = defaultdict(list)
     for trade in all_shadow:
+        if trade.get("direction", "high") != "high":
+            continue
         groups[(trade["station"], trade["side"])].append(trade)
 
     rows = []

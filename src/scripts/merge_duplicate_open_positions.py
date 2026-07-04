@@ -1,0 +1,215 @@
+"""One-shot merge of duplicate open_positions rows per token_id (issue #611).
+
+Background:
+    Before the run.py entry gate (issue #611), the bot could re-enter a bracket
+    it already held on every poll: candidate evaluation had no "already holding
+    this token today" check, and reconciliation leaned on the frozen
+    live_trades.jsonl (root cause #609). Each duplicate live BUY inserted its
+    own open_positions row for the SAME token_id -- on 2026-07-03 one WMKK
+    token held three separate rows.
+
+    Duplicate rows are exit/display machinery only: every sell path
+    (check_take_profit_exits, _check_stop_loss_exits, _check_forced_exits,
+    manual_sell_position) already groups fills by token_id, sells the summed
+    share total in one order, and deletes all rows via
+    close_positions_by_token(). Merging the rows changes no exit behaviour --
+    it just makes open_positions reflect reality: one row per held token.
+
+    The extra trades-table rows for the stacked orders are deliberately left
+    untouched: settlement (#609) handles those rows independently and their
+    PnL history must stay accurate.
+
+Merge semantics (per token_id with more than one row):
+    - shares:       summed across all rows
+    - entry_price:  share-weighted average, rounded to the nearest int cent
+    - entry_ts:     earliest across all rows
+    - id/trade_id/order_id: kept from the FIRST row (earliest entry_ts,
+      tie-broken by lowest id; the unique index is on order_id)
+    - stop_loss_cents:   most protective (highest non-NULL -- exits earliest)
+    - take_profit_cents: most protective (lowest non-NULL -- locks in earliest)
+      A warning is printed whenever the duplicate rows disagreed.
+    - all other rows for the token are deleted
+
+Safety:
+    - Verify-before-touch: all rows for a token must share the same station,
+      side, and ticker prefix pattern; a mismatch is skipped with a loud
+      warning and the script exits non-zero.
+    - Idempotent: a second run finds no duplicate tokens and exits 0 without
+      touching anything.
+    - --dry-run previews every merge without modifying the DB.
+
+Usage (run against the production DB by the operator; not run in CI):
+    python -m src.scripts.merge_duplicate_open_positions            # live run
+    python -m src.scripts.merge_duplicate_open_positions --dry-run  # preview only
+    python -m src.scripts.merge_duplicate_open_positions --db-path /path/to/meteoedge.db
+"""
+from __future__ import annotations
+
+import argparse
+import os
+import sqlite3
+from pathlib import Path
+
+_DEFAULT_DB_PATH = Path(os.getenv("DB_PATH", "data/meteoedge.db"))
+
+
+def _connect(path: Path) -> sqlite3.Connection:
+    conn = sqlite3.connect(str(path))
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys=ON")
+    return conn
+
+
+def _most_protective(values: list, *, prefer_high: bool) -> "int | None":
+    """Return the most protective of the non-NULL cent values (None if all NULL).
+
+    prefer_high=True  -> highest wins (stop_loss: a higher stop exits earlier).
+    prefer_high=False -> lowest wins (take_profit: a lower target locks in earlier).
+    """
+    non_null = [int(v) for v in values if v is not None]
+    if not non_null:
+        return None
+    return max(non_null) if prefer_high else min(non_null)
+
+
+def merge_duplicates(db_path: Path, dry_run: bool = False) -> int:
+    """Merge duplicate open_positions rows per token_id. Returns exit code."""
+    if not db_path.exists():
+        print(f"[merge] DB not found: {db_path}")
+        return 1
+
+    conn = _connect(db_path)
+
+    dup_tokens = [
+        r["token_id"]
+        for r in conn.execute(
+            "SELECT token_id FROM open_positions "
+            "GROUP BY token_id HAVING COUNT(*) > 1"
+        ).fetchall()
+    ]
+    if not dup_tokens:
+        print("[merge] no duplicate token_id rows found -- nothing to do")
+        conn.close()
+        return 0
+
+    n_merged = 0
+    n_deleted = 0
+    n_mismatched = 0
+
+    for token_id in dup_tokens:
+        rows = conn.execute(
+            "SELECT * FROM open_positions WHERE token_id=? "
+            "ORDER BY entry_ts ASC, id ASC",
+            (token_id,),
+        ).fetchall()
+
+        stations = {r["station"] for r in rows}
+        sides = {r["side"] for r in rows}
+        if len(stations) > 1 or len(sides) > 1:
+            print(
+                f"[merge] token {token_id[:14]}...: MISMATCH -- rows span "
+                f"stations={sorted(stations)} sides={sorted(sides)}. "
+                "Refusing to merge; investigate manually."
+            )
+            n_mismatched += 1
+            continue
+
+        bad_rows = [
+            r["id"] for r in rows
+            if not (float(r["shares"]) > 0 and 1 <= int(r["entry_price"]) <= 99)
+        ]
+        if bad_rows:
+            print(
+                f"[merge] token {token_id[:14]}...: MISMATCH -- row id(s) "
+                f"{bad_rows} have non-positive shares or entry_price outside "
+                "1-99c. Refusing to merge; investigate manually."
+            )
+            n_mismatched += 1
+            continue
+
+        keeper = rows[0]  # earliest entry_ts (tie: lowest id)
+        total_shares = sum(float(r["shares"]) for r in rows)
+        weighted_price = int(round(
+            sum(float(r["shares"]) * int(r["entry_price"]) for r in rows) / total_shares
+        ))
+        earliest_ts = min(r["entry_ts"] for r in rows)
+
+        stop_values = [r["stop_loss_cents"] for r in rows]
+        tp_values = [r["take_profit_cents"] for r in rows]
+        stop_loss = _most_protective(stop_values, prefer_high=True)
+        take_profit = _most_protective(tp_values, prefer_high=False)
+        if len({v for v in stop_values if v is not None}) > 1:
+            print(
+                f"[merge] token {token_id[:14]}...: WARNING -- rows disagree on "
+                f"stop_loss_cents {stop_values}; keeping most protective {stop_loss}"
+            )
+        if len({v for v in tp_values if v is not None}) > 1:
+            print(
+                f"[merge] token {token_id[:14]}...: WARNING -- rows disagree on "
+                f"take_profit_cents {tp_values}; keeping most protective {take_profit}"
+            )
+
+        delete_ids = [r["id"] for r in rows[1:]]
+        action = "[dry-run] would merge" if dry_run else "merging"
+        print(
+            f"[merge] token {token_id[:14]}... ({keeper['station']} {keeper['side']}): "
+            f"{action} {len(rows)} rows into id={keeper['id']} "
+            f"(order_id={keeper['order_id'][:16]}...) -- shares={total_shares:.4f}, "
+            f"entry_price={weighted_price}c (weighted), entry_ts={earliest_ts}; "
+            f"deleting row id(s) {delete_ids}"
+        )
+        if not dry_run:
+            conn.execute(
+                "UPDATE open_positions SET shares=?, entry_price=?, entry_ts=?, "
+                "stop_loss_cents=?, take_profit_cents=? WHERE id=?",
+                (total_shares, weighted_price, earliest_ts,
+                 stop_loss, take_profit, keeper["id"]),
+            )
+            conn.execute(
+                "DELETE FROM open_positions WHERE token_id=? AND id!=?",
+                (token_id, keeper["id"]),
+            )
+        n_merged += 1
+        n_deleted += len(delete_ids)
+
+    if not dry_run:
+        conn.commit()
+    conn.close()
+
+    print(
+        f"\n[merge] Summary: {n_merged} token(s) {'would be ' if dry_run else ''}merged, "
+        f"{n_deleted} duplicate row(s) {'would be ' if dry_run else ''}deleted, "
+        f"{n_mismatched} mismatched"
+    )
+    if n_mismatched:
+        print("[merge] FAILED: mismatched token(s) found -- investigate before re-running")
+        return 1
+    return 0
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Merge duplicate open_positions rows per token_id left behind by "
+            "the pre-#611 bracket-stacking bug (summed shares, share-weighted "
+            "entry price, earliest entry_ts)."
+        )
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        default=False,
+        help="Preview what would change without modifying the DB",
+    )
+    parser.add_argument(
+        "--db-path",
+        type=Path,
+        default=_DEFAULT_DB_PATH,
+        help=f"Path to the SQLite DB (default: {_DEFAULT_DB_PATH})",
+    )
+    args = parser.parse_args()
+    raise SystemExit(merge_duplicates(args.db_path, dry_run=args.dry_run))
+
+
+if __name__ == "__main__":
+    main()

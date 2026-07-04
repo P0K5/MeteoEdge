@@ -49,6 +49,32 @@ def _insert_shadow(db: Database, station: str, yes_ask: int, target_date: str,
     )
 
 
+def _insert_shadow_direction(db: Database, station: str, side: str, ask: int,
+                             target_date: str, direction: str,
+                             bracket_low: float = 80.0, bracket_high: float = 82.0) -> int:
+    """Insert a shadow trade with an explicit `direction` (issue #610)."""
+    ts = f"{target_date}T10:00:00+00:00"
+    return db.insert_trade(
+        ts=ts,
+        station=station,
+        ticker=f"0xSHADOW_{direction}_{station}_{ask}",
+        bracket_low=bracket_low,
+        bracket_high=bracket_high,
+        side=side,
+        predicted_price=int(ask * 0.9),
+        actual_price=ask,
+        predicted_edge=10.0,
+        mode="shadow",
+        capital_before=0.0,
+        order_id=None,
+        outcome=None,
+        pnl=None,
+        capital_after=None,
+        settled_at=None,
+        direction=direction,
+    )
+
+
 def _insert_shadow_no(db: Database, station: str, no_ask: int, target_date: str,
                       bracket_low: float = 80.0, bracket_high: float = 82.0) -> int:
     """Insert a shadow NO trade for the given station and date."""
@@ -290,4 +316,80 @@ class TestSettleShadowMultipleSides:
         assert abs(t_no["pnl"] - (-no_ask / 100)) < 1e-5          # NO lost: -0.68
         assert t_yes["outcome"] == "filled"
         assert t_no["outcome"] == "filled"
+        db.close()
+
+
+# ---------------------------------------------------------------------------
+# direction='low' rows must never be settled against the daily HIGH (#610)
+# ---------------------------------------------------------------------------
+
+class TestSettleShadowSkipsLowDirection:
+    """`truth` is the daily HIGH per station -- a direction='low' row settled
+    against it produces a near-guaranteed fake result. These rows must be
+    skipped entirely, leaving outcome/pnl/settled_at untouched."""
+
+    def test_low_direction_row_not_settled(self, tmp_path):
+        db = _fresh_db(tmp_path)
+        target = date(2025, 6, 1)
+        # Low-market bracket (e.g. "lowest temp") that happens to fall inside
+        # the daily HIGH range -- if incorrectly settled against `truth`
+        # (the daily high), this NO row would spuriously "win".
+        tid = _insert_shadow_direction(
+            db, "LFPB", "NO", 70, target.isoformat(), direction="low",
+            bracket_low=59.0, bracket_high=60.8,
+        )
+
+        truth = {"LFPB": 60.0}  # daily HIGH; would make NO "win" if mis-settled
+        settle_shadow_trades(target, truth, db=db)
+
+        trades = db.get_trades(limit=None)
+        t = next(r for r in trades if r["id"] == tid)
+        assert t["outcome"] is None
+        assert t["pnl"] is None
+        assert t["settled_at"] is None
+        db.close()
+
+    def test_low_direction_row_still_unsettled_and_returned_by_query(self, tmp_path):
+        """get_unsettled_shadow_trades() must surface the direction column so
+        settle_shadow_trades can actually branch on it."""
+        db = _fresh_db(tmp_path)
+        target = date(2025, 6, 1)
+        _insert_shadow_direction(
+            db, "KMIA", "NO", 55, target.isoformat(), direction="low",
+            bracket_low=80.0, bracket_high=81.0,
+        )
+
+        rows = db.get_unsettled_shadow_trades(target.isoformat())
+        assert len(rows) == 1
+        assert rows[0]["direction"] == "low"
+        db.close()
+
+    def test_high_and_low_rows_settled_independently_same_station_day(self, tmp_path):
+        """A direction='high' row settles normally while a direction='low'
+        row for the same station/day is skipped."""
+        db = _fresh_db(tmp_path)
+        target = date(2025, 6, 1)
+
+        tid_high = _insert_shadow_direction(
+            db, "LFPB", "YES", 30, target.isoformat(), direction="high",
+            bracket_low=75.0, bracket_high=77.0,
+        )
+        tid_low = _insert_shadow_direction(
+            db, "LFPB", "NO", 70, target.isoformat(), direction="low",
+            bracket_low=59.0, bracket_high=60.8,
+        )
+
+        truth = {"LFPB": 76.0}  # inside the high bracket -> high YES row wins
+        settle_shadow_trades(target, truth, db=db)
+
+        trades = db.get_trades(limit=None)
+        t_high = next(r for r in trades if r["id"] == tid_high)
+        t_low = next(r for r in trades if r["id"] == tid_low)
+
+        assert t_high["outcome"] == "filled"
+        assert abs(t_high["pnl"] - (100 - 30) / 100) < 1e-5
+
+        assert t_low["outcome"] is None
+        assert t_low["pnl"] is None
+        assert t_low["settled_at"] is None
         db.close()

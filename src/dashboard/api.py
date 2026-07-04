@@ -2609,10 +2609,12 @@ def trade_cost_summary(days: int = 30) -> dict:
 
 @app.get("/api/guardrail-events")
 def guardrail_events() -> dict:
-    """Return summary counts for forced-exit, cap, and bias-correction guardrail events.
+    """Return summary counts for forced-exit, cap, bias-correction, and
+    entry-guard (issue #611) guardrail events.
 
-    Forced exits come from trades.close_reason='forced_exit'; cap and correction
-    events come from the guardrail_events table.  All counts are zero-safe.
+    Forced exits come from trades.close_reason='forced_exit'; cap, correction,
+    and entry-guard events come from the guardrail_events table.  All counts
+    are zero-safe.
     """
     if _db is None:
         raise HTTPException(status_code=503, detail="Database not initialised")
@@ -2635,6 +2637,10 @@ def guardrail_events() -> dict:
                 "total": stats["correction_events"]["total"],
                 "last_7d": stats["correction_events"]["last_7d"],
                 "avg_delta_f": stats["correction_events"]["avg_delta"],
+            },
+            "entry_guard_blocks": {
+                "total": stats["entry_guard_blocks"]["total"],
+                "last_7d": stats["entry_guard_blocks"]["last_7d"],
             },
         }
     except Exception as e:
