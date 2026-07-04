@@ -25,7 +25,7 @@ def _make_hourly_data(today_str: str) -> dict:
 
 class TestDebConsensus:
     def test_build_consensus_returns_today_slots(self):
-        """Only today's slots are returned; values are scaled by open_meteo weight."""
+        """Only today's slots are returned; values are renormalized over hourly-capable sources (om_scale=1.0 here)."""
         today = datetime.now(timezone.utc).date().isoformat()
         mock_data = _make_hourly_data(today)
         weights = {"open_meteo": 0.4, "nws": 0.6}
@@ -40,11 +40,38 @@ class TestDebConsensus:
         for t in time_strs:
             assert t[:10] == today, f"Non-today slot leaked through: {t}"
 
-        # Values must be scaled by open_meteo weight (0.4)
+        # Values must be returned as-is (no weight scaling applied)
         raw_temps = [60.0, 62.0, 80.0]
         for (t_str, t_val), raw in zip(result, raw_temps):
-            assert isclose(t_val, raw * 0.4, abs_tol=1e-9), (
-                f"Expected {raw * 0.4}, got {t_val}"
+            assert isclose(t_val, raw, abs_tol=1e-9), (
+                f"Expected {raw}, got {t_val}"
+            )
+
+    @pytest.mark.parametrize("weights,label", [
+        ({"nws": 0.5, "open_meteo": 0.5}, "baseline_us"),
+        ({"open_meteo": 1.0}, "intl_om_only"),
+        ({"nws": 0.15, "open_meteo": 0.25, "gfs": 0.15, "hrrr": 0.15, "nbm": 0.15, "ecmwf": 0.10, "icon": 0.05}, "full_7model"),
+        ({"open_meteo": 0.4, "nws": 0.0}, "om_only_zero_nws"),
+    ])
+    def test_build_consensus_scale_invariant(self, weights, label):
+        """Same input temps must produce same consensus output regardless of weight dict.
+
+        Covers all four FORECAST_STACK shapes so a future stack promotion cannot
+        silently re-break intraday corrections (prerequisite for #437).
+        """
+        today = datetime.now(timezone.utc).date().isoformat()
+        mock_data = _make_hourly_data(today)
+        raw_temps = [60.0, 62.0, 80.0]
+
+        with patch("src.model.deb_hourly_consensus._fetch_open_meteo_hourly", return_value=mock_data):
+            result = build_consensus(40.0, -74.0, weights)
+
+        assert result is not None, f"[{label}] got None"
+        assert len(result) == 3, f"[{label}] wrong slot count"
+        for (t_str, t_val), raw in zip(result, raw_temps):
+            assert isclose(t_val, raw, abs_tol=1e-9), (
+                f"[{label}] weight scaling leaked into hourly path: "
+                f"expected {raw}, got {t_val}. weights={weights}"
             )
 
     def test_build_consensus_none_on_no_data(self):

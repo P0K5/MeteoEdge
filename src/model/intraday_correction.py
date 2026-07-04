@@ -257,6 +257,13 @@ def compute_correction(
 
     # --- Compute deviation and apply decay ---
     delta_f = obs_temp_f - model_temp_f
+    if abs(delta_f) > 15.0:
+        log.warning(
+            "[intraday] city=%s: |delta_f|=%.1f°F exceeds plausibility threshold "
+            "(15°F) — consensus temp %.1f vs obs %.1f; skipping correction",
+            city, abs(delta_f), model_temp_f, obs_temp_f,
+        )
+        return None
     decay_factor = get_decay_factor(city, obs_dt)
 
     corrected_mu_f = state.deb_mu_f + delta_f * decay_factor
