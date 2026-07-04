@@ -76,9 +76,6 @@ CREATE TABLE IF NOT EXISTS trades (
 );
 CREATE INDEX IF NOT EXISTS idx_trades_station_ts ON trades(station, ts);
 CREATE INDEX IF NOT EXISTS idx_trades_mode ON trades(mode);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_trades_shadow_unique
-    ON trades(station, bracket_low, bracket_high, side, direction, substr(ts,1,10))
-    WHERE mode='shadow';
 
 CREATE TABLE IF NOT EXISTS settlements (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
