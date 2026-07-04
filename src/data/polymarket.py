@@ -59,13 +59,17 @@ def fetch_market_final_price(ticker: str) -> int | None:
     """
     import json as _json
 
-    url = f"{POLYMARKET_GAMMA_API}/markets/{ticker}"
+    url = f"{POLYMARKET_GAMMA_API}/markets?condition_ids={ticker}&closed=true"
     try:
         r = fetch(url, timeout=HTTP_TIMEOUT_SECONDS)
         r.raise_for_status()
-        market = r.json()
+        result = r.json()
+        if not result:
+            log.warning("[polymarket] fetch_market_final_price(%s...): empty response", ticker[:14])
+            return None
+        market = result[0]
     except Exception as e:
-        print(f"[polymarket] fetch_market_final_price({ticker[:14]}...): {e}")
+        log.warning("[polymarket] fetch_market_final_price(%s...): %s", ticker[:14], e)
         return None
 
     raw = market.get("outcomePrices")
