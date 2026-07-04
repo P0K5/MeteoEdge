@@ -88,6 +88,11 @@ def settle_shadow_trades(target: date, truth: dict, db=None) -> None:
 
     Idempotent: rows already having ``settled_at IS NOT NULL`` are skipped.
     Does not touch risk_manager state — shadow trades are observation-only.
+
+    ``truth`` holds the daily HIGH per station, so rows with ``direction=
+    'low'`` are skipped entirely (not settled against the high) rather than
+    resolved incorrectly. See issue #610; daily-LOW truth settlement is
+    tracked separately under Epic C (#458/#452).
     """
     if db is None:
         return
@@ -98,9 +103,24 @@ def settle_shadow_trades(target: date, truth: dict, db=None) -> None:
         return
 
     n_settled = 0
+    n_skipped_low = 0
     now_iso = datetime.now(timezone.utc).isoformat()
     for r in rows:
         station = r.get("station", "")
+
+        # direction='low' rows cannot be settled against `truth`, which is the
+        # daily HIGH (see fetch_daily_climate_high). Settling a low bracket
+        # against the high produces near-guaranteed fake wins/losses and
+        # poisons shadow statistics (issue #610). Proper low-truth settlement
+        # is Epic C scope (#458/#452) — skip these rows here.
+        if r.get("direction") == "low":
+            n_skipped_low += 1
+            log.debug(
+                "[settle] [shadow] direction=low — skipping row %s (no daily-LOW truth yet)",
+                r["id"],
+            )
+            continue
+
         if station not in truth:
             log.debug("[settle] [shadow] no truth for station %s — skipping row %s", station, r["id"])
             continue
@@ -137,7 +157,10 @@ def settle_shadow_trades(target: date, truth: dict, db=None) -> None:
         except Exception as e:
             log.warning("[settle] [shadow] update failed for row %s: %s", r["id"], e)
 
-    log.info("[settle] settled %s shadow trade(s) for %s", n_settled, target)
+    log.info(
+        "[settle] settled %s shadow trade(s) for %s (skipped %s direction=low row(s))",
+        n_settled, target, n_skipped_low,
+    )
 
 
 def settle_yesterday():

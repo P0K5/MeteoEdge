@@ -506,6 +506,53 @@ python -m src.scripts.settle 2024-06-03
    - Preserves 'sold' outcome records (already exited mid-day)
 7. **Updates open_positions in DB** if entry was in DB (marks as closed after settlement)
 
+### Shadow-trade settlement and direction (issue #610)
+
+`settle_shadow_trades()` (part of the daily settlement run) resolves shadow
+rows against the daily HIGH fetched from METAR history. Rows with
+`direction='low'` (low-market candidates, e.g. "lowest temperature") **cannot**
+be settled against the daily high without producing spurious results, so
+they are skipped and counted rather than resolved. Each run logs a summary
+line of the form:
+
+```
+[settle] settled <N> shadow trade(s) for <date> (skipped <M> direction=low row(s))
+```
+
+`M` should track roughly the volume of low-side shadow candidates logged
+that day; a growing, never-settled backlog is expected until daily-LOW
+truth settlement lands (Epic C, issues #458/#452). This is advisory-only —
+`compute_promotion_bar()` also filters to `direction='high'` explicitly, so
+unsettled or mislabeled low-side rows cannot enter the Wilson promotion
+statistics either way.
+
+### One-off: quarantining mislabeled shadow rows
+
+`src/scripts/quarantine_mislabeled_shadow_trades.py` is a one-shot,
+idempotent script for correcting a specific set of shadow rows that were
+inserted with the wrong `direction` before the #610 fix landed (the shadow
+upsert previously dropped `direction`, defaulting every candidate — including
+low-side ones — to `'high'`). For each row it verifies the row's
+station/side/bracket match the expected values before touching it, then sets
+`direction='low'`, `settled_at=<now>`, `pnl=NULL`, and a `close_reason` note
+so the row is excluded from all shadow statistics.
+
+```bash
+# Preview only
+python -m src.scripts.quarantine_mislabeled_shadow_trades --dry-run
+
+# Apply
+python -m src.scripts.quarantine_mislabeled_shadow_trades
+
+# Against a non-default DB path
+python -m src.scripts.quarantine_mislabeled_shadow_trades --db-path /path/to/meteoedge.db
+```
+
+Safe to run more than once — already-quarantined rows are detected and
+skipped. If any row's station/side/bracket does not match what the script
+expects, it refuses to touch that row, reports a mismatch, and exits
+non-zero so the operator can investigate before re-running.
+
 ### Re-running Settlement
 
 If settlement fails or incomplete for a date:

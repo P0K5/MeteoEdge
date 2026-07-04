@@ -399,6 +399,7 @@ def poll_once(
                         actual_price=cand.bracket.yes_ask_cents,
                         predicted_edge=cand.edge_cents,
                         capital_before=0.0,
+                        direction=cand.direction,
                         p_yes_raw=cand.p_yes_raw,
                     )
                     if _created:

@@ -16,7 +16,9 @@ from unittest.mock import MagicMock, patch, call
 import pytest
 
 import src.monitoring.dashboard
+from src.model.envelope import Bracket
 from src.scripts.run import _start_collector_thread
+from src.strategy.scanner import Candidate
 
 
 # ---------------------------------------------------------------------------
@@ -201,6 +203,90 @@ class TestPollOncePassesDb:
         assert "db" in captured_kwargs[0], "scan_markets must be called with db= kwarg"
         assert captured_kwargs[0]["db"] is mock_db, (
             "db passed to scan_markets must be the same object passed to poll_once"
+        )
+
+
+# ---------------------------------------------------------------------------
+# The shadow upsert in poll_once() must persist direction=cand.direction —
+# regression test for issue #610.
+#
+# Root cause: the db.upsert_shadow_trade(...) call in poll_once() never
+# passed direction=cand.direction, so every low-side shadow candidate was
+# silently stored under the upsert's default direction='high'. Downstream,
+# settle_shadow_trades() then resolved these low brackets against the daily
+# HIGH, producing near-guaranteed fake wins that poisoned the Wilson
+# promotion-bar statistics.
+# ---------------------------------------------------------------------------
+
+def _low_shadow_candidate() -> Candidate:
+    """A shadow=True, direction='low' candidate, as scan_markets() would
+    build for a low-market (e.g. "lowest temperature") NO entry."""
+    bracket = Bracket(
+        ticker="LFPB-low-59-60.8",
+        low_f=59.0,
+        high_f=60.8,
+        yes_ask_cents=30,
+        yes_ask_size=100,
+        no_ask_cents=70,
+        no_ask_size=100,
+    )
+    return Candidate(
+        station="LFPB",
+        bracket=bracket,
+        side="NO",
+        edge_cents=10.0,
+        price_cents=70,
+        confidence=0.6,
+        p_yes=0.4,
+        ev_yes=-5.0,
+        ev_no=10.0,
+        minutes_to_settlement=120.0,
+        market={"question": "lowest temperature in Paris", "endDate": "2026-07-04T00:00:00Z"},
+        shadow=True,
+        direction="low",
+    )
+
+
+class TestPollOnceShadowUpsertPersistsDirection:
+    """Regression test for issue #610: the shadow upsert must forward
+    direction=cand.direction rather than relying on the DB default."""
+
+    def test_low_candidate_upserted_with_direction_low(self):
+        mock_db = MagicMock()
+        mock_db.upsert_shadow_trade.return_value = (1, True)
+        low_candidate = _low_shadow_candidate()
+
+        def _fake_scan_markets(weather, markets, **kwargs):
+            return [low_candidate], []
+
+        import src.scripts.run as run_module
+        with (
+            patch("src.scripts.run.scan_markets", side_effect=_fake_scan_markets),
+            patch("src.scripts.run._build_weather", return_value={"LFPB": MagicMock()}),
+            patch("src.scripts.run.build_weather_low_for_scanning", return_value={}),
+            patch("src.scripts.run.get_weather_markets", return_value=[]),
+            patch.object(run_module.order_manager, "reconcile_timeout_fills"),
+            patch.object(run_module.order_manager, "sync_open_orders"),
+            patch.object(run_module.order_manager, "check_take_profit_exits"),
+            patch("src.scripts.run._log_open_position_snapshots"),
+            patch("src.scripts.run.FreshnessMonitor"),
+            patch("src.scripts.run.get_source_priority", return_value=[]),
+            patch("src.scripts.run._append_candidate"),
+            patch("src.monitoring.dashboard.last_poll_ts", None, create=True),
+        ):
+            from src.scripts.run import poll_once
+            from src.risk.manager import RiskManager
+
+            mock_risk = MagicMock(spec=RiskManager)
+            mock_risk.allow_trade.return_value = (False, "test block")
+
+            poll_once(mock_risk, live_trader=None, alert_manager=None, db=mock_db)
+
+        assert mock_db.upsert_shadow_trade.called, "upsert_shadow_trade was never called"
+        _, kwargs = mock_db.upsert_shadow_trade.call_args
+        assert kwargs.get("direction") == "low", (
+            "shadow upsert must persist direction='low' for a low-side candidate "
+            "instead of silently falling back to the DB default of 'high'"
         )
 
 
