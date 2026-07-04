@@ -501,10 +501,80 @@ python -m src.scripts.settle 2024-06-03
    - Win: `100¢ - entry_price`
    - Loss: `-entry_price`
 5. **Writes settlements.csv** with actual_high, yes_won, candidate_won, pnl_cents
-6. **Updates live_trades.jsonl** for trades with outcome='filled':
-   - Adds actual_high, yes_won, pnl fields
-   - Preserves 'sold' outcome records (already exited mid-day)
-7. **Updates open_positions in DB** if entry was in DB (marks as closed after settlement)
+6. **Settles live held-to-expiry trades from the DB** (`settle_live_trades()`, see
+   [Live-trade settlement is DB-driven](#live-trade-settlement-is-db-driven-issue-609)
+   below) and **best-effort enriches** the matching `live_trades.jsonl` record
+   (adds `actual_high`, `yes_won`, `pnl`) purely so the dashboard's
+   closed-positions panel can display it — the JSONL write is never required
+   for the DB settlement itself to succeed.
+7. **Cleans up `open_positions`** for each row settled from the DB (removes the
+   resolved position so it stops showing as "open").
+
+### Live-trade settlement is DB-driven (issue #609)
+
+`settle_live_trades()` used to rewrite `logs/live_trades.jsonl` in place. That
+file was frozen from 2026-06-16 once log rotation moved writes to dated files
+(`live_trades.YYYY-MM-DD.jsonl`), so every nightly run silently settled
+nothing while `outcome='filled'` live rows accumulated in the DB with
+`pnl=NULL, settled_at=NULL`.
+
+Settlement is now DB-driven, mirroring `settle_shadow_trades()`:
+
+- Selects `mode='live' AND outcome='filled' AND settled_at IS NULL` from the
+  `trades` table via `db.get_unsettled_live_trades()`.
+- Matches each row to the target date via the `end_date` column (populated at
+  order-placement time from the market's `endDate`) or, for legacy rows
+  written before that column existed, the station-local calendar date of
+  `ts` (`STATION_TZ` + pytz).
+- PnL: `shares = capital_before / (actual_price/100)`; full win pays
+  `(100 - actual_price)` per share, full loss pays `-actual_price` per share;
+  NO wins when the bracket is **not** hit. Identical formula to the old
+  JSONL path.
+- Sold (early-exit) positions are never double-settled: the sell path flips
+  the *same* row from `outcome='filled'` to `outcome='sold'` (matched by
+  `order_id`), so it's excluded from the unsettled-live query rather than
+  re-settled.
+- `live_trades.jsonl` is enrichment-only going forward: `_write_db_settlements()`
+  (the `settlements`-table writer) reads it via `iter_rotated_jsonl()` so it
+  still sees rotated per-day files, and any JSONL read/write failure is
+  logged and swallowed — it can never block DB settlement.
+
+Each run logs a summary line of the form:
+
+```
+[settle] settled <N> live trade(s) from DB for <date> (<M> skipped[: reason; reason; ...])
+```
+
+### One-off: backfilling stranded live settlements (issue #609)
+
+`src/scripts/backfill_live_settlements.py` settles the live trades stranded
+by the bug above (42+ rows from 2026-06-20 onward at the time of the fix). It
+calls the exact same `settle_live_trades()` function used nightly — for each
+stranded date it builds a truth dict from the DB `observations` table
+(MAX(temp_f) per station's LOCAL calendar day, since the live METAR fetch
+used for normal settlement only looks back ~48h) and hands it to
+`settle_live_trades()`, so backfill and nightly settlement logic can never
+diverge. Any (date, station) with no observations on record is **skipped and
+reported**, never guessed.
+
+```bash
+# Default range: 2026-06-20 (first stranded date) -> yesterday
+python -m src.scripts.backfill_live_settlements
+
+# Preview only -- runs against a throwaway copy of the DB; the real
+# database file is only ever opened to be copied, never written.
+python -m src.scripts.backfill_live_settlements --dry-run
+
+# Explicit range
+python -m src.scripts.backfill_live_settlements --from 2026-06-20 --to 2026-07-03
+
+# Against a non-default DB path (defaults to $DB_PATH or data/meteoedge.db)
+python -m src.scripts.backfill_live_settlements --db-path /path/to/meteoedge.db
+```
+
+Safe to run more than once: settlement only ever selects `settled_at IS NULL`
+rows, so a rerun after a successful pass finds nothing left to settle for
+dates it already covered.
 
 ### Shadow-trade settlement and direction (issue #610)
 

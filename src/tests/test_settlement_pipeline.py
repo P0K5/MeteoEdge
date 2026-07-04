@@ -129,7 +129,7 @@ class TestSettleLiveTradesDb:
 
     def test_writes_pnl_settlement_and_risk(self, tmp_path, monkeypatch):
         db = _db()
-        _insert_trade(db, order_id="0xbuy1")
+        _insert_trade(db, order_id="0xbuy1", outcome="filled", end_date="2026-06-10")
         self._setup(tmp_path, monkeypatch, [_filled_record()])
         target = date(2026, 6, 10)
         truth = {"KSEA": 68.0}  # outside bracket -> NO wins
@@ -153,7 +153,7 @@ class TestSettleLiveTradesDb:
 
     def test_rerun_is_idempotent(self, tmp_path, monkeypatch):
         db = _db()
-        _insert_trade(db, order_id="0xbuy1")
+        _insert_trade(db, order_id="0xbuy1", outcome="filled", end_date="2026-06-10")
         self._setup(tmp_path, monkeypatch, [_filled_record()])
         target = date(2026, 6, 10)
         truth = {"KSEA": 68.0}

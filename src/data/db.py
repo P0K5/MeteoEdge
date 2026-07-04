@@ -288,6 +288,13 @@ class Database:
             # historical rows (written before this migration) are tagged
             # consistently with genuine fallback rows.
             ("intraday_corrections", "basis_weights", "TEXT NOT NULL DEFAULT '{\"open_meteo\": 1.0}'"),
+            # Issue #609: market end date (YYYY-MM-DD), populated at live-trade
+            # insert time from the market's endDate so settle_live_trades() can
+            # match DB rows to a settlement date without depending on
+            # live_trades.jsonl. NULL for rows written before this migration
+            # ("legacy" rows) -- settle.py falls back to the station-local date
+            # of `ts` for those.
+            ("trades", "end_date", "TEXT"),
         ]:
             try:
                 self._conn.execute(
@@ -427,11 +434,12 @@ class Database:
                             actual_fee_cents REAL,
                             size_eur        REAL,
                             direction       TEXT NOT NULL DEFAULT 'high',
-                            p_yes_raw       REAL
+                            p_yes_raw       REAL,
+                            end_date        TEXT
                         )
                         """
                     )
-                    # direction/p_yes_raw may not exist in old table — coalesce
+                    # direction/p_yes_raw/end_date may not exist in old table — coalesce
                     old_cols_q = self._conn.execute(
                         "PRAGMA table_info(trades)"
                     ).fetchall()
@@ -442,12 +450,15 @@ class Database:
                     p_yes_raw_expr = (
                         "p_yes_raw" if "p_yes_raw" in old_col_names else "NULL"
                     )
+                    end_date_expr = (
+                        "end_date" if "end_date" in old_col_names else "NULL"
+                    )
                     self._conn.execute(
                         "INSERT INTO trades_new SELECT "
                         "id,ts,station,ticker,bracket_low,bracket_high,side,"
                         "predicted_price,actual_price,slippage,predicted_edge,mode,"
                         "order_id,outcome,pnl,capital_before,capital_after,settled_at,"
-                        f"actual_fee_cents,size_eur,{direction_expr},{p_yes_raw_expr} "
+                        f"actual_fee_cents,size_eur,{direction_expr},{p_yes_raw_expr},{end_date_expr} "
                         "FROM trades"
                     )
                     self._conn.execute("DROP TABLE trades")
@@ -793,21 +804,28 @@ class Database:
         size_eur: "float | None" = None,
         direction: str = "high",
         p_yes_raw: "float | None" = None,
+        end_date: "str | None" = None,
     ) -> int:
-        """Insert a trade record; returns the new row id."""
+        """Insert a trade record; returns the new row id.
+
+        ``end_date`` (YYYY-MM-DD) is the market's resolution date, used by
+        settle_live_trades() (#609) to match a row to a settlement date
+        without depending on live_trades.jsonl. Optional -- rows without it
+        fall back to the station-local date of ``ts`` at settlement time.
+        """
         with self._lock:
             cur = self._conn.execute(
                 "INSERT INTO trades"
                 "(ts,station,ticker,bracket_low,bracket_high,side,"
                 "predicted_price,actual_price,slippage,predicted_edge,mode,order_id,"
                 "outcome,pnl,capital_before,capital_after,settled_at,size_eur,direction,"
-                "p_yes_raw) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "p_yes_raw,end_date) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     ts, station, ticker, bracket_low, bracket_high, side,
                     predicted_price, actual_price, slippage, predicted_edge, mode,
                     order_id, outcome, pnl, capital_before, capital_after, settled_at,
-                    size_eur, direction, p_yes_raw,
+                    size_eur, direction, p_yes_raw, end_date,
                 ),
             )
             self._conn.commit()
@@ -1057,6 +1075,27 @@ class Database:
             "SELECT * FROM trades "
             "WHERE mode='shadow' AND settled_at IS NULL AND DATE(ts)=?",
             (target_date,),
+        )
+        return [dict(row) for row in cur.fetchall()]
+
+    def get_unsettled_live_trades(self) -> list:
+        """Return ALL live held-to-expiry trades not yet settled (issue #609).
+
+        Mirrors get_unsettled_shadow_trades() but does NOT filter by date in
+        SQL: live rows only have a target settlement date via the (nullable)
+        ``end_date`` column or a station-local fallback derived from ``ts``,
+        neither of which SQLite can resolve without STATION_TZ. Callers
+        (settle.settle_live_trades) filter to the target date in Python.
+
+        A row is "unsettled" when it was actually filled and is still
+        awaiting a resolution: mode='live', outcome='filled', settled_at IS
+        NULL. Rows that were sold early (outcome flips to 'sold' via
+        update_trade_by_order at exit time, see order_manager._record_sell_in_db)
+        are naturally excluded and never double-settled here.
+        """
+        cur = self._conn.execute(
+            "SELECT * FROM trades "
+            "WHERE mode='live' AND outcome='filled' AND settled_at IS NULL"
         )
         return [dict(row) for row in cur.fetchall()]
 

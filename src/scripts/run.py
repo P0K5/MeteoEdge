@@ -143,6 +143,7 @@ def _append_live_trade(record: dict, db=None) -> None:
                 outcome=record.get("outcome"),
                 pnl=float(record["pnl"]) if record.get("pnl") is not None else None,
                 capital_before=float(record.get("size_eur", 5.0)),
+                end_date=record.get("end_date") or None,
             )
     except Exception as e:
         log.warning("[run] DB live trade write failed: %s", e)

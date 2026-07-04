@@ -56,6 +56,8 @@ def _execute_live(
 
     predicted_price = round(candidate.confidence * 100)
 
+    end_date = (candidate.market.get("endDate") or candidate.market.get("end_date_iso") or "")[:10]
+
     fee_cents = estimate_fee_cents(candidate.price_cents)
     size_eur = compute_position_size(
         p_win=candidate.confidence,
@@ -84,6 +86,7 @@ def _execute_live(
                     predicted_price=predicted_price,
                     predicted_edge=round(candidate.edge_cents, 2),
                     p_yes_raw=candidate.p_yes_raw,
+                    end_date=end_date,
                 )
             except Exception as e:
                 log.error("  [live] place_order failed: %s", e, exc_info=True)
@@ -134,7 +137,7 @@ def _execute_live(
             "order_id": order_id,
             "station": candidate.station,
             "question": candidate.market.get("question") or candidate.market.get("groupItemTitle") or "",
-            "end_date": (candidate.market.get("endDate") or candidate.market.get("end_date_iso") or "")[:10],
+            "end_date": end_date,
             "ticker": candidate.bracket.ticker,
             "asset_id": token_id,
             "no_token_id": token_id if candidate.side == "NO" else candidate.bracket.no_token_id,
