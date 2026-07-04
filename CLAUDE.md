@@ -364,3 +364,5 @@ Rules:
 - Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
 - After modifying code locally, run `graphify update .` to keep the graph current (AST-only, no API cost).
 - Do not run `graphify extract` unless explicitly requested, the committed graph is missing, or a major architecture/doc change requires a fresh semantic rebuild.
+
+The weekly full-rebuild CI job uses NVIDIA NIM (GLM-5.2) via `NVIDIA_NIM_API_KEY` for semantic extraction and community clustering.
