@@ -593,3 +593,51 @@ class TestComputePromotionBarExcludesNonHighDirection:
 
         rows = compute_promotion_bar(db)
         assert not any(r["station"] == "KMIA" for r in rows)
+
+
+class TestDaysCoverageLocalDate:
+    """days_coverage should count station-local dates, not UTC dates."""
+
+    def test_days_coverage_counts_local_dates(self):
+        # KATL is UTC-4 in June. Create trades that span a UTC midnight but are
+        # a single local date:
+        # - 2026-06-15T03:30:00 UTC = 2026-06-14T23:30:00 EDT (local date 2026-06-14)
+        # - 2026-06-15T04:30:00 UTC = 2026-06-15T00:30:00 EDT (local date 2026-06-15)
+        # Both are different local dates, so days_coverage should be 2.
+        trades = [
+            _trade("KATL", "NO", "katl-1", 65, ts="2026-06-15T03:30:00+00:00"),
+            _trade("KATL", "NO", "katl-2", 65, ts="2026-06-15T04:30:00+00:00"),
+        ]
+        settlements = [
+            _settlement("katl-1", resolved_yes=0),
+            _settlement("katl-2", resolved_yes=0),
+        ]
+        db = _FakeDB(trades, settlements)
+
+        rows = compute_promotion_bar(db)
+        row = next(r for r in rows if r["station"] == "KATL" and r["side"] == "NO")
+
+        # Both trades should be counted as separate local dates
+        assert row["days_coverage"] == 2
+
+    def test_days_coverage_same_local_date_different_utc_dates(self):
+        # WMKK is UTC+8. Create trades that are the same local date but
+        # different UTC dates:
+        # - 2026-06-14T16:00:00 UTC = 2026-06-15T00:00:00 MYT (local date 2026-06-15)
+        # - 2026-06-15T04:00:00 UTC = 2026-06-15T12:00:00 MYT (local date 2026-06-15)
+        # Both are the same local date, so days_coverage should be 1.
+        trades = [
+            _trade("WMKK", "NO", "wmkk-1", 65, ts="2026-06-14T16:00:00+00:00"),
+            _trade("WMKK", "NO", "wmkk-2", 65, ts="2026-06-15T04:00:00+00:00"),
+        ]
+        settlements = [
+            _settlement("wmkk-1", resolved_yes=0),
+            _settlement("wmkk-2", resolved_yes=0),
+        ]
+        db = _FakeDB(trades, settlements)
+
+        rows = compute_promotion_bar(db)
+        row = next(r for r in rows if r["station"] == "WMKK" and r["side"] == "NO")
+
+        # Both trades are on the same local date 2026-06-15
+        assert row["days_coverage"] == 1

@@ -23,7 +23,10 @@ import os
 from collections import defaultdict
 from datetime import datetime, timedelta, date as date_cls
 
-from src.config import CONFIG_DEFAULTS, get_live_config
+import pytz
+from dateutil import parser as dtparse
+
+from src.config import CONFIG_DEFAULTS, STATION_TZ, get_live_config
 from src.strategy.fee import estimate_fee_cents
 
 # z-scores are looked up via the inverse normal CDF at call time (see
@@ -300,6 +303,25 @@ def _trade_is_win(trade: dict, settlement_map: dict) -> "bool | None":
     return resolved_yes == 0
 
 
+def _get_local_date(ts: str, station: str) -> "str | None":
+    """Convert timestamp to station-local calendar date (YYYY-MM-DD).
+
+    Returns None if station has no known timezone or parsing fails.
+    Falls back to UTC date if conversion fails.
+    """
+    if station not in STATION_TZ:
+        return None
+
+    try:
+        t = dtparse.parse(ts)
+        if t.tzinfo is None:
+            t = t.replace(tzinfo=pytz.UTC)
+        tz = pytz.timezone(STATION_TZ[station])
+        return t.astimezone(tz).date().isoformat()
+    except (ValueError, OverflowError):
+        return None
+
+
 def compute_promotion_bar(db) -> list:
     """Compute the statistical promotion bar for every shadow station+side.
 
@@ -368,7 +390,10 @@ def compute_promotion_bar(db) -> list:
             avg_entry = sum(t["actual_price"] for t in settled) / n
             breakeven = breakeven_win_rate(avg_entry)
             price_valid = avg_entry >= min_price_cents
-            days_coverage = len({t["ts"][:10] for t in settled})
+            # Count distinct station-local dates (not UTC dates)
+            local_dates = {_get_local_date(t["ts"], station) for t in settled}
+            local_dates.discard(None)  # Remove None values from stations without timezone
+            days_coverage = len(local_dates)
         else:
             win_rate = 0.0
             wilson_lower = 0.0
