@@ -123,13 +123,26 @@ def settle_shadow_trades(target: date, truth: dict, db=None) -> None:
             )
             continue
 
-        if station not in truth:
-            log.debug("[settle] [shadow] no truth for station %s — skipping row %s", station, r["id"])
-            continue
+        # Try Gamma market resolution first; fall back to METAR truth if unavailable.
+        ticker = r.get("ticker", "")
+        gamma_price = fetch_market_final_price(ticker) if ticker else None
+        if gamma_price is not None:
+            # YES price ~100 → YES won; ~0 → NO won
+            yes_won = gamma_price >= 50
+            resolution_source = "gamma"
+        else:
+            if station not in truth:
+                log.debug(
+                    "[settle] [shadow] no truth for station %s — skipping row %s",
+                    station, r["id"],
+                )
+                continue
+            actual = truth[station]
+            lo, hi = float(r["bracket_low"]), float(r["bracket_high"])
+            # C-bucket bracket: top edge is exclusive [lo, hi)
+            yes_won = lo <= actual < hi
+            resolution_source = "metar"
 
-        actual = truth[station]
-        lo, hi = float(r["bracket_low"]), float(r["bracket_high"])
-        yes_won = lo <= actual <= hi
         ask = float(r["actual_price"])  # observed ask stored at insert time
 
         side = r.get("side", "YES")
@@ -153,8 +166,9 @@ def settle_shadow_trades(target: date, truth: dict, db=None) -> None:
             )
             n_settled += 1
             log.debug(
-                "[settle] [shadow] id=%s station=%s side=%s yes_won=%s won=%s pnl=%.4f",
-                r["id"], station, side, yes_won, won, pnl,
+                "[settle] [shadow] id=%s station=%s side=%s yes_won=%s won=%s pnl=%.4f"
+                " source=%s",
+                r["id"], station, side, yes_won, won, pnl, resolution_source,
             )
         except Exception as e:
             log.warning("[settle] [shadow] update failed for row %s: %s", r["id"], e)
@@ -449,13 +463,23 @@ def settle_live_trades(target: date, truth: dict[str, float], db=None) -> None:
             continue
 
         station = r.get("station", "")
-        if station not in truth:
-            skip_reasons.append(f"id={row_id} no truth for {station}")
-            continue
+        # Try Gamma market resolution first; fall back to METAR truth if unavailable.
+        ticker = r.get("ticker", "")
+        gamma_price = fetch_market_final_price(ticker) if ticker else None
+        if gamma_price is not None:
+            yes_won = gamma_price >= 50
+            actual = truth.get(station)  # may be None; only needed for JSONL patch
+            resolution_source = "gamma"
+        else:
+            if station not in truth:
+                skip_reasons.append(f"id={row_id} no truth for {station}")
+                continue
+            actual = truth[station]
+            lo, hi = float(r["bracket_low"]), float(r["bracket_high"])
+            # C-bucket bracket: top edge is exclusive [lo, hi)
+            yes_won = lo <= actual < hi
+            resolution_source = "metar"
 
-        actual = truth[station]
-        lo, hi = float(r["bracket_low"]), float(r["bracket_high"])
-        yes_won = lo <= actual <= hi
         side = r.get("side", "NO")
         price_cents = float(r.get("actual_price") or 0)
         # capital_before is the EUR amount committed at order placement --
@@ -479,6 +503,11 @@ def settle_live_trades(target: date, truth: dict[str, float], db=None) -> None:
                     "pnl": pnl, "actual_high": actual, "yes_won": yes_won,
                 }
             n_settled += 1
+            log.debug(
+                "[settle] [live] id=%s station=%s side=%s yes_won=%s won=%s pnl=%.4f"
+                " source=%s",
+                row_id, station, side, yes_won, won, pnl, resolution_source,
+            )
         except Exception as e:
             skip_reasons.append(f"id={row_id} update failed: {e}")
             log.warning("[settle] [live] DB update failed for row %s: %s", row_id, e)

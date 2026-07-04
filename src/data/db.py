@@ -6,6 +6,11 @@ import threading
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
+import pytz
+from dateutil import parser as dtparse
+
+from src.config import STATION_TZ
+
 log = logging.getLogger(__name__)
 
 _DEFAULT_PATH = os.getenv("DB_PATH", "data/meteoedge.db")
@@ -298,6 +303,10 @@ class Database:
             # ("legacy" rows) -- settle.py falls back to the station-local date
             # of `ts` for those.
             ("trades", "end_date", "TEXT"),
+            # Issue #622: track whether settlement outcome came from Gamma market
+            # resolution or METAR weather truth. NULL for rows written before this
+            # migration (legacy rows without a known source).
+            ("settlements", "resolution_source", "TEXT"),
         ]:
             try:
                 self._conn.execute(
@@ -1215,17 +1224,20 @@ class Database:
         market_final_price: "int | None" = None,
         source: str = "polymarket",
         direction: str = "high",
+        resolution_source: "str | None" = None,
     ) -> None:
         """Upsert a settlement record (unique on ticker)."""
         with self._lock:
             self._conn.execute(
                 "INSERT OR REPLACE INTO settlements"
                 "(ts,station,ticker,bracket_low,bracket_high,"
-                "actual_high_f,resolved_yes,market_final_price,source,direction) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?)",
+                "actual_high_f,resolved_yes,market_final_price,source,direction,"
+                "resolution_source) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     ts, station, ticker, bracket_low, bracket_high,
                     actual_high_f, resolved_yes, market_final_price, source, direction,
+                    resolution_source,
                 ),
             )
             self._conn.commit()
@@ -2142,29 +2154,93 @@ class Database:
     # ------------------------------------------------------------------
 
     def get_daily_obs_high(self, station: str, date: str) -> "float | None":
-        """Return MAX(temp_f) from observations for *station* on *date* (YYYY-MM-DD)."""
+        """Return MAX(temp_f) from observations for *station* on *date* (YYYY-MM-DD).
+
+        Groups observations by the station's LOCAL calendar day (not UTC).
+        Returns None if no observations found or station has no known timezone.
+        """
+        if station not in STATION_TZ:
+            return None
+
+        try:
+            target_date = dtparse.parse(date).date()
+        except (ValueError, TypeError):
+            return None
+
+        tz = pytz.timezone(STATION_TZ[station])
+
+        # Fetch observations in a ±1 day window around the target date to avoid
+        # missing observations that fall on the target local day but different UTC day.
+        date_minus_1 = (target_date - timedelta(days=1)).isoformat()
+        date_plus_2 = (target_date + timedelta(days=2)).isoformat()
+
         cur = self._conn.execute(
-            "SELECT MAX(temp_f) FROM observations WHERE station=? AND DATE(ts)=?",
-            (station, date),
+            "SELECT ts, temp_f FROM observations "
+            "WHERE station=? AND ts >= ? AND ts < ? AND temp_f IS NOT NULL "
+            "ORDER BY ts",
+            (station, date_minus_1, date_plus_2),
         )
-        row = cur.fetchone()
-        return float(row[0]) if row and row[0] is not None else None
+
+        best = None
+        for row in cur.fetchall():
+            ts_str, temp_f = row[0], row[1]
+            try:
+                t = dtparse.parse(ts_str)
+                if t.tzinfo is None:
+                    t = t.replace(tzinfo=pytz.UTC)
+                local_date = t.astimezone(tz).date()
+                if local_date == target_date:
+                    temp_f = float(temp_f)
+                    if best is None or temp_f > best:
+                        best = temp_f
+            except (ValueError, OverflowError):
+                continue
+
+        return best
 
     def get_obs_highs_range(self, station: str, since_date: str) -> dict:
         """Return {date_str: max_temp_f} for all dates >= since_date for *station*.
 
+        Groups observations by the station's LOCAL calendar day (not UTC).
         Used by DEB weight computation to pair model forecasts against observed
         daily highs without depending on the settlements table (which only
         populates from resolved live trades).
         """
+        if station not in STATION_TZ:
+            return {}
+
+        try:
+            since_date_obj = dtparse.parse(since_date).date()
+        except (ValueError, TypeError):
+            return {}
+
+        tz = pytz.timezone(STATION_TZ[station])
+
+        # Fetch all observations for the station with temp_f IS NOT NULL
         cur = self._conn.execute(
-            "SELECT DATE(ts) AS d, MAX(temp_f) AS high_f "
-            "FROM observations "
-            "WHERE station=? AND DATE(ts) >= ? AND temp_f IS NOT NULL "
-            "GROUP BY DATE(ts)",
-            (station, since_date),
+            "SELECT ts, temp_f FROM observations "
+            "WHERE station=? AND temp_f IS NOT NULL "
+            "ORDER BY ts",
+            (station,),
         )
-        return {row[0]: float(row[1]) for row in cur.fetchall()}
+
+        result: dict[str, float] = {}
+        for row in cur.fetchall():
+            ts_str, temp_f = row[0], row[1]
+            try:
+                t = dtparse.parse(ts_str)
+                if t.tzinfo is None:
+                    t = t.replace(tzinfo=pytz.UTC)
+                local_date = t.astimezone(tz).date()
+                if local_date >= since_date_obj:
+                    date_str = local_date.isoformat()
+                    temp_f = float(temp_f)
+                    if date_str not in result or temp_f > result[date_str]:
+                        result[date_str] = temp_f
+            except (ValueError, OverflowError):
+                continue
+
+        return result
 
     def log_crps(self, city: str, date: str, crps_score: float, model_mode: str = "emos_shadow") -> None:
         """Insert a CRPS score record for *city* on *date*."""
