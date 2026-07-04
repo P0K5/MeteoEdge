@@ -49,7 +49,7 @@ Are new/changed code paths covered by tests? Were existing tests weakened or rem
 Are relevant docs, docstrings, and CLAUDE.md updated if needed? If this PR changes environment variables, database schema, API endpoints, or run modes, are the updates reflected in docs/OPERATIONS.md or docs/DB_SCHEMA.md?
 
 ### 4. CI integrity
-Does this PR leave CI fully green? Are no test or lint rules removed or bypassed? Do all GitHub Actions checks pass?
+Are no test or lint rules removed or bypassed? Do not flag the `AI / NVIDIA NIM review` check as missing or pending — you are that check and it cannot be green before you run. Only flag if lint/test checks are explicitly removed or bypassed in the diff.
 
 ### 5. Secret handling
 No secrets, tokens, or credentials hardcoded or logged. Are environment variables used correctly? Are secrets handled securely throughout the code?

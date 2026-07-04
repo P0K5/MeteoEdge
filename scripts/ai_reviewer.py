@@ -89,12 +89,13 @@ def fetch_pr_diff(owner: str, repo: str, pr_number: str, token: str) -> str:
     return resp.text
 
 
-def fetch_issue(owner: str, repo: str, issue_number: int, token: str) -> dict:
+def fetch_issue(owner: str, repo: str, issue_number: int, token: str) -> dict | None:
     try:
         resp = _github_get(f"/repos/{owner}/{repo}/issues/{issue_number}", token)
+        resp.raise_for_status()
         return resp.json()
-    except Exception as exc:
-        return {"title": f"(could not fetch issue #{issue_number})", "body": str(exc)}
+    except Exception:
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -271,8 +272,10 @@ def build_review_packet(
 
     # Linked issues
     packet_parts += ["", "## Linked Issues"]
-    if not linked_issues:
-        packet_parts.append("(no closing keywords found in PR body — policy violation)")
+    if not linked_issues and closing_nums:
+        packet_parts.append("(issue details unavailable — access restricted; closing keywords confirmed in PR body above)")
+    elif not closing_nums:
+        packet_parts.append("(no closing keywords in PR body — policy violation)")
     if linked_issues:
         for issue in linked_issues:
             issue_num = issue.get("number", "?")
@@ -301,9 +304,6 @@ def build_review_packet(
                 f"Acceptance Criteria:\n{ac_text}",
                 "",
             ]
-    elif not closing_nums:
-        packet_parts.append("(no linked issues found)")
-
     packet_parts += ["", "## Policy Summary", policy_summary]
 
     return "\n".join(packet_parts)
@@ -522,7 +522,8 @@ def _run(
     linked_issues = []
     for num in linked_nums:
         issue = fetch_issue(repo_owner, repo_name, num, github_token)
-        linked_issues.append(issue)
+        if issue is not None:
+            linked_issues.append(issue)
 
     # 3. Graphify context
     print("[ai_reviewer] Loading graph context...")
