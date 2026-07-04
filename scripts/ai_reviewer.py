@@ -133,7 +133,7 @@ def get_neighbors_for_file(graph: dict, file_path: str) -> list:
         return []
 
     nodes = graph.get("nodes", [])
-    edges = graph.get("edges", [])
+    edges = graph.get("links", graph.get("edges", []))
 
     # Normalise path — drop leading ./ and convert \ to /
     norm = file_path.lstrip("./").replace("\\", "/")
