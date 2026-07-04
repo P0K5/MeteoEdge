@@ -77,7 +77,7 @@ CREATE TABLE IF NOT EXISTS trades (
 CREATE INDEX IF NOT EXISTS idx_trades_station_ts ON trades(station, ts);
 CREATE INDEX IF NOT EXISTS idx_trades_mode ON trades(mode);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_trades_shadow_unique
-    ON trades(station, bracket_low, bracket_high, side, substr(ts,1,10))
+    ON trades(station, bracket_low, bracket_high, side, direction, substr(ts,1,10))
     WHERE mode='shadow';
 
 CREATE TABLE IF NOT EXISTS settlements (
@@ -399,11 +399,13 @@ class Database:
         #   3. If both legacy table exists and current table has the new schema — no-op.
         self._migrate_forecast_log()
 
-        # Migration: add partial UNIQUE index for shadow-trade dedup (issue #376).
-        # CREATE UNIQUE INDEX IF NOT EXISTS is idempotent — safe to run on every startup.
+        # Migration: add/update partial UNIQUE index for shadow-trade dedup (issue #376, #613).
+        # When the index definition changes (e.g., adding direction column), we must drop
+        # and recreate to ensure the new definition is used.
+        self._conn.execute("DROP INDEX IF EXISTS idx_trades_shadow_unique")
         self._conn.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_trades_shadow_unique "
-            "ON trades(station, bracket_low, bracket_high, side, substr(ts,1,10)) "
+            "ON trades(station, bracket_low, bracket_high, side, direction, substr(ts,1,10)) "
             "WHERE mode='shadow'"
         )
         self._conn.commit()
