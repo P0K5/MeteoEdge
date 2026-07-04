@@ -236,11 +236,16 @@ def build_review_packet(
     base_branch = pr_meta.get("base", {}).get("ref", "?")
     head_branch = pr_meta.get("head", {}).get("ref", "?")
 
+    pr_body = pr_meta.get("body") or ""
+    closing_nums = extract_linked_issue_numbers(pr_body)
+    closing_txt = ", ".join(f"#{n}" for n in closing_nums) if closing_nums else "(none found)"
+
     packet_parts = [
         "## PR Metadata",
         f"- PR #{pr_number}: {pr_title}",
         f"- Author: {author}",
         f"- Base: {base_branch} ← {head_branch}",
+        f"- Closing keywords in PR body: {closing_txt}",
         "",
         "## Changed Files",
     ]
@@ -266,6 +271,8 @@ def build_review_packet(
 
     # Linked issues
     packet_parts += ["", "## Linked Issues"]
+    if not linked_issues:
+        packet_parts.append("(no closing keywords found in PR body — policy violation)")
     if linked_issues:
         for issue in linked_issues:
             issue_num = issue.get("number", "?")
@@ -294,7 +301,7 @@ def build_review_packet(
                 f"Acceptance Criteria:\n{ac_text}",
                 "",
             ]
-    else:
+    elif not closing_nums:
         packet_parts.append("(no linked issues found)")
 
     packet_parts += ["", "## Policy Summary", policy_summary]
