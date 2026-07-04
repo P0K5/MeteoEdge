@@ -45,8 +45,8 @@ BACKLOG_ISSUES=(601 602 80)
 
 # Wave 4 (2026-07-03 audit): live settlement broken (#609, P0), low-side
 # direction mislabel + wrong-truth settle (#610, P0), duplicate live entry
-# stacking (#611, P1).
-READY_ISSUES=(609 610 611)
+# stacking (#611, P1), US NO suppression via consensus weight-scaling bug (#615, P0).
+READY_ISSUES=(609 610 611 615)
 IN_PROGRESS_ISSUES=()
 IN_REVIEW_ISSUES=()
 # ---------------------------------------------------------------------------
