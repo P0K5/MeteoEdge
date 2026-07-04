@@ -431,7 +431,7 @@
       "label": "option_id_for()",
       "file_type": "code",
       "source_file": "scripts/board_add_audit_issues.sh",
-      "source_location": "L94",
+      "source_location": "L96",
       "metadata": {
         "language": "bash",
         "kind": "bash_function"
@@ -445,7 +445,7 @@
       "label": "sync_issue()",
       "file_type": "code",
       "source_file": "scripts/board_add_audit_issues.sh",
-      "source_location": "L107",
+      "source_location": "L109",
       "metadata": {
         "language": "bash",
         "kind": "bash_function"
@@ -459,7 +459,7 @@
       "label": "process_list()",
       "file_type": "code",
       "source_file": "scripts/board_add_audit_issues.sh",
-      "source_location": "L143",
+      "source_location": "L145",
       "metadata": {
         "language": "bash",
         "kind": "bash_function"
@@ -4824,7 +4824,7 @@
       "source_location": "L76",
       "_origin": "ast",
       "id": "src_model_deb_weighting_modelentry",
-      "community": 22,
+      "community": 220,
       "norm_label": "_modelentry"
     },
     {
@@ -4834,7 +4834,7 @@
       "source_location": "L87",
       "_origin": "ast",
       "id": "src_model_deb_weighting_register_model",
-      "community": 22,
+      "community": 220,
       "norm_label": "register_model()"
     },
     {
@@ -4924,7 +4924,7 @@
       "source_location": "L406",
       "_origin": "ast",
       "id": "src_model_deb_weighting_apply_group_cap",
-      "community": 22,
+      "community": 220,
       "norm_label": "_apply_group_cap()"
     },
     {
@@ -4974,7 +4974,7 @@
       "source_location": "L94",
       "_origin": "ast",
       "id": "src_model_deb_weighting_rationale_94",
-      "community": 22,
+      "community": 220,
       "norm_label": "register a forecast model in the deb registry.      args:         name: string k"
     },
     {
@@ -5044,7 +5044,7 @@
       "source_location": "L410",
       "_origin": "ast",
       "id": "src_model_deb_weighting_rationale_410",
-      "community": 22,
+      "community": 220,
       "norm_label": "cap the total weight of any group_id to group_weight_cap.      models without a"
     },
     {
@@ -21114,7 +21114,7 @@
       "source_location": "L278",
       "_origin": "ast",
       "id": "src_tests_test_deb_weighting_testcoldstartpolicy",
-      "community": 45,
+      "community": 214,
       "norm_label": "testcoldstartpolicy"
     },
     {
@@ -21124,7 +21124,7 @@
       "source_location": "L279",
       "_origin": "ast",
       "id": "src_tests_test_deb_weighting_testcoldstartpolicy_test_full_cold_start_returns_equal_weights",
-      "community": 45,
+      "community": 214,
       "norm_label": ".test_full_cold_start_returns_equal_weights()"
     },
     {
@@ -21134,7 +21134,7 @@
       "source_location": "L286",
       "_origin": "ast",
       "id": "src_tests_test_deb_weighting_testcoldstartpolicy_test_partial_cold_start_gfs_gets_cold_fraction",
-      "community": 45,
+      "community": 214,
       "norm_label": ".test_partial_cold_start_gfs_gets_cold_fraction()"
     },
     {
@@ -21144,7 +21144,7 @@
       "source_location": "L316",
       "_origin": "ast",
       "id": "src_tests_test_deb_weighting_testcoldstartpolicy_test_two_models_cold_start_one_calibrated_sums_to_one",
-      "community": 45,
+      "community": 214,
       "norm_label": ".test_two_models_cold_start_one_calibrated_sums_to_one()"
     },
     {
@@ -21194,7 +21194,7 @@
       "source_location": "L352",
       "_origin": "ast",
       "id": "src_tests_test_deb_weighting_testgroupweightcap",
-      "community": 22,
+      "community": 220,
       "norm_label": "testgroupweightcap"
     },
     {
@@ -21204,7 +21204,7 @@
       "source_location": "L353",
       "_origin": "ast",
       "id": "src_tests_test_deb_weighting_testgroupweightcap_test_group_cap_applied_when_exceeded",
-      "community": 22,
+      "community": 220,
       "norm_label": ".test_group_cap_applied_when_exceeded()"
     },
     {
@@ -21214,7 +21214,7 @@
       "source_location": "L361",
       "_origin": "ast",
       "id": "src_tests_test_deb_weighting_testgroupweightcap_test_group_cap_not_applied_when_under",
-      "community": 22,
+      "community": 220,
       "norm_label": ".test_group_cap_not_applied_when_under()"
     },
     {
@@ -21224,7 +21224,7 @@
       "source_location": "L368",
       "_origin": "ast",
       "id": "src_tests_test_deb_weighting_testgroupweightcap_test_group_cap_with_two_correlated_models",
-      "community": 22,
+      "community": 220,
       "norm_label": ".test_group_cap_with_two_correlated_models()"
     },
     {
@@ -21234,7 +21234,7 @@
       "source_location": "L385",
       "_origin": "ast",
       "id": "src_tests_test_deb_weighting_testgroupweightcap_test_group_cap_3_correlated_plus_1_independent",
-      "community": 22,
+      "community": 220,
       "norm_label": ".test_group_cap_3_correlated_plus_1_independent()"
     },
     {
@@ -21464,7 +21464,7 @@
       "source_location": "L630",
       "_origin": "ast",
       "id": "src_tests_test_deb_weighting_testensemblenmodels_test_hrrr_cold_start_gets_cold_start_fraction",
-      "community": 127,
+      "community": 45,
       "norm_label": ".test_hrrr_cold_start_gets_cold_start_fraction()"
     },
     {
@@ -21654,7 +21654,7 @@
       "source_location": "L805",
       "_origin": "ast",
       "id": "src_tests_test_deb_weighting_testecmwficonregistry_test_ecmwf_intl_group_cap_applied",
-      "community": 79,
+      "community": 220,
       "norm_label": ".test_ecmwf_intl_group_cap_applied()"
     },
     {
@@ -22074,7 +22074,7 @@
       "source_location": "L287",
       "_origin": "ast",
       "id": "src_tests_test_deb_weighting_rationale_287",
-      "community": 45,
+      "community": 214,
       "norm_label": "gfs in cold-start; nws+open_meteo calibrated.          gfs cold_start_fraction=0"
     },
     {
@@ -22084,7 +22084,7 @@
       "source_location": "L354",
       "_origin": "ast",
       "id": "src_tests_test_deb_weighting_rationale_354",
-      "community": 22,
+      "community": 220,
       "norm_label": "noaa_us group (nws) with weight 0.8 > group_weight_cap should be capped."
     },
     {
@@ -22094,7 +22094,7 @@
       "source_location": "L369",
       "_origin": "ast",
       "id": "src_tests_test_deb_weighting_rationale_369",
-      "community": 22,
+      "community": 220,
       "norm_label": "two correlated models; combined weight capped."
     },
     {
@@ -22104,7 +22104,7 @@
       "source_location": "L386",
       "_origin": "ast",
       "id": "src_tests_test_deb_weighting_rationale_386",
-      "community": 22,
+      "community": 220,
       "norm_label": "3 correlated + 1 independent: group capped, independent gains freed weight."
     },
     {
@@ -22234,7 +22234,7 @@
       "source_location": "L631",
       "_origin": "ast",
       "id": "src_tests_test_deb_weighting_rationale_631",
-      "community": 127,
+      "community": 45,
       "norm_label": "when hrrr has 0 samples, its weight equals cold_start_fraction / n_models."
     },
     {
@@ -22354,7 +22354,7 @@
       "source_location": "L806",
       "_origin": "ast",
       "id": "src_tests_test_deb_weighting_rationale_806",
-      "community": 79,
+      "community": 220,
       "norm_label": "ecmwf_intl group (ecmwf + icon) combined weight is capped at group_weight_cap."
     },
     {
@@ -30464,7 +30464,7 @@
       "source_location": "L323",
       "_origin": "ast",
       "id": "src_tests_test_gfs_forecast_testcomputeweightsphantomguard",
-      "community": 214,
+      "community": 360,
       "norm_label": "testcomputeweightsphantomguard"
     },
     {
@@ -30474,7 +30474,7 @@
       "source_location": "L326",
       "_origin": "ast",
       "id": "src_tests_test_gfs_forecast_testcomputeweightsphantomguard_make_db_with_open_meteo_and_gfs",
-      "community": 214,
+      "community": 360,
       "norm_label": "._make_db_with_open_meteo_and_gfs()"
     },
     {
@@ -30484,7 +30484,7 @@
       "source_location": "L354",
       "_origin": "ast",
       "id": "src_tests_test_gfs_forecast_testcomputeweightsphantomguard_test_nws_phantom_excluded_from_blend",
-      "community": 214,
+      "community": 360,
       "norm_label": ".test_nws_phantom_excluded_from_blend()"
     },
     {
@@ -30494,7 +30494,7 @@
       "source_location": "L365",
       "_origin": "ast",
       "id": "src_tests_test_gfs_forecast_testcomputeweightsphantomguard_test_fallback_when_insufficient_samples",
-      "community": 214,
+      "community": 360,
       "norm_label": ".test_fallback_when_insufficient_samples()"
     },
     {
@@ -30504,7 +30504,7 @@
       "source_location": "L371",
       "_origin": "ast",
       "id": "src_tests_test_gfs_forecast_testcomputeweightsphantomguard_test_gfs_phantom_excluded_from_blend",
-      "community": 214,
+      "community": 360,
       "norm_label": ".test_gfs_phantom_excluded_from_blend()"
     },
     {
@@ -30784,7 +30784,7 @@
       "source_location": "L324",
       "_origin": "ast",
       "id": "src_tests_test_gfs_forecast_rationale_324",
-      "community": 214,
+      "community": 360,
       "norm_label": "tests that nws (zero rows) is excluded from the blend for international stations"
     },
     {
@@ -30794,7 +30794,7 @@
       "source_location": "L327",
       "_origin": "ast",
       "id": "src_tests_test_gfs_forecast_rationale_327",
-      "community": 214,
+      "community": 360,
       "norm_label": "build a mock db with n days of open_meteo + gfs forecast rows.          dates ar"
     },
     {
@@ -30804,7 +30804,7 @@
       "source_location": "L355",
       "_origin": "ast",
       "id": "src_tests_test_gfs_forecast_rationale_355",
-      "community": 214,
+      "community": 360,
       "norm_label": "with enough open_meteo + gfs rows but zero nws rows, nws gets cold-start"
     },
     {
@@ -30814,7 +30814,7 @@
       "source_location": "L366",
       "_origin": "ast",
       "id": "src_tests_test_gfs_forecast_rationale_366",
-      "community": 214,
+      "community": 360,
       "norm_label": "falls back to equal_weights when all models have < min_samples pairs."
     },
     {
@@ -30824,7 +30824,7 @@
       "source_location": "L372",
       "_origin": "ast",
       "id": "src_tests_test_gfs_forecast_rationale_372",
-      "community": 214,
+      "community": 360,
       "norm_label": "if gfs rows are absent but nws + open_meteo have enough data,         gfs gets c"
     },
     {
@@ -37714,7 +37714,7 @@
       "source_location": "L48",
       "_origin": "ast",
       "id": "src_tests_test_observation_adapters_testjmaamedasadapterintegration",
-      "community": 85,
+      "community": 62,
       "norm_label": "testjmaamedasadapterintegration"
     },
     {
@@ -37744,7 +37744,7 @@
       "source_location": "L81",
       "_origin": "ast",
       "id": "src_tests_test_observation_adapters_testjmaamedasadapterintegration_test_jma_freshness_integration",
-      "community": 85,
+      "community": 62,
       "norm_label": ".test_jma_freshness_integration()"
     },
     {
@@ -37794,7 +37794,7 @@
       "source_location": "L171",
       "_origin": "ast",
       "id": "src_tests_test_observation_adapters_testmssadapterintegration",
-      "community": 85,
+      "community": 62,
       "norm_label": "testmssadapterintegration"
     },
     {
@@ -37814,7 +37814,7 @@
       "source_location": "L201",
       "_origin": "ast",
       "id": "src_tests_test_observation_adapters_testmssadapterintegration_test_mss_cadence_configured",
-      "community": 85,
+      "community": 62,
       "norm_label": ".test_mss_cadence_configured()"
     },
     {
@@ -37824,7 +37824,7 @@
       "source_location": "L210",
       "_origin": "ast",
       "id": "src_tests_test_observation_adapters_testmssadapterintegration_test_mss_freshness_integration_fresh",
-      "community": 85,
+      "community": 62,
       "norm_label": ".test_mss_freshness_integration_fresh()"
     },
     {
@@ -37894,7 +37894,7 @@
       "source_location": "L265",
       "_origin": "ast",
       "id": "src_tests_test_observation_adapters_testfreshnessmonitorwithadapters",
-      "community": 62,
+      "community": 85,
       "norm_label": "testfreshnessmonitorwithadapters"
     },
     {
@@ -37904,7 +37904,7 @@
       "source_location": "L267",
       "_origin": "ast",
       "id": "src_tests_test_observation_adapters_testfreshnessmonitorwithadapters_test_check_all_with_multiple_sources",
-      "community": 62,
+      "community": 85,
       "norm_label": ".test_check_all_with_multiple_sources()"
     },
     {
@@ -37914,7 +37914,7 @@
       "source_location": "L299",
       "_origin": "ast",
       "id": "src_tests_test_observation_adapters_testfreshnessmonitorwithadapters_test_stale_source_reported_false",
-      "community": 62,
+      "community": 85,
       "norm_label": ".test_stale_source_reported_false()"
     },
     {
@@ -38054,7 +38054,7 @@
       "source_location": "L82",
       "_origin": "ast",
       "id": "src_tests_test_observation_adapters_rationale_82",
-      "community": 85,
+      "community": 62,
       "norm_label": "fresh jma observation passes freshness check."
     },
     {
@@ -38104,7 +38104,7 @@
       "source_location": "L202",
       "_origin": "ast",
       "id": "src_tests_test_observation_adapters_rationale_202",
-      "community": 85,
+      "community": 62,
       "norm_label": "mss appears in source priority config with cadence_min=1."
     },
     {
@@ -38114,7 +38114,7 @@
       "source_location": "L211",
       "_origin": "ast",
       "id": "src_tests_test_observation_adapters_rationale_211",
-      "community": 85,
+      "community": 62,
       "norm_label": "fresh mss observation passes freshness check."
     },
     {
@@ -38134,7 +38134,7 @@
       "source_location": "L268",
       "_origin": "ast",
       "id": "src_tests_test_observation_adapters_rationale_268",
-      "community": 62,
+      "community": 85,
       "norm_label": "check_all reports freshness correctly for multiple sources."
     },
     {
@@ -38144,7 +38144,7 @@
       "source_location": "L300",
       "_origin": "ast",
       "id": "src_tests_test_observation_adapters_rationale_300",
-      "community": 62,
+      "community": 85,
       "norm_label": "source with data older than 2\u00d7 cadence is reported false."
     },
     {
@@ -59314,7 +59314,7 @@
       "source_location": "L690",
       "_origin": "ast",
       "id": "docs_operations_monitoring_alerts",
-      "community": 364,
+      "community": 204,
       "norm_label": "monitoring & alerts"
     },
     {
@@ -59324,7 +59324,7 @@
       "source_location": "L692",
       "_origin": "ast",
       "id": "docs_operations_dashboard",
-      "community": 364,
+      "community": 204,
       "norm_label": "dashboard"
     },
     {
@@ -59334,7 +59334,7 @@
       "source_location": "L700",
       "_origin": "ast",
       "id": "docs_operations_email_alerts",
-      "community": 364,
+      "community": 204,
       "norm_label": "email alerts"
     },
     {
@@ -59344,7 +59344,7 @@
       "source_location": "L709",
       "_origin": "ast",
       "id": "docs_operations_manual_monitoring",
-      "community": 364,
+      "community": 204,
       "norm_label": "manual monitoring"
     },
     {
@@ -59414,7 +59414,7 @@
       "source_location": "L807",
       "_origin": "ast",
       "id": "docs_operations_maintenance",
-      "community": 360,
+      "community": 204,
       "norm_label": "maintenance"
     },
     {
@@ -59424,7 +59424,7 @@
       "source_location": "L809",
       "_origin": "ast",
       "id": "docs_operations_rotating_logs",
-      "community": 360,
+      "community": 204,
       "norm_label": "rotating logs"
     },
     {
@@ -59434,7 +59434,7 @@
       "source_location": "L833",
       "_origin": "ast",
       "id": "docs_operations_database_maintenance",
-      "community": 360,
+      "community": 204,
       "norm_label": "database maintenance"
     },
     {
@@ -59444,7 +59444,7 @@
       "source_location": "L841",
       "_origin": "ast",
       "id": "docs_operations_archive_old_data",
-      "community": 360,
+      "community": 204,
       "norm_label": "archive old data"
     },
     {
@@ -59904,7 +59904,7 @@
       "source_location": "L1379",
       "_origin": "ast",
       "id": "docs_operations_deb_channel_group_assignments_issue_550",
-      "community": 204,
+      "community": 364,
       "norm_label": "deb channel group assignments (issue #550)"
     },
     {
@@ -59914,7 +59914,7 @@
       "source_location": "L1381",
       "_origin": "ast",
       "id": "docs_operations_background",
-      "community": 204,
+      "community": 364,
       "norm_label": "background"
     },
     {
@@ -59924,7 +59924,7 @@
       "source_location": "L1395",
       "_origin": "ast",
       "id": "docs_operations_raw_model_provenance_table",
-      "community": 204,
+      "community": 364,
       "norm_label": "raw-model provenance table"
     },
     {
@@ -59934,7 +59934,7 @@
       "source_location": "L1408",
       "_origin": "ast",
       "id": "docs_operations_group_id_assignments",
-      "community": 204,
+      "community": 364,
       "norm_label": "group_id assignments"
     },
     {
@@ -59944,7 +59944,7 @@
       "source_location": "L1419",
       "_origin": "ast",
       "id": "docs_operations_apply_group_cap_redistribution_fix",
-      "community": 204,
+      "community": 364,
       "norm_label": "`_apply_group_cap` redistribution fix"
     },
     {
@@ -64217,7 +64217,7 @@
       "relation": "defines",
       "confidence": "EXTRACTED",
       "source_file": "scripts/board_add_audit_issues.sh",
-      "source_location": "L94",
+      "source_location": "L96",
       "weight": 1.0,
       "source": "scripts_board_add_audit_issues",
       "target": "scripts_board_add_audit_issues_option_id_for",
@@ -64227,7 +64227,7 @@
       "relation": "defines",
       "confidence": "EXTRACTED",
       "source_file": "scripts/board_add_audit_issues.sh",
-      "source_location": "L143",
+      "source_location": "L145",
       "weight": 1.0,
       "source": "scripts_board_add_audit_issues",
       "target": "scripts_board_add_audit_issues_process_list",
@@ -64247,7 +64247,7 @@
       "relation": "defines",
       "confidence": "EXTRACTED",
       "source_file": "scripts/board_add_audit_issues.sh",
-      "source_location": "L107",
+      "source_location": "L109",
       "weight": 1.0,
       "source": "scripts_board_add_audit_issues",
       "target": "scripts_board_add_audit_issues_sync_issue",
@@ -64257,7 +64257,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "scripts/board_add_audit_issues.sh",
-      "source_location": "L154",
+      "source_location": "L156",
       "weight": 1.0,
       "context": "call",
       "source": "scripts_board_add_audit_issues_sh__entry",
@@ -64268,7 +64268,7 @@
       "relation": "calls",
       "confidence": "EXTRACTED",
       "source_file": "scripts/board_add_audit_issues.sh",
-      "source_location": "L150",
+      "source_location": "L152",
       "weight": 1.0,
       "context": "call",
       "source": "scripts_board_add_audit_issues_process_list",
@@ -172492,5 +172492,5 @@
       "source_file": "docs/IMPLEMENTATION_PLAN.md"
     }
   ],
-  "built_at_commit": "864b08fa9cdc591486ef4a8964915543d56f65d0"
+  "built_at_commit": "810fc1f5b872508b6a83ea1e63650abee8e5f37d"
 }
