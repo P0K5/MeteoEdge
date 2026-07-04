@@ -124,7 +124,7 @@ Allow developers reasonable stylistic freedom within project conventions.
 
 ## 6. Notes for implementation
 
-- If CI checks are still running or queued when you receive the PR, wait until they complete and check their status before rendering a verdict.
+- You run as a CI check yourself, so do not block on the `AI / NVIDIA NIM review` check being absent or pending — that is expected and unavoidable. Only flag CI integrity if lint or test steps are explicitly removed or bypassed in the diff.
 - If the linked issue's acceptance criteria are ambiguous or conflict with the PR implementation, flag it as a PARTIAL on acceptance criteria and note the ambiguity in Blocking Issues.
 - If the PR author has not provided test coverage and it is not clear why (e.g., "this is a documentation change" or "this is infrastructure code with no unit tests"), check whether the omission is justified before marking tests as FAIL.
 - Always link FAIL and BLOCK items to concrete evidence: a failing test, a policy reference, a missing file, or a specific code snippet.
