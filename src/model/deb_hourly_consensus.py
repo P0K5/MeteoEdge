@@ -7,11 +7,13 @@ from src.data.open_meteo import _fetch_open_meteo_hourly
 def build_consensus(
     lat: float, lon: float, weights: dict[str, float]
 ) -> list[tuple[str, float]] | None:
-    """Return DEB-weighted hourly temperature path for today (UTC).
+    """Return hourly temperature path for today (UTC) from Open-Meteo.
 
-    Since only Open-Meteo provides an hourly path, the consensus is the
-    Open-Meteo path scaled by its DEB weight. NWS weight is ignored here
-    (NWS has no hourly resolution).
+    Open-Meteo is currently the sole provider of hourly temperature paths;
+    its raw temperatures are returned directly (no weight scaling) since NWS
+    has no hourly resolution.  The ``weights`` parameter is accepted for API
+    compatibility (e.g. so callers can pass DEB weights without branching) but
+    is not applied to the hourly path.
 
     Returns list of (iso_time_str, temp_f) for current-day slots, or None.
     """
@@ -21,14 +23,13 @@ def build_consensus(
     try:
         times = data["hourly"]["time"]
         temps = data["hourly"]["temperature_2m"]
-        om_weight = weights.get("open_meteo", 0.5)
         today = datetime.now(timezone.utc).date().isoformat()
         result = []
         for t_str, t_val in zip(times, temps):
             if t_val is None:
                 continue
             if t_str[:10] == today:
-                result.append((t_str, float(t_val) * om_weight))
+                result.append((t_str, float(t_val)))
         return result if result else None
     except Exception:
         return None

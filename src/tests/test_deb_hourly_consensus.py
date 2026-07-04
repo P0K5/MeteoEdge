@@ -25,7 +25,7 @@ def _make_hourly_data(today_str: str) -> dict:
 
 class TestDebConsensus:
     def test_build_consensus_returns_today_slots(self):
-        """Only today's slots are returned; values are scaled by open_meteo weight."""
+        """Only today's slots are returned; values are raw Open-Meteo temperatures (no weight scaling)."""
         today = datetime.now(timezone.utc).date().isoformat()
         mock_data = _make_hourly_data(today)
         weights = {"open_meteo": 0.4, "nws": 0.6}
@@ -40,11 +40,37 @@ class TestDebConsensus:
         for t in time_strs:
             assert t[:10] == today, f"Non-today slot leaked through: {t}"
 
-        # Values must be scaled by open_meteo weight (0.4)
+        # Values must be returned as-is (no weight scaling applied)
         raw_temps = [60.0, 62.0, 80.0]
         for (t_str, t_val), raw in zip(result, raw_temps):
-            assert isclose(t_val, raw * 0.4, abs_tol=1e-9), (
-                f"Expected {raw * 0.4}, got {t_val}"
+            assert isclose(t_val, raw, abs_tol=1e-9), (
+                f"Expected {raw}, got {t_val}"
+            )
+
+    def test_build_consensus_unscaled_regardless_of_weights(self):
+        """Regression test for issue #615: US station weights {nws: 0.5, open_meteo: 0.5}
+        must NOT halve the returned temperatures.
+
+        Before the fix, build_consensus() multiplied temperatures by om_weight (0.5 for
+        US stations).  This caused ~30-45°F deltas that triggered the MAE gate and silently
+        suppressed all US NO entries.  Verify that temperatures are returned unscaled even
+        when om_weight is 0.5.
+        """
+        today = datetime.now(timezone.utc).date().isoformat()
+        mock_data = _make_hourly_data(today)
+        # Exact weight dict that caused the regression for US stations after #576
+        weights = {"open_meteo": 0.5, "nws": 0.5}
+
+        with patch("src.model.deb_hourly_consensus._fetch_open_meteo_hourly", return_value=mock_data):
+            result = build_consensus(40.0, -74.0, weights)
+
+        assert result is not None
+        assert len(result) == 3
+        raw_temps = [60.0, 62.0, 80.0]
+        for (t_str, t_val), raw in zip(result, raw_temps):
+            assert isclose(t_val, raw, abs_tol=1e-9), (
+                f"Temperature was scaled (expected {raw}, got {t_val}); "
+                "regression of issue #615 — om_weight must not be applied to hourly path"
             )
 
     def test_build_consensus_none_on_no_data(self):
