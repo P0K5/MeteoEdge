@@ -1769,3 +1769,45 @@ For issues beyond this runbook, escalate to:
 - Architecture questions: Tech Lead PM
 - Bug reports: Include full logs (bot.log, settle.log) and database state (trades/settlements from the error date)
 - Operational changes: Discuss with Tech Lead PM before modifying systemd units or core config
+
+---
+
+## Graphify Knowledge Graph
+
+MeteoEdge uses [Graphify](https://pypi.org/project/graphifyy/) to maintain a knowledge graph of the codebase at `graphify-out/graph.json`.
+
+### CI Jobs
+
+| Job | Trigger | LLM dependency |
+|---|---|---|
+| `incremental-update` | Every push to `master` | None (AST-only, free) |
+| `full-rebuild` | Weekly Monday 03:00 UTC or manual dispatch | NVIDIA NIM GLM-5.2 |
+
+### NVIDIA NIM backend (full-rebuild)
+
+The `full-rebuild` job uses the OpenAI-compatible NVIDIA NIM endpoint:
+
+| Variable | Value |
+|---|---|
+| `NVIDIA_NIM_API_KEY` | Secret — set in repo Settings → Secrets → Actions |
+| `GRAPHIFY_LLM_BASE_URL` | `https://integrate.api.nvidia.com/v1` |
+| `GRAPHIFY_LLM_MODEL` | `z-ai/glm-5.2` |
+
+The job passes `--backend openai` to `graphify extract` and `graphify cluster-only`; the env vars above configure the endpoint and model.
+
+### Manual full rebuild
+
+```bash
+pip install graphifyy
+export NVIDIA_NIM_API_KEY=<your-key>
+export GRAPHIFY_LLM_BASE_URL=https://integrate.api.nvidia.com/v1
+export GRAPHIFY_LLM_MODEL=z-ai/glm-5.2
+graphify extract . --backend openai --max-concurrency 4 --token-budget 32000 --no-cluster
+graphify cluster-only . --backend openai
+```
+
+### Troubleshooting
+
+- **`graphify extract` fails with 404:** Verify `GRAPHIFY_LLM_MODEL` is `z-ai/glm-5.2` (not `glm-5.2` or `nvidia/glm-5.2`).
+- **`NVIDIA_NIM_API_KEY` not set:** The full-rebuild job will fail. Add the secret in repo Settings → Secrets → Actions.
+- **Incremental update fails:** This job has no LLM dependency; check for git push permission issues.
