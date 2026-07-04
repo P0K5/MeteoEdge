@@ -480,6 +480,20 @@ class Database:
 
         self._purge_stale_deb_weight_log()
 
+        # Migration: purge intraday_corrections rows poisoned by the build_consensus
+        # weight-scaling bug (issue #615). Rows recorded while the bug was active have
+        # inflated delta_f values (~30-45°F for US cities) that corrupt the MAE gate
+        # and residual bias window. Rows matching the poisoned signature:
+        #   date >= '2026-07-02'  — #576 deploy date (when live DEB weights switched on)
+        #   basis_weights != '{"open_meteo": 1.0}'  — non-fallback weights = US stations
+        # are deleted so the MAE gate and residual correction window recover immediately.
+        self._conn.execute(
+            "DELETE FROM intraday_corrections "
+            "WHERE date >= '2026-07-02' "
+            "AND basis_weights != '{\"open_meteo\": 1.0}'"
+        )
+        self._conn.commit()
+
     def _purge_stale_deb_weight_log(self) -> None:
         """One-time idempotent cleanup for issue #552.
 

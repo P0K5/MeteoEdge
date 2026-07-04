@@ -150,7 +150,9 @@ class TestComputeCorrection:
     def test_decay_zero_returns_deb_mu_f(self):
         """When decay=0.0 (inside peak window), corrected_mu_f == deb_mu_f."""
         db = MagicMock()
-        obs = _fresh_obs(temp_f=99.0)  # large deviation but decay=0
+        # Consensus interpolates to ~75.9°F; use 83°F so delta (~7°F) is within
+        # the 15°F plausibility gate and the decay=0 behavior can be tested.
+        obs = _fresh_obs(temp_f=83.0)
         state = _make_state(deb_mu_f=80.0)
         obs_dt = datetime.now(timezone.utc)
         consensus = self._patch_consensus(obs_dt)

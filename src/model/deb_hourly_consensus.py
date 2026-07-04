@@ -3,15 +3,23 @@ import os
 from datetime import datetime, timezone
 from src.data.open_meteo import _fetch_open_meteo_hourly
 
+# Sources that provide hourly temperature resolution. NWS/HRRR/NBM have
+# no hourly path today; add keys here when they do.
+_HOURLY_CAPABLE_SOURCES: frozenset[str] = frozenset({"open_meteo"})
+
 
 def build_consensus(
     lat: float, lon: float, weights: dict[str, float]
 ) -> list[tuple[str, float]] | None:
     """Return DEB-weighted hourly temperature path for today (UTC).
 
-    Since only Open-Meteo provides an hourly path, the consensus is the
-    Open-Meteo path scaled by its DEB weight. NWS weight is ignored here
-    (NWS has no hourly resolution).
+    Renormalises the DEB weights over the subset of hourly-capable sources
+    (see ``_HOURLY_CAPABLE_SOURCES``; currently only Open-Meteo — NWS has no
+    hourly resolution) so the returned temperatures are on the correct
+    absolute scale regardless of the full weight dict.
+
+    To extend for a future hourly source: add its key to
+    ``_HOURLY_CAPABLE_SOURCES`` and add a fetch + blend step here.
 
     Returns list of (iso_time_str, temp_f) for current-day slots, or None.
     """
@@ -21,14 +29,17 @@ def build_consensus(
     try:
         times = data["hourly"]["time"]
         temps = data["hourly"]["temperature_2m"]
-        om_weight = weights.get("open_meteo", 0.5)
+        # Renormalise DEB weights over the hourly-capable subset so the returned
+        # temperatures are on the correct absolute scale regardless of the full weight dict.
+        hourly_total = sum(weights.get(s, 0.0) for s in _HOURLY_CAPABLE_SOURCES)
+        om_scale = (weights.get("open_meteo", 1.0) / hourly_total) if hourly_total > 0.0 else 1.0
         today = datetime.now(timezone.utc).date().isoformat()
         result = []
         for t_str, t_val in zip(times, temps):
             if t_val is None:
                 continue
             if t_str[:10] == today:
-                result.append((t_str, float(t_val) * om_weight))
+                result.append((t_str, float(t_val) * om_scale))
         return result if result else None
     except Exception:
         return None
