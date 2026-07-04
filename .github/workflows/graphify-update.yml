@@ -112,18 +112,22 @@ jobs:
 
       - name: Full semantic extraction
         env:
-          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          NVIDIA_NIM_API_KEY: ${{ secrets.NVIDIA_NIM_API_KEY }}
+          GRAPHIFY_LLM_BASE_URL: https://integrate.api.nvidia.com/v1
+          GRAPHIFY_LLM_MODEL: nvidia/glm-5.2
         run: |
           graphify extract . \
-            --backend deepseek \
+            --backend openai \
             --max-concurrency 4 \
             --token-budget 32000 \
             --no-cluster
 
       - name: Cluster and label communities
         env:
-          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
-        run: graphify cluster-only . --backend deepseek
+          NVIDIA_NIM_API_KEY: ${{ secrets.NVIDIA_NIM_API_KEY }}
+          GRAPHIFY_LLM_BASE_URL: https://integrate.api.nvidia.com/v1
+          GRAPHIFY_LLM_MODEL: nvidia/glm-5.2
+        run: graphify cluster-only . --backend openai
 
       - name: Commit full graph rebuild
         run: |
