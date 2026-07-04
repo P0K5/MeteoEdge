@@ -312,7 +312,7 @@ gh api graphql -f query='
 
 **A PR may NEVER be approved or merged unless ALL of the following are true:**
 
-1. **All CI checks pass** — pytest and flake8 (and any other configured checks) must show green on the PR's head commit. Check via `mcp__github__actions_list` or the PR's check status before approving.
+1. **All CI checks pass** — `CI / lint`, `CI / test`, and `AI / NVIDIA NIM review` checks must show green on the PR's head commit. Check via `mcp__github__actions_list` or the PR's check status before approving.
 2. **No direct pushes to master** — every change, including one-line hotfixes, must go through a PR. No exceptions.
 3. **Approval comes after CI is green** — if CI is still running, wait. If CI is red, the PR author must fix it first; do not approve in anticipation of a fix.
 
@@ -321,6 +321,8 @@ gh api graphql -f query='
 - [ ] If any check is `in_progress`, `queued`, or `failure` — do NOT approve; post a comment and wait or request fixes
 - [ ] Code review passes all dimensions in §4 of `agents/project-manager.md`
 - [ ] All acceptance criteria from the linked issue are met
+
+> **Branch protection for master** requires three status checks before merge: `CI / lint`, `CI / test`, and `AI / NVIDIA NIM review`. All three must be green. Direct pushes to master are disabled.
 
 ### Issue and PR linking rules
 
