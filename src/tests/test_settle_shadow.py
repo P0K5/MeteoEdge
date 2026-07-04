@@ -393,3 +393,121 @@ class TestSettleShadowSkipsLowDirection:
         assert t_low["pnl"] is None
         assert t_low["settled_at"] is None
         db.close()
+
+
+# ---------------------------------------------------------------------------
+# Issue #622 regression tests
+# ---------------------------------------------------------------------------
+
+class TestBracketTopEdgeExclusive:
+    """C-bucket bracket uses [lo, hi) — top edge is exclusive."""
+
+    def test_actual_at_top_edge_is_no_win(self, tmp_path):
+        """METAR says actual == hi → YES does NOT win (hi is exclusive).
+
+        Regression for issue #622: old code used lo <= actual <= hi (inclusive),
+        which incorrectly called YES won at the top bracket edge.
+        """
+        from unittest.mock import patch
+        db = _fresh_db(tmp_path)
+        target = date(2025, 6, 1)
+        yes_ask = 40
+        tid = _insert_shadow(db, "KORD", yes_ask, target.isoformat(),
+                             bracket_low=80.0, bracket_high=82.0)
+
+        # actual equals hi exactly — should NOT be YES won (exclusive upper bound)
+        truth = {"KORD": 82.0}
+        with patch("src.scripts.settle.fetch_market_final_price", return_value=None):
+            settle_shadow_trades(target, truth, db=db)
+
+        trades = db.get_trades(limit=None)
+        t = next(r for r in trades if r["id"] == tid)
+        assert t["outcome"] == "filled"
+        # YES lost (hi exclusive): pnl = -ask / 100
+        expected_pnl = -yes_ask / 100
+        assert abs(t["pnl"] - expected_pnl) < 1e-5, (
+            f"Expected pnl {expected_pnl} (YES lost, top edge exclusive), got {t['pnl']}"
+        )
+        db.close()
+
+    def test_actual_just_inside_wins(self, tmp_path):
+        """actual = hi - epsilon → YES wins (strictly inside bracket)."""
+        from unittest.mock import patch
+        db = _fresh_db(tmp_path)
+        target = date(2025, 6, 1)
+        yes_ask = 40
+        tid = _insert_shadow(db, "KORD", yes_ask, target.isoformat(),
+                             bracket_low=80.0, bracket_high=82.0)
+
+        truth = {"KORD": 81.9}
+        with patch("src.scripts.settle.fetch_market_final_price", return_value=None):
+            settle_shadow_trades(target, truth, db=db)
+
+        trades = db.get_trades(limit=None)
+        t = next(r for r in trades if r["id"] == tid)
+        expected_pnl = (100 - yes_ask) / 100
+        assert abs(t["pnl"] - expected_pnl) < 1e-5
+        db.close()
+
+
+class TestGammaPreferenceInShadow:
+    """settle_shadow_trades() prefers Gamma resolution over METAR."""
+
+    def test_gamma_yes_overrides_metar_no(self, tmp_path):
+        """Gamma says YES won (~100) but METAR would say NO — Gamma wins."""
+        from unittest.mock import patch
+        db = _fresh_db(tmp_path)
+        target = date(2025, 6, 1)
+        yes_ask = 30
+        tid = _insert_shadow(db, "KORD", yes_ask, target.isoformat(),
+                             bracket_low=80.0, bracket_high=82.0)
+
+        # actual=85 is outside bracket → METAR would say YES lost
+        truth = {"KORD": 85.0}
+        with patch("src.scripts.settle.fetch_market_final_price", return_value=97):
+            settle_shadow_trades(target, truth, db=db)
+
+        trades = db.get_trades(limit=None)
+        t = next(r for r in trades if r["id"] == tid)
+        # Gamma YES price=97 → yes_won=True → YES won
+        expected_pnl = (100 - yes_ask) / 100
+        assert abs(t["pnl"] - expected_pnl) < 1e-5
+
+    def test_gamma_no_overrides_metar_yes(self, tmp_path):
+        """Gamma says NO won (~0) but METAR would say YES — Gamma wins."""
+        from unittest.mock import patch
+        db = _fresh_db(tmp_path)
+        target = date(2025, 6, 1)
+        yes_ask = 30
+        tid = _insert_shadow(db, "KORD", yes_ask, target.isoformat(),
+                             bracket_low=80.0, bracket_high=82.0)
+
+        # actual=81 is inside bracket → METAR would say YES won
+        truth = {"KORD": 81.0}
+        with patch("src.scripts.settle.fetch_market_final_price", return_value=2):
+            settle_shadow_trades(target, truth, db=db)
+
+        trades = db.get_trades(limit=None)
+        t = next(r for r in trades if r["id"] == tid)
+        # Gamma YES price=2 → yes_won=False → YES lost
+        expected_pnl = -yes_ask / 100
+        assert abs(t["pnl"] - expected_pnl) < 1e-5
+
+    def test_gamma_network_failure_falls_back_to_metar(self, tmp_path):
+        """Gamma returns None (network failure) → METAR truth is used."""
+        from unittest.mock import patch
+        db = _fresh_db(tmp_path)
+        target = date(2025, 6, 1)
+        yes_ask = 30
+        tid = _insert_shadow(db, "KORD", yes_ask, target.isoformat(),
+                             bracket_low=80.0, bracket_high=82.0)
+
+        # actual=81 is inside bracket → METAR says YES won
+        truth = {"KORD": 81.0}
+        with patch("src.scripts.settle.fetch_market_final_price", return_value=None):
+            settle_shadow_trades(target, truth, db=db)
+
+        trades = db.get_trades(limit=None)
+        t = next(r for r in trades if r["id"] == tid)
+        expected_pnl = (100 - yes_ask) / 100
+        assert abs(t["pnl"] - expected_pnl) < 1e-5

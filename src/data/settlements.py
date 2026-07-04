@@ -27,6 +27,7 @@ class SettlementWriter:
         actual_high_f: float,
         resolved_yes: bool,
         market_final_price: int | None = None,
+        resolution_source: str | None = None,
     ) -> None:
         """Upsert a settlement record. ticker is UNIQUE — idempotent."""
         ts = datetime.now(timezone.utc).isoformat() + "Z"
@@ -39,4 +40,5 @@ class SettlementWriter:
             actual_high_f=actual_high_f,
             resolved_yes=int(resolved_yes),
             market_final_price=market_final_price,
+            resolution_source=resolution_source,
         )

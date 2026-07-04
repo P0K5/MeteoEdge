@@ -131,25 +131,67 @@ class TestUpsertShadowTrade:
 class TestPartialIndexViolation:
     """The UNIQUE index should prevent duplicate shadow rows at the DB level."""
 
-    def test_direct_insert_duplicate_raises_integrity_error(self, tmp_path):
+    def test_direct_insert_duplicate_same_direction_raises_integrity_error(self, tmp_path):
         db = _fresh_db(tmp_path)
         _insert_shadow(db, ts="2026-06-20T10:00:00+00:00")
 
-        # Bypass upsert_shadow_trade and insert directly to trigger the index
+        # Bypass upsert_shadow_trade and insert directly with same direction
+        # (both default to 'high') to trigger the index violation
         with pytest.raises(sqlite3.IntegrityError):
             db._conn.execute(
                 "INSERT INTO trades"
                 "(ts,station,ticker,bracket_low,bracket_high,side,"
                 "predicted_price,actual_price,slippage,predicted_edge,mode,"
-                "order_id,outcome,pnl,capital_before,capital_after,settled_at) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "order_id,outcome,pnl,capital_before,capital_after,settled_at,direction) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     "2026-06-20T11:00:00+00:00", "KORD", "KORD-test-76-78",
                     76.0, 78.0, "YES", 30, 33, None, 8.0, "shadow",
-                    None, None, None, 0.0, None, None,
+                    None, None, None, 0.0, None, None, "high",
                 ),
             )
             db._conn.commit()
+
+    def test_different_direction_rows_both_persist(self, tmp_path):
+        """Rows with same (station, bracket, side, day) but different direction both persist."""
+        db = _fresh_db(tmp_path)
+
+        # Insert first row with direction='high'
+        db._conn.execute(
+            "INSERT INTO trades"
+            "(ts,station,ticker,bracket_low,bracket_high,side,"
+            "predicted_price,actual_price,slippage,predicted_edge,mode,"
+            "order_id,outcome,pnl,capital_before,capital_after,settled_at,direction) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                "2026-06-20T10:00:00+00:00", "KORD", "KORD-test-76-78",
+                76.0, 78.0, "YES", 30, 32, None, 8.0, "shadow",
+                None, None, None, 0.0, None, None, "high",
+            ),
+        )
+        db._conn.commit()
+
+        # Insert second row with same (station, bracket, side, day) but direction='low'
+        # Should NOT raise IntegrityError (index includes direction)
+        db._conn.execute(
+            "INSERT INTO trades"
+            "(ts,station,ticker,bracket_low,bracket_high,side,"
+            "predicted_price,actual_price,slippage,predicted_edge,mode,"
+            "order_id,outcome,pnl,capital_before,capital_after,settled_at,direction) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                "2026-06-20T11:00:00+00:00", "KORD", "KORD-test-76-78",
+                76.0, 78.0, "YES", 30, 33, None, 8.0, "shadow",
+                None, None, None, 0.0, None, None, "low",
+            ),
+        )
+        db._conn.commit()
+
+        # Verify both rows persist
+        rows = db.get_trades(limit=None, mode="shadow")
+        assert len(rows) == 2
+        directions = {r["direction"] for r in rows}
+        assert directions == {"high", "low"}
 
 
 class TestMigrationScript:
