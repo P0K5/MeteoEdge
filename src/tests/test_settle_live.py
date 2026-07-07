@@ -284,6 +284,113 @@ class TestLegacyEndDateFallback:
 
 
 # ---------------------------------------------------------------------------
+# Gamma-authoritative settlement for real 0x markets (issue #644)
+# ---------------------------------------------------------------------------
+
+class TestGammaAuthoritativeSettlement:
+    """Rows with a real 0x ticker settle ONLY from the definitive Gamma
+    resolution; unresolved markets stay pending and are retried via the
+    SETTLE_LOOKBACK_DAYS window on later runs."""
+
+    def _insert_0x(self, db, *, order_id: str, end_date: str, side: str = "NO",
+                   price_cents: int = 70, size_eur: float = 5.0) -> int:
+        return db.insert_trade(
+            ts=datetime.now(timezone.utc).isoformat(),
+            station="KORD",
+            ticker=f"0x{order_id.encode().hex()}",
+            bracket_low=70.0, bracket_high=72.0,
+            side=side, predicted_price=price_cents, actual_price=price_cents,
+            predicted_edge=10.0, mode="live", order_id=order_id,
+            outcome="filled", capital_before=size_eur, end_date=end_date,
+        )
+
+    def test_gamma_no_won_settles_win(self, tmp_path, monkeypatch):
+        from unittest.mock import patch
+        db = _fresh_db(tmp_path)
+        _no_jsonl(tmp_path, monkeypatch)
+        target = date.today() - timedelta(days=1)
+        self._insert_0x(db, order_id="ord-g1", end_date=target.isoformat())
+
+        with patch("src.scripts.settle.fetch_market_resolution", return_value=False):
+            settle.settle_live_trades(target, {}, db=db)
+
+        row = db.get_trades(limit=None)[0]
+        assert row["pnl"] == round((100 - 70) / 100 * (5.0 / 0.70), 4)
+        db.close()
+
+    def test_gamma_yes_won_settles_no_side_loss_despite_metar_win(self, tmp_path, monkeypatch):
+        """The audit's headline failure: METAR truth says the bracket was
+        missed (NO won) but the market resolved YES — the market must win."""
+        from unittest.mock import patch
+        db = _fresh_db(tmp_path)
+        _no_jsonl(tmp_path, monkeypatch)
+        target = date.today() - timedelta(days=1)
+        self._insert_0x(db, order_id="ord-g2", end_date=target.isoformat())
+
+        # truth says 60.0 (outside 70-72 -> NO would "win" under METAR)
+        with patch("src.scripts.settle.fetch_market_resolution", return_value=True):
+            settle.settle_live_trades(target, {"KORD": 60.0}, db=db)
+
+        row = db.get_trades(limit=None)[0]
+        assert row["pnl"] == round(-70 / 100 * (5.0 / 0.70), 4)  # full-stake loss
+        db.close()
+
+    def test_unresolved_market_stays_pending_never_metar(self, tmp_path, monkeypatch):
+        from unittest.mock import patch
+        db = _fresh_db(tmp_path)
+        _no_jsonl(tmp_path, monkeypatch)
+        target = date.today() - timedelta(days=1)
+        self._insert_0x(db, order_id="ord-g3", end_date=target.isoformat())
+
+        # METAR truth available, but the market has not resolved -> pending
+        with patch("src.scripts.settle.fetch_market_resolution", return_value=None):
+            settle.settle_live_trades(target, {"KORD": 60.0}, db=db)
+
+        row = db.get_trades(limit=None)[0]
+        assert row["pnl"] is None
+        assert row["settled_at"] is None
+        db.close()
+
+    def test_pending_row_retried_and_credited_to_own_date(self, tmp_path, monkeypatch):
+        """A later run picks up the overdue row via the lookback window and
+        credits its PnL to the row's OWN trade date in risk_state."""
+        from unittest.mock import patch
+        db = _fresh_db(tmp_path)
+        _no_jsonl(tmp_path, monkeypatch)
+        trade_day = date.today() - timedelta(days=4)
+        self._insert_0x(db, order_id="ord-g4", end_date=trade_day.isoformat())
+
+        with patch("src.scripts.settle.fetch_market_resolution", return_value=None):
+            settle.settle_live_trades(trade_day, {}, db=db)
+        assert db.get_trades(limit=None)[0]["settled_at"] is None
+
+        later_target = date.today() - timedelta(days=1)
+        with patch("src.scripts.settle.fetch_market_resolution", return_value=False):
+            settle.settle_live_trades(later_target, {}, db=db)
+
+        row = db.get_trades(limit=None)[0]
+        expected = round((100 - 70) / 100 * (5.0 / 0.70), 4)
+        assert row["pnl"] == expected
+        assert db.get_daily_pnl(trade_day.isoformat()) == expected
+        assert db.get_daily_pnl(later_target.isoformat()) == 0.0
+        db.close()
+
+    def test_row_older_than_lookback_not_touched(self, tmp_path, monkeypatch):
+        from unittest.mock import patch
+        db = _fresh_db(tmp_path)
+        _no_jsonl(tmp_path, monkeypatch)
+        old_day = date.today() - timedelta(days=settle.SETTLE_LOOKBACK_DAYS + 5)
+        self._insert_0x(db, order_id="ord-g5", end_date=old_day.isoformat())
+
+        with patch("src.scripts.settle.fetch_market_resolution", return_value=False):
+            settle.settle_live_trades(date.today() - timedelta(days=1), {}, db=db)
+
+        row = db.get_trades(limit=None)[0]
+        assert row["settled_at"] is None
+        db.close()
+
+
+# ---------------------------------------------------------------------------
 # open_positions cleanup
 # ---------------------------------------------------------------------------
 
