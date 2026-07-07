@@ -335,7 +335,9 @@ def call_nim(
         "Content-Type": "application/json",
     }
     resp = requests.post(url, json=payload, headers=headers, timeout=120)
-    resp.raise_for_status()
+    if not resp.ok:
+        body = resp.text[:2000]
+        raise RuntimeError(f"NIM API {resp.status_code} {resp.reason}: {body}")
     data = resp.json()
     return data["choices"][0]["message"]["content"]
 
