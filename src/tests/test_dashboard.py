@@ -1725,6 +1725,9 @@ class TestPromotionBarEndpoint:
     def test_reports_green_station_side(self, client):
         """A station+side with >=30 settled wins clearing break-even is green/eligible."""
         db = self._setup_db()
+        # Fixtures use 65c entries; pin the price floor they were computed
+        # against (the code default moved to 70c in #644).
+        db.set_config("MIN_PRICE_CENTS", "60")
         original = dash_api._db
         try:
             # upsert_shadow_trade dedups on (station, bracket_low, bracket_high,
