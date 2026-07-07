@@ -1094,12 +1094,18 @@ class Database:
         cur = self._conn.execute(sql, params)
         return [dict(row) for row in cur.fetchall()]
 
-    def get_unsettled_shadow_trades(self, target_date: str) -> list:
-        """Return shadow trades for *target_date* (YYYY-MM-DD) that are not yet settled."""
+    def get_unsettled_shadow_trades(self, target_date: str, lookback_days: int = 0) -> list:
+        """Return unsettled shadow trades for *target_date* (YYYY-MM-DD).
+
+        With *lookback_days* > 0, rows from up to that many days BEFORE
+        target_date are included too, so markets that had not resolved on
+        Polymarket by an earlier settle run get retried (issue #644).
+        """
         cur = self._conn.execute(
             "SELECT * FROM trades "
-            "WHERE mode='shadow' AND settled_at IS NULL AND DATE(ts)=?",
-            (target_date,),
+            "WHERE mode='shadow' AND settled_at IS NULL "
+            "AND DATE(ts) BETWEEN DATE(?, ?) AND ?",
+            (target_date, f"-{int(lookback_days)} days", target_date),
         )
         return [dict(row) for row in cur.fetchall()]
 

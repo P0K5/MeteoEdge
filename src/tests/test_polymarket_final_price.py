@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.data.polymarket import fetch_market_final_price
+from src.data.polymarket import fetch_market_final_price, fetch_market_resolution
 
 
 def _mock_response(status_code=200, json_data=None):
@@ -95,3 +95,17 @@ class TestFetchMarketFinalPrice:
             fetch_market_final_price(TICKER)
         called_url = mock_fetch.call_args[0][0]
         assert "closed=true" in called_url
+
+
+class TestFetchMarketResolution:
+    """fetch_market_resolution() only accepts definitive extreme prices (#644)."""
+
+    @pytest.mark.parametrize("price,expected", [
+        (100, True), (97, True), (95, True),   # YES resolved
+        (0, False), (3, False), (5, False),    # NO resolved
+        (94, None), (50, None), (6, None),     # ambiguous -> unresolved
+        (None, None),                          # not found / not closed / error
+    ])
+    def test_thresholds(self, price, expected):
+        with patch("src.data.polymarket.fetch_market_final_price", return_value=price):
+            assert fetch_market_resolution(TICKER) is expected

@@ -450,7 +450,9 @@ class TestComputePromotionBar:
         trades = [_trade("WSSS", "NO", f"wsss-{i}", 65) for i in range(30)]
         settlements = [_settlement(f"wsss-{i}", resolved_yes=0) for i in range(29)]
         settlements.append(_settlement("wsss-29", resolved_yes=1))  # 1 loss
-        db = _FakeDB(trades, settlements)
+        # Fixtures use 65c entries; pin the price floor they were computed
+        # against (the code default moved to 70c in #644).
+        db = _FakeDB(trades, settlements, config={"MIN_PRICE_CENTS": "60"})
 
         rows = compute_promotion_bar(db)
         row = next(r for r in rows if r["station"] == "WSSS" and r["side"] == "NO")
@@ -536,7 +538,7 @@ class TestComputePromotionBar:
         trades = [_trade("WMKK", "YES", f"wmkk-{i}", 65) for i in range(30)]
         settlements = [_settlement(f"wmkk-{i}", resolved_yes=1) for i in range(29)]
         settlements.append(_settlement("wmkk-29", resolved_yes=0))
-        db = _FakeDB(trades, settlements)
+        db = _FakeDB(trades, settlements, config={"MIN_PRICE_CENTS": "60"})
 
         rows = compute_promotion_bar(db)
         row = next(r for r in rows if r["station"] == "WMKK" and r["side"] == "YES")
@@ -550,7 +552,9 @@ class TestComputePromotionBar:
         # threshold is read from config rather than hardcoded.
         trades = [_trade("ZGSZ", "NO", f"zgsz-{i}", 65) for i in range(10)]
         settlements = [_settlement(f"zgsz-{i}", resolved_yes=0) for i in range(10)]
-        db = _FakeDB(trades, settlements, config={"PROMOTION_MIN_SETTLED_TRADES": "5"})
+        db = _FakeDB(trades, settlements, config={
+            "PROMOTION_MIN_SETTLED_TRADES": "5", "MIN_PRICE_CENTS": "60",
+        })
 
         rows = compute_promotion_bar(db)
         row = next(r for r in rows if r["station"] == "ZGSZ")

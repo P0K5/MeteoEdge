@@ -371,12 +371,37 @@ def scan_markets(
         # passed into true_probability_yes so the dashboard toggle is respected
         # without a per-bracket DB read.
         _deb_enabled = bool(_live.get("DEB_ENABLED", CONFIG_DEFAULTS["DEB_ENABLED"]))
+        # Entry-gate thresholds live-read from bot_config (issue #644): the
+        # dashboard already exposed these keys, but the gates below consumed
+        # the import-time module constants, so edits (e.g. MIN_PRICE_CENTS=75
+        # set on 2026-07) were silently ignored until a process restart with
+        # matching env vars. Raw rows (not get_live_config) so that a key the
+        # DB has never seeded falls back to the module constant, which is
+        # env-var aware.
+        try:
+            _raw_cfg = db.get_all_config()
+        except Exception:
+            _raw_cfg = {}
+
+        def _cfg(key, default, cast):
+            try:
+                return cast(_raw_cfg[key]) if key in _raw_cfg else default
+            except (ValueError, TypeError):
+                return default
+        min_edge_cents      = _cfg("MIN_EDGE_CENTS", MIN_EDGE_CENTS, float)
+        max_edge_cents      = _cfg("MAX_EDGE_CENTS", MAX_EDGE_CENTS, float)
+        min_price_cents     = _cfg("MIN_PRICE_CENTS", MIN_PRICE_CENTS, lambda v: int(float(v)))
+        max_conf_yes_for_no = _cfg("MAX_CONFIDENCE_YES_FOR_NO", MAX_CONFIDENCE_YES_FOR_NO, float)
     else:
         shadow_yes_edge_min  = float(CONFIG_DEFAULTS["SHADOW_MIN_EDGE_CENTS_YES"])
         shadow_yes_conf_min  = float(CONFIG_DEFAULTS["SHADOW_MIN_CONFIDENCE_YES"])
         shadow_yes_price_min = int(CONFIG_DEFAULTS["SHADOW_MIN_PRICE_CENTS_YES"])
         rank_on_raw_prob = bool(CONFIG_DEFAULTS["RANK_ON_RAW_PROB"])
         _deb_enabled = None  # no DB: envelope falls back to the DEB_ENABLED env var
+        min_edge_cents      = MIN_EDGE_CENTS
+        max_edge_cents      = MAX_EDGE_CENTS
+        min_price_cents     = MIN_PRICE_CENTS
+        max_conf_yes_for_no = MAX_CONFIDENCE_YES_FOR_NO
 
     for market in markets:
         try:
@@ -540,15 +565,15 @@ def scan_markets(
 
             # Use looser shadow thresholds on the YES shadow path so the
             # shadow loop can collect data.  The NO branch is untouched.
-            _yes_edge = shadow_yes_edge_min if shadow_yes else MIN_EDGE_CENTS
+            _yes_edge = shadow_yes_edge_min if shadow_yes else min_edge_cents
             _yes_conf = shadow_yes_conf_min if shadow_yes else MIN_CONFIDENCE_YES
-            _yes_price = shadow_yes_price_min if shadow_yes else MIN_PRICE_CENTS
+            _yes_price = shadow_yes_price_min if shadow_yes else min_price_cents
 
             if ev_yes >= _yes_edge and p_yes >= _yes_conf and bracket.yes_ask_cents >= _yes_price:
-                if ev_yes > MAX_EDGE_CENTS:
+                if ev_yes > max_edge_cents:
                     skipped_reason = "max_edge"
                     log.debug("[%s] -- SKIPPED %s: %s edge=%.2f¢ > MAX=%.2f¢",
-                              station, skipped_reason, "YES", ev_yes, MAX_EDGE_CENTS)
+                              station, skipped_reason, "YES", ev_yes, max_edge_cents)
                     skip_reason_counts[skipped_reason] += 1
                 else:
                     candidate = Candidate(
@@ -560,12 +585,12 @@ def scan_markets(
                         shadow=shadow_yes,
                         p_yes_raw=raw_p_yes, ev_yes_raw=ev_yes_raw, ev_no_raw=ev_no_raw,
                     )
-            elif ev_no >= MIN_EDGE_CENTS and p_yes <= MAX_CONFIDENCE_YES_FOR_NO and bracket.no_ask_cents >= MIN_PRICE_CENTS:
+            elif ev_no >= min_edge_cents and p_yes <= max_conf_yes_for_no and bracket.no_ask_cents >= min_price_cents:
                 margin_gap = no_entry_margin_gap(bracket, state)
-                if ev_no > MAX_EDGE_CENTS:
+                if ev_no > max_edge_cents:
                     skipped_reason = "max_edge"
                     log.debug("[%s] -- SKIPPED %s: %s edge=%.2f¢ > MAX=%.2f¢",
-                              station, skipped_reason, "NO", ev_no, MAX_EDGE_CENTS)
+                              station, skipped_reason, "NO", ev_no, max_edge_cents)
                     skip_reason_counts[skipped_reason] += 1
                 elif margin_gap is not None and margin_gap < MIN_FORECAST_BRACKET_MARGIN_F:
                     skipped_reason = "margin_gate"
@@ -601,15 +626,15 @@ def scan_markets(
                 # YES gates passed but NO gate failed (or both edges below MIN_EDGE_CENTS).
                 # YES branch is now handled above unconditionally, so only NO failures
                 # and low-edge cases reach here.
-                if ev_no >= MIN_EDGE_CENTS:
-                    if p_yes > MAX_CONFIDENCE_YES_FOR_NO:
+                if ev_no >= min_edge_cents:
+                    if p_yes > max_conf_yes_for_no:
                         skipped_reason = "confidence_gate"
                         log.debug("[%s] -- SKIPPED %s: p_yes=%.4f > MAX=%.4f",
-                                  station, skipped_reason, p_yes, MAX_CONFIDENCE_YES_FOR_NO)
-                    elif bracket.no_ask_cents < MIN_PRICE_CENTS:
+                                  station, skipped_reason, p_yes, max_conf_yes_for_no)
+                    elif bracket.no_ask_cents < min_price_cents:
                         skipped_reason = "min_edge"
                         log.debug("[%s] -- SKIPPED %s: NO price=%.0f¢ < MIN=%.0f¢",
-                                  station, skipped_reason, bracket.no_ask_cents, MIN_PRICE_CENTS)
+                                  station, skipped_reason, bracket.no_ask_cents, min_price_cents)
                     else:
                         skipped_reason = "min_edge"
                     skip_reason_counts[skipped_reason] += 1
@@ -617,7 +642,7 @@ def scan_markets(
                     # Both edges below MIN_EDGE_CENTS
                     skipped_reason = "min_edge"
                     log.debug("[%s] -- SKIPPED %s: max(%.2f¢, %.2f¢) < MIN=%.2f¢",
-                              station, skipped_reason, ev_yes, ev_no, MIN_EDGE_CENTS)
+                              station, skipped_reason, ev_yes, ev_no, min_edge_cents)
                     skip_reason_counts[skipped_reason] += 1
 
             if candidate and db:
@@ -707,8 +732,8 @@ def scan_markets(
                 ev_no_raw  = ((1 - raw_p_yes_low) * 100 - bracket.no_ask_cents) - estimate_fee_cents(bracket.no_ask_cents)
 
                 low_candidate = None
-                if ev_no >= MIN_EDGE_CENTS and bracket.no_ask_cents >= MIN_PRICE_CENTS:
-                    if ev_no <= MAX_EDGE_CENTS:
+                if ev_no >= min_edge_cents and bracket.no_ask_cents >= min_price_cents:
+                    if ev_no <= max_edge_cents:
                         low_candidate = Candidate(
                             station=station, bracket=bracket, side="NO",
                             edge_cents=ev_no, price_cents=bracket.no_ask_cents,
@@ -721,8 +746,8 @@ def scan_markets(
                         )
                     else:
                         skip_reason_counts["max_edge"] += 1
-                elif ev_yes >= MIN_EDGE_CENTS and p_yes >= MIN_CONFIDENCE_YES and bracket.yes_ask_cents >= MIN_PRICE_CENTS:
-                    if ev_yes <= MAX_EDGE_CENTS:
+                elif ev_yes >= min_edge_cents and p_yes >= MIN_CONFIDENCE_YES and bracket.yes_ask_cents >= min_price_cents:
+                    if ev_yes <= max_edge_cents:
                         low_candidate = Candidate(
                             station=station, bracket=bracket, side="YES",
                             edge_cents=ev_yes, price_cents=bracket.yes_ask_cents,

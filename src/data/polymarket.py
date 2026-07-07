@@ -96,6 +96,38 @@ def fetch_market_final_price(ticker: str) -> int | None:
     return round(yes_price * 100)
 
 
+# A market only counts as definitively resolved when its final YES price is
+# pinned at an extreme. A market that is closed (trading ended) but not yet
+# resolved by UMA can report intermediate last-trade prices; settling from
+# those (or from METAR truth) booked wrong outcomes ~22% of the time (#644).
+RESOLVED_YES_MIN_CENTS = 95
+RESOLVED_NO_MAX_CENTS = 5
+
+
+def fetch_market_resolution(ticker: str) -> "bool | None":
+    """Return the definitive resolution of a market, or None if not resolved.
+
+    True  → YES won (final YES price >= RESOLVED_YES_MIN_CENTS)
+    False → NO won  (final YES price <= RESOLVED_NO_MAX_CENTS)
+    None  → market not found, still open/awaiting resolution, API failure,
+            or ambiguous final price. Callers must leave the trade unsettled
+            and retry on a later run — never substitute weather-derived truth
+            for a 0x market that will eventually resolve on-chain.
+    """
+    price = fetch_market_final_price(ticker)
+    if price is None:
+        return None
+    if price >= RESOLVED_YES_MIN_CENTS:
+        return True
+    if price <= RESOLVED_NO_MAX_CENTS:
+        return False
+    log.warning(
+        "[polymarket] market %s... closed with ambiguous final YES price %sc "
+        "-- treating as unresolved", str(ticker)[:14], price,
+    )
+    return None
+
+
 def get_orderbook(token_id: str) -> dict:
     """Fetch live CLOB order book for a single token (YES or NO side).
 

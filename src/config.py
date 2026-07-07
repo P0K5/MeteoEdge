@@ -175,7 +175,11 @@ MIN_EDGE_CENTS = float(os.getenv("MIN_EDGE_CENTS", "15.0"))
 # a clear pattern of low-priced NO (high claimed edge) losing while higher-priced
 # entries on the same station/day won. Override via env to experiment.
 MAX_EDGE_CENTS = float(os.getenv("MAX_EDGE_CENTS", "20.0"))
-MIN_PRICE_CENTS = int(os.getenv("MIN_PRICE_CENTS", "60"))  # below 60¢ ROI is negative (0-50% win rate)
+# Ground-truth audit 2026-07-07 (#644): NO bought at 60-69c had a 46% win rate
+# vs ~65% breakeven (-47.70 EUR on 28 trades) — the model is most confidently
+# wrong exactly where it disagrees hardest with the market. Floor raised 60→70.
+# The DB bot_config value (currently 75) is authoritative at runtime.
+MIN_PRICE_CENTS = int(os.getenv("MIN_PRICE_CENTS", "70"))
 MIN_CONFIDENCE_YES = 0.85       # for YES-side trades
 # NO-side entry threshold: only enter when model's p(YES) is at or below this.
 # Calibration on 30 trustworthy trades (May 24-29, with SELL pnl or yes_won
@@ -464,7 +468,7 @@ def get_canonical_station_feeds(station: str) -> list[str]:
 CONFIG_DEFAULTS: "dict[str, str | int | float | bool]" = {
     "MIN_EDGE_CENTS": 15.0,
     "MAX_EDGE_CENTS": 20.0,
-    "MIN_PRICE_CENTS": 60,
+    "MIN_PRICE_CENTS": 70,
     "MIN_CONFIDENCE_YES": 0.85,
     "MAX_CONFIDENCE_YES_FOR_NO": 0.05,
     "MIN_FORECAST_BRACKET_MARGIN_F": 2.5,

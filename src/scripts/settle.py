@@ -3,6 +3,7 @@ import csv
 import gzip
 import json
 import logging
+import os
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
@@ -10,8 +11,14 @@ log = logging.getLogger(__name__)
 
 from src.config import STATIONS, LOG_DIR, CANDIDATES_CSV, SETTLEMENTS_CSV, STATION_TZ, LIVE_TRADES_JSONL
 from src.http_client import fetch
-from src.data.polymarket import fetch_market_final_price
+from src.data.polymarket import fetch_market_final_price, fetch_market_resolution
 from src.utils.log_rotation import iter_rotated_jsonl, rotated_sources
+
+# How many days back each settle run re-checks unsettled rows. Markets that
+# have not resolved on Polymarket by the 12:00 UTC run (the common case — UMA
+# resolution lands hours later) stay pending and are retried on every
+# subsequent daily run within this window (issue #644).
+SETTLE_LOOKBACK_DAYS = int(os.getenv("SETTLE_LOOKBACK_DAYS", "14"))
 
 
 def _open_db():
@@ -95,17 +102,27 @@ def settle_shadow_trades(target: date, truth: dict, db=None) -> None:
     'low'`` are skipped entirely (not settled against the high) rather than
     resolved incorrectly. See issue #610; daily-LOW truth settlement is
     tracked separately under Epic C (#458/#452).
+
+    Resolution policy (issue #644): rows with a real 0x market hash settle
+    ONLY from the definitive Gamma resolution — a market that has not
+    resolved yet stays unsettled and is retried on later runs (rows up to
+    SETTLE_LOOKBACK_DAYS old are re-selected each run). METAR truth settled
+    trades with the wrong sign ~22% of the time and is now reserved for
+    legacy synthetic-ticker rows, which have no market to query.
     """
     if db is None:
         return
 
-    rows = db.get_unsettled_shadow_trades(target.isoformat())
+    rows = db.get_unsettled_shadow_trades(
+        target.isoformat(), lookback_days=SETTLE_LOOKBACK_DAYS
+    )
     if not rows:
         log.info("[settle] no unsettled shadow trades for %s", target)
         return
 
     n_settled = 0
     n_skipped_low = 0
+    n_pending = 0
     now_iso = datetime.now(timezone.utc).isoformat()
     for r in rows:
         station = r.get("station", "")
@@ -123,19 +140,23 @@ def settle_shadow_trades(target: date, truth: dict, db=None) -> None:
             )
             continue
 
-        # Try Gamma market resolution first; fall back to METAR truth if unavailable.
-        ticker = r.get("ticker", "")
-        gamma_price = fetch_market_final_price(ticker) if ticker else None
-        if gamma_price is not None:
-            # YES price ~100 → YES won; ~0 → NO won
-            yes_won = gamma_price >= 50
+        ticker = str(r.get("ticker") or "")
+        if ticker.startswith("0x"):
+            # Real market: the on-chain resolution is the only accepted truth.
+            yes_won = fetch_market_resolution(ticker)
+            if yes_won is None:
+                n_pending += 1
+                log.debug(
+                    "[settle] [shadow] market %s... not resolved yet — row %s stays pending",
+                    ticker[:14], r["id"],
+                )
+                continue
             resolution_source = "gamma"
         else:
-            if station not in truth:
-                log.debug(
-                    "[settle] [shadow] no truth for station %s — skipping row %s",
-                    station, r["id"],
-                )
+            # Legacy synthetic ticker: no market to query — METAR truth is the
+            # only option, and only for the run's own target date.
+            if r.get("ts", "")[:10] != target.isoformat() or station not in truth:
+                n_pending += 1
                 continue
             actual = truth[station]
             lo, hi = float(r["bracket_low"]), float(r["bracket_high"])
@@ -174,8 +195,9 @@ def settle_shadow_trades(target: date, truth: dict, db=None) -> None:
             log.warning("[settle] [shadow] update failed for row %s: %s", r["id"], e)
 
     log.info(
-        "[settle] settled %s shadow trade(s) for %s (skipped %s direction=low row(s))",
-        n_settled, target, n_skipped_low,
+        "[settle] settled %s shadow trade(s) for %s (%s pending resolution, "
+        "skipped %s direction=low row(s))",
+        n_settled, target, n_pending, n_skipped_low,
     )
 
 
@@ -276,6 +298,15 @@ def _write_db_settlements(records: list[dict], target: date, truth: dict[str, fl
         # Fetch the market's final resolved YES price from Polymarket Gamma.
         # Returns None gracefully on network failure or if not yet resolved.
         market_final_price = fetch_market_final_price(market_key) if market_key.startswith("0x") else None
+        # Prefer the definitive market resolution over METAR truth (#644):
+        # the METAR-derived comparison disagreed with the official resolution
+        # in ~22% of audited settlements.
+        if market_final_price is not None and (market_final_price >= 95 or market_final_price <= 5):
+            resolved_yes = market_final_price >= 95
+            resolution_source = "gamma"
+        else:
+            resolved_yes = lo <= actual <= hi
+            resolution_source = "metar"
         try:
             writer.record_settlement(
                 ticker=market_key,
@@ -283,8 +314,9 @@ def _write_db_settlements(records: list[dict], target: date, truth: dict[str, fl
                 bracket_low=lo,
                 bracket_high=hi,
                 actual_high_f=actual,
-                resolved_yes=lo <= actual <= hi,
+                resolved_yes=resolved_yes,
                 market_final_price=market_final_price,
+                resolution_source=resolution_source,
             )
         except Exception as e:
             log.warning("[settle] DB settlement write failed for %s: %s", market_key[:14], e)
@@ -397,9 +429,14 @@ def settle_live_trades(target: date, truth: dict[str, float], db=None) -> None:
     The DB is now the source of truth, mirroring settle_shadow_trades():
 
     - Selects live ``outcome='filled'`` rows with ``settled_at IS NULL`` via
-      ``db.get_unsettled_live_trades()`` and filters to *target* in Python
-      via resolve_trade_date() (end_date column, or station-local ts fallback
-      for legacy rows).
+      ``db.get_unsettled_live_trades()`` and filters to rows dated within
+      ``[target - SETTLE_LOOKBACK_DAYS, target]`` in Python via
+      resolve_trade_date() (end_date column, or station-local ts fallback
+      for legacy rows). Rows whose market has not definitively resolved on
+      Polymarket stay unsettled and are retried on every later run inside
+      the window (issue #644) — METAR truth is never substituted for a real
+      0x market, because it disagreed with the official resolution in ~22%
+      of audited settlements.
     - PnL: entry price = ``actual_price`` cents, shares = capital_before /
       (actual_price/100) -- capital_before holds the EUR size committed at
       order placement (the live-trade equivalent of the old JSONL
@@ -442,12 +479,17 @@ def settle_live_trades(target: date, truth: dict[str, float], db=None) -> None:
 
     now_iso = datetime.now(timezone.utc).isoformat()
     n_settled = 0
+    n_pending = 0
     skip_reasons: list[str] = []
     jsonl_patches: dict[str, dict] = {}
+    earliest = target - timedelta(days=SETTLE_LOOKBACK_DAYS)
 
     for r in db.get_unsettled_live_trades():
         row_date = resolve_trade_date(r)
-        if row_date != target:
+        # Issue #644: process every overdue unsettled row within the lookback
+        # window, not just the target date. Markets that had not resolved by
+        # an earlier run get retried here until they resolve or age out.
+        if row_date is None or row_date > target or row_date < earliest:
             continue
 
         row_id = r.get("id")
@@ -463,14 +505,30 @@ def settle_live_trades(target: date, truth: dict[str, float], db=None) -> None:
             continue
 
         station = r.get("station", "")
-        # Try Gamma market resolution first; fall back to METAR truth if unavailable.
-        ticker = r.get("ticker", "")
-        gamma_price = fetch_market_final_price(ticker) if ticker else None
-        if gamma_price is not None:
-            yes_won = gamma_price >= 50
+        ticker = str(r.get("ticker") or "")
+        if ticker.startswith("0x"):
+            # Real market: settle ONLY from the definitive on-chain resolution.
+            # METAR truth booked the wrong sign in 28/126 audited settlements
+            # (#644) because the 12:00 UTC run predates UMA resolution — a
+            # not-yet-resolved market must stay pending, never be guessed.
+            yes_won = fetch_market_resolution(ticker)
+            if yes_won is None:
+                n_pending += 1
+                log.debug(
+                    "[settle] [live] market %s... not resolved yet — row %s stays pending",
+                    ticker[:14], row_id,
+                )
+                continue
             actual = truth.get(station)  # may be None; only needed for JSONL patch
             resolution_source = "gamma"
         else:
+            # Legacy synthetic ticker: no market to query. METAR truth is the
+            # only option, and only for the run's own target date (truth is
+            # fetched for that date alone — reusing it for older rows is the
+            # stale-truth bug this issue fixes).
+            if row_date != target:
+                skip_reasons.append(f"id={row_id} legacy ticker, no truth for {row_date}")
+                continue
             if station not in truth:
                 skip_reasons.append(f"id={row_id} no truth for {station}")
                 continue
@@ -495,7 +553,9 @@ def settle_live_trades(target: date, truth: dict[str, float], db=None) -> None:
 
         try:
             db.update_trade_by_id(row_id, pnl=pnl, settled_at=now_iso)
-            db.add_settled_pnl(target.isoformat(), pnl)
+            # Credit the row's OWN trade date, not the run's target — overdue
+            # rows settled late must not distort a different day's PnL.
+            db.add_settled_pnl(row_date.isoformat(), pnl)
             order_id = r.get("order_id")
             if order_id:
                 db.close_position(order_id)  # drop the resolved open_positions row
@@ -514,12 +574,12 @@ def settle_live_trades(target: date, truth: dict[str, float], db=None) -> None:
 
     _enrich_jsonl_with_settlements(jsonl_patches)
 
-    if n_settled == 0 and not skip_reasons:
+    if n_settled == 0 and n_pending == 0 and not skip_reasons:
         log.info("[settle] no live trades to update for %s", target)
     else:
         log.info(
-            "[settle] settled %s live trade(s) from DB for %s (%s skipped%s)",
-            n_settled, target, len(skip_reasons),
+            "[settle] settled %s live trade(s) from DB for %s (%s pending resolution, %s skipped%s)",
+            n_settled, target, n_pending, len(skip_reasons),
             f": {'; '.join(skip_reasons)}" if skip_reasons else "",
         )
 

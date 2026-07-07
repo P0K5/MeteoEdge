@@ -9,6 +9,12 @@ Covers:
 - Settlement is idempotent (already-settled rows skipped)
 - Rows with no truth for station are skipped
 - settle_shadow_trades is a no-op when db=None
+
+Ticker convention (issue #644): rows inserted by these helpers carry legacy
+SYNTHETIC tickers (no 0x prefix), which exercises the METAR-truth path. Rows
+with a real 0x market hash settle ONLY from the definitive Gamma resolution —
+those flows are covered in TestGammaPreferenceInShadow with an explicit 0x
+ticker and a patched fetch_market_resolution.
 """
 from datetime import date
 from pathlib import Path
@@ -26,13 +32,14 @@ def _fresh_db(tmp_path: Path) -> Database:
 
 
 def _insert_shadow(db: Database, station: str, yes_ask: int, target_date: str,
-                   bracket_low: float = 80.0, bracket_high: float = 82.0) -> int:
+                   bracket_low: float = 80.0, bracket_high: float = 82.0,
+                   ticker: "str | None" = None) -> int:
     """Insert a shadow YES trade for the given station and date."""
     ts = f"{target_date}T10:00:00+00:00"
     return db.insert_trade(
         ts=ts,
         station=station,
-        ticker=f"0xSHADOW_{station}_{yes_ask}",
+        ticker=ticker or f"SHADOW-{station}-{yes_ask}",
         bracket_low=bracket_low,
         bracket_high=bracket_high,
         side="YES",
@@ -57,7 +64,7 @@ def _insert_shadow_direction(db: Database, station: str, side: str, ask: int,
     return db.insert_trade(
         ts=ts,
         station=station,
-        ticker=f"0xSHADOW_{direction}_{station}_{ask}",
+        ticker=f"SHADOW-{direction}-{station}-{ask}",
         bracket_low=bracket_low,
         bracket_high=bracket_high,
         side=side,
@@ -82,7 +89,7 @@ def _insert_shadow_no(db: Database, station: str, no_ask: int, target_date: str,
     return db.insert_trade(
         ts=ts,
         station=station,
-        ticker=f"0xSHADOW_NO_{station}_{no_ask}",
+        ticker=f"SHADOW-NO-{station}-{no_ask}",
         bracket_low=bracket_low,
         bracket_high=bracket_high,
         side="NO",
@@ -451,63 +458,97 @@ class TestBracketTopEdgeExclusive:
 
 
 class TestGammaPreferenceInShadow:
-    """settle_shadow_trades() prefers Gamma resolution over METAR."""
+    """0x-ticker rows settle ONLY from the definitive Gamma resolution (#644)."""
 
     def test_gamma_yes_overrides_metar_no(self, tmp_path):
-        """Gamma says YES won (~100) but METAR would say NO — Gamma wins."""
+        """Gamma says YES won but METAR would say NO — Gamma wins."""
         from unittest.mock import patch
         db = _fresh_db(tmp_path)
         target = date(2025, 6, 1)
         yes_ask = 30
         tid = _insert_shadow(db, "KORD", yes_ask, target.isoformat(),
-                             bracket_low=80.0, bracket_high=82.0)
+                             bracket_low=80.0, bracket_high=82.0,
+                             ticker="0xSHADOW_KORD_30")
 
         # actual=85 is outside bracket → METAR would say YES lost
         truth = {"KORD": 85.0}
-        with patch("src.scripts.settle.fetch_market_final_price", return_value=97):
+        with patch("src.scripts.settle.fetch_market_resolution", return_value=True):
             settle_shadow_trades(target, truth, db=db)
 
         trades = db.get_trades(limit=None)
         t = next(r for r in trades if r["id"] == tid)
-        # Gamma YES price=97 → yes_won=True → YES won
+        # Gamma yes_won=True → YES won
         expected_pnl = (100 - yes_ask) / 100
         assert abs(t["pnl"] - expected_pnl) < 1e-5
 
     def test_gamma_no_overrides_metar_yes(self, tmp_path):
-        """Gamma says NO won (~0) but METAR would say YES — Gamma wins."""
+        """Gamma says NO won but METAR would say YES — Gamma wins."""
         from unittest.mock import patch
         db = _fresh_db(tmp_path)
         target = date(2025, 6, 1)
         yes_ask = 30
         tid = _insert_shadow(db, "KORD", yes_ask, target.isoformat(),
-                             bracket_low=80.0, bracket_high=82.0)
+                             bracket_low=80.0, bracket_high=82.0,
+                             ticker="0xSHADOW_KORD_30")
 
         # actual=81 is inside bracket → METAR would say YES won
         truth = {"KORD": 81.0}
-        with patch("src.scripts.settle.fetch_market_final_price", return_value=2):
+        with patch("src.scripts.settle.fetch_market_resolution", return_value=False):
             settle_shadow_trades(target, truth, db=db)
 
         trades = db.get_trades(limit=None)
         t = next(r for r in trades if r["id"] == tid)
-        # Gamma YES price=2 → yes_won=False → YES lost
+        # Gamma yes_won=False → YES lost
         expected_pnl = -yes_ask / 100
         assert abs(t["pnl"] - expected_pnl) < 1e-5
 
-    def test_gamma_network_failure_falls_back_to_metar(self, tmp_path):
-        """Gamma returns None (network failure) → METAR truth is used."""
+    def test_gamma_unresolved_stays_pending(self, tmp_path):
+        """Unresolved market (Gamma returns None) → row stays UNSETTLED.
+
+        Regression for issue #644: the old code fell back to METAR truth,
+        which booked the wrong sign in ~22% of audited settlements because
+        the settle run predates UMA resolution. A real 0x market must wait
+        for its on-chain resolution and be retried on a later run.
+        """
         from unittest.mock import patch
         db = _fresh_db(tmp_path)
         target = date(2025, 6, 1)
         yes_ask = 30
         tid = _insert_shadow(db, "KORD", yes_ask, target.isoformat(),
-                             bracket_low=80.0, bracket_high=82.0)
+                             bracket_low=80.0, bracket_high=82.0,
+                             ticker="0xSHADOW_KORD_30")
 
-        # actual=81 is inside bracket → METAR says YES won
+        # actual=81 is inside bracket — but METAR must NOT be used
         truth = {"KORD": 81.0}
-        with patch("src.scripts.settle.fetch_market_final_price", return_value=None):
+        with patch("src.scripts.settle.fetch_market_resolution", return_value=None):
             settle_shadow_trades(target, truth, db=db)
 
         trades = db.get_trades(limit=None)
         t = next(r for r in trades if r["id"] == tid)
-        expected_pnl = (100 - yes_ask) / 100
-        assert abs(t["pnl"] - expected_pnl) < 1e-5
+        assert t["pnl"] is None
+        assert t["settled_at"] is None
+
+    def test_pending_row_settles_on_later_run_via_lookback(self, tmp_path):
+        """A row left pending is picked up by a LATER run's lookback window."""
+        from datetime import timedelta
+        from unittest.mock import patch
+        db = _fresh_db(tmp_path)
+        trade_day = date(2025, 6, 1)
+        yes_ask = 30
+        tid = _insert_shadow(db, "KORD", yes_ask, trade_day.isoformat(),
+                             bracket_low=80.0, bracket_high=82.0,
+                             ticker="0xSHADOW_KORD_30")
+
+        # Day 1: market not resolved yet — stays pending.
+        with patch("src.scripts.settle.fetch_market_resolution", return_value=None):
+            settle_shadow_trades(trade_day, {}, db=db)
+        assert db.get_trades(limit=None)[0]["settled_at"] is None
+
+        # Day 3: run targets a later date; the lookback re-selects the row
+        # and the now-resolved market settles it.
+        with patch("src.scripts.settle.fetch_market_resolution", return_value=True):
+            settle_shadow_trades(trade_day + timedelta(days=2), {}, db=db)
+
+        t = next(r for r in db.get_trades(limit=None) if r["id"] == tid)
+        assert t["settled_at"] is not None
+        assert abs(t["pnl"] - (100 - yes_ask) / 100) < 1e-5
