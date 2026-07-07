@@ -40,6 +40,10 @@ DIFF_MAX_CHARS = 4000
 SUMMARY_MAX_CHARS = 65535
 
 
+class NimDegradedError(RuntimeError):
+    """Raised when the NIM backend reports the model function as DEGRADED."""
+
+
 def _env(key: str) -> str:
     """Return env var value; raise with a masked error message on missing key."""
     val = os.environ.get(key, "")
@@ -335,7 +339,13 @@ def call_nim(
         "Content-Type": "application/json",
     }
     resp = requests.post(url, json=payload, headers=headers, timeout=120)
-    resp.raise_for_status()
+    if not resp.ok:
+        body = resp.text[:2000]
+        # Surface degraded/unavailable NIM backend as a distinct exception so
+        # callers can decide to skip gracefully instead of hard-failing CI.
+        if resp.status_code in (400, 503) and "DEGRADED" in body:
+            raise NimDegradedError(f"NIM model {model} is DEGRADED: {body}")
+        raise RuntimeError(f"NIM API {resp.status_code} {resp.reason}: {body}")
     data = resp.json()
     return data["choices"][0]["message"]["content"]
 
@@ -550,13 +560,35 @@ def _run(
 
     # 7. Call NVIDIA NIM
     print(f"[ai_reviewer] Calling NIM model {nim_model}...")
-    review_text = call_nim(
-        base_url=nim_base_url,
-        api_key=api_key,
-        model=nim_model,
-        system_prompt=system_prompt,
-        user_content=review_packet,
-    )
+    try:
+        review_text = call_nim(
+            base_url=nim_base_url,
+            api_key=api_key,
+            model=nim_model,
+            system_prompt=system_prompt,
+            user_content=review_packet,
+        )
+    except NimDegradedError as exc:
+        # NIM backend is temporarily degraded — skip the review rather than
+        # blocking all PRs. Create a neutral success check run with a note.
+        print(f"[ai_reviewer] NIM degraded, skipping review: {exc}")
+        skip_msg = (
+            f"⚠️ AI review skipped — NIM model `{nim_model}` is currently "
+            f"DEGRADED on NVIDIA's infrastructure.\n\n"
+            f"This check passes automatically to avoid blocking PRs during "
+            f"a transient outage. The review will run normally once the "
+            f"model recovers.\n\nError detail: {exc}"
+        )
+        create_check_run(
+            owner=repo_owner,
+            repo=repo_name,
+            head_sha=pr_head_sha,
+            token=github_token,
+            verdict="PASS",
+            review_text=skip_msg,
+        )
+        print("[ai_reviewer] Done — verdict=SKIPPED (NIM degraded)")
+        return
 
     # 8. Parse verdict
     verdict = parse_verdict(review_text)
