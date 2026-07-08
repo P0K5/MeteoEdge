@@ -169,21 +169,29 @@ def load_resolutions(db, tickers: "set[str]", fetch: bool, workers: int) -> dict
         if t in tickers and t not in res and v is not None:
             res[t] = bool(v)
 
+    def save_cache():
+        try:
+            os.makedirs(os.path.dirname(RESOLUTION_CACHE), exist_ok=True)
+            json.dump(cache, open(RESOLUTION_CACHE, "w"))
+        except OSError as e:
+            log.warning("[calibration] could not write %s: %s", RESOLUTION_CACHE, e)
+
     missing = sorted(t for t in tickers if t not in res)
     if fetch and missing:
         from src.data.polymarket import fetch_market_resolution
         print(f"fetching {len(missing)} unresolved markets from Gamma "
               f"({workers} workers)...")
         with ThreadPoolExecutor(max_workers=workers) as ex:
-            for t, r in zip(missing, ex.map(fetch_market_resolution, missing)):
+            for i, (t, r) in enumerate(zip(missing, ex.map(fetch_market_resolution, missing)), 1):
                 cache[t] = r
                 if r is not None:
                     res[t] = r
-        try:
-            os.makedirs(os.path.dirname(RESOLUTION_CACHE), exist_ok=True)
-            json.dump(cache, open(RESOLUTION_CACHE, "w"))
-        except OSError as e:
-            log.warning("[calibration] could not write %s: %s", RESOLUTION_CACHE, e)
+                # Flush periodically so an interrupted run resumes from where
+                # it stopped instead of refetching thousands of markets.
+                if i % 500 == 0:
+                    save_cache()
+                    print(f"  {i}/{len(missing)} fetched...")
+        save_cache()
     return res
 
 
