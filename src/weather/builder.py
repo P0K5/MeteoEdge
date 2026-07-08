@@ -304,6 +304,14 @@ def _build_one_station(
         corrected = compute_correction(city, state, db)
         if corrected is not None:
             state.corrected_mu_f = corrected
+            # The intraday correction already embeds the obs-vs-model anomaly
+            # (delta × decay, ±15°F cap). obs_bias_offset_f carries the SAME
+            # signal via a second path (latest_temp − open-meteo hourly), and
+            # the envelope adds it on top of the final forecast mean — so
+            # leaving both set counts the anomaly twice (#657). The offset
+            # survives only as the fallback nowcast nudge for states where
+            # the intraday correction is unavailable.
+            state.obs_bias_offset_f = None
             log.debug("[%s] corrected_mu_f=%.1fF (delta=%+.1fF)", station, corrected, corrected - deb_mu_f)
         # Apply per-city rolling residual bias correction (issue #307)
         base_mu = state.corrected_mu_f if state.corrected_mu_f is not None else deb_mu_f
