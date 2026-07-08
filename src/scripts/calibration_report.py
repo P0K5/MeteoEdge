@@ -142,16 +142,22 @@ def load_resolutions(db, tickers: "set[str]", fetch: bool, workers: int) -> dict
     res: dict = {}
 
     if db is not None:
-        for r in db._conn.execute(
-            "SELECT ticker, resolved_yes, market_final_price, resolution_source FROM settlements"
-        ):
-            t, ry, mfp, src = r[0], r[1], r[2], r[3]
-            if t not in tickers:
-                continue
-            definitive = (mfp is not None and (mfp >= 95 or mfp <= 5)) or (
-                src in ("gamma", "gamma_repair"))
-            if definitive:
-                res[t] = bool(ry)
+        try:
+            for r in db._conn.execute(
+                "SELECT ticker, resolved_yes, market_final_price, resolution_source FROM settlements"
+            ):
+                t, ry, mfp, src = r[0], r[1], r[2], r[3]
+                if t not in tickers:
+                    continue
+                definitive = (mfp is not None and (mfp >= 95 or mfp <= 5)) or (
+                    src in ("gamma", "gamma_repair"))
+                if definitive:
+                    res[t] = bool(ry)
+        except Exception as e:
+            # A torn DB copy (e.g. snapshot taken mid-write) must not kill the
+            # report — the cache + Gamma fetch path covers the same tickers.
+            log.warning("[calibration] settlements read failed (%s) — "
+                        "falling back to cache/Gamma", e)
 
     cache = {}
     if os.path.exists(RESOLUTION_CACHE):
