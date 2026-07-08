@@ -83,7 +83,8 @@ def compute_envelope(state: WeatherState, minutes_to_settlement: float = 9999.0)
 def true_probability_yes(bracket: Bracket, state: WeatherState,
                          minutes_to_settlement: float = 9999.0,
                          forecast_stddev: float = 2.0,
-                         deb_enabled: "bool | None" = None) -> float:
+                         deb_enabled: "bool | None" = None,
+                         sigma_climb_fraction: float = 0.5) -> float:
     """Compute P(daily high falls in this bracket).
 
     Enhanced: uses ensemble forecast and time-to-settlement boost.
@@ -96,6 +97,11 @@ def true_probability_yes(bracket: Bracket, state: WeatherState,
         deb_enabled: Resolved DEB_ENABLED flag. Callers with DB access should pass
             the value from get_live_config (read once per scan cycle, not per bracket).
             When None, falls back to the DEB_ENABLED env var (backward compatibility).
+        sigma_climb_fraction: The effective stddev is floored at this fraction of
+            the climb still to come (max_env - current_high), so early-day
+            evaluations cannot claim near-certainty about a high that is mostly
+            unrealized (issue #652). Callers with DB access pass the live
+            ENVELOPE_SIGMA_CLIMB_FRACTION config value.
     """
     global _deb_enabled_logged
 
@@ -127,7 +133,12 @@ def true_probability_yes(bracket: Bracket, state: WeatherState,
     if forecast_mean is not None and forecast_mean > max_env:
         max_env = forecast_mean
 
-    if hi < state.current_high_f:
+    # Markets resolve [lo, hi): a running high AT the top edge already belongs
+    # to the bracket above and, being a running max, can never come back down.
+    # The old `hi < current_high` let boundary-exact highs (every integer-°C
+    # high on C-bucket stations) fall through to the certainty shortcut below,
+    # booking p=1.0 on brackets that resolved NO 96-100% of the time (#652).
+    if hi <= state.current_high_f:
         return 0.0
     if lo > max_env:
         return 0.0
@@ -141,8 +152,17 @@ def true_probability_yes(bracket: Bracket, state: WeatherState,
     if state.obs_bias_offset_f is not None:
         forecast_mean = max(min_env, min(max_env, forecast_mean + state.obs_bias_offset_f))
 
+    # Uncertainty about the day's high can never be tighter than a fraction of
+    # the climb still to come: with a fixed 2°F stddev, 6am evaluations claimed
+    # near-certainty on "X or below" brackets while the climb table still
+    # allowed a 20°F+ rise — those calls resolved wrong ~95% of the time (#652).
+    # Past the peak (max_env ≈ current_high) the floor vanishes and behavior
+    # is unchanged.
+    remaining_rise = max(0.0, max_env - state.current_high_f)
+    effective_stddev = max(forecast_stddev, sigma_climb_fraction * remaining_rise)
+
     # Base probability
-    p = p_normal_between(lo, hi, forecast_mean, forecast_stddev)
+    p = p_normal_between(lo, hi, forecast_mean, effective_stddev)
 
     # Boost confidence near settlement
     p = time_to_settlement_boost(p, minutes_to_settlement)
