@@ -40,6 +40,9 @@ from src.config import LOG_DIR
 
 RESOLUTION_CACHE = os.path.join("data", "resolution_cache.json")
 RAW_P_YES_AVAILABLE_FROM = "2026-06-18"  # issue #551 deploy date
+# Flush the resolution cache to disk every N Gamma fetches so an interrupted
+# first run (~6,300 markets, ~15 min) resumes instead of refetching everything.
+CACHE_FLUSH_EVERY = 500
 
 # Lead-time bands in minutes_to_settlement (label, lo, hi)
 LEAD_BANDS = [("<3h", 0, 180), ("3-8h", 180, 480), (">8h", 480, 10 ** 9)]
@@ -188,7 +191,7 @@ def load_resolutions(db, tickers: "set[str]", fetch: bool, workers: int) -> dict
                     res[t] = r
                 # Flush periodically so an interrupted run resumes from where
                 # it stopped instead of refetching thousands of markets.
-                if i % 500 == 0:
+                if i % CACHE_FLUSH_EVERY == 0:
                     save_cache()
                     print(f"  {i}/{len(missing)} fetched...")
         save_cache()
