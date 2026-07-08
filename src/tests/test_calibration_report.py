@@ -99,3 +99,75 @@ class TestBrierScore:
 
     def test_empty_returns_none(self):
         assert brier_score([]) is None
+
+
+class TestLoadResolutionsHardening:
+    """Issue #654: torn-DB tolerance and mid-run cache flushing."""
+
+    def _tmp_cache(self, tmp_path, monkeypatch):
+        import src.scripts.calibration_report as cr
+        cache_path = tmp_path / "resolution_cache.json"
+        monkeypatch.setattr(cr, "RESOLUTION_CACHE", str(cache_path))
+        return cr, cache_path
+
+    def test_torn_db_read_falls_back_to_gamma(self, tmp_path, monkeypatch):
+        """A DB whose settlements read raises must not crash the report --
+        the Gamma path covers the same tickers."""
+        import sqlite3
+        from unittest.mock import patch
+        cr, _ = self._tmp_cache(tmp_path, monkeypatch)
+
+        class TornConn:
+            def execute(self, *_a, **_k):
+                raise sqlite3.DatabaseError("database disk image is malformed")
+
+        class TornDB:
+            _conn = TornConn()
+
+        with patch("src.data.polymarket.fetch_market_resolution",
+                   side_effect=lambda t: True):
+            res = cr.load_resolutions(TornDB(), {"0xaaa", "0xbbb"},
+                                      fetch=True, workers=1)
+        assert res == {"0xaaa": True, "0xbbb": True}
+
+    def test_cache_flushed_mid_loop(self, tmp_path, monkeypatch):
+        """With CACHE_FLUSH_EVERY=2 and 5 tickers the cache must be written
+        to disk MORE than once — at i=2, i=4, and after the loop — so an
+        interrupted run resumes from the last flush (resumability)."""
+        import json as _json
+        from unittest.mock import patch
+        cr, cache_path = self._tmp_cache(tmp_path, monkeypatch)
+        monkeypatch.setattr(cr, "CACHE_FLUSH_EVERY", 2)
+
+        tickers = {f"0x{i}" for i in range(5)}
+        real_dump = _json.dump
+        dump_calls = []
+
+        def counting_dump(obj, fh, *a, **k):
+            dump_calls.append(dict(obj))
+            return real_dump(obj, fh, *a, **k)
+
+        with patch("src.data.polymarket.fetch_market_resolution",
+                   side_effect=lambda t: False), \
+             patch.object(cr.json, "dump", counting_dump):
+            res = cr.load_resolutions(None, tickers, fetch=True, workers=1)
+
+        assert len(res) == 5 and all(v is False for v in res.values())
+        # 5 tickers / flush-every-2 -> mid-loop flushes at 2 and 4 plus the
+        # final save = 3 writes; a single end-only write would be 1.
+        assert len(dump_calls) == 3, f"expected 3 cache writes, got {len(dump_calls)}"
+        # each successive flush contains at least as much as the previous
+        assert len(dump_calls[0]) == 2 and len(dump_calls[1]) == 4
+        saved = _json.loads(cache_path.read_text())
+        assert set(saved) == tickers
+
+    def test_cached_values_short_circuit_fetch(self, tmp_path, monkeypatch):
+        import json as _json
+        from unittest.mock import patch
+        cr, cache_path = self._tmp_cache(tmp_path, monkeypatch)
+        cache_path.write_text(_json.dumps({"0xcached": True}))
+
+        with patch("src.data.polymarket.fetch_market_resolution",
+                   side_effect=AssertionError("must not fetch cached ticker")):
+            res = cr.load_resolutions(None, {"0xcached"}, fetch=True, workers=1)
+        assert res == {"0xcached": True}
