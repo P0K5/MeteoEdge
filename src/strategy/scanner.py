@@ -23,6 +23,7 @@ from src.config import (
     ENABLE_CLOB_ENRICHMENT, MIN_FORECAST_BRACKET_MARGIN_F, DISABLED_STATIONS,
     SHADOW_STATIONS, SHADOW_STATIONS_YES, SHADOW_STATIONS_NO,
     CONFIG_DEFAULTS, get_live_config, MODEL_PROB_CAP, FORECAST_STDDEV_F,
+    ENVELOPE_SIGMA_CLIMB_FRACTION,
 )
 from src.model.envelope import Bracket, WeatherState, true_probability_yes, compute_envelope
 from src.model.emos_mode import get_city_mode, apply_emos, _check_ready_for_promotion
@@ -392,6 +393,7 @@ def scan_markets(
         max_edge_cents      = _cfg("MAX_EDGE_CENTS", MAX_EDGE_CENTS, float)
         min_price_cents     = _cfg("MIN_PRICE_CENTS", MIN_PRICE_CENTS, lambda v: int(float(v)))
         max_conf_yes_for_no = _cfg("MAX_CONFIDENCE_YES_FOR_NO", MAX_CONFIDENCE_YES_FOR_NO, float)
+        sigma_climb_fraction = _cfg("ENVELOPE_SIGMA_CLIMB_FRACTION", ENVELOPE_SIGMA_CLIMB_FRACTION, float)
     else:
         shadow_yes_edge_min  = float(CONFIG_DEFAULTS["SHADOW_MIN_EDGE_CENTS_YES"])
         shadow_yes_conf_min  = float(CONFIG_DEFAULTS["SHADOW_MIN_CONFIDENCE_YES"])
@@ -402,6 +404,7 @@ def scan_markets(
         max_edge_cents      = MAX_EDGE_CENTS
         min_price_cents     = MIN_PRICE_CENTS
         max_conf_yes_for_no = MAX_CONFIDENCE_YES_FOR_NO
+        sigma_climb_fraction = ENVELOPE_SIGMA_CLIMB_FRACTION
 
     for market in markets:
         try:
@@ -510,9 +513,9 @@ def scan_markets(
                         emos_mode_used = "emos_primary"
 
             if emos_stddev_override is not None:
-                p_yes = true_probability_yes(bracket, state, mins_left, forecast_stddev=emos_stddev_override, deb_enabled=_deb_enabled)
+                p_yes = true_probability_yes(bracket, state, mins_left, forecast_stddev=emos_stddev_override, deb_enabled=_deb_enabled, sigma_climb_fraction=sigma_climb_fraction)
             else:
-                p_yes = true_probability_yes(bracket, state, mins_left, deb_enabled=_deb_enabled)
+                p_yes = true_probability_yes(bracket, state, mins_left, deb_enabled=_deb_enabled, sigma_climb_fraction=sigma_climb_fraction)
             raw_p_yes = p_yes
             # round() avoids IEEE 754 creep: 1.0-0.95 = 0.050000000000000044
             # which would silently fail the p_yes <= MAX_CONFIDENCE_YES_FOR_NO=0.05 gate.

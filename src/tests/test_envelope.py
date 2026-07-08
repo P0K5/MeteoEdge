@@ -258,9 +258,19 @@ class TestTrueProbabilityYes:
         bracket = make_bracket(low_f=70.0, high_f=90.0)
         assert true_probability_yes(bracket, state) == 1.0
 
-    def test_exact_envelope_bracket_returns_one(self):
+    def test_degenerate_bracket_at_high_returns_zero(self):
+        """Markets resolve [lo, hi): a zero-width bracket is empty, and a high
+        AT the top edge belongs to the bracket above (issue #652). The old
+        assertion (== 1.0) encoded the inclusive-top-edge bug."""
         state = make_state(current_high_f=82.0, latest_temp_f=82.0, hour=21)
         bracket = make_bracket(low_f=82.0, high_f=82.0)
+        assert true_probability_yes(bracket, state) == 0.0
+
+    def test_bracket_starting_at_high_returns_one_when_no_rise_left(self):
+        """The non-degenerate version of the old intent: [high, high+2) with
+        the envelope fully inside is certain — lo is inclusive."""
+        state = make_state(current_high_f=82.0, latest_temp_f=82.0, hour=21)
+        bracket = make_bracket(low_f=82.0, high_f=84.0)
         assert true_probability_yes(bracket, state) == 1.0
 
     def test_bayesian_case_uses_forecast(self):
@@ -537,3 +547,84 @@ class TestDebMuFLiveConfig:
             f"got both={p_both:.6f}, corrected_only={p_corrected_only:.6f}"
         )
         assert 0.0 <= p_both <= 1.0
+
+
+class TestExclusiveTopEdge:
+    """Issue #652 Bug A: markets resolve [lo, hi) — a running high AT the top
+    edge belongs to the bracket above and can never come back down. 119 of the
+    calibration report's 'certain YES' markets had current_high == bracket_high
+    exactly and resolved NO 96-100% of the time."""
+
+    def test_current_high_exactly_at_top_edge_is_zero(self):
+        # RCSS 2026-06-18 replica: bracket [93.2, 95.0], running high 95.0,
+        # evening (no further rise). Old code returned 1.0; market resolved NO.
+        state = make_state(current_high_f=95.0, latest_temp_f=88.0,
+                           forecast_high_f=None, hour=20, station="RCSS")
+        bracket = make_bracket(low_f=93.2, high_f=95.0)
+        assert true_probability_yes(bracket, state, minutes_to_settlement=16.0) == 0.0
+
+    def test_current_high_above_top_edge_is_zero(self):
+        state = make_state(current_high_f=96.0, latest_temp_f=90.0,
+                           forecast_high_f=None, hour=20)
+        bracket = make_bracket(low_f=93.2, high_f=95.0)
+        assert true_probability_yes(bracket, state) == 0.0
+
+    def test_current_high_at_bottom_edge_still_in_bracket(self):
+        """lo is inclusive: high == lo means YES is currently winning."""
+        state = make_state(current_high_f=95.0, latest_temp_f=88.0,
+                           forecast_high_f=None, hour=20, station="RCSS")
+        bracket = make_bracket(low_f=95.0, high_f=96.8)
+        p = true_probability_yes(bracket, state, minutes_to_settlement=16.0)
+        assert p > 0.5  # currently-winning bracket, little rise left
+
+    def test_current_high_strictly_inside_still_certain(self):
+        """Past peak, high strictly inside the bracket → certainty unchanged."""
+        state = make_state(current_high_f=94.0, latest_temp_f=88.0,
+                           forecast_high_f=None, hour=20, station="RCSS")
+        bracket = make_bracket(low_f=93.2, high_f=95.0)
+        # max_env == current_high when no further rise is expected
+        from unittest.mock import patch
+        with patch("src.model.envelope.expected_additional_rise", return_value=0.0):
+            assert true_probability_yes(bracket, state) == 1.0
+
+
+class TestSigmaClimbFloor:
+    """Issue #652 Bug B: the effective stddev is floored at a fraction of the
+    climb still to come, so early-day evaluations cannot claim near-certainty
+    about a mostly-unrealized daily high."""
+
+    def test_morning_open_low_bracket_not_certain(self):
+        # KORD 2026-07-07 11:06 UTC replica: 'high <= 73' bracket, current 66,
+        # obs-anchored mu ~66, NWS forecast 84, ~18F of climb still to come.
+        # Old code: p ~ 0.9998 with sigma=2. Market resolved NO.
+        from unittest.mock import patch
+        state = make_state(current_high_f=66.02, latest_temp_f=66.02,
+                           forecast_high_f=84.0, hour=6, station="KORD")
+        state.corrected_mu_f = 66.0  # intraday correction anchored to morning obs
+        bracket = make_bracket(low_f=-50.0, high_f=73.0)
+        with patch("src.model.envelope.expected_additional_rise", return_value=18.0):
+            p = true_probability_yes(bracket, state, minutes_to_settlement=54.0)
+        assert p < 0.95, f"morning certainty must be suppressed, got {p:.4f}"
+
+    def test_past_peak_behavior_unchanged(self):
+        """No remaining climb → floor inactive → identical to fixed stddev."""
+        from unittest.mock import patch
+        state = make_state(current_high_f=80.0, latest_temp_f=78.0,
+                           forecast_high_f=80.5, hour=19)
+        bracket = make_bracket(low_f=79.0, high_f=81.0)
+        with patch("src.model.envelope.expected_additional_rise", return_value=0.0):
+            p_default = true_probability_yes(bracket, state, sigma_climb_fraction=0.5)
+            p_zero_frac = true_probability_yes(bracket, state, sigma_climb_fraction=0.0)
+        assert p_default == p_zero_frac
+
+    def test_fraction_zero_restores_old_behavior(self):
+        from unittest.mock import patch
+        state = make_state(current_high_f=66.0, latest_temp_f=66.0,
+                           forecast_high_f=None, hour=6, station="KORD")
+        state.corrected_mu_f = 66.0
+        bracket = make_bracket(low_f=-50.0, high_f=73.0)
+        with patch("src.model.envelope.expected_additional_rise", return_value=18.0):
+            p_old = true_probability_yes(bracket, state, sigma_climb_fraction=0.0)
+            p_new = true_probability_yes(bracket, state, sigma_climb_fraction=0.5)
+        assert p_old > 0.99      # the old deluded certainty
+        assert p_new < p_old     # the floor widens uncertainty
