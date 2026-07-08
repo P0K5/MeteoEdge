@@ -347,6 +347,10 @@ MIN_FORECAST_BRACKET_MARGIN_F = float(os.getenv("MIN_FORECAST_BRACKET_MARGIN_F",
 # so the system never treats a bracket as a certainty. Setting to 1.0 reproduces
 # pre-guardrail behaviour exactly. Remove/loosen once EMOS (#70) is promoted.
 MODEL_PROB_CAP = float(os.getenv("MODEL_PROB_CAP", "0.95"))
+# Envelope stddev floor as a fraction of the climb still to come (issue #652):
+# effective_stddev = max(forecast_stddev, fraction * (max_env - current_high)).
+# Prevents near-certain morning claims about a high that is mostly unrealized.
+ENVELOPE_SIGMA_CLIMB_FRACTION = float(os.getenv("ENVELOPE_SIGMA_CLIMB_FRACTION", "0.5"))
 
 # EMOS deployment mode: 'legacy' | 'emos_shadow' | 'emos_primary'
 # Per-city mode is read from the emos_calibration table; this is the fallback
@@ -496,6 +500,7 @@ CONFIG_DEFAULTS: "dict[str, str | int | float | bool]" = {
     "SHADOW_MIN_CONFIDENCE_YES": 0.55,
     "SHADOW_MIN_PRICE_CENTS_YES": 20,
     "MODEL_PROB_CAP": 0.95,
+    "ENVELOPE_SIGMA_CLIMB_FRACTION": 0.5,
     # Stage 1 of issue #551: rank/prioritize candidates using the uncapped (raw)
     # model probability instead of scan order. Default off -- entry gates always
     # consume the capped p_yes regardless of this flag; only which candidate is

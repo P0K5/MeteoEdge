@@ -2094,6 +2094,13 @@ _CONFIG_META: dict[str, dict] = {
         "min": 0.0,
         "max": 10.0,
     },
+    "ENVELOPE_SIGMA_CLIMB_FRACTION": {
+        "description": "Model stddev floor as a fraction of the climb still to come — blocks near-certain claims early in the day (#652)",
+        "type": "float",
+        "group": "strategy",
+        "min": 0.0,
+        "max": 1.0,
+    },
     "EMOS_DEFAULT_MODE": {
         "description": "EMOS deployment mode fallback when no calibration row exists",
         "type": "enum",
