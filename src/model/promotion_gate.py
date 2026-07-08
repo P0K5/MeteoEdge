@@ -291,16 +291,22 @@ def breakeven_win_rate(avg_entry_price_cents: float) -> float:
     return (avg_entry_price_cents + fee_cents) / 100.0
 
 
-def _trade_is_win(trade: dict, settlement_map: dict) -> "bool | None":
-    """Return True/False if *trade* settled as a win/loss, or None if unsettled."""
-    ticker = trade.get("ticker")
-    if ticker not in settlement_map:
+def _trade_is_win(trade: dict) -> "bool | None":
+    """Return True/False if *trade* settled as a win/loss, or None if unsettled.
+
+    Shadow trades are settled directly onto their own row by
+    settle_shadow_trades() (pnl + settled_at set together; see settle.py) —
+    they are NEVER written to the ``settlements`` table, which only covers
+    live-trade markets via _write_db_settlements(). A previous version of
+    this function joined shadow trades against ``settlements`` by ticker,
+    which matched fewer than 2% of settled shadow rows (issue #655) and made
+    the promotion bar report "no settled shadow trades" for almost every
+    station regardless of actual data volume.
+    """
+    pnl = trade.get("pnl")
+    if pnl is None:
         return None
-    resolved_yes = settlement_map[ticker]
-    side = trade.get("side")
-    if side == "YES":
-        return resolved_yes == 1
-    return resolved_yes == 0
+    return float(pnl) > 0
 
 
 def _get_local_date(ts: str, station: str) -> "str | None":
@@ -362,10 +368,6 @@ def compute_promotion_bar(db) -> list:
     z = _z_for_confidence(confidence)
 
     all_shadow = db.get_trades(mode="shadow", limit=None)
-    settlements = db.get_all_settlements(since="2000-01-01T00:00:00")
-    settlement_map = {
-        s["ticker"]: s.get("resolved_yes", 0) for s in settlements
-    }
 
     # Restrict to direction='high': the bar's truth source (daily high) and
     # settlement path only cover high-side markets. Filtering explicitly here
@@ -380,9 +382,12 @@ def compute_promotion_bar(db) -> list:
     rows = []
     for (station, side) in sorted(groups.keys()):
         trades = groups[(station, side)]
-        settled = [t for t in trades if t.get("ticker") in settlement_map]
+        # A shadow trade is settled when settle_shadow_trades() has written
+        # its own pnl (see _trade_is_win) -- NOT via the settlements table,
+        # which only covers live-trade markets (issue #655).
+        settled = [t for t in trades if t.get("pnl") is not None]
         n = len(settled)
-        wins = sum(1 for t in settled if _trade_is_win(t, settlement_map))
+        wins = sum(1 for t in settled if _trade_is_win(t))
 
         if n > 0:
             win_rate = wins / n
