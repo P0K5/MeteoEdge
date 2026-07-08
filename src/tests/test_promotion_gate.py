@@ -405,12 +405,11 @@ class TestBreakevenWinRate:
 
 class _FakeDB:
     """Minimal fake DB for compute_promotion_bar — avoids per-call config reads
-    by returning a fixed config snapshot, and serves bulk trades/settlements
-    exactly like the real Database's get_trades/get_all_settlements."""
+    by returning a fixed config snapshot, and serves bulk trades exactly like
+    the real Database's get_trades()."""
 
-    def __init__(self, trades, settlements, config=None):
+    def __init__(self, trades, config=None):
         self._trades = trades
-        self._settlements = settlements
         self._config = config or {}
 
     def get_all_config(self):
@@ -419,20 +418,24 @@ class _FakeDB:
     def get_trades(self, limit=50, mode=None, direction=None):
         return [t for t in self._trades if mode is None or t.get("mode") == mode]
 
-    def get_all_settlements(self, since, direction=None):
-        return self._settlements
 
-
-def _trade(station, side, ticker, actual_price, ts="2026-06-01T12:00:00", mode="shadow",
-           direction="high"):
+def _trade(station, side, ticker, actual_price, won: "bool | None" = None,
+           ts="2026-06-01T12:00:00", mode="shadow", direction="high"):
+    """Build a shadow trade row the way settle_shadow_trades() leaves it:
+    pnl set directly on the row (win: (100-ask)/100, loss: -ask/100), no
+    settlements-table join (issue #655 — shadow trades are NEVER written to
+    the settlements table, only live-trade markets are). won=None means the
+    trade is still unsettled: pnl stays None, matching a real pending row.
+    """
+    if won is None:
+        pnl = None
+    else:
+        pnl = (100 - actual_price) / 100 if won else -actual_price / 100
     return {
         "station": station, "side": side, "ticker": ticker,
-        "actual_price": actual_price, "ts": ts, "mode": mode, "direction": direction,
+        "actual_price": actual_price, "pnl": pnl, "ts": ts, "mode": mode,
+        "direction": direction,
     }
-
-
-def _settlement(ticker, resolved_yes):
-    return {"ticker": ticker, "resolved_yes": resolved_yes}
 
 
 class TestComputePromotionBar:
@@ -443,16 +446,31 @@ class TestComputePromotionBar:
     def test_db_none_returns_empty_list(self):
         assert compute_promotion_bar(None) == []
 
+    def test_settled_trades_counted_without_any_settlements_table_row(self):
+        """Issue #655 regression: a shadow trade settled by the real
+        settle_shadow_trades() flow has NO row in the settlements table at
+        all (it writes pnl directly onto the trade). The bar must still
+        count it as settled -- the old code silently reported n=0 for
+        essentially every station because it joined shadow trades against
+        settlements, which only ever holds live-trade markets."""
+        trades = [_trade("KATL", "NO", "katl-only-on-trade-row", 65, won=True)]
+        db = _FakeDB(trades)
+
+        rows = compute_promotion_bar(db)
+        row = next(r for r in rows if r["station"] == "KATL" and r["side"] == "NO")
+
+        assert row["n"] == 1
+        assert row["wins"] == 1
+
     def test_green_eligible_station(self):
-        # WSSS/NO: 30 settled trades, 29 wins (resolved_yes=0 for NO wins), avg
-        # entry 65c. wilson_lower_bound(29,30)=0.833292 > breakeven(65)=0.665925,
+        # WSSS/NO: 30 settled trades, 29 wins, avg entry 65c.
+        # wilson_lower_bound(29,30)=0.833292 > breakeven(65)=0.665925,
         # and n=30 >= default PROMOTION_MIN_SETTLED_TRADES=30 -> green/eligible.
-        trades = [_trade("WSSS", "NO", f"wsss-{i}", 65) for i in range(30)]
-        settlements = [_settlement(f"wsss-{i}", resolved_yes=0) for i in range(29)]
-        settlements.append(_settlement("wsss-29", resolved_yes=1))  # 1 loss
+        trades = [_trade("WSSS", "NO", f"wsss-{i}", 65, won=True) for i in range(29)]
+        trades.append(_trade("WSSS", "NO", "wsss-29", 65, won=False))  # 1 loss
         # Fixtures use 65c entries; pin the price floor they were computed
         # against (the code default moved to 70c in #644).
-        db = _FakeDB(trades, settlements, config={"MIN_PRICE_CENTS": "60"})
+        db = _FakeDB(trades, config={"MIN_PRICE_CENTS": "60"})
 
         rows = compute_promotion_bar(db)
         row = next(r for r in rows if r["station"] == "WSSS" and r["side"] == "NO")
@@ -470,9 +488,8 @@ class TestComputePromotionBar:
         # ZGSZ/NO: only 10 settled trades, all wins, avg entry 65c.
         # wilson_lower_bound(10,10)=0.722460 > breakeven(65)=0.665925 (clears
         # the statistical bar) but n=10 < 30 -> amber, not eligible.
-        trades = [_trade("ZGSZ", "NO", f"zgsz-{i}", 65) for i in range(10)]
-        settlements = [_settlement(f"zgsz-{i}", resolved_yes=0) for i in range(10)]
-        db = _FakeDB(trades, settlements)
+        trades = [_trade("ZGSZ", "NO", f"zgsz-{i}", 65, won=True) for i in range(10)]
+        db = _FakeDB(trades)
 
         rows = compute_promotion_bar(db)
         row = next(r for r in rows if r["station"] == "ZGSZ")
@@ -487,10 +504,9 @@ class TestComputePromotionBar:
         # RKSI/NO: 30 settled trades, 18 wins (60%), avg entry 65c.
         # wilson_lower_bound(18,30)=0.423201 <= breakeven(65)=0.665925 -> red,
         # even though n=30 meets the minimum sample size.
-        trades = [_trade("RKSI", "NO", f"rksi-{i}", 65) for i in range(30)]
-        settlements = [_settlement(f"rksi-{i}", resolved_yes=0) for i in range(18)]
-        settlements += [_settlement(f"rksi-{i}", resolved_yes=1) for i in range(18, 30)]
-        db = _FakeDB(trades, settlements)
+        trades = [_trade("RKSI", "NO", f"rksi-{i}", 65, won=True) for i in range(18)]
+        trades += [_trade("RKSI", "NO", f"rksi-{i}", 65, won=False) for i in range(18, 30)]
+        db = _FakeDB(trades)
 
         rows = compute_promotion_bar(db)
         row = next(r for r in rows if r["station"] == "RKSI")
@@ -506,10 +522,9 @@ class TestComputePromotionBar:
         # breakeven(50)=0.5175, and n=35 >= 30, so eligible=True per the
         # strict rule -- but status is downgraded to amber because the low
         # entry price means the shadow data may not reflect live conditions.
-        trades = [_trade("EGLC", "NO", f"eglc-{i}", 50) for i in range(35)]
-        settlements = [_settlement(f"eglc-{i}", resolved_yes=0) for i in range(30)]
-        settlements += [_settlement(f"eglc-{i}", resolved_yes=1) for i in range(30, 35)]
-        db = _FakeDB(trades, settlements)
+        trades = [_trade("EGLC", "NO", f"eglc-{i}", 50, won=True) for i in range(30)]
+        trades += [_trade("EGLC", "NO", f"eglc-{i}", 50, won=False) for i in range(30, 35)]
+        db = _FakeDB(trades)
 
         rows = compute_promotion_bar(db)
         row = next(r for r in rows if r["station"] == "EGLC")
@@ -522,8 +537,8 @@ class TestComputePromotionBar:
 
     def test_red_no_settled_trades_yet(self):
         # MPMG/YES: one shadow trade logged but not yet settled -> n=0, red.
-        trades = [_trade("MPMG", "YES", "mpmg-1", 70)]
-        db = _FakeDB(trades, settlements=[])
+        trades = [_trade("MPMG", "YES", "mpmg-1", 70, won=None)]
+        db = _FakeDB(trades)
 
         rows = compute_promotion_bar(db)
         row = next(r for r in rows if r["station"] == "MPMG")
@@ -534,11 +549,12 @@ class TestComputePromotionBar:
         assert "no settled shadow trades" in row["reason"]
 
     def test_yes_side_win_condition(self):
-        # YES side wins when resolved_yes==1 (opposite of NO).
-        trades = [_trade("WMKK", "YES", f"wmkk-{i}", 65) for i in range(30)]
-        settlements = [_settlement(f"wmkk-{i}", resolved_yes=1) for i in range(29)]
-        settlements.append(_settlement("wmkk-29", resolved_yes=0))
-        db = _FakeDB(trades, settlements, config={"MIN_PRICE_CENTS": "60"})
+        # YES side wins when the bracket was hit -- opposite polarity of NO,
+        # but here that's just a matter of which `won` flag was passed in
+        # when the row's pnl was computed.
+        trades = [_trade("WMKK", "YES", f"wmkk-{i}", 65, won=True) for i in range(29)]
+        trades.append(_trade("WMKK", "YES", "wmkk-29", 65, won=False))
+        db = _FakeDB(trades, config={"MIN_PRICE_CENTS": "60"})
 
         rows = compute_promotion_bar(db)
         row = next(r for r in rows if r["station"] == "WMKK" and r["side"] == "YES")
@@ -550,9 +566,8 @@ class TestComputePromotionBar:
         # Lowering PROMOTION_MIN_SETTLED_TRADES via config should make an
         # otherwise-amber (insufficient-n) station eligible, proving the
         # threshold is read from config rather than hardcoded.
-        trades = [_trade("ZGSZ", "NO", f"zgsz-{i}", 65) for i in range(10)]
-        settlements = [_settlement(f"zgsz-{i}", resolved_yes=0) for i in range(10)]
-        db = _FakeDB(trades, settlements, config={
+        trades = [_trade("ZGSZ", "NO", f"zgsz-{i}", 65, won=True) for i in range(10)]
+        db = _FakeDB(trades, config={
             "PROMOTION_MIN_SETTLED_TRADES": "5", "MIN_PRICE_CENTS": "60",
         })
 
@@ -572,13 +587,12 @@ class TestComputePromotionBarExcludesNonHighDirection:
         # 30 high-direction NO trades (all wins) form a green row for LFPB.
         # 5 additional direction='low' rows for the SAME station+side, all
         # wins, would inflate n to 35 and change the stats if not filtered.
-        high_trades = [_trade("LFPB", "NO", f"lfpb-h{i}", 65) for i in range(30)]
+        high_trades = [_trade("LFPB", "NO", f"lfpb-h{i}", 65, won=True) for i in range(30)]
         low_trades = [
-            _trade("LFPB", "NO", f"lfpb-l{i}", 65, direction="low") for i in range(5)
+            _trade("LFPB", "NO", f"lfpb-l{i}", 65, won=True, direction="low")
+            for i in range(5)
         ]
-        settlements = [_settlement(f"lfpb-h{i}", resolved_yes=0) for i in range(30)]
-        settlements += [_settlement(f"lfpb-l{i}", resolved_yes=0) for i in range(5)]
-        db = _FakeDB(high_trades + low_trades, settlements)
+        db = _FakeDB(high_trades + low_trades)
 
         rows = compute_promotion_bar(db)
         row = next(r for r in rows if r["station"] == "LFPB" and r["side"] == "NO")
@@ -590,10 +604,10 @@ class TestComputePromotionBarExcludesNonHighDirection:
         # A station/side pair with ONLY direction='low' shadow rows should not
         # appear in the output at all (no direction='high' rows to group).
         low_trades = [
-            _trade("KMIA", "NO", f"kmia-l{i}", 65, direction="low") for i in range(10)
+            _trade("KMIA", "NO", f"kmia-l{i}", 65, won=True, direction="low")
+            for i in range(10)
         ]
-        settlements = [_settlement(f"kmia-l{i}", resolved_yes=0) for i in range(10)]
-        db = _FakeDB(low_trades, settlements)
+        db = _FakeDB(low_trades)
 
         rows = compute_promotion_bar(db)
         assert not any(r["station"] == "KMIA" for r in rows)
@@ -609,14 +623,10 @@ class TestDaysCoverageLocalDate:
         # - 2026-06-15T04:30:00 UTC = 2026-06-15T00:30:00 EDT (local date 2026-06-15)
         # Both are different local dates, so days_coverage should be 2.
         trades = [
-            _trade("KATL", "NO", "katl-1", 65, ts="2026-06-15T03:30:00+00:00"),
-            _trade("KATL", "NO", "katl-2", 65, ts="2026-06-15T04:30:00+00:00"),
+            _trade("KATL", "NO", "katl-1", 65, won=True, ts="2026-06-15T03:30:00+00:00"),
+            _trade("KATL", "NO", "katl-2", 65, won=True, ts="2026-06-15T04:30:00+00:00"),
         ]
-        settlements = [
-            _settlement("katl-1", resolved_yes=0),
-            _settlement("katl-2", resolved_yes=0),
-        ]
-        db = _FakeDB(trades, settlements)
+        db = _FakeDB(trades)
 
         rows = compute_promotion_bar(db)
         row = next(r for r in rows if r["station"] == "KATL" and r["side"] == "NO")
@@ -631,14 +641,10 @@ class TestDaysCoverageLocalDate:
         # - 2026-06-15T04:00:00 UTC = 2026-06-15T12:00:00 MYT (local date 2026-06-15)
         # Both are the same local date, so days_coverage should be 1.
         trades = [
-            _trade("WMKK", "NO", "wmkk-1", 65, ts="2026-06-14T16:00:00+00:00"),
-            _trade("WMKK", "NO", "wmkk-2", 65, ts="2026-06-15T04:00:00+00:00"),
+            _trade("WMKK", "NO", "wmkk-1", 65, won=True, ts="2026-06-14T16:00:00+00:00"),
+            _trade("WMKK", "NO", "wmkk-2", 65, won=True, ts="2026-06-15T04:00:00+00:00"),
         ]
-        settlements = [
-            _settlement("wmkk-1", resolved_yes=0),
-            _settlement("wmkk-2", resolved_yes=0),
-        ]
-        db = _FakeDB(trades, settlements)
+        db = _FakeDB(trades)
 
         rows = compute_promotion_bar(db)
         row = next(r for r in rows if r["station"] == "WMKK" and r["side"] == "NO")

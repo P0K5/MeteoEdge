@@ -1733,28 +1733,28 @@ class TestPromotionBarEndpoint:
             # upsert_shadow_trade dedups on (station, bracket_low, bracket_high,
             # side, direction, day) -- vary bracket_low per trade so all 30 are
             # distinct rows rather than collapsing into updates of one row.
+            #
+            # Settlement is written the way settle_shadow_trades() actually
+            # does it: pnl set directly on the trade row (issue #655 -- shadow
+            # trades are NEVER written to the settlements table, only
+            # live-trade markets are, so the promotion bar must never join
+            # against settlements for shadow data).
             for i in range(29):
-                db.upsert_shadow_trade(
+                row_id, _ = db.upsert_shadow_trade(
                     ts=f"2026-06-{(i % 28) + 1:02d}T12:00:00", station="WSSS", ticker=f"w{i}",
                     bracket_low=88.0 + i, bracket_high=90.0 + i, side="NO",
                     predicted_price=63, actual_price=65, predicted_edge=10.0,
                 )
-                db.insert_settlement(
-                    ts=f"2026-06-{(i % 28) + 1:02d}T12:00:00", station="WSSS", ticker=f"w{i}",
-                    bracket_low=88.0 + i, bracket_high=90.0 + i, actual_high_f=91.0,
-                    resolved_yes=0,
-                )
+                db.update_trade_by_id(row_id, outcome="filled", pnl=(100 - 65) / 100,
+                                      capital_after=(100 - 65) / 100, settled_at="2026-06-15T00:00:00")
             # 1 loss to keep it realistic
-            db.upsert_shadow_trade(
+            row_id, _ = db.upsert_shadow_trade(
                 ts="2026-07-01T00:00:00", station="WSSS", ticker="w29",
                 bracket_low=200.0, bracket_high=202.0, side="NO",
                 predicted_price=63, actual_price=65, predicted_edge=10.0,
             )
-            db.insert_settlement(
-                ts="2026-07-01T00:00:00", station="WSSS", ticker="w29",
-                bracket_low=200.0, bracket_high=202.0, actual_high_f=89.0,
-                resolved_yes=1,
-            )
+            db.update_trade_by_id(row_id, outcome="filled", pnl=-65 / 100,
+                                  capital_after=-65 / 100, settled_at="2026-07-01T00:00:00")
 
             dash_api.set_db(db)
             resp = client.get("/api/promotion-bar")
