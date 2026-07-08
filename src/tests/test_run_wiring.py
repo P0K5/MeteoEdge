@@ -871,3 +871,84 @@ class TestPollOnceSharesMetarFetch:
         assert high_side_metars_seen[0] is self._FAKE_METAR
         assert low_side_metars_seen[0] is self._FAKE_METAR
         assert high_side_metars_seen[0] is low_side_metars_seen[0]
+
+
+class TestObsBiasIntradayExclusivity:
+    """Issue #657: the intraday correction and obs_bias_offset_f carry the
+    same physical signal (obs running warm/cool vs the model). When the
+    intraday correction is active it already embeds the anomaly into
+    corrected_mu_f, so obs_bias_offset_f must be cleared — otherwise the
+    envelope adds the anomaly a second time. The offset survives only as the
+    fallback nudge when the intraday correction is unavailable."""
+
+    def _build(self, *, intraday_return, residual_delta=0.0):
+        """Run _build_weather with a deterministic mock stack and return the
+        WSSS WeatherState. `intraday_return` is what compute_correction yields;
+        `residual_delta` is added to base_mu by the residual correction."""
+        from datetime import datetime, timezone
+        from unittest.mock import patch, MagicMock
+        from src.weather.builder import _build_weather
+
+        now = datetime.now(timezone.utc)
+        fake_metar = [{"temp": "20.0", "reportTime": now.isoformat()}]
+
+        db = MagicMock()
+        db.get_latest_observation.return_value = None  # no high-freq obs override
+
+        def fake_residual(city, base_mu, _db):
+            return base_mu + residual_delta, None
+
+        with (
+            patch("src.weather.builder.fetch_all_metars_today", return_value=fake_metar),
+            patch("src.weather.builder.compute_daily_high", return_value=(80.0, now)),
+            patch("src.weather.builder.fetch_nws_forecast_high", return_value=82.0),
+            patch("src.weather.builder.fetch_secondary_forecast", return_value=83.0),
+            patch("src.weather.builder.fetch_gfs_forecast_high", return_value=81.0),
+            patch("src.weather.builder.fetch_hourly_temp_now", return_value=84.0),
+            patch("src.weather.builder.now_local", return_value=now),
+            patch("src.weather.builder.sunset_local", return_value=now),
+            patch("src.weather.builder.refresh_weights"),
+            patch("src.weather.builder.get_weights", return_value={"nws": 0.6, "open_meteo": 0.4}),
+            patch("src.weather.builder.compute_deb_mu_f", return_value=82.5),
+            patch("src.weather.builder.compute_correction", return_value=intraday_return),
+            patch("src.weather.builder.apply_residual_correction", side_effect=fake_residual),
+            patch("src.weather.builder.STATION_ACTIVE_HOURS", {"WSSS": (0, 24)}),
+            patch("src.weather.builder.STATIONS", [("WSSS", 1.3644, 103.9915, "Singapore", "WSSS", "C", "Asia/Singapore")]),
+            patch("src.weather.builder.STATION_TZ", {"WSSS": "Asia/Singapore"}),
+            patch("src.weather.builder.get_source_priority", return_value=[
+                {"source": "metar", "station": "WSSS", "cadence_min": 30},
+            ]),
+        ):
+            result = _build_weather(db=db)
+        state = result.get("WSSS")
+        assert state is not None, "_build_weather must return WSSS state"
+        return state
+
+    def test_intraday_active_clears_obs_bias(self):
+        """compute_correction returned a value → the anomaly lives in
+        corrected_mu_f and obs_bias_offset_f must be None."""
+        state = self._build(intraday_return=85.0)
+        assert state.corrected_mu_f == 85.0
+        assert state.obs_bias_offset_f is None
+
+    def test_intraday_unavailable_keeps_obs_bias_fallback(self):
+        """compute_correction returned None → legacy fallback: the offset
+        (latest_temp − hourly model = 68.0 − 84.0) stays on the state."""
+        state = self._build(intraday_return=None)
+        assert state.corrected_mu_f is None
+        assert state.obs_bias_offset_f == pytest.approx(68.0 - 84.0)
+
+    def test_residual_only_path_keeps_obs_bias(self):
+        """The residual correction is a day-scale bias signal, not the
+        intraday obs anomaly — when it alone sets corrected_mu_f, the
+        obs_bias fallback must remain."""
+        state = self._build(intraday_return=None, residual_delta=1.5)
+        assert state.corrected_mu_f == pytest.approx(82.5 + 1.5)  # deb_mu + residual
+        assert state.obs_bias_offset_f == pytest.approx(68.0 - 84.0)
+
+    def test_intraday_plus_residual_still_clears_obs_bias(self):
+        """Residual on top of an active intraday correction must not
+        resurrect the offset."""
+        state = self._build(intraday_return=85.0, residual_delta=1.5)
+        assert state.corrected_mu_f == pytest.approx(85.0 + 1.5)
+        assert state.obs_bias_offset_f is None
