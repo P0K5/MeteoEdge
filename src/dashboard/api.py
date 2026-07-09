@@ -1844,7 +1844,14 @@ def emos_mark_ready(city: str) -> EmosCityStatus:
 
 @app.get("/api/emos-shadow/status")
 def emos_shadow_status() -> list[dict]:
-    """Per-city EMOS shadow status: sample count, mean CRPS, ready_for_promotion."""
+    """Per-city EMOS shadow status: sample count, mean CRPS, ready_for_promotion.
+
+    ``legacy_mean_crps`` and ``crps_delta`` (issue #667) surface the
+    EMOS-vs-legacy promotion evidence: ``crps_delta`` = legacy_mean_crps -
+    mean_crps, positive meaning EMOS is beating the legacy baseline (lower
+    CRPS is better). Either field is None until both model_modes have at
+    least one logged row for the city.
+    """
     if _db is None:
         raise HTTPException(status_code=503, detail="Database not initialised")
     try:
@@ -1858,6 +1865,8 @@ def emos_shadow_status() -> list[dict]:
                 "city": city,
                 "n_samples": n_samples,
                 "mean_crps": status["mean_crps"],
+                "legacy_mean_crps": status["legacy_mean_crps"],
+                "crps_delta": status["crps_delta"],
                 "model_weights_snapshot": status["model_weights_snapshot"],
                 "ready_for_promotion": False,
             })

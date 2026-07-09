@@ -266,6 +266,139 @@ class TestRunnerLogsCrps:
 
 
 # ---------------------------------------------------------------------------
+# Test 7c: the daily runner also logs a legacy CRPS baseline row (issue #667)
+# ---------------------------------------------------------------------------
+
+class TestRunnerLogsLegacyCrps:
+    def test_run_calibration_logs_both_emos_and_legacy_rows(self, monkeypatch):
+        """_run_calibration appends BOTH an emos_shadow row and a legacy row
+        per city per day, so promotion evidence is EMOS-vs-legacy rather than
+        EMOS-alone.
+        """
+        from src.model.crps_score import crps_gaussian
+        import scripts.run_emos_shadow as runner
+
+        db = _db()
+        mu, sigma, y = 80.0, 2.0, 81.0
+        canned = [(mu, sigma, y)] * 60
+        a, b, c, d = 1.0, 1.1, 0.3, 1.2  # deliberately non-identity
+        monkeypatch.setattr(
+            "src.model.emos_calibration.fetch_training_data",
+            lambda city, db, **kw: canned,
+        )
+        monkeypatch.setattr(
+            "src.model.emos_calibration.fit_emos",
+            lambda data: (a, b, c, d),
+        )
+
+        runner._run_calibration(db)
+
+        # Both model_modes logged exactly once for Chicago.
+        assert db.get_emos_crps_count("Chicago", model_mode="emos_shadow") == 1
+        assert db.get_emos_crps_count("Chicago", model_mode="legacy") == 1
+
+        rows = {
+            row[0]: row[1]
+            for row in db._conn.execute(
+                "SELECT model_mode, crps_score FROM emos_crps_log WHERE city='Chicago'"
+            ).fetchall()
+        }
+        assert set(rows.keys()) == {"emos_shadow", "legacy"}
+
+        expected_emos_crps = crps_gaussian(a + b * mu, c + d * sigma, y)
+        expected_legacy_crps = crps_gaussian(mu, sigma, y)
+
+        # Legacy must use the RAW (uncorrected) mu/sigma, not the EMOS transform,
+        # so the two rows must differ under a non-identity fit.
+        assert expected_legacy_crps != pytest.approx(expected_emos_crps)
+        assert rows["emos_shadow"] == pytest.approx(expected_emos_crps, abs=1e-9)
+        assert rows["legacy"] == pytest.approx(expected_legacy_crps, abs=1e-9)
+
+    def test_run_calibration_dedups_legacy_row_same_day(self, monkeypatch):
+        """A same-day re-run must not double-log the legacy row either."""
+        import scripts.run_emos_shadow as runner
+
+        db = _db()
+        canned = [(80.0, 2.0, 81.0)] * 60
+        monkeypatch.setattr(
+            "src.model.emos_calibration.fetch_training_data",
+            lambda city, db, **kw: canned,
+        )
+        monkeypatch.setattr(
+            "src.model.emos_calibration.fit_emos",
+            lambda data: (1.0, 1.1, 0.3, 1.2),
+        )
+
+        runner._run_calibration(db)
+        runner._run_calibration(db)
+
+        assert db.get_emos_crps_count("Chicago", model_mode="emos_shadow") == 1
+        assert db.get_emos_crps_count("Chicago", model_mode="legacy") == 1
+
+
+# ---------------------------------------------------------------------------
+# Test 7d: EMOS-vs-legacy CRPS delta surfaced by db + API (issue #667)
+# ---------------------------------------------------------------------------
+
+class TestCrpsDelta:
+    def test_get_emos_shadow_city_status_computes_delta(self):
+        """crps_delta = legacy_mean_crps - mean_crps; positive means EMOS wins."""
+        db = _db()
+        db.log_crps("Chicago", "2026-06-01", 1.0, model_mode="emos_shadow")
+        db.log_crps("Chicago", "2026-06-02", 2.0, model_mode="emos_shadow")
+        db.log_crps("Chicago", "2026-06-01", 3.0, model_mode="legacy")
+        db.log_crps("Chicago", "2026-06-02", 5.0, model_mode="legacy")
+
+        status = db.get_emos_shadow_city_status("Chicago")
+        assert status["mean_crps"] == pytest.approx(1.5)
+        assert status["legacy_mean_crps"] == pytest.approx(4.0)
+        # legacy (4.0) - emos (1.5) = 2.5 > 0 -> EMOS is beating legacy
+        assert status["crps_delta"] == pytest.approx(2.5)
+
+    def test_mean_crps_not_contaminated_by_legacy_rows(self):
+        """Regression guard: an unscoped AVG() would mix legacy into mean_crps."""
+        db = _db()
+        db.log_crps("Miami", "2026-06-01", 1.0, model_mode="emos_shadow")
+        db.log_crps("Miami", "2026-06-01", 100.0, model_mode="legacy")
+
+        status = db.get_emos_shadow_city_status("Miami")
+        assert status["mean_crps"] == pytest.approx(1.0)
+        assert status["legacy_mean_crps"] == pytest.approx(100.0)
+
+    def test_delta_is_none_when_one_mode_missing(self):
+        """crps_delta (and the missing side) stay None until both modes have data."""
+        db = _db()
+        db.log_crps("Houston", "2026-06-01", 1.0, model_mode="emos_shadow")
+
+        status = db.get_emos_shadow_city_status("Houston")
+        assert status["mean_crps"] == pytest.approx(1.0)
+        assert status["legacy_mean_crps"] is None
+        assert status["crps_delta"] is None
+
+    def test_api_endpoint_surfaces_legacy_and_delta_fields(self):
+        """GET /api/emos-shadow/status includes legacy_mean_crps and crps_delta."""
+        from src.dashboard import api as api_mod
+
+        db = _db()
+        db.log_crps("Chicago", "2026-06-17", 1.5, model_mode="emos_shadow")
+        db.log_crps("Chicago", "2026-06-17", 2.5, model_mode="legacy")
+
+        with patch.object(api_mod, "_db", db):
+            client = TestClient(api_mod.app)
+            r = client.get("/api/emos-shadow/status")
+
+        assert r.status_code == 200
+        data = r.json()
+        chicago = next((e for e in data if e["city"] == "Chicago"), None)
+        assert chicago is not None
+        assert chicago["mean_crps"] == pytest.approx(1.5, abs=1e-6)
+        assert chicago["legacy_mean_crps"] == pytest.approx(2.5, abs=1e-6)
+        assert chicago["crps_delta"] == pytest.approx(1.0, abs=1e-6)
+        # n_samples stays scoped to emos_shadow rows (not doubled by the legacy row)
+        assert chicago["n_samples"] == 1
+
+
+# ---------------------------------------------------------------------------
 # Test 8: DEB weight log entry created
 # ---------------------------------------------------------------------------
 
