@@ -59,11 +59,18 @@ def _execute_live(
     end_date = (candidate.market.get("endDate") or candidate.market.get("end_date_iso") or "")[:10]
 
     # Read sizing params live from DB so dashboard config changes take effect
-    # without a restart. Fall back to module-level env-var constants if db is None.
+    # without a restart. Fall back to module-level env-var constants if db is None
+    # or if the DB returns a value that cannot be coerced to the expected type.
     if db is not None:
         live_cfg = get_live_config(db)
-        live_position_size = live_cfg.get("POSITION_SIZE_EUR", POSITION_SIZE_EUR)
-        live_sizing_mode = live_cfg.get("SIZING_MODE", SIZING_MODE)
+        try:
+            live_position_size = float(live_cfg["POSITION_SIZE_EUR"])
+            if live_position_size <= 0:
+                raise ValueError("POSITION_SIZE_EUR must be positive")
+        except (KeyError, TypeError, ValueError):
+            live_position_size = POSITION_SIZE_EUR
+        raw_mode = live_cfg.get("SIZING_MODE")
+        live_sizing_mode = raw_mode if raw_mode in ("flat", "kelly") else SIZING_MODE
     else:
         live_position_size = POSITION_SIZE_EUR
         live_sizing_mode = SIZING_MODE
