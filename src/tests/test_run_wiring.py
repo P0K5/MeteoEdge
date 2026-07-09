@@ -952,3 +952,27 @@ class TestObsBiasIntradayExclusivity:
         state = self._build(intraday_return=85.0, residual_delta=1.5)
         assert state.corrected_mu_f == pytest.approx(85.0 + 1.5)
         assert state.obs_bias_offset_f is None
+
+
+class TestIntradayDeltaField:
+    """Issue #658: the decayed intraday delta is kept on its own state field
+    so the EMOS serving path can layer it on top of the calibrated mean."""
+
+    def test_delta_set_when_intraday_fires(self):
+        harness = TestObsBiasIntradayExclusivity()
+        state = harness._build(intraday_return=85.0)
+        # compute_deb_mu_f mocked to 82.5 -> delta = 85.0 - 82.5
+        assert state.intraday_delta_f == pytest.approx(85.0 - 82.5)
+
+    def test_delta_none_when_intraday_unavailable(self):
+        harness = TestObsBiasIntradayExclusivity()
+        state = harness._build(intraday_return=None)
+        assert state.intraday_delta_f is None
+
+    def test_residual_does_not_contaminate_delta(self):
+        """The residual correction mutates corrected_mu_f AFTER the delta is
+        captured — the delta must stay the pure intraday component."""
+        harness = TestObsBiasIntradayExclusivity()
+        state = harness._build(intraday_return=85.0, residual_delta=1.5)
+        assert state.corrected_mu_f == pytest.approx(86.5)
+        assert state.intraday_delta_f == pytest.approx(2.5)

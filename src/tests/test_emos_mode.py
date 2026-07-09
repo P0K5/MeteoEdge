@@ -365,3 +365,68 @@ class TestLegacyUnchangedOutput:
             f"Shadow mode must leave probability identical to baseline; "
             f"baseline={p_baseline:.6f}, shadow={p_shadow:.6f}"
         )
+
+
+class TestEmosServingMu:
+    """Issue #658 layer contract: EMOS serves on the plain equal-weight stack
+    mean it trained on (never corrected_mu_f/deb_mu_f), with the decayed
+    intraday delta layered on top of the calibrated mean."""
+
+    def _state(self, nws=None, om=None, corrected=None, deb=None, delta=None):
+        from src.model.envelope import WeatherState
+        from datetime import datetime
+        now = datetime(2026, 7, 9, 14, 0)
+        return WeatherState(
+            station="KORD", now_local=now, sunset_local=now,
+            current_high_f=70.0, current_high_time=now,
+            latest_temp_f=70.0, latest_temp_time=now,
+            forecast_high_f=nws, secondary_forecast_f=om,
+            corrected_mu_f=corrected, deb_mu_f=deb, intraday_delta_f=delta,
+        )
+
+    def _db_with_coeffs(self, a=2.0, b=1.0, c=0.5, d=1.0):
+        db = _db()
+        db.upsert_emos_coefficients(
+            city="Chicago", model_mode="emos_shadow", a=a, b=b, c=c, d=d,
+        )
+        return db
+
+    def test_uses_plain_mean_not_corrected_mu(self):
+        from src.model.emos_mode import emos_serving_mu
+        db = self._db_with_coeffs(a=2.0, b=1.0)
+        # corrected_mu/deb_mu deliberately far away — must be ignored
+        state = self._state(nws=80.0, om=84.0, corrected=99.0, deb=95.0)
+        mu, sigma = emos_serving_mu(state, "Chicago", db, 2.0)
+        # plain mean = 82, mu_cal = 2 + 1*82 = 84; no intraday delta
+        assert mu == pytest.approx(84.0)
+        assert sigma == pytest.approx(0.5 + 1.0 * 2.0)
+
+    def test_intraday_delta_layers_on_top(self):
+        from src.model.emos_mode import emos_serving_mu
+        db = self._db_with_coeffs(a=2.0, b=1.0)
+        state = self._state(nws=80.0, om=84.0, delta=-1.5)
+        mu, _ = emos_serving_mu(state, "Chicago", db, 2.0)
+        assert mu == pytest.approx(84.0 - 1.5)
+
+    def test_single_member_mean(self):
+        from src.model.emos_mode import emos_serving_mu
+        db = self._db_with_coeffs(a=0.0, b=1.0)
+        state = self._state(nws=None, om=78.0)
+        mu, _ = emos_serving_mu(state, "Chicago", db, 2.0)
+        assert mu == pytest.approx(78.0)
+
+    def test_no_members_returns_none(self):
+        from src.model.emos_mode import emos_serving_mu
+        db = self._db_with_coeffs()
+        state = self._state(nws=None, om=None, corrected=90.0)
+        assert emos_serving_mu(state, "Chicago", db, 2.0) is None
+
+    def test_no_coefficients_passthrough(self):
+        """Without coefficients apply_emos passes through, so serving equals
+        plain mean (+delta) — get_city_mode gates this path in practice."""
+        from src.model.emos_mode import emos_serving_mu
+        db = _db()
+        state = self._state(nws=80.0, om=84.0, delta=1.0)
+        mu, sigma = emos_serving_mu(state, "Chicago", db, 2.0)
+        assert mu == pytest.approx(83.0)
+        assert sigma == pytest.approx(2.0)

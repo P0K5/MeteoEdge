@@ -31,6 +31,11 @@ class WeatherState:
     obs_bias_offset_f: float | None = None   # intraday obs bias vs model hourly temp
     deb_mu_f: float | None = None            # DEB-weighted forecast high; used when DEB_ENABLED=true
     corrected_mu_f: float | None = None      # intraday-corrected forecast; highest-priority when set
+    # The decayed intraday delta alone (corrected_mu_f - deb_mu_f at the time
+    # the intraday correction fired), kept separately so the EMOS serving path
+    # can layer the nowcast signal ON TOP of its calibrated mean instead of
+    # consuming the fully-corrected mu it was never trained on (#658).
+    intraday_delta_f: float | None = None
 
 
 @dataclass
