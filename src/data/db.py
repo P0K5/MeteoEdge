@@ -2048,17 +2048,36 @@ class Database:
         }
 
     def get_emos_shadow_city_status(self, city: str) -> dict:
-        """Return EMOS shadow status for a single city: mean_crps and latest deb_weights."""
+        """Return EMOS shadow status for a single city: mean_crps and model_weights snapshot.
+
+        The model_weights_snapshot is a dict {model: weight} for the most recent date,
+        or None if no model_weights rows exist for this city.
+        """
         crps_row = self._conn.execute(
             "SELECT AVG(crps_score) FROM emos_crps_log WHERE city=?", (city,)
         ).fetchone()
-        deb_row = self._conn.execute(
-            "SELECT weights_json FROM deb_weight_log WHERE city=? ORDER BY logged_at DESC LIMIT 1",
-            (city,),
-        ).fetchone()
+
+        # Get all model weights for this city, ordered by date DESC
+        model_weights = self.get_model_weights(city)
+
+        # Extract the snapshot for the most recent date
+        model_weights_snapshot = None
+        if model_weights:
+            # Get the most recent date (first row since ordered DESC)
+            most_recent_date = model_weights[0]["date"]
+            # Build dict of {model: weight} for this date
+            snapshot = {}
+            for row in model_weights:
+                if row["date"] == most_recent_date:
+                    snapshot[row["model"]] = row["weight"]
+                else:
+                    # Since ordered by date DESC, we can stop when date changes
+                    break
+            model_weights_snapshot = snapshot if snapshot else None
+
         return {
             "mean_crps": float(crps_row[0]) if crps_row and crps_row[0] is not None else None,
-            "deb_weights_snapshot": deb_row[0] if deb_row else None,
+            "model_weights_snapshot": model_weights_snapshot,
         }
 
     def get_trades_missing_fee_costs(self) -> list:

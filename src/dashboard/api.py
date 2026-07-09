@@ -1858,7 +1858,7 @@ def emos_shadow_status() -> list[dict]:
                 "city": city,
                 "n_samples": n_samples,
                 "mean_crps": status["mean_crps"],
-                "deb_weights_snapshot": status["deb_weights_snapshot"],
+                "model_weights_snapshot": status["model_weights_snapshot"],
                 "ready_for_promotion": False,
             })
         return results

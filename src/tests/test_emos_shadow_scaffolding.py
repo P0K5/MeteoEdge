@@ -353,6 +353,66 @@ class TestApiEndpointReturnsCityStatus:
 
 
 # ---------------------------------------------------------------------------
+# Test 10b: get_emos_shadow_city_status returns model_weights_snapshot
+# ---------------------------------------------------------------------------
+
+class TestGetEmosShadowCityStatusModelWeights:
+    def test_model_weights_snapshot_for_latest_date(self):
+        """get_emos_shadow_city_status returns {model: weight} dict for most recent date."""
+        db = _db()
+        # Insert model weights for Chicago across two dates
+        db.upsert_model_weight(city="Chicago", model="nws", date="2026-06-15", weight=0.4, rmse=1.2)
+        db.upsert_model_weight(city="Chicago", model="open_meteo", date="2026-06-15", weight=0.35, rmse=1.5)
+        db.upsert_model_weight(city="Chicago", model="gfs", date="2026-06-15", weight=0.25, rmse=1.8)
+        # More recent date
+        db.upsert_model_weight(city="Chicago", model="nws", date="2026-06-17", weight=0.45, rmse=1.1)
+        db.upsert_model_weight(city="Chicago", model="open_meteo", date="2026-06-17", weight=0.40, rmse=1.4)
+        db.upsert_model_weight(city="Chicago", model="gfs", date="2026-06-17", weight=0.15, rmse=1.9)
+
+        status = db.get_emos_shadow_city_status("Chicago")
+
+        # Should return snapshot for most recent date (2026-06-17)
+        assert status["model_weights_snapshot"] is not None
+        assert status["model_weights_snapshot"]["nws"] == pytest.approx(0.45)
+        assert status["model_weights_snapshot"]["open_meteo"] == pytest.approx(0.40)
+        assert status["model_weights_snapshot"]["gfs"] == pytest.approx(0.15)
+        # Older date should NOT appear
+        assert len(status["model_weights_snapshot"]) == 3
+
+    def test_model_weights_snapshot_returns_none_when_empty(self):
+        """get_emos_shadow_city_status returns None when no model_weights exist."""
+        db = _db()
+        # Don't insert any model_weights
+        status = db.get_emos_shadow_city_status("NoDataCity")
+
+        assert status["model_weights_snapshot"] is None
+
+    def test_api_endpoint_includes_model_weights_snapshot(self):
+        """API endpoint includes model_weights_snapshot field (renamed from deb_weights_snapshot)."""
+        from src.dashboard import api as api_mod
+
+        db = _db()
+        db.log_crps("Seattle", "2026-06-17", 1.3)
+        db.upsert_model_weight(city="Seattle", model="nws", date="2026-06-17", weight=0.5, rmse=1.0)
+        db.upsert_model_weight(city="Seattle", model="open_meteo", date="2026-06-17", weight=0.5, rmse=1.0)
+
+        with patch.object(api_mod, "_db", db):
+            client = TestClient(api_mod.app)
+            r = client.get("/api/emos-shadow/status")
+
+        assert r.status_code == 200
+        data = r.json()
+        seattle = next((e for e in data if e["city"] == "Seattle"), None)
+        assert seattle is not None
+        assert "model_weights_snapshot" in seattle
+        assert seattle["model_weights_snapshot"] is not None
+        assert seattle["model_weights_snapshot"]["nws"] == pytest.approx(0.5)
+        assert seattle["model_weights_snapshot"]["open_meteo"] == pytest.approx(0.5)
+        # Old field name should not exist
+        assert "deb_weights_snapshot" not in seattle
+
+
+# ---------------------------------------------------------------------------
 # Pooled cross-station fallback (issue #659)
 # ---------------------------------------------------------------------------
 
