@@ -159,19 +159,25 @@ def _deb_weights_for_city(city: str, allowed: frozenset, db) -> dict[str, float]
 
 def _emos_bias_correct(city: str, ensemble_mean: float, db) -> float:
     """Apply EMOS (a, b) coefficients to *ensemble_mean*; fall back to raw mean."""
+    # Key on the ACTIVE stack — the same forecast_source the shadow runner
+    # saves under (#659). The old hardcoded 'nws_open_meteo' could never
+    # match rows written per stack name.
+    active_source = "baseline"
+    if hasattr(db, "get_config"):
+        active_source = db.get_config("FORECAST_STACK") or "baseline"
     calibration_rows = db.get_all_emos_calibration() if hasattr(db, "get_all_emos_calibration") else []
     row = next(
         (
             r for r in calibration_rows
-            if r.get("city") == city and r.get("forecast_source") == "nws_open_meteo"
+            if r.get("city") == city and r.get("forecast_source") == active_source
         ),
         None,
     )
     if row is None:
         log.warning(
             "[ensemble_distribution] no emos_calibration row for city=%s "
-            "(forecast_source='nws_open_meteo') — falling back to raw ensemble_mean",
-            city,
+            "(forecast_source=%r) — falling back to raw ensemble_mean",
+            city, active_source,
         )
         return ensemble_mean
     a = float(row["a"])

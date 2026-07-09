@@ -46,7 +46,9 @@ def _run_calibration(db, stack: str = "baseline") -> None:
     from src.model.crps_score import crps_gaussian
     from src.model.emos_calibration import (
         fetch_training_data,
+        fetch_training_data_pooled,
         fit_emos,
+        pooling_group,
         save_coefficients,
         InsufficientDataError,
     )
@@ -56,8 +58,41 @@ def _run_calibration(db, stack: str = "baseline") -> None:
 
     today = datetime.now(timezone.utc).date().isoformat()
     fitted = 0
+    pooled_fitted = 0
     skipped = 0
 
+    def _persist(city, a, b, c, d, training_data, sample_count, provenance):
+        """Save coefficients + one CRPS row per city per calendar day.
+
+        The CRPS row is what the promotion guard counts, so logging exactly
+        once a day gives the operator an honest "days of shadow evidence"
+        measure. CRPS is always scored on the CITY's own triples, even when
+        the coefficients came from a pooled fit — that is the evidence that
+        matters for promoting THIS city.
+        """
+        crps_scores = [
+            crps_gaussian(a + b * mu, c + d * sigma, y)
+            for mu, sigma, y in training_data
+        ]
+        mean_crps = sum(crps_scores) / len(crps_scores) if crps_scores else 0.0
+        save_coefficients(
+            city, a, b, c, d, mean_crps, db,
+            forecast_source=stack, sample_count=sample_count,
+        )
+        if db.emos_crps_logged_for_date(city, today, "emos_shadow"):
+            log.debug(
+                "[emos_shadow] city=%s: CRPS already logged for %s — skipping",
+                city, today,
+            )
+        else:
+            db.log_crps(city, today, mean_crps, model_mode="emos_shadow")
+        log.info(
+            "[emos_shadow] city=%s: %s fit, coefficients saved (crps=%.4f, n_city=%d)",
+            city, provenance, mean_crps, len(training_data),
+        )
+
+    # ---- Pass 1: per-city fits (min_samples=60, unchanged behavior) ----
+    insufficient: list[str] = []
     for station_cfg in STATIONS:
         city = station_city(station_cfg)
         try:
@@ -65,46 +100,85 @@ def _run_calibration(db, stack: str = "baseline") -> None:
                 city, db, regime=regime, forecast_source=stack,
             )
             a, b, c, d = fit_emos(training_data)
-            crps_scores = [
-                crps_gaussian(a + b * mu, c + d * sigma, y)
-                for mu, sigma, y in training_data
-            ]
-            mean_crps = sum(crps_scores) / len(crps_scores) if crps_scores else 0.0
-            save_coefficients(
-                city,
-                a,
-                b,
-                c,
-                d,
-                mean_crps,
-                db,
-                forecast_source=stack,
-                sample_count=len(training_data),
-            )
-
-            # One CRPS sample per city per calendar day. The promotion guard
-            # counts these rows, so logging exactly once a day gives the
-            # operator an honest "days of shadow evidence" measure.
-            if db.emos_crps_logged_for_date(city, today, "emos_shadow"):
-                log.debug(
-                    "[emos_shadow] city=%s: CRPS already logged for %s — skipping",
-                    city, today,
-                )
-            else:
-                db.log_crps(city, today, mean_crps, model_mode="emos_shadow")
-            log.info(
-                "[emos_shadow] city=%s: fit complete, coefficients saved (crps=%.4f)",
-                city, mean_crps,
-            )
+            _persist(city, a, b, c, d, training_data, len(training_data), "per-city")
             fitted += 1
         except InsufficientDataError as e:
             log.debug("[emos_shadow] city=%s: insufficient data — %s", city, e)
-            skipped += 1
+            insufficient.append(city)
         except Exception as e:
             log.warning("[emos_shadow] city=%s: fit failed — %s", city, e)
             skipped += 1
 
-    log.info("[emos_shadow] done: %d fitted, %d skipped", fitted, skipped)
+    # ---- Pass 2: pooled fallback (issue #659) ----
+    # Cities below the per-city bar receive coefficients from a shared fit
+    # over their pooling group (see emos_calibration.pooling_group). The
+    # pooled fit uses ALL group members' data (including cities that fit
+    # individually — more data, better fit) but only cities WITHOUT an
+    # individual fit receive the pooled coefficients: a per-city fit is more
+    # specific and always takes precedence. A city must contribute at least
+    # POOLED_MIN_CITY_SAMPLES of its own triples to receive pooled
+    # coefficients — a fit can't be shadow-scored against a city with no
+    # local evidence.
+    POOLED_MIN_CITY_SAMPLES = 5
+    groups: dict[str, list[str]] = {}
+    for city in insufficient:
+        g = pooling_group(city)
+        if g is None:
+            skipped += 1
+            continue
+        groups.setdefault(g, []).append(city)
+
+    all_cities_by_group: dict[str, list[str]] = {}
+    for station_cfg in STATIONS:
+        city = station_city(station_cfg)
+        g = pooling_group(city)
+        if g is not None:
+            all_cities_by_group.setdefault(g, []).append(city)
+
+    for g, needy_cities in sorted(groups.items()):
+        try:
+            pooled, per_city = fetch_training_data_pooled(
+                all_cities_by_group.get(g, []), db,
+                regime=regime, forecast_source=stack,
+            )
+            a, b, c, d = fit_emos(pooled)
+            log.info(
+                "[emos_shadow] group=%s: pooled fit over %d triples from %d cities",
+                g, len(pooled), len(per_city),
+            )
+        except InsufficientDataError as e:
+            log.info("[emos_shadow] group=%s: pooled data still insufficient — %s", g, e)
+            skipped += len(needy_cities)
+            continue
+        except Exception as e:
+            log.warning("[emos_shadow] group=%s: pooled fit failed — %s", g, e)
+            skipped += len(needy_cities)
+            continue
+
+        for city in needy_cities:
+            n_city = per_city.get(city, 0)
+            if n_city < POOLED_MIN_CITY_SAMPLES:
+                log.debug(
+                    "[emos_shadow] city=%s: only %d own triples (<%d) — no pooled"
+                    " coefficients", city, n_city, POOLED_MIN_CITY_SAMPLES,
+                )
+                skipped += 1
+                continue
+            try:
+                city_triples = fetch_training_data(
+                    city, db, min_samples=1, regime=regime, forecast_source=stack,
+                )
+                _persist(city, a, b, c, d, city_triples, len(pooled),
+                         f"pooled({g})")
+                pooled_fitted += 1
+            except Exception as e:
+                log.warning("[emos_shadow] city=%s: pooled persist failed — %s", city, e)
+                skipped += 1
+
+    log.info(
+        "[emos_shadow] done: %d per-city fits, %d pooled fits, %d skipped",
+        fitted, pooled_fitted, skipped,
+    )
 
 
 def main() -> None:
