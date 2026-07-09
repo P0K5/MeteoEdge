@@ -2107,6 +2107,13 @@ _CONFIG_META: dict[str, dict] = {
         "group": "strategy",
         "options": ["legacy", "emos_shadow", "emos_primary"],
     },
+    "EMOS_MIN_SAMPLES_PROMOTION": {
+        "description": "Minimum CRPS-logged shadow days before a city may serve emos_primary",
+        "type": "int",
+        "group": "strategy",
+        "min": 10,
+        "max": 200,
+    },
     "RESIDUAL_CORRECTION_ENABLED": {
         "description": "Apply residual bias correction to model probability estimates",
         "type": "bool",

@@ -477,7 +477,7 @@ CONFIG_DEFAULTS: "dict[str, str | int | float | bool]" = {
     "MAX_CONFIDENCE_YES_FOR_NO": 0.05,
     "MIN_FORECAST_BRACKET_MARGIN_F": 2.5,
     "EMOS_DEFAULT_MODE": "legacy",
-    "EMOS_MIN_SAMPLES_SHADOW": 35,
+    "EMOS_MIN_SAMPLES_SHADOW": 35,  # Reserved for future shadow-entry gate (currently unused — no read location)
     "EMOS_MIN_SAMPLES_PROMOTION": 60,
     "DAILY_LOSS_LIMIT_EUR": 50.0,
     "MAX_OPEN_POSITIONS": 15,
