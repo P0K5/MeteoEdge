@@ -8,7 +8,8 @@ from datetime import datetime
 import pytest
 
 from src.data.db import Database
-from src.model.emos_mode import apply_emos, _check_ready_for_promotion, get_city_mode
+from src.config import seed_config
+from src.model.emos_mode import apply_emos, _check_ready_for_promotion, get_city_mode, _emos_min_samples
 from src.model.envelope import (
     Bracket,
     WeatherState,
@@ -151,8 +152,10 @@ class TestGetCityModePrimaryReady:
     def test_primary_ready_returns_emos_primary(self):
         """emos_primary row with ready_for_promotion=1 and enough CRPS samples → 'emos_primary'."""
         db = _db()
+        seed_config(db)
+        db.set_config("EMOS_MIN_SAMPLES_PROMOTION", "20")
         _upsert(db, "Chicago", "emos_primary", ready_for_promotion=1)
-        # Populate enough CRPS log entries to satisfy the promotion guard (default 20)
+        # Populate enough CRPS log entries to satisfy the promotion guard (set to 20)
         for i in range(20):
             db.log_crps("Chicago", f"2026-05-{i + 1:02d}", 1.5)
         result = get_city_mode("Chicago", db=db)
@@ -161,6 +164,7 @@ class TestGetCityModePrimaryReady:
     def test_check_ready_for_promotion_true_when_ready(self):
         """_check_ready_for_promotion returns True when ready_for_promotion=1."""
         db = _db()
+        seed_config(db)
         _upsert(db, "Miami", "emos_primary", ready_for_promotion=1)
         result = _check_ready_for_promotion("Miami", db=db)
         assert result is True
@@ -168,9 +172,11 @@ class TestGetCityModePrimaryReady:
     def test_primary_ready_takes_precedence_over_shadow(self):
         """Both shadow and ready primary + enough CRPS samples → 'emos_primary' wins."""
         db = _db()
+        seed_config(db)
+        db.set_config("EMOS_MIN_SAMPLES_PROMOTION", "20")
         _upsert(db, "Los Angeles", "emos_shadow", ready_for_promotion=0)
         _upsert(db, "Los Angeles", "emos_primary", ready_for_promotion=1)
-        # Populate enough CRPS log entries to satisfy the promotion guard (default 20)
+        # Populate enough CRPS log entries to satisfy the promotion guard (set to 20)
         for i in range(20):
             db.log_crps("Los Angeles", f"2026-05-{i + 1:02d}", 1.5)
         result = get_city_mode("Los Angeles", db=db)
@@ -189,6 +195,8 @@ class TestGetCityModeOverride:
         the primary row but records the override — the override must still win.
         """
         db = _db()
+        seed_config(db)
+        db.set_config("EMOS_MIN_SAMPLES_PROMOTION", "20")
         _upsert(db, "Chicago", "emos_primary", ready_for_promotion=0)
         for i in range(20):
             db.log_crps("Chicago", f"2026-05-{i + 1:02d}", 1.5)
@@ -236,6 +244,8 @@ class TestGetCityModeOverride:
         route to shadow.
         """
         db = _db()
+        seed_config(db)
+        db.set_config("EMOS_MIN_SAMPLES_PROMOTION", "20")
         _upsert(db, "Chicago", "emos_primary", ready_for_promotion=0)
         assert _check_ready_for_promotion("Chicago", db=db) is False
         db.set_emos_effective_mode("Chicago", "emos_primary")
@@ -430,3 +440,49 @@ class TestEmosServingMu:
         mu, sigma = emos_serving_mu(state, "Chicago", db, 2.0)
         assert mu == pytest.approx(83.0)
         assert sigma == pytest.approx(2.0)
+
+
+# ---------------------------------------------------------------------------
+# Test 8: _emos_min_samples reads from config
+# ---------------------------------------------------------------------------
+
+class TestEmosMinSamplesConfig:
+    """_emos_min_samples(db) reads EMOS_MIN_SAMPLES_PROMOTION from config."""
+
+    def test_default_emos_min_samples_is_60(self):
+        """Without explicit override, _emos_min_samples returns default 60."""
+        db = _db()
+        seed_config(db)
+        result = _emos_min_samples(db)
+        assert result == 60
+
+    def test_config_override_changes_min_samples(self):
+        """Setting EMOS_MIN_SAMPLES_PROMOTION in config changes the guard."""
+        db = _db()
+        seed_config(db)
+        db.set_config("EMOS_MIN_SAMPLES_PROMOTION", "100")
+        result = _emos_min_samples(db)
+        assert result == 100
+
+    def test_min_samples_affects_promotion_guard(self):
+        """Changing config min_samples actually affects _primary_allowed."""
+        db = _db()
+        seed_config(db)
+        db.set_config("EMOS_MIN_SAMPLES_PROMOTION", "50")
+
+        # Set up a primary row ready for promotion
+        _upsert(db, "Chicago", "emos_primary", ready_for_promotion=1)
+
+        # Add 49 CRPS samples — below the 50 threshold
+        for i in range(49):
+            db.log_crps("Chicago", f"2026-05-{i + 1:02d}", 1.5)
+
+        # Should block because 49 < 50
+        from src.model.emos_mode import _primary_allowed
+        assert _primary_allowed("Chicago", db) is False
+
+        # Add one more to reach 50
+        db.log_crps("Chicago", "2026-06-19", 1.5)
+
+        # Should now allow because 50 >= 50
+        assert _primary_allowed("Chicago", db) is True

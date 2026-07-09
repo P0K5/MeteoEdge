@@ -6,7 +6,7 @@ with enough training data, skips gracefully when data is insufficient.
 
 For every city that fits, a CRPS score row is appended to ``emos_crps_log``
 (via ``db.log_crps``). This per-day record is what the promotion guard in
-``emos_mode.get_city_mode`` counts against ``EMOS_MIN_SAMPLES`` before a city
+``emos_mode.get_city_mode`` counts against ``EMOS_MIN_SAMPLES_PROMOTION`` before a city
 is allowed to serve ``emos_primary`` — without it, promotion stays blocked
 forever because the sample count never leaves zero.
 

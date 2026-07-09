@@ -5,11 +5,25 @@ Controls whether each city uses legacy Gaussian, EMOS shadow, or EMOS primary mo
 import logging
 import os
 
+from src.config import CONFIG_DEFAULTS, get_live_config
+
 log = logging.getLogger(__name__)
 
 
-def _emos_min_samples() -> int:
-    return int(os.environ.get("EMOS_MIN_SAMPLES", "20"))
+def _emos_min_samples(db) -> int:
+    """Return the CRPS-logged shadow-day minimum for promotion to emos_primary.
+
+    Default is 60 per epic #70: "retraining should use minimum 60 samples per city
+    before promoting". Although the units differ (CRPS-logged shadow days vs. training
+    triples), by the time #667 lands every fitted city gets exactly one legacy-comparable
+    CRPS entry per day, so 60 days of shadow evidence before serving emos_primary
+    is the conservative, defensible reading of the epic's intent. This threshold is
+    operator-tunable via the dashboard (CONFIG_DEFAULTS + bot_config DB table).
+    """
+    return int(get_live_config(db).get(
+        "EMOS_MIN_SAMPLES_PROMOTION",
+        CONFIG_DEFAULTS["EMOS_MIN_SAMPLES_PROMOTION"]
+    ))
 
 
 def _shadow_or_default(city: str, db) -> str:
@@ -24,8 +38,9 @@ def _primary_allowed(city: str, db) -> bool:
     if db.get_emos_coefficients(city, "emos_primary") is None:
         return False
     n = db.get_emos_crps_count(city)
-    if n < _emos_min_samples():
-        log.info("[emos] city=%s: %d/%d samples, primary blocked", city, n, _emos_min_samples())
+    min_samples = _emos_min_samples(db)
+    if n < min_samples:
+        log.info("[emos] city=%s: %d/%d samples, primary blocked", city, n, min_samples)
         return False
     return True
 

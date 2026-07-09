@@ -16,6 +16,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from src.data.db import Database
+from src.config import CONFIG_DEFAULTS, seed_config
 from src.model.emos_calibration import (
     InsufficientDataError,
     fit_emos,
@@ -135,8 +136,12 @@ class TestInsufficientDataLogsDebug:
 
 class TestPromotionGuardBlocksBelowMinSamples:
     def test_promotion_guard_blocks_below_min_samples(self, monkeypatch):
-        """With 5 CRPS samples and EMOS_MIN_SAMPLES=20, get_city_mode returns 'emos_shadow'."""
+        """With 5 CRPS samples and EMOS_MIN_SAMPLES_PROMOTION=20, get_city_mode returns 'emos_shadow'."""
         db = _db()
+        # Seed config with EMOS_MIN_SAMPLES_PROMOTION=20
+        seed_config(db)
+        db.set_config("EMOS_MIN_SAMPLES_PROMOTION", "20")
+
         # Insert both shadow and primary rows, primary marked ready
         _upsert_shadow(db, "Chicago")
         db.upsert_emos_coefficients(
@@ -149,7 +154,6 @@ class TestPromotionGuardBlocksBelowMinSamples:
         )
         # Patch get_emos_crps_count to return 5 (below threshold)
         monkeypatch.setattr(db, "get_emos_crps_count", lambda city: 5)
-        monkeypatch.setenv("EMOS_MIN_SAMPLES", "20")
 
         mode = get_city_mode("Chicago", db=db)
         assert mode == "emos_shadow", (
@@ -163,8 +167,12 @@ class TestPromotionGuardBlocksBelowMinSamples:
 
 class TestPromotionGuardAllowsAboveMinSamples:
     def test_promotion_guard_allows_above_min_samples(self, monkeypatch):
-        """With 25 CRPS samples and EMOS_MIN_SAMPLES=20, get_city_mode returns 'emos_primary'."""
+        """With 25 CRPS samples and EMOS_MIN_SAMPLES_PROMOTION=20, get_city_mode returns 'emos_primary'."""
         db = _db()
+        # Seed config with EMOS_MIN_SAMPLES_PROMOTION=20
+        seed_config(db)
+        db.set_config("EMOS_MIN_SAMPLES_PROMOTION", "20")
+
         _upsert_shadow(db, "Miami")
         db.upsert_emos_coefficients(
             city="Miami",
@@ -176,7 +184,6 @@ class TestPromotionGuardAllowsAboveMinSamples:
         )
         # Patch get_emos_crps_count to return 25 (above threshold)
         monkeypatch.setattr(db, "get_emos_crps_count", lambda city: 25)
-        monkeypatch.setenv("EMOS_MIN_SAMPLES", "20")
 
         mode = get_city_mode("Miami", db=db)
         assert mode == "emos_primary", (
