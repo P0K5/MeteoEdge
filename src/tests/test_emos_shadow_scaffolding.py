@@ -392,9 +392,11 @@ class TestGetEmosShadowCityStatusModelWeights:
         from src.dashboard import api as api_mod
 
         db = _db()
-        db.log_crps("Seattle", "2026-06-17", 1.3)
-        db.upsert_model_weight(city="Seattle", model="nws", date="2026-06-17", weight=0.5, rmse=1.0)
-        db.upsert_model_weight(city="Seattle", model="open_meteo", date="2026-06-17", weight=0.5, rmse=1.0)
+        # Chicago is an active STATIONS entry (Seattle was removed from STATIONS —
+        # marine-layer forecast issues — so it never appears in this endpoint's response).
+        db.log_crps("Chicago", "2026-06-17", 1.3)
+        db.upsert_model_weight(city="Chicago", model="nws", date="2026-06-17", weight=0.5, rmse=1.0)
+        db.upsert_model_weight(city="Chicago", model="open_meteo", date="2026-06-17", weight=0.5, rmse=1.0)
 
         with patch.object(api_mod, "_db", db):
             client = TestClient(api_mod.app)
@@ -402,14 +404,14 @@ class TestGetEmosShadowCityStatusModelWeights:
 
         assert r.status_code == 200
         data = r.json()
-        seattle = next((e for e in data if e["city"] == "Seattle"), None)
-        assert seattle is not None
-        assert "model_weights_snapshot" in seattle
-        assert seattle["model_weights_snapshot"] is not None
-        assert seattle["model_weights_snapshot"]["nws"] == pytest.approx(0.5)
-        assert seattle["model_weights_snapshot"]["open_meteo"] == pytest.approx(0.5)
+        chicago = next((e for e in data if e["city"] == "Chicago"), None)
+        assert chicago is not None
+        assert "model_weights_snapshot" in chicago
+        assert chicago["model_weights_snapshot"] is not None
+        assert chicago["model_weights_snapshot"]["nws"] == pytest.approx(0.5)
+        assert chicago["model_weights_snapshot"]["open_meteo"] == pytest.approx(0.5)
         # Old field name should not exist
-        assert "deb_weights_snapshot" not in seattle
+        assert "deb_weights_snapshot" not in chicago
 
 
 # ---------------------------------------------------------------------------
