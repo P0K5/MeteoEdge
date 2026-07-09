@@ -43,15 +43,21 @@ Usage (run against the production DB by the operator; not run in CI):
     python -m src.scripts.quarantine_mislabeled_shadow_trades            # live run
     python -m src.scripts.quarantine_mislabeled_shadow_trades --dry-run  # preview only
     python -m src.scripts.quarantine_mislabeled_shadow_trades --db-path /path/to/meteoedge.db
+
+DB path resolution:
+    The script honors the DB_PATH environment variable for determining the default DB path,
+    matching the canonical DB layer at src/data/db.py. The --db-path argument overrides
+    the env var if explicitly passed.
 """
 from __future__ import annotations
 
 import argparse
+import os
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
-_DEFAULT_DB_PATH = Path("data/meteoedge.db")
+_DEFAULT_DB_PATH = Path(os.getenv("DB_PATH", "data/meteoedge.db"))
 
 _CLOSE_REASON = "quarantined_mislabeled_direction_610"
 
