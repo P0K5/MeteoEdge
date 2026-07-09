@@ -136,10 +136,13 @@ class TestFetchTrainingDataForecastSource:
 
 class TestSaveCoefficients:
     def test_saves_with_default_source(self):
+        # forecast_source=None passes through to the Database layer, which
+        # resolves it to the active FORECAST_STACK (#659) -- writers and
+        # readers must key on the same source.
         db = MagicMock()
         save_coefficients("Chicago", 0.1, 1.0, 0.5, 1.0, 2.5, db)
         call_kwargs = db.upsert_emos_coefficients.call_args[1]
-        assert call_kwargs["forecast_source"] == "nws_open_meteo"
+        assert call_kwargs["forecast_source"] is None
         assert call_kwargs["model_mode"] == "emos_shadow"
         assert call_kwargs["ready_for_promotion"] == 0
 
@@ -243,7 +246,9 @@ class TestUpsertEmosCoefficientsForecastSource:
             )
             rows = db.get_all_emos_calibration()
             assert len(rows) == 1
-            assert rows[0]["forecast_source"] == "nws_open_meteo"
+            # Default resolves to the active FORECAST_STACK -- 'baseline' on
+            # a DB with no FORECAST_STACK config row (#659).
+            assert rows[0]["forecast_source"] == "baseline"
         finally:
             os.unlink(path)
 
@@ -317,9 +322,12 @@ class TestUpsertEmosCoefficientsForecastSource:
             assert row_nws["a"] == pytest.approx(0.0)
             assert row_hrrr is not None
             assert row_hrrr["a"] == pytest.approx(0.3)
-            # Default param returns nws_open_meteo
+            # Default resolves to the active FORECAST_STACK (#659): with
+            # FORECAST_STACK=hrrr_nbm configured, the default read returns
+            # the hrrr_nbm row -- the same key the shadow runner writes.
+            db.set_config("FORECAST_STACK", "hrrr_nbm")
             row_default = db.get_emos_coefficients("Chicago", "emos_shadow")
-            assert row_default["a"] == pytest.approx(0.0)
+            assert row_default["a"] == pytest.approx(0.3)
         finally:
             os.unlink(path)
 

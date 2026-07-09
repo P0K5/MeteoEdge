@@ -139,10 +139,12 @@ def test_ensemble_distribution_emos_applied():
     db = _db()
     _log(db, "nws", 60.0)
     _log(db, "open_meteo", 60.0)
+    # forecast_source omitted -> resolves to the active FORECAST_STACK
+    # ('baseline' on a fresh DB), matching what _emos_bias_correct looks up
+    # (issue #659 -- writers and readers must key on the same source).
     db.upsert_emos_coefficients(
         city=CITY, model_mode="emos_shadow",
         a=2.0, b=1.0, c=0.5, d=1.0,
-        forecast_source="nws_open_meteo",
     )
 
     result = get_ensemble_distribution(STATION, DATE, db)
@@ -150,6 +152,21 @@ def test_ensemble_distribution_emos_applied():
     # mean is 60.0 (equal weights baseline) -> bias_corrected = a + b*mean = 62.0
     assert result["ensemble_mean"] == pytest.approx(60.0)
     assert result["bias_corrected"] == pytest.approx(62.0)
+
+
+def test_ensemble_distribution_emos_source_mismatch_falls_back():
+    """A row saved for a DIFFERENT stack must not be applied."""
+    db = _db()
+    _log(db, "nws", 60.0)
+    _log(db, "open_meteo", 60.0)
+    db.upsert_emos_coefficients(
+        city=CITY, model_mode="emos_shadow",
+        a=2.0, b=1.0, c=0.5, d=1.0,
+        forecast_source="hrrr_nbm",  # not the active stack
+    )
+
+    result = get_ensemble_distribution(STATION, DATE, db)
+    assert result["bias_corrected"] == pytest.approx(60.0)  # raw mean fallback
 
 
 def test_ensemble_distribution_respects_forecast_stack():

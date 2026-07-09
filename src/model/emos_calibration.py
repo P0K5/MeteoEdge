@@ -223,6 +223,81 @@ def fetch_training_data(
     return result
 
 
+def pooling_group(city: str) -> str | None:
+    """Return the cross-station pooling group for *city* (issue #659).
+
+    Per-station EMOS needs min_samples=60 settled days per lead bin — months
+    away for a fresh deployment. Pooling stations with broadly similar
+    forecast-error structure lets a shared (a, b, c, d) fit start producing
+    emos_shadow rows (and CRPS promotion evidence) immediately; per-station
+    fits automatically take precedence once a station individually clears
+    min_samples (see run_emos_shadow).
+
+    Groups (deliberately coarse — a shared fit learns the group's AVERAGE
+    bias, which is the shrinkage trade-off, not a defect):
+      - "us_f":      unit=F stations (US, °F brackets, NWS-covered)
+      - "tropics_c": unit=C stations within the tropics (|lat| < 23.5) —
+                     low day-to-day variance, narrow diurnal range
+      - "midlat_c":  every other unit=C station (Europe/Asia/Oceania
+                     mid-latitudes — synoptic-driven variance)
+
+    Returns None for cities not present in STATIONS.
+    """
+    for station_cfg in STATIONS:
+        _station, lat, _lon, cfg_city, _res, unit, _tz = station_cfg
+        if cfg_city.lower() != city.lower():
+            continue
+        if unit == "F":
+            return "us_f"
+        if abs(lat) < 23.5:
+            return "tropics_c"
+        return "midlat_c"
+    return None
+
+
+def fetch_training_data_pooled(
+    cities: list[str],
+    db,
+    min_samples: int = 60,
+    lead_hours: int = 24,
+    forecast_source: str | None = None,
+    regime: "frozenset[str] | set[str] | None" = None,
+) -> tuple[list[tuple[float, float, float]], dict[str, int]]:
+    """Pool per-city training triples across *cities* (issue #659).
+
+    Calls fetch_training_data() per city with min_samples=1 (a city
+    contributes whatever it has; cities with zero joined pairs are skipped)
+    and concatenates the triples.
+
+    Returns:
+        (pooled_triples, per_city_counts) — per_city_counts maps each city
+        to the number of triples it contributed (0-contributors omitted).
+
+    Raises:
+        InsufficientDataError: if the POOLED total is below min_samples.
+    """
+    pooled: list[tuple[float, float, float]] = []
+    per_city: dict[str, int] = {}
+    for c in cities:
+        try:
+            triples = fetch_training_data(
+                c, db, min_samples=1, lead_hours=lead_hours,
+                forecast_source=forecast_source, regime=regime,
+            )
+        except InsufficientDataError:
+            continue
+        pooled.extend(triples)
+        per_city[c] = len(triples)
+
+    if len(pooled) < min_samples:
+        raise InsufficientDataError(
+            f"Pooled training data across {len(cities)} cities has only "
+            f"{len(pooled)} triples at lead_hours={lead_hours}; need at "
+            f"least {min_samples}."
+        )
+    return pooled, per_city
+
+
 def fit_emos(
     training_data: list[tuple[float, float, float]],
 ) -> tuple[float, float, float, float]:
@@ -271,7 +346,7 @@ def save_coefficients(
     d: float,
     crps_score: float,
     db,
-    forecast_source: str = "nws_open_meteo",
+    forecast_source: "str | None" = None,
     sample_count: int | None = None,
 ) -> None:
     """Persist EMOS coefficients to the emos_calibration table.
@@ -296,7 +371,9 @@ def save_coefficients(
         d:               EMOS sigma slope (must be > 0).
         crps_score:      Mean CRPS on the training set after fitting.
         db:              A src.data.db.Database instance.
-        forecast_source: Forecast stack identifier (default "nws_open_meteo").
+        forecast_source: Forecast stack identifier. None resolves to the
+                         active FORECAST_STACK inside the Database layer, so
+                         writers and readers key on the same source (#659).
         sample_count:    Number of training samples used to fit the coefficients.
                          Recorded for caller/log context only — does not affect
                          ready_for_promotion, which is always 0 here (see above).

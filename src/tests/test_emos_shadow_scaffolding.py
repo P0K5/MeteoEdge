@@ -350,3 +350,117 @@ class TestApiEndpointReturnsCityStatus:
         assert chicago is not None
         assert chicago["n_samples"] == 1
         assert chicago["mean_crps"] == pytest.approx(1.5, abs=1e-6)
+
+
+# ---------------------------------------------------------------------------
+# Pooled cross-station fallback (issue #659)
+# ---------------------------------------------------------------------------
+
+class TestPoolingGroup:
+    def test_us_f_stations(self):
+        from src.model.emos_calibration import pooling_group
+        assert pooling_group("Chicago") == "us_f"
+        assert pooling_group("Miami") == "us_f"
+
+    def test_tropics_by_latitude(self):
+        from src.model.emos_calibration import pooling_group
+        assert pooling_group("Singapore") == "tropics_c"      # lat 1.4
+        assert pooling_group("Shenzhen") == "tropics_c"       # lat 22.6
+        assert pooling_group("Sao Paulo") == "tropics_c"      # lat -23.4
+
+    def test_midlatitude_c_stations(self):
+        from src.model.emos_calibration import pooling_group
+        assert pooling_group("London") == "midlat_c"
+        assert pooling_group("Seoul") == "midlat_c"
+        assert pooling_group("Wellington") == "midlat_c"      # lat -41.3
+
+    def test_unknown_city_returns_none(self):
+        from src.model.emos_calibration import pooling_group
+        assert pooling_group("Atlantis") is None
+
+
+class TestFetchTrainingDataPooled:
+    def test_pools_across_cities_and_counts(self, monkeypatch):
+        from src.model import emos_calibration as cal
+
+        per_city = {"London": [(70.0, 2.0, 71.0)] * 40, "Paris": [(72.0, 2.0, 73.0)] * 25}
+
+        def fake_fetch(city, db, min_samples=60, **kw):
+            if city not in per_city:
+                raise cal.InsufficientDataError(city)
+            return per_city[city]
+
+        monkeypatch.setattr(cal, "fetch_training_data", fake_fetch)
+        pooled, counts = cal.fetch_training_data_pooled(
+            ["London", "Paris", "Atlantis"], db=None, regime=frozenset({"nws"}),
+        )
+        assert len(pooled) == 65
+        assert counts == {"London": 40, "Paris": 25}  # zero-contributors omitted
+
+    def test_raises_when_pooled_total_below_min(self, monkeypatch):
+        from src.model import emos_calibration as cal
+        monkeypatch.setattr(
+            cal, "fetch_training_data",
+            lambda city, db, min_samples=60, **kw: [(70.0, 2.0, 71.0)] * 10,
+        )
+        with pytest.raises(InsufficientDataError):
+            cal.fetch_training_data_pooled(
+                ["London", "Paris"], db=None, regime=frozenset({"nws"}),
+            )
+
+
+class TestPooledFallbackInRunner:
+    """When no city clears the per-city bar, the runner fits the pooling group
+    once and writes per-city coefficients — but only for cities contributing
+    at least POOLED_MIN_CITY_SAMPLES of their own triples."""
+
+    _STATIONS = [
+        ("EGLC", 51.5053, 0.0553, "London", "EGLC", "C", "Europe/London"),
+        ("LFPB", 48.9694, 2.4414, "Paris", "LFPB", "C", "Europe/Paris"),
+    ]
+
+    def _run(self, monkeypatch, db, london_n=58, paris_n=3):
+        import scripts.run_emos_shadow as runner
+
+        per_city = {
+            "London": [(70.0, 2.0, 71.0)] * london_n,
+            "Paris": [(72.0, 2.0, 73.0)] * paris_n,
+        }
+
+        def fake_fetch(city, db, min_samples=60, **kw):
+            triples = per_city.get(city, [])
+            if len(triples) < min_samples:
+                raise InsufficientDataError(
+                    f"{city}: {len(triples)} < {min_samples}"
+                )
+            return triples
+
+        monkeypatch.setattr("src.config.STATIONS", self._STATIONS)
+        monkeypatch.setattr("src.model.emos_calibration.fetch_training_data", fake_fetch)
+        monkeypatch.setattr(
+            "src.model.emos_calibration.fit_emos", lambda data: (0.0, 1.0, 0.5, 1.0)
+        )
+        runner._run_calibration(db)
+
+    def test_pooled_coefficients_written_for_contributing_city(self, monkeypatch):
+        db = _db()
+        self._run(monkeypatch, db)  # 58 + 3 pooled = 61 >= 60
+
+        row = db.get_emos_coefficients("London", "emos_shadow")
+        assert row is not None
+        assert row["ready_for_promotion"] == 0  # structural guard holds for pooled fits
+        assert db.get_emos_crps_count("London") == 1
+
+    def test_city_below_min_own_samples_gets_nothing(self, monkeypatch):
+        db = _db()
+        self._run(monkeypatch, db)  # Paris contributes 3 < POOLED_MIN_CITY_SAMPLES
+
+        assert db.get_emos_coefficients("Paris", "emos_shadow") is None
+        assert db.get_emos_crps_count("Paris") == 0
+
+    def test_pooled_group_below_min_writes_nothing(self, monkeypatch):
+        db = _db()
+        self._run(monkeypatch, db, london_n=30, paris_n=10)  # pooled 40 < 60
+
+        assert db.get_emos_coefficients("London", "emos_shadow") is None
+        assert db.get_emos_coefficients("Paris", "emos_shadow") is None

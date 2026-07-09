@@ -1779,15 +1779,32 @@ class Database:
     # emos_calibration
     # ------------------------------------------------------------------
 
+    def _active_forecast_source(self) -> str:
+        """Resolve the forecast_source key for emos_calibration rows.
+
+        The active FORECAST_STACK is the semantic key — writers (run_emos_shadow,
+        auto_retrain) save per stack, and consumers must read the same key.
+        Before this resolver, readers defaulted to the literal 'nws_open_meteo'
+        while the shadow runner saved under the stack name, so shadow rows were
+        invisible to get_city_mode/apply_emos (issue #659).
+        """
+        return self.get_config("FORECAST_STACK") or "baseline"
+
     def upsert_emos_coefficients(
         self, *, city: str, model_mode: str,
         a: float, b: float, c: float, d: float,
         crps_score: "float | None" = None,
         trained_at: "str | None" = None,
         ready_for_promotion: int = 0,
-        forecast_source: str = "nws_open_meteo",
+        forecast_source: "str | None" = None,
     ) -> None:
-        """Insert or replace EMOS calibration coefficients for a (city, mode, source) triple."""
+        """Insert or replace EMOS calibration coefficients for a (city, mode, source) triple.
+
+        forecast_source=None resolves to the active FORECAST_STACK (see
+        _active_forecast_source) so writers and readers key consistently.
+        """
+        if forecast_source is None:
+            forecast_source = self._active_forecast_source()
         with self._lock:
             self._conn.execute(
                 """INSERT OR REPLACE INTO emos_calibration
@@ -1861,9 +1878,16 @@ class Database:
         return result
 
     def get_emos_coefficients(
-        self, city: str, model_mode: str, forecast_source: str = "nws_open_meteo"
+        self, city: str, model_mode: str, forecast_source: "str | None" = None
     ) -> "dict | None":
-        """Return EMOS coefficients dict for (city, model_mode, forecast_source), or None."""
+        """Return EMOS coefficients dict for (city, model_mode, forecast_source), or None.
+
+        forecast_source=None resolves to the active FORECAST_STACK so consumers
+        (get_city_mode, apply_emos, promotion checks) read the same rows the
+        shadow runner writes (issue #659).
+        """
+        if forecast_source is None:
+            forecast_source = self._active_forecast_source()
         cur = self._conn.execute(
             "SELECT a, b, c, d, crps_score, ready_for_promotion, trained_at "
             "FROM emos_calibration WHERE city=? AND model_mode=? AND forecast_source=?",
