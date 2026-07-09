@@ -7,7 +7,7 @@ poll_once() can call it with no change to callers.
 import logging
 import time
 
-from src.config import POSITION_SIZE_EUR, SIZING_MODE
+from src.config import POSITION_SIZE_EUR, SIZING_MODE, get_live_config
 from src.execution.live_trader import LiveTrader
 from src.execution.order_manager import order_manager as _order_manager
 from src.monitoring.alerts import AlertManager
@@ -58,18 +58,35 @@ def _execute_live(
 
     end_date = (candidate.market.get("endDate") or candidate.market.get("end_date_iso") or "")[:10]
 
+    # Read sizing params live from DB so dashboard config changes take effect
+    # without a restart. Fall back to module-level env-var constants if db is None
+    # or if the DB returns a value that cannot be coerced to the expected type.
+    if db is not None:
+        live_cfg = get_live_config(db)
+        try:
+            live_position_size = float(live_cfg["POSITION_SIZE_EUR"])
+            if live_position_size <= 0:
+                raise ValueError("POSITION_SIZE_EUR must be positive")
+        except (KeyError, TypeError, ValueError):
+            live_position_size = POSITION_SIZE_EUR
+        raw_mode = live_cfg.get("SIZING_MODE")
+        live_sizing_mode = raw_mode if raw_mode in ("flat", "kelly") else SIZING_MODE
+    else:
+        live_position_size = POSITION_SIZE_EUR
+        live_sizing_mode = SIZING_MODE
+
     fee_cents = estimate_fee_cents(candidate.price_cents)
     size_eur = compute_position_size(
         p_win=candidate.confidence,
         price_cents=float(candidate.price_cents),
         fee_cents=fee_cents,
         bankroll=bankroll,
-        sizing_mode=SIZING_MODE,
-        flat_size=POSITION_SIZE_EUR,
+        sizing_mode=live_sizing_mode,
+        flat_size=live_position_size,
     )
     log.info(
         "  [sizing] mode=%s p_win=%.3f price=%sc fee=%.2fc bankroll=%.2f -> size=%.2f EUR",
-        SIZING_MODE, candidate.confidence, candidate.price_cents, fee_cents, bankroll, size_eur,
+        live_sizing_mode, candidate.confidence, candidate.price_cents, fee_cents, bankroll, size_eur,
     )
 
     try:
