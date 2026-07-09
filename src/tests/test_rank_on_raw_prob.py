@@ -82,7 +82,7 @@ def _run_scan_two(rank_on_raw_prob: bool):
         patch("src.strategy.scanner.get_orderbook", return_value={"asks": [], "bids": []}),
         patch("src.strategy.scanner.check_taf_disruption", return_value=False),
         patch("src.strategy.scanner.get_city_mode", return_value="legacy"),
-        patch("src.strategy.scanner.apply_emos", side_effect=lambda *a, **kw: None),
+        patch("src.strategy.scanner.emos_serving_mu", side_effect=lambda *a, **kw: None),
         patch("src.strategy.scanner._check_ready_for_promotion", return_value=False),
         patch("src.strategy.scanner.compute_residual_stats", return_value=None),
         patch("src.strategy.scanner.true_probability_yes", side_effect=[0.05, 0.0]),
