@@ -8,9 +8,11 @@ Covers:
   left untouched and the script reports failure.
 - Missing row ids are reported but do not abort processing of the rest.
 - --dry-run makes no DB changes.
+- DB_PATH environment variable is honored for the default DB path (issue #614).
 """
 from __future__ import annotations
 
+import importlib
 import sqlite3
 from pathlib import Path
 
@@ -174,3 +176,20 @@ class TestQuarantineDryRun:
     def test_missing_db_returns_nonzero(self, tmp_path):
         missing_path = tmp_path / "does_not_exist.db"
         assert quarantine(missing_path, dry_run=False) == 1
+
+
+class TestDBPathEnvVar:
+    def test_db_path_env_var_honored(self, monkeypatch, tmp_path):
+        """When DB_PATH env var is set, _DEFAULT_DB_PATH uses it (issue #614)."""
+        # Set a custom path in the environment
+        custom_path = str(tmp_path / "custom_meteoedge.db")
+        monkeypatch.setenv("DB_PATH", custom_path)
+
+        # Import the module to capture _DEFAULT_DB_PATH
+        import src.scripts.quarantine_mislabeled_shadow_trades as qst_module
+
+        # Reload the module to pick up the environment variable
+        importlib.reload(qst_module)
+
+        # Verify that _DEFAULT_DB_PATH now reflects the custom env var
+        assert str(qst_module._DEFAULT_DB_PATH) == custom_path
