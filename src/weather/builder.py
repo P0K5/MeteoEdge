@@ -304,6 +304,10 @@ def _build_one_station(
         corrected = compute_correction(city, state, db)
         if corrected is not None:
             state.corrected_mu_f = corrected
+            # Keep the decayed intraday delta on its own so the EMOS serving
+            # path can layer it on top of the calibrated mean (#658).
+            if deb_mu_f is not None:
+                state.intraday_delta_f = corrected - deb_mu_f
             # The intraday correction already embeds the obs-vs-model anomaly
             # (delta × decay, ±15°F cap). obs_bias_offset_f carries the SAME
             # signal via a second path (latest_temp − open-meteo hourly), and

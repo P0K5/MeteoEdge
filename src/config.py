@@ -540,8 +540,10 @@ CONFIG_DEFAULTS: "dict[str, str | int | float | bool]" = {
 }
 
 # Maps each FORECAST_STACK value to the set of model tags whose rows should be
-# averaged to form the ensemble μ during EMOS training. Must mirror the live
-# envelope's blend exactly. Source: config.py comments lines 511-514.
+# averaged (EQUAL weights) to form the ensemble μ during EMOS training. The
+# EMOS SERVING path consumes the same equal-weight mean of the same feeds
+# (emos_mode.emos_serving_mu, issue #658 train/serve parity) — NOT the
+# DEB-weighted/intraday-corrected μ used by the legacy envelope path.
 FORECAST_STACK_MODELS: dict[str, frozenset] = {
     "baseline":        frozenset({"nws", "open_meteo"}),
     "hrrr_nbm":        frozenset({"nws", "open_meteo", "hrrr", "nbm"}),

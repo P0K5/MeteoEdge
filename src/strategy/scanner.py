@@ -26,7 +26,7 @@ from src.config import (
     ENVELOPE_SIGMA_CLIMB_FRACTION,
 )
 from src.model.envelope import Bracket, WeatherState, true_probability_yes, compute_envelope
-from src.model.emos_mode import get_city_mode, apply_emos, _check_ready_for_promotion
+from src.model.emos_mode import get_city_mode, emos_serving_mu, _check_ready_for_promotion
 from src.model.residual_correction import compute_residual_stats
 from src.data.polymarket import get_orderbook
 from src.data.taf_disruption import check_taf_disruption
@@ -470,22 +470,23 @@ def scan_markets(
             if db is not None:
                 mode = get_city_mode(city, db)
                 if mode == "emos_shadow":
-                    # Shadow: compute calibrated params for logging only; serve legacy probs.
-                    # forecast_mean and sigma used by true_probability_yes are not modified.
-                    _mu_cal, _sigma_cal = apply_emos(
-                        state.corrected_mu_f or state.deb_mu_f or state.forecast_high_f or 0.0,
-                        FORECAST_STDDEV_F,
-                        city, db,
-                    )
-                    log.debug(
-                        "[emos] shadow city=%s legacy_mu=%.2f emos_mu=%.2f"
-                        " legacy_sigma=%.2f emos_sigma=%.2f",
-                        city,
-                        state.corrected_mu_f or state.deb_mu_f or state.forecast_high_f or 0.0,
-                        _mu_cal,
-                        FORECAST_STDDEV_F,
-                        _sigma_cal,
-                    )
+                    # Shadow: compute the SERVING construction (#658 — plain
+                    # stack mean → apply_emos → + intraday delta) for logging
+                    # only; legacy probabilities are served unchanged. Logging
+                    # the same values the primary path would serve keeps the
+                    # shadow comparison honest.
+                    _serving = emos_serving_mu(state, city, db, FORECAST_STDDEV_F)
+                    if _serving is not None:
+                        _mu_final, _sigma_cal = _serving
+                        log.debug(
+                            "[emos] shadow city=%s legacy_mu=%.2f emos_mu=%.2f"
+                            " legacy_sigma=%.2f emos_sigma=%.2f",
+                            city,
+                            state.corrected_mu_f or state.deb_mu_f or state.forecast_high_f or 0.0,
+                            _mu_final,
+                            FORECAST_STDDEV_F,
+                            _sigma_cal,
+                        )
                     emos_mode_used = "emos_shadow"
                 elif mode == "emos_primary":
                     if not _check_ready_for_promotion(city, db):
@@ -496,21 +497,31 @@ def scan_markets(
                         )
                         emos_mode_used = "legacy"
                     else:
-                        _mu_raw = (
-                            state.corrected_mu_f
-                            or state.deb_mu_f
-                            or state.forecast_high_f
-                            or 0.0
-                        )
-                        _mu_cal, _sigma_cal = apply_emos(_mu_raw, FORECAST_STDDEV_F, city, db)
-                        # Inject calibrated values into a patched state so
-                        # true_probability_yes uses the EMOS-corrected mean.
-                        # We do this by temporarily wrapping: pass corrected_mu_f
-                        # and a stddev override without mutating the shared state.
-                        from dataclasses import replace as _dc_replace
-                        state = _dc_replace(state, corrected_mu_f=_mu_cal)
-                        emos_stddev_override = _sigma_cal
-                        emos_mode_used = "emos_primary"
+                        # #658 layer contract: EMOS consumes the plain
+                        # equal-weight stack mean it was TRAINED on — never
+                        # corrected_mu_f/deb_mu_f (train/serve parity; the
+                        # residual correction drops out of this path because
+                        # EMOS's intercept learns the same static bias). The
+                        # decayed intraday delta is layered on top inside
+                        # emos_serving_mu.
+                        _serving = emos_serving_mu(state, city, db, FORECAST_STDDEV_F)
+                        if _serving is None:
+                            log.warning(
+                                "[emos] city=%s emos_primary but no stack member"
+                                " forecast on state — falling back to legacy",
+                                city,
+                            )
+                            emos_mode_used = "legacy"
+                        else:
+                            _mu_final, _sigma_cal = _serving
+                            # Inject calibrated values into a patched state so
+                            # true_probability_yes uses the EMOS-corrected mean.
+                            # We do this by temporarily wrapping: pass corrected_mu_f
+                            # and a stddev override without mutating the shared state.
+                            from dataclasses import replace as _dc_replace
+                            state = _dc_replace(state, corrected_mu_f=_mu_final)
+                            emos_stddev_override = _sigma_cal
+                            emos_mode_used = "emos_primary"
 
             if emos_stddev_override is not None:
                 p_yes = true_probability_yes(bracket, state, mins_left, forecast_stddev=emos_stddev_override, deb_enabled=_deb_enabled, sigma_climb_fraction=sigma_climb_fraction)

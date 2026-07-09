@@ -77,6 +77,51 @@ def get_city_mode(city: str, db=None) -> str:
     return os.environ.get("EMOS_DEFAULT_MODE", "legacy")
 
 
+# Stack members whose forecasts are available on WeatherState at scan time.
+# Training (fetch_training_data) averages model_forecast_log rows for the
+# stack regime with EQUAL weights; serving must feed apply_emos the same
+# equal-weight mean of the same feeds — never corrected_mu_f/deb_mu_f, which
+# embed DEB weighting + intraday + residual corrections the coefficients were
+# not fitted against (train/serve parity, issue #658). Until scan-time state
+# carries HRRR/ECMWF/etc. values, non-baseline stacks serve on the two
+# always-available members; revisit at FORECAST_STACK expansion.
+_SERVING_MEMBERS = ("forecast_high_f", "secondary_forecast_f")
+
+
+def emos_serving_mu(state, city: str, db, sigma_raw: float) -> "tuple[float, float] | None":
+    """Return (mu_final, sigma_cal) for EMOS serving, or None if unservable.
+
+    The #658 layer contract:
+    1. mu_raw = plain equal-weight mean of the stack members available on
+       *state* — the same variable definition EMOS trains on.
+    2. (a, b, c, d) applied via apply_emos. EMOS's intercept absorbs the
+       static ensemble bias, which is why the rolling residual correction is
+       NOT part of this path (it learns the same bias — applying both would
+       remove it twice).
+    3. The decayed intraday delta (state.intraday_delta_f) layers ON TOP of
+       the calibrated mean: it is a genuine nowcast signal that fixed-lead
+       training cannot capture.
+
+    sigma_cal note: coefficients are fitted at a single lead bin and sigma_raw
+    is currently a constant, so d is weakly identified; per-lead sigma serving
+    is deferred (see issue #658) — the envelope's remaining-climb floor
+    (ENVELOPE_SIGMA_CLIMB_FRACTION, #653) supplies the intraday widening.
+
+    Returns None when no stack member forecast is available on the state —
+    callers must fall back to legacy behavior.
+    """
+    members = [
+        getattr(state, attr, None) for attr in _SERVING_MEMBERS
+        if getattr(state, attr, None) is not None
+    ]
+    if not members:
+        return None
+    mu_raw = sum(members) / len(members)
+    mu_cal, sigma_cal = apply_emos(mu_raw, sigma_raw, city, db)
+    mu_final = mu_cal + (state.intraday_delta_f or 0.0)
+    return mu_final, sigma_cal
+
+
 def apply_emos(mu_raw: float, sigma_raw: float, city: str, db) -> tuple[float, float]:
     """Apply EMOS linear correction: mu_cal = a + b*mu, sigma_cal = c + d*sigma.
 
