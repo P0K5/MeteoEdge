@@ -366,16 +366,34 @@ class TestBuildWeatherHighFreqObs:
         db.get_latest_observation.return_value = obs_dict
         return db
 
-    def _run_build_weather(self, db, metar_temp_c=20.0, metar_time_offset_min=-10):
-        """Run _build_weather() with mocked METAR and return the WeatherState for WSSS (Singapore)."""
+    def _run_build_weather(self, db, metar_temp_c=20.0, metar_time_offset_min=-10, now=None):
+        """Run _build_weather() with mocked METAR and return the WeatherState for WSSS (Singapore).
+
+        Freezes ``src.weather.builder.datetime`` so the internal freshness/staleness
+        check in ``_build_one_station`` (``age_min = (datetime.now(timezone.utc) -
+        obs_ts).total_seconds() / 60``) is computed against the SAME instant used to
+        build the fake observation/METAR timestamps, rather than the real wall-clock
+        time at whatever moment this line of test code happens to execute. Without
+        this, a fresh observation could occasionally be seen as stale (or vice versa)
+        under scheduling delay, making the test flaky (see #675).
+
+        Callers that build their own observation fixture timestamp (e.g. to test
+        freshness/staleness directly) MUST pass that same instant as ``now`` here —
+        otherwise it and this helper's internally-frozen "now" are two independent
+        real-time captures a few lines apart, reintroducing the exact race this is
+        meant to eliminate.
+        """
         from datetime import datetime, timezone, timedelta
         from unittest.mock import patch, MagicMock
         from src.weather.builder import _build_weather
 
-        now = datetime.now(timezone.utc)
+        now = now if now is not None else datetime.now(timezone.utc)
         metar_time = now + timedelta(minutes=metar_time_offset_min)
 
         fake_metar = [{"temp": str(metar_temp_c), "reportTime": metar_time.isoformat()}]
+
+        frozen_datetime = MagicMock(wraps=datetime)
+        frozen_datetime.now.return_value = now
 
         with (
             patch("src.weather.builder.fetch_all_metars_today", return_value=fake_metar),
@@ -385,6 +403,7 @@ class TestBuildWeatherHighFreqObs:
             patch("src.weather.builder.fetch_hourly_temp_now", return_value=84.0),
             patch("src.weather.builder.now_local", return_value=now),
             patch("src.weather.builder.sunset_local", return_value=now),
+            patch("src.weather.builder.datetime", frozen_datetime),
             patch("src.weather.builder.STATION_ACTIVE_HOURS", {"WSSS": (0, 24)}),
             patch("src.weather.builder.STATIONS", [("WSSS", 1.3644, 103.9915, "Singapore", "WSSS", "C", "Asia/Singapore")]),
             patch("src.weather.builder.STATION_TZ", {"WSSS": "Asia/Singapore"}),
@@ -430,12 +449,16 @@ class TestBuildWeatherHighFreqObs:
 
     def test_bias_offset_computed_correctly(self):
         from datetime import datetime, timezone  # noqa: F811
+        # Fixed instant shared with _run_build_weather's internal frozen "now" —
+        # using two independent datetime.now() calls here previously raced the
+        # staleness check in _build_one_station (see #675).
+        now = datetime(2026, 6, 15, 12, 0, 0, tzinfo=timezone.utc)
         fresh_obs = {
-            "ts": datetime.now(timezone.utc).isoformat(),
+            "ts": now.isoformat(),
             "temp_f": 87.0,
         }
         db = self._make_mock_db(obs_dict=fresh_obs)
-        state = self._run_build_weather(db)
+        state = self._run_build_weather(db, now=now)
         assert state is not None, "_build_weather must return WSSS state — check active hours patch"
         # fetch_hourly_temp_now is mocked to return 84.0 in _run_build_weather
         assert state.obs_bias_offset_f is not None
@@ -601,23 +624,19 @@ class TestIntradayCorrectionWiring:
         )
 
     def test_corrected_mu_f_none_falls_through_to_deb(self):
-        """When corrected_mu_f is None and DEB_ENABLED, deb_mu_f is used."""
+        """When corrected_mu_f is None and DEB_ENABLED, deb_mu_f is used.
+
+        Uses a fixed timestamp rather than datetime.now(): true_probability_yes's
+        envelope depends on expected_additional_rise(now_local.hour, ...), so an
+        absolute probability threshold is time-of-day dependent (an earlier version
+        of this test asserted p > 0.3, which is only true for ~half the hours in a
+        day — flaky depending on when the suite happens to run). Comparing against
+        a no-deb_mu_f baseline at the SAME instant is robust across every hour.
+        """
         from src.model.envelope import WeatherState, Bracket, true_probability_yes
         from datetime import datetime, timezone
 
-        now = datetime.now(timezone.utc)
-        state = WeatherState(
-            station="RJTT",
-            now_local=now,
-            sunset_local=now,
-            current_high_f=70.0,
-            current_high_time=now,
-            latest_temp_f=70.0,
-            latest_temp_time=now,
-            forecast_high_f=None,
-            deb_mu_f=80.0,
-            corrected_mu_f=None,
-        )
+        now = datetime(2026, 6, 15, 12, 0, 0, tzinfo=timezone.utc)
         bracket = Bracket(
             ticker="TEST-HIGH-78-82",
             low_f=78.0,
@@ -627,10 +646,30 @@ class TestIntradayCorrectionWiring:
             no_ask_cents=50,
             no_ask_size=100,
         )
+
+        def _make_state(deb_mu_f):
+            return WeatherState(
+                station="RJTT",
+                now_local=now,
+                sunset_local=now,
+                current_high_f=70.0,
+                current_high_time=now,
+                latest_temp_f=70.0,
+                latest_temp_time=now,
+                forecast_high_f=None,
+                deb_mu_f=deb_mu_f,
+                corrected_mu_f=None,
+            )
+
         with patch.dict("os.environ", {"DEB_ENABLED": "true"}):
-            p = true_probability_yes(bracket, state)
-        # deb_mu_f=80.0 is in the center of 78-82; probability should be substantial
-        assert p > 0.3, f"Expected substantial probability with deb_mu_f at bracket center, got {p:.4f}"
+            p_with_deb = true_probability_yes(bracket, _make_state(80.0))
+            p_without_deb = true_probability_yes(bracket, _make_state(None))
+        # deb_mu_f=80.0 sits at the bracket center; using it as the fallback
+        # forecast must raise the probability above the no-signal baseline.
+        assert p_with_deb > p_without_deb, (
+            f"Expected deb_mu_f fallback to raise probability above the no-signal "
+            f"baseline, got p_with_deb={p_with_deb:.4f} p_without_deb={p_without_deb:.4f}"
+        )
 
     def test_on_insert_callback_fires_after_commit(self):
         """on_insert_callback must be called after insert_observation commits."""
