@@ -1,7 +1,7 @@
 """Tests for src/config.py source priority configuration."""
 import pytest
 
-from src.config import get_source_priority
+from src.config import get_source_priority, is_training_eligible
 
 
 class TestGetSourcePriority:
@@ -65,6 +65,30 @@ class TestGetSourcePriority:
         sources2 = get_source_priority("Tokyo")
         # Should be the same object (cached)
         assert sources1 is sources2
+
+
+class TestIsTrainingEligible:
+    """Tests for issue #558: is_training_eligible() per-city accessor."""
+
+    EXCLUDED_CITIES = ["Jinan", "Shenzhen", "Wuhan", "Zhengzhou"]
+
+    def test_excluded_cities_are_ineligible(self):
+        """The 4 cities flagged in the 2026-07-01 audit must be ineligible."""
+        for city in self.EXCLUDED_CITIES:
+            assert is_training_eligible(city) is False, (
+                f"{city} should be training_eligible=False"
+            )
+
+    def test_other_cities_are_eligible(self):
+        """Cities without an explicit training_eligible: false flag default to True."""
+        for city in ["Tokyo", "Seoul", "Busan", "Singapore", "Chicago", "Miami"]:
+            assert is_training_eligible(city) is True, (
+                f"{city} should default to training_eligible=True"
+            )
+
+    def test_city_with_no_source_priority_entry_is_eligible(self):
+        """Cities absent from source_priority.yaml entirely default to eligible."""
+        assert is_training_eligible("NonExistentCity") is True
 
 
 class TestArchiveShadowStations:

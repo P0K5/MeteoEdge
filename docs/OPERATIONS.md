@@ -1685,6 +1685,68 @@ VALUES ('ZGGG', 0, 1, '2026-07-02T00:00:00+00:00'),
 
 ---
 
+## Per-Station Verification-Source Policy (issue #558)
+
+**Scope:** the training-data read path only (EMOS `fetch_training_data` / DEB
+`_compute_weights_with_metadata`, both via `Database.get_daily_obs_high()` /
+`Database.get_obs_highs_range()`). Live-trading entry gates and
+`DISABLED_STATIONS` are untouched — a station can still trade live while being
+excluded from training.
+
+**Principle (2026-07-01 audit, findings §1.5 + §3.3):** every downstream
+learner treats "max METAR temp_f per day" as ground truth. For each station we
+ask (a) does the verification source match the settlement source, and (b) is
+its cadence adequate to catch the true daily high? Stations failing either
+test are excluded from training data.
+
+### High-cadence verification routing
+
+`get_daily_obs_high()` / `get_obs_highs_range()` resolve the queried ICAO to
+its Polymarket city and pull observations from every DB key returned by
+`config.get_canonical_station_feeds()` (the same primitive `weather/builder.py`
+already uses for scan-time nowcasting), taking the max per local calendar day
+across the unioned rows. This means verification automatically uses the
+higher-cadence, settlement-matching feed for:
+
+| City | Settlement/verification feed | Cadence | Falls back to |
+|---|---|---|---|
+| Tokyo | JMA AMeDAS (`jma_ameidas`) | 10 min | METAR (RJTT) |
+| Seoul | AMOS | 15 min | METAR (RKSI) |
+| Busan | AMOS | 15 min | METAR (RKPK) |
+| Singapore (WSSS) | Singapore MSS | 1 min | METAR (WSSS) |
+
+All other stations have no city-keyed high-cadence feed configured, so
+`get_canonical_station_feeds()` returns just the ICAO key — no behavior change
+for them.
+
+### `training_eligible` exclusions
+
+`config/source_priority.yaml` supports a per-entry `training_eligible: false`
+flag (default `true` when omitted, and for cities with no entry at all).
+`config.is_training_eligible(city)` reads it; `get_daily_obs_high()` /
+`get_obs_highs_range()` short-circuit to `None` / `{}` for ineligible cities
+without querying the DB. Because both EMOS `fetch_training_data` and DEB's
+weight computation treat a missing daily high as "skip this date," and
+`fetch_training_data_pooled` (issue #659) calls `fetch_training_data` per city
+with `min_samples=1`, an ineligible city automatically contributes zero
+triples to any training path — including pooled fits — with no per-call-site
+filtering required.
+
+Currently marked `training_eligible: false` (2026-07-01 audit):
+
+| City (ICAO) | Reason |
+|---|---|
+| Jinan (ZSJN) | METAR feed nearly dead — 3–10 obs/day, no new observations since 2026-06-30 14:13 UTC. Code-level investigation (collector config, recent commits) found no collector bug; `src/data/collectors/` has no ZSJN-specific special-casing and the METAR fetch path is shared with all other METAR-only stations, so this reads as an upstream/data-source outage rather than an application bug. ZSJN is dropped from training pending upstream recovery — re-check obs cadence before re-enabling. |
+| Shenzhen (ZGSZ) | 2-hourly real-world METAR cadence undershoots the true daily high by up to 1–3°F — larger than the edges traded. |
+| Wuhan (ZHHH) | Same 2-hourly undershoot issue as ZGSZ. |
+| Zhengzhou (ZHCC) | Same 2-hourly undershoot issue as ZGSZ. |
+
+**Source of truth:** `config/source_priority.yaml` is the single place to add,
+remove, or adjust these exclusions — do not special-case cities in
+`db.py`/`emos_calibration.py`/`deb_weighting.py`.
+
+---
+
 ## Regenerating Climb Rate Lookup (issue #592)
 
 The climb rate lookup table (`src/data/climb_lookup.py`) is used by the envelope model to estimate expected additional rise for each station at each hour of the day. The table is seeded with synthetic climatological values and can be incrementally refined with real observations accumulated in the database.

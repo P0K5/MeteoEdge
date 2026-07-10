@@ -91,6 +91,7 @@ Shenzhen:
     station: ZGSZ
     cadence_min: 30
     is_official: true
+    training_eligible: false  # 2026-07-01 audit: 2-hourly real-world cadence undershoots true daily high by 1-3F
 
 Panama City:
   - source: metar
@@ -167,18 +168,21 @@ Wuhan:
     station: ZHHH
     cadence_min: 30
     is_official: true
+    training_eligible: false  # 2026-07-01 audit: 2-hourly real-world cadence undershoots true daily high by 1-3F
 
 Jinan:
   - source: metar
     station: ZSJN
     cadence_min: 30
     is_official: true
+    training_eligible: false  # 2026-07-01 audit: feed nearly dead (3-10 obs/day, stale since June 30)
 
 Zhengzhou:
   - source: metar
     station: ZHCC
     cadence_min: 30
     is_official: true
+    training_eligible: false  # 2026-07-01 audit: 2-hourly real-world cadence undershoots true daily high by 1-3F
 
 Manila:
   - source: metar
