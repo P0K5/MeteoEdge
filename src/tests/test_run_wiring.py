@@ -366,7 +366,7 @@ class TestBuildWeatherHighFreqObs:
         db.get_latest_observation.return_value = obs_dict
         return db
 
-    def _run_build_weather(self, db, metar_temp_c=20.0, metar_time_offset_min=-10):
+    def _run_build_weather(self, db, metar_temp_c=20.0, metar_time_offset_min=-10, now=None):
         """Run _build_weather() with mocked METAR and return the WeatherState for WSSS (Singapore).
 
         Freezes ``src.weather.builder.datetime`` so the internal freshness/staleness
@@ -376,12 +376,18 @@ class TestBuildWeatherHighFreqObs:
         time at whatever moment this line of test code happens to execute. Without
         this, a fresh observation could occasionally be seen as stale (or vice versa)
         under scheduling delay, making the test flaky (see #675).
+
+        Callers that build their own observation fixture timestamp (e.g. to test
+        freshness/staleness directly) MUST pass that same instant as ``now`` here —
+        otherwise it and this helper's internally-frozen "now" are two independent
+        real-time captures a few lines apart, reintroducing the exact race this is
+        meant to eliminate.
         """
         from datetime import datetime, timezone, timedelta
         from unittest.mock import patch, MagicMock
         from src.weather.builder import _build_weather
 
-        now = datetime.now(timezone.utc)
+        now = now if now is not None else datetime.now(timezone.utc)
         metar_time = now + timedelta(minutes=metar_time_offset_min)
 
         fake_metar = [{"temp": str(metar_temp_c), "reportTime": metar_time.isoformat()}]
@@ -443,12 +449,16 @@ class TestBuildWeatherHighFreqObs:
 
     def test_bias_offset_computed_correctly(self):
         from datetime import datetime, timezone  # noqa: F811
+        # Fixed instant shared with _run_build_weather's internal frozen "now" —
+        # using two independent datetime.now() calls here previously raced the
+        # staleness check in _build_one_station (see #675).
+        now = datetime(2026, 6, 15, 12, 0, 0, tzinfo=timezone.utc)
         fresh_obs = {
-            "ts": datetime.now(timezone.utc).isoformat(),
+            "ts": now.isoformat(),
             "temp_f": 87.0,
         }
         db = self._make_mock_db(obs_dict=fresh_obs)
-        state = self._run_build_weather(db)
+        state = self._run_build_weather(db, now=now)
         assert state is not None, "_build_weather must return WSSS state — check active hours patch"
         # fetch_hourly_temp_now is mocked to return 84.0 in _run_build_weather
         assert state.obs_bias_offset_f is not None
