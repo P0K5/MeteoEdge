@@ -97,9 +97,10 @@ def get_city_mode(city: str, db=None) -> str:
 # stack regime with EQUAL weights; serving must feed apply_emos the same
 # equal-weight mean of the same feeds — never corrected_mu_f/deb_mu_f, which
 # embed DEB weighting + intraday + residual corrections the coefficients were
-# not fitted against (train/serve parity, issue #658). Until scan-time state
+# not fitted against (train/serve parity, issue #666). Until scan-time state
 # carries HRRR/ECMWF/etc. values, non-baseline stacks serve on the two
-# always-available members; revisit at FORECAST_STACK expansion.
+# always-available members; test_serving_members_parity_guard ensures every
+# model in the active FORECAST_STACK has a corresponding scan-time attribute.
 _SERVING_MEMBERS = ("forecast_high_f", "secondary_forecast_f")
 
 
