@@ -1,5 +1,10 @@
 # Prob-cap shadow report -- 2026-07-10 (issue #551 stage 2)
 
+**Follow-up tracked in #682**: running this script against real production
+`logs/` data and making the actual `MODEL_PROB_CAP` decision. #551 (stage 2
+of the original ask) is closed by this PR since the report tooling and
+methodology are complete; #682 is the decision-stage successor.
+
 ## STATUS: BLOCKED -- no usable production data in this environment
 
 **This report cannot state a data-backed recommendation today.** The
