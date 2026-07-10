@@ -96,6 +96,35 @@ class TestGetCityModeLegacyDefault:
 
 
 # ---------------------------------------------------------------------------
+# Test 1b: EMOS_DEFAULT_MODE live-read from bot_config (issue #680)
+# ---------------------------------------------------------------------------
+
+class TestDefaultModeLiveConfig:
+    """Issue #680: the dashboard edits EMOS_DEFAULT_MODE in bot_config, so the
+    fallback must be live-read from the DB when a handle is available — the
+    env var only covers db=None paths."""
+
+    def test_db_config_value_is_honoured(self):
+        """bot_config EMOS_DEFAULT_MODE=emos_shadow → returned for a city
+        with no calibration rows and no override."""
+        db = _db()
+        db.set_config("EMOS_DEFAULT_MODE", "emos_shadow")
+        assert get_city_mode("Tokyo", db=db) == "emos_shadow"
+
+    def test_db_config_wins_over_env_var(self, monkeypatch):
+        """With a db handle, bot_config beats the env var (live-read pattern)."""
+        monkeypatch.setenv("EMOS_DEFAULT_MODE", "emos_shadow")
+        db = _db()
+        db.set_config("EMOS_DEFAULT_MODE", "legacy")
+        assert get_city_mode("Tokyo", db=db) == "legacy"
+
+    def test_unseeded_db_falls_back_to_config_default(self):
+        """No bot_config row → CONFIG_DEFAULTS['EMOS_DEFAULT_MODE'] ('legacy')."""
+        db = _db()
+        assert get_city_mode("Tokyo", db=db) == "legacy"
+
+
+# ---------------------------------------------------------------------------
 # Test 2: shadow active — emos_shadow row present, no primary
 # ---------------------------------------------------------------------------
 

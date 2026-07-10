@@ -26,11 +26,26 @@ def _emos_min_samples(db) -> int:
     ))
 
 
+def _default_mode(db=None) -> str:
+    """Resolve the EMOS fallback mode for cities with no calibration rows.
+
+    Reads the dashboard-editable ``EMOS_DEFAULT_MODE`` from bot_config when a
+    db handle is available (live-read, same pattern as ``_emos_min_samples``);
+    without a db the env var keeps its historical role (issue #680).
+    """
+    if db is not None:
+        return str(get_live_config(db).get(
+            "EMOS_DEFAULT_MODE",
+            CONFIG_DEFAULTS["EMOS_DEFAULT_MODE"]
+        ))
+    return os.environ.get("EMOS_DEFAULT_MODE", "legacy")
+
+
 def _shadow_or_default(city: str, db) -> str:
     """Fall back to emos_shadow when a shadow row exists, else EMOS_DEFAULT_MODE."""
     if db.get_emos_coefficients(city, "emos_shadow"):
         return "emos_shadow"
-    return os.environ.get("EMOS_DEFAULT_MODE", "legacy")
+    return _default_mode(db)
 
 
 def _primary_allowed(city: str, db) -> bool:
@@ -61,14 +76,14 @@ def get_city_mode(city: str, db=None) -> str:
        (typically written by the offline retrain) promotes once the sample guard
        passes; otherwise an existing shadow row serves ``emos_shadow``.
 
-    Falls back to the ``EMOS_DEFAULT_MODE`` env var (default 'legacy'). Returns
-    'legacy' when db is None.
+    Falls back to ``EMOS_DEFAULT_MODE`` — read live from bot_config when a db
+    is available, else from the env var (default 'legacy').
 
     Promotion guard: a city needs at least ``EMOS_MIN_SAMPLES`` CRPS log entries
     before it may serve ``emos_primary``, regardless of which path requested it.
     """
     if db is None:
-        return os.environ.get("EMOS_DEFAULT_MODE", "legacy")
+        return _default_mode()
 
     # 1. Operator override (dashboard promote/demote) is authoritative.
     override = db.get_emos_effective_mode(city)
@@ -84,12 +99,12 @@ def get_city_mode(city: str, db=None) -> str:
     shadow = db.get_emos_coefficients(city, "emos_shadow")
     primary = db.get_emos_coefficients(city, "emos_primary")
     if shadow is None and primary is None:
-        return os.environ.get("EMOS_DEFAULT_MODE", "legacy")
+        return _default_mode(db)
     if primary and primary.get("ready_for_promotion") == 1 and _primary_allowed(city, db):
         return "emos_primary"
     if shadow:
         return "emos_shadow"
-    return os.environ.get("EMOS_DEFAULT_MODE", "legacy")
+    return _default_mode(db)
 
 
 # Stack members whose forecasts are available on WeatherState at scan time.
