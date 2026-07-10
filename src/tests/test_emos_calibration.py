@@ -20,6 +20,7 @@ from src.data.db import Database
 from src.model.emos_calibration import (
     InsufficientDataError,
     fetch_training_data,
+    fetch_training_data_pooled,
     fit_emos,
     save_coefficients,
 )
@@ -451,3 +452,60 @@ class TestAlwaysShadow:
             f"Fit with 90 samples must still have ready_for_promotion=0 "
             f"(promotion is manual-only), got {row['ready_for_promotion']}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Test 6 (issue #558): training_eligible exclusion propagates through the
+# fetch_training_data / fetch_training_data_pooled chokepoint without any
+# per-call-site filtering.
+# ---------------------------------------------------------------------------
+
+class TestTrainingEligibilityExclusionEndToEnd:
+    """An ineligible city (Shenzhen/ZGSZ, training_eligible=false per
+    issue #558) must contribute zero triples to fetch_training_data /
+    fetch_training_data_pooled even when it has plenty of forecast_log and
+    observation rows — because get_daily_obs_high() (the shared chokepoint)
+    returns None for every one of its dates."""
+
+    def _seed(self, db, station, model, n, forecast_base, obs_base):
+        for i in range(n):
+            date_str = f"2025-02-{i + 1:02d}"
+            db.upsert_forecast_log_v2(
+                station=station,
+                model=model,
+                date=date_str,
+                forecast_high_f=forecast_base + i,
+                lead_hours=24,
+            )
+            db.insert_observation(
+                ts=f"{date_str}T14:00:00+00:00",
+                station=station,
+                temp_f=obs_base + i,
+                temp_native=obs_base + i,
+                unit="C",
+                source="metar",
+            )
+
+    def test_fetch_training_data_ineligible_city_raises_insufficient_data(self):
+        """fetch_training_data('Shenzhen', ...) must raise InsufficientDataError
+        even with min_samples=1, because every daily-high lookup returns None."""
+        db = _db()
+        self._seed(db, "ZGSZ", "nws", n=10, forecast_base=85.0, obs_base=90.0)
+        with pytest.raises(InsufficientDataError):
+            fetch_training_data("Shenzhen", db, min_samples=1, lead_hours=24, forecast_source="nws")
+
+    def test_pooled_excludes_ineligible_city_rows(self):
+        """fetch_training_data_pooled(['Chicago', 'Shenzhen'], ...) must only
+        include Chicago's triples — Shenzhen contributes 0 and is omitted
+        from per_city_counts, per the pooled-path fallback in the design note."""
+        db = _db()
+        self._seed(db, "KORD", "nws", n=10, forecast_base=70.0, obs_base=68.0)
+        self._seed(db, "ZGSZ", "nws", n=10, forecast_base=85.0, obs_base=90.0)
+
+        pooled, per_city = fetch_training_data_pooled(
+            ["Chicago", "Shenzhen"], db, min_samples=1, lead_hours=24, forecast_source="nws",
+        )
+
+        assert len(pooled) == 10
+        assert per_city == {"Chicago": 10}
+        assert "Shenzhen" not in per_city

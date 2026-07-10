@@ -9,7 +9,12 @@ from pathlib import Path
 import pytz
 from dateutil import parser as dtparse
 
-from src.config import STATION_TZ
+from src.config import (
+    STATION_TZ,
+    STATIONS,
+    get_canonical_station_feeds,
+    is_training_eligible,
+)
 
 log = logging.getLogger(__name__)
 
@@ -19,6 +24,18 @@ _DEFAULT_PATH = os.getenv("DB_PATH", "data/meteoedge.db")
 # 195f08c (the per-region DEB routing fix) and may attribute "nws" weight to
 # non-US cities. Purged on every startup (idempotent — no-op once purged).
 _DEB_WEIGHT_LOG_PURGE_CUTOFF = "2026-06-30"
+
+# ICAO -> Polymarket city name, built once from STATIONS (tuple index 0 = ICAO,
+# index 3 = city). Same mapping pattern as config.get_canonical_station_feeds();
+# duplicated here (rather than imported) to keep this a plain module-level dict
+# lookup on the hot training-data read path.
+_ICAO_TO_CITY: "dict[str, str]" = {s[0]: s[3] for s in STATIONS}
+
+
+def _icao_to_city(station: str) -> "str | None":
+    """Resolve an ICAO station code to its Polymarket city name, or None if unknown."""
+    return _ICAO_TO_CITY.get(station)
+
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS observations (
@@ -2231,9 +2248,21 @@ class Database:
         """Return MAX(temp_f) from observations for *station* on *date* (YYYY-MM-DD).
 
         Groups observations by the station's LOCAL calendar day (not UTC).
-        Returns None if no observations found or station has no known timezone.
+        Returns None if no observations found, station has no known timezone,
+        or the station's city is marked ``training_eligible: false`` in
+        ``config/source_priority.yaml`` (issue #558 — bad-label stations must
+        not feed training data).
+
+        Rows are unioned across every DB key returned by
+        ``config.get_canonical_station_feeds(station)`` (e.g. both the
+        city-keyed high-cadence feed and the ICAO-keyed METAR feed for WSSS),
+        so verification uses the same source-of-truth as scan-time nowcasting.
         """
         if station not in STATION_TZ:
+            return None
+
+        city = _icao_to_city(station)
+        if city is not None and not is_training_eligible(city):
             return None
 
         try:
@@ -2248,11 +2277,13 @@ class Database:
         date_minus_1 = (target_date - timedelta(days=1)).isoformat()
         date_plus_2 = (target_date + timedelta(days=2)).isoformat()
 
+        feed_keys = get_canonical_station_feeds(station)
+        placeholders = ",".join("?" * len(feed_keys))
         cur = self._conn.execute(
-            "SELECT ts, temp_f FROM observations "
-            "WHERE station=? AND ts >= ? AND ts < ? AND temp_f IS NOT NULL "
-            "ORDER BY ts",
-            (station, date_minus_1, date_plus_2),
+            f"SELECT ts, temp_f FROM observations "
+            f"WHERE station IN ({placeholders}) AND ts >= ? AND ts < ? AND temp_f IS NOT NULL "
+            f"ORDER BY ts",
+            (*feed_keys, date_minus_1, date_plus_2),
         )
 
         best = None
@@ -2279,8 +2310,18 @@ class Database:
         Used by DEB weight computation to pair model forecasts against observed
         daily highs without depending on the settlements table (which only
         populates from resolved live trades).
+
+        Returns ``{}`` immediately (no query) if the station's city is marked
+        ``training_eligible: false`` in ``config/source_priority.yaml`` (issue
+        #558). Rows are unioned across every DB key returned by
+        ``config.get_canonical_station_feeds(station)``, same as
+        ``get_daily_obs_high``.
         """
         if station not in STATION_TZ:
+            return {}
+
+        city = _icao_to_city(station)
+        if city is not None and not is_training_eligible(city):
             return {}
 
         try:
@@ -2290,12 +2331,14 @@ class Database:
 
         tz = pytz.timezone(STATION_TZ[station])
 
-        # Fetch all observations for the station with temp_f IS NOT NULL
+        # Fetch all observations (across every canonical feed key) with temp_f IS NOT NULL
+        feed_keys = get_canonical_station_feeds(station)
+        placeholders = ",".join("?" * len(feed_keys))
         cur = self._conn.execute(
-            "SELECT ts, temp_f FROM observations "
-            "WHERE station=? AND temp_f IS NOT NULL "
-            "ORDER BY ts",
-            (station,),
+            f"SELECT ts, temp_f FROM observations "
+            f"WHERE station IN ({placeholders}) AND temp_f IS NOT NULL "
+            f"ORDER BY ts",
+            (*feed_keys,),
         )
 
         result: dict[str, float] = {}

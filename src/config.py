@@ -463,6 +463,27 @@ def get_canonical_station_feeds(station: str) -> list[str]:
     return [station]
 
 
+def is_training_eligible(city: str) -> bool:
+    """Return whether *city* is eligible for use in training-data construction.
+
+    Reads ``source_priority.yaml`` via :func:`get_source_priority`.  A city is
+    ineligible only if at least one of its entries explicitly sets
+    ``training_eligible: false`` (e.g. dead/low-cadence feeds flagged in the
+    2026-07-01 audit — see issue #558).  Cities with no entry at all in
+    ``source_priority.yaml``, or whose entries omit the field, are eligible
+    by default.
+
+    Args:
+        city: Polymarket city name (e.g. ``"Jinan"``).
+
+    Returns:
+        False if any source entry for *city* sets ``training_eligible: false``,
+        True otherwise (including for cities absent from source_priority.yaml).
+    """
+    sources = get_source_priority(city)
+    return not any(s.get("training_eligible") is False for s in sources)
+
+
 # ------------------------------------------------------------------
 # DB-backed parameter store — config keys, defaults, and live access
 # ------------------------------------------------------------------

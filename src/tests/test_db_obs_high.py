@@ -4,6 +4,8 @@ Tests:
 - get_daily_obs_high() groups observations by station-local calendar day, not UTC
 - get_obs_highs_range() groups observations by station-local calendar day, not UTC
 - Observations near local midnight land on the correct local date
+- Issue #558: training_eligible=false stations short-circuit to None/{}
+- Issue #558: WSSS unions the METAR (ICAO-keyed) and MSS (city-keyed) feeds
 """
 from src.data.db import Database
 
@@ -322,3 +324,153 @@ class TestGetObsHighsRange:
         )
         result = db.get_obs_highs_range("KORD", "2024-06-15")
         assert result == {"2024-06-15": 78.0}
+
+
+class TestTrainingEligibilityExclusion:
+    """Issue #558: training_eligible=false stations must be excluded from
+    both get_daily_obs_high() and get_obs_highs_range() regardless of any
+    observation rows present for them."""
+
+    def test_get_daily_obs_high_zsjn_returns_none(self):
+        """ZSJN (Jinan) is training_eligible=false — always None, even with rows present."""
+        db = _db()
+        db.insert_observation(
+            ts="2024-06-15T14:00:00+00:00",
+            station="ZSJN",
+            temp_f=90.0,
+            temp_native=32.2,
+            unit="C",
+            source="metar",
+        )
+        assert db.get_daily_obs_high("ZSJN", "2024-06-15") is None
+
+    def test_get_obs_highs_range_zgsz_returns_empty(self):
+        """ZGSZ (Shenzhen) is training_eligible=false — always {}, even with rows present."""
+        db = _db()
+        db.insert_observation(
+            ts="2024-06-15T14:00:00+00:00",
+            station="ZGSZ",
+            temp_f=95.0,
+            temp_native=35.0,
+            unit="C",
+            source="metar",
+        )
+        assert db.get_obs_highs_range("ZGSZ", "2024-06-14") == {}
+
+    def test_get_daily_obs_high_zhhh_returns_none(self):
+        """Wuhan (ZHHH) is training_eligible=false."""
+        db = _db()
+        db.insert_observation(
+            ts="2024-06-15T14:00:00+00:00",
+            station="ZHHH",
+            temp_f=95.0,
+            temp_native=35.0,
+            unit="C",
+            source="metar",
+        )
+        assert db.get_daily_obs_high("ZHHH", "2024-06-15") is None
+
+    def test_get_daily_obs_high_zhcc_returns_none(self):
+        """Zhengzhou (ZHCC) is training_eligible=false."""
+        db = _db()
+        db.insert_observation(
+            ts="2024-06-15T14:00:00+00:00",
+            station="ZHCC",
+            temp_f=95.0,
+            temp_native=35.0,
+            unit="C",
+            source="metar",
+        )
+        assert db.get_daily_obs_high("ZHCC", "2024-06-15") is None
+
+    def test_eligible_station_unaffected(self):
+        """A station whose city has no training_eligible flag behaves as before."""
+        db = _db()
+        db.insert_observation(
+            ts="2024-06-15T14:00:00+00:00",
+            station="KORD",
+            temp_f=78.0,
+            temp_native=78.0,
+            unit="F",
+            source="metar",
+        )
+        assert db.get_daily_obs_high("KORD", "2024-06-15") == 78.0
+
+
+class TestWsssMultiSourceVerification:
+    """Issue #558: WSSS verification must union METAR (ICAO-keyed) rows with
+    Singapore MSS (city-keyed) rows, picking up the higher-cadence feed's max
+    even when it differs from the METAR-only max."""
+
+    def test_get_daily_obs_high_picks_up_mss_max_over_metar(self):
+        """A Singapore-keyed (MSS) row with a higher temp than any WSSS-keyed
+        (METAR) row must win — proves both feed keys are queried, not just WSSS."""
+        db = _db()
+        # WSSS-keyed METAR row: local high 88.0F
+        db.insert_observation(
+            ts="2024-06-15T06:00:00+00:00",
+            station="WSSS",
+            temp_f=88.0,
+            temp_native=31.1,
+            unit="C",
+            source="metar",
+        )
+        # Singapore-keyed MSS row on the same local day, higher temp: 91.0F
+        db.insert_observation(
+            ts="2024-06-15T07:15:00+00:00",
+            station="Singapore",
+            temp_f=91.0,
+            temp_native=32.8,
+            unit="C",
+            source="mss",
+        )
+        high = db.get_daily_obs_high("WSSS", "2024-06-15")
+        assert high == 91.0, (
+            "Expected the MSS-keyed (Singapore) row's max to win over the "
+            "METAR-keyed (WSSS) row's max"
+        )
+
+    def test_get_daily_obs_high_metar_only_row_still_seen(self):
+        """If the METAR-keyed row has the higher temp, it must still win
+        (both feeds unioned, not just the high-cadence one)."""
+        db = _db()
+        db.insert_observation(
+            ts="2024-06-15T06:00:00+00:00",
+            station="WSSS",
+            temp_f=93.0,
+            temp_native=33.9,
+            unit="C",
+            source="metar",
+        )
+        db.insert_observation(
+            ts="2024-06-15T07:15:00+00:00",
+            station="Singapore",
+            temp_f=90.0,
+            temp_native=32.2,
+            unit="C",
+            source="mss",
+        )
+        high = db.get_daily_obs_high("WSSS", "2024-06-15")
+        assert high == 93.0
+
+    def test_get_obs_highs_range_unions_both_feed_keys(self):
+        """get_obs_highs_range() must also union WSSS + Singapore keyed rows."""
+        db = _db()
+        db.insert_observation(
+            ts="2024-06-15T06:00:00+00:00",
+            station="WSSS",
+            temp_f=88.0,
+            temp_native=31.1,
+            unit="C",
+            source="metar",
+        )
+        db.insert_observation(
+            ts="2024-06-15T07:15:00+00:00",
+            station="Singapore",
+            temp_f=91.0,
+            temp_native=32.8,
+            unit="C",
+            source="mss",
+        )
+        result = db.get_obs_highs_range("WSSS", "2024-06-14")
+        assert result == {"2024-06-15": 91.0}
