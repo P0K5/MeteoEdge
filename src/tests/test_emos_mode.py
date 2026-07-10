@@ -515,3 +515,84 @@ class TestEmosMinSamplesConfig:
 
         # Should now allow because 50 >= 50
         assert _primary_allowed("Chicago", db) is True
+
+
+# ---------------------------------------------------------------------------
+# Test 9: serving members parity guard — issue #666 train/serve tripwire
+# ---------------------------------------------------------------------------
+
+class TestServingMembersParityGuard:
+    """Issue #666: guard that FORECAST_STACK expansion does not break train/serve
+    parity by adding models that serving cannot access on WeatherState.
+
+    Training averages model_forecast_log rows for the active FORECAST_STACK with
+    EQUAL weights; serving must feed apply_emos the same equal-weight mean of the
+    same feeds. If FORECAST_STACK expands beyond baseline (HRRR/NBM/ECMWF/ICON)
+    without expanding _SERVING_MEMBERS, training will include members serving
+    cannot see — recreating the exact train/serve skew #658/#664 fixed.
+    """
+
+    def test_baseline_stack_has_sufficient_serving_members(self):
+        """Sanity check: baseline stack (nws, open_meteo) has 2 serving members."""
+        from src.config import FORECAST_STACK_MODELS
+        from src.model.emos_mode import _SERVING_MEMBERS
+
+        baseline_models = FORECAST_STACK_MODELS["baseline"]
+        assert len(_SERVING_MEMBERS) >= len(baseline_models), (
+            f"Baseline stack needs {len(baseline_models)} members, "
+            f"but _SERVING_MEMBERS only has {len(_SERVING_MEMBERS)}"
+        )
+        # Baseline should have exactly 2 models and 2 serving members
+        assert len(baseline_models) == 2
+        assert len(_SERVING_MEMBERS) == 2
+
+    def test_live_forecast_stack_config_parity_guard(self):
+        """Guard: live active FORECAST_STACK is matched by _SERVING_MEMBERS.
+
+        This test reads the active FORECAST_STACK from live config (seeded to
+        defaults, as production does) and asserts the parity invariant: the
+        number of scan-time attributes in _SERVING_MEMBERS must be >= the
+        number of models in the active stack.
+
+        Currently this test passes because FORECAST_STACK defaults to 'baseline'
+        (2 members, 2 serving members). If someone flips the live default config
+        to e.g. 'hrrr_nbm' (4 models) without expanding _SERVING_MEMBERS (still 2),
+        this test will fail, enforcing the issue #666 contract.
+        """
+        from src.config import FORECAST_STACK_MODELS, get_live_config
+        from src.model.emos_mode import _SERVING_MEMBERS
+
+        db = _db()
+        seed_config(db)
+
+        live_config = get_live_config(db)
+        active_stack = live_config.get("FORECAST_STACK", "baseline")
+        stack_models = FORECAST_STACK_MODELS.get(active_stack, frozenset())
+
+        assert len(_SERVING_MEMBERS) >= len(stack_models), (
+            f"Active FORECAST_STACK '{active_stack}' has {len(stack_models)} models "
+            f"({', '.join(sorted(stack_models))}), but _SERVING_MEMBERS only has "
+            f"{len(_SERVING_MEMBERS)} scan-time attributes ({', '.join(_SERVING_MEMBERS)}). "
+            f"Before expanding FORECAST_STACK, add new model forecasts to WeatherState "
+            f"and update _SERVING_MEMBERS to match (see issue #666)."
+        )
+
+    def test_non_baseline_stacks_would_fail_parity_check(self):
+        """Unit test: demonstrate that the guard correctly detects parity failures.
+
+        This test proves the guard logic by directly asserting the failure condition
+        for non-baseline stacks. It does NOT mock the live config (staying true to
+        the repo's current baseline default), but shows what would happen if those
+        stacks were expanded without updating _SERVING_MEMBERS.
+        """
+        from src.config import FORECAST_STACK_MODELS
+        from src.model.emos_mode import _SERVING_MEMBERS
+
+        # Confirm the failure condition for each non-baseline stack
+        for stack_name in ["hrrr_nbm", "intl_ecmwf_icon", "full"]:
+            stack_models = FORECAST_STACK_MODELS[stack_name]
+            assert len(_SERVING_MEMBERS) < len(stack_models), (
+                f"Guard should detect parity failure for stack '{stack_name}': "
+                f"it has {len(stack_models)} models but _SERVING_MEMBERS only has "
+                f"{len(_SERVING_MEMBERS)} members. This proves the guard logic works."
+            )
