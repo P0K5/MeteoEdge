@@ -2048,13 +2048,28 @@ class Database:
         }
 
     def get_emos_shadow_city_status(self, city: str) -> dict:
-        """Return EMOS shadow status for a single city: mean_crps and model_weights snapshot.
+        """Return EMOS shadow status for a single city.
 
-        The model_weights_snapshot is a dict {model: weight} for the most recent date,
-        or None if no model_weights rows exist for this city.
+        Includes ``mean_crps`` (model_mode='emos_shadow'), ``legacy_mean_crps``
+        (model_mode='legacy' — the uncalibrated equal-weight baseline scored on
+        the same training triples, see issue #667), ``crps_delta`` =
+        legacy_mean_crps - mean_crps (positive means EMOS is beating legacy,
+        since lower CRPS is better), and ``model_weights_snapshot`` — a dict
+        {model: weight} for the most recent date in model_weights, or None if
+        no model_weights rows exist for this city (see issue #649).
+
+        Both CRPS averages are scoped to their own model_mode explicitly —
+        an unscoped AVG() over the whole table would silently mix 'legacy'
+        rows into the EMOS score once they start accumulating alongside
+        'emos_shadow' rows for the same city/date.
         """
         crps_row = self._conn.execute(
-            "SELECT AVG(crps_score) FROM emos_crps_log WHERE city=?", (city,)
+            "SELECT AVG(crps_score) FROM emos_crps_log WHERE city=? AND model_mode='emos_shadow'",
+            (city,),
+        ).fetchone()
+        legacy_row = self._conn.execute(
+            "SELECT AVG(crps_score) FROM emos_crps_log WHERE city=? AND model_mode='legacy'",
+            (city,),
         ).fetchone()
 
         # Get all model weights for this city, ordered by date DESC
@@ -2075,8 +2090,19 @@ class Database:
                     break
             model_weights_snapshot = snapshot if snapshot else None
 
+        mean_crps = float(crps_row[0]) if crps_row and crps_row[0] is not None else None
+        legacy_mean_crps = (
+            float(legacy_row[0]) if legacy_row and legacy_row[0] is not None else None
+        )
+        crps_delta = (
+            legacy_mean_crps - mean_crps
+            if mean_crps is not None and legacy_mean_crps is not None
+            else None
+        )
         return {
-            "mean_crps": float(crps_row[0]) if crps_row and crps_row[0] is not None else None,
+            "mean_crps": mean_crps,
+            "legacy_mean_crps": legacy_mean_crps,
+            "crps_delta": crps_delta,
             "model_weights_snapshot": model_weights_snapshot,
         }
 
@@ -2300,10 +2326,18 @@ class Database:
                     (city, date, crps_score, model_mode, logged_at),
                 )
 
-    def get_emos_crps_count(self, city: str) -> int:
-        """Return the number of CRPS log entries for *city*."""
+    def get_emos_crps_count(self, city: str, model_mode: str = "emos_shadow") -> int:
+        """Return the number of CRPS log entries for *city* under *model_mode*.
+
+        Defaults to 'emos_shadow' — this is what emos_mode.get_city_mode's
+        promotion guard counts against EMOS_MIN_SAMPLES. Scoped explicitly
+        (rather than counting all model_mode rows for the city) so the
+        'legacy' baseline row logged alongside each 'emos_shadow' row
+        (issue #667) does not silently double the promotion sample count.
+        """
         cur = self._conn.execute(
-            "SELECT COUNT(*) FROM emos_crps_log WHERE city=?", (city,)
+            "SELECT COUNT(*) FROM emos_crps_log WHERE city=? AND model_mode=?",
+            (city, model_mode),
         )
         row = cur.fetchone()
         return int(row[0]) if row else 0

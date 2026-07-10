@@ -5,10 +5,18 @@ Iterates all cities in STATIONS, fits emos_shadow coefficients for cities
 with enough training data, skips gracefully when data is insufficient.
 
 For every city that fits, a CRPS score row is appended to ``emos_crps_log``
-(via ``db.log_crps``). This per-day record is what the promotion guard in
-``emos_mode.get_city_mode`` counts against ``EMOS_MIN_SAMPLES_PROMOTION`` before a city
-is allowed to serve ``emos_primary`` — without it, promotion stays blocked
-forever because the sample count never leaves zero.
+(via ``db.log_crps``) with ``model_mode="emos_shadow"``. This per-day record
+is what the promotion guard in ``emos_mode.get_city_mode`` counts against
+``EMOS_MIN_SAMPLES_PROMOTION`` before a city is allowed to serve
+``emos_primary`` — without it, promotion stays blocked forever because the
+sample count never leaves zero.
+
+A second row is appended alongside it with ``model_mode="legacy"``: the SAME
+training triples scored with their raw, uncorrected ``(mu, sigma)`` — i.e.
+the plain equal-weight construction the legacy path actually serves, with no
+``a + b*mu`` / ``c + d*sigma`` EMOS transform applied. This gives a direct
+EMOS-vs-legacy CRPS comparison per city per day (issue #667), rather than
+relying on sample count + a holdout threshold alone as promotion evidence.
 
     python scripts/run_emos_shadow.py [--db-path PATH]
 """
@@ -62,19 +70,33 @@ def _run_calibration(db, stack: str = "baseline") -> None:
     skipped = 0
 
     def _persist(city, a, b, c, d, training_data, sample_count, provenance):
-        """Save coefficients + one CRPS row per city per calendar day.
+        """Save coefficients + one EMOS CRPS row + one legacy CRPS row per city per day.
 
-        The CRPS row is what the promotion guard counts, so logging exactly
+        The EMOS row is what the promotion guard counts, so logging exactly
         once a day gives the operator an honest "days of shadow evidence"
         measure. CRPS is always scored on the CITY's own triples, even when
         the coefficients came from a pooled fit — that is the evidence that
         matters for promoting THIS city.
+
+        The legacy row scores the SAME triples' raw (uncorrected) mu/sigma —
+        i.e. what the legacy path actually serves today — so promotion
+        evidence is an EMOS-vs-legacy comparison, not an EMOS-alone score
+        (issue #667).
         """
         crps_scores = [
             crps_gaussian(a + b * mu, c + d * sigma, y)
             for mu, sigma, y in training_data
         ]
         mean_crps = sum(crps_scores) / len(crps_scores) if crps_scores else 0.0
+
+        legacy_crps_scores = [
+            crps_gaussian(mu, sigma, y)
+            for mu, sigma, y in training_data
+        ]
+        legacy_mean_crps = (
+            sum(legacy_crps_scores) / len(legacy_crps_scores) if legacy_crps_scores else 0.0
+        )
+
         save_coefficients(
             city, a, b, c, d, mean_crps, db,
             forecast_source=stack, sample_count=sample_count,
@@ -86,9 +108,19 @@ def _run_calibration(db, stack: str = "baseline") -> None:
             )
         else:
             db.log_crps(city, today, mean_crps, model_mode="emos_shadow")
+
+        if db.emos_crps_logged_for_date(city, today, "legacy"):
+            log.debug(
+                "[emos_shadow] city=%s: legacy CRPS already logged for %s — skipping",
+                city, today,
+            )
+        else:
+            db.log_crps(city, today, legacy_mean_crps, model_mode="legacy")
+
         log.info(
-            "[emos_shadow] city=%s: %s fit, coefficients saved (crps=%.4f, n_city=%d)",
-            city, provenance, mean_crps, len(training_data),
+            "[emos_shadow] city=%s: %s fit, coefficients saved "
+            "(crps=%.4f, legacy_crps=%.4f, n_city=%d)",
+            city, provenance, mean_crps, legacy_mean_crps, len(training_data),
         )
 
     # ---- Pass 1: per-city fits (min_samples=60, unchanged behavior) ----
