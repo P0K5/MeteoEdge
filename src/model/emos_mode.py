@@ -144,7 +144,59 @@ def resolve_sigma_raw(state, use_ensemble_sigma: "bool | None", fallback_sigma: 
     return fallback_sigma
 
 
-def emos_serving_mu(state, city: str, db, sigma_raw: float) -> "tuple[float, float] | None":
+def _nearest_lead_hours(lead_hours: float, available: "list[int]") -> int:
+    """Return the entry of *available* nearest to *lead_hours* (issue #665).
+
+    Same nearest-match idiom as src/data/nws.py:_nws_sigma_for_lead. Ties
+    (e.g. lead_hours=9 with available=[6, 12]) resolve to whichever bin
+    appears first in *available* — deterministic given a stable iteration
+    order, matching Python's min() tie-breaking.
+
+    Args:
+        lead_hours: Target lead time in hours (fractional; e.g.
+            minutes_to_settlement / 60).
+        available:  Non-empty list of fitted lead_hours bin values.
+    """
+    return min(available, key=lambda k: abs(k - lead_hours))
+
+
+def _select_emos_row(city: str, db, minutes_to_settlement: "float | None") -> "dict | None":
+    """Return the emos_calibration row apply_emos should use for *city*.
+
+    emos_primary is preferred over emos_shadow — unchanged precedence from
+    before #665. Within whichever mode wins:
+
+    - minutes_to_settlement given: picks the row for the lead bin nearest to
+      it among every lead_hours value fitted for that mode (issue #665). A
+      city that has only ever been fit at the legacy lead_hours=24 default
+      always resolves to that single row regardless of minutes_to_settlement,
+      so this is a no-op until a city is retrained at more than one bin.
+    - minutes_to_settlement is None: the exact pre-#665 lookup (the single
+      row at the default lead_hours=24).
+
+    Returns None (missing-bin fallback) when the winning precedence has no
+    row in either mode — callers fall back to (mu_raw, sigma_raw) unchanged,
+    identical to today.
+    """
+    for mode in ("emos_primary", "emos_shadow"):
+        if minutes_to_settlement is not None:
+            by_lead = db.get_emos_coefficients_by_lead(city, mode)
+            if by_lead:
+                nearest = _nearest_lead_hours(
+                    minutes_to_settlement / 60.0, list(by_lead.keys())
+                )
+                return by_lead[nearest]
+        else:
+            row = db.get_emos_coefficients(city, mode)
+            if row is not None:
+                return row
+    return None
+
+
+def emos_serving_mu(
+    state, city: str, db, sigma_raw: float,
+    minutes_to_settlement: "float | None" = None,
+) -> "tuple[float, float] | None":
     """Return (mu_final, sigma_cal) for EMOS serving, or None if unservable.
 
     The #658 layer contract:
@@ -158,10 +210,15 @@ def emos_serving_mu(state, city: str, db, sigma_raw: float) -> "tuple[float, flo
        the calibrated mean: it is a genuine nowcast signal that fixed-lead
        training cannot capture.
 
-    sigma_cal note: coefficients are fitted at a single lead bin and sigma_raw
-    is currently a constant, so d is weakly identified; per-lead sigma serving
-    is deferred (see issue #658) — the envelope's remaining-climb floor
-    (ENVELOPE_SIGMA_CLIMB_FRACTION, #653) supplies the intraday widening.
+    sigma_cal note (issue #665): passing minutes_to_settlement selects
+    coefficients from the lead bin nearest to it instead of a single
+    fixed-lead row (see apply_emos/_select_emos_row), so d is properly
+    identified once more than one lead bin has been retrained for a city.
+    Until then (or when the caller omits minutes_to_settlement) this is
+    unchanged from the single-lead-bin behaviour the #658 layer contract
+    originally shipped with. The envelope's remaining-climb floor
+    (ENVELOPE_SIGMA_CLIMB_FRACTION, #653) still supplies intraday widening on
+    top of whatever sigma_cal this returns.
 
     Returns None when no stack member forecast is available on the state —
     callers must fall back to legacy behavior.
@@ -173,18 +230,28 @@ def emos_serving_mu(state, city: str, db, sigma_raw: float) -> "tuple[float, flo
     if not members:
         return None
     mu_raw = sum(members) / len(members)
-    mu_cal, sigma_cal = apply_emos(mu_raw, sigma_raw, city, db)
+    mu_cal, sigma_cal = apply_emos(
+        mu_raw, sigma_raw, city, db, minutes_to_settlement=minutes_to_settlement
+    )
     mu_final = mu_cal + (state.intraday_delta_f or 0.0)
     return mu_final, sigma_cal
 
 
-def apply_emos(mu_raw: float, sigma_raw: float, city: str, db) -> tuple[float, float]:
+def apply_emos(
+    mu_raw: float, sigma_raw: float, city: str, db,
+    minutes_to_settlement: "float | None" = None,
+) -> tuple[float, float]:
     """Apply EMOS linear correction: mu_cal = a + b*mu, sigma_cal = c + d*sigma.
 
     Falls back to (mu_raw, sigma_raw) if no coefficients found.
+
+    Args:
+        minutes_to_settlement: Optional (issue #665). When given, the
+            coefficient row is selected from the lead bin nearest to it (see
+            _select_emos_row) instead of the fixed lead_hours=24 row. Omitting
+            it reproduces pre-#665 behaviour exactly.
     """
-    # Try emos_primary first, then emos_shadow
-    row = db.get_emos_coefficients(city, "emos_primary") or db.get_emos_coefficients(city, "emos_shadow")
+    row = _select_emos_row(city, db, minutes_to_settlement)
     if row is None:
         return mu_raw, sigma_raw
     a, b, c, d = row["a"], row["b"], row["c"], row["d"]
@@ -209,6 +276,12 @@ def _check_ready_for_promotion(city: str, db) -> bool:
     The scanner uses this as a redundant safety re-check after ``get_city_mode``
     returns ``emos_primary``; honouring the override here keeps the two in sync,
     so a dashboard-promoted city is not silently dropped back to legacy.
+
+    Issue #449: ``db.get_emos_coefficients`` below resolves forecast_source AND
+    sigma_source from the active FORECAST_STACK / EMOS_SIGMA_SOURCE bot_config
+    keys (both default to their pre-#449 values), so this check transparently
+    follows whichever sigma track an operator has made active — no signature
+    change needed here, same as it already did for forecast_source (#659).
     """
     if db.get_emos_effective_mode(city) == "emos_primary":
         # Mirror get_city_mode exactly — the CRPS sample guard still applies.

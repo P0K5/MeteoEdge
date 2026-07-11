@@ -29,7 +29,8 @@ def _db() -> Database:
 def _upsert(db: Database, city: str, model_mode: str, *,
             a: float = 0.0, b: float = 1.0, c: float = 0.0, d: float = 1.0,
             ready_for_promotion: int = 0,
-            crps_score: float = 1.5) -> None:
+            crps_score: float = 1.5,
+            lead_hours: int = 24) -> None:
     """Insert EMOS calibration row for test convenience."""
     db.upsert_emos_coefficients(
         city=city,
@@ -38,6 +39,7 @@ def _upsert(db: Database, city: str, model_mode: str, *,
         crps_score=crps_score,
         trained_at=datetime.utcnow().isoformat(),
         ready_for_promotion=ready_for_promotion,
+        lead_hours=lead_hours,
     )
 
 
@@ -671,3 +673,145 @@ class TestServingMembersParityGuard:
                 f"it has {len(stack_models)} models but _SERVING_MEMBERS only has "
                 f"{len(_SERVING_MEMBERS)} members. This proves the guard logic works."
             )
+
+
+# ---------------------------------------------------------------------------
+# Test 10: _nearest_lead_hours — nearest-bin selection (issue #665)
+# ---------------------------------------------------------------------------
+
+class TestNearestLeadHours:
+    """Mirrors src/data/nws.py:_nws_sigma_for_lead's nearest-match idiom."""
+
+    def test_exact_match(self):
+        from src.model.emos_mode import _nearest_lead_hours
+        assert _nearest_lead_hours(6.0, [3, 6, 12, 18, 24]) == 6
+
+    def test_nearer_to_lower_bin(self):
+        from src.model.emos_mode import _nearest_lead_hours
+        # 8h is 2 away from 6, 4 away from 12 -> picks 6
+        assert _nearest_lead_hours(8.0, [3, 6, 12, 18, 24]) == 6
+
+    def test_nearer_to_upper_bin(self):
+        from src.model.emos_mode import _nearest_lead_hours
+        # 10h is 4 away from 6, 2 away from 12 -> picks 12
+        assert _nearest_lead_hours(10.0, [3, 6, 12, 18, 24]) == 12
+
+    def test_tie_resolves_to_first_in_list(self):
+        from src.model.emos_mode import _nearest_lead_hours
+        # 9h is equidistant from 6 and 12 -> tie resolves to whichever is
+        # first in the available list (min()'s tie-break), same idiom as
+        # _nws_sigma_for_lead.
+        assert _nearest_lead_hours(9.0, [6, 12]) == 6
+        assert _nearest_lead_hours(9.0, [12, 6]) == 12
+
+    def test_single_available_bin_always_wins(self):
+        """Missing-bin fallback degenerate case: only one bin fitted."""
+        from src.model.emos_mode import _nearest_lead_hours
+        assert _nearest_lead_hours(0.5, [24]) == 24
+        assert _nearest_lead_hours(1000.0, [24]) == 24
+
+    def test_beyond_range_picks_closest_edge(self):
+        from src.model.emos_mode import _nearest_lead_hours
+        assert _nearest_lead_hours(48.0, [3, 6, 12, 18, 24]) == 24
+        assert _nearest_lead_hours(0.1, [3, 6, 12, 18, 24]) == 3
+
+
+# ---------------------------------------------------------------------------
+# Test 11: apply_emos / emos_serving_mu — per-lead-bin serving (issue #665)
+# ---------------------------------------------------------------------------
+
+class TestApplyEmosPerLeadBin:
+    def test_no_minutes_to_settlement_uses_legacy_default_lookup(self):
+        """Omitting minutes_to_settlement reproduces pre-#665 behaviour exactly:
+        a single row at lead_hours=24 regardless of the arg not being passed."""
+        db = _db()
+        _upsert(db, "Chicago", "emos_shadow", a=5.0, b=1.0, c=0.5, d=1.0, lead_hours=24)
+        mu_cal, sigma_cal = apply_emos(80.0, 2.0, "Chicago", db)
+        assert mu_cal == pytest.approx(85.0)
+
+    def test_single_bin_fitted_ignores_minutes_to_settlement(self):
+        """Missing-bin fallback: with only the legacy lead_hours=24 bin fitted,
+        every minutes_to_settlement value resolves to that same row."""
+        db = _db()
+        _upsert(db, "Chicago", "emos_shadow", a=5.0, b=1.0, c=0.5, d=1.0, lead_hours=24)
+        near = apply_emos(80.0, 2.0, "Chicago", db, minutes_to_settlement=15)
+        far = apply_emos(80.0, 2.0, "Chicago", db, minutes_to_settlement=1440)
+        no_arg = apply_emos(80.0, 2.0, "Chicago", db)
+        assert near == far == no_arg
+
+    def test_picks_nearest_bin_among_multiple(self):
+        db = _db()
+        _upsert(db, "Denver", "emos_shadow", a=10.0, b=1.0, c=1.0, d=1.0, lead_hours=3)
+        _upsert(db, "Denver", "emos_shadow", a=20.0, b=1.0, c=2.0, d=1.0, lead_hours=6)
+        _upsert(db, "Denver", "emos_shadow", a=30.0, b=1.0, c=3.0, d=1.0, lead_hours=24)
+
+        # 90 minutes = 1.5h -> nearest of {3, 6, 24} is 3
+        mu_cal, sigma_cal = apply_emos(0.0, 0.0, "Denver", db, minutes_to_settlement=90)
+        assert mu_cal == pytest.approx(10.0)
+        assert sigma_cal == pytest.approx(1.0)
+
+        # 5 hours = 300 minutes -> nearest of {3, 6, 24} is 6
+        mu_cal, sigma_cal = apply_emos(0.0, 0.0, "Denver", db, minutes_to_settlement=300)
+        assert mu_cal == pytest.approx(20.0)
+        assert sigma_cal == pytest.approx(2.0)
+
+        # 1440 minutes = 24h -> nearest is 24
+        mu_cal, sigma_cal = apply_emos(0.0, 0.0, "Denver", db, minutes_to_settlement=1440)
+        assert mu_cal == pytest.approx(30.0)
+        assert sigma_cal == pytest.approx(3.0)
+
+    def test_bin_edge_tie_is_deterministic(self):
+        """4.5h (270 minutes) is equidistant between the 3h and 6h bins fitted
+        for Denver -- get_emos_coefficients_by_lead orders lead_hours ASC, so
+        the tie resolves to the LOWER (nearer-term) bin, matching this
+        codebase's existing "lowest lead_hours wins" convention (see
+        ensemble_distribution.py), and stays stable across repeat calls and
+        regardless of insertion order."""
+        db = _db()
+        _upsert(db, "Denver", "emos_shadow", a=20.0, b=1.0, c=2.0, d=1.0, lead_hours=6)
+        _upsert(db, "Denver", "emos_shadow", a=10.0, b=1.0, c=1.0, d=1.0, lead_hours=3)
+
+        first = apply_emos(0.0, 0.0, "Denver", db, minutes_to_settlement=270)
+        second = apply_emos(0.0, 0.0, "Denver", db, minutes_to_settlement=270)
+        assert first == second == (10.0, 1.0)  # lead_hours=3 wins the tie
+
+    def test_primary_precedence_preserved_with_lead_bins(self):
+        """emos_primary still wins over emos_shadow, evaluated within its own
+        nearest-lead-bin selection independently of shadow's bins."""
+        db = _db()
+        _upsert(db, "Atlanta", "emos_shadow", a=0.0, b=1.0, c=0.0, d=1.0, lead_hours=3)
+        _upsert(db, "Atlanta", "emos_primary", a=5.0, b=1.0, c=1.0, d=1.0, lead_hours=24)
+        mu_cal, _ = apply_emos(80.0, 2.0, "Atlanta", db, minutes_to_settlement=60)
+        # Primary has only lead_hours=24 fitted -> always resolves there
+        # regardless of minutes_to_settlement, and still wins over shadow.
+        assert mu_cal == pytest.approx(85.0)
+
+    def test_missing_city_returns_raw_with_minutes_to_settlement(self):
+        db = _db()
+        mu_cal, sigma_cal = apply_emos(82.5, 2.5, "Tokyo", db, minutes_to_settlement=45)
+        assert mu_cal == 82.5
+        assert sigma_cal == 2.5
+
+    def test_emos_serving_mu_threads_minutes_to_settlement(self):
+        from src.model.emos_mode import emos_serving_mu
+        db = _db()
+        _upsert(db, "Denver", "emos_shadow", a=0.0, b=1.0, c=1.0, d=1.0, lead_hours=3)
+        _upsert(db, "Denver", "emos_shadow", a=100.0, b=1.0, c=1.0, d=1.0, lead_hours=24)
+        from src.model.envelope import WeatherState
+        from datetime import datetime as _dt
+        now = _dt(2026, 7, 9, 14, 0)
+        state = WeatherState(
+            station="KDEN", now_local=now, sunset_local=now,
+            current_high_f=70.0, current_high_time=now,
+            latest_temp_f=70.0, latest_temp_time=now,
+            forecast_high_f=80.0, secondary_forecast_f=80.0,
+        )
+        # Near settlement (30 min = 0.5h) -> nearest bin is 3h -> a=0 -> mu=80
+        mu_near, _ = emos_serving_mu(state, "Denver", db, 2.0, minutes_to_settlement=30)
+        assert mu_near == pytest.approx(80.0)
+        # Far from settlement (1440 min = 24h) -> nearest bin is 24h -> a=100 -> mu=180
+        mu_far, _ = emos_serving_mu(state, "Denver", db, 2.0, minutes_to_settlement=1440)
+        assert mu_far == pytest.approx(180.0)
+        # Omitting minutes_to_settlement -> legacy default lead_hours=24 lookup
+        mu_default, _ = emos_serving_mu(state, "Denver", db, 2.0)
+        assert mu_default == pytest.approx(180.0)
