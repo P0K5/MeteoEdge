@@ -872,6 +872,144 @@ class TestEmosCalibrationTable:
         assert cur.fetchone()[0] == 3
 
 
+class TestToggleEmosReadyForPromotion:
+    """toggle_emos_ready_for_promotion() track scoping (issue #696).
+
+    emos_calibration's UNIQUE key grew to (city, model_mode, forecast_source,
+    sigma_source, lead_hours) across #659/#449/#665. These tests lock in that
+    the toggle only flips the active track by default, and that all_tracks=True
+    reproduces the old city-wide behavior.
+    """
+
+    def test_toggles_active_track_only(self):
+        """Default scoping flips only the active (forecast_source, sigma_source,
+        lead_hours=24) row, leaving other tracks for the same city untouched."""
+        db = _db()
+        db.upsert_emos_coefficients(
+            city="Chicago", model_mode="emos_shadow",
+            a=0.0, b=1.0, c=0.5, d=1.0,
+            forecast_source="baseline", sigma_source="fixed", lead_hours=24,
+            ready_for_promotion=0,
+        )
+        db.upsert_emos_coefficients(
+            city="Chicago", model_mode="emos_shadow",
+            a=0.1, b=1.1, c=0.6, d=1.1,
+            forecast_source="hrrr_nbm", sigma_source="fixed", lead_hours=24,
+            ready_for_promotion=0,
+        )
+        db.upsert_emos_coefficients(
+            city="Chicago", model_mode="emos_shadow",
+            a=0.2, b=1.2, c=0.7, d=1.2,
+            forecast_source="baseline", sigma_source="ensemble", lead_hours=24,
+            ready_for_promotion=0,
+        )
+        db.upsert_emos_coefficients(
+            city="Chicago", model_mode="emos_shadow",
+            a=0.3, b=1.3, c=0.8, d=1.3,
+            forecast_source="baseline", sigma_source="fixed", lead_hours=6,
+            ready_for_promotion=0,
+        )
+
+        # Active track defaults: forecast_source="baseline" (FORECAST_STACK
+        # unset), sigma_source="fixed" (EMOS_SIGMA_SOURCE unset), lead_hours=24.
+        new_val = db.toggle_emos_ready_for_promotion("Chicago")
+        assert new_val == 1
+
+        active = db.get_emos_coefficients(
+            "Chicago", "emos_shadow",
+            forecast_source="baseline", sigma_source="fixed", lead_hours=24,
+        )
+        assert active["ready_for_promotion"] == 1
+
+        for forecast_source, sigma_source, lead_hours in (
+            ("hrrr_nbm", "fixed", 24),
+            ("baseline", "ensemble", 24),
+            ("baseline", "fixed", 6),
+        ):
+            other = db.get_emos_coefficients(
+                "Chicago", "emos_shadow",
+                forecast_source=forecast_source, sigma_source=sigma_source,
+                lead_hours=lead_hours,
+            )
+            assert other["ready_for_promotion"] == 0, (
+                f"track {(forecast_source, sigma_source, lead_hours)} should be untouched"
+            )
+
+    def test_active_track_follows_bot_config(self):
+        """When FORECAST_STACK/EMOS_SIGMA_SOURCE bot_config keys are set, the
+        default scoping follows them instead of the 'baseline'/'fixed' defaults."""
+        db = _db()
+        db.set_config("FORECAST_STACK", "hrrr_nbm")
+        db.set_config("EMOS_SIGMA_SOURCE", "ensemble")
+        db.upsert_emos_coefficients(
+            city="Denver", model_mode="emos_shadow",
+            a=0.0, b=1.0, c=0.5, d=1.0,
+            forecast_source="hrrr_nbm", sigma_source="ensemble", lead_hours=24,
+            ready_for_promotion=0,
+        )
+        db.upsert_emos_coefficients(
+            city="Denver", model_mode="emos_shadow",
+            a=0.1, b=1.1, c=0.6, d=1.1,
+            forecast_source="baseline", sigma_source="fixed", lead_hours=24,
+            ready_for_promotion=0,
+        )
+
+        new_val = db.toggle_emos_ready_for_promotion("Denver")
+        assert new_val == 1
+
+        active = db.get_emos_coefficients(
+            "Denver", "emos_shadow",
+            forecast_source="hrrr_nbm", sigma_source="ensemble", lead_hours=24,
+        )
+        assert active["ready_for_promotion"] == 1
+        legacy = db.get_emos_coefficients(
+            "Denver", "emos_shadow",
+            forecast_source="baseline", sigma_source="fixed", lead_hours=24,
+        )
+        assert legacy["ready_for_promotion"] == 0
+
+    def test_all_tracks_override_flips_every_row(self):
+        """all_tracks=True reproduces the pre-#696 city-wide toggle: every
+        (city, model_mode='emos_shadow') row flips together."""
+        db = _db()
+        db.upsert_emos_coefficients(
+            city="Miami", model_mode="emos_shadow",
+            a=0.0, b=1.0, c=0.5, d=1.0,
+            forecast_source="baseline", sigma_source="fixed", lead_hours=24,
+            ready_for_promotion=0,
+        )
+        db.upsert_emos_coefficients(
+            city="Miami", model_mode="emos_shadow",
+            a=0.1, b=1.1, c=0.6, d=1.1,
+            forecast_source="hrrr_nbm", sigma_source="ensemble", lead_hours=6,
+            ready_for_promotion=0,
+        )
+
+        new_val = db.toggle_emos_ready_for_promotion("Miami", all_tracks=True)
+        assert new_val == 1
+
+        cur = db._conn.execute(
+            "SELECT ready_for_promotion FROM emos_calibration "
+            "WHERE city='Miami' AND model_mode='emos_shadow'"
+        )
+        rows = cur.fetchall()
+        assert len(rows) == 2
+        assert all(r[0] == 1 for r in rows)
+
+    def test_returns_none_when_active_track_row_missing(self):
+        """Default scoping returns None when only a non-active track has a row,
+        even though the (city, model_mode) pair exists."""
+        db = _db()
+        db.upsert_emos_coefficients(
+            city="Seattle", model_mode="emos_shadow",
+            a=0.0, b=1.0, c=0.5, d=1.0,
+            forecast_source="hrrr_nbm", sigma_source="fixed", lead_hours=24,
+            ready_for_promotion=0,
+        )
+        # Active track defaults to forecast_source="baseline" — no row there.
+        assert db.toggle_emos_ready_for_promotion("Seattle") is None
+
+
 # ---------------------------------------------------------------------------
 # Win-rate unification tests (issue #371)
 # ---------------------------------------------------------------------------

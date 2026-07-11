@@ -1279,6 +1279,75 @@ class TestEmosMarkReadyEndpoint:
         finally:
             dash_api.set_db(original)
 
+    def test_mark_ready_scopes_to_active_track_by_default(self, client):
+        """mark-ready (issue #696) only flips the active forecast_source/
+        sigma_source/lead_hours=24 track, not other tracks for the same city."""
+        db = self._setup_db()
+        db.upsert_emos_coefficients(
+            city="Chicago", model_mode="emos_shadow",
+            a=0.0, b=1.0, c=0.5, d=1.0,
+            forecast_source="baseline", sigma_source="fixed", lead_hours=24,
+            ready_for_promotion=0,
+        )
+        db.upsert_emos_coefficients(
+            city="Chicago", model_mode="emos_shadow",
+            a=0.1, b=1.1, c=0.6, d=1.1,
+            forecast_source="hrrr_nbm", sigma_source="fixed", lead_hours=24,
+            ready_for_promotion=0,
+        )
+        original = dash_api._db
+        try:
+            dash_api.set_db(db)
+            resp = client.post("/api/emos/Chicago/mark-ready")
+            assert resp.status_code == 200
+
+            active_track = db.get_emos_coefficients(
+                "Chicago", "emos_shadow",
+                forecast_source="baseline", sigma_source="fixed", lead_hours=24,
+            )
+            assert active_track["ready_for_promotion"] == 1
+            other_track = db.get_emos_coefficients(
+                "Chicago", "emos_shadow",
+                forecast_source="hrrr_nbm", sigma_source="fixed", lead_hours=24,
+            )
+            assert other_track["ready_for_promotion"] == 0
+        finally:
+            dash_api.set_db(original)
+
+    def test_mark_ready_all_tracks_query_param_flips_every_row(self, client):
+        """mark-ready?all_tracks=true reproduces the pre-#696 city-wide toggle."""
+        db = self._setup_db()
+        db.upsert_emos_coefficients(
+            city="Chicago", model_mode="emos_shadow",
+            a=0.0, b=1.0, c=0.5, d=1.0,
+            forecast_source="baseline", sigma_source="fixed", lead_hours=24,
+            ready_for_promotion=0,
+        )
+        db.upsert_emos_coefficients(
+            city="Chicago", model_mode="emos_shadow",
+            a=0.1, b=1.1, c=0.6, d=1.1,
+            forecast_source="hrrr_nbm", sigma_source="fixed", lead_hours=24,
+            ready_for_promotion=0,
+        )
+        original = dash_api._db
+        try:
+            dash_api.set_db(db)
+            resp = client.post("/api/emos/Chicago/mark-ready?all_tracks=true")
+            assert resp.status_code == 200
+
+            active_track = db.get_emos_coefficients(
+                "Chicago", "emos_shadow",
+                forecast_source="baseline", sigma_source="fixed", lead_hours=24,
+            )
+            assert active_track["ready_for_promotion"] == 1
+            other_track = db.get_emos_coefficients(
+                "Chicago", "emos_shadow",
+                forecast_source="hrrr_nbm", sigma_source="fixed", lead_hours=24,
+            )
+            assert other_track["ready_for_promotion"] == 1
+        finally:
+            dash_api.set_db(original)
+
 
 # ---------------------------------------------------------------------------
 # /api/weather-health

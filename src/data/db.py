@@ -2122,25 +2122,64 @@ class Database:
             )
             self._conn.commit()
 
-    def toggle_emos_ready_for_promotion(self, city: str) -> "int | None":
+    def toggle_emos_ready_for_promotion(
+        self,
+        city: str,
+        forecast_source: "str | None" = None,
+        sigma_source: "str | None" = None,
+        lead_hours: int = 24,
+        all_tracks: bool = False,
+    ) -> "int | None":
         """Toggle ready_for_promotion (0 ↔ 1) on the emos_shadow row for city.
 
-        Returns the new value (0 or 1), or None if no shadow row exists.
+        Issue #696: emos_calibration's UNIQUE key grew to (city, model_mode,
+        forecast_source, sigma_source, lead_hours) across #659/#449/#665, so a
+        toggle keyed only on (city, model_mode) can flip rows outside the
+        track actually being served. Scopes to the ACTIVE track by default:
+        forecast_source=None/sigma_source=None resolve via
+        _active_forecast_source/_active_sigma_source (the same resolvers
+        get_emos_coefficients uses), and lead_hours defaults to 24 — the exact
+        (forecast_source, sigma_source, lead_hours) triple
+        _check_ready_for_promotion reads via
+        db.get_emos_coefficients(city, "emos_primary") with no lead_hours
+        argument. The per-lead-bin serving path (_select_emos_row /
+        _nearest_lead_hours, #665) only picks which mu/sigma coefficients
+        apply at scan time; the promotion gate itself is single-bin, so that
+        is what this toggle targets by default.
+
+        Pass all_tracks=True to reproduce the pre-#696 city-wide behavior:
+        every row for (city, model_mode='emos_shadow') flips together,
+        regardless of forecast_source/sigma_source/lead_hours — an explicit
+        operator escape hatch, not the default.
+
+        Returns the new value (0 or 1), or None if no matching shadow row
+        exists.
         """
+        if forecast_source is None:
+            forecast_source = self._active_forecast_source()
+        if sigma_source is None:
+            sigma_source = self._active_sigma_source()
         with self._lock:
+            if all_tracks:
+                where = "city=? AND model_mode='emos_shadow'"
+                params: tuple = (city,)
+            else:
+                where = (
+                    "city=? AND model_mode='emos_shadow' AND forecast_source=? "
+                    "AND sigma_source=? AND lead_hours=?"
+                )
+                params = (city, forecast_source, sigma_source, lead_hours)
             cur = self._conn.execute(
-                "SELECT ready_for_promotion FROM emos_calibration "
-                "WHERE city=? AND model_mode='emos_shadow'",
-                (city,),
+                f"SELECT ready_for_promotion FROM emos_calibration WHERE {where}",
+                params,
             )
             row = cur.fetchone()
             if row is None:
                 return None
             new_val = 0 if row[0] else 1
             self._conn.execute(
-                "UPDATE emos_calibration SET ready_for_promotion=? "
-                "WHERE city=? AND model_mode='emos_shadow'",
-                (new_val, city),
+                f"UPDATE emos_calibration SET ready_for_promotion=? WHERE {where}",
+                (new_val, *params),
             )
             self._conn.commit()
         return new_val
