@@ -394,21 +394,24 @@ CREATE INDEX idx_ic_city_station_source_date ON intraday_corrections(city, stati
 | `id` | INTEGER PRIMARY KEY | | No | Auto-increment row ID |
 | `city` | TEXT NOT NULL | city name | No | City (e.g., "Chicago", "Seoul") |
 | `model_mode` | TEXT NOT NULL | categorical | No | Deployment mode: `'legacy'` (existing Gaussian, default), `'emos_shadow'` (compute both, serve legacy), `'emos_primary'` (serve EMOS — requires `ready_for_promotion=1`) |
-| `a` | REAL NOT NULL | statistical coefficient | No | EMOS coefficient a (offset term) |
-| `b` | REAL NOT NULL | statistical coefficient | No | EMOS coefficient b (spread term) |
-| `c` | REAL NOT NULL | statistical coefficient | No | EMOS coefficient c (ensemble spread weight) |
-| `d` | REAL NOT NULL | statistical coefficient | No | EMOS coefficient d (bias term) |
+| `forecast_source` | TEXT NOT NULL DEFAULT 'nws_open_meteo' | categorical | No | Forecast stack this fit was trained on (e.g. `'nws_open_meteo'`, `'hrrr_nbm'`). Keys parallel per-stack calibration tracks so a retrain never overwrites another stack's row (issue #659). |
+| `sigma_source` | TEXT NOT NULL DEFAULT 'fixed' | categorical | No | Sigma track this fit was trained on: `'fixed'` (constant `FORECAST_STDDEV_F`) or `'ensemble'` (persisted per-row `model_forecast_log.sigma_f`). Keys a parallel track the same way `forecast_source` does (issue #449). |
+| `lead_hours` | INTEGER NOT NULL DEFAULT 24 | hours | No | Lead-time bin this fit was trained on (e.g. 3, 6, 12, 18, 24). Serving selects the row whose `lead_hours` is nearest to minutes-to-settlement at scan time (issue #665). |
+| `a` | REAL NOT NULL | statistical coefficient | No | EMOS coefficient a (mu intercept) |
+| `b` | REAL NOT NULL | statistical coefficient | No | EMOS coefficient b (mu slope) |
+| `c` | REAL NOT NULL | statistical coefficient | No | EMOS coefficient c (sigma intercept) |
+| `d` | REAL NOT NULL | statistical coefficient | No | EMOS coefficient d (sigma slope) |
 | `crps_score` | REAL | continuous ranked probability | Yes | Continuous ranked probability skill score on validation set |
 | `ready_for_promotion` | INTEGER DEFAULT 0 | boolean (0/1) | No | Whether calibration is ready to promote to production |
 | `trained_at` | TEXT | ISO 8601 timestamp (UTC) | Yes | Timestamp when calibration was trained |
 
 **Unique Constraint:**
 ```sql
-UNIQUE(city, model_mode)
+UNIQUE(city, model_mode, forecast_source, sigma_source, lead_hours)
 ```
 
 **Notes:**
-- One row per (city, model_mode) pair. Updates replace the prior calibration.
+- One row per (city, model_mode, forecast_source, sigma_source, lead_hours) tuple. Saving a new forecast_source/sigma_source/lead_hours combination for a city never overwrites another combination's row — only an exact key match is replaced.
 - EMOS post-processing corrects systematic forecast bias and improves probability estimates.
 - `crps_score` quantifies calibration quality; lower is better.
 - `ready_for_promotion` gates whether this calibration is safe to use in live forecasts.

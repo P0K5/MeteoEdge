@@ -564,6 +564,21 @@ CONFIG_DEFAULTS: "dict[str, str | int | float | bool]" = {
     # intl_ecmwf_icon: adds ECMWF and ICON-EU for international stations
     # full: all channels active
     "FORECAST_STACK": "baseline",
+    # Active sigma source for EMOS retraining/serving (issue #449) — which
+    # emos_calibration track (keyed by forecast_source AND sigma_source) a
+    # retrain writes to and a reader (get_city_mode/apply_emos) reads from.
+    # fixed:    train/serve sigma_raw as the constant FORECAST_STDDEV_F,
+    #           ignoring any persisted per-row model_forecast_log.sigma_f —
+    #           the historical default this codebase used before per-row
+    #           sigma existed.
+    # ensemble: train/serve sigma_raw from the persisted sigma_f (falls back
+    #           to FORECAST_STDDEV_F when a row has none), pairing with the
+    #           USE_ENSEMBLE_SIGMA serving path's state.ensemble_sigma_f
+    #           (issue #448) so d is no longer fit against a near-constant
+    #           input.
+    # Default 'fixed' -- no live behaviour change until an operator flips
+    # this AND a sigma_source='ensemble' retrain has been promoted.
+    "EMOS_SIGMA_SOURCE": "fixed",
     # Statistical promotion bar (issue #559) — advisory shadow→live tooling.
     # Supersedes issue #80's old thresholds (>=5 trades / 100% WR / >=3 days).
     # A station+side is "eligible" iff settled shadow trades >= this minimum

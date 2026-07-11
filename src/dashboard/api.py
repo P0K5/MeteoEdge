@@ -2286,6 +2286,12 @@ _CONFIG_META: dict[str, dict] = {
         "group": "forecast",
         "options": ["baseline", "hrrr_nbm", "intl_ecmwf_icon", "full"],
     },
+    "EMOS_SIGMA_SOURCE": {
+        "description": "Active EMOS sigma track: 'fixed' trains/serves against the constant FORECAST_STDDEV_F, 'ensemble' against persisted per-row sigma (pairs with USE_ENSEMBLE_SIGMA, issue #449)",
+        "type": "enum",
+        "group": "forecast",
+        "options": ["fixed", "ensemble"],
+    },
     "PROMOTION_MIN_SETTLED_TRADES": {
         "description": "Minimum settled shadow trades required for promotion eligibility (issue #559, supersedes #80)",
         "type": "int",

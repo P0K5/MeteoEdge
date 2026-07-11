@@ -186,6 +186,8 @@ CREATE TABLE IF NOT EXISTS emos_calibration (
     city                TEXT NOT NULL,
     model_mode          TEXT NOT NULL,
     forecast_source     TEXT NOT NULL DEFAULT 'nws_open_meteo',
+    sigma_source        TEXT NOT NULL DEFAULT 'fixed',
+    lead_hours          INTEGER NOT NULL DEFAULT 24,
     a                   REAL NOT NULL,
     b                   REAL NOT NULL,
     c                   REAL NOT NULL,
@@ -193,7 +195,7 @@ CREATE TABLE IF NOT EXISTS emos_calibration (
     crps_score          REAL,
     ready_for_promotion INTEGER DEFAULT 0,
     trained_at          TEXT,
-    UNIQUE(city, model_mode, forecast_source)
+    UNIQUE(city, model_mode, forecast_source, sigma_source, lead_hours)
 );
 
 CREATE TABLE IF NOT EXISTS emos_mode_override (
@@ -321,6 +323,19 @@ class Database:
             # resolution or METAR weather truth. NULL for rows written before this
             # migration (legacy rows without a known source).
             ("settlements", "resolution_source", "TEXT"),
+            # Issue #449: sigma-source axis for EMOS retraining ('fixed' | 'ensemble'),
+            # keyed alongside forecast_source so a sigma_source='ensemble' retrain is
+            # stored as an independent row and never overwrites the legacy
+            # sigma_source='fixed' calibration (same non-overwrite pattern as #659's
+            # forecast_source column). Default 'fixed' matches every row written
+            # before this migration -- readers that don't pass sigma_source keep
+            # resolving to the same rows they always have (see _active_sigma_source).
+            ("emos_calibration", "sigma_source", "TEXT NOT NULL DEFAULT 'fixed'"),
+            # Issue #665: per-lead-bin EMOS coefficients. Default 24 matches the
+            # implicit lead bin every pre-#665 row was trained/served at
+            # (fetch_training_data's own default), so existing rows keep serving
+            # identically until a caller explicitly fits/reads a different bin.
+            ("emos_calibration", "lead_hours", "INTEGER NOT NULL DEFAULT 24"),
         ]:
             try:
                 self._conn.execute(
@@ -412,6 +427,64 @@ class Database:
         #      (station, model, date) — drop+recreate current table (partial migration).
         #   3. If both legacy table exists and current table has the new schema — no-op.
         self._migrate_forecast_log()
+
+        # Migration: widen emos_calibration's UNIQUE constraint to (city, model_mode,
+        # forecast_source, sigma_source, lead_hours) — issues #449/#665. The ALTER
+        # TABLE ADD COLUMN above gives existing DBs the sigma_source/lead_hours
+        # columns, but SQLite cannot widen a UNIQUE constraint in place; a DB whose
+        # table was created before this migration still has an older UNIQUE index
+        # (just city+model_mode, or city+model_mode+forecast_source), which would
+        # silently collide a sigma_source='ensemble' or non-default lead_hours
+        # retrain into the 'fixed'/lead_hours=24 legacy row via INSERT OR REPLACE.
+        # Detect the narrow constraint via SQLite's own index catalog (PRAGMA
+        # index_list/index_info) rather than matching sqlite_master's free-form SQL
+        # text, which formatting changes could silently desync from.
+        _ec_unique_cols: set = set()
+        for _idx in self._conn.execute("PRAGMA index_list(emos_calibration)").fetchall():
+            if not _idx[2]:  # idx[2] = unique flag
+                continue
+            _ec_unique_cols |= {
+                col[2] for col in self._conn.execute(f"PRAGMA index_info({_idx[1]})").fetchall()
+            }
+        if not {"sigma_source", "lead_hours"}.issubset(_ec_unique_cols):
+            with self._conn:
+                self._conn.execute("DROP TABLE IF EXISTS emos_calibration_new")
+                self._conn.execute(
+                    """
+                    CREATE TABLE emos_calibration_new (
+                        id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+                        city                TEXT NOT NULL,
+                        model_mode          TEXT NOT NULL,
+                        forecast_source     TEXT NOT NULL DEFAULT 'nws_open_meteo',
+                        sigma_source        TEXT NOT NULL DEFAULT 'fixed',
+                        lead_hours          INTEGER NOT NULL DEFAULT 24,
+                        a                   REAL NOT NULL,
+                        b                   REAL NOT NULL,
+                        c                   REAL NOT NULL,
+                        d                   REAL NOT NULL,
+                        crps_score          REAL,
+                        ready_for_promotion INTEGER DEFAULT 0,
+                        trained_at          TEXT,
+                        UNIQUE(city, model_mode, forecast_source, sigma_source, lead_hours)
+                    )
+                    """
+                )
+                self._conn.execute(
+                    """
+                    INSERT INTO emos_calibration_new
+                        (id, city, model_mode, forecast_source, sigma_source, lead_hours,
+                         a, b, c, d, crps_score, ready_for_promotion, trained_at)
+                    SELECT id, city, model_mode, forecast_source,
+                           COALESCE(sigma_source, 'fixed'), COALESCE(lead_hours, 24),
+                           a, b, c, d, crps_score, ready_for_promotion, trained_at
+                    FROM emos_calibration
+                    """
+                )
+                self._conn.execute("DROP TABLE emos_calibration")
+                self._conn.execute(
+                    "ALTER TABLE emos_calibration_new RENAME TO emos_calibration"
+                )
+            self._conn.commit()
 
         # Migration: add/update partial UNIQUE index for shadow-trade dedup (issue #376, #613).
         # When the index definition changes (e.g., adding direction column), we must drop
@@ -1807,6 +1880,19 @@ class Database:
         """
         return self.get_config("FORECAST_STACK") or "baseline"
 
+    def _active_sigma_source(self) -> str:
+        """Resolve the sigma_source key for emos_calibration rows (issue #449).
+
+        Mirrors _active_forecast_source exactly: EMOS_SIGMA_SOURCE is the
+        dashboard-editable bot_config key ('fixed' | 'ensemble') so a retrain
+        run and a live reader key on the same value without either side having
+        to pass it explicitly. Defaults to 'fixed' when unset/unseeded — the
+        value every row written before #449 is migrated to (see the
+        emos_calibration UNIQUE-widening migration in _migrate()), so this
+        resolver is a no-op for anyone who hasn't touched the new config key.
+        """
+        return self.get_config("EMOS_SIGMA_SOURCE") or "fixed"
+
     def upsert_emos_coefficients(
         self, *, city: str, model_mode: str,
         a: float, b: float, c: float, d: float,
@@ -1814,21 +1900,38 @@ class Database:
         trained_at: "str | None" = None,
         ready_for_promotion: int = 0,
         forecast_source: "str | None" = None,
+        sigma_source: "str | None" = None,
+        lead_hours: int = 24,
     ) -> None:
-        """Insert or replace EMOS calibration coefficients for a (city, mode, source) triple.
+        """Insert or replace EMOS calibration coefficients for a (city, mode, source,
+        sigma_source, lead_hours) tuple.
 
         forecast_source=None resolves to the active FORECAST_STACK (see
-        _active_forecast_source) so writers and readers key consistently.
+        _active_forecast_source); sigma_source=None resolves to the active
+        EMOS_SIGMA_SOURCE (see _active_sigma_source) — both so writers and
+        readers key consistently without every call site threading them
+        explicitly. lead_hours defaults to 24 (issue #665), matching the only
+        lead bin ever trained/served before per-lead-bin storage existed, so a
+        caller that never mentions it lands on exactly the row pre-#665 code
+        reads and writes.
+
+        Coefficients for a different forecast_source, sigma_source, or
+        lead_hours are stored as independent rows (UNIQUE(city, model_mode,
+        forecast_source, sigma_source, lead_hours)) — saving one never
+        overwrites another's row, same non-overwrite guarantee #659 already
+        provides across forecast_source values.
         """
         if forecast_source is None:
             forecast_source = self._active_forecast_source()
+        if sigma_source is None:
+            sigma_source = self._active_sigma_source()
         with self._lock:
             self._conn.execute(
                 """INSERT OR REPLACE INTO emos_calibration
-                   (city, model_mode, forecast_source,
+                   (city, model_mode, forecast_source, sigma_source, lead_hours,
                     a, b, c, d, crps_score, ready_for_promotion, trained_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (city, model_mode, forecast_source,
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (city, model_mode, forecast_source, sigma_source, lead_hours,
                  a, b, c, d, crps_score, ready_for_promotion, trained_at),
             )
             self._conn.commit()
@@ -1895,20 +1998,30 @@ class Database:
         return result
 
     def get_emos_coefficients(
-        self, city: str, model_mode: str, forecast_source: "str | None" = None
+        self, city: str, model_mode: str,
+        forecast_source: "str | None" = None,
+        sigma_source: "str | None" = None,
+        lead_hours: int = 24,
     ) -> "dict | None":
-        """Return EMOS coefficients dict for (city, model_mode, forecast_source), or None.
+        """Return EMOS coefficients dict for (city, model_mode, forecast_source,
+        sigma_source, lead_hours), or None.
 
-        forecast_source=None resolves to the active FORECAST_STACK so consumers
-        (get_city_mode, apply_emos, promotion checks) read the same rows the
-        shadow runner writes (issue #659).
+        forecast_source=None resolves to the active FORECAST_STACK, sigma_source=None
+        to the active EMOS_SIGMA_SOURCE (see _active_forecast_source /
+        _active_sigma_source), so consumers (get_city_mode, apply_emos, promotion
+        checks) read the same rows a retrain writes (issues #659, #449).
+        lead_hours defaults to 24, the lead bin every pre-#665 row lives at, so
+        callers that don't care about per-lead-bin serving see unchanged behaviour.
         """
         if forecast_source is None:
             forecast_source = self._active_forecast_source()
+        if sigma_source is None:
+            sigma_source = self._active_sigma_source()
         cur = self._conn.execute(
             "SELECT a, b, c, d, crps_score, ready_for_promotion, trained_at "
-            "FROM emos_calibration WHERE city=? AND model_mode=? AND forecast_source=?",
-            (city, model_mode, forecast_source),
+            "FROM emos_calibration WHERE city=? AND model_mode=? AND forecast_source=? "
+            "AND sigma_source=? AND lead_hours=?",
+            (city, model_mode, forecast_source, sigma_source, lead_hours),
         )
         row = cur.fetchone()
         if row is None:
@@ -1918,12 +2031,52 @@ class Database:
             "crps_score": row[4], "ready_for_promotion": row[5], "trained_at": row[6],
         }
 
+    def get_emos_coefficients_by_lead(
+        self, city: str, model_mode: str,
+        forecast_source: "str | None" = None,
+        sigma_source: "str | None" = None,
+    ) -> "dict[int, dict]":
+        """Return {lead_hours: coefficients} for every lead bin fitted for this
+        (city, model_mode, forecast_source, sigma_source) key (issue #665).
+
+        Used by the per-lead-bin serving path to pick the bin nearest to
+        minutes-to-settlement at scan time — see
+        src/model/emos_mode.py:_nearest_lead_hours. Empty dict when nothing has
+        been fitted for this key (including the common case where only the
+        legacy lead_hours=24 row exists, for city/mode combos with no row at
+        all).
+
+        Rows are returned ordered by lead_hours ASC so a dict built from them
+        iterates lowest-lead-first — _nearest_lead_hours' tie-break (Python's
+        min() keeps the first-encountered candidate) then consistently prefers
+        the shorter lead bin on an exact tie, matching this codebase's existing
+        "lowest lead_hours wins" convention (see ensemble_distribution.py).
+        """
+        if forecast_source is None:
+            forecast_source = self._active_forecast_source()
+        if sigma_source is None:
+            sigma_source = self._active_sigma_source()
+        cur = self._conn.execute(
+            "SELECT lead_hours, a, b, c, d, crps_score, ready_for_promotion, trained_at "
+            "FROM emos_calibration WHERE city=? AND model_mode=? AND forecast_source=? "
+            "AND sigma_source=? ORDER BY lead_hours ASC",
+            (city, model_mode, forecast_source, sigma_source),
+        )
+        return {
+            row[0]: {
+                "a": row[1], "b": row[2], "c": row[3], "d": row[4],
+                "crps_score": row[5], "ready_for_promotion": row[6], "trained_at": row[7],
+            }
+            for row in cur.fetchall()
+        }
+
     def get_all_emos_calibration(self) -> list[dict]:
         """Return all rows from emos_calibration as dicts."""
         cur = self._conn.execute(
-            "SELECT city, model_mode, forecast_source, a, b, c, d, "
-            "crps_score, ready_for_promotion, trained_at "
-            "FROM emos_calibration ORDER BY city, model_mode, forecast_source"
+            "SELECT city, model_mode, forecast_source, sigma_source, lead_hours, "
+            "a, b, c, d, crps_score, ready_for_promotion, trained_at "
+            "FROM emos_calibration "
+            "ORDER BY city, model_mode, forecast_source, sigma_source, lead_hours"
         )
         return [dict(row) for row in cur.fetchall()]
 

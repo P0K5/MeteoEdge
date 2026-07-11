@@ -19,6 +19,7 @@ ready_for_promotion=0 — promotion to active is a deliberate manual step.
 """
 from __future__ import annotations
 
+import math
 from datetime import datetime, timezone
 
 from scipy.optimize import minimize
@@ -41,6 +42,17 @@ from src.model.crps_score import crps_gaussian
 # guaranteed fully clean. Scoped narrowly to the "gfs" model only — other
 # channels' historical pairs are unaffected.
 GFS_DATA_VALID_FROM: str = "2026-07-02"
+
+# Valid sigma_source values for fetch_training_data / save_coefficients (issue #449).
+# "ensemble" is fetch_training_data's historical, unparametrised behaviour:
+# prefer the persisted per-row model_forecast_log.sigma_f, falling back to the
+# constant FORECAST_STDDEV_F only when a row has none. "fixed" is new: it
+# ignores sigma_f entirely and always trains against the constant, matching
+# what live serving does when USE_ENSEMBLE_SIGMA is off (resolve_sigma_raw
+# returns fallback_sigma unconditionally). Training under "fixed" produces a
+# coefficient set paired with that legacy serving path; training under
+# "ensemble" pairs with USE_ENSEMBLE_SIGMA=True serving (state.ensemble_sigma_f).
+SIGMA_SOURCES: frozenset[str] = frozenset({"fixed", "ensemble"})
 
 
 # ---------------------------------------------------------------------------
@@ -101,6 +113,7 @@ def fetch_training_data(
     lead_hours: int = 24,
     forecast_source: str | None = None,
     regime: "frozenset[str] | set[str] | None" = None,
+    sigma_source: str = "ensemble",
 ) -> list[tuple[float, float, float]]:
     """Build (mu_ensemble, sigma_ensemble, actual_high_f) triples for a city.
 
@@ -109,12 +122,14 @@ def fetch_training_data(
        Each row is a forecast captured at a fixed lead time by the cron worker
        (src/scripts/capture_forecasts.py).
     2. For each date, average all model forecasts (nws/open_meteo/gfs) to form
-       the ensemble mean mu_f.  sigma_f is taken from the persisted ``sigma_f``
-       column when available; otherwise falls back to ``FORECAST_STDDEV_F``.
+       the ensemble mean mu_f.  sigma_f is resolved per ``sigma_source`` (see
+       below).
     3. For each date, look up the settled daily high from the observations table
        (source='metar', MAX(temp_f) for that date).
-    4. Return the joined list; raise InsufficientDataError if fewer than
-       min_samples triples are found.
+    4. Drop any triple containing a NaN/inf value (issue #449) -- a corrupt
+       sensor read or persisted sigma_f must not silently poison the fit.
+    5. Return the joined list; raise InsufficientDataError if fewer than
+       min_samples triples are found (counted AFTER the NaN/inf drop).
 
     NOTE: In early deployments (or after the #422 migration) model_forecast_log
     will have zero rows at lead_hours=24.  The function will raise
@@ -134,17 +149,30 @@ def fetch_training_data(
                          to include in the ensemble μ. When provided, takes precedence over
                          ``forecast_source`` for row filtering. When both ``regime`` and
                          ``forecast_source`` are None, raises ValueError.
+        sigma_source:    "ensemble" (default, back-compat with pre-#449 behaviour) uses
+                         the persisted per-row ``sigma_f`` when a date has one, falling
+                         back to ``FORECAST_STDDEV_F`` only for dates with none.
+                         "fixed" ignores ``sigma_f`` entirely and always uses
+                         ``FORECAST_STDDEV_F`` — the constant every triple was trained
+                         against before per-row sigma existed, and what live serving
+                         uses when USE_ENSEMBLE_SIGMA is off. Must be one of
+                         SIGMA_SOURCES; raises ValueError otherwise (issue #449).
 
     Returns:
         List of (mu_f, sigma_f, actual_high_f) float triples.
 
     Raises:
         InsufficientDataError: If fewer than min_samples triples are found.
-        ValueError: If both ``regime`` and ``forecast_source`` are None.
+        ValueError: If both ``regime`` and ``forecast_source`` are None, or if
+            ``sigma_source`` is not one of SIGMA_SOURCES.
     """
     if regime is None and forecast_source is None:
         raise ValueError(
             "fetch_training_data requires either 'regime' or 'forecast_source'"
+        )
+    if sigma_source not in SIGMA_SOURCES:
+        raise ValueError(
+            f"sigma_source must be one of {sorted(SIGMA_SOURCES)}, got {sigma_source!r}"
         )
 
     station = _city_to_station(city)
@@ -197,7 +225,13 @@ def fetch_training_data(
         d = row["date"]
         mu = float(row["forecast_high_f"])
         date_mu_accum.setdefault(d, []).append(mu)
-        # Use the first non-NULL sigma_f encountered for a given date
+        if sigma_source == "fixed":
+            # #449: ignore any persisted sigma_f entirely — every triple trains
+            # against the same constant, matching legacy (pre-sigma_f) behaviour
+            # and USE_ENSEMBLE_SIGMA=False serving.
+            continue
+        # sigma_source == "ensemble": use the first non-NULL sigma_f encountered
+        # for a given date (unchanged pre-#449 behaviour).
         if date_sigma.get(d) is None:
             raw_sigma = row.get("sigma_f")
             date_sigma[d] = float(raw_sigma) if raw_sigma is not None else None
@@ -212,6 +246,15 @@ def fetch_training_data(
         obs_high = db.get_daily_obs_high(station, date_str)
         if obs_high is None:
             continue  # no observation for this date — skip
+        # Issue #449: a NaN/inf anywhere in the triple (bad sensor read, a
+        # corrupt persisted sigma_f, etc.) must not silently corrupt the CRPS
+        # fit -- scipy.optimize.minimize propagates NaN through the whole loss
+        # without raising, so an unfiltered NaN row can poison every
+        # coefficient for the city. Drop just that date rather than failing
+        # the whole fetch; min_samples below still guards against too few
+        # clean triples remaining.
+        if any(math.isnan(v) or math.isinf(v) for v in (mu_f, sigma_f, obs_high)):
+            continue
         result.append((mu_f, sigma_f, obs_high))
 
     if len(result) < min_samples:
@@ -262,12 +305,18 @@ def fetch_training_data_pooled(
     lead_hours: int = 24,
     forecast_source: str | None = None,
     regime: "frozenset[str] | set[str] | None" = None,
+    sigma_source: str = "ensemble",
 ) -> tuple[list[tuple[float, float, float]], dict[str, int]]:
     """Pool per-city training triples across *cities* (issue #659).
 
     Calls fetch_training_data() per city with min_samples=1 (a city
     contributes whatever it has; cities with zero joined pairs are skipped)
     and concatenates the triples.
+
+    Args:
+        sigma_source: Forwarded to fetch_training_data() for every city — see
+            that function's docstring (issue #449). Default "ensemble" matches
+            pre-#449 pooled-fit behaviour exactly.
 
     Returns:
         (pooled_triples, per_city_counts) — per_city_counts maps each city
@@ -283,6 +332,7 @@ def fetch_training_data_pooled(
             triples = fetch_training_data(
                 c, db, min_samples=1, lead_hours=lead_hours,
                 forecast_source=forecast_source, regime=regime,
+                sigma_source=sigma_source,
             )
         except InsufficientDataError:
             continue
@@ -348,6 +398,8 @@ def save_coefficients(
     db,
     forecast_source: "str | None" = None,
     sample_count: int | None = None,
+    sigma_source: "str | None" = None,
+    lead_hours: int = 24,
 ) -> None:
     """Persist EMOS coefficients to the emos_calibration table.
 
@@ -360,8 +412,10 @@ def save_coefficients(
     reduced-sample shadow fit, not merely a threshold check that could later
     be bypassed.
 
-    Coefficients for different forecast_source values are stored independently
-    — saving for "hrrr_nbm" never overwrites the legacy "nws_open_meteo" row.
+    Coefficients for different forecast_source, sigma_source, or lead_hours
+    values are stored independently — saving for "hrrr_nbm" (or
+    sigma_source="ensemble", or lead_hours=6) never overwrites the legacy
+    "nws_open_meteo"/"fixed"/lead_hours=24 row (issues #659, #449, #665).
 
     Args:
         city:            City name (e.g. "Chicago").
@@ -377,6 +431,14 @@ def save_coefficients(
         sample_count:    Number of training samples used to fit the coefficients.
                          Recorded for caller/log context only — does not affect
                          ready_for_promotion, which is always 0 here (see above).
+        sigma_source:    "fixed" | "ensemble" | None. None resolves to the
+                         active EMOS_SIGMA_SOURCE inside the Database layer, so
+                         writers and readers key on the same track (#449). Pass
+                         the same value fetch_training_data() was called with
+                         for this fit.
+        lead_hours:      Lead-time bin these coefficients were fitted at.
+                         Default 24, matching the only bin fetch_training_data()
+                         used before per-lead-bin fitting existed (#665).
     """
     ready_for_promotion = 0
 
@@ -391,6 +453,8 @@ def save_coefficients(
         trained_at=datetime.now(timezone.utc).isoformat(),
         ready_for_promotion=ready_for_promotion,
         forecast_source=forecast_source,
+        sigma_source=sigma_source,
+        lead_hours=lead_hours,
     )
 
 
@@ -398,6 +462,7 @@ def check_ready_for_promotion(
     db,
     forecast_source: str,
     cities: list[str],
+    sigma_source: "str | None" = None,
 ) -> bool:
     """Return True only if every city has ready_for_promotion=1 for this source.
 
@@ -409,9 +474,18 @@ def check_ready_for_promotion(
         db:              A src.data.db.Database instance.
         forecast_source: The new forecast stack identifier (e.g. "hrrr_nbm").
         cities:          List of city names that must all be ready.
+        sigma_source:    Optional "fixed" | "ensemble" filter (issue #449).
+                         None (default) does not filter on sigma_source at
+                         all — every row for the requested forecast_source
+                         counts regardless of which sigma track it was
+                         trained on, identical to pre-#449 behaviour. Pass a
+                         value explicitly to gate promotion on a specific
+                         sigma-source retrain (e.g. require an "ensemble" fit
+                         before enabling USE_ENSEMBLE_SIGMA in production).
 
     Returns:
-        True iff all cities have a row with ready_for_promotion=1 for this source.
+        True iff all cities have a row with ready_for_promotion=1 for this
+        source (and, when given, this sigma_source).
     """
     if not cities:
         return False
@@ -419,6 +493,8 @@ def check_ready_for_promotion(
     promoted = {
         r["city"]
         for r in rows
-        if r.get("forecast_source") == forecast_source and r.get("ready_for_promotion") == 1
+        if r.get("forecast_source") == forecast_source
+        and r.get("ready_for_promotion") == 1
+        and (sigma_source is None or r.get("sigma_source") == sigma_source)
     }
     return all(city in promoted for city in cities)

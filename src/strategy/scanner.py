@@ -484,8 +484,11 @@ def scan_markets(
                     # stack mean → apply_emos → + intraday delta) for logging
                     # only; legacy probabilities are served unchanged. Logging
                     # the same values the primary path would serve keeps the
-                    # shadow comparison honest.
-                    _serving = emos_serving_mu(state, city, db, _sigma_raw)
+                    # shadow comparison honest. mins_left drives per-lead-bin
+                    # sigma coefficient selection when a city has been
+                    # retrained at more than one lead bin (issue #665); a
+                    # city fit only at the legacy default bin sees no change.
+                    _serving = emos_serving_mu(state, city, db, _sigma_raw, minutes_to_settlement=mins_left)
                     if _serving is not None:
                         _mu_final, _sigma_cal = _serving
                         log.debug(
@@ -513,8 +516,11 @@ def scan_markets(
                         # residual correction drops out of this path because
                         # EMOS's intercept learns the same static bias). The
                         # decayed intraday delta is layered on top inside
-                        # emos_serving_mu.
-                        _serving = emos_serving_mu(state, city, db, _sigma_raw)
+                        # emos_serving_mu. mins_left drives per-lead-bin sigma
+                        # coefficient selection (issue #665) -- unchanged
+                        # behaviour for any city fit only at the legacy
+                        # default lead bin.
+                        _serving = emos_serving_mu(state, city, db, _sigma_raw, minutes_to_settlement=mins_left)
                         if _serving is None:
                             log.warning(
                                 "[emos] city=%s emos_primary but no stack member"
