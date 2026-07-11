@@ -36,6 +36,12 @@ class WeatherState:
     # can layer the nowcast signal ON TOP of its calibrated mean instead of
     # consuming the fully-corrected mu it was never trained on (#658).
     intraday_delta_f: float | None = None
+    # Per-station GEFS ensemble-spread sigma (°F), from src/model/ensemble_sigma.py
+    # via src/scripts/capture_forecasts.py. None when GEFS is unavailable for the
+    # station or a caller hasn't wired the producer yet. Consumed by
+    # true_probability_yes (and the EMOS-shadow serving path) instead of the
+    # fixed FORECAST_STDDEV_F only when USE_ENSEMBLE_SIGMA is enabled (#448).
+    ensemble_sigma_f: float | None = None
 
 
 @dataclass
@@ -89,7 +95,8 @@ def true_probability_yes(bracket: Bracket, state: WeatherState,
                          minutes_to_settlement: float = 9999.0,
                          forecast_stddev: float = 2.0,
                          deb_enabled: "bool | None" = None,
-                         sigma_climb_fraction: float = 0.5) -> float:
+                         sigma_climb_fraction: float = 0.5,
+                         use_ensemble_sigma: "bool | None" = None) -> float:
     """Compute P(daily high falls in this bracket).
 
     Enhanced: uses ensemble forecast and time-to-settlement boost.
@@ -98,7 +105,9 @@ def true_probability_yes(bracket: Bracket, state: WeatherState,
         bracket: Bracket to evaluate
         state: WeatherState with forecasts and observations
         minutes_to_settlement: Time until market resolves (default 9999 = far in future)
-        forecast_stddev: Forecast uncertainty (default 2.0 degrees F)
+        forecast_stddev: Forecast uncertainty (default 2.0 degrees F). Overridden by
+            state.ensemble_sigma_f when use_ensemble_sigma resolves True and the
+            field is set (issue #448) -- see use_ensemble_sigma below.
         deb_enabled: Resolved DEB_ENABLED flag. Callers with DB access should pass
             the value from get_live_config (read once per scan cycle, not per bracket).
             When None, falls back to the DEB_ENABLED env var (backward compatibility).
@@ -107,6 +116,15 @@ def true_probability_yes(bracket: Bracket, state: WeatherState,
             evaluations cannot claim near-certainty about a high that is mostly
             unrealized (issue #652). Callers with DB access pass the live
             ENVELOPE_SIGMA_CLIMB_FRACTION config value.
+        use_ensemble_sigma: Resolved USE_ENSEMBLE_SIGMA flag (issue #448). Callers
+            with DB access should pass the value from get_live_config, read once
+            per scan cycle. When None, falls back to the USE_ENSEMBLE_SIGMA env
+            var (backward compatibility). When the resolved flag is True AND
+            state.ensemble_sigma_f is not None, forecast_stddev is replaced by
+            state.ensemble_sigma_f before the climb-fraction floor is applied.
+            When False, or when ensemble_sigma_f is None (e.g. GEFS unavailable),
+            behaviour is unchanged -- the legacy fixed-sigma (forecast_stddev)
+            path is used.
     """
     global _deb_enabled_logged
 
@@ -124,6 +142,13 @@ def true_probability_yes(bracket: Bracket, state: WeatherState,
     if not _deb_enabled_logged:
         log.info("DEB_ENABLED=%s (source: %s)", deb_enabled, deb_source)
         _deb_enabled_logged = True
+
+    # Resolve USE_ENSEMBLE_SIGMA: caller-provided (from live config) wins; env
+    # var is the fallback (same precedence pattern as DEB_ENABLED above).
+    if use_ensemble_sigma is None:
+        use_ensemble_sigma = os.getenv("USE_ENSEMBLE_SIGMA", "false").lower() == "true"
+    if use_ensemble_sigma and state.ensemble_sigma_f is not None:
+        forecast_stddev = state.ensemble_sigma_f
 
     # Priority: corrected_mu_f (intraday) > deb_mu_f (DEB-enabled) > ensemble fallback.
     # Compute before early exits so a high forecast can expand max_env.

@@ -279,6 +279,7 @@ All three keys are DB-backed (editable via the dashboard Config tab or `PATCH /a
 | Variable | Default | Unit | Description | Requires Credentials |
 |----------|---------|------|-------------|----------------------|
 | `MODEL_PROB_CAP` | 0.95 | probability | Symmetric cap applied to `p_yes` after `true_probability_yes()`: clamps to `[1-cap, cap]`. Interim guard against overconfidence until EMOS (#70) is promoted. Set to `1.0` to disable. | No |
+| `USE_ENSEMBLE_SIGMA` | false | boolean | When true AND `WeatherState.ensemble_sigma_f` is populated (per-station GEFS ensemble spread), `true_probability_yes()` and the EMOS-shadow/primary serving path use it instead of the fixed `FORECAST_STDDEV_F`. Default off — this is plumbing only (issue #448); no live behaviour change until a station's ensemble sigma producer is wired (#449/#665) and this is promoted per station. | No |
 
 ### Residual Bias Correction
 

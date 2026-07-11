@@ -26,7 +26,7 @@ from src.config import (
     ENVELOPE_SIGMA_CLIMB_FRACTION,
 )
 from src.model.envelope import Bracket, WeatherState, true_probability_yes, compute_envelope
-from src.model.emos_mode import get_city_mode, emos_serving_mu, _check_ready_for_promotion
+from src.model.emos_mode import get_city_mode, emos_serving_mu, _check_ready_for_promotion, resolve_sigma_raw
 from src.model.residual_correction import compute_residual_stats
 from src.data.polymarket import get_orderbook
 from src.data.taf_disruption import check_taf_disruption
@@ -372,6 +372,10 @@ def scan_markets(
         # passed into true_probability_yes so the dashboard toggle is respected
         # without a per-bracket DB read.
         _deb_enabled = bool(_live.get("DEB_ENABLED", CONFIG_DEFAULTS["DEB_ENABLED"]))
+        # USE_ENSEMBLE_SIGMA resolved once per scan from live config (issue #448) —
+        # same pattern as DEB_ENABLED. Default off: no live behaviour change
+        # until a station's ensemble_sigma_f is populated AND this is flipped on.
+        _use_ensemble_sigma = bool(_live.get("USE_ENSEMBLE_SIGMA", CONFIG_DEFAULTS["USE_ENSEMBLE_SIGMA"]))
         # Entry-gate thresholds live-read from bot_config (issue #644): the
         # dashboard already exposed these keys, but the gates below consumed
         # the import-time module constants, so edits (e.g. MIN_PRICE_CENTS=75
@@ -400,6 +404,7 @@ def scan_markets(
         shadow_yes_price_min = int(CONFIG_DEFAULTS["SHADOW_MIN_PRICE_CENTS_YES"])
         rank_on_raw_prob = bool(CONFIG_DEFAULTS["RANK_ON_RAW_PROB"])
         _deb_enabled = None  # no DB: envelope falls back to the DEB_ENABLED env var
+        _use_ensemble_sigma = None  # no DB: envelope falls back to the USE_ENSEMBLE_SIGMA env var
         min_edge_cents      = MIN_EDGE_CENTS
         max_edge_cents      = MAX_EDGE_CENTS
         min_price_cents     = MIN_PRICE_CENTS
@@ -467,6 +472,11 @@ def scan_markets(
             # apply linear bias correction to forecast_mean and forecast_stddev.
             emos_mode_used = "legacy"
             emos_stddev_override = None
+            # Sigma EMOS serving should feed apply_emos (issue #448): the
+            # station's ensemble_sigma_f when USE_ENSEMBLE_SIGMA is on and the
+            # value is available, else the legacy fixed FORECAST_STDDEV_F.
+            # Resolves to FORECAST_STDDEV_F unchanged while the flag is off.
+            _sigma_raw = resolve_sigma_raw(state, _use_ensemble_sigma, FORECAST_STDDEV_F)
             if db is not None:
                 mode = get_city_mode(city, db)
                 if mode == "emos_shadow":
@@ -475,7 +485,7 @@ def scan_markets(
                     # only; legacy probabilities are served unchanged. Logging
                     # the same values the primary path would serve keeps the
                     # shadow comparison honest.
-                    _serving = emos_serving_mu(state, city, db, FORECAST_STDDEV_F)
+                    _serving = emos_serving_mu(state, city, db, _sigma_raw)
                     if _serving is not None:
                         _mu_final, _sigma_cal = _serving
                         log.debug(
@@ -484,7 +494,7 @@ def scan_markets(
                             city,
                             state.corrected_mu_f or state.deb_mu_f or state.forecast_high_f or 0.0,
                             _mu_final,
-                            FORECAST_STDDEV_F,
+                            _sigma_raw,
                             _sigma_cal,
                         )
                     emos_mode_used = "emos_shadow"
@@ -504,7 +514,7 @@ def scan_markets(
                         # EMOS's intercept learns the same static bias). The
                         # decayed intraday delta is layered on top inside
                         # emos_serving_mu.
-                        _serving = emos_serving_mu(state, city, db, FORECAST_STDDEV_F)
+                        _serving = emos_serving_mu(state, city, db, _sigma_raw)
                         if _serving is None:
                             log.warning(
                                 "[emos] city=%s emos_primary but no stack member"
@@ -524,9 +534,14 @@ def scan_markets(
                             emos_mode_used = "emos_primary"
 
             if emos_stddev_override is not None:
-                p_yes = true_probability_yes(bracket, state, mins_left, forecast_stddev=emos_stddev_override, deb_enabled=_deb_enabled, sigma_climb_fraction=sigma_climb_fraction)
+                # emos_stddev_override is already the EMOS-calibrated sigma (derived
+                # from _sigma_raw, which itself may already be ensemble_sigma_f-based
+                # -- see resolve_sigma_raw above). Pass use_ensemble_sigma=False so
+                # true_probability_yes uses this value as-is instead of re-overriding
+                # it with the raw state.ensemble_sigma_f (issue #448).
+                p_yes = true_probability_yes(bracket, state, mins_left, forecast_stddev=emos_stddev_override, deb_enabled=_deb_enabled, sigma_climb_fraction=sigma_climb_fraction, use_ensemble_sigma=False)
             else:
-                p_yes = true_probability_yes(bracket, state, mins_left, deb_enabled=_deb_enabled, sigma_climb_fraction=sigma_climb_fraction)
+                p_yes = true_probability_yes(bracket, state, mins_left, deb_enabled=_deb_enabled, sigma_climb_fraction=sigma_climb_fraction, use_ensemble_sigma=_use_ensemble_sigma)
             raw_p_yes = p_yes
             # round() avoids IEEE 754 creep: 1.0-0.95 = 0.050000000000000044
             # which would silently fail the p_yes <= MAX_CONFIDENCE_YES_FOR_NO=0.05 gate.

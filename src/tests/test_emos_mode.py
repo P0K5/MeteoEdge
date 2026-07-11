@@ -472,6 +472,81 @@ class TestEmosServingMu:
 
 
 # ---------------------------------------------------------------------------
+# Test 7b: resolve_sigma_raw — issue #448, EMOS-shadow picks up ensemble sigma
+# ---------------------------------------------------------------------------
+
+class TestResolveSigmaRaw:
+    """resolve_sigma_raw feeds the EMOS-shadow/primary serving path (#448):
+    picks state.ensemble_sigma_f when USE_ENSEMBLE_SIGMA resolves True and the
+    field is set, else falls back to the legacy fixed sigma unchanged."""
+
+    def _state(self, ensemble_sigma_f=None):
+        from src.model.envelope import WeatherState
+        from datetime import datetime
+        now = datetime(2026, 7, 9, 14, 0)
+        return WeatherState(
+            station="KORD", now_local=now, sunset_local=now,
+            current_high_f=70.0, current_high_time=now,
+            latest_temp_f=70.0, latest_temp_time=now,
+            forecast_high_f=80.0, ensemble_sigma_f=ensemble_sigma_f,
+        )
+
+    def test_uses_ensemble_sigma_when_flag_true_and_field_set(self):
+        from src.model.emos_mode import resolve_sigma_raw
+        state = self._state(ensemble_sigma_f=3.5)
+        result = resolve_sigma_raw(state, True, 2.0)
+        assert result == 3.5
+
+    def test_falls_back_when_field_is_none(self):
+        """Flag on but ensemble_sigma_f=None (e.g. GEFS unavailable) -> fixed fallback."""
+        from src.model.emos_mode import resolve_sigma_raw
+        state = self._state(ensemble_sigma_f=None)
+        result = resolve_sigma_raw(state, True, 2.0)
+        assert result == 2.0
+
+    def test_falls_back_when_flag_false(self):
+        """Flag off -> ensemble_sigma_f ignored even when set."""
+        from src.model.emos_mode import resolve_sigma_raw
+        state = self._state(ensemble_sigma_f=3.5)
+        result = resolve_sigma_raw(state, False, 2.0)
+        assert result == 2.0
+
+    def test_none_flag_falls_back_to_env_var(self, monkeypatch):
+        """use_ensemble_sigma=None -> USE_ENSEMBLE_SIGMA env var resolves it."""
+        from src.model.emos_mode import resolve_sigma_raw
+        monkeypatch.setenv("USE_ENSEMBLE_SIGMA", "true")
+        state = self._state(ensemble_sigma_f=3.5)
+        assert resolve_sigma_raw(state, None, 2.0) == 3.5
+
+    def test_none_flag_defaults_off_without_env_var(self, monkeypatch):
+        from src.model.emos_mode import resolve_sigma_raw
+        monkeypatch.delenv("USE_ENSEMBLE_SIGMA", raising=False)
+        state = self._state(ensemble_sigma_f=3.5)
+        assert resolve_sigma_raw(state, None, 2.0) == 2.0
+
+    def test_emos_serving_mu_picks_up_resolved_sigma(self):
+        """End-to-end: resolve_sigma_raw's output flows through emos_serving_mu's
+        sigma_cal (c + d*sigma_raw) -- the EMOS-shadow path 'picks up' the new
+        sigma exactly the way it picks up FORECAST_STDDEV_F today."""
+        from src.model.emos_mode import resolve_sigma_raw, emos_serving_mu
+        db = _db()
+        _upsert(db, "Chicago", "emos_shadow", a=0.0, b=1.0, c=0.5, d=1.0)
+        state = self._state(ensemble_sigma_f=4.0)
+        state.secondary_forecast_f = 82.0  # give it a second stack member
+
+        sigma_raw_on = resolve_sigma_raw(state, True, 2.0)
+        sigma_raw_off = resolve_sigma_raw(state, False, 2.0)
+        assert sigma_raw_on == 4.0
+        assert sigma_raw_off == 2.0
+
+        _, sigma_cal_on = emos_serving_mu(state, "Chicago", db, sigma_raw_on)
+        _, sigma_cal_off = emos_serving_mu(state, "Chicago", db, sigma_raw_off)
+        assert sigma_cal_on == pytest.approx(0.5 + 1.0 * 4.0)
+        assert sigma_cal_off == pytest.approx(0.5 + 1.0 * 2.0)
+        assert sigma_cal_on != sigma_cal_off
+
+
+# ---------------------------------------------------------------------------
 # Test 8: _emos_min_samples reads from config
 # ---------------------------------------------------------------------------
 

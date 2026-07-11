@@ -352,6 +352,16 @@ MODEL_PROB_CAP = float(os.getenv("MODEL_PROB_CAP", "0.95"))
 # Prevents near-certain morning claims about a high that is mostly unrealized.
 ENVELOPE_SIGMA_CLIMB_FRACTION = float(os.getenv("ENVELOPE_SIGMA_CLIMB_FRACTION", "0.5"))
 
+# Feature flag (issue #448, epic #70 Phase 2 / #445): when true AND
+# WeatherState.ensemble_sigma_f is populated (per-station GEFS ensemble
+# spread -- the estimator lives in src/model/ensemble_sigma.py; wiring it
+# onto WeatherState is a follow-up issue, #449/#665), true_probability_yes
+# and the EMOS-shadow serving path use it as the forecast stddev instead of
+# the fixed FORECAST_STDDEV_F. Default OFF: this PR only plumbs the field
+# and its consumption path -- it must not change what gets served live.
+# Promote per station only after shadow data validates the estimator.
+USE_ENSEMBLE_SIGMA = os.getenv("USE_ENSEMBLE_SIGMA", "false").lower() == "true"
+
 # EMOS deployment mode: 'legacy' | 'emos_shadow' | 'emos_primary'
 # Per-city mode is read from the emos_calibration table; this is the fallback
 # when no calibration row exists for a city.
@@ -523,6 +533,10 @@ CONFIG_DEFAULTS: "dict[str, str | int | float | bool]" = {
     "SHADOW_MIN_PRICE_CENTS_YES": 20,
     "MODEL_PROB_CAP": 0.95,
     "ENVELOPE_SIGMA_CLIMB_FRACTION": 0.5,
+    # Feature flag (issue #448): use WeatherState.ensemble_sigma_f (GEFS
+    # ensemble spread) instead of the fixed FORECAST_STDDEV_F when available.
+    # Default off -- no live behaviour change until a station is promoted.
+    "USE_ENSEMBLE_SIGMA": False,
     # Stage 1 of issue #551: rank/prioritize candidates using the uncapped (raw)
     # model probability instead of scan order. Default off -- entry gates always
     # consume the capped p_yes regardless of this flag; only which candidate is
