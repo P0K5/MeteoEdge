@@ -355,6 +355,160 @@ class TestPollOncePassesWeatherLow:
 
 
 # ---------------------------------------------------------------------------
+# poll_once() persists every scanned candidate to the DB `candidates` table
+# — issue #684.
+#
+# Root cause: db.insert_candidate() existed (with a p_yes_raw column added by
+# #564) but had no caller outside tests. The pipeline only ever wrote
+# candidates to logs/candidates*.csv, so `SELECT COUNT(*) FROM candidates`
+# was always 0 in production and any SQL analysis assuming that table
+# reflected reality silently got zero rows. This wires the DB write in
+# alongside the existing CSV write (which is left untouched).
+# ---------------------------------------------------------------------------
+
+def _candidate_with_p_yes_raw() -> Candidate:
+    """A non-shadow NO candidate with p_yes_raw populated, as scan_markets()
+    builds when MODEL_PROB_CAP clamps the raw model probability (#551)."""
+    bracket = Bracket(
+        ticker="KORD-high-81-83",
+        low_f=81.0,
+        high_f=83.0,
+        yes_ask_cents=40,
+        yes_ask_size=100,
+        no_ask_cents=60,
+        no_ask_size=100,
+    )
+    return Candidate(
+        station="KORD",
+        bracket=bracket,
+        side="NO",
+        edge_cents=15.0,
+        price_cents=60,
+        confidence=0.72,
+        p_yes=0.28,
+        ev_yes=-10.0,
+        ev_no=15.0,
+        minutes_to_settlement=90.0,
+        market={"question": "high temp in Chicago", "endDate": "2026-07-05T00:00:00Z"},
+        p_yes_raw=0.31,
+        direction="high",
+    )
+
+
+def _poll_once_with_candidate(mock_db, candidate):
+    """Drive poll_once() with a single scanner candidate and a mocked db."""
+    def _fake_scan_markets(weather, markets, **kwargs):
+        return [candidate], []
+
+    import src.scripts.run as run_module
+    with (
+        patch("src.scripts.run.scan_markets", side_effect=_fake_scan_markets),
+        patch("src.scripts.run._build_weather", return_value={"KORD": MagicMock()}),
+        patch("src.scripts.run.build_weather_low_for_scanning", return_value={}),
+        patch("src.scripts.run.get_weather_markets", return_value=[]),
+        patch.object(run_module.order_manager, "reconcile_timeout_fills"),
+        patch.object(run_module.order_manager, "sync_open_orders"),
+        patch.object(run_module.order_manager, "check_take_profit_exits"),
+        patch("src.scripts.run._log_open_position_snapshots"),
+        patch("src.scripts.run.FreshnessMonitor"),
+        patch("src.scripts.run.get_source_priority", return_value=[]),
+        patch("src.scripts.run._append_candidate"),
+        patch("src.monitoring.dashboard.last_poll_ts", None, create=True),
+    ):
+        from src.scripts.run import poll_once
+        from src.risk.manager import RiskManager
+
+        mock_risk = MagicMock(spec=RiskManager)
+        mock_risk.allow_trade.return_value = (False, "test block")
+
+        poll_once(mock_risk, live_trader=None, alert_manager=None, db=mock_db)
+
+
+class TestPollOncePersistsCandidateToDb:
+    """Every scanned candidate must reach db.insert_candidate(), not just the CSV."""
+
+    def test_candidate_persisted_with_p_yes_raw(self):
+        mock_db = MagicMock()
+        _poll_once_with_candidate(mock_db, _candidate_with_p_yes_raw())
+
+        assert mock_db.insert_candidate.called, "insert_candidate was never called"
+        _, kwargs = mock_db.insert_candidate.call_args
+        assert kwargs.get("p_yes_raw") == 0.31, (
+            "p_yes_raw must be forwarded to insert_candidate -- this is the whole "
+            "point of #684, since #564's column is otherwise write-once-in-tests-only"
+        )
+        assert kwargs.get("station") == "KORD"
+        assert kwargs.get("ticker") == "KORD-high-81-83"
+        assert kwargs.get("side") == "NO"
+        assert kwargs.get("direction") == "high"
+        assert kwargs.get("market_price") == 60
+        assert kwargs.get("predicted_price") == 72  # round(confidence * 100)
+        assert kwargs.get("predicted_edge") == 15.0
+        assert kwargs.get("minutes_to_settlement") == 90.0
+
+    def test_db_insert_failure_does_not_crash_poll(self):
+        """A DB error on insert_candidate must be swallowed (logged), not raised —
+        the CSV write stays the durable path and the poll loop must keep going."""
+        mock_db = MagicMock()
+        mock_db.insert_candidate.side_effect = RuntimeError("db unavailable")
+
+        # Must not raise.
+        _poll_once_with_candidate(mock_db, _candidate_with_p_yes_raw())
+
+    def test_no_db_no_insert_attempted(self):
+        """db=None (e.g. --once smoke runs) must not attempt any DB call."""
+        def _fake_scan_markets(weather, markets, **kwargs):
+            return [_candidate_with_p_yes_raw()], []
+
+        import src.scripts.run as run_module
+        with (
+            patch("src.scripts.run.scan_markets", side_effect=_fake_scan_markets),
+            patch("src.scripts.run._build_weather", return_value={"KORD": MagicMock()}),
+            patch("src.scripts.run.build_weather_low_for_scanning", return_value={}),
+            patch("src.scripts.run.get_weather_markets", return_value=[]),
+            patch.object(run_module.order_manager, "reconcile_timeout_fills"),
+            patch.object(run_module.order_manager, "sync_open_orders"),
+            patch.object(run_module.order_manager, "check_take_profit_exits"),
+            patch("src.scripts.run._log_open_position_snapshots"),
+            patch("src.scripts.run.FreshnessMonitor"),
+            patch("src.scripts.run.get_source_priority", return_value=[]),
+            patch("src.scripts.run._append_candidate"),
+            patch("src.monitoring.dashboard.last_poll_ts", None, create=True),
+        ):
+            from src.scripts.run import poll_once
+            from src.risk.manager import RiskManager
+
+            mock_risk = MagicMock(spec=RiskManager)
+            mock_risk.allow_trade.return_value = (False, "test block")
+
+            # Must not raise even though db=None.
+            poll_once(mock_risk, live_trader=None, alert_manager=None, db=None)
+
+
+class TestPollOnceCandidateRowLandsInRealDb:
+    """End-to-end: drive poll_once() against a real (in-memory) Database and
+    confirm the row is actually queryable with p_yes_raw populated -- not just
+    that the mock was called with the right kwargs."""
+
+    def test_row_appears_with_p_yes_raw(self):
+        from src.data.db import Database
+
+        db = Database(":memory:")
+        _poll_once_with_candidate(db, _candidate_with_p_yes_raw())
+
+        row = db._conn.execute(
+            "SELECT station, ticker, side, direction, p_yes_raw FROM candidates "
+            "WHERE ticker='KORD-high-81-83'"
+        ).fetchone()
+        assert row is not None, "no row was inserted into candidates"
+        assert row[0] == "KORD"
+        assert row[1] == "KORD-high-81-83"
+        assert row[2] == "NO"
+        assert row[3] == "high"
+        assert row[4] == pytest.approx(0.31)
+
+
+# ---------------------------------------------------------------------------
 # _build_weather() high-freq obs wiring — issue #129
 # ---------------------------------------------------------------------------
 

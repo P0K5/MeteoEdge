@@ -298,3 +298,24 @@ surface with `/api/promotion-bar`. Issue #80 remains open — whether its
 standalone script is still wanted (e.g. as a CLI wrapper around
 `compute_promotion_bar()` for use outside the dashboard) is left as an open
 question for the Tech Lead PM; see the comment thread on #80.
+
+---
+
+## `candidates` table write volume (issue #684)
+
+`poll_once()` now calls `db.insert_candidate()` for every scanned candidate,
+alongside the existing `logs/candidates*.csv` write (which is unchanged and
+remains the CSV surface). Before this, `db.log_candidate()`/`insert_candidate()`
+had no production caller and `candidates` was always empty in production.
+
+- **Expected volume:** ~25k rows/day, the same order of magnitude as
+  `guardrail_events`, which already sustains ~20k/day without issue.
+- **No retention/rotation job exists yet for `candidates`** — rows accumulate
+  indefinitely, same as `trades` and `guardrail_events` today. If DB size
+  becomes a concern, add a rotation/archive job analogous to
+  `src/utils/log_rotation.py`'s CSV housekeeping (see `SNAPSHOT_RETAIN_DAYS`
+  above) rather than deleting rows ad hoc, since `candidates` is now a
+  first-class source for population-level analysis (#682 counterfactuals,
+  #670 crowding backtests).
+- The CSV write in `_append_candidate()` is left in place; retiring it is a
+  separate decision (#683), not part of this change.
