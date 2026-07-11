@@ -216,6 +216,12 @@ WantedBy=timers.target
   `logs/settlements.csv`, and `logs/snapshots.jsonl` and writes a markdown
   report. It never touches `MODEL_PROB_CAP`, `MAX_CONFIDENCE_YES_FOR_NO`, or
   any other live config.
+- **`logs/settlements.csv` is frozen and deprecated** (see
+  [The settlements.csv leg is deprecated](#the-settlementscsv-leg-is-deprecated-issue-683)
+  under Settlement, below) — `settle.py` stopped writing it on 2026-06-18 and
+  now never will again. This script still reads it defensively (a missing or
+  stale file is tolerated), but its settlements-fed sections report 0/0 until
+  #682 re-points them at the DB `trades` table.
 
 **Operational commands:**
 ```bash
@@ -534,7 +540,9 @@ python -m src.scripts.settle 2024-06-03
 4. **Calculates P&L** per candidate:
    - Win: `100¢ - entry_price`
    - Loss: `-entry_price`
-5. **Writes settlements.csv** with actual_high, yes_won, candidate_won, pnl_cents
+5. ~~Writes settlements.csv~~ — **deprecated (issue #683)**, see
+   [The settlements.csv leg is deprecated](#the-settlementscsv-leg-is-deprecated-issue-683)
+   below. This step is now a no-op log line.
 6. **Settles live held-to-expiry trades from the DB** (`settle_live_trades()`, see
    [Live-trade settlement is DB-driven](#live-trade-settlement-is-db-driven-issue-609)
    below) and **best-effort enriches** the matching `live_trades.jsonl` record
@@ -543,6 +551,39 @@ python -m src.scripts.settle 2024-06-03
    for the DB settlement itself to succeed.
 7. **Cleans up `open_positions`** for each row settled from the DB (removes the
    resolved position so it stops showing as "open").
+
+### The settlements.csv leg is deprecated (issue #683)
+
+`settle_yesterday()` used to write `logs/settlements.csv` by joining
+yesterday's rows out of the **live** `logs/candidates.csv`. Date-based log
+rotation (#169, 2026-06-16) moves each day's rows into
+`candidates.YYYY-MM-DD.csv` before the 13:00 UTC settle run, so that join
+stopped matching anything on 2026-06-18 — `settlements.csv` has been frozen
+(dead) since, with every daily run logging `"No candidates matched ...
+nothing written."` and settling nothing to the file. The same cutover froze
+`logs/live_trades.jsonl` (see the #609 section below); this is the same bug
+class hitting the CSV settlement leg instead.
+
+Additionally, `settlements.csv` never carried `p_yes_raw`/`ev_no_raw`
+(pre-#564 schema — #564 added those columns to the DB tables, not the CSVs)
+and has no header row, so even revived it could not serve the #682 shadow
+report.
+
+**Decision (issue #683): deprecate, don't fix.** Settlement truth is
+DB-first — the `settlements` table (`src/data/settlements.py`,
+`record_settlement`) and same-row `trades` settlement (see below) are
+healthy and unaffected. `settle_yesterday()` and the `python -m
+src.scripts.settle <date>` manual path no longer read `candidates.csv` or
+write `settlements.csv`; they log a single `"CSV settlement leg is
+deprecated (#683)"` info line and proceed straight to DB settlement.
+
+Remaining consumer: `scripts/prob_cap_shadow_report.py` still reads
+`logs/settlements.csv` (via `SETTLEMENTS_CSV` in `src/config.py`) as one of
+its data sources for the #682 report. That script tolerates a missing or
+stale file (`rotated_sources()` skips nonexistent paths), and issue #682's
+own diagnosis (`backtest_results/prob_cap_data_diagnosis_2026-07-10.md`)
+recommends re-pointing `load_settled_candidates()` at the DB `trades` table
+instead — tracked separately under #682, not part of this deprecation.
 
 ### Live-trade settlement is DB-driven (issue #609)
 
@@ -828,7 +869,7 @@ In addition to appended log files, the bot writes structured data to JSONL files
 | `logs/snapshots.jsonl` | Market state snapshots during evaluation | ts, station, ticker, bracket, p_yes, ev_yes, ev_no, and orderbook state |
 | `logs/live_trades.jsonl` | All live (real) trades executed | ts, order_id, station, ticker, side, entry price, actual fill price, outcome, pnl, and exit reason if sold early |
 | `logs/position_snapshots.jsonl` | Intraday position monitoring | ts, ticker, no_token_id, bracket, current entry/bid/ask, model re-evaluation, fair value |
-| `logs/settlements.csv` | Settlement outcomes (from settle.py) | candidate row + actual_high, yes_won, candidate_won, pnl_cents |
+| `logs/settlements.csv` | **Deprecated (#683), no longer written.** Frozen since 2026-06-16; settlement truth is now DB-first (`settlements`/`trades` tables). | candidate row + actual_high, yes_won, candidate_won, pnl_cents |
 
 ### Diagnosing Issues
 

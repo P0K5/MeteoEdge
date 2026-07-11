@@ -1,5 +1,4 @@
 """Run once a day after NWS publishes the Daily Climate Report (typically ~9am local next day)."""
-import csv
 import gzip
 import json
 import logging
@@ -9,7 +8,7 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
-from src.config import STATIONS, LOG_DIR, CANDIDATES_CSV, SETTLEMENTS_CSV, STATION_TZ, LIVE_TRADES_JSONL
+from src.config import STATIONS, LOG_DIR, CANDIDATES_CSV, STATION_TZ, LIVE_TRADES_JSONL
 from src.http_client import fetch
 from src.data.polymarket import fetch_market_final_price, fetch_market_resolution
 from src.utils.log_rotation import iter_rotated_jsonl, rotated_sources
@@ -201,6 +200,26 @@ def settle_shadow_trades(target: date, truth: dict, db=None) -> None:
     )
 
 
+def _log_csv_settlement_deprecated() -> None:
+    """Note that the legacy ``settlements.csv`` leg is deprecated (issue #683).
+
+    It used to be produced here by joining yesterday's rows out of the
+    *live* ``logs/candidates.csv``. Date-based log rotation (#169,
+    2026-06-16) moves each day's rows into ``candidates.YYYY-MM-DD.csv``
+    before this run, so that join stopped matching anything on 2026-06-18
+    and ``settlements.csv`` has been frozen ever since. Even revived, the
+    file never carried ``p_yes_raw``/``ev_no_raw`` (pre-#564 schema) and has
+    no header row, so it could not serve downstream reports either.
+    Settlement truth is DB-first: the ``settlements`` table
+    (``record_settlement``) and same-row ``trades`` settlement below are
+    unaffected by this and remain the source of truth.
+    """
+    log.info(
+        "[settle] CSV settlement leg is deprecated (#683) -- settlements.csv "
+        "is no longer written; settlement truth is DB-first (settlements/trades tables)."
+    )
+
+
 def settle_yesterday():
     """For each candidate from yesterday, record whether it would have won."""
     if not CANDIDATES_CSV.exists():
@@ -217,39 +236,7 @@ def settle_yesterday():
             truth[station] = h
             log.info("  [%s] daily high = %.1f°F", station, h)
 
-    new_file = not SETTLEMENTS_CSV.exists()
-    with open(CANDIDATES_CSV) as f_in, open(SETTLEMENTS_CSV, "a", newline="") as f_out:
-        reader = csv.DictReader(f_in)
-        writer = None
-        for row in reader:
-            ts = row["ts"][:10]
-            if ts != yesterday.isoformat():
-                continue
-            station = row["station"]
-            if station not in truth:
-                continue
-            actual = truth[station]
-            lo, hi = float(row["bracket_low"]), float(row["bracket_high"])
-            yes_won = lo <= actual <= hi
-            won = yes_won if row["flagged_side"] == "YES" else not yes_won
-
-            if row["flagged_side"] == "YES":
-                pnl = (100 - float(row["flagged_price"])) if yes_won else -float(row["flagged_price"])
-            else:
-                pnl = (100 - float(row["flagged_price"])) if (not yes_won) else -float(row["flagged_price"])
-
-            out = {**row, "actual_high": actual, "yes_won": yes_won,
-                   "candidate_won": won, "pnl_cents": round(pnl, 2)}
-            if writer is None:
-                writer = csv.DictWriter(f_out, fieldnames=list(out.keys()))
-                if new_file:
-                    writer.writeheader()
-            writer.writerow(out)
-
-    if writer is not None:
-        log.info("[settle] Wrote settlements to %s", SETTLEMENTS_CSV)
-    else:
-        log.info("[settle] No candidates matched %s in %s -- nothing written.", yesterday, CANDIDATES_CSV)
+    _log_csv_settlement_deprecated()
 
     db = _open_db()
     settle_live_trades(yesterday, truth, db=db)
@@ -614,35 +601,7 @@ if __name__ == "__main__":
             if h is not None:
                 truth[station] = h
                 log.info("  [%s] daily high = %.1f°F", station, h)
-        new_file = not SETTLEMENTS_CSV.exists()
-        with open(CANDIDATES_CSV) as f_in, open(SETTLEMENTS_CSV, "a", newline="") as f_out:
-            reader = csv.DictReader(f_in)
-            writer = None
-            for row in reader:
-                if row["ts"][:10] != target.isoformat():
-                    continue
-                station = row["station"]
-                if station not in truth:
-                    continue
-                actual = truth[station]
-                lo, hi = float(row["bracket_low"]), float(row["bracket_high"])
-                yes_won = lo <= actual <= hi
-                won = yes_won if row["flagged_side"] == "YES" else not yes_won
-                if row["flagged_side"] == "YES":
-                    pnl = (100 - float(row["flagged_price"])) if yes_won else -float(row["flagged_price"])
-                else:
-                    pnl = (100 - float(row["flagged_price"])) if (not yes_won) else -float(row["flagged_price"])
-                out = {**row, "actual_high": actual, "yes_won": yes_won,
-                       "candidate_won": won, "pnl_cents": round(pnl, 2)}
-                if writer is None:
-                    writer = csv.DictWriter(f_out, fieldnames=list(out.keys()))
-                    if new_file:
-                        writer.writeheader()
-                writer.writerow(out)
-        if writer:
-            log.info("[settle] Wrote settlements to %s", SETTLEMENTS_CSV)
-        else:
-            log.info("[settle] No candidates matched %s -- nothing written.", target)
+        _log_csv_settlement_deprecated()
         _db = _open_db()
         settle_live_trades(target, truth, db=_db)
         settle_shadow_trades(target, truth, db=_db)
