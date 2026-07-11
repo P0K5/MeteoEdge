@@ -1,5 +1,46 @@
 # Operations Reference
 
+## Database Layout
+
+MeteoEdge uses **two separate SQLite databases** by design:
+
+| Database | Path | Purpose | Key tables |
+|---|---|---|---|
+| **Live** | `data/meteoedge.db` | Primary transactional database for real-time trading and observations | `trades`, `candidates`, `observations`, `settlements`, `guardrail_events`, `open_positions`, `model_forecast_log`, `bot_config` |
+| **Analytics** | `data/analytics.db` | Archival-only database for long-term telemetry storage | `snapshot_archive`, `position_snapshot_archive` |
+
+**Archive ingestion lag:** The analytics database is populated asynchronously by the archiver process (`src/data/archive_db.py`). Snapshot tables have a ~24h ingest lag — rows available in `meteoedge.db` are batch-inserted into `analytics.db` roughly one day later.
+
+### Silent database creation footgun ⚠️
+
+SQLite's default behavior with relative paths creates a **new empty database** if the file does not exist, instead of erroring. This has caused multiple false "data is gone" alerts (#617, #649, #685):
+
+```bash
+# If opened from the wrong cwd, this creates a fresh empty data/meteoedge.db:
+sqlite3 data/meteoedge.db ".tables"  # 0 tables in the new file!
+# Should have returned 499,300 guardrail_events rows instead.
+```
+
+**Solution:** Always use the `scripts/dbq` helper to open databases. It resolves the repo root (via `git rev-parse --show-toplevel`) and opens files read-only, preventing both accidental writes and the silent-create trap:
+
+```bash
+# Interactive shell on the live database
+scripts/dbq
+
+# Run a single query
+scripts/dbq "SELECT COUNT(*) FROM guardrail_events;"
+
+# Open the analytics database instead
+scripts/dbq --analytics
+
+# Run a query on analytics
+scripts/dbq --analytics "SELECT COUNT(*) FROM snapshot_archive;"
+```
+
+The `--analytics` flag routes to `data/analytics.db`; omit it or use `--live` for the default `data/meteoedge.db`.
+
+---
+
 ## Environment Variables
 
 ### Data Retention
