@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+# =============================================================================
+# dbq — Database Query Helper
+#
+# Safely opens the MeteoEdge SQLite database from any working directory,
+# preventing the silent-create footgun (relative paths create a new empty
+# DB instead of erroring if the cwd is wrong).
+#
+# Usage:
+#   dbq                    # Open meteoedge.db read-only in the default shell
+#   dbq --analytics        # Open analytics.db instead
+#   dbq --live             # Explicitly open meteoedge.db (same as default)
+#   dbq --analytics ".tables"  # Run a single SQLite command and exit
+#
+# Examples:
+#   dbq                    # Interactive shell on meteoedge.db
+#   dbq "SELECT COUNT(*) FROM guardrail_events;"
+#   dbq --analytics "SELECT COUNT(*) FROM snapshot_archive;"
+#
+# Exit code: 0 on success, 1 if repo root not found or DB file missing
+# =============================================================================
+
+set -euo pipefail
+
+# Detect if this script is being sourced vs run
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    # Running directly
+    :
+else
+    # Being sourced — don't exit, just return from function
+    set +e
+fi
+
+# Find the repo root by looking for .git directory
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || true)
+if [[ -z "$REPO_ROOT" ]]; then
+    echo "ERROR: not in a git repository. Cannot determine repo root." >&2
+    exit 1
+fi
+
+# Parse arguments
+DB_FILE="meteoedge.db"  # Default
+COMMAND=""
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --analytics)
+            DB_FILE="analytics.db"
+            shift
+            ;;
+        --live)
+            DB_FILE="meteoedge.db"
+            shift
+            ;;
+        -h|--help)
+            sed -n '2,/^$/p' "$0" | sed 's/^# //'
+            exit 0
+            ;;
+        *)
+            # Treat remaining args as SQLite command
+            COMMAND="$*"
+            break
+            ;;
+    esac
+done
+
+DB_PATH="${REPO_ROOT}/data/${DB_FILE}"
+
+# Verify the database file exists
+if [[ ! -f "$DB_PATH" ]]; then
+    echo "ERROR: Database not found at $DB_PATH" >&2
+    echo "       Expected location: $(git rev-parse --show-toplevel 2>/dev/null || echo '[repo root]')/data/${DB_FILE}" >&2
+    exit 1
+fi
+
+# Open the database read-only via URI parameter
+# This prevents accidental writes and makes the read-only intent explicit.
+if [[ -n "$COMMAND" ]]; then
+    # Run a single command and exit
+    sqlite3 "file:${DB_PATH}?mode=ro" "$COMMAND"
+else
+    # Open an interactive shell
+    sqlite3 "file:${DB_PATH}?mode=ro"
+fi
