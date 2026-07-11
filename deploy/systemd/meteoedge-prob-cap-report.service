@@ -9,6 +9,6 @@ User=p0k5
 WorkingDirectory=/home/p0k5/MeteoEdge
 Environment=PYTHONUNBUFFERED=1
 EnvironmentFile=/home/p0k5/MeteoEdge/.env
-ExecStart=/home/p0k5/MeteoEdge/.venv/bin/python -u scripts/prob_cap_shadow_report.py
+ExecStart=/home/p0k5/MeteoEdge/.venv/bin/python -u scripts/prob_cap_shadow_report.py --out-dir logs/reports
 StandardOutput=append:/home/p0k5/MeteoEdge/logs/prob_cap_report.log
 StandardError=append:/home/p0k5/MeteoEdge/logs/prob_cap_report.log
