@@ -342,21 +342,55 @@ question for the Tech Lead PM; see the comment thread on #80.
 
 ---
 
-## `candidates` table write volume (issue #684)
+## `candidates` and `guardrail_events` retention policy (issue #699)
+
+### Write volume
 
 `poll_once()` now calls `db.insert_candidate()` for every scanned candidate,
 alongside the existing `logs/candidates*.csv` write (which is unchanged and
 remains the CSV surface). Before this, `db.log_candidate()`/`insert_candidate()`
 had no production caller and `candidates` was always empty in production.
 
-- **Expected volume:** ~25k rows/day, the same order of magnitude as
-  `guardrail_events`, which already sustains ~20k/day without issue.
-- **No retention/rotation job exists yet for `candidates`** — rows accumulate
-  indefinitely, same as `trades` and `guardrail_events` today. If DB size
-  becomes a concern, add a rotation/archive job analogous to
-  `src/utils/log_rotation.py`'s CSV housekeeping (see `SNAPSHOT_RETAIN_DAYS`
-  above) rather than deleting rows ad hoc, since `candidates` is now a
-  first-class source for population-level analysis (#682 counterfactuals,
-  #670 crowding backtests).
+- **Expected volume:** ~25k rows/day (candidates), ~20k rows/day (guardrail_events).
 - The CSV write in `_append_candidate()` is left in place; retiring it is a
   separate decision (#683), not part of this change.
+
+### Retention policy
+
+A daily purge job (`src/scripts/purge_retention.py`) removes old rows to control
+database size:
+
+| Table | Retention window | Schedule | Mechanism |
+|---|---|---|---|
+| `candidates` | 90 days | Daily at 01:00 UTC | DELETE WHERE ts < cutoff |
+| `guardrail_events` | 60 days | Daily at 01:00 UTC | DELETE WHERE ts < cutoff |
+
+The purge job is:
+- **Idempotent:** Safe to run repeatedly; only deletes rows older than the window.
+- **Configurable:** Retention windows can be adjusted via environment variables:
+  - `CANDIDATES_RETAIN_DAYS` (default: 90)
+  - `GUARDRAIL_RETAIN_DAYS` (default: 60)
+- **Monitorable:** Logs deleted row counts to `logs/purge.log`.
+
+**Scheduled via systemd:**
+```bash
+systemctl enable meteoedge-purge-retention.timer
+systemctl start meteoedge-purge-retention.timer
+systemctl status meteoedge-purge-retention.timer
+```
+
+**Manual dry-run (no deletion):**
+```bash
+python -m src.scripts.purge_retention --dry-run
+```
+
+**Manual execution with custom retention windows:**
+```bash
+python -m src.scripts.purge_retention --candidates-days 120 --guardrail-days 90
+```
+
+Note: The 90-day candidates window allows sufficient time for population-level
+analysis (#682 counterfactuals, #670 crowding backtests) and coincides with the
+annual settlement cycle. The 60-day guardrail_events window balances operational
+alerting history with database size, and can be extended during investigation
+windows if needed (via `GUARDRAIL_RETAIN_DAYS` env var).
