@@ -64,23 +64,65 @@ about what tomorrow's high will be. For a next-day market this means
 | `corrected_mu_f` | **No** | By construction, today's intraday-corrected mean; never valid for tomorrow |
 | `intraday_delta_f` | **No** | Same — a today-only nowcast correction |
 
-Practically: `compute_envelope()` and `true_probability_yes()` must not be
-called with a `WeatherState` carrying `current_high_f`/`latest_temp_f`-derived
-signal for next-day brackets. The cleanest implementation is a distinct
-next-day `WeatherState` construction path (or a `for_next_day=True` flag on
-the existing builder) that only ever populates `forecast_high_f`,
-`secondary_forecast_f`, `deb_mu_f`, and `ensemble_sigma_f` from tomorrow's
-forecast cycle, leaving all today-anchored fields `None`/unset so any
-accidental read is `None` rather than stale today-data.
+### Revision (post-review): this is a distinct probability path, not a degenerate WeatherState
+
+The original sketch — build a next-day `WeatherState` with today-anchored
+fields left `None` so accidental reads "fail soft" — does not survive contact
+with `envelope.py`. `current_high_f` is a **required, non-optional
+`WeatherState` field**, and `compute_envelope()`/`true_probability_yes()` are
+built directly around it:
+
+- `min_high = state.current_high_f` (`envelope.py:85`)
+- hard bracket elimination against `state.current_high_f` (`envelope.py:171`
+  region — brackets whose high is below the current running high are
+  eliminated)
+- `remaining_rise = max_env - current_high_f`-style climb math (`envelope.py`
+  `compute_envelope`/climb-fraction logic, ~line 191 region)
+
+`None` crashes these paths outright; a sentinel value (e.g. 0.0) would run
+without crashing but silently corrupt the climb/elimination logic with a
+fabricated "current high." Neither is acceptable.
+
+**Corrected design: next-day evaluation is its own explicit probability
+path**, implemented as a new branch (e.g. `next_day: bool = False` parameter
+on `true_probability_yes`, or a sibling function
+`next_day_probability_yes(bracket, mu, sigma) -> float`), not a variant call
+into the same-day path with a doctored state. Specification:
+
+- **μ**: the forecast mean for tomorrow's date — the stack mean
+  (`ensemble_forecast`/`FORECAST_STACK` combination) or, when available, the
+  lead-appropriate DEB-weighted mean for tomorrow's forecast cycle. Never
+  derived from today's observations.
+- **σ**: resolved via the lead-bin machinery below (see Sigma / lead_hours).
+- **Bracket integration**: plain Gaussian CDF over `[bracket.low_f,
+  bracket.high_f]` against `N(mu, sigma)` (i.e. `p_normal_between`,
+  `envelope.py:60`, called directly) — **with neither the observed-high floor
+  (`min_high = current_high_f`) nor the `max_env` climb ceiling applied**.
+  Both are same-day concepts: the floor encodes "the high can't retroactively
+  drop below what's already been observed," and the ceiling encodes "the high
+  can't exceed today's current high plus today's remaining possible climb" —
+  neither has meaning before today's observation window for that date has
+  started. Stated explicitly so this isn't missed: dropping `max_env` removes
+  the *upper* truncation as well as the floor, so next-day probability mass is
+  shaped differently (wider, more symmetric around μ) than a same-day
+  evaluation of an equivalent bracket. This is intentional and correct, not
+  an oversight — the whole point of forecast-only evaluation is that there is
+  no partial-day information to truncate against yet.
+- `time_to_settlement_boost` (`envelope.py:74`) does not apply either — it
+  assumes "close observation of a controlled process," which again is a
+  same-day property.
+
+Implementation lands in `envelope.py` as an explicit, separately-testable
+function/branch — never by constructing a same-day `WeatherState` with holes
+poked in it and hoping downstream code degrades safely.
 
 This also has a direct interaction with the EMOS serving layer (#658/#664):
 `intraday_delta_f` is explicitly the layer that lets EMOS serving apply the
 nowcast on top of its calibrated mean (see `envelope.py:34-37`). Next-day
-markets structurally have no nowcast yet, so EMOS serving for a next-day
-candidate must resolve as if `intraday_delta_f` were never set — no special
-casing needed if the field is simply left `None`, but the EMOS serving path
-must not fall back to reading `corrected_mu_f`/`current_high_f` from a stale
-today `WeatherState` for the same station.
+markets structurally have no nowcast yet, so the next-day path simply never
+reads or constructs `intraday_delta_f` — it isn't a matter of leaving a field
+`None` on a shared state object, since next-day evaluation doesn't go through
+the same-day `WeatherState`/EMOS-serving call path at all.
 
 ## Sigma / lead_hours
 
@@ -90,9 +132,52 @@ today's `MIN_MINUTES_TO_SETTLEMENT`" through to their own close). The #665
 already picks the nearest fitted `lead_hours` bin to a target lead time, so
 no new selection logic is needed — the scanner just needs to pass the
 next-day market's actual lead time (hours to its own close) instead of
-assuming `lead_hours=24`. Where no calibration row is fitted at any nearby
-bin for a city, the existing `FORECAST_STDDEV_F` (2.0°F) fallback applies
-unchanged — same fallback as any other lead-time gap today.
+assuming `lead_hours=24`.
+
+### Fallback sigma when no calibrated bin covers the lead
+
+Where no calibration row is fitted at any nearby bin for a city, same-day
+evaluation falls back to the constant `FORECAST_STDDEV_F` (2.0°F). That
+constant was tuned against same-day forecast error; at 12-36h lead, real
+forecast uncertainty is meaningfully wider, so reusing 2.0°F unchanged for
+the fallback next-day case would make next-day `p_yes` too extreme —
+overstating confidence and inflating apparent edges exactly where the model
+is weakest (a lead range with no fitted calibration at all).
+
+Add a dashboard-tunable multiplier, `NEXT_DAY_SIGMA_MULTIPLIER` (float,
+default `1.5`), applied only to the *fallback* path (no calibrated bin
+covers the lead): `fallback_sigma = FORECAST_STDDEV_F *
+NEXT_DAY_SIGMA_MULTIPLIER`. Wire via `CONFIG_DEFAULTS`/`_CONFIG_META`
+(group `"forecast"`) alongside `NEXT_DAY_EVALUATION`. The 1.5x default is a
+starting estimate, not a fitted value — shadow data should be used to
+sanity-check it before any live-entry decision (see Amendment 3 below). When
+a calibrated bin *does* cover the lead (i.e. `_nearest_lead_hours` found a
+fitted row), that row's own sigma is used unchanged — the multiplier only
+guards the "we have nothing fitted at all" case.
+
+## Segmentation: next-day rows must be discriminable downstream
+
+Next-day evaluations flow into the same `candidates` table and
+`snapshots`/`snapshot_archive` rows as same-day evaluations — the same
+populations that feed the prob-cap shadow report, saturation baselines, and
+future calibration analysis. Mixing 12-36h-lead rows into these tables
+without a marker silently shifts every downstream aggregate (mean edge, win
+rate, saturation counts) the moment the flag goes on, with no way to filter
+them back out.
+
+Add an explicit discriminator column, `is_next_day INTEGER NOT NULL DEFAULT
+0`, to:
+
+- `candidates` (`db.insert_candidate()` — new keyword arg, defaults to 0 so
+  all existing/same-day call sites are unaffected)
+- `snapshots`/`snapshot_archive` write paths (same pattern)
+
+`minutes_to_settlement` technically makes same-day-vs-next-day derivable
+after the fact (next-day rows sit at 12-36h vs. same-day's much shorter
+window), but analytics code must not have to infer it from a numeric
+threshold that could silently drift — an explicit boolean is the honest
+contract. This is a small, additive schema change (new column with a
+default), not a migration of existing data.
 
 ## Rollout: shadow-first
 
@@ -131,3 +216,34 @@ Ship behind a new default-off flag, `NEXT_DAY_EVALUATION`:
 - Any change to `MODEL_PROB_CAP`, entry gates, or other live serving
   behavior beyond the `wrong_date` date-equality relaxation described above.
 - `STATION_ACTIVE_HOURS` tuning.
+
+## Questions the later live-entry decision must answer (named now, so shadow data can answer them)
+
+Live enablement stays a separate, later decision, but the shadow period
+should be designed to produce the evidence that decision will need. Naming
+these now so the shadow data collected isn't missing what's required later:
+
+1. **Cross-day exposure policy.** A station can hold an open position on
+   today's market while its next-day market simultaneously becomes
+   evaluable (and, once live, potentially enterable) — this is a form of
+   exposure the current one-market-per-station-per-day model was never
+   designed around. Per-station concurrent-exposure limits need an explicit
+   rule (e.g. cap combined today+next-day position size, or forbid opening a
+   next-day position while a same-station today position is open) before any
+   live enablement. Shadow logging should record whether a same-station
+   today position was open at next-day-evaluation time, so the later
+   decision can quantify how often this would actually occur.
+2. **Liquidity/spread check.** Next-day order books in the 12:00-00:00 UTC
+   window (i.e. right after a market opens, well before its own settlement
+   approaches) may be thin or wide relative to same-day books close to
+   settlement. Shadow-recorded prices must be spread-checked (bid/ask width,
+   size at touch) before any win-rate or edge conclusion is drawn from them —
+   a next-day "edge" computed against an illiquid quote is not comparable to
+   a same-day edge against a tight, liquid one.
+3. **Next-day-specific entry thresholds.** Same-day `MIN_EDGE_CENTS`/
+   `MIN_PRICE_CENTS`/confidence gates were tuned against same-day error
+   characteristics; next-day markets likely need their own (probably
+   stricter) thresholds rather than inheriting the same-day gates unchanged.
+   The shadow analysis should report what next-day-specific thresholds would
+   have been needed to match same-day's realized win rate, as direct input
+   to that later decision — not just raw next-day CRPS/edge numbers.
