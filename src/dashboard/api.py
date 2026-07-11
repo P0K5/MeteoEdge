@@ -2240,6 +2240,11 @@ _CONFIG_META: dict[str, dict] = {
         "type": "bool",
         "group": "forecast",
     },
+    "USE_ENSEMBLE_SIGMA": {
+        "description": "Use per-station GEFS ensemble spread (WeatherState.ensemble_sigma_f) instead of the fixed FORECAST_STDDEV_F in true_probability_yes and EMOS-shadow serving, when available (issue #448). Default off — no live behaviour change until a station is promoted.",
+        "type": "bool",
+        "group": "forecast",
+    },
     "DEB_HRRR_COLD_START_FRACTION": {
         "description": "Weight multiplier for HRRR during cold-start (< DEB_MIN_SAMPLES pairs)",
         "type": "float",
@@ -2280,11 +2285,6 @@ _CONFIG_META: dict[str, dict] = {
         "type": "enum",
         "group": "forecast",
         "options": ["baseline", "hrrr_nbm", "intl_ecmwf_icon", "full"],
-    },
-    "USE_ENSEMBLE_SIGMA": {
-        "description": "Use ensemble standard deviation for confidence capping instead of hardcoded forecast_stddev_f — requires 5-day shadow validation before live promotion (issue #451)",
-        "type": "bool",
-        "group": "forecast",
     },
     "PROMOTION_MIN_SETTLED_TRADES": {
         "description": "Minimum settled shadow trades required for promotion eligibility (issue #559, supersedes #80)",

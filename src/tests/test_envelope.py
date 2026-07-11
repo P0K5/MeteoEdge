@@ -628,3 +628,141 @@ class TestSigmaClimbFloor:
             p_new = true_probability_yes(bracket, state, sigma_climb_fraction=0.5)
         assert p_old > 0.99      # the old deluded certainty
         assert p_new < p_old     # the floor widens uncertainty
+
+
+# ---------------------------------------------------------------------------
+# ensemble_sigma_f / USE_ENSEMBLE_SIGMA — issue #448
+# ---------------------------------------------------------------------------
+
+class TestEnsembleSigma:
+    """WeatherState.ensemble_sigma_f replaces the fixed forecast_stddev when
+    USE_ENSEMBLE_SIGMA resolves True and the field is set; otherwise the
+    legacy fixed-sigma (FORECAST_STDDEV_F-equivalent) path is used unchanged
+    (issue #448, epic #70 Phase 2 / #445)."""
+
+    def _state_and_bracket(self, ensemble_sigma_f: "float | None" = None):
+        # Mirrors TestDebMuF's setup: hour=14, climb=4.5 (mocked away below),
+        # a bracket comfortably inside the envelope so the stddev actually
+        # matters (not swallowed by the p=0/p=1 early exits).
+        state = make_state(current_high_f=80.0, latest_temp_f=79.0, hour=14, forecast_high_f=81.0)
+        state.secondary_forecast_f = 81.0
+        state.ensemble_sigma_f = ensemble_sigma_f
+        bracket = make_bracket(low_f=81.0, high_f=85.0)
+        return state, bracket
+
+    def test_ensemble_sigma_used_when_flag_true_and_field_set(self):
+        """use_ensemble_sigma=True + ensemble_sigma_f set -> differs from the
+        fixed-stddev baseline (a much wider sigma changes p_yes)."""
+        state, bracket = self._state_and_bracket(ensemble_sigma_f=8.0)
+        state_baseline, bracket_baseline = self._state_and_bracket(ensemble_sigma_f=None)
+
+        p_ensemble = true_probability_yes(bracket, state, use_ensemble_sigma=True)
+        p_baseline = true_probability_yes(bracket_baseline, state_baseline, use_ensemble_sigma=True)
+
+        assert p_ensemble != p_baseline, (
+            f"ensemble_sigma_f=8.0 must widen/shift the distribution vs the "
+            f"fixed-stddev baseline; got ensemble={p_ensemble:.4f}, baseline={p_baseline:.4f}"
+        )
+
+    def test_legacy_fallback_when_ensemble_sigma_f_none(self):
+        """use_ensemble_sigma=True but ensemble_sigma_f=None (e.g. GEFS
+        unavailable) -> identical to the legacy fixed-sigma result."""
+        state, bracket = self._state_and_bracket(ensemble_sigma_f=None)
+
+        p_flag_on = true_probability_yes(bracket, state, use_ensemble_sigma=True)
+        p_flag_off = true_probability_yes(bracket, state, use_ensemble_sigma=False)
+
+        assert p_flag_on == p_flag_off, (
+            f"With ensemble_sigma_f=None, the flag must have no effect; "
+            f"got flag_on={p_flag_on:.6f}, flag_off={p_flag_off:.6f}"
+        )
+
+    def test_flag_false_ignores_ensemble_sigma_f_even_when_set(self):
+        """use_ensemble_sigma=False -> ensemble_sigma_f is ignored, identical
+        to a state with no ensemble_sigma_f at all."""
+        state_with_sigma, bracket_a = self._state_and_bracket(ensemble_sigma_f=8.0)
+        state_without_sigma, bracket_b = self._state_and_bracket(ensemble_sigma_f=None)
+
+        p_with = true_probability_yes(bracket_a, state_with_sigma, use_ensemble_sigma=False)
+        p_without = true_probability_yes(bracket_b, state_without_sigma, use_ensemble_sigma=False)
+
+        assert p_with == p_without, (
+            f"use_ensemble_sigma=False must ignore ensemble_sigma_f entirely; "
+            f"got with_field={p_with:.6f}, without_field={p_without:.6f}"
+        )
+
+    def test_default_off_matches_legacy_behavior(self):
+        """Default (use_ensemble_sigma unset, USE_ENSEMBLE_SIGMA env unset)
+        -> ensemble_sigma_f must not change behaviour (strict default-off
+        rollout, issue #448)."""
+        state_with_sigma, bracket_a = self._state_and_bracket(ensemble_sigma_f=8.0)
+        state_without_sigma, bracket_b = self._state_and_bracket(ensemble_sigma_f=None)
+
+        p_with = true_probability_yes(bracket_a, state_with_sigma)
+        p_without = true_probability_yes(bracket_b, state_without_sigma)
+
+        assert p_with == p_without, (
+            f"Default rollout state must be behaviour-preserving; "
+            f"got with_field={p_with:.6f}, without_field={p_without:.6f}"
+        )
+
+    def test_caller_value_takes_precedence_over_env(self, monkeypatch):
+        """Caller-passed use_ensemble_sigma=True (live config) overrides env var false."""
+        monkeypatch.setenv("USE_ENSEMBLE_SIGMA", "false")
+        state, bracket = self._state_and_bracket(ensemble_sigma_f=8.0)
+        state_baseline, bracket_baseline = self._state_and_bracket(ensemble_sigma_f=None)
+
+        p_ensemble = true_probability_yes(bracket, state, use_ensemble_sigma=True)
+        p_baseline = true_probability_yes(bracket_baseline, state_baseline, use_ensemble_sigma=True)
+
+        assert p_ensemble != p_baseline, (
+            "Caller use_ensemble_sigma=True must override env var false"
+        )
+
+    def test_env_var_fallback_when_use_ensemble_sigma_none(self, monkeypatch):
+        """use_ensemble_sigma=None -> USE_ENSEMBLE_SIGMA env var is used
+        (backward compatibility, mirrors DEB_ENABLED's resolution)."""
+        monkeypatch.setenv("USE_ENSEMBLE_SIGMA", "true")
+        state, bracket = self._state_and_bracket(ensemble_sigma_f=8.0)
+        state_baseline, bracket_baseline = self._state_and_bracket(ensemble_sigma_f=None)
+
+        p_ensemble = true_probability_yes(bracket, state, use_ensemble_sigma=None)
+        p_baseline = true_probability_yes(bracket_baseline, state_baseline, use_ensemble_sigma=None)
+
+        assert p_ensemble != p_baseline, (
+            "use_ensemble_sigma=None with env USE_ENSEMBLE_SIGMA=true must use ensemble_sigma_f"
+        )
+
+    def test_env_var_false_by_default(self, monkeypatch):
+        """use_ensemble_sigma=None with no env var set -> defaults to off."""
+        monkeypatch.delenv("USE_ENSEMBLE_SIGMA", raising=False)
+        state, bracket = self._state_and_bracket(ensemble_sigma_f=8.0)
+        state_baseline, bracket_baseline = self._state_and_bracket(ensemble_sigma_f=None)
+
+        p_ensemble = true_probability_yes(bracket, state, use_ensemble_sigma=None)
+        p_baseline = true_probability_yes(bracket_baseline, state_baseline, use_ensemble_sigma=None)
+
+        assert p_ensemble == p_baseline, (
+            "use_ensemble_sigma=None with no env var set must default to off"
+        )
+
+    def test_climb_floor_still_applies_on_top_of_ensemble_sigma(self):
+        """The remaining-climb sigma floor (#652) still wins over a narrow
+        ensemble_sigma_f -- ensemble sigma only replaces the *base*
+        forecast_stddev, not the effective_stddev floor logic."""
+        from unittest.mock import patch
+        state = make_state(current_high_f=66.0, latest_temp_f=66.0,
+                           forecast_high_f=None, hour=6, station="KORD")
+        state.corrected_mu_f = 66.0
+        state.ensemble_sigma_f = 0.5  # much narrower than the fixed 2.0F default
+        bracket = make_bracket(low_f=-50.0, high_f=73.0)
+        with patch("src.model.envelope.expected_additional_rise", return_value=18.0):
+            p_narrow_sigma = true_probability_yes(
+                bracket, state, use_ensemble_sigma=True, sigma_climb_fraction=0.5,
+            )
+        # Despite ensemble_sigma_f=0.5, the climb floor (0.5 * 18F = 9F) still
+        # dominates, so the morning "certain YES" delusion remains suppressed.
+        assert p_narrow_sigma < 0.95, (
+            f"climb floor must still suppress early-day certainty even with a "
+            f"narrow ensemble_sigma_f, got {p_narrow_sigma:.4f}"
+        )

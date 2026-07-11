@@ -119,6 +119,31 @@ def get_city_mode(city: str, db=None) -> str:
 _SERVING_MEMBERS = ("forecast_high_f", "secondary_forecast_f")
 
 
+def resolve_sigma_raw(state, use_ensemble_sigma: "bool | None", fallback_sigma: float) -> float:
+    """Return the sigma_raw EMOS serving should feed into apply_emos (issue #448).
+
+    Picks state.ensemble_sigma_f (per-station GEFS ensemble spread) when
+    use_ensemble_sigma resolves True AND the state carries a value; otherwise
+    returns fallback_sigma (FORECAST_STDDEV_F) unchanged -- the default,
+    behaviour-preserving path while USE_ENSEMBLE_SIGMA stays off.
+
+    Args:
+        state: WeatherState for the station being scored.
+        use_ensemble_sigma: Resolved USE_ENSEMBLE_SIGMA flag. Callers with DB
+            access should pass the live-config value (resolved once per scan,
+            same pattern as DEB_ENABLED). When None, falls back to the
+            USE_ENSEMBLE_SIGMA env var (backward compatibility, mirrors
+            true_probability_yes's use_ensemble_sigma param).
+        fallback_sigma: sigma to use when ensemble_sigma_f is unavailable or
+            the flag is off (typically FORECAST_STDDEV_F).
+    """
+    if use_ensemble_sigma is None:
+        use_ensemble_sigma = os.getenv("USE_ENSEMBLE_SIGMA", "false").lower() == "true"
+    if use_ensemble_sigma and getattr(state, "ensemble_sigma_f", None) is not None:
+        return state.ensemble_sigma_f
+    return fallback_sigma
+
+
 def emos_serving_mu(state, city: str, db, sigma_raw: float) -> "tuple[float, float] | None":
     """Return (mu_final, sigma_cal) for EMOS serving, or None if unservable.
 
