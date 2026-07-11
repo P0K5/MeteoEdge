@@ -6,7 +6,7 @@ MeteoEdge uses **two separate SQLite databases** by design:
 
 | Database | Path | Purpose | Key tables |
 |---|---|---|---|
-| **Live** | `data/meteoedge.db` | Primary transactional database for real-time trading and observations | `trades`, `candidates`, `observations`, `settlements`, `guardrail_events`, `position_snapshot`, `model_forecast_log`, `bot_config` |
+| **Live** | `data/meteoedge.db` | Primary transactional database for real-time trading and observations | `trades`, `candidates`, `observations`, `settlements`, `guardrail_events`, `open_positions`, `model_forecast_log`, `bot_config` |
 | **Analytics** | `data/analytics.db` | Archival-only database for long-term telemetry storage | `snapshot_archive`, `position_snapshot_archive` |
 
 **Archive ingestion lag:** The analytics database is populated asynchronously by the archiver process (`src/data/archive_db.py`). Snapshot tables have a ~24h ingest lag — rows available in `meteoedge.db` are batch-inserted into `analytics.db` roughly one day later.
