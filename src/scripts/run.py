@@ -389,6 +389,32 @@ def poll_once(
         }
         _append_candidate(row)
 
+        # Persist to the candidates table alongside the CSV write (issue #684).
+        # The CSV had been the only candidate surface in production, leaving
+        # the DB `candidates` table (and its p_yes_raw column, #564) orphaned.
+        # This is a write-path addition only -- it does not affect what gets
+        # evaluated or acted on (entry gates read `candidates`/`cand` in memory,
+        # never this table).
+        if db is not None:
+            try:
+                db.insert_candidate(
+                    ts=ts,
+                    station=cand.station,
+                    ticker=cand.bracket.ticker,
+                    bracket_low=cand.bracket.low_f,
+                    bracket_high=cand.bracket.high_f,
+                    side=cand.side,
+                    predicted_price=round(cand.confidence * 100),
+                    predicted_edge=round(cand.edge_cents, 2),
+                    market_price=cand.price_cents,
+                    confidence=round(cand.confidence, 4),
+                    minutes_to_settlement=round(cand.minutes_to_settlement, 1),
+                    direction=cand.direction,
+                    p_yes_raw=cand.p_yes_raw,
+                )
+            except Exception as e:
+                log.warning("  [candidates] DB insert failed: %s", e)
+
         # Shadow candidates: log to trades table as observation only.
         # No capital reserved, no order placed, no risk_manager gates checked.
         if cand.shadow:
