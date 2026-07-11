@@ -2306,6 +2306,18 @@ _CONFIG_META: dict[str, dict] = {
         "min": 0.5,
         "max": 0.999,
     },
+    "NEXT_DAY_EVALUATION": {
+        "description": "Evaluate a station's next-day market once today's own market is past MIN_MINUTES_TO_SETTLEMENT or absent (issue #687). Shadow-logged only (is_next_day=1) -- no live entries from next-day evaluation. Default off -- no live behaviour change until enabled.",
+        "type": "bool",
+        "group": "strategy",
+    },
+    "NEXT_DAY_SIGMA_MULTIPLIER": {
+        "description": "Fallback sigma multiplier for next-day evaluation when no EMOS lead bin covers the market's lead time: sigma = FORECAST_STDDEV_F * this (issue #687). Unfitted starting estimate -- a matched calibration bin's own sigma is used unchanged.",
+        "type": "float",
+        "group": "forecast",
+        "min": 1.0,
+        "max": 5.0,
+    },
 }
 
 _EMOS_VALID_MODES = frozenset({"legacy", "emos_shadow", "emos_primary"})

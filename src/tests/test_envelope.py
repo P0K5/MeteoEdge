@@ -14,6 +14,7 @@ from src.model.envelope import (
     WeatherState,
     compute_envelope,
     ensemble_forecast,
+    next_day_probability_yes,
     p_normal_between,
     true_probability_yes,
 )
@@ -766,3 +767,59 @@ class TestEnsembleSigma:
             f"climb floor must still suppress early-day certainty even with a "
             f"narrow ensemble_sigma_f, got {p_narrow_sigma:.4f}"
         )
+
+
+# ---------------------------------------------------------------------------
+# next_day_probability_yes (issue #687)
+# ---------------------------------------------------------------------------
+
+class TestNextDayProbabilityYes:
+    """Unit tests for the forecast-only next-day probability path.
+
+    Distinct from true_probability_yes: no observed-high floor, no max_env
+    climb ceiling, no time_to_settlement_boost -- plain Gaussian bracket
+    integration against N(mu, sigma) only.
+    """
+
+    def test_matches_p_normal_between_directly(self):
+        """next_day_probability_yes is a thin pass-through to p_normal_between --
+        no envelope/climb/floor logic applied."""
+        bracket = make_bracket(low_f=80.0, high_f=82.0)
+        result = next_day_probability_yes(bracket, mu=81.0, sigma=2.0)
+        expected = p_normal_between(80.0, 82.0, mean=81.0, stddev=2.0)
+        assert isclose(result, expected, abs_tol=1e-12)
+
+    def test_no_observed_high_floor(self):
+        """A bracket entirely below mu is NOT forced to 0 the way the same-day
+        floor (hi <= current_high_f) would -- there's no 'already observed'
+        running high for a next-day market."""
+        bracket = make_bracket(low_f=60.0, high_f=65.0)
+        # mu=81 is far above the bracket, so probability mass is genuinely
+        # small here -- but it comes from the Gaussian tail, not a hard floor.
+        result = next_day_probability_yes(bracket, mu=81.0, sigma=5.0)
+        assert 0.0 <= result < 0.01
+
+    def test_no_max_env_ceiling_wider_tails_than_same_day(self):
+        """Without max_env truncation, a bracket well above mu still gets
+        some probability mass from the upper tail (same-day's ceiling would
+        truncate this away once max_env is exceeded)."""
+        bracket = make_bracket(low_f=95.0, high_f=97.0)
+        result = next_day_probability_yes(bracket, mu=81.0, sigma=8.0)
+        assert result > 0.0
+
+    def test_symmetric_around_mu(self):
+        """No floor/ceiling asymmetry: brackets equidistant from mu on either
+        side get equal probability (same-day's floor/ceiling would break this
+        symmetry near the current running high)."""
+        bracket_below = make_bracket(low_f=76.0, high_f=79.0)
+        bracket_above = make_bracket(low_f=83.0, high_f=86.0)
+        p_below = next_day_probability_yes(bracket_below, mu=81.0, sigma=4.0)
+        p_above = next_day_probability_yes(bracket_above, mu=81.0, sigma=4.0)
+        assert isclose(p_below, p_above, abs_tol=1e-9)
+
+    def test_raises_on_nonpositive_sigma(self):
+        bracket = make_bracket(low_f=80.0, high_f=82.0)
+        with pytest.raises(ValueError):
+            next_day_probability_yes(bracket, mu=81.0, sigma=0.0)
+        with pytest.raises(ValueError):
+            next_day_probability_yes(bracket, mu=81.0, sigma=-1.0)

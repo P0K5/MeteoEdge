@@ -64,6 +64,44 @@ def p_normal_between(low: float, high: float, mean: float, stddev: float) -> flo
     return max(0.0, min(1.0, cdf(high) - cdf(low)))
 
 
+def next_day_probability_yes(bracket: Bracket, mu: float, sigma: float) -> float:
+    """P(next-day daily high falls in this bracket) -- forecast-only path (issue #687).
+
+    This is a distinct probability path from ``true_probability_yes``, not a
+    same-day call with a doctored ``WeatherState``. Next-day markets are
+    evaluated before today's observation window for that settlement date has
+    even started, so none of the same-day concepts apply:
+
+    - No observed-high floor (``min_high = current_high_f``) -- there is no
+      "already observed" running high for a day that hasn't started yet.
+    - No ``max_env`` climb ceiling -- dropping the floor without also
+      dropping the ceiling would still leave an upper truncation that has no
+      meaning before the day's climb has begun. Removing both means
+      next-day probability mass is wider and more symmetric around ``mu``
+      than an equivalent same-day evaluation -- intentional, per the #687
+      design doc, not an oversight.
+    - No ``time_to_settlement_boost`` -- that assumes close observation of a
+      controlled process approaching settlement, which is also a same-day
+      property.
+
+    Plain Gaussian bracket integration via ``p_normal_between``.
+
+    Args:
+        bracket: Bracket to evaluate.
+        mu: Forecast mean daily high for tomorrow's date. Callers must derive
+            this from the forecast stack (or a lead-appropriate DEB/EMOS
+            mean) -- never from today's observations.
+        sigma: Forecast stddev for tomorrow's date. When a caller applies an
+            EMOS calibration transform to mu, sigma must come from that same
+            calibration row's transform (or neither should be calibrated) --
+            see the round-2 #687 review's calibration consistency rule. This
+            function does not enforce that; it is the caller's contract.
+    """
+    if sigma <= 0:
+        raise ValueError(f"next_day_probability_yes: sigma must be positive, got {sigma!r}")
+    return p_normal_between(bracket.low_f, bracket.high_f, mu, sigma)
+
+
 def ensemble_forecast(primary: float | None, secondary: float | None) -> float | None:
     """Combine multiple forecast sources."""
     if primary and secondary:

@@ -65,7 +65,8 @@ CREATE TABLE IF NOT EXISTS candidates (
     confidence      REAL NOT NULL,
     minutes_to_settlement REAL NOT NULL,
     flagged_first   INTEGER NOT NULL DEFAULT 1,
-    direction       TEXT NOT NULL DEFAULT 'high'
+    direction       TEXT NOT NULL DEFAULT 'high',
+    is_next_day     INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_cand_station_ts ON candidates(station, ts);
 CREATE INDEX IF NOT EXISTS idx_cand_ticker ON candidates(ticker);
@@ -336,6 +337,13 @@ class Database:
             # (fetch_training_data's own default), so existing rows keep serving
             # identically until a caller explicitly fits/reads a different bin.
             ("emos_calibration", "lead_hours", "INTEGER NOT NULL DEFAULT 24"),
+            # Issue #687: discriminator for next-day (forecast-only, shadow-only)
+            # candidates vs. same-day candidates -- next-day rows flow into the
+            # same candidates/snapshot_archive populations feeding the prob-cap
+            # report and saturation baselines, so they must be explicitly
+            # filterable rather than inferred from minutes_to_settlement.
+            # Default 0 matches every pre-#687 row (all same-day).
+            ("candidates", "is_next_day", "INTEGER NOT NULL DEFAULT 0"),
         ]:
             try:
                 self._conn.execute(
@@ -866,19 +874,28 @@ class Database:
         flagged_first: int = 1,
         direction: str = "high",
         p_yes_raw: "float | None" = None,
+        is_next_day: int = 0,
     ) -> int:
-        """Insert a trade candidate; returns the new row id."""
+        """Insert a trade candidate; returns the new row id.
+
+        Args:
+            is_next_day: 1 when this candidate came from next-day evaluation
+                (issue #687) -- a forecast-only, shadow-only evaluation of a
+                station's next market. Defaults to 0 so every existing
+                same-day call site is unaffected.
+        """
         with self._lock:
             cur = self._conn.execute(
                 "INSERT INTO candidates"
                 "(ts,station,ticker,bracket_low,bracket_high,side,"
                 "predicted_price,predicted_edge,market_price,confidence,"
-                "minutes_to_settlement,flagged_first,direction,p_yes_raw) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "minutes_to_settlement,flagged_first,direction,p_yes_raw,is_next_day) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     ts, station, ticker, bracket_low, bracket_high, side,
                     predicted_price, predicted_edge, market_price, confidence,
                     minutes_to_settlement, flagged_first, direction, p_yes_raw,
+                    int(is_next_day),
                 ),
             )
             self._conn.commit()

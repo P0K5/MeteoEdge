@@ -468,6 +468,7 @@ def poll_once(
                     minutes_to_settlement=round(cand.minutes_to_settlement, 1),
                     direction=cand.direction,
                     p_yes_raw=cand.p_yes_raw,
+                    is_next_day=int(cand.is_next_day),
                 )
             except Exception as e:
                 log.warning("  [candidates] DB insert failed: %s", e)

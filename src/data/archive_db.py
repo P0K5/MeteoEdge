@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS snapshot_archive (
     ev_no                 REAL,
     minutes_to_settlement REAL,
     emos_mode             TEXT,
+    is_next_day           INTEGER NOT NULL DEFAULT 0,
     UNIQUE(ts, ticker)
 );
 CREATE INDEX IF NOT EXISTS idx_sa_station_ts ON snapshot_archive(station, ts);
@@ -65,8 +66,13 @@ _SNAPSHOT_COLS = (
     "ts", "station", "ticker", "bracket_low", "bracket_high",
     "yes_ask", "no_ask", "current_high", "latest_temp", "forecast_high",
     "p_yes", "raw_p_yes", "capped_p_yes", "ev_yes", "ev_no",
-    "minutes_to_settlement", "emos_mode",
+    "minutes_to_settlement", "emos_mode", "is_next_day",
 )
+
+# Per-column defaults applied when a batch-inserted row is missing a key --
+# needed for is_next_day (issue #687) since JSONL lines written before this
+# column existed carry no such key, and the column is NOT NULL.
+_SNAPSHOT_COL_DEFAULTS = {"is_next_day": 0}
 
 _POSITION_SNAPSHOT_COLS = (
     "ts", "ticker", "no_token_id", "station", "bracket_low", "bracket_high",
@@ -94,7 +100,24 @@ class ArchiveDatabase:
             stmt = stmt.strip()
             if stmt:
                 self._conn.execute(stmt)
+        self._migrate()
         self._conn.commit()
+
+    def _migrate(self) -> None:
+        """Idempotent schema migrations for analytics.db files created before
+        a column existed (mirrors src/data/db.py's _migrate pattern).
+        """
+        for table, col, definition in [
+            # Issue #687: discriminator for next-day (forecast-only,
+            # shadow-only) rows -- CREATE TABLE IF NOT EXISTS above only
+            # covers brand-new databases; pre-existing analytics.db files
+            # need this ALTER TABLE to gain the column.
+            ("snapshot_archive", "is_next_day", "INTEGER NOT NULL DEFAULT 0"),
+        ]:
+            try:
+                self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {definition}")
+            except sqlite3.OperationalError:
+                pass  # column already exists
 
     def close(self) -> None:
         """Close the underlying SQLite connection."""
@@ -118,7 +141,10 @@ class ArchiveDatabase:
             f"INSERT OR IGNORE INTO snapshot_archive "
             f"({','.join(_SNAPSHOT_COLS)}) VALUES ({placeholders})"
         )
-        params = [tuple(row.get(c) for c in _SNAPSHOT_COLS) for row in rows]
+        params = [
+            tuple(row.get(c, _SNAPSHOT_COL_DEFAULTS.get(c)) for c in _SNAPSHOT_COLS)
+            for row in rows
+        ]
         with self._lock:
             with self._conn:
                 cur = self._conn.executemany(sql, params)

@@ -588,6 +588,20 @@ CONFIG_DEFAULTS: "dict[str, str | int | float | bool]" = {
     # live entry gate.
     "PROMOTION_MIN_SETTLED_TRADES": 30,
     "PROMOTION_WILSON_CONFIDENCE": 0.95,
+    # Next-day evaluation (issue #687): once a station's own today-market is
+    # past MIN_MINUTES_TO_SETTLEMENT (or absent), allow evaluating its next
+    # market instead of hard-skipping it via the wrong_date gate. Default off
+    # -- scanner behaviour is byte-for-byte identical to today while this is
+    # False. When on, next-day candidates are shadow-logged only (is_next_day=1)
+    # via the existing log_candidate()/insert_candidate() path -- no live
+    # entries from next-day evaluation under any circumstance in this design.
+    "NEXT_DAY_EVALUATION": False,
+    # Fallback sigma multiplier for next-day evaluation when no EMOS lead bin
+    # covers the market's lead time (issue #687 amendment 2): effective sigma
+    # = FORECAST_STDDEV_F * NEXT_DAY_SIGMA_MULTIPLIER. 1.5 is a starting
+    # estimate, not a fitted value -- only applies to the fully-unfitted case;
+    # a matched calibration bin's own sigma is used unchanged.
+    "NEXT_DAY_SIGMA_MULTIPLIER": 1.5,
 }
 
 # Maps each FORECAST_STACK value to the set of model tags whose rows should be

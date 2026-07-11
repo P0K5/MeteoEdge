@@ -25,14 +25,28 @@ from src.config import (
     CONFIG_DEFAULTS, get_live_config, MODEL_PROB_CAP, FORECAST_STDDEV_F,
     ENVELOPE_SIGMA_CLIMB_FRACTION,
 )
-from src.model.envelope import Bracket, WeatherState, true_probability_yes, compute_envelope
-from src.model.emos_mode import get_city_mode, emos_serving_mu, _check_ready_for_promotion, resolve_sigma_raw
+from src.model.envelope import (
+    Bracket, WeatherState, true_probability_yes, compute_envelope,
+    next_day_probability_yes,
+)
+from src.model.emos_mode import (
+    get_city_mode, emos_serving_mu, _check_ready_for_promotion, resolve_sigma_raw,
+    _select_emos_row,
+)
 from src.model.residual_correction import compute_residual_stats
 from src.data.polymarket import get_orderbook
 from src.data.taf_disruption import check_taf_disruption
+from src.data.open_meteo import fetch_open_meteo_with_spread, fetch_gfs_with_spread
 from src.strategy.fee import estimate_fee_cents
 
 log = logging.getLogger(__name__)
+
+# Station -> (lat, lon), for next-day forecast fetches (issue #687). Built
+# from the same STATIONS tuples as POLYMARKET_CITY_TO_STATION/STATION_TO_CITY
+# below.
+STATION_COORDS: dict[str, tuple[float, float]] = {
+    station: (lat, lon) for station, lat, lon, *_ in STATIONS
+}
 
 
 # Map Polymarket city name (lowercase) → METAR station code
@@ -229,6 +243,75 @@ def minutes_to_settlement(market: dict) -> float:
         return 9999
 
 
+def _fetch_next_day_forecast(station: str, lead_hours: float) -> "tuple[float, float | None] | None":
+    """Fetch (mu_f, sigma_f) for a station's next-day forecast (issue #687).
+
+    Follows the same open_meteo -> gfs fallback convention as
+    src/scripts/capture_forecasts.py: try the multi-model spread fetch first
+    (both mu and cross-model sigma); if unavailable, fall back to the
+    single-model GFS fetch (mu only -- sigma is always None there, since a
+    single deterministic run has no cross-member spread to compute).
+
+    Returns None when no station coordinates are configured or neither
+    fetcher returns a usable forecast (e.g. all upstream requests failed).
+    """
+    coords = STATION_COORDS.get(station)
+    if coords is None:
+        return None
+    lat, lon = coords
+    result = fetch_open_meteo_with_spread(lat, lon, lead_hours=round(lead_hours))
+    if result is not None:
+        return result
+    return fetch_gfs_with_spread(lat, lon, lead_hours=round(lead_hours))
+
+
+def _resolve_next_day_mu_sigma(
+    station: str, city: str, lead_hours: float, db, next_day_sigma_multiplier: float,
+) -> "tuple[float, float] | None":
+    """Resolve (mu, sigma) for a next-day candidate (issue #687).
+
+    Implements the round-2 review's binding calibration consistency rule:
+    per evaluation, use the matched EMOS lead-bin row's full (a, b, c, d), or
+    none of it -- never a calibrated sigma paired with an uncalibrated mu.
+
+    - If a fitted lead bin covers ``lead_hours``: mu = a + b*mu_stack,
+      sigma = c + d*sigma_stack (exactly the transform EMOS serving would
+      apply at that lead -- see src.model.emos_mode.apply_emos).
+    - Otherwise: raw mu_stack (uncalibrated) with
+      sigma = FORECAST_STDDEV_F * NEXT_DAY_SIGMA_MULTIPLIER (issue #687
+      amendment 2 -- the same-day fallback FORECAST_STDDEV_F alone is tuned
+      too tight for 12-36h lead).
+
+    Returns None when no next-day forecast is available at all for the
+    station (caller should skip the candidate, same as any other
+    forecast-unavailable condition).
+    """
+    fetched = _fetch_next_day_forecast(station, lead_hours)
+    if fetched is None:
+        return None
+    mu_stack, sigma_stack = fetched
+
+    row = _select_emos_row(city, db, lead_hours * 60.0) if db is not None else None
+    if row is not None:
+        a, b, c, d = row["a"], row["b"], row["c"], row["d"]
+        # sigma_stack may be None (GFS-only fallback carries no cross-model
+        # spread) -- FORECAST_STDDEV_F stands in as the *raw* sigma fed into
+        # this same row's (c, d) transform, so mu and sigma still come from
+        # the identical calibration row (never fitted sigma with an
+        # uncalibrated mu).
+        sigma_raw = sigma_stack if sigma_stack is not None else FORECAST_STDDEV_F
+        mu_cal = a + b * mu_stack
+        sigma_cal = c + d * sigma_raw
+        if sigma_cal > 0:
+            return mu_cal, sigma_cal
+        log.warning(
+            "[next-day] sigma_cal=%.4f <= 0 for city=%s -- falling back to raw stack + multiplier",
+            sigma_cal, city,
+        )
+
+    return mu_stack, FORECAST_STDDEV_F * next_day_sigma_multiplier
+
+
 def _enrich_from_clob(bracket: Bracket, orderbooks: "dict[str, dict] | None" = None) -> None:
     """Overwrite bracket ask prices with live CLOB data.
 
@@ -297,6 +380,10 @@ class Candidate:
     taf_disruption: bool = field(default=False)  # TEMPO/PROB TS/SH/FG overlap
     shadow: bool = field(default=False)           # True when yes_enabled=False for station
     direction: Literal["high", "low"] = field(default="high")  # daily-high or daily-low market
+    # True when this candidate came from next-day evaluation (issue #687) --
+    # a forecast-only evaluation of a station's next market, always shadow=True
+    # regardless of station overrides (no live entries from next-day eval).
+    is_next_day: bool = field(default=False)
 
 
 def no_entry_margin_gap(bracket: Bracket, state: WeatherState) -> float | None:
@@ -398,6 +485,12 @@ def scan_markets(
         min_price_cents     = _cfg("MIN_PRICE_CENTS", MIN_PRICE_CENTS, lambda v: int(float(v)))
         max_conf_yes_for_no = _cfg("MAX_CONFIDENCE_YES_FOR_NO", MAX_CONFIDENCE_YES_FOR_NO, float)
         sigma_climb_fraction = _cfg("ENVELOPE_SIGMA_CLIMB_FRACTION", ENVELOPE_SIGMA_CLIMB_FRACTION, float)
+        # Next-day evaluation (issue #687), default off -- resolved once per
+        # scan, same pattern as DEB_ENABLED/USE_ENSEMBLE_SIGMA above.
+        next_day_evaluation = bool(_live.get("NEXT_DAY_EVALUATION", CONFIG_DEFAULTS["NEXT_DAY_EVALUATION"]))
+        next_day_sigma_multiplier = float(_live.get(
+            "NEXT_DAY_SIGMA_MULTIPLIER", CONFIG_DEFAULTS["NEXT_DAY_SIGMA_MULTIPLIER"]
+        ))
     else:
         shadow_yes_edge_min  = float(CONFIG_DEFAULTS["SHADOW_MIN_EDGE_CENTS_YES"])
         shadow_yes_conf_min  = float(CONFIG_DEFAULTS["SHADOW_MIN_CONFIDENCE_YES"])
@@ -410,6 +503,62 @@ def scan_markets(
         min_price_cents     = MIN_PRICE_CENTS
         max_conf_yes_for_no = MAX_CONFIDENCE_YES_FOR_NO
         sigma_climb_fraction = ENVELOPE_SIGMA_CLIMB_FRACTION
+        # No DB: fall back to the env var (same precedence pattern as
+        # DEB_ENABLED/USE_ENSEMBLE_SIGMA's env-var fallback, applied here
+        # directly since next-day resolution has no downstream env fallback
+        # of its own).
+        next_day_evaluation = os.getenv(
+            "NEXT_DAY_EVALUATION", str(CONFIG_DEFAULTS["NEXT_DAY_EVALUATION"])
+        ).strip().lower() == "true"
+        next_day_sigma_multiplier = float(os.getenv(
+            "NEXT_DAY_SIGMA_MULTIPLIER", str(CONFIG_DEFAULTS["NEXT_DAY_SIGMA_MULTIPLIER"])
+        ))
+
+    # Next-day evaluation (issue #687): per-station eligibility + which future
+    # date to treat as "next-day" for that station. Computed once per scan,
+    # entirely behind next_day_evaluation (default off) -- while off,
+    # eligible_next_day_date stays empty and the per-market wrong_date check
+    # below never takes the next-day branch, so behaviour is byte-for-byte
+    # unchanged from today.
+    #
+    # Eligibility is per-station: once today's own market for a station is
+    # past MIN_MINUTES_TO_SETTLEMENT (or absent from the fetched market set),
+    # that station's next market (by closest endDate) becomes evaluable. A
+    # station whose today-market is still live is unaffected.
+    today_utc = datetime.now(timezone.utc).date()
+    eligible_next_day_date: dict = {}
+    if next_day_evaluation:
+        _today_mins_by_station: dict = {}
+        _next_dates_by_station: dict = {}
+        for _m in markets:
+            _is_temp, _station = is_highest_temp_market(_m)
+            if not _is_temp or _station not in weather:
+                continue
+            _end_str = (
+                _m.get("endDate") or _m.get("end_date_iso")
+                or _m.get("endDateIso") or _m.get("close_time") or ""
+            )
+            if not _end_str:
+                continue
+            try:
+                _end_dt = dtparse.parse(str(_end_str))
+                if _end_dt.tzinfo is None:
+                    _end_dt = _end_dt.replace(tzinfo=timezone.utc)
+            except Exception:
+                continue
+            if _end_dt.date() == today_utc:
+                _mins = minutes_to_settlement(_m)
+                _today_mins_by_station[_station] = max(
+                    _today_mins_by_station.get(_station, -9999.0), _mins
+                )
+            elif _end_dt.date() > today_utc:
+                _next_dates_by_station.setdefault(_station, set()).add(_end_dt.date())
+
+        for _station, _dates in _next_dates_by_station.items():
+            _today_mins = _today_mins_by_station.get(_station)
+            if _today_mins is not None and _today_mins >= MIN_MINUTES_TO_SETTLEMENT:
+                continue  # today's market still live for this station -- not eligible
+            eligible_next_day_date[_station] = min(_dates)  # closest future date
 
     for market in markets:
         try:
@@ -437,18 +586,27 @@ def scan_markets(
                 or market.get("endDateIso") or market.get("close_time") or ""
             )
             wrong_date_skipped = False
+            is_next_day_eval = False
             if end_str:
                 try:
                     end_dt = dtparse.parse(str(end_str))
                     if end_dt.tzinfo is None:
                         end_dt = end_dt.replace(tzinfo=timezone.utc)
-                    today_utc = datetime.now(timezone.utc).date()
                     if end_dt.date() != today_utc:
-                        label = market.get("groupItemTitle") or market.get("question", "")[:40]
-                        log.debug("[%s] -- SKIPPED %s: closes %s != today (%s)",
-                                  station, "wrong_date", end_dt.date(), today_utc)
-                        skip_reason_counts["wrong_date"] += 1
-                        wrong_date_skipped = True
+                        # Issue #687: a station past its own MIN_MINUTES_TO_SETTLEMENT
+                        # (or with no today-market at all) may evaluate its next
+                        # market instead of hard-skipping here -- see the
+                        # eligible_next_day_date precompute above. Per-station only;
+                        # a station whose today-market is still live never reaches
+                        # this branch's eligibility (precompute excludes it).
+                        if next_day_evaluation and eligible_next_day_date.get(station) == end_dt.date():
+                            is_next_day_eval = True
+                        else:
+                            label = market.get("groupItemTitle") or market.get("question", "")[:40]
+                            log.debug("[%s] -- SKIPPED %s: closes %s != today (%s)",
+                                      station, "wrong_date", end_dt.date(), today_utc)
+                            skip_reason_counts["wrong_date"] += 1
+                            wrong_date_skipped = True
                 except Exception:
                     pass
 
@@ -468,86 +626,117 @@ def scan_markets(
             state = weather[station]
             city = STATION_TO_CITY.get(station, station)
 
-            # EMOS mode switching: determine mode for this city and optionally
-            # apply linear bias correction to forecast_mean and forecast_stddev.
-            emos_mode_used = "legacy"
-            emos_stddev_override = None
-            # Sigma EMOS serving should feed apply_emos (issue #448): the
-            # station's ensemble_sigma_f when USE_ENSEMBLE_SIGMA is on and the
-            # value is available, else the legacy fixed FORECAST_STDDEV_F.
-            # Resolves to FORECAST_STDDEV_F unchanged while the flag is off.
-            _sigma_raw = resolve_sigma_raw(state, _use_ensemble_sigma, FORECAST_STDDEV_F)
-            if db is not None:
-                mode = get_city_mode(city, db)
-                if mode == "emos_shadow":
-                    # Shadow: compute the SERVING construction (#658 — plain
-                    # stack mean → apply_emos → + intraday delta) for logging
-                    # only; legacy probabilities are served unchanged. Logging
-                    # the same values the primary path would serve keeps the
-                    # shadow comparison honest. mins_left drives per-lead-bin
-                    # sigma coefficient selection when a city has been
-                    # retrained at more than one lead bin (issue #665); a
-                    # city fit only at the legacy default bin sees no change.
-                    _serving = emos_serving_mu(state, city, db, _sigma_raw, minutes_to_settlement=mins_left)
-                    if _serving is not None:
-                        _mu_final, _sigma_cal = _serving
-                        log.debug(
-                            "[emos] shadow city=%s legacy_mu=%.2f emos_mu=%.2f"
-                            " legacy_sigma=%.2f emos_sigma=%.2f",
-                            city,
-                            state.corrected_mu_f or state.deb_mu_f or state.forecast_high_f or 0.0,
-                            _mu_final,
-                            _sigma_raw,
-                            _sigma_cal,
-                        )
-                    emos_mode_used = "emos_shadow"
-                elif mode == "emos_primary":
-                    if not _check_ready_for_promotion(city, db):
-                        log.warning(
-                            "[emos] city=%s emos_primary but ready_for_promotion=0"
-                            " — falling back to legacy",
-                            city,
-                        )
-                        emos_mode_used = "legacy"
-                    else:
-                        # #658 layer contract: EMOS consumes the plain
-                        # equal-weight stack mean it was TRAINED on — never
-                        # corrected_mu_f/deb_mu_f (train/serve parity; the
-                        # residual correction drops out of this path because
-                        # EMOS's intercept learns the same static bias). The
-                        # decayed intraday delta is layered on top inside
-                        # emos_serving_mu. mins_left drives per-lead-bin sigma
-                        # coefficient selection (issue #665) -- unchanged
-                        # behaviour for any city fit only at the legacy
-                        # default lead bin.
+            if is_next_day_eval:
+                # Issue #687: next-day evaluation is its own explicit
+                # probability path -- never true_probability_yes on a doctored
+                # state (see envelope.next_day_probability_yes docstring).
+                # mins_left here is this market's own lead time (its close is
+                # the next-day date, not today's), so it doubles as the lead
+                # hours the #665 lead-bin machinery expects.
+                emos_mode_used = "next_day"
+                _resolved = _resolve_next_day_mu_sigma(
+                    station, city, mins_left / 60.0, db, next_day_sigma_multiplier
+                )
+                if _resolved is None:
+                    label = market.get("groupItemTitle") or market.get("question", "")[:40]
+                    log.debug("[%s] -- SKIPPED %s: no next-day forecast available",
+                              station, "next_day_forecast_unavailable")
+                    skip_reason_counts["next_day_forecast_unavailable"] += 1
+                    continue
+                _next_day_mu, _next_day_sigma = _resolved
+                p_yes = next_day_probability_yes(bracket, _next_day_mu, _next_day_sigma)
+                # Next-day rows have no today-anchored running high/latest temp
+                # to report (that's the whole point of forecast-only
+                # evaluation) -- forecast_high reflects the actual mean fed
+                # into p_yes rather than today's (irrelevant) forecast_high_f.
+                _snap_current_high = None
+                _snap_latest_temp = None
+                _snap_forecast_high = _next_day_mu
+            else:
+                # EMOS mode switching: determine mode for this city and optionally
+                # apply linear bias correction to forecast_mean and forecast_stddev.
+                emos_mode_used = "legacy"
+                emos_stddev_override = None
+                # Sigma EMOS serving should feed apply_emos (issue #448): the
+                # station's ensemble_sigma_f when USE_ENSEMBLE_SIGMA is on and the
+                # value is available, else the legacy fixed FORECAST_STDDEV_F.
+                # Resolves to FORECAST_STDDEV_F unchanged while the flag is off.
+                _sigma_raw = resolve_sigma_raw(state, _use_ensemble_sigma, FORECAST_STDDEV_F)
+                if db is not None:
+                    mode = get_city_mode(city, db)
+                    if mode == "emos_shadow":
+                        # Shadow: compute the SERVING construction (#658 — plain
+                        # stack mean → apply_emos → + intraday delta) for logging
+                        # only; legacy probabilities are served unchanged. Logging
+                        # the same values the primary path would serve keeps the
+                        # shadow comparison honest. mins_left drives per-lead-bin
+                        # sigma coefficient selection when a city has been
+                        # retrained at more than one lead bin (issue #665); a
+                        # city fit only at the legacy default bin sees no change.
                         _serving = emos_serving_mu(state, city, db, _sigma_raw, minutes_to_settlement=mins_left)
-                        if _serving is None:
+                        if _serving is not None:
+                            _mu_final, _sigma_cal = _serving
+                            log.debug(
+                                "[emos] shadow city=%s legacy_mu=%.2f emos_mu=%.2f"
+                                " legacy_sigma=%.2f emos_sigma=%.2f",
+                                city,
+                                state.corrected_mu_f or state.deb_mu_f or state.forecast_high_f or 0.0,
+                                _mu_final,
+                                _sigma_raw,
+                                _sigma_cal,
+                            )
+                        emos_mode_used = "emos_shadow"
+                    elif mode == "emos_primary":
+                        if not _check_ready_for_promotion(city, db):
                             log.warning(
-                                "[emos] city=%s emos_primary but no stack member"
-                                " forecast on state — falling back to legacy",
+                                "[emos] city=%s emos_primary but ready_for_promotion=0"
+                                " — falling back to legacy",
                                 city,
                             )
                             emos_mode_used = "legacy"
                         else:
-                            _mu_final, _sigma_cal = _serving
-                            # Inject calibrated values into a patched state so
-                            # true_probability_yes uses the EMOS-corrected mean.
-                            # We do this by temporarily wrapping: pass corrected_mu_f
-                            # and a stddev override without mutating the shared state.
-                            from dataclasses import replace as _dc_replace
-                            state = _dc_replace(state, corrected_mu_f=_mu_final)
-                            emos_stddev_override = _sigma_cal
-                            emos_mode_used = "emos_primary"
+                            # #658 layer contract: EMOS consumes the plain
+                            # equal-weight stack mean it was TRAINED on — never
+                            # corrected_mu_f/deb_mu_f (train/serve parity; the
+                            # residual correction drops out of this path because
+                            # EMOS's intercept learns the same static bias). The
+                            # decayed intraday delta is layered on top inside
+                            # emos_serving_mu. mins_left drives per-lead-bin sigma
+                            # coefficient selection (issue #665) -- unchanged
+                            # behaviour for any city fit only at the legacy
+                            # default lead bin.
+                            _serving = emos_serving_mu(state, city, db, _sigma_raw, minutes_to_settlement=mins_left)
+                            if _serving is None:
+                                log.warning(
+                                    "[emos] city=%s emos_primary but no stack member"
+                                    " forecast on state — falling back to legacy",
+                                    city,
+                                )
+                                emos_mode_used = "legacy"
+                            else:
+                                _mu_final, _sigma_cal = _serving
+                                # Inject calibrated values into a patched state so
+                                # true_probability_yes uses the EMOS-corrected mean.
+                                # We do this by temporarily wrapping: pass corrected_mu_f
+                                # and a stddev override without mutating the shared state.
+                                from dataclasses import replace as _dc_replace
+                                state = _dc_replace(state, corrected_mu_f=_mu_final)
+                                emos_stddev_override = _sigma_cal
+                                emos_mode_used = "emos_primary"
 
-            if emos_stddev_override is not None:
-                # emos_stddev_override is already the EMOS-calibrated sigma (derived
-                # from _sigma_raw, which itself may already be ensemble_sigma_f-based
-                # -- see resolve_sigma_raw above). Pass use_ensemble_sigma=False so
-                # true_probability_yes uses this value as-is instead of re-overriding
-                # it with the raw state.ensemble_sigma_f (issue #448).
-                p_yes = true_probability_yes(bracket, state, mins_left, forecast_stddev=emos_stddev_override, deb_enabled=_deb_enabled, sigma_climb_fraction=sigma_climb_fraction, use_ensemble_sigma=False)
-            else:
-                p_yes = true_probability_yes(bracket, state, mins_left, deb_enabled=_deb_enabled, sigma_climb_fraction=sigma_climb_fraction, use_ensemble_sigma=_use_ensemble_sigma)
+                if emos_stddev_override is not None:
+                    # emos_stddev_override is already the EMOS-calibrated sigma (derived
+                    # from _sigma_raw, which itself may already be ensemble_sigma_f-based
+                    # -- see resolve_sigma_raw above). Pass use_ensemble_sigma=False so
+                    # true_probability_yes uses this value as-is instead of re-overriding
+                    # it with the raw state.ensemble_sigma_f (issue #448).
+                    p_yes = true_probability_yes(bracket, state, mins_left, forecast_stddev=emos_stddev_override, deb_enabled=_deb_enabled, sigma_climb_fraction=sigma_climb_fraction, use_ensemble_sigma=False)
+                else:
+                    p_yes = true_probability_yes(bracket, state, mins_left, deb_enabled=_deb_enabled, sigma_climb_fraction=sigma_climb_fraction, use_ensemble_sigma=_use_ensemble_sigma)
+                _snap_current_high = state.current_high_f
+                _snap_latest_temp = state.latest_temp_f
+                _snap_forecast_high = state.forecast_high_f
+
             raw_p_yes = p_yes
             # round() avoids IEEE 754 creep: 1.0-0.95 = 0.050000000000000044
             # which would silently fail the p_yes <= MAX_CONFIDENCE_YES_FOR_NO=0.05 gate.
@@ -570,13 +759,14 @@ def scan_markets(
                 "ts": ts, "station": station, "ticker": bracket.ticker,
                 "bracket_low": bracket.low_f, "bracket_high": bracket.high_f,
                 "yes_ask": bracket.yes_ask_cents, "no_ask": bracket.no_ask_cents,
-                "current_high": state.current_high_f, "latest_temp": state.latest_temp_f,
-                "forecast_high": state.forecast_high_f, "p_yes": round(p_yes, 4),
+                "current_high": _snap_current_high, "latest_temp": _snap_latest_temp,
+                "forecast_high": _snap_forecast_high, "p_yes": round(p_yes, 4),
                 "raw_p_yes": round(raw_p_yes, 4), "capped_p_yes": round(p_yes, 4),
                 "ev_yes": round(ev_yes, 2), "ev_no": round(ev_no, 2),
                 "ev_yes_raw": round(ev_yes_raw, 2), "ev_no_raw": round(ev_no_raw, 2),
                 "minutes_to_settlement": round(mins_left, 1),
                 "emos_mode": emos_mode_used,
+                "is_next_day": 1 if is_next_day_eval else 0,
             }
             snapshots.append(snap)
 
@@ -617,11 +807,22 @@ def scan_markets(
                         confidence=p_yes, p_yes=p_yes,
                         ev_yes=ev_yes, ev_no=ev_no,
                         minutes_to_settlement=mins_left, market=market,
-                        shadow=shadow_yes,
+                        # Issue #687: next-day candidates are always shadow-only
+                        # -- no live entries under any circumstance -- regardless
+                        # of the station's own yes_enabled override. The gate
+                        # thresholds above (_yes_edge/_yes_conf/_yes_price) still
+                        # use the station's real shadow_yes classification
+                        # unchanged; only the final routing flag is forced here.
+                        shadow=(shadow_yes or is_next_day_eval),
                         p_yes_raw=raw_p_yes, ev_yes_raw=ev_yes_raw, ev_no_raw=ev_no_raw,
+                        is_next_day=is_next_day_eval,
                     )
             elif ev_no >= min_edge_cents and p_yes <= max_conf_yes_for_no and bracket.no_ask_cents >= min_price_cents:
-                margin_gap = no_entry_margin_gap(bracket, state)
+                # Next-day: skip the margin gate rather than evaluate it against
+                # `state.forecast_high_f`/`current_high_f` -- those are today's
+                # observation-anchored values and have no bearing on a next-day
+                # bracket (same safety property as the probability path itself).
+                margin_gap = no_entry_margin_gap(bracket, state) if not is_next_day_eval else None
                 if ev_no > max_edge_cents:
                     skipped_reason = "max_edge"
                     log.debug("[%s] -- SKIPPED %s: %s edge=%.2f¢ > MAX=%.2f¢",
@@ -654,8 +855,9 @@ def scan_markets(
                         confidence=1 - p_yes, p_yes=p_yes,
                         ev_yes=ev_yes, ev_no=ev_no,
                         minutes_to_settlement=mins_left, market=market,
-                        shadow=shadow_no,
+                        shadow=(shadow_no or is_next_day_eval),
                         p_yes_raw=raw_p_yes, ev_yes_raw=ev_yes_raw, ev_no_raw=ev_no_raw,
+                        is_next_day=is_next_day_eval,
                     )
             else:
                 # YES gates passed but NO gate failed (or both edges below MIN_EDGE_CENTS).

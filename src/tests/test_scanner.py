@@ -443,3 +443,145 @@ class TestEntryGates:
 
         assert not any("margin_gate" in r.message for r in caplog.records)
         assert any(c.side == "NO" for c in candidates)
+
+
+# ---------------------------------------------------------------------------
+# Next-day evaluation (issue #687)
+# ---------------------------------------------------------------------------
+
+class TestNextDayEvaluation:
+    """Tests for the relaxed wrong_date gate + next-day shadow-only path.
+
+    NEXT_DAY_EVALUATION defaults off; scan_markets(db=None) falls back to the
+    NEXT_DAY_EVALUATION env var (mirrors DEB_ENABLED/USE_ENSEMBLE_SIGMA's
+    no-DB fallback pattern), so tests toggle it via monkeypatch.setenv.
+    """
+
+    def _weather_state(self, station="KMIA") -> WeatherState:
+        now = datetime.now(timezone.utc)
+        return WeatherState(
+            station=station,
+            now_local=now,
+            sunset_local=now.replace(hour=20),
+            current_high_f=75.0,
+            current_high_time=now,
+            latest_temp_f=72.0,
+            latest_temp_time=now,
+            forecast_high_f=80.0,
+        )
+
+    def _market(self, end_dt, group_title="80-85°F", condition_id="0xnextday",
+                prices='["0.50","0.50"]'):
+        return _market(
+            group_title=group_title,
+            question="Will the highest temperature in Miami be 80-85°F?",
+            condition_id=condition_id,
+        ) | {"endDate": end_dt.isoformat(), "outcomePrices": prices}
+
+    def test_flag_off_next_day_market_still_wrong_date(self, caplog, monkeypatch):
+        """Default (flag off): a future-dated market is skipped exactly as
+        today, even with no today-market at all for the station -- byte-for-
+        byte unchanged behaviour."""
+        monkeypatch.delenv("NEXT_DAY_EVALUATION", raising=False)
+        weather = {"KMIA": self._weather_state()}
+        tomorrow = datetime.now(timezone.utc) + timedelta(days=1, hours=6)
+        market = self._market(tomorrow)
+
+        with caplog.at_level(logging.DEBUG):
+            candidates, snapshots = scan_markets(weather, [market])
+
+        assert candidates == []
+        assert snapshots == []
+        assert any("wrong_date" in r.message for r in caplog.records)
+
+    def test_flag_on_absent_today_market_evaluates_next_day(self, monkeypatch):
+        """Flag on, no today-market fetched at all for the station: the
+        station's next market becomes evaluable as a next-day candidate."""
+        monkeypatch.setenv("NEXT_DAY_EVALUATION", "true")
+        weather = {"KMIA": self._weather_state()}
+        tomorrow = datetime.now(timezone.utc) + timedelta(days=1, hours=6)
+        market = self._market(tomorrow, prices='["0.30","0.70"]')
+
+        with patch("src.strategy.scanner._fetch_next_day_forecast", return_value=(82.0, 3.0)):
+            candidates, snapshots = scan_markets(weather, [market])
+
+        assert len(snapshots) == 1
+        assert snapshots[0]["is_next_day"] == 1
+        # Whether or not this bracket clears the entry gates, it must never
+        # produce a live (non-shadow) candidate.
+        assert all(c.shadow is True and c.is_next_day is True for c in candidates)
+
+    def test_flag_on_today_market_past_window_evaluates_next_day(self, monkeypatch):
+        """Flag on, today's own market is present but past
+        MIN_MINUTES_TO_SETTLEMENT: the station's next market is still
+        evaluable (design doc's 'past window' eligibility clause)."""
+        monkeypatch.setenv("NEXT_DAY_EVALUATION", "true")
+        weather = {"KMIA": self._weather_state()}
+        now = datetime.now(timezone.utc)
+        today_market = self._market(
+            now + timedelta(minutes=5), condition_id="0xtoday",
+        )
+        tomorrow_market = self._market(
+            now + timedelta(days=1, hours=6), condition_id="0xnextday",
+            prices='["0.30","0.70"]',
+        )
+
+        with patch("src.strategy.scanner._fetch_next_day_forecast", return_value=(82.0, 3.0)):
+            candidates, snapshots = scan_markets(weather, [today_market, tomorrow_market])
+
+        next_day_snaps = [s for s in snapshots if s["ticker"] == "0xnextday"]
+        assert len(next_day_snaps) == 1
+        assert next_day_snaps[0]["is_next_day"] == 1
+
+    def test_flag_on_today_market_still_live_blocks_next_day(self, monkeypatch):
+        """Per-station gating: while today's own market is still live (mins
+        left >= MIN_MINUTES_TO_SETTLEMENT), the next-day market must still
+        hit wrong_date -- it is NOT promoted early."""
+        monkeypatch.setenv("NEXT_DAY_EVALUATION", "true")
+        weather = {"KMIA": self._weather_state()}
+        now = datetime.now(timezone.utc)
+        today_market = self._market(
+            now + timedelta(hours=2), condition_id="0xtoday",
+        )
+        tomorrow_market = self._market(
+            now + timedelta(days=1, hours=6), condition_id="0xnextday",
+        )
+
+        with patch("src.strategy.scanner._fetch_next_day_forecast", return_value=(82.0, 3.0)):
+            candidates, snapshots = scan_markets(weather, [today_market, tomorrow_market])
+
+        next_day_snaps = [s for s in snapshots if s["ticker"] == "0xnextday"]
+        assert next_day_snaps == []
+        assert all(not c.is_next_day for c in candidates)
+
+    def test_flag_on_forecast_unavailable_skips_candidate(self, monkeypatch, caplog):
+        """When the next-day forecast fetch fails/unavailable, the candidate is
+        skipped (no crash, no fabricated probability)."""
+        monkeypatch.setenv("NEXT_DAY_EVALUATION", "true")
+        weather = {"KMIA": self._weather_state()}
+        tomorrow = datetime.now(timezone.utc) + timedelta(days=1, hours=6)
+        market = self._market(tomorrow)
+
+        with patch("src.strategy.scanner._fetch_next_day_forecast", return_value=None):
+            with caplog.at_level(logging.DEBUG):
+                candidates, snapshots = scan_markets(weather, [market])
+
+        assert candidates == []
+        assert snapshots == []
+        assert any("next_day_forecast_unavailable" in r.message for r in caplog.records)
+
+    def test_flag_on_no_side_gates_still_apply(self, monkeypatch):
+        """A next-day bracket that would fail the NO confidence/edge gates on
+        a same-day basis produces no candidate at all -- gates apply
+        unchanged, only the routing to shadow-only is forced."""
+        monkeypatch.setenv("NEXT_DAY_EVALUATION", "true")
+        weather = {"KMIA": self._weather_state()}
+        tomorrow = datetime.now(timezone.utc) + timedelta(days=1, hours=6)
+        # 50/50 prices -> no edge on either side.
+        market = self._market(tomorrow, prices='["0.50","0.50"]')
+
+        with patch("src.strategy.scanner._fetch_next_day_forecast", return_value=(82.0, 3.0)):
+            candidates, snapshots = scan_markets(weather, [market])
+
+        assert len(snapshots) == 1
+        assert candidates == []
