@@ -1811,11 +1811,18 @@ def emos_demote(city: str) -> EmosCityStatus:
 
 
 @app.post("/api/emos/{city}/mark-ready", response_model=EmosCityStatus)
-def emos_mark_ready(city: str) -> EmosCityStatus:
+def emos_mark_ready(city: str, all_tracks: bool = False) -> EmosCityStatus:
     """Toggle ready_for_promotion (0 ↔ 1) on the shadow row for a city.
 
     This is an administrative flag the operator sets after reviewing CRPS scores.
     Returns 409 if no shadow row exists for the city.
+
+    By default (issue #696) this scopes to the ACTIVE track — the current
+    forecast_source/sigma_source (from FORECAST_STACK/EMOS_SIGMA_SOURCE
+    bot_config) at the default lead_hours=24 bin the promotion gate actually
+    reads. Pass ?all_tracks=true to reproduce the pre-#696 city-wide behavior
+    (every forecast_source/sigma_source/lead_hours row for the city flips
+    together) — an explicit operator opt-in, not the default.
 
     Returns the updated EmosCityStatus for the city.
     """
@@ -1824,7 +1831,7 @@ def emos_mark_ready(city: str) -> EmosCityStatus:
 
     canonical_city, station = _resolve_city(city)
 
-    new_val = _db.toggle_emos_ready_for_promotion(canonical_city)
+    new_val = _db.toggle_emos_ready_for_promotion(canonical_city, all_tracks=all_tracks)
     if new_val is None:
         raise HTTPException(
             status_code=409,
