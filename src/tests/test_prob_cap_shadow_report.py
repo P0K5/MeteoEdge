@@ -1,4 +1,4 @@
-"""Tests for scripts/prob_cap_shadow_report.py (issue #570).
+"""Tests for scripts/prob_cap_shadow_report.py (issue #570, DB path #682).
 
 Covers:
 - Self-gating: below --min-days, exits cleanly with no report file; at/above,
@@ -14,22 +14,36 @@ Covers:
 - RANK_ON_RAW_PROB ordering simulation picks the higher-raw-edge candidate and
   reports the realized PnL delta correctly.
 - The change/hold/extend-window recommendation heuristic.
+- Issue #682: the DB-backed path (meteoedge.db::trades for settled candidates,
+  analytics.db::snapshot_archive + live jsonl for population saturation,
+  guardrail_events as a cross-check, observations-derived actual highs for
+  newly-discovered candidates) against small synthetic SQLite fixtures, plus
+  the empty-environment degrade-gracefully behavior (missing DB file, or a
+  DB file that exists but has none of the expected tables yet).
 
-All dates used are synthetic (2026-01-DD), unrelated to the real calendar
-date the tests run on, per the #565 lesson: self-gating counts distinct
-dates *present in the data*, never a window anchored to real "today".
+All dates used are synthetic (2026-01-DD) or fixed historical dates already
+in the past relative to any real run (2026-07-0x), never a window anchored to
+real "today", per the #565 lesson: self-gating counts distinct dates
+*present in the data*.
 """
 from __future__ import annotations
 
 import csv
 import json
+import sqlite3
 
 from scripts.prob_cap_shadow_report import (
     classify_new_admission_channel,
     clamp_p_yes,
     clamp_saturation_stats,
     distinct_dates_with_raw_data,
+    distinct_dates_with_raw_data_db,
     distribution_stats,
+    guardrail_cap_applied_count,
+    load_settled_candidates_db,
+    merge_saturation_dicts,
+    population_saturation_from_archive,
+    population_saturation_from_recent_jsonl,
     recommend,
     render_report,
     run_report,
@@ -82,6 +96,59 @@ def _write_csv(path, fieldnames, rows) -> None:
         w.writeheader()
         for r in rows:
             w.writerow(r)
+
+
+def _make_trades_db(path, rows) -> None:
+    """Minimal synthetic meteoedge.db::trades fixture (issue #682 DB path)."""
+    con = sqlite3.connect(str(path))
+    con.execute(
+        "CREATE TABLE trades (ts TEXT, station TEXT, ticker TEXT, bracket_low REAL, "
+        "bracket_high REAL, side TEXT, p_yes_raw REAL, actual_price INTEGER, "
+        "pnl REAL, settled_at TEXT)"
+    )
+    for r in rows:
+        con.execute(
+            "INSERT INTO trades (ts, station, ticker, bracket_low, bracket_high, side, "
+            "p_yes_raw, actual_price, pnl, settled_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (
+                r.get("ts"), r.get("station"), r.get("ticker"), r.get("bracket_low"),
+                r.get("bracket_high"), r.get("side"), r.get("p_yes_raw"),
+                r.get("actual_price"), r.get("pnl"), r.get("settled_at"),
+            ),
+        )
+    con.commit()
+    con.close()
+
+
+def _make_snapshot_archive_db(path, rows) -> None:
+    """Minimal synthetic analytics.db::snapshot_archive fixture (issue #682)."""
+    con = sqlite3.connect(str(path))
+    con.execute(
+        "CREATE TABLE snapshot_archive (ts TEXT, station TEXT, ticker TEXT, "
+        "raw_p_yes REAL, capped_p_yes REAL)"
+    )
+    for r in rows:
+        con.execute(
+            "INSERT INTO snapshot_archive (ts, station, ticker, raw_p_yes, capped_p_yes) "
+            "VALUES (?,?,?,?,?)",
+            (r.get("ts"), r.get("station"), r.get("ticker"), r.get("raw_p_yes"),
+             r.get("capped_p_yes")),
+        )
+    con.commit()
+    con.close()
+
+
+def _make_guardrail_events_db(path, rows) -> None:
+    """Minimal synthetic meteoedge.db::guardrail_events fixture (issue #682)."""
+    con = sqlite3.connect(str(path))
+    con.execute("CREATE TABLE guardrail_events (ts TEXT, event_type TEXT, station TEXT)")
+    for r in rows:
+        con.execute(
+            "INSERT INTO guardrail_events (ts, event_type, station) VALUES (?,?,?)",
+            (r.get("ts"), r.get("event_type", "cap_applied"), r.get("station")),
+        )
+    con.commit()
+    con.close()
 
 
 def _write_jsonl(path, rows) -> None:
@@ -429,3 +496,290 @@ class TestRenderReport:
         assert "## RANK_ON_RAW_PROB=true simulated ordering effect" in report
         assert "## Recommendation" in report
         assert "HOLD -- test" in report
+
+    def test_population_saturation_section_only_when_provided(self):
+        saturation = {"total": 0, "total_clamped": 0, "by_side": {}, "by_station": {}}
+        cap_results = {
+            0.95: {"trade_count": 0, "already_admitted_count": 0, "newly_admitted_count": 0,
+                   "unresolved_new_count": 0, "win_rate": None, "total_pnl_cents": 0.0,
+                   "edge_channel_count": 0, "gate_headroom_channel_count": 0},
+        }
+        rank_sim = {"polls_with_multiple_no_candidates": 0, "divergent_picks": 0,
+                    "pnl_delta_cents": 0.0, "raw_pick_wins": 0, "capped_pick_wins": 0}
+
+        no_pop = render_report(
+            "2026-01-08", 7, saturation, {"count": 0}, cap_results, rank_sim,
+            "HOLD -- test", (0.95,),
+        )
+        assert "## Population-level clamp saturation" not in no_pop
+
+        pop = {"total": 10, "total_clamped": 8, "by_station": {"KORD": [8, 10]},
+               "guardrail_cap_applied": 8}
+        with_pop = render_report(
+            "2026-01-08", 7, saturation, {"count": 0}, cap_results, rank_sim,
+            "HOLD -- test", (0.95,), population_saturation=pop,
+        )
+        assert "## Population-level clamp saturation" in with_pop
+        assert "8/10" in with_pop
+        assert "KORD" in with_pop
+
+
+# ---------------------------------------------------------------------------
+# DB-backed loading (issue #682, 2026-07-10 diagnosis)
+# ---------------------------------------------------------------------------
+
+class TestDistinctDatesWithRawDataDb:
+    def test_counts_distinct_dates_with_raw(self, tmp_path):
+        db_path = tmp_path / "meteoedge.db"
+        _make_trades_db(db_path, [
+            {"ts": "2026-07-03T10:00:00+00:00", "p_yes_raw": 0.01},
+            {"ts": "2026-07-04T10:00:00+00:00", "p_yes_raw": 0.02},
+            {"ts": "2026-07-05T10:00:00+00:00", "p_yes_raw": None},  # excluded
+        ])
+        assert distinct_dates_with_raw_data_db(db_path) == {"2026-07-03", "2026-07-04"}
+
+    def test_since_ts_filter(self, tmp_path):
+        db_path = tmp_path / "meteoedge.db"
+        _make_trades_db(db_path, [
+            {"ts": "2026-07-01T10:00:00+00:00", "p_yes_raw": 0.01},
+            {"ts": "2026-07-05T10:00:00+00:00", "p_yes_raw": 0.02},
+        ])
+        dates = distinct_dates_with_raw_data_db(db_path, since_ts="2026-07-03")
+        assert dates == {"2026-07-05"}
+
+    def test_missing_db_file_returns_empty(self, tmp_path):
+        assert distinct_dates_with_raw_data_db(tmp_path / "nope.db") == set()
+
+    def test_db_exists_but_no_trades_table_returns_empty(self, tmp_path):
+        db_path = tmp_path / "empty.db"
+        sqlite3.connect(str(db_path)).close()
+        assert distinct_dates_with_raw_data_db(db_path) == set()
+
+
+class TestLoadSettledCandidatesDb:
+    def test_reconstructs_p_yes_and_no_side_outcome(self, tmp_path):
+        db_path = tmp_path / "meteoedge.db"
+        _make_trades_db(db_path, [{
+            "ts": "2026-07-05T10:00:00+00:00", "station": "KORD", "ticker": "TICK-1",
+            "bracket_low": 80.0, "bracket_high": 84.0, "side": "NO",
+            "p_yes_raw": 0.001, "actual_price": 22, "pnl": 0.78,
+            "settled_at": "2026-07-06T00:00:00+00:00",
+        }])
+        rows = load_settled_candidates_db(db_path, since_ts="2026-07-01")
+        assert len(rows) == 1
+        r = rows[0]
+        assert r["p_yes_raw"] == 0.001
+        assert r["p_yes"] == 0.05  # clamp_p_yes(0.001, 0.95)
+        assert r["price_cents"] == 22.0
+        assert r["pnl_cents"] == 0.78
+        # NO-side trade won money (pnl > 0) -> YES did not happen -> yes_won False
+        assert r["yes_won"] is False
+
+    def test_yes_side_outcome_mapping(self, tmp_path):
+        db_path = tmp_path / "meteoedge.db"
+        _make_trades_db(db_path, [{
+            "ts": "2026-07-05T10:00:00+00:00", "station": "KORD", "ticker": "TICK-2",
+            "bracket_low": 80.0, "bracket_high": 84.0, "side": "YES",
+            "p_yes_raw": 0.99, "actual_price": 90, "pnl": 1.5,
+            "settled_at": "2026-07-06T00:00:00+00:00",
+        }])
+        rows = load_settled_candidates_db(db_path, since_ts="2026-07-01")
+        assert rows[0]["yes_won"] is True
+
+    def test_excludes_unsettled_and_missing_raw_rows(self, tmp_path):
+        db_path = tmp_path / "meteoedge.db"
+        _make_trades_db(db_path, [
+            {"ts": "2026-07-05T10:00:00+00:00", "station": "KORD", "ticker": "T1",
+             "side": "NO", "p_yes_raw": 0.01, "actual_price": 20, "pnl": 0.5,
+             "settled_at": None},
+            {"ts": "2026-07-05T10:00:00+00:00", "station": "KORD", "ticker": "T2",
+             "side": "NO", "p_yes_raw": None, "actual_price": 20, "pnl": 0.5,
+             "settled_at": "2026-07-06T00:00:00+00:00"},
+        ])
+        assert load_settled_candidates_db(db_path, since_ts="2026-07-01") == []
+
+    def test_missing_db_returns_empty_list(self, tmp_path):
+        assert load_settled_candidates_db(tmp_path / "nope.db", since_ts="2026-07-01") == []
+
+
+class TestPopulationSaturation:
+    def test_from_archive(self, tmp_path):
+        db_path = tmp_path / "analytics.db"
+        _make_snapshot_archive_db(db_path, [
+            {"ts": "2026-07-05T10:00:00+00:00", "station": "KORD", "ticker": "T1",
+             "raw_p_yes": 0.01, "capped_p_yes": 0.05},
+            {"ts": "2026-07-05T10:05:00+00:00", "station": "KORD", "ticker": "T2",
+             "raw_p_yes": 0.5, "capped_p_yes": 0.5},
+        ])
+        stats = population_saturation_from_archive(db_path, since_ts="2026-07-01")
+        assert stats["total"] == 2
+        assert stats["total_clamped"] == 1
+        assert stats["by_station"]["KORD"] == [1, 2]
+
+    def test_missing_analytics_db_returns_zeroed_stats(self, tmp_path):
+        stats = population_saturation_from_archive(tmp_path / "nope.db", since_ts="2026-07-01")
+        assert stats["total"] == 0
+        assert stats["total_clamped"] == 0
+
+    def test_recent_jsonl_only_counts_rows_after_cutoff(self, tmp_path):
+        snapshots = tmp_path / "logs" / "snapshots.jsonl"
+        _write_jsonl(snapshots, [
+            {"ts": "2026-07-05T10:00:00+00:00", "station": "KORD", "ticker": "OLD",
+             "no_ask": 20, "raw_p_yes": 0.01},
+            {"ts": "2026-07-05T12:00:00+00:00", "station": "KORD", "ticker": "NEW",
+             "no_ask": 20, "raw_p_yes": 0.4},
+        ])
+        stats = population_saturation_from_recent_jsonl(
+            snapshots, since_ts="2026-07-01", after_ts="2026-07-05T11:00:00+00:00",
+        )
+        assert stats["total"] == 1
+
+    def test_merge_sums_across_sources(self):
+        a = {"total": 2, "total_clamped": 1, "by_station": {"KORD": [1, 2]},
+             "clamped_raw_values": [0.01]}
+        b = {"total": 3, "total_clamped": 2, "by_station": {"KORD": [1, 1], "KMIA": [1, 2]},
+             "clamped_raw_values": [0.02, 0.03]}
+        merged = merge_saturation_dicts(a, b)
+        assert merged["total"] == 5
+        assert merged["total_clamped"] == 3
+        assert merged["by_station"]["KORD"] == [2, 3]
+        assert merged["by_station"]["KMIA"] == [1, 2]
+        assert sorted(merged["clamped_raw_values"]) == [0.01, 0.02, 0.03]
+
+
+class TestGuardrailCrossCheck:
+    def test_counts_cap_applied_events_in_window(self, tmp_path):
+        db_path = tmp_path / "meteoedge.db"
+        _make_guardrail_events_db(db_path, [
+            {"ts": "2026-07-05T10:00:00+00:00", "event_type": "cap_applied"},
+            {"ts": "2026-07-05T10:01:00+00:00", "event_type": "cap_applied"},
+            {"ts": "2026-07-05T10:02:00+00:00", "event_type": "correction_applied"},
+            {"ts": "2026-06-01T10:00:00+00:00", "event_type": "cap_applied"},  # before window
+        ])
+        assert guardrail_cap_applied_count(db_path, since_ts="2026-07-01") == 2
+
+    def test_missing_table_returns_none(self, tmp_path):
+        db_path = tmp_path / "meteoedge.db"
+        sqlite3.connect(str(db_path)).close()
+        assert guardrail_cap_applied_count(db_path, since_ts="2026-07-01") is None
+
+
+class TestSimulateCapValuesExtraActualHighLookup:
+    def test_extra_lookup_resolves_newly_discovered_candidate(self):
+        """DB path has no actual_high on settled rows; the caller (run_report)
+        supplies it separately via observations-derived highs. Mirrors
+        TestSimulateCapValues.test_edge_channel_discovers_new_no_candidate but
+        sourcing the resolution from extra_actual_high_lookup instead of a
+        baseline settled row's actual_high field.
+        """
+        snapshot = _snapshot_row(ticker="TICK-NEW", station="KNEW", no_ask=79, raw_p_yes=0.01)
+        extra_lookup = {("KNEW", "2026-01-01"): 90.0}  # outside bracket 80-84 -> NO wins
+
+        results = simulate_cap_values(
+            [], [snapshot], cap_values=(0.95, 0.97), extra_actual_high_lookup=extra_lookup,
+        )
+        assert results[0.95]["newly_admitted_count"] == 0
+        r = results[0.97]
+        assert r["newly_admitted_count"] == 1
+        assert r["unresolved_new_count"] == 0
+        assert r["edge_channel_count"] == 1
+        assert r["total_pnl_cents"] == 21.0  # 100 - no_ask(79)
+
+    def test_settled_row_actual_high_takes_precedence_over_extra_lookup(self):
+        """If a (station, date) is resolvable both ways, the settled-row value
+        (the outcome of an actual trade) wins over the supplementary
+        observations-derived lookup, per simulate_cap_values()'s documented
+        precedence. Chosen so the two sources disagree on which side won:
+        settled actual_high=82 falls inside bracket 80-84 (YES won, NO loses,
+        pnl=-no_ask); the extra lookup's 90 would fall outside (NO wins,
+        pnl=+21) if it were used instead.
+        """
+        baseline = _norm_row(ticker="TICK-BASELINE", station="KNEW", actual_high=82.0)
+        snapshot = _snapshot_row(ticker="TICK-NEW", station="KNEW", no_ask=79, raw_p_yes=0.01)
+        extra_lookup = {("KNEW", "2026-01-01"): 90.0}
+
+        results = simulate_cap_values(
+            [baseline], [snapshot], cap_values=(0.97,), extra_actual_high_lookup=extra_lookup,
+        )
+        r = results[0.97]
+        assert r["newly_admitted_count"] == 1
+        # -79 (settled row's actual_high used) not +21 (extra lookup's value)
+        assert r["total_pnl_cents"] == baseline["pnl_cents"] + (-79.0)
+
+
+class TestRunReportDbPath:
+    def test_db_path_end_to_end(self, tmp_path):
+        meteoedge_db = tmp_path / "meteoedge.db"
+        analytics_db = tmp_path / "analytics.db"
+        rows = [
+            {
+                "ts": f"2026-07-{day:02d}T10:00:00+00:00", "station": "KORD",
+                "ticker": f"TICK-{day}", "bracket_low": 80.0, "bracket_high": 84.0,
+                "side": "NO", "p_yes_raw": 0.01, "actual_price": 20, "pnl": 0.5,
+                "settled_at": f"2026-07-{day:02d}T12:00:00+00:00",
+            }
+            for day in range(3, 11)  # 2026-07-03..2026-07-10 -> 8 distinct dates
+        ]
+        _make_trades_db(meteoedge_db, rows)
+        _make_snapshot_archive_db(analytics_db, [
+            {"ts": "2026-07-05T10:00:00+00:00", "station": "KORD", "ticker": "S1",
+             "raw_p_yes": 0.01, "capped_p_yes": 0.05},
+        ])
+
+        out_dir = tmp_path / "backtest_results"
+        rc = run_report(
+            candidates_csv=tmp_path / "logs" / "candidates.csv",
+            settlements_csv=tmp_path / "logs" / "settlements.csv",
+            snapshots_jsonl=tmp_path / "logs" / "snapshots.jsonl",
+            out_dir=out_dir,
+            min_days=7,
+            dry_run=False,
+            report_date="2026-07-11",
+            meteoedge_db=meteoedge_db,
+            analytics_db=analytics_db,
+            since_ts="2026-07-03",
+        )
+        assert rc == 0
+        out_file = out_dir / "prob_cap_shadow_2026-07-11.md"
+        assert out_file.exists()
+        content = out_file.read_text()
+        assert "## Population-level clamp saturation" in content
+        assert "## Cap simulation" in content
+        assert "8 distinct date(s)" in content
+
+    def test_missing_meteoedge_db_falls_back_to_csv_path(self, tmp_path):
+        """meteoedge_db path doesn't exist -> use_db False -> legacy CSV path,
+        which itself has no data in this empty temp dir -> clean self-gate
+        skip, matching the pre-#682 empty-environment behavior exactly.
+        """
+        out_dir = tmp_path / "backtest_results"
+        rc = run_report(
+            candidates_csv=tmp_path / "logs" / "candidates.csv",
+            settlements_csv=tmp_path / "logs" / "settlements.csv",
+            snapshots_jsonl=tmp_path / "logs" / "snapshots.jsonl",
+            out_dir=out_dir,
+            min_days=7,
+            dry_run=False,
+            meteoedge_db=tmp_path / "does_not_exist.db",
+        )
+        assert rc == 0
+        assert not out_dir.exists()
+
+    def test_db_file_exists_but_no_tables_degrades_cleanly(self, tmp_path):
+        """A DB file exists (e.g. an empty dev container's fresh sqlite file)
+        but has none of the expected tables yet -- must not crash.
+        """
+        meteoedge_db = tmp_path / "empty.db"
+        sqlite3.connect(str(meteoedge_db)).close()
+        out_dir = tmp_path / "backtest_results"
+        rc = run_report(
+            candidates_csv=tmp_path / "logs" / "candidates.csv",
+            settlements_csv=tmp_path / "logs" / "settlements.csv",
+            snapshots_jsonl=tmp_path / "logs" / "snapshots.jsonl",
+            out_dir=out_dir,
+            min_days=7,
+            dry_run=False,
+            meteoedge_db=meteoedge_db,
+        )
+        assert rc == 0
+        assert not out_dir.exists()
