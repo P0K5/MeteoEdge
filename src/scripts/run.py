@@ -62,6 +62,9 @@ _write_lock = threading.Lock()
 # EMOS shadow daily calibration gate
 _last_emos_shadow_date: str = ""
 
+# Zero-evaluation watchdog state (issue #686)
+_zero_eval_consecutive_ticks: int = 0
+
 
 def _maybe_run_emos_shadow(db) -> None:
     """Run the EMOS shadow calibration once per calendar day."""
@@ -76,6 +79,57 @@ def _maybe_run_emos_shadow(db) -> None:
         _emos_runner.main_with_db(db)
     except Exception as e:
         log.warning("[emos_shadow] daily run failed: %s", e)
+
+
+def _check_zero_eval_watchdog(ts: str, num_markets: int, num_evaluated: int, db=None) -> None:
+    """Watchdog for silent zero-evaluation ticks: alert when N consecutive polls
+    produce zero evaluated brackets while markets are listed.
+
+    This catches the recurring daily ~12h blackout (issue #686, #687) and any
+    other failure modes where markets exist but nothing passes evaluation.
+
+    Args:
+        ts: ISO timestamp of this poll
+        num_markets: Number of markets fetched (from Polymarket)
+        num_evaluated: Number of markets that passed evaluation (len(snapshots))
+        db: Database connection for logging guardrail events
+    """
+    global _zero_eval_consecutive_ticks
+
+    # Read threshold from database (allows dashboard tuning) with fallback
+    threshold = 4  # default
+    if db is not None:
+        try:
+            cfg_val = db.get_config("ZERO_EVAL_WATCHDOG_CONSECUTIVE_TICKS")
+            if cfg_val is not None:
+                threshold = int(cfg_val)
+        except (ValueError, TypeError):
+            pass
+
+    # Only track when markets exist but nothing evaluated
+    if num_markets > 0 and num_evaluated == 0:
+        _zero_eval_consecutive_ticks += 1
+
+        if _zero_eval_consecutive_ticks >= threshold:
+            log.error(
+                "[watchdog] ALERT: %d consecutive polls with zero evaluated brackets (threshold=%d, markets=%d)",
+                _zero_eval_consecutive_ticks, threshold, num_markets
+            )
+            # Log guardrail event for dashboard visibility
+            if db is not None:
+                try:
+                    db.log_guardrail_event(
+                        ts, "GLOBAL", "zero_eval_ticks",
+                        float(num_markets), float(_zero_eval_consecutive_ticks),
+                    )
+                except Exception as e:
+                    log.warning("[watchdog] guardrail event write failed: %s", e)
+    else:
+        # Markets available and something evaluated, or no markets at all — reset counter
+        if _zero_eval_consecutive_ticks > 0:
+            log.info("[watchdog] zero-eval counter reset (was %d, now %d markets, %d evaluated)",
+                     _zero_eval_consecutive_ticks, num_markets, num_evaluated)
+        _zero_eval_consecutive_ticks = 0
 
 
 # Balance-check circuit-breaker state (issue #286)
@@ -316,6 +370,9 @@ def poll_once(
         weather, markets, db=db, orderbooks=shared_orderbooks,
         weather_low=weather_low, prob_low_fn=true_probability_low_in_bracket,
     )
+
+    # Check zero-evaluation watchdog (issue #686)
+    _check_zero_eval_watchdog(ts, len(markets), len(snapshots), db=db)
 
     for snap in snapshots:
         _append_snapshot(snap)
