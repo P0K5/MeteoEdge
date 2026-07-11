@@ -104,6 +104,55 @@ sqlite3 data/meteoedge.db "UPDATE bot_config SET value='full' WHERE key='FORECAS
 
 ---
 
+## Ensemble Sigma Promotion Gate (issue #451)
+
+### USE_ENSEMBLE_SIGMA config flag
+
+The `USE_ENSEMBLE_SIGMA` DB config key controls whether to use per-model ensemble standard deviation for confidence capping instead of the hardcoded `forecast_stddev_f`:
+
+| Value | Behavior |
+|---|---|
+| `false` | Default. Uses hardcoded `FORECAST_STDDEV_F = 2.0` for confidence capping. |
+| `true` | Uses per-model ensemble sigma from the ensemble distribution for confidence capping. Requires 5-day shadow validation before live promotion. |
+
+Change via the dashboard config panel or directly in the DB:
+
+```bash
+sqlite3 data/meteoedge.db "UPDATE bot_config SET value='true' WHERE key='USE_ENSEMBLE_SIGMA';"
+```
+
+### Promotion gate procedure
+
+Before promoting `USE_ENSEMBLE_SIGMA` to live, collect 5 days of shadow performance data to validate that the per-model sigma approach improves model calibration without degrading P&L.
+
+**Step 1 — Enable shadow-only (no live impact yet):**
+```bash
+sqlite3 data/meteoedge.db "UPDATE bot_config SET value='true' WHERE key='USE_ENSEMBLE_SIGMA';"
+```
+The flag is only consumed in shadow simulation paths; live trading continues with hardcoded sigma.
+
+**Step 2 — Monitor for 5 days:**
+- Watch the dashboard **EMOS** tab for CRPS scores of shadow-mode cities.
+- Watch the dashboard **Stations** tab for shadow trade performance (no live impact).
+- Check `logs/bot.log` for any errors related to ensemble sigma computation.
+
+**Step 3 — Promote to live if validation passes:**
+Once satisfied that shadow performance is stable and no regressions are observed:
+```bash
+# No further action needed — the flag is already live. Just update the bot restart strategy if desired.
+sqlite3 data/meteoedge.db "UPDATE bot_config SET value='true' WHERE key='USE_ENSEMBLE_SIGMA';"
+```
+
+**Step 4 — Monitor for 7 days** after promotion. Watch the dashboard **Performance** metrics for any sign of model calibration degradation. Roll back immediately if observed.
+
+### Roll back
+
+```bash
+sqlite3 data/meteoedge.db "UPDATE bot_config SET value='false' WHERE key='USE_ENSEMBLE_SIGMA';"
+```
+
+---
+
 ## Station Shadow→Live Promotion (issue #559)
 
 **This is the sole promotion path for moving a shadow station+side to live trading.**
