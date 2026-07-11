@@ -343,3 +343,63 @@ class TestConfigEndpointsWithoutDb:
         resp = no_db_client.patch("/api/config", json={"key": "MIN_EDGE_CENTS", "value": 18.0})
         assert resp.status_code == 503
         assert resp.json()["detail"] == "Database not initialised"
+
+
+# ---------------------------------------------------------------------------
+# Issue #451: USE_ENSEMBLE_SIGMA promotion gate
+# ---------------------------------------------------------------------------
+
+class TestUseEnsembleSigmaConfig:
+    """Tests for USE_ENSEMBLE_SIGMA flag wiring (issue #451)."""
+
+    def test_use_ensemble_sigma_in_config_defaults(self):
+        """USE_ENSEMBLE_SIGMA must be in CONFIG_DEFAULTS."""
+        assert "USE_ENSEMBLE_SIGMA" in CONFIG_DEFAULTS
+        assert CONFIG_DEFAULTS["USE_ENSEMBLE_SIGMA"] is False
+
+    def test_use_ensemble_sigma_seeded_as_false(self):
+        """USE_ENSEMBLE_SIGMA must seed to False by default."""
+        db = _db()
+        seed_config(db)
+        cfg = get_live_config(db)
+        assert cfg["USE_ENSEMBLE_SIGMA"] is False
+        assert isinstance(cfg["USE_ENSEMBLE_SIGMA"], bool)
+
+    def test_use_ensemble_sigma_can_be_set_to_true(self):
+        """USE_ENSEMBLE_SIGMA must accept True value."""
+        db = _db()
+        seed_config(db)
+        db.set_config("USE_ENSEMBLE_SIGMA", "true")
+        cfg = get_live_config(db)
+        assert cfg["USE_ENSEMBLE_SIGMA"] is True
+
+    def test_use_ensemble_sigma_api_endpoint(self, api_client):
+        """GET /api/config must include USE_ENSEMBLE_SIGMA."""
+        client, _ = api_client
+        data = client.get("/api/config").json()
+        # USE_ENSEMBLE_SIGMA is in the 'forecast' group
+        assert "forecast" in data
+        assert "USE_ENSEMBLE_SIGMA" in data["forecast"]
+        param = data["forecast"]["USE_ENSEMBLE_SIGMA"]
+        assert param["type"] == "bool"
+        assert param["value"] is False
+
+    def test_use_ensemble_sigma_patch_endpoint(self, api_client):
+        """PATCH /api/config must accept USE_ENSEMBLE_SIGMA changes."""
+        client, db = api_client
+        resp = client.patch(
+            "/api/config",
+            json={"key": "USE_ENSEMBLE_SIGMA", "value": True},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["value"] is True
+        assert db.get_config("USE_ENSEMBLE_SIGMA") == "true"
+
+    def test_use_ensemble_sigma_has_description(self, api_client):
+        """USE_ENSEMBLE_SIGMA must have a description in metadata."""
+        client, _ = api_client
+        data = client.get("/api/config").json()
+        param = data["forecast"]["USE_ENSEMBLE_SIGMA"]
+        assert "description" in param
+        assert len(param["description"]) > 0
+        assert "ensemble" in param["description"].lower()

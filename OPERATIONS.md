@@ -145,6 +145,72 @@ sqlite3 data/meteoedge.db "UPDATE bot_config SET value='full' WHERE key='FORECAS
 
 ---
 
+## Ensemble Sigma Promotion Gate (issue #451)
+
+### USE_ENSEMBLE_SIGMA config flag
+
+The `USE_ENSEMBLE_SIGMA` DB config key is a single global switch controlling whether `ensemble_sigma_f` is computed from per-model ensemble standard deviation instead of the hardcoded `FORECAST_STDDEV_F = 2.0`:
+
+| Value | Behavior |
+|---|---|
+| `false` | Default. Uses hardcoded `FORECAST_STDDEV_F = 2.0` everywhere. |
+| `true` | Computes per-model ensemble sigma wherever the EMOS-shadow path runs (see #448). |
+
+Change via the dashboard config panel or directly in the DB:
+
+```bash
+sqlite3 data/meteoedge.db "UPDATE bot_config SET value='true' WHERE key='USE_ENSEMBLE_SIGMA';"
+```
+
+### There is no separate promote-to-live step for this flag
+
+`USE_ENSEMBLE_SIGMA` does not have its own shadow→live lifecycle. Per #448's
+scope, ensemble sigma is only wired into the **EMOS-shadow** path (the
+per-city `emos_shadow` mode already tracked in `src/model/emos_mode.py`) —
+turning this flag on does not, by itself, change what is served to any live
+trade. A city only starts being served *live* ensemble sigma once that city
+itself is promoted to live trading through the **existing** [Station
+Shadow→Live Promotion (issue #559)](#station-shadowlive-promotion-issue-559)
+mechanism below — the same statistical bar (`compute_promotion_bar()`,
+`PROMOTION_MIN_SETTLED_TRADES`, Wilson lower bound vs. break-even) that gates
+every other station+side promotion. This flag has no parallel promotion
+mechanism of its own.
+
+**Step 1 — Enable the flag:**
+```bash
+sqlite3 data/meteoedge.db "UPDATE bot_config SET value='true' WHERE key='USE_ENSEMBLE_SIGMA';"
+```
+This only affects cities currently running in `emos_shadow` mode (per #448);
+cities on `legacy` or `emos_primary` are unaffected, and no city's live-served
+predictions change as a result of this step alone.
+
+**Step 2 — Monitor for 5 days:**
+- Watch the dashboard **EMOS** tab for CRPS scores of shadow-mode cities (EMOS-vs-legacy comparison, per the existing `emos_crps_log` rows).
+- Watch the dashboard **Promotion** tab (`/api/promotion-bar`) for any change in shadow win-rate statistics for affected cities.
+- Check `logs/bot.log` for any errors related to ensemble sigma computation.
+
+**Step 3 — Live promotion happens per-city via the existing #559 path:**
+Once a city's shadow data (now informed by ensemble sigma) clears the #559
+promotion bar, promote that city+side to live exactly as documented in
+"Station Shadow→Live Promotion" below — e.g.:
+```bash
+sqlite3 data/meteoedge.db "UPDATE station_overrides SET no_enabled=1 WHERE station='WSSS';"
+```
+`USE_ENSEMBLE_SIGMA` itself is never "promoted" — it stays a global on/off
+switch for whether shadow-mode cities compute ensemble sigma at all.
+
+### Roll back
+
+```bash
+sqlite3 data/meteoedge.db "UPDATE bot_config SET value='false' WHERE key='USE_ENSEMBLE_SIGMA';"
+```
+Reverting the flag returns all EMOS-shadow cities to the hardcoded
+`FORECAST_STDDEV_F` immediately; it has no effect on stations already
+promoted to live via #559, since that promotion is tracked independently in
+`station_overrides`.
+
+---
+
 ## Station Shadow→Live Promotion (issue #559)
 
 **This is the sole promotion path for moving a shadow station+side to live trading.**

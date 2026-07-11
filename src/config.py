@@ -550,6 +550,10 @@ CONFIG_DEFAULTS: "dict[str, str | int | float | bool]" = {
     # intl_ecmwf_icon: adds ECMWF and ICON-EU for international stations
     # full: all channels active
     "FORECAST_STACK": "baseline",
+    # Use ensemble standard deviation for confidence capping (issue #451).
+    # When True, replaces the hardcoded forecast_stddev_f with per-model sigma.
+    # Shadow-only by default; promotion gate requires 5-day validation pass.
+    "USE_ENSEMBLE_SIGMA": False,
     # Statistical promotion bar (issue #559) — advisory shadow→live tooling.
     # Supersedes issue #80's old thresholds (>=5 trades / 100% WR / >=3 days).
     # A station+side is "eligible" iff settled shadow trades >= this minimum
