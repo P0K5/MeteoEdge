@@ -2286,11 +2286,6 @@ _CONFIG_META: dict[str, dict] = {
         "group": "forecast",
         "options": ["baseline", "hrrr_nbm", "intl_ecmwf_icon", "full"],
     },
-    "USE_ENSEMBLE_SIGMA": {
-        "description": "Use ensemble standard deviation for confidence capping instead of hardcoded forecast_stddev_f — requires 5-day shadow validation before live promotion (issue #451)",
-        "type": "bool",
-        "group": "forecast",
-    },
     "PROMOTION_MIN_SETTLED_TRADES": {
         "description": "Minimum settled shadow trades required for promotion eligibility (issue #559, supersedes #80)",
         "type": "int",
