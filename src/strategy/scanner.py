@@ -997,7 +997,15 @@ def scan_markets(
                 state_low = weather_low[station]
                 p_yes = prob_low_fn(bracket, state_low, mins_left, FORECAST_STDDEV_F)
                 raw_p_yes_low = p_yes
-                p_yes = min(p_yes, MODEL_PROB_CAP)
+                # Issue #567 decision: clamp symmetrically to [1-cap, cap], matching the
+                # high-side clamp above (~L744), instead of the upper-only clamp PR #564
+                # deliberately left in place (that PR's scope excluded any live-gate
+                # change; it flagged this asymmetry as a follow-up). No concrete reason
+                # was found for the low side needing an unfloored small p, so we align
+                # for consistency. This is still shadow-only (low-side scanner currently
+                # records zero shadow trades per bug #554) so it has no live impact.
+                _cap_lower_low = round(1.0 - MODEL_PROB_CAP, 10)
+                p_yes = min(max(p_yes, _cap_lower_low), MODEL_PROB_CAP)
 
                 ev_yes = (p_yes * 100 - bracket.yes_ask_cents) - estimate_fee_cents(bracket.yes_ask_cents)
                 ev_no  = ((1 - p_yes) * 100 - bracket.no_ask_cents) - estimate_fee_cents(bracket.no_ask_cents)
