@@ -239,6 +239,62 @@ sudo journalctl -u meteoedge-prob-cap-report.service -f
 tail -f logs/prob_cap_report.log
 ```
 
+#### meteoedge-purge-retention.service / meteoedge-purge-retention.timer
+
+One-shot service, run daily at **01:00 UTC** by
+`meteoedge-purge-retention.timer`. Runs `src/scripts/purge_retention.py`,
+which enforces the retention policy for the `candidates` and
+`guardrail_events` tables (issue #699). Installed and enabled by
+`deploy/systemd/install.sh` (issue #705). See [`candidates` and
+`guardrail_events` retention policy](../OPERATIONS.md) in the root
+`OPERATIONS.md` for the full retention-window and configuration details.
+
+```ini
+[Unit]
+Description=MeteoEdge daily retention purge (candidates, guardrail_events)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=p0k5
+WorkingDirectory=/home/p0k5/MeteoEdge
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=/home/p0k5/MeteoEdge/.env
+ExecStart=/home/p0k5/MeteoEdge/.venv/bin/python -u -m src.scripts.purge_retention
+StandardOutput=append:/home/p0k5/MeteoEdge/logs/purge.log
+StandardError=append:/home/p0k5/MeteoEdge/logs/purge.log
+```
+
+```ini
+[Unit]
+Description=Run MeteoEdge retention purge daily at 01:00 UTC
+
+[Timer]
+OnCalendar=*-*-* 01:00:00 UTC
+AccuracySec=1m
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+```
+
+**Operational commands:**
+```bash
+# Check next scheduled run
+sudo systemctl list-timers meteoedge-purge-retention.timer
+
+# Manually trigger a run
+sudo systemctl start meteoedge-purge-retention.service
+
+# Or run directly without systemd (dry-run, no deletion)
+python -m src.scripts.purge_retention --dry-run
+
+# View logs
+sudo journalctl -u meteoedge-purge-retention.service -f
+tail -f logs/purge.log
+```
+
 ---
 
 ## Configuration
