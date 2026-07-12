@@ -40,7 +40,7 @@ from src.risk.manager import RiskManager
 from src.strategy.scanner import scan_markets
 from src.weather.builder import (
     _build_weather, _station_in_active_window, build_weather_for_pricing,
-    build_weather_low_for_scanning,
+    build_weather_low_for_scanning, persist_metar_for_climb_stations,
 )
 from src.model.envelope_low import true_probability_low_in_bracket
 from src.execution.live_trader import LiveTrader
@@ -265,6 +265,16 @@ def poll_once(
     # build_weather_low_for_scanning() for why no active-hours gate is needed.
     # Shares _metars_cache with the high-side build above (issue #582).
     weather_low = build_weather_low_for_scanning(db=db, metars_cache=_metars_cache)
+
+    # Climb-table METAR persistence (issue #669) -- runs every poll regardless
+    # of STATION_ACTIVE_HOURS or open positions, for the stations named in
+    # config.CLIMB_BUILDER_24H_METAR_STATIONS. Does NOT feed the scanner or
+    # pricer; it only ensures Database.get_hourly_obs_for_climb() has
+    # early-local-morning METAR rows to work with when the climb table is
+    # regenerated. Shares _metars_cache so it never double-fetches a station
+    # already fetched by the builders above (issue #582 pattern).
+    if db is not None:
+        persist_metar_for_climb_stations(db=db, metars_cache=_metars_cache)
 
     # Collect open-position token IDs early so they can be included in the
     # batch orderbook fetch below (together with the scanner's YES/NO tokens).

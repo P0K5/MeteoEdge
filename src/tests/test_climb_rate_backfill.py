@@ -118,6 +118,70 @@ class TestGetHourlyObsForClimbSchema:
 
 
 # ---------------------------------------------------------------------------
+# 1b. compute_from_db canonical-feed routing (issue #669): high-cadence city
+# feeds must be folded in, not just the METAR-keyed ICAO rows.
+# ---------------------------------------------------------------------------
+
+class TestComputeFromDbCanonicalFeedRouting:
+    """RKSI/RKPK have a 24/7 AMOS feed persisted under the city name ("Seoul",
+    "Busan"), independent of STATION_ACTIVE_HOURS. Before #669,
+    compute_from_db() only ever called get_hourly_obs_for_climb(icao) -- the
+    ICAO-keyed METAR rows -- and silently ignored that denser, always-on city
+    feed, exactly the same class of bug #558 already fixed for
+    get_daily_obs_high(). compute_from_db() must now union every DB key
+    config.get_canonical_station_feeds(icao) returns."""
+
+    def test_seoul_amos_feed_is_folded_into_rksi_table(self, tmp_path):
+        """A city-keyed (AMOS) observation for "Seoul" must count toward RKSI's
+        climb table even though it's never stored under the ICAO code "RKSI"."""
+        path = str(tmp_path / "seoul.db")
+        db = _db(path)
+        # RKSI's active window starts at local 11:00 (see STATION_ACTIVE_HOURS),
+        # so only afternoon/evening METAR is ever persisted under "RKSI" in
+        # production. Simulate that gap: seed METAR for hours 11-23 only under
+        # "RKSI", but seed the FULL 24h diurnal profile under "Seoul" (AMOS,
+        # which runs 24/7 regardless of active hours).
+        tzinfo = ZoneInfo("Asia/Seoul")
+        for day in range(1, 13):
+            for hour in range(24):
+                local_dt = datetime(2026, 6, day, hour, 0, tzinfo=tzinfo)
+                utc_dt = local_dt.astimezone(timezone.utc)
+                ts = utc_dt.isoformat()
+                temp = _profile(hour)
+                db.insert_observation(
+                    ts=ts, station="Seoul", temp_f=temp, temp_native=temp,
+                    unit="C", source="amos", cadence_min=15, is_official=1,
+                )
+                if hour >= 11:
+                    _insert_obs(db, "RKSI", ts, temp)
+
+        lookup, sources = _run(path, ["RKSI"])
+
+        # Without the Seoul-keyed union, hour-6 (before RKSI's 11:00 active
+        # window) would have zero DB observations and stay synthetic (99.0).
+        # With the union, the AMOS-sourced "Seoul" rows cover hour 6 too.
+        assert lookup["RKSI"][6][6] == pytest.approx(75.0 - _profile(6), abs=0.01)
+        assert "DB observations" in sources["RKSI"]
+
+    def test_metar_only_station_is_unaffected(self, tmp_path):
+        """KORD has no city-keyed high-cadence feed -- behaviour is unchanged,
+        and an unrelated city-keyed row for a different station must not leak in."""
+        path = str(tmp_path / "kord.db")
+        db = _db(path)
+        _seed_diurnal_days(db, "KORD", "America/Chicago", n_days=12)
+        # Unrelated city-keyed row (Singapore/MSS) must not affect KORD's table.
+        db.insert_observation(
+            ts="2026-06-15T14:00:00+00:00", station="Singapore", temp_f=900.0,
+            temp_native=482.0, unit="C", source="mss", cadence_min=1, is_official=1,
+        )
+
+        lookup, _ = _run(path, ["KORD"])
+
+        june = lookup["KORD"][6]
+        assert june[6] == pytest.approx(75.0 - _profile(6), abs=0.01)  # unaffected by Singapore row
+
+
+# ---------------------------------------------------------------------------
 # 2. compute_from_db recovers a known diurnal curve (both #587 bugs regress here)
 # ---------------------------------------------------------------------------
 

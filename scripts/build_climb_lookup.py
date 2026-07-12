@@ -41,6 +41,13 @@ Network requirement:
         refinement on a reviewed baseline).
     If git is unavailable (not a repo / no git binary), a warning is issued but
     execution proceeds (the check is a safety net, not a hard dependency).
+
+--from-db source routing (issue #669):
+    compute_from_db() unions observations across every DB key returned by
+    config.get_canonical_station_feeds(icao) -- not just the ICAO-keyed METAR
+    rows. Stations with a high-cadence city-keyed feed (Seoul/Busan → AMOS,
+    Singapore → MSS, Tokyo → JMA AMeDAS) get that denser, always-on data
+    folded in; METAR-only stations are unaffected.
 """
 
 import logging
@@ -569,9 +576,26 @@ def compute_from_db(
 ) -> "tuple[dict[str, dict[int, dict[int, float]]], dict[str, str]]":
     """Replace synthetic values with p95-derived values from real collected observations.
 
-    For each station in STATIONS, fetches all observations from the DB via
-    get_hourly_obs_for_climb and computes p95 climb rates. Cells with fewer than
-    MIN_DAYS_PER_CELL distinct dates fall back to the existing synthetic value.
+    For each station in STATIONS, fetches all observations from the DB and
+    computes p95 climb rates. Cells with fewer than MIN_DAYS_PER_CELL distinct
+    dates fall back to the existing synthetic value.
+
+    Issue #669: observations are unioned across every DB key returned by
+    ``config.get_canonical_station_feeds(icao)`` -- the same source-of-truth
+    ``db.get_daily_obs_high()`` already uses (issue #558) -- not just the
+    ICAO-keyed METAR rows. Stations with a high-cadence city-keyed feed (Seoul
+    → AMOS, Singapore → MSS, Tokyo → JMA AMeDAS, ...) persist those readings
+    under the city name, and that feed runs 24/7 independent of
+    STATION_ACTIVE_HOURS -- unlike METAR persistence, which historically only
+    ran while the scanner's active-hours gate (or an open position) triggered
+    a fetch. Querying only the ICAO key silently dropped all of that denser,
+    ungated data and left the climb table's early-local-morning cells built
+    from the thinnest, most gated observation set available -- exactly where
+    it can least afford it. Merging happens here (the caller), not inside
+    ``Database.get_hourly_obs_for_climb()``, to keep that method's simple
+    single-station-key contract unchanged for any other caller; the routing
+    knowledge (``get_canonical_station_feeds``) already lives in
+    ``src.config``, which this module already imports ``STATIONS`` from.
 
     All binning is done in **station-local time** (issue #587): the consumer,
     expected_additional_rise(), indexes CLIMB_LOOKUP by local month/hour, and
@@ -590,13 +614,17 @@ def compute_from_db(
     from zoneinfo import ZoneInfo
     sys.path.insert(0, str(Path(__file__).parent.parent))
     from src.data.db import Database  # noqa: E402
+    from src.config import get_canonical_station_feeds  # noqa: E402
 
     lookup: "dict[str, dict[int, dict[int, float]]]" = {}
     sources: "dict[str, str]" = {}
 
     with Database(db_path) as db:
         for icao, _lat, _lon, _city, _res, _unit, _tz in STATIONS:
-            obs = db.get_hourly_obs_for_climb(icao)
+            feed_keys = get_canonical_station_feeds(icao)
+            obs: list = []
+            for key in feed_keys:
+                obs.extend(db.get_hourly_obs_for_climb(key))
 
             if not obs:
                 # No DB observations — keep existing synthetic values
@@ -739,7 +767,7 @@ def check_climb_lookup_dirty(force: bool = False) -> None:
             # git error (e.g. exit code 128/129 when run outside a git repo) — the
             # dirty check is a safety net, not a hard dependency, so warn and proceed.
             # (returncode 0 = clean, 1 = dirty; anything else means git could not
-            # perform the diff, most commonly "not a git repository".)
+            # perform the diff, most commonly "not a git repository").
             logger.warning(
                 "git not available or not in a git repo — skipping dirty-baseline check. "
                 "If using --from-db, ensure src/data/climb_lookup.py reflects a clean, "

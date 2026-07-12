@@ -168,6 +168,31 @@ STATION_ACTIVE_HOURS = {
     "NZWN": (6, 23),
 }
 
+# Issue #669: stations whose METAR persistence must run 24/7, independent of
+# STATION_ACTIVE_HOURS, because the climb-table builder needs early
+# local-morning observations that the scanner's active-hours gate otherwise
+# thins out (RKSI/RKPK start at local 11:00; the Chinese stations at local
+# 11:00 too -- see STATION_ACTIVE_HOURS above).
+#
+# This does NOT touch STATION_ACTIVE_HOURS itself or build_weather_for_scanning()
+# -- that gate exists to prevent the scanner from opening new *entries* on
+# overnight carryover (the KHOU 2026-05-27 incident) and must not be regressed.
+# It only adds a second, narrow METAR fetch+persist pass
+# (persist_metar_for_climb_stations() in src/weather/builder.py) that runs
+# every poll for these stations regardless of local hour or open-position
+# status, mirroring the precedent set by build_weather_for_pricing() (#425)
+# for the same "scanner gate is right for trading, wrong for data collection"
+# reason.
+#
+# RKSI and RKPK are included even though Seoul/Busan already have a 24/7 AMOS
+# feed (see config/source_priority.yaml) -- METAR remains a useful redundant
+# feed for the climb builder's get_canonical_station_feeds() union, and the
+# extra persistence is a no-op cost (METAR is fetched every poll anyway via
+# the shared metars_cache).
+CLIMB_BUILDER_24H_METAR_STATIONS: "frozenset[str]" = frozenset({
+    "RKSI", "RKPK", "ZGSZ", "ZGGG", "ZHHH", "ZHCC", "ZSPD",
+})
+
 # Strategy thresholds (env var overrides)
 MIN_EDGE_CENTS = float(os.getenv("MIN_EDGE_CENTS", "15.0"))
 # Live ledger showed high-edge entries are adversely selected. Tightened from 25c
