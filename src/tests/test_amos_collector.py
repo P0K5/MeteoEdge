@@ -79,6 +79,18 @@ def _open_meteo_response(temp_c: float) -> dict:
     }
 
 
+# KMA ASOS "previous-day only" response (issue #694) — HTTP 200 with resultCode=99
+def _kma_result_code_response(code: str = "99", msg: str = "전날 자료까지 제공됩니다.") -> dict:
+    return {
+        "response": {
+            "header": {
+                "resultCode": code,
+                "resultMsg": msg,
+            }
+        }
+    }
+
+
 # ---------------------------------------------------------------------------
 # KMA API path
 # ---------------------------------------------------------------------------
@@ -186,6 +198,77 @@ class TestOpenMeteoFallback:
 
         assert results["Seoul"] is True
         assert results["Busan"] is True
+
+
+# ---------------------------------------------------------------------------
+# KMA ASOS "previous-day only" response (issue #694)
+# ---------------------------------------------------------------------------
+
+class TestKmaHistoricalOnlyResponse:
+    """AsosHourlyInfoService always returns resultCode=99 for same-day requests.
+
+    This is expected, permanent behavior (the archive-only endpoint), not an
+    unexpected parse failure -- it must be handled explicitly and quietly
+    (DEBUG, not ERROR), and must still fall back to Open-Meteo.
+    """
+
+    def test_falls_back_to_open_meteo_on_resultcode_99(self, monkeypatch):
+        """resultCode=99 is treated as an expected non-error and falls back cleanly."""
+        monkeypatch.setenv("KMA_API_KEY", "test-key")
+        db = _db()
+        collector = AmosCollector(db)
+
+        kma_seoul = _make_response(200, _kma_result_code_response("99"))
+        kma_busan = _make_response(200, _kma_result_code_response("99"))
+        seoul_om = _make_response(200, _open_meteo_response(25.5))
+        busan_om = _make_response(200, _open_meteo_response(23.5))
+
+        with patch(
+            "src.data.collectors.amos.fetch",
+            side_effect=[kma_seoul, seoul_om, kma_busan, busan_om],
+        ):
+            results = collector.poll()
+
+        assert results["Seoul"] is True
+        assert results["Busan"] is True
+
+        rows_s = db.get_observations("Seoul", since="2000-01-01")
+        assert len(rows_s) == 1
+        assert rows_s[0]["is_official"] == 0  # Open-Meteo fallback, not official AMOS
+
+    def test_resultcode_99_does_not_log_error(self, monkeypatch, caplog):
+        """resultCode=99 must NOT produce an ERROR-level log (issue #694 — was a KeyError/ERROR before)."""
+        monkeypatch.setenv("KMA_API_KEY", "test-key")
+        db = _db()
+        collector = AmosCollector(db)
+
+        kma_resp = _make_response(200, _kma_result_code_response("99"))
+
+        with caplog.at_level(logging.DEBUG, logger="src.data.collectors.amos"):
+            with patch("src.data.collectors.amos.fetch", return_value=kma_resp):
+                reading = collector._fetch_kma("Seoul")
+
+        assert reading is None
+        assert not any(r.levelname == "ERROR" for r in caplog.records)
+        assert any(
+            "historical-only" in r.message or "resultCode=99" in r.message
+            for r in caplog.records
+        )
+
+    def test_unexpected_result_code_still_logs_warning(self, monkeypatch, caplog):
+        """A non-99, non-00 resultCode is a genuinely new failure mode and should stay visible."""
+        monkeypatch.setenv("KMA_API_KEY", "test-key")
+        db = _db()
+        collector = AmosCollector(db)
+
+        kma_resp = _make_response(200, _kma_result_code_response("30", "SERVICE_KEY_IS_NOT_REGISTERED_ERROR"))
+
+        with caplog.at_level(logging.WARNING, logger="src.data.collectors.amos"):
+            with patch("src.data.collectors.amos.fetch", return_value=kma_resp):
+                reading = collector._fetch_kma("Seoul")
+
+        assert reading is None
+        assert any(r.levelname == "WARNING" for r in caplog.records)
 
 
 # ---------------------------------------------------------------------------
