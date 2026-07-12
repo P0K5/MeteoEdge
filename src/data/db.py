@@ -1251,6 +1251,27 @@ class Database:
         )
         return [dict(row) for row in cur.fetchall()]
 
+    def get_settled_live_trades(self) -> list:
+        """Return held-to-expiry settled live trades (issue #617).
+
+        Selects ``mode='live' AND outcome='filled' AND settled_at IS NOT NULL``
+        -- these are markets that resolved via ``settle_live_trades()`` (#609),
+        which writes ``pnl``/``settled_at`` directly onto the trades row.
+
+        Early exits (``outcome='sold'``, stop-loss/take-profit/manual) are
+        deliberately excluded here even though they also carry a non-NULL
+        ``settled_at`` (set at sell time by order_manager) -- the dashboard's
+        closed-positions panel still reads those from live_trades.jsonl, which
+        order_manager writes directly and independently of settle.py, so they
+        are unaffected by the removal of the settle.py JSONL write-back.
+        """
+        cur = self._conn.execute(
+            "SELECT * FROM trades "
+            "WHERE mode='live' AND outcome='filled' AND settled_at IS NOT NULL "
+            "ORDER BY settled_at DESC"
+        )
+        return [dict(row) for row in cur.fetchall()]
+
     def get_unsettled_live_trades(self) -> list:
         """Return ALL live held-to-expiry trades not yet settled (issue #609).
 

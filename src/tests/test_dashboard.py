@@ -632,6 +632,142 @@ class TestClosedPositionsExitReason:
 
 
 # ---------------------------------------------------------------------------
+# Issue #617: DB-driven _db_settled_positions() parity with the (superseded)
+# JSONL-driven _settled_jsonl_positions() exercised in
+# TestClosedPositionsExitReason above.
+# ---------------------------------------------------------------------------
+
+class TestDbSettledPositionsParity:
+    """_db_settled_positions() reads settle_live_trades()-settled rows
+    directly from the trades table (mode='live' AND settled_at IS NOT NULL)
+    and must reproduce the same exit_reason/pnl/shares/entry_price/exit_price
+    shape that _settled_jsonl_positions() used to produce from the
+    (now-removed) settle.py JSONL write-back, for the equivalent underlying
+    trade -- same side/pnl/size_eur/entry_price fixtures as the
+    TestClosedPositionsExitReason JSONL tests above.
+    """
+
+    def _setup_db(self):
+        from src.data.db import Database
+        return Database(":memory:")
+
+    def _insert_settled(
+        self, db, *, side="YES", pnl, size_eur=5.0, entry_price=50,
+        station="KORD", ticker="0xabc123", bracket_low=70.0, bracket_high=72.0,
+        end_date="2024-01-01T23:59:59+00:00", outcome="filled", mode="live",
+        order_id="ord-1", settled_at="2024-01-02T09:00:00+00:00",
+    ):
+        return db.insert_trade(
+            ts="2024-01-01T10:00:00+00:00", station=station, ticker=ticker,
+            bracket_low=bracket_low, bracket_high=bracket_high, side=side,
+            predicted_price=entry_price, actual_price=entry_price,
+            predicted_edge=10.0, mode=mode, order_id=order_id,
+            outcome=outcome, pnl=pnl, capital_before=size_eur,
+            settled_at=settled_at, size_eur=size_eur, end_date=end_date,
+        )
+
+    def test_won_exit_reason_matches_jsonl_parity(self):
+        """Mirrors test_settled_position_won_exit_reason: side=YES, pnl=5.0,
+        shares=10.0 (size_eur=5.0 / entry_price=50c)."""
+        from src.dashboard.api import _db_settled_positions
+        db = self._setup_db()
+        self._insert_settled(db, side="YES", pnl=5.0, size_eur=5.0, entry_price=50)
+        original = dash_api._db
+        try:
+            dash_api.set_db(db)
+            positions, condition_ids = _db_settled_positions()
+        finally:
+            dash_api.set_db(original)
+        assert len(positions) == 1
+        p = positions[0]
+        assert p.exit_reason == "won"
+        assert p.pnl == 5.0
+        assert p.shares == 10.0
+        assert p.entry_price == 50
+        assert p.exit_price == 100
+        assert p.side == "YES"
+        assert p.station == "KORD"
+        assert condition_ids == {"0xabc123"}
+
+    def test_lost_exit_reason_matches_jsonl_parity(self):
+        """Mirrors test_settled_position_lost_exit_reason: side=NO, pnl=-2.5,
+        shares=10.0."""
+        from src.dashboard.api import _db_settled_positions
+        db = self._setup_db()
+        self._insert_settled(db, side="NO", pnl=-2.5, size_eur=5.0, entry_price=50)
+        original = dash_api._db
+        try:
+            dash_api.set_db(db)
+            positions, _condition_ids = _db_settled_positions()
+        finally:
+            dash_api.set_db(original)
+        assert len(positions) == 1
+        p = positions[0]
+        assert p.exit_reason == "lost"
+        assert p.pnl == -2.5
+        assert p.shares == 10.0
+        assert p.exit_price == 0
+
+    def test_zero_pnl_is_lost_matches_jsonl_parity(self):
+        """Mirrors test_settled_position_zero_pnl_is_lost: pnl == 0 -> lost."""
+        from src.dashboard.api import _db_settled_positions
+        db = self._setup_db()
+        self._insert_settled(db, side="YES", pnl=0.0, size_eur=5.0, entry_price=50)
+        original = dash_api._db
+        try:
+            dash_api.set_db(db)
+            positions, _condition_ids = _db_settled_positions()
+        finally:
+            dash_api.set_db(original)
+        assert len(positions) == 1
+        assert positions[0].exit_reason == "lost"
+        assert positions[0].pnl == 0.0
+
+    def test_excludes_sold_rows(self):
+        """Early exits (outcome='sold') are NOT returned here -- those stay
+        sourced from live_trades.jsonl via _stopped_positions(), since
+        order_manager writes those records directly at sell time,
+        unaffected by the #617 migration."""
+        from src.dashboard.api import _db_settled_positions
+        db = self._setup_db()
+        self._insert_settled(db, pnl=3.0, outcome="sold", order_id="ord-sold")
+        original = dash_api._db
+        try:
+            dash_api.set_db(db)
+            positions, condition_ids = _db_settled_positions()
+        finally:
+            dash_api.set_db(original)
+        assert positions == []
+        assert condition_ids == set()
+
+    def test_excludes_shadow_and_paper_modes(self):
+        """Only mode='live' settled rows feed the closed-positions panel."""
+        from src.dashboard.api import _db_settled_positions
+        db = self._setup_db()
+        self._insert_settled(db, pnl=1.0, mode="shadow", order_id="ord-shadow")
+        self._insert_settled(db, pnl=1.0, mode="paper", order_id="ord-paper")
+        original = dash_api._db
+        try:
+            dash_api.set_db(db)
+            positions, _condition_ids = _db_settled_positions()
+        finally:
+            dash_api.set_db(original)
+        assert positions == []
+
+    def test_no_db_returns_empty(self):
+        """Must degrade gracefully (empty list + empty set) when _db is None."""
+        from src.dashboard.api import _db_settled_positions
+        original = dash_api._db
+        try:
+            dash_api._db = None
+            positions, condition_ids = _db_settled_positions()
+        finally:
+            dash_api._db = original
+        assert positions == []
+        assert condition_ids == set()
+
+
+# ---------------------------------------------------------------------------
 # Bridge stub compatibility — src.monitoring.dashboard still works
 # ---------------------------------------------------------------------------
 
