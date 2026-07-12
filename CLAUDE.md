@@ -85,6 +85,15 @@ You (the **Tech Lead PM**) will:
 7. **Review all PRs** — You are the technical reviewer. For frontend PRs, also send to the Designer for UX review.
 8. **Track progress** — Keep the GitHub Project board accurate. Update statuses at every transition.
 
+#### PR Review Protocol
+
+- Before reviewing any PR, read the `AI / NVIDIA NIM review` GitHub Check and its PR comment summary.
+- Do not re-scan the full diff or re-read architecture files if the AI reviewer has already summarized impact and blast radius.
+- Manual deep-dive is only required when: (a) PR touches trading logic, EMOS, guardrails, DB schema, or deployment; (b) AI reviewer output is incomplete or incorrect; (c) PR has no linked issues.
+- Token optimization goal: start from AI reviewer findings, not from scratch.
+
+AI reviewer model: GLM-5.2 via NVIDIA NIM. Prompt: `agents/reviewer_prompt_glm52.md`.
+
 ### Chain of command
 
 ```
@@ -148,6 +157,8 @@ Agent tool:
     7. Post a comment on the issue: "PR #M submitted for review"
     8. Request review from Tech Lead PM (and Designer if frontend)
 
+    When fixing PR review blocking items, read the `AI / NVIDIA NIM review` PR comment first. Use its checklist items as your task list. Do not ignore the reviewer's findings.
+
     ## Pre-resolved GitHub Context (DO NOT re-query these)
     GITHUB_PROJECT_ID={{GITHUB_PROJECT_ID}}
     STATUS_FIELD_ID={{STATUS_FIELD_ID}}
@@ -193,6 +204,8 @@ Agent tool:
     9. Move the issue to "In review" on the project board (GraphQL)
     10. Post a comment on the issue: "PR #M ready for review"
     11. Request review from Tech Lead PM (and Designer if frontend)
+
+    For Simple fixes flagged by the AI reviewer, read the specific blocking item in the `AI / NVIDIA NIM review` comment and fix only that. Do not scope-creep.
 
     ## Pre-resolved GitHub Context (DO NOT re-query these)
     GITHUB_PROJECT_ID={{GITHUB_PROJECT_ID}}
@@ -323,6 +336,8 @@ gh api graphql -f query='
 - [ ] All acceptance criteria from the linked issue are met
 
 > **Branch protection for master** requires three status checks before merge: `CI / lint`, `CI / test`, and `AI / NVIDIA NIM review`. All three must be green. Direct pushes to master are disabled.
+
+PRs require: CI lint + test, Secret Scanning (when active), and `AI / NVIDIA NIM review` — all green before merge.
 
 ### Issue and PR linking rules
 
