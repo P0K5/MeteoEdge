@@ -8,11 +8,34 @@ temperature readings for:
 Data source priority:
   1. KMA ASOS API (https://apis.data.go.kr/1360000/AsosHourlyInfoService/getWthrDataList)
      Requires KMA_API_KEY env var (serviceKey). When present this is used as the
-     primary source because it provides official hourly airport sensor data.
+     primary source.
   2. Open-Meteo (api.open-meteo.com) — FALLBACK when KMA_API_KEY is absent or
      the KMA endpoint returns an error. Open-Meteo provides hourly modelled data;
      cadence is effectively 60 minutes in fallback mode. This is clearly noted
      because it changes the effective cadence and is not an official AMOS reading.
+
+DELIBERATE DESIGN DECISION (issue #694): the KMA ASOS API
+(``AsosHourlyInfoService``) is an **archive-only** service — it only serves
+data up to the previous day. Every request for the current KST hour returns
+HTTP 200 with ``{"response":{"header":{"resultCode":"99", ...}}}`` ("data up
+to the previous day only, please check the date range"). This is expected,
+permanent behavior of this endpoint, not a transient failure, so
+``_fetch_kma()`` detects ``resultCode == "99"`` explicitly and logs it once at
+DEBUG (not ERROR) before falling back to Open-Meteo — see ``_fetch_kma()`` for
+details.
+
+Why we did NOT switch to a real-time replacement in this change: a prior
+investigation comment on #694 proposed the KMA API Hub "AMOS minute data" feed
+(``https://apihub.kma.go.kr/api/typ01/url/amos.php``) as the real-time
+replacement. That endpoint requires a brand-new ``KMA_APIHUB_KEY`` credential
+(a separate KMA API Hub account with mandatory Korean-mobile-number
+verification) that does not exist anywhere in this repo/environment, and
+outbound HTTPS to both ``apis.data.go.kr`` and ``apihub.kma.go.kr`` is blocked
+in this sandbox, so the replacement could not be verified here. Rather than
+wire up an unverified integration against an endpoint nobody has credentials
+for, this change only hardens the existing (verified, working) fallback path.
+The API Hub migration remains the recommended follow-up once a human operator
+provisions ``KMA_APIHUB_KEY`` — see #694 for the full setup guide.
 
 CRITICAL CONSTRAINT: Errors in one station (Seoul or Busan) do NOT abort
 processing of the other station. Each station is polled independently within
@@ -119,8 +142,15 @@ class AmosCollector:
         if self._api_key:
             reading = self._fetch_kma(station)
             if reading is None:
-                log.warning(
-                    "[amos] KMA API failed for %s, trying Open-Meteo fallback", station
+                # NOTE: this fires on every poll when KMA_API_KEY is set, because
+                # AsosHourlyInfoService is archive-only and always declines
+                # same-day requests (resultCode=99) -- see _fetch_kma() and the
+                # module docstring. That specific, expected case is already
+                # logged once at DEBUG inside _fetch_kma(); this is a quiet,
+                # generic breadcrumb for the "trying fallback" transition and is
+                # intentionally NOT at WARNING/ERROR so it doesn't spam logs.
+                log.debug(
+                    "[amos] KMA API unavailable for %s, using Open-Meteo fallback", station
                 )
 
         if reading is None:
@@ -165,6 +195,15 @@ class AmosCollector:
         - serviceKey must be URL-encoded in query params
         - dataCd=ASOS, dateCd=HR for hourly airport data
         - Response is XML or JSON depending on _type param; we request JSON
+
+        Known, permanent, by-design response (issue #694): this endpoint only
+        serves data up to the previous day. A request for the current KST hour
+        always returns HTTP 200 with ``resultCode == "99"`` and a Korean
+        "previous day only" message instead of an items list. This is detected
+        explicitly below and logged once at DEBUG — it is NOT treated as an
+        unexpected parse failure (that used to KeyError and log at ERROR on
+        every single poll). See the module docstring for why this is the
+        deliberate fallback path rather than a bug to "fix" further.
         """
         station_id = _KMA_STATIONS[station]
         now_kst = datetime.now(_KST)
@@ -185,6 +224,28 @@ class AmosCollector:
             data = r.json()
         except Exception as exc:
             log.error("[amos] KMA fetch error for %s: %s", station, exc)
+            return None
+
+        result_code = (
+            data.get("response", {}).get("header", {}).get("resultCode")
+            if isinstance(data, dict) else None
+        )
+        if result_code == "99":
+            # Expected, permanent behavior of AsosHourlyInfoService — not an error.
+            log.debug(
+                "[amos] KMA ASOS is historical-only, falling back to Open-Meteo by "
+                "design (resultCode=99, station=%s) — see issue #694",
+                station,
+            )
+            return None
+        if result_code is not None and result_code != "00":
+            # Any other non-success resultCode is unexpected — keep logging it
+            # loudly so a genuine new failure mode isn't silently swallowed.
+            log.warning(
+                "[amos] KMA ASOS returned resultCode=%s for %s: %s",
+                result_code, station,
+                data.get("response", {}).get("header", {}).get("resultMsg"),
+            )
             return None
 
         try:
