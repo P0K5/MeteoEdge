@@ -172,10 +172,20 @@ def _has_secondary_observation_source(db, station: str) -> bool:
 
 
 def _has_settled_loss(db, station: str) -> bool:
-    """Check if there's at least one settled loss in the station's history."""
+    """Check if there's at least one settled loss in the station's history.
+
+    Issue #704: excludes next-day shadow rows (is_next_day=0), same as
+    compute_promotion_bar() below. This function feeds gate 5 of
+    check_promotion_prerequisites(), which is itself a promotion-readiness
+    signal like the promotion bar -- a loss recorded only under next-day
+    evaluation (different sigma/lead-time regime, #687) should not count
+    toward "this station has proven it can lose" for same-day live
+    promotion, so both trades readers are kept consistent rather than
+    letting one filter and the other not.
+    """
     settlements = db.get_settlements(station, since="2000-01-01T00:00:00")
 
-    all_shadow = db.get_trades(mode="shadow", limit=None)
+    all_shadow = db.get_trades(mode="shadow", limit=None, is_next_day=0)
     shadow_trades = [t for t in all_shadow if t.get("station") == station]
 
     if not shadow_trades:
@@ -367,7 +377,12 @@ def compute_promotion_bar(db) -> list:
     ))
     z = _z_for_confidence(confidence)
 
-    all_shadow = db.get_trades(mode="shadow", limit=None)
+    # Issue #704: exclude next-day shadow rows (is_next_day=0) -- next-day
+    # evaluation candidates carry a different sigma/lead-time regime (#687,
+    # next_day_sigma_multiplier) and are not comparable to same-day shadow
+    # trades. Mixing them in would silently contaminate the win-rate/Wilson
+    # bound statistics this promotion bar is built on.
+    all_shadow = db.get_trades(mode="shadow", limit=None, is_next_day=0)
 
     # Restrict to direction='high': the bar's truth source (daily high) and
     # settlement path only cover high-side markets. Filtering explicitly here

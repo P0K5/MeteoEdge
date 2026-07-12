@@ -238,11 +238,14 @@ def check_calibration(conn: sqlite3.Connection, cal_days: int) -> tuple[list[str
     lines: list[str] = []
 
     # -- 4a. Shadow trade ensemble calibration --
+    # Issue #704: excludes next-day rows (is_next_day=0) -- next-day shadow
+    # trades (#687) use a different sigma/lead-time regime and would
+    # otherwise silently mix into the same-day calibration buckets below.
     try:
         shadow_rows = conn.execute(
             "SELECT predicted_price, pnl "
             "FROM trades "
-            "WHERE mode='shadow' AND pnl IS NOT NULL AND ts >= ? "
+            "WHERE mode='shadow' AND pnl IS NOT NULL AND ts >= ? AND is_next_day = 0 "
             "ORDER BY ts",
             (since,),
         ).fetchall()

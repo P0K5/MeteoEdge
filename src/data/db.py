@@ -66,7 +66,8 @@ CREATE TABLE IF NOT EXISTS candidates (
     minutes_to_settlement REAL NOT NULL,
     flagged_first   INTEGER NOT NULL DEFAULT 1,
     direction       TEXT NOT NULL DEFAULT 'high',
-    is_next_day     INTEGER NOT NULL DEFAULT 0
+    is_next_day     INTEGER NOT NULL DEFAULT 0,
+    today_position_open INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_cand_station_ts ON candidates(station, ts);
 CREATE INDEX IF NOT EXISTS idx_cand_ticker ON candidates(ticker);
@@ -90,7 +91,8 @@ CREATE TABLE IF NOT EXISTS trades (
     capital_before  REAL NOT NULL,
     capital_after   REAL,
     settled_at      TEXT,
-    direction       TEXT NOT NULL DEFAULT 'high'
+    direction       TEXT NOT NULL DEFAULT 'high',
+    is_next_day     INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_trades_station_ts ON trades(station, ts);
 CREATE INDEX IF NOT EXISTS idx_trades_mode ON trades(mode);
@@ -344,6 +346,21 @@ class Database:
             # filterable rather than inferred from minutes_to_settlement.
             # Default 0 matches every pre-#687 row (all same-day).
             ("candidates", "is_next_day", "INTEGER NOT NULL DEFAULT 0"),
+            # Issue #704 (Gap 1): same discriminator as candidates.is_next_day,
+            # but on trades -- upsert_shadow_trade() (the next-day shadow write
+            # path) had no way to tag its own rows, so once NEXT_DAY_EVALUATION
+            # is on, next-day shadow trades are indistinguishable from same-day
+            # shadow trades in every trades-based consumer (promotion gate,
+            # prob-cap report, shadow-health calibration). Default 0 matches
+            # every pre-#704 row (all same-day).
+            ("trades", "is_next_day", "INTEGER NOT NULL DEFAULT 0"),
+            # Issue #704 (Gap 2): records whether a same-station LIVE position
+            # was open at next-day-evaluation time, so the ≥7-day shadow window
+            # can quantify how often cross-day exposure would actually occur
+            # (the approved #687 design's deferred-question-1 data need).
+            # Always 0 for same-day candidates -- only populated by scanner.py's
+            # next-day-eval branch. Default 0 matches every pre-#704 row.
+            ("candidates", "today_position_open", "INTEGER NOT NULL DEFAULT 0"),
         ]:
             try:
                 self._conn.execute(
@@ -875,6 +892,7 @@ class Database:
         direction: str = "high",
         p_yes_raw: "float | None" = None,
         is_next_day: int = 0,
+        today_position_open: int = 0,
     ) -> int:
         """Insert a trade candidate; returns the new row id.
 
@@ -883,19 +901,26 @@ class Database:
                 (issue #687) -- a forecast-only, shadow-only evaluation of a
                 station's next market. Defaults to 0 so every existing
                 same-day call site is unaffected.
+            today_position_open: 1 when a same-station LIVE position was open
+                at next-day-evaluation time (issue #704, Gap 2). Only
+                meaningful when is_next_day=1 -- same-day candidates always
+                pass 0 (there is no "today position" concept relative to a
+                same-day candidate). Read-only telemetry: never gates or
+                alters the live entry decision.
         """
         with self._lock:
             cur = self._conn.execute(
                 "INSERT INTO candidates"
                 "(ts,station,ticker,bracket_low,bracket_high,side,"
                 "predicted_price,predicted_edge,market_price,confidence,"
-                "minutes_to_settlement,flagged_first,direction,p_yes_raw,is_next_day) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "minutes_to_settlement,flagged_first,direction,p_yes_raw,is_next_day,"
+                "today_position_open) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     ts, station, ticker, bracket_low, bracket_high, side,
                     predicted_price, predicted_edge, market_price, confidence,
                     minutes_to_settlement, flagged_first, direction, p_yes_raw,
-                    int(is_next_day),
+                    int(is_next_day), int(today_position_open),
                 ),
             )
             self._conn.commit()
@@ -1178,13 +1203,20 @@ class Database:
         limit: "int | None" = 50,
         mode: "str | None" = None,
         direction: "str | None" = None,
+        is_next_day: "int | None" = None,
     ) -> list:
         """Return trades ordered by most-recent-first.
 
         Args:
-            limit:     Maximum rows to return (``None`` = no limit).
-            mode:      Filter to ``'paper'`` or ``'live'`` if provided.
-            direction: Filter to ``'high'`` or ``'low'`` if provided.
+            limit:       Maximum rows to return (``None`` = no limit).
+            mode:        Filter to ``'paper'`` or ``'live'`` if provided.
+            direction:   Filter to ``'high'`` or ``'low'`` if provided.
+            is_next_day: Filter to 0 (same-day) or 1 (next-day shadow eval,
+                issue #704) if provided. ``None`` (default) returns both --
+                callers that read shadow trades for win-rate/calibration
+                statistics should pass ``is_next_day=0`` explicitly so
+                next-day rows (different sigma/lead-time regime) never
+                silently contaminate the same-day population.
         """
         conditions = []
         params: list = []
@@ -1194,6 +1226,9 @@ class Database:
         if direction is not None:
             conditions.append("direction=?")
             params.append(direction)
+        if is_next_day is not None:
+            conditions.append("is_next_day=?")
+            params.append(int(is_next_day))
         where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
         sql = f"SELECT * FROM trades{where} ORDER BY ts DESC"
         if limit is not None:
@@ -1263,6 +1298,28 @@ class Database:
         )
         return cur.fetchone() is not None
 
+    def has_open_live_position(self, station: str) -> bool:
+        """Return True if *station* has a LIVE position currently open.
+
+        "Open" mirrors get_unsettled_live_trades()'s definition: mode='live',
+        outcome='filled' (actually entered, not a timeout/cancel), settled_at
+        IS NULL (not yet resolved) -- i.e. capital is presently at risk on
+        this station's today market.
+
+        Used by scanner.py's next-day evaluation branch (issue #704, Gap 2)
+        to record whether a same-station today position was open at
+        next-day-evaluation time, so the shadow window can quantify how often
+        this cross-day overlap would actually occur. Read-only telemetry
+        only -- never used to gate or alter the live entry decision.
+        """
+        cur = self._conn.execute(
+            "SELECT 1 FROM trades "
+            "WHERE mode='live' AND station=? AND outcome='filled' AND settled_at IS NULL "
+            "LIMIT 1",
+            (station,),
+        )
+        return cur.fetchone() is not None
+
     def upsert_shadow_trade(
         self,
         *,
@@ -1278,10 +1335,22 @@ class Database:
         capital_before: float = 0.0,
         direction: str = "high",
         p_yes_raw: "float | None" = None,
+        is_next_day: int = 0,
     ) -> tuple[int, bool]:
         """Insert a shadow trade row, or update actual_price if one already exists today.
 
         Dedup key: (station, bracket_low, bracket_high, side, direction, day).
+
+        Args:
+            is_next_day: 1 when this shadow trade came from next-day
+                evaluation (issue #687/#704) -- mirrors Candidate.is_next_day
+                so trades-based consumers (promotion gate, prob-cap report,
+                shadow-health) can filter/segment next-day rows out of the
+                same-day population. Only used on insert -- the dedup-hit
+                UPDATE path only refreshes actual_price (same as it already
+                does for p_yes_raw), since the dedup key does not include
+                is_next_day and an existing row's classification should not
+                change underneath it.
 
         Returns (row_id, created) where created=True means a new row was inserted,
         False means an existing row's actual_price was updated.
@@ -1308,12 +1377,14 @@ class Database:
                 "INSERT INTO trades"
                 "(ts,station,ticker,bracket_low,bracket_high,side,"
                 "predicted_price,actual_price,slippage,predicted_edge,mode,order_id,"
-                "outcome,pnl,capital_before,capital_after,settled_at,direction,p_yes_raw) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "outcome,pnl,capital_before,capital_after,settled_at,direction,p_yes_raw,"
+                "is_next_day) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     ts, station, ticker, bracket_low, bracket_high, side,
                     predicted_price, actual_price, None, predicted_edge, "shadow",
                     None, None, None, capital_before, None, None, direction, p_yes_raw,
+                    int(is_next_day),
                 ),
             )
             self._conn.commit()

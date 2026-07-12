@@ -469,6 +469,7 @@ def poll_once(
                     direction=cand.direction,
                     p_yes_raw=cand.p_yes_raw,
                     is_next_day=int(cand.is_next_day),
+                    today_position_open=int(cand.today_position_open),
                 )
             except Exception as e:
                 log.warning("  [candidates] DB insert failed: %s", e)
@@ -492,6 +493,7 @@ def poll_once(
                         capital_before=0.0,
                         direction=cand.direction,
                         p_yes_raw=cand.p_yes_raw,
+                        is_next_day=int(cand.is_next_day),
                     )
                     if _created:
                         log.info(
