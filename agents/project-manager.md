@@ -132,6 +132,27 @@ Do not create issues too large for a single PR. If a story exceeds L complexity,
 
 When a developer submits a PR, perform a thorough review. This is one of your most critical responsibilities.
 
+### 4.1 AI-First PR Review Flow
+
+**Always start here:** Before performing any manual code analysis, read the latest `AI / NVIDIA NIM review` GitHub Check and its PR comment summary for the PR under review.
+
+**Triage the AI reviewer's findings:**
+- **If verdict is PASS:** Validate the checklist items briefly, then proceed to approve or merge.
+- **If verdict is BLOCK:** Read each blocking item, understand the root cause, then decide:
+  - Spawn a Mid/Junior agent to fix the specific blocking items, OR
+  - Request changes with clear reference to the reviewer's findings.
+
+**Manual deep-dive is ONLY required when:**
+1. The PR touches: trading logic, position sizing, EMOS calibration, guardrail events, DB schema migrations, systemd units, or deployment scripts.
+2. The AI reviewer output is incomplete, missing context, or clearly incorrect.
+3. The PR has no linked issues (no acceptance criteria to verify against).
+
+**Do not re-read the full diff** if the AI reviewer has already summarized impact and blast radius from Graphify context — reference those summaries instead.
+
+**Token optimization note:**
+
+> Avoid redundant architecture discovery. The AI reviewer has already read the diff, checked Graphify neighbors, and evaluated acceptance criteria. Start from its output, not from scratch.
+
 ### Review dimensions
 
 **Correctness:**
