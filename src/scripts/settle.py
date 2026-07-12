@@ -1,6 +1,4 @@
 """Run once a day after NWS publishes the Daily Climate Report (typically ~9am local next day)."""
-import gzip
-import json
 import logging
 import os
 from datetime import date, datetime, timedelta, timezone
@@ -11,7 +9,7 @@ log = logging.getLogger(__name__)
 from src.config import STATIONS, LOG_DIR, CANDIDATES_CSV, STATION_TZ, LIVE_TRADES_JSONL
 from src.http_client import fetch
 from src.data.polymarket import fetch_market_final_price, fetch_market_resolution
-from src.utils.log_rotation import iter_rotated_jsonl, rotated_sources
+from src.utils.log_rotation import iter_rotated_jsonl
 
 # How many days back each settle run re-checks unsettled rows. Markets that
 # have not resolved on Polymarket by the 12:00 UTC run (the common case — UMA
@@ -341,72 +339,6 @@ def resolve_trade_date(row: dict) -> "date | None":
         return None
 
 
-def _enrich_jsonl_with_settlements(patches: dict[str, dict]) -> None:
-    """Best-effort: write pnl/actual_high/yes_won back into the rotated JSONL
-    record matching each order_id, so the dashboard's closed-positions panel
-    (src/dashboard/api.py:_settled_jsonl_positions, which still reads
-    live_trades.jsonl rather than the DB) can display DB-settled trades.
-
-    Patches the FIRST outcome='filled' record with a matching order_id and no
-    existing 'pnl' field across every rotated source (plain + dated .jsonl +
-    .jsonl.gz). Unmatched/unparseable lines are preserved verbatim -- this
-    never drops data the way the old whole-file rewrite could.
-
-    Never raises: DB settlement (the source of truth as of #609) must succeed
-    regardless of JSONL write-back failures.
-    """
-    if not patches:
-        return
-    remaining = set(patches)
-    try:
-        for path in rotated_sources(LIVE_TRADES_JSONL):
-            if not remaining:
-                break
-            is_gz = path.suffix == ".gz"
-            try:
-                opener = gzip.open(path, "rt", encoding="utf-8") if is_gz else open(path, "r", encoding="utf-8")
-                with opener as f:
-                    lines = f.readlines()
-            except OSError as e:
-                log.warning("[settle] jsonl enrichment: could not read %s: %s", path, e)
-                continue
-
-            changed = False
-            new_lines = []
-            for line in lines:
-                stripped = line.strip()
-                rec = None
-                if stripped:
-                    try:
-                        rec = json.loads(stripped)
-                    except json.JSONDecodeError:
-                        rec = None
-                order_id = rec.get("order_id") if rec else None
-                if (
-                    rec is not None
-                    and order_id in remaining
-                    and rec.get("outcome") == "filled"
-                    and "pnl" not in rec
-                ):
-                    rec.update(patches[order_id])
-                    new_lines.append(json.dumps(rec, default=str) + "\n")
-                    remaining.discard(order_id)
-                    changed = True
-                else:
-                    new_lines.append(line)
-
-            if not changed:
-                continue
-            try:
-                writer = gzip.open(path, "wt", encoding="utf-8") if is_gz else open(path, "w", encoding="utf-8")
-                with writer as f:
-                    f.writelines(new_lines)
-            except OSError as e:
-                log.warning("[settle] jsonl enrichment: could not write %s: %s", path, e)
-    except Exception as e:
-        log.warning("[settle] jsonl enrichment failed (non-fatal): %s", e)
-
-
 def settle_live_trades(target: date, truth: dict[str, float], db=None) -> None:
     """Settle live held-to-expiry trades for *target* from the DB ``trades`` table.
 
@@ -439,15 +371,20 @@ def settle_live_trades(target: date, truth: dict[str, float], db=None) -> None:
       shared between the trades row and its open_positions row) so resolved
       markets don't linger as "open" after settlement.
 
-    ``live_trades.jsonl`` is enrichment only, never the source of truth:
+    ``live_trades.jsonl`` is read-only enrichment for the settlements-table
+    writer below, never the source of truth for the dashboard:
     - _write_db_settlements() (the `settlements` table writer) is fed from
       iter_rotated_jsonl() so it still sees rotated per-day files; any read
       or write failure there is logged and swallowed, never blocking DB
       settlement below.
-    - After DB settlement, pnl/actual_high/yes_won are best-effort patched
+    - Issue #617: this used to also best-effort patch pnl/actual_high/yes_won
       back into the matching rotated JSONL record (by order_id) so the
-      dashboard's closed-positions panel, which still reads live_trades.jsonl,
-      can display these trades. See _enrich_jsonl_with_settlements().
+      dashboard's closed-positions panel could display these trades (see
+      the removed _enrich_jsonl_with_settlements()). The panel now reads
+      settled held-to-expiry trades directly from this table via
+      db.get_settled_live_trades() (src/dashboard/api.py:_db_settled_positions),
+      so that write-back is gone -- this function no longer touches
+      live_trades.jsonl at all.
     """
     try:
         records = list(iter_rotated_jsonl(LIVE_TRADES_JSONL))
@@ -468,7 +405,6 @@ def settle_live_trades(target: date, truth: dict[str, float], db=None) -> None:
     n_settled = 0
     n_pending = 0
     skip_reasons: list[str] = []
-    jsonl_patches: dict[str, dict] = {}
     earliest = target - timedelta(days=SETTLE_LOOKBACK_DAYS)
 
     for r in db.get_unsettled_live_trades():
@@ -506,7 +442,6 @@ def settle_live_trades(target: date, truth: dict[str, float], db=None) -> None:
                     ticker[:14], row_id,
                 )
                 continue
-            actual = truth.get(station)  # may be None; only needed for JSONL patch
             resolution_source = "gamma"
         else:
             # Legacy synthetic ticker: no market to query. METAR truth is the
@@ -546,9 +481,6 @@ def settle_live_trades(target: date, truth: dict[str, float], db=None) -> None:
             order_id = r.get("order_id")
             if order_id:
                 db.close_position(order_id)  # drop the resolved open_positions row
-                jsonl_patches[order_id] = {
-                    "pnl": pnl, "actual_high": actual, "yes_won": yes_won,
-                }
             n_settled += 1
             log.debug(
                 "[settle] [live] id=%s station=%s side=%s yes_won=%s won=%s pnl=%.4f"
@@ -558,8 +490,6 @@ def settle_live_trades(target: date, truth: dict[str, float], db=None) -> None:
         except Exception as e:
             skip_reasons.append(f"id={row_id} update failed: {e}")
             log.warning("[settle] [live] DB update failed for row %s: %s", row_id, e)
-
-    _enrich_jsonl_with_settlements(jsonl_patches)
 
     if n_settled == 0 and n_pending == 0 and not skip_reasons:
         log.info("[settle] no live trades to update for %s", target)

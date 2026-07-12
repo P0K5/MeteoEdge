@@ -8,7 +8,13 @@ Covers:
 - Already-settled rows are skipped on rerun (idempotent).
 - Legacy rows without end_date settle via the station-local ts fallback.
 - open_positions cleanup after settlement.
-- Best-effort JSONL enrichment write-back for the dashboard.
+
+Issue #617: the settle.py JSONL enrichment write-back for the dashboard
+closed-positions panel (_enrich_jsonl_with_settlements()) was removed once
+the panel started reading settled held-to-expiry trades directly from the
+trades table (db.get_settled_live_trades(), see src/dashboard/api.py and
+src/tests/test_dashboard.py::TestDbSettledPositionsParity) -- there is no
+longer a JSONL write-back to test here.
 
 Dates are anchored relative to today (not hardcoded) so these tests do not
 rot as "today" moves forward.
@@ -416,42 +422,40 @@ class TestOpenPositionsCleanup:
 
 
 # ---------------------------------------------------------------------------
-# Best-effort JSONL enrichment for the dashboard closed-positions panel
+# Issue #617: the dashboard's closed-positions panel now reads settled
+# held-to-expiry trades directly from the trades table
+# (db.get_settled_live_trades()) instead of a JSONL write-back -- the old
+# _enrich_jsonl_with_settlements() write-back tested here was removed.
 # ---------------------------------------------------------------------------
 
-class TestJsonlEnrichment:
-    def test_pnl_written_back_to_matching_jsonl_record(self, tmp_path, monkeypatch):
+class TestDbSettledLiveTrades:
+    def test_settled_row_selectable_via_get_settled_live_trades(self, tmp_path, monkeypatch):
         db = _fresh_db(tmp_path)
+        _no_jsonl(tmp_path, monkeypatch)
         target = date.today() - timedelta(days=1)
         _insert_live(db, order_id="ord-enrich", side="NO", price_cents=70,
                      size_eur=5.0, end_date=target.isoformat())
 
-        record = {
-            "order_id": "ord-enrich", "station": "KORD", "outcome": "filled",
-            "end_date": target.isoformat(), "bracket_low": 70.0, "bracket_high": 72.0,
-            "side": "NO", "price_cents": 70, "size_eur": 5.0,
-        }
-        jsonl = _stale_jsonl(tmp_path, monkeypatch, records=[record])
-
         settle.settle_live_trades(target, {"KORD": 60.0}, db=db)
 
-        patched = [json.loads(line) for line in jsonl.read_text().splitlines() if line.strip()]
-        assert len(patched) == 1
-        assert "pnl" in patched[0]
-        assert patched[0]["pnl"] == round((100 - 70) / 100 * (5.0 / 0.70), 4)
-        assert patched[0]["yes_won"] is False
+        settled = db.get_settled_live_trades()
+        assert len(settled) == 1
+        assert settled[0]["order_id"] == "ord-enrich"
+        assert settled[0]["pnl"] == round((100 - 70) / 100 * (5.0 / 0.70), 4)
+        assert settled[0]["settled_at"] is not None
         db.close()
 
-    def test_enrichment_failure_never_blocks_db_settlement(self, tmp_path, monkeypatch):
-        """Even if the JSONL directory cannot be read/written, DB settlement
-        must still succeed (JSONL is enrichment-only, never source of truth)."""
+    def test_settlement_survives_unreadable_jsonl_directory(self, tmp_path, monkeypatch):
+        """Even if the JSONL directory cannot be read (used only by
+        _write_db_settlements, the `settlements` table writer), DB settlement
+        of the trades table must still succeed -- JSONL is never the source
+        of truth for live trades."""
         db = _fresh_db(tmp_path)
         target = date.today() - timedelta(days=1)
         _insert_live(db, order_id="ord-robust", side="NO", price_cents=70,
                      size_eur=5.0, end_date=target.isoformat())
 
-        # Point at a path whose parent doesn't exist and can't be created
-        # implicitly by rotated_sources() -- read/list should just no-op.
+        # Point at a path whose parent doesn't exist -- read should just no-op.
         monkeypatch.setattr(settle, "LIVE_TRADES_JSONL",
                              Path("/nonexistent-dir-xyz/live_trades.jsonl"))
 

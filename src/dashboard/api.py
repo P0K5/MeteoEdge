@@ -773,20 +773,109 @@ def _stopped_positions() -> list[ClosedPositionOut]:
 def _settled_jsonl_positions() -> list[ClosedPositionOut]:
     """Return settled hold-to-expiry trades from live_trades.jsonl.
 
-    settle.py writes pnl/actual_high/yes_won back to outcome='filled' records
-    after each market resolves.  The presence of a 'pnl' field is the signal
-    that settlement has been recorded.  This catches positions that were
-    redeemed on Polymarket and therefore disappeared from the wallet API.
+    NOTE (issue #617): superseded by _db_settled_positions() for the live
+    dashboard render path — _positions_from_wallet() no longer calls this.
+    settle_live_trades() (#609) writes pnl/settled_at directly onto the trades
+    row and no longer patches it back into live_trades.jsonl (the write-back
+    helper, _enrich_jsonl_with_settlements(), was removed from settle.py), so
+    this will return an empty list for any trade settled after that change.
+    Kept only so historical/rotated JSONL files with pre-#617 enrichment can
+    still be parsed if ever needed; not otherwise load-bearing.
+
+    settle.py used to write pnl/actual_high/yes_won back to outcome='filled'
+    records after each market resolves.  The presence of a 'pnl' field was the
+    signal that settlement had been recorded.
 
     Records that also have an outcome='sold' sibling (stop-loss / take-profit
-    exits) are already captured by _stopped_positions() — settle.py skips
-    writing pnl back to those filled records, so they won't appear here.
+    exits) are already captured by _stopped_positions() — settle.py skipped
+    writing pnl back to those filled records, so they never appeared here.
 
     Reads from the mtime-keyed cache: live_trades.jsonl is parsed at most once
     per file change across all three callers in _positions_from_wallet().
     """
     _, _, settled = _cached_live_trades()
     return settled
+
+
+def _db_settled_positions() -> list[ClosedPositionOut]:
+    """Return held-to-expiry settled live positions from the trades table (#617).
+
+    Replaces _settled_jsonl_positions() as the source feeding
+    _positions_from_wallet()'s closed_positions list: settle_live_trades()
+    (#609) writes pnl/settled_at directly onto the trades row, so this reads
+    that instead of depending on live_trades.jsonl.
+
+    Early exits (outcome='sold', stop-loss/take-profit/manual) are NOT covered
+    here — those remain sourced from live_trades.jsonl via _stopped_positions()
+    / _cached_live_trades(), because order_manager writes those JSONL records
+    directly at sell time, independently of settle.py, so they are unaffected
+    by the removal of the settle.py JSONL write-back and still carry a usable
+    token_id for the dashboard's per-position chart.
+
+    Known limitation: the matching open_positions row is deleted by settle.py
+    at settlement time (db.close_position(order_id)), so these entries never
+    carry a token_id (no chart link) or the original market `question` text —
+    the frontend already falls back to a synthesized question string from
+    station/side/bracket when `question` is empty (see buildQuestion() in
+    static/index.html), and to a plain (non-expandable) closed-position row
+    when token_id is empty, both pre-existing fallbacks unaffected by this
+    change. Deliberately does not call the Gamma API to look up the real
+    question text here, to avoid adding synchronous per-row HTTP calls to the
+    /api/portfolio request path.
+
+    Returns:
+        (positions, condition_ids) where condition_ids is the set of ``0x...``
+        market condition IDs (the trades.ticker value for real markets) among
+        the settled rows. _positions_from_wallet() uses this in place of a
+        token_id lookup (unavailable post-settlement, see above) to skip
+        Polymarket wallet rows that are still ``redeemable`` for a market we
+        have already settled from the DB — otherwise that market would be
+        double-counted via the wallet API's unreliable curPrice-based
+        win/loss guess (see the comment at the wallet loop's redeemable
+        branch in _positions_from_wallet()).
+    """
+    if _db is None:
+        return [], set()
+    try:
+        rows = _db.get_settled_live_trades()
+    except Exception:
+        logger.warning("_db_settled_positions: DB query failed", exc_info=True)
+        return [], set()
+
+    result: list[ClosedPositionOut] = []
+    condition_ids: set[str] = set()
+    for r in rows:
+        try:
+            entry_cents = int(r.get("actual_price") or 50)
+            pnl = float(r["pnl"]) if r.get("pnl") is not None else 0.0
+            is_win = pnl > 0
+            size_eur = r.get("size_eur")
+            if size_eur is None:
+                size_eur = r.get("capital_before") or 0
+            shares = float(size_eur) / (entry_cents / 100) if entry_cents else 0.0
+            result.append(ClosedPositionOut(
+                question="",
+                station=str(r.get("station") or ""),
+                side=str(r.get("side") or "NO"),
+                bracket_low=float(r.get("bracket_low") or 0.0),
+                bracket_high=float(r.get("bracket_high") or 0.0),
+                entry_price=entry_cents,
+                exit_price=100 if is_win else 0,
+                pnl=pnl,
+                shares=round(shares, 4),
+                closed_at=str(r.get("end_date") or r.get("ts") or ""),
+                token_id="",
+                exit_reason="won" if is_win else "lost",
+            ))
+            ticker = str(r.get("ticker") or "")
+            if ticker.startswith("0x"):
+                condition_ids.add(ticker)
+        except Exception:
+            logger.warning(
+                "_db_settled_positions: skipping malformed row id=%s",
+                r.get("id"), exc_info=True,
+            )
+    return result, condition_ids
 
 
 def _nws_forecast_for_title(title: str) -> float | None:
@@ -902,9 +991,15 @@ def _positions_from_wallet() -> tuple[list[PositionOut], list[ClosedPositionOut]
         offset += 100
 
     enrichment = _db_open_positions_enrichment()
-    # Single cached pass over live_trades.jsonl — all three callers below share
-    # this result; the file is parsed at most once per file change (issue #170).
-    jsonl_enrichment, stopped_list, settled_list = _cached_live_trades()
+    # Single cached pass over live_trades.jsonl for enrichment + early-exit
+    # (sold) positions, which are still written directly by order_manager at
+    # sell time and unaffected by issue #617. Held-to-expiry settlements no
+    # longer come from this parse — see _db_settled_positions() below.
+    jsonl_enrichment, stopped_list, _unused_settled = _cached_live_trades()
+    # Issue #617: held-to-expiry settlements now come from the trades table
+    # directly (settle_live_trades() writes pnl/settled_at onto the row) --
+    # settle.py no longer patches these back into live_trades.jsonl.
+    settled_list, db_settled_condition_ids = _db_settled_positions()
     snap_probs = _latest_model_probs()
     # Fallback prob source for stations outside scanner active-hours window (#425).
     # The always-on re-pricer writes position_snapshots.jsonl 24/7; we use it
@@ -945,17 +1040,23 @@ def _positions_from_wallet() -> tuple[list[PositionOut], list[ClosedPositionOut]
     open_positions: list[PositionOut] = []
     closed_positions: list[ClosedPositionOut] = []
 
-    # JSONL-driven outcomes (stopped + settled) are authoritative for win/loss
-    # because settle.py records the realised pnl against actual_high vs the
-    # bracket.  The Polymarket Data API reports curPrice=0 for BOTH winning
-    # and losing redeemable tokens once the orderbook is gone, which would
-    # otherwise label every unredeemed winner as a -initial_value loss.
-    # Build the JSONL-covered token set up front so the wallet redeemable
-    # branch can defer to it.
+    # JSONL/DB-driven outcomes (stopped + settled) are authoritative for
+    # win/loss because settle.py records the realised pnl against actual_high
+    # vs the bracket.  The Polymarket Data API reports curPrice=0 for BOTH
+    # winning and losing redeemable tokens once the orderbook is gone, which
+    # would otherwise label every unredeemed winner as a -initial_value loss.
+    # Build the covered-position sets up front so the wallet redeemable
+    # branch can defer to them.
+    #
+    # stopped_list (early exits) still carries a real token_id -- those JSONL
+    # records are written directly by order_manager at sell time, unaffected
+    # by issue #617.  settled_list (held-to-expiry, now DB-sourced) no longer
+    # carries a token_id (the open_positions row is deleted at settlement
+    # time) -- it's matched instead by market condition ID via
+    # db_settled_condition_ids, since trades.ticker stores the same 0x
+    # condition ID the wallet API reports as `conditionId` for a position.
     jsonl_settled_tokens: set[str] = {
         p.token_id for p in stopped_list if p.token_id
-    } | {
-        p.token_id for p in settled_list if p.token_id
     }
 
     for row in rows:
@@ -974,12 +1075,20 @@ def _positions_from_wallet() -> tuple[list[PositionOut], list[ClosedPositionOut]
         my_prob = int(enrich.get("predicted_price", avg_entry_cents))
 
         if row.get("redeemable"):
-            # Resolved market.  Skip if JSONL already carries an authoritative
-            # outcome for this token — that record will be appended below and
-            # gets the correct win/loss + pnl from settle.py.
-            if token_id in jsonl_settled_tokens:
+            # Resolved market.  Skip if JSONL/DB already carries an
+            # authoritative outcome for this position — that record will be
+            # appended below and gets the correct win/loss + pnl from
+            # settle.py.  Early exits are matched by token_id (jsonl_settled_
+            # tokens); DB-sourced held-to-expiry settlements no longer carry
+            # a token_id post-settlement, so those are matched by market
+            # condition ID instead (db_settled_condition_ids) — see the
+            # comment above where these sets are built.
+            condition_id = str(row.get("conditionId") or "")
+            if token_id in jsonl_settled_tokens or (
+                condition_id and condition_id in db_settled_condition_ids
+            ):
                 continue
-            # No JSONL record (e.g. manual trade not made by the bot): fall
+            # No JSONL/DB record (e.g. manual trade not made by the bot): fall
             # back to Polymarket Data API.  Note: curPrice is unreliable for
             # resolved markets without an active orderbook — it's 0 even for
             # winning tokens — so this branch may still misclassify rare
@@ -1038,13 +1147,14 @@ def _positions_from_wallet() -> tuple[list[PositionOut], list[ClosedPositionOut]
                 token_id=token_id,
             ))
 
-    # Append JSONL-authoritative outcomes.  The wallet loop above already
-    # skipped any redeemable row whose token_id is in jsonl_settled_tokens,
-    # so there are no token_id collisions with the wallet-produced entries.
-    # Stopped (sold) and settled (held-to-expiry with pnl) can themselves
-    # overlap for a single token: settle.py skips writing pnl back to filled
-    # records that have a sibling sold record, so in practice each token
-    # appears in at most one of the two lists.  Still dedup defensively.
+    # Append JSONL/DB-authoritative outcomes.  The wallet loop above already
+    # skipped any redeemable row whose token_id is in jsonl_settled_tokens or
+    # whose market condition ID is in db_settled_condition_ids, so there are
+    # no collisions with the wallet-produced entries.  stopped_list entries
+    # always carry a token_id (JSONL, unaffected by #617) and are deduped
+    # defensively against each other; settled_list entries (DB-sourced, #617)
+    # never carry a token_id post-settlement, so they are always appended --
+    # dedup for those already happened above via db_settled_condition_ids.
     seen_token_ids = {p.token_id for p in closed_positions if p.token_id}
     for p in stopped_list:
         if not p.token_id or p.token_id not in seen_token_ids:
