@@ -99,21 +99,26 @@ def _write_csv(path, fieldnames, rows) -> None:
 
 
 def _make_trades_db(path, rows) -> None:
-    """Minimal synthetic meteoedge.db::trades fixture (issue #682 DB path)."""
+    """Minimal synthetic meteoedge.db::trades fixture (issue #682 DB path).
+
+    is_next_day defaults to 0 (issue #704) for every row that doesn't
+    explicitly pass it, matching the real trades table's migration default.
+    """
     con = sqlite3.connect(str(path))
     con.execute(
         "CREATE TABLE trades (ts TEXT, station TEXT, ticker TEXT, bracket_low REAL, "
         "bracket_high REAL, side TEXT, p_yes_raw REAL, actual_price INTEGER, "
-        "pnl REAL, settled_at TEXT)"
+        "pnl REAL, settled_at TEXT, is_next_day INTEGER NOT NULL DEFAULT 0)"
     )
     for r in rows:
         con.execute(
             "INSERT INTO trades (ts, station, ticker, bracket_low, bracket_high, side, "
-            "p_yes_raw, actual_price, pnl, settled_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            "p_yes_raw, actual_price, pnl, settled_at, is_next_day) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
             (
                 r.get("ts"), r.get("station"), r.get("ticker"), r.get("bracket_low"),
                 r.get("bracket_high"), r.get("side"), r.get("p_yes_raw"),
                 r.get("actual_price"), r.get("pnl"), r.get("settled_at"),
+                r.get("is_next_day", 0),
             ),
         )
     con.commit()
@@ -600,6 +605,24 @@ class TestLoadSettledCandidatesDb:
 
     def test_missing_db_returns_empty_list(self, tmp_path):
         assert load_settled_candidates_db(tmp_path / "nope.db", since_ts="2026-07-01") == []
+
+    def test_excludes_next_day_rows(self, tmp_path):
+        """Issue #704: this is exactly the settled-candidates population
+        Amendment 1 (#682) was written to keep clean -- a next-day shadow
+        row (different sigma/lead-time regime, #687) must not appear here
+        even though it otherwise satisfies settled_at/p_yes_raw."""
+        db_path = tmp_path / "meteoedge.db"
+        _make_trades_db(db_path, [
+            {"ts": "2026-07-05T10:00:00+00:00", "station": "KORD", "ticker": "SAME-DAY",
+             "side": "NO", "p_yes_raw": 0.01, "actual_price": 20, "pnl": 0.5,
+             "settled_at": "2026-07-06T00:00:00+00:00", "is_next_day": 0},
+            {"ts": "2026-07-05T10:00:00+00:00", "station": "KORD", "ticker": "NEXT-DAY",
+             "side": "NO", "p_yes_raw": 0.01, "actual_price": 20, "pnl": 0.5,
+             "settled_at": "2026-07-06T00:00:00+00:00", "is_next_day": 1},
+        ])
+        rows = load_settled_candidates_db(db_path, since_ts="2026-07-01")
+        assert len(rows) == 1
+        assert rows[0]["ticker"] == "SAME-DAY"
 
 
 class TestPopulationSaturation:

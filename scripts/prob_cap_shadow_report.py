@@ -311,6 +311,11 @@ def load_settled_candidates_db(meteoedge_db: "Path | None", since_ts: str,
     diagnosis-comment mapping. yes_won -- whether the *YES* outcome
     occurred, the flag every downstream stat here keys off -- is derived
     from that: a NO-side trade wins money exactly when YES did NOT happen.
+
+    Issue #704: filters to ``is_next_day = 0`` -- this is exactly the
+    settled-candidates population Amendment 1 (#682) was written to keep
+    clean, and next-day shadow rows (different sigma/lead-time regime, #687)
+    would otherwise contaminate it once NEXT_DAY_EVALUATION is on.
     """
     con = _connect_ro(meteoedge_db)
     if con is None:
@@ -321,7 +326,8 @@ def load_settled_candidates_db(meteoedge_db: "Path | None", since_ts: str,
         cur = con.execute(
             "SELECT ts, station, ticker, bracket_low, bracket_high, side, "
             "p_yes_raw, actual_price, pnl FROM trades "
-            "WHERE settled_at IS NOT NULL AND p_yes_raw IS NOT NULL AND ts >= ?",
+            "WHERE settled_at IS NOT NULL AND p_yes_raw IS NOT NULL AND ts >= ? "
+            "AND is_next_day = 0",
             (since_ts,),
         )
         rows = cur.fetchall()

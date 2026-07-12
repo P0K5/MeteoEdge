@@ -415,17 +415,24 @@ class _FakeDB:
     def get_all_config(self):
         return self._config
 
-    def get_trades(self, limit=50, mode=None, direction=None):
-        return [t for t in self._trades if mode is None or t.get("mode") == mode]
+    def get_trades(self, limit=50, mode=None, direction=None, is_next_day=None):
+        return [
+            t for t in self._trades
+            if (mode is None or t.get("mode") == mode)
+            and (is_next_day is None or t.get("is_next_day", 0) == is_next_day)
+        ]
 
 
 def _trade(station, side, ticker, actual_price, won: "bool | None" = None,
-           ts="2026-06-01T12:00:00", mode="shadow", direction="high"):
+           ts="2026-06-01T12:00:00", mode="shadow", direction="high",
+           is_next_day=0):
     """Build a shadow trade row the way settle_shadow_trades() leaves it:
     pnl set directly on the row (win: (100-ask)/100, loss: -ask/100), no
     settlements-table join (issue #655 — shadow trades are NEVER written to
     the settlements table, only live-trade markets are). won=None means the
     trade is still unsettled: pnl stays None, matching a real pending row.
+
+    is_next_day=0 by default (issue #704) -- matches every pre-#704 row.
     """
     if won is None:
         pnl = None
@@ -434,7 +441,7 @@ def _trade(station, side, ticker, actual_price, won: "bool | None" = None,
     return {
         "station": station, "side": side, "ticker": ticker,
         "actual_price": actual_price, "pnl": pnl, "ts": ts, "mode": mode,
-        "direction": direction,
+        "direction": direction, "is_next_day": is_next_day,
     }
 
 
@@ -611,6 +618,74 @@ class TestComputePromotionBarExcludesNonHighDirection:
 
         rows = compute_promotion_bar(db)
         assert not any(r["station"] == "KMIA" for r in rows)
+
+
+class TestComputePromotionBarExcludesNextDay:
+    """Issue #704 (Gap 1): compute_promotion_bar must exclude next-day shadow
+    rows (is_next_day=1) so the different sigma/lead-time regime introduced
+    by next-day evaluation (#687) cannot contaminate the win-rate/Wilson
+    bound stats this bar is built on."""
+
+    def test_next_day_rows_excluded_from_station_group(self):
+        # 30 same-day NO trades (all wins) form a green row for RJTT.
+        # 5 additional is_next_day=1 rows for the SAME station+side, all
+        # wins, would inflate n to 35 and change the stats if not filtered.
+        same_day = [_trade("RJTT", "NO", f"rjtt-s{i}", 65, won=True) for i in range(30)]
+        next_day = [
+            _trade("RJTT", "NO", f"rjtt-n{i}", 65, won=True, is_next_day=1)
+            for i in range(5)
+        ]
+        db = _FakeDB(same_day + next_day)
+
+        rows = compute_promotion_bar(db)
+        row = next(r for r in rows if r["station"] == "RJTT" and r["side"] == "NO")
+
+        assert row["n"] == 30, "is_next_day=1 rows must not be counted"
+        assert row["wins"] == 30
+
+    def test_station_with_only_next_day_rows_is_absent(self):
+        next_day = [
+            _trade("ZSPD", "NO", f"zspd-n{i}", 65, won=True, is_next_day=1)
+            for i in range(10)
+        ]
+        db = _FakeDB(next_day)
+
+        rows = compute_promotion_bar(db)
+        assert not any(r["station"] == "ZSPD" for r in rows)
+
+
+class TestHasSettledLossExcludesNextDay:
+    """Issue #704: _has_settled_loss() (gate 5's real implementation, called
+    unmocked here) must exclude next-day rows for the same reason
+    compute_promotion_bar() does -- a next-day-only loss should not count
+    toward "this station has proven it can lose" for same-day promotion."""
+
+    def _db_with_shadow_settlement(self, station, ticker, side, resolved_yes, is_next_day):
+        from src.data.db import Database
+        db = Database(":memory:")
+        db.insert_settlement(
+            ts="2026-06-01T12:00:00Z", station=station, ticker=ticker,
+            bracket_low=80.0, bracket_high=82.0, actual_high_f=90.0,
+            resolved_yes=resolved_yes,
+        )
+        db.upsert_shadow_trade(
+            ts="2026-06-01T10:00:00Z", station=station, ticker=ticker,
+            bracket_low=80.0, bracket_high=82.0, side=side,
+            predicted_price=70, actual_price=70, predicted_edge=10.0,
+            is_next_day=is_next_day,
+        )
+        return db
+
+    def test_same_day_loss_counts(self):
+        from src.model.promotion_gate import _has_settled_loss
+        # side=YES, resolved_yes=0 -> YES lost.
+        db = self._db_with_shadow_settlement("KJFK", "kjfk-sameday", "YES", 0, is_next_day=0)
+        assert _has_settled_loss(db, "KJFK") is True
+
+    def test_next_day_only_loss_does_not_count(self):
+        from src.model.promotion_gate import _has_settled_loss
+        db = self._db_with_shadow_settlement("KJFK", "kjfk-nextday", "YES", 0, is_next_day=1)
+        assert _has_settled_loss(db, "KJFK") is False
 
 
 class TestDaysCoverageLocalDate:

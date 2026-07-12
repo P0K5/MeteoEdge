@@ -384,6 +384,12 @@ class Candidate:
     # a forecast-only evaluation of a station's next market, always shadow=True
     # regardless of station overrides (no live entries from next-day eval).
     is_next_day: bool = field(default=False)
+    # True when a same-station LIVE position was open at next-day-evaluation
+    # time (issue #704, Gap 2) -- read-only telemetry so the shadow window can
+    # quantify cross-day exposure overlap; always False for same-day
+    # candidates (is_next_day=False). Never used to gate or alter the live
+    # entry decision.
+    today_position_open: bool = field(default=False)
 
 
 def no_entry_margin_gap(bracket: Bracket, state: WeatherState) -> float | None:
@@ -558,6 +564,23 @@ def scan_markets(
             _today_mins = _today_mins_by_station.get(_station)
             if _today_mins is not None and _today_mins >= MIN_MINUTES_TO_SETTLEMENT:
                 continue  # today's market still live for this station -- not eligible
+            # Issue #704 (Note 3): deliberately `min(_dates)` -- the closest
+            # future-dated market -- rather than a strict `today_utc + 1`.
+            # If a station's day+1 market is unlisted but day+2 exists, this
+            # picks a 36-60h-lead market instead of hard-skipping the station
+            # for the day. Decision: keep `min(_dates)` rather than restrict to
+            # strict day+1, because the actual lead is already recorded per
+            # candidate row and does not need a second column to be
+            # analyzable. Below, `mins_left` for the next-day branch is that
+            # market's OWN lead time (its close is this future date, not
+            # today's) -- it flows unchanged into
+            # Candidate.minutes_to_settlement and from there into
+            # candidates.minutes_to_settlement (see run.py's insert_candidate
+            # call), so the shadow window can already segment by actual lead
+            # bucket (e.g. ~24h vs ~48h) without any new instrumentation.
+            # Shadow-only routing (is_next_day_eval forces shadow=True) and
+            # the lead-binned EMOS sigma machinery (#665) make a stale/long
+            # lead tolerable in the meantime.
             eligible_next_day_date[_station] = min(_dates)  # closest future date
 
     for market in markets:
@@ -626,6 +649,10 @@ def scan_markets(
             state = weather[station]
             city = STATION_TO_CITY.get(station, station)
 
+            # Only meaningful for next-day candidates (issue #704, Gap 2);
+            # stays False for the same-day path below.
+            _next_day_today_position_open = False
+
             if is_next_day_eval:
                 # Issue #687: next-day evaluation is its own explicit
                 # probability path -- never true_probability_yes on a doctored
@@ -634,6 +661,14 @@ def scan_markets(
                 # the next-day date, not today's), so it doubles as the lead
                 # hours the #665 lead-bin machinery expects.
                 emos_mode_used = "next_day"
+                # Issue #704 (Gap 2): record whether a same-station LIVE
+                # position is open right now, so the shadow window can
+                # quantify cross-day exposure overlap for the deferred
+                # cross-day-exposure-policy question. Read-only lookup --
+                # never gates or alters this (or any) live decision.
+                _next_day_today_position_open = (
+                    db.has_open_live_position(station) if db is not None else False
+                )
                 _resolved = _resolve_next_day_mu_sigma(
                     station, city, mins_left / 60.0, db, next_day_sigma_multiplier
                 )
@@ -816,6 +851,7 @@ def scan_markets(
                         shadow=(shadow_yes or is_next_day_eval),
                         p_yes_raw=raw_p_yes, ev_yes_raw=ev_yes_raw, ev_no_raw=ev_no_raw,
                         is_next_day=is_next_day_eval,
+                        today_position_open=_next_day_today_position_open,
                     )
             elif ev_no >= min_edge_cents and p_yes <= max_conf_yes_for_no and bracket.no_ask_cents >= min_price_cents:
                 # Next-day: skip the margin gate rather than evaluate it against
@@ -858,6 +894,7 @@ def scan_markets(
                         shadow=(shadow_no or is_next_day_eval),
                         p_yes_raw=raw_p_yes, ev_yes_raw=ev_yes_raw, ev_no_raw=ev_no_raw,
                         is_next_day=is_next_day_eval,
+                        today_position_open=_next_day_today_position_open,
                     )
             else:
                 # YES gates passed but NO gate failed (or both edges below MIN_EDGE_CENTS).
