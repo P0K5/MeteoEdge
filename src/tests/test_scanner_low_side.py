@@ -1,11 +1,12 @@
 """Tests for low-side scanner extension (Issue #455)."""
 from datetime import datetime, timezone
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from src.model.envelope import Bracket
 from src.model.envelope_low import WeatherStateLow  # noqa: used in type hints only
+from src.strategy import scanner as _scanner_mod
 from src.strategy.scanner import (
     Candidate,
     is_highest_temp_market,
@@ -220,3 +221,84 @@ class TestScanMarketsLowSide:
         weather_low = {}  # no state for RJTT
         candidates, _ = scan_markets(weather={}, markets=markets, weather_low=weather_low)
         assert all(c.direction != "low" for c in candidates)
+
+
+# ---------------------------------------------------------------------------
+# Low-side p_yes clamp symmetry (issue #567)
+#
+# Decision recorded: the low-side clamp is now symmetric [1-cap, cap], matching
+# the high-side clamp, instead of the upper-only min(p_yes, cap) PR #564 left
+# in place. No concrete reason was found for the asymmetry (PR #564 preserved
+# it purely to keep that PR's scope to dual-logging, and flagged it as a
+# follow-up) -- see src/strategy/scanner.py's low-side block for the code
+# comment recording this. Still shadow-only / zero live impact per bug #554.
+# ---------------------------------------------------------------------------
+
+def _low_market_with(city: str, group_title: str, yes_price: float, no_price: float,
+                     station_hint: str) -> dict:
+    """Like _low_market but with controllable outcome prices and a far-enough
+    endDate (end of today UTC) so the MIN_MINUTES_TO_SETTLEMENT window gate
+    doesn't swallow the candidate (see bug #554 -- the default `_low_market`
+    endDate of "now" reliably fails that gate, which is part of why the
+    low-side scanner recorded zero shadow trades)."""
+    today_end = datetime.now(timezone.utc).strftime("%Y-%m-%dT23:59:00Z")
+    return {
+        "question": f"Will the lowest temperature in {city} be {group_title}?",
+        "groupItemTitle": group_title,
+        "conditionId": f"0xLOW_{station_hint}",
+        "outcomes": '["Yes","No"]',
+        "outcomePrices": f'[{yes_price}, {no_price}]',
+        "clobTokenIds": '["tok1","tok2"]',
+        "endDate": today_end,
+    }
+
+
+class TestLowSideClampSymmetry:
+    """Issue #567: low-side p_yes clamp must floor at 1-cap, same as high side."""
+
+    def test_low_side_floors_very_low_raw_p_yes_to_one_minus_cap(self):
+        """raw_p_yes=0.001 with MODEL_PROB_CAP=0.95 must floor to p_yes=0.05.
+
+        no_ask=78c is chosen so the NO edge only lands inside
+        [MIN_EDGE_CENTS, MAX_EDGE_CENTS] when the floor applies (capped
+        p_yes=0.05 -> ev_no ~= 15.8c); the un-floored raw value (~0.001)
+        would push ev_no above MAX_EDGE_CENTS and the candidate would be
+        skipped as max_edge instead -- so a candidate appearing at all,
+        with p_yes exactly 0.05, demonstrates the symmetric floor is applied.
+        """
+        market = _low_market_with("Chicago", "55-59°F", yes_price=0.22, no_price=0.78,
+                                   station_hint="KORD")
+        weather_low = {"KORD": _make_weather_low("KORD", current_low_f=50.0)}
+        prob_low_fn = lambda b, s, m, f: 0.001  # noqa: E731
+
+        with patch.object(_scanner_mod, "MODEL_PROB_CAP", 0.95):
+            candidates, _ = scan_markets(weather={}, markets=[market],
+                                         weather_low=weather_low, prob_low_fn=prob_low_fn)
+
+        low_no_cands = [c for c in candidates if c.direction == "low" and c.side == "NO"]
+        assert len(low_no_cands) == 1, f"expected exactly 1 low-side NO candidate, got {low_no_cands}"
+        cand = low_no_cands[0]
+        assert cand.p_yes == 0.05, f"expected p_yes floored to 0.05, got {cand.p_yes}"
+        assert cand.p_yes_raw == 0.001
+        assert cand.confidence == pytest.approx(0.95)
+
+    def test_low_side_midrange_p_yes_unaffected_by_floor(self):
+        """A p_yes already inside [1-cap, cap] must pass through unchanged.
+
+        p_yes=0.90 with yes_ask=72/no_ask=28 clears the YES-side gates
+        (ev_yes~=16.6c, within [MIN_EDGE_CENTS, MAX_EDGE_CENTS]; p_yes=0.90
+        >= MIN_CONFIDENCE_YES=0.85; yes_ask=72 >= MIN_PRICE_CENTS=70).
+        """
+        market = _low_market_with("Chicago", "55-59°F", yes_price=0.72, no_price=0.28,
+                                   station_hint="KORD")
+        weather_low = {"KORD": _make_weather_low("KORD", current_low_f=50.0)}
+        prob_low_fn = lambda b, s, m, f: 0.90  # noqa: E731
+
+        with patch.object(_scanner_mod, "MODEL_PROB_CAP", 0.95):
+            candidates, _ = scan_markets(weather={}, markets=[market],
+                                         weather_low=weather_low, prob_low_fn=prob_low_fn)
+
+        low_cands = [c for c in candidates if c.direction == "low"]
+        assert len(low_cands) == 1, f"expected exactly 1 low-side candidate, got {low_cands}"
+        assert low_cands[0].p_yes == 0.90
+        assert low_cands[0].p_yes_raw == 0.90
