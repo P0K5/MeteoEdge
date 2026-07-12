@@ -9,6 +9,7 @@ from dateutil import parser as dtparse
 from src.config import (
     STATIONS, STATION_TZ, STATION_ACTIVE_HOURS,
     get_source_priority, get_canonical_station_feeds,
+    CLIMB_BUILDER_24H_METAR_STATIONS,
 )
 from src.data.metar import (
     fetch_all_metars_today, compute_daily_high,
@@ -137,6 +138,115 @@ def _get_metars_for_station(station: str, metars_cache: "dict[str, list] | None"
     return metars_cache[station]
 
 
+def _store_metar_if_new(
+    db, station: str, latest_time: datetime, latest_temp_c: float,
+    latest_temp_f: float, raw_metar: dict,
+) -> bool:
+    """Insert a ``source="metar"`` observation row if it's newer than the last one stored.
+
+    Extracted from the persistence step of ``_build_one_station`` so the same
+    dedup-and-store logic can be reused by ``persist_metar_for_climb_stations``
+    (issue #669) without duplicating it. Returns True if a row was inserted.
+    """
+    metar_ts = latest_time.astimezone(timezone.utc).isoformat()
+    prev_metar = db.get_latest_observation("metar", station)
+    if prev_metar is not None and prev_metar["ts"] == metar_ts:
+        return False
+    db.insert_observation(
+        ts=metar_ts,
+        station=station,
+        temp_f=latest_temp_f,
+        temp_native=float(latest_temp_c),
+        unit="C",
+        source="metar",
+        cadence_min=30,
+        is_official=1,
+        raw_json=json.dumps(raw_metar),
+    )
+    return True
+
+
+def _persist_latest_metar(station: str, metars: list, db) -> bool:
+    """Parse and persist the latest METAR reading for *station* if it's new.
+
+    Narrow helper used by ``persist_metar_for_climb_stations`` (issue #669):
+    it does the minimum work needed to get a METAR observation into the
+    ``observations`` table -- no daily-high computation, no forecast fetches,
+    no DEB weighting -- so the always-on climb-table persistence pass stays
+    cheap and side-effect-free beyond the DB write. Mirrors the parsing logic
+    in ``_build_one_station`` exactly (same field names, same °C→°F formula).
+
+    Returns True if a new row was inserted, False on missing data, parse
+    error, or a duplicate (unchanged) timestamp.
+    """
+    if not metars:
+        return False
+    latest = metars[0]
+    latest_temp_c = latest.get("temp")
+    if latest_temp_c is None:
+        return False
+    obs_str = latest.get("reportTime") or latest.get("obsTime")
+    if not obs_str:
+        return False
+    try:
+        latest_temp_f = (float(latest_temp_c) * 9 / 5) + 32
+        latest_time = dtparse.parse(obs_str)
+        if latest_time.tzinfo is None:
+            latest_time = latest_time.replace(tzinfo=timezone.utc)
+    except Exception as e:
+        log.debug("[%s] climb-persist METAR parse error: %s", station, e)
+        return False
+    return _store_metar_if_new(db, station, latest_time, latest_temp_c, latest_temp_f, latest)
+
+
+def persist_metar_for_climb_stations(stations=None, db=None, metars_cache=None) -> dict:
+    """Persist METAR observations 24/7 for climb-table stations (issue #669).
+
+    ``build_weather_for_scanning`` only calls ``_build_one_station`` (which
+    persists the latest METAR as a side effect) for stations inside their
+    ``STATION_ACTIVE_HOURS`` window, and ``build_weather_for_pricing`` only
+    for stations with an open position. Together this meant METAR
+    observations for RKSI/RKPK/ZGSZ/ZGGG/ZHHH/ZHCC/ZSPD
+    (``config.CLIMB_BUILDER_24H_METAR_STATIONS``) were never persisted during
+    their early local-morning hours unless a position happened to be open --
+    exactly the window the climb-table builder
+    (``scripts/build_climb_lookup.py --from-db``, via
+    ``Database.get_hourly_obs_for_climb``) most needs.
+
+    This is intentionally a narrow, cheap pass -- see ``_persist_latest_metar``.
+    It must NOT be used for scanning or pricing decisions: it does not build a
+    ``WeatherState`` and has no active-hours gate by design, mirroring the
+    precedent set by ``build_weather_for_pricing`` (#425) for the same
+    "scanner gate is right for trading, wrong for data collection" reason.
+
+    Args:
+        stations: iterable of (station, lat, lon, city, ...) tuples to persist
+            for. Defaults to the ``CLIMB_BUILDER_24H_METAR_STATIONS`` subset
+            of ``STATIONS``.
+        db: Database instance. No-op (returns ``{}``) if None.
+        metars_cache: optional dict shared with the scanning/low-side builders
+            within the same poll so this doesn't trigger a second HTTP fetch
+            for a station already fetched this cycle (issue #582 pattern).
+
+    Returns dict mapping station code → True if a new METAR row was inserted
+    this call, False otherwise (including "no new data since last poll").
+    """
+    if db is None:
+        return {}
+    if stations is None:
+        stations = [s for s in STATIONS if s[0] in CLIMB_BUILDER_24H_METAR_STATIONS]
+
+    results: dict[str, bool] = {}
+    for station, *_rest in stations:
+        try:
+            metars = _get_metars_for_station(station, metars_cache)
+            results[station] = _persist_latest_metar(station, metars, db)
+        except Exception as exc:
+            log.warning("[%s] climb-persist METAR fetch/store failed: %s", station, exc)
+            results[station] = False
+    return results
+
+
 def _build_one_station(
     station: str,
     lat: float,
@@ -226,20 +336,7 @@ def _build_one_station(
     # Persist the latest METAR so the freshness monitor and intraday
     # correction can use it as a fallback observation source.
     if db is not None:
-        metar_ts = latest_time.astimezone(timezone.utc).isoformat()
-        prev_metar = db.get_latest_observation("metar", station)
-        if prev_metar is None or prev_metar["ts"] != metar_ts:
-            db.insert_observation(
-                ts=metar_ts,
-                station=station,
-                temp_f=latest_temp_f,
-                temp_native=float(latest_temp_c),
-                unit="C",
-                source="metar",
-                cadence_min=30,
-                is_official=1,
-                raw_json=json.dumps(latest),
-            )
+        _store_metar_if_new(db, station, latest_time, latest_temp_c, latest_temp_f, latest)
 
     # Attempt to upgrade latest_temp_f from a fresher high-freq obs
     obs_bias_offset_f = None
