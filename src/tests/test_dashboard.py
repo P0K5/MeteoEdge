@@ -785,20 +785,24 @@ class TestStartDashboardPortGuard:
         import socket
         from src.monitoring.dashboard import start_dashboard
 
-        # Bind the port externally to simulate conflict
+        # Bind an ephemeral port externally to simulate conflict, rather than
+        # the real production port 8000 -- using 8000 here would race with
+        # other tests/processes and leak a live listener for the rest of the
+        # test session (see test_start_dashboard_succeeds_when_port_free).
         external_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         external_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
-            external_socket.bind(("0.0.0.0", 8000))
+            external_socket.bind(("0.0.0.0", 0))
             external_socket.listen(1)
+            test_port = external_socket.getsockname()[1]
 
             # Now try to start the dashboard — should log and return, not crash
             with caplog.at_level(_logging.INFO, logger="src.monitoring.dashboard"):
-                start_dashboard(host="0.0.0.0", port=8000)
+                start_dashboard(host="0.0.0.0", port=test_port)
 
             # Verify the info log was emitted
             assert any(
-                "port 8000 already in use" in record.message
+                f"port {test_port} already in use" in record.message
                 for record in caplog.records
             ), "Expected graceful skip log when port is already in use"
         finally:
@@ -807,19 +811,26 @@ class TestStartDashboardPortGuard:
     def test_start_dashboard_succeeds_when_port_free(self, caplog):
         """start_dashboard() must start uvicorn when port is available."""
         import logging as _logging
+        import socket
         from src.monitoring.dashboard import start_dashboard
 
-        # Port 8000 is assumed free in test environment
-        # (test isolation should prevent conflicts)
-        with caplog.at_level(_logging.INFO, logger="src.monitoring.dashboard"):
-            start_dashboard(host="0.0.0.0", port=8000)
+        # Grab an ephemeral port known to be free right before starting the
+        # dashboard, instead of hardcoding the real production port 8000 --
+        # start_dashboard() spins up a real daemon-thread uvicorn server with
+        # no teardown hook, so reusing 8000 here would leak a live listener
+        # for the rest of the test session and race other tests.
+        probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        probe.bind(("0.0.0.0", 0))
+        test_port = probe.getsockname()[1]
+        probe.close()
 
-        # Verify the success log was emitted
-        # Note: This test will pass if port 8000 is free;
-        # if the port is actually taken in test env, this will log the skip instead.
-        # For a more robust test, use an ephemeral port or mock the socket.
-        # For now, just verify no crash occurs.
-        assert True  # If we reach here, no crash occurred
+        with caplog.at_level(_logging.INFO, logger="src.monitoring.dashboard"):
+            start_dashboard(host="0.0.0.0", port=test_port)
+
+        assert any(
+            f"started at http://0.0.0.0:{test_port}" in record.message
+            for record in caplog.records
+        ), "Expected start_dashboard() to log a successful start on a free port"
 
 
 # ---------------------------------------------------------------------------
