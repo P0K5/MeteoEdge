@@ -101,6 +101,33 @@ class TestSettlementWriter:
         assert len(rows) == 1
         assert rows[0]["market_final_price"] is None
 
+    def test_record_settlement_timestamp_format(self):
+        """record_settlement stores valid ISO 8601 timestamp without double timezone suffix."""
+        import re
+        db = _db()
+        writer = SettlementWriter(db)
+        writer.record_settlement(
+            ticker="KORD-ts-test",
+            station="KORD",
+            bracket_low=32.0, bracket_high=36.0,
+            actual_high_f=34.0,
+            resolved_yes=True,
+        )
+        rows = db.get_settlements("KORD", since="2000-01-01")
+        assert len(rows) == 1
+        ts = rows[0]["ts"]
+
+        # Should match ISO 8601 with timezone offset, NOT double timezone (no trailing Z)
+        # Valid format: 2026-07-14T12:34:56.123456+00:00
+        # Invalid format: 2026-07-14T12:34:56.123456+00:00Z
+        iso8601_pattern = r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?[+-]\d{2}:\d{2}$'
+        assert re.match(iso8601_pattern, ts), f"Timestamp '{ts}' does not match ISO 8601 format (no trailing Z)"
+
+        # Verify SQLite date() function works with the timestamp
+        import sqlite3
+        result = db._conn.execute(f"SELECT date(?) as d", (ts,)).fetchone()
+        assert result[0] is not None, f"SQLite date() returned NULL for timestamp '{ts}'"
+
 
 class TestWriteDbSettlements:
     """Tests for _write_db_settlements() — the settlement writer in settle.py."""
