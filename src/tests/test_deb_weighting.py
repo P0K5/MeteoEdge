@@ -1410,7 +1410,7 @@ class TestRefreshWeightsExclusion:
         start = today - timedelta(days=29)
         settlements = _settlement_rows(start, 20, actual_high=80.0)
         logs = _log_rows(start, 20, ["nws", "open_meteo"],
-                        forecast_fn=lambda m, i: 80.5)
+                          forecast_fn=lambda m, i: 80.5)
 
         db = MagicMock(spec=[
             "get_all_config",
