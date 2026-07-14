@@ -550,6 +550,10 @@ CONFIG_DEFAULTS: "dict[str, str | int | float | bool]" = {
     "MIN_MINUTES_TO_SETTLEMENT": 15,
     "FORCE_EXIT_MINUTES_TO_SETTLEMENT": 60,
     "ZERO_EVAL_WATCHDOG_CONSECUTIVE_TICKS": 4,  # Fire alert after 4 consecutive zero-evaluation ticks with markets available (~20 min at 5-min poll cadence)
+    # Alert when MAX(model_forecast_log.logged_at) is older than this many
+    # hours (issue #717). Default 6h tolerates the normal hourly-to-daily
+    # capture cadence gaps between scheduled capture runs.
+    "FORECAST_CAPTURE_STALENESS_THRESHOLD_HOURS": 6.0,
     # Shadow-only YES thresholds — applied on the YES shadow path only.
     # These are intentionally looser than the live YES gates so the shadow loop
     # can collect data without risking live orders.  The NO side is unaffected.

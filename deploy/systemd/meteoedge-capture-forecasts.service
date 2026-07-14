@@ -5,6 +5,17 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
+# issue #717: on 2026-07-07 a hung herbie GRIB download left this oneshot
+# stuck in `activating` state indefinitely -- systemd timers skip firing
+# while the unit is still active, so the capture job silently stopped
+# running entirely (zero runs, zero errors, for 6+ days). A full run takes
+# ~15-25min based on production log timestamps; 45min gives generous
+# headroom while guaranteeing systemd kills a hung run so the next timer
+# fire (meteoedge-capture-forecasts.timer) can proceed. This is a backstop
+# only -- per-fetch timeouts inside capture_forecasts.py (in-process) are
+# the primary defense so a single hung station/model fails without needing
+# this unit-level kill.
+TimeoutStartSec=45min
 User=p0k5
 WorkingDirectory=/home/p0k5/MeteoEdge
 Environment=PYTHONUNBUFFERED=1

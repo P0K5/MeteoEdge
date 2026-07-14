@@ -1850,6 +1850,18 @@ class Database:
         )
         return [dict(r) for r in cur.fetchall()]
 
+    def get_last_forecast_capture_ts(self) -> "str | None":
+        """Return MAX(logged_at) across all of model_forecast_log, or None if empty.
+
+        Used by the forecast-capture staleness watchdog (issue #717) to detect
+        a silently-dead capture job (src/scripts/capture_forecasts.py, run by
+        the separate meteoedge-capture-forecasts.service/.timer). Read-only --
+        does not touch the capture process itself.
+        """
+        cur = self._conn.execute("SELECT MAX(logged_at) FROM model_forecast_log")
+        row = cur.fetchone()
+        return row[0] if row and row[0] is not None else None
+
     # ------------------------------------------------------------------
     # intraday_corrections
     # ------------------------------------------------------------------

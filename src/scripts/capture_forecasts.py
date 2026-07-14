@@ -112,7 +112,10 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import statistics
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from datetime import datetime, timedelta, timezone
 
 from src.config import STATIONS, STATION_TZ
@@ -138,6 +141,42 @@ _CAPTURE_SCHEDULE: dict[int, list[tuple[int, int]]] = {
     18: [(0, 6)],           # 18Z → today at lead ≈ 6h
     21: [(0, 3)],           # 21Z → today at lead ≈ 3h
 }
+
+# Explicit per-fetch timeout (issue #717). Prime suspect for the 2026-07-07
+# silent death: a hung herbie GRIB download blocked the capture loop
+# indefinitely (log frozen mid-stream, no traceback). 90s comfortably covers
+# a slow-but-healthy GRIB byte-range fetch or HTTP call while still letting
+# the loop move on quickly from a genuinely hung download. This is the
+# in-process defense; deploy/systemd/meteoedge-capture-forecasts.service's
+# TimeoutStartSec is the process-level backstop.
+CAPTURE_FETCH_TIMEOUT_SECONDS = float(os.getenv("CAPTURE_FETCH_TIMEOUT_SECONDS", "90"))
+
+
+def _call_with_timeout(func, *args, _label: str = "", **kwargs):
+    """Call *func(*args, **kwargs)* with a hard wall-clock timeout.
+
+    Runs func in a single-use worker thread and waits up to
+    CAPTURE_FETCH_TIMEOUT_SECONDS. Raises TimeoutError if it does not
+    complete in time -- callers must catch this (along with any exception
+    func itself might raise) and continue with the next station/model rather
+    than letting it propagate (issue #717).
+
+    The worker thread is NOT forcibly killed on timeout (Python has no safe
+    way to do that); it is abandoned to finish or error out on its own in the
+    background while this function returns immediately, which is exactly what
+    keeps the capture loop from stalling the way it did on 2026-07-07.
+    """
+    pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix=f"capture-{_label or 'fetch'}")
+    future = pool.submit(func, *args, **kwargs)
+    try:
+        return future.result(timeout=CAPTURE_FETCH_TIMEOUT_SECONDS)
+    except FutureTimeoutError:
+        raise TimeoutError(
+            f"{_label or getattr(func, '__name__', 'fetch')} "
+            f"exceeded {CAPTURE_FETCH_TIMEOUT_SECONDS:.0f}s timeout"
+        )
+    finally:
+        pool.shutdown(wait=False)
 
 
 def _target_date(day_offset: int) -> str:
@@ -194,16 +233,28 @@ def run_captures(db, *, dry_run: bool = False, force: bool = False) -> None:
                 station, target_date, lead_hours,
             )
 
-            _capture_station(
-                db=db,
-                station=station,
-                lat=lat,
-                lon=lon,
-                target_date=target_date,
-                lead_hours=lead_hours,
-                issued_at=issued_at,
-                dry_run=dry_run,
-            )
+            try:
+                _capture_station(
+                    db=db,
+                    station=station,
+                    lat=lat,
+                    lon=lon,
+                    target_date=target_date,
+                    lead_hours=lead_hours,
+                    issued_at=issued_at,
+                    dry_run=dry_run,
+                )
+            except Exception as exc:
+                # Defense in depth (issue #717): _capture_station already
+                # isolates each channel's fetch with its own timeout + try/
+                # except, but this outer guard guarantees that even an
+                # unexpected failure for one station/lead-time combination
+                # can never kill the rest of the capture run.
+                log.error(
+                    "[capture] station=%s target_date=%s lead_hours=%d capture failed "
+                    "unexpectedly -- continuing with next station/model: %s",
+                    station, target_date, lead_hours, exc, exc_info=True,
+                )
 
 
 def _capture_station(
@@ -219,7 +270,11 @@ def _capture_station(
 ) -> None:
     """Fetch and log forecasts for a single station at a given lead-time."""
     # --- NWS ---
-    nws_result = fetch_nws_with_spread(lat, lon, lead_hours)
+    try:
+        nws_result = _call_with_timeout(fetch_nws_with_spread, lat, lon, lead_hours, _label="nws")
+    except Exception as exc:
+        log.warning("[capture] %s nws fetch failed/timed out (lead=%dh): %s", station, lead_hours, exc)
+        nws_result = None
     if nws_result is not None:
         nws_mu, nws_sigma = nws_result
         log.info(
@@ -240,7 +295,11 @@ def _capture_station(
         log.debug("[capture] %s nws unavailable (lead=%dh)", station, lead_hours)
 
     # --- Open-Meteo (best_match / multi-model) ---
-    om_result = fetch_open_meteo_with_spread(lat, lon, lead_hours)
+    try:
+        om_result = _call_with_timeout(fetch_open_meteo_with_spread, lat, lon, lead_hours, _label="open_meteo")
+    except Exception as exc:
+        log.warning("[capture] %s open_meteo fetch failed/timed out (lead=%dh): %s", station, lead_hours, exc)
+        om_result = None
     if om_result is not None:
         om_mu, om_sigma = om_result
         log.info(
@@ -259,7 +318,14 @@ def _capture_station(
             )
     else:
         # Fallback: try single-model fetch
-        om_mu = fetch_secondary_forecast(lat, lon)
+        try:
+            om_mu = _call_with_timeout(fetch_secondary_forecast, lat, lon, _label="open_meteo_fallback")
+        except Exception as exc:
+            log.warning(
+                "[capture] %s open_meteo fallback fetch failed/timed out (lead=%dh): %s",
+                station, lead_hours, exc,
+            )
+            om_mu = None
         if om_mu is not None:
             log.info(
                 "[capture] %s open_meteo mu=%.1fF sigma=None (single-model fallback) lead=%dh date=%s",
@@ -279,7 +345,11 @@ def _capture_station(
             log.debug("[capture] %s open_meteo unavailable (lead=%dh)", station, lead_hours)
 
     # --- GFS ---
-    gfs_result = fetch_gfs_with_spread(lat, lon, lead_hours)
+    try:
+        gfs_result = _call_with_timeout(fetch_gfs_with_spread, lat, lon, lead_hours, _label="gfs")
+    except Exception as exc:
+        log.warning("[capture] %s gfs fetch failed/timed out (lead=%dh): %s", station, lead_hours, exc)
+        gfs_result = None
     if gfs_result is not None:
         gfs_mu, gfs_sigma = gfs_result
         # gfs_sigma is None since #548 (single deterministic model, no member
@@ -305,7 +375,7 @@ def _capture_station(
 
     # --- GEFS ensemble ---
     try:
-        gefs_raw = fetch_gefs_ensemble(lat, lon, station=station)
+        gefs_raw = _call_with_timeout(fetch_gefs_ensemble, lat, lon, station=station, _label="gefs")
     except Exception as exc:
         log.warning("[capture] %s gefs unavailable (lead=%dh): %s", station, lead_hours, exc)
         gefs_raw = []
@@ -342,7 +412,7 @@ def _capture_station(
     # --- HRRR ---
     try:
         from src.data.hrrr import fetch_hrrr_hourly
-        hrrr_rows = fetch_hrrr_hourly(lat, lon, station=station)
+        hrrr_rows = _call_with_timeout(fetch_hrrr_hourly, lat, lon, station=station, _label="hrrr")
         if hrrr_rows:
             hrrr_mu = statistics.mean(r.temp_f for r in hrrr_rows)
             log.info("[capture] %s hrrr mu=%.1fF lead=%dh date=%s", station, hrrr_mu, lead_hours, target_date)
@@ -360,7 +430,9 @@ def _capture_station(
     # --- NBM ---
     try:
         from src.data.nbm import fetch_nbm_daily_high
-        nbm_result = fetch_nbm_daily_high(lat, lon, station=station, target_date=target_date)
+        nbm_result = _call_with_timeout(
+            fetch_nbm_daily_high, lat, lon, station=station, target_date=target_date, _label="nbm",
+        )
         if nbm_result is not None:
             log.info("[capture] %s nbm mu=%.1fF lead=%dh date=%s", station, nbm_result.forecast_high_f, lead_hours, target_date)
             if not dry_run and db is not None:
@@ -377,7 +449,9 @@ def _capture_station(
     # --- ECMWF ---
     try:
         from src.data.ecmwf_open import fetch_ecmwf_daily_high
-        ecmwf_result = fetch_ecmwf_daily_high(lat, lon, station=station, target_date=target_date)
+        ecmwf_result = _call_with_timeout(
+            fetch_ecmwf_daily_high, lat, lon, station=station, target_date=target_date, _label="ecmwf",
+        )
         if ecmwf_result is not None:
             log.info("[capture] %s ecmwf mu=%.1fF lead=%dh date=%s", station, ecmwf_result.forecast_high_f, lead_hours, target_date)
             if not dry_run and db is not None:
@@ -394,7 +468,7 @@ def _capture_station(
     # --- ICON ---
     try:
         from src.data.icon import fetch_icon_hourly
-        icon_rows = fetch_icon_hourly(lat, lon, station=station)
+        icon_rows = _call_with_timeout(fetch_icon_hourly, lat, lon, station=station, _label="icon")
         if icon_rows:
             icon_mu = statistics.mean(r.temp_f for r in icon_rows)
             log.info("[capture] %s icon mu=%.1fF lead=%dh date=%s", station, icon_mu, lead_hours, target_date)
