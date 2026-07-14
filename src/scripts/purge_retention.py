@@ -130,7 +130,7 @@ def run(
         conn.close()
 
     dry_tag = " [DRY RUN]" if dry_run else ""
-    print(
+    log.info(
         f"[purge_retention]{dry_tag} "
         f"candidates: retention={candidates_days}d, deleted={cand_deleted} | "
         f"guardrail_events: retention={guardrail_days}d, deleted={guard_deleted}"
