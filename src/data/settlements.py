@@ -30,7 +30,7 @@ class SettlementWriter:
         resolution_source: str | None = None,
     ) -> None:
         """Upsert a settlement record. ticker is UNIQUE — idempotent."""
-        ts = datetime.now(timezone.utc).isoformat() + "Z"
+        ts = datetime.now(timezone.utc).isoformat()
         self.db.insert_settlement(
             ts=ts,
             station=station,

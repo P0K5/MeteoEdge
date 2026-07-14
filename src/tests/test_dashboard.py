@@ -768,6 +768,72 @@ class TestDbSettledPositionsParity:
 
 
 # ---------------------------------------------------------------------------
+# start_dashboard() port-binding guard (issue #722)
+# ---------------------------------------------------------------------------
+
+class TestStartDashboardPortGuard:
+    """Test that start_dashboard() gracefully handles port-binding conflicts.
+
+    Issue #722: When port 8000 is already in use (e.g., by a second
+    meteoedge-dashboard.service), start_dashboard() must not crash the bot.
+    Instead, it logs and returns gracefully.
+    """
+
+    def test_start_dashboard_skips_when_port_in_use(self, caplog):
+        """start_dashboard() must log and return gracefully if port is already bound."""
+        import logging as _logging
+        import socket
+        from src.monitoring.dashboard import start_dashboard
+
+        # Bind an ephemeral port externally to simulate conflict, rather than
+        # the real production port 8000 -- using 8000 here would race with
+        # other tests/processes and leak a live listener for the rest of the
+        # test session (see test_start_dashboard_succeeds_when_port_free).
+        external_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        external_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            external_socket.bind(("0.0.0.0", 0))
+            external_socket.listen(1)
+            test_port = external_socket.getsockname()[1]
+
+            # Now try to start the dashboard — should log and return, not crash
+            with caplog.at_level(_logging.INFO, logger="src.monitoring.dashboard"):
+                start_dashboard(host="0.0.0.0", port=test_port)
+
+            # Verify the info log was emitted
+            assert any(
+                f"port {test_port} already in use" in record.message
+                for record in caplog.records
+            ), "Expected graceful skip log when port is already in use"
+        finally:
+            external_socket.close()
+
+    def test_start_dashboard_succeeds_when_port_free(self, caplog):
+        """start_dashboard() must start uvicorn when port is available."""
+        import logging as _logging
+        import socket
+        from src.monitoring.dashboard import start_dashboard
+
+        # Grab an ephemeral port known to be free right before starting the
+        # dashboard, instead of hardcoding the real production port 8000 --
+        # start_dashboard() spins up a real daemon-thread uvicorn server with
+        # no teardown hook, so reusing 8000 here would leak a live listener
+        # for the rest of the test session and race other tests.
+        probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        probe.bind(("0.0.0.0", 0))
+        test_port = probe.getsockname()[1]
+        probe.close()
+
+        with caplog.at_level(_logging.INFO, logger="src.monitoring.dashboard"):
+            start_dashboard(host="0.0.0.0", port=test_port)
+
+        assert any(
+            f"started at http://0.0.0.0:{test_port}" in record.message
+            for record in caplog.records
+        ), "Expected start_dashboard() to log a successful start on a free port"
+
+
+# ---------------------------------------------------------------------------
 # Bridge stub compatibility — src.monitoring.dashboard still works
 # ---------------------------------------------------------------------------
 

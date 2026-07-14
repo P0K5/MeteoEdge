@@ -333,3 +333,30 @@ class TestPurgeIntegration:
         assert _count_rows(conn, "candidates") == 1
         assert _count_rows(conn, "guardrail_events") == 0
         conn.close()
+
+    def test_run_logs_with_timestamp(self, tmp_path, caplog):
+        """run() logs summary with timestamp (verifies #721 fix - no longer uses bare print())."""
+        import logging
+        conn = _create_test_db(tmp_path)
+        db_path = tmp_path / "test.db"
+
+        now = datetime.now(timezone.utc)
+        old_ts = (now - timedelta(days=100)).isoformat()
+
+        _insert_candidate(conn, old_ts)
+        _insert_guardrail_event(conn, old_ts)
+        conn.close()
+
+        # Capture log output
+        with caplog.at_level(logging.INFO):
+            run(db_path=db_path, candidates_days=90, guardrail_days=60, dry_run=False)
+
+        # Check that the log contains the purge_retention summary message
+        # This confirms that run() now uses log.info() instead of bare print()
+        assert any("[purge_retention]" in record.message for record in caplog.records), \
+            "Expected [purge_retention] message not found in logs"
+
+        # Verify the message content
+        purge_record = [r for r in caplog.records if "[purge_retention]" in r.message][0]
+        assert "candidates: retention=90d, deleted=1" in purge_record.message
+        assert "guardrail_events: retention=60d, deleted=1" in purge_record.message

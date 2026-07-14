@@ -31,6 +31,7 @@ from src.model.deb_weighting import (
     _models_for_region,
     compute_weights,
     register_model,
+    refresh_weights,
 )
 
 
@@ -1364,3 +1365,148 @@ class TestComputeWeightsWithMetadata:
         assert isinstance(weights, dict)
         assert "nws" in weights
         assert isclose(sum(weights.values()), 1.0, abs_tol=1e-6)
+
+
+# ---------------------------------------------------------------------------
+# refresh_weights: skip excluded cities (issue #558, #718)
+# ---------------------------------------------------------------------------
+
+class TestRefreshWeightsExclusion:
+    """Verify refresh_weights skips cities marked training_ineligible in
+    config/source_priority.yaml (issue #558, #718).
+
+    The fix ensures that excluded cities (ZGSZ/Shenzhen, ZHHH/Wuhan,
+    ZHCC/Zhengzhou, ZSJN/Jinan) do not receive new model_weights rows,
+    preventing cold-start equal-weight rows from being written for
+    ineligible training locations.
+    """
+
+    def test_refresh_weights_skips_excluded_city(self, monkeypatch):
+        """When a city is ineligible (training_eligible: false), refresh_weights
+        should return early without writing any model_weights rows (issue #718)."""
+        # Mock is_training_eligible to return False for "Shenzhen"
+        monkeypatch.setattr(dw, "is_training_eligible", lambda city: city != "Shenzhen")
+
+        db = MagicMock(spec=[
+            "get_all_config",
+            "get_model_weights",
+            "upsert_model_weight",
+        ])
+        db.get_all_config.return_value = {"DEB_ENABLED": "true"}
+
+        # Call refresh_weights for an excluded city
+        refresh_weights(db, station="ZGSZ", city="Shenzhen", station_region="asia")
+
+        # upsert_model_weight should NOT be called
+        db.upsert_model_weight.assert_not_called()
+
+    def test_refresh_weights_processes_eligible_city(self, monkeypatch):
+        """When a city is eligible, refresh_weights should proceed and call
+        upsert_model_weight for each model (issue #718)."""
+        # Mock is_training_eligible to return True for "Singapore"
+        monkeypatch.setattr(dw, "is_training_eligible", lambda city: True)
+
+        today = date.today()
+        start = today - timedelta(days=29)
+        settlements = _settlement_rows(start, 20, actual_high=80.0)
+        logs = _log_rows(start, 20, ["nws", "open_meteo"],
+                          forecast_fn=lambda m, i: 80.5)
+
+        db = MagicMock(spec=[
+            "get_all_config",
+            "get_model_weights",
+            "upsert_model_weight",
+            "get_forecast_log_by_lead",
+            "get_obs_highs_range",
+        ])
+        db.get_all_config.return_value = {"DEB_ENABLED": "true"}
+        db.get_model_weights.return_value = []  # No prior weights
+        db.get_forecast_log_by_lead.return_value = logs
+        db.get_obs_highs_range.return_value = {row["ts"][:10]: row["actual_high_f"]
+                                                for row in settlements}
+
+        # Call refresh_weights for an eligible city
+        refresh_weights(db, station="WSSS", city="Singapore", station_region="asia")
+
+        # upsert_model_weight should be called for each model
+        assert db.upsert_model_weight.call_count > 0, (
+            "upsert_model_weight should be called for eligible cities"
+        )
+        # Each call should include city="Singapore"
+        for call in db.upsert_model_weight.call_args_list:
+            assert call.kwargs.get("city") == "Singapore", (
+                f"upsert_model_weight called with incorrect city"
+            )
+
+    def test_refresh_weights_respects_deb_enabled_flag(self, monkeypatch):
+        """When DEB_ENABLED is false, refresh_weights should return early
+        regardless of training_eligible status."""
+        monkeypatch.setattr(dw, "is_training_eligible", lambda city: True)
+
+        db = MagicMock(spec=[
+            "get_all_config",
+            "get_model_weights",
+            "upsert_model_weight",
+        ])
+        db.get_all_config.return_value = {"DEB_ENABLED": "false"}
+
+        # Call refresh_weights
+        refresh_weights(db, station="WSSS", city="Singapore", station_region="asia")
+
+        # upsert_model_weight should NOT be called (DEB_ENABLED takes precedence)
+        db.upsert_model_weight.assert_not_called()
+
+    def test_refresh_weights_skips_if_already_refreshed_today(self, monkeypatch):
+        """When weights were already refreshed today, skip even if eligible."""
+        monkeypatch.setattr(dw, "is_training_eligible", lambda city: True)
+
+        today = date.today().isoformat()
+        db = MagicMock(spec=[
+            "get_all_config",
+            "get_model_weights",
+            "upsert_model_weight",
+        ])
+        db.get_all_config.return_value = {"DEB_ENABLED": "true"}
+        db.get_model_weights.return_value = [{"date": today, "model": "nws", "weight": 0.5}]
+
+        # Call refresh_weights
+        refresh_weights(db, station="WSSS", city="Singapore", station_region="asia")
+
+        # upsert_model_weight should NOT be called (already refreshed today)
+        db.upsert_model_weight.assert_not_called()
+
+    def test_refresh_weights_four_excluded_cities(self, monkeypatch):
+        """Verify that all 4 cities from issue #558 (ZSJN/ZGSZ/ZHHH/ZHCC) are
+        properly excluded."""
+        excluded_cities = ["Jinan", "Shenzhen", "Wuhan", "Zhengzhou"]
+
+        def mock_is_training_eligible(city):
+            return city not in excluded_cities
+
+        monkeypatch.setattr(dw, "is_training_eligible", mock_is_training_eligible)
+
+        db = MagicMock(spec=[
+            "get_all_config",
+            "get_model_weights",
+            "upsert_model_weight",
+            "get_forecast_log_by_lead",
+            "get_obs_highs_range",
+        ])
+        db.get_all_config.return_value = {"DEB_ENABLED": "true"}
+
+        # Test each excluded city
+        for city in excluded_cities:
+            db.reset_mock()
+            refresh_weights(db, station="TEST", city=city, station_region="asia")
+            db.upsert_model_weight.assert_not_called(), (
+                f"upsert_model_weight should not be called for excluded city {city}"
+            )
+
+        # Test a non-excluded city
+        db.reset_mock()
+        db.get_model_weights.return_value = []
+        db.get_forecast_log_by_lead.return_value = []
+        db.get_obs_highs_range.return_value = {}
+        refresh_weights(db, station="WSSS", city="Singapore", station_region="asia")
+        # This city is not in the excluded list, so upsert should be attempted
+        # (even if it results in no-op due to missing data)

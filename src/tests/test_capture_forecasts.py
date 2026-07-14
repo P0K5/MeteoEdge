@@ -7,17 +7,22 @@ Covers:
 - HRRR, NBM, ECMWF, ICON shadow sources (#492): 3 tests each —
   happy path writes row, domain/availability skip does not write,
   fetch failure does not raise.
+- Per-fetch timeout + capture-loop resilience (#717): a hung fetch times out
+  and the loop proceeds; a single station/lead-time failure never kills the
+  rest of run_captures().
 """
 from __future__ import annotations
 
 import logging
+import time
 
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+import src.scripts.capture_forecasts as capture_forecasts_module
 from src.data.db import Database
-from src.scripts.capture_forecasts import _capture_station
+from src.scripts.capture_forecasts import _capture_station, run_captures
 
 
 # ---------------------------------------------------------------------------
@@ -507,3 +512,127 @@ class TestIconCapture:
 
         icon_calls = [c for c in mock_upsert.call_args_list if c.kwargs.get("model") == "icon"]
         assert len(icon_calls) == 0, "Expected no icon upsert on fetch failure"
+
+
+# ---------------------------------------------------------------------------
+# TestFetchTimeout (issue #717 — hung herbie/GRIB/network fetch must not
+# stall the capture loop indefinitely)
+# ---------------------------------------------------------------------------
+
+def _hang(seconds: float):
+    """Return a fetch stand-in that sleeps *seconds* then returns a valid result.
+
+    Used to simulate a hung network/GRIB download: with
+    CAPTURE_FETCH_TIMEOUT_SECONDS patched much smaller than *seconds*,
+    _call_with_timeout must give up and raise before this ever returns.
+    """
+    def _fn(*args, **kwargs):
+        time.sleep(seconds)
+        return (72.0, 1.0)
+    return _fn
+
+
+class TestFetchTimeout:
+    """A hung fetch inside _capture_station must time out, log, and let the
+    loop continue -- never block indefinitely and never raise out of
+    _capture_station."""
+
+    def test_hung_nws_fetch_times_out_and_loop_continues(self, caplog):
+        """NWS fetch hangs well past the (patched, tiny) timeout -- _capture_station
+        must return promptly, log a warning, and still attempt the other channels."""
+        db = _db()
+        mock_upsert = MagicMock()
+        db.upsert_forecast_log_v2 = mock_upsert
+
+        with (
+            patch.object(capture_forecasts_module, "CAPTURE_FETCH_TIMEOUT_SECONDS", 0.05),
+            patch("src.scripts.capture_forecasts.fetch_nws_with_spread", side_effect=_hang(2.0)),
+            # Silence every other channel so this test isolates the nws timeout path.
+            patch("src.scripts.capture_forecasts.fetch_open_meteo_with_spread", return_value=None),
+            patch("src.scripts.capture_forecasts.fetch_secondary_forecast", return_value=None),
+            patch("src.scripts.capture_forecasts.fetch_gfs_with_spread", return_value=(70.0, None)),
+            patch("src.scripts.capture_forecasts.fetch_gefs_ensemble", return_value=[]),
+            patch("src.data.hrrr.fetch_hrrr_hourly", return_value=[]),
+            patch("src.data.nbm.fetch_nbm_daily_high", return_value=None),
+            patch("src.data.ecmwf_open.fetch_ecmwf_daily_high", return_value=None),
+            patch("src.data.icon.fetch_icon_hourly", return_value=[]),
+            caplog.at_level(logging.WARNING),
+        ):
+            start = time.monotonic()
+            _capture_station(**_capture_kwargs(db=db))  # must not raise, must not block
+            elapsed = time.monotonic() - start
+
+        # Returned promptly -- nowhere near the 2s the hung fetch would have taken.
+        assert elapsed < 1.0, f"Expected a quick return after timeout, took {elapsed:.2f}s"
+
+        # Timeout was logged for the nws channel.
+        assert any(
+            "nws fetch failed/timed out" in r.getMessage() for r in caplog.records
+        ), [r.getMessage() for r in caplog.records]
+
+        # No upsert for nws (timed out), but the loop proceeded to gfs and wrote it.
+        nws_calls = [c for c in mock_upsert.call_args_list if c.kwargs.get("model") == "nws"]
+        gfs_calls = [c for c in mock_upsert.call_args_list if c.kwargs.get("model") == "gfs"]
+        assert len(nws_calls) == 0, "Expected no nws upsert after a timeout"
+        assert len(gfs_calls) == 1, "Expected the loop to continue to the gfs channel"
+
+    def test_hung_hrrr_fetch_times_out_without_raising(self, caplog):
+        """Same guard for a channel that already had its own try/except (HRRR) --
+        the timeout must be caught by that existing handler, not escape it."""
+        db = _db()
+        mock_upsert = MagicMock()
+        db.upsert_forecast_log_v2 = mock_upsert
+
+        with (
+            _silence_base_sources(),
+            patch.object(capture_forecasts_module, "CAPTURE_FETCH_TIMEOUT_SECONDS", 0.05),
+            patch("src.data.hrrr.fetch_hrrr_hourly", side_effect=_hang(2.0)),
+            caplog.at_level(logging.WARNING),
+        ):
+            start = time.monotonic()
+            _capture_station(**_capture_kwargs(db=db))
+            elapsed = time.monotonic() - start
+
+        assert elapsed < 1.0, f"Expected a quick return after timeout, took {elapsed:.2f}s"
+        assert any(
+            "hrrr ingestion failed" in r.getMessage() for r in caplog.records
+        ), [r.getMessage() for r in caplog.records]
+        hrrr_calls = [c for c in mock_upsert.call_args_list if c.kwargs.get("model") == "hrrr"]
+        assert len(hrrr_calls) == 0
+
+
+# ---------------------------------------------------------------------------
+# TestRunCapturesResilience (issue #717 — a single station/model failure must
+# never kill the whole capture run)
+# ---------------------------------------------------------------------------
+
+class TestRunCapturesResilience:
+    """run_captures() must keep iterating over stations even when
+    _capture_station() raises unexpectedly for one of them."""
+
+    def test_one_station_failure_does_not_stop_the_run(self, caplog):
+        fake_stations = [
+            ("KORD", 41.98, -87.90, "Chicago"),
+            ("KDEN", 39.85, -104.66, "Denver"),
+        ]
+
+        call_log: list[str] = []
+
+        def _fake_capture_station(*, station, **kwargs):
+            call_log.append(station)
+            if station == "KORD":
+                raise RuntimeError("simulated unexpected capture failure")
+            # KDEN succeeds silently.
+
+        with (
+            patch.object(capture_forecasts_module, "STATIONS", fake_stations),
+            patch.object(capture_forecasts_module, "_capture_station", side_effect=_fake_capture_station),
+            caplog.at_level(logging.ERROR),
+        ):
+            run_captures(db=None, dry_run=True, force=True)
+
+        # Both stations were attempted despite the first one raising.
+        assert call_log == ["KORD", "KDEN"], call_log
+        assert any(
+            "capture failed unexpectedly" in r.getMessage() for r in caplog.records
+        ), [r.getMessage() for r in caplog.records]
