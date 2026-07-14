@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 from datetime import date as date_cls, timedelta
 from typing import Optional
 
-from src.config import get_live_config, CONFIG_DEFAULTS, FORECAST_STACK_MODELS
+from src.config import get_live_config, CONFIG_DEFAULTS, FORECAST_STACK_MODELS, is_training_eligible
 
 log = logging.getLogger(__name__)
 
@@ -492,6 +492,10 @@ def refresh_weights(db, station: str, city: str, station_region: str = "us") -> 
             at international stations where they will never have data.
     """
     if not get_live_config(db).get("DEB_ENABLED", CONFIG_DEFAULTS["DEB_ENABLED"]):
+        return
+
+    # Skip weight training for excluded cities (issue #558, #718)
+    if not is_training_eligible(city):
         return
 
     today = date_cls.today().isoformat()
