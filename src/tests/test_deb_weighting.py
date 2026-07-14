@@ -1388,11 +1388,11 @@ class TestRefreshWeightsExclusion:
         monkeypatch.setattr(dw, "is_training_eligible", lambda city: city != "Shenzhen")
 
         db = MagicMock(spec=[
-            "get_live_config",
+            "get_all_config",
             "get_model_weights",
             "upsert_model_weight",
         ])
-        db.get_live_config.return_value = {"DEB_ENABLED": True}
+        db.get_all_config.return_value = {"DEB_ENABLED": "true"}
 
         # Call refresh_weights for an excluded city
         refresh_weights(db, station="ZGSZ", city="Shenzhen", station_region="asia")
@@ -1413,13 +1413,13 @@ class TestRefreshWeightsExclusion:
                         forecast_fn=lambda m, i: 80.5)
 
         db = MagicMock(spec=[
-            "get_live_config",
+            "get_all_config",
             "get_model_weights",
             "upsert_model_weight",
             "get_forecast_log_by_lead",
             "get_obs_highs_range",
         ])
-        db.get_live_config.return_value = {"DEB_ENABLED": True}
+        db.get_all_config.return_value = {"DEB_ENABLED": "true"}
         db.get_model_weights.return_value = []  # No prior weights
         db.get_forecast_log_by_lead.return_value = logs
         db.get_obs_highs_range.return_value = {row["ts"][:10]: row["actual_high_f"]
@@ -1444,11 +1444,11 @@ class TestRefreshWeightsExclusion:
         monkeypatch.setattr(dw, "is_training_eligible", lambda city: True)
 
         db = MagicMock(spec=[
-            "get_live_config",
+            "get_all_config",
             "get_model_weights",
             "upsert_model_weight",
         ])
-        db.get_live_config.return_value = {"DEB_ENABLED": False}
+        db.get_all_config.return_value = {"DEB_ENABLED": "false"}
 
         # Call refresh_weights
         refresh_weights(db, station="WSSS", city="Singapore", station_region="asia")
@@ -1462,11 +1462,11 @@ class TestRefreshWeightsExclusion:
 
         today = date.today().isoformat()
         db = MagicMock(spec=[
-            "get_live_config",
+            "get_all_config",
             "get_model_weights",
             "upsert_model_weight",
         ])
-        db.get_live_config.return_value = {"DEB_ENABLED": True}
+        db.get_all_config.return_value = {"DEB_ENABLED": "true"}
         db.get_model_weights.return_value = [{"date": today, "model": "nws", "weight": 0.5}]
 
         # Call refresh_weights
@@ -1486,11 +1486,13 @@ class TestRefreshWeightsExclusion:
         monkeypatch.setattr(dw, "is_training_eligible", mock_is_training_eligible)
 
         db = MagicMock(spec=[
-            "get_live_config",
+            "get_all_config",
             "get_model_weights",
             "upsert_model_weight",
+            "get_forecast_log_by_lead",
+            "get_obs_highs_range",
         ])
-        db.get_live_config.return_value = {"DEB_ENABLED": True}
+        db.get_all_config.return_value = {"DEB_ENABLED": "true"}
 
         # Test each excluded city
         for city in excluded_cities:

@@ -790,6 +790,7 @@ class TestStartDashboardPortGuard:
         external_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
             external_socket.bind(("0.0.0.0", 8000))
+            external_socket.listen(1)
 
             # Now try to start the dashboard — should log and return, not crash
             with caplog.at_level(_logging.INFO, logger="src.monitoring.dashboard"):
