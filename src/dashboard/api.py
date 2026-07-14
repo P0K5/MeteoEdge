@@ -1677,6 +1677,20 @@ def weather_health_status() -> dict:
     }
 
 
+@app.get("/api/forecast-capture-health")
+def forecast_capture_health() -> dict:
+    """Dashboard health tile for the forecast-capture staleness watchdog (issue #717).
+
+    Reports whether MAX(model_forecast_log.logged_at) is older than the
+    configurable FORECAST_CAPTURE_STALENESS_THRESHOLD_HOURS threshold. This is
+    a read-only, on-demand check of the DB -- the same underlying logic that
+    src/scripts/run.py calls each poll tick to emit an ERROR into logs/bot.log
+    (see src/monitoring/capture_staleness.py).
+    """
+    from src.monitoring.capture_staleness import get_capture_health
+    return get_capture_health(_db)
+
+
 # ---------------------------------------------------------------------------
 # EMOS management endpoints
 # ---------------------------------------------------------------------------
@@ -2294,6 +2308,13 @@ _CONFIG_META: dict[str, dict] = {
         "group": "promotion",
         "min": 0.5,
         "max": 0.999,
+    },
+    "FORECAST_CAPTURE_STALENESS_THRESHOLD_HOURS": {
+        "description": "Alert when the forecast-capture job's most recent model_forecast_log write is older than this many hours (issue #717)",
+        "type": "float",
+        "group": "monitoring",
+        "min": 1.0,
+        "max": 48.0,
     },
 }
 

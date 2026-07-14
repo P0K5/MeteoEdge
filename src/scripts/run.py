@@ -330,6 +330,14 @@ def poll_once(
             ]
             _freshness_monitor.check_all(db, active_sources)
 
+    # Watchdog: alert if the forecast-capture job (separate oneshot systemd
+    # unit, src/scripts/capture_forecasts.py) has gone silently stale (issue
+    # #717). Read-only -- observes model_forecast_log via db, never touches
+    # the capture process itself.
+    if db is not None:
+        from src.monitoring.capture_staleness import check_capture_staleness
+        check_capture_staleness(db)
+
     global _balance_fail_count, _wallet_cooldown_until
 
     # Wallet-empty cooldown: skip the entire candidate loop until the window passes.
