@@ -1763,6 +1763,90 @@ The `--from-db` mode includes a plausibility guard (issue #587) that warns if an
 
 ---
 
+## Data Backup & Extraction
+
+**Background:** Plain file copy (e.g., `cp data/meteoedge.db /backup/meteoedge.db`) can capture torn pages if the bot is actively writing to the database during the copy. This results in integrity failures on the backup (PRAGMA integrity_check fails) and makes the backup unusable for audit, analysis, or recovery.
+
+**Solution:** Use `scripts/extract_data.sh`, which leverages SQLite's `.backup` command. The `.backup` command uses SQLite's backup API and retries on lock contention, guaranteeing a consistent, verified copy even during live writes.
+
+### Running a Backup
+
+```bash
+mkdir -p /backups/$(date +\%Y-\%m-\%d)
+scripts/extract_data.sh /backups/$(date +\%Y-\%m-\%d)
+```
+
+This creates:
+- `/backups/2026-07-14/meteoedge.db` — consistent copy of the live trading database
+- `/backups/2026-07-14/analytics.db` — consistent copy of the analytics database
+- `/backups/2026-07-14/logs/` — copy of all logs (bot.log, dashboard.log, settle.log, etc.)
+
+Exit code is 0 on success (all DBs verified with PRAGMA integrity_check); 1 on failure.
+
+### Automated Daily Backups
+
+Add to cron (as the p0k5 user):
+
+```bash
+# Daily backup at 02:00 UTC
+0 2 * * * cd /home/p0k5/MeteoEdge && bash scripts/extract_data.sh /backups/$(date +\%Y-\%m-\%d) >> /var/log/meteoedge_backup.log 2>&1
+```
+
+Or use a systemd timer for more robust scheduling:
+
+```ini
+# /etc/systemd/system/meteoedge-backup.service
+[Unit]
+Description=MeteoEdge Daily Database Backup
+After=network.target
+
+[Service]
+Type=oneshot
+User=p0k5
+WorkingDirectory=/home/p0k5/MeteoEdge
+ExecStart=/bin/bash -c 'scripts/extract_data.sh /backups/$(date +\%Y-\%m-\%d)'
+StandardOutput=append:/var/log/meteoedge_backup.log
+StandardError=append:/var/log/meteoedge_backup.log
+
+# /etc/systemd/system/meteoedge-backup.timer
+[Unit]
+Description=Daily MeteoEdge Database Backup
+
+[Timer]
+OnCalendar=daily
+OnCalendar=*-*-* 02:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+```
+
+Enable with:
+```bash
+sudo systemctl enable meteoedge-backup.timer
+sudo systemctl start meteoedge-backup.timer
+sudo systemctl status meteoedge-backup.timer
+```
+
+### Verifying a Backup
+
+Check that a backup is consistent:
+
+```bash
+sqlite3 /backups/2026-07-14/meteoedge.db "PRAGMA integrity_check;"
+sqlite3 /backups/2026-07-14/analytics.db "PRAGMA integrity_check;"
+```
+
+Both should return `ok`. If either returns an error, the backup is corrupted and must not be used.
+
+### Troubleshooting
+
+- **"sqlite3 CLI not found"** — Install sqlite3: `apt-get install sqlite3` (Ubuntu/Debian), `brew install sqlite` (macOS), etc.
+- **"Integrity check FAILED"** — A corrupted backup. Delete it and re-run the extraction script. If this happens consistently, check for concurrent DB access or hardware issues.
+- **"Cannot create destination directory"** — Insufficient permissions or disk space. Verify the destination path is writable.
+
+---
+
 ## Support & Escalation
 
 For issues beyond this runbook, escalate to:
