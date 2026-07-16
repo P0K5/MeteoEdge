@@ -58,18 +58,21 @@ class TestGetCaptureHealth:
         assert health["stale"] is False
         assert health["last_logged_at"] == fresh_ts
         assert health["age_hours"] == pytest.approx(1.0, abs=0.01)
-        assert health["threshold_hours"] == pytest.approx(6.0)
+        assert health["threshold_hours"] == pytest.approx(10.0)
 
     def test_stale_timestamp_older_than_threshold(self):
         db = _db()
         now = datetime(2026, 7, 14, 12, 0, 0, tzinfo=timezone.utc)
-        stale_ts = (now - timedelta(hours=8)).isoformat()  # > default 6h threshold
+        # 12h age is unambiguously stale against the 10h default (issue #726:
+        # kept clear of the designed ~8.3h overnight capture gap, which must NOT
+        # be treated as stale).
+        stale_ts = (now - timedelta(hours=12)).isoformat()
         _insert_capture_row(db, stale_ts)
 
         health = get_capture_health(db, now=now)
 
         assert health["stale"] is True
-        assert health["age_hours"] == pytest.approx(8.0, abs=0.01)
+        assert health["age_hours"] == pytest.approx(12.0, abs=0.01)
 
     def test_no_rows_is_stale(self):
         """Empty model_forecast_log (or missing table) -- treat as stale, never silently OK."""
@@ -105,8 +108,21 @@ class TestGetCaptureHealth:
         """Boundary: age == threshold should not be flagged (strictly greater-than)."""
         db = _db()
         now = datetime(2026, 7, 14, 12, 0, 0, tzinfo=timezone.utc)
-        ts = (now - timedelta(hours=6)).isoformat()
+        ts = (now - timedelta(hours=10)).isoformat()
         _insert_capture_row(db, ts)
+
+        health = get_capture_health(db, now=now)
+
+        assert health["stale"] is False
+
+    def test_designed_overnight_gap_is_not_stale(self):
+        """Regression for issue #726: the ~8.3h gap between the last evening
+        capture (~21:46 UTC) and the next morning run (~06:05 UTC) is by design
+        and must NOT alert. The old 6h default false-fired here every night."""
+        db = _db()
+        now = datetime(2026, 7, 15, 6, 5, 0, tzinfo=timezone.utc)
+        overnight_ts = (now - timedelta(hours=8, minutes=20)).isoformat()
+        _insert_capture_row(db, overnight_ts)
 
         health = get_capture_health(db, now=now)
 
@@ -118,7 +134,7 @@ class TestCheckCaptureStaleness:
 
     def test_fires_error_when_stale(self, caplog):
         db = MagicMock()
-        db.get_config.return_value = None  # use hardcoded default (6h)
+        db.get_config.return_value = None  # use hardcoded default (10h)
         now = datetime(2026, 7, 14, 12, 0, 0, tzinfo=timezone.utc)
         stale_ts = (now - timedelta(hours=144)).isoformat()  # 6 days, per the #717 incident
         db.get_last_forecast_capture_ts.return_value = stale_ts
@@ -161,7 +177,7 @@ class TestCheckCaptureStaleness:
         db = MagicMock()
         db.get_config.return_value = None
         now = datetime(2026, 7, 14, 12, 0, 0, tzinfo=timezone.utc)
-        stale_ts = (now - timedelta(hours=10)).isoformat()
+        stale_ts = (now - timedelta(hours=12)).isoformat()  # clearly > 10h default
         db.get_last_forecast_capture_ts.return_value = stale_ts
 
         with caplog.at_level(logging.ERROR):
@@ -178,7 +194,7 @@ class TestCheckCaptureStaleness:
         db = MagicMock()
         db.get_config.return_value = None
         now = datetime(2026, 7, 14, 12, 0, 0, tzinfo=timezone.utc)
-        stale_ts = (now - timedelta(hours=10)).isoformat()
+        stale_ts = (now - timedelta(hours=12)).isoformat()  # clearly > 10h default
         db.get_last_forecast_capture_ts.return_value = stale_ts
 
         with caplog.at_level(logging.ERROR):

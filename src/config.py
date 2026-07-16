@@ -551,9 +551,12 @@ CONFIG_DEFAULTS: "dict[str, str | int | float | bool]" = {
     "FORCE_EXIT_MINUTES_TO_SETTLEMENT": 60,
     "ZERO_EVAL_WATCHDOG_CONSECUTIVE_TICKS": 4,  # Fire alert after 4 consecutive zero-evaluation ticks with markets available (~20 min at 5-min poll cadence)
     # Alert when MAX(model_forecast_log.logged_at) is older than this many
-    # hours (issue #717). Default 6h tolerates the normal hourly-to-daily
-    # capture cadence gaps between scheduled capture runs.
-    "FORECAST_CAPTURE_STALENESS_THRESHOLD_HOURS": 6.0,
+    # hours (issue #717). The capture timer's four daily runs (~06/12/18/21 UTC)
+    # leave a designed overnight gap of ~8.3h between the ~21:46 UTC write and
+    # the next ~06:05 UTC run; the default must clear that gap or it false-alerts
+    # every night (issue #726). 10h clears it with margin while still catching a
+    # genuinely dead job the same morning it should have run.
+    "FORECAST_CAPTURE_STALENESS_THRESHOLD_HOURS": 10.0,
     # Shadow-only YES thresholds — applied on the YES shadow path only.
     # These are intentionally looser than the live YES gates so the shadow loop
     # can collect data without risking live orders.  The NO side is unaffected.
