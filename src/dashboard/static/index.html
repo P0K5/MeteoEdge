@@ -2864,8 +2864,8 @@ function renderEdgeKpi(data, unit = 'F') {
 let configLoaded = false;
 let _configData = {};
 
-const _CFG_GROUP_LABELS = { strategy: 'Strategy', risk: 'Risk', position: 'Position Sizing', timing: 'Timing', forecast: 'Forecast' };
-const _CFG_GROUP_ICONS = { strategy: 'trending-up', risk: 'shield', position: 'layers', timing: 'clock', forecast: 'cloud' };
+const _CFG_GROUP_LABELS = { strategy: 'Strategy', risk: 'Risk', position: 'Position Sizing', timing: 'Timing', forecast: 'Forecast', monitoring: 'Monitoring', promotion: 'Promotion' };
+const _CFG_GROUP_ICONS = { strategy: 'trending-up', risk: 'shield', position: 'layers', timing: 'clock', forecast: 'cloud', monitoring: 'activity', promotion: 'award' };
 
 function _renderConfigParam(key, param) {
   let ctrlHTML;
@@ -2893,7 +2893,13 @@ function _renderConfigParam(key, param) {
 }
 
 function _renderConfigGroups(data) {
-  const order = ['strategy', 'risk', 'position', 'timing', 'forecast'];
+  // Preferred display order for known groups. Any group present in the API
+  // response but not listed here is appended afterwards, so a newly-added
+  // _CONFIG_META group (e.g. "monitoring", "promotion") can never again be
+  // silently dropped from the Config tab just because it was omitted here.
+  const preferred = ['strategy', 'risk', 'position', 'timing', 'forecast', 'monitoring', 'promotion'];
+  const extras = Object.keys(data).filter(g => !preferred.includes(g));
+  const order = [...preferred, ...extras];
   let html = '';
   for (const group of order) {
     if (!data[group]) continue;
