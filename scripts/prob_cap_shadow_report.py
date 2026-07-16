@@ -233,6 +233,24 @@ def simulated_ev_no(p_yes_sim: float, price_cents: float) -> float:
     return (1 - p_yes_sim) * 100 - price_cents - fee
 
 
+def synthetic_no_pnl_cents(price_cents: float, no_won: bool) -> float:
+    """Per-$1-notional synthetic PnL for a NO position entered at *price_cents*.
+
+    A NO share bought at *price_cents* pays out 100c if NO wins (i.e. the YES
+    outcome did not happen) and 0c otherwise, so the PnL per $1 of notional is
+    ``100 - price`` on a win and ``-price`` on a loss.
+
+    Issue #723: this is the *single* basis the cap simulation uses for BOTH
+    already-admitted and newly-admitted rows. Previously already-admitted rows
+    reported ``trades.pnl`` (real account currency, scaled by that trade's
+    ``size_eur``) while newly-admitted rows used this synthetic basis, so a
+    cap's "Total PnL" was not comparable across cap values. Normalizing both to
+    this basis makes the PnL column apples-to-apples; the real account PnL is
+    still reported separately (already-admitted only) for reference.
+    """
+    return (100.0 - price_cents) if no_won else -price_cents
+
+
 # ---------------------------------------------------------------------------
 # DB-backed loading (issue #682, 2026-07-10 diagnosis)
 #
@@ -735,7 +753,7 @@ def simulate_cap_values(settled_rows: list[dict], snapshot_rows: list[dict],
                 continue
             yes_won = s["bracket_low"] <= actual_high <= s["bracket_high"]
             no_won = not yes_won
-            pnl_cents = (100 - s["no_ask"]) if no_won else -s["no_ask"]
+            pnl_cents = synthetic_no_pnl_cents(s["no_ask"], no_won)
             newly_admitted.append({
                 "ticker": s["ticker"], "station": s["station"], "date": s["date"],
                 "p_yes_sim": p_yes_sim, "ev_no_sim": ev_no_sim, "channel": channel,
@@ -748,8 +766,26 @@ def simulate_cap_values(settled_rows: list[dict], snapshot_rows: list[dict],
             sum(1 for n in newly_admitted if not n["yes_won"])
         resolved_count = len(resolved_baseline) + len(newly_admitted)
         win_rate = (wins / resolved_count) if resolved_count else None
-        total_pnl = sum(r["pnl_cents"] for r in resolved_baseline) + \
-            sum(n["pnl_cents"] for n in newly_admitted)
+
+        # Issue #723: both populations are summed on the same per-$1-notional
+        # synthetic basis so the total is comparable across cap values. For an
+        # already-admitted NO row, "won" means the YES outcome did not happen
+        # (yes_won is False); newly_admitted rows already carry synthetic
+        # pnl_cents from synthetic_no_pnl_cents() above.
+        total_pnl = sum(
+            synthetic_no_pnl_cents(r["price_cents"], r["yes_won"] is False)
+            for r in resolved_baseline
+        ) + sum(n["pnl_cents"] for n in newly_admitted)
+
+        # Real account-currency PnL, kept separate and reported for reference
+        # only. Already-admitted rows carry it (trades.pnl, scaled by size_eur);
+        # newly-admitted rows never had a real position, so this figure is the
+        # already-admitted population only. None if any resolved row lacks it.
+        real_pnls = [r.get("pnl_cents") for r in resolved_baseline]
+        already_admitted_real_pnl = (
+            sum(real_pnls) if real_pnls and all(p is not None for p in real_pnls)
+            else None
+        )
 
         results[cap] = {
             "trade_count": trade_count,
@@ -759,6 +795,7 @@ def simulate_cap_values(settled_rows: list[dict], snapshot_rows: list[dict],
             "resolved_count": resolved_count,
             "win_rate": win_rate,
             "total_pnl_cents": total_pnl,
+            "already_admitted_real_pnl": already_admitted_real_pnl,
             "edge_channel_count": edge_count,
             "gate_headroom_channel_count": gate_headroom_count,
         }
@@ -937,15 +974,18 @@ def render_report(report_date: str, n_days: int, saturation: dict,
     lines.append("## Cap simulation (NO side only -- protected side)")
     lines.append("")
     lines.append("| Cap | Trades | Already-admitted | Newly-admitted | Unresolved-new "
-                 "| Win rate | Total PnL (c) | Edge-channel | Gate-headroom-channel |")
-    lines.append("|---|---|---|---|---|---|---|---|---|")
+                 "| Win rate | PnL/$1 notional (c) | Real PnL (acct, ref) | Edge-channel "
+                 "| Gate-headroom-channel |")
+    lines.append("|---|---|---|---|---|---|---|---|---|---|")
     for cap in cap_values:
         r = cap_results[cap]
         wr = f"{r['win_rate']:.1%}" if r["win_rate"] is not None else "n/a"
+        real = r.get("already_admitted_real_pnl")
+        real_str = f"{real:.2f}" if real is not None else "n/a"
         lines.append(
             f"| {cap} | {r['trade_count']} | {r['already_admitted_count']} | "
             f"{r['newly_admitted_count']} | {r['unresolved_new_count']} | {wr} | "
-            f"{r['total_pnl_cents']:.1f} | {r['edge_channel_count']} | "
+            f"{r['total_pnl_cents']:.1f} | {real_str} | {r['edge_channel_count']} | "
             f"{r['gate_headroom_channel_count']} |"
         )
     lines.append("")
@@ -960,19 +1000,21 @@ def render_report(report_date: str, n_days: int, saturation: dict,
         "confirmed empirically above."
     )
     lines.append("")
-    if population_saturation is not None:
-        lines.append(
-            "**Unit caveat (DB path, issue #682):** \"Total PnL\" mixes two different scales "
-            "here. Already-admitted rows carry `trades.pnl`, the real account-currency PnL of "
-            "the actual position (scaled by that trade's `size_eur`); newly-admitted rows "
-            "(discovered from snapshots, resolved via observations daily highs) use the "
-            "per-$1-notional synthetic PnL `(100 - price) if won else -price` that this "
-            "simulation has always used. A cap's \"Total PnL\" is therefore not an "
-            "apples-to-apples number once it has any newly-admitted rows -- read the win-rate "
-            "delta and the gate-headroom-channel count as the primary signals, and treat PnL "
-            "deltas as directional, not literal, until this is reconciled."
-        )
-        lines.append("")
+    lines.append(
+        "**PnL basis (issue #723):** \"PnL/$1 notional (c)\" is the single basis used for "
+        "*both* populations -- `(100 - price) if the NO side won else -price`, in cents per "
+        "$1 of notional, computed from each row's own entry price and realized outcome "
+        "(already-admitted: `trades.actual_price` + `trades.pnl` sign; newly-admitted: the "
+        "snapshot's `no_ask` + the observations-resolved bracket outcome). Because every row "
+        "uses the same unit, a cap's PnL total and the cross-cap PnL delta are now "
+        "apples-to-apples -- this column, not just win rate, is a trustworthy signal. "
+        "\"Real PnL (acct, ref)\" is the real account-currency PnL of the actual positions "
+        "(`trades.pnl`, scaled by each trade's `size_eur`); it covers the already-admitted "
+        "population only (newly-admitted rows never held a real position) and is invariant to "
+        "cap by construction, so it is reported for reference, not for cross-cap comparison. "
+        "It reads `n/a` if any resolved already-admitted row is missing its stored PnL."
+    )
+    lines.append("")
 
     lines.append("## RANK_ON_RAW_PROB=true simulated ordering effect")
     lines.append("")
