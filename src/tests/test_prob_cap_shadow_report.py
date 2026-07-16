@@ -32,6 +32,8 @@ import csv
 import json
 import sqlite3
 
+import pytest
+
 from scripts.prob_cap_shadow_report import (
     classify_new_admission_channel,
     clamp_p_yes,
@@ -49,6 +51,7 @@ from scripts.prob_cap_shadow_report import (
     run_report,
     simulate_cap_values,
     simulate_rank_on_raw_prob,
+    synthetic_no_pnl_cents,
 )
 
 CANDIDATE_FIELDS = [
@@ -376,6 +379,14 @@ class TestClassifyChannel:
         assert classify_new_admission_channel(True, True) == "edge"
 
 
+class TestSyntheticNoPnl:
+    def test_win_pays_hundred_minus_price(self):
+        assert synthetic_no_pnl_cents(79.0, no_won=True) == pytest.approx(21.0)
+
+    def test_loss_is_negative_price(self):
+        assert synthetic_no_pnl_cents(79.0, no_won=False) == pytest.approx(-79.0)
+
+
 class TestSimulateCapValues:
     def test_already_admitted_population_invariant_to_cap(self):
         """A settled NO row stays admitted (and counted once) at every cap."""
@@ -413,6 +424,39 @@ class TestSimulateCapValues:
         results = simulate_cap_values([], [snapshot], cap_values=(0.95, 0.97))
         assert results[0.97]["newly_admitted_count"] == 0
         assert results[0.97]["unresolved_new_count"] == 1
+
+    def test_pnl_uses_synthetic_basis_not_real_account_pnl(self):
+        """Issue #723: the cap-simulation PnL total must be the per-$1-notional
+        synthetic value (from entry price + outcome), NOT the real account
+        `pnl_cents`, so it is comparable across caps and with newly-admitted
+        rows. Uses a MIXED fixture where the two bases deliberately differ.
+
+        Two already-admitted NO rows, no snapshots (so the population is
+        cap-invariant and no synthetic newly-admitted rows are added):
+          * winner:  entry 80c, NO won  -> synthetic 100-80 = +20.0; real +0.40
+          * loser:   entry 80c, NO lost -> synthetic     -80 = -80.0; real -2.00
+        Synthetic total = 20.0 - 80.0 = -60.0 (differs from the real -1.60).
+        """
+        winner = _norm_row(ticker="W", price_cents=80.0, yes_won=False, pnl_cents=0.40)
+        loser = _norm_row(ticker="L", price_cents=80.0, yes_won=True, pnl_cents=-2.00)
+        results = simulate_cap_values([winner, loser], snapshot_rows=[], cap_values=(0.95,))
+        r = results[0.95]
+
+        # Total PnL is the synthetic per-$1 basis, not the real account sum.
+        assert r["total_pnl_cents"] == pytest.approx(-60.0)
+        assert r["total_pnl_cents"] != pytest.approx(-1.60)
+        # Real account PnL is reported separately, already-admitted only.
+        assert r["already_admitted_real_pnl"] == pytest.approx(-1.60)
+
+    def test_real_pnl_is_none_when_a_resolved_row_lacks_stored_pnl(self):
+        """already_admitted_real_pnl degrades to None if any resolved row is
+        missing its real pnl_cents, while total_pnl_cents (synthetic) still
+        computes from the entry price + outcome."""
+        row = _norm_row(ticker="X", price_cents=75.0, yes_won=False, pnl_cents=None)
+        results = simulate_cap_values([row], snapshot_rows=[], cap_values=(0.95,))
+        r = results[0.95]
+        assert r["already_admitted_real_pnl"] is None
+        assert r["total_pnl_cents"] == pytest.approx(25.0)  # 100 - 75, NO won
 
 
 # ---------------------------------------------------------------------------
@@ -501,6 +545,29 @@ class TestRenderReport:
         assert "## RANK_ON_RAW_PROB=true simulated ordering effect" in report
         assert "## Recommendation" in report
         assert "HOLD -- test" in report
+
+    def test_pnl_columns_and_basis_note_present(self):
+        """Issue #723: the normalized per-$1 column, the separate real-account
+        column, and the updated basis note all render; the stale mixed-units
+        caveat does not."""
+        saturation = {"total": 0, "total_clamped": 0, "by_side": {}, "by_station": {}}
+        cap_results = {
+            0.95: {"trade_count": 2, "already_admitted_count": 2, "newly_admitted_count": 0,
+                   "unresolved_new_count": 0, "win_rate": 0.5, "total_pnl_cents": -60.0,
+                   "already_admitted_real_pnl": -1.60,
+                   "edge_channel_count": 0, "gate_headroom_channel_count": 0},
+        }
+        rank_sim = {"polls_with_multiple_no_candidates": 0, "divergent_picks": 0,
+                    "pnl_delta_cents": 0.0, "raw_pick_wins": 0, "capped_pick_wins": 0}
+        report = render_report(
+            "2026-01-08", 7, saturation, {"count": 0}, cap_results, rank_sim,
+            "HOLD -- test", (0.95,),
+        )
+        assert "PnL/$1 notional (c)" in report
+        assert "Real PnL (acct, ref)" in report
+        assert "**PnL basis (issue #723):**" in report
+        assert "-1.60" in report  # real account PnL rendered
+        assert "Unit caveat (DB path, issue #682)" not in report
 
     def test_population_saturation_section_only_when_provided(self):
         saturation = {"total": 0, "total_clamped": 0, "by_side": {}, "by_station": {}}
