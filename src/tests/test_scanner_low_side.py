@@ -165,6 +165,12 @@ def _low_market(city: str, group_title: str = "55-59°F") -> dict:
 
 
 class TestScanMarketsLowSide:
+    @pytest.fixture(autouse=True)
+    def _enable_low_markets(self, monkeypatch):
+        """Issue #733: the LOW scan is off by default; these tests exercise the
+        (still fully supported) flag-on behaviour."""
+        monkeypatch.setenv("ENABLE_LOW_MARKETS", "true")
+
     def test_no_low_candidates_when_weather_low_is_none(self):
         markets = [_low_market("Chicago")]
         candidates, _ = scan_markets(weather={}, markets=markets, weather_low=None)
@@ -256,6 +262,11 @@ def _low_market_with(city: str, group_title: str, yes_price: float, no_price: fl
 class TestLowSideClampSymmetry:
     """Issue #567: low-side p_yes clamp must floor at 1-cap, same as high side."""
 
+    @pytest.fixture(autouse=True)
+    def _enable_low_markets(self, monkeypatch):
+        """Issue #733: the LOW scan is off by default; enable it to exercise the clamp."""
+        monkeypatch.setenv("ENABLE_LOW_MARKETS", "true")
+
     def test_low_side_floors_very_low_raw_p_yes_to_one_minus_cap(self):
         """raw_p_yes=0.001 with MODEL_PROB_CAP=0.95 must floor to p_yes=0.05.
 
@@ -302,3 +313,63 @@ class TestLowSideClampSymmetry:
         assert len(low_cands) == 1, f"expected exactly 1 low-side candidate, got {low_cands}"
         assert low_cands[0].p_yes == 0.90
         assert low_cands[0].p_yes_raw == 0.90
+
+
+# ---------------------------------------------------------------------------
+# Issue #733: LOW-direction scan rollback — disabled by default
+# ---------------------------------------------------------------------------
+
+class TestLowMarketsDisabledByDefault:
+    """Issue #733 rollback: with defaults (no ENABLE_LOW_MARKETS set), the
+    low-side block must not run even when weather_low and prob_low_fn are
+    provided, and the HIGH side must be completely unaffected."""
+
+    @pytest.fixture(autouse=True)
+    def _ensure_flag_unset(self, monkeypatch):
+        monkeypatch.delenv("ENABLE_LOW_MARKETS", raising=False)
+
+    def test_no_low_candidates_by_default_even_with_state(self):
+        markets = [_low_market_with("Chicago", "55-59°F", yes_price=0.22,
+                                    no_price=0.78, station_hint="KORD")]
+        weather_low = {"KORD": _make_weather_low("KORD", current_low_f=50.0)}
+        prob_low_fn = lambda b, s, m, f: 0.001  # noqa: E731
+
+        with patch.object(_scanner_mod, "MODEL_PROB_CAP", 0.95):
+            candidates, _ = scan_markets(weather={}, markets=markets,
+                                         weather_low=weather_low, prob_low_fn=prob_low_fn)
+
+        assert all(c.direction != "low" for c in candidates), (
+            "LOW candidates emitted with ENABLE_LOW_MARKETS unset (default off)"
+        )
+
+    def test_env_flag_true_restores_low_scan(self, monkeypatch):
+        """The rollback is reversible: the exact market/state that is skipped
+        by default is scanned again once the flag is flipped on."""
+        monkeypatch.setenv("ENABLE_LOW_MARKETS", "true")
+        markets = [_low_market_with("Chicago", "55-59°F", yes_price=0.22,
+                                    no_price=0.78, station_hint="KORD")]
+        weather_low = {"KORD": _make_weather_low("KORD", current_low_f=50.0)}
+        prob_low_fn = lambda b, s, m, f: 0.001  # noqa: E731
+
+        with patch.object(_scanner_mod, "MODEL_PROB_CAP", 0.95):
+            candidates, _ = scan_markets(weather={}, markets=markets,
+                                         weather_low=weather_low, prob_low_fn=prob_low_fn)
+
+        assert any(c.direction == "low" for c in candidates)
+
+    def test_high_side_unchanged_with_flag_off(self):
+        """A HIGH market scan produces identical results whether weather_low is
+        passed or not while the flag is off."""
+        markets = [
+            {"question": "Will the highest temperature in Chicago be 82-84°F?",
+             "groupItemTitle": "82-84°F", "conditionId": "0xHIGH",
+             "outcomes": '["Yes","No"]', "outcomePrices": '[0.4,0.6]',
+             "clobTokenIds": '["t1","t2"]',
+             "endDate": datetime.now(timezone.utc).isoformat()},
+        ]
+        prob_low_fn = lambda b, s, m, f: 0.05  # noqa: E731
+        without_low, _ = scan_markets(weather={}, markets=markets, weather_low=None)
+        with_low, _ = scan_markets(weather={}, markets=markets,
+                                   weather_low={"KORD": _make_weather_low("KORD")},
+                                   prob_low_fn=prob_low_fn)
+        assert [c.direction for c in without_low] == [c.direction for c in with_low]

@@ -9,6 +9,7 @@ import argparse
 import csv
 import json
 import logging
+import os
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -24,7 +25,7 @@ from src.config import (
     RISK_DAILY_LOSS_LIMIT_EUR, RISK_MAX_OPEN_POSITIONS,
     RISK_DRAWDOWN_STOP_PCT, RISK_MIN_LIQUIDITY, STARTING_CAPITAL_EUR,
     POSITION_SIZE_WITH_FEES, ENABLE_CLOB_ENRICHMENT,
-    LIVE_ALLOW_BRACKET_REENTRY,
+    LIVE_ALLOW_BRACKET_REENTRY, CONFIG_DEFAULTS,
     get_source_priority, seed_config, seed_station_overrides,
 )
 from src.data.db import Database
@@ -261,10 +262,20 @@ def poll_once(
     _dashboard_module.weather_health = weather_health  # surface feed health to the dashboard banner
 
     # Low-side shadow scan (Epic C, issue #457) -- shadow-only, never gates live
-    # entries (see scanner.py's low-side block). Built every poll; see
-    # build_weather_low_for_scanning() for why no active-hours gate is needed.
-    # Shares _metars_cache with the high-side build above (issue #582).
-    weather_low = build_weather_low_for_scanning(db=db, metars_cache=_metars_cache)
+    # entries (see scanner.py's low-side block). Shares _metars_cache with the
+    # high-side build above (issue #582).
+    #
+    # Issue #733 rollback: skip building low-side states entirely when
+    # ENABLE_LOW_MARKETS is off (default) -- scan_markets() gates the low-side
+    # block authoritatively from the same live config; this just avoids the
+    # per-poll build cost for states that would never be scored.
+    _low_raw = db.get_config("ENABLE_LOW_MARKETS") if db is not None else None
+    if _low_raw is None:
+        _low_raw = os.getenv("ENABLE_LOW_MARKETS", str(CONFIG_DEFAULTS["ENABLE_LOW_MARKETS"]))
+    if str(_low_raw).strip().lower() in ("true", "1", "yes"):
+        weather_low = build_weather_low_for_scanning(db=db, metars_cache=_metars_cache)
+    else:
+        weather_low = {}
 
     # Climb-table METAR persistence (issue #669) -- runs every poll regardless
     # of STATION_ACTIVE_HOURS or open positions, for the stations named in
