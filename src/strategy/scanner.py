@@ -497,6 +497,9 @@ def scan_markets(
         next_day_sigma_multiplier = float(_live.get(
             "NEXT_DAY_SIGMA_MULTIPLIER", CONFIG_DEFAULTS["NEXT_DAY_SIGMA_MULTIPLIER"]
         ))
+        # LOW-direction scan rollback (issue #733), default off -- resolved
+        # once per scan, same pattern as NEXT_DAY_EVALUATION above.
+        enable_low_markets = bool(_live.get("ENABLE_LOW_MARKETS", CONFIG_DEFAULTS["ENABLE_LOW_MARKETS"]))
     else:
         shadow_yes_edge_min  = float(CONFIG_DEFAULTS["SHADOW_MIN_EDGE_CENTS_YES"])
         shadow_yes_conf_min  = float(CONFIG_DEFAULTS["SHADOW_MIN_CONFIDENCE_YES"])
@@ -519,6 +522,9 @@ def scan_markets(
         next_day_sigma_multiplier = float(os.getenv(
             "NEXT_DAY_SIGMA_MULTIPLIER", str(CONFIG_DEFAULTS["NEXT_DAY_SIGMA_MULTIPLIER"])
         ))
+        enable_low_markets = os.getenv(
+            "ENABLE_LOW_MARKETS", str(CONFIG_DEFAULTS["ENABLE_LOW_MARKETS"])
+        ).strip().lower() == "true"
 
     # Next-day evaluation (issue #687): per-station eligibility + which future
     # date to treat as "next-day" for that station. Computed once per scan,
@@ -955,8 +961,14 @@ def scan_markets(
     # provided — absent that dict no low-side state is available to score.
     # All low-side candidates are emitted with shadow=True regardless of any
     # station_overrides settings (promotion to live is tracked in #458).
+    #
+    # Issue #733 (2026-07-17 rollback decision): additionally gated behind
+    # ENABLE_LOW_MARKETS, default OFF — the bot focuses on daily-HIGH markets
+    # only. LOW never traded live (shadow-only since #455) but accumulated a
+    # disproportionate bug trail (#554, #610, permanently-unsettled LOW shadow
+    # rows). Flip the flag to restore the previous shadow-only behaviour.
     # -----------------------------------------------------------------------
-    if weather_low and prob_low_fn is not None:
+    if enable_low_markets and weather_low and prob_low_fn is not None:
         for market in markets:
             try:
                 is_low, station = is_lowest_temp_market(market)

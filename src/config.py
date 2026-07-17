@@ -628,6 +628,13 @@ CONFIG_DEFAULTS: "dict[str, str | int | float | bool]" = {
     # via the existing log_candidate()/insert_candidate() path -- no live
     # entries from next-day evaluation under any circumstance in this design.
     "NEXT_DAY_EVALUATION": False,
+    # LOW-direction ("lowest temperature in") market scanning (issue #733
+    # rollback decision, 2026-07-17): the bot focuses on daily-HIGH markets
+    # only. LOW was shadow-only from day one (#455) and produced a
+    # disproportionate bug trail (#554, #610, permanent settle zombies) for
+    # 55 shadow rows of output. Off by default; flipping this back on
+    # restores the previous shadow-only LOW scan unchanged.
+    "ENABLE_LOW_MARKETS": False,
     # Fallback sigma multiplier for next-day evaluation when no EMOS lead bin
     # covers the market's lead time (issue #687 amendment 2): effective sigma
     # = FORECAST_STDDEV_F * NEXT_DAY_SIGMA_MULTIPLIER. 1.5 is a starting

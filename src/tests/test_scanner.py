@@ -379,7 +379,19 @@ class TestEntryGates:
     """Tests for the DISABLED_STATIONS and margin_gate entry filters in scan_markets()."""
 
     def _weather_state(self) -> WeatherState:
-        return _state(forecast=80.0, current=75.0)
+        import dataclasses
+        state = _state(forecast=80.0, current=75.0)
+        # Pin the state's clock 30 min past its own sunset so the envelope's
+        # remaining-climb term is zero no matter when the test runs. _state()
+        # uses the real wall clock against a fixed hour-20 sunset, which made
+        # these three tests time-of-day flaky: before 20:00 UTC the model
+        # still priced an afternoon climb (p_yes~=0.07 -> ev_no below
+        # MIN_EDGE_CENTS -> candidate skipped as min_edge before ever
+        # reaching the margin gate), so they only passed in evening-UTC CI
+        # runs.
+        return dataclasses.replace(
+            state, now_local=state.sunset_local + timedelta(minutes=30)
+        )
 
     def _miami_market(self, group_title: str, outcome_prices: str) -> dict:
         market = _market(

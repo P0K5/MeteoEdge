@@ -2276,6 +2276,11 @@ _CONFIG_META: dict[str, dict] = {
         "type": "bool",
         "group": "strategy",
     },
+    "ENABLE_LOW_MARKETS": {
+        "description": "Scan LOW-direction ('lowest temperature in') markets, shadow-only. Off by default (issue #733 rollback: the bot focuses on daily-HIGH markets); flipping on restores the previous shadow-only LOW scan.",
+        "type": "bool",
+        "group": "strategy",
+    },
     "DAILY_LOSS_LIMIT_EUR": {
         "description": "Maximum daily loss before trading halts (€)",
         "type": "float",

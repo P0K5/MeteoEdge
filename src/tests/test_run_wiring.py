@@ -306,9 +306,10 @@ class TestPollOnceShadowUpsertPersistsDirection:
 class TestPollOncePassesWeatherLow:
     """scan_markets() must receive weather_low= and prob_low_fn= from poll_once()."""
 
-    def test_scan_markets_receives_weather_low_and_prob_low_fn(self):
-        mock_db = MagicMock()
-        sentinel_weather_low = {"EGLC": MagicMock()}
+    @staticmethod
+    def _run_poll_once(mock_db, sentinel_weather_low):
+        """Run poll_once() under the standard patch stack; return
+        (mock_build_low, captured scan_markets kwargs)."""
         captured_kwargs: list[dict] = []
 
         def _fake_scan_markets(weather, markets, **kwargs):
@@ -337,9 +338,24 @@ class TestPollOncePassesWeatherLow:
             mock_risk.allow_trade.return_value = (False, "test block")
 
             poll_once(mock_risk, live_trader=None, alert_manager=None, db=mock_db)
+        return mock_build_low, captured_kwargs
+
+    def test_scan_markets_receives_weather_low_and_prob_low_fn(self):
+        """With ENABLE_LOW_MARKETS on, the #554 wiring must stay intact."""
+        mock_db = MagicMock()
+        # Issue #733: the LOW scan is flag-gated (default off); this test
+        # exercises the flag-ON wiring, so the DB config returns "true" for
+        # that key and None for everything else (as an unseeded DB would).
+        mock_db.get_config.side_effect = (
+            lambda key, *a: "true" if key == "ENABLE_LOW_MARKETS" else None
+        )
+        sentinel_weather_low = {"EGLC": MagicMock()}
+
+        mock_build_low, captured_kwargs = self._run_poll_once(mock_db, sentinel_weather_low)
 
         assert mock_build_low.called, (
-            "poll_once() must call build_weather_low_for_scanning() every poll"
+            "poll_once() must call build_weather_low_for_scanning() when "
+            "ENABLE_LOW_MARKETS is on"
         )
         assert captured_kwargs, "scan_markets was never called"
         assert "weather_low" in captured_kwargs[0], (
@@ -352,6 +368,24 @@ class TestPollOncePassesWeatherLow:
             "alongside weather_low for the low-side block to execute"
         )
         assert callable(captured_kwargs[0]["prob_low_fn"])
+
+    def test_low_build_skipped_when_flag_off(self, monkeypatch):
+        """Issue #733 rollback: with defaults (flag unset in DB and env),
+        poll_once() must NOT build low-side weather states."""
+        monkeypatch.delenv("ENABLE_LOW_MARKETS", raising=False)
+        mock_db = MagicMock()
+        mock_db.get_config.return_value = None  # unseeded key -> default (off)
+
+        mock_build_low, captured_kwargs = self._run_poll_once(mock_db, {"EGLC": MagicMock()})
+
+        assert not mock_build_low.called, (
+            "build_weather_low_for_scanning() must be skipped while "
+            "ENABLE_LOW_MARKETS is off (default)"
+        )
+        assert captured_kwargs, "scan_markets was never called"
+        assert captured_kwargs[0].get("weather_low") == {}, (
+            "scan_markets should receive an empty weather_low while the flag is off"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -976,7 +1010,11 @@ class TestPollOnceSharesMetarFetch:
     KORD_STATION = ("KORD", 41.9742, -87.9073, "Chicago", "KORD", "F", "America/Chicago")
     _FAKE_METAR = [{"temp": 15.0, "reportTime": "2026-06-25T03:00:00-05:00"}]
 
-    def test_metar_fetched_once_and_shared_across_both_builders(self):
+    def test_metar_fetched_once_and_shared_across_both_builders(self, monkeypatch):
+        # Issue #733: the low-side build is flag-gated (default off); this
+        # test's scenario is precisely "both builders run and share one METAR
+        # fetch", so the flag must be on for it to be exercisable.
+        monkeypatch.setenv("ENABLE_LOW_MARKETS", "true")
         import src.scripts.run as run_module
         from datetime import datetime
         import pytz
