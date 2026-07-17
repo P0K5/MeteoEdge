@@ -474,3 +474,80 @@ class TestWsssMultiSourceVerification:
         )
         result = db.get_obs_highs_range("WSSS", "2024-06-14")
         assert result == {"2024-06-15": 91.0}
+
+
+class TestFallbackTruthExclusion:
+    """Issue #731: is_official=0 (Open-Meteo fallback) rows must be excluded
+    from the daily-high TRUTH selectors, so modelled fallback data can never
+    override a real METAR reading as the observed high EMOS/DEB train against.
+
+    Uses RJTT/Tokyo: canonical feeds are ["Tokyo", "RJTT"] and Tokyo is
+    training_eligible, matching the production Seoul/Busan/Tokyo case where the
+    city-keyed feed is Open-Meteo fallback and the ICAO-keyed feed is real
+    METAR.
+    """
+
+    def _raw_insert(self, db, ts, station, temp_f, is_official):
+        """Insert an observation with an explicit is_official value (including
+        NULL), which the public insert_observation() helper does not expose."""
+        with db._lock:
+            db._conn.execute(
+                "INSERT INTO observations (ts, station, temp_f, temp_native, unit, "
+                "source, is_official) VALUES (?,?,?,?,?,?,?)",
+                (ts, station, temp_f, temp_f, "C", "test", is_official),
+            )
+            db._conn.commit()
+
+    def test_daily_high_ignores_higher_fallback_row(self):
+        """A higher is_official=0 fallback row must NOT override the real METAR
+        high (the circular-truth bug #731 fixes)."""
+        db = _db()
+        # Real METAR (is_official defaults to 1) under the ICAO key.
+        db.insert_observation(
+            ts="2024-06-15T03:00:00+00:00", station="RJTT",
+            temp_f=85.0, temp_native=29.4, unit="C", source="metar",
+        )
+        # Higher modelled fallback under the city key, is_official=0.
+        self._raw_insert(db, "2024-06-15T04:00:00+00:00", "Tokyo", 99.0, 0)
+
+        # Truth is the real METAR high, not the higher fallback.
+        assert db.get_daily_obs_high("RJTT", "2024-06-15") == 85.0
+
+    def test_obs_highs_range_ignores_higher_fallback_row(self):
+        db = _db()
+        db.insert_observation(
+            ts="2024-06-15T03:00:00+00:00", station="RJTT",
+            temp_f=85.0, temp_native=29.4, unit="C", source="metar",
+        )
+        self._raw_insert(db, "2024-06-15T04:00:00+00:00", "Tokyo", 99.0, 0)
+
+        result = db.get_obs_highs_range("RJTT", "2024-06-14")
+        assert result == {"2024-06-15": 85.0}
+
+    def test_official_fallback_free_max_still_correct(self):
+        """When the real feed's own row is the max, it is returned unchanged
+        (the fix only removes fallback rows, nothing else)."""
+        db = _db()
+        db.insert_observation(
+            ts="2024-06-15T03:00:00+00:00", station="RJTT",
+            temp_f=90.0, temp_native=32.2, unit="C", source="metar",
+        )
+        self._raw_insert(db, "2024-06-15T04:00:00+00:00", "Tokyo", 80.0, 0)
+        assert db.get_daily_obs_high("RJTT", "2024-06-15") == 90.0
+
+    def test_fallback_only_station_yields_no_truth(self):
+        """If ALL rows are fallback (is_official=0), the truth selectors return
+        no value -- modelled data is never treated as an observation."""
+        db = _db()
+        self._raw_insert(db, "2024-06-15T03:00:00+00:00", "Tokyo", 88.0, 0)
+        self._raw_insert(db, "2024-06-15T04:00:00+00:00", "Tokyo", 91.0, 0)
+        assert db.get_daily_obs_high("RJTT", "2024-06-15") is None
+        assert db.get_obs_highs_range("RJTT", "2024-06-14") == {}
+
+    def test_null_is_official_treated_as_official(self):
+        """Legacy rows predating the is_official column default (NULL) must be
+        treated as official, not dropped."""
+        db = _db()
+        self._raw_insert(db, "2024-06-15T03:00:00+00:00", "RJTT", 87.0, None)
+        assert db.get_daily_obs_high("RJTT", "2024-06-15") == 87.0
+        assert db.get_obs_highs_range("RJTT", "2024-06-14") == {"2024-06-15": 87.0}
