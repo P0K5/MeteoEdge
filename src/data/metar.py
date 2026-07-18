@@ -12,7 +12,7 @@ from astral.sun import sun
 
 import logging
 
-from src.config import STATION_TZ, HTTP_TIMEOUT_SECONDS
+from src.config import STATION_TZ, HTTP_TIMEOUT_SECONDS, METAR_SKIP_STATIONS
 from src.http_client import fetch
 
 log = logging.getLogger(__name__)
@@ -24,6 +24,11 @@ def fetch_metar(station: str) -> dict | None:
     Returns the most recent METAR report as a dict with keys like 'temp',
     'reportTime', 'obsTime', etc. Returns None on error.
     """
+    if station in METAR_SKIP_STATIONS:
+        # Issue #732: chronically-dead upstream feed — skip the fetch to avoid
+        # wasted HTTP calls and repetitive parse-error spam. Same outcome (no
+        # reading) as the previous error path, minus the noise.
+        return None
     url = f"https://aviationweather.gov/api/data/metar?ids={station}&format=json&hours=2"
     try:
         r = fetch(url, timeout=HTTP_TIMEOUT_SECONDS)
@@ -41,6 +46,9 @@ def fetch_all_metars_today(station: str) -> list[dict]:
 
     Returns a list of METAR reports as dicts. Returns empty list on error.
     """
+    if station in METAR_SKIP_STATIONS:
+        # Issue #732: see fetch_metar() — skip the known-dead upstream feed.
+        return []
     url = f"https://aviationweather.gov/api/data/metar?ids={station}&format=json&hours=24"
     try:
         r = fetch(url, timeout=HTTP_TIMEOUT_SECONDS)

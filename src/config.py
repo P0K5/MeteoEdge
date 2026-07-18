@@ -423,6 +423,20 @@ SHADOW_STATIONS_ARCHIVE: "frozenset[str]" = frozenset({
 # Alias kept so existing code referencing DISABLED_STATIONS still works.
 DISABLED_STATIONS: "set[str]" = SHADOW_STATIONS
 
+# METAR_SKIP_STATIONS (issue #732): ICAO codes whose aviationweather.gov METAR
+# feed is chronically dead, so the fetch is short-circuited to avoid wasted
+# HTTP calls and repetitive JSON-parse error spam in bot.log.
+#   ZSJN (Jinan): NOAA/aviationweather returns an empty/non-JSON body for this
+#   station (metar-day error "Expecting value: line 1 column 1"), ~127x/2 days.
+#   Jinan is already training_eligible=false (source_priority.yaml) and has no
+#   live Polymarket market, so skipping the fetch loses no usable data -- it
+#   only stops the noise. Override via the METAR_SKIP_STATIONS env var
+#   (comma-separated ICAO codes) to add/remove stations without a code change.
+_metar_skip_raw = os.getenv("METAR_SKIP_STATIONS", "ZSJN")
+METAR_SKIP_STATIONS: "frozenset[str]" = frozenset(
+    s.strip().upper() for s in _metar_skip_raw.split(",") if s.strip()
+)
+
 # Per-side shadow env vars: only shadow the named side.
 SHADOW_STATIONS_YES: "set[str]" = {
     s.strip().upper() for s in os.getenv("SHADOW_STATIONS_YES", "").split(",") if s.strip()
