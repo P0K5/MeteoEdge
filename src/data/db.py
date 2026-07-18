@@ -2592,9 +2592,17 @@ class Database:
 
         feed_keys = get_canonical_station_feeds(station)
         placeholders = ",".join("?" * len(feed_keys))
+        # Issue #731: exclude is_official=0 (Open-Meteo fallback) rows from the
+        # daily-high TRUTH. The canonical feed union pools a city-keyed
+        # high-cadence feed with the ICAO-keyed METAR feed and takes the MAX;
+        # for Seoul/Busan/Tokyo the city feed is modelled Open-Meteo data
+        # (is_official=0), which could otherwise override the real METAR reading
+        # as the "observed" high that EMOS/DEB train against (circular truth).
+        # NULL is treated as official (legacy rows predate the column default).
         cur = self._conn.execute(
             f"SELECT ts, temp_f FROM observations "
             f"WHERE station IN ({placeholders}) AND ts >= ? AND ts < ? AND temp_f IS NOT NULL "
+            f"AND (is_official IS NULL OR is_official = 1) "
             f"ORDER BY ts",
             (*feed_keys, date_minus_1, date_plus_2),
         )
@@ -2644,12 +2652,17 @@ class Database:
 
         tz = pytz.timezone(STATION_TZ[station])
 
-        # Fetch all observations (across every canonical feed key) with temp_f IS NOT NULL
+        # Fetch all observations (across every canonical feed key) with temp_f
+        # IS NOT NULL. Issue #731: exclude is_official=0 (Open-Meteo fallback)
+        # rows so modelled data can't override real METAR as the observed daily
+        # high the DEB weights train against -- same rationale as
+        # get_daily_obs_high(). NULL is treated as official (legacy rows).
         feed_keys = get_canonical_station_feeds(station)
         placeholders = ",".join("?" * len(feed_keys))
         cur = self._conn.execute(
             f"SELECT ts, temp_f FROM observations "
             f"WHERE station IN ({placeholders}) AND temp_f IS NOT NULL "
+            f"AND (is_official IS NULL OR is_official = 1) "
             f"ORDER BY ts",
             (*feed_keys,),
         )
