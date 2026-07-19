@@ -79,16 +79,27 @@ def fetch_daily_climate_high(station: str, target_date: date) -> float | None:
 def settle_shadow_trades(target: date, truth: dict, db=None) -> None:
     """Settle shadow trades for *target* using real outcomes from *truth*.
 
-    Shadow rows were inserted with ``mode='shadow'``, ``capital_before=0.0``,
-    and ``actual_price=ask_cents`` (the observed ask at logging time).
-    Settlement uses a $1 notional stake so results are normalised for
-    cross-period comparison:
+    Shadow rows are inserted with ``mode='shadow'``, ``capital_before=0.0``,
+    and ``actual_price`` = the **cost of the side actually bought** (issue
+    #737): the YES ask for YES rows and the NO ask for NO rows. This matches
+    the live-row convention. (Rows written before #737 stored the YES ask on
+    both sides; the one-off ``backfill_shadow_no_price_737`` migration corrects
+    those historical NO rows and their settled pnl.)
 
-    YES side:
+    Settlement uses a $1 notional stake so results are normalised for
+    cross-period comparison. Because ``actual_price`` is already the bought-side
+    cost, a single formula is correct for both sides:
+
+        pnl = (100 - actual_price) / 100   if the bought side won
+        pnl = -(actual_price) / 100        if the bought side lost
+
+    Concretely:
+
+    YES side (actual_price = yes_ask):
         pnl = (100 - yes_ask) / 100   if YES bracket was hit (won)
         pnl = -(yes_ask) / 100        if YES bracket was missed (lost)
 
-    NO side:
+    NO side (actual_price = no_ask):
         pnl = (100 - no_ask) / 100    if YES bracket was missed (NO won)
         pnl = -(no_ask) / 100         if YES bracket was hit (NO lost)
 
@@ -123,21 +134,11 @@ def settle_shadow_trades(target: date, truth: dict, db=None) -> None:
     now_iso = datetime.now(timezone.utc).isoformat()
     for r in rows:
         station = r.get("station", "")
-
-        # direction='low' rows cannot be settled against `truth`, which is the
-        # daily HIGH (see fetch_daily_climate_high). Settling a low bracket
-        # against the high produces near-guaranteed fake wins/losses and
-        # poisons shadow statistics (issue #610). Proper low-truth settlement
-        # is Epic C scope (#458/#452) — skip these rows here.
-        if r.get("direction") == "low":
-            n_skipped_low += 1
-            log.debug(
-                "[settle] [shadow] direction=low — skipping row %s (no daily-LOW truth yet)",
-                r["id"],
-            )
-            continue
-
         ticker = str(r.get("ticker") or "")
+
+        # Attempt Gamma resolution FIRST for 0x-ticker rows (definitive market truth,
+        # valid regardless of direction). Only apply the direction='low' skip to rows
+        # that would need METAR daily-HIGH truth (non-0x synthetic tickers).
         if ticker.startswith("0x"):
             # Real market: the on-chain resolution is the only accepted truth.
             yes_won = fetch_market_resolution(ticker)
@@ -151,7 +152,20 @@ def settle_shadow_trades(target: date, truth: dict, db=None) -> None:
             resolution_source = "gamma"
         else:
             # Legacy synthetic ticker: no market to query — METAR truth is the
-            # only option, and only for the run's own target date.
+            # only option. direction='low' rows cannot be settled against `truth`,
+            # which is the daily HIGH (see fetch_daily_climate_high). Settling a low
+            # bracket against the high produces near-guaranteed fake wins/losses and
+            # poisons shadow statistics (issue #610). Proper low-truth settlement
+            # is Epic C scope (#458/#452) — skip these rows here.
+            if r.get("direction") == "low":
+                n_skipped_low += 1
+                log.debug(
+                    "[settle] [shadow] direction=low — skipping row %s (no daily-LOW truth yet)",
+                    r["id"],
+                )
+                continue
+
+            # Non-0x, non-low: use METAR truth for the run's target date.
             if r.get("ts", "")[:10] != target.isoformat() or station not in truth:
                 n_pending += 1
                 continue

@@ -43,8 +43,12 @@ def _make_response(status_code: int = 200, json_data: dict | None = None) -> Mag
     return mock_resp
 
 
-def _jma_response(temp_c: float, time_key: str = "090000") -> dict:
-    """Build a minimal JMA AMeDAS JSON response for one time slot."""
+def _jma_response(temp_c: float, time_key: str = "20260620090000") -> dict:
+    """Build a minimal JMA AMeDAS JSON response for one time slot.
+
+    Post-#739 the JMA point file is a 3-hour bucket keyed by full
+    ``YYYYMMDDHHmmss`` slot timestamps (not the old 6-digit ``HHMMss``).
+    """
     return {
         time_key: {
             "temp": [temp_c, 0],   # [value, quality_flag=0 (good)]
@@ -108,9 +112,9 @@ class TestJmaHappyPath:
         collector = JmaAmedasCollector(db)
 
         data = {
-            "090000": {"temp": [20.0, 0], "wind": [1.0, 0]},
-            "091000": {"temp": [21.0, 0], "wind": [1.0, 0]},
-            "092000": {"temp": [22.5, 0], "wind": [1.0, 0]},
+            "20260620090000": {"temp": [20.0, 0], "wind": [1.0, 0]},
+            "20260620091000": {"temp": [21.0, 0], "wind": [1.0, 0]},
+            "20260620092000": {"temp": [22.5, 0], "wind": [1.0, 0]},
         }
         resp = _make_response(200, data)
         with patch("src.data.collectors.jma_ameidas.fetch", return_value=resp):
@@ -125,8 +129,8 @@ class TestJmaHappyPath:
         collector = JmaAmedasCollector(db)
 
         data = {
-            "090000": {"temp": [99.9, 8], "wind": [1.0, 0]},  # quality=8, bad
-            "091000": {"temp": [21.0, 0], "wind": [1.0, 0]},  # quality=0, good
+            "20260620090000": {"temp": [99.9, 8], "wind": [1.0, 0]},  # quality=8, bad
+            "20260620091000": {"temp": [21.0, 0], "wind": [1.0, 0]},  # quality=0, good
         }
         resp = _make_response(200, data)
         with patch("src.data.collectors.jma_ameidas.fetch", return_value=resp):
@@ -141,13 +145,13 @@ class TestJmaHappyPath:
         db = _db()
         collector = JmaAmedasCollector(db)
 
-        resp = _make_response(200, _jma_response(23.0, time_key="091000"))
+        resp = _make_response(200, _jma_response(23.0, time_key="20260620091000"))
         with patch("src.data.collectors.jma_ameidas.fetch", return_value=resp):
             collector.poll()
 
         rows = db.get_observations("Tokyo", since="2000-01-01")
         raw = json.loads(rows[0]["raw_json"])
-        assert raw["time_key"] == "091000"
+        assert raw["time_key"] == "20260620091000"
 
 
 # ---------------------------------------------------------------------------
@@ -160,12 +164,10 @@ class TestJstToUtcConversion:
         db = _db()
         collector = JmaAmedasCollector(db)
 
-        # The time_key "090000" = 09:00 JST. Our _fetch_jma replaces now_jst's
-        # hour/minute with those from the time_key. We patch datetime.now indirectly
-        # by providing a fixed now_jst through the response: the collector builds
-        # obs_jst = now_jst.replace(hour=9, minute=0) for key "090000".
-        # We can verify the stored ts is 9 hours behind the JST key.
-        resp = _make_response(200, _jma_response(25.0, time_key="090000"))
+        # The slot key "20260620090000" = 09:00 JST. Post-#739 the parser reads
+        # the full YYYYMMDDHHmmss timestamp directly from the key and converts it
+        # JST->UTC, so 09:00 JST must be stored as 00:00 UTC (9 hours earlier).
+        resp = _make_response(200, _jma_response(25.0, time_key="20260620090000"))
         with patch("src.data.collectors.jma_ameidas.fetch", return_value=resp):
             collector.poll()
 
@@ -311,30 +313,34 @@ class TestCadenceEnvVar:
 
 
 # ---------------------------------------------------------------------------
-# Publication-lag clamp — no future-timestamp requests (issue #560)
+# Publication-lag clamp — 3-hour bucket requests, no future timestamps (#560/#739)
 # ---------------------------------------------------------------------------
 
 class TestPublicationLagAndFutureTimestamps:
-    """The collector must never request a JMA slot that hasn't been published
-    yet. These tests freeze the clock at awkward boundaries (just before/after
-    a 10-min mark, exactly on the mark, and both directions of JST midnight)
-    and call the REAL `_fetch_jma()` / `poll()` path, asserting on the actual
-    URL(s) requested via the mocked `fetch`. The fallback chain (current →
-    previous 10-min slot → previous hour) must remain intact — only the
-    starting anchor shifts by the publication lag.
+    """The collector must never request an unpublished JMA file nor store a
+    future timestamp. Post-#739 the point feed is a 3-hour bucket file
+    (``YYYYMMDD_HH.json``); the publication-lag anchor (issue #560) still
+    shifts the request off a just-opened bucket, and the fallback chain
+    (current bucket -> previous slot offset -> previous hour) must stay intact.
+
+    These tests freeze the clock and drive the REAL ``poll()`` path, asserting
+    on the bucket URL(s) requested and the timestamp actually stored. The
+    per-slot URL/grid-snap details are covered separately in
+    ``test_jma_ameidas.py`` (``TestUrlFormat``/``TestFallbackChain``); here we
+    keep the poll-level, clock-frozen integration coverage.
     """
 
     @patch("src.data.collectors.jma_ameidas.datetime")
     @patch("src.data.collectors.jma_ameidas.fetch")
-    def test_no_future_timestamp_just_after_10min_mark(
+    def test_primary_request_targets_current_3h_bucket(
         self, mock_fetch: MagicMock, mock_datetime: MagicMock
     ):
-        """At 09:10:05 JST, the primary request must target 09:00, not 09:10
-        (09:10 just opened 5 seconds ago and cannot possibly be published yet)."""
+        """Mid-bucket (09:17 JST) the primary request targets the 09:00 bucket
+        file (``20260620_09.json``)."""
         db = _db()
         collector = JmaAmedasCollector(db)
 
-        now_jst = datetime(2026, 6, 20, 9, 10, 5, tzinfo=_JST)
+        now_jst = datetime(2026, 6, 20, 9, 17, 0, tzinfo=_JST)
         mock_datetime.now.return_value = now_jst
         mock_datetime.side_effect = lambda *args, **kwargs: datetime(*args, **kwargs)
 
@@ -343,148 +349,91 @@ class TestPublicationLagAndFutureTimestamps:
         collector.poll()
 
         url = mock_fetch.call_args_list[0][0][0]
-        assert "20260620090000" in url
-        assert "20260620091000" not in url
+        assert "20260620_09.json" in url
 
     @patch("src.data.collectors.jma_ameidas.datetime")
     @patch("src.data.collectors.jma_ameidas.fetch")
-    def test_no_future_timestamp_just_before_10min_mark(
+    def test_publication_lag_avoids_just_opened_bucket(
         self, mock_fetch: MagicMock, mock_datetime: MagicMock
     ):
-        """At 09:08:30 JST, lag-adjustment and grid-snap both land on 09:00."""
+        """At 09:01 JST the 09:00 bucket only just opened; the 2-min lag anchor
+        (08:59) keeps the primary request on the already-published 06:00 bucket
+        rather than the just-opened 09:00 one."""
         db = _db()
         collector = JmaAmedasCollector(db)
 
-        now_jst = datetime(2026, 6, 20, 9, 8, 30, tzinfo=_JST)
+        now_jst = datetime(2026, 6, 20, 9, 1, 0, tzinfo=_JST)
         mock_datetime.now.return_value = now_jst
         mock_datetime.side_effect = lambda *args, **kwargs: datetime(*args, **kwargs)
 
-        mock_fetch.return_value = _make_response(200, _jma_response(21.0))
+        mock_fetch.return_value = _make_response(200, _jma_response(21.0, time_key="20260620065000"))
 
         collector.poll()
 
         url = mock_fetch.call_args_list[0][0][0]
-        assert "20260620090000" in url
+        assert "20260620_06.json" in url
+        assert "20260620_09.json" not in url
 
     @patch("src.data.collectors.jma_ameidas.datetime")
     @patch("src.data.collectors.jma_ameidas.fetch")
-    def test_no_future_timestamp_at_10min_boundary_exactly(
+    def test_previous_bucket_reachable_on_404(
         self, mock_fetch: MagicMock, mock_datetime: MagicMock
     ):
-        """At 09:10:00 JST exactly, the just-opened slot must not be requested."""
+        """If the current bucket 404s, the fallback chain must still reach the
+        previous 3-hour bucket (06:00) — the chain does not collapse."""
         db = _db()
         collector = JmaAmedasCollector(db)
 
-        now_jst = datetime(2026, 6, 20, 9, 10, 0, tzinfo=_JST)
+        now_jst = datetime(2026, 6, 20, 9, 17, 0, tzinfo=_JST)
         mock_datetime.now.return_value = now_jst
         mock_datetime.side_effect = lambda *args, **kwargs: datetime(*args, **kwargs)
 
-        mock_fetch.return_value = _make_response(200, _jma_response(22.5))
-
-        collector.poll()
-
-        url = mock_fetch.call_args_list[0][0][0]
-        assert "20260620090000" in url
-        assert "20260620091000" not in url
-
-    @patch("src.data.collectors.jma_ameidas.datetime")
-    @patch("src.data.collectors.jma_ameidas.fetch")
-    def test_no_future_timestamp_around_jst_midnight_before(
-        self, mock_fetch: MagicMock, mock_datetime: MagicMock
-    ):
-        """At 23:58:00 JST, the request stays on the same calendar day (23:50),
-        never rolling into the next day."""
-        db = _db()
-        collector = JmaAmedasCollector(db)
-
-        now_jst = datetime(2026, 6, 20, 23, 58, 0, tzinfo=_JST)
-        mock_datetime.now.return_value = now_jst
-        mock_datetime.side_effect = lambda *args, **kwargs: datetime(*args, **kwargs)
-
-        mock_fetch.return_value = _make_response(200, _jma_response(18.5))
-
-        collector.poll()
-
-        url = mock_fetch.call_args_list[0][0][0]
-        assert "20260620235000" in url
-        assert "20260621" not in url
-
-    @patch("src.data.collectors.jma_ameidas.datetime")
-    @patch("src.data.collectors.jma_ameidas.fetch")
-    def test_no_future_timestamp_around_jst_midnight_after(
-        self, mock_fetch: MagicMock, mock_datetime: MagicMock
-    ):
-        """At 00:01:00 JST (just after midnight), lag-adjustment rolls the
-        anchor back into the *previous* calendar day (23:59) before snapping,
-        landing on the previous day's 23:50 slot — never a future timestamp."""
-        db = _db()
-        collector = JmaAmedasCollector(db)
-
-        now_jst = datetime(2026, 6, 21, 0, 1, 0, tzinfo=_JST)
-        mock_datetime.now.return_value = now_jst
-        mock_datetime.side_effect = lambda *args, **kwargs: datetime(*args, **kwargs)
-
-        mock_fetch.return_value = _make_response(200, _jma_response(17.0))
-
-        collector.poll()
-
-        url = mock_fetch.call_args_list[0][0][0]
-        assert "20260620235000" in url
-
-    @patch("src.data.collectors.jma_ameidas.datetime")
-    @patch("src.data.collectors.jma_ameidas.fetch")
-    def test_retry_previous_slot_for_just_published_boundary(
-        self, mock_fetch: MagicMock, mock_datetime: MagicMock
-    ):
-        """When the lag-adjusted primary slot still 404s, fall back to exactly
-        one previous 10-minute slot — the fallback chain depth is preserved,
-        it does not hammer the future slot again."""
-        db = _db()
-        collector = JmaAmedasCollector(db)
-
-        now_jst = datetime(2026, 6, 20, 9, 12, 0, tzinfo=_JST)
-        mock_datetime.now.return_value = now_jst
-        mock_datetime.side_effect = lambda *args, **kwargs: datetime(*args, **kwargs)
-
+        # current bucket (09) 404s on the anchor and the -10min retry (still 09),
+        # the -1h retry lands on the previous bucket (06) and succeeds.
         mock_fetch.side_effect = [
             _make_response(404),
-            _make_response(200, _jma_response(20.5)),
-        ]
-
-        collector.poll()
-
-        assert mock_fetch.call_count == 2
-        first_call = mock_fetch.call_args_list[0][0][0]
-        second_call = mock_fetch.call_args_list[1][0][0]
-        assert "20260620091000" in first_call
-        assert "20260620090000" in second_call
-
-    @patch("src.data.collectors.jma_ameidas.datetime")
-    @patch("src.data.collectors.jma_ameidas.fetch")
-    def test_previous_hour_tier_still_reachable(
-        self, mock_fetch: MagicMock, mock_datetime: MagicMock
-    ):
-        """The third fallback tier (previous hour) must still be reachable —
-        the lag clamp must not collapse the chain from 3 attempts to 2."""
-        db = _db()
-        collector = JmaAmedasCollector(db)
-
-        now_jst = datetime(2026, 6, 20, 9, 12, 0, tzinfo=_JST)
-        mock_datetime.now.return_value = now_jst
-        mock_datetime.side_effect = lambda *args, **kwargs: datetime(*args, **kwargs)
-
-        mock_fetch.side_effect = [
-            _make_response(404),  # 09:10 (anchor)
-            _make_response(404),  # 09:00 (previous slot)
-            _make_response(200, _jma_response(19.5)),  # 08:10 (previous hour)
+            _make_response(404),
+            _make_response(200, _jma_response(19.5, time_key="20260620081000")),
         ]
 
         result = collector.poll()
 
         assert result is True
         assert mock_fetch.call_count == 3
-        third_call = mock_fetch.call_args_list[2][0][0]
-        assert "20260620081000" in third_call
+        assert "20260620_06.json" in mock_fetch.call_args_list[2][0][0]
+
+    @patch("src.data.collectors.jma_ameidas.datetime")
+    @patch("src.data.collectors.jma_ameidas.fetch")
+    def test_stored_timestamp_not_in_future(
+        self, mock_fetch: MagicMock, mock_datetime: MagicMock
+    ):
+        """The stored observation timestamp is the newest published slot in the
+        bucket and is never ahead of 'now'."""
+        db = _db()
+        collector = JmaAmedasCollector(db)
+
+        now_jst = datetime(2026, 6, 20, 9, 17, 0, tzinfo=_JST)
+        mock_datetime.now.return_value = now_jst
+        mock_datetime.side_effect = lambda *args, **kwargs: datetime(*args, **kwargs)
+
+        # Newest good slot is 09:10 JST (already published at 09:17); no future slot.
+        data = {
+            "20260620090000": {"temp": [22.0, 0], "wind": [1.0, 0]},
+            "20260620091000": {"temp": [22.3, 0], "wind": [1.0, 0]},
+        }
+        mock_fetch.return_value = _make_response(200, data)
+
+        assert collector.poll() is True
+
+        rows = db.get_observations("Tokyo", since="2000-01-01")
+        stored = datetime.fromisoformat(rows[0]["ts"])
+        if stored.tzinfo is None:
+            stored = stored.replace(tzinfo=timezone.utc)
+        now_utc = now_jst.astimezone(timezone.utc)
+        assert stored <= now_utc
+        # 09:10 JST -> 00:10 UTC
+        assert stored.astimezone(timezone.utc).hour == 0
+        assert stored.astimezone(timezone.utc).minute == 10
 
     @patch("src.data.collectors.jma_ameidas.datetime")
     @patch("src.data.collectors.jma_ameidas.fetch")
@@ -500,7 +449,7 @@ class TestPublicationLagAndFutureTimestamps:
         mock_datetime.now.return_value = now_jst
         mock_datetime.side_effect = lambda *args, **kwargs: datetime(*args, **kwargs)
 
-        mock_fetch.return_value = _make_response(200, _jma_response(25.0))
+        mock_fetch.return_value = _make_response(200, _jma_response(25.0, time_key="20260620143000"))
 
         result = collector.poll()
 

@@ -1,14 +1,15 @@
-"""JMA AMeDAS 10-minute observation adapter for Tokyo Haneda.
+"""JMA AMeDAS 10-minute observation adapter for Tokyo Kitanomaru.
 
 Fetches real-time temperature from the JMA AMeDAS public JSON feed and
 persists it to the observations table.
 
-JMA AMeDAS endpoint:
-  https://www.jma.go.jp/bosai/amedas/data/point/{station_code}/{YYYYMMDDHHMMSS}.json
+JMA AMeDAS endpoint (3-hour bucket format):
+  https://www.jma.go.jp/bosai/amedas/data/point/{station_code}/{YYYYMMDD}_{HH}.json
+  where HH ∈ {00, 03, 06, 09, 12, 15, 18, 21} (JST bucket starts)
 
 Response structure (one measurement per 10-minute slot within the file):
   {
-    "HHMMss": {
+    "YYYYMMDDHHmmss": {
       "temp": [22.4, 0],      # [value, quality_flag]  0 = good
       "wind": [3.2, 0],
       "windDirection": [5, 0]
@@ -16,7 +17,7 @@ Response structure (one measurement per 10-minute slot within the file):
     ...
   }
 
-Station: 44132 — Tokyo/Haneda amedas sensor.
+Station: 44132 — Tokyo/Kitanomaru (central Tokyo) amedas sensor.
 
 Fallback: If the JMA endpoint is inaccessible (404, network error), the adapter
 falls back to the Open-Meteo hourly API for Haneda coordinates
@@ -46,7 +47,7 @@ _JMA_STATION = os.getenv("JMA_STATION_CODE", "44132")  # Tokyo Haneda
 _JST = timezone(timedelta(hours=9))  # Japan Standard Time = UTC+9
 
 _JMA_URL_TEMPLATE = (
-    "https://www.jma.go.jp/bosai/amedas/data/point/{station}/{timestamp}.json"
+    "https://www.jma.go.jp/bosai/amedas/data/point/{station}/{date}_{hour}.json"
 )
 
 # Observed publication lag: JMA finishes writing a 10-minute slot file a
@@ -158,17 +159,26 @@ class JmaAmedasCollector:
         return reading
 
     def _fetch_jma_slot(self, base_jst: datetime) -> "tuple[datetime, float, dict] | None":
-        """Fetch and parse the AMeDAS 10-minute slot file for *base_jst*.
+        """Fetch and parse the AMeDAS 3-hour bucket file for *base_jst*.
 
-        Snaps *base_jst* to the nearest 10-minute grid (down) before constructing the URL.
-        The resulting URL uses a 14-digit timestamp in the format YYYYMMDDHHMMSS.
+        Snaps *base_jst* to the nearest 3-hour bucket boundary (down).
+        Valid bucket hours in JST: {00, 03, 06, 09, 12, 15, 18, 21}.
+
+        Within the bucket file, keys are per-slot timestamps (YYYYMMDDHHmmss).
+        Selects the NEWEST slot with quality_flag == 0; skips slots with quality_flag != 0.
+        Converts the selected JST slot timestamp to UTC.
         """
-        # Snap to the nearest 10-minute grid (down)
-        snapped_jst = base_jst.replace(minute=base_jst.minute // 10 * 10, second=0, microsecond=0)
+        # Snap to the nearest 3-hour bucket boundary (down)
+        bucket_hour = (base_jst.hour // 3) * 3
+        snapped_jst = base_jst.replace(hour=bucket_hour, minute=0, second=0, microsecond=0)
+
+        date_str = snapped_jst.strftime("%Y%m%d")
+        hour_str = f"{bucket_hour:02d}"
 
         url = _JMA_URL_TEMPLATE.format(
             station=_JMA_STATION,
-            timestamp=snapped_jst.strftime("%Y%m%d%H%M00"),
+            date=date_str,
+            hour=hour_str,
         )
 
         try:
@@ -179,8 +189,8 @@ class JmaAmedasCollector:
 
         if r.status_code == 404:
             log.warning(
-                "[jma] AMeDAS file not yet published for %s (station %s)",
-                snapped_jst.strftime("%Y%m%d%H%M"), _JMA_STATION,
+                "[jma] AMeDAS 3-hour bucket not yet published for %s_%s (station %s)",
+                date_str, hour_str, _JMA_STATION,
             )
             return None
         if r.status_code != 200:
@@ -193,13 +203,13 @@ class JmaAmedasCollector:
             log.error("[jma] JSON parse error: %s", exc)
             return None
 
-        # Data is a dict keyed by time strings like "090000", "091000", etc.
-        # Iterate in sorted order to find the most recent good reading.
+        # Data is keyed by per-slot timestamps like "20260620090000", "20260620091000", etc.
+        # Iterate in reverse sorted order to find the NEWEST good reading.
         best_ts: datetime | None = None
         best_temp: float | None = None
         best_raw: dict | None = None
 
-        for time_key in sorted(data.keys()):
+        for time_key in sorted(data.keys(), reverse=True):
             slot = data[time_key]
             temp_entry = slot.get("temp")
             if not isinstance(temp_entry, list) or len(temp_entry) < 2:
@@ -208,18 +218,24 @@ class JmaAmedasCollector:
             if quality != 0 or value is None:
                 continue
             try:
-                hour = int(time_key[:2])
-                minute = int(time_key[2:4])
-                obs_jst = base_jst.replace(hour=hour, minute=minute, second=0, microsecond=0)
+                # Parse YYYYMMDDHHmmss format
+                year = int(time_key[:4])
+                month = int(time_key[4:6])
+                day = int(time_key[6:8])
+                hour = int(time_key[8:10])
+                minute = int(time_key[10:12])
+                second = int(time_key[12:14])
+                obs_jst = datetime(year, month, day, hour, minute, second, tzinfo=_JST)
                 obs_utc = obs_jst.astimezone(timezone.utc)
-            except (ValueError, OverflowError):
+            except (ValueError, OverflowError, IndexError):
                 continue
             best_ts = obs_utc
             best_temp = float(value)
             best_raw = {"time_key": time_key, "slot": slot}
+            break  # Found the newest good slot, stop here
 
         if best_ts is None or best_temp is None:
-            log.warning("[jma] no valid temperature readings in hour data")
+            log.warning("[jma] no valid temperature readings in 3-hour bucket %s_%s", date_str, hour_str)
             return None
 
         return best_ts, best_temp, best_raw

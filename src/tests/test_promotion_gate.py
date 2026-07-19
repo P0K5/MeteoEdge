@@ -726,3 +726,27 @@ class TestDaysCoverageLocalDate:
 
         # Both trades are on the same local date 2026-06-15
         assert row["days_coverage"] == 1
+
+
+class TestPromotionBarNoSideBoughtCost737:
+    """Issue #738: once #737 stores the NO cost in trades.actual_price, the
+    promotion bar's NO-side breakeven and price_valid reflect the true ~0.78
+    breakeven at ~77c NO entries -- not the ~0.25 the old yes_ask-in-actual_price
+    convention produced (which made the NO bar far too easy to clear)."""
+
+    def test_no_side_breakeven_reflects_bought_side_cost(self):
+        # 20 settled NO rows at the corrected NO cost of 77c (mixed outcomes).
+        trades = [
+            _trade("RCSS", "NO", f"no{i}", actual_price=77, won=(i % 5 != 0))
+            for i in range(20)
+        ]
+        rows = compute_promotion_bar(_FakeDB(trades))
+        no_row = next(r for r in rows if r["side"] == "NO")
+        assert no_row["avg_entry_price_cents"] == pytest.approx(77.0)
+        # breakeven must equal the real (bought-side) breakeven at 77c ...
+        assert no_row["breakeven_win_rate"] == pytest.approx(breakeven_win_rate(77))
+        # ... i.e. ~0.78, NOT the ~0.25 the old yes_ask (~23c) basis produced.
+        assert no_row["breakeven_win_rate"] > 0.75
+        # price_valid was side-confused pre-#737 (avg_entry ~23c < MIN_PRICE_CENTS);
+        # at the corrected 77c it is valid.
+        assert no_row["price_valid"] is True

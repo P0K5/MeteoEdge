@@ -2595,14 +2595,24 @@ class Database:
         # Issue #731: exclude is_official=0 (Open-Meteo fallback) rows from the
         # daily-high TRUTH. The canonical feed union pools a city-keyed
         # high-cadence feed with the ICAO-keyed METAR feed and takes the MAX;
-        # for Seoul/Busan/Tokyo the city feed is modelled Open-Meteo data
-        # (is_official=0), which could otherwise override the real METAR reading
-        # as the "observed" high that EMOS/DEB train against (circular truth).
+        # a city feed sourced from modelled Open-Meteo data (is_official=0)
+        # could otherwise override the real METAR reading as the "observed"
+        # high that EMOS/DEB train against (circular truth). Historically this
+        # applied to Seoul/Busan (amos, retired -- issue #740) and could apply
+        # to any future city-keyed feed that falls back to modelled data.
         # NULL is treated as official (legacy rows predate the column default).
+        # Issue #741: also exclude via raw_json LIKE '%source_fallback%' as a
+        # second, independent signal -- every fallback writer (e.g. the former
+        # amos Open-Meteo fallback) tags raw_json with "source_fallback" AND
+        # sets is_official=0, so this OR condition is redundant by design and
+        # only catches a row where one of the two markers was set incorrectly.
+        # NULL raw_json is treated as non-fallback (most rows have no raw_json
+        # at all and must not be excluded).
         cur = self._conn.execute(
             f"SELECT ts, temp_f FROM observations "
             f"WHERE station IN ({placeholders}) AND ts >= ? AND ts < ? AND temp_f IS NOT NULL "
             f"AND (is_official IS NULL OR is_official = 1) "
+            f"AND (raw_json IS NULL OR raw_json NOT LIKE '%source_fallback%') "
             f"ORDER BY ts",
             (*feed_keys, date_minus_1, date_plus_2),
         )
@@ -2657,12 +2667,15 @@ class Database:
         # rows so modelled data can't override real METAR as the observed daily
         # high the DEB weights train against -- same rationale as
         # get_daily_obs_high(). NULL is treated as official (legacy rows).
+        # Issue #741: same raw_json LIKE '%source_fallback%' second signal as
+        # get_daily_obs_high() -- see the comment there for the full rationale.
         feed_keys = get_canonical_station_feeds(station)
         placeholders = ",".join("?" * len(feed_keys))
         cur = self._conn.execute(
             f"SELECT ts, temp_f FROM observations "
             f"WHERE station IN ({placeholders}) AND temp_f IS NOT NULL "
             f"AND (is_official IS NULL OR is_official = 1) "
+            f"AND (raw_json IS NULL OR raw_json NOT LIKE '%source_fallback%') "
             f"ORDER BY ts",
             (*feed_keys,),
         )

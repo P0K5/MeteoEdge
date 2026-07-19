@@ -123,25 +123,32 @@ class TestGetHourlyObsForClimbSchema:
 # ---------------------------------------------------------------------------
 
 class TestComputeFromDbCanonicalFeedRouting:
-    """RKSI/RKPK have a 24/7 AMOS feed persisted under the city name ("Seoul",
-    "Busan"), independent of STATION_ACTIVE_HOURS. Before #669,
-    compute_from_db() only ever called get_hourly_obs_for_climb(icao) -- the
-    ICAO-keyed METAR rows -- and silently ignored that denser, always-on city
-    feed, exactly the same class of bug #558 already fixed for
-    get_daily_obs_high(). compute_from_db() must now union every DB key
-    config.get_canonical_station_feeds(icao) returns."""
+    """Some ICAO stations have a high-cadence feed persisted under the city
+    name (e.g. Singapore/MSS for WSSS), independent of STATION_ACTIVE_HOURS.
+    Before #669, compute_from_db() only ever called
+    get_hourly_obs_for_climb(icao) -- the ICAO-keyed METAR rows -- and
+    silently ignored that denser, always-on city feed, exactly the same class
+    of bug #558 already fixed for get_daily_obs_high(). compute_from_db()
+    must now union every DB key config.get_canonical_station_feeds(icao)
+    returns.
 
-    def test_seoul_amos_feed_is_folded_into_rksi_table(self, tmp_path):
-        """A city-keyed (AMOS) observation for "Seoul" must count toward RKSI's
-        climb table even though it's never stored under the ICAO code "RKSI"."""
-        path = str(tmp_path / "seoul.db")
+    Uses Singapore/WSSS (MSS) rather than the former Seoul/RKSI (AMOS)
+    example: AMOS is retired (issue #740, METAR RKSI/RKPK is now Korea's
+    sole observation source), so Seoul no longer has a city-keyed
+    high-cadence feed to fold in. MSS/Singapore is unaffected and still
+    demonstrates the same canonical-feed union.
+    """
+
+    def test_singapore_mss_feed_is_folded_into_wsss_table(self, tmp_path):
+        """A city-keyed (MSS) observation for "Singapore" must count toward
+        WSSS's climb table even though it's never stored under the ICAO code
+        "WSSS"."""
+        path = str(tmp_path / "singapore.db")
         db = _db(path)
-        # RKSI's active window starts at local 11:00 (see STATION_ACTIVE_HOURS),
-        # so only afternoon/evening METAR is ever persisted under "RKSI" in
-        # production. Simulate that gap: seed METAR for hours 11-23 only under
-        # "RKSI", but seed the FULL 24h diurnal profile under "Seoul" (AMOS,
-        # which runs 24/7 regardless of active hours).
-        tzinfo = ZoneInfo("Asia/Seoul")
+        # Simulate a gap in the METAR-keyed feed: seed METAR for hours 11-23
+        # only under "WSSS", but seed the FULL 24h diurnal profile under
+        # "Singapore" (MSS, which runs 24/7 regardless of active hours).
+        tzinfo = ZoneInfo("Asia/Singapore")
         for day in range(1, 13):
             for hour in range(24):
                 local_dt = datetime(2026, 6, day, hour, 0, tzinfo=tzinfo)
@@ -149,19 +156,20 @@ class TestComputeFromDbCanonicalFeedRouting:
                 ts = utc_dt.isoformat()
                 temp = _profile(hour)
                 db.insert_observation(
-                    ts=ts, station="Seoul", temp_f=temp, temp_native=temp,
-                    unit="C", source="amos", cadence_min=15, is_official=1,
+                    ts=ts, station="Singapore", temp_f=temp, temp_native=temp,
+                    unit="C", source="mss", cadence_min=1, is_official=1,
                 )
                 if hour >= 11:
-                    _insert_obs(db, "RKSI", ts, temp)
+                    _insert_obs(db, "WSSS", ts, temp)
 
-        lookup, sources = _run(path, ["RKSI"])
+        lookup, sources = _run(path, ["WSSS"])
 
-        # Without the Seoul-keyed union, hour-6 (before RKSI's 11:00 active
-        # window) would have zero DB observations and stay synthetic (99.0).
-        # With the union, the AMOS-sourced "Seoul" rows cover hour 6 too.
-        assert lookup["RKSI"][6][6] == pytest.approx(75.0 - _profile(6), abs=0.01)
-        assert "DB observations" in sources["RKSI"]
+        # Without the Singapore-keyed union, hour-6 (missing from the
+        # METAR-keyed feed in this simulated gap) would have zero DB
+        # observations and stay synthetic (99.0). With the union, the
+        # MSS-sourced "Singapore" rows cover hour 6 too.
+        assert lookup["WSSS"][6][6] == pytest.approx(75.0 - _profile(6), abs=0.01)
+        assert "DB observations" in sources["WSSS"]
 
     def test_metar_only_station_is_unaffected(self, tmp_path):
         """KORD has no city-keyed high-cadence feed -- behaviour is unchanged,

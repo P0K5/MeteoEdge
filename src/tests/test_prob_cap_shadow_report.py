@@ -873,3 +873,36 @@ class TestRunReportDbPath:
         )
         assert rc == 0
         assert not out_dir.exists()
+
+
+class TestBoughtSideBasis738:
+    """Issue #738: after #737 stores the NO cost in trades.actual_price, an
+    already-admitted NO row and a newly-admitted snapshot row settle on ONE
+    bought-side basis -- win pays (100 - cost), loss pays -cost. Pre-#737 the
+    already-admitted side used yes_ask (~22c) so a win read ~+78c; here the
+    corrected cost (78c) makes a win read +22c, matching the snapshot no_ask
+    basis."""
+
+    def test_already_admitted_no_win_uses_bought_side_cost(self):
+        settled = [_norm_row(ticker="TICK-A", price_cents=78.0,
+                             yes_won=False, pnl_cents=22.0)]
+        results = simulate_cap_values(settled, [], cap_values=(0.95,))
+        # win contribution = 100 - 78 = 22 (NOT 100 - 22 = 78 under the old bug)
+        assert results[0.95]["total_pnl_cents"] == pytest.approx(22.0)
+
+    def test_already_admitted_no_loss_charges_full_cost(self):
+        settled = [_norm_row(ticker="TICK-B", price_cents=78.0,
+                             yes_won=True, pnl_cents=-78.0)]
+        results = simulate_cap_values(settled, [], cap_values=(0.95,))
+        assert results[0.95]["total_pnl_cents"] == pytest.approx(-78.0)
+
+    def test_both_populations_same_basis(self):
+        """The already-admitted contribution for a NO win at 78c equals the
+        synthetic basis newly-admitted rows are scored on for the same cost and
+        outcome -- i.e. both populations use one bought-side basis."""
+        settled = [_norm_row(ticker="TICK-OLD", price_cents=78.0,
+                             yes_won=False, pnl_cents=22.0)]
+        already_total = simulate_cap_values(settled, [], cap_values=(0.95,))[0.95]["total_pnl_cents"]
+        newly_one = synthetic_no_pnl_cents(78.0, no_won=True)  # newly-admitted basis
+        assert already_total == pytest.approx(newly_one)
+        assert already_total == pytest.approx(22.0)

@@ -294,6 +294,38 @@ class TestSettleShadowNoSideLost:
         db.close()
 
 
+class TestSettleShadowNoPrice737Regression:
+    """Issue #737 regression: a NO row whose bought-side cost is stored (78c,
+    the corrected value for a market where yes_ask=22c) must settle to
+    pnl=+0.22 on a win and -0.78 on a loss -- NOT the inflated +0.78/-0.22 the
+    old yes_ask-on-both-sides convention produced."""
+
+    def test_no_win_pays_bought_side_cost(self, tmp_path):
+        db = _fresh_db(tmp_path)
+        target = date(2025, 6, 1)
+        no_cost = 78  # corrected NO cost for a market quoting yes_ask=22c
+        tid = _insert_shadow_no(db, "KORD", no_cost, target.isoformat(),
+                                bracket_low=80.0, bracket_high=82.0)
+        # actual_high=85.0 outside [80,82] → YES missed → NO won
+        settle_shadow_trades(target, {"KORD": 85.0}, db=db)
+        t = next(r for r in db.get_trades(limit=None) if r["id"] == tid)
+        assert abs(t["pnl"] - 0.22) < 1e-9
+        assert abs(t["capital_after"] - 0.22) < 1e-9
+        db.close()
+
+    def test_no_loss_pays_bought_side_cost(self, tmp_path):
+        db = _fresh_db(tmp_path)
+        target = date(2025, 6, 1)
+        no_cost = 78
+        tid = _insert_shadow_no(db, "KORD", no_cost, target.isoformat(),
+                                bracket_low=80.0, bracket_high=82.0)
+        # actual_high=81.0 within [80,82] → YES hit → NO lost
+        settle_shadow_trades(target, {"KORD": 81.0}, db=db)
+        t = next(r for r in db.get_trades(limit=None) if r["id"] == tid)
+        assert abs(t["pnl"] - (-0.78)) < 1e-9
+        db.close()
+
+
 class TestSettleShadowMultipleSides:
     """YES and NO shadow rows for the same station/date settle independently."""
 
@@ -552,3 +584,95 @@ class TestGammaPreferenceInShadow:
         t = next(r for r in db.get_trades(limit=None) if r["id"] == tid)
         assert t["settled_at"] is not None
         assert abs(t["pnl"] - (100 - yes_ask) / 100) < 1e-5
+
+
+# ---------------------------------------------------------------------------
+# Issue #742 regression tests: 0x-Gamma resolution before low-skip
+# ---------------------------------------------------------------------------
+
+class TestGammaResolutionBeforeLowSkip:
+    """0x-ticker rows settle via Gamma regardless of direction (issue #742)."""
+
+    def test_low_direction_0x_ticker_settles_via_gamma(self, tmp_path):
+        """A LOW row WITH 0x ticker should settle via Gamma (not be skipped)."""
+        from unittest.mock import patch
+        db = _fresh_db(tmp_path)
+        target = date(2025, 6, 1)
+        yes_ask = 30
+        tid = _insert_shadow_direction(
+            db, "KORD", "YES", yes_ask, target.isoformat(), direction="low",
+            bracket_low=80.0, bracket_high=82.0,
+        )
+        # Override ticker to a real 0x market
+        db._conn.execute(
+            "UPDATE trades SET ticker = ? WHERE id = ?",
+            ("0xLOW_KORD_30", tid)
+        )
+        db._conn.commit()
+
+        # Gamma says YES won (even though direction=low)
+        with patch("src.scripts.settle.fetch_market_resolution", return_value=True):
+            settle_shadow_trades(target, {"KORD": 85.0}, db=db)
+
+        trades = db.get_trades(limit=None)
+        t = next(r for r in trades if r["id"] == tid)
+        # Should be settled via Gamma (yes_won=True)
+        assert t["outcome"] == "filled"
+        expected_pnl = (100 - yes_ask) / 100
+        assert abs(t["pnl"] - expected_pnl) < 1e-5
+        assert t["settled_at"] is not None
+        db.close()
+
+    def test_low_direction_synthetic_ticker_still_skipped(self, tmp_path):
+        """A LOW row WITHOUT 0x ticker should still be skipped (no Gamma fallback)."""
+        from unittest.mock import patch
+        db = _fresh_db(tmp_path)
+        target = date(2025, 6, 1)
+        yes_ask = 30
+        tid = _insert_shadow_direction(
+            db, "KORD", "YES", yes_ask, target.isoformat(), direction="low",
+            bracket_low=80.0, bracket_high=82.0,
+        )
+        # Ticker is synthetic (no 0x prefix)
+        assert not db.get_trades(limit=None)[0]["ticker"].startswith("0x")
+
+        # Even with Gamma available, synthetic LOW should be skipped
+        with patch("src.scripts.settle.fetch_market_resolution", return_value=True):
+            settle_shadow_trades(target, {"KORD": 81.0}, db=db)
+
+        trades = db.get_trades(limit=None)
+        t = next(r for r in trades if r["id"] == tid)
+        # Should NOT be settled (skipped due to direction=low)
+        assert t["outcome"] is None
+        assert t["pnl"] is None
+        assert t["settled_at"] is None
+        db.close()
+
+    def test_0x_low_market_unresolved_stays_pending(self, tmp_path):
+        """A LOW row WITH 0x ticker that's unresolved should stay pending."""
+        from unittest.mock import patch
+        db = _fresh_db(tmp_path)
+        target = date(2025, 6, 1)
+        yes_ask = 30
+        tid = _insert_shadow_direction(
+            db, "KORD", "YES", yes_ask, target.isoformat(), direction="low",
+            bracket_low=80.0, bracket_high=82.0,
+        )
+        # Override ticker to a real 0x market
+        db._conn.execute(
+            "UPDATE trades SET ticker = ? WHERE id = ?",
+            ("0xLOW_KORD_30", tid)
+        )
+        db._conn.commit()
+
+        # Gamma says market is unresolved
+        with patch("src.scripts.settle.fetch_market_resolution", return_value=None):
+            settle_shadow_trades(target, {"KORD": 81.0}, db=db)
+
+        trades = db.get_trades(limit=None)
+        t = next(r for r in trades if r["id"] == tid)
+        # Should stay pending (waiting for Gamma resolution)
+        assert t["outcome"] is None
+        assert t["pnl"] is None
+        assert t["settled_at"] is None
+        db.close()

@@ -57,15 +57,19 @@ class TestGetCanonicalStationFeeds:
         feeds = get_canonical_station_feeds("WSSS")
         assert feeds == ["Singapore", "WSSS"], f"Unexpected: {feeds}"
 
-    def test_seoul_returns_city_and_icao(self):
-        """RKSI (Seoul) has an AMOS feed → [city, ICAO]."""
+    def test_seoul_returns_icao_only(self):
+        """Issue #740: amos is retired, so RKSI (Seoul) no longer has a
+        city-keyed high-cadence feed -- METAR (RKSI) is the sole source →
+        [ICAO] only."""
         feeds = get_canonical_station_feeds("RKSI")
-        assert feeds == ["Seoul", "RKSI"], f"Unexpected: {feeds}"
+        assert feeds == ["RKSI"], f"Unexpected: {feeds}"
 
-    def test_busan_returns_city_and_icao(self):
-        """RKPK (Busan) has an AMOS feed → [city, ICAO]."""
+    def test_busan_returns_icao_only(self):
+        """Issue #740: amos is retired, so RKPK (Busan) no longer has a
+        city-keyed high-cadence feed -- METAR (RKPK) is the sole source →
+        [ICAO] only."""
         feeds = get_canonical_station_feeds("RKPK")
-        assert feeds == ["Busan", "RKPK"], f"Unexpected: {feeds}"
+        assert feeds == ["RKPK"], f"Unexpected: {feeds}"
 
     def test_tokyo_returns_city_and_icao(self):
         """RJTT (Tokyo) has a JMA AMeDAS feed → [city, ICAO]."""
@@ -83,8 +87,11 @@ class TestGetCanonicalStationFeeds:
         assert feeds == ["ZZZZ"]
 
     def test_city_key_comes_first(self):
-        """City key (high-cadence) must be first in the list for priority ordering."""
-        for icao in ("WSSS", "RKSI", "RKPK", "RJTT"):
+        """City key (high-cadence) must be first in the list for priority
+        ordering. Issue #740: RKSI/RKPK are excluded here -- amos is retired,
+        so they no longer have a city-keyed feed (see
+        test_seoul_returns_icao_only / test_busan_returns_icao_only)."""
+        for icao in ("WSSS", "RJTT"):
             feeds = get_canonical_station_feeds(icao)
             assert len(feeds) == 2
             # First entry is NOT the ICAO (it is the city name)

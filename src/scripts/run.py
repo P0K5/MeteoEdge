@@ -67,6 +67,24 @@ _last_emos_shadow_date: str = ""
 _zero_eval_consecutive_ticks: int = 0
 
 
+def _shadow_bought_side_cost_cents(
+    side: str, yes_ask_cents: int, no_ask_cents=None
+) -> int:
+    """Cost of the side actually "bought" for a shadow row's ``actual_price``.
+
+    Issue #737: ``settle_shadow_trades()`` prices ``actual_price`` as the
+    bought-side cost (win pays ``100 - cost``, loss pays ``-cost``), so a NO
+    shadow row must store the NO ask, not the YES ask. Falls back to
+    ``100 - yes_ask`` (clamped to [1, 99]) when ``no_ask`` is missing or
+    degenerate. YES rows always store the YES ask.
+    """
+    if side == "NO":
+        if not no_ask_cents or int(no_ask_cents) <= 0:
+            return max(1, min(99, 100 - int(yes_ask_cents)))
+        return int(no_ask_cents)
+    return int(yes_ask_cents)
+
+
 def _maybe_run_emos_shadow(db) -> None:
     """Run the EMOS shadow calibration once per calendar day."""
     global _last_emos_shadow_date
@@ -508,6 +526,15 @@ def poll_once(
         if cand.shadow:
             n_shadow += 1
             if db is not None:
+                # Issue #737: store the cost of the side actually "bought" so
+                # settle_shadow_trades() (which prices actual_price as the
+                # bought-side cost) is correct for BOTH sides -- NO rows carry
+                # the NO ask (~78c), not the YES ask (~22c).
+                shadow_cost_cents = _shadow_bought_side_cost_cents(
+                    cand.side,
+                    cand.bracket.yes_ask_cents,
+                    getattr(cand.bracket, "no_ask_cents", None),
+                )
                 try:
                     _row_id, _created = db.upsert_shadow_trade(
                         ts=ts,
@@ -517,7 +544,7 @@ def poll_once(
                         bracket_high=cand.bracket.high_f,
                         side=cand.side,
                         predicted_price=int(round(cand.p_yes * 100)),
-                        actual_price=cand.bracket.yes_ask_cents,
+                        actual_price=shadow_cost_cents,
                         predicted_edge=cand.edge_cents,
                         capital_before=0.0,
                         direction=cand.direction,
@@ -526,13 +553,13 @@ def poll_once(
                     )
                     if _created:
                         log.info(
-                            "  [shadow] logged %s candidate %s @ %sc (no order placed)",
-                            cand.side, cand.bracket.ticker[:14], cand.bracket.yes_ask_cents,
+                            "  [shadow] logged %s candidate %s @ %sc bought-side cost (no order placed)",
+                            cand.side, cand.bracket.ticker[:14], shadow_cost_cents,
                         )
                     else:
                         log.debug(
                             "  [shadow] dedup: updated actual_price=%sc for %s %s (today already logged)",
-                            cand.bracket.yes_ask_cents, cand.side, cand.bracket.ticker[:14],
+                            shadow_cost_cents, cand.side, cand.bracket.ticker[:14],
                         )
                 except Exception as e:
                     log.warning("  [shadow] DB upsert failed: %s", e)
@@ -689,6 +716,10 @@ def main() -> None:
     # never crashes run.py.
     _start_collector_thread(lambda: TafCollector(db).run_loop(), "taf-collector")
     _start_collector_thread(lambda: JmaAmedasCollector(db).run_loop(), "jma-collector")
+    # AmosCollector is retired (issue #740) -- METAR RKSI/RKPK is now the sole
+    # Korea observation truth feed. run_loop() is a no-op that logs once and
+    # returns; left wired (rather than removed) to match test_run_wiring.py's
+    # "all four collector threads start" expectation and avoid a scheduler change.
     _start_collector_thread(lambda: AmosCollector(db).run_loop(), "amos-collector")
     _start_collector_thread(lambda: MssCollector(db).run_loop(), "mss-collector")
 
