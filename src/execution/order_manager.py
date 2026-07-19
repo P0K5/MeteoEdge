@@ -338,6 +338,7 @@ def _reconcile_db_row(record: dict, ts: str, db=None) -> None:
                 order_id=order_id or None,
                 outcome="filled",
                 capital_before=float(record.get("size_eur", 0)),
+                size_eur=float(record["size_eur"]) if record.get("size_eur") is not None else None,  # issue #746
                 p_yes_raw=record.get("p_yes_raw"),
                 end_date=record.get("end_date") or None,
             )
@@ -588,6 +589,7 @@ class OrderManager:
                         order_id=order_id,
                         outcome="filled",
                         capital_before=float(latest_record.get("size_eur") or 0),
+                        size_eur=float(latest_record["size_eur"]) if latest_record.get("size_eur") is not None else None,  # issue #746
                     )
             except Exception as e:
                 log.warning("[reconcile] DB trade insert failed for %s...: %s", token_id[:14], e)

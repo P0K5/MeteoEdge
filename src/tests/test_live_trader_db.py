@@ -53,6 +53,22 @@ class TestPlaceOrderWritesPosition:
         assert positions[0]["side"] == "NO"
         assert positions[0]["entry_price"] == 70
 
+    def test_place_order_writes_size_eur(self):
+        """Issue #746: size_eur is set at placement (== stake), before any outcome."""
+        db = _db()
+        trader = _make_trader(db)
+        trader.client.create_and_post_order.return_value = {"orderID": "ord-size1"}
+
+        trader.place_order(
+            token_id="tok-size", side="NO", price_cents=70, size_usdc=5.0,
+            station="KORD", bracket_low=32.0, bracket_high=36.0,
+        )
+
+        row = db.get_trade_by_order_id("ord-size1")
+        assert row is not None
+        assert row["size_eur"] == 5.0
+        assert row["capital_before"] == 5.0
+
     def test_place_order_no_db_does_not_raise(self):
         """place_order() without DB must not raise."""
         trader = _make_trader(db=None)
