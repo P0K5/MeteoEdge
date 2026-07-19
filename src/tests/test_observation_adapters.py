@@ -52,7 +52,7 @@ class TestJmaAmedasAdapterIntegration:
         db = _db(tmp_path)
         collector = JmaAmedasCollector(db)
 
-        jma_resp = _make_resp(200, {"090000": {"temp": [22.5, 0], "wind": [3.2, 0]}})
+        jma_resp = _make_resp(200, {"20260620090000": {"temp": [22.5, 0], "wind": [3.2, 0]}})
         with patch("src.data.collectors.jma_ameidas.fetch", return_value=jma_resp):
             result = collector.poll()
 
@@ -339,7 +339,7 @@ class TestFallbackLabeling:
         db = _db(tmp_path)
         collector = JmaAmedasCollector(db)
 
-        jma_resp = _make_resp(200, {"090000": {"temp": [22.5, 0]}})
+        jma_resp = _make_resp(200, {"20260620090000": {"temp": [22.5, 0]}})
         with patch("src.data.collectors.jma_ameidas.fetch", return_value=jma_resp):
             result = collector.poll()
 
@@ -350,26 +350,35 @@ class TestFallbackLabeling:
 
 class TestJmaPreviousHourRetry:
 
-    def test_404_on_current_hour_retries_previous_hour(self, tmp_path):
-        """A 404 on the current hour file triggers a retry on the previous hour."""
+    @patch("src.data.collectors.jma_ameidas.datetime")
+    def test_404_on_current_bucket_retries_previous_bucket(self, mock_datetime, tmp_path):
+        """A 404 on the current 3-hour bucket file (post-#739) triggers a retry
+        that reaches a different, earlier bucket. Clock is frozen near a bucket
+        boundary (09:05 JST) so the retry deterministically crosses from the
+        09:00 bucket to the 06:00 bucket."""
         db = _db(tmp_path)
         collector = JmaAmedasCollector(db)
 
+        now_jst = datetime(2026, 6, 20, 9, 5, 0, tzinfo=timezone(timedelta(hours=9)))
+        mock_datetime.now.return_value = now_jst
+        mock_datetime.side_effect = lambda *args, **kwargs: datetime(*args, **kwargs)
+
         resp_404 = _make_resp(404, {})
-        jma_resp = _make_resp(200, {"090000": {"temp": [19.5, 0]}})
+        jma_resp = _make_resp(200, {"20260620065000": {"temp": [19.5, 0]}})
 
         fetched_urls: list[str] = []
 
         def _fake_fetch(url, **kwargs):
             fetched_urls.append(url)
-            return resp_404 if len(fetched_urls) == 1 else jma_resp
+            return resp_404 if "20260620_09.json" in url else jma_resp
 
         with patch("src.data.collectors.jma_ameidas.fetch", side_effect=_fake_fetch):
             result = collector.poll()
 
         assert result is True
-        assert len(fetched_urls) == 2
-        assert fetched_urls[0] != fetched_urls[1]
+        # current bucket (09) 404s; the fallback chain reaches the earlier 06 bucket
+        assert any("20260620_09.json" in u for u in fetched_urls)
+        assert any("20260620_06.json" in u for u in fetched_urls)
         obs = db.get_observations("Tokyo", since="2000-01-01")
         assert obs[-1]["is_official"] == 1
 
