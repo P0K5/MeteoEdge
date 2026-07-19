@@ -123,21 +123,11 @@ def settle_shadow_trades(target: date, truth: dict, db=None) -> None:
     now_iso = datetime.now(timezone.utc).isoformat()
     for r in rows:
         station = r.get("station", "")
-
-        # direction='low' rows cannot be settled against `truth`, which is the
-        # daily HIGH (see fetch_daily_climate_high). Settling a low bracket
-        # against the high produces near-guaranteed fake wins/losses and
-        # poisons shadow statistics (issue #610). Proper low-truth settlement
-        # is Epic C scope (#458/#452) — skip these rows here.
-        if r.get("direction") == "low":
-            n_skipped_low += 1
-            log.debug(
-                "[settle] [shadow] direction=low — skipping row %s (no daily-LOW truth yet)",
-                r["id"],
-            )
-            continue
-
         ticker = str(r.get("ticker") or "")
+
+        # Attempt Gamma resolution FIRST for 0x-ticker rows (definitive market truth,
+        # valid regardless of direction). Only apply the direction='low' skip to rows
+        # that would need METAR daily-HIGH truth (non-0x synthetic tickers).
         if ticker.startswith("0x"):
             # Real market: the on-chain resolution is the only accepted truth.
             yes_won = fetch_market_resolution(ticker)
@@ -151,7 +141,20 @@ def settle_shadow_trades(target: date, truth: dict, db=None) -> None:
             resolution_source = "gamma"
         else:
             # Legacy synthetic ticker: no market to query — METAR truth is the
-            # only option, and only for the run's own target date.
+            # only option. direction='low' rows cannot be settled against `truth`,
+            # which is the daily HIGH (see fetch_daily_climate_high). Settling a low
+            # bracket against the high produces near-guaranteed fake wins/losses and
+            # poisons shadow statistics (issue #610). Proper low-truth settlement
+            # is Epic C scope (#458/#452) — skip these rows here.
+            if r.get("direction") == "low":
+                n_skipped_low += 1
+                log.debug(
+                    "[settle] [shadow] direction=low — skipping row %s (no daily-LOW truth yet)",
+                    r["id"],
+                )
+                continue
+
+            # Non-0x, non-low: use METAR truth for the run's target date.
             if r.get("ts", "")[:10] != target.isoformat() or station not in truth:
                 n_pending += 1
                 continue
