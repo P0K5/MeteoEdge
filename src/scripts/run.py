@@ -689,6 +689,10 @@ def main() -> None:
     # never crashes run.py.
     _start_collector_thread(lambda: TafCollector(db).run_loop(), "taf-collector")
     _start_collector_thread(lambda: JmaAmedasCollector(db).run_loop(), "jma-collector")
+    # AmosCollector is retired (issue #740) -- METAR RKSI/RKPK is now the sole
+    # Korea observation truth feed. run_loop() is a no-op that logs once and
+    # returns; left wired (rather than removed) to match test_run_wiring.py's
+    # "all four collector threads start" expectation and avoid a scheduler change.
     _start_collector_thread(lambda: AmosCollector(db).run_loop(), "amos-collector")
     _start_collector_thread(lambda: MssCollector(db).run_loop(), "mss-collector")
 

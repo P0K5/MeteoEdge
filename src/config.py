@@ -184,11 +184,13 @@ STATION_ACTIVE_HOURS = {
 # for the same "scanner gate is right for trading, wrong for data collection"
 # reason.
 #
-# RKSI and RKPK are included even though Seoul/Busan already have a 24/7 AMOS
-# feed (see config/source_priority.yaml) -- METAR remains a useful redundant
-# feed for the climb builder's get_canonical_station_feeds() union, and the
-# extra persistence is a no-op cost (METAR is fetched every poll anyway via
-# the shared metars_cache).
+# RKSI and RKPK are included even though their active window starts late
+# (11:00 local) -- this 24/7 METAR persistence is now their ONLY source of
+# early-morning climb data (issue #740 retired the amos/Open-Meteo-fallback
+# feed that used to cover this gap; METAR is the sole Korea observation
+# source in config/source_priority.yaml). The extra persistence is a no-op
+# cost regardless (METAR is fetched every poll anyway via the shared
+# metars_cache).
 CLIMB_BUILDER_24H_METAR_STATIONS: "frozenset[str]" = frozenset({
     "RKSI", "RKPK", "ZGSZ", "ZGGG", "ZHHH", "ZHCC", "ZSPD",
 })

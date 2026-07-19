@@ -97,71 +97,56 @@ class TestJmaAmedasAdapterIntegration:
 
 
 # ---------------------------------------------------------------------------
-# AMOS integration
+# AMOS integration -- retired, issue #740
 # ---------------------------------------------------------------------------
 
 class TestAmosAdapterIntegration:
+    """Issue #740: AmosCollector is retired (no-op). METAR (RKSI/RKPK) is now
+    the sole, primary Korea observation source in source_priority.yaml."""
 
-    def test_amos_stores_observation_with_correct_schema(self, tmp_path, monkeypatch):
-        """AMOS adapter stores observations with all required columns."""
+    def test_amos_collector_is_a_noop(self, tmp_path, monkeypatch):
+        """poll() must not write any observation rows -- no HTTP calls, no
+        DB writes, regardless of KMA_API_KEY."""
         monkeypatch.delenv("KMA_API_KEY", raising=False)
         db = _db(tmp_path)
         collector = AmosCollector(db)
 
-        # Open-Meteo fallback response (no KMA key)
-        now_utc = datetime.now(timezone.utc)
-        past_hour = now_utc.replace(minute=0, second=0, microsecond=0) - timedelta(hours=1)
-        om_resp = _make_resp(200, {
-            "hourly": {
-                "time": [past_hour.isoformat()],
-                "temperature_2m": [20.5],
-            }
-        })
+        result = collector.poll()
 
-        with patch("src.data.collectors.amos.fetch", side_effect=[om_resp, om_resp]):
-            result = collector.poll()
+        assert result == {"Seoul": False, "Busan": False}
+        assert db.get_observations("Seoul", since="2000-01-01") == []
+        assert db.get_observations("Busan", since="2000-01-01") == []
 
-        # poll() returns {station: bool} dict
-        assert result.get("Seoul") is True or result.get("Busan") is True
+    def test_amos_no_longer_in_source_priority(self):
+        """amos must not appear in source_priority.yaml for Seoul or Busan --
+        METAR is now the sole, primary source (issue #740)."""
+        for city in ("Seoul", "Busan"):
+            sources = get_source_priority(city)
+            amos = next((s for s in sources if s["source"] == "amos"), None)
+            assert amos is None, f"{city} still has an amos source_priority entry"
 
-        obs = db.get_observations("Seoul", since="2000-01-01")
-        assert len(obs) > 0
-
-        row = obs[-1]
-        assert row["source"] == "amos"
-        assert row["station"] == "Seoul"
-        assert row["unit"] == "C"
-        # Open-Meteo fallback data is modelled, not official AMOS readings
-        assert row["is_official"] == 0
-        assert isinstance(row["temp_f"], float)
-        datetime.fromisoformat(row["ts"])
-
-    def test_amos_cadence_configured(self):
-        """AMOS appears in source priority config with correct cadence."""
-        sources = get_source_priority("Seoul")
-        amos = next((s for s in sources if s["source"] == "amos"), None)
-        assert amos is not None
-        assert amos["station"] == "Seoul"
-        assert amos["cadence_min"] == 15
-        assert amos["is_official"] is True
-
-    def test_amos_freshness_integration_stale(self, tmp_path):
-        """Stale AMOS observation fails freshness check."""
-        db = _db(tmp_path)
-        monitor = FreshnessMonitor()
-
-        old_ts = (datetime.now(timezone.utc) - timedelta(minutes=35)).isoformat()
-        db.insert_observation(
-            ts=old_ts,
-            station="Seoul",
-            temp_f=68.0,
-            temp_native=20.0,
-            unit="C",
-            source="amos",
+    def test_metar_is_primary_korea_source(self):
+        """METAR (RKSI/RKPK) is configured as the (sole) official source for
+        Seoul/Busan, which also keeps the intraday-correction entry alive."""
+        seoul = get_source_priority("Seoul")
+        assert any(
+            s["source"] == "metar" and s["station"] == "RKSI" and s["is_official"] is True
+            for s in seoul
+        )
+        busan = get_source_priority("Busan")
+        assert any(
+            s["source"] == "metar" and s["station"] == "RKPK" and s["is_official"] is True
+            for s in busan
         )
 
-        # cadence_min=15, threshold=30 min — 35 min old is stale
-        assert monitor.check(db, "amos", "Seoul", cadence_min=15) is False
+    def test_amos_freshness_check_no_longer_expected(self, tmp_path):
+        """With no amos entry in source_priority.yaml, run.py's freshness loop
+        (which iterates get_source_priority(city)) no longer checks amos/Seoul
+        or amos/Busan at all -- confirmed here indirectly: an amos observation
+        that WOULD be stale is simply absent from the active_sources list a
+        caller would build from get_source_priority("Seoul")."""
+        sources = get_source_priority("Seoul")
+        assert all(s["source"] != "amos" for s in sources)
 
 
 # ---------------------------------------------------------------------------
@@ -241,8 +226,9 @@ class TestSourcePriorityIntegration:
     def test_tokyo_jma_is_first(self):
         assert get_source_priority("Tokyo")[0]["source"] == "jma_ameidas"
 
-    def test_seoul_amos_is_first(self):
-        assert get_source_priority("Seoul")[0]["source"] == "amos"
+    def test_seoul_metar_is_first(self):
+        """Issue #740: amos is retired -- METAR (RKSI) is Seoul's sole source."""
+        assert get_source_priority("Seoul")[0]["source"] == "metar"
 
     def test_singapore_mss_is_first(self):
         assert get_source_priority("Singapore")[0]["source"] == "mss"

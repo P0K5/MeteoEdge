@@ -16,21 +16,19 @@ Tokyo:
     cadence_min: 30
     is_official: true
 
+# Issue #740: the amos entries (KMA ASOS / Open-Meteo fallback) are removed.
+# KMA ASOS was unobtainable by design (archive-only, issue #694) and the
+# Open-Meteo fallback never produced official readings -- both are retired
+# in src/data/collectors/amos.py. METAR (RKSI/RKPK) is now the sole, primary
+# Korea observation source and doubles as this city's intraday-correction
+# entry (see the module comment at the top of this file).
 Seoul:
-  - source: amos
-    station: Seoul
-    cadence_min: 15
-    is_official: true
   - source: metar
     station: RKSI
     cadence_min: 30
     is_official: true
 
 Busan:
-  - source: amos
-    station: Busan
-    cadence_min: 15
-    is_official: true
   - source: metar
     station: RKPK
     cadence_min: 30

@@ -17,19 +17,21 @@ class TestGetSourcePriority:
         assert sources[0]["is_official"] is True
 
     def test_get_source_priority_seoul(self):
-        """Seoul should have amos as first priority."""
+        """Issue #740: amos is retired -- Seoul's sole source is METAR (RKSI)."""
         sources = get_source_priority("Seoul")
         assert len(sources) > 0
-        assert sources[0]["source"] == "amos"
-        assert sources[0]["station"] == "Seoul"
-        assert sources[0]["cadence_min"] == 15
+        assert sources[0]["source"] == "metar"
+        assert sources[0]["station"] == "RKSI"
+        assert sources[0]["cadence_min"] == 30
+        assert all(s["source"] != "amos" for s in sources)
 
     def test_get_source_priority_busan(self):
-        """Busan should have amos as first priority."""
+        """Issue #740: amos is retired -- Busan's sole source is METAR (RKPK)."""
         sources = get_source_priority("Busan")
         assert len(sources) > 0
-        assert sources[0]["source"] == "amos"
-        assert sources[0]["station"] == "Busan"
+        assert sources[0]["source"] == "metar"
+        assert sources[0]["station"] == "RKPK"
+        assert all(s["source"] != "amos" for s in sources)
 
     def test_get_source_priority_singapore(self):
         """Singapore should have mss as first priority."""

@@ -6,7 +6,10 @@ Tests:
 - Observations near local midnight land on the correct local date
 - Issue #558: training_eligible=false stations short-circuit to None/{}
 - Issue #558: WSSS unions the METAR (ICAO-keyed) and MSS (city-keyed) feeds
+- Issue #741: raw_json LIKE '%source_fallback%' is a second exclusion signal
 """
+import json
+
 from src.data.db import Database
 
 
@@ -551,3 +554,63 @@ class TestFallbackTruthExclusion:
         self._raw_insert(db, "2024-06-15T03:00:00+00:00", "RJTT", 87.0, None)
         assert db.get_daily_obs_high("RJTT", "2024-06-15") == 87.0
         assert db.get_obs_highs_range("RJTT", "2024-06-14") == {"2024-06-15": 87.0}
+
+
+class TestFallbackRawJsonSecondSignal:
+    """Issue #741: the raw_json LIKE '%source_fallback%' condition is a second,
+    independent exclusion signal alongside is_official=0 -- fallback writers
+    (e.g. the former amos Open-Meteo fallback) set both markers, but this
+    proves the raw_json condition alone is sufficient even if is_official
+    were mistakenly left at its default (1) on a fallback row."""
+
+    def _raw_insert_with_raw_json(self, db, ts, station, temp_f, is_official, raw_json):
+        with db._lock:
+            db._conn.execute(
+                "INSERT INTO observations (ts, station, temp_f, temp_native, unit, "
+                "source, is_official, raw_json) VALUES (?,?,?,?,?,?,?,?)",
+                (ts, station, temp_f, temp_f, "C", "test", is_official, raw_json),
+            )
+            db._conn.commit()
+
+    def test_fallback_row_above_metar_max_excluded_by_raw_json_alone(self):
+        """A row tagged is_official=1 (mistakenly, as if the flag were never
+        set) but with raw_json containing 'source_fallback' and a HIGHER temp
+        than the real METAR row must still be excluded -- the truth query
+        returns the METAR value, not the fallback."""
+        db = _db()
+        # Real METAR under the ICAO key.
+        db.insert_observation(
+            ts="2024-06-15T03:00:00+00:00", station="RJTT",
+            temp_f=85.0, temp_native=29.4, unit="C", source="metar",
+        )
+        # Higher fallback-tagged row under the city key, is_official
+        # incorrectly left at 1 -- only the raw_json marker identifies it.
+        self._raw_insert_with_raw_json(
+            db, "2024-06-15T04:00:00+00:00", "Tokyo", 99.0, 1,
+            json.dumps({"source_fallback": "open-meteo", "station": "Tokyo"}),
+        )
+
+        assert db.get_daily_obs_high("RJTT", "2024-06-15") == 85.0
+        assert db.get_obs_highs_range("RJTT", "2024-06-14") == {"2024-06-15": 85.0}
+
+    def test_row_with_unrelated_raw_json_not_excluded(self):
+        """A row with raw_json set but NOT containing 'source_fallback' must
+        not be dropped -- the filter is substring-specific, not
+        raw_json-presence-based."""
+        db = _db()
+        self._raw_insert_with_raw_json(
+            db, "2024-06-15T03:00:00+00:00", "RJTT", 90.0, 1,
+            json.dumps({"stnId": "112", "ta": "32.2"}),
+        )
+        assert db.get_daily_obs_high("RJTT", "2024-06-15") == 90.0
+        assert db.get_obs_highs_range("RJTT", "2024-06-14") == {"2024-06-15": 90.0}
+
+    def test_null_raw_json_not_excluded(self):
+        """Rows with no raw_json at all (the common case) must not be dropped
+        by the new condition."""
+        db = _db()
+        db.insert_observation(
+            ts="2024-06-15T03:00:00+00:00", station="RJTT",
+            temp_f=85.0, temp_native=29.4, unit="C", source="metar",
+        )
+        assert db.get_daily_obs_high("RJTT", "2024-06-15") == 85.0
