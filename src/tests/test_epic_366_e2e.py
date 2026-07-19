@@ -27,32 +27,33 @@ class TestJmaUrlFormat:
     """Test that JMA URL builder produces correctly formatted timestamps."""
 
     def test_jma_url_format(self):
-        """Feed JST 2026-06-20T17:00 → assert URL contains 14-digit timestamp.
+        """Feed JST 2026-06-20T17:00 → assert URL is the 3-hour bucket file (#739).
 
-        For JST 2026-06-20T17:00:00, the snapped timestamp should be 20260620170000.
+        Post-#739 the JMA point feed is a 3-hour bucket (YYYYMMDD_HH.json). JST
+        17:00 falls in the 15:00 bucket → point/<station>/20260620_15.json.
         """
         from src.data.collectors.jma_ameidas import _JMA_URL_TEMPLATE, _JMA_STATION
         from datetime import timezone, timedelta
 
         _JST = timezone(timedelta(hours=9))
         base_jst = datetime(2026, 6, 20, 17, 0, 0, tzinfo=_JST)
-        # Snap to 10-min grid: minute=17//10*10=10 → 17:10? No, 17:00 snaps to 17:00
-        snapped_minute = base_jst.minute // 10 * 10
-        snapped_jst = base_jst.replace(minute=snapped_minute, second=0, microsecond=0)
-        timestamp = snapped_jst.strftime("%Y%m%d%H%M00")
-
-        url = _JMA_URL_TEMPLATE.format(station=_JMA_STATION, timestamp=timestamp)
+        bucket_hour = (base_jst.hour // 3) * 3  # 17 → 15
+        url = _JMA_URL_TEMPLATE.format(
+            station=_JMA_STATION,
+            date=base_jst.strftime("%Y%m%d"),
+            hour=f"{bucket_hour:02d}",
+        )
 
         assert "https://www.jma.go.jp/bosai/amedas/data/point/" in url
         assert _JMA_STATION in url
-        assert "20260620170000" in url
+        assert "20260620_15.json" in url
         assert url.endswith(".json"), "JMA URL should point to a JSON endpoint"
 
-    def test_jma_timestamp_14_digit_format(self):
-        """Verify timestamp is exactly 14 digits."""
-        timestamp = "20260620170000"
-        assert len(timestamp) == 14
-        assert timestamp.isdigit()
+    def test_jma_slot_key_14_digit_format(self):
+        """Slot keys WITHIN a bucket file are full 14-digit YYYYMMDDHHmmss stamps."""
+        slot_key = "20260620170000"
+        assert len(slot_key) == 14
+        assert slot_key.isdigit()
 
 
 # ---------------------------------------------------------------------------
