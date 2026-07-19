@@ -47,35 +47,35 @@ Deployed cap: 0.95 | Fixed NO-entry gate (MAX_CONFIDENCE_YES_FOR_NO, held consta
 
 Source: `analytics.db::snapshot_archive`, gap-filled with the live (not-yet-archived) `logs/snapshots.<date>.jsonl` for the most recent ~24h the archiver hasn't ingested. Every evaluated bracket, gated or not -- much larger than, and complementary to, the settled-trades table above (no per-row trade side is recorded at evaluation time).
 
-- Overall: 412668/585152 (70.5%) evaluated brackets clamped.
-- Cross-check: `guardrail_events` recorded 412805 `cap_applied` events over the same window (population count above should be close).
+- Overall: 412818/585383 (70.5%) evaluated brackets clamped.
+- Cross-check: `guardrail_events` recorded 412955 `cap_applied` events over the same window (population count above should be close).
 
 | Station | Clamped | Total | Rate |
 |---|---|---|---|
 | EFHK | 12603 | 22171 | 56.8% |
-| EGLC | 11606 | 20502 | 56.6% |
+| EGLC | 11613 | 20513 | 56.6% |
 | EPWA | 11990 | 21301 | 56.3% |
-| KATL | 14672 | 18929 | 77.5% |
-| KHOU | 14884 | 18883 | 78.8% |
-| KLAX | 16977 | 20084 | 84.5% |
-| KMIA | 15184 | 18913 | 80.3% |
-| KORD | 15436 | 18880 | 81.8% |
+| KATL | 14688 | 18951 | 77.5% |
+| KHOU | 14898 | 18905 | 78.8% |
+| KLAX | 16995 | 20106 | 84.5% |
+| KMIA | 15202 | 18935 | 80.3% |
+| KORD | 15454 | 18902 | 81.8% |
 | LFPB | 13156 | 21271 | 61.8% |
 | LIMC | 12273 | 21331 | 57.5% |
 | LLBG | 14374 | 22155 | 64.9% |
 | LTAC | 13415 | 22113 | 60.7% |
 | LTFM | 13362 | 22152 | 60.3% |
-| MPMG | 12421 | 18774 | 66.2% |
-| NZWN | 20272 | 24919 | 81.4% |
+| MPMG | 12433 | 18796 | 66.1% |
+| NZWN | 20284 | 24941 | 81.3% |
 | OEJN | 14648 | 22138 | 66.2% |
 | RCSS | 18291 | 24811 | 73.7% |
-| RJTT | 19273 | 25000 | 77.1% |
+| RJTT | 19285 | 25022 | 77.1% |
 | RKPK | 15107 | 18628 | 81.1% |
 | RKSI | 15342 | 18660 | 82.2% |
-| RPLL | 17033 | 24905 | 68.4% |
-| SBGR | 13080 | 18871 | 69.3% |
+| RPLL | 17038 | 24916 | 68.4% |
+| SBGR | 13092 | 18893 | 69.3% |
 | WMKK | 16989 | 24776 | 68.6% |
-| WSSS | 18265 | 24908 | 73.3% |
+| WSSS | 18271 | 24919 | 73.3% |
 | ZGGG | 12921 | 17488 | 73.9% |
 | ZGSZ | 12194 | 17500 | 69.7% |
 | ZHHH | 12879 | 17548 | 73.4% |
