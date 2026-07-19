@@ -79,16 +79,27 @@ def fetch_daily_climate_high(station: str, target_date: date) -> float | None:
 def settle_shadow_trades(target: date, truth: dict, db=None) -> None:
     """Settle shadow trades for *target* using real outcomes from *truth*.
 
-    Shadow rows were inserted with ``mode='shadow'``, ``capital_before=0.0``,
-    and ``actual_price=ask_cents`` (the observed ask at logging time).
-    Settlement uses a $1 notional stake so results are normalised for
-    cross-period comparison:
+    Shadow rows are inserted with ``mode='shadow'``, ``capital_before=0.0``,
+    and ``actual_price`` = the **cost of the side actually bought** (issue
+    #737): the YES ask for YES rows and the NO ask for NO rows. This matches
+    the live-row convention. (Rows written before #737 stored the YES ask on
+    both sides; the one-off ``backfill_shadow_no_price_737`` migration corrects
+    those historical NO rows and their settled pnl.)
 
-    YES side:
+    Settlement uses a $1 notional stake so results are normalised for
+    cross-period comparison. Because ``actual_price`` is already the bought-side
+    cost, a single formula is correct for both sides:
+
+        pnl = (100 - actual_price) / 100   if the bought side won
+        pnl = -(actual_price) / 100        if the bought side lost
+
+    Concretely:
+
+    YES side (actual_price = yes_ask):
         pnl = (100 - yes_ask) / 100   if YES bracket was hit (won)
         pnl = -(yes_ask) / 100        if YES bracket was missed (lost)
 
-    NO side:
+    NO side (actual_price = no_ask):
         pnl = (100 - no_ask) / 100    if YES bracket was missed (NO won)
         pnl = -(no_ask) / 100         if YES bracket was hit (NO lost)
 

@@ -294,6 +294,38 @@ class TestSettleShadowNoSideLost:
         db.close()
 
 
+class TestSettleShadowNoPrice737Regression:
+    """Issue #737 regression: a NO row whose bought-side cost is stored (78c,
+    the corrected value for a market where yes_ask=22c) must settle to
+    pnl=+0.22 on a win and -0.78 on a loss -- NOT the inflated +0.78/-0.22 the
+    old yes_ask-on-both-sides convention produced."""
+
+    def test_no_win_pays_bought_side_cost(self, tmp_path):
+        db = _fresh_db(tmp_path)
+        target = date(2025, 6, 1)
+        no_cost = 78  # corrected NO cost for a market quoting yes_ask=22c
+        tid = _insert_shadow_no(db, "KORD", no_cost, target.isoformat(),
+                                bracket_low=80.0, bracket_high=82.0)
+        # actual_high=85.0 outside [80,82] → YES missed → NO won
+        settle_shadow_trades(target, {"KORD": 85.0}, db=db)
+        t = next(r for r in db.get_trades(limit=None) if r["id"] == tid)
+        assert abs(t["pnl"] - 0.22) < 1e-9
+        assert abs(t["capital_after"] - 0.22) < 1e-9
+        db.close()
+
+    def test_no_loss_pays_bought_side_cost(self, tmp_path):
+        db = _fresh_db(tmp_path)
+        target = date(2025, 6, 1)
+        no_cost = 78
+        tid = _insert_shadow_no(db, "KORD", no_cost, target.isoformat(),
+                                bracket_low=80.0, bracket_high=82.0)
+        # actual_high=81.0 within [80,82] → YES hit → NO lost
+        settle_shadow_trades(target, {"KORD": 81.0}, db=db)
+        t = next(r for r in db.get_trades(limit=None) if r["id"] == tid)
+        assert abs(t["pnl"] - (-0.78)) < 1e-9
+        db.close()
+
+
 class TestSettleShadowMultipleSides:
     """YES and NO shadow rows for the same station/date settle independently."""
 
