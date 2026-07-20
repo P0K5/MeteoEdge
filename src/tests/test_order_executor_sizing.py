@@ -67,7 +67,7 @@ def _make_db(position_size_eur=2.0, sizing_mode="flat"):
 
 def _run(candidate, db, bankroll=100.0):
     """Run _execute_live and return the trade record passed to _append_live_trade."""
-    from src.execution.order_executor import _execute_live
+    from src.execution import order_executor as oe
 
     trader = MagicMock()
     trader.place_order.return_value = "order-id-abcdef"
@@ -78,9 +78,13 @@ def _run(candidate, db, bankroll=100.0):
     def _capture(record, db=None):
         captured.update(record)
 
-    with patch("src.execution.order_executor.LiveTrader", return_value=trader), \
+    # Patch the fill-wait sleep to a no-op: check_fill returns "filled" on the
+    # first poll, so the loop breaks immediately -- without this each test would
+    # block for a real FILL_POLL_INTERVAL_S (30s).
+    with patch.object(oe, "LiveTrader", return_value=trader), \
+         patch.object(oe.time, "sleep", lambda s: None), \
          patch.object(sys.modules["src.scripts.run"], "_append_live_trade", side_effect=_capture):
-        _execute_live(
+        oe._execute_live(
             candidate, MagicMock(), MagicMock(),
             "2026-07-09T12:00:00Z", db=db, bankroll=bankroll,
         )

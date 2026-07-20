@@ -69,6 +69,7 @@ class LiveTrader:
                     mode="live",
                     order_id=order_id,
                     capital_before=size_usdc,
+                    size_eur=size_usdc,  # issue #746: stake at placement, before any outcome
                     p_yes_raw=p_yes_raw,
                     end_date=end_date or None,
                 )
