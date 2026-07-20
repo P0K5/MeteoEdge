@@ -1,11 +1,11 @@
-"""Tests for src/data/freshness_monitor.py.
+"""Tests for src/data/freshness_monitor.py (issue #745, #744).
 
 Covers:
-- 3-tier log levels (silent, WARNING, CRITICAL)
-- Source-specific thresholds from config
-- De-duplication: at most one log per (source, station) per 15 minutes
-- Recovery INFO when data returns to fresh after being stale
-- No data scenarios (CRITICAL log, no de-duplication)
+- cadence-derived staleness thresholds (not a global constant)
+- one CRITICAL per outage (fresh->stale transition), DEBUG heartbeat after,
+  INFO recovery on stale->fresh
+- missing-data outages de-duplicated the same way
+- check_all skips chronically-dead METAR stations (METAR_SKIP_STATIONS, e.g. ZSJN)
 """
 from __future__ import annotations
 
@@ -14,319 +14,125 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.data.freshness_monitor import FreshnessMonitor, _last_log_time
+from src import config
+from src.data.freshness_monitor import (
+    FreshnessMonitor,
+    cadence_staleness_threshold_min,
+    _outage_since,
+)
 
 
-class TestFreshnessMonitor:
-    """Test suite for FreshnessMonitor.check()."""
+def _obs(age_min: float) -> dict:
+    ts = datetime.now(timezone.utc) - timedelta(minutes=age_min)
+    return {"ts": ts.isoformat().replace("+00:00", "Z")}
 
+
+def _db(obs):
+    db = MagicMock()
+    db.get_latest_observation.return_value = obs
+    return db
+
+
+class TestThresholdDerivation:
+    def test_slow_metar_feed_uses_multiplicative(self):
+        # 30-min cadence -> max(90, 45) = 90
+        assert cadence_staleness_threshold_min(30) == 90.0
+
+    def test_fast_feed_uses_additive_floor(self):
+        # 1-min cadence -> max(3, 16) = 16
+        assert cadence_staleness_threshold_min(1) == 16.0
+
+    def test_mid_feed(self):
+        # 10-min cadence -> max(30, 25) = 30
+        assert cadence_staleness_threshold_min(10) == 30.0
+
+    def test_zero_or_negative_cadence_floored(self):
+        assert cadence_staleness_threshold_min(0) == 16.0
+
+
+class TestOutageStateMachine:
     def setup_method(self):
-        """Clear de-duplication state before each test."""
-        _last_log_time.clear()
+        _outage_since.clear()
 
-    def _make_obs(self, age_seconds: int) -> dict:
-        """Create a mock observation with given age in seconds."""
-        ts = datetime.now(timezone.utc) - timedelta(seconds=age_seconds)
-        return {"ts": ts.isoformat().replace("+00:00", "Z")}
-
-    def _make_db(self, obs: dict | None) -> MagicMock:
-        """Create a mock Database that returns the given observation."""
-        db = MagicMock()
-        db.get_latest_observation.return_value = obs
-        return db
-
-    # -----------------------------------------------------------------------
-    # Fresh observations (within threshold) — silent
-    # -----------------------------------------------------------------------
-
-    def test_fresh_within_threshold_silent(self, caplog):
-        """Observation within threshold → no log, returns True."""
+    def test_fresh_within_cadence_threshold_silent(self, caplog):
+        """The exact #745 spam case: a 30-min METAR feed at 14min age is fresh."""
         monitor = FreshnessMonitor()
-        db = self._make_db(self._make_obs(age_seconds=60))  # 1 minute, threshold is 180s
+        with caplog.at_level("DEBUG"):
+            result = monitor.check(_db(_obs(14.0)), "metar", "WSSS", cadence_min=30)
+        assert result is True
+        assert not any(r.levelname == "CRITICAL" for r in caplog.records)
+
+    def test_stale_logs_one_critical_then_debug(self, caplog):
+        monitor = FreshnessMonitor()
+        db = _db(_obs(120.0))  # 120min > 90min threshold for cadence 30
 
         with caplog.at_level("DEBUG"):
-            result = monitor.check(db, "metar", "KORD", cadence_min=5)
-
-        assert result is True
-        assert not any(
-            "WARNING" in record.levelname or "CRITICAL" in record.levelname
-            for record in caplog.records
-        )
-
-    def test_fresh_with_amos_source(self, caplog):
-        """AMOS source (90s threshold) within limit → silent."""
-        monitor = FreshnessMonitor()
-        db = self._make_db(self._make_obs(age_seconds=60))  # 60s < 90s threshold
-
-        result = monitor.check(db, "amos", "Singapore", cadence_min=10)
-
-        assert result is True
-        assert not any(
-            record.levelname in ("WARNING", "CRITICAL")
-            for record in caplog.records
-        )
-
-    # -----------------------------------------------------------------------
-    # Stale observations (1x–3x threshold) → WARNING
-    # -----------------------------------------------------------------------
-
-    def test_stale_within_3x_threshold_warning(self, caplog):
-        """Stale 1x–3x threshold → WARNING log."""
-        monitor = FreshnessMonitor()
-        # METAR threshold: 180 seconds (3 minutes)
-        # Stale at 300 seconds = 1.67x threshold
-        db = self._make_db(self._make_obs(age_seconds=300))
-
-        result = monitor.check(db, "metar", "KORD", cadence_min=5)
-
-        assert result is False
-        assert any(
-            record.levelname == "WARNING"
-            and "metar/KORD" in record.message
-            for record in caplog.records
-        )
-
-    def test_stale_with_mss_source_warning(self, caplog):
-        """MSS source (15s threshold) at 30s stale (2x) → WARNING."""
-        monitor = FreshnessMonitor()
-        # MSS threshold: 15 seconds
-        # Stale at 30 seconds = 2x threshold
-        db = self._make_db(self._make_obs(age_seconds=30))
-
-        result = monitor.check(db, "mss", "Station1", cadence_min=10)
-
-        assert result is False
-        assert any(
-            record.levelname == "WARNING" and "mss/Station1" in record.message
-            for record in caplog.records
-        )
-
-    # -----------------------------------------------------------------------
-    # Very stale observations (>3x threshold) → CRITICAL
-    # -----------------------------------------------------------------------
-
-    def test_stale_beyond_3x_threshold_critical(self, caplog):
-        """Stale >3x threshold → CRITICAL log."""
-        monitor = FreshnessMonitor()
-        # METAR threshold: 180 seconds (3 minutes)
-        # Stale at 600 seconds = 3.33x threshold
-        db = self._make_db(self._make_obs(age_seconds=600))
-
-        result = monitor.check(db, "metar", "KMIA", cadence_min=5)
-
-        assert result is False
-        assert any(
-            record.levelname == "CRITICAL"
-            and "metar/KMIA" in record.message
-            and "3x" in record.message
-            for record in caplog.records
-        )
-
-    # -----------------------------------------------------------------------
-    # Silent for >24h → CRITICAL
-    # -----------------------------------------------------------------------
-
-    def test_silent_beyond_24h_critical(self, caplog):
-        """Observation stale for >24h → CRITICAL log."""
-        monitor = FreshnessMonitor()
-        # Stale for 25 hours = 90000 seconds
-        db = self._make_db(self._make_obs(age_seconds=90000))
-
-        result = monitor.check(db, "metar", "KATL", cadence_min=5)
-
-        assert result is False
-        assert any(
-            record.levelname == "CRITICAL"
-            and "metar/KATL" in record.message
-            and "24h" in record.message
-            for record in caplog.records
-        )
-
-    # -----------------------------------------------------------------------
-    # De-duplication: at most one log per 15 minutes
-    # -----------------------------------------------------------------------
-
-    def test_dedup_same_staleness_suppressed(self, caplog):
-        """Same staleness logged twice → second is suppressed by dedup."""
-        monitor = FreshnessMonitor()
-        db = self._make_db(self._make_obs(age_seconds=300))  # 5 minutes stale
-
-        # First check — should log
-        monitor.check(db, "metar", "KORD", cadence_min=5)
-        logs_first = [r for r in caplog.records if r.levelname == "WARNING"]
-        assert len(logs_first) == 1
+            monitor.check(db, "metar", "WSSS", cadence_min=30)
+        criticals = [r for r in caplog.records if r.levelname == "CRITICAL"]
+        assert len(criticals) == 1 and "metar/WSSS" in criticals[0].message
 
         caplog.clear()
+        with caplog.at_level("DEBUG"):
+            monitor.check(db, "metar", "WSSS", cadence_min=30)  # outage continues
+        assert not any(r.levelname == "CRITICAL" for r in caplog.records)
+        assert any(r.levelname == "DEBUG" for r in caplog.records)
 
-        # Immediately after, same observation — should NOT log (dedup window)
-        # Manipulate _last_log_time to fake 5 minutes passing
-        import src.data.freshness_monitor as fm
-        key = "metar/KORD"
-        old_last = fm._last_log_time[key]
-        # Set it to 5 minutes ago (within the 15-min dedup window)
-        fm._last_log_time[key] = old_last - timedelta(minutes=5)
-
-        monitor.check(db, "metar", "KORD", cadence_min=5)
-        logs_second = [r for r in caplog.records if r.levelname == "WARNING"]
-        assert len(logs_second) == 0, "Dedup should suppress the second log"
-
-    def test_dedup_independent_per_source_station(self, caplog):
-        """De-duplication is per (source, station) → different pairs log independently."""
+    def test_recovery_emits_info_and_clears_state(self, caplog):
         monitor = FreshnessMonitor()
-        db = self._make_db(self._make_obs(age_seconds=300))
-
-        # First check for metar/KORD
-        monitor.check(db, "metar", "KORD", cadence_min=5)
-        assert any(
-            record.levelname == "WARNING"
-            and "metar/KORD" in record.message
-            for record in caplog.records
-        )
+        monitor.check(_db(_obs(120.0)), "metar", "WSSS", cadence_min=30)
+        assert "metar/WSSS" in _outage_since
 
         caplog.clear()
-
-        # Second check for metar/KMIA (different station) — should log independently
-        monitor.check(db, "metar", "KMIA", cadence_min=5)
-        assert any(
-            record.levelname == "WARNING"
-            and "metar/KMIA" in record.message
-            for record in caplog.records
-        )
-
-    # -----------------------------------------------------------------------
-    # Recovery: INFO log when returning to fresh after WARNING/CRITICAL
-    # -----------------------------------------------------------------------
-
-    def test_recovery_after_warning(self, caplog):
-        """Stale then fresh → INFO recovery log emitted."""
-        monitor = FreshnessMonitor()
-
-        # First: stale (300 seconds = 5 minutes)
-        db_stale = self._make_db(self._make_obs(age_seconds=300))
-        monitor.check(db_stale, "metar", "KORD", cadence_min=5)
-
-        caplog.clear()
-
-        # Second: fresh (60 seconds = 1 minute)
-        db_fresh = self._make_db(self._make_obs(age_seconds=60))
         with caplog.at_level("INFO"):
-            result = monitor.check(db_fresh, "metar", "KORD", cadence_min=5)
-
+            result = monitor.check(_db(_obs(5.0)), "metar", "WSSS", cadence_min=30)
         assert result is True
-        assert any(
-            record.levelname == "INFO"
-            and "recovered" in record.message
-            and "metar/KORD" in record.message
-            for record in caplog.records
-        )
+        assert any(r.levelname == "INFO" and "recovered" in r.message for r in caplog.records)
+        assert "metar/WSSS" not in _outage_since
 
-    def test_recovery_resets_dedup_state(self, caplog):
-        """After recovery, de-dup state resets → next stale logs immediately."""
+    def test_second_outage_after_recovery_logs_critical_again(self, caplog):
         monitor = FreshnessMonitor()
-
-        # First: stale
-        db_stale = self._make_db(self._make_obs(age_seconds=300))
-        monitor.check(db_stale, "metar", "KORD", cadence_min=5)
-
+        monitor.check(_db(_obs(120.0)), "metar", "WSSS", cadence_min=30)   # outage 1
+        monitor.check(_db(_obs(5.0)), "metar", "WSSS", cadence_min=30)     # recover
         caplog.clear()
+        with caplog.at_level("DEBUG"):
+            monitor.check(_db(_obs(120.0)), "metar", "WSSS", cadence_min=30)  # outage 2
+        assert any(r.levelname == "CRITICAL" for r in caplog.records)
 
-        # Second: fresh (triggers recovery)
-        db_fresh = self._make_db(self._make_obs(age_seconds=60))
-        monitor.check(db_fresh, "metar", "KORD", cadence_min=5)
-
+    def test_missing_data_outage_deduped(self, caplog):
+        monitor = FreshnessMonitor()
+        with caplog.at_level("DEBUG"):
+            monitor.check(_db(None), "jma_ameidas", "Tokyo", cadence_min=10)
+        assert sum(r.levelname == "CRITICAL" for r in caplog.records) == 1
         caplog.clear()
+        with caplog.at_level("DEBUG"):
+            monitor.check(_db(None), "jma_ameidas", "Tokyo", cadence_min=10)
+        assert not any(r.levelname == "CRITICAL" for r in caplog.records)
 
-        # Third: stale again — should log immediately (de-dup state was cleared by recovery)
-        monitor.check(db_stale, "metar", "KORD", cadence_min=5)
-        assert any(
-            record.levelname == "WARNING"
-            for record in caplog.records
-        )
-
-    # -----------------------------------------------------------------------
-    # No data (None observation)
-    # -----------------------------------------------------------------------
-
-    def test_no_data_critical_log(self, caplog):
-        """No observation → CRITICAL log, returns False."""
+    def test_outage_state_independent_per_key(self, caplog):
         monitor = FreshnessMonitor()
-        db = self._make_db(None)
+        with caplog.at_level("DEBUG"):
+            monitor.check(_db(_obs(120.0)), "metar", "KORD", cadence_min=30)
+            monitor.check(_db(_obs(120.0)), "metar", "KMIA", cadence_min=30)
+        criticals = [r for r in caplog.records if r.levelname == "CRITICAL"]
+        assert len(criticals) == 2
 
-        result = monitor.check(db, "metar", "KORD", cadence_min=5)
 
-        assert result is False
-        assert any(
-            record.levelname == "CRITICAL"
-            and "No observation data" in record.message
-            for record in caplog.records
-        )
+class TestCheckAllSkipsDeadStations:
+    """Issue #744: chronically-dead METAR stations (ZSJN) are not monitored."""
 
-    def test_no_data_clears_dedup_state(self, caplog):
-        """No data → de-dup state cleared for that key."""
+    def setup_method(self):
+        _outage_since.clear()
+
+    def test_zsjn_excluded_from_check_all(self, caplog):
+        assert "ZSJN" in config.METAR_SKIP_STATIONS  # delisted by #736
         monitor = FreshnessMonitor()
-
-        # First: stale (to populate de-dup state)
-        db_stale = self._make_db(self._make_obs(age_seconds=300))
-        monitor.check(db_stale, "metar", "KORD", cadence_min=5)
-
-        caplog.clear()
-
-        # Second: no data
-        db_none = self._make_db(None)
-        monitor.check(db_none, "metar", "KORD", cadence_min=5)
-
-        # Verify the key is removed from _last_log_time
-        assert "metar/KORD" not in _last_log_time
-
-    # -----------------------------------------------------------------------
-    # Default threshold for unlisted sources
-    # -----------------------------------------------------------------------
-
-    def test_unlisted_source_uses_default_threshold(self, caplog):
-        """Source not in FRESHNESS_THRESHOLDS_MIN uses default (180s)."""
-        monitor = FreshnessMonitor()
-        # "unknown_source" not in config.FRESHNESS_THRESHOLDS_MIN
-        # Default threshold is 180 seconds
-        # Stale at 300 seconds = 1.67x default threshold → WARNING
-        db = self._make_db(self._make_obs(age_seconds=300))
-
-        result = monitor.check(db, "unknown_source", "Station", cadence_min=5)
-
-        assert result is False
-        assert any(
-            record.levelname == "WARNING"
-            and "unknown_source/Station" in record.message
-            for record in caplog.records
-        )
-
-    # -----------------------------------------------------------------------
-    # check_all still works
-    # -----------------------------------------------------------------------
-
-    def test_check_all_aggregates_results(self):
-        """check_all returns dict of results for multiple sources."""
-        monitor = FreshnessMonitor()
-        db = MagicMock()
-
-        # Configure db to return different ages for different sources
-        obs_fresh = self._make_obs(age_seconds=60)   # fresh
-        obs_stale = self._make_obs(age_seconds=300)  # stale
-
-        def side_effect(source, station):
-            if source == "metar" and station == "KORD":
-                return obs_fresh
-            elif source == "amos" and station == "Singapore":
-                return obs_stale
-            return None
-
-        db.get_latest_observation.side_effect = side_effect
-
+        db = _db(None)  # ZSJN has no data; would CRITICAL every tick if checked
         sources = [
-            {"source": "metar", "station": "KORD", "cadence_min": 5},
-            {"source": "amos", "station": "Singapore", "cadence_min": 5},
+            {"source": "metar", "station": "ZSJN", "cadence_min": 30},
+            {"source": "metar", "station": "KORD", "cadence_min": 30},
         ]
-
-        results = monitor.check_all(db, sources)
-
-        assert results["metar/KORD"] is True  # fresh
-        assert results["amos/Singapore"] is False  # stale
+        with caplog.at_level("DEBUG"):
+            results = monitor.check_all(db, sources)
+        assert "metar/ZSJN" not in results      # never checked
+        assert "metar/KORD" in results
+        assert not any("ZSJN" in r.message for r in caplog.records)  # no spam
