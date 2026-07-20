@@ -270,6 +270,12 @@ RISK_MIN_LIQUIDITY = int(os.getenv("RISK_MIN_LIQUIDITY", "50"))
 #   OPEN position exists for the token -- never stack on an open position.
 LIVE_ALLOW_BRACKET_REENTRY = os.getenv("LIVE_ALLOW_BRACKET_REENTRY", "false").lower() == "true"
 
+# Issue #743: after a GTC fill timeout + successful cancel, allow ONE in-process
+# reprice-retry -- re-fetch the book, re-validate the candidate at the new price
+# against the UNCHANGED entry gates, and place one fresh GTC. Never weakens the
+# same-day entry guard for later polls (the retry is in-process only).
+LIVE_TIMEOUT_REPRICE_RETRY = os.getenv("LIVE_TIMEOUT_REPRICE_RETRY", "true").lower() == "true"
+
 # Forecast uncertainty (stddev in °F) for the Bayesian prior on undetermined brackets
 FORECAST_STDDEV_F = 2.0
 
@@ -557,6 +563,8 @@ CONFIG_DEFAULTS: "dict[str, str | int | float | bool]" = {
     "MIN_MARKET_LIQUIDITY_SHARES": 50.0,
     "POSITION_SIZE_EUR": 5.0,
     "SIZING_MODE": "flat",
+    # Issue #743: one reprice-retry after a GTC fill timeout (gates unchanged).
+    "LIVE_TIMEOUT_REPRICE_RETRY": True,
     "TAKE_PROFIT_BUFFER_CENTS": 2,
     "STOP_LOSS_MIN_BID_CENTS": 40,
     "STOP_LOSS_CONSECUTIVE_POLLS": 2,
