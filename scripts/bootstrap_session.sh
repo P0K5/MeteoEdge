@@ -146,6 +146,46 @@ $ITEM_BLOCK
 EOF
 
 echo "[bootstrap] Written to $OUT"
+
+# ---------------------------------------------------------------------------
+# 5. Render agent `model:` frontmatter from .claude/model-config.env
+#    designer + mid-dev use AGENT_MODEL_STRONG, junior-dev uses AGENT_MODEL_LIGHT.
+#    Falls back to the Anthropic preset (sonnet/haiku) if no config is present.
+# ---------------------------------------------------------------------------
+MODEL_CONFIG=".claude/model-config.env"
+
+AGENT_MODEL_STRONG="sonnet"
+AGENT_MODEL_LIGHT="haiku"
+if [ -f "$MODEL_CONFIG" ]; then
+  # shellcheck disable=SC1090
+  source "$MODEL_CONFIG"
+  echo "[bootstrap] Model config loaded: strong=$AGENT_MODEL_STRONG light=$AGENT_MODEL_LIGHT"
+else
+  echo "[bootstrap] $MODEL_CONFIG not found — using Anthropic defaults (sonnet/haiku)"
+fi
+
+render_agent_model() {
+  local file="$1" model="$2"
+  [ -f "$file" ] || { echo "[bootstrap] WARN: $file missing, skipping"; return; }
+  python3 - "$file" "$model" <<'PYEOF'
+import re, sys
+path, model = sys.argv[1], sys.argv[2]
+with open(path, encoding="utf-8") as f:
+    text = f.read()
+new = re.sub(r"^model:.*$", f"model: {model}", text, count=1, flags=re.M)
+if new != text:
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(new)
+    print(f"[bootstrap] {path}: model -> {model}")
+else:
+    print(f"[bootstrap] {path}: model already {model}")
+PYEOF
+}
+
+render_agent_model ".claude/agents/designer.md"   "$AGENT_MODEL_STRONG"
+render_agent_model ".claude/agents/mid-dev.md"    "$AGENT_MODEL_STRONG"
+render_agent_model ".claude/agents/junior-dev.md" "$AGENT_MODEL_LIGHT"
+
 echo ""
 echo "===== Session Context ====="
 cat "$OUT"

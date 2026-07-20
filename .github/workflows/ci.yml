@@ -37,6 +37,9 @@ jobs:
     - name: Run flake8
       run: python -m flake8 src/
 
+    - name: Check prompt drift (single-source governance/graphify)
+      run: bash scripts/check_prompt_drift.sh
+
   test:
     name: Test (pytest)
     runs-on: ubuntu-22.04
