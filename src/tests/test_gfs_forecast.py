@@ -4,8 +4,12 @@ Covers:
 - src/data/open_meteo.fetch_gfs_forecast_high  — parse, unit handling, None on error
 - src/data/open_meteo.fetch_gfs_with_spread     — real single-model gfs_seamless
   fetch, distinct from the open_meteo multi-model fetch (issue #548)
-- src/model/deb_weighting.MODELS / EQUAL_WEIGHTS  — gfs now in the tuple
-- src/model/deb_hourly_consensus.compute_deb_mu_f — three-model blend logic
+- src/model/deb_weighting.MODELS / EQUAL_WEIGHTS  — "gfs" removed from the
+  DEB channel set by issue #761 (double-counted the same physical GFS model
+  as "open_meteo"); ingestion via fetch_gfs_forecast_high/fetch_gfs_with_spread
+  is unaffected and still tested below
+- src/model/deb_hourly_consensus.compute_deb_mu_f — blend logic accepts a
+  "gfs" weight key generically (does not consult the DEB registry)
 - src/model/deb_weighting.compute_weights  — phantom-model exclusion for NWS-less stations
 
 No real HTTP calls are made; all external dependencies are mocked.
@@ -219,17 +223,18 @@ class TestFetchGfsWithSpread:
 
 
 # ---------------------------------------------------------------------------
-# MODELS and EQUAL_WEIGHTS constants — gfs must be present
+# MODELS and EQUAL_WEIGHTS constants — "gfs" removed by issue #761
 # ---------------------------------------------------------------------------
 
 class TestModelsConstants:
-    def test_gfs_in_models_tuple(self):
-        """'gfs' must be listed in MODELS so DEB/EMOS can consume it."""
-        assert "gfs" in MODELS, f"Expected 'gfs' in MODELS, got: {MODELS}"
+    def test_gfs_not_in_models_tuple(self):
+        """Issue #761: 'gfs' was removed from MODELS — it double-counted the
+        same physical GFS model as 'open_meteo'."""
+        assert "gfs" not in MODELS, f"Expected 'gfs' absent from MODELS, got: {MODELS}"
 
-    def test_equal_weights_has_gfs(self):
-        """EQUAL_WEIGHTS must include gfs."""
-        assert "gfs" in EQUAL_WEIGHTS, f"Expected 'gfs' in EQUAL_WEIGHTS, got: {EQUAL_WEIGHTS}"
+    def test_equal_weights_does_not_have_gfs(self):
+        """EQUAL_WEIGHTS must not include gfs (issue #761)."""
+        assert "gfs" not in EQUAL_WEIGHTS, f"Expected 'gfs' absent from EQUAL_WEIGHTS, got: {EQUAL_WEIGHTS}"
 
     def test_equal_weights_sums_to_one(self):
         """EQUAL_WEIGHTS values must sum to 1.0."""
@@ -324,12 +329,10 @@ class TestComputeWeightsPhantomGuard:
     """Tests that NWS (zero rows) is excluded from the blend for international stations."""
 
     def _make_db_with_open_meteo_and_gfs(self, n: int) -> MagicMock:
-        """Build a mock DB with n days of open_meteo + gfs forecast rows.
-
-        Dates are pinned to July 2026 (on/after GFS_DATA_VALID_FROM, see
-        issue #548) so "gfs" matched pairs aren't excluded by the
-        duplicate-era training filter in compute_weights().
-        """
+        """Build a mock DB with n days of open_meteo forecast rows, plus "gfs"
+        rows (issue #761: "gfs" is no longer a registered DEB channel, so
+        these rows are included here specifically to confirm compute_weights
+        silently ignores them rather than raising or double-counting)."""
         db = MagicMock()
         db.get_forecast_log_by_lead.return_value = (
             [
@@ -352,13 +355,14 @@ class TestComputeWeightsPhantomGuard:
         return db
 
     def test_nws_phantom_excluded_from_blend(self):
-        """With enough open_meteo + gfs rows but zero NWS rows, NWS gets cold-start
-        weight and the two active models dominate; all weights sum to 1.0."""
+        """With enough open_meteo rows (plus ignored "gfs" rows) but zero NWS
+        rows, NWS gets cold-start weight and open_meteo dominates; all
+        weights sum to 1.0, and "gfs" contributes no weight."""
         db = self._make_db_with_open_meteo_and_gfs(MIN_SAMPLES + 2)
         weights = compute_weights(db, "WSSS", "Singapore")
+        assert "gfs" not in weights, "issue #761: 'gfs' must not appear in DEB weights"
         # nws has zero rows → cold-start → gets a small fraction, not the majority
         assert weights["nws"] < weights["open_meteo"], "cold-start nws should be < open_meteo"
-        assert weights["nws"] < weights["gfs"], "cold-start nws should be < gfs"
         # All weights must sum to 1.0
         assert isclose(sum(weights.values()), 1.0, abs_tol=1e-9), f"Weights sum to {sum(weights.values())}"
 
@@ -367,10 +371,11 @@ class TestComputeWeightsPhantomGuard:
         db = self._make_db_with_open_meteo_and_gfs(MIN_SAMPLES - 1)
         weights = compute_weights(db, "WSSS", "Singapore")
         assert weights == EQUAL_WEIGHTS
+        assert "gfs" not in weights
 
-    def test_gfs_phantom_excluded_from_blend(self):
-        """If GFS rows are absent but NWS + open_meteo have enough data,
-        GFS gets cold-start weight and the two active models dominate; all sum to 1.0."""
+    def test_hrrr_phantom_excluded_from_blend(self):
+        """If HRRR rows are absent but NWS + open_meteo have enough data,
+        HRRR gets cold-start weight and the two active models dominate; all sum to 1.0."""
         n = MIN_SAMPLES + 2
         db = MagicMock()
         db.get_forecast_log_by_lead.return_value = (
@@ -392,7 +397,8 @@ class TestComputeWeightsPhantomGuard:
             for i in range(1, n + 1)
         }
         weights = compute_weights(db, "KORD", "Chicago")
-        # gfs has zero rows → cold-start → gets a small fraction
-        assert weights["gfs"] < weights["nws"], "cold-start gfs should be < nws"
-        assert weights["gfs"] < weights["open_meteo"], "cold-start gfs should be < open_meteo"
+        assert "gfs" not in weights, "issue #761: 'gfs' must not appear in DEB weights"
+        # hrrr has zero rows → cold-start → gets a small fraction
+        assert weights["hrrr"] < weights["nws"], "cold-start hrrr should be < nws"
+        assert weights["hrrr"] < weights["open_meteo"], "cold-start hrrr should be < open_meteo"
         assert isclose(sum(weights.values()), 1.0, abs_tol=1e-9), f"Weights sum to {sum(weights.values())}"

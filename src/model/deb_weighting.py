@@ -9,7 +9,16 @@ forecast channels declaratively without touching compute logic.
 Pre-registered channels:
   - "nws"        : NWS daily-high forecast  (US, 24h cadence)
   - "open_meteo" : Open-Meteo daily-high    (global, 24h cadence)
-  - "gfs"        : GFS daily-high forecast  (global, 6h cadence)
+
+Note (issue #761): a dedicated "gfs" channel was registered here from #309
+through #550, but was removed because it double-counted the same physical
+model as "open_meteo" — Open-Meteo's multi-model mean already includes a
+gfs_seamless constituent identical to what the "gfs" channel fetched, and the
+two channels logged identical row counts with a combined ~58% of DEB ensemble
+weight, biasing the consensus mean toward GFS regardless of how the genuinely
+independent channels (NWS, ECMWF, ICON) disagreed. Ingestion of "gfs" rows
+into model_forecast_log (src/scripts/capture_forecasts.py) is unchanged and
+out of scope for #761 — only DEB weight computation stopped consuming it.
 
 When DEB_ENABLED is false (default) or when fewer than MIN_SAMPLES pairs exist,
 equal weights are returned silently.
@@ -48,20 +57,13 @@ GROUP_WEIGHT_CAP: float = float(os.getenv("DEB_GROUP_WEIGHT_CAP", "0.7"))
 
 MIN_SAMPLES: int = _MIN_SAMPLES
 
-# GFS_DATA_VALID_FROM: cutoff date (ISO "YYYY-MM-DD") before which "gfs" rows
-# in model_forecast_log are known byte-identical duplicates of "open_meteo"
-# rows (issue #548 — fetch_gfs_with_spread() previously just returned
-# fetch_open_meteo_with_spread() verbatim, so every pre-fix "gfs" row is a
-# copy of the corresponding "open_meteo" row, not an independent signal).
-# compute_weights() excludes "gfs" matched pairs dated strictly before this
-# constant so DEB never calibrates on the duplicated period.
-#
-# Set to DEPLOYMENT DATE + 1 (deployed 2026-07-01), NOT the merge date: the
-# old duplicated code kept writing "gfs" rows throughout deployment day, so
-# rows dated 2026-07-01 are still contaminated — 2026-07-02 is the first date
-# guaranteed fully clean. Scoped narrowly to the "gfs" model only — other
-# channels' historical pairs are unaffected.
-GFS_DATA_VALID_FROM: str = "2026-07-02"
+# Note (issue #761): a GFS_DATA_VALID_FROM duplicate-era cutoff (issue #548)
+# used to live here, excluding pre-2026-07-02 "gfs" rows from DEB training
+# because they were byte-identical duplicates of "open_meteo". It was removed
+# along with the "gfs" channel registration below — with "gfs" no longer a
+# registered DEB channel at all, the cutoff had nothing left to filter.
+# src/model/emos_calibration.py retains its own separate copy of this
+# constant for EMOS training-data filtering, which is out of scope for #761.
 
 # Tracks (city, date) pairs already logged this process lifetime.
 # Used by external callers that want once-per-day log semantics.
@@ -110,30 +112,30 @@ def register_model(
     )
 
 
-# Pre-register the 3 legacy channels
+# Pre-register the 2 legacy channels
 #
-# group_id honesty (issue #550): "open_meteo" and "gfs" are NOT independent
-# signals — both ultimately derive from Open-Meteo's API, and open_meteo's
-# multi-model mean literally includes a gfs_seamless constituent (see
-# fetch_open_meteo_with_spread() / fetch_gfs_with_spread() in
-# src/data/open_meteo.py). Before #548, "gfs" was in fact a byte-identical
-# duplicate of "open_meteo" — the single strongest piece of provenance
-# evidence for how tightly these two channels are coupled. Both are grouped
-# under "gfs_family" alongside "gefs" (NOAA's GFS ensemble) once that channel
-# is wired into DEB (tracked separately by issue #448 — "gefs" ingestion
-# exists in src/data/gefs.py but is not yet registered here).
+# group_id honesty (issue #550, amended #761): "open_meteo" derives from
+# Open-Meteo's API, whose multi-model mean literally includes a gfs_seamless
+# constituent (see fetch_open_meteo_with_spread() in src/data/open_meteo.py).
+# #550 originally paired it with a dedicated "gfs" channel under "gfs_family"
+# because both were, in effect, the same physical GFS model counted twice —
+# before #548, "gfs" was a byte-identical duplicate of "open_meteo", and even
+# after #548 both channels tracked the same underlying model (confirmed by
+# identical 3096-row counts and ~58% combined DEB weight on 2026-07-21). #761
+# removed the redundancy at the source by dropping the "gfs" channel entirely
+# rather than merely capping the pair's combined weight (see
+# docs/OPERATIONS.md "DEB Channel Group Assignments" for the full rationale).
 #
-# open_meteo's other two constituents (ecmwf_ifs04, jma_seamless) are NOT
-# captured by this single group_id — the registry only supports one group per
-# channel. This is a deliberate, documented trade-off (see docs/OPERATIONS.md
-# "Channel raw-model provenance" table): open_meteo's GFS overlap is the
-# tightest and best-evidenced correlation, so it anchors the choice, but the
-# residual ECMWF/JMA correlation against "ecmwf_intl" remains uncapped. A
-# follow-up could split open_meteo into per-constituent channels or extend the
-# registry to support multiple group memberships; out of scope for #550.
+# open_meteo keeps the "gfs_family" group_id as a forward-compatible
+# placeholder: "gefs" (NOAA's GFS ensemble) is GFS-core-derived and, once
+# wired into DEB (tracked separately by issue #448 — ingestion already exists
+# in src/data/gefs.py but is not yet registered here), should join this same
+# group rather than being left uncapped against open_meteo. Until then the
+# group has a single member, so GROUP_WEIGHT_CAP effectively also bounds
+# open_meteo's own weight at 0.7 — a defensible diversification safeguard,
+# not a behavioral concern.
 register_model("nws",        region="us",     expected_cadence_h=24.0, group_id="noaa_us")
 register_model("open_meteo", region="global", expected_cadence_h=24.0, group_id="gfs_family")
-register_model("gfs",        region="global", expected_cadence_h=6.0,  group_id="gfs_family")
 
 # HRRR and NBM: CONUS-only NOAA sources; correlated with NWS via noaa_us group cap.
 # cold_start_fraction is live-read from env so seed_config / dashboard overrides take effect.
@@ -181,7 +183,7 @@ def _model_names_for_region(station_region: str) -> tuple[str, ...]:
 
 # MODELS: tuple of model names for the default "us" region.
 # Computed from the registry so callers that iterate over it still work.
-# Order: nws, open_meteo, gfs  (same as before; registry insertion order preserved)
+# Order: registry insertion order preserved. "gfs" was removed (issue #761).
 MODELS: tuple[str, ...] = _model_names_for_region("us")
 
 # EQUAL_WEIGHTS: uniform weight dict for the default "us" region.
@@ -287,12 +289,12 @@ def _compute_weights_with_metadata(
     for row in log_rows:
         model_name = row["model"]
         if model_name not in errors:
-            continue  # model not applicable for this station_region
-        d = row["date"]
-        if model_name == "gfs" and d < GFS_DATA_VALID_FROM:
-            # Duplicate-era row (issue #548) — exclude from DEB training so
-            # calibration doesn't learn from the open_meteo-duplicated period.
+            # Model not applicable for this station_region — this also covers
+            # "gfs" rows still being written to model_forecast_log by capture
+            # ingestion (issue #761: "gfs" is no longer a registered DEB
+            # channel, so its rows are never applicable here).
             continue
+        d = row["date"]
         if d not in actuals:
             continue
         days_ago = (today - date_cls.fromisoformat(d)).days
@@ -417,10 +419,12 @@ def _apply_group_cap(
 
     Note (issue #550): earlier versions of this function only redistributed
     freed weight to explicitly ungrouped (group_id=None) models. Once every
-    registered channel for a region has a real group_id — which is now the
-    case, e.g. for EU/global stations where open_meteo/gfs (group "gfs_family")
-    and ecmwf/icon (group "ecmwf_intl") are the only applicable models and none
-    is left ungrouped — that fallback had nowhere to send freed weight, and it
+    registered channel for a region has a real group_id — e.g. for EU/global
+    stations where open_meteo (group "gfs_family") and ecmwf/icon (group
+    "ecmwf_intl") are the only applicable models and none is left ungrouped
+    (true at the time of #550 when "gfs" was also a "gfs_family" member, and
+    still true after #761 removed "gfs" since "gfs_family" simply has one
+    fewer member now) — that fallback had nowhere to send freed weight, and it
     was silently dropped, so the returned weights no longer summed to 1.0.
     Redistributing to "everyone outside the over-cap group(s)" fixes that
     while still enforcing the same GROUP_WEIGHT_CAP for the offending group.
