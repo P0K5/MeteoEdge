@@ -250,6 +250,47 @@ CREATE TABLE IF NOT EXISTS deb_weight_log (
     weights_json TEXT NOT NULL,
     logged_at   TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS scan_decisions (
+    station               TEXT NOT NULL,
+    ticker                TEXT NOT NULL,
+    date                  TEXT NOT NULL,
+    ts                    TEXT NOT NULL,
+    poll_ts               TEXT NOT NULL,
+    bracket_low           REAL NOT NULL,
+    bracket_high          REAL NOT NULL,
+    side                  TEXT CHECK(side IN ('YES','NO') OR side IS NULL),
+    yes_ask               INTEGER,
+    no_ask                INTEGER,
+    current_high          REAL,
+    latest_temp           REAL,
+    forecast_high         REAL,
+    p_yes                 REAL,
+    raw_p_yes             REAL,
+    capped_p_yes          REAL,
+    ev_yes                REAL,
+    ev_no                 REAL,
+    ev_yes_raw            REAL,
+    ev_no_raw             REAL,
+    minutes_to_settlement REAL,
+    emos_mode             TEXT,
+    is_next_day           INTEGER NOT NULL DEFAULT 0,
+    gate_verdict          TEXT NOT NULL CHECK(gate_verdict IN (
+        'traded_live','shadow_only','next_day_shadow','entry_guard','timeout_today',
+        'below_min_edge','above_max_edge','below_min_price','below_min_confidence',
+        'margin_gate','mae_gate'
+    )),
+    gate_actual           REAL,
+    gate_threshold        REAL,
+    gate_unit             TEXT,
+    gate_detail           TEXT,
+    ensemble_mean         REAL,
+    ensemble_members      INTEGER,
+    ensemble_range_low    REAL,
+    ensemble_range_high   REAL,
+    PRIMARY KEY (station, ticker, date)
+);
+CREATE INDEX IF NOT EXISTS idx_scan_decisions_station_date ON scan_decisions(station, date);
 """
 
 
@@ -945,6 +986,131 @@ class Database:
             (ticker,),
         )
         return cur.fetchone()[0]
+
+    # ------------------------------------------------------------------
+    # scan_decisions (issue #756 -- Edge tab bot's-eye per-bracket view)
+    # ------------------------------------------------------------------
+
+    _SCAN_DECISION_GATE_VERDICTS = frozenset({
+        "traded_live", "shadow_only", "next_day_shadow", "entry_guard", "timeout_today",
+        "below_min_edge", "above_max_edge", "below_min_price", "below_min_confidence",
+        "margin_gate", "mae_gate",
+    })
+
+    def upsert_scan_decision(
+        self,
+        *,
+        ts: str,
+        station: str,
+        ticker: str,
+        date: str,
+        bracket_low: float,
+        bracket_high: float,
+        gate_verdict: str,
+        poll_ts: "str | None" = None,
+        side: "str | None" = None,
+        yes_ask: "int | None" = None,
+        no_ask: "int | None" = None,
+        current_high: "float | None" = None,
+        latest_temp: "float | None" = None,
+        forecast_high: "float | None" = None,
+        p_yes: "float | None" = None,
+        raw_p_yes: "float | None" = None,
+        capped_p_yes: "float | None" = None,
+        ev_yes: "float | None" = None,
+        ev_no: "float | None" = None,
+        ev_yes_raw: "float | None" = None,
+        ev_no_raw: "float | None" = None,
+        minutes_to_settlement: "float | None" = None,
+        emos_mode: "str | None" = None,
+        is_next_day: int = 0,
+        gate_actual: "float | None" = None,
+        gate_threshold: "float | None" = None,
+        gate_unit: "str | None" = None,
+        gate_detail: "str | None" = None,
+        ensemble_mean: "float | None" = None,
+        ensemble_members: "int | None" = None,
+        ensemble_range_low: "float | None" = None,
+        ensemble_range_high: "float | None" = None,
+    ) -> None:
+        """Upsert the latest poll's evaluated-bracket decision row.
+
+        Idempotent per poll: a fresh call for the same ``(station, ticker,
+        date)`` key replaces the prior row in place, so this table always
+        reflects the most recent scan, not an ever-growing history -- unlike
+        ``candidates``/``snapshots.jsonl``, which are append-only logs.
+
+        Writer: ``src.scripts.run.poll_once`` (mirrors the ``insert_candidate``
+        call site, issue #684), once per evaluated bracket per poll -- the
+        scanner attaches ``gate_verdict`` per bracket (src.strategy.scanner.
+        scan_markets) and run.py upgrades the ``traded_live`` placeholder to
+        ``entry_guard``/``timeout_today``/(confirmed) ``traded_live`` once the
+        entry-guard check and any live execution attempt have resolved (the
+        "verdict seam" -- see the PR for #756).
+
+        Args:
+            gate_verdict: one of the 11 canonical verdicts (see
+                ``_SCAN_DECISION_GATE_VERDICTS``); raises ``ValueError`` on
+                any other value so a typo never silently reaches the DB.
+        """
+        if gate_verdict not in self._SCAN_DECISION_GATE_VERDICTS:
+            raise ValueError(f"invalid gate_verdict: {gate_verdict!r}")
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO scan_decisions("
+                "station,ticker,date,ts,poll_ts,bracket_low,bracket_high,side,"
+                "yes_ask,no_ask,current_high,latest_temp,forecast_high,"
+                "p_yes,raw_p_yes,capped_p_yes,ev_yes,ev_no,ev_yes_raw,ev_no_raw,"
+                "minutes_to_settlement,emos_mode,is_next_day,gate_verdict,"
+                "gate_actual,gate_threshold,gate_unit,gate_detail,"
+                "ensemble_mean,ensemble_members,ensemble_range_low,ensemble_range_high) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+                "ON CONFLICT(station, ticker, date) DO UPDATE SET "
+                "ts=excluded.ts, poll_ts=excluded.poll_ts, "
+                "bracket_low=excluded.bracket_low, bracket_high=excluded.bracket_high, "
+                "side=excluded.side, yes_ask=excluded.yes_ask, no_ask=excluded.no_ask, "
+                "current_high=excluded.current_high, latest_temp=excluded.latest_temp, "
+                "forecast_high=excluded.forecast_high, p_yes=excluded.p_yes, "
+                "raw_p_yes=excluded.raw_p_yes, capped_p_yes=excluded.capped_p_yes, "
+                "ev_yes=excluded.ev_yes, ev_no=excluded.ev_no, "
+                "ev_yes_raw=excluded.ev_yes_raw, ev_no_raw=excluded.ev_no_raw, "
+                "minutes_to_settlement=excluded.minutes_to_settlement, "
+                "emos_mode=excluded.emos_mode, is_next_day=excluded.is_next_day, "
+                "gate_verdict=excluded.gate_verdict, gate_actual=excluded.gate_actual, "
+                "gate_threshold=excluded.gate_threshold, gate_unit=excluded.gate_unit, "
+                "gate_detail=excluded.gate_detail, ensemble_mean=excluded.ensemble_mean, "
+                "ensemble_members=excluded.ensemble_members, "
+                "ensemble_range_low=excluded.ensemble_range_low, "
+                "ensemble_range_high=excluded.ensemble_range_high",
+                (
+                    station, ticker, date, ts, poll_ts or ts, bracket_low, bracket_high, side,
+                    yes_ask, no_ask, current_high, latest_temp, forecast_high,
+                    p_yes, raw_p_yes, capped_p_yes, ev_yes, ev_no, ev_yes_raw, ev_no_raw,
+                    minutes_to_settlement, emos_mode, int(is_next_day), gate_verdict,
+                    gate_actual, gate_threshold, gate_unit, gate_detail,
+                    ensemble_mean, ensemble_members, ensemble_range_low, ensemble_range_high,
+                ),
+            )
+            self._conn.commit()
+
+    def get_scan_decisions(self, station: str, date: str) -> list[dict]:
+        """Return every evaluated bracket's latest-poll decision row for (station, date).
+
+        Ordered ascending by bracket_low, matching the Edge tab's per-bracket
+        table row order (design spec docs/design/edge-tab-bracket-decisions.md §4).
+        """
+        cur = self._conn.execute(
+            "SELECT station,ticker,date,ts,poll_ts,bracket_low,bracket_high,side,"
+            "yes_ask,no_ask,current_high,latest_temp,forecast_high,"
+            "p_yes,raw_p_yes,capped_p_yes,ev_yes,ev_no,ev_yes_raw,ev_no_raw,"
+            "minutes_to_settlement,emos_mode,is_next_day,gate_verdict,"
+            "gate_actual,gate_threshold,gate_unit,gate_detail,"
+            "ensemble_mean,ensemble_members,ensemble_range_low,ensemble_range_high "
+            "FROM scan_decisions WHERE station=? AND date=? ORDER BY bracket_low ASC",
+            (station, date),
+        )
+        cols = [d[0] for d in cur.description]
+        return [dict(zip(cols, row)) for row in cur.fetchall()]
 
     # ------------------------------------------------------------------
     # trades
