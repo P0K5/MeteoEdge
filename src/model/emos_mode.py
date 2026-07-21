@@ -5,7 +5,7 @@ Controls whether each city uses legacy Gaussian, EMOS shadow, or EMOS primary mo
 import logging
 import os
 
-from src.config import CONFIG_DEFAULTS, get_live_config
+from src.config import CONFIG_DEFAULTS, FORECAST_STACK_MODELS, MODEL_STATE_ATTRS, get_live_config
 
 log = logging.getLogger(__name__)
 
@@ -120,11 +120,52 @@ def get_city_mode(city: str, db=None) -> str:
 # stack regime with EQUAL weights; serving must feed apply_emos the same
 # equal-weight mean of the same feeds — never corrected_mu_f/deb_mu_f, which
 # embed DEB weighting + intraday + residual corrections the coefficients were
-# not fitted against (train/serve parity, issue #666). Until scan-time state
-# carries HRRR/ECMWF/etc. values, non-baseline stacks serve on the two
-# always-available members; test_serving_members_parity_guard ensures every
-# model in the active FORECAST_STACK has a corresponding scan-time attribute.
-_SERVING_MEMBERS = ("forecast_high_f", "secondary_forecast_f")
+# not fitted against (train/serve parity, issue #666).
+#
+# _SERVING_MEMBERS is no longer a hardcoded pair (issue #760): the attribute
+# names are resolved per-call from _MODEL_STATE_ATTRS (src.config.
+# MODEL_STATE_ATTRS), restricted to whichever models the ACTIVE
+# FORECAST_STACK regime uses (see _active_stack_models / _serving_members_for_stack
+# below). This module constant is kept only as the well-known baseline-stack
+# value — most call sites should go through _serving_members_for_stack() with
+# the live active stack instead. WeatherState may carry MORE model attributes
+# than the active stack needs (captured channels are independent of which
+# stack is currently being served) — restricting to the active stack's models
+# is what keeps serving's mu_raw in parity with what fetch_training_data
+# trained on. test_serving_members_parity_guard exercises this for every
+# FORECAST_STACK regime.
+_MODEL_STATE_ATTRS = MODEL_STATE_ATTRS
+
+
+def _serving_members_for_stack(stack_models: "frozenset[str] | set[str]") -> tuple[str, ...]:
+    """Return the WeatherState attribute names to average for *stack_models*.
+
+    Maps each model tag in *stack_models* to its WeatherState attribute via
+    _MODEL_STATE_ATTRS, in a stable (sorted) order. A model with no entry in
+    _MODEL_STATE_ATTRS is silently dropped — see MODEL_STATE_ATTRS's
+    docstring for why (e.g. "gefs" in the "full" stack is out of scope).
+    """
+    return tuple(
+        _MODEL_STATE_ATTRS[model] for model in sorted(stack_models)
+        if model in _MODEL_STATE_ATTRS
+    )
+
+
+def _active_stack_models(db) -> frozenset:
+    """Resolve the active FORECAST_STACK's model set from live config.
+
+    Same live-read pattern as _emos_min_samples/_default_mode. Falls back to
+    the baseline set for an unrecognised stack name (should not happen —
+    FORECAST_STACK is validated at the dashboard config layer).
+    """
+    active_stack = get_live_config(db).get("FORECAST_STACK", CONFIG_DEFAULTS["FORECAST_STACK"])
+    return FORECAST_STACK_MODELS.get(active_stack, FORECAST_STACK_MODELS["baseline"])
+
+
+# Baseline-stack serving members, kept as a module constant for readability
+# and for callers/tests that want the well-known default without a db handle.
+# Equivalent to _serving_members_for_stack(FORECAST_STACK_MODELS["baseline"]).
+_SERVING_MEMBERS = _serving_members_for_stack(FORECAST_STACK_MODELS["baseline"])
 
 
 def resolve_sigma_raw(state, use_ensemble_sigma: "bool | None", fallback_sigma: float) -> float:
@@ -230,9 +271,21 @@ def emos_serving_mu(
 
     Returns None when no stack member forecast is available on the state —
     callers must fall back to legacy behavior.
+
+    Member selection (issue #760): the WeatherState attributes averaged into
+    mu_raw are restricted to the models in the ACTIVE FORECAST_STACK regime
+    (via _active_stack_models(db) / _serving_members_for_stack), not simply
+    "whichever attributes happen to be non-None on state". This matters
+    because model_forecast_log capture (and therefore state.hrrr_forecast_f
+    etc.) runs independently of which stack is currently being served —
+    without this restriction, a state carrying HRRR/NBM/ECMWF/ICON values
+    while FORECAST_STACK=baseline would silently pull in members the active
+    coefficients were never trained on, breaking train/serve parity (#666)
+    and the "baseline serving is byte-for-byte unchanged" invariant.
     """
+    serving_attrs = _serving_members_for_stack(_active_stack_models(db))
     members = [
-        getattr(state, attr, None) for attr in _SERVING_MEMBERS
+        getattr(state, attr, None) for attr in serving_attrs
         if getattr(state, attr, None) is not None
     ]
     if not members:

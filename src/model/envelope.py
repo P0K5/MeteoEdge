@@ -42,6 +42,19 @@ class WeatherState:
     # true_probability_yes (and the EMOS-shadow serving path) instead of the
     # fixed FORECAST_STDDEV_F only when USE_ENSEMBLE_SIGMA is enabled (#448).
     ensemble_sigma_f: float | None = None
+    # Per-model forecast-highs (°F) for the expanded FORECAST_STACK regimes
+    # (hrrr_nbm / intl_ecmwf_icon). Populated by src.weather.builder from the
+    # already-captured model_forecast_log row for that model (lowest
+    # lead_hours, same source src.model.ensemble_distribution reads) ONLY
+    # when the active FORECAST_STACK needs it -- see src.config.
+    # MODEL_STATE_ATTRS for the model->attribute mapping. None on the
+    # baseline stack (the default) and for stations/regions the model
+    # doesn't cover. Consumed by src.model.emos_mode.emos_serving_mu to keep
+    # EMOS train/serve parity when a non-baseline stack is active (#666, #760).
+    hrrr_forecast_f: float | None = None
+    nbm_forecast_f: float | None = None
+    ecmwf_forecast_f: float | None = None
+    icon_forecast_f: float | None = None
 
 
 @dataclass

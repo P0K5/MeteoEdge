@@ -679,6 +679,32 @@ FORECAST_STACK_MODELS: dict[str, frozenset] = {
     "full":            frozenset({"nws", "open_meteo", "hrrr", "nbm", "ecmwf", "icon", "gefs"}),
 }
 
+# Maps each FORECAST_STACK model tag to the scan-time WeatherState (src.model.
+# envelope) attribute that carries its forecast-high (issue #760, EMOS serving-
+# member parity). This is the single source of truth two consumers share:
+#
+# - src.weather.builder populates the attribute from the already-captured
+#   model_forecast_log row for that model (lowest lead_hours per model, the
+#   same source src.model.ensemble_distribution reads).
+# - src.model.emos_mode reads the same mapping, restricted to whichever
+#   models the ACTIVE FORECAST_STACK regime uses, to keep the equal-weight
+#   serving mean in parity with what fetch_training_data trained on (issue
+#   #666).
+#
+# "gefs" (the "full" stack's 7th member) has no entry -- it is an ensemble
+# spread product consumed for sigma, not a single forecast-high value, and
+# is out of scope for #760 (only hrrr_nbm / intl_ecmwf_icon are promotable
+# today). A stack that references a model with no entry here still fails
+# the serving-member parity guard by design.
+MODEL_STATE_ATTRS: dict[str, str] = {
+    "nws": "forecast_high_f",
+    "open_meteo": "secondary_forecast_f",
+    "hrrr": "hrrr_forecast_f",
+    "nbm": "nbm_forecast_f",
+    "ecmwf": "ecmwf_forecast_f",
+    "icon": "icon_forecast_f",
+}
+
 
 def seed_config(db) -> None:
     """Seed bot_config from env vars / hardcoded defaults on first run.
