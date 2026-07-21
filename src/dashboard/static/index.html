@@ -2833,7 +2833,11 @@ function gateTooltip(b) {
   const threshold = _gateFmtByUnit(b.gate_threshold, b.gate_unit);
   switch (b.gate_verdict) {
     case 'traded_live':
-      return `Traded live — cleared every gate on the ${b.side || '—'} side.`;
+      // Deliberately doesn't say "live": scan_decisions can't distinguish a
+      // confirmed live fill from a paper-mode placeholder (see the PR #779 /
+      // OPERATIONS.md note), so claiming "live" here could mislabel a paper
+      // run. A real live/paper signal is tracked in Backlog #780.
+      return `Traded — cleared every gate on the ${b.side || '—'} side.`;
     case 'entry_guard':
       return b.gate_detail || 'Blocked by an entry guard this poll.';
     case 'timeout_today':
@@ -2888,7 +2892,8 @@ function renderEdgeGateLegend() {
 
 function gateLegendMeaning(verdict) {
   const meanings = {
-    traded_live: 'Cleared every gate and traded live on the flagged side.',
+    // Deliberately doesn't say "live" -- see gateTooltip() above (Backlog #780).
+    traded_live: 'Cleared every gate and traded on the flagged side.',
     entry_guard: 'Wanted to trade but an operational guard (e.g. duplicate position) blocked it.',
     timeout_today: 'Order placed but not filled before the settlement window closed.',
     shadow_only: 'Would trade, but this station/side runs in shadow (paper) mode.',

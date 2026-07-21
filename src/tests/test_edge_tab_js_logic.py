@@ -102,9 +102,11 @@ _ASSERTIONS = textwrap.dedent("""
       gateTooltip({ gate_verdict: 'below_min_confidence', gate_actual: 0.42, gate_threshold: 0.05, gate_unit: 'probability' }),
       'model p_yes 42%% < min confidence 5%% required for YES'
     );
+    // Deliberately doesn't say "live" -- scan_decisions can't distinguish a
+    // confirmed live fill from a paper-mode placeholder (Backlog #780).
     assert.strictEqual(
       gateTooltip({ gate_verdict: 'traded_live', side: 'YES' }),
-      'Traded live — cleared every gate on the YES side.'
+      'Traded — cleared every gate on the YES side.'
     );
     assert.strictEqual(
       gateTooltip({ gate_verdict: 'entry_guard', gate_detail: 'duplicate-entry guard' }),

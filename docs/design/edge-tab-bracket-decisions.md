@@ -146,9 +146,14 @@ trading decision. What replaces it is a single-line scan context bar:
   per #757's acceptance criteria ("may be retained") — agreed approach: collapsed
   by default so it never competes with the primary decision table, per Clarity]`).
 - **Body content**, plain key-value rows (not KPI cards — this is de-emphasized
-  detail now): `Ensemble mean`, `Range (5th–95th pct)`, `Members`. Reuses
+  detail now): `Ensemble mean`, `Range (min–max)`, `Members`. Reuses
   `.bias-th`/`.deb-th` label styling already present for similar secondary
   tabular detail elsewhere in the dashboard.
+  `[Implementation correction, #758/PR #779: relabelled from "Range (5th–95th pct)"
+  to "Range (min–max)" — forecast_inputs.ensemble_range_low/high is the raw
+  min/max across contributing models, not a percentile; the original wording
+  claimed a statistic the data doesn't represent. Accepted — more accurate
+  labeling serves Clarity better than the original copy.]`
 - If the backend has retired this data entirely (per #757's "retire or demote"
   choice), the `<details>` element is omitted rather than rendered empty — confirm
   final call with Tech Lead PM before D ships.
@@ -257,7 +262,7 @@ elsewhere in this dashboard**, not new ones:
 
 | Verdict | Chip label | Family | Tooltip (native `title`) |
 |---|---|---|---|
-| `traded_live` | `Traded` | green | `Traded live — cleared every gate on the {side} side.` |
+| `traded_live` | `Traded` | green | `Traded — cleared every gate on the {side} side.` (deliberately drops "live" — see #758/PR #779 discussion and Backlog #780) |
 | `entry_guard` | `Blocked` | red | `{guard reason text from backend}` e.g. "Already have an open position in this bracket today — duplicate-entry guard." |
 | `timeout_today` | `Timed out` | red | `Order placed but not filled before the settlement window closed.` |
 | `shadow_only` | `Shadow` | amber | `Would trade, but this station/side runs in shadow (paper) mode — no live order placed.` |
