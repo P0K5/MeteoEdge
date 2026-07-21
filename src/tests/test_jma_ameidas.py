@@ -127,7 +127,7 @@ class TestUrlFormat:
 
         # Check the exact URL format
         url = mock_fetch.call_args[0][0]
-        assert "https://www.jma.go.jp/bosai/amedas/data/point/44132/" in url
+        assert "https://www.jma.go.jp/bosai/amedas/data/point/44166/" in url
         assert "20260620_09.json" in url
 
     @patch("src.data.collectors.jma_ameidas.fetch")

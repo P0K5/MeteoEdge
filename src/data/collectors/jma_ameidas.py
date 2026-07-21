@@ -1,4 +1,4 @@
-"""JMA AMeDAS 10-minute observation adapter for Tokyo Kitanomaru.
+"""JMA AMeDAS 10-minute observation adapter for Tokyo Haneda Airport.
 
 Fetches real-time temperature from the JMA AMeDAS public JSON feed and
 persists it to the observations table.
@@ -17,7 +17,11 @@ Response structure (one measurement per 10-minute slot within the file):
     ...
   }
 
-Station: 44132 — Tokyo/Kitanomaru (central Tokyo) amedas sensor.
+Station: 44166 — Tokyo/Haneda Airport (東京国際空港) AMeDAS sensor. This is the
+station Polymarket's Tokyo market resolves against ("highest temperature at the
+Tokyo Haneda Airport Station"), and it matches the RJTT METAR feed and the
+Open-Meteo fallback coordinates below. (Was 44132 = Kitanomaru/central Tokyo,
+~15 km inland — a wrong-code bug corrected in issue #750.)
 
 Fallback: If the JMA endpoint is inaccessible (404, network error), the adapter
 falls back to the Open-Meteo hourly API for Haneda coordinates
@@ -43,7 +47,7 @@ log = logging.getLogger(__name__)
 # Constants
 # ---------------------------------------------------------------------------
 
-_JMA_STATION = os.getenv("JMA_STATION_CODE", "44132")  # Tokyo Haneda
+_JMA_STATION = os.getenv("JMA_STATION_CODE", "44166")  # Tokyo Haneda Airport AMeDAS (#750; was 44132=Kitanomaru)
 _JST = timezone(timedelta(hours=9))  # Japan Standard Time = UTC+9
 
 _JMA_URL_TEMPLATE = (
