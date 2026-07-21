@@ -22,9 +22,15 @@ templates: invoke the **board-status** skill. Full protocol:
 6. **Implement** in small, coherent steps, following existing patterns.
 7. **Test** — write tests following existing test patterns; run the full suite
    before opening the PR.
-8. **(G) Open a PR** containing:
+8. **(G) Open a PR** following `.github/pull_request_template.md` — since
+   `gh pr create --body …` bypasses the template, you must include its sections
+   yourself:
    - `Closes #N` for every related issue (mandatory — unlinked PRs are rejected)
    - What changed, why, and how to test
+   - **How to deploy** (mandatory) — tick the applicable template line(s)
+     (code-only + which services to restart, DB migration step, one-off script,
+     config/env change, post-deploy validation) or check **"No deploy needed"**
+     for docs/tests/CI-only PRs. A PR missing this section is a review blocker.
    - Any trade-offs or uncertainties
 9. **(G) Move the issue to In review** on the board.
 10. **(G) Comment on the issue:** "PR #N submitted for review — [brief summary]".
@@ -42,6 +48,8 @@ templates: invoke the **board-status** skill. Full protocol:
 - [ ] Issue status is "In review" on the board (via GraphQL, not labels)
 - [ ] PR references issues with `Closes #N`
 - [ ] PR description includes: what changed, why, how to test
+- [ ] PR description includes a filled **How to deploy** section (or
+      "No deploy needed" checked)
 - [ ] Comment posted on issue: "PR #N submitted for review"
 - [ ] Review requested from Tech Lead PM (and Designer if frontend)
 - [ ] All tests pass

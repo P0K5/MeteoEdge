@@ -43,6 +43,11 @@ blast radius — start from its output, not from scratch.
   tables/columns, run modes, log paths, deployment steps, CLI args, or API
   endpoints, then `docs/OPERATIONS.md` and/or `docs/DB_SCHEMA.md` must be
   updated — otherwise it's a `[blocker]`.
+- **Deploy guide present:** the PR body must include a filled **How to deploy**
+  section (per `.github/pull_request_template.md`) — the exact ship steps
+  (services to restart, DB migration, one-off scripts, config/env, post-deploy
+  validation) or "No deploy needed" for docs/tests/CI-only. Missing or empty =
+  `[blocker]`.
 
 ## 3. Review output format
 
@@ -77,6 +82,7 @@ requests are blockers.
 Pre-approval checklist:
 
 - [ ] All acceptance criteria from the linked issue met
+- [ ] **How to deploy** section present & filled (or "No deploy needed") — missing = `[blocker]`
 - [ ] All CI checks green on the head SHA (verified, not assumed)
 - [ ] Correctness, architecture, quality, performance reviewed
 - [ ] Test coverage adequate for the scope
