@@ -72,8 +72,6 @@ from src.execution.live_trader import LiveTrader
 from src.execution.order_manager import order_manager
 from src.dashboard.data import read_jsonl, load_live_trades, load_snapshots, load_position_snapshots
 from src.utils.log_rotation import iter_rotated_jsonl, rotated_sources
-from src.model.ensemble_distribution import get_ensemble_distribution
-from src.model.bracket_analysis import get_bracket_analysis
 
 _db = Database()
 
@@ -2839,44 +2837,106 @@ def guardrail_events() -> dict:
 
 # ---------------------------------------------------------------------------
 # Edge Tab — GET /api/analysis/{station}
+#
+# Issue #757: repointed to read the persisted scan_decisions table (#756) --
+# the numbers the scanner actually traded on -- instead of a parallel
+# get_ensemble_distribution()/get_bracket_analysis() recompute that could
+# disagree with the live decision. That recompute is demoted, not retired:
+# get_ensemble_distribution() still has a live caller (src.strategy.scanner,
+# which is how ensemble_mean/members/range land in scan_decisions in the
+# first place); get_bracket_analysis() loses its only caller here and is left
+# in place per the issue's "don't delete unless clearly dead" instruction.
 # ---------------------------------------------------------------------------
+
+def _format_bracket_range(low_f: float, high_f: float) -> str:
+    """Human-readable bracket label, e.g. ``"82–84°F"``.
+
+    Mirrors the open-ended-bracket convention from the retired
+    ``get_bracket_analysis()`` (src/model/bracket_analysis.py) so the label
+    text is unchanged for operators: sentinel bounds outside [-49, 199] mean
+    "no lower/upper bound".
+    """
+    if low_f <= -49:
+        return f"≤{int(high_f)}°F"
+    if high_f >= 199:
+        return f"≥{int(low_f)}°F"
+    return f"{int(low_f)}–{int(high_f)}°F"
+
 
 class BracketOut(BaseModel):
     range: str
     bracket_low: float
     bracket_high: float
-    polymarket_prob: float | None
-    model_prob: float | None
-    edge: float | None
+    market_yes_ask: int | None
+    market_no_ask: int | None
+    p_yes: float | None
+    raw_p_yes: float | None
+    ev_yes: float | None
+    ev_no: float | None
+    emos_mode: str | None
+    forecast_high: float | None
+    current_high: float | None
+    minutes_to_settlement: float | None
+    gate_verdict: str | None
+    side: Literal["YES", "NO"] | None
+    gate_actual: float | None
+    gate_threshold: float | None
+    gate_unit: str | None
+    gate_detail: str | None
+    poll_ts: str | None
+
+
+class ForecastInputsOut(BaseModel):
+    """Demoted secondary block (design spec §3) -- the ensemble summary the
+    scanner read while producing this poll's p_yes, sourced read-only from
+    the persisted scan_decisions snapshot, never a live recompute.
+    """
+    ensemble_mean: float | None
+    ensemble_range_low: float | None
+    ensemble_range_high: float | None
+    ensemble_members: int | None
 
 
 class AnalysisStationOut(BaseModel):
     station: str
     date: str
-    ensemble_mean: float | None
-    bias_corrected: float | None
-    member_count: int
-    range: list[float | None]
-    distribution: dict[str, int]
+    is_next_day: bool
+    poll_ts: str | None
+    poll_interval_seconds: int
+    forecast_inputs: ForecastInputsOut | None
     brackets: list[BracketOut]
 
 
 @app.get("/api/analysis/{station}", response_model=AnalysisStationOut)
-def analysis_station(station: str, date: str | None = None) -> AnalysisStationOut:
-    """Return ensemble distribution and bracket edge analysis for a station.
+def analysis_station(
+    station: str,
+    date: str | None = None,
+    next_day: bool = False,
+) -> AnalysisStationOut:
+    """Return the bot's-eye per-bracket decision view for a station (issue #757).
+
+    Serves the persisted ``scan_decisions`` table (#756) -- the same
+    p_yes/ev_yes/ev_no/emos_mode numbers the scanner actually traded on, plus
+    the per-bracket gate verdict -- rather than a parallel ensemble recompute.
 
     Path param:
         station: METAR code (e.g. KORD). Case-insensitive; normalised to upper.
 
-    Query param:
-        date: optional YYYY-MM-DD string. Defaults to today (UTC).
+    Query params:
+        date: optional YYYY-MM-DD settlement-date string. Defaults to today
+            (UTC) when ``next_day`` is false, tomorrow (UTC) when true.
+        next_day: day selector — false selects the today (``is_next_day=0``)
+            partition, true selects the D+1 (``is_next_day=1``) partition of
+            ``scan_decisions`` rows. Rows are additionally filtered by
+            ``is_next_day`` to defend against a caller-supplied ``date`` that
+            disagrees with ``next_day``.
 
     Returns:
-        200 — ensemble + bracket data
+        200 — per-bracket decision rows (empty list + last poll_ts, if any,
+              when there is no recent scan for the station/date)
         404 — station not in configured station list
         422 — date is not a valid YYYY-MM-DD string (FastAPI auto-handles malformed
               types; the explicit check below covers semantically invalid dates)
-        503 — ensemble data unavailable (DB error or no data)
     """
     import datetime as _dt
 
@@ -2888,7 +2948,9 @@ def analysis_station(station: str, date: str | None = None) -> AnalysisStationOu
 
     # Resolve / validate date
     if date is None:
-        resolved_date_str = _dt.datetime.now(_dt.timezone.utc).date().isoformat()
+        today_utc = _dt.datetime.now(_dt.timezone.utc).date()
+        resolved_date = today_utc + _dt.timedelta(days=1) if next_day else today_utc
+        resolved_date_str = resolved_date.isoformat()
     else:
         try:
             _dt.date.fromisoformat(date)
@@ -2896,56 +2958,88 @@ def analysis_station(station: str, date: str | None = None) -> AnalysisStationOu
         except ValueError:
             raise HTTPException(status_code=422, detail=f"Invalid date format: {date!r}. Expected YYYY-MM-DD.")
 
-    resolved_date = _dt.date.fromisoformat(resolved_date_str)
+    if _db is None:
+        raise HTTPException(status_code=503, detail="Database not initialised")
 
-    # Fetch ensemble distribution (B1)
+    # Source of truth: the persisted scan_decisions snapshot (#756), never a
+    # live get_ensemble_distribution()/get_bracket_analysis() recompute.
     try:
-        ensemble = get_ensemble_distribution(station_upper, resolved_date_str, _db)
+        rows = _db.get_scan_decisions(station_upper, resolved_date_str)
     except Exception as exc:
-        logger.warning("[analysis/%s] ensemble fetch failed: %s", station_upper, exc)
-        raise HTTPException(
-            status_code=503,
-            detail={"error": "ensemble data unavailable", "station": station_upper, "date": resolved_date_str},
-        )
+        logger.warning("[analysis/%s] scan_decisions fetch failed: %s", station_upper, exc)
+        rows = []
 
-    if ensemble is None:
-        raise HTTPException(
-            status_code=503,
-            detail={"error": "ensemble data unavailable", "station": station_upper, "date": resolved_date_str},
-        )
+    # Partition on is_next_day (belt-and-braces alongside the date resolution
+    # above -- a row's date and is_next_day are written together by the
+    # scanner, but filtering here means a caller-supplied date/next_day
+    # mismatch degrades to an empty result rather than a wrong partition).
+    want_next_day = 1 if next_day else 0
+    rows = [r for r in rows if int(r.get("is_next_day") or 0) == want_next_day]
 
-    # Fetch bracket analysis (B2) — graceful degradation: missing brackets → empty list
-    try:
-        raw_brackets = get_bracket_analysis(station_upper, resolved_date, _db)
-    except Exception as exc:
-        logger.warning("[analysis/%s] bracket fetch failed: %s", station_upper, exc)
-        raw_brackets = []
+    poll_interval_seconds = get_live_config(_db).get("POLL_INTERVAL_SECONDS", CONFIG_DEFAULTS["POLL_INTERVAL_SECONDS"])
+
+    if not rows:
+        return AnalysisStationOut(
+            station=station_upper,
+            date=resolved_date_str,
+            is_next_day=next_day,
+            poll_ts=None,
+            poll_interval_seconds=poll_interval_seconds,
+            forecast_inputs=None,
+            brackets=[],
+        )
 
     brackets = [
         BracketOut(
-            range=b["range"],
-            bracket_low=b["bracket_low"],
-            bracket_high=b["bracket_high"],
-            polymarket_prob=b.get("polymarket_prob"),
-            model_prob=b.get("model_prob"),
-            edge=b.get("edge"),
+            range=_format_bracket_range(r["bracket_low"], r["bracket_high"]),
+            bracket_low=r["bracket_low"],
+            bracket_high=r["bracket_high"],
+            market_yes_ask=r.get("yes_ask"),
+            market_no_ask=r.get("no_ask"),
+            p_yes=r.get("p_yes"),
+            raw_p_yes=r.get("raw_p_yes"),
+            ev_yes=r.get("ev_yes"),
+            ev_no=r.get("ev_no"),
+            emos_mode=r.get("emos_mode"),
+            forecast_high=r.get("forecast_high"),
+            current_high=r.get("current_high"),
+            minutes_to_settlement=r.get("minutes_to_settlement"),
+            gate_verdict=r.get("gate_verdict"),
+            side=r.get("side"),
+            gate_actual=r.get("gate_actual"),
+            gate_threshold=r.get("gate_threshold"),
+            gate_unit=r.get("gate_unit"),
+            gate_detail=r.get("gate_detail"),
+            poll_ts=r.get("poll_ts"),
         )
-        for b in raw_brackets
+        for r in rows
     ]
 
-    # Distribution keys must be strings (JSON object keys)
-    distribution = {str(k): v for k, v in (ensemble.get("distribution") or {}).items()}
+    # All rows come from the same poll_once() call, so poll_ts is identical
+    # across brackets in practice; max() is a defensive tie-break, not a
+    # meaningful aggregation.
+    top_poll_ts = max((r.get("poll_ts") for r in rows if r.get("poll_ts")), default=None)
 
-    rng = ensemble.get("range") or (None, None)
+    # Forecast inputs (design spec §3) -- same ensemble_* values repeated on
+    # every row for a given poll (scanner attaches them once per poll, not
+    # per bracket); take the first row's copy as the scan-level summary.
+    first = rows[0]
+    forecast_inputs = None
+    if any(first.get(k) is not None for k in ("ensemble_mean", "ensemble_members", "ensemble_range_low", "ensemble_range_high")):
+        forecast_inputs = ForecastInputsOut(
+            ensemble_mean=first.get("ensemble_mean"),
+            ensemble_range_low=first.get("ensemble_range_low"),
+            ensemble_range_high=first.get("ensemble_range_high"),
+            ensemble_members=first.get("ensemble_members"),
+        )
 
     return AnalysisStationOut(
         station=station_upper,
         date=resolved_date_str,
-        ensemble_mean=ensemble.get("ensemble_mean"),
-        bias_corrected=ensemble.get("bias_corrected"),
-        member_count=ensemble.get("member_count") or 0,
-        range=list(rng),
-        distribution=distribution,
+        is_next_day=next_day,
+        poll_ts=top_poll_ts,
+        poll_interval_seconds=poll_interval_seconds,
+        forecast_inputs=forecast_inputs,
         brackets=brackets,
     )
 
