@@ -21,6 +21,15 @@ spawning, and never edit `model:` frontmatter by hand. On a non-Anthropic
 backend (NVIDIA NIM), `scripts/bootstrap_session.sh` renders the frontmatter
 from `.claude/model-config.env`.
 
+> **Why the PM lives in `agents/pm.md`, not `.claude/agents/`.** `.claude/agents/`
+> holds only subagents spawnable via the Agent tool (`subagent_type: …`), which
+> require `name`/`description`/`model`/`tools` frontmatter. The Tech Lead PM is
+> the **orchestrator** — the root session launched with
+> `claude --system-prompt "$(cat agents/pm.md)"` — and is never spawned as a
+> subagent, so it intentionally stays in the legacy `agents/` directory beside
+> `reviewer_prompt_glm52.md` (a CI-consumed prompt, likewise not a subagent).
+> This split is by design, not drift.
+
 Shared instruction fragments (single source of truth — never re-inline them):
 
 - `.claude/instructions/governance.md` — the GitHub governance protocol

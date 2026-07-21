@@ -74,6 +74,7 @@ def sanitize_value(value, counts):
 
 def sanitize_file(path, out_dir):
     counts = {}
+    out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / path.name
     n_lines = 0
     with open(path, encoding="utf-8") as fin, \
