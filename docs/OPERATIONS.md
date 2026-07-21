@@ -353,45 +353,64 @@ Controlled entirely by env vars; DB-backed via `CONFIG_DEFAULTS`.
 
 #### Edge Tab — Analysis API
 
-`GET /api/analysis/{station}?date=YYYY-MM-DD` returns the ensemble distribution and per-bracket Polymarket edge for a given station and date. The `date` parameter is optional and defaults to today (UTC).
+`GET /api/analysis/{station}?date=YYYY-MM-DD&next_day=false` returns the bot's-eye per-bracket decision view for a given station and date (issue #757): a read-only mirror of the scanner's last poll, sourced from the persisted `scan_decisions` table (#756) — the same `p_yes`/`ev_yes`/`ev_no`/`emos_mode` numbers the scanner actually traded on, plus the per-bracket `gate_verdict`. This is a **repoint**, not a v1 continuation — it no longer calls `get_ensemble_distribution()`/`get_bracket_analysis()` (`src/model/ensemble_distribution.py` / `src/model/bracket_analysis.py`) on the request path; those remain in the codebase (`get_ensemble_distribution()` still has a live caller in `src.strategy.scanner`, which is how the `ensemble_*` columns land in `scan_decisions` in the first place) but are demoted off this endpoint, not deleted.
+
+**Query params:**
+
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `date` | string (YYYY-MM-DD) | today (UTC), or tomorrow when `next_day=true` | Settlement date to query. `scan_decisions` rows are keyed by their own settlement date, so a next-day evaluation's row naturally lives under tomorrow's date already — see `is_next_day` below |
+| `next_day` | bool | `false` | Day selector — `false` returns the Today (`is_next_day=0`) partition, `true` returns the D+1 (`is_next_day=1`) partition. Rows are filtered by `is_next_day` in addition to `date`, so a caller-supplied `date` that disagrees with `next_day` degrades to an empty result rather than serving the wrong partition |
 
 **HTTP status codes:**
 
 | Code | Condition |
 |------|-----------|
-| 200 | Success — data returned |
+| 200 | Success — data returned, or an empty bracket list (with `poll_ts: null`) when there is no recent scan for the station/date |
 | 404 | Unknown station (not in STATIONS config) |
 | 422 | Malformed date parameter |
-| 503 | Ensemble data unavailable (no model forecast log rows or DB error) |
+| 503 | Database not initialised |
 
 **Response schema (200):**
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `station` | string | METAR code (upper-cased) |
-| `date` | string | YYYY-MM-DD date of the forecast |
-| `ensemble_mean` | float \| null | Weighted ensemble mean high temp (°F or °C per station unit) |
-| `bias_corrected` | float \| null | EMOS bias-corrected mean |
-| `member_count` | int | Number of model members in the distribution |
-| `range` | [float\|null, float\|null] | [min, max] of the distribution |
-| `distribution` | object | Bucketed distribution — keys are integer temp strings, values are counts |
-| `brackets` | array | Per-bracket edge analysis (see below) |
+| `date` | string | YYYY-MM-DD settlement date resolved for the query |
+| `is_next_day` | bool | Echoes the resolved `next_day` selector |
+| `poll_ts` | string \| null | ISO 8601 timestamp of the poll that produced these rows; `null` when there is no recent scan |
+| `poll_interval_seconds` | int | Live value of `POLL_INTERVAL_SECONDS` (`src/config.py`, DB-overridable via `GET/PATCH /api/config`) — the UI uses 2× this as the stale-scan threshold for the freshness pill |
+| `forecast_inputs` | object \| null | Demoted "forecast inputs" secondary block (design spec §3) — `null` when the scan_decisions row carries no ensemble data. **Never a live recompute**: sourced from the same poll's persisted snapshot |
+| `brackets` | array | One row per bracket the scanner evaluated in the persisted scan, ascending `bracket_low` order (see below) |
+
+**`forecast_inputs` object:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `ensemble_mean` | float \| null | Weighted ensemble forecast mean (°F), as read by the scanner at poll time |
+| `ensemble_range_low` / `ensemble_range_high` | float \| null | Min/max forecast value across contributing models |
+| `ensemble_members` | int \| null | Number of distinct forecast models contributing |
 
 **Each `brackets` element:**
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `range` | string | Human-readable label (e.g. `"54–55°F"`) |
-| `bracket_low` | float | Lower boundary of the bracket |
-| `bracket_high` | float | Upper boundary of the bracket |
-| `polymarket_prob` | float \| null | Current Polymarket YES probability (0–100) |
-| `model_prob` | float \| null | Model probability for the bracket (0–100) |
-| `edge` | float \| null | Signed edge in percentage points (model_prob − polymarket_prob); null when either side is missing |
+| `range` | string | Human-readable label (e.g. `"68–70°F"`) |
+| `bracket_low` / `bracket_high` | float | Bracket bounds (°F) |
+| `market_yes_ask` / `market_no_ask` | int \| null | Market ask price on each side at scan time (¢) |
+| `p_yes` | float \| null | Model probability, capped (served/traded-on) |
+| `raw_p_yes` | float \| null | Model probability, raw (pre-`MODEL_PROB_CAP` clamp) |
+| `ev_yes` / `ev_no` | float \| null | Expected value of buying YES / NO at the capped probability (¢) |
+| `emos_mode` | string \| null | Which forecast-serving path produced `p_yes` this poll |
+| `forecast_high` / `current_high` | float \| null | Forecast/observed high at scan time |
+| `minutes_to_settlement` | float \| null | Time to market close at scan time |
+| `gate_verdict` | string \| null | One of the 11 canonical verdicts (see `docs/DB_SCHEMA.md`'s `scan_decisions` section) |
+| `side` | `"YES"` \| `"NO"` \| null | The traded/candidate side |
+| `gate_actual` / `gate_threshold` / `gate_unit` | float / float / string \| null | The compared numbers for the six numeric-rejection verdicts; `null` for every other verdict |
+| `gate_detail` | string \| null | Prose detail for `entry_guard` (guard reason verbatim) / `timeout_today` (execution outcome); `null` otherwise |
+| `poll_ts` | string \| null | ISO 8601 timestamp of the poll this bracket was evaluated in |
 
-**503 error body:**
-```json
-{"error": "ensemble data unavailable", "station": "KORD", "date": "2026-06-29"}
-```
+Dropped from the pre-#757 contract: `bias_corrected` (no parallel model to compute it from any more) and the raw `distribution` histogram (superseded by the `forecast_inputs` summary above).
 
 #### Per-Station Residual API
 
