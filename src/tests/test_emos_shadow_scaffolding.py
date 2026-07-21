@@ -233,6 +233,60 @@ class TestGetEmosCrpsCount:
 
 
 # ---------------------------------------------------------------------------
+# Test 7a: CRPS count/dedup are scoped by forecast_source (issue #759)
+# ---------------------------------------------------------------------------
+
+class TestCrpsScopedByForecastSource:
+    def test_counts_advance_independently_per_forecast_source(self):
+        """Two stacks' CRPS evidence for the same city must not pool into one
+        count -- otherwise the promotion guard can't evaluate an expanded
+        stack independently of the baseline stack's accumulated evidence.
+        """
+        db = _db()
+        db.log_crps("Chicago", "2026-06-01", 1.1, forecast_source="baseline")
+        db.log_crps("Chicago", "2026-06-02", 1.2, forecast_source="baseline")
+        db.log_crps("Chicago", "2026-06-01", 2.1, forecast_source="expanded")
+
+        assert db.get_emos_crps_count("Chicago", forecast_source="baseline") == 2
+        assert db.get_emos_crps_count("Chicago", forecast_source="expanded") == 1
+
+    def test_default_forecast_source_resolves_to_active_stack(self):
+        """log_crps/get_emos_crps_count with forecast_source unset both
+        resolve to the active FORECAST_STACK (same resolver as
+        emos_calibration reads/writes, issue #659) -- so the promotion guard
+        call site (db.get_emos_crps_count(city), no forecast_source passed)
+        automatically tracks whichever stack is currently active.
+        """
+        db = _db()
+        db.set_config("FORECAST_STACK", "expanded")
+        db.log_crps("Chicago", "2026-06-01", 1.1)  # forecast_source unset
+
+        assert db.get_emos_crps_count("Chicago", forecast_source="expanded") == 1
+        assert db.get_emos_crps_count("Chicago", forecast_source="baseline") == 0
+        assert db.get_emos_crps_count("Chicago") == 1  # default also resolves to 'expanded'
+
+    def test_dedup_guard_scoped_per_forecast_source(self):
+        """emos_crps_logged_for_date's per-day dedup guard is keyed on
+        forecast_source too -- a second stack calibrated the same day must
+        NOT be treated as already logged just because the first stack
+        claimed that (city, date, model_mode) slot.
+        """
+        db = _db()
+        assert db.emos_crps_logged_for_date(
+            "Chicago", "2026-06-01", forecast_source="baseline"
+        ) is False
+
+        db.log_crps("Chicago", "2026-06-01", 1.1, forecast_source="baseline")
+
+        assert db.emos_crps_logged_for_date(
+            "Chicago", "2026-06-01", forecast_source="baseline"
+        ) is True
+        assert db.emos_crps_logged_for_date(
+            "Chicago", "2026-06-01", forecast_source="expanded"
+        ) is False
+
+
+# ---------------------------------------------------------------------------
 # Test 7b: the daily runner logs a CRPS row per city (and dedups same-day)
 # ---------------------------------------------------------------------------
 
@@ -334,6 +388,75 @@ class TestRunnerLogsLegacyCrps:
 
         assert db.get_emos_crps_count("Chicago", model_mode="emos_shadow") == 1
         assert db.get_emos_crps_count("Chicago", model_mode="legacy") == 1
+
+
+# ---------------------------------------------------------------------------
+# Test 7c-bis: two stacks calibrated the same day don't collide (issue #759)
+# ---------------------------------------------------------------------------
+
+class TestRunnerLogsPerForecastSource:
+    def test_two_stacks_same_day_each_log_independent_rows(self, monkeypatch):
+        """Running the shadow calibration for two different stacks on the
+        SAME calendar day must produce independent CRPS rows for each stack
+        (both emos_shadow and legacy) -- before #759, the second stack's run
+        would silently no-op because the dedup guard only checked
+        (city, date, model_mode), which the first stack's run already
+        claimed for the day.
+        """
+        import scripts.run_emos_shadow as runner
+
+        db = _db()
+        canned = [(80.0, 2.0, 81.0)] * 60
+        monkeypatch.setattr(
+            "src.model.emos_calibration.fetch_training_data",
+            lambda city, db, **kw: canned,
+        )
+        monkeypatch.setattr(
+            "src.model.emos_calibration.fit_emos",
+            lambda data: (0.0, 1.0, 0.5, 1.0),
+        )
+
+        runner._run_calibration(db, stack="baseline")
+        runner._run_calibration(db, stack="expanded")
+
+        assert db.get_emos_crps_count(
+            "Chicago", model_mode="emos_shadow", forecast_source="baseline"
+        ) == 1
+        assert db.get_emos_crps_count(
+            "Chicago", model_mode="emos_shadow", forecast_source="expanded"
+        ) == 1
+        assert db.get_emos_crps_count(
+            "Chicago", model_mode="legacy", forecast_source="baseline"
+        ) == 1
+        assert db.get_emos_crps_count(
+            "Chicago", model_mode="legacy", forecast_source="expanded"
+        ) == 1
+
+    def test_same_stack_same_day_still_dedups(self, monkeypatch):
+        """The forecast_source scoping must not weaken the existing
+        same-stack, same-day dedup guard."""
+        import scripts.run_emos_shadow as runner
+
+        db = _db()
+        canned = [(80.0, 2.0, 81.0)] * 60
+        monkeypatch.setattr(
+            "src.model.emos_calibration.fetch_training_data",
+            lambda city, db, **kw: canned,
+        )
+        monkeypatch.setattr(
+            "src.model.emos_calibration.fit_emos",
+            lambda data: (0.0, 1.0, 0.5, 1.0),
+        )
+
+        runner._run_calibration(db, stack="baseline")
+        runner._run_calibration(db, stack="baseline")
+
+        assert db.get_emos_crps_count(
+            "Chicago", model_mode="emos_shadow", forecast_source="baseline"
+        ) == 1
+        assert db.get_emos_crps_count(
+            "Chicago", model_mode="legacy", forecast_source="baseline"
+        ) == 1
 
 
 # ---------------------------------------------------------------------------

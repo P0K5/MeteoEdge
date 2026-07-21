@@ -5,11 +5,15 @@ Iterates all cities in STATIONS, fits emos_shadow coefficients for cities
 with enough training data, skips gracefully when data is insufficient.
 
 For every city that fits, a CRPS score row is appended to ``emos_crps_log``
-(via ``db.log_crps``) with ``model_mode="emos_shadow"``. This per-day record
-is what the promotion guard in ``emos_mode.get_city_mode`` counts against
-``EMOS_MIN_SAMPLES_PROMOTION`` before a city is allowed to serve
-``emos_primary`` — without it, promotion stays blocked forever because the
-sample count never leaves zero.
+(via ``db.log_crps``) with ``model_mode="emos_shadow"`` and
+``forecast_source=stack``. This per-day record is what the promotion guard in
+``emos_mode.get_city_mode`` counts against ``EMOS_MIN_SAMPLES_PROMOTION``
+(scoped to the active forecast_source only, issue #759) before a city is
+allowed to serve ``emos_primary`` — without it, promotion stays blocked
+forever because the sample count never leaves zero. Scoping the row and its
+per-day dedup guard by ``forecast_source`` means two stacks calibrated on the
+same calendar day each log their own row instead of the second stack's run
+silently skipping because the first already claimed that day's slot.
 
 A second row is appended alongside it with ``model_mode="legacy"``: the SAME
 training triples scored with their raw, uncorrected ``(mu, sigma)`` — i.e.
@@ -101,21 +105,21 @@ def _run_calibration(db, stack: str = "baseline") -> None:
             city, a, b, c, d, mean_crps, db,
             forecast_source=stack, sample_count=sample_count,
         )
-        if db.emos_crps_logged_for_date(city, today, "emos_shadow"):
+        if db.emos_crps_logged_for_date(city, today, "emos_shadow", forecast_source=stack):
             log.debug(
-                "[emos_shadow] city=%s: CRPS already logged for %s — skipping",
-                city, today,
+                "[emos_shadow] city=%s: CRPS already logged for %s (stack=%s) — skipping",
+                city, today, stack,
             )
         else:
-            db.log_crps(city, today, mean_crps, model_mode="emos_shadow")
+            db.log_crps(city, today, mean_crps, model_mode="emos_shadow", forecast_source=stack)
 
-        if db.emos_crps_logged_for_date(city, today, "legacy"):
+        if db.emos_crps_logged_for_date(city, today, "legacy", forecast_source=stack):
             log.debug(
-                "[emos_shadow] city=%s: legacy CRPS already logged for %s — skipping",
-                city, today,
+                "[emos_shadow] city=%s: legacy CRPS already logged for %s (stack=%s) — skipping",
+                city, today, stack,
             )
         else:
-            db.log_crps(city, today, legacy_mean_crps, model_mode="legacy")
+            db.log_crps(city, today, legacy_mean_crps, model_mode="legacy", forecast_source=stack)
 
         log.info(
             "[emos_shadow] city=%s: %s fit, coefficients saved "

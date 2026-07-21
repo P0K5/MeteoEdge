@@ -49,7 +49,15 @@ def _shadow_or_default(city: str, db) -> str:
 
 
 def _primary_allowed(city: str, db) -> bool:
-    """Return True only if a primary row exists and the CRPS sample guard passes."""
+    """Return True only if a primary row exists and the CRPS sample guard passes.
+
+    ``get_emos_crps_count(city)`` (forecast_source unset) resolves to the
+    active FORECAST_STACK via ``db._active_forecast_source`` — same
+    resolution the calibration reads use — so the promotion guard counts
+    CRPS evidence for the currently-served stack only, never pooling samples
+    accrued under a different forecast_source across a stack switch
+    (issue #759).
+    """
     if db.get_emos_coefficients(city, "emos_primary") is None:
         return False
     n = db.get_emos_crps_count(city)

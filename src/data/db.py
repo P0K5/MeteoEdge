@@ -234,12 +234,13 @@ CREATE TABLE IF NOT EXISTS station_overrides (
 );
 
 CREATE TABLE IF NOT EXISTS emos_crps_log (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    city       TEXT NOT NULL,
-    date       TEXT NOT NULL,
-    crps_score REAL NOT NULL,
-    model_mode TEXT NOT NULL DEFAULT 'emos_shadow',
-    logged_at  TEXT NOT NULL
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    city            TEXT NOT NULL,
+    date            TEXT NOT NULL,
+    crps_score      REAL NOT NULL,
+    model_mode      TEXT NOT NULL DEFAULT 'emos_shadow',
+    forecast_source TEXT NOT NULL DEFAULT 'baseline',
+    logged_at       TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS deb_weight_log (
@@ -361,6 +362,17 @@ class Database:
             # Always 0 for same-day candidates -- only populated by scanner.py's
             # next-day-eval branch. Default 0 matches every pre-#704 row.
             ("candidates", "today_position_open", "INTEGER NOT NULL DEFAULT 0"),
+            # Issue #759: forecast-stack axis for the CRPS promotion counter.
+            # Without this, get_emos_crps_count/emos_crps_logged_for_date key
+            # on (city, model_mode) only, so two stacks' shadow runs on the
+            # same day collide on the one-sample-per-city-per-day dedup guard
+            # and the promotion count silently pools CRPS from whichever
+            # stack happens to log first. Default 'baseline' backfills every
+            # pre-#759 row (all logged before forecast-stack expansion
+            # existed) and matches _active_forecast_source's own fallback, so
+            # the already-accumulated baseline promotion evidence keeps
+            # counting unchanged.
+            ("emos_crps_log", "forecast_source", "TEXT NOT NULL DEFAULT 'baseline'"),
         ]:
             try:
                 self._conn.execute(
@@ -2698,17 +2710,39 @@ class Database:
 
         return result
 
-    def log_crps(self, city: str, date: str, crps_score: float, model_mode: str = "emos_shadow") -> None:
-        """Insert a CRPS score record for *city* on *date*."""
+    def log_crps(
+        self,
+        city: str,
+        date: str,
+        crps_score: float,
+        model_mode: str = "emos_shadow",
+        forecast_source: "str | None" = None,
+    ) -> None:
+        """Insert a CRPS score record for *city* on *date*.
+
+        forecast_source=None resolves to the active FORECAST_STACK (see
+        _active_forecast_source) — same resolution pattern as the
+        emos_calibration read/write helpers (issue #659). The shadow runner
+        passes it explicitly so two different stacks' runs never collide on
+        the same (city, date, model_mode) row (issue #759).
+        """
+        if forecast_source is None:
+            forecast_source = self._active_forecast_source()
         logged_at = datetime.now(timezone.utc).isoformat()
         with self._lock:
             with self._conn:
                 self._conn.execute(
-                    "INSERT INTO emos_crps_log(city,date,crps_score,model_mode,logged_at) VALUES(?,?,?,?,?)",
-                    (city, date, crps_score, model_mode, logged_at),
+                    "INSERT INTO emos_crps_log(city,date,crps_score,model_mode,forecast_source,logged_at) "
+                    "VALUES(?,?,?,?,?,?)",
+                    (city, date, crps_score, model_mode, forecast_source, logged_at),
                 )
 
-    def get_emos_crps_count(self, city: str, model_mode: str = "emos_shadow") -> int:
+    def get_emos_crps_count(
+        self,
+        city: str,
+        model_mode: str = "emos_shadow",
+        forecast_source: "str | None" = None,
+    ) -> int:
         """Return the number of CRPS log entries for *city* under *model_mode*.
 
         Defaults to 'emos_shadow' — this is what emos_mode.get_city_mode's
@@ -2716,26 +2750,47 @@ class Database:
         (rather than counting all model_mode rows for the city) so the
         'legacy' baseline row logged alongside each 'emos_shadow' row
         (issue #667) does not silently double the promotion sample count.
+
+        forecast_source=None resolves to the active FORECAST_STACK, so the
+        promotion guard counts CRPS samples for the currently-served stack
+        only, never pooling evidence accrued under a different stack across
+        a FORECAST_STACK switch (issue #759).
         """
+        if forecast_source is None:
+            forecast_source = self._active_forecast_source()
         cur = self._conn.execute(
-            "SELECT COUNT(*) FROM emos_crps_log WHERE city=? AND model_mode=?",
-            (city, model_mode),
+            "SELECT COUNT(*) FROM emos_crps_log WHERE city=? AND model_mode=? AND forecast_source=?",
+            (city, model_mode, forecast_source),
         )
         row = cur.fetchone()
         return int(row[0]) if row else 0
 
     def emos_crps_logged_for_date(
-        self, city: str, date: str, model_mode: str = "emos_shadow"
+        self,
+        city: str,
+        date: str,
+        model_mode: str = "emos_shadow",
+        forecast_source: "str | None" = None,
     ) -> bool:
-        """Return True if a CRPS row already exists for (city, date, model_mode).
+        """Return True if a CRPS row already exists for (city, date, model_mode,
+        forecast_source).
 
         Used by the daily shadow runner to avoid double-counting samples when
         the calibration runs more than once on the same calendar day (e.g. after
         a process restart resets the in-memory once-per-day gate).
+
+        forecast_source=None resolves to the active FORECAST_STACK, so two
+        different stacks calibrated on the same day each get their own row
+        instead of the second stack silently skipping because the first
+        already claimed that day's (city, date, model_mode) slot
+        (issue #759).
         """
+        if forecast_source is None:
+            forecast_source = self._active_forecast_source()
         cur = self._conn.execute(
-            "SELECT 1 FROM emos_crps_log WHERE city=? AND date=? AND model_mode=? LIMIT 1",
-            (city, date, model_mode),
+            "SELECT 1 FROM emos_crps_log WHERE city=? AND date=? AND model_mode=? "
+            "AND forecast_source=? LIMIT 1",
+            (city, date, model_mode, forecast_source),
         )
         return cur.fetchone() is not None
 

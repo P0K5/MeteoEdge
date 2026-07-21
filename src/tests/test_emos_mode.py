@@ -215,6 +215,45 @@ class TestGetCityModePrimaryReady:
 
 
 # ---------------------------------------------------------------------------
+# Test 3b: promotion guard counts the ACTIVE forecast_source only (#759)
+# ---------------------------------------------------------------------------
+
+class TestPromotionGuardScopedByForecastSource:
+    def test_primary_blocked_when_samples_belong_to_a_different_stack(self):
+        """CRPS evidence logged under a forecast_source other than the
+        active FORECAST_STACK must not count toward promotion -- otherwise
+        switching stacks mid-collection would let leftover 'baseline'
+        evidence wrongly unblock a freshly-switched, unevaluated stack.
+        """
+        db = _db()
+        seed_config(db)
+        db.set_config("EMOS_MIN_SAMPLES_PROMOTION", "20")
+        db.set_config("FORECAST_STACK", "expanded")
+        _upsert(db, "Chicago", "emos_primary", ready_for_promotion=1)
+        # 20 samples logged for 'baseline' -- NOT the active stack.
+        for i in range(20):
+            db.log_crps("Chicago", f"2026-05-{i + 1:02d}", 1.5, forecast_source="baseline")
+
+        result = get_city_mode("Chicago", db=db)
+        assert result != "emos_primary"
+
+    def test_primary_allowed_once_active_stack_accrues_its_own_samples(self):
+        """Once the active stack itself has enough CRPS evidence, promotion
+        proceeds normally -- forecast_source scoping doesn't otherwise
+        change the promotion threshold/behavior."""
+        db = _db()
+        seed_config(db)
+        db.set_config("EMOS_MIN_SAMPLES_PROMOTION", "20")
+        db.set_config("FORECAST_STACK", "expanded")
+        _upsert(db, "Chicago", "emos_primary", ready_for_promotion=1)
+        for i in range(20):
+            db.log_crps("Chicago", f"2026-05-{i + 1:02d}", 1.5, forecast_source="expanded")
+
+        result = get_city_mode("Chicago", db=db)
+        assert result == "emos_primary"
+
+
+# ---------------------------------------------------------------------------
 # Test 4b: operator override (dashboard promote/demote) is authoritative
 # ---------------------------------------------------------------------------
 
