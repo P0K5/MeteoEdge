@@ -2659,6 +2659,26 @@ async function loadEdgeStationData(metar) {
   edgeD1Cache = { station: metar, data: d1Data };
   updateEdgeD1ButtonState(d1Data);
 
+  // Auto-advance to D+1 when "Today" is empty but D+1 has data (issue #782,
+  // option A). The Today partition is empty by construction for the whole
+  // 12:00–24:00 UTC half of each day: every market closes at noon UTC, so a
+  // station's only open market is its next-day (D+1) partition until UTC
+  // midnight. Landing the operator on an empty "Today" reads as broken, so
+  // render the D+1 data we already fetched instead. The proper fix — anchoring
+  // the day boundary to the market's settlement window rather than the UTC
+  // calendar date — is tracked in #782. "Today" stays one click away.
+  const todayHasData = !!(todayData && todayData.brackets && todayData.brackets.length > 0);
+  const d1HasData = !!(d1Data && d1Data.brackets && d1Data.brackets.length > 0);
+
+  if (!todayHasData && d1HasData) {
+    edgeIsNextDay = true;
+    setEdgeDateButtonActive(true);
+    renderEdgeScanBar(d1Data, metar, unit);
+    renderEdgeForecastInputs(d1Data, unit);
+    renderEdgeDecisionTable(d1Data.brackets, unit, metar, true);
+    return;
+  }
+
   if (todayData === null) {
     showEdgeError('Could not load the scan data.');
   }
