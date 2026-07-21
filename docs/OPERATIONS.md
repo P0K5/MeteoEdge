@@ -1261,6 +1261,22 @@ This script:
 
 No trading halt is required. The reset affects only EMOS calibration; all live trading, risk limits, and settlement continue unchanged.
 
+### Forecast-stack expansion: promote sequentially, never in parallel (2026-07-21 audit)
+
+**Do not run baseline and an expanded forecast stack (`hrrr_nbm`, `intl_ecmwf_icon`, `full`) as EMOS shadows in parallel expecting each to accrue its own promotion clock. It does not work today, and switching the scored stack mid-collection contaminates the promotion decision.** Two mechanics enforce this:
+
+1. **The CRPS promotion counter is not stack-aware.** `db.get_emos_crps_count(city, model_mode)` counts `emos_crps_log` rows by `(city, model_mode)` only — the table has no `forecast_source` column — and the per-day dedup guard `emos_crps_logged_for_date(city, date, model_mode)` is keyed the same way. So there is exactly **one** `emos_shadow` CRPS slot per city per day: whichever stack's `run_emos_shadow` fires first claims it, and the second is silently skipped (it still refits/persists stack-keyed coefficients, but accrues **zero** promotion samples). Switching stacks mid-run does not reset the counter — it keeps climbing while pooling CRPS from two different forecast pipelines into one promotion guard. This is tracked in **#759** (add `forecast_source` to `emos_crps_log` and key the count/dedup on it); parallel stack evaluation is impossible until it lands.
+
+2. **The serving path can only feed the two baseline members.** `emos_mode._SERVING_MEMBERS = ("forecast_high_f", "secondary_forecast_f")` is hardcoded, and `test_serving_members_parity_guard` requires every model in the active `FORECAST_STACK` to have a scan-time `WeatherState` attribute. Flipping `FORECAST_STACK` to a non-baseline stack therefore **fails the parity guard** — you would train coefficients on a 4-member ensemble and serve them on 2 (train/serve skew). The captured channels (ECMWF/ICON/HRRR/NBM, logging in `model_forecast_log` since ~2026-06-29) do not reach scan-time state yet. This is the real blocker for promoting any expanded-stack EMOS, tracked in **#760** (carry expanded channels onto scan-time `WeatherState`; derive `_SERVING_MEMBERS` from the active stack).
+
+**Correct sequence for the forecast-stack milestone:**
+
+1. Finish and promote **baseline** EMOS first (only stack that can serve today; ~mid-Sept on clean, matched evidence). Baseline keeps accruing regardless of the below.
+2. Land **#759** (stack-aware CRPS counter) and **#760** (scan-time serving-member plumbing) — both required before an expanded stack can be shadow-evaluated *then* promoted.
+3. Start expanded collection with a deliberate `scripts/reset_emos_data.py` reset so the expanded stack gets a clean 60-day clock on matched evidence. This **does** cost a fresh 60 days for the expanded stack, and that is correct — it prevents baseline's samples from masquerading as expanded's. It is not a "lost" reset; it is the honest start of the expanded stack's own clock.
+
+Before a blanket promotion, triage the cities where EMOS is worse than legacy (**#762**) — as of the 2026-07-21 audit, EMOS beat legacy in 23/30 cities but regressed on Jinan, Shenzhen (both data-starved, n=2, obs stalled 07-10), Tel Aviv, and Manila.
+
 ---
 
 ## Architectural Decisions
