@@ -118,41 +118,84 @@ a,button,input,select{transition:color var(--transition),background var(--transi
 .edge-date-btn.active{background:var(--primary-bg);color:var(--primary);font-weight:600;}
 .edge-date-btn:disabled{opacity:.35;cursor:not-allowed;color:var(--faint);}
 
-/* ── EDGE KPI ROW ── */
-.edge-kpi-row{
-  display:grid;grid-template-columns:repeat(5,1fr);gap:var(--space-4);
-  margin-bottom:var(--space-6);
+/* ── EDGE SCAN SUMMARY BAR (design spec §2, issue #758) ── */
+.edge-scan-bar{
+  display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-2) var(--space-5);
+  padding:var(--space-3) var(--space-4);
+  background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-lg);
+  margin-bottom:var(--space-4);font-size:var(--text-sm);
 }
-@media(max-width:900px){.edge-kpi-row{grid-template-columns:repeat(3,1fr);}}
-@media(max-width:600px){.edge-kpi-row{grid-template-columns:1fr 1fr;}}
+.edge-scan-freshness{display:flex;align-items:center;gap:6px;color:var(--muted);font-family:var(--font-mono);font-variant-numeric:tabular-nums;}
+.edge-scan-freshness i{width:14px;height:14px;}
+.edge-scan-freshness.stale{
+  background:var(--warn-bg);color:var(--warn);border-radius:var(--radius-full);
+  padding:3px 10px;font-weight:600;
+}
+.edge-scan-forecast{color:var(--text);font-weight:600;}
+.edge-scan-forecast .label{color:var(--muted);font-weight:500;margin-right:4px;}
 
-/* ── EDGE DISTRIBUTION CHART ── */
-.edge-dist-chart .chart-wrap{height:260px;}
+/* ── EDGE FORECAST INPUTS (design spec §3, collapsed disclosure) ── */
+.edge-forecast-inputs{margin-bottom:var(--space-4);font-size:var(--text-sm);}
+.edge-forecast-inputs summary{cursor:pointer;font-weight:600;color:var(--muted);padding:var(--space-2) 0;}
+.edge-forecast-inputs summary:hover{color:var(--text);}
+.edge-forecast-inputs-body{padding:var(--space-2) 0 var(--space-3);}
 
-/* ── EDGE TABLE ── */
+/* ── EDGE GATE LEGEND (design spec §6, collapsed disclosure) ── */
+.edge-gate-legend{margin-top:var(--space-4);font-size:var(--text-sm);}
+.edge-gate-legend summary{cursor:pointer;font-weight:600;color:var(--muted);padding:var(--space-2) 0;}
+.edge-gate-legend summary:hover{color:var(--text);}
+.edge-gate-legend ul{list-style:none;padding:var(--space-2) 0 0;display:flex;flex-direction:column;gap:var(--space-2);}
+.edge-gate-legend-group-title{font-size:var(--text-xs);font-weight:700;letter-spacing:.05em;color:var(--muted);margin-top:var(--space-2);}
+.edge-gate-legend li{display:flex;align-items:center;flex-wrap:wrap;gap:8px;font-size:var(--text-xs);color:var(--muted);}
+
+/* ── EDGE PER-BRACKET DECISION TABLE (design spec §4, issue #758) ── */
 .edge-table-section{margin-bottom:var(--space-6);}
-.edge-table{width:100%;border-collapse:collapse;font-size:var(--text-sm);font-variant-numeric:tabular-nums;}
-.edge-table th{text-align:left;padding:var(--space-2) var(--space-3);font-size:var(--text-xs);font-weight:700;letter-spacing:.05em;color:var(--muted);border-bottom:1px solid var(--divider);}
-.edge-table td{padding:var(--space-3);border-bottom:1px solid var(--divider);}
-.edge-table tr:last-child td{border-bottom:none;}
-.edge-table tr.best-edge-row{background:var(--edge-bg);}
+.edge-decision-table{width:100%;border-collapse:collapse;font-size:var(--text-sm);font-variant-numeric:tabular-nums;}
+.edge-decision-table th{text-align:left;padding:var(--space-2) var(--space-3);font-size:var(--text-xs);font-weight:700;letter-spacing:.05em;color:var(--muted);border-bottom:1px solid var(--divider);}
+.edge-decision-table td{padding:var(--space-3);border-bottom:1px solid var(--divider);vertical-align:top;}
+.edge-decision-table tr:last-child td{border-bottom:none;}
+.edge-decision-table tr.row-traded{background:var(--yes-bg);border-left:3px solid var(--yes);}
+.edge-decision-table tr.row-near-miss{background:var(--no-bg);border-left:3px solid var(--no);}
+.edge-decision-table tr.row-best-signal{background:var(--edge-bg);border-left:3px solid var(--edge);}
+.edge-decision-table tr.row-thin{opacity:.55;}
+.edge-decision-table tr.edge-row-link{cursor:pointer;}
+.edge-decision-table tr.edge-row-link:hover{filter:brightness(1.06);}
 .edge-table-bracket{font-family:var(--font-mono);}
-.edge-prob-bar-wrap{display:flex;align-items:center;gap:var(--space-3);}
-.edge-prob-bar{flex-shrink:0;width:80px;height:16px;background:var(--surface-off);border-radius:var(--radius-sm);overflow:hidden;border:1px solid var(--divider);}
-.edge-prob-bar-fill{height:100%;background:var(--primary);transition:width 180ms ease;}
-.edge-prob-value{flex-shrink:0;min-width:45px;text-align:right;font-weight:600;}
-.edge-edge-value{font-weight:600;display:flex;align-items:center;gap:var(--space-2);}
-.edge-edge-value.positive{color:var(--yes);}
-.edge-edge-value.negative{color:var(--no);}
-.edge-edge-value.near-zero{color:var(--muted);}
-.edge-edge-value.thin-signal{color:var(--muted);opacity:0.5;}
-.edge-table tr.thin-signal-row{opacity:0.45;}
-.best-edge-chip{display:inline-flex;align-items:center;gap:4px;background:var(--edge-bg);color:var(--edge);border-radius:var(--radius-full);padding:2px 8px;font-size:var(--text-xs);font-weight:600;flex-shrink:0;margin-left:var(--space-2);}
+.edge-market-cell,.edge-ev-cell{white-space:nowrap;}
+.edge-market-cell span.side-hit,.edge-ev-cell span.side-hit{font-weight:700;text-decoration:underline;text-decoration-color:var(--muted);text-underline-offset:2px;}
+.edge-pyes-value{font-weight:700;}
+.edge-pyes-raw{display:block;color:var(--muted);font-size:var(--text-xs);margin-top:2px;}
+.edge-pyes-mode{margin-top:4px;}
+.edge-ev-value.positive{color:var(--yes);}
+.edge-ev-value.negative{color:var(--no);}
+.edge-ev-value.near-zero{color:var(--muted);}
+.edge-best-signal-caption{display:inline-flex;align-items:center;gap:3px;margin-top:4px;color:var(--edge);font-size:var(--text-xs);font-weight:700;}
+.edge-best-signal-caption i{width:11px;height:11px;}
 .edge-table-skeleton tr{background:none;}
 .edge-table-skeleton tr td{padding:var(--space-3);}
 .edge-table-skeleton tr td .skeleton{width:100%;height:1.1em;display:block;}
-.edge-table-empty{text-align:center;padding:var(--space-8) var(--space-4);color:var(--muted);display:flex;flex-direction:column;align-items:center;gap:var(--space-4);}
-.edge-table-empty i{width:40px;height:40px;color:var(--faint);}
+
+/* ── GATE-VERDICT CHIP (design spec §5, issue #758 / #529) ── */
+.gate-chip{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:var(--radius-full);font-size:var(--text-xs);font-weight:700;letter-spacing:.02em;white-space:nowrap;}
+.gate-chip .status-dot{width:6px;height:6px;border-radius:var(--radius-full);}
+
+/* Family 1 — executed for real */
+.gate-traded_live{background:var(--yes-bg);color:var(--yes);}
+.gate-traded_live .status-dot{background:var(--yes);}
+
+/* Family 2 — passed the model/market gates, blocked or missed at execution */
+.gate-entry_guard,.gate-timeout_today{background:var(--no-bg);color:var(--no);}
+.gate-entry_guard .status-dot,.gate-timeout_today .status-dot{background:var(--no);}
+
+/* Family 3 — shadow-routed by policy (paper only, not a rejection) */
+.gate-shadow_only,.gate-next_day_shadow{background:var(--warn-bg);color:var(--warn);}
+.gate-shadow_only .status-dot,.gate-next_day_shadow .status-dot{background:var(--warn);}
+
+/* Family 4 — rejected on the numbers (the routine, majority case) */
+.gate-below_min_edge,.gate-above_max_edge,.gate-below_min_price,
+.gate-below_min_confidence,.gate-margin_gate,.gate-mae_gate{background:var(--surface-off);color:var(--muted);}
+.gate-below_min_edge .status-dot,.gate-above_max_edge .status-dot,.gate-below_min_price .status-dot,
+.gate-below_min_confidence .status-dot,.gate-margin_gate .status-dot,.gate-mae_gate .status-dot{background:var(--muted);}
 
 /* ── MAIN CONTENT ── */
 .main{max-width:980px;margin:0 auto;padding:var(--space-6) var(--space-4) var(--space-10);}
@@ -444,6 +487,13 @@ a,button,input,select{transition:color var(--transition),background var(--transi
   display:none;align-items:center;gap:var(--space-2);
 }
 .error-banner.visible{display:flex;}
+.error-banner .btn-retry{
+  margin-left:auto;flex-shrink:0;
+  background:transparent;border:1px solid var(--no-dim);color:var(--no);
+  border-radius:var(--radius-md);padding:3px 10px;font-size:var(--text-xs);font-weight:700;
+  cursor:pointer;
+}
+.error-banner .btn-retry:hover{background:var(--no-dim);}
 
 /* ── WEATHER-FEED WARNING BANNER ── */
 .warn-banner{
@@ -846,13 +896,16 @@ a,button,input,select{transition:color var(--transition),background var(--transi
   </main>
 </section>
 
-<!-- ── EDGE TAB ── -->
+<!-- ── EDGE TAB (bot's-eye per-bracket decision view, issue #758 / design spec
+     docs/design/edge-tab-bracket-decisions.md — supersedes the histogram +
+     KPI strip from epic #510) ── -->
 <section id="tab-edge" class="tab-panel">
   <main class="main">
 
   <div class="error-banner" id="edge-error-banner">
     <i data-lucide="alert-circle"></i>
     <span id="edge-error-text">Could not load edge data.</span>
+    <button class="btn-retry" id="edge-error-retry" onclick="retryEdgeLoad()">Retry</button>
   </div>
 
   <!-- STATION SELECTOR PILL ROW -->
@@ -863,65 +916,44 @@ a,button,input,select{transition:color var(--transition),background var(--transi
     </div>
   </div>
 
-  <!-- ── EDGE KPI STRIP (F2) ── -->
-  <div class="edge-kpi-row" id="edge-kpi-row">
-    <div class="wallet-card">
-      <div class="wc-label">Ensemble Mean</div>
-      <div class="wc-value" id="kpi-ensemble-mean"><span class="skeleton" style="width:60px;height:1.1em;display:inline-block;"></span></div>
-      <div class="wc-sub" id="kpi-ensemble-sub">raw ensemble</div>
-    </div>
-    <div class="wallet-card">
-      <div class="wc-label">Bias-Corrected</div>
-      <div class="wc-value" id="kpi-bias-corrected"><span class="skeleton" style="width:60px;height:1.1em;display:inline-block;"></span></div>
-      <div class="wc-sub" id="kpi-bias-sub">—</div>
-    </div>
-    <div class="wallet-card">
-      <div class="wc-label">Members</div>
-      <div class="wc-value" id="kpi-members"><span class="skeleton" style="width:60px;height:1.1em;display:inline-block;"></span></div>
-      <div class="wc-sub" id="kpi-members-sub">—</div>
-    </div>
-    <div class="wallet-card">
-      <div class="wc-label">Range</div>
-      <div class="wc-value" id="kpi-range"><span class="skeleton" style="width:60px;height:1.1em;display:inline-block;"></span></div>
-      <div class="wc-sub" id="kpi-range-sub">5th–95th pct</div>
-    </div>
-    <div class="wallet-card">
-      <div class="wc-label">Best Edge</div>
-      <div class="wc-value" id="kpi-best-edge"><span class="skeleton" style="width:60px;height:1.1em;display:inline-block;"></span></div>
-      <div class="wc-sub" id="kpi-best-sub">—</div>
-    </div>
-  </div>
-
-  <!-- ── ENSEMBLE DISTRIBUTION CHART (F3) ── -->
-  <div class="chart-section" id="edge-dist-section">
-    <div class="chart-wrap" id="edge-chart-wrap">
-      <div class="empty">
-        <i data-lucide="loader"></i>
-        <p>Loading distribution…</p>
-      </div>
-    </div>
-  </div>
-
-
-
-  <!-- ── EDGE TAB DATE SELECTOR ── -->
+  <!-- ── EDGE TAB DATE SELECTOR (reused unchanged from v1 per design spec §1) ── -->
   <div class="edge-date-toggle">
     <button class="edge-date-btn active" id="edge-date-today" onclick="selectEdgeDate('today')">Today</button>
     <button class="edge-date-btn" id="edge-date-d1" onclick="selectEdgeDate('d1')" disabled title="No D+1 market available for this station yet">D+1</button>
   </div>
 
-  <!-- ── EDGE TABLE (F4) ── -->
+  <!-- ── SCAN SUMMARY BAR (design spec §2, replaces the 5-card KPI strip) ── -->
+  <div class="edge-scan-bar" id="edge-scan-bar">
+    <span class="skeleton" style="width:180px;height:1.1em;display:inline-block;"></span>
+  </div>
+
+  <!-- ── FORECAST INPUTS (design spec §3, collapsed secondary detail) ── -->
+  <details class="edge-forecast-inputs" id="edge-forecast-inputs" style="display:none;">
+    <summary>Forecast inputs</summary>
+    <div class="edge-forecast-inputs-body">
+      <table class="bias-table">
+        <tbody>
+          <tr><th class="bias-th">Ensemble mean</th><td class="bias-td" id="fi-mean">—</td></tr>
+          <tr><th class="bias-th">Range (min–max)</th><td class="bias-td" id="fi-range">—</td></tr>
+          <tr><th class="bias-th">Members</th><td class="bias-td" id="fi-members">—</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </details>
+
+  <!-- ── PER-BRACKET DECISION TABLE (design spec §4, AC: one row per bracket) ── -->
   <div class="edge-table-section" id="edge-table-section">
     <div class="section-hdr">
-      <div class="section-title"><i data-lucide="table-2"></i>Model vs Market</div>
+      <div class="section-title"><i data-lucide="table-2"></i>Per-bracket decisions</div>
     </div>
-    <table class="edge-table" id="edge-table">
+    <table class="edge-decision-table" id="edge-table">
       <thead>
         <tr>
-          <th>Bracket</th>
-          <th>Market</th>
-          <th>Model</th>
-          <th>Edge (pp)</th>
+          <th scope="col">Bracket</th>
+          <th scope="col">Market (YES · NO)</th>
+          <th scope="col">Model p_yes</th>
+          <th scope="col">EV (YES · NO)</th>
+          <th scope="col">Gate</th>
         </tr>
       </thead>
       <tbody id="edge-table-body">
@@ -930,10 +962,18 @@ a,button,input,select{transition:color var(--transition),background var(--transi
           <td><span class="skeleton"></span></td>
           <td><span class="skeleton"></span></td>
           <td><span class="skeleton"></span></td>
+          <td><span class="skeleton"></span></td>
         </tr>
       </tbody>
     </table>
   </div>
+
+  <!-- ── GATE LEGEND (design spec §6, collapsed) ── -->
+  <details class="edge-gate-legend">
+    <summary>Gate legend — what each chip means</summary>
+    <ul id="edge-gate-legend-list"></ul>
+  </details>
+
   </main>
 </section>
 
@@ -1763,7 +1803,6 @@ let stationsMap = {};  // Map[station_metar] → station object with status fiel
 let edgeLoaded = false;
 let edgeSelectedStation = null;  // Currently selected station in edge tab
 let edgeAllStations = [];  // List of all stations
-let edgeSelectedDate = null;  // Currently selected date in edge tab (ISO string)
 
 const STATUS_ORDER = { active: 0, outside_hours: 1, no_data: 2, disabled: 3 };
 
@@ -2479,14 +2518,22 @@ async function fetchPromotionBar() {
 }
 
 /* ─────────────────────────────────────────
-   EDGE TAB
+   EDGE TAB — bot's-eye per-bracket decision view (issue #758)
+   Design spec: docs/design/edge-tab-bracket-decisions.md
+   Data: GET /api/analysis/{station}?next_day=<bool> (issue #757), serving
+   the persisted scan_decisions snapshot — never a live recompute.
    ───────────────────────────────────────── */
 
-function todayISO() {
-  return new Date().toISOString().slice(0, 10);
-}
+// Cache of the last-fetched D+1 partition per station, so the initial load
+// only needs one extra request per station select to determine whether the
+// D+1 toggle should be enabled (no separate "market exists" endpoint exists
+// yet — a non-empty D+1 scan_decisions partition is the closest available
+// signal that a D+1 market was evaluated for this station).
+let edgeD1Cache = { station: null, data: null };
+let edgeIsNextDay = false;
 
 function edgeTempFmt(val_f, unit) {
+  if (val_f == null) return '—';
   if (unit === 'C') return ((val_f - 32) * 5 / 9).toFixed(1) + '°C';
   return val_f.toFixed(1) + '°F';
 }
@@ -2497,6 +2544,8 @@ function edgeStationUnit() {
 }
 
 async function loadEdgeTab() {
+  renderEdgeGateLegend();
+
   // Fetch stations from /api/stations/overview if not already loaded
   if (edgeAllStations.length === 0) {
     try {
@@ -2521,18 +2570,9 @@ async function loadEdgeTab() {
     edgeSelectedStation = edgeAllStations[0].metar;
   }
 
-  // Sync active state and render edge table
   syncEdgePillActive();
-  console.log(`[Edge] Selected station: ${edgeSelectedStation}, date: ${todayISO()}`);
   if (edgeSelectedStation) {
-    showEdgeTableSkeleton();
-    const date = edgeSelectedDate || todayISO();
-    fetchEdgeData(edgeSelectedStation, date).then(data => {
-      const unit = edgeStationUnit();
-      renderEdgeKpi(data, unit);
-      renderEdgeTable(data ? data.brackets : null, unit, data ? data.member_count : 0);
-      renderEdgeDistChart(data ? data.distribution : null, unit);
-    });
+    await loadEdgeStationData(edgeSelectedStation);
   }
 }
 
@@ -2557,15 +2597,7 @@ function selectEdgeStation(metar) {
   edgeSelectedStation = metar;
   localStorage.setItem('edgeTab.selectedStation', metar);
   syncEdgePillActive();
-  console.log(`[Edge] Selected station: ${metar}, date: ${todayISO()}`);
-  showEdgeTableSkeleton();
-  const _date = edgeSelectedDate || todayISO();
-  fetchEdgeData(metar, _date).then(data => {
-    const unit = edgeStationUnit();
-    renderEdgeKpi(data, unit);
-    renderEdgeTable(data ? data.brackets : null, unit, data ? data.member_count : 0);
-    renderEdgeDistChart(data ? data.distribution : null, unit);
-  });
+  loadEdgeStationData(metar);
 }
 
 function syncEdgePillActive() {
@@ -2593,269 +2625,434 @@ function hideEdgeError() {
   }
 }
 
-function selectEdgeDate(dateKey) {
-  if (dateKey === 'today') {
-    edgeSelectedDate = todayISO();
-  } else if (dateKey === 'd1') {
-    const tomorrow = new Date();
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    edgeSelectedDate = tomorrow.toISOString().slice(0, 10);
+// Retry affordance for the error banner (design spec §7) — re-runs whichever
+// fetch was showing when the banner appeared.
+function retryEdgeLoad() {
+  hideEdgeError();
+  if (!edgeSelectedStation) {
+    loadEdgeTab();
+    return;
   }
+  if (edgeIsNextDay) {
+    selectEdgeDate('d1');
+  } else {
+    loadEdgeStationData(edgeSelectedStation);
+  }
+}
 
+// Fetches the Today partition, and — in parallel — the D+1 partition solely
+// to decide whether the D+1 toggle should be enabled (design spec §1/§7:
+// "D+1 disabled + tooltip when no next-day market"). Renders Today.
+async function loadEdgeStationData(metar) {
+  hideEdgeError();
+  edgeIsNextDay = false;
+  showEdgeTableSkeleton();
+  showEdgeScanBarSkeleton();
+  setEdgeDateButtonActive(false);
+
+  const unit = edgeStationUnit();
+  const [todayData, d1Data] = await Promise.all([
+    fetchEdgeData(metar, false),
+    fetchEdgeData(metar, true),
+  ]);
+
+  edgeD1Cache = { station: metar, data: d1Data };
+  updateEdgeD1ButtonState(d1Data);
+
+  if (todayData === null) {
+    showEdgeError('Could not load the scan data.');
+  }
+  renderEdgeScanBar(todayData, metar, unit);
+  renderEdgeForecastInputs(todayData, unit);
+  renderEdgeDecisionTable(todayData ? todayData.brackets : null, unit, metar, false);
+}
+
+function updateEdgeD1ButtonState(d1Data) {
+  const d1Btn = document.getElementById('edge-date-d1');
+  if (!d1Btn) return;
+  const hasD1 = !!(d1Data && d1Data.brackets && d1Data.brackets.length > 0);
+  d1Btn.disabled = !hasD1;
+  d1Btn.title = hasD1
+    ? 'View tomorrow\'s (D+1) evaluation — always shadow-routed by policy'
+    : 'No D+1 market available for this station yet';
+}
+
+function setEdgeDateButtonActive(isNextDay) {
   const todayBtn = document.getElementById('edge-date-today');
   const d1Btn = document.getElementById('edge-date-d1');
-  if (todayBtn) todayBtn.classList.toggle('active', dateKey === 'today');
-  if (d1Btn) d1Btn.classList.toggle('active', dateKey === 'd1');
-
-  console.log(`[Edge] Selected date: ${edgeSelectedDate}`);
-  // F2-F5 wire-up: loadEdgeTab() will be called here once data fetch is integrated
+  if (todayBtn) todayBtn.classList.toggle('active', !isNextDay);
+  if (d1Btn) d1Btn.classList.toggle('active', isNextDay);
 }
 
+async function selectEdgeDate(dateKey) {
+  const wantNextDay = dateKey === 'd1';
+  const d1Btn = document.getElementById('edge-date-d1');
+  if (wantNextDay && d1Btn && d1Btn.disabled) return;
+  if (!edgeSelectedStation) return;
 
-async function renderEdgeDistChart(distribution, unit = 'F') {
-  const wrap = document.getElementById('edge-chart-wrap');
-  if (!wrap) return;
+  edgeIsNextDay = wantNextDay;
+  setEdgeDateButtonActive(wantNextDay);
+  hideEdgeError();
+  showEdgeTableSkeleton();
+  showEdgeScanBarSkeleton();
 
-  // Handle empty/missing distribution
-  if (!distribution || Object.keys(distribution).length === 0) {
-    wrap.innerHTML = '<div class="empty"><i data-lucide="inbox"></i><p>No ensemble data available for this date.</p></div>';
-    lucide.createIcons();
-    return;
+  const unit = edgeStationUnit();
+  const data = (wantNextDay && edgeD1Cache.station === edgeSelectedStation)
+    ? edgeD1Cache.data
+    : await fetchEdgeData(edgeSelectedStation, wantNextDay);
+
+  if (data === null) {
+    showEdgeError('Could not load the scan data.');
   }
-
-  // Parse distribution: convert string keys to numbers, count members
-  const buckets = Object.entries(distribution)
-    .map(([tempStr, count]) => ({
-      temp: parseFloat(tempStr),
-      count: parseInt(count, 10) || 0
-    }))
-    .sort((a, b) => a.temp - b.temp);
-
-  if (buckets.length === 0) {
-    wrap.innerHTML = '<div class="empty"><i data-lucide="inbox"></i><p>No ensemble data available for this date.</p></div>';
-    lucide.createIcons();
-    return;
-  }
-
-  // Find peak (max count) for highlighting
-  const maxCount = Math.max(...buckets.map(b => b.count));
-  const totalMembers = buckets.reduce((sum, b) => sum + b.count, 0);
-
-  // Create bucket labels, converting to °C for non-US stations
-  const labels = buckets.map(b => {
-    if (unit === 'C') {
-      const lowC = Math.floor((b.temp - 32) * 5 / 9);
-      const highC = Math.ceil(((b.temp + 1) - 32) * 5 / 9);
-      return lowC === highC ? `${lowC}°C` : `${lowC}–${highC}°C`;
-    }
-    return `${Math.floor(b.temp)}–${Math.floor(b.temp + 1)}°F`;
-  });
-
-  const data = buckets.map(b => b.count);
-
-  // Set up the canvas
-  wrap.innerHTML = '<canvas id="edge-dist-canvas" class="edge-dist-chart"></canvas>';
-  const canvas = document.getElementById('edge-dist-canvas');
-
-  // Get CSS color variables
-  const cs = getComputedStyle(document.documentElement);
-  const clr = k => cs.getPropertyValue(k).trim();
-
-  // Chart.js config with horizontal bars
-  new Chart(canvas, {
-    type: 'bar',
-    data: {
-      labels: labels,
-      datasets: [
-        {
-          label: 'Ensemble members',
-          data: data,
-          backgroundColor: data.map((count, i) =>
-            count === maxCount ? clr('--edge') : clr('--primary') + '99'
-          ),
-          borderColor: 'transparent',
-          borderRadius: 4,
-          barThickness: 'flex',
-        },
-      ],
-    },
-    options: {
-      indexAxis: 'y',
-      responsive: true,
-      maintainAspectRatio: false,
-      plugins: {
-        legend: {
-          display: false,
-        },
-        tooltip: {
-          backgroundColor: clr('--surface-2'),
-          titleColor: clr('--text'),
-          bodyColor: clr('--text'),
-          borderColor: clr('--border'),
-          borderWidth: 1,
-          padding: 8,
-          displayColors: false,
-          callbacks: {
-            title: () => '',
-            label: ctx => {
-              const count = ctx.parsed.x;
-              const pct = ((count / totalMembers) * 100).toFixed(1);
-              return `${count} members (${pct}%)`;
-            },
-          },
-        },
-        datalabels: {
-          display: true,
-          color: clr('--muted'),
-          font: { size: 11, family: "JetBrains Mono, monospace" },
-          align: 'end',
-          anchor: 'end',
-          offset: 6,
-          formatter: (value) => `${value}`,
-        },
-      },
-      scales: {
-        x: {
-          beginAtZero: true,
-          ticks: { color: clr('--muted'), font: { size: 10 } },
-          grid: { color: clr('--divider') + '55', drawBorder: false },
-        },
-        y: {
-          ticks: { color: clr('--muted'), font: { size: 10, family: "JetBrains Mono, monospace" } },
-          grid: { display: false },
-        },
-      },
-    },
-  });
+  renderEdgeScanBar(data, edgeSelectedStation, unit);
+  renderEdgeForecastInputs(data, unit);
+  renderEdgeDecisionTable(data ? data.brackets : null, unit, edgeSelectedStation, wantNextDay);
 }
 
-function renderEdgeTable(brackets, unit = 'F', memberCount = 0) {
-  const tbody = document.getElementById('edge-table-body');
-  if (!tbody) return;
+async function fetchEdgeData(station, nextDay) {
+  try {
+    const resp = await fetch(`/api/analysis/${station}?next_day=${nextDay ? 'true' : 'false'}`);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    return await resp.json();
+  } catch (e) {
+    console.error(`[Edge] fetchEdgeData error for ${station} (next_day=${nextDay}):`, e);
+    return null;
+  }
+}
 
-  if (!brackets || brackets.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="4"><div class="edge-table-empty"><i data-lucide="inbox"></i><p>No bracket data available.</p></div></td></tr>`;
-    lucide.createIcons();
+/* ── Scan summary bar (design spec §2) ── */
+
+function showEdgeScanBarSkeleton() {
+  const bar = document.getElementById('edge-scan-bar');
+  if (bar) bar.innerHTML = '<span class="skeleton" style="width:180px;height:1.1em;display:inline-block;"></span>';
+}
+
+function fmtPollFreshness(pollTsIso, pollIntervalSeconds) {
+  const d = new Date(pollTsIso);
+  if (isNaN(d.getTime())) return null;
+  const ageMs = Date.now() - d.getTime();
+  const ageMin = Math.max(0, Math.round(ageMs / 60000));
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  const ss = String(d.getSeconds()).padStart(2, '0');
+  // Stale threshold: 2x the configured POLL_INTERVAL_SECONDS (fallback 10min
+  // if the backend ever sends a falsy value — design spec §2 open question 5).
+  const staleThresholdMs = (pollIntervalSeconds && pollIntervalSeconds > 0 ? pollIntervalSeconds : 300) * 2 * 1000;
+  return { text: `${hh}:${mm}:${ss} (${ageMin}m ago)`, isStale: ageMs > staleThresholdMs, ageMin };
+}
+
+function renderEdgeScanBar(data, station, unit) {
+  const bar = document.getElementById('edge-scan-bar');
+  if (!bar) return;
+
+  if (!data || !data.poll_ts) {
+    const label = data && data.is_next_day ? `No scan recorded for ${station} on D+1 yet` : `No scan recorded for ${station} today`;
+    bar.innerHTML = `<span style="color:var(--muted);">${label}</span>`;
     return;
   }
 
-  // Find the bracket with the highest absolute edge for highlight.
-  // Only consider brackets where the model probability is backed by ≥2 ensemble
-  // members; with a thin ensemble, 0% model_prob is a sampling artifact, not a signal.
-  const minModelProb = memberCount > 0 ? (2 / memberCount) * 100 : 0;
-  let bestIdx = -1;
-  let bestAbs = -1;
-  brackets.forEach((b, i) => {
-    if (b.edge !== null && b.edge !== undefined &&
-        b.model_prob !== null && b.model_prob >= minModelProb) {
-      const abs = Math.abs(b.edge);
-      if (abs > bestAbs) { bestAbs = abs; bestIdx = i; }
-    }
-  });
+  const fresh = fmtPollFreshness(data.poll_ts, data.poll_interval_seconds);
+  const freshnessHTML = fresh
+    ? `<div class="edge-scan-freshness${fresh.isStale ? ' stale' : ''}"${fresh.isStale ? ` title="Last scan was ${fresh.ageMin}m ago — the scanner may be paused or the station outside its active window."` : ''}>
+         <i data-lucide="clock"></i><span>${fresh.text}</span>
+       </div>`
+    : '';
 
-  const bracketLabel = (b) => {
-    if (unit === 'C') {
-      const lo = b.bracket_low, hi = b.bracket_high;
-      const toC = f => Math.round((f - 32) * 5 / 9);
-      if (lo <= -49) return `≤${toC(hi)}°C`;
-      if (hi >= 199) return `≥${toC(lo)}°C`;
-      return `${toC(lo)}–${toC(hi)}°C`;
-    }
-    return b.range || '—';
-  };
+  const first = (data.brackets && data.brackets[0]) || null;
+  const fHigh = first ? edgeTempFmt(first.forecast_high, unit) : '—';
+  const cHigh = first ? edgeTempFmt(first.current_high, unit) : '—';
 
-  tbody.innerHTML = brackets.map((b, i) => {
-    const edgePp = b.edge !== null && b.edge !== undefined ? b.edge : null;
-    const thinSignal = b.model_prob !== null && b.model_prob < minModelProb;
-    const edgeClass = thinSignal || edgePp === null ? 'thin-signal' : edgePp > 1 ? 'positive' : edgePp < -1 ? 'negative' : 'near-zero';
-    const edgeText = edgePp === null ? '—' : (edgePp > 0 ? '+' : '') + edgePp.toFixed(1) + 'pp';
-    const bestChip = i === bestIdx && edgePp !== null ? '<span class="best-edge-chip"><i data-lucide="star" style="width:10px;height:10px;"></i>Best</span>' : '';
-    const mktPct = b.polymarket_prob !== null ? b.polymarket_prob.toFixed(1) + '%' : '—';
-    const mdlPct = b.model_prob !== null ? b.model_prob.toFixed(1) + '%' : '—';
-    const barWidth = b.model_prob !== null ? Math.round(b.model_prob) : 0;
-    return `<tr class="${i === bestIdx && edgePp !== null ? 'best-edge-row' : ''}${thinSignal ? ' thin-signal-row' : ''}">
-      <td class="edge-table-bracket">${bracketLabel(b)}</td>
-      <td>${mktPct}</td>
-      <td><div class="edge-prob-bar-wrap"><div class="edge-prob-bar"><div class="edge-prob-bar-fill" style="width:${barWidth}%"></div></div><span class="edge-prob-value">${mdlPct}</span></div></td>
-      <td><div class="edge-edge-value ${edgeClass}">${edgeText}${bestChip}</div></td>
-    </tr>`;
-  }).join('');
+  bar.innerHTML = `${freshnessHTML}<div class="edge-scan-forecast">` +
+    `<span class="label">Model forecast high</span>${fHigh}` +
+    `<span style="margin:0 8px;color:var(--faint);">·</span>` +
+    `<span class="label">Current observed high</span>${cHigh}` +
+    `</div>`;
   lucide.createIcons();
+}
+
+/* ── Forecast inputs (design spec §3, collapsed) ── */
+
+function renderEdgeForecastInputs(data, unit) {
+  const details = document.getElementById('edge-forecast-inputs');
+  if (!details) return;
+  const fi = data && data.forecast_inputs;
+  if (!fi) {
+    details.style.display = 'none';
+    details.open = false;
+    return;
+  }
+  details.style.display = '';
+  const meanEl = document.getElementById('fi-mean');
+  const rangeEl = document.getElementById('fi-range');
+  const membersEl = document.getElementById('fi-members');
+  if (meanEl) meanEl.textContent = fi.ensemble_mean != null ? edgeTempFmt(fi.ensemble_mean, unit) : '—';
+  if (rangeEl) {
+    rangeEl.textContent = (fi.ensemble_range_low != null && fi.ensemble_range_high != null)
+      ? `${edgeTempFmt(fi.ensemble_range_low, unit)}–${edgeTempFmt(fi.ensemble_range_high, unit)}`
+      : '—';
+  }
+  if (membersEl) membersEl.textContent = fi.ensemble_members != null ? String(fi.ensemble_members) : '—';
+}
+
+/* ── Gate-verdict chip (design spec §5, satisfies #529) ── */
+
+const GATE_CHIP_META = {
+  traded_live:          { label: 'Traded',              family: 'Executed for real' },
+  entry_guard:          { label: 'Blocked',              family: 'Passed the gates, blocked or missed at execution' },
+  timeout_today:        { label: 'Timed out',            family: 'Passed the gates, blocked or missed at execution' },
+  shadow_only:          { label: 'Shadow',                family: 'Shadow-routed by policy' },
+  next_day_shadow:      { label: 'Next-day',              family: 'Shadow-routed by policy' },
+  below_min_edge:       { label: 'Edge too small',        family: 'Rejected on the numbers' },
+  above_max_edge:       { label: 'Edge too large',        family: 'Rejected on the numbers' },
+  below_min_price:      { label: 'Price too low',         family: 'Rejected on the numbers' },
+  below_min_confidence: { label: 'Confidence low',        family: 'Rejected on the numbers' },
+  margin_gate:          { label: 'Margin too thin',       family: 'Rejected on the numbers' },
+  mae_gate:             { label: 'Forecast error high',   family: 'Rejected on the numbers' },
+};
+
+const GATE_LEGEND_GROUPS = [
+  { title: 'Executed for real', verdicts: ['traded_live'] },
+  { title: 'Passed the gates, blocked or missed at execution', verdicts: ['entry_guard', 'timeout_today'] },
+  { title: 'Shadow-routed by policy', verdicts: ['shadow_only', 'next_day_shadow'] },
+  { title: 'Rejected on the numbers (routine, majority case)', verdicts: ['below_min_edge', 'above_max_edge', 'below_min_price', 'below_min_confidence', 'margin_gate', 'mae_gate'] },
+];
+
+function _gateFmtByUnit(val, unit) {
+  if (val == null) return '—';
+  if (unit === 'cents') return `${val.toFixed(1)}¢`;
+  if (unit === 'degrees_f') return `${val.toFixed(1)}°F`;
+  if (unit === 'probability') return `${(val * 100).toFixed(0)}%`;
+  return `${val}`;
+}
+
+// Tooltip / aria-label body text per verdict (design spec §5 table). Reuses
+// the exact threshold-vs-actual numbers the scanner itself gated on
+// (gate_actual/gate_threshold/gate_unit), or gate_detail prose for entry_guard.
+function gateTooltip(b) {
+  const actual = _gateFmtByUnit(b.gate_actual, b.gate_unit);
+  const threshold = _gateFmtByUnit(b.gate_threshold, b.gate_unit);
+  switch (b.gate_verdict) {
+    case 'traded_live':
+      return `Traded live — cleared every gate on the ${b.side || '—'} side.`;
+    case 'entry_guard':
+      return b.gate_detail || 'Blocked by an entry guard this poll.';
+    case 'timeout_today':
+      return 'Order placed but not filled before the settlement window closed.';
+    case 'shadow_only':
+      return 'Would trade, but this station/side runs in shadow (paper) mode — no live order placed.';
+    case 'next_day_shadow':
+      return 'D+1 evaluations are shadow-only by policy — informs tomorrow, no live order today.';
+    case 'below_min_edge':
+      return `edge ${actual} < min ${threshold}`;
+    case 'above_max_edge':
+      return `edge ${actual} > max ${threshold} — flagged as a pricing-error risk, not traded`;
+    case 'below_min_price':
+      return `ask ${actual} < min ${threshold} — too thin to fill reliably`;
+    case 'below_min_confidence':
+      return `model p_yes ${actual} < min confidence ${threshold} required for YES`;
+    case 'margin_gate':
+      return `YES/NO margin ${actual} < required ${threshold} — model isn't decisive enough here`;
+    case 'mae_gate':
+      return `rolling MAE ${actual} > ${threshold} — recent accuracy too poor for a live NO entry`;
+    default:
+      return '';
+  }
+}
+
+function gateChipHTML(b) {
+  const verdict = b.gate_verdict;
+  const meta = GATE_CHIP_META[verdict];
+  if (!meta) return '<span class="gate-chip" style="color:var(--faint);">—</span>';
+  const tooltip = gateTooltip(b);
+  // aria-label carries the full explanation (accessibility notes: not gated
+  // behind hover-only title); title is kept too for sighted mouse/keyboard users.
+  return `<span class="gate-chip gate-${verdict}" title="${_escAttr(tooltip)}" aria-label="${_escAttr(meta.label + ': ' + tooltip)}">` +
+    `<span class="status-dot"></span>${meta.label}</span>`;
+}
+
+function _escAttr(s) {
+  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+}
+
+function renderEdgeGateLegend() {
+  const list = document.getElementById('edge-gate-legend-list');
+  if (!list || list.childElementCount > 0) return;  // render once
+  list.innerHTML = GATE_LEGEND_GROUPS.map(group => {
+    const items = group.verdicts.map(v => {
+      const meta = GATE_CHIP_META[v];
+      return `<li><span class="gate-chip gate-${v}"><span class="status-dot"></span>${meta.label}</span> — ${_escAttr(gateLegendMeaning(v))}</li>`;
+    }).join('');
+    return `<div class="edge-gate-legend-group-title">${group.title}</div>${items}`;
+  }).join('');
+}
+
+function gateLegendMeaning(verdict) {
+  const meanings = {
+    traded_live: 'Cleared every gate and traded live on the flagged side.',
+    entry_guard: 'Wanted to trade but an operational guard (e.g. duplicate position) blocked it.',
+    timeout_today: 'Order placed but not filled before the settlement window closed.',
+    shadow_only: 'Would trade, but this station/side runs in shadow (paper) mode.',
+    next_day_shadow: 'D+1 evaluations are always shadow-only by policy.',
+    below_min_edge: 'Model edge over market price is below the minimum required.',
+    above_max_edge: 'Model edge is implausibly large — flagged as a pricing-error risk.',
+    below_min_price: 'Market ask is too thin to fill reliably.',
+    below_min_confidence: 'Model p_yes is not decisive enough for a YES entry.',
+    margin_gate: 'YES/NO margin is too thin — model is not decisive enough.',
+    mae_gate: 'Rolling forecast error is too high for a live NO entry right now.',
+  };
+  return meanings[verdict] || '';
+}
+
+/* ── Per-bracket decision table (design spec §4) ── */
+
+function bracketLabel(b, unit) {
+  if (unit === 'C') {
+    const lo = b.bracket_low, hi = b.bracket_high;
+    const toC = f => Math.round((f - 32) * 5 / 9);
+    if (lo <= -49) return `≤${toC(hi)}°C`;
+    if (hi >= 199) return `≥${toC(lo)}°C`;
+    return `${toC(lo)}–${toC(hi)}°C`;
+  }
+  return b.range || '—';
+}
+
+function fmtCents(v) {
+  return v == null ? '—' : `${v}¢`;
+}
+
+function fmtEv(v) {
+  if (v == null) return { text: '—', cls: 'near-zero' };
+  const cls = v > 0.5 ? 'positive' : v < -0.5 ? 'negative' : 'near-zero';
+  const text = `${v > 0 ? '+' : v < 0 ? '−' : ''}${Math.abs(v).toFixed(1)}¢`;
+  return { text, cls };
+}
+
+// Row emphasis precedence (design spec §4, mutually exclusive):
+// 1. row-traded — any bracket with traded_live.
+// 2. row-near-miss — else the entry_guard/timeout_today row with the higher
+//    of its own flagged side's ev_yes/ev_no.
+// 3. row-best-signal — else the bracket with the single highest
+//    max(ev_yes, ev_no) across all rows, only if that value is a real signal
+//    (> 0) — never manufactured from an all-negative table.
+function computeRowEmphasis(brackets) {
+  const emphasis = new Array(brackets.length).fill(null);
+
+  const tradedIdx = brackets.findIndex(b => b.gate_verdict === 'traded_live');
+  if (tradedIdx !== -1) {
+    emphasis[tradedIdx] = 'row-traded';
+    return emphasis;
+  }
+
+  let nearMissIdx = -1, nearMissVal = -Infinity;
+  brackets.forEach((b, i) => {
+    if (b.gate_verdict !== 'entry_guard' && b.gate_verdict !== 'timeout_today') return;
+    const val = b.side === 'YES' ? b.ev_yes : b.side === 'NO' ? b.ev_no : Math.max(b.ev_yes ?? -Infinity, b.ev_no ?? -Infinity);
+    if (val != null && val > nearMissVal) { nearMissVal = val; nearMissIdx = i; }
+  });
+  if (nearMissIdx !== -1) {
+    emphasis[nearMissIdx] = 'row-near-miss';
+    return emphasis;
+  }
+
+  let bestIdx = -1, bestVal = -Infinity;
+  brackets.forEach((b, i) => {
+    const val = Math.max(b.ev_yes ?? -Infinity, b.ev_no ?? -Infinity);
+    if (val > bestVal) { bestVal = val; bestIdx = i; }
+  });
+  if (bestIdx !== -1 && bestVal > 0) {
+    emphasis[bestIdx] = 'row-best-signal';
+  }
+  return emphasis;
+}
+
+function isThinSignal(b) {
+  const yesThin = b.ev_yes == null || Math.abs(b.ev_yes) < 0.5;
+  const noThin = b.ev_no == null || Math.abs(b.ev_no) < 0.5;
+  return yesThin && noThin;
 }
 
 function showEdgeTableSkeleton() {
   const tbody = document.getElementById('edge-table-body');
   if (!tbody) return;
   tbody.innerHTML = Array(5).fill(0).map(() =>
-    `<tr class="edge-table-skeleton"><td><span class="skeleton"></span></td><td><span class="skeleton"></span></td><td><span class="skeleton"></span></td><td><span class="skeleton"></span></td></tr>`
+    `<tr class="edge-table-skeleton"><td><span class="skeleton"></span></td><td><span class="skeleton"></span></td><td><span class="skeleton"></span></td><td><span class="skeleton"></span></td><td><span class="skeleton"></span></td></tr>`
   ).join('');
 }
 
-async function fetchEdgeData(station, date) {
-  try {
-    const resp = await fetch(`/api/analysis/${station}?date=${date}`);
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    return await resp.json();
-  } catch (e) {
-    console.error(`[Edge] fetchEdgeData error for ${station} on ${date}:`, e);
-    return null;
-  }
-}
+function renderEdgeDecisionTable(brackets, unit, station, isNextDay) {
+  const tbody = document.getElementById('edge-table-body');
+  if (!tbody) return;
 
-function renderEdgeKpi(data, unit = 'F') {
-  const setKpi = (id, subId, val, sub) => {
-    const el = document.getElementById(id);
-    const subEl = document.getElementById(subId);
-    if (el) el.textContent = val;
-    if (subEl) subEl.textContent = sub;
-  };
-  const degSym = unit === 'C' ? '°C' : '°F';
-  if (!data) {
-    setKpi('kpi-ensemble-mean', 'kpi-ensemble-sub', '—', 'No data');
-    setKpi('kpi-bias-corrected', 'kpi-bias-sub', '—', 'No data');
-    setKpi('kpi-members', 'kpi-members-sub', '—', 'No data');
-    setKpi('kpi-range', 'kpi-range-sub', '—', 'No data');
-    setKpi('kpi-best-edge', 'kpi-best-sub', '—', 'No data');
+  if (brackets === null) {
+    // Fetch failed — the top error banner already communicates this; leave
+    // the table empty rather than double-messaging.
+    tbody.innerHTML = '';
     return;
   }
-  setKpi('kpi-ensemble-mean', 'kpi-ensemble-sub',
-    data.ensemble_mean != null ? edgeTempFmt(data.ensemble_mean, unit) : '—',
-    'raw ensemble');
-  const corrDiff_f = (data.bias_corrected != null && data.ensemble_mean != null)
-    ? (data.bias_corrected - data.ensemble_mean) : null;
-  const corrDiff = unit === 'C' && corrDiff_f != null
-    ? (corrDiff_f * 5 / 9).toFixed(1)
-    : corrDiff_f != null ? corrDiff_f.toFixed(1) : null;
-  setKpi('kpi-bias-corrected', 'kpi-bias-sub',
-    data.bias_corrected != null ? edgeTempFmt(data.bias_corrected, unit) : '—',
-    corrDiff === '0.0' ? '(uncorrected)' : corrDiff != null ? `${corrDiff > 0 ? '+' : ''}${corrDiff}${degSym} correction` : '—');
-  setKpi('kpi-members', 'kpi-members-sub',
-    data.member_count != null ? String(data.member_count) : '—',
-    data.active_stack_models ? data.active_stack_models.join(', ') : '—');
-  const rng = data.range;
-  setKpi('kpi-range', 'kpi-range-sub',
-    (rng && rng[0] != null && rng[1] != null)
-      ? `${edgeTempFmt(rng[0], unit)}–${edgeTempFmt(rng[1], unit)}` : '—',
-    '5th–95th pct');
-  const brackets = data.brackets || [];
-  const memberCount = data.member_count || 0;
-  const minModelProb = memberCount > 0 ? (2 / memberCount) * 100 : 0;
-  let best = null;
-  brackets.forEach(b => {
-    if (b.edge != null && b.model_prob != null && b.model_prob >= minModelProb &&
-        (best === null || Math.abs(b.edge) > Math.abs(best.edge))) best = b;
-  });
-  setKpi('kpi-best-edge', 'kpi-best-sub',
-    best && best.edge != null ? (best.edge > 0 ? '+' : '') + best.edge.toFixed(1) + 'pp' : '—',
-    best ? (() => {
-      if (unit === 'C') {
-        const toC = f => Math.round((f - 32) * 5 / 9);
-        if (best.bracket_low <= -49) return `≤${toC(best.bracket_high)}°C`;
-        if (best.bracket_high >= 199) return `≥${toC(best.bracket_low)}°C`;
-        return `${toC(best.bracket_low)}–${toC(best.bracket_high)}°C`;
-      }
-      return best.range || '—';
-    })() : '—');
+
+  if (brackets.length === 0) {
+    const label = isNextDay ? `No D+1 scan for ${station} yet` : `No scan for ${station} today`;
+    tbody.innerHTML = `<tr><td colspan="5"><div class="empty"><i data-lucide="inbox"></i><h3>${label}</h3><p>MeteoEdge hasn't evaluated this station yet ${isNextDay ? 'for D+1' : 'today'} — check back after the next poll.</p></div></td></tr>`;
+    lucide.createIcons();
+    return;
+  }
+
+  const emphasis = computeRowEmphasis(brackets);
+
+  tbody.innerHTML = brackets.map((b, i) => {
+    const thin = isThinSignal(b);
+    const rowCls = [emphasis[i], thin ? 'row-thin' : ''].filter(Boolean).join(' ');
+
+    const yesHit = b.side === 'YES';
+    const noHit = b.side === 'NO';
+    const marketCell = `<div class="edge-market-cell">` +
+      `<span class="${yesHit ? 'side-hit' : ''}">${fmtCents(b.market_yes_ask)}</span> / ` +
+      `<span class="${noHit ? 'side-hit' : ''}">${fmtCents(b.market_no_ask)}</span>` +
+      `</div>`;
+
+    const pYesPct = b.p_yes != null ? (b.p_yes * 100).toFixed(0) + '%' : '—';
+    const rawPct = b.raw_p_yes != null ? (b.raw_p_yes * 100).toFixed(0) + '%' : null;
+    const showRaw = rawPct != null && b.p_yes != null && Math.round(b.raw_p_yes * 100) !== Math.round(b.p_yes * 100);
+    const modeChip = b.emos_mode ? edgeEmosModeChipHTML(b.emos_mode) : '';
+    const pYesCell = `<div class="edge-pyes-value">${pYesPct}</div>` +
+      (showRaw ? `<span class="edge-pyes-raw">raw ${rawPct}</span>` : '') +
+      (modeChip ? `<div class="edge-pyes-mode">${modeChip}</div>` : '');
+
+    const evYes = fmtEv(b.ev_yes);
+    const evNo = fmtEv(b.ev_no);
+    const evCell = `<div class="edge-ev-cell">` +
+      `<span class="edge-ev-value ${evYes.cls} ${yesHit ? 'side-hit' : ''}">${evYes.text}</span> / ` +
+      `<span class="edge-ev-value ${evNo.cls} ${noHit ? 'side-hit' : ''}">${evNo.text}</span>` +
+      `</div>`;
+
+    const bestCaption = emphasis[i] === 'row-best-signal'
+      ? `<div class="edge-best-signal-caption"><i data-lucide="star"></i>Best signal today</div>`
+      : '';
+    const gateCell = `${gateChipHTML(b)}${bestCaption}`;
+
+    return `<tr class="${rowCls}">` +
+      `<td class="edge-table-bracket">${bracketLabel(b, unit)}</td>` +
+      `<td>${marketCell}</td>` +
+      `<td>${pYesCell}</td>` +
+      `<td>${evCell}</td>` +
+      `<td>${gateCell}</td>` +
+      `</tr>`;
+  }).join('');
+  lucide.createIcons();
+}
+
+// Small inline mode chip reusing the .status-badge/.badge-* anatomy already
+// established on the EMOS tab (legacy/shadow/primary) — kept local to the
+// Edge tab so it doesn't affect the EMOS tab's own chip labels/behaviour.
+function edgeEmosModeChipHTML(mode) {
+  const map = {
+    legacy: ['legacy', 'Legacy'],
+    emos_shadow: ['shadow', 'Shadow'],
+    emos_primary: ['primary', 'Primary'],
+    next_day: ['legacy', 'Next-day'],
+  };
+  const [cls, label] = map[mode] || ['legacy', mode];
+  return `<span class="status-badge badge-${cls}"><span class="status-dot"></span>${label}</span>`;
 }
 
 /* ─────────────────────────────────────────
