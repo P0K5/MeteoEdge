@@ -170,6 +170,46 @@ def _append_snapshot(snap: dict) -> None:
         f.write(json.dumps(snap, default=str) + "\n")
 
 
+def _persist_scan_decisions(
+    decisions: "dict[str, dict]",
+    confirmed: "dict[str, tuple[str, str | None]]",
+    live_trader,
+    db,
+) -> None:
+    """Upsert this poll's per-bracket gate verdicts to scan_decisions (issue #756).
+
+    *decisions* is keyed by ticker, built from scan_markets()'s snapshots --
+    each already carries a scanner-side gate_verdict (see scan_markets'
+    docstring / GATE_VERDICTS). *confirmed* carries the run.py-side overrides
+    collected while resolving the entry-guard/execution seam this poll, keyed
+    by ticker -> (verdict, detail); it takes precedence over the scanner's
+    verdict when present.
+
+    Any bracket left at the scanner's "traded_live" placeholder (a live
+    candidate pending execution) that was never confirmed one way or the
+    other this poll -- e.g. the wallet-cooldown skip, or the balance-
+    insufficient break leaving later candidates unvisited -- is downgraded to
+    entry_guard here so the table never claims a live trade that did not
+    happen. Paper-mode polls (no live_trader) have no entry-guard/execution
+    seam at all, so their placeholder is left as-is (best-effort "would trade
+    live" reading, not a confirmed exchange fill).
+    """
+    if db is None:
+        return
+    for ticker, decision in decisions.items():
+        if ticker in confirmed:
+            verdict, detail = confirmed[ticker]
+            decision["gate_verdict"] = verdict
+            decision["gate_detail"] = detail
+        elif live_trader and decision.get("gate_verdict") == "traded_live":
+            decision["gate_verdict"] = "entry_guard"
+            decision["gate_detail"] = "did not reach execution this poll"
+        try:
+            db.upsert_scan_decision(**decision)
+        except Exception as e:
+            log.warning("[scan_decisions] upsert failed for %s...: %s", ticker[:20], e)
+
+
 def _append_candidate(row: dict) -> None:
     LOG_DIR.mkdir(exist_ok=True)
     with _write_lock:
@@ -417,6 +457,16 @@ def poll_once(
     for snap in snapshots:
         _append_snapshot(snap)
 
+    # scan_decisions (issue #756): one entry per evaluated high-side bracket,
+    # keyed by ticker, seeded from the scanner's per-bracket gate_verdict.
+    # _confirmed collects run.py-side overrides (entry-guard / execution
+    # outcome) as the candidate loop below resolves them; _persist_scan_decisions
+    # applies both and upserts at every poll-exit point from here on.
+    _decisions: dict = {
+        snap["ticker"]: snap for snap in snapshots if snap.get("gate_verdict") is not None
+    }
+    _confirmed: dict = {}
+
     # Log freshness for high-frequency sources (skip METAR outside active window).
     if db is not None:
         _freshness_monitor = FreshnessMonitor()
@@ -441,6 +491,7 @@ def poll_once(
     if live_trader and time.time() < _wallet_cooldown_until:
         log.info("[balance] wallet-empty cooldown active (%.0fs remaining) — skipping placement",
                  _wallet_cooldown_until - time.time())
+        _persist_scan_decisions(_decisions, _confirmed, live_trader, db)
         _finalize_poll()
         return
 
@@ -469,7 +520,7 @@ def poll_once(
     # keys that already passed the gate in THIS scan. If the scanner flags the
     # same bracket twice in one poll, only the first candidate passes.
     _entry_keys_this_poll: set = set()
-    for cand in candidates:
+    for _cand_idx, cand in enumerate(candidates):
         row = {
             "ts": ts,
             "station": cand.station,
@@ -613,6 +664,7 @@ def poll_once(
                     "[entry-guard] blocked %s %s %s...: %s",
                     cand.station, cand.side, cand.bracket.ticker[:14], _guard_reason,
                 )
+                _confirmed[cand.bracket.ticker] = ("entry_guard", _guard_reason)
                 if db is not None:
                     try:
                         # Counter surface for the dashboard: rides the existing
@@ -630,6 +682,16 @@ def poll_once(
         if live_trader and available_usdc < POSITION_SIZE_WITH_FEES:
             log.info("  [balance] insufficient (%.2f USDC < %.2f needed incl. fees), skipping remaining", available_usdc, POSITION_SIZE_WITH_FEES)
             _wallet_cooldown_until = time.time() + _WALLET_EMPTY_COOLDOWN_SECONDS
+            # scan_decisions (issue #756): this candidate AND every later
+            # non-shadow candidate in this poll never reach the entry-guard/
+            # execution seam below -- mark them all so their row doesn't keep
+            # the scanner's optimistic "traded_live" placeholder.
+            for _c in candidates[_cand_idx:]:
+                if not _c.shadow:
+                    _confirmed.setdefault(
+                        _c.bracket.ticker,
+                        ("entry_guard", "insufficient USDC balance to place order this poll"),
+                    )
             break
 
         raw_liquidity = cand.bracket.yes_ask_size + cand.bracket.no_ask_size
@@ -640,6 +702,7 @@ def poll_once(
         )
         if not allowed:
             log.info("  [risk] blocked: %s", reason)
+            _confirmed[cand.bracket.ticker] = ("entry_guard", f"blocked by risk manager: {reason}")
             continue
 
         n_acted += 1
@@ -655,15 +718,31 @@ def poll_once(
 
     if live_trader and approved:
         with ThreadPoolExecutor(max_workers=len(approved)) as executor:
-            futures = [
-                executor.submit(_execute_live, cand, live_trader._client_factory, risk_manager, ts, db, available_usdc)
+            futures = {
+                executor.submit(_execute_live, cand, live_trader._client_factory, risk_manager, ts, db, available_usdc): cand
                 for cand in approved
-            ]
+            }
             for future in as_completed(futures):
+                cand = futures[future]
                 try:
-                    future.result()
+                    outcome = future.result()
                 except Exception as e:
                     log.error("  [live] thread error: %s", e, exc_info=True)
+                    outcome = None
+                # scan_decisions verdict seam (issue #756): 'filled' is the only
+                # outcome that confirms a real live trade -- everything else
+                # (timeout/cancelled/place_failed/no_token_id/already_open/an
+                # in-thread exception) downgrades to timeout_today, with the
+                # raw outcome kept in gate_detail for diagnostics.
+                if outcome == "filled":
+                    _confirmed[cand.bracket.ticker] = ("traded_live", None)
+                else:
+                    _confirmed[cand.bracket.ticker] = (
+                        "timeout_today",
+                        f"execution outcome: {outcome}" if outcome else "execution attempt raised an exception",
+                    )
+
+    _persist_scan_decisions(_decisions, _confirmed, live_trader, db)
 
     log.info(
         "[scan] %s markets, %s evaluated, %s candidates, %s acted on, %s shadow, %s entry-guard blocked",

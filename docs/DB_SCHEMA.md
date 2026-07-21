@@ -456,6 +456,93 @@ CREATE TABLE IF NOT EXISTS emos_crps_log (
 
 ---
 
+### scan_decisions
+
+**Purpose:** The bot's-eye per-bracket decision view for the Edge tab (epic #754). One row per `(station, ticker, date)` holding the **most recent poll's** evaluated bracket — the same `p_yes`/`ev_yes`/`ev_no`/`emos_mode` numbers the scanner traded on (never a parallel recompute), plus the `gate_verdict` naming the exact reason that bracket did or didn't trade. Upserted every poll — this is a live "last known state" table, not an append-only log (`candidates`/`snapshots.jsonl` remain the historical record).
+
+**Writer:** `src.scripts.run.poll_once`, once per evaluated high-side bracket per poll (mirrors the `db.insert_candidate` call site, issue #684). `src.strategy.scanner.scan_markets` attaches the pre-execution `gate_verdict` (+ every other column below) to each evaluated bracket's snapshot; `poll_once` upgrades the `traded_live` placeholder to `entry_guard` / `timeout_today` / (confirmed) `traded_live` once the entry-guard check and any live execution attempt for that bracket have resolved (the "verdict seam" — see issue #756's PR for the exact line-level seam between scanner.py and run.py). Low-side (shadow-only) brackets never produce a `snapshots.jsonl` row today and are therefore never written here either — out of scope for this table, same as `snapshots.jsonl`.
+**Reader:** `Database.get_scan_decisions(station, date)` (helper for issue #757's serve endpoint — no dashboard route consumes this table directly yet).
+
+| Column | Type | Units | Nullable | Description |
+|--------|------|-------|----------|-------------|
+| `station` | TEXT NOT NULL | METAR code | No | Station code (e.g., `KMIA`) — part of the primary key |
+| `ticker` | TEXT NOT NULL | Polymarket condition ID | No | Bracket's market ticker — part of the primary key |
+| `date` | TEXT NOT NULL | YYYY-MM-DD | No | The bracket's own settlement date (today for same-day evaluation, the market's own future date for a next-day evaluation, issue #687) — part of the primary key |
+| `ts` / `poll_ts` | TEXT NOT NULL | ISO 8601 timestamp (UTC) | No | When this poll ran. Two columns for parity with `snapshots.jsonl`'s `ts` field and the design spec's `poll_ts` freshness-indicator field — always written with the same value |
+| `bracket_low` / `bracket_high` | REAL NOT NULL | °F | No | Bracket bounds (same convention as `candidates`) |
+| `side` | TEXT | `'YES'` / `'NO'` / NULL | Yes | The traded/candidate side, from `Candidate.side` — NULL when this bracket never produced a `Candidate` at all (i.e. every rejection verdict except `mae_gate`, `shadow_only`, `next_day_shadow`, `entry_guard`, `timeout_today`, `traded_live`) |
+| `yes_ask` / `no_ask` | INTEGER | cents | Yes | Market ask price on each side at scan time |
+| `current_high` / `latest_temp` / `forecast_high` | REAL | °F | Yes | Same-day observation/forecast context; NULL for a next-day row (no today-anchored observation exists yet — `forecast_high` instead holds the next-day mean fed into `p_yes`, see `scan_markets`) |
+| `p_yes` / `raw_p_yes` / `capped_p_yes` | REAL | probability [0,1] | Yes | Model probability: capped (served/traded-on), raw (pre-`MODEL_PROB_CAP` clamp, issue #551), and capped again under its own name for `snapshots.jsonl` field parity |
+| `ev_yes` / `ev_no` | REAL | cents | Yes | Expected value of buying YES / NO at the capped probability — the numbers the scanner actually gated on |
+| `ev_yes_raw` / `ev_no_raw` | REAL | cents | Yes | Same, at the raw (uncapped) probability — logging/ranking only, never a gate input |
+| `minutes_to_settlement` | REAL | minutes | Yes | Time to market close at scan time |
+| `emos_mode` | TEXT | `'legacy'` / `'emos_shadow'` / `'emos_primary'` / `'next_day'` | Yes | Which forecast-serving path produced `p_yes` this poll |
+| `is_next_day` | INTEGER NOT NULL DEFAULT 0 | boolean (0/1) | No | 1 when this bracket came from next-day evaluation (issue #687) |
+| `gate_verdict` | TEXT NOT NULL | enum, 11 values | No | Exactly one of `traded_live`, `shadow_only`, `next_day_shadow`, `entry_guard`, `timeout_today`, `below_min_edge`, `above_max_edge`, `below_min_price`, `below_min_confidence`, `margin_gate`, `mae_gate` — enforced by a `CHECK` constraint and by `Database.upsert_scan_decision` raising `ValueError` on any other value. Names locked with the design spec (`docs/design/edge-tab-bracket-decisions.md`) |
+| `gate_actual` / `gate_threshold` / `gate_unit` | REAL / REAL / TEXT | varies (`cents`, `degrees_f`, `probability`) | Yes | The compared numbers for the six numeric-rejection verdicts (`below_min_edge`, `above_max_edge`, `below_min_price`, `below_min_confidence`, `margin_gate`, `mae_gate`) — the exact actual-vs-threshold pair `scan_markets` already computed. NULL for every other verdict |
+| `gate_detail` | TEXT | prose | Yes | For `entry_guard`: the guard reason string verbatim from `run.py` (e.g. "open position already exists for this token") — passed through, never reconstructed by a reader. For `timeout_today`: the raw execution outcome (e.g. `execution outcome: timeout`). NULL otherwise |
+| `ensemble_mean` | REAL | °F | Yes | Weighted ensemble forecast mean for `(station, date)`, sourced read-only from `get_ensemble_distribution()` (same `model_forecast_log`-backed function the pre-#756 Edge tab used) — demoted into the "Forecast inputs" collapsed detail, not retired |
+| `ensemble_members` | INTEGER | count | Yes | Number of distinct forecast models contributing to `ensemble_mean` |
+| `ensemble_range_low` / `ensemble_range_high` | REAL | °F | Yes | Min/max forecast value across contributing models (labelled "5th–95th pct" in the UI, matching the pre-#756 KPI strip's existing min/max-as-range convention) |
+
+**DDL:**
+```sql
+CREATE TABLE IF NOT EXISTS scan_decisions (
+    station               TEXT NOT NULL,
+    ticker                TEXT NOT NULL,
+    date                  TEXT NOT NULL,
+    ts                    TEXT NOT NULL,
+    poll_ts               TEXT NOT NULL,
+    bracket_low           REAL NOT NULL,
+    bracket_high          REAL NOT NULL,
+    side                  TEXT CHECK(side IN ('YES','NO') OR side IS NULL),
+    yes_ask               INTEGER,
+    no_ask                INTEGER,
+    current_high          REAL,
+    latest_temp           REAL,
+    forecast_high         REAL,
+    p_yes                 REAL,
+    raw_p_yes             REAL,
+    capped_p_yes          REAL,
+    ev_yes                REAL,
+    ev_no                 REAL,
+    ev_yes_raw            REAL,
+    ev_no_raw             REAL,
+    minutes_to_settlement REAL,
+    emos_mode             TEXT,
+    is_next_day           INTEGER NOT NULL DEFAULT 0,
+    gate_verdict          TEXT NOT NULL CHECK(gate_verdict IN (
+        'traded_live','shadow_only','next_day_shadow','entry_guard','timeout_today',
+        'below_min_edge','above_max_edge','below_min_price','below_min_confidence',
+        'margin_gate','mae_gate'
+    )),
+    gate_actual           REAL,
+    gate_threshold        REAL,
+    gate_unit             TEXT,
+    gate_detail           TEXT,
+    ensemble_mean         REAL,
+    ensemble_members      INTEGER,
+    ensemble_range_low    REAL,
+    ensemble_range_high   REAL,
+    PRIMARY KEY (station, ticker, date)
+);
+CREATE INDEX IF NOT EXISTS idx_scan_decisions_station_date ON scan_decisions(station, date);
+```
+
+**Upsert-per-poll semantics:**
+- `Database.upsert_scan_decision(...)` is an `INSERT ... ON CONFLICT(station, ticker, date) DO UPDATE SET ...` — a fresh poll for the same key **replaces** the prior row's every column in place. The table always reflects the single most recent scan for a bracket, never an accumulating history.
+- This is a deliberate contrast with `candidates` (one row per candidate per poll, append-only) and `snapshots.jsonl` (append-only log) — `scan_decisions` exists specifically to answer "what did the bot see on its **last** poll," so old rows would only add noise.
+- Every write is best-effort: a failed upsert is caught and logged (`log.warning`), never raised into the polling loop — a DB hiccup on this surfacing-only table must not affect trading.
+
+**The verdict seam (scanner ↔ run.py):**
+1. `scan_markets` computes the pre-execution verdict for every evaluated bracket from the existing gate branches it already takes — no new control flow, purely an attached label. A live (non-shadow, non-next-day) candidate that clears every gate gets the optimistic placeholder `traded_live`.
+2. `run.py`'s entry-guard check (duplicate-candidate / open-position / same-day-reentry) downgrades that placeholder to `entry_guard` (with the real guard reason in `gate_detail`) if it fires before execution is even attempted — same for a risk-manager block or an insufficient-USDC-balance skip.
+3. If the candidate reaches `_execute_live`, the real per-attempt outcome (`filled` / `timeout` / `cancelled` / `place_failed` / …) resolves the verdict to `traded_live` (only on `filled`) or `timeout_today` (everything else, with the raw outcome kept in `gate_detail`).
+4. Any `traded_live` placeholder that a poll never got around to confirming one way or the other (e.g. the wallet-empty cooldown skipping the candidate loop entirely) is downgraded to `entry_guard` before the DB write, so the table never claims a live trade that did not happen. Paper-mode polls (no live trader configured) have no entry-guard/execution seam at all, so their placeholder is left as `traded_live` — a best-effort "would trade live" reading, not a confirmed exchange fill.
+
+---
+
 ### bot_config
 
 **Purpose:** Persistent key-value store for operator-adjustable bot parameters. Values survive restarts and are authoritative over environment variables once seeded.

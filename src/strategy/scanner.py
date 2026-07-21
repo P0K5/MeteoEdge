@@ -33,13 +33,29 @@ from src.model.emos_mode import (
     get_city_mode, emos_serving_mu, _check_ready_for_promotion, resolve_sigma_raw,
     _select_emos_row,
 )
-from src.model.residual_correction import compute_residual_stats
+from src.model.residual_correction import compute_residual_stats, MAX_RESIDUAL_MAE_F_FOR_LIVE
+from src.model.ensemble_distribution import get_ensemble_distribution
 from src.data.polymarket import get_orderbook
 from src.data.taf_disruption import check_taf_disruption
 from src.data.open_meteo import fetch_open_meteo_with_spread, fetch_gfs_with_spread
 from src.strategy.fee import estimate_fee_cents
 
 log = logging.getLogger(__name__)
+
+# The 11 canonical gate-verdict enums (issue #756 / epic #754; names locked
+# with the design spec docs/design/edge-tab-bracket-decisions.md). Every
+# evaluated high-side bracket's snap dict carries exactly one of these under
+# "gate_verdict" -- surfacing only, this module never uses it to gate/alter a
+# decision. "traded_live" is also scan_markets()'s pre-execution placeholder
+# for a live (non-shadow, non-next-day) candidate that passed every gate --
+# src.scripts.run.poll_once upgrades it to entry_guard/timeout_today/
+# traded_live once the entry-guard check and (if applicable) the live
+# execution attempt have resolved (the "verdict seam", see run.py).
+GATE_VERDICTS = frozenset({
+    "traded_live", "shadow_only", "next_day_shadow", "entry_guard", "timeout_today",
+    "below_min_edge", "above_max_edge", "below_min_price", "below_min_confidence",
+    "margin_gate", "mae_gate",
+})
 
 # Station -> (lat, lon), for next-day forecast fetches (issue #687). Built
 # from the same STATIONS tuples as POLYMARKET_CITY_TO_STATION/STATION_TO_CITY
@@ -452,6 +468,37 @@ def scan_markets(
     ts = datetime.now(timezone.utc).isoformat()
     skip_reason_counts: Counter = Counter()  # Track skip reasons for final summary
 
+    # Ensemble summary cache for the scan_decisions "Forecast inputs" fields
+    # (issue #756 locked data contract: demote, don't retire -- these are
+    # sourced from the same read-only model_forecast_log query the old Edge
+    # tab used, get_ensemble_distribution(), never a live fetch). Cached per
+    # (station, date) for this scan only so a station with several brackets
+    # doesn't repeat the DB read once per bracket.
+    _ensemble_cache: "dict[tuple[str, str], dict | None]" = {}
+
+    def _ensemble_summary(station_code: str, date_str: str) -> dict:
+        key = (station_code, date_str)
+        if key not in _ensemble_cache:
+            try:
+                _ensemble_cache[key] = (
+                    get_ensemble_distribution(station_code, date_str, db) if db is not None else None
+                )
+            except Exception as e:
+                log.debug("[ensemble_summary] %s %s: %s", station_code, date_str, e)
+                _ensemble_cache[key] = None
+        ens = _ensemble_cache[key]
+        if not ens:
+            return {"ensemble_mean": None, "ensemble_members": None,
+                    "ensemble_range_low": None, "ensemble_range_high": None}
+        rng = ens.get("range") or (None, None)
+        mean = ens.get("ensemble_mean")
+        return {
+            "ensemble_mean": round(mean, 2) if mean is not None else None,
+            "ensemble_members": ens.get("member_count"),
+            "ensemble_range_low": round(rng[0], 2) if rng[0] is not None else None,
+            "ensemble_range_high": round(rng[1], 2) if rng[1] is not None else None,
+        }
+
     # Read shadow YES thresholds from live config (DB-backed) so they can be
     # tuned via the dashboard without restarting the bot.  Fall back to
     # CONFIG_DEFAULTS when db is unavailable (tests, CLI runs without a DB).
@@ -616,6 +663,11 @@ def scan_markets(
             )
             wrong_date_skipped = False
             is_next_day_eval = False
+            # The settlement date this bracket's scan_decisions row is keyed
+            # on (issue #756) -- today for the same-day path, the market's own
+            # future date for a next-day evaluation. Defaults to today_utc so
+            # a market with no parseable end date still gets a sane key.
+            _decision_date = today_utc.isoformat()
             if end_str:
                 try:
                     end_dt = dtparse.parse(str(end_str))
@@ -630,6 +682,7 @@ def scan_markets(
                         # this branch's eligibility (precompute excludes it).
                         if next_day_evaluation and eligible_next_day_date.get(station) == end_dt.date():
                             is_next_day_eval = True
+                            _decision_date = end_dt.date().isoformat()
                         else:
                             label = market.get("groupItemTitle") or market.get("question", "")[:40]
                             log.debug("[%s] -- SKIPPED %s: closes %s != today (%s)",
@@ -808,7 +861,14 @@ def scan_markets(
                 "minutes_to_settlement": round(mins_left, 1),
                 "emos_mode": emos_mode_used,
                 "is_next_day": 1 if is_next_day_eval else 0,
+                # scan_decisions fields (issue #756) -- date/poll_ts key + persist
+                # the poll this bracket was evaluated in; side/gate_* are filled
+                # in below once the gate outcome for this bracket is known.
+                "date": _decision_date, "poll_ts": ts,
+                "side": None, "gate_verdict": None, "gate_actual": None,
+                "gate_threshold": None, "gate_unit": None, "gate_detail": None,
             }
+            snap.update(_ensemble_summary(station, _decision_date))
             snapshots.append(snap)
 
             # Check for a tradeable edge
@@ -835,12 +895,23 @@ def scan_markets(
             _yes_conf = shadow_yes_conf_min if shadow_yes else MIN_CONFIDENCE_YES
             _yes_price = shadow_yes_price_min if shadow_yes else min_price_cents
 
+            # Gate-verdict fields (issue #756) -- set alongside skipped_reason/
+            # candidate at each existing branch below, purely observational
+            # (never read back into any gate condition in this function).
+            gate_verdict = None
+            gate_actual = None
+            gate_threshold = None
+            gate_unit = None
+            gate_detail = None
+
             if ev_yes >= _yes_edge and p_yes >= _yes_conf and bracket.yes_ask_cents >= _yes_price:
                 if ev_yes > max_edge_cents:
                     skipped_reason = "max_edge"
                     log.debug("[%s] -- SKIPPED %s: %s edge=%.2f¢ > MAX=%.2f¢",
                               station, skipped_reason, "YES", ev_yes, max_edge_cents)
                     skip_reason_counts[skipped_reason] += 1
+                    gate_verdict = "above_max_edge"
+                    gate_actual, gate_threshold, gate_unit = ev_yes, max_edge_cents, "cents"
                 else:
                     candidate = Candidate(
                         station=station, bracket=bracket, side="YES",
@@ -859,6 +930,15 @@ def scan_markets(
                         is_next_day=is_next_day_eval,
                         today_position_open=_next_day_today_position_open,
                     )
+                    if is_next_day_eval:
+                        gate_verdict = "next_day_shadow"
+                    elif shadow_yes:
+                        gate_verdict = "shadow_only"
+                    else:
+                        # Pre-execution placeholder -- run.py's entry-guard /
+                        # execution seam resolves this to entry_guard,
+                        # timeout_today, or (confirmed) traded_live.
+                        gate_verdict = "traded_live"
             elif ev_no >= min_edge_cents and p_yes <= max_conf_yes_for_no and bracket.no_ask_cents >= min_price_cents:
                 # Next-day: skip the margin gate rather than evaluate it against
                 # `state.forecast_high_f`/`current_high_f` -- those are today's
@@ -870,22 +950,28 @@ def scan_markets(
                     log.debug("[%s] -- SKIPPED %s: %s edge=%.2f¢ > MAX=%.2f¢",
                               station, skipped_reason, "NO", ev_no, max_edge_cents)
                     skip_reason_counts[skipped_reason] += 1
+                    gate_verdict = "above_max_edge"
+                    gate_actual, gate_threshold, gate_unit = ev_no, max_edge_cents, "cents"
                 elif margin_gap is not None and margin_gap < MIN_FORECAST_BRACKET_MARGIN_F:
                     skipped_reason = "margin_gate"
                     log.debug("[%s] -- SKIPPED %s: bracket %.1f-%.1fF within %.1fF of expected high (< %.1fF)",
                               station, skipped_reason, bracket.low_f, bracket.high_f,
                               margin_gap, MIN_FORECAST_BRACKET_MARGIN_F)
                     skip_reason_counts[skipped_reason] += 1
+                    gate_verdict = "margin_gate"
+                    gate_actual, gate_threshold, gate_unit = margin_gap, MIN_FORECAST_BRACKET_MARGIN_F, "degrees_f"
                 else:
                     # MAE gate (issue #307): suppress live NO entries when rolling MAE
                     # exceeds MAX_RESIDUAL_MAE_F_FOR_LIVE. Shadow continues so data
                     # keeps accumulating while the station is gated.
                     _mae_suppressed = False
+                    _mae_actual = None
                     if db is not None and not shadow_no:
                         _res_stats = compute_residual_stats(city, db)
                         if _res_stats is not None and _res_stats.live_suppressed:
                             shadow_no = True
                             _mae_suppressed = True
+                            _mae_actual = _res_stats.rolling_mae
                             log.info(
                                 "[%s] MAE gate: rolling_mae=%.2f°F > threshold → "
                                 "forcing NO to shadow (live suppressed)",
@@ -902,6 +988,18 @@ def scan_markets(
                         is_next_day=is_next_day_eval,
                         today_position_open=_next_day_today_position_open,
                     )
+                    if is_next_day_eval:
+                        gate_verdict = "next_day_shadow"
+                    elif _mae_suppressed:
+                        gate_verdict = "mae_gate"
+                        gate_actual, gate_threshold, gate_unit = (
+                            _mae_actual, MAX_RESIDUAL_MAE_F_FOR_LIVE, "degrees_f"
+                        )
+                    elif shadow_no:
+                        gate_verdict = "shadow_only"
+                    else:
+                        # Pre-execution placeholder -- same seam as the YES path.
+                        gate_verdict = "traded_live"
             else:
                 # YES gates passed but NO gate failed (or both edges below MIN_EDGE_CENTS).
                 # YES branch is now handled above unconditionally, so only NO failures
@@ -911,12 +1009,26 @@ def scan_markets(
                         skipped_reason = "confidence_gate"
                         log.debug("[%s] -- SKIPPED %s: p_yes=%.4f > MAX=%.4f",
                                   station, skipped_reason, p_yes, max_conf_yes_for_no)
+                        gate_verdict = "below_min_confidence"
+                        gate_actual, gate_threshold, gate_unit = p_yes, max_conf_yes_for_no, "probability"
                     elif bracket.no_ask_cents < min_price_cents:
                         skipped_reason = "min_edge"
                         log.debug("[%s] -- SKIPPED %s: NO price=%.0f¢ < MIN=%.0f¢",
                                   station, skipped_reason, bracket.no_ask_cents, min_price_cents)
+                        # NOTE: skipped_reason is mislabeled "min_edge" here for the
+                        # skip_reason_counts summary (pre-existing, left as-is -- out
+                        # of scope for #756) -- the real failing condition is the NO
+                        # price floor, so the verdict reflects that correctly.
+                        gate_verdict = "below_min_price"
+                        gate_actual, gate_threshold, gate_unit = bracket.no_ask_cents, min_price_cents, "cents"
                     else:
+                        # Unreachable in practice: if ev_no/p_yes/no_ask all satisfy
+                        # the elif above, this bracket would already have taken the
+                        # NO-candidate branch above it. Kept only so skipped_reason/
+                        # gate_verdict are never left unset.
                         skipped_reason = "min_edge"
+                        gate_verdict = "below_min_edge"
+                        gate_actual, gate_threshold, gate_unit = max(ev_yes, ev_no), min_edge_cents, "cents"
                     skip_reason_counts[skipped_reason] += 1
                 else:
                     # Both edges below MIN_EDGE_CENTS
@@ -924,6 +1036,15 @@ def scan_markets(
                     log.debug("[%s] -- SKIPPED %s: max(%.2f¢, %.2f¢) < MIN=%.2f¢",
                               station, skipped_reason, ev_yes, ev_no, min_edge_cents)
                     skip_reason_counts[skipped_reason] += 1
+                    gate_verdict = "below_min_edge"
+                    gate_actual, gate_threshold, gate_unit = max(ev_yes, ev_no), min_edge_cents, "cents"
+
+            snap["side"] = candidate.side if candidate else None
+            snap["gate_verdict"] = gate_verdict
+            snap["gate_actual"] = round(gate_actual, 4) if gate_actual is not None else None
+            snap["gate_threshold"] = gate_threshold
+            snap["gate_unit"] = gate_unit
+            snap["gate_detail"] = gate_detail
 
             if candidate and db:
                 _taf_city = STATION_TO_CITY.get(station, "")

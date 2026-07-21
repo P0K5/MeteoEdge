@@ -90,11 +90,19 @@ def _execute_live(
     ts: str,
     db=None,
     bankroll: float = 0.0,
-) -> None:
+) -> "str | None":
     """Place one order and wait for fill/timeout. open_position() already called by caller.
 
     Each thread creates its own LiveTrader/ClobClient to avoid HTTP/2 stream
     collisions when multiple orders are placed concurrently.
+
+    Returns:
+        The final per-attempt outcome string ('filled' | 'timeout' | 'cancelled'
+        | 'place_failed'), or a short sentinel ('no_token_id' | 'already_open')
+        when execution never reached ``_attempt``. Callers use this to resolve
+        the scan_decisions verdict seam (issue #756) -- run.py maps 'filled' to
+        'traded_live' and everything else to 'timeout_today' (with the raw
+        outcome carried in gate_detail for diagnostics).
     """
     from src.scripts.run import _append_live_trade  # noqa: PLC0415
 
@@ -107,14 +115,14 @@ def _execute_live(
     if not token_id:
         log.info("  [live] no token_id for %s..., skipping", candidate.bracket.ticker[:16])
         risk_manager.close_position()
-        return
+        return "no_token_id"
 
     order_key = token_id
     with _order_manager._open_orders_lock:
         if order_key in _order_manager._open_orders:
             log.info("  [live] skip %s %s... -- GTC order already open on exchange", candidate.side, candidate.bracket.ticker[:16])
             risk_manager.close_position()
-            return
+            return "already_open"
         _order_manager._open_orders.add(order_key)
 
     predicted_price = round(candidate.confidence * 100)
@@ -243,7 +251,7 @@ def _execute_live(
         order_id, outcome, cancel_ok = _attempt(candidate.price_cents, candidate.edge_cents)
         if outcome == "place_failed":
             risk_manager.close_position()
-            return
+            return outcome
 
         # Issue #743: exactly one reprice-retry after a timeout that was cleanly
         # cancelled. In-process only -- the same-day entry guard (has_live_trade_today)
@@ -263,6 +271,7 @@ def _execute_live(
         risk_manager.close_position()
         if outcome == "filled":
             risk_manager.record_pnl(0.0)  # Actual PnL resolved at settlement
+        return outcome
     finally:
         with _order_manager._open_orders_lock:
             _order_manager._open_orders.discard(order_key)
