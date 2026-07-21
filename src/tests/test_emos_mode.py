@@ -512,6 +512,94 @@ class TestEmosServingMu:
         assert sigma == pytest.approx(2.0)
 
 
+class TestEmosServingMuActiveStackParity:
+    """Issue #760: emos_serving_mu must average exactly the WeatherState
+    attributes for the ACTIVE FORECAST_STACK's models -- the same
+    equal-weight set fetch_training_data trains on -- never simply
+    "whatever forecast attributes happen to be non-None on state".
+    """
+
+    def _state(self, **overrides):
+        now = datetime(2026, 7, 21, 14, 0)
+        defaults = dict(
+            station="KORD", now_local=now, sunset_local=now,
+            current_high_f=70.0, current_high_time=now,
+            latest_temp_f=70.0, latest_temp_time=now,
+            forecast_high_f=None, secondary_forecast_f=None,
+        )
+        defaults.update(overrides)
+        return WeatherState(**defaults)
+
+    def test_hrrr_nbm_active_stack_uses_equal_weight_mean_of_four(self):
+        """Active stack = hrrr_nbm: mu_raw must be the mean of all 4 members."""
+        from src.model.emos_mode import emos_serving_mu
+        db = _db()
+        db.set_config("FORECAST_STACK", "hrrr_nbm")
+        state = self._state(
+            forecast_high_f=80.0, secondary_forecast_f=84.0,
+            hrrr_forecast_f=76.0, nbm_forecast_f=78.0,
+        )
+        # No emos_calibration row -> apply_emos passes mu_raw through unchanged,
+        # isolating the member-selection behaviour under test.
+        mu, sigma = emos_serving_mu(state, "Chicago", db, 2.0)
+        assert mu == pytest.approx((80.0 + 84.0 + 76.0 + 78.0) / 4)
+        assert sigma == pytest.approx(2.0)
+
+    def test_intl_ecmwf_icon_active_stack_uses_equal_weight_mean_of_four(self):
+        """Active stack = intl_ecmwf_icon: mu_raw must be the mean of all 4 members."""
+        from src.model.emos_mode import emos_serving_mu
+        db = _db()
+        db.set_config("FORECAST_STACK", "intl_ecmwf_icon")
+        state = self._state(
+            forecast_high_f=20.0, secondary_forecast_f=22.0,
+            ecmwf_forecast_f=19.0, icon_forecast_f=21.0,
+        )
+        mu, sigma = emos_serving_mu(state, "Tokyo", db, 1.0)
+        assert mu == pytest.approx((20.0 + 22.0 + 19.0 + 21.0) / 4)
+        assert sigma == pytest.approx(1.0)
+
+    def test_hrrr_nbm_active_stack_missing_member_uses_whats_available(self):
+        """A station without HRRR/NBM data yet (active stack hrrr_nbm) must
+        still serve off whichever members ARE present, not return None."""
+        from src.model.emos_mode import emos_serving_mu
+        db = _db()
+        db.set_config("FORECAST_STACK", "hrrr_nbm")
+        state = self._state(forecast_high_f=80.0, secondary_forecast_f=84.0)
+        mu, _ = emos_serving_mu(state, "Chicago", db, 2.0)
+        assert mu == pytest.approx((80.0 + 84.0) / 2)
+
+    def test_baseline_serving_byte_for_byte_unchanged_with_extra_attrs_present(self):
+        """Issue #760 DoD: baseline serving is byte-for-byte unchanged. A state
+        that carries HRRR/NBM/ECMWF/ICON values (channels are captured
+        independent of the active stack -- #431/#438) must NOT pull them into
+        mu_raw while FORECAST_STACK stays baseline (the unset/default value):
+        serving must equal the pre-#760 two-member (nws, open_meteo) mean.
+        """
+        from src.model.emos_mode import emos_serving_mu
+        db = _db()  # FORECAST_STACK unset -> resolves to the 'baseline' default
+        state = self._state(
+            forecast_high_f=80.0, secondary_forecast_f=84.0,
+            hrrr_forecast_f=1000.0, nbm_forecast_f=-1000.0,
+            ecmwf_forecast_f=1000.0, icon_forecast_f=-1000.0,
+        )
+        mu, sigma = emos_serving_mu(state, "Chicago", db, 2.0)
+        assert mu == pytest.approx((80.0 + 84.0) / 2)
+        assert sigma == pytest.approx(2.0)
+
+    def test_baseline_serving_unchanged_when_forecast_stack_explicitly_set(self):
+        """Same as above but with FORECAST_STACK explicitly written as
+        'baseline' (rather than left unset) -- both paths must agree."""
+        from src.model.emos_mode import emos_serving_mu
+        db = _db()
+        db.set_config("FORECAST_STACK", "baseline")
+        state = self._state(
+            forecast_high_f=80.0, secondary_forecast_f=84.0,
+            hrrr_forecast_f=1000.0, nbm_forecast_f=-1000.0,
+        )
+        mu, _ = emos_serving_mu(state, "Chicago", db, 2.0)
+        assert mu == pytest.approx((80.0 + 84.0) / 2)
+
+
 # ---------------------------------------------------------------------------
 # Test 7b: resolve_sigma_raw — issue #448, EMOS-shadow picks up ensemble sigma
 # ---------------------------------------------------------------------------
@@ -634,18 +722,20 @@ class TestEmosMinSamplesConfig:
 
 
 # ---------------------------------------------------------------------------
-# Test 9: serving members parity guard — issue #666 train/serve tripwire
+# Test 9: serving members parity guard — issues #666/#760 train/serve tripwire
 # ---------------------------------------------------------------------------
 
 class TestServingMembersParityGuard:
-    """Issue #666: guard that FORECAST_STACK expansion does not break train/serve
-    parity by adding models that serving cannot access on WeatherState.
+    """Issue #666/#760: guard that FORECAST_STACK expansion does not break
+    train/serve parity by adding models that serving cannot access on
+    WeatherState.
 
     Training averages model_forecast_log rows for the active FORECAST_STACK with
     EQUAL weights; serving must feed apply_emos the same equal-weight mean of the
-    same feeds. If FORECAST_STACK expands beyond baseline (HRRR/NBM/ECMWF/ICON)
-    without expanding _SERVING_MEMBERS, training will include members serving
-    cannot see — recreating the exact train/serve skew #658/#664 fixed.
+    same feeds. Since #760, _SERVING_MEMBERS-equivalent attributes are resolved
+    per-call from _serving_members_for_stack(active_stack_models) — every model
+    in a promotable regime (hrrr_nbm, intl_ecmwf_icon) now has a WeatherState
+    attribute, closing the train/serve skew #658/#664 originally guarded against.
     """
 
     def test_baseline_stack_has_sufficient_serving_members(self):
@@ -663,20 +753,21 @@ class TestServingMembersParityGuard:
         assert len(_SERVING_MEMBERS) == 2
 
     def test_live_forecast_stack_config_parity_guard(self):
-        """Guard: live active FORECAST_STACK is matched by _SERVING_MEMBERS.
+        """Guard: live active FORECAST_STACK is matched by its serving members.
 
         This test reads the active FORECAST_STACK from live config (seeded to
         defaults, as production does) and asserts the parity invariant: the
-        number of scan-time attributes in _SERVING_MEMBERS must be >= the
-        number of models in the active stack.
+        number of scan-time attributes _serving_members_for_stack resolves for
+        the active stack must be >= the number of models in that stack.
 
-        Currently this test passes because FORECAST_STACK defaults to 'baseline'
-        (2 members, 2 serving members). If someone flips the live default config
-        to e.g. 'hrrr_nbm' (4 models) without expanding _SERVING_MEMBERS (still 2),
-        this test will fail, enforcing the issue #666 contract.
+        Currently this passes because FORECAST_STACK defaults to 'baseline'
+        (2 models, 2 serving members) — and, since #760, would also pass if the
+        live default were flipped to 'hrrr_nbm' or 'intl_ecmwf_icon' (see
+        test_serving_members_parity_guard below), enforcing the issue #666
+        contract for every regime that's actually promotable today.
         """
         from src.config import FORECAST_STACK_MODELS, get_live_config
-        from src.model.emos_mode import _SERVING_MEMBERS
+        from src.model.emos_mode import _active_stack_models, _serving_members_for_stack
 
         db = _db()
         seed_config(db)
@@ -684,34 +775,70 @@ class TestServingMembersParityGuard:
         live_config = get_live_config(db)
         active_stack = live_config.get("FORECAST_STACK", "baseline")
         stack_models = FORECAST_STACK_MODELS.get(active_stack, frozenset())
+        serving_attrs = _serving_members_for_stack(_active_stack_models(db))
 
-        assert len(_SERVING_MEMBERS) >= len(stack_models), (
+        assert len(serving_attrs) >= len(stack_models), (
             f"Active FORECAST_STACK '{active_stack}' has {len(stack_models)} models "
-            f"({', '.join(sorted(stack_models))}), but _SERVING_MEMBERS only has "
-            f"{len(_SERVING_MEMBERS)} scan-time attributes ({', '.join(_SERVING_MEMBERS)}). "
-            f"Before expanding FORECAST_STACK, add new model forecasts to WeatherState "
-            f"and update _SERVING_MEMBERS to match (see issue #666)."
+            f"({', '.join(sorted(stack_models))}), but serving only resolves "
+            f"{len(serving_attrs)} scan-time attributes ({', '.join(serving_attrs)}). "
+            f"Before promoting FORECAST_STACK, add new model forecasts to WeatherState "
+            f"and update src.config.MODEL_STATE_ATTRS to match (see issue #666)."
         )
 
-    def test_non_baseline_stacks_would_fail_parity_check(self):
-        """Unit test: demonstrate that the guard correctly detects parity failures.
-
-        This test proves the guard logic by directly asserting the failure condition
-        for non-baseline stacks. It does NOT mock the live config (staying true to
-        the repo's current baseline default), but shows what would happen if those
-        stacks were expanded without updating _SERVING_MEMBERS.
+    @pytest.mark.parametrize("stack_name", ["hrrr_nbm", "intl_ecmwf_icon"])
+    def test_serving_members_parity_guard(self, stack_name):
+        """Issue #760 DoD: the parity guard passes for BOTH promotable expanded
+        stacks — every model in the regime has a scan-time WeatherState
+        attribute reachable via _serving_members_for_stack, and that attribute
+        actually exists on WeatherState (not just in the mapping).
         """
         from src.config import FORECAST_STACK_MODELS
-        from src.model.emos_mode import _SERVING_MEMBERS
+        from src.model.emos_mode import _serving_members_for_stack
+        from src.model.envelope import WeatherState
 
-        # Confirm the failure condition for each non-baseline stack
-        for stack_name in ["hrrr_nbm", "intl_ecmwf_icon", "full"]:
-            stack_models = FORECAST_STACK_MODELS[stack_name]
-            assert len(_SERVING_MEMBERS) < len(stack_models), (
-                f"Guard should detect parity failure for stack '{stack_name}': "
-                f"it has {len(stack_models)} models but _SERVING_MEMBERS only has "
-                f"{len(_SERVING_MEMBERS)} members. This proves the guard logic works."
+        stack_models = FORECAST_STACK_MODELS[stack_name]
+        serving_attrs = _serving_members_for_stack(stack_models)
+
+        assert len(serving_attrs) == len(stack_models), (
+            f"Stack '{stack_name}' has {len(stack_models)} models "
+            f"({', '.join(sorted(stack_models))}) but only resolved "
+            f"{len(serving_attrs)} WeatherState attributes ({', '.join(serving_attrs)})."
+        )
+
+        dummy = WeatherState(
+            station="KORD",
+            now_local=datetime(2026, 7, 21, 12, 0),
+            sunset_local=datetime(2026, 7, 21, 20, 0),
+            current_high_f=70.0,
+            current_high_time=datetime(2026, 7, 21, 12, 0),
+            latest_temp_f=70.0,
+            latest_temp_time=datetime(2026, 7, 21, 12, 0),
+            forecast_high_f=None,
+        )
+        for attr in serving_attrs:
+            assert hasattr(dummy, attr), (
+                f"WeatherState is missing attribute {attr!r} required by stack "
+                f"'{stack_name}' (see src.config.MODEL_STATE_ATTRS)"
             )
+
+    def test_full_stack_still_fails_parity_gefs_out_of_scope(self):
+        """The 'full' stack adds 'gefs' on top of hrrr_nbm/intl_ecmwf_icon.
+        GEFS is an ensemble-spread product consumed for sigma, not a single
+        forecast-high value, and has no MODEL_STATE_ATTRS entry by design
+        (see src.config.MODEL_STATE_ATTRS docstring) — 'full' promotion is
+        explicitly out of scope for #760. This documents the known gap
+        instead of silently regressing coverage.
+        """
+        from src.config import FORECAST_STACK_MODELS
+        from src.model.emos_mode import _serving_members_for_stack
+
+        stack_models = FORECAST_STACK_MODELS["full"]
+        serving_attrs = _serving_members_for_stack(stack_models)
+        assert len(serving_attrs) < len(stack_models), (
+            "Expected 'full' stack to still fail the parity guard (gefs has no "
+            "WeatherState attribute) — if this now passes, MODEL_STATE_ATTRS "
+            "gained a 'gefs' entry and this test (and its docstring) are stale."
+        )
 
 
 # ---------------------------------------------------------------------------

@@ -10,6 +10,7 @@ from src.config import (
     STATIONS, STATION_TZ, STATION_ACTIVE_HOURS,
     get_source_priority, get_canonical_station_feeds,
     CLIMB_BUILDER_24H_METAR_STATIONS,
+    CONFIG_DEFAULTS, FORECAST_STACK_MODELS,
 )
 from src.data.metar import (
     fetch_all_metars_today, compute_daily_high,
@@ -25,6 +26,7 @@ from src.model.intraday_correction import compute_correction
 from src.model.residual_correction import apply_residual_correction
 from src.model.envelope import WeatherState
 from src.model.envelope_low import WeatherStateLow
+from src.model.ensemble_distribution import _lowest_lead_per_model
 from src.data.obs_consensus import compute_consensus_high
 
 log = logging.getLogger(__name__)
@@ -117,6 +119,38 @@ def _deb_station_region(station: str, unit: str) -> str:
     if station[:1] in _EU_ICAO_PREFIXES:
         return "eu"
     return "global"
+
+
+def _extra_stack_model_highs(station: str, db) -> "dict[str, float]":
+    """Return {model: forecast_high_f} for models the ACTIVE FORECAST_STACK
+    needs beyond the always-populated baseline pair (nws, open_meteo), for
+    scan-time WeatherState (issue #760, EMOS serving-member parity).
+
+    Reads today's (UTC date) model_forecast_log rows for *station* -- the
+    lowest lead_hours row per model, same source src.model.
+    ensemble_distribution.get_ensemble_distribution() reads -- and keeps only
+    the models the active stack actually uses via src.config.
+    FORECAST_STACK_MODELS / MODEL_STATE_ATTRS.
+
+    Returns {} (no DB query at all) when the active stack is baseline or
+    unrecognised: baseline never needs these values, so this keeps baseline
+    serving byte-for-byte unchanged and avoids an unnecessary read on the
+    hot scan path for the default deployment. Non-baseline stacks are
+    captured independently of which stack is active (issue context: HRRR/
+    NBM/ECMWF/ICON channels have been logging since ~2026-06-29 while the
+    served stack stayed baseline), so this can return values for stations
+    the active stack doesn't apply to (e.g. an EU station with no HRRR row)
+    -- callers get {} entries for those and WeatherState leaves the
+    corresponding attribute None, same as any other missing forecast.
+    """
+    active_stack = db.get_config("FORECAST_STACK") or CONFIG_DEFAULTS["FORECAST_STACK"]
+    stack_models = FORECAST_STACK_MODELS.get(active_stack, frozenset())
+    extra_models = stack_models - {"nws", "open_meteo"}
+    if not extra_models:
+        return {}
+    today_str = datetime.now(timezone.utc).date().isoformat()
+    per_model = _lowest_lead_per_model(station, today_str, db)
+    return {model: value for model, value in per_model.items() if model in extra_models}
 
 
 def _get_metars_for_station(station: str, metars_cache: "dict[str, list] | None") -> list:
@@ -367,6 +401,10 @@ def _build_one_station(
     forecast_secondary = fetch_secondary_forecast(lat, lon)
     forecast_gfs = fetch_gfs_forecast_high(lat, lon)
 
+    # Scan-time per-model forecast-highs for expanded FORECAST_STACK regimes
+    # (issue #760) -- {} (and no DB query) when the active stack is baseline.
+    extra_stack_highs = _extra_stack_model_highs(station, db) if db is not None else {}
+
     if db is not None:
         # NOTE: forecast logging to model_forecast_log was removed from the scan loop.
         # The cron capture worker (src/scripts/capture_forecasts.py) is the sole
@@ -396,6 +434,10 @@ def _build_one_station(
         secondary_forecast_f=forecast_secondary,
         obs_bias_offset_f=obs_bias_offset_f,
         deb_mu_f=deb_mu_f,
+        hrrr_forecast_f=extra_stack_highs.get("hrrr"),
+        nbm_forecast_f=extra_stack_highs.get("nbm"),
+        ecmwf_forecast_f=extra_stack_highs.get("ecmwf"),
+        icon_forecast_f=extra_stack_highs.get("icon"),
     )
     if db is not None:
         corrected = compute_correction(city, state, db)
