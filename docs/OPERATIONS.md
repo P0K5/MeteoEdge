@@ -1716,6 +1716,33 @@ diversified 3-4 channel ensemble but is actually a monoculture.
 
 Every currently-*registered* channel has a deliberate, non-`None` `group_id` — the "documented reason for `None`" escape hatch in the #550 acceptance criteria is not exercised by any channel today.
 
+### Update (issue #761): `gfs` removed from the DEB registry entirely
+
+On 2026-07-21, `model_weights` showed `open_meteo` averaging 0.301 and `gfs`
+averaging 0.276 across 26 cities — a combined **~58% of DEB ensemble weight**
+for what is, per the provenance table above, the same physical GFS model
+counted twice. Rather than continue to merely *bound* the pair's combined
+weight via `gfs_family`'s `GROUP_WEIGHT_CAP`, issue #761 removed the `gfs`
+channel from the DEB registry outright (Option (a) from the issue, not the
+group-cap alternative (b)) — `open_meteo` remains as the sole GFS
+representative in DEB, and `open_meteo`'s `group_id="gfs_family"` is kept
+unchanged as a forward-compatible placeholder for `gefs` (issue #448, not yet
+wired in). With `gfs_family` now a single-member group, `GROUP_WEIGHT_CAP`
+incidentally also bounds `open_meteo`'s own weight at 0.7 — a defensible
+diversification safeguard, not a targeted behavior change.
+
+Scope: this change touches only `src/model/deb_weighting.py`'s channel
+registry (`register_model("gfs", ...)` removed, plus its now-dead
+`GFS_DATA_VALID_FROM` duplicate-era filter). It does **not** touch
+`src/config.py`'s `FORECAST_STACK_MODELS["baseline"]` (`{nws, open_meteo}`),
+which the EMOS baseline regime depends on and which never included `gfs` in
+the first place — DEB and EMOS's stack-membership mapping are independent
+systems. `gfs` ingestion into `model_forecast_log` via
+`src/scripts/capture_forecasts.py` is unaffected; DEB's `compute_weights()`
+now simply skips those rows. See
+`src/tests/test_deb_weighting.py::TestGfsDropPath` and
+`::TestBaselineEmosRegimeUnaffectedByGfsDrop` for the regression coverage.
+
 ### `_apply_group_cap` redistribution fix
 
 Grouping `open_meteo`/`gfs` under `gfs_family` means that for EU/global-only
