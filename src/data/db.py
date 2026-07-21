@@ -2722,9 +2722,9 @@ class Database:
 
         forecast_source=None resolves to the active FORECAST_STACK (see
         _active_forecast_source) — same resolution pattern as the
-        emos_calibration read/write helpers (#659). Explicit so two stacks'
-        shadow runs never collide on the same (city, date, model_mode) row
-        (issue #759).
+        emos_calibration read/write helpers (issue #659). The shadow runner
+        passes it explicitly so two different stacks' runs never collide on
+        the same (city, date, model_mode) row (issue #759).
         """
         if forecast_source is None:
             forecast_source = self._active_forecast_source()
@@ -2751,10 +2751,10 @@ class Database:
         'legacy' baseline row logged alongside each 'emos_shadow' row
         (issue #667) does not silently double the promotion sample count.
 
-        forecast_source=None resolves to the active FORECAST_STACK (issue
-        #759) — the promotion guard must count samples for the stack
-        currently being served/evaluated only, never pooling evidence across
-        a stack switch.
+        forecast_source=None resolves to the active FORECAST_STACK, so the
+        promotion guard counts CRPS samples for the currently-served stack
+        only, never pooling evidence accrued under a different stack across
+        a FORECAST_STACK switch (issue #759).
         """
         if forecast_source is None:
             forecast_source = self._active_forecast_source()
@@ -2779,11 +2779,11 @@ class Database:
         the calibration runs more than once on the same calendar day (e.g. after
         a process restart resets the in-memory once-per-day gate).
 
-        forecast_source=None resolves to the active FORECAST_STACK (issue
-        #759) — scoped so two different stacks calibrated on the same day
-        each get their own row instead of the second stack silently skipping
-        because the first already claimed that day's (city, date, model_mode)
-        slot.
+        forecast_source=None resolves to the active FORECAST_STACK, so two
+        different stacks calibrated on the same day each get their own row
+        instead of the second stack silently skipping because the first
+        already claimed that day's (city, date, model_mode) slot
+        (issue #759).
         """
         if forecast_source is None:
             forecast_source = self._active_forecast_source()

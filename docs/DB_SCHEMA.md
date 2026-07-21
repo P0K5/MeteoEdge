@@ -418,6 +418,44 @@ UNIQUE(city, model_mode, forecast_source, sigma_source, lead_hours)
 
 ---
 
+### emos_crps_log
+
+**Purpose:** Per-city, per-day CRPS (Continuous Ranked Probability Score) evidence log. Backs the `emos_mode.get_city_mode` promotion guard — a city needs at least `EMOS_MIN_SAMPLES_PROMOTION` logged rows before it may serve `emos_primary` — and the EMOS-vs-legacy comparison surfaced on the dashboard (`/api/emos-shadow/status`).
+
+**Writer:** `scripts/run_emos_shadow.py` (`_run_calibration`), once per city per day  
+**Reader:** `emos_mode._primary_allowed` (promotion guard), `Database.get_emos_shadow_city_status` (dashboard)
+
+| Column | Type | Units | Nullable | Description |
+|--------|------|-------|----------|-------------|
+| `id` | INTEGER PRIMARY KEY | | No | Auto-increment row ID |
+| `city` | TEXT NOT NULL | city name | No | City (e.g., "Chicago") |
+| `date` | TEXT NOT NULL | YYYY-MM-DD | No | Calendar date the CRPS score was computed for |
+| `crps_score` | REAL NOT NULL | continuous ranked probability | No | Mean CRPS over that day's training triples for this `model_mode`/`forecast_source` |
+| `model_mode` | TEXT NOT NULL DEFAULT 'emos_shadow' | categorical | No | `'emos_shadow'` (EMOS-transformed coefficients, what the promotion guard counts) or `'legacy'` (same triples scored with raw, uncorrected mu/sigma — the EMOS-vs-legacy comparison baseline, issue #667) |
+| `forecast_source` | TEXT NOT NULL DEFAULT 'baseline' | categorical | No | Forecast stack this CRPS row was scored against (e.g. `'baseline'`, an expanded stack). Default `'baseline'` backfills every pre-#759 row. Keys the promotion counter and per-day dedup guard alongside `(city, model_mode)` so two different stacks calibrated the same day each accrue independent CRPS evidence instead of colliding on one shared daily slot (issue #759). |
+| `logged_at` | TEXT NOT NULL | ISO 8601 timestamp (UTC) | No | When the row was written |
+
+**DDL:**
+```sql
+CREATE TABLE IF NOT EXISTS emos_crps_log (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    city            TEXT NOT NULL,
+    date            TEXT NOT NULL,
+    crps_score      REAL NOT NULL,
+    model_mode      TEXT NOT NULL DEFAULT 'emos_shadow',
+    forecast_source TEXT NOT NULL DEFAULT 'baseline',
+    logged_at       TEXT NOT NULL
+);
+```
+
+**Notes:**
+- One `emos_shadow` row and one `legacy` row are written per city per calendar day (never more — `emos_crps_logged_for_date` dedups a same-day re-run, e.g. after a process restart).
+- `get_emos_crps_count(city, model_mode='emos_shadow', forecast_source=None)` — the promotion counter — and `emos_crps_logged_for_date` both resolve `forecast_source=None` to the active `FORECAST_STACK` (via `Database._active_forecast_source`, same resolver `emos_calibration` reads/writes use), so callers that don't pass it explicitly automatically scope to whichever stack is currently active.
+- The promotion guard in `emos_mode._primary_allowed` therefore counts CRPS samples for the active stack only — evidence logged under a different `forecast_source` never pools into another stack's promotion decision, even across a `FORECAST_STACK` switch.
+- `Database.get_emos_shadow_city_status`'s `mean_crps`/`legacy_mean_crps` dashboard aggregates are scoped by `model_mode` only (not `forecast_source`) — out of scope for #759, tracked as a possible follow-up if per-stack dashboard display parity is needed.
+
+---
+
 ### bot_config
 
 **Purpose:** Persistent key-value store for operator-adjustable bot parameters. Values survive restarts and are authoritative over environment variables once seeded.
