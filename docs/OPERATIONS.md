@@ -412,6 +412,39 @@ Controlled entirely by env vars; DB-backed via `CONFIG_DEFAULTS`.
 
 Dropped from the pre-#757 contract: `bias_corrected` (no parallel model to compute it from any more) and the raw `distribution` histogram (superseded by the `forecast_inputs` summary above).
 
+#### Edge Tab — Frontend (issue #758)
+
+`src/dashboard/static/index.html`'s Edge tab renders the per-bracket decision
+view described in `docs/design/edge-tab-bracket-decisions.md`, consuming the
+API above 1:1 (no client-side recompute). A few implementation decisions
+that operators/reviewers may want to know about, beyond what the design spec
+already covers:
+
+- **D+1 button enablement.** The endpoint has no dedicated "does a D+1
+  market exist" field, so the frontend fetches the D+1 partition in parallel
+  with Today's on every station select and enables the D+1 toggle only when
+  that partition is non-empty. An empty D+1 partition can mean either "no
+  market yet" or "not scanned yet" — both read as "nothing to show" from the
+  UI's point of view, so the button stays disabled with the (unchanged from
+  v1) "No D+1 market available for this station yet" tooltip either way.
+- **`traded_live` is rendered without a paper/live qualifier.** Per
+  `src/scripts/run.py`'s `_persist_scan_decisions` docstring, a paper-mode
+  poll (no live trader configured) can leave a bracket at the scanner's
+  `traded_live` placeholder without ever confirming a real fill —
+  `scan_decisions` has no column that distinguishes that case from a
+  confirmed live trade, so the UI cannot safely add a "(paper)" qualifier
+  without risking mislabeling a genuine live trade. Flagged as a possible
+  follow-up if operators need that distinction (would require a new
+  persisted column).
+- **Forecast-inputs range label.** `forecast_inputs.ensemble_range_low/high`
+  are the raw min/max across contributing models, not a percentile — the UI
+  labels the row "Range (min–max)" rather than the design spec's original
+  "5th–95th pct" wording, to avoid claiming a statistic the data doesn't
+  represent.
+- **#528 (click-through to the matching Polymarket market)** is not
+  implemented — the response above carries no market identifier
+  (slug/`condition_id`/ticker) per bracket to link to.
+
 #### Per-Station Residual API
 
 `GET /api/stations/{metar}/residual` returns a list of residual stats entries, one per distinct `(station, source)` pair that has qualified data (≥ `RESIDUAL_MIN_SAMPLES` rows) in the trailing `RESIDUAL_WINDOW_DAYS`. Each entry includes:
