@@ -1,0 +1,70 @@
+{
+  "run_date": "2026-07-22",
+  "transcripts_analyzed": [
+    "2950ec26-37ae-4d3b-8f7d-d7d06e3c6b77.jsonl",
+    "d4bbb525-86df-45f1-980b-1463683df9fe.jsonl",
+    "d11c6870-f7ef-4f2e-a447-15e7a7edbfb3.jsonl",
+    "102b140e-f7ea-4613-85d9-1d0c966d8074.jsonl",
+    "9d53aef9-c324-4727-af37-a542ccb543f2.jsonl",
+    "40289982-6fe9-4cb4-adfa-26e374489b65.jsonl",
+    "7408f95c-7a6f-4970-bb2b-a50aeddb5fe8.jsonl",
+    "c8beb655-6111-49e7-8562-e1ef865e3127.jsonl",
+    "3e2449d9-aa9b-4fdf-a273-811de3eb486f.jsonl",
+    "38deb1bb-a79d-44ba-b91b-81506cb1c083.jsonl"
+  ],
+  "cost_guard": {
+    "used": false,
+    "reason": "NVIDIA_NIM_API_KEY not set in this environment; triage performed directly by Claude instead of the NIM cost-guard pass. Noted per skill instructions as a bypass, not a silent skip."
+  },
+  "baseline": {
+    "tokens_per_completed_issue": 2918112,
+    "delta_vs_previous": "+7.0% (2,727,120 -> 2,918,112, 2026-07-21 -> 2026-07-22)"
+  },
+  "proposals": [
+    {
+      "id": "P1",
+      "target_file": "CLAUDE.md",
+      "category": "poor-query",
+      "evidence": [
+        {
+          "transcript": "7408f95c-7a6f-4970-bb2b-a50aeddb5fe8.jsonl",
+          "turns": [65, 40, 44, 47, 52, 66, 351],
+          "quote": "Go. First I need the board item IDs for #755/#759/#761/#762 -- they're newer than the last session-context.env refresh (which stops at #177), so I'll resolve them directly and pass them in the spawn prompts."
+        },
+        {
+          "transcript": "102b140e-f7ea-4613-85d9-1d0c966d8074.jsonl",
+          "turns": [26, 29, 31, 34, 36, 58],
+          "quote": "query($cursor: String) { node(id: \"PVT_kwHOAU95o84BVOQN\") { ... on ProjectV2 { items(first: 100, after: $cursor) ... } } } -- repeated 5-6 times with hand-written cursor-chasing python scripts between calls"
+        },
+        {
+          "transcript": "c8beb655-6111-49e7-8562-e1ef865e3127.jsonl",
+          "turns": [313, 1607, 1609, 1613, 1615, 1619],
+          "quote": "query($projectId: ID!) { node(id: $projectId) { ... on ProjectV2 { items(first: 100 / last: 20) ... } } } -- repeated full-board dumps plus a per-issue GraphQL loop for #452/#458/#459/#460"
+        }
+      ],
+      "diff_summary": "CLAUDE.md's session-init step 1 already says 'if values are empty or missing, run bootstrap_session.sh first', but every observed violation happened AFTER session init had already completed successfully -- the instruction reads as a one-time init-time check, so once an agent is mid-task and discovers a specific issue's item ID is missing (because the issue was created after the last session-context.env refresh), it silently falls through to hand-written GraphQL instead of re-running the one cheap script. Added a standing paragraph directly after the init checklist stating this rule applies for the whole session, not just at start, and explicitly forbidding hand-rolled board queries/pagination loops as a substitute.",
+      "expected_impact": "Each observed incident cost 5-8 extra tool-call turns and multiple multi-KB paginated GraphQL responses (full board dumps at up to 100 items/page, some walked across 5+ pages, one incident additionally mis-guessed the repo owner and retried) versus one bootstrap_session.sh call. This pattern recurred in 3 of the 10 sampled transcripts (7408f95c, 102b140e, c8beb655) -- plausibly a meaningful share of the +7% tokens-per-issue regression observed this run vs 2026-07-21's baseline. Conservatively ~5,000-15,000 tokens and 5+ turns avoided per future incident.",
+      "confidence": "high"
+    },
+    {
+      "id": "P2",
+      "target_file": "agents/pm.md",
+      "category": "missed-skill",
+      "evidence": [
+        {
+          "transcript": "2950ec26-37ae-4d3b-8f7d-d7d06e3c6b77.jsonl",
+          "turns": [196, 331, 573, 608],
+          "quote": "turn 196: only Skill(board-status) invoked all session; turns 331/573: gh pr create for #785/#790 with no How to deploy section; turn 608 (user): \"i'm still seeing in the PR templates that the agents are not posting a how to deploy summary together with the PR. I though this had been fixed already.\""
+        },
+        {
+          "transcript": "2950ec26-37ae-4d3b-8f7d-d7d06e3c6b77.jsonl",
+          "turns": [],
+          "quote": "agents/pm.md line 45 (pre-fix): 'Complex issues: implement yourself, or assign to mid-dev with guidance.' -- no pointer to dev-workflow's PR checklist for the self-implement path, and agents/pm.md's own skill-routing table (lines 27-31) lists create-issues/pr-review/board-status but omits dev-workflow entirely."
+        }
+      ],
+      "diff_summary": "Issue #774 added the 'How to deploy' requirement to dev-workflow/pr-review SKILL.md, but dev-workflow's own description ('the mandatory issue-to-PR workflow for developers (Mid and Junior)') and agents/pm.md's skill-routing table both frame it as a Mid/Junior-only skill. When the PM implements an issue directly per its own explicit permission ('Complex issues: implement yourself'), nothing routes it back to dev-workflow's checklist -- confirmed by this session doing exactly that on two PRs (#785, #790) and skipping the section on both, caught only by user inspection after merge. Added a row to pm.md's skill-routing table pointing self-implementation at dev-workflow, plus an explicit reminder at the 'implement yourself' line naming the How-to-deploy section specifically (the step most likely to be skipped, since it's the newest addition to the checklist).",
+      "expected_impact": "Prevents the exact recurrence this session hit: 2 merged PRs missing the section, 1 user-noticed gap, 2 retroactive gh pr edit round-trips post-merge to fix the record. Going forward, saves that whole correction cycle (~1 user turn + 2-4 tool calls) on every PR the PM opens directly instead of delegating -- and closes the gap #774 was meant to close but didn't, since #774 only touched the skill files a self-implementing PM was never routed to.",
+      "confidence": "high"
+    }
+  ]
+}
