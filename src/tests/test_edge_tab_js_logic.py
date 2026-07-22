@@ -15,6 +15,14 @@ Every assertion here mirrors a concrete rule from
 docs/design/edge-tab-bracket-decisions.md §4/§5, so a regression that changes
 gate-chip wording or row-emphasis precedence fails loudly instead of only
 being caught by an operator staring at the live dashboard.
+
+It also drives `loadEdgeStationData()` end-to-end (issue #787 / PR #783) to
+cover the Today->D+1 auto-advance branch: a stubbed `fetch` keyed off the
+`next_day` query param feeds each of the three cases the "AI / NVIDIA NIM
+review" flagged as untested, and `renderEdgeDecisionTable`/`showEdgeError`
+are reassigned to recording spies (same top-level-function-reassignment
+trick as the DOM stubs) so the test can assert on what actually got
+rendered without a browser.
 """
 from __future__ import annotations
 
@@ -178,9 +186,83 @@ _ASSERTIONS = textwrap.dedent("""
     assert.strictEqual(bracketLabel({ range: '68–70°F', bracket_low: 68, bracket_high: 70 }, 'F'), '68–70°F');
     assert.strictEqual(bracketLabel({ bracket_low: -50, bracket_high: 40 }, 'C'), '≤4°C');
     assert.strictEqual(bracketLabel({ bracket_low: 100, bracket_high: 200 }, 'C'), '≥38°C');
-
-    console.log('ALL_EDGE_TAB_JS_ASSERTIONS_PASSED');
 """) % {"verdicts": EXPECTED_VERDICTS}
+
+# loadEdgeStationData() auto-advance-to-D+1 tests (issue #787 / PR #783). These
+# drive the real function end-to-end with a stubbed fetch keyed off the
+# `next_day` query param, then assert on the module-scope globals and
+# render-function call args the function drives -- same "spy by reassigning
+# the top-level function declaration" trick used for DOM stubs above, since
+# nothing in this file has a mocking library available.
+_D1_AUTOADVANCE_ASSERTIONS = textwrap.dedent("""
+    function jsonResp(body) { return { ok: true, json: async () => body }; }
+    const failedResp = { ok: false };
+
+    let fetchResponses = { today: null, d1: null };
+    let fetchCallCount = 0;
+    global.fetch = async (url) => {
+      fetchCallCount += 1;
+      const isNextDay = /next_day=true/.test(url);
+      return isNextDay ? fetchResponses.d1 : fetchResponses.today;
+    };
+
+    let renderTableCalls = [];
+    renderEdgeDecisionTable = (...args) => { renderTableCalls.push(args); };
+    let errorCalls = 0;
+    showEdgeError = () => { errorCalls += 1; };
+
+    const TODAY_EMPTY = jsonResp({ brackets: [] });
+    const D1_WITH_DATA = jsonResp({ brackets: [{ range: '68-70', bracket_low: 68, bracket_high: 70 }] });
+    const TODAY_WITH_DATA = jsonResp({ brackets: [{ range: '60-62', bracket_low: 60, bracket_high: 62 }] });
+
+    (async () => {
+      // Case 1: Today empty, D+1 has data -- auto-advance fires, reuses the
+      // already-fetched d1Data local (no extra request beyond the initial
+      // parallel pair), and does not surface the error banner.
+      fetchResponses = { today: TODAY_EMPTY, d1: D1_WITH_DATA };
+      fetchCallCount = 0;
+      renderTableCalls = [];
+      errorCalls = 0;
+      await loadEdgeStationData('KTEST');
+      assert.strictEqual(edgeIsNextDay, true, 'case 1: edgeIsNextDay should be true');
+      assert.strictEqual(fetchCallCount, 2, 'case 1: only the initial parallel today+d1 fetch, no extra request');
+      assert.strictEqual(renderTableCalls.length, 1, 'case 1: table rendered exactly once');
+      assert.strictEqual(renderTableCalls[0][3], true, 'case 1: rendered with isNextDay=true');
+      assert.strictEqual(renderTableCalls[0][0].length, 1, 'case 1: rendered the D+1 bracket');
+      assert.strictEqual(errorCalls, 0, 'case 1: no error banner');
+
+      // Case 2: Today has data -- auto-advance does NOT fire, behaves as before.
+      fetchResponses = { today: TODAY_WITH_DATA, d1: D1_WITH_DATA };
+      fetchCallCount = 0;
+      renderTableCalls = [];
+      errorCalls = 0;
+      await loadEdgeStationData('KTEST');
+      assert.strictEqual(edgeIsNextDay, false, 'case 2: edgeIsNextDay should stay false');
+      assert.strictEqual(renderTableCalls.length, 1, 'case 2: table rendered exactly once');
+      assert.strictEqual(renderTableCalls[0][3], false, 'case 2: rendered with isNextDay=false');
+      assert.strictEqual(renderTableCalls[0][0].length, 1, 'case 2: rendered the Today bracket');
+      assert.strictEqual(errorCalls, 0, 'case 2: no error banner');
+
+      // Case 3: both empty and Today's fetch failed -- auto-advance does NOT
+      // fire (no D+1 data to advance to either) and the existing error-banner
+      // path still runs.
+      fetchResponses = { today: failedResp, d1: jsonResp({ brackets: [] }) };
+      fetchCallCount = 0;
+      renderTableCalls = [];
+      errorCalls = 0;
+      await loadEdgeStationData('KTEST');
+      assert.strictEqual(edgeIsNextDay, false, 'case 3: edgeIsNextDay should stay false');
+      assert.strictEqual(renderTableCalls.length, 1, 'case 3: table rendered exactly once');
+      assert.strictEqual(renderTableCalls[0][3], false, 'case 3: rendered with isNextDay=false');
+      assert.strictEqual(renderTableCalls[0][0], null, 'case 3: rendered null brackets (fetch failed)');
+      assert.strictEqual(errorCalls, 1, 'case 3: error banner shown');
+
+      console.log('ALL_EDGE_TAB_JS_ASSERTIONS_PASSED');
+    })().catch((err) => {
+      console.error(err);
+      process.exit(1);
+    });
+""")
 
 
 def _extract_inline_script() -> str:
@@ -197,7 +279,15 @@ def test_edge_tab_gate_and_emphasis_logic(tmp_path):
     (issue #758). Fails if index.html's script can't parse/load, or if any
     of the design-spec-derived behaviors above regress.
     """
-    combined = _PRELUDE + "\n" + _extract_inline_script() + "\n" + _ASSERTIONS
+    combined = (
+        _PRELUDE
+        + "\n"
+        + _extract_inline_script()
+        + "\n"
+        + _ASSERTIONS
+        + "\n"
+        + _D1_AUTOADVANCE_ASSERTIONS
+    )
     script_path = tmp_path / "edge_tab_logic_check.js"
     script_path.write_text(combined, encoding="utf-8")
 
