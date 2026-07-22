@@ -69,6 +69,44 @@ def _today_end() -> datetime:
     return now.replace(hour=23, minute=59, second=59, microsecond=0)
 
 
+# ---------------------------------------------------------------------------
+# Wall-clock freezing (issue #786) -- a handful of tests below build a market
+# settlement time relative to "now" (either the tail end of today, or "now +
+# N hours"). Near the UTC day boundary that stops being safe: `scan_markets`
+# reads its own `datetime.now(timezone.utc)` twice -- once for the same-day
+# filter, once for minutes-to-settlement -- so a test built against the real
+# wall clock at collection/run time can drift onto the wrong side of
+# midnight, or shrink the remaining-time term enough to flip which gate
+# fires first. `_FrozenDatetime` pins scanner's `datetime.now()` to a fixed
+# mid-day UTC instant so those two reads -- and the market end time the test
+# derives from the same instant -- always agree, independent of the hour CI
+# actually runs in. Same discipline as `_kmia_state()`'s sunset pinning above.
+# ---------------------------------------------------------------------------
+
+
+class _FrozenDatetime(datetime):
+    _fixed: "datetime | None" = None
+
+    @classmethod
+    def now(cls, tz=None):
+        assert cls._fixed is not None, "set _FrozenDatetime._fixed before use"
+        return cls._fixed.astimezone(tz) if tz else cls._fixed
+
+
+@contextlib.contextmanager
+def _frozen_scanner_now(fixed: datetime):
+    """Freeze `src.strategy.scanner`'s `datetime.now(timezone.utc)` reads to
+    `fixed` for the duration of the context. `fixed` should be a mid-day UTC
+    instant, well clear of the day boundary."""
+    _FrozenDatetime._fixed = fixed
+    with patch("src.strategy.scanner.datetime", _FrozenDatetime):
+        yield
+    _FrozenDatetime._fixed = None
+
+
+_FROZEN_NOW = datetime(2026, 3, 10, 12, 0, 0, tzinfo=timezone.utc)
+
+
 class TestGateVerdicts:
     """One test per canonical gate_verdict -- each also asserts the existing
     candidates output (side/shadow) is unaffected, per the issue's AC that
@@ -127,9 +165,16 @@ class TestGateVerdicts:
         assert snap["gate_threshold"] == 70
 
     def test_below_min_confidence_no_side(self):
+        """Settlement is pinned ~12h out from a frozen mid-day `now` (issue
+        #786) -- at the real day's tail end this same market (built via
+        `_today_end()`) can shrink to minutes-to-settlement, sharpening the
+        distribution until `above_max_edge` fires before `below_min_confidence`
+        is ever reached."""
         weather = {"KMIA": _kmia_state()}
-        market = _market("78-79°F", "0xconf", _today_end(), '["0.30","0.70"]')
-        candidates, snapshots = scan_markets(weather, [market])
+        end = _FROZEN_NOW.replace(hour=23, minute=59, second=59, microsecond=0)
+        market = _market("78-79°F", "0xconf", end, '["0.30","0.70"]')
+        with _frozen_scanner_now(_FROZEN_NOW):
+            candidates, snapshots = scan_markets(weather, [market])
         assert candidates == []
         snap = snapshots[0]
         assert snap["gate_verdict"] == "below_min_confidence"
@@ -152,8 +197,14 @@ class TestGateVerdicts:
     def test_mae_gate_forces_no_to_shadow(self):
         """A NO candidate that would otherwise trade live is forced to shadow
         by the MAE gate -- verdict reflects that specific reason, not the
-        generic 'shadow_only'."""
-        now = datetime.now(timezone.utc)
+        generic 'shadow_only'.
+
+        `now`/`end_time` are pinned to a frozen mid-day `now` (issue #786)
+        rather than the real wall clock -- `now + timedelta(hours=3)` run
+        late in the UTC day rolls onto the next calendar date, which
+        `scan_markets` then classifies as a next-day (not same-day) market
+        and filters out of the candidate set entirely."""
+        now = _FROZEN_NOW
         end_time = now + timedelta(hours=3)
         state = WeatherState(
             station="RKPK", now_local=now, sunset_local=now,
@@ -171,7 +222,8 @@ class TestGateVerdicts:
             city="Busan", mean_signed_error=4.6, rolling_mae=10.1,
             sample_count=90, correction_applied=True, live_suppressed=True,
         )
-        with patch("src.strategy.scanner.compute_residual_stats", return_value=suppressed):
+        with patch("src.strategy.scanner.compute_residual_stats", return_value=suppressed), \
+                _frozen_scanner_now(_FROZEN_NOW):
             candidates, snapshots = scan_markets({"RKPK": state}, [market], db=mock_db)
 
         assert len(candidates) == 1
@@ -186,8 +238,11 @@ class TestGateVerdicts:
 
     def test_mae_gate_does_not_fire_below_threshold(self):
         """Same setup, MAE within threshold: verdict is the live placeholder,
-        not mae_gate -- confirms the gate is genuinely conditional."""
-        now = datetime.now(timezone.utc)
+        not mae_gate -- confirms the gate is genuinely conditional.
+
+        `now`/`end_time` frozen for the same reason as
+        `test_mae_gate_forces_no_to_shadow` above (issue #786)."""
+        now = _FROZEN_NOW
         end_time = now + timedelta(hours=3)
         state = WeatherState(
             station="RKPK", now_local=now, sunset_local=now,
@@ -205,7 +260,8 @@ class TestGateVerdicts:
             city="Busan", mean_signed_error=1.0, rolling_mae=3.0,
             sample_count=90, correction_applied=True, live_suppressed=False,
         )
-        with patch("src.strategy.scanner.compute_residual_stats", return_value=safe):
+        with patch("src.strategy.scanner.compute_residual_stats", return_value=safe), \
+                _frozen_scanner_now(_FROZEN_NOW):
             candidates, snapshots = scan_markets({"RKPK": state}, [market], db=mock_db)
 
         assert len(candidates) == 1
