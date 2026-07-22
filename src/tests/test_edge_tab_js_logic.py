@@ -23,6 +23,13 @@ review" flagged as untested, and `renderEdgeDecisionTable`/`showEdgeError`
 are reassigned to recording spies (same top-level-function-reassignment
 trick as the DOM stubs) so the test can assert on what actually got
 rendered without a browser.
+
+And, per the Designer's change request on PR #783: the persistent in-content
+D+1 indicator (auto-advanced and manually-toggled cases) and the day-aware
+"Best signal" caption fix, asserted against the actual rendered DOM text --
+not the date-toggle button's `.active` class -- since the toggle tint alone
+was judged insufficient signal for trading UI and a test that only checked
+toggle state would pass even with the in-content indicator missing entirely.
 """
 from __future__ import annotations
 
@@ -58,8 +65,16 @@ _PRELUDE = textwrap.dedent("""
       Object.defineProperty(el, 'textContent', { get(){ return this._textContent || ''; }, set(v){ this._textContent = v; } });
       return el;
     }
+    // getElementById returns the *same* stub instance for a given id on every
+    // call (a real DOM would too) -- needed so tests can render, then read
+    // back what a later getElementById(sameId) call sees, e.g. the D+1
+    // indicator's visibility/text after loadEdgeStationData()/selectEdgeDate().
+    const _elementsById = {};
     global.document = {
-      getElementById() { return makeStubElement(); },
+      getElementById(id) {
+        if (!_elementsById[id]) _elementsById[id] = makeStubElement();
+        return _elementsById[id];
+      },
       querySelectorAll() { return []; },
       querySelector() { return null; },
       createElement() { return makeStubElement(); },
@@ -188,15 +203,31 @@ _ASSERTIONS = textwrap.dedent("""
     assert.strictEqual(bracketLabel({ bracket_low: 100, bracket_high: 200 }, 'C'), '≥38°C');
 """) % {"verdicts": EXPECTED_VERDICTS}
 
-# loadEdgeStationData() auto-advance-to-D+1 tests (issue #787 / PR #783). These
-# drive the real function end-to-end with a stubbed fetch keyed off the
-# `next_day` query param, then assert on the module-scope globals and
-# render-function call args the function drives -- same "spy by reassigning
-# the top-level function declaration" trick used for DOM stubs above, since
-# nothing in this file has a mocking library available.
+# loadEdgeStationData() auto-advance-to-D+1 tests (issue #787 / PR #783), plus
+# the Designer-requested persistent in-content D+1 indicator and the day-aware
+# "Best signal" caption fix that shipped alongside it. These drive the real
+# functions end-to-end with a stubbed fetch keyed off the `next_day` query
+# param, then assert on the module-scope globals, the D+1 indicator's actual
+# DOM text/visibility, and render-function call args -- same
+# "spy by reassigning the top-level function declaration" trick used for DOM
+# stubs above, since nothing in this file has a mocking library available.
+#
+# Per explicit re-review criterion: the indicator/caption assertions below
+# read the DOM element's own text content (via the id-cached getElementById
+# stub in _PRELUDE), not the date-toggle button's .active class -- asserting
+# only the toggle state would pass even if the in-content indicator were
+# missing entirely, which is exactly the failure mode this change exists to
+# prevent.
 _D1_AUTOADVANCE_ASSERTIONS = textwrap.dedent("""
     function jsonResp(body) { return { ok: true, json: async () => body }; }
     const failedResp = { ok: false };
+
+    function d1IndicatorState() {
+      const el = document.getElementById('edge-d1-indicator');
+      const textEl = document.getElementById('edge-d1-indicator-text');
+      return { visible: el.style.display !== 'none', text: textEl.textContent };
+    }
+    const D1_INDICATOR_TEXT = \"Today's markets closed \\u2014 showing D+1 (shadow-only)\";
 
     let fetchResponses = { today: null, d1: null };
     let fetchCallCount = 0;
@@ -206,19 +237,41 @@ _D1_AUTOADVANCE_ASSERTIONS = textwrap.dedent("""
       return isNextDay ? fetchResponses.d1 : fetchResponses.today;
     };
 
+    const TODAY_EMPTY = jsonResp({ brackets: [] });
+    const D1_WITH_DATA = jsonResp({ brackets: [{ range: '68-70', bracket_low: 68, bracket_high: 70 }] });
+    const TODAY_WITH_DATA = jsonResp({ brackets: [{ range: '60-62', bracket_low: 60, bracket_high: 62 }] });
+
+    // --- Day-aware "Best signal" caption (line ~3092) -- tested against the
+    // *real* renderEdgeDecisionTable, before it gets reassigned to a spy
+    // below, by reading the actually-rendered table HTML back off the DOM.
+    const bestSignalBrackets = [
+      { gate_verdict: 'below_min_edge', ev_yes: -5, ev_no: -3, range: '60-62', bracket_low: 60, bracket_high: 62 },
+      { gate_verdict: 'below_min_confidence', ev_yes: 6, ev_no: -1, range: '68-70', bracket_low: 68, bracket_high: 70 },
+    ];
+    renderEdgeDecisionTable(bestSignalBrackets, 'F', 'KTEST', false);
+    let tableHTML = document.getElementById('edge-table-body').innerHTML;
+    assert.ok(tableHTML.includes('Best signal today'), 'caption should read \"Best signal today\" when isNextDay=false');
+    assert.ok(!tableHTML.includes('Best signal D+1'), 'caption should not say D+1 when isNextDay=false');
+
+    renderEdgeDecisionTable(bestSignalBrackets, 'F', 'KTEST', true);
+    tableHTML = document.getElementById('edge-table-body').innerHTML;
+    assert.ok(tableHTML.includes('Best signal D+1'), 'caption should read \"Best signal D+1\" when isNextDay=true');
+    assert.ok(!tableHTML.includes('Best signal today'), 'caption should not say \"today\" when isNextDay=true');
+
+    // --- loadEdgeStationData() auto-advance branch -- renderEdgeDecisionTable
+    // is now reassigned to a recording spy so these cases can assert on what
+    // it was called with, independent of its own (already tested above)
+    // rendering logic.
     let renderTableCalls = [];
     renderEdgeDecisionTable = (...args) => { renderTableCalls.push(args); };
     let errorCalls = 0;
     showEdgeError = () => { errorCalls += 1; };
 
-    const TODAY_EMPTY = jsonResp({ brackets: [] });
-    const D1_WITH_DATA = jsonResp({ brackets: [{ range: '68-70', bracket_low: 68, bracket_high: 70 }] });
-    const TODAY_WITH_DATA = jsonResp({ brackets: [{ range: '60-62', bracket_low: 60, bracket_high: 62 }] });
-
     (async () => {
       // Case 1: Today empty, D+1 has data -- auto-advance fires, reuses the
       // already-fetched d1Data local (no extra request beyond the initial
-      // parallel pair), and does not surface the error banner.
+      // parallel pair), does not surface the error banner, and shows the
+      // persistent D+1 indicator with the exact expected text.
       fetchResponses = { today: TODAY_EMPTY, d1: D1_WITH_DATA };
       fetchCallCount = 0;
       renderTableCalls = [];
@@ -230,8 +283,12 @@ _D1_AUTOADVANCE_ASSERTIONS = textwrap.dedent("""
       assert.strictEqual(renderTableCalls[0][3], true, 'case 1: rendered with isNextDay=true');
       assert.strictEqual(renderTableCalls[0][0].length, 1, 'case 1: rendered the D+1 bracket');
       assert.strictEqual(errorCalls, 0, 'case 1: no error banner');
+      let indicator = d1IndicatorState();
+      assert.strictEqual(indicator.visible, true, 'case 1: D+1 indicator should be visible');
+      assert.strictEqual(indicator.text, D1_INDICATOR_TEXT, 'case 1: D+1 indicator text');
 
-      // Case 2: Today has data -- auto-advance does NOT fire, behaves as before.
+      // Case 2: Today has data -- auto-advance does NOT fire, behaves as
+      // before, and the D+1 indicator stays hidden with no leftover text.
       fetchResponses = { today: TODAY_WITH_DATA, d1: D1_WITH_DATA };
       fetchCallCount = 0;
       renderTableCalls = [];
@@ -242,10 +299,13 @@ _D1_AUTOADVANCE_ASSERTIONS = textwrap.dedent("""
       assert.strictEqual(renderTableCalls[0][3], false, 'case 2: rendered with isNextDay=false');
       assert.strictEqual(renderTableCalls[0][0].length, 1, 'case 2: rendered the Today bracket');
       assert.strictEqual(errorCalls, 0, 'case 2: no error banner');
+      indicator = d1IndicatorState();
+      assert.strictEqual(indicator.visible, false, 'case 2: D+1 indicator should be hidden');
+      assert.strictEqual(indicator.text, '', 'case 2: D+1 indicator text should be cleared');
 
       // Case 3: both empty and Today's fetch failed -- auto-advance does NOT
-      // fire (no D+1 data to advance to either) and the existing error-banner
-      // path still runs.
+      // fire (no D+1 data to advance to either), the existing error-banner
+      // path still runs, and the D+1 indicator stays hidden.
       fetchResponses = { today: failedResp, d1: jsonResp({ brackets: [] }) };
       fetchCallCount = 0;
       renderTableCalls = [];
@@ -256,6 +316,28 @@ _D1_AUTOADVANCE_ASSERTIONS = textwrap.dedent("""
       assert.strictEqual(renderTableCalls[0][3], false, 'case 3: rendered with isNextDay=false');
       assert.strictEqual(renderTableCalls[0][0], null, 'case 3: rendered null brackets (fetch failed)');
       assert.strictEqual(errorCalls, 1, 'case 3: error banner shown');
+      indicator = d1IndicatorState();
+      assert.strictEqual(indicator.visible, false, 'case 3: D+1 indicator should be hidden');
+      assert.strictEqual(indicator.text, '', 'case 3: D+1 indicator text should be cleared');
+
+      // Case 4: manual toggle via selectEdgeDate() -- the indicator must show
+      // on a deliberate D+1 click too, not just on auto-advance, and must
+      // clear again when the operator clicks back to Today.
+      edgeSelectedStation = 'KTEST';
+      edgeD1Cache = { station: null, data: null };  // force a fresh D+1 fetch, not a stale cache hit
+      document.getElementById('edge-date-d1').disabled = false;
+      fetchResponses = { today: TODAY_WITH_DATA, d1: D1_WITH_DATA };
+      await selectEdgeDate('d1');
+      assert.strictEqual(edgeIsNextDay, true, 'case 4: edgeIsNextDay should be true after manual D+1 toggle');
+      indicator = d1IndicatorState();
+      assert.strictEqual(indicator.visible, true, 'case 4: D+1 indicator should be visible on manual toggle');
+      assert.strictEqual(indicator.text, D1_INDICATOR_TEXT, 'case 4: D+1 indicator text on manual toggle');
+
+      await selectEdgeDate('today');
+      assert.strictEqual(edgeIsNextDay, false, 'case 4: edgeIsNextDay should be false after toggling back to Today');
+      indicator = d1IndicatorState();
+      assert.strictEqual(indicator.visible, false, 'case 4: D+1 indicator should hide after toggling back to Today');
+      assert.strictEqual(indicator.text, '', 'case 4: D+1 indicator text should be cleared after toggling back to Today');
 
       console.log('ALL_EDGE_TAB_JS_ASSERTIONS_PASSED');
     })().catch((err) => {
