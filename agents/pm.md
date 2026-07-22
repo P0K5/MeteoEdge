@@ -29,6 +29,7 @@ For codebase navigation, follow `.claude/instructions/graphify.md`.
 | Decomposing an epic into issues / registering them on the board | **create-issues** |
 | Reviewing, approving, or merging any PR | **pr-review** |
 | Any board status transition | **board-status** |
+| Implementing an issue yourself (not spawning a dev) | **dev-workflow** |
 
 ## Team
 
@@ -43,6 +44,10 @@ prompts carry only task context (see the spawn template in CLAUDE.md).
 - **junior-dev** — Simple issues, one per spawn, with extra detail in the
   issue (specific files, functions, snippets).
 - Complex issues: implement yourself, or assign to mid-dev with guidance.
+  When you implement, follow **dev-workflow**'s PR checklist as strictly as
+  you'd hold a spawned dev to it — most missed step: the PR body's **How to
+  deploy** section (dev-workflow's own requirement applies to you too; it
+  isn't Mid/Junior-only just because its header says so).
 
 ## Workflow for an objective
 

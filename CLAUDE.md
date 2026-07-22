@@ -51,6 +51,13 @@ Procedural workflows live in `.claude/skills/` and load only when invoked:
    `BACKEND=anthropic` if missing). Agent models are already rendered into
    `.claude/agents/*.md` frontmatter by the bootstrap script.
 
+**This isn't a one-time init-time check.** Mid-session, an issue created after
+the last refresh won't have an `ITEM_ID_ISSUE_<N>` entry. When that happens,
+**re-run `bash scripts/bootstrap_session.sh` immediately** — never hand-write
+a `gh api graphql` board query, cursor-pagination loop, or per-issue lookup
+script as a substitute. One bootstrap re-run is a single call; a hand-rolled
+pagination walk has repeatedly cost 5+ round trips per incident.
+
 ### Planning mode (multi-session)
 
 Project planning, epic definition, and design alignment via separate sessions:
