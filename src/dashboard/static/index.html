@@ -2900,11 +2900,13 @@ function gateTooltip(b) {
   const threshold = _gateFmtByUnit(b.gate_threshold, b.gate_unit);
   switch (b.gate_verdict) {
     case 'traded_live':
-      // Deliberately doesn't say "live": scan_decisions can't distinguish a
-      // confirmed live fill from a paper-mode placeholder (see the PR #779 /
-      // OPERATIONS.md note), so claiming "live" here could mislabel a paper
-      // run. A real live/paper signal is tracked in Backlog #780.
-      return `Traded — cleared every gate on the ${b.side || '—'} side.`;
+      // execution_mode (#780) distinguishes a confirmed live fill from the
+      // scanner's paper-mode "would trade live" placeholder -- treat a
+      // missing/unrecognized value as 'paper', the conservative reading
+      // (never claim "live" without an explicit confirmed signal).
+      return b.execution_mode === 'live'
+        ? `Traded live — cleared every gate on the ${b.side || '—'} side and the order filled.`
+        : `Traded (paper) — cleared every gate on the ${b.side || '—'} side; no live trader was configured this poll, so no order was placed.`;
     case 'entry_guard':
       return b.gate_detail || 'Blocked by an entry guard this poll.';
     case 'timeout_today':
@@ -2934,11 +2936,16 @@ function gateChipHTML(b) {
   const verdict = b.gate_verdict;
   const meta = GATE_CHIP_META[verdict];
   if (!meta) return '<span class="gate-chip" style="color:var(--faint);">—</span>';
+  // traded_live's label is qualified with the execution_mode signal (#780) --
+  // see gateTooltip()'s comment for the same 'paper' fallback rule.
+  const label = verdict === 'traded_live'
+    ? (b.execution_mode === 'live' ? 'Traded live' : 'Traded (paper)')
+    : meta.label;
   const tooltip = gateTooltip(b);
   // aria-label carries the full explanation (accessibility notes: not gated
   // behind hover-only title); title is kept too for sighted mouse/keyboard users.
-  return `<span class="gate-chip gate-${verdict}" title="${_escAttr(tooltip)}" aria-label="${_escAttr(meta.label + ': ' + tooltip)}">` +
-    `<span class="status-dot"></span>${meta.label}</span>`;
+  return `<span class="gate-chip gate-${verdict}" title="${_escAttr(tooltip)}" aria-label="${_escAttr(label + ': ' + tooltip)}">` +
+    `<span class="status-dot"></span>${label}</span>`;
 }
 
 function _escAttr(s) {
@@ -2959,8 +2966,7 @@ function renderEdgeGateLegend() {
 
 function gateLegendMeaning(verdict) {
   const meanings = {
-    // Deliberately doesn't say "live" -- see gateTooltip() above (Backlog #780).
-    traded_live: 'Cleared every gate and traded on the flagged side.',
+    traded_live: 'Cleared every gate and traded on the flagged side -- shown as "Traded live" for a confirmed exchange fill, or "Traded (paper)" when no live trader was configured this poll.',
     entry_guard: 'Wanted to trade but an operational guard (e.g. duplicate position) blocked it.',
     timeout_today: 'Order placed but not filled before the settlement window closed.',
     shadow_only: 'Would trade, but this station/side runs in shadow (paper) mode.',

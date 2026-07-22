@@ -2898,6 +2898,7 @@ class BracketOut(BaseModel):
     gate_threshold: float | None
     gate_unit: str | None
     gate_detail: str | None
+    execution_mode: Literal["live", "paper"] | None
     poll_ts: str | None
 
 
@@ -3025,6 +3026,7 @@ def analysis_station(
             gate_threshold=r.get("gate_threshold"),
             gate_unit=r.get("gate_unit"),
             gate_detail=r.get("gate_detail"),
+            execution_mode=r.get("execution_mode"),
             poll_ts=r.get("poll_ts"),
         )
         for r in rows

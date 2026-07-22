@@ -125,21 +125,32 @@ _ASSERTIONS = textwrap.dedent("""
       gateTooltip({ gate_verdict: 'below_min_confidence', gate_actual: 0.42, gate_threshold: 0.05, gate_unit: 'probability' }),
       'model p_yes 42%% < min confidence 5%% required for YES'
     );
-    // Deliberately doesn't say "live" -- scan_decisions can't distinguish a
-    // confirmed live fill from a paper-mode placeholder (Backlog #780).
+    // execution_mode (#780) distinguishes a confirmed live fill from the
+    // scanner's paper-mode placeholder; a missing/unrecognized value reads
+    // as 'paper', the conservative default.
+    assert.strictEqual(
+      gateTooltip({ gate_verdict: 'traded_live', side: 'YES', execution_mode: 'live' }),
+      'Traded live — cleared every gate on the YES side and the order filled.'
+    );
+    assert.strictEqual(
+      gateTooltip({ gate_verdict: 'traded_live', side: 'YES', execution_mode: 'paper' }),
+      'Traded (paper) — cleared every gate on the YES side; no live trader was configured this poll, so no order was placed.'
+    );
     assert.strictEqual(
       gateTooltip({ gate_verdict: 'traded_live', side: 'YES' }),
-      'Traded — cleared every gate on the YES side.'
+      'Traded (paper) — cleared every gate on the YES side; no live trader was configured this poll, so no order was placed.'
     );
     assert.strictEqual(
       gateTooltip({ gate_verdict: 'entry_guard', gate_detail: 'duplicate-entry guard' }),
       'duplicate-entry guard'
     );
 
-    // gateChipHTML: correct family class + label text present.
-    const chip = gateChipHTML({ gate_verdict: 'traded_live', side: 'YES' });
-    assert.ok(chip.includes('gate-traded_live'), 'chip missing gate-traded_live class');
-    assert.ok(chip.includes('Traded'), 'chip missing label text');
+    // gateChipHTML: correct family class + execution_mode-qualified label text.
+    const liveChip = gateChipHTML({ gate_verdict: 'traded_live', side: 'YES', execution_mode: 'live' });
+    assert.ok(liveChip.includes('gate-traded_live'), 'chip missing gate-traded_live class');
+    assert.ok(liveChip.includes('Traded live'), 'live chip missing "Traded live" label');
+    const paperChip = gateChipHTML({ gate_verdict: 'traded_live', side: 'YES', execution_mode: 'paper' });
+    assert.ok(paperChip.includes('Traded (paper)'), 'paper chip missing "Traded (paper)" label');
 
     // Row-emphasis precedence (design spec §4): row-traded beats everything else.
     let emphasis = computeRowEmphasis([
