@@ -440,6 +440,10 @@ DISABLED_STATIONS: "set[str]" = SHADOW_STATIONS
 #   live Polymarket market, so skipping the fetch loses no usable data -- it
 #   only stops the noise. Override via the METAR_SKIP_STATIONS env var
 #   (comma-separated ICAO codes) to add/remove stations without a code change.
+#   #765: repair-vs-delist decision -- delisted, not repaired. Also used by
+#   src/dashboard/api.py to exclude these stations from the EMOS promotion
+#   cohort listing (they aren't being evaluated, so shouldn't surface as
+#   phantom "regressions").
 _metar_skip_raw = os.getenv("METAR_SKIP_STATIONS", "ZSJN")
 METAR_SKIP_STATIONS: "frozenset[str]" = frozenset(
     s.strip().upper() for s in _metar_skip_raw.split(",") if s.strip()

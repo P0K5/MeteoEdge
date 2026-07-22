@@ -614,6 +614,24 @@ class TestApiEndpointReturnsCityStatus:
         assert chicago["n_samples"] == 1
         assert chicago["mean_crps"] == pytest.approx(1.5, abs=1e-6)
 
+    def test_zsjn_excluded_from_shadow_cohort(self):
+        """Jinan (ZSJN) is delisted from the EMOS shadow cohort ledger (issue
+        #765): dead feed, fetch-skipped, so it no longer surfaces as a
+        phantom "EMOS regression". Other held-for-other-reasons cities
+        (e.g. Shenzhen, training_eligible=false but feed healthy) remain.
+        """
+        from src.dashboard import api as api_mod
+
+        db = _db()
+        with patch.object(api_mod, "_db", db):
+            client = TestClient(api_mod.app)
+            r = client.get("/api/emos-shadow/status")
+
+        assert r.status_code == 200
+        cities = [entry["city"] for entry in r.json()]
+        assert "Jinan" not in cities
+        assert "Shenzhen" in cities
+
 
 # ---------------------------------------------------------------------------
 # Test 10b: get_emos_shadow_city_status returns model_weights_snapshot

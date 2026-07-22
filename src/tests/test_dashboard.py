@@ -1119,8 +1119,12 @@ class TestEmosStatusEndpoint:
         return Database(":memory:")
 
     def test_returns_list_for_all_cities(self, client):
-        """Status endpoint returns one entry per city in STATIONS."""
-        from src.config import STATIONS
+        """Status endpoint returns one entry per city in the EMOS cohort.
+
+        The cohort excludes stations with a chronically dead METAR feed
+        (METAR_SKIP_STATIONS, issue #765) — currently just ZSJN (Jinan).
+        """
+        from src.config import STATIONS, METAR_SKIP_STATIONS
         db = self._setup_db()
         original = dash_api._db
         try:
@@ -1129,7 +1133,26 @@ class TestEmosStatusEndpoint:
             assert resp.status_code == 200
             data = resp.json()
             assert isinstance(data, list)
-            assert len(data) == len(STATIONS)
+            assert len(data) == len(STATIONS) - len(METAR_SKIP_STATIONS)
+        finally:
+            dash_api.set_db(original)
+
+    def test_zsjn_excluded_from_cohort(self, client):
+        """Jinan (ZSJN) is delisted from the EMOS promotion cohort (issue #765):
+        dead feed, fetch-skipped, so it no longer surfaces as a phantom
+        regression. Other cities are unaffected.
+        """
+        db = self._setup_db()
+        original = dash_api._db
+        try:
+            dash_api.set_db(db)
+            resp = client.get("/api/emos/status")
+            assert resp.status_code == 200
+            cities = [item["city"] for item in resp.json()]
+            assert "Jinan" not in cities
+            # A healthy-feed, training_eligible=false city (held for other
+            # reasons) must still be present — this is a targeted exclusion.
+            assert "Shenzhen" in cities
         finally:
             dash_api.set_db(original)
 
