@@ -99,9 +99,11 @@ def _frozen_scanner_now(fixed: datetime):
     `fixed` for the duration of the context. `fixed` should be a mid-day UTC
     instant, well clear of the day boundary."""
     _FrozenDatetime._fixed = fixed
-    with patch("src.strategy.scanner.datetime", _FrozenDatetime):
-        yield
-    _FrozenDatetime._fixed = None
+    try:
+        with patch("src.strategy.scanner.datetime", _FrozenDatetime):
+            yield
+    finally:
+        _FrozenDatetime._fixed = None
 
 
 _FROZEN_NOW = datetime(2026, 3, 10, 12, 0, 0, tzinfo=timezone.utc)
