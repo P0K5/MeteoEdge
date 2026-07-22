@@ -67,6 +67,11 @@ live_state.json
 data/feeds/
 data/cache/
 
+# Reflect-loop artifacts (issue #747) -- required output of every reflection
+# run (metrics.jsonl update + proposals/*.json); the blanket *.json/*.jsonl
+# rules above would otherwise silently exclude them (issue #794).
+!docs/reflection/**
+
 # Generated output
 simulation_output.txt
 
