@@ -339,6 +339,25 @@ _D1_AUTOADVANCE_ASSERTIONS = textwrap.dedent("""
       assert.strictEqual(indicator.visible, false, 'case 4: D+1 indicator should hide after toggling back to Today');
       assert.strictEqual(indicator.text, '', 'case 4: D+1 indicator text should be cleared after toggling back to Today');
 
+      // Case 5: regression guard (Tech Lead PM review) -- loadEdgeStationData()
+      // must reset the D+1 indicator *synchronously*, before the fetch
+      // round-trip, not only in the post-fetch fallthrough. Otherwise, on a
+      // station switch away from a D+1-showing station, the previous
+      // station's "showing D+1" banner lingers on screen through the new
+      // station's skeleton-loading state. A JS async function runs
+      // synchronously up to its first `await`, so checking indicator state
+      // right after calling (without awaiting) the function catches this
+      // deterministically.
+      renderEdgeD1Indicator(true);  // simulate leftover state from a prior station
+      indicator = d1IndicatorState();
+      assert.strictEqual(indicator.visible, true, 'case 5 setup: indicator should start visible');
+      fetchResponses = { today: TODAY_WITH_DATA, d1: D1_WITH_DATA };
+      const pending = loadEdgeStationData('KTEST');  // not awaited yet
+      indicator = d1IndicatorState();
+      assert.strictEqual(indicator.visible, false, 'case 5: indicator must reset before the fetch resolves, not after');
+      assert.strictEqual(indicator.text, '', 'case 5: indicator text must clear synchronously too');
+      await pending;
+
       console.log('ALL_EDGE_TAB_JS_ASSERTIONS_PASSED');
     })().catch((err) => {
       console.error(err);

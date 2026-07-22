@@ -935,9 +935,15 @@ a,button,input,select{transition:color var(--transition),background var(--transi
     <button class="edge-date-btn" id="edge-date-d1" onclick="selectEdgeDate('d1')" disabled title="No D+1 market available for this station yet">D+1</button>
   </div>
 
-  <!-- ── D+1 INDICATOR (persistent in-content marker, issue #787 follow-up) ── -->
+  <!-- ── D+1 INDICATOR (persistent in-content marker, issue #787 follow-up) ──
+       Icon is `info`, not `alert-triangle` -- `alert-triangle` already means
+       "market moved against model" (a real adverse-position signal, see the
+       `.edge-hint` usage above in this file). Reusing it here for a routine,
+       true-for-half-of-every-day state would dilute that signal. `info` reads
+       as orientation, which is what this banner actually is (Designer call,
+       issue #787). ── -->
   <div class="edge-d1-indicator" id="edge-d1-indicator" style="display:none;">
-    <i data-lucide="alert-triangle"></i>
+    <i data-lucide="info"></i>
     <span id="edge-d1-indicator-text"></span>
   </div>
 
@@ -2668,6 +2674,9 @@ async function loadEdgeStationData(metar) {
   showEdgeTableSkeleton();
   showEdgeScanBarSkeleton();
   setEdgeDateButtonActive(false);
+  renderEdgeD1Indicator(false);  // reset immediately -- otherwise the previous
+                                  // station's D+1 banner lingers through this
+                                  // station's fetch round-trip
 
   const unit = edgeStationUnit();
   const [todayData, d1Data] = await Promise.all([
