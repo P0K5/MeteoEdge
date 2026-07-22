@@ -193,9 +193,17 @@ def _persist_scan_decisions(
     happen. Paper-mode polls (no live_trader) have no entry-guard/execution
     seam at all, so their placeholder is left as-is (best-effort "would trade
     live" reading, not a confirmed exchange fill).
+
+    Every row also gets ``execution_mode`` (issue #780): ``'live'`` when this
+    poll had a live trader configured, ``'paper'`` otherwise. Combined with
+    the downgrade above, this is what lets a reader trust a persisted
+    ``traded_live`` + ``execution_mode='live'`` row as a confirmed exchange
+    fill, vs. ``traded_live`` + ``execution_mode='paper'``, which is only the
+    scanner's unconfirmed "would trade live" placeholder.
     """
     if db is None:
         return
+    execution_mode = "live" if live_trader else "paper"
     for ticker, decision in decisions.items():
         if ticker in confirmed:
             verdict, detail = confirmed[ticker]
@@ -204,6 +212,7 @@ def _persist_scan_decisions(
         elif live_trader and decision.get("gate_verdict") == "traded_live":
             decision["gate_verdict"] = "entry_guard"
             decision["gate_detail"] = "did not reach execution this poll"
+        decision["execution_mode"] = execution_mode
         try:
             db.upsert_scan_decision(**decision)
         except Exception as e:

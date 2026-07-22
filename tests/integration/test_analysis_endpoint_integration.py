@@ -69,6 +69,7 @@ _KORD_BRACKETS = [
         yes_ask=45, no_ask=57, p_yes=0.52, raw_p_yes=0.50,
         ev_yes=8.9, ev_no=-2.1, gate_verdict="traded_live",
         side="YES", gate_actual=None, gate_threshold=None, gate_unit=None,
+        execution_mode="live",
     ),
     dict(
         ticker="kord-58-60", bracket_low=58.0, bracket_high=60.0,
@@ -193,7 +194,7 @@ class TestIntegration200FullResponse:
                 "ev_yes", "ev_no", "emos_mode", "forecast_high", "current_high",
                 "minutes_to_settlement", "gate_verdict", "side",
                 "gate_actual", "gate_threshold", "gate_unit", "gate_detail",
-                "poll_ts",
+                "execution_mode", "poll_ts",
             ):
                 assert field in bracket, f"Bracket missing field: {field}"
 
@@ -237,6 +238,7 @@ class TestIntegration200BracketFieldsPassThrough:
             assert b["ev_no"] == pytest.approx(seeded["ev_no"])
             assert b["gate_verdict"] == seeded["gate_verdict"]
             assert b["side"] == seeded["side"]
+            assert b["execution_mode"] == seeded.get("execution_mode", "paper")
 
 
 @pytest.mark.integration

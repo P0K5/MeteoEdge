@@ -284,6 +284,7 @@ CREATE TABLE IF NOT EXISTS scan_decisions (
     gate_threshold        REAL,
     gate_unit             TEXT,
     gate_detail           TEXT,
+    execution_mode        TEXT NOT NULL DEFAULT 'paper' CHECK(execution_mode IN ('live','paper')),
     ensemble_mean         REAL,
     ensemble_members      INTEGER,
     ensemble_range_low    REAL,
@@ -414,6 +415,13 @@ class Database:
             # the already-accumulated baseline promotion evidence keeps
             # counting unchanged.
             ("emos_crps_log", "forecast_source", "TEXT NOT NULL DEFAULT 'baseline'"),
+            # Issue #780: distinguishes a confirmed live fill from the
+            # scanner's paper-mode "would trade live" placeholder for
+            # traded_live rows -- see _persist_scan_decisions in run.py for
+            # where it's stamped. Default 'paper' backfills every pre-#780
+            # row conservatively (never claim a legacy row as a confirmed
+            # live fill it can't prove).
+            ("scan_decisions", "execution_mode", "TEXT NOT NULL DEFAULT 'paper'"),
         ]:
             try:
                 self._conn.execute(
@@ -997,6 +1005,11 @@ class Database:
         "margin_gate", "mae_gate",
     })
 
+    # Issue #780: 'live' only when the verdict seam confirmed a real exchange
+    # fill this poll; 'paper' for every other row, including the scanner's
+    # unconfirmed traded_live placeholder from a poll with no live_trader.
+    _SCAN_DECISION_EXECUTION_MODES = frozenset({"live", "paper"})
+
     def upsert_scan_decision(
         self,
         *,
@@ -1028,6 +1041,7 @@ class Database:
         gate_threshold: "float | None" = None,
         gate_unit: "str | None" = None,
         gate_detail: "str | None" = None,
+        execution_mode: str = "paper",
         ensemble_mean: "float | None" = None,
         ensemble_members: "int | None" = None,
         ensemble_range_low: "float | None" = None,
@@ -1052,9 +1066,17 @@ class Database:
             gate_verdict: one of the 11 canonical verdicts (see
                 ``_SCAN_DECISION_GATE_VERDICTS``); raises ``ValueError`` on
                 any other value so a typo never silently reaches the DB.
+            execution_mode: ``'live'`` or ``'paper'`` (see
+                ``_SCAN_DECISION_EXECUTION_MODES``; issue #780) -- whether
+                this poll had a live trader configured, and therefore
+                whether a ``traded_live`` verdict is a confirmed exchange
+                fill (``'live'``) or the scanner's unconfirmed placeholder
+                (``'paper'``). Raises ``ValueError`` on any other value.
         """
         if gate_verdict not in self._SCAN_DECISION_GATE_VERDICTS:
             raise ValueError(f"invalid gate_verdict: {gate_verdict!r}")
+        if execution_mode not in self._SCAN_DECISION_EXECUTION_MODES:
+            raise ValueError(f"invalid execution_mode: {execution_mode!r}")
         with self._lock:
             self._conn.execute(
                 "INSERT INTO scan_decisions("
@@ -1062,9 +1084,9 @@ class Database:
                 "yes_ask,no_ask,current_high,latest_temp,forecast_high,"
                 "p_yes,raw_p_yes,capped_p_yes,ev_yes,ev_no,ev_yes_raw,ev_no_raw,"
                 "minutes_to_settlement,emos_mode,is_next_day,gate_verdict,"
-                "gate_actual,gate_threshold,gate_unit,gate_detail,"
+                "gate_actual,gate_threshold,gate_unit,gate_detail,execution_mode,"
                 "ensemble_mean,ensemble_members,ensemble_range_low,ensemble_range_high) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
                 "ON CONFLICT(station, ticker, date) DO UPDATE SET "
                 "ts=excluded.ts, poll_ts=excluded.poll_ts, "
                 "bracket_low=excluded.bracket_low, bracket_high=excluded.bracket_high, "
@@ -1078,7 +1100,8 @@ class Database:
                 "emos_mode=excluded.emos_mode, is_next_day=excluded.is_next_day, "
                 "gate_verdict=excluded.gate_verdict, gate_actual=excluded.gate_actual, "
                 "gate_threshold=excluded.gate_threshold, gate_unit=excluded.gate_unit, "
-                "gate_detail=excluded.gate_detail, ensemble_mean=excluded.ensemble_mean, "
+                "gate_detail=excluded.gate_detail, execution_mode=excluded.execution_mode, "
+                "ensemble_mean=excluded.ensemble_mean, "
                 "ensemble_members=excluded.ensemble_members, "
                 "ensemble_range_low=excluded.ensemble_range_low, "
                 "ensemble_range_high=excluded.ensemble_range_high",
@@ -1087,7 +1110,7 @@ class Database:
                     yes_ask, no_ask, current_high, latest_temp, forecast_high,
                     p_yes, raw_p_yes, capped_p_yes, ev_yes, ev_no, ev_yes_raw, ev_no_raw,
                     minutes_to_settlement, emos_mode, int(is_next_day), gate_verdict,
-                    gate_actual, gate_threshold, gate_unit, gate_detail,
+                    gate_actual, gate_threshold, gate_unit, gate_detail, execution_mode,
                     ensemble_mean, ensemble_members, ensemble_range_low, ensemble_range_high,
                 ),
             )
@@ -1104,7 +1127,7 @@ class Database:
             "yes_ask,no_ask,current_high,latest_temp,forecast_high,"
             "p_yes,raw_p_yes,capped_p_yes,ev_yes,ev_no,ev_yes_raw,ev_no_raw,"
             "minutes_to_settlement,emos_mode,is_next_day,gate_verdict,"
-            "gate_actual,gate_threshold,gate_unit,gate_detail,"
+            "gate_actual,gate_threshold,gate_unit,gate_detail,execution_mode,"
             "ensemble_mean,ensemble_members,ensemble_range_low,ensemble_range_high "
             "FROM scan_decisions WHERE station=? AND date=? ORDER BY bracket_low ASC",
             (station, date),
