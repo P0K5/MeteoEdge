@@ -1593,8 +1593,8 @@
       "source_location": "L489",
       "_origin": "ast",
       "id": "scripts_prob_cap_shadow_report_merge_saturation_dicts",
-      "community": 158,
-      "community_name": "Shadow Loop Config",
+      "community": 221,
+      "community_name": "TestEMOSFitWithVariableSigma",
       "norm_label": "merge_saturation_dicts()"
     },
     {
@@ -1604,8 +1604,8 @@
       "source_location": "L503",
       "_origin": "ast",
       "id": "scripts_prob_cap_shadow_report_guardrail_cap_applied_count",
-      "community": 315,
-      "community_name": "meteoedge.db",
+      "community": 125,
+      "community_name": "Hours Parameter Handling",
       "norm_label": "guardrail_cap_applied_count()"
     },
     {
@@ -1703,8 +1703,8 @@
       "source_location": "L854",
       "_origin": "ast",
       "id": "scripts_prob_cap_shadow_report_recommend",
-      "community": 326,
-      "community_name": "OPERATIONS.md",
+      "community": 315,
+      "community_name": "meteoedge.db",
       "norm_label": "recommend()"
     },
     {
@@ -1879,8 +1879,8 @@
       "source_location": "L504",
       "_origin": "ast",
       "id": "scripts_prob_cap_shadow_report_rationale_504",
-      "community": 315,
-      "community_name": "meteoedge.db",
+      "community": 125,
+      "community_name": "Hours Parameter Handling",
       "norm_label": "cross-check count for population saturation: guardrail_events.cap_applied."
     },
     {
@@ -11779,8 +11779,8 @@
       "source_location": "L79",
       "_origin": "ast",
       "id": "src_scripts_settle_settle_shadow_trades",
-      "community": 106,
-      "community_name": "Bracket Regex Parsing",
+      "community": 261,
+      "community_name": "conftest.py",
       "norm_label": "settle_shadow_trades()"
     },
     {
@@ -11889,8 +11889,8 @@
       "source_location": "L80",
       "_origin": "ast",
       "id": "src_scripts_settle_rationale_80",
-      "community": 106,
-      "community_name": "Bracket Regex Parsing",
+      "community": 261,
+      "community_name": "conftest.py",
       "norm_label": "settle shadow trades for *target* using real outcomes from *truth*.      shadow"
     },
     {
@@ -12109,8 +12109,8 @@
       "source_location": "L107",
       "_origin": "ast",
       "id": "src_strategy_scanner_is_highest_temp_market",
-      "community": 247,
-      "community_name": "TestSeedConfig",
+      "community": 40,
+      "community_name": "Climb Rate Tables",
       "norm_label": "is_highest_temp_market()"
     },
     {
@@ -12120,8 +12120,8 @@
       "source_location": "L123",
       "_origin": "ast",
       "id": "src_strategy_scanner_is_lowest_temp_market",
-      "community": 247,
-      "community_name": "TestSeedConfig",
+      "community": 40,
+      "community_name": "Climb Rate Tables",
       "norm_label": "is_lowest_temp_market()"
     },
     {
@@ -12153,8 +12153,8 @@
       "source_location": "L177",
       "_origin": "ast",
       "id": "src_strategy_scanner_parse_bracket_from_market",
-      "community": 215,
-      "community_name": "._weather_state",
+      "community": 247,
+      "community_name": "TestSeedConfig",
       "norm_label": "parse_bracket_from_market()"
     },
     {
@@ -12263,8 +12263,8 @@
       "source_location": "L108",
       "_origin": "ast",
       "id": "src_strategy_scanner_rationale_108",
-      "community": 247,
-      "community_name": "TestSeedConfig",
+      "community": 40,
+      "community_name": "Climb Rate Tables",
       "norm_label": "return (true, station_code) if this is a 'will the highest temperature in     <c"
     },
     {
@@ -12274,8 +12274,8 @@
       "source_location": "L124",
       "_origin": "ast",
       "id": "src_strategy_scanner_rationale_124",
-      "community": 247,
-      "community_name": "TestSeedConfig",
+      "community": 40,
+      "community_name": "Climb Rate Tables",
       "norm_label": "return (true, station_code) for 'lowest temperature in <city>' markets.      use"
     },
     {
@@ -12307,8 +12307,8 @@
       "source_location": "L178",
       "_origin": "ast",
       "id": "src_strategy_scanner_rationale_178",
-      "community": 215,
-      "community_name": "._weather_state",
+      "community": 247,
+      "community_name": "TestSeedConfig",
       "norm_label": "parse a polymarket bracket market into a bracket using the `groupitemtitle`"
     },
     {
@@ -22383,8 +22383,8 @@
       "source_location": "L515",
       "_origin": "ast",
       "id": "src_tests_test_dashboard_testclosedpositionsexitreason",
-      "community": 27,
-      "community_name": "Project Documentation & Plans",
+      "community": 250,
+      "community_name": "get_live_config",
       "norm_label": "testclosedpositionsexitreason"
     },
     {
@@ -22394,8 +22394,8 @@
       "source_location": "L518",
       "_origin": "ast",
       "id": "src_tests_test_dashboard_testclosedpositionsexitreason_test_stopped_position_take_profit_exit_reason",
-      "community": 27,
-      "community_name": "Project Documentation & Plans",
+      "community": 250,
+      "community_name": "get_live_config",
       "norm_label": ".test_stopped_position_take_profit_exit_reason()"
     },
     {
@@ -22405,8 +22405,8 @@
       "source_location": "L541",
       "_origin": "ast",
       "id": "src_tests_test_dashboard_testclosedpositionsexitreason_test_stopped_position_stop_loss_exit_reason",
-      "community": 27,
-      "community_name": "Project Documentation & Plans",
+      "community": 250,
+      "community_name": "get_live_config",
       "norm_label": ".test_stopped_position_stop_loss_exit_reason()"
     },
     {
@@ -22416,8 +22416,8 @@
       "source_location": "L564",
       "_origin": "ast",
       "id": "src_tests_test_dashboard_testclosedpositionsexitreason_test_settled_position_won_exit_reason",
-      "community": 27,
-      "community_name": "Project Documentation & Plans",
+      "community": 250,
+      "community_name": "get_live_config",
       "norm_label": ".test_settled_position_won_exit_reason()"
     },
     {
@@ -22427,8 +22427,8 @@
       "source_location": "L587",
       "_origin": "ast",
       "id": "src_tests_test_dashboard_testclosedpositionsexitreason_test_settled_position_lost_exit_reason",
-      "community": 27,
-      "community_name": "Project Documentation & Plans",
+      "community": 250,
+      "community_name": "get_live_config",
       "norm_label": ".test_settled_position_lost_exit_reason()"
     },
     {
@@ -22438,8 +22438,8 @@
       "source_location": "L610",
       "_origin": "ast",
       "id": "src_tests_test_dashboard_testclosedpositionsexitreason_test_settled_position_zero_pnl_is_lost",
-      "community": 27,
-      "community_name": "Project Documentation & Plans",
+      "community": 250,
+      "community_name": "get_live_config",
       "norm_label": ".test_settled_position_zero_pnl_is_lost()"
     },
     {
@@ -23670,8 +23670,8 @@
       "source_location": "L516",
       "_origin": "ast",
       "id": "src_tests_test_dashboard_rationale_516",
-      "community": 27,
-      "community_name": "Project Documentation & Plans",
+      "community": 250,
+      "community_name": "get_live_config",
       "norm_label": "test exit_reason field on closed positions (early exits and settled)."
     },
     {
@@ -23681,8 +23681,8 @@
       "source_location": "L519",
       "_origin": "ast",
       "id": "src_tests_test_dashboard_rationale_519",
-      "community": 27,
-      "community_name": "Project Documentation & Plans",
+      "community": 250,
+      "community_name": "get_live_config",
       "norm_label": "_stopped_positions() should set exit_reason='take_profit' for take_profit@ trigg"
     },
     {
@@ -23692,8 +23692,8 @@
       "source_location": "L542",
       "_origin": "ast",
       "id": "src_tests_test_dashboard_rationale_542",
-      "community": 27,
-      "community_name": "Project Documentation & Plans",
+      "community": 250,
+      "community_name": "get_live_config",
       "norm_label": "_stopped_positions() should set exit_reason='stop_loss' for stop_loss@ triggers."
     },
     {
@@ -23703,8 +23703,8 @@
       "source_location": "L565",
       "_origin": "ast",
       "id": "src_tests_test_dashboard_rationale_565",
-      "community": 27,
-      "community_name": "Project Documentation & Plans",
+      "community": 250,
+      "community_name": "get_live_config",
       "norm_label": "_settled_jsonl_positions() should set exit_reason='won' when pnl > 0."
     },
     {
@@ -23714,8 +23714,8 @@
       "source_location": "L588",
       "_origin": "ast",
       "id": "src_tests_test_dashboard_rationale_588",
-      "community": 27,
-      "community_name": "Project Documentation & Plans",
+      "community": 250,
+      "community_name": "get_live_config",
       "norm_label": "_settled_jsonl_positions() should set exit_reason='lost' when pnl <= 0."
     },
     {
@@ -23725,8 +23725,8 @@
       "source_location": "L611",
       "_origin": "ast",
       "id": "src_tests_test_dashboard_rationale_611",
-      "community": 27,
-      "community_name": "Project Documentation & Plans",
+      "community": 250,
+      "community_name": "get_live_config",
       "norm_label": "_settled_jsonl_positions() should set exit_reason='lost' when pnl == 0."
     },
     {
@@ -29665,7 +29665,7 @@
       "source_location": "L834",
       "_origin": "ast",
       "id": "src_tests_test_deb_weighting_testgfsfamilyregistry",
-      "community": 415,
+      "community": 134,
       "community_name": "test_deb_weighting.py",
       "norm_label": "testgfsfamilyregistry"
     },
@@ -29676,7 +29676,7 @@
       "source_location": "L843",
       "_origin": "ast",
       "id": "src_tests_test_deb_weighting_testgfsfamilyregistry_test_open_meteo_registered_gfs_family",
-      "community": 415,
+      "community": 134,
       "community_name": "test_deb_weighting.py",
       "norm_label": ".test_open_meteo_registered_gfs_family()"
     },
@@ -29687,7 +29687,7 @@
       "source_location": "L846",
       "_origin": "ast",
       "id": "src_tests_test_deb_weighting_testgfsfamilyregistry_test_gfs_not_registered",
-      "community": 415,
+      "community": 134,
       "community_name": "test_deb_weighting.py",
       "norm_label": ".test_gfs_not_registered()"
     },
@@ -29698,7 +29698,7 @@
       "source_location": "L849",
       "_origin": "ast",
       "id": "src_tests_test_deb_weighting_testgfsfamilyregistry_test_no_channel_left_with_undocumented_none_group",
-      "community": 415,
+      "community": 134,
       "community_name": "test_deb_weighting.py",
       "norm_label": ".test_no_channel_left_with_undocumented_none_group()"
     },
@@ -29709,7 +29709,7 @@
       "source_location": "L859",
       "_origin": "ast",
       "id": "src_tests_test_deb_weighting_testgfsfamilyregistry_test_gfs_family_solo_member_capped_at_group_cap",
-      "community": 415,
+      "community": 134,
       "community_name": "test_deb_weighting.py",
       "norm_label": ".test_gfs_family_solo_member_capped_at_group_cap()"
     },
@@ -29720,7 +29720,7 @@
       "source_location": "L870",
       "_origin": "ast",
       "id": "src_tests_test_deb_weighting_testgfsfamilyregistry_test_redistribution_when_no_ungrouped_models_remain",
-      "community": 415,
+      "community": 134,
       "community_name": "test_deb_weighting.py",
       "norm_label": ".test_redistribution_when_no_ungrouped_models_remain()"
     },
@@ -30556,7 +30556,7 @@
       "source_location": "L835",
       "_origin": "ast",
       "id": "src_tests_test_deb_weighting_rationale_835",
-      "community": 415,
+      "community": 134,
       "community_name": "test_deb_weighting.py",
       "norm_label": "verify open_meteo keeps the \"gfs_family\" group_id after #761 removed     its for"
     },
@@ -30567,7 +30567,7 @@
       "source_location": "L850",
       "_origin": "ast",
       "id": "src_tests_test_deb_weighting_rationale_850",
-      "community": 415,
+      "community": 134,
       "community_name": "test_deb_weighting.py",
       "norm_label": "every currently-registered channel has a deliberate, non-none         group_id."
     },
@@ -30578,7 +30578,7 @@
       "source_location": "L860",
       "_origin": "ast",
       "id": "src_tests_test_deb_weighting_rationale_860",
-      "community": 415,
+      "community": 134,
       "community_name": "test_deb_weighting.py",
       "norm_label": "issue #761: with \"gfs\" removed, \"gfs_family\" has a single member         (open_m"
     },
@@ -30589,7 +30589,7 @@
       "source_location": "L871",
       "_origin": "ast",
       "id": "src_tests_test_deb_weighting_rationale_871",
-      "community": 415,
+      "community": 134,
       "community_name": "test_deb_weighting.py",
       "norm_label": "regression test for the _apply_group_cap fix (issue #550), updated         for #"
     },
@@ -32005,7 +32005,7 @@
       "label": "_extract_inline_script()",
       "file_type": "code",
       "source_file": "src/tests/test_edge_tab_js_logic.py",
-      "source_location": "L186",
+      "source_location": "L369",
       "_origin": "ast",
       "id": "src_tests_test_edge_tab_js_logic_extract_inline_script",
       "community": 371,
@@ -32016,7 +32016,7 @@
       "label": "test_edge_tab_gate_and_emphasis_logic()",
       "file_type": "code",
       "source_file": "src/tests/test_edge_tab_js_logic.py",
-      "source_location": "L194",
+      "source_location": "L377",
       "_origin": "ast",
       "id": "src_tests_test_edge_tab_js_logic_test_edge_tab_gate_and_emphasis_logic",
       "community": 371,
@@ -32038,9 +32038,9 @@
       "label": "Executes the real shipped dashboard script under Node and exercises     the gate",
       "file_type": "rationale",
       "source_file": "src/tests/test_edge_tab_js_logic.py",
-      "source_location": "L195",
+      "source_location": "L378",
       "_origin": "ast",
-      "id": "src_tests_test_edge_tab_js_logic_rationale_195",
+      "id": "src_tests_test_edge_tab_js_logic_rationale_378",
       "community": 371,
       "community_name": "TestBackwardCompat",
       "norm_label": "executes the real shipped dashboard script under node and exercises     the gate"
@@ -33130,8 +33130,8 @@
       "source_location": "L182",
       "_origin": "ast",
       "id": "src_tests_test_emos_mode_testgetcitymodeprimaryready",
-      "community": 250,
-      "community_name": "get_live_config",
+      "community": 6,
+      "community_name": "Model Retraining",
       "norm_label": "testgetcitymodeprimaryready"
     },
     {
@@ -33141,8 +33141,8 @@
       "source_location": "L183",
       "_origin": "ast",
       "id": "src_tests_test_emos_mode_testgetcitymodeprimaryready_test_primary_ready_returns_emos_primary",
-      "community": 250,
-      "community_name": "get_live_config",
+      "community": 6,
+      "community_name": "Model Retraining",
       "norm_label": ".test_primary_ready_returns_emos_primary()"
     },
     {
@@ -33152,8 +33152,8 @@
       "source_location": "L195",
       "_origin": "ast",
       "id": "src_tests_test_emos_mode_testgetcitymodeprimaryready_test_check_ready_for_promotion_true_when_ready",
-      "community": 250,
-      "community_name": "get_live_config",
+      "community": 186,
+      "community_name": "emos_mode.py",
       "norm_label": ".test_check_ready_for_promotion_true_when_ready()"
     },
     {
@@ -33163,8 +33163,8 @@
       "source_location": "L203",
       "_origin": "ast",
       "id": "src_tests_test_emos_mode_testgetcitymodeprimaryready_test_primary_ready_takes_precedence_over_shadow",
-      "community": 250,
-      "community_name": "get_live_config",
+      "community": 6,
+      "community_name": "Model Retraining",
       "norm_label": ".test_primary_ready_takes_precedence_over_shadow()"
     },
     {
@@ -34087,8 +34087,8 @@
       "source_location": "L184",
       "_origin": "ast",
       "id": "src_tests_test_emos_mode_rationale_184",
-      "community": 250,
-      "community_name": "get_live_config",
+      "community": 6,
+      "community_name": "Model Retraining",
       "norm_label": "emos_primary row with ready_for_promotion=1 and enough crps samples \u2192 'emos_prim"
     },
     {
@@ -34098,8 +34098,8 @@
       "source_location": "L196",
       "_origin": "ast",
       "id": "src_tests_test_emos_mode_rationale_196",
-      "community": 250,
-      "community_name": "get_live_config",
+      "community": 186,
+      "community_name": "emos_mode.py",
       "norm_label": "_check_ready_for_promotion returns true when ready_for_promotion=1."
     },
     {
@@ -34109,8 +34109,8 @@
       "source_location": "L204",
       "_origin": "ast",
       "id": "src_tests_test_emos_mode_rationale_204",
-      "community": 250,
-      "community_name": "get_live_config",
+      "community": 6,
+      "community_name": "Model Retraining",
       "norm_label": "both shadow and ready primary + enough crps samples \u2192 'emos_primary' wins."
     },
     {
@@ -52787,8 +52787,8 @@
       "source_location": "L210",
       "_origin": "ast",
       "id": "src_tests_test_order_manager_testreconcilerotationaware",
-      "community": 8,
-      "community_name": "Bracket Market Parsing",
+      "community": 280,
+      "community_name": "Recovery & Restart",
       "norm_label": "testreconcilerotationaware"
     },
     {
@@ -52798,8 +52798,8 @@
       "source_location": "L213",
       "_origin": "ast",
       "id": "src_tests_test_order_manager_testreconcilerotationaware_test_only_dated_token_patched_when_plain_file_has_different_token",
-      "community": 8,
-      "community_name": "Bracket Market Parsing",
+      "community": 280,
+      "community_name": "Recovery & Restart",
       "norm_label": ".test_only_dated_token_patched_when_plain_file_has_different_token()"
     },
     {
@@ -52809,8 +52809,8 @@
       "source_location": "L237",
       "_origin": "ast",
       "id": "src_tests_test_order_manager_testreconcilerotationaware_test_gz_file_not_rewritten",
-      "community": 8,
-      "community_name": "Bracket Market Parsing",
+      "community": 280,
+      "community_name": "Recovery & Restart",
       "norm_label": ".test_gz_file_not_rewritten()"
     },
     {
@@ -52820,8 +52820,8 @@
       "source_location": "L261",
       "_origin": "ast",
       "id": "src_tests_test_order_manager_testreconcilerotationaware_test_multiple_dated_files_all_patched",
-      "community": 8,
-      "community_name": "Bracket Market Parsing",
+      "community": 280,
+      "community_name": "Recovery & Restart",
       "norm_label": ".test_multiple_dated_files_all_patched()"
     },
     {
@@ -52831,8 +52831,8 @@
       "source_location": "L286",
       "_origin": "ast",
       "id": "src_tests_test_order_manager_testreconcilerotationaware_test_noop_when_no_sources_at_all",
-      "community": 8,
-      "community_name": "Bracket Market Parsing",
+      "community": 280,
+      "community_name": "Recovery & Restart",
       "norm_label": ".test_noop_when_no_sources_at_all()"
     },
     {
@@ -52842,8 +52842,8 @@
       "source_location": "L297",
       "_origin": "ast",
       "id": "src_tests_test_order_manager_testreconcilerotationaware_test_idempotent_second_run_produces_no_patches",
-      "community": 8,
-      "community_name": "Bracket Market Parsing",
+      "community": 280,
+      "community_name": "Recovery & Restart",
       "norm_label": ".test_idempotent_second_run_produces_no_patches()"
     },
     {
@@ -53942,8 +53942,8 @@
       "source_location": "L211",
       "_origin": "ast",
       "id": "src_tests_test_order_manager_rationale_211",
-      "community": 8,
-      "community_name": "Bracket Market Parsing",
+      "community": 280,
+      "community_name": "Recovery & Restart",
       "norm_label": "reconcile_timeout_fills must iterate all rotated jsonl sources correctly."
     },
     {
@@ -53953,8 +53953,8 @@
       "source_location": "L214",
       "_origin": "ast",
       "id": "src_tests_test_order_manager_rationale_214",
-      "community": 8,
-      "community_name": "Bracket Market Parsing",
+      "community": 280,
+      "community_name": "Recovery & Restart",
       "norm_label": "plain file has token-a (not in wallet); dated file has token-b (in wallet)."
     },
     {
@@ -53964,8 +53964,8 @@
       "source_location": "L238",
       "_origin": "ast",
       "id": "src_tests_test_order_manager_rationale_238",
-      "community": 8,
-      "community_name": "Bracket Market Parsing",
+      "community": 280,
+      "community_name": "Recovery & Restart",
       "norm_label": "records in .gz archives are visible for reads but the archive is never rewritten"
     },
     {
@@ -53975,8 +53975,8 @@
       "source_location": "L262",
       "_origin": "ast",
       "id": "src_tests_test_order_manager_rationale_262",
-      "community": 8,
-      "community_name": "Bracket Market Parsing",
+      "community": 280,
+      "community_name": "Recovery & Restart",
       "norm_label": "all dated jsonl files with matching tokens are patched in one reconcile pass."
     },
     {
@@ -53986,8 +53986,8 @@
       "source_location": "L287",
       "_origin": "ast",
       "id": "src_tests_test_order_manager_rationale_287",
-      "community": 8,
-      "community_name": "Bracket Market Parsing",
+      "community": 280,
+      "community_name": "Recovery & Restart",
       "norm_label": "no plain file, no dated files -> _wallet_held_token_ids never called."
     },
     {
@@ -53997,8 +53997,8 @@
       "source_location": "L298",
       "_origin": "ast",
       "id": "src_tests_test_order_manager_rationale_298",
-      "community": 8,
-      "community_name": "Bracket Market Parsing",
+      "community": 280,
+      "community_name": "Recovery & Restart",
       "norm_label": "running reconcile twice produces zero new patches on the second pass."
     },
     {
@@ -56065,8 +56065,8 @@
       "source_location": "L149",
       "_origin": "ast",
       "id": "src_tests_test_prob_cap_shadow_report_make_guardrail_events_db",
-      "community": 315,
-      "community_name": "meteoedge.db",
+      "community": 125,
+      "community_name": "Hours Parameter Handling",
       "norm_label": "_make_guardrail_events_db()"
     },
     {
@@ -56450,8 +56450,8 @@
       "source_location": "L491",
       "_origin": "ast",
       "id": "src_tests_test_prob_cap_shadow_report_testrecommend",
-      "community": 326,
-      "community_name": "OPERATIONS.md",
+      "community": 315,
+      "community_name": "meteoedge.db",
       "norm_label": "testrecommend"
     },
     {
@@ -56461,8 +56461,8 @@
       "source_location": "L495",
       "_origin": "ast",
       "id": "src_tests_test_prob_cap_shadow_report_testrecommend_test_candidate_to_raise",
-      "community": 326,
-      "community_name": "OPERATIONS.md",
+      "community": 315,
+      "community_name": "meteoedge.db",
       "norm_label": ".test_candidate_to_raise()"
     },
     {
@@ -56472,8 +56472,8 @@
       "source_location": "L504",
       "_origin": "ast",
       "id": "src_tests_test_prob_cap_shadow_report_testrecommend_test_hold_on_pnl_regression",
-      "community": 326,
-      "community_name": "OPERATIONS.md",
+      "community": 315,
+      "community_name": "meteoedge.db",
       "norm_label": ".test_hold_on_pnl_regression()"
     },
     {
@@ -56483,8 +56483,8 @@
       "source_location": "L513",
       "_origin": "ast",
       "id": "src_tests_test_prob_cap_shadow_report_testrecommend_test_extend_window_on_small_sample",
-      "community": 326,
-      "community_name": "OPERATIONS.md",
+      "community": 315,
+      "community_name": "meteoedge.db",
       "norm_label": ".test_extend_window_on_small_sample()"
     },
     {
@@ -56703,8 +56703,8 @@
       "source_location": "L727",
       "_origin": "ast",
       "id": "src_tests_test_prob_cap_shadow_report_testpopulationsaturation_test_merge_sums_across_sources",
-      "community": 158,
-      "community_name": "Shadow Loop Config",
+      "community": 221,
+      "community_name": "TestEMOSFitWithVariableSigma",
       "norm_label": ".test_merge_sums_across_sources()"
     },
     {
@@ -56714,8 +56714,8 @@
       "source_location": "L740",
       "_origin": "ast",
       "id": "src_tests_test_prob_cap_shadow_report_testguardrailcrosscheck",
-      "community": 315,
-      "community_name": "meteoedge.db",
+      "community": 125,
+      "community_name": "Hours Parameter Handling",
       "norm_label": "testguardrailcrosscheck"
     },
     {
@@ -56725,8 +56725,8 @@
       "source_location": "L741",
       "_origin": "ast",
       "id": "src_tests_test_prob_cap_shadow_report_testguardrailcrosscheck_test_counts_cap_applied_events_in_window",
-      "community": 315,
-      "community_name": "meteoedge.db",
+      "community": 125,
+      "community_name": "Hours Parameter Handling",
       "norm_label": ".test_counts_cap_applied_events_in_window()"
     },
     {
@@ -56736,8 +56736,8 @@
       "source_location": "L751",
       "_origin": "ast",
       "id": "src_tests_test_prob_cap_shadow_report_testguardrailcrosscheck_test_missing_table_returns_none",
-      "community": 315,
-      "community_name": "meteoedge.db",
+      "community": 125,
+      "community_name": "Hours Parameter Handling",
       "norm_label": ".test_missing_table_returns_none()"
     },
     {
@@ -56901,8 +56901,8 @@
       "source_location": "L150",
       "_origin": "ast",
       "id": "src_tests_test_prob_cap_shadow_report_rationale_150",
-      "community": 315,
-      "community_name": "meteoedge.db",
+      "community": 125,
+      "community_name": "Hours Parameter Handling",
       "norm_label": "minimal synthetic meteoedge.db::guardrail_events fixture (issue #682)."
     },
     {
@@ -60113,8 +60113,8 @@
       "source_location": "L276",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testclampbehaviour_test_custom_clamp_range",
-      "community": 56,
-      "community_name": "Freshness Monitor Tests",
+      "community": 108,
+      "community_name": "Intraday Bias Correction",
       "norm_label": ".test_custom_clamp_range()"
     },
     {
@@ -60762,8 +60762,8 @@
       "source_location": "L277",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_rationale_277",
-      "community": 56,
-      "community_name": "Freshness Monitor Tests",
+      "community": 108,
+      "community_name": "Intraday Bias Correction",
       "norm_label": "custom max_correction_f=3.0 \u2192 mean=+4.6 applied correction clamped to +3.0."
     },
     {
@@ -62357,8 +62357,8 @@
       "source_location": "L40",
       "_origin": "ast",
       "id": "src_tests_test_risk_db_testpnlseededfromdb",
-      "community": 38,
-      "community_name": "Settlement Pipeline Tests",
+      "community": 326,
+      "community_name": "OPERATIONS.md",
       "norm_label": "testpnlseededfromdb"
     },
     {
@@ -62368,8 +62368,8 @@
       "source_location": "L43",
       "_origin": "ast",
       "id": "src_tests_test_risk_db_testpnlseededfromdb_test_pnl_seeded_from_db",
-      "community": 38,
-      "community_name": "Settlement Pipeline Tests",
+      "community": 326,
+      "community_name": "OPERATIONS.md",
       "norm_label": ".test_pnl_seeded_from_db()"
     },
     {
@@ -62379,8 +62379,8 @@
       "source_location": "L57",
       "_origin": "ast",
       "id": "src_tests_test_risk_db_testpnlseededfromdb_test_pnl_seeded_zero_when_no_db_entry",
-      "community": 38,
-      "community_name": "Settlement Pipeline Tests",
+      "community": 326,
+      "community_name": "OPERATIONS.md",
       "norm_label": ".test_pnl_seeded_zero_when_no_db_entry()"
     },
     {
@@ -62390,8 +62390,8 @@
       "source_location": "L63",
       "_origin": "ast",
       "id": "src_tests_test_risk_db_testpnlseededfromdb_test_daily_limit_enforced_after_restart",
-      "community": 38,
-      "community_name": "Settlement Pipeline Tests",
+      "community": 326,
+      "community_name": "OPERATIONS.md",
       "norm_label": ".test_daily_limit_enforced_after_restart()"
     },
     {
@@ -62478,8 +62478,8 @@
       "source_location": "L151",
       "_origin": "ast",
       "id": "src_tests_test_risk_db_testnewdayreset",
-      "community": 280,
-      "community_name": "Recovery & Restart",
+      "community": 38,
+      "community_name": "Settlement Pipeline Tests",
       "norm_label": "testnewdayreset"
     },
     {
@@ -62489,8 +62489,8 @@
       "source_location": "L154",
       "_origin": "ast",
       "id": "src_tests_test_risk_db_testnewdayreset_test_new_day_reset_with_db",
-      "community": 280,
-      "community_name": "Recovery & Restart",
+      "community": 38,
+      "community_name": "Settlement Pipeline Tests",
       "norm_label": ".test_new_day_reset_with_db()"
     },
     {
@@ -62500,8 +62500,8 @@
       "source_location": "L166",
       "_origin": "ast",
       "id": "src_tests_test_risk_db_testnewdayreset_test_new_day_reset_writes_zero_to_db",
-      "community": 280,
-      "community_name": "Recovery & Restart",
+      "community": 38,
+      "community_name": "Settlement Pipeline Tests",
       "norm_label": ".test_new_day_reset_writes_zero_to_db()"
     },
     {
@@ -62610,8 +62610,8 @@
       "source_location": "L41",
       "_origin": "ast",
       "id": "src_tests_test_risk_db_rationale_41",
-      "community": 38,
-      "community_name": "Settlement Pipeline Tests",
+      "community": 326,
+      "community_name": "OPERATIONS.md",
       "norm_label": "_daily_pnl is seeded from db on __post_init__ when db is provided."
     },
     {
@@ -62621,8 +62621,8 @@
       "source_location": "L44",
       "_origin": "ast",
       "id": "src_tests_test_risk_db_rationale_44",
-      "community": 38,
-      "community_name": "Settlement Pipeline Tests",
+      "community": 326,
+      "community_name": "OPERATIONS.md",
       "norm_label": "insert pnl into db and verify riskmanager seeds from it on init."
     },
     {
@@ -62632,8 +62632,8 @@
       "source_location": "L58",
       "_origin": "ast",
       "id": "src_tests_test_risk_db_rationale_58",
-      "community": 38,
-      "community_name": "Settlement Pipeline Tests",
+      "community": 326,
+      "community_name": "OPERATIONS.md",
       "norm_label": "if no db entry exists for today, _daily_pnl should be 0.0."
     },
     {
@@ -62643,8 +62643,8 @@
       "source_location": "L64",
       "_origin": "ast",
       "id": "src_tests_test_risk_db_rationale_64",
-      "community": 38,
-      "community_name": "Settlement Pipeline Tests",
+      "community": 326,
+      "community_name": "OPERATIONS.md",
       "norm_label": "seed -\u20ac40 into db, create riskmanager, verify limit triggers."
     },
     {
@@ -62731,8 +62731,8 @@
       "source_location": "L152",
       "_origin": "ast",
       "id": "src_tests_test_risk_db_rationale_152",
-      "community": 280,
-      "community_name": "Recovery & Restart",
+      "community": 38,
+      "community_name": "Settlement Pipeline Tests",
       "norm_label": "_reset_if_new_day() clears pnl and resets the db when the day changes."
     },
     {
@@ -62742,8 +62742,8 @@
       "source_location": "L155",
       "_origin": "ast",
       "id": "src_tests_test_risk_db_rationale_155",
-      "community": 280,
-      "community_name": "Recovery & Restart",
+      "community": 38,
+      "community_name": "Settlement Pipeline Tests",
       "norm_label": "seed pnl for yesterday, create rm on 'today', assert _daily_pnl == 0."
     },
     {
@@ -62753,8 +62753,8 @@
       "source_location": "L167",
       "_origin": "ast",
       "id": "src_tests_test_risk_db_rationale_167",
-      "community": 280,
-      "community_name": "Recovery & Restart",
+      "community": 38,
+      "community_name": "Settlement Pipeline Tests",
       "norm_label": "when _reset_if_new_day() fires, it writes a 0.0 pnl row for the new day."
     },
     {
@@ -64788,8 +64788,8 @@
       "source_location": "L24",
       "_origin": "ast",
       "id": "src_tests_test_scanner_testparsebracketfrommarket",
-      "community": 215,
-      "community_name": "._weather_state",
+      "community": 247,
+      "community_name": "TestSeedConfig",
       "norm_label": "testparsebracketfrommarket"
     },
     {
@@ -64799,8 +64799,8 @@
       "source_location": "L27",
       "_origin": "ast",
       "id": "src_tests_test_scanner_testparsebracketfrommarket_test_lte_or_below",
-      "community": 215,
-      "community_name": "._weather_state",
+      "community": 247,
+      "community_name": "TestSeedConfig",
       "norm_label": ".test_lte_or_below()"
     },
     {
@@ -64810,8 +64810,8 @@
       "source_location": "L34",
       "_origin": "ast",
       "id": "src_tests_test_scanner_testparsebracketfrommarket_test_lte_or_less",
-      "community": 215,
-      "community_name": "._weather_state",
+      "community": 247,
+      "community_name": "TestSeedConfig",
       "norm_label": ".test_lte_or_less()"
     },
     {
@@ -64821,8 +64821,8 @@
       "source_location": "L40",
       "_origin": "ast",
       "id": "src_tests_test_scanner_testparsebracketfrommarket_test_gte_or_above",
-      "community": 215,
-      "community_name": "._weather_state",
+      "community": 247,
+      "community_name": "TestSeedConfig",
       "norm_label": ".test_gte_or_above()"
     },
     {
@@ -64832,8 +64832,8 @@
       "source_location": "L47",
       "_origin": "ast",
       "id": "src_tests_test_scanner_testparsebracketfrommarket_test_gte_or_more",
-      "community": 215,
-      "community_name": "._weather_state",
+      "community": 247,
+      "community_name": "TestSeedConfig",
       "norm_label": ".test_gte_or_more()"
     },
     {
@@ -64843,8 +64843,8 @@
       "source_location": "L53",
       "_origin": "ast",
       "id": "src_tests_test_scanner_testparsebracketfrommarket_test_between_and",
-      "community": 215,
-      "community_name": "._weather_state",
+      "community": 247,
+      "community_name": "TestSeedConfig",
       "norm_label": ".test_between_and()"
     },
     {
@@ -64854,8 +64854,8 @@
       "source_location": "L60",
       "_origin": "ast",
       "id": "src_tests_test_scanner_testparsebracketfrommarket_test_range_dash",
-      "community": 215,
-      "community_name": "._weather_state",
+      "community": 247,
+      "community_name": "TestSeedConfig",
       "norm_label": ".test_range_dash()"
     },
     {
@@ -64865,8 +64865,8 @@
       "source_location": "L67",
       "_origin": "ast",
       "id": "src_tests_test_scanner_testparsebracketfrommarket_test_range_em_dash",
-      "community": 215,
-      "community_name": "._weather_state",
+      "community": 247,
+      "community_name": "TestSeedConfig",
       "norm_label": ".test_range_em_dash()"
     },
     {
@@ -64876,8 +64876,8 @@
       "source_location": "L74",
       "_origin": "ast",
       "id": "src_tests_test_scanner_testparsebracketfrommarket_test_unparseable_returns_none",
-      "community": 215,
-      "community_name": "._weather_state",
+      "community": 247,
+      "community_name": "TestSeedConfig",
       "norm_label": ".test_unparseable_returns_none()"
     },
     {
@@ -64887,8 +64887,8 @@
       "source_location": "L79",
       "_origin": "ast",
       "id": "src_tests_test_scanner_testparsebracketfrommarket_test_missing_condition_id_returns_none",
-      "community": 215,
-      "community_name": "._weather_state",
+      "community": 247,
+      "community_name": "TestSeedConfig",
       "norm_label": ".test_missing_condition_id_returns_none()"
     },
     {
@@ -64898,8 +64898,8 @@
       "source_location": "L85",
       "_origin": "ast",
       "id": "src_tests_test_scanner_testparsebracketfrommarket_test_yes_price_parsed",
-      "community": 215,
-      "community_name": "._weather_state",
+      "community": 247,
+      "community_name": "TestSeedConfig",
       "norm_label": ".test_yes_price_parsed()"
     },
     {
@@ -64942,8 +64942,8 @@
       "source_location": "L109",
       "_origin": "ast",
       "id": "src_tests_test_scanner_testishighesttempmarket",
-      "community": 247,
-      "community_name": "TestSeedConfig",
+      "community": 40,
+      "community_name": "Climb Rate Tables",
       "norm_label": "testishighesttempmarket"
     },
     {
@@ -64953,8 +64953,8 @@
       "source_location": "L112",
       "_origin": "ast",
       "id": "src_tests_test_scanner_testishighesttempmarket_test_matching_city",
-      "community": 247,
-      "community_name": "TestSeedConfig",
+      "community": 40,
+      "community_name": "Climb Rate Tables",
       "norm_label": ".test_matching_city()"
     },
     {
@@ -64964,8 +64964,8 @@
       "source_location": "L119",
       "_origin": "ast",
       "id": "src_tests_test_scanner_testishighesttempmarket_test_lowest_temp_skipped",
-      "community": 247,
-      "community_name": "TestSeedConfig",
+      "community": 40,
+      "community_name": "Climb Rate Tables",
       "norm_label": ".test_lowest_temp_skipped()"
     },
     {
@@ -64975,8 +64975,8 @@
       "source_location": "L125",
       "_origin": "ast",
       "id": "src_tests_test_scanner_testishighesttempmarket_test_unknown_city_returns_false",
-      "community": 247,
-      "community_name": "TestSeedConfig",
+      "community": 40,
+      "community_name": "Climb Rate Tables",
       "norm_label": ".test_unknown_city_returns_false()"
     },
     {
@@ -65492,8 +65492,8 @@
       "source_location": "L25",
       "_origin": "ast",
       "id": "src_tests_test_scanner_rationale_25",
-      "community": 215,
-      "community_name": "._weather_state",
+      "community": 247,
+      "community_name": "TestSeedConfig",
       "norm_label": "tests for all 4 bracket label formats that polymarket uses."
     },
     {
@@ -65503,8 +65503,8 @@
       "source_location": "L28",
       "_origin": "ast",
       "id": "src_tests_test_scanner_rationale_28",
-      "community": 215,
-      "community_name": "._weather_state",
+      "community": 247,
+      "community_name": "TestSeedConfig",
       "norm_label": "55\u00b0f or below' \u2192 low=-50, high=55."
     },
     {
@@ -65514,8 +65514,8 @@
       "source_location": "L35",
       "_origin": "ast",
       "id": "src_tests_test_scanner_rationale_35",
-      "community": 215,
-      "community_name": "._weather_state",
+      "community": 247,
+      "community_name": "TestSeedConfig",
       "norm_label": "60\u00b0f or less' \u2192 low=-50, high=60."
     },
     {
@@ -65525,8 +65525,8 @@
       "source_location": "L41",
       "_origin": "ast",
       "id": "src_tests_test_scanner_rationale_41",
-      "community": 215,
-      "community_name": "._weather_state",
+      "community": 247,
+      "community_name": "TestSeedConfig",
       "norm_label": "92\u00b0f or above' \u2192 low=92, high=200."
     },
     {
@@ -65536,8 +65536,8 @@
       "source_location": "L48",
       "_origin": "ast",
       "id": "src_tests_test_scanner_rationale_48",
-      "community": 215,
-      "community_name": "._weather_state",
+      "community": 247,
+      "community_name": "TestSeedConfig",
       "norm_label": "85\u00b0f or more' \u2192 low=85, high=200."
     },
     {
@@ -65547,8 +65547,8 @@
       "source_location": "L54",
       "_origin": "ast",
       "id": "src_tests_test_scanner_rationale_54",
-      "community": 215,
-      "community_name": "._weather_state",
+      "community": 247,
+      "community_name": "TestSeedConfig",
       "norm_label": "between 56 and 57\u00b0f' \u2192 low=56, high=57."
     },
     {
@@ -65558,8 +65558,8 @@
       "source_location": "L61",
       "_origin": "ast",
       "id": "src_tests_test_scanner_rationale_61",
-      "community": 215,
-      "community_name": "._weather_state",
+      "community": 247,
+      "community_name": "TestSeedConfig",
       "norm_label": "58-60\u00b0f' \u2192 low=58, high=60."
     },
     {
@@ -65569,8 +65569,8 @@
       "source_location": "L68",
       "_origin": "ast",
       "id": "src_tests_test_scanner_rationale_68",
-      "community": 215,
-      "community_name": "._weather_state",
+      "community": 247,
+      "community_name": "TestSeedConfig",
       "norm_label": "82\u201384\u00b0f' (em-dash) \u2192 low=82, high=84."
     },
     {
@@ -65580,8 +65580,8 @@
       "source_location": "L75",
       "_origin": "ast",
       "id": "src_tests_test_scanner_rationale_75",
-      "community": 215,
-      "community_name": "._weather_state",
+      "community": 247,
+      "community_name": "TestSeedConfig",
       "norm_label": "unrecognized label returns none."
     },
     {
@@ -65591,8 +65591,8 @@
       "source_location": "L80",
       "_origin": "ast",
       "id": "src_tests_test_scanner_rationale_80",
-      "community": 215,
-      "community_name": "._weather_state",
+      "community": 247,
+      "community_name": "TestSeedConfig",
       "norm_label": "market without conditionid returns none."
     },
     {
@@ -65602,8 +65602,8 @@
       "source_location": "L86",
       "_origin": "ast",
       "id": "src_tests_test_scanner_rationale_86",
-      "community": 215,
-      "community_name": "._weather_state",
+      "community": 247,
+      "community_name": "TestSeedConfig",
       "norm_label": "yes price is correctly extracted from outcomeprices."
     },
     {
@@ -65646,8 +65646,8 @@
       "source_location": "L110",
       "_origin": "ast",
       "id": "src_tests_test_scanner_rationale_110",
-      "community": 247,
-      "community_name": "TestSeedConfig",
+      "community": 40,
+      "community_name": "Climb Rate Tables",
       "norm_label": "tests for is_highest_temp_market() filter."
     },
     {
@@ -65657,8 +65657,8 @@
       "source_location": "L113",
       "_origin": "ast",
       "id": "src_tests_test_scanner_rationale_113",
-      "community": 247,
-      "community_name": "TestSeedConfig",
+      "community": 40,
+      "community_name": "Climb Rate Tables",
       "norm_label": "correctly identifies a miami highest-temp market."
     },
     {
@@ -65668,8 +65668,8 @@
       "source_location": "L120",
       "_origin": "ast",
       "id": "src_tests_test_scanner_rationale_120",
-      "community": 247,
-      "community_name": "TestSeedConfig",
+      "community": 40,
+      "community_name": "Climb Rate Tables",
       "norm_label": "lowest-temperature markets must not match."
     },
     {
@@ -65679,8 +65679,8 @@
       "source_location": "L126",
       "_origin": "ast",
       "id": "src_tests_test_scanner_rationale_126",
-      "community": 247,
-      "community_name": "TestSeedConfig",
+      "community": 40,
+      "community_name": "Climb Rate Tables",
       "norm_label": "unknown city returns false."
     },
     {
@@ -66108,8 +66108,8 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "src_tests_test_scanner_low_side",
-      "community": 247,
-      "community_name": "TestSeedConfig",
+      "community": 40,
+      "community_name": "Climb Rate Tables",
       "norm_label": "test_scanner_low_side.py"
     },
     {
@@ -66119,8 +66119,8 @@
       "source_location": "L22",
       "_origin": "ast",
       "id": "src_tests_test_scanner_low_side_market",
-      "community": 247,
-      "community_name": "TestSeedConfig",
+      "community": 40,
+      "community_name": "Climb Rate Tables",
       "norm_label": "_market()"
     },
     {
@@ -66130,8 +66130,8 @@
       "source_location": "L34",
       "_origin": "ast",
       "id": "src_tests_test_scanner_low_side_testislowesttempmarket",
-      "community": 247,
-      "community_name": "TestSeedConfig",
+      "community": 40,
+      "community_name": "Climb Rate Tables",
       "norm_label": "testislowesttempmarket"
     },
     {
@@ -66141,8 +66141,8 @@
       "source_location": "L35",
       "_origin": "ast",
       "id": "src_tests_test_scanner_low_side_testislowesttempmarket_test_detects_chicago_low",
-      "community": 247,
-      "community_name": "TestSeedConfig",
+      "community": 40,
+      "community_name": "Climb Rate Tables",
       "norm_label": ".test_detects_chicago_low()"
     },
     {
@@ -66152,8 +66152,8 @@
       "source_location": "L41",
       "_origin": "ast",
       "id": "src_tests_test_scanner_low_side_testislowesttempmarket_test_detects_nyc_alias",
-      "community": 247,
-      "community_name": "TestSeedConfig",
+      "community": 40,
+      "community_name": "Climb Rate Tables",
       "norm_label": ".test_detects_nyc_alias()"
     },
     {
@@ -66163,8 +66163,8 @@
       "source_location": "L47",
       "_origin": "ast",
       "id": "src_tests_test_scanner_low_side_testislowesttempmarket_test_detects_london",
-      "community": 247,
-      "community_name": "TestSeedConfig",
+      "community": 40,
+      "community_name": "Climb Rate Tables",
       "norm_label": ".test_detects_london()"
     },
     {
@@ -66174,8 +66174,8 @@
       "source_location": "L53",
       "_origin": "ast",
       "id": "src_tests_test_scanner_low_side_testislowesttempmarket_test_detects_seoul",
-      "community": 247,
-      "community_name": "TestSeedConfig",
+      "community": 40,
+      "community_name": "Climb Rate Tables",
       "norm_label": ".test_detects_seoul()"
     },
     {
@@ -66185,8 +66185,8 @@
       "source_location": "L59",
       "_origin": "ast",
       "id": "src_tests_test_scanner_low_side_testislowesttempmarket_test_rejects_highest_temp_market",
-      "community": 247,
-      "community_name": "TestSeedConfig",
+      "community": 40,
+      "community_name": "Climb Rate Tables",
       "norm_label": ".test_rejects_highest_temp_market()"
     },
     {
@@ -66196,8 +66196,8 @@
       "source_location": "L64",
       "_origin": "ast",
       "id": "src_tests_test_scanner_low_side_testislowesttempmarket_test_rejects_unknown_city",
-      "community": 247,
-      "community_name": "TestSeedConfig",
+      "community": 40,
+      "community_name": "Climb Rate Tables",
       "norm_label": ".test_rejects_unknown_city()"
     },
     {
@@ -66207,8 +66207,8 @@
       "source_location": "L69",
       "_origin": "ast",
       "id": "src_tests_test_scanner_low_side_testislowesttempmarket_test_rejects_non_temp_market",
-      "community": 247,
-      "community_name": "TestSeedConfig",
+      "community": 40,
+      "community_name": "Climb Rate Tables",
       "norm_label": ".test_rejects_non_temp_market()"
     },
     {
@@ -66218,8 +66218,8 @@
       "source_location": "L74",
       "_origin": "ast",
       "id": "src_tests_test_scanner_low_side_testislowesttempmarket_test_label_patterns_gte",
-      "community": 247,
-      "community_name": "TestSeedConfig",
+      "community": 40,
+      "community_name": "Climb Rate Tables",
       "norm_label": ".test_label_patterns_gte()"
     },
     {
@@ -66229,8 +66229,8 @@
       "source_location": "L80",
       "_origin": "ast",
       "id": "src_tests_test_scanner_low_side_testislowesttempmarket_test_label_patterns_lte",
-      "community": 247,
-      "community_name": "TestSeedConfig",
+      "community": 40,
+      "community_name": "Climb Rate Tables",
       "norm_label": ".test_label_patterns_lte()"
     },
     {
@@ -66240,8 +66240,8 @@
       "source_location": "L87",
       "_origin": "ast",
       "id": "src_tests_test_scanner_low_side_testhighesttempmarketregressions",
-      "community": 247,
-      "community_name": "TestSeedConfig",
+      "community": 40,
+      "community_name": "Climb Rate Tables",
       "norm_label": "testhighesttempmarketregressions"
     },
     {
@@ -66251,8 +66251,8 @@
       "source_location": "L90",
       "_origin": "ast",
       "id": "src_tests_test_scanner_low_side_testhighesttempmarketregressions_test_lowest_market_not_matched_by_highest",
-      "community": 247,
-      "community_name": "TestSeedConfig",
+      "community": 40,
+      "community_name": "Climb Rate Tables",
       "norm_label": ".test_lowest_market_not_matched_by_highest()"
     },
     {
@@ -66262,8 +66262,8 @@
       "source_location": "L95",
       "_origin": "ast",
       "id": "src_tests_test_scanner_low_side_testhighesttempmarketregressions_test_highest_still_works",
-      "community": 247,
-      "community_name": "TestSeedConfig",
+      "community": 40,
+      "community_name": "Climb Rate Tables",
       "norm_label": ".test_highest_still_works()"
     },
     {
@@ -66515,8 +66515,8 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "src_tests_test_scanner_low_side_rationale_1",
-      "community": 247,
-      "community_name": "TestSeedConfig",
+      "community": 40,
+      "community_name": "Climb Rate Tables",
       "norm_label": "tests for low-side scanner extension (issue #455)."
     },
     {
@@ -66526,8 +66526,8 @@
       "source_location": "L88",
       "_origin": "ast",
       "id": "src_tests_test_scanner_low_side_rationale_88",
-      "community": 247,
-      "community_name": "TestSeedConfig",
+      "community": 40,
+      "community_name": "Climb Rate Tables",
       "norm_label": "is_highest_temp_market must not match lowest-temp markets."
     },
     {
@@ -68308,8 +68308,8 @@
       "source_location": "L34",
       "_origin": "ast",
       "id": "src_tests_test_settle_shadow_insert_shadow",
-      "community": 128,
-      "community_name": "Polymarket API Client",
+      "community": 106,
+      "community_name": "Bracket Regex Parsing",
       "norm_label": "_insert_shadow()"
     },
     {
@@ -68396,8 +68396,8 @@
       "source_location": "L175",
       "_origin": "ast",
       "id": "src_tests_test_settle_shadow_testsettleshadowidempotency",
-      "community": 128,
-      "community_name": "Polymarket API Client",
+      "community": 348,
+      "community_name": "__init__.py",
       "norm_label": "testsettleshadowidempotency"
     },
     {
@@ -68407,8 +68407,8 @@
       "source_location": "L176",
       "_origin": "ast",
       "id": "src_tests_test_settle_shadow_testsettleshadowidempotency_test_already_settled_rows_are_skipped",
-      "community": 128,
-      "community_name": "Polymarket API Client",
+      "community": 348,
+      "community_name": "__init__.py",
       "norm_label": ".test_already_settled_rows_are_skipped()"
     },
     {
@@ -68748,8 +68748,8 @@
       "source_location": "L37",
       "_origin": "ast",
       "id": "src_tests_test_settle_shadow_rationale_37",
-      "community": 128,
-      "community_name": "Polymarket API Client",
+      "community": 106,
+      "community_name": "Bracket Regex Parsing",
       "norm_label": "insert a shadow yes trade for the given station and date."
     },
     {
@@ -68836,8 +68836,8 @@
       "source_location": "L177",
       "_origin": "ast",
       "id": "src_tests_test_settle_shadow_rationale_177",
-      "community": 128,
-      "community_name": "Polymarket API Client",
+      "community": 348,
+      "community_name": "__init__.py",
       "norm_label": "running settle_shadow_trades twice does not change pnl on rows already settled."
     },
     {
@@ -80691,7 +80691,7 @@
       "label": "Screen layout",
       "file_type": "document",
       "source_file": "docs/design/edge-tab-bracket-decisions.md",
-      "source_location": "L51",
+      "source_location": "L60",
       "_origin": "ast",
       "id": "docs_design_edge_tab_bracket_decisions_screen_layout",
       "community": 168,
@@ -80702,7 +80702,7 @@
       "label": "Components",
       "file_type": "document",
       "source_file": "docs/design/edge-tab-bracket-decisions.md",
-      "source_location": "L80",
+      "source_location": "L89",
       "_origin": "ast",
       "id": "docs_design_edge_tab_bracket_decisions_components",
       "community": 168,
@@ -80713,7 +80713,7 @@
       "label": "1. Tab bar, station selector, Today/D+1 toggle \u2014 reused unchanged",
       "file_type": "document",
       "source_file": "docs/design/edge-tab-bracket-decisions.md",
-      "source_location": "L82",
+      "source_location": "L91",
       "_origin": "ast",
       "id": "docs_design_edge_tab_bracket_decisions_1_tab_bar_station_selector_today_d_1_toggle_reused_unchanged",
       "community": 168,
@@ -80724,7 +80724,7 @@
       "label": "2. Scan summary bar (replaces the 5-card KPI strip)",
       "file_type": "document",
       "source_file": "docs/design/edge-tab-bracket-decisions.md",
-      "source_location": "L94",
+      "source_location": "L121",
       "_origin": "ast",
       "id": "docs_design_edge_tab_bracket_decisions_2_scan_summary_bar_replaces_the_5_card_kpi_strip",
       "community": 168,
@@ -80735,7 +80735,7 @@
       "label": "3. Forecast inputs (collapsed secondary block)",
       "file_type": "document",
       "source_file": "docs/design/edge-tab-bracket-decisions.md",
-      "source_location": "L135",
+      "source_location": "L162",
       "_origin": "ast",
       "id": "docs_design_edge_tab_bracket_decisions_3_forecast_inputs_collapsed_secondary_block",
       "community": 168,
@@ -80746,7 +80746,7 @@
       "label": "4. Per-bracket decision table",
       "file_type": "document",
       "source_file": "docs/design/edge-tab-bracket-decisions.md",
-      "source_location": "L161",
+      "source_location": "L188",
       "_origin": "ast",
       "id": "docs_design_edge_tab_bracket_decisions_4_per_bracket_decision_table",
       "community": 168,
@@ -80757,7 +80757,7 @@
       "label": "5. The gate-verdict chip",
       "file_type": "document",
       "source_file": "docs/design/edge-tab-bracket-decisions.md",
-      "source_location": "L206",
+      "source_location": "L240",
       "_origin": "ast",
       "id": "docs_design_edge_tab_bracket_decisions_5_the_gate_verdict_chip",
       "community": 168,
@@ -80768,7 +80768,7 @@
       "label": "6. Gate legend (collapsed disclosure)",
       "file_type": "document",
       "source_file": "docs/design/edge-tab-bracket-decisions.md",
-      "source_location": "L280",
+      "source_location": "L314",
       "_origin": "ast",
       "id": "docs_design_edge_tab_bracket_decisions_6_gate_legend_collapsed_disclosure",
       "community": 168,
@@ -80779,7 +80779,7 @@
       "label": "7. Loading / empty / stale / error states",
       "file_type": "document",
       "source_file": "docs/design/edge-tab-bracket-decisions.md",
-      "source_location": "L296",
+      "source_location": "L330",
       "_origin": "ast",
       "id": "docs_design_edge_tab_bracket_decisions_7_loading_empty_stale_error_states",
       "community": 168,
@@ -80790,7 +80790,7 @@
       "label": "Design tokens / references",
       "file_type": "document",
       "source_file": "docs/design/edge-tab-bracket-decisions.md",
-      "source_location": "L311",
+      "source_location": "L345",
       "_origin": "ast",
       "id": "docs_design_edge_tab_bracket_decisions_design_tokens_references",
       "community": 168,
@@ -80801,7 +80801,7 @@
       "label": "Accessibility notes",
       "file_type": "document",
       "source_file": "docs/design/edge-tab-bracket-decisions.md",
-      "source_location": "L335",
+      "source_location": "L372",
       "_origin": "ast",
       "id": "docs_design_edge_tab_bracket_decisions_accessibility_notes",
       "community": 168,
@@ -80812,7 +80812,7 @@
       "label": "Open questions / flags for Tech Lead PM",
       "file_type": "document",
       "source_file": "docs/design/edge-tab-bracket-decisions.md",
-      "source_location": "L364",
+      "source_location": "L404",
       "_origin": "ast",
       "id": "docs_design_edge_tab_bracket_decisions_open_questions_flags_for_tech_lead_pm",
       "community": 168,
@@ -156586,7 +156586,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_edge_tab_js_logic.py",
-      "source_location": "L186",
+      "source_location": "L369",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_tests_test_edge_tab_js_logic",
@@ -156597,7 +156597,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_edge_tab_js_logic.py",
-      "source_location": "L194",
+      "source_location": "L377",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_tests_test_edge_tab_js_logic",
@@ -156620,7 +156620,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_edge_tab_js_logic.py",
-      "source_location": "L200",
+      "source_location": "L386",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_tests_test_edge_tab_js_logic_test_edge_tab_gate_and_emphasis_logic",
@@ -156631,10 +156631,10 @@
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_edge_tab_js_logic.py",
-      "source_location": "L195",
+      "source_location": "L378",
       "weight": 1.0,
       "_origin": "ast",
-      "source": "src_tests_test_edge_tab_js_logic_rationale_195",
+      "source": "src_tests_test_edge_tab_js_logic_rationale_378",
       "target": "src_tests_test_edge_tab_js_logic_test_edge_tab_gate_and_emphasis_logic",
       "confidence_score": 1.0
     },
@@ -229812,7 +229812,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "docs/design/edge-tab-bracket-decisions.md",
-      "source_location": "L335",
+      "source_location": "L372",
       "weight": 1.0,
       "_origin": "ast",
       "source": "docs_design_edge_tab_bracket_decisions_design_spec_edge_tab_bot_s_eye_per_bracket_decision_view",
@@ -229823,7 +229823,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "docs/design/edge-tab-bracket-decisions.md",
-      "source_location": "L80",
+      "source_location": "L89",
       "weight": 1.0,
       "_origin": "ast",
       "source": "docs_design_edge_tab_bracket_decisions_design_spec_edge_tab_bot_s_eye_per_bracket_decision_view",
@@ -229834,7 +229834,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "docs/design/edge-tab-bracket-decisions.md",
-      "source_location": "L311",
+      "source_location": "L345",
       "weight": 1.0,
       "_origin": "ast",
       "source": "docs_design_edge_tab_bracket_decisions_design_spec_edge_tab_bot_s_eye_per_bracket_decision_view",
@@ -229845,7 +229845,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "docs/design/edge-tab-bracket-decisions.md",
-      "source_location": "L364",
+      "source_location": "L404",
       "weight": 1.0,
       "_origin": "ast",
       "source": "docs_design_edge_tab_bracket_decisions_design_spec_edge_tab_bot_s_eye_per_bracket_decision_view",
@@ -229856,7 +229856,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "docs/design/edge-tab-bracket-decisions.md",
-      "source_location": "L51",
+      "source_location": "L60",
       "weight": 1.0,
       "_origin": "ast",
       "source": "docs_design_edge_tab_bracket_decisions_design_spec_edge_tab_bot_s_eye_per_bracket_decision_view",
@@ -229900,7 +229900,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "docs/design/edge-tab-bracket-decisions.md",
-      "source_location": "L82",
+      "source_location": "L91",
       "weight": 1.0,
       "_origin": "ast",
       "source": "docs_design_edge_tab_bracket_decisions_components",
@@ -229911,7 +229911,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "docs/design/edge-tab-bracket-decisions.md",
-      "source_location": "L94",
+      "source_location": "L121",
       "weight": 1.0,
       "_origin": "ast",
       "source": "docs_design_edge_tab_bracket_decisions_components",
@@ -229922,7 +229922,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "docs/design/edge-tab-bracket-decisions.md",
-      "source_location": "L135",
+      "source_location": "L162",
       "weight": 1.0,
       "_origin": "ast",
       "source": "docs_design_edge_tab_bracket_decisions_components",
@@ -229933,7 +229933,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "docs/design/edge-tab-bracket-decisions.md",
-      "source_location": "L161",
+      "source_location": "L188",
       "weight": 1.0,
       "_origin": "ast",
       "source": "docs_design_edge_tab_bracket_decisions_components",
@@ -229944,7 +229944,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "docs/design/edge-tab-bracket-decisions.md",
-      "source_location": "L206",
+      "source_location": "L240",
       "weight": 1.0,
       "_origin": "ast",
       "source": "docs_design_edge_tab_bracket_decisions_components",
@@ -229955,7 +229955,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "docs/design/edge-tab-bracket-decisions.md",
-      "source_location": "L280",
+      "source_location": "L314",
       "weight": 1.0,
       "_origin": "ast",
       "source": "docs_design_edge_tab_bracket_decisions_components",
@@ -229966,7 +229966,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "docs/design/edge-tab-bracket-decisions.md",
-      "source_location": "L296",
+      "source_location": "L330",
       "weight": 1.0,
       "_origin": "ast",
       "source": "docs_design_edge_tab_bracket_decisions_components",
@@ -230478,5 +230478,5 @@
     }
   ],
   "hyperedges": [],
-  "built_at_commit": "3e1710c0606ab5d6818c0d608ae253d0c68e5fe6"
+  "built_at_commit": "1113b5b542915853ee19d2668c7024eca0fdf3d2"
 }
