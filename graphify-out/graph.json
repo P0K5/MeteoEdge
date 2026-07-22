@@ -1593,8 +1593,8 @@
       "source_location": "L489",
       "_origin": "ast",
       "id": "scripts_prob_cap_shadow_report_merge_saturation_dicts",
-      "community": 221,
-      "community_name": "TestEMOSFitWithVariableSigma",
+      "community": 158,
+      "community_name": "Shadow Loop Config",
       "norm_label": "merge_saturation_dicts()"
     },
     {
@@ -1604,8 +1604,8 @@
       "source_location": "L503",
       "_origin": "ast",
       "id": "scripts_prob_cap_shadow_report_guardrail_cap_applied_count",
-      "community": 125,
-      "community_name": "Hours Parameter Handling",
+      "community": 315,
+      "community_name": "meteoedge.db",
       "norm_label": "guardrail_cap_applied_count()"
     },
     {
@@ -1703,8 +1703,8 @@
       "source_location": "L854",
       "_origin": "ast",
       "id": "scripts_prob_cap_shadow_report_recommend",
-      "community": 315,
-      "community_name": "meteoedge.db",
+      "community": 348,
+      "community_name": "__init__.py",
       "norm_label": "recommend()"
     },
     {
@@ -1879,8 +1879,8 @@
       "source_location": "L504",
       "_origin": "ast",
       "id": "scripts_prob_cap_shadow_report_rationale_504",
-      "community": 125,
-      "community_name": "Hours Parameter Handling",
+      "community": 315,
+      "community_name": "meteoedge.db",
       "norm_label": "cross-check count for population saturation: guardrail_events.cap_applied."
     },
     {
@@ -6950,8 +6950,8 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "src_model_emos_mode",
-      "community": 186,
-      "community_name": "emos_mode.py",
+      "community": 6,
+      "community_name": "Model Retraining",
       "norm_label": "emos_mode.py"
     },
     {
@@ -6962,7 +6962,7 @@
       "_origin": "ast",
       "id": "src_model_emos_mode_emos_min_samples",
       "community": 186,
-      "community_name": "emos_mode.py",
+      "community_name": "_emos_min_samples",
       "norm_label": "_emos_min_samples()"
     },
     {
@@ -6972,8 +6972,8 @@
       "source_location": "L29",
       "_origin": "ast",
       "id": "src_model_emos_mode_default_mode",
-      "community": 186,
-      "community_name": "emos_mode.py",
+      "community": 6,
+      "community_name": "Model Retraining",
       "norm_label": "_default_mode()"
     },
     {
@@ -6983,8 +6983,8 @@
       "source_location": "L44",
       "_origin": "ast",
       "id": "src_model_emos_mode_shadow_or_default",
-      "community": 186,
-      "community_name": "emos_mode.py",
+      "community": 6,
+      "community_name": "Model Retraining",
       "norm_label": "_shadow_or_default()"
     },
     {
@@ -6994,8 +6994,8 @@
       "source_location": "L51",
       "_origin": "ast",
       "id": "src_model_emos_mode_primary_allowed",
-      "community": 186,
-      "community_name": "emos_mode.py",
+      "community": 6,
+      "community_name": "Model Retraining",
       "norm_label": "_primary_allowed()"
     },
     {
@@ -7016,8 +7016,8 @@
       "source_location": "L140",
       "_origin": "ast",
       "id": "src_model_emos_mode_serving_members_for_stack",
-      "community": 186,
-      "community_name": "emos_mode.py",
+      "community": 390,
+      "community_name": "_serving_members_for_stack",
       "norm_label": "_serving_members_for_stack()"
     },
     {
@@ -7093,8 +7093,8 @@
       "source_location": "L327",
       "_origin": "ast",
       "id": "src_model_emos_mode_check_ready_for_promotion",
-      "community": 186,
-      "community_name": "emos_mode.py",
+      "community": 6,
+      "community_name": "Model Retraining",
       "norm_label": "_check_ready_for_promotion()"
     },
     {
@@ -7104,8 +7104,8 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "src_model_emos_mode_rationale_1",
-      "community": 186,
-      "community_name": "emos_mode.py",
+      "community": 6,
+      "community_name": "Model Retraining",
       "norm_label": "emos deployment mode helpers.  controls whether each city uses legacy gaussian,"
     },
     {
@@ -7116,7 +7116,7 @@
       "_origin": "ast",
       "id": "src_model_emos_mode_rationale_14",
       "community": 186,
-      "community_name": "emos_mode.py",
+      "community_name": "_emos_min_samples",
       "norm_label": "return the crps-logged shadow-day minimum for promotion to emos_primary.      de"
     },
     {
@@ -7126,8 +7126,8 @@
       "source_location": "L30",
       "_origin": "ast",
       "id": "src_model_emos_mode_rationale_30",
-      "community": 186,
-      "community_name": "emos_mode.py",
+      "community": 6,
+      "community_name": "Model Retraining",
       "norm_label": "resolve the emos fallback mode for cities with no calibration rows.      reads t"
     },
     {
@@ -7137,8 +7137,8 @@
       "source_location": "L45",
       "_origin": "ast",
       "id": "src_model_emos_mode_rationale_45",
-      "community": 186,
-      "community_name": "emos_mode.py",
+      "community": 6,
+      "community_name": "Model Retraining",
       "norm_label": "fall back to emos_shadow when a shadow row exists, else emos_default_mode."
     },
     {
@@ -7148,8 +7148,8 @@
       "source_location": "L52",
       "_origin": "ast",
       "id": "src_model_emos_mode_rationale_52",
-      "community": 186,
-      "community_name": "emos_mode.py",
+      "community": 6,
+      "community_name": "Model Retraining",
       "norm_label": "return true only if a primary row exists and the crps sample guard passes."
     },
     {
@@ -7170,8 +7170,8 @@
       "source_location": "L141",
       "_origin": "ast",
       "id": "src_model_emos_mode_rationale_141",
-      "community": 186,
-      "community_name": "emos_mode.py",
+      "community": 390,
+      "community_name": "_serving_members_for_stack",
       "norm_label": "return the weatherstate attribute names to average for *stack_models*.      maps"
     },
     {
@@ -7247,8 +7247,8 @@
       "source_location": "L328",
       "_origin": "ast",
       "id": "src_model_emos_mode_rationale_328",
-      "community": 186,
-      "community_name": "emos_mode.py",
+      "community": 6,
+      "community_name": "Model Retraining",
       "norm_label": "return true when a city is cleared to serve emos_primary.      two independent s"
     },
     {
@@ -11779,8 +11779,8 @@
       "source_location": "L79",
       "_origin": "ast",
       "id": "src_scripts_settle_settle_shadow_trades",
-      "community": 261,
-      "community_name": "conftest.py",
+      "community": 106,
+      "community_name": "Bracket Regex Parsing",
       "norm_label": "settle_shadow_trades()"
     },
     {
@@ -11889,8 +11889,8 @@
       "source_location": "L80",
       "_origin": "ast",
       "id": "src_scripts_settle_rationale_80",
-      "community": 261,
-      "community_name": "conftest.py",
+      "community": 106,
+      "community_name": "Bracket Regex Parsing",
       "norm_label": "settle shadow trades for *target* using real outcomes from *truth*.      shadow"
     },
     {
@@ -22383,8 +22383,8 @@
       "source_location": "L515",
       "_origin": "ast",
       "id": "src_tests_test_dashboard_testclosedpositionsexitreason",
-      "community": 250,
-      "community_name": "get_live_config",
+      "community": 27,
+      "community_name": "Project Documentation & Plans",
       "norm_label": "testclosedpositionsexitreason"
     },
     {
@@ -22394,8 +22394,8 @@
       "source_location": "L518",
       "_origin": "ast",
       "id": "src_tests_test_dashboard_testclosedpositionsexitreason_test_stopped_position_take_profit_exit_reason",
-      "community": 250,
-      "community_name": "get_live_config",
+      "community": 27,
+      "community_name": "Project Documentation & Plans",
       "norm_label": ".test_stopped_position_take_profit_exit_reason()"
     },
     {
@@ -22405,8 +22405,8 @@
       "source_location": "L541",
       "_origin": "ast",
       "id": "src_tests_test_dashboard_testclosedpositionsexitreason_test_stopped_position_stop_loss_exit_reason",
-      "community": 250,
-      "community_name": "get_live_config",
+      "community": 27,
+      "community_name": "Project Documentation & Plans",
       "norm_label": ".test_stopped_position_stop_loss_exit_reason()"
     },
     {
@@ -22416,8 +22416,8 @@
       "source_location": "L564",
       "_origin": "ast",
       "id": "src_tests_test_dashboard_testclosedpositionsexitreason_test_settled_position_won_exit_reason",
-      "community": 250,
-      "community_name": "get_live_config",
+      "community": 27,
+      "community_name": "Project Documentation & Plans",
       "norm_label": ".test_settled_position_won_exit_reason()"
     },
     {
@@ -22427,8 +22427,8 @@
       "source_location": "L587",
       "_origin": "ast",
       "id": "src_tests_test_dashboard_testclosedpositionsexitreason_test_settled_position_lost_exit_reason",
-      "community": 250,
-      "community_name": "get_live_config",
+      "community": 27,
+      "community_name": "Project Documentation & Plans",
       "norm_label": ".test_settled_position_lost_exit_reason()"
     },
     {
@@ -22438,8 +22438,8 @@
       "source_location": "L610",
       "_origin": "ast",
       "id": "src_tests_test_dashboard_testclosedpositionsexitreason_test_settled_position_zero_pnl_is_lost",
-      "community": 250,
-      "community_name": "get_live_config",
+      "community": 27,
+      "community_name": "Project Documentation & Plans",
       "norm_label": ".test_settled_position_zero_pnl_is_lost()"
     },
     {
@@ -23670,8 +23670,8 @@
       "source_location": "L516",
       "_origin": "ast",
       "id": "src_tests_test_dashboard_rationale_516",
-      "community": 250,
-      "community_name": "get_live_config",
+      "community": 27,
+      "community_name": "Project Documentation & Plans",
       "norm_label": "test exit_reason field on closed positions (early exits and settled)."
     },
     {
@@ -23681,8 +23681,8 @@
       "source_location": "L519",
       "_origin": "ast",
       "id": "src_tests_test_dashboard_rationale_519",
-      "community": 250,
-      "community_name": "get_live_config",
+      "community": 27,
+      "community_name": "Project Documentation & Plans",
       "norm_label": "_stopped_positions() should set exit_reason='take_profit' for take_profit@ trigg"
     },
     {
@@ -23692,8 +23692,8 @@
       "source_location": "L542",
       "_origin": "ast",
       "id": "src_tests_test_dashboard_rationale_542",
-      "community": 250,
-      "community_name": "get_live_config",
+      "community": 27,
+      "community_name": "Project Documentation & Plans",
       "norm_label": "_stopped_positions() should set exit_reason='stop_loss' for stop_loss@ triggers."
     },
     {
@@ -23703,8 +23703,8 @@
       "source_location": "L565",
       "_origin": "ast",
       "id": "src_tests_test_dashboard_rationale_565",
-      "community": 250,
-      "community_name": "get_live_config",
+      "community": 27,
+      "community_name": "Project Documentation & Plans",
       "norm_label": "_settled_jsonl_positions() should set exit_reason='won' when pnl > 0."
     },
     {
@@ -23714,8 +23714,8 @@
       "source_location": "L588",
       "_origin": "ast",
       "id": "src_tests_test_dashboard_rationale_588",
-      "community": 250,
-      "community_name": "get_live_config",
+      "community": 27,
+      "community_name": "Project Documentation & Plans",
       "norm_label": "_settled_jsonl_positions() should set exit_reason='lost' when pnl <= 0."
     },
     {
@@ -23725,8 +23725,8 @@
       "source_location": "L611",
       "_origin": "ast",
       "id": "src_tests_test_dashboard_rationale_611",
-      "community": 250,
-      "community_name": "get_live_config",
+      "community": 27,
+      "community_name": "Project Documentation & Plans",
       "norm_label": "_settled_jsonl_positions() should set exit_reason='lost' when pnl == 0."
     },
     {
@@ -29665,8 +29665,8 @@
       "source_location": "L834",
       "_origin": "ast",
       "id": "src_tests_test_deb_weighting_testgfsfamilyregistry",
-      "community": 134,
-      "community_name": "test_deb_weighting.py",
+      "community": 56,
+      "community_name": "Freshness Monitor Tests",
       "norm_label": "testgfsfamilyregistry"
     },
     {
@@ -29676,8 +29676,8 @@
       "source_location": "L843",
       "_origin": "ast",
       "id": "src_tests_test_deb_weighting_testgfsfamilyregistry_test_open_meteo_registered_gfs_family",
-      "community": 134,
-      "community_name": "test_deb_weighting.py",
+      "community": 56,
+      "community_name": "Freshness Monitor Tests",
       "norm_label": ".test_open_meteo_registered_gfs_family()"
     },
     {
@@ -29687,8 +29687,8 @@
       "source_location": "L846",
       "_origin": "ast",
       "id": "src_tests_test_deb_weighting_testgfsfamilyregistry_test_gfs_not_registered",
-      "community": 134,
-      "community_name": "test_deb_weighting.py",
+      "community": 56,
+      "community_name": "Freshness Monitor Tests",
       "norm_label": ".test_gfs_not_registered()"
     },
     {
@@ -29698,8 +29698,8 @@
       "source_location": "L849",
       "_origin": "ast",
       "id": "src_tests_test_deb_weighting_testgfsfamilyregistry_test_no_channel_left_with_undocumented_none_group",
-      "community": 134,
-      "community_name": "test_deb_weighting.py",
+      "community": 56,
+      "community_name": "Freshness Monitor Tests",
       "norm_label": ".test_no_channel_left_with_undocumented_none_group()"
     },
     {
@@ -29709,8 +29709,8 @@
       "source_location": "L859",
       "_origin": "ast",
       "id": "src_tests_test_deb_weighting_testgfsfamilyregistry_test_gfs_family_solo_member_capped_at_group_cap",
-      "community": 134,
-      "community_name": "test_deb_weighting.py",
+      "community": 56,
+      "community_name": "Freshness Monitor Tests",
       "norm_label": ".test_gfs_family_solo_member_capped_at_group_cap()"
     },
     {
@@ -29720,8 +29720,8 @@
       "source_location": "L870",
       "_origin": "ast",
       "id": "src_tests_test_deb_weighting_testgfsfamilyregistry_test_redistribution_when_no_ungrouped_models_remain",
-      "community": 134,
-      "community_name": "test_deb_weighting.py",
+      "community": 56,
+      "community_name": "Freshness Monitor Tests",
       "norm_label": ".test_redistribution_when_no_ungrouped_models_remain()"
     },
     {
@@ -30556,8 +30556,8 @@
       "source_location": "L835",
       "_origin": "ast",
       "id": "src_tests_test_deb_weighting_rationale_835",
-      "community": 134,
-      "community_name": "test_deb_weighting.py",
+      "community": 56,
+      "community_name": "Freshness Monitor Tests",
       "norm_label": "verify open_meteo keeps the \"gfs_family\" group_id after #761 removed     its for"
     },
     {
@@ -30567,8 +30567,8 @@
       "source_location": "L850",
       "_origin": "ast",
       "id": "src_tests_test_deb_weighting_rationale_850",
-      "community": 134,
-      "community_name": "test_deb_weighting.py",
+      "community": 56,
+      "community_name": "Freshness Monitor Tests",
       "norm_label": "every currently-registered channel has a deliberate, non-none         group_id."
     },
     {
@@ -30578,8 +30578,8 @@
       "source_location": "L860",
       "_origin": "ast",
       "id": "src_tests_test_deb_weighting_rationale_860",
-      "community": 134,
-      "community_name": "test_deb_weighting.py",
+      "community": 56,
+      "community_name": "Freshness Monitor Tests",
       "norm_label": "issue #761: with \"gfs\" removed, \"gfs_family\" has a single member         (open_m"
     },
     {
@@ -30589,8 +30589,8 @@
       "source_location": "L871",
       "_origin": "ast",
       "id": "src_tests_test_deb_weighting_rationale_871",
-      "community": 134,
-      "community_name": "test_deb_weighting.py",
+      "community": 56,
+      "community_name": "Freshness Monitor Tests",
       "norm_label": "regression test for the _apply_group_cap fix (issue #550), updated         for #"
     },
     {
@@ -33130,8 +33130,8 @@
       "source_location": "L182",
       "_origin": "ast",
       "id": "src_tests_test_emos_mode_testgetcitymodeprimaryready",
-      "community": 6,
-      "community_name": "Model Retraining",
+      "community": 250,
+      "community_name": "get_live_config",
       "norm_label": "testgetcitymodeprimaryready"
     },
     {
@@ -33141,8 +33141,8 @@
       "source_location": "L183",
       "_origin": "ast",
       "id": "src_tests_test_emos_mode_testgetcitymodeprimaryready_test_primary_ready_returns_emos_primary",
-      "community": 6,
-      "community_name": "Model Retraining",
+      "community": 250,
+      "community_name": "get_live_config",
       "norm_label": ".test_primary_ready_returns_emos_primary()"
     },
     {
@@ -33152,8 +33152,8 @@
       "source_location": "L195",
       "_origin": "ast",
       "id": "src_tests_test_emos_mode_testgetcitymodeprimaryready_test_check_ready_for_promotion_true_when_ready",
-      "community": 186,
-      "community_name": "emos_mode.py",
+      "community": 250,
+      "community_name": "get_live_config",
       "norm_label": ".test_check_ready_for_promotion_true_when_ready()"
     },
     {
@@ -33163,8 +33163,8 @@
       "source_location": "L203",
       "_origin": "ast",
       "id": "src_tests_test_emos_mode_testgetcitymodeprimaryready_test_primary_ready_takes_precedence_over_shadow",
-      "community": 6,
-      "community_name": "Model Retraining",
+      "community": 250,
+      "community_name": "get_live_config",
       "norm_label": ".test_primary_ready_takes_precedence_over_shadow()"
     },
     {
@@ -33185,8 +33185,8 @@
       "source_location": "L222",
       "_origin": "ast",
       "id": "src_tests_test_emos_mode_testpromotionguardscopedbyforecastsource_test_primary_blocked_when_samples_belong_to_a_different_stack",
-      "community": 6,
-      "community_name": "Model Retraining",
+      "community": 14,
+      "community_name": "METAR Data Fetcher",
       "norm_label": ".test_primary_blocked_when_samples_belong_to_a_different_stack()"
     },
     {
@@ -33196,8 +33196,8 @@
       "source_location": "L240",
       "_origin": "ast",
       "id": "src_tests_test_emos_mode_testpromotionguardscopedbyforecastsource_test_primary_allowed_once_active_stack_accrues_its_own_samples",
-      "community": 6,
-      "community_name": "Model Retraining",
+      "community": 14,
+      "community_name": "METAR Data Fetcher",
       "norm_label": ".test_primary_allowed_once_active_stack_accrues_its_own_samples()"
     },
     {
@@ -33670,7 +33670,7 @@
       "_origin": "ast",
       "id": "src_tests_test_emos_mode_testemosminsamplesconfig_test_default_emos_min_samples_is_60",
       "community": 186,
-      "community_name": "emos_mode.py",
+      "community_name": "_emos_min_samples",
       "norm_label": ".test_default_emos_min_samples_is_60()"
     },
     {
@@ -33681,7 +33681,7 @@
       "_origin": "ast",
       "id": "src_tests_test_emos_mode_testemosminsamplesconfig_test_config_override_changes_min_samples",
       "community": 186,
-      "community_name": "emos_mode.py",
+      "community_name": "_emos_min_samples",
       "norm_label": ".test_config_override_changes_min_samples()"
     },
     {
@@ -33746,8 +33746,8 @@
       "source_location": "L824",
       "_origin": "ast",
       "id": "src_tests_test_emos_mode_testservingmembersparityguard_test_full_stack_still_fails_parity_gefs_out_of_scope",
-      "community": 186,
-      "community_name": "emos_mode.py",
+      "community": 390,
+      "community_name": "_serving_members_for_stack",
       "norm_label": ".test_full_stack_still_fails_parity_gefs_out_of_scope()"
     },
     {
@@ -34087,8 +34087,8 @@
       "source_location": "L184",
       "_origin": "ast",
       "id": "src_tests_test_emos_mode_rationale_184",
-      "community": 6,
-      "community_name": "Model Retraining",
+      "community": 250,
+      "community_name": "get_live_config",
       "norm_label": "emos_primary row with ready_for_promotion=1 and enough crps samples \u2192 'emos_prim"
     },
     {
@@ -34098,8 +34098,8 @@
       "source_location": "L196",
       "_origin": "ast",
       "id": "src_tests_test_emos_mode_rationale_196",
-      "community": 186,
-      "community_name": "emos_mode.py",
+      "community": 250,
+      "community_name": "get_live_config",
       "norm_label": "_check_ready_for_promotion returns true when ready_for_promotion=1."
     },
     {
@@ -34109,8 +34109,8 @@
       "source_location": "L204",
       "_origin": "ast",
       "id": "src_tests_test_emos_mode_rationale_204",
-      "community": 6,
-      "community_name": "Model Retraining",
+      "community": 250,
+      "community_name": "get_live_config",
       "norm_label": "both shadow and ready primary + enough crps samples \u2192 'emos_primary' wins."
     },
     {
@@ -34120,8 +34120,8 @@
       "source_location": "L223",
       "_origin": "ast",
       "id": "src_tests_test_emos_mode_rationale_223",
-      "community": 6,
-      "community_name": "Model Retraining",
+      "community": 14,
+      "community_name": "METAR Data Fetcher",
       "norm_label": "crps evidence logged under a forecast_source other than the         active forec"
     },
     {
@@ -34131,8 +34131,8 @@
       "source_location": "L241",
       "_origin": "ast",
       "id": "src_tests_test_emos_mode_rationale_241",
-      "community": 6,
-      "community_name": "Model Retraining",
+      "community": 14,
+      "community_name": "METAR Data Fetcher",
       "norm_label": "once the active stack itself has enough crps evidence, promotion         proceed"
     },
     {
@@ -34451,7 +34451,7 @@
       "_origin": "ast",
       "id": "src_tests_test_emos_mode_rationale_686",
       "community": 186,
-      "community_name": "emos_mode.py",
+      "community_name": "_emos_min_samples",
       "norm_label": "without explicit override, _emos_min_samples returns default 60."
     },
     {
@@ -34462,7 +34462,7 @@
       "_origin": "ast",
       "id": "src_tests_test_emos_mode_rationale_693",
       "community": 186,
-      "community_name": "emos_mode.py",
+      "community_name": "_emos_min_samples",
       "norm_label": "setting emos_min_samples_promotion in config changes the guard."
     },
     {
@@ -34527,8 +34527,8 @@
       "source_location": "L825",
       "_origin": "ast",
       "id": "src_tests_test_emos_mode_rationale_825",
-      "community": 186,
-      "community_name": "emos_mode.py",
+      "community": 390,
+      "community_name": "_serving_members_for_stack",
       "norm_label": "the 'full' stack adds 'gefs' on top of hrrr_nbm/intl_ecmwf_icon.         gefs is"
     },
     {
@@ -53359,8 +53359,8 @@
       "source_location": "L1000",
       "_origin": "ast",
       "id": "src_tests_test_order_manager_testmanualsellposition_test_balance_error_retries_with_avail_shares",
-      "community": 22,
-      "community_name": "Forecast Data Fetching",
+      "community": 123,
+      "community_name": "Position Atomicity",
       "norm_label": ".test_balance_error_retries_with_avail_shares()"
     },
     {
@@ -53370,8 +53370,8 @@
       "source_location": "L1024",
       "_origin": "ast",
       "id": "src_tests_test_order_manager_testmanualsellposition_test_balance_error_zero_shares_closes_position",
-      "community": 123,
-      "community_name": "Position Atomicity",
+      "community": 22,
+      "community_name": "Forecast Data Fetching",
       "norm_label": ".test_balance_error_zero_shares_closes_position()"
     },
     {
@@ -54448,8 +54448,8 @@
       "source_location": "L1001",
       "_origin": "ast",
       "id": "src_tests_test_order_manager_rationale_1001",
-      "community": 22,
-      "community_name": "Forecast Data Fetching",
+      "community": 123,
+      "community_name": "Position Atomicity",
       "norm_label": "balance error on first call \u2192 retries with avail_shares, returns sold."
     },
     {
@@ -54459,8 +54459,8 @@
       "source_location": "L1025",
       "_origin": "ast",
       "id": "src_tests_test_order_manager_rationale_1025",
-      "community": 123,
-      "community_name": "Position Atomicity",
+      "community": 22,
+      "community_name": "Forecast Data Fetching",
       "norm_label": "balance error with 0 available shares closes the db row, returns error."
     },
     {
@@ -56065,8 +56065,8 @@
       "source_location": "L149",
       "_origin": "ast",
       "id": "src_tests_test_prob_cap_shadow_report_make_guardrail_events_db",
-      "community": 125,
-      "community_name": "Hours Parameter Handling",
+      "community": 315,
+      "community_name": "meteoedge.db",
       "norm_label": "_make_guardrail_events_db()"
     },
     {
@@ -56450,8 +56450,8 @@
       "source_location": "L491",
       "_origin": "ast",
       "id": "src_tests_test_prob_cap_shadow_report_testrecommend",
-      "community": 315,
-      "community_name": "meteoedge.db",
+      "community": 348,
+      "community_name": "__init__.py",
       "norm_label": "testrecommend"
     },
     {
@@ -56461,8 +56461,8 @@
       "source_location": "L495",
       "_origin": "ast",
       "id": "src_tests_test_prob_cap_shadow_report_testrecommend_test_candidate_to_raise",
-      "community": 315,
-      "community_name": "meteoedge.db",
+      "community": 348,
+      "community_name": "__init__.py",
       "norm_label": ".test_candidate_to_raise()"
     },
     {
@@ -56472,8 +56472,8 @@
       "source_location": "L504",
       "_origin": "ast",
       "id": "src_tests_test_prob_cap_shadow_report_testrecommend_test_hold_on_pnl_regression",
-      "community": 315,
-      "community_name": "meteoedge.db",
+      "community": 348,
+      "community_name": "__init__.py",
       "norm_label": ".test_hold_on_pnl_regression()"
     },
     {
@@ -56483,8 +56483,8 @@
       "source_location": "L513",
       "_origin": "ast",
       "id": "src_tests_test_prob_cap_shadow_report_testrecommend_test_extend_window_on_small_sample",
-      "community": 315,
-      "community_name": "meteoedge.db",
+      "community": 348,
+      "community_name": "__init__.py",
       "norm_label": ".test_extend_window_on_small_sample()"
     },
     {
@@ -56703,8 +56703,8 @@
       "source_location": "L727",
       "_origin": "ast",
       "id": "src_tests_test_prob_cap_shadow_report_testpopulationsaturation_test_merge_sums_across_sources",
-      "community": 221,
-      "community_name": "TestEMOSFitWithVariableSigma",
+      "community": 158,
+      "community_name": "Shadow Loop Config",
       "norm_label": ".test_merge_sums_across_sources()"
     },
     {
@@ -56714,8 +56714,8 @@
       "source_location": "L740",
       "_origin": "ast",
       "id": "src_tests_test_prob_cap_shadow_report_testguardrailcrosscheck",
-      "community": 125,
-      "community_name": "Hours Parameter Handling",
+      "community": 315,
+      "community_name": "meteoedge.db",
       "norm_label": "testguardrailcrosscheck"
     },
     {
@@ -56725,8 +56725,8 @@
       "source_location": "L741",
       "_origin": "ast",
       "id": "src_tests_test_prob_cap_shadow_report_testguardrailcrosscheck_test_counts_cap_applied_events_in_window",
-      "community": 125,
-      "community_name": "Hours Parameter Handling",
+      "community": 315,
+      "community_name": "meteoedge.db",
       "norm_label": ".test_counts_cap_applied_events_in_window()"
     },
     {
@@ -56736,8 +56736,8 @@
       "source_location": "L751",
       "_origin": "ast",
       "id": "src_tests_test_prob_cap_shadow_report_testguardrailcrosscheck_test_missing_table_returns_none",
-      "community": 125,
-      "community_name": "Hours Parameter Handling",
+      "community": 315,
+      "community_name": "meteoedge.db",
       "norm_label": ".test_missing_table_returns_none()"
     },
     {
@@ -56901,8 +56901,8 @@
       "source_location": "L150",
       "_origin": "ast",
       "id": "src_tests_test_prob_cap_shadow_report_rationale_150",
-      "community": 125,
-      "community_name": "Hours Parameter Handling",
+      "community": 315,
+      "community_name": "meteoedge.db",
       "norm_label": "minimal synthetic meteoedge.db::guardrail_events fixture (issue #682)."
     },
     {
@@ -59959,8 +59959,8 @@
       "source_location": "L181",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testresidualstatsaccuracy",
-      "community": 56,
-      "community_name": "Freshness Monitor Tests",
+      "community": 108,
+      "community_name": "Intraday Bias Correction",
       "norm_label": "testresidualstatsaccuracy"
     },
     {
@@ -59970,8 +59970,8 @@
       "source_location": "L182",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testresidualstatsaccuracy_run",
-      "community": 56,
-      "community_name": "Freshness Monitor Tests",
+      "community": 108,
+      "community_name": "Intraday Bias Correction",
       "norm_label": "._run()"
     },
     {
@@ -59981,8 +59981,8 @@
       "source_location": "L197",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testresidualstatsaccuracy_test_mean_signed_error_positive",
-      "community": 56,
-      "community_name": "Freshness Monitor Tests",
+      "community": 108,
+      "community_name": "Intraday Bias Correction",
       "norm_label": ".test_mean_signed_error_positive()"
     },
     {
@@ -59992,8 +59992,8 @@
       "source_location": "L203",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testresidualstatsaccuracy_test_mean_signed_error_mixed",
-      "community": 56,
-      "community_name": "Freshness Monitor Tests",
+      "community": 108,
+      "community_name": "Intraday Bias Correction",
       "norm_label": ".test_mean_signed_error_mixed()"
     },
     {
@@ -60003,8 +60003,8 @@
       "source_location": "L209",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testresidualstatsaccuracy_test_rolling_mae_all_positive",
-      "community": 56,
-      "community_name": "Freshness Monitor Tests",
+      "community": 108,
+      "community_name": "Intraday Bias Correction",
       "norm_label": ".test_rolling_mae_all_positive()"
     },
     {
@@ -60014,8 +60014,8 @@
       "source_location": "L215",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testresidualstatsaccuracy_test_rolling_mae_absolute_value",
-      "community": 56,
-      "community_name": "Freshness Monitor Tests",
+      "community": 108,
+      "community_name": "Intraday Bias Correction",
       "norm_label": ".test_rolling_mae_absolute_value()"
     },
     {
@@ -60025,8 +60025,8 @@
       "source_location": "L221",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testresidualstatsaccuracy_test_sample_count",
-      "community": 56,
-      "community_name": "Freshness Monitor Tests",
+      "community": 108,
+      "community_name": "Intraday Bias Correction",
       "norm_label": ".test_sample_count()"
     },
     {
@@ -60036,8 +60036,8 @@
       "source_location": "L225",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testresidualstatsaccuracy_test_correction_applied_when_nonzero",
-      "community": 56,
-      "community_name": "Freshness Monitor Tests",
+      "community": 108,
+      "community_name": "Intraday Bias Correction",
       "norm_label": ".test_correction_applied_when_nonzero()"
     },
     {
@@ -60047,8 +60047,8 @@
       "source_location": "L230",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testresidualstatsaccuracy_test_correction_applied_zero",
-      "community": 56,
-      "community_name": "Freshness Monitor Tests",
+      "community": 108,
+      "community_name": "Intraday Bias Correction",
       "norm_label": ".test_correction_applied_zero()"
     },
     {
@@ -60058,8 +60058,8 @@
       "source_location": "L243",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testclampbehaviour",
-      "community": 56,
-      "community_name": "Freshness Monitor Tests",
+      "community": 108,
+      "community_name": "Intraday Bias Correction",
       "norm_label": "testclampbehaviour"
     },
     {
@@ -60069,8 +60069,8 @@
       "source_location": "L244",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testclampbehaviour_run",
-      "community": 56,
-      "community_name": "Freshness Monitor Tests",
+      "community": 108,
+      "community_name": "Intraday Bias Correction",
       "norm_label": "._run()"
     },
     {
@@ -60080,8 +60080,8 @@
       "source_location": "L258",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testclampbehaviour_test_clamp_binds_positive",
-      "community": 56,
-      "community_name": "Freshness Monitor Tests",
+      "community": 108,
+      "community_name": "Intraday Bias Correction",
       "norm_label": ".test_clamp_binds_positive()"
     },
     {
@@ -60091,8 +60091,8 @@
       "source_location": "L264",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testclampbehaviour_test_clamp_binds_negative",
-      "community": 56,
-      "community_name": "Freshness Monitor Tests",
+      "community": 108,
+      "community_name": "Intraday Bias Correction",
       "norm_label": ".test_clamp_binds_negative()"
     },
     {
@@ -60102,8 +60102,8 @@
       "source_location": "L270",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testclampbehaviour_test_clamp_not_needed_small_value",
-      "community": 56,
-      "community_name": "Freshness Monitor Tests",
+      "community": 108,
+      "community_name": "Intraday Bias Correction",
       "norm_label": ".test_clamp_not_needed_small_value()"
     },
     {
@@ -60124,8 +60124,8 @@
       "source_location": "L302",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testmaegate",
-      "community": 56,
-      "community_name": "Freshness Monitor Tests",
+      "community": 108,
+      "community_name": "Intraday Bias Correction",
       "norm_label": "testmaegate"
     },
     {
@@ -60135,8 +60135,8 @@
       "source_location": "L303",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testmaegate_run",
-      "community": 56,
-      "community_name": "Freshness Monitor Tests",
+      "community": 108,
+      "community_name": "Intraday Bias Correction",
       "norm_label": "._run()"
     },
     {
@@ -60146,8 +60146,8 @@
       "source_location": "L317",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testmaegate_test_mae_above_threshold_suppresses_live",
-      "community": 56,
-      "community_name": "Freshness Monitor Tests",
+      "community": 108,
+      "community_name": "Intraday Bias Correction",
       "norm_label": ".test_mae_above_threshold_suppresses_live()"
     },
     {
@@ -60157,8 +60157,8 @@
       "source_location": "L325",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testmaegate_test_mae_below_threshold_does_not_suppress",
-      "community": 56,
-      "community_name": "Freshness Monitor Tests",
+      "community": 108,
+      "community_name": "Intraday Bias Correction",
       "norm_label": ".test_mae_below_threshold_does_not_suppress()"
     },
     {
@@ -60168,8 +60168,8 @@
       "source_location": "L332",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testmaegate_test_mae_exactly_at_threshold_does_not_suppress",
-      "community": 56,
-      "community_name": "Freshness Monitor Tests",
+      "community": 108,
+      "community_name": "Intraday Bias Correction",
       "norm_label": ".test_mae_exactly_at_threshold_does_not_suppress()"
     },
     {
@@ -60179,8 +60179,8 @@
       "source_location": "L338",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testmaegate_test_mae_just_above_threshold_suppresses",
-      "community": 56,
-      "community_name": "Freshness Monitor Tests",
+      "community": 108,
+      "community_name": "Intraday Bias Correction",
       "norm_label": ".test_mae_just_above_threshold_suppresses()"
     },
     {
@@ -60663,8 +60663,8 @@
       "source_location": "L198",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_rationale_198",
-      "community": 56,
-      "community_name": "Freshness Monitor Tests",
+      "community": 108,
+      "community_name": "Intraday Bias Correction",
       "norm_label": "all positive deltas: warm bias."
     },
     {
@@ -60674,8 +60674,8 @@
       "source_location": "L204",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_rationale_204",
-      "community": 56,
-      "community_name": "Freshness Monitor Tests",
+      "community": 108,
+      "community_name": "Intraday Bias Correction",
       "norm_label": "mixed deltas: mean should be correct."
     },
     {
@@ -60685,8 +60685,8 @@
       "source_location": "L210",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_rationale_210",
-      "community": 56,
-      "community_name": "Freshness Monitor Tests",
+      "community": 108,
+      "community_name": "Intraday Bias Correction",
       "norm_label": "mae of all-positive deltas equals mean."
     },
     {
@@ -60696,8 +60696,8 @@
       "source_location": "L216",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_rationale_216",
-      "community": 56,
-      "community_name": "Freshness Monitor Tests",
+      "community": 108,
+      "community_name": "Intraday Bias Correction",
       "norm_label": "mae uses absolute values: [-4, +6] \u2192 mae=(4+6)/2=5."
     },
     {
@@ -60707,8 +60707,8 @@
       "source_location": "L226",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_rationale_226",
-      "community": 56,
-      "community_name": "Freshness Monitor Tests",
+      "community": 108,
+      "community_name": "Intraday Bias Correction",
       "norm_label": "correction_applied=true when clamped_correction != 0."
     },
     {
@@ -60718,8 +60718,8 @@
       "source_location": "L231",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_rationale_231",
-      "community": 56,
-      "community_name": "Freshness Monitor Tests",
+      "community": 108,
+      "community_name": "Intraday Bias Correction",
       "norm_label": "correction_applied=true even if mean is exactly 0 (clamped=0)."
     },
     {
@@ -60729,8 +60729,8 @@
       "source_location": "L259",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_rationale_259",
-      "community": 56,
-      "community_name": "Freshness Monitor Tests",
+      "community": 108,
+      "community_name": "Intraday Bias Correction",
       "norm_label": "mean = +10\u00b0f clamped to +5\u00b0f."
     },
     {
@@ -60740,8 +60740,8 @@
       "source_location": "L265",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_rationale_265",
-      "community": 56,
-      "community_name": "Freshness Monitor Tests",
+      "community": 108,
+      "community_name": "Intraday Bias Correction",
       "norm_label": "mean = -8\u00b0f clamped to -5\u00b0f."
     },
     {
@@ -60751,8 +60751,8 @@
       "source_location": "L271",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_rationale_271",
-      "community": 56,
-      "community_name": "Freshness Monitor Tests",
+      "community": 108,
+      "community_name": "Intraday Bias Correction",
       "norm_label": "mean = +2\u00b0f within \u00b15 \u2192 no clamp."
     },
     {
@@ -60773,8 +60773,8 @@
       "source_location": "L318",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_rationale_318",
-      "community": 56,
-      "community_name": "Freshness Monitor Tests",
+      "community": 108,
+      "community_name": "Intraday Bias Correction",
       "norm_label": "mae=10.1 > threshold=8.0 \u2192 live_suppressed=true."
     },
     {
@@ -60784,8 +60784,8 @@
       "source_location": "L326",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_rationale_326",
-      "community": 56,
-      "community_name": "Freshness Monitor Tests",
+      "community": 108,
+      "community_name": "Intraday Bias Correction",
       "norm_label": "mae=3.7 < threshold=8.0 \u2192 live_suppressed=false."
     },
     {
@@ -60795,8 +60795,8 @@
       "source_location": "L333",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_rationale_333",
-      "community": 56,
-      "community_name": "Freshness Monitor Tests",
+      "community": 108,
+      "community_name": "Intraday Bias Correction",
       "norm_label": "mae exactly equal to threshold \u2192 not suppressed (strictly >)."
     },
     {
@@ -60806,8 +60806,8 @@
       "source_location": "L339",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_rationale_339",
-      "community": 56,
-      "community_name": "Freshness Monitor Tests",
+      "community": 108,
+      "community_name": "Intraday Bias Correction",
       "norm_label": "mae=8.01 > 8.0 \u2192 suppressed."
     },
     {
@@ -62357,8 +62357,8 @@
       "source_location": "L40",
       "_origin": "ast",
       "id": "src_tests_test_risk_db_testpnlseededfromdb",
-      "community": 326,
-      "community_name": "OPERATIONS.md",
+      "community": 38,
+      "community_name": "Settlement Pipeline Tests",
       "norm_label": "testpnlseededfromdb"
     },
     {
@@ -62368,8 +62368,8 @@
       "source_location": "L43",
       "_origin": "ast",
       "id": "src_tests_test_risk_db_testpnlseededfromdb_test_pnl_seeded_from_db",
-      "community": 326,
-      "community_name": "OPERATIONS.md",
+      "community": 38,
+      "community_name": "Settlement Pipeline Tests",
       "norm_label": ".test_pnl_seeded_from_db()"
     },
     {
@@ -62379,8 +62379,8 @@
       "source_location": "L57",
       "_origin": "ast",
       "id": "src_tests_test_risk_db_testpnlseededfromdb_test_pnl_seeded_zero_when_no_db_entry",
-      "community": 326,
-      "community_name": "OPERATIONS.md",
+      "community": 38,
+      "community_name": "Settlement Pipeline Tests",
       "norm_label": ".test_pnl_seeded_zero_when_no_db_entry()"
     },
     {
@@ -62390,8 +62390,8 @@
       "source_location": "L63",
       "_origin": "ast",
       "id": "src_tests_test_risk_db_testpnlseededfromdb_test_daily_limit_enforced_after_restart",
-      "community": 326,
-      "community_name": "OPERATIONS.md",
+      "community": 38,
+      "community_name": "Settlement Pipeline Tests",
       "norm_label": ".test_daily_limit_enforced_after_restart()"
     },
     {
@@ -62478,8 +62478,8 @@
       "source_location": "L151",
       "_origin": "ast",
       "id": "src_tests_test_risk_db_testnewdayreset",
-      "community": 38,
-      "community_name": "Settlement Pipeline Tests",
+      "community": 326,
+      "community_name": "OPERATIONS.md",
       "norm_label": "testnewdayreset"
     },
     {
@@ -62489,8 +62489,8 @@
       "source_location": "L154",
       "_origin": "ast",
       "id": "src_tests_test_risk_db_testnewdayreset_test_new_day_reset_with_db",
-      "community": 38,
-      "community_name": "Settlement Pipeline Tests",
+      "community": 326,
+      "community_name": "OPERATIONS.md",
       "norm_label": ".test_new_day_reset_with_db()"
     },
     {
@@ -62500,8 +62500,8 @@
       "source_location": "L166",
       "_origin": "ast",
       "id": "src_tests_test_risk_db_testnewdayreset_test_new_day_reset_writes_zero_to_db",
-      "community": 38,
-      "community_name": "Settlement Pipeline Tests",
+      "community": 326,
+      "community_name": "OPERATIONS.md",
       "norm_label": ".test_new_day_reset_writes_zero_to_db()"
     },
     {
@@ -62610,8 +62610,8 @@
       "source_location": "L41",
       "_origin": "ast",
       "id": "src_tests_test_risk_db_rationale_41",
-      "community": 326,
-      "community_name": "OPERATIONS.md",
+      "community": 38,
+      "community_name": "Settlement Pipeline Tests",
       "norm_label": "_daily_pnl is seeded from db on __post_init__ when db is provided."
     },
     {
@@ -62621,8 +62621,8 @@
       "source_location": "L44",
       "_origin": "ast",
       "id": "src_tests_test_risk_db_rationale_44",
-      "community": 326,
-      "community_name": "OPERATIONS.md",
+      "community": 38,
+      "community_name": "Settlement Pipeline Tests",
       "norm_label": "insert pnl into db and verify riskmanager seeds from it on init."
     },
     {
@@ -62632,8 +62632,8 @@
       "source_location": "L58",
       "_origin": "ast",
       "id": "src_tests_test_risk_db_rationale_58",
-      "community": 326,
-      "community_name": "OPERATIONS.md",
+      "community": 38,
+      "community_name": "Settlement Pipeline Tests",
       "norm_label": "if no db entry exists for today, _daily_pnl should be 0.0."
     },
     {
@@ -62643,8 +62643,8 @@
       "source_location": "L64",
       "_origin": "ast",
       "id": "src_tests_test_risk_db_rationale_64",
-      "community": 326,
-      "community_name": "OPERATIONS.md",
+      "community": 38,
+      "community_name": "Settlement Pipeline Tests",
       "norm_label": "seed -\u20ac40 into db, create riskmanager, verify limit triggers."
     },
     {
@@ -62731,8 +62731,8 @@
       "source_location": "L152",
       "_origin": "ast",
       "id": "src_tests_test_risk_db_rationale_152",
-      "community": 38,
-      "community_name": "Settlement Pipeline Tests",
+      "community": 326,
+      "community_name": "OPERATIONS.md",
       "norm_label": "_reset_if_new_day() clears pnl and resets the db when the day changes."
     },
     {
@@ -62742,8 +62742,8 @@
       "source_location": "L155",
       "_origin": "ast",
       "id": "src_tests_test_risk_db_rationale_155",
-      "community": 38,
-      "community_name": "Settlement Pipeline Tests",
+      "community": 326,
+      "community_name": "OPERATIONS.md",
       "norm_label": "seed pnl for yesterday, create rm on 'today', assert _daily_pnl == 0."
     },
     {
@@ -62753,8 +62753,8 @@
       "source_location": "L167",
       "_origin": "ast",
       "id": "src_tests_test_risk_db_rationale_167",
-      "community": 38,
-      "community_name": "Settlement Pipeline Tests",
+      "community": 326,
+      "community_name": "OPERATIONS.md",
       "norm_label": "when _reset_if_new_day() fires, it writes a 0.0 pnl row for the new day."
     },
     {
@@ -68308,8 +68308,8 @@
       "source_location": "L34",
       "_origin": "ast",
       "id": "src_tests_test_settle_shadow_insert_shadow",
-      "community": 106,
-      "community_name": "Bracket Regex Parsing",
+      "community": 128,
+      "community_name": "Polymarket API Client",
       "norm_label": "_insert_shadow()"
     },
     {
@@ -68396,8 +68396,8 @@
       "source_location": "L175",
       "_origin": "ast",
       "id": "src_tests_test_settle_shadow_testsettleshadowidempotency",
-      "community": 348,
-      "community_name": "__init__.py",
+      "community": 128,
+      "community_name": "Polymarket API Client",
       "norm_label": "testsettleshadowidempotency"
     },
     {
@@ -68407,8 +68407,8 @@
       "source_location": "L176",
       "_origin": "ast",
       "id": "src_tests_test_settle_shadow_testsettleshadowidempotency_test_already_settled_rows_are_skipped",
-      "community": 348,
-      "community_name": "__init__.py",
+      "community": 128,
+      "community_name": "Polymarket API Client",
       "norm_label": ".test_already_settled_rows_are_skipped()"
     },
     {
@@ -68748,8 +68748,8 @@
       "source_location": "L37",
       "_origin": "ast",
       "id": "src_tests_test_settle_shadow_rationale_37",
-      "community": 106,
-      "community_name": "Bracket Regex Parsing",
+      "community": 128,
+      "community_name": "Polymarket API Client",
       "norm_label": "insert a shadow yes trade for the given station and date."
     },
     {
@@ -68836,8 +68836,8 @@
       "source_location": "L177",
       "_origin": "ast",
       "id": "src_tests_test_settle_shadow_rationale_177",
-      "community": 348,
-      "community_name": "__init__.py",
+      "community": 128,
+      "community_name": "Polymarket API Client",
       "norm_label": "running settle_shadow_trades twice does not change pnl on rows already settled."
     },
     {
@@ -75613,7 +75613,7 @@
       "_origin": "ast",
       "id": "src_tests_test_taf_parser_testjsonwrappedinput",
       "community": 350,
-      "community_name": "__init__.py",
+      "community_name": "TestJsonWrappedInput",
       "norm_label": "testjsonwrappedinput"
     },
     {
@@ -75624,7 +75624,7 @@
       "_origin": "ast",
       "id": "src_tests_test_taf_parser_testjsonwrappedinput_make_json",
       "community": 350,
-      "community_name": "__init__.py",
+      "community_name": "TestJsonWrappedInput",
       "norm_label": "._make_json()"
     },
     {
@@ -75635,7 +75635,7 @@
       "_origin": "ast",
       "id": "src_tests_test_taf_parser_testjsonwrappedinput_test_rawtaf_key",
       "community": 350,
-      "community_name": "__init__.py",
+      "community_name": "TestJsonWrappedInput",
       "norm_label": ".test_rawtaf_key()"
     },
     {
@@ -75646,7 +75646,7 @@
       "_origin": "ast",
       "id": "src_tests_test_taf_parser_testjsonwrappedinput_test_rawob_key",
       "community": 350,
-      "community_name": "__init__.py",
+      "community_name": "TestJsonWrappedInput",
       "norm_label": ".test_rawob_key()"
     },
     {
@@ -75657,7 +75657,7 @@
       "_origin": "ast",
       "id": "src_tests_test_taf_parser_testjsonwrappedinput_test_json_object_not_array",
       "community": 350,
-      "community_name": "__init__.py",
+      "community_name": "TestJsonWrappedInput",
       "norm_label": ".test_json_object_not_array()"
     },
     {
@@ -75668,7 +75668,7 @@
       "_origin": "ast",
       "id": "src_tests_test_taf_parser_testjsonwrappedinput_test_json_empty_rawtaf",
       "community": 350,
-      "community_name": "__init__.py",
+      "community_name": "TestJsonWrappedInput",
       "norm_label": ".test_json_empty_rawtaf()"
     },
     {
@@ -75679,7 +75679,7 @@
       "_origin": "ast",
       "id": "src_tests_test_taf_parser_testjsonwrappedinput_test_json_malformed",
       "community": 350,
-      "community_name": "__init__.py",
+      "community_name": "TestJsonWrappedInput",
       "norm_label": ".test_json_malformed()"
     },
     {
@@ -79338,7 +79338,7 @@
       "label": "Team",
       "file_type": "document",
       "source_file": "agents/pm.md",
-      "source_location": "L33",
+      "source_location": "L34",
       "_origin": "ast",
       "id": "agents_pm_team",
       "community": 263,
@@ -79349,7 +79349,7 @@
       "label": "Workflow for an objective",
       "file_type": "document",
       "source_file": "agents/pm.md",
-      "source_location": "L47",
+      "source_location": "L52",
       "_origin": "ast",
       "id": "agents_pm_workflow_for_an_objective",
       "community": 263,
@@ -79360,7 +79360,7 @@
       "label": "Behavioural rules",
       "file_type": "document",
       "source_file": "agents/pm.md",
-      "source_location": "L65",
+      "source_location": "L70",
       "_origin": "ast",
       "id": "agents_pm_behavioural_rules",
       "community": 263,
@@ -79371,7 +79371,7 @@
       "label": "Status reporting format",
       "file_type": "document",
       "source_file": "agents/pm.md",
-      "source_location": "L80",
+      "source_location": "L85",
       "_origin": "ast",
       "id": "agents_pm_status_reporting_format",
       "community": 263,
@@ -228536,7 +228536,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "agents/pm.md",
-      "source_location": "L65",
+      "source_location": "L70",
       "weight": 1.0,
       "_origin": "ast",
       "source": "agents_pm_tech_lead_pm_orchestrator",
@@ -228558,7 +228558,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "agents/pm.md",
-      "source_location": "L80",
+      "source_location": "L85",
       "weight": 1.0,
       "_origin": "ast",
       "source": "agents_pm_tech_lead_pm_orchestrator",
@@ -228569,7 +228569,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "agents/pm.md",
-      "source_location": "L33",
+      "source_location": "L34",
       "weight": 1.0,
       "_origin": "ast",
       "source": "agents_pm_tech_lead_pm_orchestrator",
@@ -228580,7 +228580,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "agents/pm.md",
-      "source_location": "L47",
+      "source_location": "L52",
       "weight": 1.0,
       "_origin": "ast",
       "source": "agents_pm_tech_lead_pm_orchestrator",
@@ -230478,5 +230478,5 @@
     }
   ],
   "hyperedges": [],
-  "built_at_commit": "1113b5b542915853ee19d2668c7024eca0fdf3d2"
+  "built_at_commit": "dc6c6f7fe20f3795362a77aa0e1093fa8dce112d"
 }
