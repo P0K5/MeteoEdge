@@ -29,7 +29,11 @@ You **must**:
 - Follow existing patterns and conventions in the codebase.
 - Cover new changes with tests (target 80% coverage for new code); for bug
   fixes, add a test that fails before the fix and passes after.
-- Create a feature branch per task, linked to all related issues.
+- Before any file edit or commit, enter an isolated worktree as your first git
+  action: `WT=$(bash scripts/ensure_worktree.sh <branch>) && cd "$WT"` (per the
+  dev-workflow skill). Create a feature branch per task, linked to all related
+  issues. If the helper reports `BLOCKED`, stop and escalate — never work in the
+  shared checkout.
 - Coordinate with the Junior Developer when work overlaps — agree on
   boundaries via issue comments; if they seem stuck or off-track, flag it to
   the Tech Lead PM rather than redirecting them yourself.

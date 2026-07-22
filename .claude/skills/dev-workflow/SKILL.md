@@ -16,9 +16,27 @@ templates: invoke the **board-status** skill. Full protocol:
    note the patterns (use graphify per `.claude/instructions/graphify.md`).
 3. **(G) Post your plan** — comment on the issue: "Starting work — plan: [2–4 steps]".
 4. **(G) Move the issue to In progress** on the board (board-status skill).
-5. **Create a feature branch.**
+5. **(G) Enter your isolated worktree — MANDATORY FIRST git action, before any
+   file edit or commit.** Never work in the shared checkout: concurrent spawns
+   there branch off each other's moving HEAD and corrupt commits (issue #800,
+   PR #796). Run, from the repo root:
+
+   ```bash
+   WT=$(bash scripts/ensure_worktree.sh <branch-name>) || { echo "Blocked"; exit 1; }
+   cd "$WT"
+   ```
+
+   Branch naming:
    - Junior: `junior/<issue-number>-<short-description>`
    - Mid: any descriptive name, linked to ALL related issues
+
+   The helper creates `.claude/worktrees/agent-<branch>` off `origin/master`,
+   verifies the worktree is isolated (its toplevel is **not** the shared
+   checkout) and on your branch, and prints the path as its last line. **If it
+   exits non-zero / prints `BLOCKED`, STOP** — post a "Blocked: worktree
+   isolation failed" comment and escalate to the Tech Lead PM. Do **not** fall
+   back to the shared checkout. Do every subsequent edit, test run, and commit
+   from inside `$WT`; confirm with `git rev-parse --show-toplevel` if unsure.
 6. **Implement** in small, coherent steps, following existing patterns.
 7. **Test** — write tests following existing test patterns; run the full suite
    before opening the PR.
@@ -45,6 +63,8 @@ templates: invoke the **board-status** skill. Full protocol:
 
 ## Pre-review checklist
 
+- [ ] All work was done in an isolated worktree (`git rev-parse --show-toplevel`
+      points inside `.claude/worktrees/agent-*`, not the shared checkout)
 - [ ] Issue status is "In review" on the board (via GraphQL, not labels)
 - [ ] PR references issues with `Closes #N`
 - [ ] PR description includes: what changed, why, how to test

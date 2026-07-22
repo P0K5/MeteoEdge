@@ -78,13 +78,28 @@ raise SystemExit('[bootstrap] ERROR: Status field not found in project. Ensure a
 echo "[bootstrap] Status field + options resolved."
 
 # ---------------------------------------------------------------------------
-# 3. Issue item IDs (current board items, up to 100)
+# 3. Issue item IDs (ALL board items, via cursor pagination)
+#
+#     items(first: 100) returns only the first page. Boards larger than one
+#     page (this one is 4x over) MUST be walked with a pageInfo/endCursor loop,
+#     otherwise higher-numbered issues silently never get an ITEM_ID_ISSUE_
+#     entry no matter how many times the script is re-run (see issue #793).
+#
+#     The same pattern applies to any *(first: N) query that can exceed N —
+#     e.g. fields(first: 30) above — if the project ever grows past that bound.
 # ---------------------------------------------------------------------------
-ITEMS_JSON=$(gh api graphql -f query='
-  query($projectId: ID!) {
+ITEM_BLOCK=$(GH_BIN="${GH_BIN:-gh}" python3 - "$PROJECT_ID" <<'PYEOF'
+import json, os, subprocess, sys
+
+project_id = sys.argv[1]
+gh_bin = os.environ.get("GH_BIN", "gh")
+
+QUERY = """
+  query($projectId: ID!, $cursor: String) {
     node(id: $projectId) {
       ... on ProjectV2 {
-        items(first: 100) {
+        items(first: 100, after: $cursor) {
+          pageInfo { hasNextPage endCursor }
           nodes {
             id
             content {
@@ -94,21 +109,46 @@ ITEMS_JSON=$(gh api graphql -f query='
         }
       }
     }
-  }' -f projectId="$PROJECT_ID")
+  }
+"""
 
-ITEM_BLOCK=$(echo "$ITEMS_JSON" | python3 -c "
-import sys, json
-items = json.load(sys.stdin)['data']['node']['items']['nodes']
-lines = []
-for item in items:
-    content = item.get('content') or {}
-    if 'number' in content:
-        lines.append(f\"ITEM_ID_ISSUE_{content['number']}={item['id']}\")
-if not lines:
-    print('# (no issues currently on the board)')
+def fetch(cursor):
+    cmd = [gh_bin, "api", "graphql",
+           "-f", "query=" + QUERY,
+           "-f", "projectId=" + project_id]
+    if cursor:
+        cmd += ["-f", "cursor=" + cursor]
+    out = subprocess.run(cmd, capture_output=True, text=True, check=True).stdout
+    return json.loads(out)["data"]["node"]["items"]
+
+# number -> item id (a de-dupe map: each issue maps to a single board item)
+entries = {}
+cursor = None
+pages = 0
+while True:
+    items = fetch(cursor)
+    pages += 1
+    for item in items["nodes"]:
+        content = item.get("content") or {}
+        if "number" in content:
+            entries[content["number"]] = item["id"]
+    page_info = items["pageInfo"]
+    if page_info["hasNextPage"]:
+        cursor = page_info["endCursor"]
+    else:
+        break
+
+sys.stderr.write(
+    f"[bootstrap] items query walked {pages} page(s), "
+    f"{len(entries)} issue-backed board item(s) resolved.\n"
+)
+
+if not entries:
+    print("# (no issues currently on the board)")
 else:
-    print('\\n'.join(sorted(lines, key=lambda x: int(x.split('_')[3].split('=')[0]))))
-")
+    print("\n".join(f"ITEM_ID_ISSUE_{n}={entries[n]}" for n in sorted(entries)))
+PYEOF
+)
 
 COUNT=$(echo "$ITEM_BLOCK" | grep -c 'ITEM_ID_ISSUE_' || true)
 echo "[bootstrap] $COUNT board item(s) resolved."
