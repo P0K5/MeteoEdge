@@ -1,7 +1,9 @@
 """Tests for src/config.py source priority configuration."""
 import pytest
 
-from src.config import get_source_priority, is_training_eligible
+from datetime import date
+
+from src.config import get_source_priority, get_training_eligible_since, is_training_eligible
 
 
 class TestGetSourcePriority:
@@ -72,10 +74,13 @@ class TestGetSourcePriority:
 class TestIsTrainingEligible:
     """Tests for issue #558: is_training_eligible() per-city accessor."""
 
-    EXCLUDED_CITIES = ["Jinan", "Shenzhen", "Wuhan", "Zhengzhou"]
+    # Issue #766: Shenzhen moved from an unconditional training_eligible: false
+    # exclusion to a date-scoped training_eligible_since cutover -- it is no
+    # longer unconditionally ineligible, see TestGetTrainingEligibleSince below.
+    EXCLUDED_CITIES = ["Jinan", "Wuhan", "Zhengzhou"]
 
     def test_excluded_cities_are_ineligible(self):
-        """The 4 cities flagged in the 2026-07-01 audit must be ineligible."""
+        """The 3 unconditionally excluded cities must be ineligible."""
         for city in self.EXCLUDED_CITIES:
             assert is_training_eligible(city) is False, (
                 f"{city} should be training_eligible=False"
@@ -83,7 +88,7 @@ class TestIsTrainingEligible:
 
     def test_other_cities_are_eligible(self):
         """Cities without an explicit training_eligible: false flag default to True."""
-        for city in ["Tokyo", "Seoul", "Busan", "Singapore", "Chicago", "Miami"]:
+        for city in ["Tokyo", "Seoul", "Busan", "Singapore", "Chicago", "Miami", "Shenzhen"]:
             assert is_training_eligible(city) is True, (
                 f"{city} should default to training_eligible=True"
             )
@@ -91,6 +96,24 @@ class TestIsTrainingEligible:
     def test_city_with_no_source_priority_entry_is_eligible(self):
         """Cities absent from source_priority.yaml entirely default to eligible."""
         assert is_training_eligible("NonExistentCity") is True
+
+
+class TestGetTrainingEligibleSince:
+    """Tests for issue #766: get_training_eligible_since() date-scoped accessor."""
+
+    def test_shenzhen_has_cutover_date(self):
+        """Shenzhen (ZGSZ) is eligible only from its 2026-07-14 cadence upgrade."""
+        assert get_training_eligible_since("Shenzhen") == date(2026, 7, 14)
+
+    def test_cities_without_cutover_return_none(self):
+        """Cities with no training_eligible_since field return None."""
+        for city in ["Tokyo", "Seoul", "Singapore", "Jinan", "Wuhan", "Zhengzhou"]:
+            assert get_training_eligible_since(city) is None, (
+                f"{city} should have no training_eligible_since cutover"
+            )
+
+    def test_city_with_no_source_priority_entry_returns_none(self):
+        assert get_training_eligible_since("NonExistentCity") is None
 
 
 class TestArchiveShadowStations:

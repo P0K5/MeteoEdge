@@ -13,6 +13,7 @@ from src.config import (
     STATION_TZ,
     STATIONS,
     get_canonical_station_feeds,
+    get_training_eligible_since,
     is_training_eligible,
 )
 
@@ -2740,9 +2741,12 @@ class Database:
 
         Groups observations by the station's LOCAL calendar day (not UTC).
         Returns None if no observations found, station has no known timezone,
-        or the station's city is marked ``training_eligible: false`` in
+        the station's city is marked ``training_eligible: false`` in
         ``config/source_priority.yaml`` (issue #558 — bad-label stations must
-        not feed training data).
+        not feed training data), or *date* falls before the city's
+        ``training_eligible_since`` cutover date, if any (issue #766 — a city
+        can become eligible only from a known date onward, e.g. Shenzhen/ZGSZ
+        after its 2026-07-14 obs-cadence upgrade).
 
         Rows are unioned across every DB key returned by
         ``config.get_canonical_station_feeds(station)`` (e.g. both the
@@ -2760,6 +2764,11 @@ class Database:
             target_date = dtparse.parse(date).date()
         except (ValueError, TypeError):
             return None
+
+        if city is not None:
+            eligible_since = get_training_eligible_since(city)
+            if eligible_since is not None and target_date < eligible_since:
+                return None
 
         tz = pytz.timezone(STATION_TZ[station])
 
@@ -2822,7 +2831,9 @@ class Database:
 
         Returns ``{}`` immediately (no query) if the station's city is marked
         ``training_eligible: false`` in ``config/source_priority.yaml`` (issue
-        #558). Rows are unioned across every DB key returned by
+        #558). Dates before the city's ``training_eligible_since`` cutover, if
+        any, are silently dropped from the result (issue #766). Rows are
+        unioned across every DB key returned by
         ``config.get_canonical_station_feeds(station)``, same as
         ``get_daily_obs_high``.
         """
@@ -2837,6 +2848,10 @@ class Database:
             since_date_obj = dtparse.parse(since_date).date()
         except (ValueError, TypeError):
             return {}
+
+        eligible_since = get_training_eligible_since(city) if city is not None else None
+        if eligible_since is not None and eligible_since > since_date_obj:
+            since_date_obj = eligible_since
 
         tz = pytz.timezone(STATION_TZ[station])
 

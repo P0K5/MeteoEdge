@@ -89,7 +89,14 @@ Shenzhen:
     station: ZGSZ
     cadence_min: 30
     is_official: true
-    training_eligible: false  # 2026-07-01 audit: 2-hourly real-world cadence undershoots true daily high by 1-3F
+    # Issue #558 (2026-07-01 audit): 2-hourly real-world cadence undershot
+    # the true daily high by 1-3F, so training was disabled outright.
+    # Issue #766: the ZGSZ METAR feed's real-world cadence upgraded from
+    # ~2-hourly to hourly starting 2026-07-14 (confirmed via observations
+    # row counts: ~12/day before, ~24/day after, stable through 2026-07-21).
+    # Re-enabled for training, but only for dates on/after the cutover --
+    # pre-cutover dates still carry the old undershoot-biased label.
+    training_eligible_since: "2026-07-14"
 
 Panama City:
   - source: metar

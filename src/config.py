@@ -1,5 +1,6 @@
 """Unified config for Polymarket weather arbitrage. Environment vars override defaults."""
 import os
+from datetime import date
 from functools import lru_cache
 from pathlib import Path
 
@@ -539,6 +540,34 @@ def is_training_eligible(city: str) -> bool:
     """
     sources = get_source_priority(city)
     return not any(s.get("training_eligible") is False for s in sources)
+
+
+def get_training_eligible_since(city: str) -> "date | None":
+    """Return the date from which *city* becomes training-eligible, if gated.
+
+    Some cities are not unconditionally ineligible (``is_training_eligible``
+    still returns True) but only became trustworthy for training as of a
+    known cutover date — e.g. Shenzhen (ZGSZ), whose METAR cadence upgraded
+    from ~2-hourly to hourly on 2026-07-14 (issue #766), resolving the
+    2026-07-01 audit's 1-3F daily-high undershoot for dates on/after the
+    cutover. Dates before the cutover keep the old, under-sampled label and
+    must still be excluded.
+
+    Reads the ``training_eligible_since`` field (ISO date string) from
+    ``source_priority.yaml`` via :func:`get_source_priority`.
+
+    Args:
+        city: Polymarket city name (e.g. ``"Shenzhen"``).
+
+    Returns:
+        The cutover date if any source entry for *city* sets
+        ``training_eligible_since``, else None.
+    """
+    for source in get_source_priority(city):
+        since_raw = source.get("training_eligible_since")
+        if since_raw:
+            return date.fromisoformat(str(since_raw))
+    return None
 
 
 # ------------------------------------------------------------------

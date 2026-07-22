@@ -7,6 +7,7 @@ Tests:
 - Issue #558: training_eligible=false stations short-circuit to None/{}
 - Issue #558: WSSS unions the METAR (ICAO-keyed) and MSS (city-keyed) feeds
 - Issue #741: raw_json LIKE '%source_fallback%' is a second exclusion signal
+- Issue #766: training_eligible_since date-scoped re-entry (Shenzhen/ZGSZ)
 """
 import json
 
@@ -347,8 +348,9 @@ class TestTrainingEligibilityExclusion:
         )
         assert db.get_daily_obs_high("ZSJN", "2024-06-15") is None
 
-    def test_get_obs_highs_range_zgsz_returns_empty(self):
-        """ZGSZ (Shenzhen) is training_eligible=false — always {}, even with rows present."""
+    def test_get_obs_highs_range_zgsz_returns_empty_before_cutover(self):
+        """ZGSZ (Shenzhen) is training_eligible_since=2026-07-14 (issue #766) --
+        a pre-cutover date range returns {}, even with rows present."""
         db = _db()
         db.insert_observation(
             ts="2024-06-15T14:00:00+00:00",
@@ -398,6 +400,82 @@ class TestTrainingEligibilityExclusion:
             source="metar",
         )
         assert db.get_daily_obs_high("KORD", "2024-06-15") == 78.0
+
+
+class TestTrainingEligibleSinceCutover:
+    """Issue #766: training_eligible_since date-scoped re-entry for Shenzhen
+    (ZGSZ) -- pre-cutover dates stay excluded, post-cutover dates are
+    included, following its 2026-07-14 METAR cadence upgrade."""
+
+    def test_get_daily_obs_high_zgsz_excluded_before_cutover(self):
+        """A date before the 2026-07-14 cutover still returns None."""
+        db = _db()
+        db.insert_observation(
+            ts="2026-07-13T14:00:00+00:00",
+            station="ZGSZ",
+            temp_f=95.0,
+            temp_native=35.0,
+            unit="C",
+            source="metar",
+        )
+        assert db.get_daily_obs_high("ZGSZ", "2026-07-13") is None
+
+    def test_get_daily_obs_high_zgsz_included_on_cutover_date(self):
+        """The cutover date itself (2026-07-14) is included."""
+        db = _db()
+        db.insert_observation(
+            ts="2026-07-14T14:00:00+00:00",
+            station="ZGSZ",
+            temp_f=95.0,
+            temp_native=35.0,
+            unit="C",
+            source="metar",
+        )
+        assert db.get_daily_obs_high("ZGSZ", "2026-07-14") == 95.0
+
+    def test_get_daily_obs_high_zgsz_included_after_cutover(self):
+        """A date well after the cutover is included."""
+        db = _db()
+        db.insert_observation(
+            ts="2026-07-20T14:00:00+00:00",
+            station="ZGSZ",
+            temp_f=90.0,
+            temp_native=32.2,
+            unit="C",
+            source="metar",
+        )
+        assert db.get_daily_obs_high("ZGSZ", "2026-07-20") == 90.0
+
+    def test_get_obs_highs_range_zgsz_drops_pre_cutover_dates_only(self):
+        """A range spanning the cutover keeps post-cutover dates and drops
+        pre-cutover ones, even when since_date itself is before the cutover."""
+        db = _db()
+        db.insert_observation(
+            ts="2026-07-13T14:00:00+00:00",
+            station="ZGSZ",
+            temp_f=95.0,
+            temp_native=35.0,
+            unit="C",
+            source="metar",
+        )
+        db.insert_observation(
+            ts="2026-07-14T14:00:00+00:00",
+            station="ZGSZ",
+            temp_f=90.0,
+            temp_native=32.2,
+            unit="C",
+            source="metar",
+        )
+        db.insert_observation(
+            ts="2026-07-15T14:00:00+00:00",
+            station="ZGSZ",
+            temp_f=91.0,
+            temp_native=32.8,
+            unit="C",
+            source="metar",
+        )
+        result = db.get_obs_highs_range("ZGSZ", "2026-07-01")
+        assert result == {"2026-07-14": 90.0, "2026-07-15": 91.0}
 
 
 class TestWsssMultiSourceVerification:
