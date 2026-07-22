@@ -20,6 +20,7 @@ Output:
       saturation) and % of rows with NULL sigma_f (see issue #555)
 """
 import argparse
+import math
 import os
 import sys
 from datetime import datetime, timedelta, timezone
@@ -188,7 +189,7 @@ def main() -> None:
     print(f"{'City':<20} {'Forecast':>10} {'Settled':>10} {'Status':>20}")
     print("-" * 80)
 
-    # Build city→station map for settled days lookup
+    # Build city->station map for settled days lookup
     city_to_station: dict[str, str] = {
         city: metar for metar, _lat, _lon, city, *_ in STATIONS
     }
@@ -212,15 +213,47 @@ def main() -> None:
         print("READINESS PROJECTION:")
         print("-" * 80)
         if reset_ts:
+            today = datetime.now(timezone.utc).date()
+            days_since_reset = (datetime.now(timezone.utc) - reset_ts).days
+
             for city, forecast_count, settled_count in at_risk_cities:
-                # Binding constraint: both forecast rows AND settled days must reach 60
-                days_needed = max(MIN_SAMPLES - forecast_count, MIN_SAMPLES - settled_count)
-                readiness_date = reset_ts + timedelta(days=days_needed)
-                print(
-                    f"{city:<20} forecast={forecast_count:>3} settled={settled_count:>3} "
-                    f"→ ready ~{readiness_date.strftime('%Y-%m-%d')} "
-                    f"(+{days_needed} days, bottleneck={'settled' if settled_count < forecast_count else 'forecast'})"
-                )
+                # Determine bottleneck: which constraint is tighter
+                if settled_count < MIN_SAMPLES:
+                    # Settled bottleneck
+                    rate = settled_count / days_since_reset if days_since_reset > 0 else 0
+
+                    if rate > 0:
+                        days_needed = math.ceil((MIN_SAMPLES - settled_count) / rate)
+                        readiness_date = today + timedelta(days=days_needed)
+                        print(
+                            f"{city:<20} forecast={forecast_count:>3} settled={settled_count:>3} "
+                            f"-> ready ~{readiness_date.strftime('%Y-%m-%d')} "
+                            f"(rate: {rate:.2f}/day, bottleneck: settled)"
+                        )
+                    else:
+                        # Stalled feed
+                        print(
+                            f"{city:<20} forecast={forecast_count:>3} settled={settled_count:>3} "
+                            f"-> STALLED — not accruing; will not reach {MIN_SAMPLES} at current rate"
+                        )
+                elif forecast_count < MIN_SAMPLES:
+                    # Forecast bottleneck
+                    rate = forecast_count / days_since_reset if days_since_reset > 0 else 0
+
+                    if rate > 0:
+                        days_needed = math.ceil((MIN_SAMPLES - forecast_count) / rate)
+                        readiness_date = today + timedelta(days=days_needed)
+                        print(
+                            f"{city:<20} forecast={forecast_count:>3} settled={settled_count:>3} "
+                            f"-> ready ~{readiness_date.strftime('%Y-%m-%d')} "
+                            f"(rate: {rate:.2f}/day, bottleneck: forecast)"
+                        )
+                    else:
+                        # Stalled feed
+                        print(
+                            f"{city:<20} forecast={forecast_count:>3} settled={settled_count:>3} "
+                            f"-> STALLED — not accruing; will not reach {MIN_SAMPLES} at current rate"
+                        )
         else:
             print("Cannot estimate readiness without reset timestamp in bot_config.")
             print(
