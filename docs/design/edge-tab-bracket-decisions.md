@@ -32,6 +32,15 @@ reading logs.
 
 1. Operator opens the **Edge** tab (lands on last-selected station via
    `localStorage`, defaulting to the first configured station; date = today).
+   `[Implementation correction, #782/#787/PR #783: "date = today" is no longer
+   unconditional. Every Polymarket temperature market closes at noon UTC on its
+   label date, so the Today partition is empty by construction for the
+   12:00–24:00 UTC half of every day. The tab now auto-advances to D+1 when
+   Today comes back empty and D+1 has data — see the amended §1 below for the
+   persistent in-content indicator that makes this state visible. The
+   semantic fix (re-anchoring the day boundary to the market's settlement
+   window instead of the UTC calendar date) is tracked separately in #782,
+   intentionally left open; this is the UX mitigation.]`
 2. Operator reads the **scan summary bar**: when the last poll ran, the model's
    forecast high vs the current observed high. This is scan-level context shared by
    every bracket below it.
@@ -90,6 +99,24 @@ One behavior change: **D+1 is always shadow-routed** by policy (per epic #754's
 exists" framing, D+1 should be **enabled whenever a D+1 market exists**, and every
 row will simply show the `next_day_shadow` chip rather than a mix of verdicts. The
 disabled/tooltip pattern for "no D+1 market" is unchanged.
+
+`[Implementation correction, #787/PR #783: two further amendments to this
+"reused unchanged" section, both driven by the Designer's change request on
+PR #783.
+First — auto-advance: the tab now lands on D+1 automatically when Today comes
+back empty and D+1 has data (see User flow step 1 above), not just on a
+manual toggle click.
+Second — persistent in-content D+1 indicator: the toggle's
+.edge-date-btn.active tint alone was judged insufficient signal for trading
+UI once the tab could land on D+1 by default rather than only by a deliberate
+click. Whenever the D+1 partition is showing — auto-advanced OR manually
+toggled — a persistent textual banner renders inside the content area itself
+(.edge-d1-indicator, between the date toggle and the scan summary bar),
+reading "Today's markets closed — showing D+1 (shadow-only)". It survives
+every re-render and is visible without hovering or clicking anything.
+"Shadow-only" is factual, not hedged wording — scanner.py forces
+shadow=(shadow_* or is_next_day_eval) for every D+1 evaluation (issue #687),
+so a D+1 row is never a live position.]`
 
 ### 2. Scan summary bar (replaces the 5-card KPI strip)
 
@@ -197,6 +224,13 @@ columns; supplementary detail lives inside cells, not as extra columns):
      `max(ev_yes, ev_no)` across all rows, regardless of verdict. Gets a small
      `★ Best signal today` caption next to its Gate chip (text, not icon-only, so
      it's announced to screen readers, not just implied by background color).
+     `[Implementation correction, #787/PR #783: the caption is day-aware — reads
+     "Best signal today" when viewing Today and "Best signal D+1" when viewing
+     D+1 (auto-advanced or manually toggled). The original wording was
+     hardcoded to "today" regardless of which partition was showing, a
+     pre-existing bug (reachable since v1's manual D+1 toggle) whose severity
+     PR #783 raised from a deliberate-click edge case to the default view for
+     roughly half of every day, since it now sits in that PR's blast radius.]`
   4. No highlight if the table is empty or all EVs are deeply negative (nothing
      resembling a signal) — don't manufacture a highlight from noise.
 - **Thin-signal de-emphasis:** brackets with negligible liquidity or EV near zero
@@ -326,6 +360,9 @@ for the tokens this spec newly recruits into gate-chip duty):
 New CSS **classes**: `.edge-scan-bar`, `.edge-scan-freshness`, `.edge-forecast-inputs`,
 `.edge-decision-table`, `.gate-chip` + eleven `.gate-{verdict}` modifiers,
 `.edge-gate-legend`. All compose existing tokens; no new visual primitives.
+`[Implementation correction, #787/PR #783: adds `.edge-d1-indicator` —
+reuses `--warn`/`--warn-bg` exactly as the amber shadow-chip family above, no
+new token.]`
 
 **Removed** (do not carry forward from v1): `.edge-kpi-row`/`.wallet-card` KPI strip
 usage on this tab, `.edge-dist-chart`, `.edge-prob-bar`/`.edge-prob-bar-fill`,
@@ -340,8 +377,11 @@ usage on this tab, `.edge-dist-chart`, `.edge-prob-bar`/`.edge-prob-bar-fill`,
   `title` attribute is kept too (native tooltip on hover/focus for sighted mouse
   and keyboard users, consistent with the rest of the app's tooltip convention —
   see `docs/design/edge-tab.md`'s reliance on native `title`).
-- **Row emphasis:** the `★ Best signal today` caption (§4) uses visible text, not
-  color/icon alone, same requirement carried over from v1's best-edge chip.
+- **Row emphasis:** the `★ Best signal today` / `★ Best signal D+1` caption (§4,
+  day-aware per the #787/PR #783 correction) uses visible text, not color/icon
+  alone, same requirement carried over from v1's best-edge chip.
+- **D+1 indicator:** the persistent `.edge-d1-indicator` banner (§1) is text, not
+  color/icon alone — same rationale as the gate chip and best-signal caption above.
 - **Disclosures:** native `<details>`/`<summary>` for both Forecast inputs (§3)
   and the Gate legend (§6) — free keyboard toggle (Enter/Space on the summary),
   free screen-reader semantics, no ARIA authoring needed.

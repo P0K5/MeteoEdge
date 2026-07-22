@@ -118,6 +118,19 @@ a,button,input,select{transition:color var(--transition),background var(--transi
 .edge-date-btn.active{background:var(--primary-bg);color:var(--primary);font-weight:600;}
 .edge-date-btn:disabled{opacity:.35;cursor:not-allowed;color:var(--faint);}
 
+/* ── EDGE D+1 INDICATOR (issue #787 follow-up: the toggle's .active tint
+   alone isn't enough of a signal on trading UI — this is a persistent,
+   in-content marker whenever the D+1 partition is showing, whether reached
+   by auto-advance or by manually clicking the D+1 toggle) ── */
+.edge-d1-indicator{
+  display:flex;align-items:center;gap:8px;
+  padding:var(--space-2) var(--space-4);
+  background:var(--warn-bg);color:var(--warn);font-weight:600;font-size:var(--text-sm);
+  border:1px solid var(--warn);border-radius:var(--radius-md);
+  margin-bottom:var(--space-4);
+}
+.edge-d1-indicator i{width:16px;height:16px;flex-shrink:0;}
+
 /* ── EDGE SCAN SUMMARY BAR (design spec §2, issue #758) ── */
 .edge-scan-bar{
   display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-2) var(--space-5);
@@ -920,6 +933,18 @@ a,button,input,select{transition:color var(--transition),background var(--transi
   <div class="edge-date-toggle">
     <button class="edge-date-btn active" id="edge-date-today" onclick="selectEdgeDate('today')">Today</button>
     <button class="edge-date-btn" id="edge-date-d1" onclick="selectEdgeDate('d1')" disabled title="No D+1 market available for this station yet">D+1</button>
+  </div>
+
+  <!-- ── D+1 INDICATOR (persistent in-content marker, issue #787 follow-up) ──
+       Icon is `info`, not `alert-triangle` -- `alert-triangle` already means
+       "market moved against model" (a real adverse-position signal, see the
+       `.edge-hint` usage above in this file). Reusing it here for a routine,
+       true-for-half-of-every-day state would dilute that signal. `info` reads
+       as orientation, which is what this banner actually is (Designer call,
+       issue #787). ── -->
+  <div class="edge-d1-indicator" id="edge-d1-indicator" style="display:none;">
+    <i data-lucide="info"></i>
+    <span id="edge-d1-indicator-text"></span>
   </div>
 
   <!-- ── SCAN SUMMARY BAR (design spec §2, replaces the 5-card KPI strip) ── -->
@@ -2649,6 +2674,9 @@ async function loadEdgeStationData(metar) {
   showEdgeTableSkeleton();
   showEdgeScanBarSkeleton();
   setEdgeDateButtonActive(false);
+  renderEdgeD1Indicator(false);  // reset immediately -- otherwise the previous
+                                  // station's D+1 banner lingers through this
+                                  // station's fetch round-trip
 
   const unit = edgeStationUnit();
   const [todayData, d1Data] = await Promise.all([
@@ -2659,6 +2687,28 @@ async function loadEdgeStationData(metar) {
   edgeD1Cache = { station: metar, data: d1Data };
   updateEdgeD1ButtonState(d1Data);
 
+  // Auto-advance to D+1 when "Today" is empty but D+1 has data (issue #782,
+  // option A). The Today partition is empty by construction for the whole
+  // 12:00–24:00 UTC half of each day: every market closes at noon UTC, so a
+  // station's only open market is its next-day (D+1) partition until UTC
+  // midnight. Landing the operator on an empty "Today" reads as broken, so
+  // render the D+1 data we already fetched instead. The proper fix — anchoring
+  // the day boundary to the market's settlement window rather than the UTC
+  // calendar date — is tracked in #782. "Today" stays one click away.
+  const todayHasData = !!(todayData && todayData.brackets && todayData.brackets.length > 0);
+  const d1HasData = !!(d1Data && d1Data.brackets && d1Data.brackets.length > 0);
+
+  if (!todayHasData && d1HasData) {
+    edgeIsNextDay = true;
+    setEdgeDateButtonActive(true);
+    renderEdgeD1Indicator(true);
+    renderEdgeScanBar(d1Data, metar, unit);
+    renderEdgeForecastInputs(d1Data, unit);
+    renderEdgeDecisionTable(d1Data.brackets, unit, metar, true);
+    return;
+  }
+
+  renderEdgeD1Indicator(false);
   if (todayData === null) {
     showEdgeError('Could not load the scan data.');
   }
@@ -2684,6 +2734,22 @@ function setEdgeDateButtonActive(isNextDay) {
   if (d1Btn) d1Btn.classList.toggle('active', isNextDay);
 }
 
+// Persistent in-content D+1 marker (issue #787 follow-up) — the toggle's
+// .active tint alone isn't enough of a signal on trading UI, so whenever the
+// D+1 partition is showing (auto-advanced OR manually toggled), a textual
+// indicator inside the content area itself says so, survives every
+// re-render, and is visible without interacting with the page. D+1
+// evaluations are always shadow-routed (scanner.py forces
+// shadow=(shadow_* or is_next_day_eval), issue #687), so "shadow-only" here
+// is a factual statement, not a hedge.
+function renderEdgeD1Indicator(isNextDay) {
+  const el = document.getElementById('edge-d1-indicator');
+  const textEl = document.getElementById('edge-d1-indicator-text');
+  if (!el || !textEl) return;
+  el.style.display = isNextDay ? '' : 'none';
+  textEl.textContent = isNextDay ? "Today's markets closed — showing D+1 (shadow-only)" : '';
+}
+
 async function selectEdgeDate(dateKey) {
   const wantNextDay = dateKey === 'd1';
   const d1Btn = document.getElementById('edge-date-d1');
@@ -2692,6 +2758,7 @@ async function selectEdgeDate(dateKey) {
 
   edgeIsNextDay = wantNextDay;
   setEdgeDateButtonActive(wantNextDay);
+  renderEdgeD1Indicator(wantNextDay);
   hideEdgeError();
   showEdgeTableSkeleton();
   showEdgeScanBarSkeleton();
@@ -3031,7 +3098,7 @@ function renderEdgeDecisionTable(brackets, unit, station, isNextDay) {
       `</div>`;
 
     const bestCaption = emphasis[i] === 'row-best-signal'
-      ? `<div class="edge-best-signal-caption"><i data-lucide="star"></i>Best signal today</div>`
+      ? `<div class="edge-best-signal-caption"><i data-lucide="star"></i>Best signal ${isNextDay ? 'D+1' : 'today'}</div>`
       : '';
     const gateCell = `${gateChipHTML(b)}${bestCaption}`;
 
