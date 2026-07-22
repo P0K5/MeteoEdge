@@ -173,7 +173,9 @@ Jinan:
     station: ZSJN
     cadence_min: 30
     is_official: true
-    training_eligible: false  # 2026-07-01 audit: feed nearly dead (3-10 obs/day, stale since June 30)
+    training_eligible: false  # 2026-07-01 audit: feed nearly dead (3-10 obs/day, stale since June 30);
+    # feed went fully dead 2026-07-17 (METAR_SKIP_STATIONS, #732). Delisted from
+    # the EMOS promotion cohort rather than repaired -- see #765.
 
 Zhengzhou:
   - source: metar

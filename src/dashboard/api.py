@@ -57,7 +57,7 @@ from src.config import (
     POSITION_SNAPSHOTS_JSONL, LOG_DIR, STARTING_CAPITAL_EUR,
     STATION_ACTIVE_HOURS, DISABLED_STATIONS, SHADOW_STATIONS_YES, SHADOW_STATIONS_NO,
     EMOS_DEFAULT_MODE, CONFIG_DEFAULTS, get_live_config, station_city,
-    MODEL_PROB_CAP,
+    MODEL_PROB_CAP, METAR_SKIP_STATIONS,
 )
 from src.model.residual_correction import (
     compute_residual_stats,
@@ -489,6 +489,15 @@ _CITY_TO_STATION: dict[str, str] = {
 }
 
 _STATION_TO_CITY: dict[str, str] = {v: k for k, v in _CITY_TO_STATION.items()}
+
+# EMOS promotion-cohort bookkeeping (issue #765): stations whose METAR feed is
+# chronically dead (METAR_SKIP_STATIONS, issue #732) are excluded here so they
+# stop surfacing as phantom "EMOS regressions" in the cohort listing/ledger —
+# they aren't being evaluated at all, just frozen at a stale calibration. This
+# is narrower than DISABLED_STATIONS/training_eligible=false: those also cover
+# cities with a healthy feed held for data-quality reasons (e.g. Shenzhen),
+# which must stay visible in the cohort pending their own promotion decision.
+_EMOS_COHORT_STATIONS = [s for s in STATIONS if s[0] not in METAR_SKIP_STATIONS]
 
 
 def _emos_row_to_coefficients(row: dict) -> EmosCoefficients:
@@ -1805,10 +1814,12 @@ def forecast_capture_health() -> dict:
 
 @app.get("/api/emos/status", response_model=list[EmosCityStatus])
 def emos_status() -> list[EmosCityStatus]:
-    """Return EMOS calibration state for all cities defined in STATIONS.
+    """Return EMOS calibration state for all cities in the EMOS cohort.
 
     For each city, reports the effective mode, shadow/primary calibration rows,
-    settled day count, and the minimum required before promotion.
+    settled day count, and the minimum required before promotion. Stations with
+    a chronically dead METAR feed (METAR_SKIP_STATIONS, issue #765) are excluded
+    — they aren't being evaluated, so they're not part of the cohort.
     """
     if _db is None:
         raise HTTPException(status_code=503, detail="Database not initialised")
@@ -1822,7 +1833,7 @@ def emos_status() -> list[EmosCityStatus]:
         calibration_by_city.setdefault(city_key, {})[mode_key] = row
 
     result = []
-    for station, _lat, _lon, city, *_ in STATIONS:
+    for station, _lat, _lon, city, *_ in _EMOS_COHORT_STATIONS:
         status = _get_emos_city_status(city, station, calibration_by_city)
         result.append(status)
     return result
@@ -1980,12 +1991,16 @@ def emos_shadow_status() -> list[dict]:
     mean_crps, positive meaning EMOS is beating the legacy baseline (lower
     CRPS is better). Either field is None until both model_modes have at
     least one logged row for the city.
+
+    Stations with a chronically dead METAR feed (METAR_SKIP_STATIONS, issue
+    #765) are excluded from this cohort listing — they aren't being
+    evaluated, so they no longer surface as phantom "EMOS regressions".
     """
     if _db is None:
         raise HTTPException(status_code=503, detail="Database not initialised")
     try:
         results = []
-        for station_cfg in STATIONS:
+        for station_cfg in _EMOS_COHORT_STATIONS:
             city = station_city(station_cfg)
             n_samples = _db.get_emos_crps_count(city)
             status = _db.get_emos_shadow_city_status(city)
