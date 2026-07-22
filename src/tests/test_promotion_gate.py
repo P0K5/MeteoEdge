@@ -658,22 +658,30 @@ class TestHasSettledLossExcludesNextDay:
     """Issue #704: _has_settled_loss() (gate 5's real implementation, called
     unmocked here) must exclude next-day rows for the same reason
     compute_promotion_bar() does -- a next-day-only loss should not count
-    toward "this station has proven it can lose" for same-day promotion."""
+    toward "this station has proven it can lose" for same-day promotion.
+
+    Issue #789: shadow settlement lives on the trade row's own `pnl` (written
+    by settle_shadow_trades() via update_trade_by_id()), never in the
+    `settlements` table -- that table is only ever populated for live-trade
+    markets. These fixtures settle pnl directly on the shadow row, matching
+    production, instead of the pre-#789 fixture that only wrote a
+    `settlements` row the real code path never reads for shadow trades.
+    """
 
     def _db_with_shadow_settlement(self, station, ticker, side, resolved_yes, is_next_day):
         from src.data.db import Database
         db = Database(":memory:")
-        db.insert_settlement(
-            ts="2026-06-01T12:00:00Z", station=station, ticker=ticker,
-            bracket_low=80.0, bracket_high=82.0, actual_high_f=90.0,
-            resolved_yes=resolved_yes,
-        )
-        db.upsert_shadow_trade(
+        row_id, _ = db.upsert_shadow_trade(
             ts="2026-06-01T10:00:00Z", station=station, ticker=ticker,
             bracket_low=80.0, bracket_high=82.0, side=side,
             predicted_price=70, actual_price=70, predicted_edge=10.0,
             is_next_day=is_next_day,
         )
+        # side=YES, resolved_yes=0 -> YES lost -> pnl < 0 (mirrors settle.py).
+        won = (side == "YES") == bool(resolved_yes)
+        pnl = (100 - 70) / 100 if won else -70 / 100
+        db.update_trade_by_id(row_id, outcome="filled", pnl=round(pnl, 6),
+                               settled_at="2026-06-01T12:00:00Z")
         return db
 
     def test_same_day_loss_counts(self):
@@ -685,6 +693,16 @@ class TestHasSettledLossExcludesNextDay:
     def test_next_day_only_loss_does_not_count(self):
         from src.model.promotion_gate import _has_settled_loss
         db = self._db_with_shadow_settlement("KJFK", "kjfk-nextday", "YES", 0, is_next_day=1)
+        assert _has_settled_loss(db, "KJFK") is False
+
+    def test_pure_wins_do_not_count_as_loss(self):
+        """Issue #789 regression: a station with only settled wins (no
+        settlements-table row at all) must still return False, not True --
+        the pre-fix ticker-join silently returned False here too (for the
+        wrong reason: no settlements row existed to join against), so this
+        pins the correct behavior now that pnl is read directly."""
+        from src.model.promotion_gate import _has_settled_loss
+        db = self._db_with_shadow_settlement("KJFK", "kjfk-win", "YES", 1, is_next_day=0)
         assert _has_settled_loss(db, "KJFK") is False
 
 

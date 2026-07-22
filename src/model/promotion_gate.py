@@ -182,43 +182,18 @@ def _has_settled_loss(db, station: str) -> bool:
     toward "this station has proven it can lose" for same-day live
     promotion, so both trades readers are kept consistent rather than
     letting one filter and the other not.
-    """
-    settlements = db.get_settlements(station, since="2000-01-01T00:00:00")
 
+    Issue #789: reads settlement outcome from the shadow trade's own `pnl`
+    (set directly by settle_shadow_trades(), mirroring _trade_is_win() below)
+    rather than joining against the `settlements` table -- that table is only
+    ever written for live-trade markets (_write_db_settlements()), so the
+    former ticker-join matched under 2% of settled shadow rows (the same
+    issue #655 fixed for compute_promotion_bar(), left unfixed here).
+    """
     all_shadow = db.get_trades(mode="shadow", limit=None, is_next_day=0)
     shadow_trades = [t for t in all_shadow if t.get("station") == station]
 
-    if not shadow_trades:
-        return False
-
-    # Build a map of ticker → settlement result
-    settlement_map = {}
-    for settlement in settlements:
-        ticker = settlement.get("ticker")
-        resolved_yes = settlement.get("resolved_yes", 0)
-        settlement_map[ticker] = resolved_yes
-
-    # Check if any shadow trade lost
-    for trade in shadow_trades:
-        ticker = trade["ticker"]
-        side = trade["side"]
-
-        if ticker not in settlement_map:
-            continue
-
-        resolved_yes = settlement_map[ticker]
-
-        # Determine if this trade lost
-        is_loss = False
-        if side == "YES" and resolved_yes == 0:
-            is_loss = True
-        elif side == "NO" and resolved_yes == 1:
-            is_loss = True
-
-        if is_loss:
-            return True
-
-    return False
+    return any(_trade_is_win(trade) is False for trade in shadow_trades)
 
 
 # ----------------------------------------------------------------------
