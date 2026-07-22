@@ -13,7 +13,7 @@ import os
 import re
 from collections import Counter
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Literal
 from dateutil import parser as dtparse
 
@@ -408,7 +408,9 @@ class Candidate:
     today_position_open: bool = field(default=False)
 
 
-def no_entry_margin_gap(bracket: Bracket, state: WeatherState) -> float | None:
+def no_entry_margin_gap(
+    bracket: Bracket, state: WeatherState, market_date: date | None = None,
+) -> float | None:
     """Distance in °F between the bracket and the expected daily high, for NO entries.
 
     Returns None when the gate does not apply:
@@ -417,9 +419,18 @@ def no_entry_margin_gap(bracket: Bracket, state: WeatherState) -> float | None:
       envelope model prices these adequately)
     - the running daily high already exceeds the bracket top (the daily max
       cannot decrease, so NO can no longer lose)
+
+    market_date is the market's settlement date. In the evening window where a
+    market is already same-day by UTC but the station's local day has not
+    rolled over (issue #784), ``current_high_f`` was observed on the *previous*
+    local day and says nothing about the market's own daily max — every
+    current-high branch above would misfire on it, so the gate falls back to
+    forecast only.
     """
     forecast = state.forecast_high_f if state.forecast_high_f is not None else state.secondary_forecast_f
     current = state.current_high_f
+    if market_date is not None and state.now_local.date() != market_date:
+        current = None
     bases = [v for v in (forecast, current) if v is not None]
     if not bases:
         return None
@@ -944,7 +955,14 @@ def scan_markets(
                 # `state.forecast_high_f`/`current_high_f` -- those are today's
                 # observation-anchored values and have no bearing on a next-day
                 # bracket (same safety property as the probability path itself).
-                margin_gap = no_entry_margin_gap(bracket, state) if not is_next_day_eval else None
+                # Same-day: pass the settlement date so the gate can drop
+                # `current_high_f` when the station's local day lags it (#784).
+                margin_gap = (
+                    no_entry_margin_gap(
+                        bracket, state, market_date=date.fromisoformat(_decision_date),
+                    )
+                    if not is_next_day_eval else None
+                )
                 if ev_no > max_edge_cents:
                     skipped_reason = "max_edge"
                     log.debug("[%s] -- SKIPPED %s: %s edge=%.2f¢ > MAX=%.2f¢",

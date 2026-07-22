@@ -374,6 +374,38 @@ class TestNoEntryMarginGap:
         """Neither forecast nor running high → gate cannot apply."""
         assert no_entry_margin_gap(_bracket(82, 84), _state(None, None)) is None
 
+    # -- market_date cross-day handling (issue #784) --------------------------
+
+    def test_cross_day_market_ignores_current_high_bypass(self):
+        """Yesterday's high above the bracket top must not disable the gate.
+
+        KORD scenario: market settles tomorrow (station-local), running high 86
+        is from today. Old code: current 86 > top 75 → None (no gate). Fixed:
+        forecast-only → gap = 76 - 75 = 1.0.
+        """
+        state = _state(76.0, 86.0)
+        tomorrow = state.now_local.date() + timedelta(days=1)
+        assert no_entry_margin_gap(_bracket(74, 75), state, market_date=tomorrow) == 1.0
+
+    def test_cross_day_market_ignores_current_high_in_base(self):
+        """Stale current high must not inflate the expected-high base."""
+        state = _state(78.0, 81.0)
+        tomorrow = state.now_local.date() + timedelta(days=1)
+        # Same-day this is gap 1.0 (base=81); cross-day base=forecast 78 → 4.0.
+        assert no_entry_margin_gap(_bracket(82, 84), state, market_date=tomorrow) == 4.0
+
+    def test_cross_day_market_no_forecast_returns_none(self):
+        """Cross-day with only a (dropped) current high → gate cannot apply."""
+        state = _state(None, 86.0)
+        tomorrow = state.now_local.date() + timedelta(days=1)
+        assert no_entry_margin_gap(_bracket(74, 75), state, market_date=tomorrow) is None
+
+    def test_matching_market_date_keeps_current_high_semantics(self):
+        """market_date equal to the local date leaves all current-high logic intact."""
+        state = _state(76.0, 86.0)
+        today = state.now_local.date()
+        assert no_entry_margin_gap(_bracket(82, 84), state, market_date=today) is None
+
 
 class TestEntryGates:
     """Tests for the DISABLED_STATIONS and margin_gate entry filters in scan_markets()."""
@@ -455,6 +487,34 @@ class TestEntryGates:
 
         assert not any("margin_gate" in r.message for r in caplog.records)
         assert any(c.side == "NO" for c in candidates)
+
+    def test_margin_gate_fires_cross_day_despite_stale_current_high(self, caplog):
+        """Issue #784: yesterday's running high must not bypass the margin gate.
+
+        Same-day-by-UTC evening window: the market settles on the station's
+        NEXT local day, so state.now_local is still 'yesterday' relative to the
+        market date. Running high 86 exceeds the 74-75 bracket top — the old
+        'NO can no longer lose' bypass let the candidate through — but the
+        market-day forecast of 76 is only 1F clear of the bracket, inside the
+        default 2.5F margin, so the gate must fire.
+        """
+        import dataclasses
+        yesterday = datetime.now(timezone.utc) - timedelta(days=1)
+        state = dataclasses.replace(
+            _state(forecast=76.0, current=86.0),
+            now_local=yesterday.replace(hour=20, minute=30),
+            sunset_local=yesterday.replace(hour=20),
+        )
+        weather = {"KMIA": state}
+        market = self._miami_market("74-75°F", '["0.20", "0.80"]')
+
+        with patch("src.strategy.scanner.MIN_MINUTES_TO_SETTLEMENT", 0), \
+                patch("src.strategy.scanner.MODEL_PROB_CAP", 1.0):
+            with caplog.at_level(logging.DEBUG):
+                candidates, _ = scan_markets(weather, [market])
+
+        assert candidates == []
+        assert any("margin_gate" in r.message for r in caplog.records)
 
 
 # ---------------------------------------------------------------------------
