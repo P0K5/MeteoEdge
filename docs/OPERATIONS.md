@@ -1932,13 +1932,48 @@ Currently marked `training_eligible: false` (2026-07-01 audit):
 | City (ICAO) | Reason |
 |---|---|
 | Jinan (ZSJN) | METAR feed nearly dead — 3–10 obs/day, no new observations since 2026-06-30 14:13 UTC. Code-level investigation (collector config, recent commits) found no collector bug; `src/data/collectors/` has no ZSJN-specific special-casing and the METAR fetch path is shared with all other METAR-only stations, so this reads as an upstream/data-source outage rather than an application bug. ZSJN is dropped from training pending upstream recovery — re-check obs cadence before re-enabling. |
-| Shenzhen (ZGSZ) | 2-hourly real-world METAR cadence undershoots the true daily high by up to 1–3°F — larger than the edges traded. |
-| Wuhan (ZHHH) | Same 2-hourly undershoot issue as ZGSZ. |
-| Zhengzhou (ZHCC) | Same 2-hourly undershoot issue as ZGSZ. |
+| Wuhan (ZHHH) | 2-hourly real-world METAR cadence undershoots the true daily high by up to 1–3°F — larger than the edges traded. |
+| Zhengzhou (ZHCC) | Same 2-hourly undershoot issue as ZHHH. |
 
 **Source of truth:** `config/source_priority.yaml` is the single place to add,
 remove, or adjust these exclusions — do not special-case cities in
 `db.py`/`emos_calibration.py`/`deb_weighting.py`.
+
+### Date-scoped re-entry: `training_eligible_since` (issue #766)
+
+Shenzhen (ZGSZ) was one of the four cities above under the same 2-hourly
+undershoot exclusion. Follow-up investigation (#762) confirmed its METAR feed
+is otherwise healthy (fresh obs, not data-starved), so it was worth
+re-checking whether the underlying cadence problem still held.
+
+**Finding:** the ZGSZ METAR feed's real-world reporting cadence upgraded from
+~2-hourly to hourly starting **2026-07-14** (station-side change, not a
+MeteoEdge collector change) — confirmed from `observations` row counts:
+~12/day for the ~5 weeks before 07-14, ~24/day for every day since, stable
+through 2026-07-21. Subsampling the post-upgrade hourly data down to a
+simulated 2-hourly cadence (both even- and odd-hour phase) reproduces a mean
+undershoot of 0.2°F (max 1.8°F across 9 days) — consistent with, but smaller
+than, the original audit's 1–3°F estimate, and using the native (now-hourly)
+cadence as the training label eliminates the undershoot by construction going
+forward.
+
+**Decision:** rather than a blanket `training_eligible: true` flip (which
+would let the DB's pre-upgrade, undershoot-biased daily highs back into
+training), `config/source_priority.yaml` gets a new optional per-entry
+`training_eligible_since: "YYYY-MM-DD"` field. `config.get_training_eligible_since(city)`
+reads it; `get_daily_obs_high()` returns `None` for dates before the cutover,
+and `get_obs_highs_range()` clamps its `since_date` lower bound up to the
+cutover if later. Shenzhen is configured with `training_eligible_since:
+"2026-07-14"` — pre-cutover dates remain excluded exactly as before, and only
+dates using the new hourly-cadence label enter training. This is
+purely additive: cities with no `training_eligible_since` entry (all others)
+are unaffected, and cities with an unconditional `training_eligible: false`
+(Jinan, Wuhan, Zhengzhou) are checked first and remain fully excluded
+regardless of date.
+
+**Source of truth:** `config/source_priority.yaml` is the single place to add,
+remove, or adjust `training_eligible_since` cutovers — do not special-case
+cities in `db.py`/`emos_calibration.py`/`deb_weighting.py`.
 
 ---
 

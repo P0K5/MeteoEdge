@@ -461,8 +461,9 @@ class TestAlwaysShadow:
 # ---------------------------------------------------------------------------
 
 class TestTrainingEligibilityExclusionEndToEnd:
-    """An ineligible city (Shenzhen/ZGSZ, training_eligible=false per
-    issue #558) must contribute zero triples to fetch_training_data /
+    """A city ineligible for the dates under test (Shenzhen/ZGSZ, all 2025-02
+    dates fall before its issue #766 training_eligible_since=2026-07-14
+    cutover) must contribute zero triples to fetch_training_data /
     fetch_training_data_pooled even when it has plenty of forecast_log and
     observation rows — because get_daily_obs_high() (the shared chokepoint)
     returns None for every one of its dates."""
