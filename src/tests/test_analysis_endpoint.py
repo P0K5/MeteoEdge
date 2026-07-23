@@ -156,7 +156,7 @@ class TestAnalysisEndpoint200:
             "forecast_high", "current_high", "minutes_to_settlement",
             "gate_verdict", "side",
             "gate_actual", "gate_threshold", "gate_unit", "gate_detail",
-            "poll_ts",
+            "execution_mode", "poll_ts",
         ):
             assert field in bracket, f"Missing bracket field: {field}"
 
@@ -180,6 +180,21 @@ class TestAnalysisEndpoint200:
         assert bracket["gate_verdict"] == "entry_guard"
         assert bracket["gate_detail"] == "duplicate-entry guard: open position already exists"
         assert bracket["poll_ts"] == "2026-07-21T14:32:05+00:00"
+
+    def test_execution_mode_pass_through(self, client_with_db):
+        """Issue #780: execution_mode round-trips from scan_decisions to the
+        response contract, distinguishing a confirmed live fill from the
+        scanner's paper-mode placeholder."""
+        client, db = client_with_db
+        _seed_row(db, gate_verdict="traded_live", side="YES", execution_mode="live")
+        r = client.get(f"/api/analysis/{STATION}?date=2026-07-21")
+        assert r.json()["brackets"][0]["execution_mode"] == "live"
+
+        _seed_row(db, ticker="0xdef", gate_verdict="traded_live", side="YES",
+                   execution_mode="paper")
+        r = client.get(f"/api/analysis/{STATION}?date=2026-07-21")
+        modes = {b["execution_mode"] for b in r.json()["brackets"]}
+        assert modes == {"live", "paper"}
 
     def test_gate_tooltip_fields_pass_through(self, client_with_db):
         client, db = client_with_db

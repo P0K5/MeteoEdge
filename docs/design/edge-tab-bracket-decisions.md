@@ -296,7 +296,7 @@ elsewhere in this dashboard**, not new ones:
 
 | Verdict | Chip label | Family | Tooltip (native `title`) |
 |---|---|---|---|
-| `traded_live` | `Traded` | green | `Traded — cleared every gate on the {side} side.` (deliberately drops "live" — see #758/PR #779 discussion and Backlog #780) |
+| `traded_live` | `Traded live` / `Traded (paper)` | green | Qualified by the `execution_mode` signal (issue #780): `Traded live — cleared every gate on the {side} side and the order filled.` (confirmed fill) or `Traded (paper) — cleared every gate on the {side} side; no live trader was configured this poll, so no order was placed.` (unconfirmed placeholder) |
 | `entry_guard` | `Blocked` | red | `{guard reason text from backend}` e.g. "Already have an open position in this bracket today — duplicate-entry guard." |
 | `timeout_today` | `Timed out` | red | `Order placed but not filled before the settlement window closed.` |
 | `shadow_only` | `Shadow` | amber | `Would trade, but this station/side runs in shadow (paper) mode — no live order placed.` |

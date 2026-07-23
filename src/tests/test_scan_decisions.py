@@ -374,6 +374,35 @@ class TestScanDecisionsUpsert:
                 bracket_low=80.0, bracket_high=85.0, gate_verdict="not_a_real_verdict",
             )
 
+    def test_execution_mode_defaults_to_paper(self, db):
+        """Issue #780: a caller that never passes execution_mode gets the
+        conservative default -- never claim an unspecified row as a
+        confirmed live fill."""
+        db.upsert_scan_decision(
+            ts="2026-07-21T10:00:00Z", station="KMIA", ticker="0xabc",
+            date="2026-07-21", bracket_low=80.0, bracket_high=85.0,
+            gate_verdict="traded_live", side="YES",
+        )
+        rows = db.get_scan_decisions("KMIA", "2026-07-21")
+        assert rows[0]["execution_mode"] == "paper"
+
+    def test_execution_mode_live_round_trips(self, db):
+        db.upsert_scan_decision(
+            ts="2026-07-21T10:00:00Z", station="KMIA", ticker="0xabc",
+            date="2026-07-21", bracket_low=80.0, bracket_high=85.0,
+            gate_verdict="traded_live", side="YES", execution_mode="live",
+        )
+        rows = db.get_scan_decisions("KMIA", "2026-07-21")
+        assert rows[0]["execution_mode"] == "live"
+
+    def test_invalid_execution_mode_rejected(self, db):
+        with pytest.raises(ValueError):
+            db.upsert_scan_decision(
+                ts="x", station="KMIA", ticker="0xabc", date="2026-07-21",
+                bracket_low=80.0, bracket_high=85.0, gate_verdict="traded_live",
+                execution_mode="not_a_real_mode",
+            )
+
 
 # ---------------------------------------------------------------------------
 # run.py: the verdict seam + N-brackets-N-rows / candidates unaffected
@@ -501,6 +530,7 @@ class TestRunVerdictSeam:
         assert len(rows) == 1
         assert rows[0]["gate_verdict"] == "traded_live"
         assert rows[0]["gate_detail"] is None
+        assert rows[0]["execution_mode"] == "live"  # issue #780: confirmed fill
 
     def test_execution_timeout_downgrades_to_timeout_today(self, db):
         cand = _make_candidate()
@@ -542,6 +572,7 @@ class TestRunVerdictSeam:
         assert len(rows) == 1
         assert rows[0]["gate_verdict"] == "entry_guard"
         assert "open position" in rows[0]["gate_detail"]
+        assert rows[0]["execution_mode"] == "live"  # issue #780: poll had a live trader
 
     def test_placeholder_never_resolved_downgrades_to_entry_guard(self, db):
         """Wallet-empty cooldown short-circuits the poll before the candidate
@@ -556,6 +587,7 @@ class TestRunVerdictSeam:
         rows = db.get_scan_decisions("KATL", snap["date"])
         assert len(rows) == 1
         assert rows[0]["gate_verdict"] == "entry_guard"
+        assert rows[0]["execution_mode"] == "live"  # issue #780: poll had a live trader
 
     def test_paper_mode_leaves_placeholder_as_traded_live(self, db):
         """No live_trader -- there is no entry-guard/execution seam at all,
@@ -569,6 +601,7 @@ class TestRunVerdictSeam:
         rows = db.get_scan_decisions("KATL", snap["date"])
         assert len(rows) == 1
         assert rows[0]["gate_verdict"] == "traded_live"
+        assert rows[0]["execution_mode"] == "paper"  # issue #780: unconfirmed placeholder
 
 
 class TestScanDecisionsRowCount:
@@ -592,6 +625,9 @@ class TestScanDecisionsRowCount:
         assert verdicts["0xb"] == "above_max_edge"
         assert verdicts["0xc"] == "shadow_only"
         assert verdicts["0xd"] == "traded_live"  # confirmed by the execution outcome
+        # issue #780: every row this poll is stamped 'live' -- a live trader
+        # was configured, regardless of each individual bracket's verdict.
+        assert all(r["execution_mode"] == "live" for r in rows)
 
     def test_second_poll_same_day_upserts_not_appends(self, db):
         """Idempotent-per-poll semantics through the full run.py path, not

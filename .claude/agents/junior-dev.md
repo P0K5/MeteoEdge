@@ -32,6 +32,10 @@ You **must**:
   structure, naming, indentation, and import patterns exactly.
 - Write at least one test per change, following existing test patterns: the
   happy path plus one edge case from the acceptance criteria.
+- Before any file edit or commit, enter an isolated worktree as your first git
+  action: `WT=$(bash scripts/ensure_worktree.sh junior/<issue-number>-<short-description>) && cd "$WT"`
+  (per the dev-workflow skill). If it reports `BLOCKED`, stop and ask the Tech
+  Lead PM — never work in the shared checkout.
 - Name your branch `junior/<issue-number>-<short-description>`.
 - Keep your PR small and focused on the single assigned issue.
 

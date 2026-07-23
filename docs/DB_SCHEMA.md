@@ -460,7 +460,7 @@ CREATE TABLE IF NOT EXISTS emos_crps_log (
 
 **Purpose:** The bot's-eye per-bracket decision view for the Edge tab (epic #754). One row per `(station, ticker, date)` holding the **most recent poll's** evaluated bracket — the same `p_yes`/`ev_yes`/`ev_no`/`emos_mode` numbers the scanner traded on (never a parallel recompute), plus the `gate_verdict` naming the exact reason that bracket did or didn't trade. Upserted every poll — this is a live "last known state" table, not an append-only log (`candidates`/`snapshots.jsonl` remain the historical record).
 
-**Writer:** `src.scripts.run.poll_once`, once per evaluated high-side bracket per poll (mirrors the `db.insert_candidate` call site, issue #684). `src.strategy.scanner.scan_markets` attaches the pre-execution `gate_verdict` (+ every other column below) to each evaluated bracket's snapshot; `poll_once` upgrades the `traded_live` placeholder to `entry_guard` / `timeout_today` / (confirmed) `traded_live` once the entry-guard check and any live execution attempt for that bracket have resolved (the "verdict seam" — see issue #756's PR for the exact line-level seam between scanner.py and run.py). Low-side (shadow-only) brackets never produce a `snapshots.jsonl` row today and are therefore never written here either — out of scope for this table, same as `snapshots.jsonl`.
+**Writer:** `src.scripts.run.poll_once`, once per evaluated high-side bracket per poll (mirrors the `db.insert_candidate` call site, issue #684). `src.strategy.scanner.scan_markets` attaches the pre-execution `gate_verdict` (+ every other column below) to each evaluated bracket's snapshot; `poll_once` upgrades the `traded_live` placeholder to `entry_guard` / `timeout_today` / (confirmed) `traded_live` once the entry-guard check and any live execution attempt for that bracket have resolved (the "verdict seam" — see issue #756's PR for the exact line-level seam between scanner.py and run.py). Low-side (shadow-only) brackets never produce a `snapshots.jsonl` row today and are therefore never written here either — out of scope for this table, same as `snapshots.jsonl`. Every row is also stamped with `execution_mode` (issue #780, `_persist_scan_decisions`) so a `traded_live` verdict can be trusted as a confirmed exchange fill (`execution_mode='live'`) vs. the scanner's unconfirmed paper-mode placeholder (`execution_mode='paper'`).
 **Reader:** `Database.get_scan_decisions(station, date)`, consumed by `GET /api/analysis/{station}` (issue #757 — see `docs/OPERATIONS.md`'s "Edge Tab — Analysis API" section for the full response contract). The endpoint filters the returned rows by `is_next_day` to partition Today vs D+1.
 
 | Column | Type | Units | Nullable | Description |
@@ -482,6 +482,7 @@ CREATE TABLE IF NOT EXISTS emos_crps_log (
 | `gate_verdict` | TEXT NOT NULL | enum, 11 values | No | Exactly one of `traded_live`, `shadow_only`, `next_day_shadow`, `entry_guard`, `timeout_today`, `below_min_edge`, `above_max_edge`, `below_min_price`, `below_min_confidence`, `margin_gate`, `mae_gate` — enforced by a `CHECK` constraint and by `Database.upsert_scan_decision` raising `ValueError` on any other value. Names locked with the design spec (`docs/design/edge-tab-bracket-decisions.md`) |
 | `gate_actual` / `gate_threshold` / `gate_unit` | REAL / REAL / TEXT | varies (`cents`, `degrees_f`, `probability`) | Yes | The compared numbers for the six numeric-rejection verdicts (`below_min_edge`, `above_max_edge`, `below_min_price`, `below_min_confidence`, `margin_gate`, `mae_gate`) — the exact actual-vs-threshold pair `scan_markets` already computed. NULL for every other verdict |
 | `gate_detail` | TEXT | prose | Yes | For `entry_guard`: the guard reason string verbatim from `run.py` (e.g. "open position already exists for this token") — passed through, never reconstructed by a reader. For `timeout_today`: the raw execution outcome (e.g. `execution outcome: timeout`). NULL otherwise |
+| `execution_mode` | TEXT NOT NULL DEFAULT `'paper'` | `'live'` / `'paper'` | No | Issue #780: whether this poll had a live trader configured (`'live'`) or not (`'paper'`), stamped uniformly on every bracket row that poll by `_persist_scan_decisions`. Enforced by a `CHECK` constraint and by `Database.upsert_scan_decision` raising `ValueError` on any other value. Combined with `gate_verdict`, this is what distinguishes a confirmed live exchange fill (`traded_live` + `'live'`) from the scanner's unconfirmed "would trade live" placeholder (`traded_live` + `'paper'`) — every pre-#780 row defaults to `'paper'`, the conservative reading |
 | `ensemble_mean` | REAL | °F | Yes | Weighted ensemble forecast mean for `(station, date)`, sourced read-only from `get_ensemble_distribution()` (same `model_forecast_log`-backed function the pre-#756 Edge tab used) — demoted into the "Forecast inputs" collapsed detail, not retired |
 | `ensemble_members` | INTEGER | count | Yes | Number of distinct forecast models contributing to `ensemble_mean` |
 | `ensemble_range_low` / `ensemble_range_high` | REAL | °F | Yes | Min/max forecast value across contributing models (labelled "5th–95th pct" in the UI, matching the pre-#756 KPI strip's existing min/max-as-range convention) |
@@ -521,6 +522,7 @@ CREATE TABLE IF NOT EXISTS scan_decisions (
     gate_threshold        REAL,
     gate_unit             TEXT,
     gate_detail           TEXT,
+    execution_mode        TEXT NOT NULL DEFAULT 'paper' CHECK(execution_mode IN ('live','paper')),
     ensemble_mean         REAL,
     ensemble_members      INTEGER,
     ensemble_range_low    REAL,
@@ -529,6 +531,14 @@ CREATE TABLE IF NOT EXISTS scan_decisions (
 );
 CREATE INDEX IF NOT EXISTS idx_scan_decisions_station_date ON scan_decisions(station, date);
 ```
+
+Existing (pre-#780) installations pick up `execution_mode` via the idempotent
+`ALTER TABLE ... ADD COLUMN execution_mode TEXT NOT NULL DEFAULT 'paper'`
+migration in `Database._migrate` — same pattern as every other post-launch
+column on this table. The `ALTER TABLE` omits the `CHECK` constraint (SQLite
+allows it, but no other migration in this codebase adds one); validity is
+instead enforced in Python by `Database.upsert_scan_decision`, same as
+`gate_verdict`'s own `ValueError`-on-invalid-value guard.
 
 **Upsert-per-poll semantics:**
 - `Database.upsert_scan_decision(...)` is an `INSERT ... ON CONFLICT(station, ticker, date) DO UPDATE SET ...` — a fresh poll for the same key **replaces** the prior row's every column in place. The table always reflects the single most recent scan for a bracket, never an accumulating history.

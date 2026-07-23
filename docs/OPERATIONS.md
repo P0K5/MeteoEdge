@@ -408,6 +408,7 @@ Controlled entirely by env vars; DB-backed via `CONFIG_DEFAULTS`.
 | `side` | `"YES"` \| `"NO"` \| null | The traded/candidate side |
 | `gate_actual` / `gate_threshold` / `gate_unit` | float / float / string \| null | The compared numbers for the six numeric-rejection verdicts; `null` for every other verdict |
 | `gate_detail` | string \| null | Prose detail for `entry_guard` (guard reason verbatim) / `timeout_today` (execution outcome); `null` otherwise |
+| `execution_mode` | `"live"` \| `"paper"` \| null | Issue #780: whether this poll had a live trader configured. Combined with `gate_verdict`, distinguishes a confirmed live exchange fill (`traded_live` + `"live"`) from the scanner's unconfirmed "would trade live" placeholder (`traded_live` + `"paper"`) |
 | `poll_ts` | string \| null | ISO 8601 timestamp of the poll this bracket was evaluated in |
 
 Dropped from the pre-#757 contract: `bias_corrected` (no parallel model to compute it from any more) and the raw `distribution` histogram (superseded by the `forecast_inputs` summary above).
@@ -427,15 +428,14 @@ already covers:
   market yet" or "not scanned yet" — both read as "nothing to show" from the
   UI's point of view, so the button stays disabled with the (unchanged from
   v1) "No D+1 market available for this station yet" tooltip either way.
-- **`traded_live` is rendered without a paper/live qualifier.** Per
-  `src/scripts/run.py`'s `_persist_scan_decisions` docstring, a paper-mode
-  poll (no live trader configured) can leave a bracket at the scanner's
-  `traded_live` placeholder without ever confirming a real fill —
-  `scan_decisions` has no column that distinguishes that case from a
-  confirmed live trade, so the UI cannot safely add a "(paper)" qualifier
-  without risking mislabeling a genuine live trade. Flagged as a possible
-  follow-up if operators need that distinction (would require a new
-  persisted column).
+- **`traded_live` is qualified by `execution_mode` (issue #780).** The chip
+  label/tooltip/aria-label read "Traded live" (`execution_mode='live'`, a
+  confirmed exchange fill) or "Traded (paper)" (`execution_mode='paper'`,
+  the scanner's unconfirmed "would trade live" placeholder from a poll with
+  no live trader configured) — see `GATE_CHIP_META`/`gateChipHTML`/
+  `gateTooltip` in `index.html`. Prior to #780 the chip always read the
+  same neutral "Traded" regardless of which case a row was, because
+  `scan_decisions` had no column to distinguish them.
 - **Forecast-inputs range label.** `forecast_inputs.ensemble_range_low/high`
   are the raw min/max across contributing models, not a percentile — the UI
   labels the row "Range (min–max)" rather than the design spec's original
