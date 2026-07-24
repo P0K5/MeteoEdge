@@ -337,3 +337,130 @@ class TestReportOnly:
 
         # fetch_training_data should never be called
         mock_fetch.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# 12. sigma_source coupling (issue #799 -- main review risk)
+# ---------------------------------------------------------------------------
+
+class TestSigmaSourceCoupling:
+    """The offline retrain script must resolve sigma_source from the SAME
+    USE_ENSEMBLE_SIGMA flag live serving reads (Database._active_sigma_source),
+    and pass the IDENTICAL value to both fetch_training_data (what gets fit)
+    and save_coefficients/upsert_emos_coefficients (what gets persisted) --
+    decoupling the two reproduces the #658 train/serve skew.
+    """
+
+    def test_resolves_sigma_source_from_use_ensemble_sigma_true(self):
+        mod = _load_script()
+        db = Database(":memory:")
+        db.set_config("USE_ENSEMBLE_SIGMA", "true")
+
+        fetch_calls = []
+
+        def fake_fetch(city, db, min_samples=60, **kw):
+            fetch_calls.append(kw.get("sigma_source"))
+            return _make_triples(80)
+
+        with patch("socket.gethostname", return_value="my-laptop"), \
+             patch.object(Path, "exists", return_value=False), \
+             patch.object(mod, "fit_emos", return_value=(0.0, 1.0, 0.0, 1.0)), \
+             patch.object(mod, "get_all_cities", return_value=["Chicago"]), \
+             patch.object(mod, "fetch_training_data", side_effect=fake_fetch):
+            test_args = argparse.Namespace(
+                db=":memory:", city="Chicago", min_samples=60,
+                promote_threshold=0.08, dry_run=False, report_only=False,
+            )
+            with patch("argparse.ArgumentParser.parse_args", return_value=test_args), \
+                 patch("scripts.auto_retrain_probability_calibration.Database", return_value=db):
+                mod.main()
+
+        assert fetch_calls == ["ensemble"], fetch_calls
+
+    def test_resolves_sigma_source_from_use_ensemble_sigma_false(self):
+        mod = _load_script()
+        db = Database(":memory:")
+        db.set_config("USE_ENSEMBLE_SIGMA", "false")
+
+        fetch_calls = []
+
+        def fake_fetch(city, db, min_samples=60, **kw):
+            fetch_calls.append(kw.get("sigma_source"))
+            return _make_triples(80)
+
+        with patch("socket.gethostname", return_value="my-laptop"), \
+             patch.object(Path, "exists", return_value=False), \
+             patch.object(mod, "fit_emos", return_value=(0.0, 1.0, 0.0, 1.0)), \
+             patch.object(mod, "get_all_cities", return_value=["Chicago"]), \
+             patch.object(mod, "fetch_training_data", side_effect=fake_fetch):
+            test_args = argparse.Namespace(
+                db=":memory:", city="Chicago", min_samples=60,
+                promote_threshold=0.08, dry_run=False, report_only=False,
+            )
+            with patch("argparse.ArgumentParser.parse_args", return_value=test_args), \
+                 patch("scripts.auto_retrain_probability_calibration.Database", return_value=db):
+                mod.main()
+
+        assert fetch_calls == ["fixed"], fetch_calls
+
+    def test_saved_row_lands_under_the_same_track_fetch_used(self):
+        """A REAL (non-mocked) DB write: the row persisted must be readable
+        back under the SAME sigma_source fetch_training_data was told to use --
+        a live reader's default lookup (sigma_source=None) must find it."""
+        mod = _load_script()
+        db = Database(":memory:")
+        db.set_config("USE_ENSEMBLE_SIGMA", "true")
+
+        with patch("socket.gethostname", return_value="my-laptop"), \
+             patch.object(Path, "exists", return_value=False), \
+             patch.object(mod, "fit_emos", return_value=(0.0, 1.0, 0.0, 1.0)), \
+             patch.object(mod, "get_all_cities", return_value=["Chicago"]), \
+             patch.object(mod, "fetch_training_data", return_value=_make_triples(80)):
+            test_args = argparse.Namespace(
+                db=":memory:", city="Chicago", min_samples=60,
+                promote_threshold=0.08, dry_run=False, report_only=False,
+            )
+            with patch("argparse.ArgumentParser.parse_args", return_value=test_args), \
+                 patch("scripts.auto_retrain_probability_calibration.Database", return_value=db):
+                mod.main()
+
+        row = db.get_emos_coefficients(
+            "Chicago", "emos_shadow", forecast_source="baseline", sigma_source="ensemble",
+        )
+        assert row is not None
+        fixed_row = db.get_emos_coefficients(
+            "Chicago", "emos_shadow", forecast_source="baseline", sigma_source="fixed",
+        )
+        assert fixed_row is None, "must not also land under the wrong track"
+
+        # And a live reader's default lookup (no sigma_source passed) finds it.
+        default_row = db.get_emos_coefficients("Chicago", "emos_shadow", forecast_source="baseline")
+        assert default_row is not None
+
+    def test_explicit_sigma_source_cli_overrides_db_flag(self):
+        """--sigma-source overrides the DB-derived value for one-off comparisons."""
+        mod = _load_script()
+        db = Database(":memory:")
+        db.set_config("USE_ENSEMBLE_SIGMA", "true")  # would resolve 'ensemble'...
+
+        fetch_calls = []
+
+        def fake_fetch(city, db, min_samples=60, **kw):
+            fetch_calls.append(kw.get("sigma_source"))
+            return _make_triples(80)
+
+        with patch("socket.gethostname", return_value="my-laptop"), \
+             patch.object(Path, "exists", return_value=False), \
+             patch.object(mod, "fit_emos", return_value=(0.0, 1.0, 0.0, 1.0)), \
+             patch.object(mod, "get_all_cities", return_value=["Chicago"]), \
+             patch.object(mod, "fetch_training_data", side_effect=fake_fetch):
+            test_args = argparse.Namespace(
+                db=":memory:", city="Chicago", min_samples=60,
+                promote_threshold=0.08, dry_run=False, report_only=False,
+                sigma_source="fixed",  # ...but the CLI override forces 'fixed'
+            )
+            with patch("argparse.ArgumentParser.parse_args", return_value=test_args), \
+                 patch("scripts.auto_retrain_probability_calibration.Database", return_value=db):
+                mod.main()
+
+        assert fetch_calls == ["fixed"], fetch_calls

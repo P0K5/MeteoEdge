@@ -395,10 +395,24 @@ ENVELOPE_SIGMA_CLIMB_FRACTION = float(os.getenv("ENVELOPE_SIGMA_CLIMB_FRACTION",
 # spread -- the estimator lives in src/model/ensemble_sigma.py; wiring it
 # onto WeatherState is a follow-up issue, #449/#665), true_probability_yes
 # and the EMOS-shadow serving path use it as the forecast stddev instead of
-# the fixed FORECAST_STDDEV_F. Default OFF: this PR only plumbs the field
-# and its consumption path -- it must not change what gets served live.
-# Promote per station only after shadow data validates the estimator.
-USE_ENSEMBLE_SIGMA = os.getenv("USE_ENSEMBLE_SIGMA", "false").lower() == "true"
+# the fixed FORECAST_STDDEV_F.
+#
+# Issue #799: flipped ON by default. Before #799, EMOS's sigma_raw predictor
+# was overwhelmingly the constant FORECAST_STDDEV_F=2.0 (unidentifiable c/d --
+# d fit to ~0.001 across every station), even though sigma_f is already
+# populated on thousands of open_meteo/GEFS rows. This is now the SINGLE
+# source of truth coupling train and serve: src.data.db.Database.
+# _active_sigma_source() (which coefficient row a retrain writes / a live
+# reader keys on) derives directly from this flag -- see its docstring for
+# why a second, independently-settable key (the now-legacy EMOS_SIGMA_SOURCE)
+# was the actual decoupling risk this closes. NOTE: flipping this constant in
+# code does NOT retroactively change an already-deployed bot_config row --
+# seed_config() only seeds unset keys ("DB is authoritative" once set) -- so
+# an existing production DB keeps serving 'fixed' until an operator explicitly
+# sets USE_ENSEMBLE_SIGMA=true (dashboard PATCH or db.set_config), which
+# should only happen after an 'ensemble' retrain has produced calibration rows
+# (see scripts/run_emos_shadow.py / scripts/auto_retrain_probability_calibration.py).
+USE_ENSEMBLE_SIGMA = os.getenv("USE_ENSEMBLE_SIGMA", "true").lower() == "true"
 
 # EMOS deployment mode: 'legacy' | 'emos_shadow' | 'emos_primary'
 # Per-city mode is read from the emos_calibration table; this is the fallback
@@ -628,8 +642,15 @@ CONFIG_DEFAULTS: "dict[str, str | int | float | bool]" = {
     "ENVELOPE_SIGMA_CLIMB_FRACTION": 0.5,
     # Feature flag (issue #448): use WeatherState.ensemble_sigma_f (GEFS
     # ensemble spread) instead of the fixed FORECAST_STDDEV_F when available.
-    # Default off -- no live behaviour change until a station is promoted.
-    "USE_ENSEMBLE_SIGMA": False,
+    # Issue #799: default flipped ON -- this is now the single source of
+    # truth for BOTH which emos_calibration sigma_source track is read/
+    # written (see Database._active_sigma_source()) and what raw sigma value
+    # is fed into serving (resolve_sigma_raw / true_probability_yes). Note:
+    # this code default does not retroactively change an already-seeded
+    # bot_config row on an existing DB (seed_config() only seeds unset keys) --
+    # flipping it live on a deployed instance is a deliberate operator step,
+    # gated on an 'ensemble' retrain having produced calibration rows first.
+    "USE_ENSEMBLE_SIGMA": True,
     # Stage 1 of issue #551: rank/prioritize candidates using the uncapped (raw)
     # model probability instead of scan order. Default off -- entry gates always
     # consume the capped p_yes regardless of this flag; only which candidate is
@@ -657,20 +678,19 @@ CONFIG_DEFAULTS: "dict[str, str | int | float | bool]" = {
     # intl_ecmwf_icon: adds ECMWF and ICON-EU for international stations
     # full: all channels active
     "FORECAST_STACK": "baseline",
-    # Active sigma source for EMOS retraining/serving (issue #449) — which
-    # emos_calibration track (keyed by forecast_source AND sigma_source) a
-    # retrain writes to and a reader (get_city_mode/apply_emos) reads from.
-    # fixed:    train/serve sigma_raw as the constant FORECAST_STDDEV_F,
-    #           ignoring any persisted per-row model_forecast_log.sigma_f —
-    #           the historical default this codebase used before per-row
-    #           sigma existed.
-    # ensemble: train/serve sigma_raw from the persisted sigma_f (falls back
-    #           to FORECAST_STDDEV_F when a row has none), pairing with the
-    #           USE_ENSEMBLE_SIGMA serving path's state.ensemble_sigma_f
-    #           (issue #448) so d is no longer fit against a near-constant
-    #           input.
-    # Default 'fixed' -- no live behaviour change until an operator flips
-    # this AND a sigma_source='ensemble' retrain has been promoted.
+    # LEGACY / DEPRECATED as of issue #799 — no longer read by
+    # Database._active_sigma_source(), which now derives the active
+    # emos_calibration sigma_source track ('fixed' | 'ensemble') directly
+    # from USE_ENSEMBLE_SIGMA above. This key is kept only so an
+    # already-seeded bot_config row on an existing DB (and any code still
+    # calling db.get_config("EMOS_SIGMA_SOURCE") directly) doesn't break;
+    # setting it no longer has any effect on training or serving. Before
+    # #799 this was an INDEPENDENTLY settable bot_config key that a retrain
+    # script or operator could set out of step with USE_ENSEMBLE_SIGMA --
+    # exactly the dual-flag decoupling that can reproduce the #658 train/
+    # serve skew (a calibration row fit under one sigma_source read back
+    # while serving fed the OTHER sigma_source's raw input). Use
+    # USE_ENSEMBLE_SIGMA instead.
     "EMOS_SIGMA_SOURCE": "fixed",
     # Statistical promotion bar (issue #559) — advisory shadow→live tooling.
     # Supersedes issue #80's old thresholds (>=5 trades / 100% WR / >=3 days).
