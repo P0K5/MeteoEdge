@@ -16,6 +16,11 @@ Bounds enforce sigma_cal > 0 at all times (c > 1e-3, d > 1e-3).
 
 Output coefficients are always written as model_mode='emos_shadow' with
 ready_for_promotion=0 — promotion to active is a deliberate manual step.
+
+Cities below the per-station data bar are calibrated via a partial-pooling
+shrinkage blend against a cross-station group fit (issue #798; superseded the
+prior hard min_samples=60 per-city cutover from issue #659) — see
+pooling_group, shrinkage_weight, and blend_coefficients below.
 """
 from __future__ import annotations
 
@@ -269,12 +274,15 @@ def fetch_training_data(
 def pooling_group(city: str) -> str | None:
     """Return the cross-station pooling group for *city* (issue #659).
 
-    Per-station EMOS needs min_samples=60 settled days per lead bin — months
-    away for a fresh deployment. Pooling stations with broadly similar
-    forecast-error structure lets a shared (a, b, c, d) fit start producing
-    emos_shadow rows (and CRPS promotion evidence) immediately; per-station
-    fits automatically take precedence once a station individually clears
-    min_samples (see run_emos_shadow).
+    Per-station EMOS needs 60 settled days per lead bin for a fully-trusted
+    fit — months away for a fresh deployment. Pooling stations with broadly
+    similar forecast-error structure lets a shared (a, b, c, d) fit start
+    producing emos_shadow rows (and CRPS promotion evidence) immediately.
+    run_emos_shadow blends each station's own fit with its group's pooled fit,
+    weighted by how many of the station's own triples it has (issue #798) —
+    a station with 0 own triples gets the pure pooled fit, one at/above 60
+    gets its pure per-station fit, and everywhere in between gets a smooth
+    mix (see shrinkage_weight / blend_coefficients).
 
     Groups (deliberately coarse — a shared fit learns the group's AVERAGE
     bias, which is the shrinkage trade-off, not a defect):
@@ -346,6 +354,79 @@ def fetch_training_data_pooled(
             f"least {min_samples}."
         )
     return pooled, per_city
+
+
+def shrinkage_weight(n_city: int, full_weight_samples: int = 60) -> float:
+    """Partial-pooling weight for a city's own EMOS fit (issue #798).
+
+    Replaces run_emos_shadow.py's hard binary cutover (a per-city fit if
+    n_city >= 60, else a 100%-pooled group fit contributing 0% of the city's
+    own data) with a continuous ramp:
+
+        weight = clamp(n_city / full_weight_samples, 0.0, 1.0)
+
+    - n_city == 0                                -> weight 0.0 (purely the
+      pooled group fit)
+    - n_city >= full_weight_samples (default 60)  -> weight 1.0 (purely the
+      city's own fit -- bit-for-bit the pre-#798 per-city-only outcome, so
+      cities that already cleared the old bar see no change)
+    - in between                                   -> a straight-line blend
+
+    A linear ramp (rather than an asymptotic n / (n + k) Empirical-Bayes-style
+    curve) is used deliberately so weight is EXACTLY 1.0 at full_weight_samples:
+    it reproduces the legacy Pass-1 output exactly at and above the old
+    threshold, so the only behavioural change is in the previously
+    all-or-nothing 1..59 sample band. A softer n/(n+k) curve is a reasonable
+    alternative if evidence later shows cities just below 60 still get too
+    much weight from a noisy few-sample fit -- flagged here as a trade-off for
+    review, not a settled design choice.
+
+    Args:
+        n_city:              Number of triples the city itself contributed.
+        full_weight_samples: Sample count at which weight saturates at 1.0.
+                             Defaults to 60, matching the legacy min_samples
+                             cutover point.
+
+    Returns:
+        A float in [0.0, 1.0].
+    """
+    if full_weight_samples <= 0:
+        return 1.0
+    return max(0.0, min(1.0, n_city / full_weight_samples))
+
+
+def blend_coefficients(
+    city_coeffs: tuple[float, float, float, float],
+    pooled_coeffs: tuple[float, float, float, float],
+    weight: float,
+) -> tuple[float, float, float, float]:
+    """Weighted average of a city's own EMOS fit and its pooling group's fit.
+
+    ``weight`` is the city fit's share (see shrinkage_weight); the pooled
+    group fit gets ``1 - weight``. Applied componentwise to (a, b, c, d).
+
+    Because both inputs already satisfy c > 1e-3 and d > 1e-3 (fit_emos's
+    optimizer bounds) and weight is clamped to [0.0, 1.0], the blended (c, d)
+    is a convex combination of two positive numbers and therefore also
+    strictly positive -- sigma positivity is preserved without re-checking.
+
+    Args:
+        city_coeffs:   (a, b, c, d) from fitting the city's own triples.
+        pooled_coeffs: (a, b, c, d) from fitting the pooling group's triples.
+        weight:        The city fit's weight, in [0.0, 1.0] (see shrinkage_weight).
+
+    Returns:
+        Blended (a, b, c, d) tuple of floats.
+    """
+    a_c, b_c, c_c, d_c = city_coeffs
+    a_p, b_p, c_p, d_p = pooled_coeffs
+    w = max(0.0, min(1.0, weight))
+    return (
+        w * a_c + (1.0 - w) * a_p,
+        w * b_c + (1.0 - w) * b_p,
+        w * c_c + (1.0 - w) * c_p,
+        w * d_c + (1.0 - w) * d_p,
+    )
 
 
 def fit_emos(
