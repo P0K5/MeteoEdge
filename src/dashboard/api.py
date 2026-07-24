@@ -458,6 +458,7 @@ class PromotionBarOut(BaseModel):
     eligible: bool
     status: str
     reason: str
+    excluded_certainty_shortcut_count: int = 0
 
 
 class EmosCoefficients(BaseModel):

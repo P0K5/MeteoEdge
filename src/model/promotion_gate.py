@@ -14,6 +14,13 @@ win rate derived from the average entry price and the fee model in
 ``src/strategy/fee.py``. It supersedes the ad-hoc thresholds proposed in
 issue #80 (>=5 trades / 100% win rate / >=3 days).
 
+Issue #823: the bar excludes "certainty-shortcut" rows (``p_yes_raw == 0.0``,
+i.e. envelope.py's ``hi <= current_high_f`` deterministic-NO shortcut) from
+its win-rate/Wilson stats -- those rows never exercised the probabilistic
+model and would otherwise silently inflate a station's apparent edge. The
+excluded count is surfaced per station+side (see
+``excluded_certainty_shortcut_count``) for auditability.
+
 IMPORTANT: this module is ADVISORY TOOLING ONLY. Nothing here auto-promotes a
 station, and nothing here is consulted by the live entry gate. It only
 reports status for a human (or the dashboard) to act on.
@@ -332,10 +339,14 @@ def compute_promotion_bar(db) -> list:
 
     Returns:
         A list of dicts, one per (station, side) pair that has at least one
-        shadow trade on record, each with:
+        eligible (direction='high') shadow trade OR at least one excluded
+        certainty-shortcut row on record, each with:
             station, side, n, wins, win_rate, wilson_lower_bound,
             breakeven_win_rate, avg_entry_price_cents, days_coverage,
-            price_valid, eligible, status ('green'|'amber'|'red'), reason
+            price_valid, eligible, status ('green'|'amber'|'red'), reason,
+            excluded_certainty_shortcut_count (issue #823 -- count of
+            p_yes_raw==0.0 rows excluded from the stats above, for
+            auditability)
     """
     if db is None:
         return []
@@ -363,15 +374,35 @@ def compute_promotion_bar(db) -> list:
     # settlement path only cover high-side markets. Filtering explicitly here
     # (rather than trusting every row's direction to be correct) keeps this
     # advisory statistic robust to any residual mislabeled rows (issue #610).
+    #
+    # Issue #823: also drop "certainty-shortcut" rows (p_yes_raw == 0.0).
+    # envelope.py's `hi <= state.current_high_f` branch returns a hard 0.0
+    # WITHOUT ever evaluating the probabilistic model -- the bracket was
+    # already unreachable at scan time. These rows can only ever settle as a
+    # win for the NO side (the shortcut is definitionally correct), so mixing
+    # them into the win-rate/Wilson stats inflates a station's apparent edge
+    # with calls the statistical model never actually had to make. They are
+    # excluded from the stats below; the excluded count is still surfaced per
+    # station+side (`excluded_certainty_shortcut_count`) for auditability, and
+    # a station+side made up ENTIRELY of shortcut rows still appears in the
+    # output (with n=0) rather than silently disappearing, exactly like a
+    # non-shortcut station+side with no settled trades yet.
     groups: "dict[tuple[str, str], list]" = defaultdict(list)
+    excluded_certainty_shortcut: "dict[tuple[str, str], int]" = defaultdict(int)
     for trade in all_shadow:
         if trade.get("direction", "high") != "high":
             continue
-        groups[(trade["station"], trade["side"])].append(trade)
+        key = (trade["station"], trade["side"])
+        if trade.get("p_yes_raw") == 0.0:
+            excluded_certainty_shortcut[key] += 1
+            continue
+        groups[key].append(trade)
 
+    all_keys = set(groups.keys()) | set(excluded_certainty_shortcut.keys())
     rows = []
-    for (station, side) in sorted(groups.keys()):
-        trades = groups[(station, side)]
+    for (station, side) in sorted(all_keys):
+        trades = groups.get((station, side), [])
+        excluded_count = excluded_certainty_shortcut.get((station, side), 0)
         # A shadow trade is settled when settle_shadow_trades() has written
         # its own pnl (see _trade_is_win) -- NOT via the settlements table,
         # which only covers live-trade markets (issue #655).
@@ -401,7 +432,13 @@ def compute_promotion_bar(db) -> list:
         eligible = n >= min_trades and clears_bar
 
         if n == 0:
-            status, reason = "red", "no settled shadow trades yet"
+            status = "red"
+            reason = "no settled shadow trades yet"
+            if excluded_count > 0:
+                reason += (
+                    f" ({excluded_count} certainty-shortcut row(s) excluded, "
+                    "issue #823)"
+                )
         elif not clears_bar:
             status = "red"
             reason = (
@@ -433,6 +470,7 @@ def compute_promotion_bar(db) -> list:
             "eligible": eligible,
             "status": status,
             "reason": reason,
+            "excluded_certainty_shortcut_count": excluded_count,
         })
 
     return rows

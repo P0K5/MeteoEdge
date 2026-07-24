@@ -425,7 +425,7 @@ class _FakeDB:
 
 def _trade(station, side, ticker, actual_price, won: "bool | None" = None,
            ts="2026-06-01T12:00:00", mode="shadow", direction="high",
-           is_next_day=0):
+           is_next_day=0, p_yes_raw: "float | None" = None):
     """Build a shadow trade row the way settle_shadow_trades() leaves it:
     pnl set directly on the row (win: (100-ask)/100, loss: -ask/100), no
     settlements-table join (issue #655 — shadow trades are NEVER written to
@@ -433,6 +433,9 @@ def _trade(station, side, ticker, actual_price, won: "bool | None" = None,
     trade is still unsettled: pnl stays None, matching a real pending row.
 
     is_next_day=0 by default (issue #704) -- matches every pre-#704 row.
+    p_yes_raw=None by default -- matches historical rows predating the
+    column (issue #551); pass 0.0 to simulate a certainty-shortcut row
+    (issue #823).
     """
     if won is None:
         pnl = None
@@ -442,6 +445,7 @@ def _trade(station, side, ticker, actual_price, won: "bool | None" = None,
         "station": station, "side": side, "ticker": ticker,
         "actual_price": actual_price, "pnl": pnl, "ts": ts, "mode": mode,
         "direction": direction, "is_next_day": is_next_day,
+        "p_yes_raw": p_yes_raw,
     }
 
 
@@ -652,6 +656,93 @@ class TestComputePromotionBarExcludesNextDay:
 
         rows = compute_promotion_bar(db)
         assert not any(r["station"] == "ZSPD" for r in rows)
+
+
+class TestComputePromotionBarExcludesCertaintyShortcut:
+    """Issue #823: compute_promotion_bar must exclude "certainty-shortcut"
+    rows (p_yes_raw == 0.0 -- envelope.py's ``hi <= current_high_f`` branch,
+    which returns a hard 0.0 without ever evaluating the probabilistic model)
+    from its win-rate/Wilson stats, and surface the excluded count per
+    station+side for auditability.
+
+    Real production data showed ZGSZ and SBGR (~33% and ~37% of their settled
+    shadow rows respectively) were certainty-shortcut calls -- rows that can
+    only ever settle as a NO win by construction, silently inflating the
+    apparent win rate/edge for those stations."""
+
+    def test_certainty_shortcut_rows_excluded_from_station_group(self):
+        # 30 real (non-shortcut) NO trades (all wins) form a green row for
+        # ZGSZ. 15 additional p_yes_raw=0.0 rows for the SAME station+side,
+        # also wins, would inflate n to 45 and change the stats if not
+        # filtered -- mirroring the ~33% contamination seen in production.
+        real_trades = [
+            _trade("ZGSZ", "NO", f"zgsz-r{i}", 65, won=True, p_yes_raw=0.05)
+            for i in range(30)
+        ]
+        shortcut_trades = [
+            _trade("ZGSZ", "NO", f"zgsz-s{i}", 65, won=True, p_yes_raw=0.0)
+            for i in range(15)
+        ]
+        db = _FakeDB(real_trades + shortcut_trades)
+
+        rows = compute_promotion_bar(db)
+        row = next(r for r in rows if r["station"] == "ZGSZ" and r["side"] == "NO")
+
+        assert row["n"] == 30, "p_yes_raw=0.0 rows must not be counted"
+        assert row["wins"] == 30
+        assert row["excluded_certainty_shortcut_count"] == 15
+
+    def test_station_with_only_shortcut_rows_still_appears_with_n_zero(self):
+        # Issue #823 explicitly requires surfacing the excluded count for
+        # auditability -- a station+side made up ENTIRELY of shortcut rows
+        # must still appear (n=0, red) rather than silently disappearing,
+        # so a reviewer can see it was excluded rather than assuming there
+        # was simply no shadow data at all.
+        shortcut_only = [
+            _trade("SBGR", "NO", f"sbgr-s{i}", 65, won=True, p_yes_raw=0.0)
+            for i in range(8)
+        ]
+        db = _FakeDB(shortcut_only)
+
+        rows = compute_promotion_bar(db)
+        row = next(r for r in rows if r["station"] == "SBGR" and r["side"] == "NO")
+
+        assert row["n"] == 0
+        assert row["excluded_certainty_shortcut_count"] == 8
+        assert row["eligible"] is False
+        assert row["status"] == "red"
+        assert "8 certainty-shortcut row(s) excluded" in row["reason"]
+        assert "#823" in row["reason"]
+
+    def test_p_yes_raw_none_is_not_treated_as_shortcut(self):
+        # Historical rows predating the p_yes_raw column (issue #551) carry
+        # p_yes_raw=None, not 0.0 -- these must NOT be excluded.
+        trades = [
+            _trade("KATL", "NO", f"katl-{i}", 65, won=True, p_yes_raw=None)
+            for i in range(5)
+        ]
+        db = _FakeDB(trades)
+
+        rows = compute_promotion_bar(db)
+        row = next(r for r in rows if r["station"] == "KATL" and r["side"] == "NO")
+
+        assert row["n"] == 5
+        assert row["excluded_certainty_shortcut_count"] == 0
+
+    def test_green_station_unaffected_when_no_shortcut_rows_present(self):
+        # Regression guard: a station with zero certainty-shortcut rows must
+        # report excluded_certainty_shortcut_count == 0 and be unaffected.
+        trades = [_trade("WSSS", "NO", f"wsss-{i}", 65, won=True, p_yes_raw=0.05)
+                  for i in range(29)]
+        trades.append(_trade("WSSS", "NO", "wsss-29", 65, won=False, p_yes_raw=0.05))
+        db = _FakeDB(trades, config={"MIN_PRICE_CENTS": "60"})
+
+        rows = compute_promotion_bar(db)
+        row = next(r for r in rows if r["station"] == "WSSS" and r["side"] == "NO")
+
+        assert row["n"] == 30
+        assert row["excluded_certainty_shortcut_count"] == 0
+        assert row["status"] == "green"
 
 
 class TestHasSettledLossExcludesNextDay:
