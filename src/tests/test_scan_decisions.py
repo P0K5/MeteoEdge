@@ -317,12 +317,13 @@ class TestGateVerdicts:
         assert snap["side"] == "YES"
 
     def test_every_verdict_is_in_the_locked_enum(self):
-        """Sanity guard: GATE_VERDICTS is exactly the 11 names locked with the
+        """Sanity guard: GATE_VERDICTS is exactly the 12 names locked with the
         design spec -- catches an accidental typo/rename in either place."""
         assert GATE_VERDICTS == {
             "traded_live", "shadow_only", "next_day_shadow", "entry_guard",
             "timeout_today", "below_min_edge", "above_max_edge",
             "below_min_price", "below_min_confidence", "margin_gate", "mae_gate",
+            "day_mismatch_shadow",
         }
 
 
