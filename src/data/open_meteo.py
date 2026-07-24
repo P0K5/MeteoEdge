@@ -11,7 +11,7 @@ for DEB/EMOS ensemble weighting.  It is fetched as a separate call so its foreca
 is always logged under model="gfs" in model_forecast_log, independent of the
 default best-match open_meteo entry.
 """
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import logging
 
@@ -224,7 +224,17 @@ def fetch_gfs_with_spread(
 
 
 def fetch_hourly_temp_now(lat: float, lon: float) -> float | None:
-    """Return Open-Meteo hourly temperature (°F) for the nearest past UTC hour.
+    """Return Open-Meteo hourly temperature (°F) for the nearest past hour, now.
+
+    ``_fetch_open_meteo_hourly()`` requests ``timezone=auto``, so
+    ``hourly.time[]`` timestamps are naive and expressed in the station's
+    *local* time, not UTC (contrast the explicit ``timezone=UTC`` fetches
+    used by ``fetch_open_meteo_with_spread``/``fetch_gfs_with_spread``).  The
+    response also carries ``utc_offset_seconds`` for that same local time.
+    We use it to convert each naive local timestamp to its true UTC instant
+    before comparing against "now" — otherwise, for any station not on UTC,
+    this silently selects a temperature several hours off from the real
+    current hour (see issue #810).
 
     Returns None if unavailable.
     """
@@ -234,12 +244,16 @@ def fetch_hourly_temp_now(lat: float, lon: float) -> float | None:
     try:
         times = data["hourly"]["time"]
         temps = data["hourly"]["temperature_2m"]
+        utc_offset_seconds = data.get("utc_offset_seconds", 0) or 0
         now_utc = datetime.now(timezone.utc)
         best_temp = None
         for t_str, t_val in zip(times, temps):
             t_dt = datetime.fromisoformat(t_str)
             if t_dt.tzinfo is None:
-                t_dt = t_dt.replace(tzinfo=timezone.utc)
+                # t_dt is a naive *local* timestamp. Stamping it as UTC and
+                # then subtracting the station's UTC offset yields the true
+                # UTC instant it represents (local - offset = UTC).
+                t_dt = t_dt.replace(tzinfo=timezone.utc) - timedelta(seconds=utc_offset_seconds)
             if t_dt <= now_utc and t_val is not None:
                 best_temp = float(t_val)
         return best_temp
