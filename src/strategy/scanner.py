@@ -919,6 +919,17 @@ def scan_markets(
             shadow_yes = not yes_enabled
             shadow_no = not no_enabled
 
+            # Unbiased bracket-evaluation execution mode (#826): station-level
+            # determination of whether any live trading is possible for this
+            # bracket's station.  "shadow" when both sides are shadow-only,
+            # "live" otherwise (paper-mode override applied in run.py).
+            if yes_enabled or no_enabled:
+                execution_mode = "live"
+            else:
+                execution_mode = "shadow"
+            snap["execution_mode"] = execution_mode
+            snap["settlement_date"] = _decision_date
+
             # Use looser shadow thresholds on the YES shadow path so the
             # shadow loop can collect data.  The NO branch is untouched.
             _yes_edge = shadow_yes_edge_min if shadow_yes else min_edge_cents

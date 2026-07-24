@@ -22,6 +22,7 @@ from src.utils.log_rotation import rotated_path, housekeep, SNAPSHOT_RETAIN_DAYS
 from src.config import (
     POLL_INTERVAL_SECONDS, LOG_DIR,
     CANDIDATES_CSV, SNAPSHOTS_JSONL, LIVE_TRADES_JSONL,
+    BRACKET_EVALS_JSONL, BRACKET_EVAL_RETAIN_DAYS,
     RISK_DAILY_LOSS_LIMIT_EUR, RISK_MAX_OPEN_POSITIONS,
     RISK_DRAWDOWN_STOP_PCT, RISK_MIN_LIQUIDITY, STARTING_CAPITAL_EUR,
     POSITION_SIZE_WITH_FEES, ENABLE_CLOB_ENRICHMENT,
@@ -168,6 +169,76 @@ def _append_snapshot(snap: dict) -> None:
     housekeep(SNAPSHOTS_JSONL, retain_days=SNAPSHOT_RETAIN_DAYS)
     with open(dest, "a") as f:
         f.write(json.dumps(snap, default=str) + "\n")
+
+
+# Hourly-dedup cache for bracket-evaluation snapshots (#826).  Keys are
+# (station, ticker) tuples; values are the last hour-bucket string written
+# (ISO-8601 truncated to hour, e.g. "2026-07-24T14").  When a snap lands in the
+# same hour as the last write for that (station, ticker), it is silently
+# skipped to keep volume at ~8K rows/day instead of ~66K.
+_last_bracket_hour: "dict[tuple[str, str], str]" = {}
+
+
+def _write_bracket_evaluations(
+    snapshots: "list[dict]",
+    has_live_trader: bool,
+) -> None:
+    """Persist hourly-deduped bracket-evaluation snapshots (#826).
+
+    One row per (station, ticker, hour) -- the first evaluation within each
+    hour bucket.  Written to a rotated, gzip-compressed JSONL file with 90-day
+    retention.  This is the unbiased full-population store the Brier skill test
+    (#822) will consume.
+
+    Additive only -- does not touch any other log stream, the scan_decisions
+    table, or the Edge tab.
+    """
+    for snap in snapshots:
+        station = snap.get("station")
+        ticker = snap.get("ticker")
+        if not station or not ticker:
+            continue
+
+        # Hour bucket from the snap's poll_ts (ISO "2026-07-24T14:03:00" → "2026-07-24T14").
+        poll_ts = snap.get("poll_ts", "")
+        hour_bucket = poll_ts[:13] if len(poll_ts) >= 13 else poll_ts
+        if not hour_bucket:
+            continue
+
+        key = (station, ticker)
+        if _last_bracket_hour.get(key) == hour_bucket:
+            continue  # already wrote one row for this (station, ticker, hour)
+        _last_bracket_hour[key] = hour_bucket
+
+        # Paper-mode override: scanner sets "live" when ANY side is enabled;
+        # downgrade to "paper" when the run has no live trader.
+        exec_mode = snap.get("execution_mode", "live")
+        if exec_mode == "live" and not has_live_trader:
+            exec_mode = "paper"
+
+        row = {
+            "station": station,
+            "ticker": ticker,
+            "bracket_low": snap.get("bracket_low"),
+            "bracket_high": snap.get("bracket_high"),
+            "poll_ts": hour_bucket + ":00:00+00:00",
+            "yes_ask": snap.get("yes_ask"),
+            "no_ask": snap.get("no_ask"),
+            "p_yes": snap.get("p_yes"),
+            "p_yes_raw": snap.get("raw_p_yes"),
+            "emos_mode": snap.get("emos_mode"),
+            "is_next_day": snap.get("is_next_day"),
+            "minutes_to_settlement": snap.get("minutes_to_settlement"),
+            "execution_mode": exec_mode,
+            "settlement_date": snap.get("settlement_date"),
+        }
+
+        LOG_DIR.mkdir(exist_ok=True)
+        dest = rotated_path(BRACKET_EVALS_JSONL)
+        housekeep(BRACKET_EVALS_JSONL, retain_days=BRACKET_EVAL_RETAIN_DAYS)
+        with _write_lock:
+            with open(dest, "a") as f:
+                f.write(json.dumps(row, default=str) + "\n")
 
 
 def _persist_scan_decisions(
@@ -465,6 +536,11 @@ def poll_once(
 
     for snap in snapshots:
         _append_snapshot(snap)
+
+    # Persist hourly-deduped bracket-evaluation snapshots (#826): the unbiased
+    # full-population store consumed by the Brier skill test (#822).  Additive
+    # only -- scan_decisions and the Edge tab are untouched.
+    _write_bracket_evaluations(snapshots, has_live_trader=live_trader is not None)
 
     # scan_decisions (issue #756): one entry per evaluated high-side bracket,
     # keyed by ticker, seeded from the scanner's per-bracket gate_verdict.
