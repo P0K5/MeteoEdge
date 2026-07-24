@@ -320,6 +320,120 @@ class TestRunnerLogsCrps:
 
 
 # ---------------------------------------------------------------------------
+# Test 7b-bis: train/serve sigma_source coupling (issue #799 -- main review risk)
+# ---------------------------------------------------------------------------
+
+class TestRunnerSigmaSourceCoupling:
+    """The daily runner must fetch training data AND persist coefficients
+    under the SAME sigma_source, derived from the single USE_ENSEMBLE_SIGMA
+    bot_config flag that also gates live serving (resolve_sigma_raw / apply_emos
+    via Database._active_sigma_source). Decoupling the fetch from the save --
+    e.g. fetching with one sigma_source while the save resolves a different
+    one -- reproduces the #658 train/serve skew; this is the specific risk
+    issue #799 exists to close.
+    """
+
+    def _patch_fit(self, monkeypatch):
+        monkeypatch.setattr(
+            "src.model.emos_calibration.fit_emos", lambda data: (0.0, 1.0, 0.5, 1.0)
+        )
+
+    def test_ensemble_flag_on_fetches_and_saves_under_ensemble(self, monkeypatch):
+        import scripts.run_emos_shadow as runner
+
+        db = _db()
+        db.set_config("USE_ENSEMBLE_SIGMA", "true")
+        self._patch_fit(monkeypatch)
+
+        seen_sigma_sources = []
+
+        def fake_fetch(city, db, **kw):
+            seen_sigma_sources.append(kw.get("sigma_source"))
+            return [(80.0, 2.0, 81.0)] * 60
+
+        monkeypatch.setattr("src.model.emos_calibration.fetch_training_data", fake_fetch)
+
+        runner._run_calibration(db)
+
+        assert seen_sigma_sources, "fetch_training_data was never called"
+        assert all(s == "ensemble" for s in seen_sigma_sources), seen_sigma_sources
+
+        # The row landed under the SAME track fetch was told to use, so a
+        # live reader resolving via the identical USE_ENSEMBLE_SIGMA flag
+        # finds it.
+        row = db.get_emos_coefficients(
+            "Chicago", "emos_shadow", forecast_source="baseline", sigma_source="ensemble",
+        )
+        assert row is not None
+        # The 'fixed' track must NOT have been written -- a mismatched write
+        # here is exactly the decoupling bug (fetch used one track, save used
+        # the other).
+        fixed_row = db.get_emos_coefficients(
+            "Chicago", "emos_shadow", forecast_source="baseline", sigma_source="fixed",
+        )
+        assert fixed_row is None
+
+    def test_ensemble_flag_off_fetches_and_saves_under_fixed(self, monkeypatch):
+        import scripts.run_emos_shadow as runner
+
+        db = _db()
+        db.set_config("USE_ENSEMBLE_SIGMA", "false")
+        self._patch_fit(monkeypatch)
+
+        seen_sigma_sources = []
+
+        def fake_fetch(city, db, **kw):
+            seen_sigma_sources.append(kw.get("sigma_source"))
+            return [(80.0, 2.0, 81.0)] * 60
+
+        monkeypatch.setattr("src.model.emos_calibration.fetch_training_data", fake_fetch)
+
+        runner._run_calibration(db)
+
+        assert seen_sigma_sources
+        assert all(s == "fixed" for s in seen_sigma_sources), seen_sigma_sources
+
+        row = db.get_emos_coefficients(
+            "Chicago", "emos_shadow", forecast_source="baseline", sigma_source="fixed",
+        )
+        assert row is not None
+        ensemble_row = db.get_emos_coefficients(
+            "Chicago", "emos_shadow", forecast_source="baseline", sigma_source="ensemble",
+        )
+        assert ensemble_row is None
+
+    def test_serving_reader_finds_the_track_training_just_wrote(self, monkeypatch):
+        """End-to-end coupling guard: whatever sigma_source the runner just
+        wrote under is exactly what a live reader's DEFAULT resolution
+        (sigma_source=None -> Database._active_sigma_source(), the same
+        resolver apply_emos/get_city_mode use) finds -- for BOTH values of
+        USE_ENSEMBLE_SIGMA, with zero explicit sigma_source threading on the
+        read side.
+        """
+        import scripts.run_emos_shadow as runner
+
+        for flag_value, expected_source in (("true", "ensemble"), ("false", "fixed")):
+            db = _db()
+            db.set_config("USE_ENSEMBLE_SIGMA", flag_value)
+            self._patch_fit(monkeypatch)
+            monkeypatch.setattr(
+                "src.model.emos_calibration.fetch_training_data",
+                lambda city, db, **kw: [(80.0, 2.0, 81.0)] * 60,
+            )
+
+            runner._run_calibration(db)
+
+            # No sigma_source passed here -- this is exactly how apply_emos/
+            # get_city_mode read at serving time.
+            row = db.get_emos_coefficients("Chicago", "emos_shadow", forecast_source="baseline")
+            assert row is not None, (
+                f"USE_ENSEMBLE_SIGMA={flag_value}: serving's default read found no "
+                f"row -- train/serve sigma_source decoupled"
+            )
+            assert db._active_sigma_source() == expected_source
+
+
+# ---------------------------------------------------------------------------
 # Test 7c: the daily runner also logs a legacy CRPS baseline row (issue #667)
 # ---------------------------------------------------------------------------
 

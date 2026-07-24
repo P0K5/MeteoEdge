@@ -157,6 +157,18 @@ def fetch_training_data(
                          against before per-row sigma existed, and what live serving
                          uses when USE_ENSEMBLE_SIGMA is off. Must be one of
                          SIGMA_SOURCES; raises ValueError otherwise (issue #449).
+                         IMPORTANT (issue #799): this parameter's OWN default
+                         ("ensemble") is independent of the live USE_ENSEMBLE_SIGMA
+                         flag -- a retrain caller (run_emos_shadow.py, auto_retrain_
+                         probability_calibration.py) must explicitly resolve
+                         sigma_source from USE_ENSEMBLE_SIGMA (the same flag
+                         Database._active_sigma_source() derives the coefficient-row
+                         key from) and pass it here explicitly, matching what it
+                         passes to save_coefficients()/upsert_emos_coefficients() for
+                         the SAME call. Relying on this function's bare default while
+                         a different sigma_source gets resolved at save time is
+                         exactly the train/serve decoupling that reproduces the #658
+                         skew.
 
     Returns:
         List of (mu_f, sigma_f, actual_high_f) float triples.
@@ -431,11 +443,14 @@ def save_coefficients(
         sample_count:    Number of training samples used to fit the coefficients.
                          Recorded for caller/log context only — does not affect
                          ready_for_promotion, which is always 0 here (see above).
-        sigma_source:    "fixed" | "ensemble" | None. None resolves to the
-                         active EMOS_SIGMA_SOURCE inside the Database layer, so
-                         writers and readers key on the same track (#449). Pass
-                         the same value fetch_training_data() was called with
-                         for this fit.
+        sigma_source:    "fixed" | "ensemble" | None. None resolves to
+                         Database._active_sigma_source(), which derives from the
+                         active USE_ENSEMBLE_SIGMA bot_config flag (#449, #799), so
+                         writers and readers key on the same track. Pass the SAME
+                         value fetch_training_data() was called with for this fit
+                         -- do not rely on the two independently defaulting to the
+                         same thing (see fetch_training_data's sigma_source
+                         docstring note, issue #799).
         lead_hours:      Lead-time bin these coefficients were fitted at.
                          Default 24, matching the only bin fetch_training_data()
                          used before per-lead-bin fitting existed (#665).

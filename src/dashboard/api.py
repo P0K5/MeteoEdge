@@ -2393,7 +2393,7 @@ _CONFIG_META: dict[str, dict] = {
         "group": "forecast",
     },
     "USE_ENSEMBLE_SIGMA": {
-        "description": "Use per-station GEFS ensemble spread (WeatherState.ensemble_sigma_f) instead of the fixed FORECAST_STDDEV_F in true_probability_yes and EMOS-shadow serving, when available (issue #448). Default off — no live behaviour change until a station is promoted.",
+        "description": "Use per-station GEFS ensemble spread (WeatherState.ensemble_sigma_f) instead of the fixed FORECAST_STDDEV_F in true_probability_yes and EMOS serving, when available (issue #448). Also the single source of truth for which emos_calibration sigma_source track ('fixed'/'ensemble') a retrain writes to and a live reader reads from (issue #799) — flipping this on an existing deployment requires an 'ensemble' retrain to have already produced calibration rows (EMOS_SIGMA_SOURCE is deprecated/no-op; do not use it).",
         "type": "bool",
         "group": "forecast",
     },
@@ -2439,7 +2439,7 @@ _CONFIG_META: dict[str, dict] = {
         "options": ["baseline", "hrrr_nbm", "intl_ecmwf_icon", "full"],
     },
     "EMOS_SIGMA_SOURCE": {
-        "description": "Active EMOS sigma track: 'fixed' trains/serves against the constant FORECAST_STDDEV_F, 'ensemble' against persisted per-row sigma (pairs with USE_ENSEMBLE_SIGMA, issue #449)",
+        "description": "DEPRECATED (issue #799) — no longer read by the resolver; the active EMOS sigma track now derives directly from USE_ENSEMBLE_SIGMA. Setting this key has no effect. Kept only for backward compatibility with already-seeded bot_config rows.",
         "type": "enum",
         "group": "forecast",
         "options": ["fixed", "ensemble"],

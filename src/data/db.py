@@ -10,6 +10,7 @@ import pytz
 from dateutil import parser as dtparse
 
 from src.config import (
+    CONFIG_DEFAULTS,
     STATION_TZ,
     STATIONS,
     get_canonical_station_feeds,
@@ -2204,17 +2205,37 @@ class Database:
         return self.get_config("FORECAST_STACK") or "baseline"
 
     def _active_sigma_source(self) -> str:
-        """Resolve the sigma_source key for emos_calibration rows (issue #449).
+        """Resolve the sigma_source key for emos_calibration rows (issue #799).
 
-        Mirrors _active_forecast_source exactly: EMOS_SIGMA_SOURCE is the
-        dashboard-editable bot_config key ('fixed' | 'ensemble') so a retrain
-        run and a live reader key on the same value without either side having
-        to pass it explicitly. Defaults to 'fixed' when unset/unseeded — the
-        value every row written before #449 is migrated to (see the
-        emos_calibration UNIQUE-widening migration in _migrate()), so this
-        resolver is a no-op for anyone who hasn't touched the new config key.
+        Derives directly from the single ``USE_ENSEMBLE_SIGMA`` bot_config
+        flag: 'ensemble' when it resolves true, 'fixed' otherwise. This is
+        the SAME flag ``resolve_sigma_raw``/``true_probability_yes`` gate the
+        live sigma_raw INPUT on (src/model/emos_mode.py, src/model/envelope.py)
+        -- one flag now drives both "which coefficient row do we read/write"
+        and "what raw sigma value do we feed it", so the two can never point
+        at different tracks.
+
+        Before #799 this read a SEPARATE bot_config key, EMOS_SIGMA_SOURCE
+        ('fixed' | 'ensemble'), independently settable from USE_ENSEMBLE_SIGMA.
+        That dual-flag design is exactly how a #658-style train/serve skew can
+        reappear: an operator (or a retrain script that forgot to thread the
+        parameter -- the actual bug this fixed, see run_emos_shadow.py) could
+        save/read the 'ensemble' row while USE_ENSEMBLE_SIGMA stayed False, so
+        serving fed the constant FORECAST_STDDEV_F into coefficients that were
+        fit against real per-row spread (or vice versa). EMOS_SIGMA_SOURCE
+        remains a legacy bot_config key (kept for schema/back-compat -- some
+        already-deployed DBs have a row for it) but is no longer read here;
+        setting it has no effect. Use USE_ENSEMBLE_SIGMA instead.
+
+        Defaults to 'fixed' when USE_ENSEMBLE_SIGMA is unset/unseeded/false —
+        the value every row written before #449 is migrated to (see the
+        emos_calibration UNIQUE-widening migration in _migrate()).
         """
-        return self.get_config("EMOS_SIGMA_SOURCE") or "fixed"
+        raw = self.get_config("USE_ENSEMBLE_SIGMA")
+        if raw is None:
+            raw = str(CONFIG_DEFAULTS.get("USE_ENSEMBLE_SIGMA", False))
+        use_ensemble = raw.lower() in ("true", "1", "yes")
+        return "ensemble" if use_ensemble else "fixed"
 
     def upsert_emos_coefficients(
         self, *, city: str, model_mode: str,
@@ -2330,9 +2351,9 @@ class Database:
         sigma_source, lead_hours), or None.
 
         forecast_source=None resolves to the active FORECAST_STACK, sigma_source=None
-        to the active EMOS_SIGMA_SOURCE (see _active_forecast_source /
+        to the active USE_ENSEMBLE_SIGMA-derived track (see _active_forecast_source /
         _active_sigma_source), so consumers (get_city_mode, apply_emos, promotion
-        checks) read the same rows a retrain writes (issues #659, #449).
+        checks) read the same rows a retrain writes (issues #659, #449, #799).
         lead_hours defaults to 24, the lead bin every pre-#665 row lives at, so
         callers that don't care about per-lead-bin serving see unchanged behaviour.
         """

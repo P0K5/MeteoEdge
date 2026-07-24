@@ -353,17 +353,31 @@ class TestUseEnsembleSigmaConfig:
     """Tests for USE_ENSEMBLE_SIGMA flag wiring (issue #451)."""
 
     def test_use_ensemble_sigma_in_config_defaults(self):
-        """USE_ENSEMBLE_SIGMA must be in CONFIG_DEFAULTS."""
-        assert "USE_ENSEMBLE_SIGMA" in CONFIG_DEFAULTS
-        assert CONFIG_DEFAULTS["USE_ENSEMBLE_SIGMA"] is False
+        """USE_ENSEMBLE_SIGMA must be in CONFIG_DEFAULTS.
 
-    def test_use_ensemble_sigma_seeded_as_false(self):
-        """USE_ENSEMBLE_SIGMA must seed to False by default."""
+        Issue #799: default flipped True -- sigma_raw now sources from the
+        real per-row ensemble spread by default, and this is the single flag
+        Database._active_sigma_source() keys the retrain/serve coefficient
+        track on.
+        """
+        assert "USE_ENSEMBLE_SIGMA" in CONFIG_DEFAULTS
+        assert CONFIG_DEFAULTS["USE_ENSEMBLE_SIGMA"] is True
+
+    def test_use_ensemble_sigma_seeded_as_true(self):
+        """USE_ENSEMBLE_SIGMA must seed to True by default (issue #799)."""
         db = _db()
         seed_config(db)
         cfg = get_live_config(db)
-        assert cfg["USE_ENSEMBLE_SIGMA"] is False
+        assert cfg["USE_ENSEMBLE_SIGMA"] is True
         assert isinstance(cfg["USE_ENSEMBLE_SIGMA"], bool)
+
+    def test_use_ensemble_sigma_can_be_set_to_false(self):
+        """USE_ENSEMBLE_SIGMA must still accept an explicit False (legacy 'fixed' track)."""
+        db = _db()
+        seed_config(db)
+        db.set_config("USE_ENSEMBLE_SIGMA", "false")
+        cfg = get_live_config(db)
+        assert cfg["USE_ENSEMBLE_SIGMA"] is False
 
     def test_use_ensemble_sigma_can_be_set_to_true(self):
         """USE_ENSEMBLE_SIGMA must accept True value."""
@@ -382,7 +396,7 @@ class TestUseEnsembleSigmaConfig:
         assert "USE_ENSEMBLE_SIGMA" in data["forecast"]
         param = data["forecast"]["USE_ENSEMBLE_SIGMA"]
         assert param["type"] == "bool"
-        assert param["value"] is False
+        assert param["value"] is True  # issue #799: default flipped on
 
     def test_use_ensemble_sigma_patch_endpoint(self, api_client):
         """PATCH /api/config must accept USE_ENSEMBLE_SIGMA changes."""

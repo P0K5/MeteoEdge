@@ -54,7 +54,7 @@ def _run_calibration(db, stack: str = "baseline") -> None:
       3. Append one CRPS row to emos_crps_log for today's date — deduplicated so
          a same-day re-run (e.g. after a process restart) cannot double-count.
     """
-    from src.config import FORECAST_STACK_MODELS, STATIONS, station_city
+    from src.config import CONFIG_DEFAULTS, FORECAST_STACK_MODELS, STATIONS, get_live_config, station_city
     from src.model.crps_score import crps_gaussian
     from src.model.emos_calibration import (
         fetch_training_data,
@@ -67,6 +67,24 @@ def _run_calibration(db, stack: str = "baseline") -> None:
 
     regime = FORECAST_STACK_MODELS.get(stack, FORECAST_STACK_MODELS["baseline"])
     log.info("[emos_shadow] FORECAST_STACK=%s, regime=%s", stack, sorted(regime))
+
+    # Issue #799: resolve sigma_source from the SAME USE_ENSEMBLE_SIGMA flag
+    # that gates live serving (resolve_sigma_raw / Database._active_sigma_source)
+    # and thread it explicitly through every fetch_training_data/save_coefficients
+    # call below. fetch_training_data's own default ("ensemble") must never be
+    # relied on here -- it is independent of the live flag, so a bare call would
+    # silently fit against one sigma track while save_coefficients (sigma_source
+    # resolved via the DB layer) persists under whatever the flag says, landing
+    # a mismatched fit under the wrong key -- exactly the #658-style train/serve
+    # skew this issue closes.
+    use_ensemble_sigma = bool(get_live_config(db).get(
+        "USE_ENSEMBLE_SIGMA", CONFIG_DEFAULTS["USE_ENSEMBLE_SIGMA"]
+    ))
+    sigma_source = "ensemble" if use_ensemble_sigma else "fixed"
+    log.info(
+        "[emos_shadow] USE_ENSEMBLE_SIGMA=%s -> sigma_source=%s",
+        use_ensemble_sigma, sigma_source,
+    )
 
     today = datetime.now(timezone.utc).date().isoformat()
     fitted = 0
@@ -104,6 +122,7 @@ def _run_calibration(db, stack: str = "baseline") -> None:
         save_coefficients(
             city, a, b, c, d, mean_crps, db,
             forecast_source=stack, sample_count=sample_count,
+            sigma_source=sigma_source,
         )
         if db.emos_crps_logged_for_date(city, today, "emos_shadow", forecast_source=stack):
             log.debug(
@@ -133,7 +152,7 @@ def _run_calibration(db, stack: str = "baseline") -> None:
         city = station_city(station_cfg)
         try:
             training_data = fetch_training_data(
-                city, db, regime=regime, forecast_source=stack,
+                city, db, regime=regime, forecast_source=stack, sigma_source=sigma_source,
             )
             a, b, c, d = fit_emos(training_data)
             _persist(city, a, b, c, d, training_data, len(training_data), "per-city")
@@ -175,7 +194,7 @@ def _run_calibration(db, stack: str = "baseline") -> None:
         try:
             pooled, per_city = fetch_training_data_pooled(
                 all_cities_by_group.get(g, []), db,
-                regime=regime, forecast_source=stack,
+                regime=regime, forecast_source=stack, sigma_source=sigma_source,
             )
             a, b, c, d = fit_emos(pooled)
             log.info(
@@ -203,6 +222,7 @@ def _run_calibration(db, stack: str = "baseline") -> None:
             try:
                 city_triples = fetch_training_data(
                     city, db, min_samples=1, regime=regime, forecast_source=stack,
+                    sigma_source=sigma_source,
                 )
                 _persist(city, a, b, c, d, city_triples, len(pooled),
                          f"pooled({g})")

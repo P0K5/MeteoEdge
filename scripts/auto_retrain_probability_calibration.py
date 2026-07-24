@@ -28,7 +28,7 @@ from pathlib import Path
 
 import logging
 
-from src.config import FORECAST_STACK_MODELS, STATIONS
+from src.config import CONFIG_DEFAULTS, FORECAST_STACK_MODELS, STATIONS, get_live_config
 from src.data.db import Database
 from src.model.crps_score import mean_crps
 from src.model.emos_calibration import (
@@ -103,6 +103,15 @@ def main() -> None:
         default=None,
         help="Forecast stack identifier (default: read from DB, fallback to 'baseline')",
     )
+    parser.add_argument(
+        "--sigma-source",
+        default=None,
+        choices=["fixed", "ensemble"],
+        help=(
+            "EMOS sigma track (default: derived from the DB's USE_ENSEMBLE_SIGMA "
+            "bot_config value, issue #799 -- 'ensemble' if true, else 'fixed')."
+        ),
+    )
     args = parser.parse_args()
 
     db = Database(args.db)
@@ -111,6 +120,22 @@ def main() -> None:
     stack = getattr(args, "forecast_stack", None) or db.get_config("FORECAST_STACK") or "baseline"
     regime = FORECAST_STACK_MODELS.get(stack, FORECAST_STACK_MODELS["baseline"])
     log.info("[retrain] FORECAST_STACK=%s, regime=%s", stack, sorted(regime))
+
+    # Issue #799: resolve sigma_source from the SAME USE_ENSEMBLE_SIGMA flag
+    # that gates live serving, and thread it explicitly through EVERY
+    # fetch_training_data/save_coefficients call below -- never rely on
+    # fetch_training_data's own default ("ensemble"), which is independent of
+    # the live flag and would silently fit against one sigma track while the
+    # save resolves a different one, landing a mismatched fit under the wrong
+    # key (the #658-style train/serve skew this issue closes). An explicit
+    # --sigma-source overrides the DB-derived value for one-off comparisons.
+    sigma_source = getattr(args, "sigma_source", None)
+    if sigma_source is None:
+        use_ensemble_sigma = bool(get_live_config(db).get(
+            "USE_ENSEMBLE_SIGMA", CONFIG_DEFAULTS["USE_ENSEMBLE_SIGMA"]
+        ))
+        sigma_source = "ensemble" if use_ensemble_sigma else "fixed"
+    log.info("[retrain] sigma_source=%s", sigma_source)
 
     # Handle --report-only: query DB and exit
     if args.report_only:
@@ -135,7 +160,7 @@ def main() -> None:
         try:
             data = fetch_training_data(
                 city, db, min_samples=args.min_samples,
-                regime=regime, forecast_source=stack,
+                regime=regime, forecast_source=stack, sigma_source=sigma_source,
             )
         except InsufficientDataError as e:
             print(f"  {city}: SKIP — {e}")
@@ -183,6 +208,7 @@ def main() -> None:
                 db,
                 forecast_source=stack,
                 sample_count=len(data),
+                sigma_source=sigma_source,
             )
             if ready:
                 db.upsert_emos_coefficients(
@@ -195,6 +221,8 @@ def main() -> None:
                     crps_score=crps_holdout,
                     trained_at=trained_at,
                     ready_for_promotion=1,
+                    forecast_source=stack,
+                    sigma_source=sigma_source,
                 )
 
         print(
