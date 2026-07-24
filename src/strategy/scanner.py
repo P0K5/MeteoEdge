@@ -54,7 +54,7 @@ log = logging.getLogger(__name__)
 GATE_VERDICTS = frozenset({
     "traded_live", "shadow_only", "next_day_shadow", "entry_guard", "timeout_today",
     "below_min_edge", "above_max_edge", "below_min_price", "below_min_confidence",
-    "margin_gate", "mae_gate",
+    "margin_gate", "mae_gate", "day_mismatch_shadow",
 })
 
 # Station -> (lat, lon), for next-day forecast fetches (issue #687). Built
@@ -674,6 +674,7 @@ def scan_markets(
             )
             wrong_date_skipped = False
             is_next_day_eval = False
+            _day_mismatch = False  # issue #820: local day != settlement day
             # The settlement date this bracket's scan_decisions row is keyed
             # on (issue #756) -- today for the same-day path, the market's own
             # future date for a next-day evaluation. Defaults to today_utc so
@@ -835,12 +836,30 @@ def scan_markets(
                     # -- see resolve_sigma_raw above). Pass use_ensemble_sigma=False so
                     # true_probability_yes uses this value as-is instead of re-overriding
                     # it with the raw state.ensemble_sigma_f (issue #448).
-                    p_yes = true_probability_yes(bracket, state, mins_left, forecast_stddev=emos_stddev_override, deb_enabled=_deb_enabled, sigma_climb_fraction=sigma_climb_fraction, use_ensemble_sigma=False)
+                    p_yes = true_probability_yes(bracket, state, mins_left, forecast_stddev=emos_stddev_override, deb_enabled=_deb_enabled, sigma_climb_fraction=sigma_climb_fraction, use_ensemble_sigma=False, settlement_date=date.fromisoformat(_decision_date))
                 else:
-                    p_yes = true_probability_yes(bracket, state, mins_left, deb_enabled=_deb_enabled, sigma_climb_fraction=sigma_climb_fraction, use_ensemble_sigma=_use_ensemble_sigma)
+                    p_yes = true_probability_yes(bracket, state, mins_left, deb_enabled=_deb_enabled, sigma_climb_fraction=sigma_climb_fraction, use_ensemble_sigma=_use_ensemble_sigma, settlement_date=date.fromisoformat(_decision_date))
                 _snap_current_high = state.current_high_f
                 _snap_latest_temp = state.latest_temp_f
                 _snap_forecast_high = state.forecast_high_f
+
+                # Issue #820: evening false-certainty entries. When the
+                # WeatherState's local day differs from the market's settlement
+                # day (e.g. 19:00-22:00 CDT where UTC has rolled over but
+                # Chicago hasn't), current_high_f and the observation-anchored
+                # envelope are from the wrong day. true_probability_yes already
+                # skips the observation-based certainty shortcuts in this
+                # scenario (via the settlement_date parameter) -- here we force
+                # the candidate to shadow so no live entry can fire on a
+                # day-mismatched evaluation.
+                _day_mismatch = (not is_next_day_eval
+                                 and state.now_local.date() != date.fromisoformat(_decision_date))
+                if _day_mismatch:
+                    log.info(
+                        "[%s] day-mismatch: state local=%s market=%s"
+                        " -- forcing shadow (issue #820)",
+                        station, state.now_local.date(), _decision_date,
+                    )
 
             raw_p_yes = p_yes
             # round() avoids IEEE 754 creep: 1.0-0.95 = 0.050000000000000044
@@ -947,12 +966,17 @@ def scan_markets(
                         # thresholds above (_yes_edge/_yes_conf/_yes_price) still
                         # use the station's real shadow_yes classification
                         # unchanged; only the final routing flag is forced here.
-                        shadow=(shadow_yes or is_next_day_eval),
+                        # Issue #820: day-mismatch candidates are also forced to
+                        # shadow -- the WeatherState's local day differs from the
+                        # settlement day, so observations are from the wrong day.
+                        shadow=(shadow_yes or is_next_day_eval or _day_mismatch),
                         p_yes_raw=raw_p_yes, ev_yes_raw=ev_yes_raw, ev_no_raw=ev_no_raw,
                         is_next_day=is_next_day_eval,
                         today_position_open=_next_day_today_position_open,
                     )
-                    if is_next_day_eval:
+                    if _day_mismatch:
+                        gate_verdict = "day_mismatch_shadow"
+                    elif is_next_day_eval:
                         gate_verdict = "next_day_shadow"
                     elif shadow_yes:
                         gate_verdict = "shadow_only"
@@ -1012,12 +1036,14 @@ def scan_markets(
                         confidence=1 - p_yes, p_yes=p_yes,
                         ev_yes=ev_yes, ev_no=ev_no,
                         minutes_to_settlement=mins_left, market=market,
-                        shadow=(shadow_no or is_next_day_eval),
+                        shadow=(shadow_no or is_next_day_eval or _day_mismatch),
                         p_yes_raw=raw_p_yes, ev_yes_raw=ev_yes_raw, ev_no_raw=ev_no_raw,
                         is_next_day=is_next_day_eval,
                         today_position_open=_next_day_today_position_open,
                     )
-                    if is_next_day_eval:
+                    if _day_mismatch:
+                        gate_verdict = "day_mismatch_shadow"
+                    elif is_next_day_eval:
                         gate_verdict = "next_day_shadow"
                     elif _mae_suppressed:
                         gate_verdict = "mae_gate"

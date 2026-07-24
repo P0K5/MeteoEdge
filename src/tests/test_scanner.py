@@ -489,14 +489,17 @@ class TestEntryGates:
         assert any(c.side == "NO" for c in candidates)
 
     def test_margin_gate_fires_cross_day_despite_stale_current_high(self, caplog):
-        """Issue #784: yesterday's running high must not bypass the margin gate.
+        """Issue #784 / #820: evening window cross-day guard.
 
         Same-day-by-UTC evening window: the market settles on the station's
         NEXT local day, so state.now_local is still 'yesterday' relative to the
-        market date. Running high 86 exceeds the 74-75 bracket top — the old
-        'NO can no longer lose' bypass let the candidate through — but the
-        market-day forecast of 76 is only 1F clear of the bracket, inside the
-        default 2.5F margin, so the gate must fire.
+        market date. Running high 86 exceeds the 74-75 bracket top -- the old
+        'NO can no longer lose' bypass let the candidate through -- but the
+        market-day forecast of 76 is only 1F clear of the bracket.
+
+        Pre-#820 the margin gate caught this. Since #820, day-mismatch
+        detection forces shadow before any live gates fire, and the shadow
+        candidate falls below min_edge (12.19 < 15), so it's skipped.
         """
         import dataclasses
         yesterday = datetime.now(timezone.utc) - timedelta(days=1)
@@ -511,13 +514,56 @@ class TestEntryGates:
         with patch("src.strategy.scanner.MIN_MINUTES_TO_SETTLEMENT", 0), \
                 patch("src.strategy.scanner.MODEL_PROB_CAP", 1.0):
             with caplog.at_level(logging.DEBUG):
-                candidates, _ = scan_markets(weather, [market])
+                candidates, snapshots = scan_markets(weather, [market])
 
         assert candidates == []
-        assert any("margin_gate" in r.message for r in caplog.records)
+        # Issue #820: day-mismatch is detected and logged; the shadow
+        # candidate falls below min_edge (12.19 < 15) so it's skipped
+        # with a "below_min_edge" verdict, not margin_gate.
+        assert any("day-mismatch" in r.message for r in caplog.records)
+        snap_verdicts = [s.get("gate_verdict") for s in snapshots]
+        assert "margin_gate" not in snap_verdicts, \
+            "margin_gate must not fire when day mismatch forces shadow first"
 
+    def test_day_mismatch_forces_shadow_with_sufficient_edge(self, caplog):
+        """Issue #820: evening-window candidate with enough edge is forced to
+        shadow with day_mismatch_shadow verdict.
 
-# ---------------------------------------------------------------------------
+        State is from yesterday (local), market settles today (UTC). The
+        forecast is 85°F, bracket is 72-74°F (far below forecast → p_yes≈0
+        → NO confidence high). Without #820 this would produce a live
+        traded_live candidate; with #820 it's forced to shadow.
+        """
+        import dataclasses
+        yesterday = datetime.now(timezone.utc) - timedelta(days=1)
+        state = dataclasses.replace(
+            _state(forecast=85.0, current=88.0),
+            now_local=yesterday.replace(hour=20, minute=30),
+            sunset_local=yesterday.replace(hour=20),
+        )
+        weather = {"KMIA": state}
+        # YES=20¢, NO=80¢ — NO price ≥ MIN_PRICE_CENTS (70), bracket far
+        # below forecast → p_yes≈0 → ev_no ≈ 17 < MAX_EDGE_CENTS (20).
+        market = self._miami_market("72-74°F", '["0.20", "0.80"]')
+
+        with patch("src.strategy.scanner.MIN_MINUTES_TO_SETTLEMENT", 0), \
+                patch("src.strategy.scanner.MODEL_PROB_CAP", 1.0):
+            with caplog.at_level(logging.DEBUG):
+                candidates, snapshots = scan_markets(weather, [market])
+
+        assert len(candidates) >= 1, \
+            f"expected at least 1 shadow candidate, got {len(candidates)}"
+        candidate = candidates[0]
+        assert candidate.shadow is True, \
+            "day-mismatch candidate must be shadow"
+        assert candidate.side == "NO"
+        # The snapshot should have the day_mismatch_shadow verdict for the
+        # flagged side (the candidate itself carries shadow=True but the
+        # gate_verdict lives on the snap).
+        snap_for_side = [s for s in snapshots if s["side"] == candidate.side]
+        assert len(snap_for_side) == 1
+        assert snap_for_side[0]["gate_verdict"] == "day_mismatch_shadow"
+        assert any("day-mismatch" in r.message for r in caplog.records)
 # Next-day evaluation (issue #687)
 # ---------------------------------------------------------------------------
 

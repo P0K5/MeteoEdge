@@ -6,7 +6,7 @@ src/data/open_meteo.py. Climb rates are now sourced from src/model/climb_rates.p
 import logging
 import os
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from math import erf, sqrt
 
 from src.model.climb_rates import expected_additional_rise
@@ -147,7 +147,8 @@ def true_probability_yes(bracket: Bracket, state: WeatherState,
                          forecast_stddev: float = 2.0,
                          deb_enabled: "bool | None" = None,
                          sigma_climb_fraction: float = 0.5,
-                         use_ensemble_sigma: "bool | None" = None) -> float:
+                         use_ensemble_sigma: "bool | None" = None,
+                         settlement_date: "date | None" = None) -> float:
     """Compute P(daily high falls in this bracket).
 
     Enhanced: uses ensemble forecast and time-to-settlement boost.
@@ -176,6 +177,14 @@ def true_probability_yes(bracket: Bracket, state: WeatherState,
             When False, or when ensemble_sigma_f is None (e.g. GEFS unavailable),
             behaviour is unchanged -- the legacy fixed-sigma (forecast_stddev)
             path is used.
+        settlement_date: The market's settlement date (issue #820). When provided
+            and the WeatherState's local day differs from the settlement date,
+            observation-based certainty shortcuts are skipped -- current_high_f
+            and max_env are observations from the wrong local day and would
+            produce false 0.0/1.0 certainty in the evening window (e.g.
+            19:00-22:00 CDT when UTC has already rolled over but the station is
+            still in the previous local day). Behaviour is unchanged when None
+            or when the dates match.
     """
     global _deb_enabled_logged
 
@@ -214,24 +223,39 @@ def true_probability_yes(bracket: Bracket, state: WeatherState,
     if forecast_mean is not None and forecast_mean > max_env:
         max_env = forecast_mean
 
+    # When the WeatherState's local day differs from the settlement day,
+    # current_high_f and max_env are observations from the wrong day --
+    # the certainty shortcuts would produce false 0.0/1.0 (issue #820:
+    # evening false-certainty entries). Skip them and use forecast-only
+    # evaluation instead.
+    _day_mismatch = (settlement_date is not None
+                     and state.now_local.date() != settlement_date)
+
     # Markets resolve [lo, hi): a running high AT the top edge already belongs
     # to the bracket above and, being a running max, can never come back down.
     # The old `hi < current_high` let boundary-exact highs (every integer-°C
     # high on C-bucket stations) fall through to the certainty shortcut below,
     # booking p=1.0 on brackets that resolved NO 96-100% of the time (#652).
-    if hi <= state.current_high_f:
-        return 0.0
-    if lo > max_env:
-        return 0.0
-    if lo <= state.current_high_f and hi >= max_env:
-        return 1.0
+    if not _day_mismatch:
+        if hi <= state.current_high_f:
+            return 0.0
+        if lo > max_env:
+            return 0.0
+        if lo <= state.current_high_f and hi >= max_env:
+            return 1.0
 
     if forecast_mean is None:
         forecast_mean = (state.current_high_f + max_env) / 2
 
-    forecast_mean = max(min_env, min(max_env, forecast_mean))
-    if state.obs_bias_offset_f is not None:
-        forecast_mean = max(min_env, min(max_env, forecast_mean + state.obs_bias_offset_f))
+    # Clamp forecast_mean to the observation-based envelope only when
+    # observations are from the correct local day. On a day mismatch the
+    # envelope bounds are from the wrong day and would distort the
+    # forecast (e.g. clamping today's 85°F forecast to yesterday's 88°F
+    # realized high -- issue #820).
+    if not _day_mismatch:
+        forecast_mean = max(min_env, min(max_env, forecast_mean))
+        if state.obs_bias_offset_f is not None:
+            forecast_mean = max(min_env, min(max_env, forecast_mean + state.obs_bias_offset_f))
 
     # Uncertainty about the day's high can never be tighter than a fraction of
     # the climb still to come: with a fixed 2°F stddev, 6am evaluations claimed

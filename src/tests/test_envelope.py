@@ -817,6 +817,136 @@ class TestNextDayProbabilityYes:
         p_above = next_day_probability_yes(bracket_above, mu=81.0, sigma=4.0)
         assert isclose(p_below, p_above, abs_tol=1e-9)
 
+
+# ---------------------------------------------------------------------------
+# Day-mismatch guard (issue #820)
+# ---------------------------------------------------------------------------
+
+class TestDayMismatchGuard:
+    """Certainty shortcuts must not fire when the WeatherState's local day
+    differs from the settlement day (evening false-certainty entries).
+    """
+
+    def test_certainty_shortcuts_bypassed_when_days_differ(self):
+        """Evening window: state is from yesterday (after peak), market settles
+        today. Old code: hi(75) <= current_high_f(88) → returns 0.0. New code:
+        settlement_date mismatch → skips shortcuts → uses forecast Gaussian.
+        """
+        from datetime import date, timedelta
+        yesterday = datetime(2026, 5, 15, 20, 30)  # 8:30pm, past peak
+        state = make_state(
+            current_high_f=88.0, latest_temp_f=86.0,
+            forecast_high_f=85.0, hour=20,
+        )
+        state = WeatherState(
+            station=state.station,
+            now_local=yesterday,  # state is from yesterday
+            sunset_local=yesterday.replace(hour=20, minute=15),
+            current_high_f=88.0,
+            current_high_time=yesterday,
+            latest_temp_f=86.0,
+            latest_temp_time=yesterday,
+            forecast_high_f=85.0,
+        )
+        # Settlement is today (state's now_local is yesterday)
+        today = yesterday + timedelta(days=1)
+        settlement = today.date()
+
+        # A bracket well below yesterday's 88°F high would normally fire
+        # the certainty shortcut (hi=75 <= current_high=88 → 0.0).
+        bracket = make_bracket(low_f=72.0, high_f=75.0)
+
+        # Without settlement_date: old behavior returns 0.0
+        p_without = true_probability_yes(bracket, state, forecast_stddev=3.0)
+        assert p_without == 0.0
+
+        # With settlement_date that differs: shortcuts bypassed → Gaussian
+        p_with = true_probability_yes(
+            bracket, state, forecast_stddev=3.0,
+            settlement_date=settlement,
+        )
+        # Should get a non-zero, non-certain probability from the Gaussian
+        # tail: P(72 <= X <= 75 | X~N(85, 3)) is small but > 0
+        assert 0.0 < p_with < 0.02, f"expected small positive, got {p_with}"
+
+    def test_days_match_behavior_unchanged(self):
+        """When local day == settlement day, shortcuts fire normally."""
+        state = make_state(
+            current_high_f=88.0, latest_temp_f=86.0,
+            forecast_high_f=85.0, hour=20,
+        )
+        today = state.now_local.date()
+        bracket = make_bracket(low_f=72.0, high_f=75.0)
+
+        # With matching settlement_date: shortcuts still fire
+        p = true_probability_yes(
+            bracket, state, forecast_stddev=3.0,
+            settlement_date=today,
+        )
+        assert p == 0.0  # hi(75) <= current_high(88)
+
+    def test_forecast_mean_not_clamped_to_wrong_day_envelope(self):
+        """When days differ, forecast_mean must not be clamped to yesterday's
+        envelope (e.g. clamping today's 85°F forecast to yesterday's 88°F
+        realized high would inflate the forecast)."""
+        from datetime import date, timedelta
+        yesterday = datetime(2026, 5, 15, 20, 30)
+        state = WeatherState(
+            station="KNYC",
+            now_local=yesterday,
+            sunset_local=yesterday.replace(hour=20, minute=15),
+            current_high_f=88.0,  # yesterday's high
+            current_high_time=yesterday,
+            latest_temp_f=86.0,
+            latest_temp_time=yesterday,
+            forecast_high_f=85.0,  # today's forecast, lower than yesterday's high
+        )
+        today = (yesterday + timedelta(days=1)).date()
+
+        # With day mismatch: forecast_mean=85 should NOT be clamped to 88
+        bracket = make_bracket(low_f=80.0, high_f=86.0)
+        p = true_probability_yes(
+            bracket, state, forecast_stddev=3.0,
+            settlement_date=today,
+        )
+        # If clamped to 88, bracket [80,86] with mu=88 would be mostly below mu
+        # → low probability. Without clamping, mu=85 centers on the bracket →
+        # higher probability. Check it's > what the clamped version would give.
+        assert p > 0.15, f"expected unclamped forecast to give higher p, got {p}"
+
+    def test_day_mismatch_no_false_one(self):
+        """A bracket spanning the observation envelope must NOT return 1.0
+        when days differ (the lo <= current_high_f AND hi >= max_env shortcut)."""
+        from datetime import date, timedelta
+        yesterday = datetime(2026, 5, 15, 20, 30)
+        state = WeatherState(
+            station="KNYC",
+            now_local=yesterday,
+            sunset_local=yesterday.replace(hour=20, minute=15),
+            current_high_f=88.0,
+            current_high_time=yesterday,
+            latest_temp_f=86.0,
+            latest_temp_time=yesterday,
+            forecast_high_f=85.0,
+        )
+        today = (yesterday + timedelta(days=1)).date()
+
+        # Bracket spans yesterday's envelope: [87, 89] covers [88, 88]
+        # Old code: lo(87) <= 88 AND hi(89) >= 88 → returns 1.0
+        bracket = make_bracket(low_f=87.0, high_f=89.0)
+
+        # Without settlement_date: certainty shortcut fires → 1.0
+        p_without = true_probability_yes(bracket, state, forecast_stddev=3.0)
+        assert p_without == 1.0
+
+        # With day mismatch: shortcuts bypassed → Gaussian, NOT 1.0
+        p_with = true_probability_yes(
+            bracket, state, forecast_stddev=3.0,
+            settlement_date=today,
+        )
+        assert 0.0 < p_with < 1.0, \
+            f"expected non-certain probability, got {p_with}"
+
     def test_raises_on_nonpositive_sigma(self):
         bracket = make_bracket(low_f=80.0, high_f=82.0)
         with pytest.raises(ValueError):
