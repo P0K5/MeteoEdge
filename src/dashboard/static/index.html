@@ -3131,7 +3131,7 @@ function edgeEmosModeChipHTML(mode) {
     next_day: ['legacy', 'EMOS: next-day', 'D+1 evaluation; always in shadow mode by policy'],
   };
   const [cls, label, tooltip] = map[mode] || ['legacy', mode, ''];
-  const tooltipAttr = tooltip ? ` title="${_escAttr(tooltip)}"` : '';
+  const tooltipAttr = tooltip ? ` title="${_escAttr(tooltip)}" aria-label="${_escAttr(label + ': ' + tooltip)}"` : '';
   return `<span class="status-badge badge-${cls}"${tooltipAttr}><span class="status-dot"></span>${label}</span>`;
 }
 
