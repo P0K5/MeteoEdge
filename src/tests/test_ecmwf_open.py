@@ -18,6 +18,7 @@ from src.data.ecmwf_open import (
     _kelvin_to_f,
     _resolve_ecmwf_cycle,
     fetch_ecmwf_daily_high,
+    fetch_ecmwf_ensemble_spread,
     fetch_ecmwf_hourly,
 )
 from src.data.hrrr import HourlyTemp
@@ -406,3 +407,141 @@ class TestEcmwfStrDateCoercion:
             )
         assert isinstance(result, EcmwfForecast)
         assert result.attribution == "ECMWF Open Data, CC-BY-4.0"
+
+
+# ---------------------------------------------------------------------------
+# fetch_ecmwf_ensemble_spread — issue #824
+# ---------------------------------------------------------------------------
+
+
+class TestFetchEcmwfEnsembleSpreadHappyPath:
+    """ENS members are available -> raw (unfloored) stdev in °F is returned."""
+
+    def _members_side_effect(self, members_k):
+        def _side_effect(cycle_dt, fxx, lat, lon):
+            return list(members_k)
+        return _side_effect
+
+    def test_returns_float_sigma_for_multiple_members(self):
+        # 3 members with a genuine spread
+        members_k = [293.0, 294.0, 296.0]
+        with (
+            patch("src.data.ecmwf_open._resolve_ecmwf_cycle", return_value=CYCLE_DT),
+            patch(
+                "src.data.ecmwf_open._fetch_ecmwf_ens_members_2t",
+                side_effect=self._members_side_effect(members_k),
+            ),
+        ):
+            sigma = fetch_ecmwf_ensemble_spread(LONDON_LAT, LONDON_LON, target_date=TOMORROW)
+
+        assert sigma is not None
+        assert isinstance(sigma, float)
+        assert sigma > 0.0
+
+    def test_identical_members_yield_near_zero_sigma_not_floored(self):
+        """Unlike compute_ensemble_sigma(), no SIGMA_FLOOR_F clamp at capture time."""
+        members_k = [295.0, 295.0, 295.0]
+        with (
+            patch("src.data.ecmwf_open._resolve_ecmwf_cycle", return_value=CYCLE_DT),
+            patch(
+                "src.data.ecmwf_open._fetch_ecmwf_ens_members_2t",
+                side_effect=self._members_side_effect(members_k),
+            ),
+        ):
+            sigma = fetch_ecmwf_ensemble_spread(LONDON_LAT, LONDON_LON, target_date=TOMORROW)
+
+        assert sigma is not None
+        assert sigma < 1.0  # would be floored to 1.0 by compute_ensemble_sigma(); must NOT be here
+
+    def test_string_target_date_does_not_raise(self):
+        members_k = [293.0, 294.0, 296.0]
+        with (
+            patch("src.data.ecmwf_open._resolve_ecmwf_cycle", return_value=CYCLE_DT),
+            patch(
+                "src.data.ecmwf_open._fetch_ecmwf_ens_members_2t",
+                side_effect=self._members_side_effect(members_k),
+            ),
+        ):
+            sigma = fetch_ecmwf_ensemble_spread(
+                LONDON_LAT, LONDON_LON, target_date=TOMORROW.isoformat()
+            )
+
+        assert sigma is not None
+
+    def test_representative_fxx_falls_within_target_window(self):
+        """The fxx passed to _fetch_ecmwf_ens_members_2t must land inside
+        target_date's UTC calendar-day window."""
+        captured_fxx = []
+
+        def _capture(cycle_dt, fxx, lat, lon):
+            captured_fxx.append(fxx)
+            return [293.0, 294.0, 296.0]
+
+        with (
+            patch("src.data.ecmwf_open._resolve_ecmwf_cycle", return_value=CYCLE_DT),
+            patch("src.data.ecmwf_open._fetch_ecmwf_ens_members_2t", side_effect=_capture),
+        ):
+            fetch_ecmwf_ensemble_spread(LONDON_LAT, LONDON_LON, target_date=TOMORROW)
+
+        assert len(captured_fxx) == 1
+        valid_dt = CYCLE_DT + timedelta(hours=captured_fxx[0])
+        target_start = datetime(TOMORROW.year, TOMORROW.month, TOMORROW.day, tzinfo=timezone.utc)
+        target_end = target_start + timedelta(days=1)
+        assert target_start <= valid_dt < target_end
+
+
+class TestFetchEcmwfEnsembleSpreadNoData:
+    def test_returns_none_when_no_cycle(self):
+        with patch("src.data.ecmwf_open._resolve_ecmwf_cycle", return_value=None):
+            sigma = fetch_ecmwf_ensemble_spread(LONDON_LAT, LONDON_LON, target_date=TOMORROW)
+
+        assert sigma is None
+
+    def test_returns_none_when_members_fetch_fails(self):
+        with (
+            patch("src.data.ecmwf_open._resolve_ecmwf_cycle", return_value=CYCLE_DT),
+            patch("src.data.ecmwf_open._fetch_ecmwf_ens_members_2t", return_value=None),
+        ):
+            sigma = fetch_ecmwf_ensemble_spread(LONDON_LAT, LONDON_LON, target_date=TOMORROW)
+
+        assert sigma is None
+
+    def test_returns_none_when_fewer_than_two_members(self):
+        with (
+            patch("src.data.ecmwf_open._resolve_ecmwf_cycle", return_value=CYCLE_DT),
+            patch("src.data.ecmwf_open._fetch_ecmwf_ens_members_2t", return_value=[295.0]),
+        ):
+            sigma = fetch_ecmwf_ensemble_spread(LONDON_LAT, LONDON_LON, target_date=TOMORROW)
+
+        assert sigma is None
+
+    def test_returns_none_when_no_step_in_window(self):
+        """cycle_dt so old that no 3-hourly step (0..90h) reaches target_date."""
+        far_past_cycle = CYCLE_DT - timedelta(days=10)
+        with (
+            patch("src.data.ecmwf_open._resolve_ecmwf_cycle", return_value=far_past_cycle),
+            patch("src.data.ecmwf_open._fetch_ecmwf_ens_members_2t") as mock_members,
+        ):
+            sigma = fetch_ecmwf_ensemble_spread(LONDON_LAT, LONDON_LON, target_date=TOMORROW)
+
+        assert sigma is None
+        mock_members.assert_not_called()
+
+    def test_propagates_when_members_fetch_raises(self):
+        """fetch_ecmwf_ensemble_spread() itself does not add a try/except
+        around _fetch_ecmwf_ens_members_2t() -- same as fetch_ecmwf_daily_high()
+        not wrapping _fetch_ecmwf_2t(). In production _fetch_ecmwf_ens_members_2t
+        catches its own exceptions and returns None (mirroring _fetch_ecmwf_2t);
+        this test exercises the artificial case of the helper itself raising, to
+        confirm the caller (capture_forecasts._capture_station's
+        _call_with_timeout + try/except wrapper, issue #717) is what's
+        responsible for containing that failure, not this module."""
+        with (
+            patch("src.data.ecmwf_open._resolve_ecmwf_cycle", return_value=CYCLE_DT),
+            patch(
+                "src.data.ecmwf_open._fetch_ecmwf_ens_members_2t",
+                side_effect=RuntimeError("herbie timeout"),
+            ),
+        ):
+            with pytest.raises(RuntimeError):
+                fetch_ecmwf_ensemble_spread(LONDON_LAT, LONDON_LON, target_date=TOMORROW)

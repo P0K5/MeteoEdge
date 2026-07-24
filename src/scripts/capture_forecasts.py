@@ -53,8 +53,8 @@ Lead-time bins:
 - 18Z: log forecast for TODAY    → lead_hours ≈ 6
 - 21Z: log forecast for TODAY    → lead_hours ≈ 3
 
-sigma_f sourcing policy, by channel (issue #555):
---------------------------------------------------
+sigma_f sourcing policy, by channel (issue #555, ecmwf row updated by #824):
+-----------------------------------------------------------------------
 EMOS trains ``σ_calibrated = c + d·σ_ensemble``, so ``sigma_f`` must either
 carry a genuine dispersion signal or be an honestly-NULL "we don't have
 one" — never a silently-invented number. Per-channel decision:
@@ -70,6 +70,14 @@ one" — never a silently-invented number. Per-channel decision:
                  |          | best_match) — genuine multi-model spread.
     gfs          | NULL     | Single deterministic run (#548); no ensemble
                  |          | or multi-model spread exists to derive from.
+                 |          | (#824 investigation: the 1170/3546 historical
+                 |          | rows with non-NULL sigma_f predate PR #563
+                 |          | (merged 2026-07-02), when fetch_gfs_with_spread
+                 |          | was literally `return
+                 |          | fetch_open_meteo_with_spread(...)` -- i.e. gfs
+                 |          | duplicated the open_meteo multi-model spread.
+                 |          | Expected/historical, not a live bug; every row
+                 |          | since #563 is correctly NULL.)
     gefs         | Derive   | Raw (UNFLOORED) stdev of the ~30 GEFS members
                  |          | — the one true ensemble-member spread we
                  |          | capture. SIGMA_FLOOR_F is applied only at
@@ -86,13 +94,31 @@ one" — never a silently-invented number. Per-channel decision:
                  |          | open endpoint used here exposes only the
                  |          | point forecast, not its internal spread —
                  |          | left NULL rather than a fabricated constant.
-    ecmwf        | NULL     | Single deterministic run (open-data endpoint
-                 |          | does not expose the ECMWF ensemble/EPS
-                 |          | spread) — left NULL rather than a fabricated
-                 |          | constant.
-    icon         | NULL     | Single deterministic run (open-data endpoint
-                 |          | does not expose ICON-EPS spread) — left NULL
-                 |          | rather than a fabricated constant.
+                 |          | (#824 investigation: NOAA does publish an NBM
+                 |          | "qmd" percentile file — 10/25/50/75/90th pct —
+                 |          | a genuine spread proxy without needing a full
+                 |          | ensemble, but it is a distinct GRIB
+                 |          | product/variable not yet in grib_cache's
+                 |          | SUPPORTED_VARS; scope as its own follow-up
+                 |          | issue rather than folded into this one.)
+    ecmwf        | Derive   | (#824) forecast_high_f still comes from the
+                 |          | "oper" (HRES) deterministic product, but
+                 |          | sigma_f is now the raw (UNFLOORED) stdev of
+                 |          | the separate "enfo" ENS product's ~51 members
+                 |          | (see fetch_ecmwf_ensemble_spread() in
+                 |          | src/data/ecmwf_open.py). The pre-#824
+                 |          | assumption that Open Data doesn't expose the
+                 |          | ECMWF ensemble was wrong — it's exposed under
+                 |          | a different ``product=`` than the
+                 |          | deterministic run. NULL when the ENS cycle/
+                 |          | fetch is unavailable (never fabricated).
+    icon         | NULL     | Single deterministic run (ICON-EU). DWD does
+                 |          | publish an ICON-EPS ensemble (icon-eu-eps,
+                 |          | ~40 members) at a different opendata path,
+                 |          | but it is not yet wired here — new endpoint,
+                 |          | new member-loop plumbing (#824 follow-up:
+                 |          | scope as its own issue rather than folded
+                 |          | into this one).
 
 EMOS trains per-channel (see ``forecast_source``/``regime`` filtering in
 src/model/emos_calibration.py:fetch_training_data), so a NULL sigma_f for
@@ -448,17 +474,38 @@ def _capture_station(
 
     # --- ECMWF ---
     try:
-        from src.data.ecmwf_open import fetch_ecmwf_daily_high
+        from src.data.ecmwf_open import fetch_ecmwf_daily_high, fetch_ecmwf_ensemble_spread
         ecmwf_result = _call_with_timeout(
             fetch_ecmwf_daily_high, lat, lon, station=station, target_date=target_date, _label="ecmwf",
         )
         if ecmwf_result is not None:
-            log.info("[capture] %s ecmwf mu=%.1fF lead=%dh date=%s", station, ecmwf_result.forecast_high_f, lead_hours, target_date)
+            # #824: derive sigma_f from the separate ECMWF ENS ("enfo") product
+            # -- a genuine raw (unfloored) member-spread signal, independent of
+            # the HRES ("oper") deterministic run used for forecast_high_f
+            # above. An ENS fetch failure/timeout must never block the HRES
+            # row from being written; it only demotes sigma_f to NULL.
+            try:
+                ecmwf_sigma = _call_with_timeout(
+                    fetch_ecmwf_ensemble_spread, lat, lon, station=station,
+                    target_date=target_date, _label="ecmwf_ens",
+                )
+            except Exception as exc:
+                log.warning(
+                    "[capture] %s ecmwf ensemble spread fetch failed/timed out (lead=%dh): %s",
+                    station, lead_hours, exc,
+                )
+                ecmwf_sigma = None
+            log.info(
+                "[capture] %s ecmwf mu=%.1fF sigma=%s lead=%dh date=%s",
+                station, ecmwf_result.forecast_high_f,
+                "None" if ecmwf_sigma is None else f"{ecmwf_sigma:.2f}F",
+                lead_hours, target_date,
+            )
             if not dry_run and db is not None:
                 db.upsert_forecast_log_v2(
                     station=station, model="ecmwf", date=target_date,
                     forecast_high_f=ecmwf_result.forecast_high_f, lead_hours=lead_hours,
-                    issued_at=issued_at, sigma_f=None,
+                    issued_at=issued_at, sigma_f=ecmwf_sigma,
                 )
         else:
             log.debug("[capture] %s ecmwf unavailable (lead=%dh)", station, lead_hours)
