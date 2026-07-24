@@ -284,6 +284,9 @@ def _persist_scan_decisions(
             decision["gate_verdict"] = "entry_guard"
             decision["gate_detail"] = "did not reach execution this poll"
         decision["execution_mode"] = execution_mode
+        # settlement_date is a bracket-eval field (#826) — strip before
+        # upsert since scan_decisions has no column for it.
+        decision.pop("settlement_date", None)
         try:
             db.upsert_scan_decision(**decision)
         except Exception as e:
