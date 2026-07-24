@@ -6,6 +6,7 @@ Verifies that:
 3. HTML img tag includes width/height attributes to prevent layout shift
 """
 import os
+import struct
 from pathlib import Path
 
 import pytest
@@ -31,18 +32,27 @@ class TestDashboardLogoOptimization:
 
         Resizing from 1254x1254 to 96x96 provides the best balance between
         quality and file size for a dashboard logo.
+
+        Parses the PNG IHDR chunk (always the first chunk after the 8-byte
+        signature) using stdlib struct to avoid a Pillow dependency in CI.
         """
-        from PIL import Image
         logo_path = Path("src/dashboard/static/logo.png")
-        img = Image.open(logo_path)
-        assert img.size == (96, 96), f"Logo dimensions are {img.size}, expected (96, 96)"
+        data = logo_path.read_bytes()
+        # Bytes 16-19: width (big-endian uint32)
+        # Bytes 20-23: height (big-endian uint32)
+        width = struct.unpack('>I', data[16:20])[0]
+        height = struct.unpack('>I', data[20:24])[0]
+        assert (width, height) == (96, 96), f"Logo dimensions are ({width}, {height}), expected (96, 96)"
 
     def test_logo_format_is_png(self):
-        """Logo must be in PNG format."""
-        from PIL import Image
+        """Logo must be in PNG format.
+
+        Checks the first 8 bytes are the PNG magic signature
+        (\\x89PNG\\r\\n\\x1a\\n) using stdlib only.
+        """
         logo_path = Path("src/dashboard/static/logo.png")
-        img = Image.open(logo_path)
-        assert img.format == "PNG", f"Logo format is {img.format}, expected PNG"
+        data = logo_path.read_bytes()
+        assert data[:8] == b'\x89PNG\r\n\x1a\n', "Logo file is not a valid PNG (missing PNG magic signature)"
 
     def test_html_logo_img_tag_has_width_attribute(self):
         """The logo <img> tag must have an explicit width attribute to prevent layout shift."""
@@ -85,9 +95,12 @@ class TestDashboardLogoOptimization:
         assert 'alt=' in img_tag, "alt attribute missing from logo img tag"
 
     def test_logo_color_mode_is_rgb(self):
-        """Logo should be in RGB color mode for efficient compression."""
-        from PIL import Image
+        """Logo should be in RGB color mode for efficient compression.
+
+        Reads byte 25 of the PNG file (IHDR color type field):
+        2 = RGB, 6 = RGBA. Both are acceptable; RGBA adds transparency support.
+        """
         logo_path = Path("src/dashboard/static/logo.png")
-        img = Image.open(logo_path)
-        # RGB or RGBA are acceptable; RGBA is actually fine and adds transparency support
-        assert img.mode in ("RGB", "RGBA"), f"Logo color mode is {img.mode}, expected RGB or RGBA"
+        data = logo_path.read_bytes()
+        color_type = data[25]
+        assert color_type in (2, 6), f"Logo color type is {color_type}, expected 2 (RGB) or 6 (RGBA)"
