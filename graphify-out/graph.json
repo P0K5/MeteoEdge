@@ -2709,8 +2709,8 @@
       "source_location": "L549",
       "_origin": "ast",
       "id": "src_config_get_training_eligible_since",
-      "community": 186,
-      "community_name": "get_training_eligible_since",
+      "community": 417,
+      "community_name": "config.py",
       "norm_label": "get_training_eligible_since()"
     },
     {
@@ -2808,8 +2808,8 @@
       "source_location": "L550",
       "_origin": "ast",
       "id": "src_config_rationale_550",
-      "community": 186,
-      "community_name": "get_training_eligible_since",
+      "community": 417,
+      "community_name": "config.py",
       "norm_label": "return the date from which *city* becomes training-eligible, if gated.      some"
     },
     {
@@ -6834,8 +6834,8 @@
       "source_location": "L76",
       "_origin": "ast",
       "id": "src_model_emos_calibration_city_to_station",
-      "community": 4,
-      "community_name": "Settlement Logic Tests",
+      "community": 104,
+      "community_name": "City Deb Endpoint",
       "norm_label": "_city_to_station()"
     },
     {
@@ -6856,8 +6856,8 @@
       "source_location": "L109",
       "_origin": "ast",
       "id": "src_model_emos_calibration_fetch_training_data",
-      "community": 4,
-      "community_name": "Settlement Logic Tests",
+      "community": 104,
+      "community_name": "City Deb Endpoint",
       "norm_label": "fetch_training_data()"
     },
     {
@@ -6867,8 +6867,8 @@
       "source_location": "L269",
       "_origin": "ast",
       "id": "src_model_emos_calibration_pooling_group",
-      "community": 7,
-      "community_name": "EMOS Mode Management",
+      "community": 326,
+      "community_name": "OPERATIONS.md",
       "norm_label": "pooling_group()"
     },
     {
@@ -6944,8 +6944,8 @@
       "source_location": "L77",
       "_origin": "ast",
       "id": "src_model_emos_calibration_rationale_77",
-      "community": 4,
-      "community_name": "Settlement Logic Tests",
+      "community": 104,
+      "community_name": "City Deb Endpoint",
       "norm_label": "return the metar station code for a city name (matches stations config)."
     },
     {
@@ -6966,8 +6966,8 @@
       "source_location": "L118",
       "_origin": "ast",
       "id": "src_model_emos_calibration_rationale_118",
-      "community": 4,
-      "community_name": "Settlement Logic Tests",
+      "community": 104,
+      "community_name": "City Deb Endpoint",
       "norm_label": "build (mu_ensemble, sigma_ensemble, actual_high_f) triples for a city.      stra"
     },
     {
@@ -6977,8 +6977,8 @@
       "source_location": "L270",
       "_origin": "ast",
       "id": "src_model_emos_calibration_rationale_270",
-      "community": 7,
-      "community_name": "EMOS Mode Management",
+      "community": 326,
+      "community_name": "OPERATIONS.md",
       "norm_label": "return the cross-station pooling group for *city* (issue #659).      per-station"
     },
     {
@@ -10024,8 +10024,8 @@
       "source_location": "L99",
       "_origin": "ast",
       "id": "src_scripts_calibration_report_brier_score",
-      "community": 379,
-      "community_name": "TestResidualStatsClamped",
+      "community": 238,
+      "community_name": "breakeven_win_rate",
       "norm_label": "brier_score()"
     },
     {
@@ -17262,8 +17262,8 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "src_tests_test_calibration_report",
-      "community": 379,
-      "community_name": "TestResidualStatsClamped",
+      "community": 238,
+      "community_name": "breakeven_win_rate",
       "norm_label": "test_calibration_report.py"
     },
     {
@@ -17383,8 +17383,8 @@
       "source_location": "L91",
       "_origin": "ast",
       "id": "src_tests_test_calibration_report_testbrierscore",
-      "community": 379,
-      "community_name": "TestResidualStatsClamped",
+      "community": 238,
+      "community_name": "breakeven_win_rate",
       "norm_label": "testbrierscore"
     },
     {
@@ -17394,8 +17394,8 @@
       "source_location": "L92",
       "_origin": "ast",
       "id": "src_tests_test_calibration_report_testbrierscore_test_exact_value",
-      "community": 379,
-      "community_name": "TestResidualStatsClamped",
+      "community": 238,
+      "community_name": "breakeven_win_rate",
       "norm_label": ".test_exact_value()"
     },
     {
@@ -17405,8 +17405,8 @@
       "source_location": "L96",
       "_origin": "ast",
       "id": "src_tests_test_calibration_report_testbrierscore_test_perfect_and_worst",
-      "community": 379,
-      "community_name": "TestResidualStatsClamped",
+      "community": 238,
+      "community_name": "breakeven_win_rate",
       "norm_label": ".test_perfect_and_worst()"
     },
     {
@@ -17416,8 +17416,8 @@
       "source_location": "L100",
       "_origin": "ast",
       "id": "src_tests_test_calibration_report_testbrierscore_test_empty_returns_none",
-      "community": 379,
-      "community_name": "TestResidualStatsClamped",
+      "community": 238,
+      "community_name": "breakeven_win_rate",
       "norm_label": ".test_empty_returns_none()"
     },
     {
@@ -17482,8 +17482,8 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "src_tests_test_calibration_report_rationale_1",
-      "community": 379,
-      "community_name": "TestResidualStatsClamped",
+      "community": 238,
+      "community_name": "breakeven_win_rate",
       "norm_label": "unit tests for the pure computation core of src/scripts/calibration_report.py."
     },
     {
@@ -20067,8 +20067,8 @@
       "source_location": "L101",
       "_origin": "ast",
       "id": "src_tests_test_config_testgettrainingeligiblesince",
-      "community": 186,
-      "community_name": "get_training_eligible_since",
+      "community": 417,
+      "community_name": "config.py",
       "norm_label": "testgettrainingeligiblesince"
     },
     {
@@ -20078,8 +20078,8 @@
       "source_location": "L104",
       "_origin": "ast",
       "id": "src_tests_test_config_testgettrainingeligiblesince_test_shenzhen_has_cutover_date",
-      "community": 186,
-      "community_name": "get_training_eligible_since",
+      "community": 417,
+      "community_name": "config.py",
       "norm_label": ".test_shenzhen_has_cutover_date()"
     },
     {
@@ -20089,8 +20089,8 @@
       "source_location": "L108",
       "_origin": "ast",
       "id": "src_tests_test_config_testgettrainingeligiblesince_test_cities_without_cutover_return_none",
-      "community": 186,
-      "community_name": "get_training_eligible_since",
+      "community": 417,
+      "community_name": "config.py",
       "norm_label": ".test_cities_without_cutover_return_none()"
     },
     {
@@ -20100,8 +20100,8 @@
       "source_location": "L115",
       "_origin": "ast",
       "id": "src_tests_test_config_testgettrainingeligiblesince_test_city_with_no_source_priority_entry_returns_none",
-      "community": 186,
-      "community_name": "get_training_eligible_since",
+      "community": 417,
+      "community_name": "config.py",
       "norm_label": ".test_city_with_no_source_priority_entry_returns_none()"
     },
     {
@@ -20386,8 +20386,8 @@
       "source_location": "L102",
       "_origin": "ast",
       "id": "src_tests_test_config_rationale_102",
-      "community": 186,
-      "community_name": "get_training_eligible_since",
+      "community": 417,
+      "community_name": "config.py",
       "norm_label": "tests for issue #766: get_training_eligible_since() date-scoped accessor."
     },
     {
@@ -20397,8 +20397,8 @@
       "source_location": "L105",
       "_origin": "ast",
       "id": "src_tests_test_config_rationale_105",
-      "community": 186,
-      "community_name": "get_training_eligible_since",
+      "community": 417,
+      "community_name": "config.py",
       "norm_label": "shenzhen (zgsz) is eligible only from its 2026-07-14 cadence upgrade."
     },
     {
@@ -20408,8 +20408,8 @@
       "source_location": "L109",
       "_origin": "ast",
       "id": "src_tests_test_config_rationale_109",
-      "community": 186,
-      "community_name": "get_training_eligible_since",
+      "community": 417,
+      "community_name": "config.py",
       "norm_label": "cities with no training_eligible_since field return none."
     },
     {
@@ -27558,8 +27558,8 @@
       "source_location": "L17",
       "_origin": "ast",
       "id": "src_tests_test_db_obs_high_db",
-      "community": 113,
-      "community_name": "Model Temperature Interpolation",
+      "community": 72,
+      "community_name": "Envelope Computation Tests",
       "norm_label": "_db()"
     },
     {
@@ -27569,8 +27569,8 @@
       "source_location": "",
       "_origin": "ast",
       "id": "src_tests_test_db_obs_high_py_database",
-      "community": 113,
-      "community_name": "Model Temperature Interpolation",
+      "community": 72,
+      "community_name": "Envelope Computation Tests",
       "norm_label": "database"
     },
     {
@@ -28042,8 +28042,8 @@
       "source_location": "L18",
       "_origin": "ast",
       "id": "src_tests_test_db_obs_high_rationale_18",
-      "community": 113,
-      "community_name": "Model Temperature Interpolation",
+      "community": 72,
+      "community_name": "Envelope Computation Tests",
       "norm_label": "return a fresh in-memory database instance."
     },
     {
@@ -29571,8 +29571,8 @@
       "source_location": "L274",
       "_origin": "ast",
       "id": "src_tests_test_deb_weighting_testcoldstartpolicy",
-      "community": 45,
-      "community_name": "TAF Parser",
+      "community": 255,
+      "community_name": "Settlement",
       "norm_label": "testcoldstartpolicy"
     },
     {
@@ -29582,8 +29582,8 @@
       "source_location": "L275",
       "_origin": "ast",
       "id": "src_tests_test_deb_weighting_testcoldstartpolicy_test_full_cold_start_returns_equal_weights",
-      "community": 45,
-      "community_name": "TAF Parser",
+      "community": 255,
+      "community_name": "Settlement",
       "norm_label": ".test_full_cold_start_returns_equal_weights()"
     },
     {
@@ -29593,8 +29593,8 @@
       "source_location": "L282",
       "_origin": "ast",
       "id": "src_tests_test_deb_weighting_testcoldstartpolicy_test_partial_cold_start_hrrr_gets_cold_fraction",
-      "community": 45,
-      "community_name": "TAF Parser",
+      "community": 255,
+      "community_name": "Settlement",
       "norm_label": ".test_partial_cold_start_hrrr_gets_cold_fraction()"
     },
     {
@@ -29604,8 +29604,8 @@
       "source_location": "L314",
       "_origin": "ast",
       "id": "src_tests_test_deb_weighting_testcoldstartpolicy_test_gfs_log_rows_ignored_all_cold_start",
-      "community": 45,
-      "community_name": "TAF Parser",
+      "community": 255,
+      "community_name": "Settlement",
       "norm_label": ".test_gfs_log_rows_ignored_all_cold_start()"
     },
     {
@@ -29912,8 +29912,8 @@
       "source_location": "L602",
       "_origin": "ast",
       "id": "src_tests_test_deb_weighting_testensemblenmodels_make_calibrated_db",
-      "community": 45,
-      "community_name": "TAF Parser",
+      "community": 119,
+      "community_name": "Daily Climate High",
       "norm_label": "._make_calibrated_db()"
     },
     {
@@ -30550,8 +30550,8 @@
       "source_location": "L1399",
       "_origin": "ast",
       "id": "src_tests_test_deb_weighting_testrefreshweightsexclusion_test_refresh_weights_processes_eligible_city",
-      "community": 45,
-      "community_name": "TAF Parser",
+      "community": 242,
+      "community_name": "EMOS Data Reset",
       "norm_label": ".test_refresh_weights_processes_eligible_city()"
     },
     {
@@ -30737,8 +30737,8 @@
       "source_location": "L283",
       "_origin": "ast",
       "id": "src_tests_test_deb_weighting_rationale_283",
-      "community": 45,
-      "community_name": "TAF Parser",
+      "community": 255,
+      "community_name": "Settlement",
       "norm_label": "hrrr in cold-start; nws+open_meteo calibrated.          hrrr cold_start_fraction"
     },
     {
@@ -30748,8 +30748,8 @@
       "source_location": "L315",
       "_origin": "ast",
       "id": "src_tests_test_deb_weighting_rationale_315",
-      "community": 45,
-      "community_name": "TAF Parser",
+      "community": 255,
+      "community_name": "Settlement",
       "norm_label": "issue #761: log rows for \"gfs\" (still possibly present from         ingestion, o"
     },
     {
@@ -31386,8 +31386,8 @@
       "source_location": "L1400",
       "_origin": "ast",
       "id": "src_tests_test_deb_weighting_rationale_1400",
-      "community": 45,
-      "community_name": "TAF Parser",
+      "community": 242,
+      "community_name": "EMOS Data Reset",
       "norm_label": "when a city is eligible, refresh_weights should proceed and call         upsert_"
     },
     {
@@ -32651,8 +32651,8 @@
       "source_location": "L162",
       "_origin": "ast",
       "id": "src_tests_test_emos_calibration_testinsufficientdataerror",
-      "community": 4,
-      "community_name": "Settlement Logic Tests",
+      "community": 30,
+      "community_name": "Settlement Recording",
       "norm_label": "testinsufficientdataerror"
     },
     {
@@ -32662,8 +32662,8 @@
       "source_location": "L165",
       "_origin": "ast",
       "id": "src_tests_test_emos_calibration_testinsufficientdataerror_test_raises_when_forecast_log_empty",
-      "community": 4,
-      "community_name": "Settlement Logic Tests",
+      "community": 30,
+      "community_name": "Settlement Recording",
       "norm_label": ".test_raises_when_forecast_log_empty()"
     },
     {
@@ -32673,8 +32673,8 @@
       "source_location": "L172",
       "_origin": "ast",
       "id": "src_tests_test_emos_calibration_testinsufficientdataerror_test_raises_when_below_min_samples",
-      "community": 4,
-      "community_name": "Settlement Logic Tests",
+      "community": 30,
+      "community_name": "Settlement Recording",
       "norm_label": ".test_raises_when_below_min_samples()"
     },
     {
@@ -32684,8 +32684,8 @@
       "source_location": "L197",
       "_origin": "ast",
       "id": "src_tests_test_emos_calibration_testinsufficientdataerror_test_raises_for_unknown_city",
-      "community": 4,
-      "community_name": "Settlement Logic Tests",
+      "community": 30,
+      "community_name": "Settlement Recording",
       "norm_label": ".test_raises_for_unknown_city()"
     },
     {
@@ -32695,8 +32695,8 @@
       "source_location": "L203",
       "_origin": "ast",
       "id": "src_tests_test_emos_calibration_testinsufficientdataerror_test_succeeds_when_enough_samples",
-      "community": 4,
-      "community_name": "Settlement Logic Tests",
+      "community": 30,
+      "community_name": "Settlement Recording",
       "norm_label": ".test_succeeds_when_enough_samples()"
     },
     {
@@ -32981,8 +32981,8 @@
       "source_location": "L163",
       "_origin": "ast",
       "id": "src_tests_test_emos_calibration_rationale_163",
-      "community": 4,
-      "community_name": "Settlement Logic Tests",
+      "community": 30,
+      "community_name": "Settlement Recording",
       "norm_label": "insufficientdataerror must be raised correctly from fetch_training_data."
     },
     {
@@ -32992,8 +32992,8 @@
       "source_location": "L166",
       "_origin": "ast",
       "id": "src_tests_test_emos_calibration_rationale_166",
-      "community": 4,
-      "community_name": "Settlement Logic Tests",
+      "community": 30,
+      "community_name": "Settlement Recording",
       "norm_label": "empty model_forecast_log \u2192 insufficientdataerror (city maps to station)."
     },
     {
@@ -33003,8 +33003,8 @@
       "source_location": "L173",
       "_origin": "ast",
       "id": "src_tests_test_emos_calibration_rationale_173",
-      "community": 4,
-      "community_name": "Settlement Logic Tests",
+      "community": 30,
+      "community_name": "Settlement Recording",
       "norm_label": "only a few forecast + observation rows \u2192 insufficientdataerror."
     },
     {
@@ -33014,8 +33014,8 @@
       "source_location": "L198",
       "_origin": "ast",
       "id": "src_tests_test_emos_calibration_rationale_198",
-      "community": 4,
-      "community_name": "Settlement Logic Tests",
+      "community": 30,
+      "community_name": "Settlement Recording",
       "norm_label": "city not in stations config \u2192 insufficientdataerror."
     },
     {
@@ -33025,8 +33025,8 @@
       "source_location": "L204",
       "_origin": "ast",
       "id": "src_tests_test_emos_calibration_rationale_204",
-      "community": 4,
-      "community_name": "Settlement Logic Tests",
+      "community": 30,
+      "community_name": "Settlement Recording",
       "norm_label": "sufficient paired data returns the correct number of triples."
     },
     {
@@ -36413,8 +36413,8 @@
       "source_location": "L702",
       "_origin": "ast",
       "id": "src_tests_test_emos_shadow_scaffolding_testpoolinggroup",
-      "community": 7,
-      "community_name": "EMOS Mode Management",
+      "community": 326,
+      "community_name": "OPERATIONS.md",
       "norm_label": "testpoolinggroup"
     },
     {
@@ -36424,8 +36424,8 @@
       "source_location": "L703",
       "_origin": "ast",
       "id": "src_tests_test_emos_shadow_scaffolding_testpoolinggroup_test_us_f_stations",
-      "community": 7,
-      "community_name": "EMOS Mode Management",
+      "community": 326,
+      "community_name": "OPERATIONS.md",
       "norm_label": ".test_us_f_stations()"
     },
     {
@@ -36435,8 +36435,8 @@
       "source_location": "L708",
       "_origin": "ast",
       "id": "src_tests_test_emos_shadow_scaffolding_testpoolinggroup_test_tropics_by_latitude",
-      "community": 7,
-      "community_name": "EMOS Mode Management",
+      "community": 326,
+      "community_name": "OPERATIONS.md",
       "norm_label": ".test_tropics_by_latitude()"
     },
     {
@@ -36446,8 +36446,8 @@
       "source_location": "L714",
       "_origin": "ast",
       "id": "src_tests_test_emos_shadow_scaffolding_testpoolinggroup_test_midlatitude_c_stations",
-      "community": 7,
-      "community_name": "EMOS Mode Management",
+      "community": 326,
+      "community_name": "OPERATIONS.md",
       "norm_label": ".test_midlatitude_c_stations()"
     },
     {
@@ -36457,8 +36457,8 @@
       "source_location": "L720",
       "_origin": "ast",
       "id": "src_tests_test_emos_shadow_scaffolding_testpoolinggroup_test_unknown_city_returns_none",
-      "community": 7,
-      "community_name": "EMOS Mode Management",
+      "community": 326,
+      "community_name": "OPERATIONS.md",
       "norm_label": ".test_unknown_city_returns_none()"
     },
     {
@@ -36919,8 +36919,8 @@
       "source_location": "L55",
       "_origin": "ast",
       "id": "src_tests_test_emos_sigma_source_real_db",
-      "community": 326,
-      "community_name": "OPERATIONS.md",
+      "community": 4,
+      "community_name": "Settlement Logic Tests",
       "norm_label": "_real_db()"
     },
     {
@@ -36930,8 +36930,8 @@
       "source_location": "L61",
       "_origin": "ast",
       "id": "src_tests_test_emos_sigma_source_cleanup",
-      "community": 326,
-      "community_name": "OPERATIONS.md",
+      "community": 4,
+      "community_name": "Settlement Logic Tests",
       "norm_label": "_cleanup()"
     },
     {
@@ -37139,8 +37139,8 @@
       "source_location": "L265",
       "_origin": "ast",
       "id": "src_tests_test_emos_sigma_source_testupsertemoscoefficientssigmasource",
-      "community": 326,
-      "community_name": "OPERATIONS.md",
+      "community": 4,
+      "community_name": "Settlement Logic Tests",
       "norm_label": "testupsertemoscoefficientssigmasource"
     },
     {
@@ -37150,8 +37150,8 @@
       "source_location": "L266",
       "_origin": "ast",
       "id": "src_tests_test_emos_sigma_source_testupsertemoscoefficientssigmasource_test_ensemble_retrain_does_not_overwrite_fixed_legacy_row",
-      "community": 326,
-      "community_name": "OPERATIONS.md",
+      "community": 4,
+      "community_name": "Settlement Logic Tests",
       "norm_label": ".test_ensemble_retrain_does_not_overwrite_fixed_legacy_row()"
     },
     {
@@ -37161,8 +37161,8 @@
       "source_location": "L290",
       "_origin": "ast",
       "id": "src_tests_test_emos_sigma_source_testupsertemoscoefficientssigmasource_test_default_sigma_source_resolves_to_fixed",
-      "community": 326,
-      "community_name": "OPERATIONS.md",
+      "community": 4,
+      "community_name": "Settlement Logic Tests",
       "norm_label": ".test_default_sigma_source_resolves_to_fixed()"
     },
     {
@@ -37172,8 +37172,8 @@
       "source_location": "L302",
       "_origin": "ast",
       "id": "src_tests_test_emos_sigma_source_testupsertemoscoefficientssigmasource_test_config_driven_active_sigma_source",
-      "community": 326,
-      "community_name": "OPERATIONS.md",
+      "community": 4,
+      "community_name": "Settlement Logic Tests",
       "norm_label": ".test_config_driven_active_sigma_source()"
     },
     {
@@ -37183,8 +37183,8 @@
       "source_location": "L315",
       "_origin": "ast",
       "id": "src_tests_test_emos_sigma_source_testupsertemoscoefficientssigmasource_test_lead_hours_stored_independently",
-      "community": 326,
-      "community_name": "OPERATIONS.md",
+      "community": 4,
+      "community_name": "Settlement Logic Tests",
       "norm_label": ".test_lead_hours_stored_independently()"
     },
     {
@@ -37194,8 +37194,8 @@
       "source_location": "L340",
       "_origin": "ast",
       "id": "src_tests_test_emos_sigma_source_testmigrationwidensuniqueconstraint",
-      "community": 326,
-      "community_name": "OPERATIONS.md",
+      "community": 4,
+      "community_name": "Settlement Logic Tests",
       "norm_label": "testmigrationwidensuniqueconstraint"
     },
     {
@@ -37205,8 +37205,8 @@
       "source_location": "L341",
       "_origin": "ast",
       "id": "src_tests_test_emos_sigma_source_testmigrationwidensuniqueconstraint_test_old_3col_unique_db_migrates_and_preserves_rows",
-      "community": 326,
-      "community_name": "OPERATIONS.md",
+      "community": 4,
+      "community_name": "Settlement Logic Tests",
       "norm_label": ".test_old_3col_unique_db_migrates_and_preserves_rows()"
     },
     {
@@ -37216,8 +37216,8 @@
       "source_location": "L400",
       "_origin": "ast",
       "id": "src_tests_test_emos_sigma_source_testmigrationwidensuniqueconstraint_test_old_2col_unique_db_migrates",
-      "community": 326,
-      "community_name": "OPERATIONS.md",
+      "community": 4,
+      "community_name": "Settlement Logic Tests",
       "norm_label": ".test_old_2col_unique_db_migrates()"
     },
     {
@@ -37293,8 +37293,8 @@
       "source_location": "L291",
       "_origin": "ast",
       "id": "src_tests_test_emos_sigma_source_rationale_291",
-      "community": 326,
-      "community_name": "OPERATIONS.md",
+      "community": 4,
+      "community_name": "Settlement Logic Tests",
       "norm_label": "with no emos_sigma_source config row, the active resolver defaults to 'fixed'."
     },
     {
@@ -37304,8 +37304,8 @@
       "source_location": "L303",
       "_origin": "ast",
       "id": "src_tests_test_emos_sigma_source_rationale_303",
-      "community": 326,
-      "community_name": "OPERATIONS.md",
+      "community": 4,
+      "community_name": "Settlement Logic Tests",
       "norm_label": "emos_sigma_source='ensemble' in bot_config changes the default resolution."
     },
     {
@@ -37315,8 +37315,8 @@
       "source_location": "L342",
       "_origin": "ast",
       "id": "src_tests_test_emos_sigma_source_rationale_342",
-      "community": 326,
-      "community_name": "OPERATIONS.md",
+      "community": 4,
+      "community_name": "Settlement Logic Tests",
       "norm_label": "a db with the pre-#449 unique(city, model_mode, forecast_source) schema"
     },
     {
@@ -37326,8 +37326,8 @@
       "source_location": "L401",
       "_origin": "ast",
       "id": "src_tests_test_emos_sigma_source_rationale_401",
-      "community": 326,
-      "community_name": "OPERATIONS.md",
+      "community": 4,
+      "community_name": "Settlement Logic Tests",
       "norm_label": "the oldest schema (pre-#659, city+model_mode only) also migrates cleanly"
     },
     {
@@ -47380,8 +47380,8 @@
       "source_location": "L115",
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_testurlformat",
-      "community": 82,
-      "community_name": "Database Update Operations",
+      "community": 186,
+      "community_name": "TestUrlFormat",
       "norm_label": "testurlformat"
     },
     {
@@ -47391,8 +47391,8 @@
       "source_location": "L119",
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_testurlformat_test_url_format_3hour_bucket",
-      "community": 82,
-      "community_name": "Database Update Operations",
+      "community": 186,
+      "community_name": "TestUrlFormat",
       "norm_label": ".test_url_format_3hour_bucket()"
     },
     {
@@ -47402,8 +47402,8 @@
       "source_location": "L134",
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_testurlformat_test_url_format_snap_hour_5_to_3",
-      "community": 82,
-      "community_name": "Database Update Operations",
+      "community": 186,
+      "community_name": "TestUrlFormat",
       "norm_label": ".test_url_format_snap_hour_5_to_3()"
     },
     {
@@ -47413,8 +47413,8 @@
       "source_location": "L147",
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_testurlformat_test_url_format_snap_hour_23_to_21",
-      "community": 82,
-      "community_name": "Database Update Operations",
+      "community": 186,
+      "community_name": "TestUrlFormat",
       "norm_label": ".test_url_format_snap_hour_23_to_21()"
     },
     {
@@ -47534,8 +47534,8 @@
       "source_location": "L319",
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_testnewestslotselection",
-      "community": 423,
-      "community_name": "TestNewestSlotSelection",
+      "community": 82,
+      "community_name": "Database Update Operations",
       "norm_label": "testnewestslotselection"
     },
     {
@@ -47545,8 +47545,8 @@
       "source_location": "L323",
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_testnewestslotselection_test_newest_good_slot_selected",
-      "community": 423,
-      "community_name": "TestNewestSlotSelection",
+      "community": 82,
+      "community_name": "Database Update Operations",
       "norm_label": ".test_newest_good_slot_selected()"
     },
     {
@@ -47556,8 +47556,8 @@
       "source_location": "L344",
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_testnewestslotselection_test_skip_bad_quality_find_older_good",
-      "community": 423,
-      "community_name": "TestNewestSlotSelection",
+      "community": 82,
+      "community_name": "Database Update Operations",
       "norm_label": ".test_skip_bad_quality_find_older_good()"
     },
     {
@@ -47567,8 +47567,8 @@
       "source_location": "L365",
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_testnewestslotselection_test_jst_utc_conversion",
-      "community": 423,
-      "community_name": "TestNewestSlotSelection",
+      "community": 82,
+      "community_name": "Database Update Operations",
       "norm_label": ".test_jst_utc_conversion()"
     },
     {
@@ -47688,8 +47688,8 @@
       "source_location": "L116",
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_rationale_116",
-      "community": 82,
-      "community_name": "Database Update Operations",
+      "community": 186,
+      "community_name": "TestUrlFormat",
       "norm_label": "test 3-hour bucket url format (yyyymmdd_hh.json)."
     },
     {
@@ -47699,8 +47699,8 @@
       "source_location": "L122",
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_rationale_122",
-      "community": 82,
-      "community_name": "Database Update Operations",
+      "community": 186,
+      "community_name": "TestUrlFormat",
       "norm_label": "url should contain 3-hour bucket format (yyyymmdd_hh.json)."
     },
     {
@@ -47710,8 +47710,8 @@
       "source_location": "L137",
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_rationale_137",
-      "community": 82,
-      "community_name": "Database Update Operations",
+      "community": 186,
+      "community_name": "TestUrlFormat",
       "norm_label": "url for hour 5 should snap to bucket hour 03."
     },
     {
@@ -47721,8 +47721,8 @@
       "source_location": "L150",
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_rationale_150",
-      "community": 82,
-      "community_name": "Database Update Operations",
+      "community": 186,
+      "community_name": "TestUrlFormat",
       "norm_label": "url for hour 23 should snap to bucket hour 21."
     },
     {
@@ -47842,8 +47842,8 @@
       "source_location": "L320",
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_rationale_320",
-      "community": 423,
-      "community_name": "TestNewestSlotSelection",
+      "community": 82,
+      "community_name": "Database Update Operations",
       "norm_label": "verify the newest good-quality slot is selected from a bucket."
     },
     {
@@ -47853,8 +47853,8 @@
       "source_location": "L326",
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_rationale_326",
-      "community": 423,
-      "community_name": "TestNewestSlotSelection",
+      "community": 82,
+      "community_name": "Database Update Operations",
       "norm_label": "should select the newest slot with quality_flag == 0."
     },
     {
@@ -47864,8 +47864,8 @@
       "source_location": "L347",
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_rationale_347",
-      "community": 423,
-      "community_name": "TestNewestSlotSelection",
+      "community": 82,
+      "community_name": "Database Update Operations",
       "norm_label": "should skip bad-quality slots and find the newest good one."
     },
     {
@@ -47875,8 +47875,8 @@
       "source_location": "L368",
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_rationale_368",
-      "community": 423,
-      "community_name": "TestNewestSlotSelection",
+      "community": 82,
+      "community_name": "Database Update Operations",
       "norm_label": "should correctly convert jst \u2192 utc (jst is utc+9)."
     },
     {
@@ -52286,8 +52286,8 @@
       "source_location": "L48",
       "_origin": "ast",
       "id": "src_tests_test_observation_adapters_testjmaamedasadapterintegration",
-      "community": 5,
-      "community_name": "Agent Roles & Docs",
+      "community": 423,
+      "community_name": "TestJmaAmedasAdapterIntegration",
       "norm_label": "testjmaamedasadapterintegration"
     },
     {
@@ -52308,8 +52308,8 @@
       "source_location": "L72",
       "_origin": "ast",
       "id": "src_tests_test_observation_adapters_testjmaamedasadapterintegration_test_jma_cadence_configured",
-      "community": 5,
-      "community_name": "Agent Roles & Docs",
+      "community": 423,
+      "community_name": "TestJmaAmedasAdapterIntegration",
       "norm_label": ".test_jma_cadence_configured()"
     },
     {
@@ -52319,8 +52319,8 @@
       "source_location": "L81",
       "_origin": "ast",
       "id": "src_tests_test_observation_adapters_testjmaamedasadapterintegration_test_jma_freshness_integration",
-      "community": 5,
-      "community_name": "Agent Roles & Docs",
+      "community": 423,
+      "community_name": "TestJmaAmedasAdapterIntegration",
       "norm_label": ".test_jma_freshness_integration()"
     },
     {
@@ -52385,8 +52385,8 @@
       "source_location": "L156",
       "_origin": "ast",
       "id": "src_tests_test_observation_adapters_testmssadapterintegration",
-      "community": 433,
-      "community_name": "TestMssAdapterIntegration",
+      "community": 5,
+      "community_name": "Agent Roles & Docs",
       "norm_label": "testmssadapterintegration"
     },
     {
@@ -52407,8 +52407,8 @@
       "source_location": "L186",
       "_origin": "ast",
       "id": "src_tests_test_observation_adapters_testmssadapterintegration_test_mss_cadence_configured",
-      "community": 433,
-      "community_name": "TestMssAdapterIntegration",
+      "community": 5,
+      "community_name": "Agent Roles & Docs",
       "norm_label": ".test_mss_cadence_configured()"
     },
     {
@@ -52418,8 +52418,8 @@
       "source_location": "L195",
       "_origin": "ast",
       "id": "src_tests_test_observation_adapters_testmssadapterintegration_test_mss_freshness_integration_fresh",
-      "community": 433,
-      "community_name": "TestMssAdapterIntegration",
+      "community": 5,
+      "community_name": "Agent Roles & Docs",
       "norm_label": ".test_mss_freshness_integration_fresh()"
     },
     {
@@ -52660,8 +52660,8 @@
       "source_location": "L73",
       "_origin": "ast",
       "id": "src_tests_test_observation_adapters_rationale_73",
-      "community": 5,
-      "community_name": "Agent Roles & Docs",
+      "community": 423,
+      "community_name": "TestJmaAmedasAdapterIntegration",
       "norm_label": "jma appears in source priority config with correct cadence."
     },
     {
@@ -52671,8 +52671,8 @@
       "source_location": "L82",
       "_origin": "ast",
       "id": "src_tests_test_observation_adapters_rationale_82",
-      "community": 5,
-      "community_name": "Agent Roles & Docs",
+      "community": 423,
+      "community_name": "TestJmaAmedasAdapterIntegration",
       "norm_label": "fresh jma observation passes freshness check."
     },
     {
@@ -52748,8 +52748,8 @@
       "source_location": "L187",
       "_origin": "ast",
       "id": "src_tests_test_observation_adapters_rationale_187",
-      "community": 433,
-      "community_name": "TestMssAdapterIntegration",
+      "community": 5,
+      "community_name": "Agent Roles & Docs",
       "norm_label": "mss appears in source priority config with cadence_min=1."
     },
     {
@@ -52759,8 +52759,8 @@
       "source_location": "L196",
       "_origin": "ast",
       "id": "src_tests_test_observation_adapters_rationale_196",
-      "community": 433,
-      "community_name": "TestMssAdapterIntegration",
+      "community": 5,
+      "community_name": "Agent Roles & Docs",
       "norm_label": "fresh mss observation passes freshness check."
     },
     {
@@ -60580,8 +60580,8 @@
       "source_location": "L37",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_make_stats",
-      "community": 2,
-      "community_name": "Spike Detection",
+      "community": 108,
+      "community_name": "Intraday Bias Correction",
       "norm_label": "_make_stats()"
     },
     {
@@ -60591,8 +60591,8 @@
       "source_location": "L59",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testresidualstatsclamped",
-      "community": 2,
-      "community_name": "Spike Detection",
+      "community": 108,
+      "community_name": "Intraday Bias Correction",
       "norm_label": "testresidualstatsclamped"
     },
     {
@@ -60602,8 +60602,8 @@
       "source_location": "L60",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testresidualstatsclamped_test_no_clamp_needed",
-      "community": 2,
-      "community_name": "Spike Detection",
+      "community": 108,
+      "community_name": "Intraday Bias Correction",
       "norm_label": ".test_no_clamp_needed()"
     },
     {
@@ -60613,8 +60613,8 @@
       "source_location": "L64",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testresidualstatsclamped_test_clamp_positive_exceeds_max",
-      "community": 2,
-      "community_name": "Spike Detection",
+      "community": 108,
+      "community_name": "Intraday Bias Correction",
       "norm_label": ".test_clamp_positive_exceeds_max()"
     },
     {
@@ -60624,8 +60624,8 @@
       "source_location": "L69",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testresidualstatsclamped_test_clamp_negative_exceeds_max",
-      "community": 2,
-      "community_name": "Spike Detection",
+      "community": 108,
+      "community_name": "Intraday Bias Correction",
       "norm_label": ".test_clamp_negative_exceeds_max()"
     },
     {
@@ -60635,8 +60635,8 @@
       "source_location": "L74",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testresidualstatsclamped_test_zero_signed_error",
-      "community": 2,
-      "community_name": "Spike Detection",
+      "community": 108,
+      "community_name": "Intraday Bias Correction",
       "norm_label": ".test_zero_signed_error()"
     },
     {
@@ -60646,8 +60646,8 @@
       "source_location": "L78",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testresidualstatsclamped_test_exact_boundary",
-      "community": 2,
-      "community_name": "Spike Detection",
+      "community": 108,
+      "community_name": "Intraday Bias Correction",
       "norm_label": ".test_exact_boundary()"
     },
     {
@@ -60745,8 +60745,8 @@
       "source_location": "L181",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testresidualstatsaccuracy",
-      "community": 108,
-      "community_name": "Intraday Bias Correction",
+      "community": 2,
+      "community_name": "Spike Detection",
       "norm_label": "testresidualstatsaccuracy"
     },
     {
@@ -60756,8 +60756,8 @@
       "source_location": "L182",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testresidualstatsaccuracy_run",
-      "community": 108,
-      "community_name": "Intraday Bias Correction",
+      "community": 2,
+      "community_name": "Spike Detection",
       "norm_label": "._run()"
     },
     {
@@ -60767,8 +60767,8 @@
       "source_location": "L197",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testresidualstatsaccuracy_test_mean_signed_error_positive",
-      "community": 108,
-      "community_name": "Intraday Bias Correction",
+      "community": 2,
+      "community_name": "Spike Detection",
       "norm_label": ".test_mean_signed_error_positive()"
     },
     {
@@ -60778,8 +60778,8 @@
       "source_location": "L203",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testresidualstatsaccuracy_test_mean_signed_error_mixed",
-      "community": 108,
-      "community_name": "Intraday Bias Correction",
+      "community": 2,
+      "community_name": "Spike Detection",
       "norm_label": ".test_mean_signed_error_mixed()"
     },
     {
@@ -60789,8 +60789,8 @@
       "source_location": "L209",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testresidualstatsaccuracy_test_rolling_mae_all_positive",
-      "community": 108,
-      "community_name": "Intraday Bias Correction",
+      "community": 2,
+      "community_name": "Spike Detection",
       "norm_label": ".test_rolling_mae_all_positive()"
     },
     {
@@ -60800,8 +60800,8 @@
       "source_location": "L215",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testresidualstatsaccuracy_test_rolling_mae_absolute_value",
-      "community": 108,
-      "community_name": "Intraday Bias Correction",
+      "community": 2,
+      "community_name": "Spike Detection",
       "norm_label": ".test_rolling_mae_absolute_value()"
     },
     {
@@ -60811,8 +60811,8 @@
       "source_location": "L221",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testresidualstatsaccuracy_test_sample_count",
-      "community": 108,
-      "community_name": "Intraday Bias Correction",
+      "community": 2,
+      "community_name": "Spike Detection",
       "norm_label": ".test_sample_count()"
     },
     {
@@ -60822,8 +60822,8 @@
       "source_location": "L225",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testresidualstatsaccuracy_test_correction_applied_when_nonzero",
-      "community": 108,
-      "community_name": "Intraday Bias Correction",
+      "community": 2,
+      "community_name": "Spike Detection",
       "norm_label": ".test_correction_applied_when_nonzero()"
     },
     {
@@ -60833,8 +60833,8 @@
       "source_location": "L230",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testresidualstatsaccuracy_test_correction_applied_zero",
-      "community": 108,
-      "community_name": "Intraday Bias Correction",
+      "community": 2,
+      "community_name": "Spike Detection",
       "norm_label": ".test_correction_applied_zero()"
     },
     {
@@ -60844,8 +60844,8 @@
       "source_location": "L243",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testclampbehaviour",
-      "community": 108,
-      "community_name": "Intraday Bias Correction",
+      "community": 2,
+      "community_name": "Spike Detection",
       "norm_label": "testclampbehaviour"
     },
     {
@@ -60855,8 +60855,8 @@
       "source_location": "L244",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testclampbehaviour_run",
-      "community": 108,
-      "community_name": "Intraday Bias Correction",
+      "community": 2,
+      "community_name": "Spike Detection",
       "norm_label": "._run()"
     },
     {
@@ -60866,8 +60866,8 @@
       "source_location": "L258",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testclampbehaviour_test_clamp_binds_positive",
-      "community": 108,
-      "community_name": "Intraday Bias Correction",
+      "community": 2,
+      "community_name": "Spike Detection",
       "norm_label": ".test_clamp_binds_positive()"
     },
     {
@@ -60877,8 +60877,8 @@
       "source_location": "L264",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testclampbehaviour_test_clamp_binds_negative",
-      "community": 108,
-      "community_name": "Intraday Bias Correction",
+      "community": 2,
+      "community_name": "Spike Detection",
       "norm_label": ".test_clamp_binds_negative()"
     },
     {
@@ -60888,8 +60888,8 @@
       "source_location": "L270",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testclampbehaviour_test_clamp_not_needed_small_value",
-      "community": 108,
-      "community_name": "Intraday Bias Correction",
+      "community": 2,
+      "community_name": "Spike Detection",
       "norm_label": ".test_clamp_not_needed_small_value()"
     },
     {
@@ -60910,8 +60910,8 @@
       "source_location": "L302",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testmaegate",
-      "community": 108,
-      "community_name": "Intraday Bias Correction",
+      "community": 2,
+      "community_name": "Spike Detection",
       "norm_label": "testmaegate"
     },
     {
@@ -60921,8 +60921,8 @@
       "source_location": "L303",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testmaegate_run",
-      "community": 108,
-      "community_name": "Intraday Bias Correction",
+      "community": 2,
+      "community_name": "Spike Detection",
       "norm_label": "._run()"
     },
     {
@@ -60932,8 +60932,8 @@
       "source_location": "L317",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testmaegate_test_mae_above_threshold_suppresses_live",
-      "community": 108,
-      "community_name": "Intraday Bias Correction",
+      "community": 2,
+      "community_name": "Spike Detection",
       "norm_label": ".test_mae_above_threshold_suppresses_live()"
     },
     {
@@ -60943,8 +60943,8 @@
       "source_location": "L325",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testmaegate_test_mae_below_threshold_does_not_suppress",
-      "community": 108,
-      "community_name": "Intraday Bias Correction",
+      "community": 2,
+      "community_name": "Spike Detection",
       "norm_label": ".test_mae_below_threshold_does_not_suppress()"
     },
     {
@@ -60954,8 +60954,8 @@
       "source_location": "L332",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testmaegate_test_mae_exactly_at_threshold_does_not_suppress",
-      "community": 108,
-      "community_name": "Intraday Bias Correction",
+      "community": 2,
+      "community_name": "Spike Detection",
       "norm_label": ".test_mae_exactly_at_threshold_does_not_suppress()"
     },
     {
@@ -60965,8 +60965,8 @@
       "source_location": "L338",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_testmaegate_test_mae_just_above_threshold_suppresses",
-      "community": 108,
-      "community_name": "Intraday Bias Correction",
+      "community": 2,
+      "community_name": "Spike Detection",
       "norm_label": ".test_mae_just_above_threshold_suppresses()"
     },
     {
@@ -61350,8 +61350,8 @@
       "source_location": "L65",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_rationale_65",
-      "community": 2,
-      "community_name": "Spike Detection",
+      "community": 108,
+      "community_name": "Intraday Bias Correction",
       "norm_label": "mean_signed_error=+8.0 with max=5.0 \u2192 clamped to +5.0."
     },
     {
@@ -61361,8 +61361,8 @@
       "source_location": "L70",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_rationale_70",
-      "community": 2,
-      "community_name": "Spike Detection",
+      "community": 108,
+      "community_name": "Intraday Bias Correction",
       "norm_label": "mean_signed_error=-7.5 with max=5.0 \u2192 clamped to -5.0."
     },
     {
@@ -61372,8 +61372,8 @@
       "source_location": "L79",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_rationale_79",
-      "community": 2,
-      "community_name": "Spike Detection",
+      "community": 108,
+      "community_name": "Intraday Bias Correction",
       "norm_label": "exactly at the boundary is not clamped."
     },
     {
@@ -61449,8 +61449,8 @@
       "source_location": "L198",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_rationale_198",
-      "community": 108,
-      "community_name": "Intraday Bias Correction",
+      "community": 2,
+      "community_name": "Spike Detection",
       "norm_label": "all positive deltas: warm bias."
     },
     {
@@ -61460,8 +61460,8 @@
       "source_location": "L204",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_rationale_204",
-      "community": 108,
-      "community_name": "Intraday Bias Correction",
+      "community": 2,
+      "community_name": "Spike Detection",
       "norm_label": "mixed deltas: mean should be correct."
     },
     {
@@ -61471,8 +61471,8 @@
       "source_location": "L210",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_rationale_210",
-      "community": 108,
-      "community_name": "Intraday Bias Correction",
+      "community": 2,
+      "community_name": "Spike Detection",
       "norm_label": "mae of all-positive deltas equals mean."
     },
     {
@@ -61482,8 +61482,8 @@
       "source_location": "L216",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_rationale_216",
-      "community": 108,
-      "community_name": "Intraday Bias Correction",
+      "community": 2,
+      "community_name": "Spike Detection",
       "norm_label": "mae uses absolute values: [-4, +6] \u2192 mae=(4+6)/2=5."
     },
     {
@@ -61493,8 +61493,8 @@
       "source_location": "L226",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_rationale_226",
-      "community": 108,
-      "community_name": "Intraday Bias Correction",
+      "community": 2,
+      "community_name": "Spike Detection",
       "norm_label": "correction_applied=true when clamped_correction != 0."
     },
     {
@@ -61504,8 +61504,8 @@
       "source_location": "L231",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_rationale_231",
-      "community": 108,
-      "community_name": "Intraday Bias Correction",
+      "community": 2,
+      "community_name": "Spike Detection",
       "norm_label": "correction_applied=true even if mean is exactly 0 (clamped=0)."
     },
     {
@@ -61515,8 +61515,8 @@
       "source_location": "L259",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_rationale_259",
-      "community": 108,
-      "community_name": "Intraday Bias Correction",
+      "community": 2,
+      "community_name": "Spike Detection",
       "norm_label": "mean = +10\u00b0f clamped to +5\u00b0f."
     },
     {
@@ -61526,8 +61526,8 @@
       "source_location": "L265",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_rationale_265",
-      "community": 108,
-      "community_name": "Intraday Bias Correction",
+      "community": 2,
+      "community_name": "Spike Detection",
       "norm_label": "mean = -8\u00b0f clamped to -5\u00b0f."
     },
     {
@@ -61537,8 +61537,8 @@
       "source_location": "L271",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_rationale_271",
-      "community": 108,
-      "community_name": "Intraday Bias Correction",
+      "community": 2,
+      "community_name": "Spike Detection",
       "norm_label": "mean = +2\u00b0f within \u00b15 \u2192 no clamp."
     },
     {
@@ -61559,8 +61559,8 @@
       "source_location": "L318",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_rationale_318",
-      "community": 108,
-      "community_name": "Intraday Bias Correction",
+      "community": 2,
+      "community_name": "Spike Detection",
       "norm_label": "mae=10.1 > threshold=8.0 \u2192 live_suppressed=true."
     },
     {
@@ -61570,8 +61570,8 @@
       "source_location": "L326",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_rationale_326",
-      "community": 108,
-      "community_name": "Intraday Bias Correction",
+      "community": 2,
+      "community_name": "Spike Detection",
       "norm_label": "mae=3.7 < threshold=8.0 \u2192 live_suppressed=false."
     },
     {
@@ -61581,8 +61581,8 @@
       "source_location": "L333",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_rationale_333",
-      "community": 108,
-      "community_name": "Intraday Bias Correction",
+      "community": 2,
+      "community_name": "Spike Detection",
       "norm_label": "mae exactly equal to threshold \u2192 not suppressed (strictly >)."
     },
     {
@@ -61592,8 +61592,8 @@
       "source_location": "L339",
       "_origin": "ast",
       "id": "src_tests_test_residual_correction_rationale_339",
-      "community": 108,
-      "community_name": "Intraday Bias Correction",
+      "community": 2,
+      "community_name": "Spike Detection",
       "norm_label": "mae=8.01 > 8.0 \u2192 suppressed."
     },
     {
@@ -79351,6 +79351,17 @@
       "norm_label": "judgment and escalation"
     },
     {
+      "label": "commands/pm.md",
+      "file_type": "document",
+      "source_file": ".claude/commands/pm.md",
+      "source_location": "L1",
+      "_origin": "ast",
+      "id": "claude_commands_pm",
+      "community": 433,
+      "community_name": "commands/pm.md",
+      "norm_label": "commands/pm.md"
+    },
+    {
       "label": "governance.md",
       "file_type": "document",
       "source_file": ".claude/instructions/governance.md",
@@ -80132,7 +80143,7 @@
       "norm_label": "retention policy"
     },
     {
-      "label": "pm.md",
+      "label": "agents/pm.md",
       "file_type": "document",
       "source_file": "agents/pm.md",
       "source_location": "L1",
@@ -80140,7 +80151,7 @@
       "id": "agents_pm",
       "community": 263,
       "community_name": "__init__.py",
-      "norm_label": "pm.md"
+      "norm_label": "agents/pm.md"
     },
     {
       "label": "Tech Lead PM (Orchestrator)",
@@ -232632,5 +232643,5 @@
     }
   ],
   "hyperedges": [],
-  "built_at_commit": "7d4099ab82167cc041b293635b800ec85674086a"
+  "built_at_commit": "06614b9f53faa9a5f5728125aae7fe274f827669"
 }
