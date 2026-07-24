@@ -2485,6 +2485,7 @@ function renderPromotionRow(row) {
       <td class="promo-td">${_promoPct(row.breakeven_win_rate)}</td>
       <td class="promo-td">${row.avg_entry_price_cents.toFixed(1)}¢${row.price_valid ? '' : ' ⚠'}</td>
       <td class="promo-td">${row.days_coverage}</td>
+      <td class="promo-td" title="Certainty-shortcut rows (p_yes_raw=0.0) excluded from the stats above -- issue #823">${row.excluded_certainty_shortcut_count || 0}</td>
       <td class="promo-td">
         <span class="status-badge ${badgeClass}"><span class="status-dot"></span>${_promoStatusLabel(row.status)}</span>
       </td>
@@ -2518,6 +2519,7 @@ function renderPromotionBar(rows) {
           <th class="promo-th">Break-even</th>
           <th class="promo-th">Avg entry</th>
           <th class="promo-th">Days</th>
+          <th class="promo-th" title="Certainty-shortcut rows (p_yes_raw=0.0) excluded from the stats -- issue #823">Excluded</th>
           <th class="promo-th">Status</th>
           <th class="promo-th">Reason</th>
         </tr>
