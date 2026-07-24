@@ -111,6 +111,37 @@ _ASSERTIONS = textwrap.dedent("""
     }
     assert.strictEqual(Object.keys(GATE_CHIP_META).length, EXPECTED_VERDICTS.length);
 
+    // Issue #819: shadow-routed verdicts (shadow_only, next_day_shadow) must
+    // have disambiguating prefixes to distinguish from other shadow-related
+    // concepts (EMOS calibration mode, D+1 policy indicator, etc.). Pattern
+    // mirrors the #811 fix where EMOS mode labels got "EMOS:" prefix.
+    assert.strictEqual(
+      GATE_CHIP_META.shadow_only.label, 'Live: shadow',
+      'shadow_only must have disambiguating "Live:" prefix'
+    );
+    assert.strictEqual(
+      GATE_CHIP_META.next_day_shadow.label, 'Live: next-day',
+      'next_day_shadow must have disambiguating "Live:" prefix'
+    );
+    // Both should be in the same family
+    assert.strictEqual(
+      GATE_CHIP_META.shadow_only.family, 'Shadow-routed by policy',
+      'shadow_only should be in Shadow-routed family'
+    );
+    assert.strictEqual(
+      GATE_CHIP_META.next_day_shadow.family, 'Shadow-routed by policy',
+      'next_day_shadow should be in Shadow-routed family'
+    );
+    // Verify the prefixes start with 'Live:' for disambiguation
+    assert.ok(
+      GATE_CHIP_META.shadow_only.label.startsWith('Live:'),
+      'shadow_only label must start with "Live:" prefix'
+    );
+    assert.ok(
+      GATE_CHIP_META.next_day_shadow.label.startsWith('Live:'),
+      'next_day_shadow label must start with "Live:" prefix'
+    );
+
     // gateTooltip: numeric-threshold verdicts format actual/threshold by gate_unit
     // exactly the way the scanner itself gated on the value (design spec §5 table).
     assert.strictEqual(
