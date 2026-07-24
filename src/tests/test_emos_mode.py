@@ -676,6 +676,59 @@ class TestResolveSigmaRaw:
 
 
 # ---------------------------------------------------------------------------
+# Test 7b-bis: resolve_sigma_raw and Database._active_sigma_source agree for
+# the SAME USE_ENSEMBLE_SIGMA value (issue #799 -- main review risk)
+# ---------------------------------------------------------------------------
+
+class TestResolveSigmaRawAgreesWithActiveSigmaSource:
+    """The two call sites that must never diverge:
+
+    - resolve_sigma_raw(state, use_ensemble_sigma, ...) -- decides what raw
+      sigma value gets FED INTO apply_emos at serving time.
+    - db._active_sigma_source() -- decides WHICH emos_calibration row (the
+      'fixed' or 'ensemble' track) apply_emos reads coefficients from.
+
+    Both must resolve from the identical USE_ENSEMBLE_SIGMA live-config value
+    for a given scan cycle, or serving can feed a real ensemble sigma_raw
+    through coefficients fit under the 'fixed' track (or vice versa) -- the
+    #658-style skew #799 exists to prevent.
+    """
+
+    def _state(self, ensemble_sigma_f=3.5):
+        from src.model.envelope import WeatherState
+        from datetime import datetime
+        now = datetime(2026, 7, 9, 14, 0)
+        return WeatherState(
+            station="KORD", now_local=now, sunset_local=now,
+            current_high_f=70.0, current_high_time=now,
+            latest_temp_f=70.0, latest_temp_time=now,
+            forecast_high_f=80.0, ensemble_sigma_f=ensemble_sigma_f,
+        )
+
+    def test_flag_true_uses_ensemble_input_and_ensemble_track(self):
+        from src.model.emos_mode import resolve_sigma_raw
+        db = _db()
+        db.set_config("USE_ENSEMBLE_SIGMA", "true")
+        use_ensemble_sigma = True  # resolved from live config, same as scanner.py's pattern
+
+        sigma_raw = resolve_sigma_raw(self._state(), use_ensemble_sigma, 2.0)
+        assert sigma_raw == 3.5  # fed the REAL ensemble spread, not the constant
+
+        assert db._active_sigma_source() == "ensemble"
+
+    def test_flag_false_uses_fixed_input_and_fixed_track(self):
+        from src.model.emos_mode import resolve_sigma_raw
+        db = _db()
+        db.set_config("USE_ENSEMBLE_SIGMA", "false")
+        use_ensemble_sigma = False
+
+        sigma_raw = resolve_sigma_raw(self._state(), use_ensemble_sigma, 2.0)
+        assert sigma_raw == 2.0  # the constant, not the real spread
+
+        assert db._active_sigma_source() == "fixed"
+
+
+# ---------------------------------------------------------------------------
 # Test 8: _emos_min_samples reads from config
 # ---------------------------------------------------------------------------
 
