@@ -3122,15 +3122,17 @@ function renderEdgeDecisionTable(brackets, unit, station, isNextDay) {
 // Small inline mode chip reusing the .status-badge/.badge-* anatomy already
 // established on the EMOS tab (legacy/shadow/primary) — kept local to the
 // Edge tab so it doesn't affect the EMOS tab's own chip labels/behaviour.
+// Labels are prefixed with "EMOS:" to distinguish from execution routing.
 function edgeEmosModeChipHTML(mode) {
   const map = {
-    legacy: ['legacy', 'Legacy'],
-    emos_shadow: ['shadow', 'Shadow'],
-    emos_primary: ['primary', 'Primary'],
-    next_day: ['legacy', 'Next-day'],
+    legacy: ['legacy', 'EMOS: legacy', 'EMOS model is using legacy (pre-calibration) probabilities'],
+    emos_shadow: ['shadow', 'EMOS: shadow', 'EMOS model is in shadow calibration mode; legacy probabilities are served live'],
+    emos_primary: ['primary', 'EMOS: primary', 'EMOS model is primary; calibrated probabilities are served live'],
+    next_day: ['legacy', 'EMOS: next-day', 'D+1 evaluation; always in shadow mode by policy'],
   };
-  const [cls, label] = map[mode] || ['legacy', mode];
-  return `<span class="status-badge badge-${cls}"><span class="status-dot"></span>${label}</span>`;
+  const [cls, label, tooltip] = map[mode] || ['legacy', mode, ''];
+  const tooltipAttr = tooltip ? ` title="${_escAttr(tooltip)}" aria-label="${_escAttr(label + ': ' + tooltip)}"` : '';
+  return `<span class="status-badge badge-${cls}"${tooltipAttr}><span class="status-dot"></span>${label}</span>`;
 }
 
 /* ─────────────────────────────────────────
