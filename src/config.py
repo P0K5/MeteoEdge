@@ -287,6 +287,10 @@ SNAPSHOTS_JSONL = LOG_DIR / "snapshots.jsonl"
 SETTLEMENTS_CSV = LOG_DIR / "settlements.csv"
 LIVE_TRADES_JSONL = LOG_DIR / "live_trades.jsonl"
 POSITION_SNAPSHOTS_JSONL = LOG_DIR / "position_snapshots.jsonl"
+# Unbiased bracket-evaluation snapshots for the skill test (#826) -- one row
+# per (station, ticker, hour), hourly-deduped, retained 90 days.
+BRACKET_EVALS_JSONL = LOG_DIR / "bracket_evals.jsonl"
+BRACKET_EVAL_RETAIN_DAYS: int = int(os.getenv("BRACKET_EVAL_RETAIN_DAYS", "90"))
 
 # Live execution
 POLYMARKET_HOST = os.getenv("POLYMARKET_HOST", "https://clob.polymarket.com")
