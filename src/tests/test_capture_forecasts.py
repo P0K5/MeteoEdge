@@ -112,6 +112,7 @@ def _silence_base_sources():
         patch("src.data.hrrr.fetch_hrrr_hourly", return_value=[]),
         patch("src.data.nbm.fetch_nbm_daily_high", return_value=None),
         patch("src.data.ecmwf_open.fetch_ecmwf_daily_high", return_value=None),
+        patch("src.data.ecmwf_open.fetch_ecmwf_ensemble_spread", return_value=None),
         patch("src.data.icon.fetch_icon_hourly", return_value=[]),
     ):
         yield
@@ -403,11 +404,18 @@ class TestNbmCapture:
 # ---------------------------------------------------------------------------
 
 class TestEcmwfCapture:
-    """ECMWF shadow ingestion into _capture_station (#492)."""
+    """ECMWF shadow ingestion into _capture_station (#492).
 
-    def test_happy_path_writes_ecmwf_row(self):
-        """When fetch_ecmwf_daily_high returns a result, upsert_forecast_log_v2 must be
-        called with model='ecmwf' and forecast_high_f from the result."""
+    #824: sigma_f is now derived from the separate ECMWF ENS ("enfo") product
+    via fetch_ecmwf_ensemble_spread(), independent of forecast_high_f (which
+    still comes from the "oper" HRES product via fetch_ecmwf_daily_high()).
+    """
+
+    def test_happy_path_writes_ecmwf_row_with_null_sigma_when_ens_unavailable(self):
+        """When fetch_ecmwf_daily_high returns a result but the ENS spread is
+        unavailable (patched to None by _silence_base_sources), upsert_forecast_log_v2
+        must be called with model='ecmwf', forecast_high_f from the result, and
+        sigma_f=None."""
         db = _db()
         mock_upsert = MagicMock()
         db.upsert_forecast_log_v2 = mock_upsert
@@ -424,6 +432,67 @@ class TestEcmwfCapture:
         assert kw["forecast_high_f"] == pytest.approx(73.5)
         assert kw["sigma_f"] is None
         assert kw["station"] == "KORD"
+
+    def test_happy_path_writes_ecmwf_row_with_ensemble_sigma(self):
+        """#824: when the ENS spread is available, sigma_f must carry it while
+        forecast_high_f still comes from the deterministic (HRES) result."""
+        db = _db()
+        mock_upsert = MagicMock()
+        db.upsert_forecast_log_v2 = mock_upsert
+
+        with (
+            _silence_base_sources(),
+            patch("src.data.ecmwf_open.fetch_ecmwf_daily_high", return_value=_FakeEcmwfForecast()),
+            patch("src.data.ecmwf_open.fetch_ecmwf_ensemble_spread", return_value=1.35),
+        ):
+            _capture_station(**_capture_kwargs(db=db))
+
+        ecmwf_calls = [c for c in mock_upsert.call_args_list if c.kwargs.get("model") == "ecmwf"]
+        assert len(ecmwf_calls) == 1
+        kw = ecmwf_calls[0].kwargs
+        assert kw["forecast_high_f"] == pytest.approx(73.5)
+        assert kw["sigma_f"] == pytest.approx(1.35)
+
+    def test_ensemble_spread_not_fetched_when_daily_high_unavailable(self):
+        """No point spending a fetch on ENS spread if there's no forecast_high_f
+        row to attach it to."""
+        db = _db()
+        mock_upsert = MagicMock()
+        db.upsert_forecast_log_v2 = mock_upsert
+
+        with (
+            _silence_base_sources(),
+            patch("src.data.ecmwf_open.fetch_ecmwf_daily_high", return_value=None),
+            patch("src.data.ecmwf_open.fetch_ecmwf_ensemble_spread") as mock_ens,
+        ):
+            _capture_station(**_capture_kwargs(db=db))
+
+        mock_ens.assert_not_called()
+        ecmwf_calls = [c for c in mock_upsert.call_args_list if c.kwargs.get("model") == "ecmwf"]
+        assert len(ecmwf_calls) == 0
+
+    def test_ensemble_spread_failure_does_not_block_deterministic_row(self):
+        """#824: an ENS fetch failure must still let the HRES forecast_high_f
+        row get written, with sigma_f falling back to NULL."""
+        db = _db()
+        mock_upsert = MagicMock()
+        db.upsert_forecast_log_v2 = mock_upsert
+
+        with (
+            _silence_base_sources(),
+            patch("src.data.ecmwf_open.fetch_ecmwf_daily_high", return_value=_FakeEcmwfForecast()),
+            patch(
+                "src.data.ecmwf_open.fetch_ecmwf_ensemble_spread",
+                side_effect=RuntimeError("ENS timeout"),
+            ),
+        ):
+            _capture_station(**_capture_kwargs(db=db))  # must not raise
+
+        ecmwf_calls = [c for c in mock_upsert.call_args_list if c.kwargs.get("model") == "ecmwf"]
+        assert len(ecmwf_calls) == 1, "Expected the HRES row to still be written"
+        kw = ecmwf_calls[0].kwargs
+        assert kw["forecast_high_f"] == pytest.approx(73.5)
+        assert kw["sigma_f"] is None
 
     def test_unavailable_does_not_write(self):
         """When fetch_ecmwf_daily_high returns None, no upsert for 'ecmwf'."""
