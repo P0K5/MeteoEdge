@@ -48,6 +48,7 @@ import httpx
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.gzip import GZipMiddleware
 from pydantic import BaseModel
 
 from py_clob_client_v2.clob_types import BookParams
@@ -292,6 +293,8 @@ def _open_positions_count() -> int:
 
 
 app = FastAPI(title="MeteoEdge Dashboard", version="1.0.0")
+
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 app.add_middleware(
     CORSMiddleware,
