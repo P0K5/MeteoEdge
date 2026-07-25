@@ -5,7 +5,13 @@ Covers:
   price, 1c/99c rail rows.
 - dedupe_one_per_bracket_day: keeps the lowest-minutes_to_settlement row per
   (station, ticker, end_date).
-- join_outcomes: settlements join, dropping rows with no definitive match.
+- join_outcomes: the LEGACY settlements join, dropping rows with no
+  definitive match (still reachable via --outcome-source settlements).
+- resolve_candidate_outcomes (issue #865): the DEFAULT outcome path --
+  Gamma-first with an observed-daily-high fallback, scoring every evaluated
+  bracket instead of only the ~156 MeteoEdge actually traded. Covers the
+  end_date -> settlement_date mapping, the gamma/metar provenance split, the
+  never-guess drop, station-day counting, and the #861 multi-YES diagnostic.
 - classify_day_segment / utc_offset_bucket: derived same-day/next-day and
   UTC-offset segmentation (the CSV carries neither column directly).
 - market_p_yes / compute_bss / verdict_label: exact BSS math against
@@ -23,10 +29,13 @@ from __future__ import annotations
 import csv
 import gzip
 import sqlite3
+from unittest.mock import patch
 
 import pytest
 
 from src.scripts.bss_market_vs_model_report import (
+    OUTCOME_SOURCE_RESOLVER,
+    OUTCOME_SOURCE_SETTLEMENTS,
     REQUIRED_DISCLAIMER,
     apply_exclusions,
     build_report,
@@ -37,6 +46,7 @@ from src.scripts.bss_market_vs_model_report import (
     load_candidate_rows,
     load_settlement_outcomes,
     market_p_yes,
+    resolve_candidate_outcomes,
     run_report,
     sharpness_histogram,
     station_local_date,
@@ -97,6 +107,30 @@ def _write_settlements_db(path, settlements):
             "actual_high_f, resolved_yes, source, direction) VALUES "
             "('2026-02-02T00:00:00Z','KORD',?,60,65,66.0,?,'polymarket','high')",
             (ticker, int(resolved_yes)),
+        )
+    con.commit()
+    con.close()
+
+
+def _write_observations_db(path, observations, settlements=None):
+    """observations: list of (station, ts, temp_f). Mirrors the fixture shape in
+    test_resolve_bracket_outcomes.py so both suites exercise the same schema."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if settlements is not None:
+        _write_settlements_db(path, settlements)
+        con = sqlite3.connect(str(path))
+    else:
+        con = sqlite3.connect(str(path))
+    con.execute(
+        "CREATE TABLE IF NOT EXISTS observations (id INTEGER PRIMARY KEY, ts TEXT, "
+        "station TEXT, temp_f REAL, temp_native REAL, unit TEXT, current_high REAL, "
+        "source TEXT, raw_json TEXT)"
+    )
+    for station, ts, temp_f in observations:
+        con.execute(
+            "INSERT INTO observations (ts, station, temp_f, temp_native, unit, source) "
+            "VALUES (?, ?, ?, ?, 'F', 'metar')",
+            (ts, station, temp_f, temp_f),
         )
     con.commit()
     con.close()
@@ -330,9 +364,37 @@ class TestEndToEnd:
             candidates_csv=candidates_csv,
             db_path=tmp_path / "data" / "meteoedge.db",
             out_dir=tmp_path / "backtest_results",
+            outcome_source=OUTCOME_SOURCE_SETTLEMENTS,
         )
         assert rc == 0
         assert not (tmp_path / "backtest_results").exists()
+
+    def test_resolver_path_gates_on_missing_db_without_network(self, tmp_path):
+        """Resolver path with no database must bail BEFORE any Gamma request --
+        a sandbox run must cost zero HTTP calls (issue #865)."""
+        candidates_csv = tmp_path / "logs" / "candidates.csv"
+        _write_candidates_csv(candidates_csv, [_row()])
+        with patch(
+            "src.scripts.resolve_bracket_outcomes.fetch_market_resolution"
+        ) as mock_fetch:
+            rc = run_report(
+                candidates_csv=candidates_csv,
+                db_path=tmp_path / "data" / "meteoedge.db",
+                out_dir=tmp_path / "backtest_results",
+                outcome_source=OUTCOME_SOURCE_RESOLVER,
+            )
+        assert rc == 0
+        assert not (tmp_path / "backtest_results").exists()
+        mock_fetch.assert_not_called()
+
+    def test_run_report_rejects_unknown_outcome_source(self, tmp_path):
+        with pytest.raises(ValueError, match="outcome_source"):
+            run_report(
+                candidates_csv=tmp_path / "logs" / "candidates.csv",
+                db_path=tmp_path / "data" / "meteoedge.db",
+                out_dir=tmp_path / "backtest_results",
+                outcome_source="settlments",  # typo -- must not silently fall back
+            )
 
     def test_run_report_writes_report_with_disclaimer_on_synthetic_fixture(self, tmp_path):
         """Purely a pipeline smoke test on fabricated fixture rows (never presented
@@ -356,7 +418,8 @@ class TestEndToEnd:
 
         out_dir = tmp_path / "backtest_results"
         rc = run_report(candidates_csv=candidates_csv, db_path=db_path,
-                        out_dir=out_dir, run_date="2026-02-15")
+                        out_dir=out_dir, run_date="2026-02-15",
+                        outcome_source=OUTCOME_SOURCE_SETTLEMENTS)
         assert rc == 0
         report_path = out_dir / "bss_market_vs_model_pass1_2026-02-15.md"
         assert report_path.exists()
@@ -377,3 +440,253 @@ class TestEndToEnd:
         rows = load_candidate_rows(tmp_path / "logs" / "candidates.csv")
         assert len(rows) == 1
         assert rows[0]["p_yes_raw"] == 0.2
+
+
+# ---------------------------------------------------------------------------
+# resolve_candidate_outcomes -- the default outcome path (issue #865)
+# ---------------------------------------------------------------------------
+
+def _cand(**overrides) -> dict:
+    """A single already-de-duplicated candidate row, normalized as
+    load_candidate_rows() would return it (floats, not CSV strings)."""
+    base = {
+        "ts": "2026-02-01T18:00:00+00:00",
+        "station": "KORD",
+        "ticker": "0xabc001",
+        "end_date": "2026-02-01",
+        "bracket_low": 60.0,
+        "bracket_high": 65.0,
+        "yes_ask": 20.0,
+        "no_ask": 82.0,
+        "p_yes_raw": 0.2,
+        "minutes_to_settlement": 300.0,
+    }
+    base.update(overrides)
+    return base
+
+
+class TestResolveCandidateOutcomes:
+    """The core of #865: outcomes come from weather + Polymarket, not from
+    whether MeteoEdge happened to trade the bracket."""
+
+    def test_scores_a_bracket_that_was_never_traded(self, tmp_path):
+        """The whole point. This ticker has no `settlements` row at all -- the
+        legacy join would drop it (that is how the 2026-07-25 run fell to
+        n=20); the resolver scores it from the observed daily high."""
+        db_path = tmp_path / "meteoedge.db"
+        _write_observations_db(db_path, [("KORD", "2026-02-01T20:00:00+00:00", 62.0)])
+
+        rows, counts = resolve_candidate_outcomes(
+            [_cand(ticker="0xnever_traded")], db_path,
+            use_gamma=False, gamma_cache_path=tmp_path / "cache.json",
+        )
+        assert len(rows) == 1
+        assert rows[0]["yes_won"] is True          # 62.0 lies in [60, 65]
+        assert rows[0]["resolution_source"] == "metar"
+        assert counts["n_unresolvable"] == 0
+
+    def test_gamma_takes_precedence_over_observed_high(self, tmp_path):
+        """Mirrors settle.py's precedence exactly (#860): the official on-chain
+        outcome wins even when METAR would say otherwise."""
+        db_path = tmp_path / "meteoedge.db"
+        _write_observations_db(db_path, [("KORD", "2026-02-01T20:00:00+00:00", 62.0)])
+
+        with patch(
+            "src.scripts.resolve_bracket_outcomes.fetch_market_resolution",
+            return_value=False,
+        ):
+            rows, counts = resolve_candidate_outcomes(
+                [_cand()], db_path, gamma_cache_path=tmp_path / "cache.json",
+            )
+        assert rows[0]["yes_won"] is False          # gamma NO beats METAR YES
+        assert rows[0]["resolution_source"] == "gamma"
+        assert counts["resolved_from_gamma"] == 1
+        assert counts.get("resolved_from_metar", 0) == 0
+
+    def test_falls_back_to_observed_high_when_gamma_indecisive(self, tmp_path):
+        db_path = tmp_path / "meteoedge.db"
+        _write_observations_db(db_path, [("KORD", "2026-02-01T20:00:00+00:00", 70.0)])
+
+        with patch(
+            "src.scripts.resolve_bracket_outcomes.fetch_market_resolution",
+            return_value=None,
+        ):
+            rows, counts = resolve_candidate_outcomes(
+                [_cand()], db_path, gamma_cache_path=tmp_path / "cache.json",
+            )
+        assert rows[0]["yes_won"] is False          # 70.0 outside [60, 65]
+        assert rows[0]["resolution_source"] == "metar"
+        assert counts["resolved_from_metar"] == 1
+
+    def test_unresolvable_row_is_dropped_never_guessed(self, tmp_path):
+        """No gamma resolution and no observation for that station-day: the row
+        leaves the sample. A guessed outcome would corrupt the Brier score."""
+        db_path = tmp_path / "meteoedge.db"
+        _write_observations_db(db_path, [])         # no observations at all
+
+        with patch(
+            "src.scripts.resolve_bracket_outcomes.fetch_market_resolution",
+            return_value=None,
+        ):
+            rows, counts = resolve_candidate_outcomes(
+                [_cand()], db_path, gamma_cache_path=tmp_path / "cache.json",
+            )
+        assert rows == []
+        assert counts["n_unresolvable"] == 1
+
+    def test_end_date_is_mapped_to_settlement_date(self, tmp_path):
+        """The one field that needs adapting between the two row shapes."""
+        db_path = tmp_path / "meteoedge.db"
+        _write_observations_db(db_path, [("KORD", "2026-02-01T20:00:00+00:00", 62.0)])
+
+        rows, _ = resolve_candidate_outcomes(
+            [_cand(end_date="2026-02-01T00:00:00Z")], db_path,
+            use_gamma=False, gamma_cache_path=tmp_path / "cache.json",
+        )
+        assert rows[0]["settlement_date"] == "2026-02-01"
+
+    def test_row_without_end_date_is_counted_not_crashed(self, tmp_path):
+        db_path = tmp_path / "meteoedge.db"
+        _write_observations_db(db_path, [("KORD", "2026-02-01T20:00:00+00:00", 62.0)])
+
+        rows, counts = resolve_candidate_outcomes(
+            [_cand(end_date=""), _cand(ticker="0xok")], db_path,
+            use_gamma=False, gamma_cache_path=tmp_path / "cache.json",
+        )
+        assert len(rows) == 1
+        assert counts["n_missing_end_date"] == 1
+        assert counts["n_unresolvable"] == 1
+
+    def test_station_days_counted_not_bracket_rows(self, tmp_path):
+        """Effective sample size: 3 brackets on one station-day is ONE
+        independent draw, not three (docs/REMEDIATION_PLAN.md)."""
+        db_path = tmp_path / "meteoedge.db"
+        _write_observations_db(db_path, [("KORD", "2026-02-01T20:00:00+00:00", 62.0)])
+
+        rows, counts = resolve_candidate_outcomes(
+            [
+                _cand(ticker="0x1", bracket_low=55.0, bracket_high=59.0),
+                _cand(ticker="0x2", bracket_low=60.0, bracket_high=65.0),
+                _cand(ticker="0x3", bracket_low=66.0, bracket_high=70.0),
+            ],
+            db_path, use_gamma=False, gamma_cache_path=tmp_path / "cache.json",
+        )
+        assert len(rows) == 3
+        assert counts["n_station_days"] == 1
+        assert sum(1 for r in rows if r["yes_won"]) == 1
+
+    def test_no_network_issues_zero_requests(self, tmp_path):
+        db_path = tmp_path / "meteoedge.db"
+        _write_observations_db(db_path, [("KORD", "2026-02-01T20:00:00+00:00", 62.0)])
+
+        with patch(
+            "src.scripts.resolve_bracket_outcomes.fetch_market_resolution"
+        ) as mock_fetch:
+            rows, counts = resolve_candidate_outcomes(
+                [_cand()], db_path, allow_network=False,
+                gamma_cache_path=tmp_path / "cache.json",
+            )
+        mock_fetch.assert_not_called()
+        assert rows[0]["resolution_source"] == "metar"
+        assert counts["gamma"]["n_skipped_offline"] == 1
+
+
+class TestResolverEndToEnd:
+    def _setup(self, tmp_path, rows, observations):
+        candidates_csv = tmp_path / "logs" / "candidates.csv"
+        _write_candidates_csv(candidates_csv, rows)
+        db_path = tmp_path / "data" / "meteoedge.db"
+        _write_observations_db(db_path, observations)
+        return candidates_csv, db_path
+
+    def test_report_scores_untraded_brackets_and_states_provenance(self, tmp_path):
+        """End-to-end on synthetic fixture rows (never a real finding): the
+        report must be written, name its ground truth, and count station-days."""
+        rows = [
+            _row(ticker="0x001", bracket_low="60", bracket_high="65", p_yes_raw="0.20"),
+            _row(ticker="0x002", bracket_low="66", bracket_high="70", p_yes_raw="0.40",
+                 yes_ask="35", no_ask="67"),
+        ]
+        candidates_csv, db_path = self._setup(
+            tmp_path, rows, [("KORD", "2026-02-01T20:00:00+00:00", 62.0)]
+        )
+        out_dir = tmp_path / "backtest_results"
+
+        with patch(
+            "src.scripts.resolve_bracket_outcomes.fetch_market_resolution",
+            return_value=None,
+        ):
+            rc = run_report(
+                candidates_csv=candidates_csv, db_path=db_path, out_dir=out_dir,
+                run_date="2026-02-15", outcome_source=OUTCOME_SOURCE_RESOLVER,
+                gamma_cache_path=tmp_path / "cache.json",
+            )
+        assert rc == 0
+        text = (out_dir / "bss_market_vs_model_pass1_2026-02-15.md").read_text()
+
+        # The Pass-1 caveat survives the change -- this is still not the M3 gate.
+        assert "PASS 1 -- NOT THE DECISION GATE" in text
+        # Neither bracket has a settlements row; both are still scored.
+        assert "| **Final de-duplicated sample (n)** | **2** |" in text
+        assert "| **Effective sample size (station-days)** | **1** |" in text
+        assert "## Outcome ground truth" in text
+        assert "Observed daily high fallback (`metar`) | 2" in text
+        assert "Not joined to `settlements`" in text
+
+    def test_multi_yes_boundary_exposure_is_reported(self, tmp_path):
+        """#861: adjacent Celsius-derived brackets sharing an edge both resolve
+        YES under the inclusive interval. The report must count it, loudly."""
+        rows = [
+            _row(ticker="0x001", bracket_low="84.2", bracket_high="86.0", p_yes_raw="0.30"),
+            _row(ticker="0x002", bracket_low="86.0", bracket_high="87.8", p_yes_raw="0.30"),
+        ]
+        candidates_csv, db_path = self._setup(
+            tmp_path, rows, [("KORD", "2026-02-01T20:00:00+00:00", 86.0)]
+        )
+        out_dir = tmp_path / "backtest_results"
+
+        rc = run_report(
+            candidates_csv=candidates_csv, db_path=db_path, out_dir=out_dir,
+            run_date="2026-02-15", outcome_source=OUTCOME_SOURCE_RESOLVER,
+            use_gamma=False, gamma_cache_path=tmp_path / "cache.json",
+        )
+        assert rc == 0
+        text = (out_dir / "bss_market_vs_model_pass1_2026-02-15.md").read_text()
+        assert "Boundary-convention exposure (issue #861): 1 station-day(s)" in text
+
+    def test_clean_data_reports_zero_boundary_exposure(self, tmp_path):
+        rows = [_row(ticker="0x001", bracket_low="60", bracket_high="65", p_yes_raw="0.20")]
+        candidates_csv, db_path = self._setup(
+            tmp_path, rows, [("KORD", "2026-02-01T20:00:00+00:00", 62.0)]
+        )
+        out_dir = tmp_path / "backtest_results"
+
+        rc = run_report(
+            candidates_csv=candidates_csv, db_path=db_path, out_dir=out_dir,
+            run_date="2026-02-15", outcome_source=OUTCOME_SOURCE_RESOLVER,
+            use_gamma=False, gamma_cache_path=tmp_path / "cache.json",
+        )
+        assert rc == 0
+        text = (out_dir / "bss_market_vs_model_pass1_2026-02-15.md").read_text()
+        assert "**0** station-days resolved YES on more than one bracket" in text
+
+    def test_settlements_source_still_reproduces_legacy_report(self, tmp_path):
+        """--outcome-source settlements must keep working unchanged, so the
+        2026-07-25 n=20 report stays reproducible."""
+        rows = [_row(ticker="0x001", p_yes_raw="0.20")]
+        candidates_csv = tmp_path / "logs" / "candidates.csv"
+        _write_candidates_csv(candidates_csv, rows)
+        db_path = tmp_path / "data" / "meteoedge.db"
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        _write_settlements_db(db_path, [("0x001", True)])
+        out_dir = tmp_path / "backtest_results"
+
+        rc = run_report(
+            candidates_csv=candidates_csv, db_path=db_path, out_dir=out_dir,
+            run_date="2026-02-15", outcome_source=OUTCOME_SOURCE_SETTLEMENTS,
+        )
+        assert rc == 0
+        text = (out_dir / "bss_market_vs_model_pass1_2026-02-15.md").read_text()
+        assert "joined to `settlements`" in text
+        assert "Excluded: no definitive settlement match" in text
+        assert "## Outcome ground truth" not in text
