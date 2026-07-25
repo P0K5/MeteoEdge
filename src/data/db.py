@@ -242,6 +242,7 @@ CREATE TABLE IF NOT EXISTS emos_crps_log (
     crps_score      REAL NOT NULL,
     model_mode      TEXT NOT NULL DEFAULT 'emos_shadow',
     forecast_source TEXT NOT NULL DEFAULT 'baseline',
+    sigma_source    TEXT NOT NULL DEFAULT 'fixed',
     logged_at       TEXT NOT NULL
 );
 
@@ -417,6 +418,21 @@ class Database:
             # the already-accumulated baseline promotion evidence keeps
             # counting unchanged.
             ("emos_crps_log", "forecast_source", "TEXT NOT NULL DEFAULT 'baseline'"),
+            # Issue #851: sigma-source axis for the CRPS promotion counter,
+            # mirroring #759's forecast_source fix. Without this,
+            # get_emos_crps_count/emos_crps_logged_for_date key on
+            # (city, model_mode, forecast_source) only, so a sigma_source
+            # switch (#799, fixed -> ensemble) does NOT reset the promotion
+            # clock: shadow-day evidence logged under the old fixed-sigma
+            # coefficients keeps counting toward the newly-retrained
+            # ensemble-sigma lineage's promotion decision -- the exact
+            # #658-style train/serve-evidence skew #799 closed for the
+            # coefficients themselves. Default 'fixed' backfills every
+            # pre-#851 row -- every CRPS row logged before this migration was
+            # scored against a sigma_source='fixed' (or unresolved,
+            # equivalently pre-#449) coefficient fit, so this is the accurate
+            # historical tag, not merely a matching-default placeholder.
+            ("emos_crps_log", "sigma_source", "TEXT NOT NULL DEFAULT 'fixed'"),
             # Issue #780: distinguishes a confirmed live fill from the
             # scanner's paper-mode "would trade live" placeholder for
             # traded_live rows -- see _persist_scan_decisions in run.py for
@@ -2615,14 +2631,28 @@ class Database:
         an unscoped AVG() over the whole table would silently mix 'legacy'
         rows into the EMOS score once they start accumulating alongside
         'emos_shadow' rows for the same city/date.
+
+        Both averages are also scoped to the active sigma_source (issue
+        #851) — otherwise, after a sigma_source switch (issue #799), this
+        display metric would silently blend shadow-day CRPS scored against
+        the old sigma track's coefficients into the average, understating or
+        overstating how the CURRENTLY active (newly-retrained) lineage is
+        actually performing.
+
+        NOTE: unlike get_emos_crps_count, this is not additionally scoped by
+        forecast_source — a pre-existing gap from before issue #759 that is
+        out of scope for #851's sigma_source fix; tracked separately.
         """
+        sigma_source = self._active_sigma_source()
         crps_row = self._conn.execute(
-            "SELECT AVG(crps_score) FROM emos_crps_log WHERE city=? AND model_mode='emos_shadow'",
-            (city,),
+            "SELECT AVG(crps_score) FROM emos_crps_log "
+            "WHERE city=? AND model_mode='emos_shadow' AND sigma_source=?",
+            (city, sigma_source),
         ).fetchone()
         legacy_row = self._conn.execute(
-            "SELECT AVG(crps_score) FROM emos_crps_log WHERE city=? AND model_mode='legacy'",
-            (city,),
+            "SELECT AVG(crps_score) FROM emos_crps_log "
+            "WHERE city=? AND model_mode='legacy' AND sigma_source=?",
+            (city, sigma_source),
         ).fetchone()
 
         # Get all model weights for this city, ordered by date DESC
@@ -2942,6 +2972,7 @@ class Database:
         crps_score: float,
         model_mode: str = "emos_shadow",
         forecast_source: "str | None" = None,
+        sigma_source: "str | None" = None,
     ) -> None:
         """Insert a CRPS score record for *city* on *date*.
 
@@ -2950,16 +2981,25 @@ class Database:
         emos_calibration read/write helpers (issue #659). The shadow runner
         passes it explicitly so two different stacks' runs never collide on
         the same (city, date, model_mode) row (issue #759).
+
+        sigma_source=None resolves to the active USE_ENSEMBLE_SIGMA-derived
+        track (see _active_sigma_source) — same resolution pattern, so a
+        sigma_source switch (issue #799) tags new rows with the lineage they
+        were actually scored under instead of leaving them indistinguishable
+        from rows logged under the previous sigma track (issue #851).
         """
         if forecast_source is None:
             forecast_source = self._active_forecast_source()
+        if sigma_source is None:
+            sigma_source = self._active_sigma_source()
         logged_at = datetime.now(timezone.utc).isoformat()
         with self._lock:
             with self._conn:
                 self._conn.execute(
-                    "INSERT INTO emos_crps_log(city,date,crps_score,model_mode,forecast_source,logged_at) "
-                    "VALUES(?,?,?,?,?,?)",
-                    (city, date, crps_score, model_mode, forecast_source, logged_at),
+                    "INSERT INTO emos_crps_log"
+                    "(city,date,crps_score,model_mode,forecast_source,sigma_source,logged_at) "
+                    "VALUES(?,?,?,?,?,?,?)",
+                    (city, date, crps_score, model_mode, forecast_source, sigma_source, logged_at),
                 )
 
     def get_emos_crps_count(
@@ -2967,6 +3007,7 @@ class Database:
         city: str,
         model_mode: str = "emos_shadow",
         forecast_source: "str | None" = None,
+        sigma_source: "str | None" = None,
     ) -> int:
         """Return the number of CRPS log entries for *city* under *model_mode*.
 
@@ -2980,12 +3021,22 @@ class Database:
         promotion guard counts CRPS samples for the currently-served stack
         only, never pooling evidence accrued under a different stack across
         a FORECAST_STACK switch (issue #759).
+
+        sigma_source=None resolves to the active USE_ENSEMBLE_SIGMA-derived
+        track (see _active_sigma_source), so the promotion guard counts CRPS
+        samples scored under the currently-active sigma lineage only, never
+        pooling shadow-day evidence accrued under a different sigma_source
+        (e.g. pre-#799 'fixed' coefficients) across a sigma_source switch
+        (issue #851) — mirroring the #759 forecast_source guard above.
         """
         if forecast_source is None:
             forecast_source = self._active_forecast_source()
+        if sigma_source is None:
+            sigma_source = self._active_sigma_source()
         cur = self._conn.execute(
-            "SELECT COUNT(*) FROM emos_crps_log WHERE city=? AND model_mode=? AND forecast_source=?",
-            (city, model_mode, forecast_source),
+            "SELECT COUNT(*) FROM emos_crps_log "
+            "WHERE city=? AND model_mode=? AND forecast_source=? AND sigma_source=?",
+            (city, model_mode, forecast_source, sigma_source),
         )
         row = cur.fetchone()
         return int(row[0]) if row else 0
@@ -2996,9 +3047,10 @@ class Database:
         date: str,
         model_mode: str = "emos_shadow",
         forecast_source: "str | None" = None,
+        sigma_source: "str | None" = None,
     ) -> bool:
         """Return True if a CRPS row already exists for (city, date, model_mode,
-        forecast_source).
+        forecast_source, sigma_source).
 
         Used by the daily shadow runner to avoid double-counting samples when
         the calibration runs more than once on the same calendar day (e.g. after
@@ -3009,13 +3061,22 @@ class Database:
         instead of the second stack silently skipping because the first
         already claimed that day's (city, date, model_mode) slot
         (issue #759).
+
+        sigma_source=None resolves to the active USE_ENSEMBLE_SIGMA-derived
+        track, so a sigma_source switch on the same calendar day (e.g. the
+        day #799 flips USE_ENSEMBLE_SIGMA) does not silently skip logging
+        the new lineage's first row because the old lineage already claimed
+        that day's (city, date, model_mode, forecast_source) slot
+        (issue #851).
         """
         if forecast_source is None:
             forecast_source = self._active_forecast_source()
+        if sigma_source is None:
+            sigma_source = self._active_sigma_source()
         cur = self._conn.execute(
             "SELECT 1 FROM emos_crps_log WHERE city=? AND date=? AND model_mode=? "
-            "AND forecast_source=? LIMIT 1",
-            (city, date, model_mode, forecast_source),
+            "AND forecast_source=? AND sigma_source=? LIMIT 1",
+            (city, date, model_mode, forecast_source, sigma_source),
         )
         return cur.fetchone() is not None
 

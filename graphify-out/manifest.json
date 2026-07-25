@@ -100,8 +100,8 @@
     "semantic_hash": ""
   },
   "src/data/db.py": {
-    "mtime": 1784981101.536068,
-    "ast_hash": "d25f1bae6740cb3470037a248dcd9117",
+    "mtime": 1784985315.7110991,
+    "ast_hash": "341050cdb6faa15bf1a04f12e66cf4e4",
     "semantic_hash": ""
   },
   "src/data/freshness_monitor.py": {
@@ -225,8 +225,8 @@
     "semantic_hash": ""
   },
   "src/model/emos_mode.py": {
-    "mtime": 1784981101.53945,
-    "ast_hash": "99f6827cb47bb0912132eb399fbe6771",
+    "mtime": 1784985315.7110991,
+    "ast_hash": "700c73f89ac180279dc1f3eca61dc517",
     "semantic_hash": ""
   },
   "src/model/envelope.py": {
@@ -385,8 +385,8 @@
     "semantic_hash": ""
   },
   "src/tests/test_emos_mode.py": {
-    "mtime": 1784981101.544025,
-    "ast_hash": "2ae4d2fde9ceac066526f8425cba66ef",
+    "mtime": 1784985315.7110991,
+    "ast_hash": "320b4f646b5f12b58b19b174b349e81a",
     "semantic_hash": ""
   },
   "src/tests/test_envelope.py": {
@@ -710,8 +710,8 @@
     "semantic_hash": ""
   },
   "scripts/run_emos_shadow.py": {
-    "mtime": 1784981101.5308414,
-    "ast_hash": "815ff406983022a4334b9df54eed296f",
+    "mtime": 1784985315.7110991,
+    "ast_hash": "95f59e42d8e0e92200190c19ffb1ebe5",
     "semantic_hash": ""
   },
   "src/model/promotion_gate.py": {
@@ -800,8 +800,8 @@
     "semantic_hash": ""
   },
   "src/tests/test_emos_shadow_scaffolding.py": {
-    "mtime": 1784981101.544025,
-    "ast_hash": "8e02c3aea6fed6b856a3bfb04e8cec1c",
+    "mtime": 1784985315.7110991,
+    "ast_hash": "fcf986ccf2057a7412ac3632bbf94abe",
     "semantic_hash": ""
   },
   "src/tests/test_epic_366_e2e.py": {
@@ -1634,11 +1634,6 @@
     "ast_hash": "639b2d4e1a76bb47519384e598980c10",
     "semantic_hash": ""
   },
-  "src/scripts/resolve_bracket_outcomes.py": {
-    "mtime": 1784981223.7567763,
-    "ast_hash": "18ca67014434b6b919af3217ba35bd24",
-    "semantic_hash": ""
-  },
   "src/tests/test_bss_market_vs_model_report.py": {
     "mtime": 1784981101.544025,
     "ast_hash": "0684e62862e8f69f2d791f6d741fd5d8",
@@ -1649,14 +1644,14 @@
     "ast_hash": "fd65a34feecdc91aba2cd50e1728e13f",
     "semantic_hash": ""
   },
+  "src/tests/test_emos_crps_log_sigma_source_migration.py": {
+    "mtime": 1784985315.7110991,
+    "ast_hash": "f41f571245874a2e8b8f159ccdc31936",
+    "semantic_hash": ""
+  },
   "src/tests/test_emos_shrinkage.py": {
     "mtime": 1784981101.544025,
     "ast_hash": "bacd61aa6eb0a29d2fec5d7e3bcad8db",
-    "semantic_hash": ""
-  },
-  "src/tests/test_resolve_bracket_outcomes.py": {
-    "mtime": 1784981322.4919062,
-    "ast_hash": "f8902b328e008d5339aa87d98a5e7dc1",
     "semantic_hash": ""
   },
   "backtest_results/bss_market_vs_model_pass1_2026-07-24.md": {
@@ -1667,6 +1662,16 @@
   "backtest_results/bss_market_vs_model_pass1_2026-07-25.md": {
     "mtime": 1784981101.4684966,
     "ast_hash": "5ea9923a35607a32145388bc04bbf566",
+    "semantic_hash": ""
+  },
+  "src/scripts/resolve_bracket_outcomes.py": {
+    "mtime": 1784981223.7567763,
+    "ast_hash": "18ca67014434b6b919af3217ba35bd24",
+    "semantic_hash": ""
+  },
+  "src/tests/test_resolve_bracket_outcomes.py": {
+    "mtime": 1784981322.4919062,
+    "ast_hash": "f8902b328e008d5339aa87d98a5e7dc1",
     "semantic_hash": ""
   }
 }

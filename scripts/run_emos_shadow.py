@@ -5,15 +5,20 @@ Iterates all cities in STATIONS, fits emos_shadow coefficients for cities
 with enough training data, skips gracefully when data is insufficient.
 
 For every city that fits, a CRPS score row is appended to ``emos_crps_log``
-(via ``db.log_crps``) with ``model_mode="emos_shadow"`` and
-``forecast_source=stack``. This per-day record is what the promotion guard in
+(via ``db.log_crps``) with ``model_mode="emos_shadow"``,
+``forecast_source=stack``, and ``sigma_source`` (resolved once per run from
+the same ``USE_ENSEMBLE_SIGMA`` flag threaded through ``save_coefficients``
+below). This per-day record is what the promotion guard in
 ``emos_mode.get_city_mode`` counts against ``EMOS_MIN_SAMPLES_PROMOTION``
-(scoped to the active forecast_source only, issue #759) before a city is
-allowed to serve ``emos_primary`` — without it, promotion stays blocked
-forever because the sample count never leaves zero. Scoping the row and its
-per-day dedup guard by ``forecast_source`` means two stacks calibrated on the
-same calendar day each log their own row instead of the second stack's run
-silently skipping because the first already claimed that day's slot.
+(scoped to the active forecast_source, issue #759, and sigma_source, issue
+#851) before a city is allowed to serve ``emos_primary`` — without it,
+promotion stays blocked forever because the sample count never leaves zero.
+Scoping the row and its per-day dedup guard by ``forecast_source``/
+``sigma_source`` means two stacks (or sigma tracks) calibrated on the same
+calendar day each log their own row instead of the second one's run silently
+skipping because the first already claimed that day's slot — and means a
+sigma_source switch resets the promotion clock for the new lineage instead
+of inheriting the old lineage's already-accumulated evidence.
 
 A second row is appended alongside it with ``model_mode="legacy"``: the SAME
 training triples scored with their raw, uncorrected ``(mu, sigma)`` — i.e.
@@ -137,21 +142,39 @@ def _run_calibration(db, stack: str = "baseline") -> None:
             forecast_source=stack, sample_count=sample_count,
             sigma_source=sigma_source,
         )
-        if db.emos_crps_logged_for_date(city, today, "emos_shadow", forecast_source=stack):
+        # Issue #851: thread the SAME sigma_source resolved above through the
+        # CRPS log rows too (both the dedup check and the write), mirroring
+        # save_coefficients above. Without this, emos_crps_log/
+        # get_emos_crps_count have no way to tell shadow-day evidence scored
+        # under this sigma_source apart from evidence logged under a
+        # previous sigma track -- the promotion clock would silently keep
+        # counting pre-switch samples toward this (newly-retrained) lineage.
+        if db.emos_crps_logged_for_date(
+            city, today, "emos_shadow", forecast_source=stack, sigma_source=sigma_source
+        ):
             log.debug(
-                "[emos_shadow] city=%s: CRPS already logged for %s (stack=%s) — skipping",
-                city, today, stack,
+                "[emos_shadow] city=%s: CRPS already logged for %s (stack=%s, sigma=%s) — skipping",
+                city, today, stack, sigma_source,
             )
         else:
-            db.log_crps(city, today, mean_crps, model_mode="emos_shadow", forecast_source=stack)
+            db.log_crps(
+                city, today, mean_crps, model_mode="emos_shadow",
+                forecast_source=stack, sigma_source=sigma_source,
+            )
 
-        if db.emos_crps_logged_for_date(city, today, "legacy", forecast_source=stack):
+        if db.emos_crps_logged_for_date(
+            city, today, "legacy", forecast_source=stack, sigma_source=sigma_source
+        ):
             log.debug(
-                "[emos_shadow] city=%s: legacy CRPS already logged for %s (stack=%s) — skipping",
-                city, today, stack,
+                "[emos_shadow] city=%s: legacy CRPS already logged for %s "
+                "(stack=%s, sigma=%s) — skipping",
+                city, today, stack, sigma_source,
             )
         else:
-            db.log_crps(city, today, legacy_mean_crps, model_mode="legacy", forecast_source=stack)
+            db.log_crps(
+                city, today, legacy_mean_crps, model_mode="legacy",
+                forecast_source=stack, sigma_source=sigma_source,
+            )
 
         log.info(
             "[emos_shadow] city=%s: %s fit, coefficients saved "
