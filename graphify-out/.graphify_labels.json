@@ -435,6 +435,5 @@
   "434": "integration/__init__.py",
   "440": "Key Findings",
   "442": "TestMultipleGateFail",
-  "443": "TestClimbRateGate",
-  "446": "InsufficientDataError"
+  "443": "TestClimbRateGate"
 }
