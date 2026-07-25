@@ -16,7 +16,18 @@ exclusion is structurally wrong for Pass 2, which needs the full untraded
 population: whether a bracket resolved YES or NO is a fact about the
 weather, not about whether MeteoEdge traded it.
 
-**Ground truth.** YES iff the station's observed daily high -- MAX(temp_f)
+**Ground truth (issue #860).** Polymarket's definitive on-chain resolution
+where the market has settled decisively, falling back to the observed daily
+high otherwise -- the SAME precedence ``settle.py`` uses, so this repo has one
+resolution policy rather than two. This matters because the METAR-derived
+comparison booked the wrong outcome in ~22% of audited settlements (#644),
+and #822's M3 gate is the go/no-go decision for the entire trading thesis:
+scoring it against a proxy known to be wrong 1 time in 5 could flip the
+verdict. Network cost is bounded by a persistent cache -- a settled market's
+outcome never changes, so each ticker is fetched at most once ever -- and
+``--no-network`` serves from cache only.
+
+**METAR fallback.** YES iff the station's observed daily high -- MAX(temp_f)
 among ``observations`` rows for that station, grouped by the station's LOCAL
 calendar day (``STATION_TZ``) -- falls in ``[bracket_low, bracket_high]``.
 This mirrors the local-day-grouping algorithm already used in
@@ -96,6 +107,7 @@ fabricating a report.
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import os
 import sqlite3
@@ -109,7 +121,8 @@ from dateutil import parser as dtparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from src.config import BRACKET_EVALS_JSONL, STATION_TZ  # noqa: E402
+from src.config import BRACKET_EVALS_JSONL, LOG_DIR, STATION_TZ  # noqa: E402
+from src.data.polymarket import fetch_market_resolution  # noqa: E402
 from src.scripts.settle import resolve_trade_date  # noqa: E402
 from src.utils.log_rotation import iter_rotated_jsonl  # noqa: E402
 
@@ -118,6 +131,15 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(messag
 
 DEFAULT_DB_PATH = Path(os.getenv("DB_PATH", "data/meteoedge.db"))
 DEFAULT_OUT_DIR = Path("backtest_results")
+DEFAULT_GAMMA_CACHE_PATH = LOG_DIR / "gamma_resolution_cache.json"
+
+# Sentinel for "caller didn't specify a cache path -- use the module default".
+# Needed because a plain `cache_path=DEFAULT_GAMMA_CACHE_PATH` default binds the
+# value at import time, which would make the constant unpatchable (tests must be
+# able to redirect the cache away from the real logs/ directory). Resolving the
+# module global at CALL time keeps that patchable, while leaving an explicit
+# `cache_path=None` free to mean its own thing: no cache at all.
+_DEFAULT_CACHE = object()
 
 
 # ---------------------------------------------------------------------------
@@ -282,14 +304,159 @@ def resolve_outcome(
         return None
 
 
-def resolve_bracket_rows(
-    rows: "list[dict]", observed_highs: "dict[tuple[str, str], float]"
-) -> "tuple[list[dict], dict]":
-    """Attach ``observed_high`` and ``resolved_yes`` to every resolvable row.
+# ---------------------------------------------------------------------------
+# Gamma resolution: the AUTHORITATIVE ground truth (issue #860)
+# ---------------------------------------------------------------------------
+#
+# ``settle.py`` (see ``_write_db_settlements``) prefers Polymarket's official
+# on-chain resolution over METAR-derived truth, because the METAR comparison
+# booked the wrong outcome in ~22% of audited settlements (issue #644). This
+# module originally resolved from METAR only, which is exactly why #858's
+# settlements-direct correctness check reported a 27.5% mismatch rate on its
+# first production run -- it was comparing two DIFFERENT ground truths, one of
+# which the team had already concluded is the less trustworthy proxy.
+#
+# Since #822's M3 gate is the go/no-go decision for the whole trading thesis,
+# it must be scored against what actually happened, not against a proxy known
+# to be wrong ~1 time in 5. So this module now mirrors ``settle.py``'s
+# precedence exactly -- one resolution policy in this repo, not two.
 
-    Rows for a (station, settlement_date) with no observed high on record are
-    dropped (counted, not guessed). Returns (resolved_rows, counts).
+def load_gamma_cache(path: "Path | None") -> "dict[str, bool]":
+    """Load the persistent {ticker: resolved_yes} Gamma cache.
+
+    A resolved Polymarket market's outcome never changes once it has settled
+    on-chain, so a decisive resolution is cached permanently and that ticker
+    is never fetched again -- this is what keeps the network cost of scoring
+    hundreds of brackets/day bounded (issue #860).
+
+    A missing/corrupt/unreadable cache file is treated as an empty cache
+    (warned, never raised): a cache is an optimisation, and losing it must
+    only cost time, never correctness.
     """
+    if path is None:
+        return {}
+    path = Path(path)
+    if not path.exists():
+        return {}
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        log.warning("[resolve_bracket_outcomes] gamma cache unreadable (%s): %s", path, exc)
+        return {}
+    if not isinstance(raw, dict):
+        log.warning("[resolve_bracket_outcomes] gamma cache malformed (%s), ignoring", path)
+        return {}
+    return {str(k): bool(v) for k, v in raw.items() if isinstance(v, bool)}
+
+
+def save_gamma_cache(path: "Path | None", cache: "dict[str, bool]") -> None:
+    """Persist the Gamma cache. Failure is warned, never raised -- see
+    ``load_gamma_cache``: the cache must never be able to fail a run."""
+    if path is None:
+        return
+    path = Path(path)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(cache, indent=2, sort_keys=True), encoding="utf-8")
+    except OSError as exc:
+        log.warning("[resolve_bracket_outcomes] could not write gamma cache (%s): %s", path, exc)
+
+
+def resolve_gamma_outcomes(
+    tickers: "set[str]",
+    cache_path: "Path | None" = _DEFAULT_CACHE,
+    allow_network: bool = True,
+) -> "tuple[dict[str, bool], dict]":
+    """Return ({ticker: resolved_yes}, stats) for every ticker Polymarket has
+    definitively resolved.
+
+    Only DECISIVE resolutions are returned and cached -- ``fetch_market_
+    resolution`` returns None for a market that is unresolved, ambiguous, or
+    unreachable, and those are deliberately NOT cached so a later run retries
+    them (a market that has not settled yet may settle tomorrow; caching
+    "unknown" forever would permanently freeze it out of the M3 population).
+
+    ``allow_network=False`` (the CLI's ``--no-network``) serves purely from
+    cache and issues zero HTTP requests, so the whole pipeline stays usable
+    offline -- callers fall back to METAR for anything uncached.
+
+    A per-ticker fetch failure degrades that ticker to METAR and never aborts
+    the run.
+
+    ``cache_path`` defaults to ``DEFAULT_GAMMA_CACHE_PATH`` (resolved at call
+    time -- see ``_DEFAULT_CACHE``); pass ``None`` explicitly to run with no
+    cache at all.
+    """
+    if cache_path is _DEFAULT_CACHE:
+        cache_path = DEFAULT_GAMMA_CACHE_PATH
+    cache = load_gamma_cache(cache_path)
+    stats: dict = defaultdict(int)
+    stats["n_requested"] = len(tickers)
+
+    resolutions: "dict[str, bool]" = {}
+    to_fetch = []
+    for ticker in sorted(tickers):
+        if not ticker:
+            continue
+        if ticker in cache:
+            resolutions[ticker] = cache[ticker]
+            stats["n_cache_hits"] += 1
+        else:
+            to_fetch.append(ticker)
+
+    if not allow_network:
+        stats["n_skipped_offline"] = len(to_fetch)
+        return resolutions, dict(stats)
+
+    cache_dirty = False
+    for ticker in to_fetch:
+        stats["n_fetched"] += 1
+        try:
+            resolved = fetch_market_resolution(ticker)
+        except Exception as exc:  # noqa: BLE001 -- never let one ticker kill the run
+            log.warning(
+                "[resolve_bracket_outcomes] gamma fetch failed for %s: %s -- "
+                "falling back to METAR for this bracket", str(ticker)[:14], exc,
+            )
+            stats["n_fetch_errors"] += 1
+            continue
+        if resolved is None:
+            stats["n_indecisive"] += 1
+            continue
+        resolutions[ticker] = bool(resolved)
+        cache[ticker] = bool(resolved)
+        cache_dirty = True
+        stats["n_newly_resolved"] += 1
+
+    if cache_dirty:
+        save_gamma_cache(cache_path, cache)
+
+    return resolutions, dict(stats)
+
+
+def resolve_bracket_rows(
+    rows: "list[dict]",
+    observed_highs: "dict[tuple[str, str], float]",
+    gamma_resolutions: "dict[str, bool] | None" = None,
+) -> "tuple[list[dict], dict]":
+    """Attach ``observed_high``, ``resolved_yes`` and ``resolution_source`` to
+    every resolvable row.
+
+    Resolution precedence mirrors ``settle.py``'s exactly (issue #860):
+    Polymarket's definitive resolution wins when available
+    (``resolution_source='gamma'``), otherwise the observed daily high decides
+    (``resolution_source='metar'``).
+
+    Note a Gamma-resolved row survives even when no observation exists for
+    that station-day -- the official outcome does not need METAR to
+    corroborate it -- so switching Gamma on can only grow the resolved
+    population, never shrink it. ``observed_high`` is still attached when
+    known (it stays useful for diagnostics), and is None when not.
+
+    Rows that Gamma cannot resolve AND that have no observed high on record
+    are dropped (counted, never guessed). Returns (resolved_rows, counts).
+    """
+    gamma_resolutions = gamma_resolutions or {}
     counts: dict = defaultdict(int)
     counts["input_rows"] = len(rows)
     out = []
@@ -300,14 +467,31 @@ def resolve_bracket_rows(
             counts["missing_station_or_settlement_date"] += 1
             continue
         observed_high = observed_highs.get((station, settlement_date))
-        if observed_high is None:
-            counts["no_observed_high"] += 1
-            continue
-        resolved_yes = resolve_outcome(row.get("bracket_low"), row.get("bracket_high"), observed_high)
-        if resolved_yes is None:
-            counts["missing_bracket_bounds"] += 1
-            continue
-        out.append({**row, "observed_high": observed_high, "resolved_yes": resolved_yes})
+
+        gamma_yes = gamma_resolutions.get(row.get("ticker"))
+        if gamma_yes is not None:
+            resolved_yes = bool(gamma_yes)
+            resolution_source = "gamma"
+            counts["resolved_from_gamma"] += 1
+        else:
+            if observed_high is None:
+                counts["no_observed_high"] += 1
+                continue
+            resolved_yes = resolve_outcome(
+                row.get("bracket_low"), row.get("bracket_high"), observed_high
+            )
+            if resolved_yes is None:
+                counts["missing_bracket_bounds"] += 1
+                continue
+            resolution_source = "metar"
+            counts["resolved_from_metar"] += 1
+
+        out.append({
+            **row,
+            "observed_high": observed_high,
+            "resolved_yes": resolved_yes,
+            "resolution_source": resolution_source,
+        })
     counts["resolved_rows"] = len(out)
     return out, dict(counts)
 
@@ -319,20 +503,41 @@ def resolve_bracket_rows(
 def resolve_bracket_outcomes(
     bracket_evals_base: Path = BRACKET_EVALS_JSONL,
     db_path: "Path | None" = None,
+    use_gamma: bool = True,
+    allow_network: bool = True,
+    gamma_cache_path: "Path | None" = _DEFAULT_CACHE,
 ) -> "tuple[list[dict], dict]":
     """Load, dedupe, and resolve the outcome of every evaluated bracket.
 
-    Independent of ``settlements`` -- the only DB table read is
-    ``observations``. Returns (resolved_rows, counts):
+    Never joins ``settlements`` for resolution (issue #850 -- that join is
+    what collapses the population to the ~156 traded brackets). Ground truth
+    is Polymarket's definitive resolution where available, falling back to the
+    observed daily high from ``observations`` -- the same precedence
+    ``settle.py`` uses (issue #860).
+
+    Args:
+        use_gamma:      consult Polymarket for definitive resolutions. False
+                        reverts to pure-METAR resolution (the pre-#860
+                        behaviour) -- useful to reproduce an older report or
+                        to isolate the two sources when debugging.
+        allow_network:  when ``use_gamma``, permit HTTP fetches for tickers
+                        not already cached. False serves from cache only and
+                        issues zero requests (the CLI's ``--no-network``).
+        gamma_cache_path: persistent {ticker: resolved_yes} cache, so any
+                        ticker is fetched at most once ever.
+
+    Returns (resolved_rows, counts):
 
     - ``resolved_rows``: one dict per (station, ticker, settlement_date) --
-      the ``bracket_evals`` row plus ``observed_high`` (float) and
-      ``resolved_yes`` (bool).
+      the ``bracket_evals`` row plus ``observed_high`` (float or None),
+      ``resolved_yes`` (bool) and ``resolution_source`` ('gamma' | 'metar').
     - ``counts``: exclusion-funnel dict. ``counts["n_bracket_rows"]`` is the
       resolved bracket-row count; ``counts["n_station_days"]`` is the
       distinct (station, settlement_date) count -- the effective-sample-size
       figure for any downstream BSS/reliability power discussion, since all
       brackets sharing a station-day are not independent draws.
+      ``counts["resolved_from_gamma"]`` / ``["resolved_from_metar"]`` break
+      the population down by which ground truth decided it.
     """
     db_path = Path(db_path) if db_path is not None else DEFAULT_DB_PATH
 
@@ -345,12 +550,61 @@ def resolve_bracket_outcomes(
     }
     observed_highs = compute_observed_highs(db_path, station_dates)
 
-    resolved_rows, counts = resolve_bracket_rows(deduped, observed_highs)
+    gamma_resolutions: "dict[str, bool]" = {}
+    gamma_stats: dict = {}
+    if use_gamma:
+        tickers = {r["ticker"] for r in deduped if r.get("ticker")}
+        gamma_resolutions, gamma_stats = resolve_gamma_outcomes(
+            tickers, cache_path=gamma_cache_path, allow_network=allow_network
+        )
+
+    resolved_rows, counts = resolve_bracket_rows(deduped, observed_highs, gamma_resolutions)
     counts["raw_rows"] = len(raw_rows)
     counts["deduped_bracket_rows"] = len(deduped)
     counts["n_bracket_rows"] = len(resolved_rows)
     counts["n_station_days"] = len({(r["station"], r["settlement_date"]) for r in resolved_rows})
+    counts["gamma"] = gamma_stats
+    counts["gamma_enabled"] = bool(use_gamma)
     return resolved_rows, counts
+
+
+def detect_multi_yes_station_days(resolved_rows: "list[dict]") -> "list[dict]":
+    """Return station-days where MORE THAN ONE bracket resolved YES.
+
+    A station-day has exactly one daily high, so at most one bracket can
+    contain it -- two YES brackets on the same station-day is a logical
+    impossibility and means the resolution is wrong somewhere.
+
+    This is a DIAGNOSTIC, not a fix. The 2026-07-25 production report showed
+    it happening on Celsius-derived brackets whose Fahrenheit conversions
+    share an edge (e.g. ZGSZ 84.2-86.0 and 86.0-87.8 are 29-30C and 30-31C;
+    an observed 86.0F == 30C sits exactly on the shared boundary and
+    ``resolve_outcome``'s inclusive ``lo <= x <= hi`` puts it in both).
+    The correct interval convention is NOT yet established -- the production
+    data is consistent with neither half-open form (see issue #861), and
+    ``settle.py`` shares the same inclusive expression, so guessing here
+    would silently diverge the two. Surfacing the count is the honest step
+    until the real convention is confirmed.
+    """
+    by_day: "dict[tuple, list[dict]]" = defaultdict(list)
+    for row in resolved_rows:
+        if row.get("resolved_yes"):
+            by_day[(row.get("station"), row.get("settlement_date"))].append(row)
+
+    out = []
+    for (station, settlement_date), rows in sorted(by_day.items(), key=lambda kv: str(kv[0])):
+        if len(rows) > 1:
+            out.append({
+                "station": station,
+                "settlement_date": settlement_date,
+                "n_yes": len(rows),
+                "observed_high": rows[0].get("observed_high"),
+                "brackets": [
+                    (r.get("bracket_low"), r.get("bracket_high"), r.get("resolution_source"))
+                    for r in rows
+                ],
+            })
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -438,10 +692,19 @@ def load_settlement_rows(db_path: "Path | None") -> "list[dict]":
     if con is None:
         return []
     try:
-        cur = con.execute(
-            "SELECT ticker, station, bracket_low, bracket_high, actual_high_f, "
-            "resolved_yes FROM settlements"
+        # resolution_source arrived as a migration (db.py's ensure-column
+        # list), so a DB predating it -- or a minimal test fixture -- may not
+        # have the column. Probe rather than SELECT it blindly: the enclosing
+        # OperationalError handler returns [], which would silently zero the
+        # whole correctness check instead of just omitting one column.
+        have_resolution_source = any(
+            r["name"] == "resolution_source"
+            for r in con.execute("PRAGMA table_info(settlements)").fetchall()
         )
+        cols = "ticker, station, bracket_low, bracket_high, actual_high_f, resolved_yes"
+        if have_resolution_source:
+            cols += ", resolution_source"
+        cur = con.execute(f"SELECT {cols} FROM settlements")
         return [dict(r) for r in cur.fetchall()]
     except sqlite3.OperationalError as exc:
         log.warning("[resolve_bracket_outcomes] settlements read failed: %s", exc)
@@ -542,6 +805,13 @@ def cross_check_against_settlements_direct(db_path: "Path | None") -> dict:
     n_no_observed_high = 0
     n_match = 0
     mismatches = []
+    # Mismatches split by which ground truth the settlements row itself used
+    # (issue #860). A row settled from 'gamma' disagreeing with our METAR
+    # recomputation is the EXPECTED ~22% divergence #644 documented -- not
+    # evidence this module is broken. A 'metar'-settled row disagreeing is
+    # unexplained and genuinely worth investigating, since both sides then
+    # claim to be computing the same thing from the same observations.
+    mismatch_by_source: dict = defaultdict(int)
     for row, settlement_date in dated_rows:
         observed_high = observed_highs.get((row.get("station"), settlement_date))
         direct_yes = resolve_outcome(row.get("bracket_low"), row.get("bracket_high"), observed_high)
@@ -552,6 +822,8 @@ def cross_check_against_settlements_direct(db_path: "Path | None") -> dict:
         if direct_yes == settlements_yes:
             n_match += 1
         else:
+            source = row.get("resolution_source") or "unknown"
+            mismatch_by_source[source] += 1
             mismatches.append({
                 "station": row.get("station"),
                 "ticker": row.get("ticker"),
@@ -559,8 +831,10 @@ def cross_check_against_settlements_direct(db_path: "Path | None") -> dict:
                 "bracket_low": row.get("bracket_low"),
                 "bracket_high": row.get("bracket_high"),
                 "observed_high": observed_high,
+                "settlements_actual_high_f": row.get("actual_high_f"),
                 "direct_resolved_yes": direct_yes,
                 "settlements_resolved_yes": settlements_yes,
+                "settlements_resolution_source": source,
             })
 
     return {
@@ -570,6 +844,7 @@ def cross_check_against_settlements_direct(db_path: "Path | None") -> dict:
         "n_checked": n_match + len(mismatches),
         "n_match": n_match,
         "n_mismatch": len(mismatches),
+        "mismatch_by_source": dict(mismatch_by_source),
         "mismatches": mismatches,
     }
 
@@ -617,6 +892,65 @@ def build_dry_run_report(
         f"**{counts.get('n_station_days', 0)}** |"
     )
     lines.append("")
+
+    # Ground-truth breakdown (issue #860)
+    gamma_stats = counts.get("gamma") or {}
+    lines.append("## Ground truth used (issue #860)\n")
+    if not counts.get("gamma_enabled", False):
+        lines.append(
+            "> **Gamma resolution DISABLED for this run** (`--no-gamma`). Every row below "
+            "was resolved from METAR observations only -- the pre-#860 behaviour, which "
+            "`settle.py` itself does not use. Not suitable for the #822 M3 verdict.\n"
+        )
+    lines.append(
+        "Resolution precedence mirrors `settle.py`: Polymarket's definitive on-chain "
+        "resolution wins where available, METAR observed-high decides otherwise. The "
+        "METAR comparison booked the wrong outcome in ~22% of audited settlements "
+        "(#644), so a high `gamma` share is what makes the M3 gate trustworthy.\n"
+    )
+    lines.append("| Metric | Count |")
+    lines.append("|---|---|")
+    lines.append(f"| Resolved from **gamma** (official resolution) | {counts.get('resolved_from_gamma', 0)} |")
+    lines.append(f"| Resolved from **metar** (observed daily high) | {counts.get('resolved_from_metar', 0)} |")
+    lines.append(f"| Gamma cache hits (no network call) | {gamma_stats.get('n_cache_hits', 0)} |")
+    lines.append(f"| Gamma tickers newly fetched | {gamma_stats.get('n_fetched', 0)} |")
+    lines.append(f"| ...of which newly resolved + cached | {gamma_stats.get('n_newly_resolved', 0)} |")
+    lines.append(
+        f"| ...not yet decisively resolved (retried next run) | "
+        f"{gamma_stats.get('n_indecisive', 0)} |"
+    )
+    lines.append(f"| ...fetch errors (degraded to METAR) | {gamma_stats.get('n_fetch_errors', 0)} |")
+    if gamma_stats.get("n_skipped_offline"):
+        lines.append(
+            f"| Skipped -- offline mode (`--no-network`) | "
+            f"{gamma_stats.get('n_skipped_offline', 0)} |"
+        )
+    lines.append("")
+
+    multi_yes = detect_multi_yes_station_days(resolved_rows)
+    lines.append("## Diagnostic: station-days with more than one YES bracket\n")
+    lines.append(
+        "A station-day has exactly ONE daily high, so at most one bracket can contain it. "
+        "More than one YES is a logical impossibility and means resolution is wrong "
+        "somewhere. Known cause on Celsius-derived brackets: their Fahrenheit conversions "
+        "share an edge (ZGSZ 84.2-86.0 and 86.0-87.8 are 29-30C and 30-31C), and "
+        "`resolve_outcome`'s inclusive `lo <= x <= hi` puts a value sitting exactly on the "
+        "boundary in both. The correct convention is not yet established -- see issue "
+        "#861; this is reported, deliberately not silently 'fixed'.\n"
+    )
+    lines.append(f"**Affected station-days: {len(multi_yes)}**\n")
+    if multi_yes:
+        lines.append("| station | settlement_date | n_yes | observed_high | brackets (low, high, source) |")
+        lines.append("|---|---|---|---|---|")
+        for m in multi_yes[:25]:
+            brackets = "; ".join(f"({b[0]}, {b[1]}, {b[2]})" for b in m["brackets"])
+            lines.append(
+                f"| {m['station']} | {m['settlement_date']} | {m['n_yes']} | "
+                f"{m['observed_high']} | {brackets} |"
+            )
+        if len(multi_yes) > 25:
+            lines.append(f"| ... | ... | ... | ... | _{len(multi_yes) - 25} more_ |")
+        lines.append("")
     lines.append(
         "Note on power: all brackets evaluated on a station-day share the SAME observed "
         "daily high, so they are not independent draws. The station-day figure above, not "
@@ -680,18 +1014,46 @@ def build_dry_run_report(
     lines.append(f"| Mismatches | {direct_check.get('n_mismatch', 0)} |")
     lines.append("")
 
+    by_source = direct_check.get("mismatch_by_source") or {}
+    if by_source:
+        lines.append("**Mismatches by the settlements row's OWN resolution source (issue #860):**\n")
+        lines.append("| settlements.resolution_source | Mismatches | Interpretation |")
+        lines.append("|---|---|---|")
+        interpretations = {
+            "gamma": "**Expected.** That row was settled from Polymarket's official "
+                     "resolution, which #644 measured as disagreeing with METAR ~22% of "
+                     "the time. Not evidence this resolver is broken.",
+            "metar": "**Investigate.** Both sides claim to compute the observed daily "
+                     "high from the same observations, so a disagreement here is "
+                     "unexplained.",
+            "unknown": "Row predates the `resolution_source` column -- source unknown, "
+                       "so cannot be attributed either way.",
+        }
+        for source, n in sorted(by_source.items(), key=lambda kv: -kv[1]):
+            lines.append(f"| `{source}` | {n} | {interpretations.get(source, '--')} |")
+        lines.append("")
+
     if direct_check.get("mismatches"):
-        lines.append("### Mismatches (investigate before trusting this resolver)\n")
+        lines.append("### Mismatches\n")
+        lines.append(
+            "`observed_high` is what THIS module recomputed from `observations`; "
+            "`settlements.actual_high_f` is what the settle path recorded. When those two "
+            "differ, the disagreement is about the temperature itself; when they are equal "
+            "but the verdicts differ, it is about the resolution rule (bracket-boundary "
+            "convention, issue #861) or about gamma-vs-metar precedence.\n"
+        )
         lines.append(
             "| station | ticker | settlement_date | bracket_low | bracket_high | "
-            "observed_high | direct | settlements |"
+            "observed_high | settlements.actual_high_f | direct | settlements | source |"
         )
-        lines.append("|---|---|---|---|---|---|---|---|")
+        lines.append("|---|---|---|---|---|---|---|---|---|---|")
         for m in direct_check["mismatches"]:
             lines.append(
                 f"| {m['station']} | {m['ticker']} | {m['settlement_date']} | "
                 f"{m['bracket_low']} | {m['bracket_high']} | {m['observed_high']} | "
-                f"{m['direct_resolved_yes']} | {m['settlements_resolved_yes']} |"
+                f"{m.get('settlements_actual_high_f')} | "
+                f"{m['direct_resolved_yes']} | {m['settlements_resolved_yes']} | "
+                f"`{m.get('settlements_resolution_source', 'unknown')}` |"
             )
         lines.append("")
 
@@ -729,7 +1091,13 @@ def build_dry_run_report(
 
 
 def run_dry_run(
-    bracket_evals_base: Path, db_path: Path, out_dir: Path, run_date: "str | None" = None
+    bracket_evals_base: Path,
+    db_path: Path,
+    out_dir: Path,
+    run_date: "str | None" = None,
+    use_gamma: bool = True,
+    allow_network: bool = True,
+    gamma_cache_path: "Path | None" = _DEFAULT_CACHE,
 ) -> int:
     """Resolve outcomes, run both correctness checks, and (if there is real
     data for at least one of them) write a report. Self-gating, like
@@ -746,7 +1114,13 @@ def run_dry_run(
     """
     run_date = run_date or datetime.now(timezone.utc).date().isoformat()
 
-    resolved_rows, counts = resolve_bracket_outcomes(bracket_evals_base, db_path)
+    resolved_rows, counts = resolve_bracket_outcomes(
+        bracket_evals_base,
+        db_path,
+        use_gamma=use_gamma,
+        allow_network=allow_network,
+        gamma_cache_path=gamma_cache_path,
+    )
 
     if counts.get("raw_rows", 0) == 0:
         log.info(
@@ -781,11 +1155,14 @@ def run_dry_run(
     out_path.write_text(report, encoding="utf-8")
     log.info(
         "[resolve_bracket_outcomes] wrote %s (n_bracket_rows=%d, n_station_days=%d, "
+        "ground truth: gamma=%d metar=%d, "
         "settlements cross-check: n_overlap=%d n_mismatch=%d, "
-        "settlements-direct check: n_checked=%d n_mismatch=%d)",
+        "settlements-direct check: n_checked=%d n_mismatch=%d %s)",
         out_path, counts["n_bracket_rows"], counts["n_station_days"],
+        counts.get("resolved_from_gamma", 0), counts.get("resolved_from_metar", 0),
         cross_check["n_overlap"], cross_check["n_mismatch"],
         direct_check["n_checked"], direct_check["n_mismatch"],
+        direct_check.get("mismatch_by_source") or {},
     )
     return 0
 
@@ -797,8 +1174,23 @@ def main(argv: "list[str] | None" = None) -> int:
     ap.add_argument("--out", type=Path, default=DEFAULT_OUT_DIR)
     ap.add_argument("--run-date", default=None,
                     help="Report date stamp (default: today, UTC)")
+    ap.add_argument("--gamma-cache", type=Path, default=DEFAULT_GAMMA_CACHE_PATH,
+                    help="Persistent {ticker: resolved_yes} cache so any ticker is "
+                         "fetched from Polymarket at most once ever")
+    ap.add_argument("--no-network", action="store_true",
+                    help="Never issue HTTP requests: serve Gamma resolutions from the "
+                         "cache only and fall back to METAR for anything uncached")
+    ap.add_argument("--no-gamma", action="store_true",
+                    help="Ignore Polymarket resolutions entirely and resolve purely from "
+                         "METAR observed highs (pre-#860 behaviour; NOT suitable for the "
+                         "#822 M3 verdict -- see #644)")
     args = ap.parse_args(argv)
-    return run_dry_run(args.bracket_evals, args.db, args.out, args.run_date)
+    return run_dry_run(
+        args.bracket_evals, args.db, args.out, args.run_date,
+        use_gamma=not args.no_gamma,
+        allow_network=not args.no_network,
+        gamma_cache_path=args.gamma_cache,
+    )
 
 
 if __name__ == "__main__":

@@ -25,20 +25,48 @@ import sqlite3
 
 import pytest
 
+from unittest.mock import patch
+
 from src.scripts.resolve_bracket_outcomes import (
     build_dry_run_report,
     compute_observed_highs,
     cross_check_against_settlements,
     cross_check_against_settlements_direct,
     dedupe_one_per_bracket_day,
+    detect_multi_yes_station_days,
     load_bracket_eval_rows,
+    load_gamma_cache,
     load_settlement_outcomes,
     load_settlement_rows,
     resolve_bracket_outcomes,
     resolve_bracket_rows,
+    resolve_gamma_outcomes,
     resolve_outcome,
     run_dry_run,
+    save_gamma_cache,
 )
+
+
+@pytest.fixture(autouse=True)
+def _never_hit_the_network(tmp_path_factory):
+    """Hard guarantee that NO test in this module makes a real Polymarket call.
+
+    ``resolve_bracket_outcomes`` is Gamma-first by default (issue #860), so
+    without this an unsuspecting test with bracket_evals rows would fire real
+    HTTP requests. Returning None means "not decisively resolved", i.e. every
+    test falls back to METAR unless it patches this itself. The cache is also
+    redirected into a temp dir so no test can read or write the real
+    ``logs/gamma_resolution_cache.json``.
+    """
+    cache_dir = tmp_path_factory.mktemp("gamma_cache_guard")
+    with (
+        patch("src.scripts.resolve_bracket_outcomes.fetch_market_resolution", return_value=None),
+        patch(
+            "src.scripts.resolve_bracket_outcomes.DEFAULT_GAMMA_CACHE_PATH",
+            cache_dir / "gamma_resolution_cache.json",
+        ),
+    ):
+        yield
 
 
 # ---------------------------------------------------------------------------
@@ -853,3 +881,370 @@ class TestRunDryRun:
         text = out_file.read_text()
         assert "| Mismatches | 1 |" in text
         assert "t-bad" in text
+
+
+# ---------------------------------------------------------------------------
+# Gamma-first ground truth (issue #860)
+# ---------------------------------------------------------------------------
+
+def _write_settlements_db_with_source(path, settlements, trades=(), observations=()):
+    """Like _write_settlements_direct_db but the settlements table HAS the
+    resolution_source column (it arrived as a migration, so both shapes exist
+    in the wild -- the no-column shape is covered by the helpers above).
+
+    settlements: (ticker, station, bracket_low, bracket_high, actual_high_f,
+                  resolved_yes, resolution_source)
+    """
+    if observations:
+        _write_observations_db(path, observations)
+    con = sqlite3.connect(str(path))
+    con.execute(
+        "CREATE TABLE settlements (id INTEGER PRIMARY KEY, ts TEXT, station TEXT, "
+        "ticker TEXT UNIQUE, bracket_low REAL, bracket_high REAL, actual_high_f REAL, "
+        "resolved_yes INTEGER, market_final_price INTEGER, source TEXT, direction TEXT, "
+        "resolution_source TEXT)"
+    )
+    for tk, st, lo, hi, actual, yes, src in settlements:
+        con.execute(
+            "INSERT INTO settlements (ts, station, ticker, bracket_low, bracket_high, "
+            "actual_high_f, resolved_yes, source, direction, resolution_source) VALUES "
+            "('2099-01-01T00:00:00Z', ?, ?, ?, ?, ?, ?, 'polymarket', 'high', ?)",
+            (st, tk, lo, hi, actual, int(yes), src),
+        )
+    if trades:
+        _write_trades_table(con, trades)
+    con.commit()
+    con.close()
+
+
+class TestGammaCache:
+    def test_roundtrip(self, tmp_path):
+        p = tmp_path / "cache.json"
+        save_gamma_cache(p, {"0xaaa": True, "0xbbb": False})
+        assert load_gamma_cache(p) == {"0xaaa": True, "0xbbb": False}
+
+    def test_missing_file_is_empty_cache(self, tmp_path):
+        assert load_gamma_cache(tmp_path / "nope.json") == {}
+
+    def test_none_path_is_empty_cache(self):
+        assert load_gamma_cache(None) == {}
+
+    def test_corrupt_cache_degrades_to_empty_without_raising(self, tmp_path):
+        """A cache is an optimisation -- losing it may cost time, never
+        correctness, and must never crash a run."""
+        p = tmp_path / "cache.json"
+        p.write_text("{not json at all")
+        assert load_gamma_cache(p) == {}
+
+    def test_non_dict_cache_is_ignored(self, tmp_path):
+        p = tmp_path / "cache.json"
+        p.write_text('["not", "a", "dict"]')
+        assert load_gamma_cache(p) == {}
+
+    def test_non_bool_values_are_dropped(self, tmp_path):
+        p = tmp_path / "cache.json"
+        p.write_text('{"0xaaa": true, "0xjunk": "maybe"}')
+        assert load_gamma_cache(p) == {"0xaaa": True}
+
+    def test_save_to_unwritable_path_does_not_raise(self, tmp_path):
+        blocker = tmp_path / "afile"
+        blocker.write_text("x")
+        save_gamma_cache(blocker / "nested" / "cache.json", {"0xaaa": True})
+
+
+class TestResolveGammaOutcomes:
+    def test_decisive_yes_and_no_are_returned_and_cached(self, tmp_path):
+        cache_path = tmp_path / "cache.json"
+        with patch(
+            "src.scripts.resolve_bracket_outcomes.fetch_market_resolution",
+            side_effect=lambda t: True if t == "0xyes" else False,
+        ):
+            res, stats = resolve_gamma_outcomes({"0xyes", "0xno"}, cache_path=cache_path)
+        assert res == {"0xyes": True, "0xno": False}
+        assert stats["n_newly_resolved"] == 2
+        assert load_gamma_cache(cache_path) == {"0xyes": True, "0xno": False}
+
+    def test_cache_hit_makes_no_network_call(self, tmp_path):
+        """The whole point of the cache (#860): a settled market's outcome
+        never changes, so a cached ticker must never be fetched again."""
+        cache_path = tmp_path / "cache.json"
+        save_gamma_cache(cache_path, {"0xaaa": True})
+        with patch(
+            "src.scripts.resolve_bracket_outcomes.fetch_market_resolution"
+        ) as mock_fetch:
+            res, stats = resolve_gamma_outcomes({"0xaaa"}, cache_path=cache_path)
+        mock_fetch.assert_not_called()
+        assert res == {"0xaaa": True}
+        assert stats["n_cache_hits"] == 1
+        assert stats.get("n_fetched", 0) == 0
+
+    def test_indecisive_is_not_cached_so_it_retries_next_run(self, tmp_path):
+        """A market that hasn't settled yet may settle tomorrow -- caching
+        'unknown' forever would permanently freeze it out of the population."""
+        cache_path = tmp_path / "cache.json"
+        with patch(
+            "src.scripts.resolve_bracket_outcomes.fetch_market_resolution", return_value=None
+        ):
+            res, stats = resolve_gamma_outcomes({"0xopen"}, cache_path=cache_path)
+        assert res == {}
+        assert stats["n_indecisive"] == 1
+        assert load_gamma_cache(cache_path) == {}
+
+        # Later run, now decisive -> picked up.
+        with patch(
+            "src.scripts.resolve_bracket_outcomes.fetch_market_resolution", return_value=True
+        ):
+            res2, _ = resolve_gamma_outcomes({"0xopen"}, cache_path=cache_path)
+        assert res2 == {"0xopen": True}
+
+    def test_fetch_error_degrades_to_metar_and_does_not_raise(self, tmp_path):
+        with patch(
+            "src.scripts.resolve_bracket_outcomes.fetch_market_resolution",
+            side_effect=RuntimeError("gamma is down"),
+        ):
+            res, stats = resolve_gamma_outcomes({"0xaaa"}, cache_path=tmp_path / "c.json")
+        assert res == {}
+        assert stats["n_fetch_errors"] == 1
+
+    def test_one_bad_ticker_does_not_stop_the_others(self, tmp_path):
+        def _flaky(ticker):
+            if ticker == "0xbad":
+                raise RuntimeError("boom")
+            return True
+
+        with patch(
+            "src.scripts.resolve_bracket_outcomes.fetch_market_resolution", side_effect=_flaky
+        ):
+            res, stats = resolve_gamma_outcomes(
+                {"0xbad", "0xgood"}, cache_path=tmp_path / "c.json"
+            )
+        assert res == {"0xgood": True}
+        assert stats["n_fetch_errors"] == 1
+
+    def test_no_network_makes_zero_calls_and_still_serves_cache(self, tmp_path):
+        cache_path = tmp_path / "cache.json"
+        save_gamma_cache(cache_path, {"0xcached": True})
+        with patch(
+            "src.scripts.resolve_bracket_outcomes.fetch_market_resolution"
+        ) as mock_fetch:
+            res, stats = resolve_gamma_outcomes(
+                {"0xcached", "0xuncached"}, cache_path=cache_path, allow_network=False
+            )
+        mock_fetch.assert_not_called()
+        assert res == {"0xcached": True}
+        assert stats["n_skipped_offline"] == 1
+
+
+class TestGammaPrecedence:
+    """Gamma must win over METAR -- that is the entire point of #860."""
+
+    def _rows_and_highs(self):
+        rows = [_eval_row(ticker="0xaaa", bracket_low=81.0, bracket_high=83.0)]
+        highs = {("KORD", "2026-07-05"): 82.0}  # METAR says YES
+        return rows, highs
+
+    def test_gamma_no_overrides_metar_yes(self):
+        rows, highs = self._rows_and_highs()
+        out, counts = resolve_bracket_rows(rows, highs, {"0xaaa": False})
+        assert out[0]["resolved_yes"] is False
+        assert out[0]["resolution_source"] == "gamma"
+        assert counts["resolved_from_gamma"] == 1
+
+    def test_gamma_yes_overrides_metar_no(self):
+        rows = [_eval_row(ticker="0xaaa", bracket_low=81.0, bracket_high=83.0)]
+        highs = {("KORD", "2026-07-05"): 95.0}  # METAR says NO
+        out, _ = resolve_bracket_rows(rows, highs, {"0xaaa": True})
+        assert out[0]["resolved_yes"] is True
+        assert out[0]["resolution_source"] == "gamma"
+
+    def test_falls_back_to_metar_when_gamma_has_no_answer(self):
+        rows, highs = self._rows_and_highs()
+        out, counts = resolve_bracket_rows(rows, highs, {})
+        assert out[0]["resolved_yes"] is True
+        assert out[0]["resolution_source"] == "metar"
+        assert counts["resolved_from_metar"] == 1
+
+    def test_gamma_resolves_a_row_with_no_observation_at_all(self):
+        """An official resolution doesn't need METAR to corroborate it, so
+        switching Gamma on can only grow the population, never shrink it."""
+        rows = [_eval_row(ticker="0xaaa")]
+        out, counts = resolve_bracket_rows(rows, {}, {"0xaaa": True})
+        assert len(out) == 1
+        assert out[0]["resolved_yes"] is True
+        assert out[0]["observed_high"] is None
+        assert counts.get("no_observed_high", 0) == 0
+
+    def test_row_with_neither_gamma_nor_observation_is_dropped_not_guessed(self):
+        rows = [_eval_row(ticker="0xaaa")]
+        out, counts = resolve_bracket_rows(rows, {}, {})
+        assert out == []
+        assert counts["no_observed_high"] == 1
+
+
+class TestResolveBracketOutcomesGammaWiring:
+    def test_use_gamma_false_makes_no_network_call(self, tmp_path):
+        bracket_evals = tmp_path / "bracket_evals.jsonl"
+        _write_bracket_evals_jsonl(bracket_evals, [_eval_row(ticker="0xaaa")])
+        db_path = tmp_path / "meteoedge.db"
+        _write_observations_db(db_path, [("KORD", "2026-07-05T18:00:00+00:00", 82.0)])
+
+        with patch(
+            "src.scripts.resolve_bracket_outcomes.fetch_market_resolution"
+        ) as mock_fetch:
+            rows, counts = resolve_bracket_outcomes(
+                bracket_evals, db_path, use_gamma=False, gamma_cache_path=tmp_path / "c.json"
+            )
+        mock_fetch.assert_not_called()
+        assert counts["gamma_enabled"] is False
+        assert rows[0]["resolution_source"] == "metar"
+
+    def test_gamma_result_flows_end_to_end(self, tmp_path):
+        bracket_evals = tmp_path / "bracket_evals.jsonl"
+        _write_bracket_evals_jsonl(bracket_evals, [_eval_row(ticker="0xaaa")])
+        db_path = tmp_path / "meteoedge.db"
+        # METAR would say YES (82 is inside 81-83); gamma overrules with NO.
+        _write_observations_db(db_path, [("KORD", "2026-07-05T18:00:00+00:00", 82.0)])
+
+        with patch(
+            "src.scripts.resolve_bracket_outcomes.fetch_market_resolution", return_value=False
+        ):
+            rows, counts = resolve_bracket_outcomes(
+                bracket_evals, db_path, gamma_cache_path=tmp_path / "c.json"
+            )
+        assert rows[0]["resolved_yes"] is False
+        assert rows[0]["resolution_source"] == "gamma"
+        assert counts["resolved_from_gamma"] == 1
+
+
+class TestDetectMultiYesStationDays:
+    def test_flags_two_yes_brackets_on_one_station_day(self):
+        """One station-day has one daily high, so two YES brackets is a
+        logical impossibility (the boundary-inclusivity issue, #861)."""
+        rows = [
+            {"station": "ZGSZ", "settlement_date": "2026-06-12", "resolved_yes": True,
+             "bracket_low": 84.2, "bracket_high": 86.0, "observed_high": 86.0,
+             "resolution_source": "metar"},
+            {"station": "ZGSZ", "settlement_date": "2026-06-12", "resolved_yes": True,
+             "bracket_low": 86.0, "bracket_high": 87.8, "observed_high": 86.0,
+             "resolution_source": "metar"},
+        ]
+        out = detect_multi_yes_station_days(rows)
+        assert len(out) == 1
+        assert out[0]["station"] == "ZGSZ"
+        assert out[0]["n_yes"] == 2
+
+    def test_single_yes_is_not_flagged(self):
+        rows = [
+            {"station": "KORD", "settlement_date": "2026-07-05", "resolved_yes": True,
+             "bracket_low": 81.0, "bracket_high": 83.0, "observed_high": 82.0,
+             "resolution_source": "metar"},
+            {"station": "KORD", "settlement_date": "2026-07-05", "resolved_yes": False,
+             "bracket_low": 84.0, "bracket_high": 85.0, "observed_high": 82.0,
+             "resolution_source": "metar"},
+        ]
+        assert detect_multi_yes_station_days(rows) == []
+
+    def test_different_days_are_not_conflated(self):
+        rows = [
+            {"station": "KORD", "settlement_date": "2026-07-05", "resolved_yes": True,
+             "bracket_low": 81.0, "bracket_high": 83.0, "observed_high": 82.0,
+             "resolution_source": "metar"},
+            {"station": "KORD", "settlement_date": "2026-07-06", "resolved_yes": True,
+             "bracket_low": 81.0, "bracket_high": 83.0, "observed_high": 82.0,
+             "resolution_source": "metar"},
+        ]
+        assert detect_multi_yes_station_days(rows) == []
+
+
+class TestDirectCheckResolutionSource:
+    def test_mismatches_are_attributed_to_the_settlements_row_source(self, tmp_path):
+        """A gamma-settled row disagreeing with our METAR recomputation is the
+        EXPECTED ~22% divergence (#644); a metar-settled row disagreeing is
+        unexplained. The report must be able to tell them apart (#860)."""
+        db_path = tmp_path / "meteoedge.db"
+        _write_settlements_db_with_source(
+            db_path,
+            observations=[
+                ("KORD", "2026-07-05T18:00:00+00:00", 82.0),
+                ("KLAX", "2026-07-05T18:00:00+00:00", 82.0),
+            ],
+            settlements=[
+                # Both disagree with METAR (which says YES for 81-83 @ 82.0),
+                # but for different reasons.
+                ("0xgamma", "KORD", 81.0, 83.0, 82.0, False, "gamma"),
+                ("0xmetar", "KLAX", 81.0, 83.0, 82.0, False, "metar"),
+            ],
+            trades=[
+                ("0xgamma", "KORD", "2026-07-05T12:00:00+00:00", "2026-07-05"),
+                ("0xmetar", "KLAX", "2026-07-05T12:00:00+00:00", "2026-07-05"),
+            ],
+        )
+        result = cross_check_against_settlements_direct(db_path)
+        assert result["n_mismatch"] == 2
+        assert result["mismatch_by_source"] == {"gamma": 1, "metar": 1}
+
+    def test_settlements_actual_high_is_reported_alongside_our_recomputation(self, tmp_path):
+        """When the two temperatures differ, the disagreement is about the
+        temperature; when they're equal, it's about the resolution rule."""
+        db_path = tmp_path / "meteoedge.db"
+        _write_settlements_db_with_source(
+            db_path,
+            observations=[("KORD", "2026-07-05T18:00:00+00:00", 82.0)],
+            settlements=[("0xaaa", "KORD", 81.0, 83.0, 91.4, False, "gamma")],
+            trades=[("0xaaa", "KORD", "2026-07-05T12:00:00+00:00", "2026-07-05")],
+        )
+        result = cross_check_against_settlements_direct(db_path)
+        m = result["mismatches"][0]
+        assert m["observed_high"] == 82.0
+        assert m["settlements_actual_high_f"] == 91.4
+
+    def test_db_without_resolution_source_column_still_runs(self, tmp_path):
+        """The column arrived as a migration, so older DBs lack it. Probing
+        for it must degrade to 'unknown', NOT zero out the whole check."""
+        db_path = tmp_path / "meteoedge.db"
+        _write_settlements_direct_db(
+            db_path,
+            observations=[("KORD", "2026-07-05T18:00:00+00:00", 82.0)],
+            settlements=[("0xaaa", "KORD", 81.0, 83.0, 82.0, False)],
+            trades=[("0xaaa", "KORD", "2026-07-05T12:00:00+00:00", "2026-07-05")],
+        )
+        result = cross_check_against_settlements_direct(db_path)
+        assert result["n_checked"] == 1
+        assert result["n_mismatch"] == 1
+        assert result["mismatch_by_source"] == {"unknown": 1}
+
+
+class TestReportGammaSections:
+    def test_report_includes_ground_truth_and_multi_yes_sections(self, tmp_path):
+        bracket_evals = tmp_path / "bracket_evals.jsonl"
+        _write_bracket_evals_jsonl(bracket_evals, [_eval_row(ticker="0xaaa")])
+        db_path = tmp_path / "meteoedge.db"
+        _write_observations_db(db_path, [("KORD", "2026-07-05T18:00:00+00:00", 82.0)])
+
+        with patch(
+            "src.scripts.resolve_bracket_outcomes.fetch_market_resolution", return_value=True
+        ):
+            rc = run_dry_run(
+                bracket_evals, db_path, tmp_path / "out", run_date="2026-07-25",
+                gamma_cache_path=tmp_path / "c.json",
+            )
+        assert rc == 0
+        text = (tmp_path / "out" / "bracket_outcome_resolution_dryrun_2026-07-25.md").read_text()
+        assert "## Ground truth used (issue #860)" in text
+        assert "Resolved from **gamma**" in text
+        assert "more than one YES bracket" in text
+
+    def test_report_warns_loudly_when_gamma_is_disabled(self, tmp_path):
+        bracket_evals = tmp_path / "bracket_evals.jsonl"
+        _write_bracket_evals_jsonl(bracket_evals, [_eval_row(ticker="0xaaa")])
+        db_path = tmp_path / "meteoedge.db"
+        _write_observations_db(db_path, [("KORD", "2026-07-05T18:00:00+00:00", 82.0)])
+
+        rc = run_dry_run(
+            bracket_evals, db_path, tmp_path / "out", run_date="2026-07-25",
+            use_gamma=False, gamma_cache_path=tmp_path / "c.json",
+        )
+        assert rc == 0
+        text = (tmp_path / "out" / "bracket_outcome_resolution_dryrun_2026-07-25.md").read_text()
+        assert "Gamma resolution DISABLED" in text
+        assert "Not suitable for the #822 M3 verdict" in text
