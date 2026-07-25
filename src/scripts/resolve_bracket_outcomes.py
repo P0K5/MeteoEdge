@@ -64,6 +64,24 @@ module's independently-computed ``resolved_yes`` against
 They must match -- a mismatch means this module's ground truth (or
 ``settlements``' truth) is wrong, not that the two are free to disagree.
 
+**Issue #858.** The check above only has statistical power on the overlap
+between ``bracket_evals`` and ``settlements`` -- and ``bracket_evals`` only
+started logging 2026-07-24 (#826) while ``settlements`` mostly predates that,
+so in production the overlap can be (and, on 2026-07-25, was) zero: a
+technically-passing check with nothing behind it. ``cross_check_against_
+settlements_direct()`` is a second, independent correctness check that never
+goes through ``bracket_evals`` at all: it resolves every ``settlements`` row
+straight from that row's own ``station``/``bracket_low``/``bracket_high``
+against an independently-recomputed observed high, then compares to that
+SAME row's ``resolved_yes``. Because ``settlements.ts`` is the settle-service
+RUN timestamp (see ``src.data.settlements.SettlementWriter.record_settlement``),
+not the settlement date, the settlement date for each row is instead derived
+by joining to ``trades`` on ``ticker`` and reusing ``settle.resolve_trade_date()``
+-- the same ``end_date``-preferred, station-local-``ts``-fallback convention
+``backfill_live_settlements.py`` already relies on for exactly this problem.
+A row whose ticker has no matching ``trades`` row (so no trustworthy date)
+is skipped, not guessed.
+
 Usage (dry-run CLI; prints and writes a report; never writes to the DB)::
 
     python -m src.scripts.resolve_bracket_outcomes
@@ -92,6 +110,7 @@ from dateutil import parser as dtparse
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from src.config import BRACKET_EVALS_JSONL, STATION_TZ  # noqa: E402
+from src.scripts.settle import resolve_trade_date  # noqa: E402
 from src.utils.log_rotation import iter_rotated_jsonl  # noqa: E402
 
 log = logging.getLogger(__name__)
@@ -402,10 +421,166 @@ def cross_check_against_settlements(
 
 
 # ---------------------------------------------------------------------------
+# Correctness check #2 (issue #858): resolve directly from settlements'
+# OWN fields, bypassing bracket_evals entirely
+# ---------------------------------------------------------------------------
+
+def load_settlement_rows(db_path: "Path | None") -> "list[dict]":
+    """Return every ``settlements`` row with the columns
+    ``cross_check_against_settlements_direct()`` needs: ``ticker``,
+    ``station``, ``bracket_low``, ``bracket_high``, ``actual_high_f``,
+    ``resolved_yes``. Unlike ``load_settlement_outcomes()`` (which only keeps
+    ``resolved_yes`` for the bracket_evals-overlap check), this keeps enough
+    of each row to independently re-resolve it without going back through
+    ``bracket_evals`` at all.
+    """
+    con = _connect_ro(db_path)
+    if con is None:
+        return []
+    try:
+        cur = con.execute(
+            "SELECT ticker, station, bracket_low, bracket_high, actual_high_f, "
+            "resolved_yes FROM settlements"
+        )
+        return [dict(r) for r in cur.fetchall()]
+    except sqlite3.OperationalError as exc:
+        log.warning("[resolve_bracket_outcomes] settlements read failed: %s", exc)
+        return []
+    finally:
+        con.close()
+
+
+def _trade_dates_by_ticker(db_path: "Path | None") -> "dict[str, date]":
+    """Return {ticker: settlement_date} derived from the ``trades`` table.
+
+    ``settlements.ts`` is the settle-service RUN timestamp (see
+    ``src.data.settlements.SettlementWriter.record_settlement`` -- it's
+    always ``datetime.now(timezone.utc)`` at write time), NOT the settlement
+    date, so it must never be used to date a settlements row. Instead, this
+    joins to ``trades`` on ``ticker`` and reuses ``settle.resolve_trade_date()``
+    -- the same end_date-preferred, station-local-``ts``-fallback convention
+    ``backfill_live_settlements.py`` already relies on for exactly this
+    problem -- rather than re-deriving a date from scratch. A ticker with no
+    ``trades`` row, or whose ``trades`` row(s) can't be dated, is simply
+    absent from the returned dict.
+    """
+    con = _connect_ro(db_path)
+    if con is None:
+        return {}
+    try:
+        cur = con.execute("SELECT ticker, station, ts, end_date FROM trades")
+        out: "dict[str, date]" = {}
+        for row in cur.fetchall():
+            ticker = row["ticker"]
+            if not ticker or ticker in out:
+                continue
+            d = resolve_trade_date(dict(row))
+            if d is not None:
+                out[ticker] = d
+        return out
+    except sqlite3.OperationalError as exc:
+        log.warning("[resolve_bracket_outcomes] trades read failed: %s", exc)
+        return {}
+    finally:
+        con.close()
+
+
+def cross_check_against_settlements_direct(db_path: "Path | None") -> dict:
+    """Resolve every ``settlements`` row directly from its OWN
+    station/bracket_low/bracket_high (and an independently-derived
+    settlement date), completely bypassing ``bracket_evals`` and
+    ``resolve_bracket_outcomes()``. Then compare the independently-computed
+    outcome against that SAME row's ``resolved_yes``.
+
+    This is the correctness check issue #858 asks for: unlike
+    ``cross_check_against_settlements()``, its statistical power does not
+    depend on ``bracket_evals`` overlapping ``settlements`` in time -- it can
+    validate the resolver's core logic (``resolve_outcome`` +
+    ``compute_observed_highs``) against the FULL ``settlements`` population.
+
+    Returns a dict with:
+    - ``n_settlement_rows``: total rows read from ``settlements``.
+    - ``n_no_trade_date``: rows skipped because no ``trades`` row (or none
+      that resolve to a date) matches the ticker -- can't independently date
+      the row, so it's never guessed.
+    - ``n_no_observed_high``: rows skipped because no observation exists for
+      that (station, date) once dated.
+    - ``n_checked``: rows actually compared (``n_match + n_mismatch``).
+    - ``n_match`` / ``n_mismatch`` / ``mismatches``: as in
+      ``cross_check_against_settlements()``.
+    """
+    settlement_rows = load_settlement_rows(db_path)
+    n_settlement_rows = len(settlement_rows)
+    if n_settlement_rows == 0:
+        return {
+            "n_settlement_rows": 0,
+            "n_no_trade_date": 0,
+            "n_no_observed_high": 0,
+            "n_checked": 0,
+            "n_match": 0,
+            "n_mismatch": 0,
+            "mismatches": [],
+        }
+
+    trade_dates = _trade_dates_by_ticker(db_path)
+
+    dated_rows: "list[tuple[dict, str]]" = []
+    n_no_trade_date = 0
+    for row in settlement_rows:
+        d = trade_dates.get(row.get("ticker"))
+        if d is None:
+            n_no_trade_date += 1
+            continue
+        dated_rows.append((row, d.isoformat()))
+
+    station_dates = {
+        (row["station"], settlement_date) for row, settlement_date in dated_rows
+        if row.get("station")
+    }
+    observed_highs = compute_observed_highs(db_path, station_dates)
+
+    n_no_observed_high = 0
+    n_match = 0
+    mismatches = []
+    for row, settlement_date in dated_rows:
+        observed_high = observed_highs.get((row.get("station"), settlement_date))
+        direct_yes = resolve_outcome(row.get("bracket_low"), row.get("bracket_high"), observed_high)
+        if direct_yes is None:
+            n_no_observed_high += 1
+            continue
+        settlements_yes = bool(row.get("resolved_yes"))
+        if direct_yes == settlements_yes:
+            n_match += 1
+        else:
+            mismatches.append({
+                "station": row.get("station"),
+                "ticker": row.get("ticker"),
+                "settlement_date": settlement_date,
+                "bracket_low": row.get("bracket_low"),
+                "bracket_high": row.get("bracket_high"),
+                "observed_high": observed_high,
+                "direct_resolved_yes": direct_yes,
+                "settlements_resolved_yes": settlements_yes,
+            })
+
+    return {
+        "n_settlement_rows": n_settlement_rows,
+        "n_no_trade_date": n_no_trade_date,
+        "n_no_observed_high": n_no_observed_high,
+        "n_checked": n_match + len(mismatches),
+        "n_match": n_match,
+        "n_mismatch": len(mismatches),
+        "mismatches": mismatches,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Dry-run CLI
 # ---------------------------------------------------------------------------
 
-def build_dry_run_report(resolved_rows: "list[dict]", counts: dict, cross_check: dict, run_date: str) -> str:
+def build_dry_run_report(
+    resolved_rows: "list[dict]", counts: dict, cross_check: dict, direct_check: dict, run_date: str
+) -> str:
     lines = []
     lines.append("# Bracket Outcome Resolution -- Dry Run (issue #850)\n")
     lines.append(f"**Run date:** {run_date}  ")
@@ -477,6 +652,49 @@ def build_dry_run_report(resolved_rows: "list[dict]", counts: dict, cross_check:
             )
         lines.append("")
 
+    lines.append(
+        "## Correctness check #2: resolved directly from `settlements` (issue #858)\n"
+    )
+    lines.append(
+        "Independent of the check above -- and of `bracket_evals` entirely. Every "
+        "`settlements` row is re-resolved from its OWN `station`/`bracket_low`/"
+        "`bracket_high` against an independently-recomputed observed high (dated via "
+        "`trades.end_date`/station-local `ts`, NOT `settlements.ts` -- see methodology "
+        "notes), then compared to that SAME row's `resolved_yes`. This has statistical "
+        "power over the FULL `settlements` population, so it stays informative even when "
+        "the check above has near-zero overlap.\n"
+    )
+    lines.append("| Metric | Value |")
+    lines.append("|---|---|")
+    lines.append(f"| Settlements rows read (n) | {direct_check.get('n_settlement_rows', 0)} |")
+    lines.append(
+        f"| Excluded: no dateable `trades` row for this ticker | "
+        f"{direct_check.get('n_no_trade_date', 0)} |"
+    )
+    lines.append(
+        f"| Excluded: no observed high on record for that station-day | "
+        f"{direct_check.get('n_no_observed_high', 0)} |"
+    )
+    lines.append(f"| **Checked (n)** | **{direct_check.get('n_checked', 0)}** |")
+    lines.append(f"| Matches | {direct_check.get('n_match', 0)} |")
+    lines.append(f"| Mismatches | {direct_check.get('n_mismatch', 0)} |")
+    lines.append("")
+
+    if direct_check.get("mismatches"):
+        lines.append("### Mismatches (investigate before trusting this resolver)\n")
+        lines.append(
+            "| station | ticker | settlement_date | bracket_low | bracket_high | "
+            "observed_high | direct | settlements |"
+        )
+        lines.append("|---|---|---|---|---|---|---|---|")
+        for m in direct_check["mismatches"]:
+            lines.append(
+                f"| {m['station']} | {m['ticker']} | {m['settlement_date']} | "
+                f"{m['bracket_low']} | {m['bracket_high']} | {m['observed_high']} | "
+                f"{m['direct_resolved_yes']} | {m['settlements_resolved_yes']} |"
+            )
+        lines.append("")
+
     lines.append("\n---\n")
     lines.append("## Methodology notes\n")
     lines.append(
@@ -498,6 +716,14 @@ def build_dry_run_report(resolved_rows: "list[dict]", counts: dict, cross_check:
         "- This module does NOT compute BS_model / BS_market / BSS -- that remains issue "
         "#822 Pass 2's own scope, built on top of `resolve_bracket_outcomes()`."
     )
+    lines.append(
+        "- Correctness check #2 (issue #858) never uses `settlements.ts` as a settlement "
+        "date -- it's the settle-service RUN timestamp, not the settlement date (see "
+        "`src.data.settlements.SettlementWriter.record_settlement`). The date instead "
+        "comes from the matching `trades` row's `end_date` (falling back to that row's "
+        "own station-local `ts` day), via `settle.resolve_trade_date()` -- the same "
+        "convention `backfill_live_settlements.py` uses."
+    )
     lines.append("")
     return "\n".join(lines)
 
@@ -505,9 +731,18 @@ def build_dry_run_report(resolved_rows: "list[dict]", counts: dict, cross_check:
 def run_dry_run(
     bracket_evals_base: Path, db_path: Path, out_dir: Path, run_date: "str | None" = None
 ) -> int:
-    """Resolve outcomes, cross-check against settlements, and (if there is
-    real data) write a report. Self-gating, like
+    """Resolve outcomes, run both correctness checks, and (if there is real
+    data for at least one of them) write a report. Self-gating, like
     ``bss_market_vs_model_report.run_report``: no local data -> no report.
+
+    The two correctness checks are independent of each other (issue #858):
+    ``cross_check_against_settlements()`` only has power on the
+    ``bracket_evals`` <-> ``settlements`` overlap, which can be near-zero in
+    production (``bracket_evals`` only started logging 2026-07-24, #826,
+    while ``settlements`` mostly predates that). ``cross_check_against_
+    settlements_direct()`` never depends on ``bracket_evals`` at all, so a
+    report is written whenever EITHER check has real data to show, not only
+    when ``bracket_evals`` does.
     """
     run_date = run_date or datetime.now(timezone.utc).date().isoformat()
 
@@ -516,32 +751,41 @@ def run_dry_run(
     if counts.get("raw_rows", 0) == 0:
         log.info(
             "[resolve_bracket_outcomes] no rows found under %s (rotated sources) -- "
-            "nothing to resolve. This is expected in a fresh checkout / dev sandbox; "
-            "logs/ is gitignored and lives on the bot host. Not writing a report.",
+            "nothing to resolve from bracket_evals. This is expected in a fresh "
+            "checkout / dev sandbox; logs/ is gitignored and lives on the bot host. "
+            "Falling back to the settlements-direct check only (issue #858).",
             bracket_evals_base,
         )
-        return 0
-
-    if not resolved_rows:
+    elif not resolved_rows:
         log.info(
             "[resolve_bracket_outcomes] no bracket rows resolved to an outcome -- no "
             "matching observations found (data/meteoedge.db missing/empty, or no "
-            "observations overlap the bracket_evals date range). Not writing a report."
+            "observations overlap the bracket_evals date range). Falling back to the "
+            "settlements-direct check only (issue #858)."
         )
-        return 0
 
     settlement_outcomes = load_settlement_outcomes(db_path)
     cross_check = cross_check_against_settlements(resolved_rows, settlement_outcomes)
+    direct_check = cross_check_against_settlements_direct(db_path)
 
-    report = build_dry_run_report(resolved_rows, counts, cross_check, run_date)
+    if not resolved_rows and direct_check["n_settlement_rows"] == 0:
+        log.info(
+            "[resolve_bracket_outcomes] no bracket_evals rows and no settlements rows -- "
+            "nothing to report. Not writing a report."
+        )
+        return 0
+
+    report = build_dry_run_report(resolved_rows, counts, cross_check, direct_check, run_date)
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"bracket_outcome_resolution_dryrun_{run_date}.md"
     out_path.write_text(report, encoding="utf-8")
     log.info(
         "[resolve_bracket_outcomes] wrote %s (n_bracket_rows=%d, n_station_days=%d, "
-        "settlements cross-check: n_overlap=%d n_mismatch=%d)",
+        "settlements cross-check: n_overlap=%d n_mismatch=%d, "
+        "settlements-direct check: n_checked=%d n_mismatch=%d)",
         out_path, counts["n_bracket_rows"], counts["n_station_days"],
         cross_check["n_overlap"], cross_check["n_mismatch"],
+        direct_check["n_checked"], direct_check["n_mismatch"],
     )
     return 0
 
