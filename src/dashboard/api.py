@@ -2444,6 +2444,7 @@ _CONFIG_META: dict[str, dict] = {
         "type": "enum",
         "group": "forecast",
         "options": ["fixed", "ensemble"],
+        "hidden": True,
     },
     "PROMOTION_MIN_SETTLED_TRADES": {
         "description": "Minimum settled shadow trades required for promotion eligibility (issue #559, supersedes #80)",
@@ -2582,7 +2583,11 @@ def _build_param_entry(key: str, raw: str) -> dict:
 
 @app.get("/api/config")
 def get_config() -> dict:
-    """Return all editable bot parameters with their current DB values, grouped by category."""
+    """Return all editable bot parameters with their current DB values, grouped by category.
+
+    Hidden parameters (marked with "hidden": True in _CONFIG_META) are excluded from
+    the response but remain in the system for backward compatibility.
+    """
     if _db is None:
         raise HTTPException(status_code=503, detail="Database not initialised")
     live = get_live_config(_db)
@@ -2590,6 +2595,9 @@ def get_config() -> dict:
     result: dict[str, dict] = {}
     for key in CONFIG_DEFAULTS:
         meta = _CONFIG_META.get(key, {})
+        # Skip hidden parameters (e.g., deprecated/no-op fields)
+        if meta.get("hidden", False):
+            continue
         group = meta.get("group", "other")
         raw = str(live.get(key, CONFIG_DEFAULTS[key]))
         if group not in result:
