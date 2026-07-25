@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import time
+from datetime import datetime, timezone
 
 from unittest.mock import MagicMock, patch
 
@@ -693,9 +694,28 @@ class TestRunCapturesResilience:
                 raise RuntimeError("simulated unexpected capture failure")
             # KDEN succeeds silently.
 
+        # Pin the current hour to one with no _CAPTURE_SCHEDULE entry (issue
+        # #856). force=True only substitutes the single-entry 06Z smoke-test
+        # schedule when the REAL current UTC hour has no schedule entry of
+        # its own -- run_captures does `captures = _CAPTURE_SCHEDULE.get(utc_hour, [])`
+        # first and only falls back under `if not captures`. Hour 12 has TWO
+        # entries (`[(1, 24), (0, 12)]`), so running this test during that
+        # UTC hour silently exercised the real two-capture schedule instead
+        # of the intended single-entry smoke-test path -- each station got
+        # captured twice, and the call_log assertion below depended on
+        # wall-clock time. Freezing to an unscheduled hour makes the result
+        # independent of when the test happens to run.
+        fake_now = datetime(2026, 1, 1, 3, 0, tzinfo=timezone.utc)
+
+        class _FixedDatetime(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return fake_now
+
         with (
             patch.object(capture_forecasts_module, "STATIONS", fake_stations),
             patch.object(capture_forecasts_module, "_capture_station", side_effect=_fake_capture_station),
+            patch.object(capture_forecasts_module, "datetime", _FixedDatetime),
             caplog.at_level(logging.ERROR),
         ):
             run_captures(db=None, dry_run=True, force=True)
