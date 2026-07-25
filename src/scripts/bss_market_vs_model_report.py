@@ -1,0 +1,605 @@
+"""Market-vs-model Brier Skill Score report — Pass 1 (issue #822).
+
+**THIS IS PASS 1 ONLY** — see ``docs/REMEDIATION_PLAN.md`` ("M1 · Fast
+verdict") for the full plan. Pass 1 is an early, retrospective, directional
+read on the 37 days of archived ``logs/candidates.*.csv.gz`` -- the data that
+already exists, so no waiting is required. It is explicitly **not** the
+decision-gate verdict (that is Pass 2, run at M3 on clean, post-#820-fix,
+all-bracket data once #826 -- persisting *every* evaluated bracket, not just
+gate-selected candidates -- has accumulated enough history).
+
+Two reasons Pass 1 cannot be read as a settling verdict, both structural, not
+implementation details:
+
+1. **Pre-fix model.** Every row here was produced by the model *before* the
+   #810 timezone fix and the (still-open) #820 evening-window fix. A
+   negative BSS condemns the OLD model; a positive one does not clear the
+   fixed one, and either way the number will move once #820 lands.
+2. **Gate-selected sample.** ``logs/candidates.csv`` only contains brackets
+   that already cleared the live entry gates (``MIN_EDGE_CENTS`` /
+   ``MIN_PRICE_CENTS`` / the near-certainty envelope check). This answers
+   "on the brackets we chose to trade, were we better than the market?" --
+   operationally relevant, but not a general calibration measure, and not
+   the ``n >= 300`` / all-bracket population the M3 decision gate requires.
+
+Any report this script writes must keep both caveats in its own header --
+see ``REQUIRED_DISCLAIMER`` below -- so a reader skimming only the top of the
+file cannot mistake this for the M3 verdict.
+
+Methodology (docs/REMEDIATION_PLAN.md, "The decision gate (#822)")::
+
+    BS_model  = mean( (p_yes_raw   - outcome)^2 )
+    BS_market = mean( (p_market_yes - outcome)^2 )
+    BSS       = 1 - (BS_model / BS_market)
+
+Data sources (host-local, no network):
+
+  * ``logs/candidates.*.csv.gz`` (date-rotated + gzip-compressed, see
+    ``src/utils/log_rotation.py``) -- one row per *poll* for every candidate
+    that already cleared the live entry gates. Carries ``p_yes_raw``,
+    ``yes_ask``, ``no_ask``, ``end_date``, ``minutes_to_settlement``.
+  * ``data/meteoedge.db`` :: ``settlements`` table -- realized market
+    outcomes (``resolved_yes``), keyed by ``ticker`` (issue #644's Gamma-first
+    resolution; the same table ``src/scripts/calibration_report.py`` reads).
+
+Required row-level exclusions (issue #822, issue #820):
+
+  * ``p_yes_raw`` missing (legacy pre-#564 rows carry no raw probability).
+  * ``p_yes_raw == 0.0`` -- the certainty-shortcut artifact diagnosed in
+    #820 (evening window collapses ``max_env`` onto the finished day's high
+    and the envelope model emits an exact 0.0 that reflects the bug, not a
+    forecast).
+  * ``yes_ask``/``no_ask`` at the 1c/99c rail -- the exchange's price floor
+    and ceiling. A rail price is not really "the market's implied
+    probability" (it is clipped), so keeping these rows would flatter or
+    penalize BS_market on a value the market itself did not freely produce.
+  * No definitive settlement match in the ``settlements`` table.
+
+De-duplication: one row per (station, ticker, settlement date) -- a bracket
+is polled repeatedly before its market closes, and the entry gates already
+select a specific poll's numbers as "the" candidate, so the sample must not
+over-count. This mirrors ``src.scripts.calibration_report.pick_samples``'s
+"final sample" choice: the row with the LOWEST ``minutes_to_settlement`` is
+kept (closest to resolution, i.e. the model/market's last word before the
+outcome is known).
+
+Segmentation (issue #822 scope): same-day vs. next-day evaluation (derived
+from the station-local calendar date of ``ts`` vs. ``end_date`` -- the CSV
+carries no ``is_next_day`` column, unlike the DB ``candidates``/``trades``
+tables) and by UTC-offset bucket (derived from ``STATION_TZ`` at ``ts``) --
+both diagnostic cuts for whether the pre-fix #820 bug's effect concentrates
+in a particular window, per the "evening window" diagnosis in
+``docs/REMEDIATION_PLAN.md``.
+
+Self-gating: if zero rows survive loading (e.g. no local ``logs/`` data --
+this is the common case in a fresh checkout or a sandboxed dev
+environment, since ``logs/`` is gitignored and lives on the bot host) this
+script logs an honest message and returns without writing a report --
+NEVER writes a report with a fabricated or synthetic BSS number. Correct
+this is a real Brier-skill decision-gate input; unlike some backtest
+scripts in this repo that fall back to synthetic proxy data when a real
+integration has no logged history yet (e.g. ``ecmwf_icon_backtest.py`` for
+a genuinely-new data source), there is nothing legitimate to proxy here --
+the archived data either exists on the host running this script, or the
+run must be treated as blocked, not silently faked.
+
+Usage::
+
+    python -m src.scripts.bss_market_vs_model_report
+    python -m src.scripts.bss_market_vs_model_report --candidates-csv logs/candidates.csv \
+        --db data/meteoedge.db --out backtest_results
+"""
+from __future__ import annotations
+
+import argparse
+import csv
+import gzip
+import logging
+import os
+import sqlite3
+import sys
+from collections import defaultdict
+from datetime import date, datetime, timezone
+from pathlib import Path
+from typing import Iterator
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from src.config import CANDIDATES_CSV, STATION_TZ  # noqa: E402
+from src.scripts.calibration_report import (  # noqa: E402
+    BUCKET_EDGES, brier_score, build_reliability, format_reliability,
+)
+from src.utils.log_rotation import rotated_sources  # noqa: E402
+
+log = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+
+REQUIRED_DISCLAIMER = """\
+> **PASS 1 -- NOT THE DECISION GATE.** This scores the model's PRE-#820-FIX
+> probabilities on a GATE-SELECTED sample (only brackets that already cleared
+> live entry gates -- not the general population of evaluated brackets).
+> It is a lower bound / directional read, weeks before the M3 decision gate
+> (issue #822, Pass 2), which re-runs this same test on clean, post-fix,
+> all-bracket data once #826 has accumulated enough history. **Do not treat
+> the number below as settling whether the trading edge is real.**
+"""
+
+# Exchange price rails (cents). A yes_ask/no_ask sitting at the floor/ceiling
+# is a clipped, not a freely-produced, market price.
+RAIL_LOW_CENTS = 1
+RAIL_HIGH_CENTS = 99
+
+DEFAULT_DB_PATH = Path(os.getenv("DB_PATH", "data/meteoedge.db"))
+DEFAULT_OUT_DIR = Path("backtest_results")
+
+
+# ---------------------------------------------------------------------------
+# Loading logs/candidates.*.csv.gz
+# ---------------------------------------------------------------------------
+
+def _iter_csv_rows(base: Path) -> Iterator[dict]:
+    """Yield dict rows across every rotated (and possibly gzipped) source for *base*.
+
+    Mirrors ``scripts/prob_cap_shadow_report.py``'s ``_iter_csv_rows`` -- no
+    shared CSV-rotation helper exists yet (only the JSONL side,
+    ``iter_rotated_jsonl``), so this is intentionally duplicated rather than
+    introducing a new cross-script dependency for one loop.
+    """
+    for path in rotated_sources(base):
+        is_gz = path.suffix == ".gz"
+        try:
+            opener = (
+                gzip.open(path, "rt", encoding="utf-8", newline="")
+                if is_gz else open(path, "r", encoding="utf-8", newline="")
+            )
+            with opener as fh:
+                yield from csv.DictReader(fh)
+        except OSError as exc:
+            log.warning("[bss] could not read %s: %s", path, exc)
+
+
+def _f(row: dict, key: str) -> "float | None":
+    val = row.get(key)
+    if val is None or val == "" or val == "None":
+        return None
+    try:
+        return float(val)
+    except (TypeError, ValueError):
+        return None
+
+
+def load_candidate_rows(candidates_csv: "Path" = CANDIDATES_CSV) -> "list[dict]":
+    """Load and numerically normalize every row across the rotated archive.
+
+    Returns dicts with the raw string columns preserved (``ts``, ``station``,
+    ``ticker``, ``end_date``) plus normalized floats for ``p_yes_raw``,
+    ``yes_ask``, ``no_ask``, ``minutes_to_settlement``.
+    """
+    out = []
+    for row in _iter_csv_rows(candidates_csv):
+        out.append({
+            "ts": row.get("ts", ""),
+            "station": row.get("station", ""),
+            "ticker": row.get("ticker", ""),
+            "end_date": row.get("end_date", ""),
+            "bracket_low": _f(row, "bracket_low"),
+            "bracket_high": _f(row, "bracket_high"),
+            "yes_ask": _f(row, "yes_ask"),
+            "no_ask": _f(row, "no_ask"),
+            "p_yes_raw": _f(row, "p_yes_raw"),
+            "minutes_to_settlement": _f(row, "minutes_to_settlement"),
+        })
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Exclusions (issue #822 / #820)
+# ---------------------------------------------------------------------------
+
+def apply_exclusions(rows: "list[dict]") -> "tuple[list[dict], dict[str, int]]":
+    """Apply the mandatory Pass-1 row exclusions. Returns (kept, counts)."""
+    counts: dict = defaultdict(int)
+    kept = []
+    for row in rows:
+        if row["p_yes_raw"] is None:
+            counts["missing_p_yes_raw"] += 1
+            continue
+        if row["p_yes_raw"] == 0.0:
+            counts["p_yes_raw_zero_artifact"] += 1
+            continue
+        if row["yes_ask"] is None or row["no_ask"] is None:
+            counts["missing_market_price"] += 1
+            continue
+        if (row["yes_ask"] <= RAIL_LOW_CENTS or row["yes_ask"] >= RAIL_HIGH_CENTS
+                or row["no_ask"] <= RAIL_LOW_CENTS or row["no_ask"] >= RAIL_HIGH_CENTS):
+            counts["rail_1c_99c"] += 1
+            continue
+        kept.append(row)
+    counts["input_rows"] = len(rows)
+    counts["kept_after_row_exclusions"] = len(kept)
+    return kept, dict(counts)
+
+
+def dedupe_one_per_bracket_day(rows: "list[dict]") -> "list[dict]":
+    """Keep exactly one row per (station, ticker, end_date).
+
+    Keeps the row with the lowest ``minutes_to_settlement`` -- the final,
+    closest-to-resolution poll -- mirroring
+    ``calibration_report.pick_samples``'s "final sample per market" choice.
+    """
+    best: "dict[tuple, dict]" = {}
+    for row in rows:
+        key = (row["station"], row["ticker"], row["end_date"])
+        prev = best.get(key)
+        mts = row["minutes_to_settlement"]
+        if prev is None or (mts is not None and (
+                prev["minutes_to_settlement"] is None or mts < prev["minutes_to_settlement"])):
+            best[key] = row
+    return list(best.values())
+
+
+# ---------------------------------------------------------------------------
+# Outcome join: settlements table (meteoedge.db)
+# ---------------------------------------------------------------------------
+
+def _connect_ro(db_path: "Path | None") -> "sqlite3.Connection | None":
+    """Open *db_path* read-only. Returns None if missing/unopenable.
+
+    Never creates the file (unlike plain ``sqlite3.connect``) -- this script
+    must never write to production databases.
+    """
+    if db_path is None:
+        return None
+    db_path = Path(db_path)
+    if not db_path.exists():
+        return None
+    try:
+        con = sqlite3.connect(f"file:{db_path.as_posix()}?mode=ro", uri=True)
+        con.row_factory = sqlite3.Row
+        return con
+    except sqlite3.OperationalError as exc:
+        log.warning("[bss] could not open %s read-only: %s", db_path, exc)
+        return None
+
+
+def load_settlement_outcomes(db_path: "Path | None") -> "dict[str, bool]":
+    """Return {ticker: resolved_yes} from the settlements table."""
+    con = _connect_ro(db_path)
+    if con is None:
+        return {}
+    try:
+        cur = con.execute("SELECT ticker, resolved_yes FROM settlements")
+        return {r["ticker"]: bool(r["resolved_yes"]) for r in cur.fetchall()}
+    except sqlite3.OperationalError as exc:
+        log.warning("[bss] settlements read failed: %s", exc)
+        return {}
+    finally:
+        con.close()
+
+
+def join_outcomes(rows: "list[dict]", outcomes: "dict[str, bool]") -> "tuple[list[dict], int]":
+    """Attach ``yes_won`` to each row; drop rows with no definitive settlement.
+
+    Returns (rows_with_outcome, n_dropped_no_settlement).
+    """
+    out = []
+    dropped = 0
+    for row in rows:
+        yes_won = outcomes.get(row["ticker"])
+        if yes_won is None:
+            dropped += 1
+            continue
+        out.append({**row, "yes_won": yes_won})
+    return out, dropped
+
+
+# ---------------------------------------------------------------------------
+# Segmentation
+# ---------------------------------------------------------------------------
+
+def station_local_date(ts_str: str, station: str) -> "date | None":
+    """Return the station-local calendar date of *ts_str*, or None.
+
+    Mirrors ``src/scripts/settle.py::resolve_trade_date``'s STATION_TZ +
+    pytz conversion (same pattern, different purpose here: segmentation, not
+    settlement-date resolution).
+    """
+    tz_name = STATION_TZ.get(station)
+    if not tz_name or not ts_str:
+        return None
+    import pytz
+    from dateutil import parser as dtparse
+    try:
+        tz = pytz.timezone(tz_name)
+        t = dtparse.parse(ts_str)
+        if t.tzinfo is None:
+            t = t.replace(tzinfo=timezone.utc)
+        return t.astimezone(tz).date()
+    except (ValueError, OverflowError, pytz.UnknownTimeZoneError):
+        return None
+
+
+def classify_day_segment(row: dict) -> "str | None":
+    """Return 'same_day', 'next_day', 'other', or None (undeterminable).
+
+    ``logs/candidates.csv`` carries no ``is_next_day`` column (unlike the DB
+    ``candidates``/``trades`` tables written alongside it) -- derived here
+    from the station-local calendar date of ``ts`` vs. ``end_date``.
+    """
+    local_date = station_local_date(row.get("ts", ""), row.get("station", ""))
+    end_date_str = row.get("end_date", "")
+    if local_date is None or not end_date_str:
+        return None
+    try:
+        end_date = date.fromisoformat(end_date_str[:10])
+    except ValueError:
+        return None
+    delta = (end_date - local_date).days
+    if delta == 0:
+        return "same_day"
+    if delta == 1:
+        return "next_day"
+    return "other"
+
+
+def utc_offset_bucket(row: dict) -> "str | None":
+    """Return a 'UTC+H'/'UTC-H' label for the station's offset at ``ts``."""
+    tz_name = STATION_TZ.get(row.get("station", ""))
+    ts_str = row.get("ts", "")
+    if not tz_name or not ts_str:
+        return None
+    import pytz
+    from dateutil import parser as dtparse
+    try:
+        tz = pytz.timezone(tz_name)
+        t = dtparse.parse(ts_str)
+        if t.tzinfo is None:
+            t = t.replace(tzinfo=timezone.utc)
+        offset = t.astimezone(tz).utcoffset()
+        if offset is None:
+            return None
+        hours = offset.total_seconds() / 3600.0
+        sign = "+" if hours >= 0 else "-"
+        return f"UTC{sign}{abs(hours):g}"
+    except (ValueError, OverflowError, pytz.UnknownTimeZoneError):
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Market-implied probability + BSS
+# ---------------------------------------------------------------------------
+
+def market_p_yes(row: dict) -> float:
+    """Market-implied P(YES), symmetrized across both sides of the book.
+
+    ``yes_ask`` alone is the cost to buy YES (a natural "market says P(YES)"
+    reading), but ``100 - no_ask`` is an independent second reading from the
+    NO side. Averaging the two nets out asymmetric bid/ask spread noise
+    instead of arbitrarily preferring one side.
+    """
+    return ((row["yes_ask"]) + (100.0 - row["no_ask"])) / 200.0
+
+
+def sharpness_histogram(probs: "list[float]", edges: "list[float]" = BUCKET_EDGES) -> "list[dict]":
+    """Count of predictions per probability bucket (distribution shape only)."""
+    rows = []
+    for lo, hi in zip(edges, edges[1:]):
+        n = sum(1 for p in probs if lo <= p < hi)
+        rows.append({"bucket": f"{lo:.2f}-{min(hi, 1.0):.2f}", "n": n})
+    return rows
+
+
+def format_sharpness(rows: "list[dict]", title: str) -> str:
+    total = sum(r["n"] for r in rows) or 1
+    out = [f"\n=== {title} ===", f"{'bucket':>11} {'n':>6} {'share':>7}"]
+    for r in rows:
+        out.append(f"{r['bucket']:>11} {r['n']:>6} {100 * r['n'] / total:>6.1f}%")
+    return "\n".join(out)
+
+
+def compute_bss(samples: "list[tuple[dict, bool]]") -> dict:
+    """Compute BS_model, BS_market, BSS over de-duped, outcome-joined rows.
+
+    *samples* is a list of (row, yes_won) — actually rows already carry
+    ``yes_won`` from join_outcomes(), so this takes the row list directly.
+    """
+    model_pairs = [(r["p_yes_raw"], r["yes_won"]) for r in samples]
+    market_pairs = [(market_p_yes(r), r["yes_won"]) for r in samples]
+    bs_model = brier_score(model_pairs)
+    bs_market = brier_score(market_pairs)
+    bss = None
+    if bs_model is not None and bs_market is not None and bs_market > 0:
+        bss = 1.0 - (bs_model / bs_market)
+    return {
+        "n": len(samples),
+        "bs_model": bs_model,
+        "bs_market": bs_market,
+        "bss": bss,
+    }
+
+
+def verdict_label(bss: "float | None") -> str:
+    """Map a BSS value to the decision-gate language (informational only for Pass 1)."""
+    if bss is None:
+        return "n/a (insufficient or degenerate data)"
+    if bss > 0.05:
+        return "edge appears real (BSS > 0.05)"
+    if bss > 0:
+        return "marginal (0 < BSS <= 0.05)"
+    return "no edge over the market (BSS <= 0)"
+
+
+# ---------------------------------------------------------------------------
+# Report assembly
+# ---------------------------------------------------------------------------
+
+def build_report(samples: "list[dict]", exclusion_counts: dict, n_no_settlement: int,
+                 run_date: str) -> str:
+    global_stats = compute_bss(samples)
+
+    by_segment: "dict[str, list[dict]]" = defaultdict(list)
+    for r in samples:
+        seg = classify_day_segment(r) or "undeterminable"
+        by_segment[seg].append(r)
+
+    by_offset: "dict[str, list[dict]]" = defaultdict(list)
+    for r in samples:
+        bucket = utc_offset_bucket(r) or "undeterminable"
+        by_offset[bucket].append(r)
+
+    model_samples = [(r["p_yes_raw"], r["yes_won"]) for r in samples]
+    market_samples = [(market_p_yes(r), r["yes_won"]) for r in samples]
+
+    lines = []
+    lines.append("# Market-vs-Model Skill Test -- Pass 1 (issue #822)\n")
+    lines.append(f"**Run date:** {run_date}  ")
+    lines.append("**Data source:** `logs/candidates.*.csv.gz` (archived, gate-selected) "
+                 "joined to `settlements` (meteoedge.db)  \n")
+    lines.append(REQUIRED_DISCLAIMER)
+    lines.append("\n---\n")
+
+    lines.append("## Exclusion funnel\n")
+    lines.append("| Stage | Count |")
+    lines.append("|---|---|")
+    lines.append(f"| Input rows (all polls, all dates) | {exclusion_counts.get('input_rows', 0)} |")
+    lines.append(f"| Excluded: missing `p_yes_raw` | {exclusion_counts.get('missing_p_yes_raw', 0)} |")
+    lines.append(
+        f"| Excluded: `p_yes_raw == 0.0` (certainty-shortcut artifact, #820) | "
+        f"{exclusion_counts.get('p_yes_raw_zero_artifact', 0)} |"
+    )
+    lines.append(f"| Excluded: missing market price | {exclusion_counts.get('missing_market_price', 0)} |")
+    lines.append(f"| Excluded: 1c/99c rail | {exclusion_counts.get('rail_1c_99c', 0)} |")
+    lines.append(f"| Kept after row exclusions | {exclusion_counts.get('kept_after_row_exclusions', 0)} |")
+    lines.append(f"| Excluded: no definitive settlement match | {n_no_settlement} |")
+    lines.append(f"| **Final de-duplicated sample (n)** | **{global_stats['n']}** |")
+    lines.append("")
+
+    lines.append("## Global result\n")
+    lines.append("| Metric | Value |")
+    lines.append("|---|---|")
+    lines.append(f"| n | {global_stats['n']} |")
+    bs_m = global_stats["bs_model"]
+    bs_k = global_stats["bs_market"]
+    bss = global_stats["bss"]
+    lines.append(f"| BS_model | {bs_m:.4f} |" if bs_m is not None else "| BS_model | n/a |")
+    lines.append(f"| BS_market | {bs_k:.4f} |" if bs_k is not None else "| BS_market | n/a |")
+    lines.append(f"| BSS | {bss:.4f} |" if bss is not None else "| BSS | n/a |")
+    lines.append(f"| Pass-1 reading (NOT the M3 verdict) | {verdict_label(bss)} |")
+    lines.append("")
+    lines.append("Note on power (docs/REMEDIATION_PLAN.md): all brackets on a station-day "
+                 "share one daily-high outcome, so the effective sample size is "
+                 "station-days, not bracket-rows. This report states the de-duplicated "
+                 "bracket-row n; it does not further collapse to station-days.\n")
+
+    lines.append("## Segment: same-day vs. next-day\n")
+    lines.append("(Derived from station-local `ts` date vs. `end_date` -- `logs/candidates.csv` "
+                 "carries no `is_next_day` column.)\n")
+    lines.append("| Segment | n | BS_model | BS_market | BSS |")
+    lines.append("|---|---|---|---|---|")
+    for seg in sorted(by_segment):
+        stats = compute_bss(by_segment[seg])
+        bsm = f"{stats['bs_model']:.4f}" if stats["bs_model"] is not None else "n/a"
+        bsk = f"{stats['bs_market']:.4f}" if stats["bs_market"] is not None else "n/a"
+        bssv = f"{stats['bss']:.4f}" if stats["bss"] is not None else "n/a"
+        lines.append(f"| {seg} | {stats['n']} | {bsm} | {bsk} | {bssv} |")
+    lines.append("")
+
+    lines.append("## Segment: UTC-offset bucket\n")
+    lines.append("| Bucket | n | BS_model | BS_market | BSS |")
+    lines.append("|---|---|---|---|---|")
+    for bucket in sorted(by_offset):
+        stats = compute_bss(by_offset[bucket])
+        bsm = f"{stats['bs_model']:.4f}" if stats["bs_model"] is not None else "n/a"
+        bsk = f"{stats['bs_market']:.4f}" if stats["bs_market"] is not None else "n/a"
+        bssv = f"{stats['bss']:.4f}" if stats["bss"] is not None else "n/a"
+        lines.append(f"| {bucket} | {stats['n']} | {bsm} | {bsk} | {bssv} |")
+    lines.append("")
+
+    lines.append("## Reliability")
+    lines.append(format_reliability(build_reliability(model_samples), "Model (p_yes_raw)"))
+    lines.append(format_reliability(build_reliability(market_samples), "Market (symmetrized implied P(YES))"))
+
+    lines.append("\n## Sharpness")
+    lines.append(format_sharpness(sharpness_histogram([p for p, _ in model_samples]), "Model (p_yes_raw)"))
+    lines.append(format_sharpness(sharpness_histogram([p for p, _ in market_samples]), "Market (symmetrized implied P(YES))"))
+
+    lines.append("\n---\n")
+    lines.append("## Methodology notes\n")
+    lines.append("- `p_model` = `p_yes_raw` (pre-clamp, pre-#820-fix probability).")
+    lines.append("- `p_market` = `(yes_ask + (100 - no_ask)) / 200` -- symmetrized across both "
+                 "sides of the book (see `market_p_yes()`); using `yes_ask` alone is an "
+                 "equally defensible alternative and would read slightly differently on wide "
+                 "spreads.")
+    lines.append("- De-duplication keeps the final (lowest `minutes_to_settlement`) poll per "
+                 "(station, ticker, settlement date), mirroring "
+                 "`calibration_report.pick_samples`.")
+    lines.append("- Outcome truth: `settlements.resolved_yes` (meteoedge.db), keyed by ticker.")
+    lines.append("")
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+def run_report(candidates_csv: Path, db_path: Path, out_dir: Path,
+               run_date: "str | None" = None) -> int:
+    """Load, filter, join, score, and (if there is real data) write the report.
+
+    Self-gating at three points -- each logs a clear reason and returns 0
+    (safe to schedule any day) rather than writing a report with no real
+    signal in it:
+      1. no candidate rows at all (no local ``logs/`` data),
+      2. no settlement outcomes at all (no local ``settlements`` table data),
+      3. no row survives the settlement join.
+    """
+    run_date = run_date or datetime.now(timezone.utc).date().isoformat()
+
+    raw_rows = load_candidate_rows(candidates_csv)
+    if not raw_rows:
+        log.info(
+            "[bss] no rows found under %s (rotated sources) -- nothing to score. "
+            "This is expected in a fresh checkout / dev sandbox; logs/ is "
+            "gitignored and lives on the bot host. Not writing a report.",
+            candidates_csv,
+        )
+        return 0
+
+    kept_rows, exclusion_counts = apply_exclusions(raw_rows)
+    deduped = dedupe_one_per_bracket_day(kept_rows)
+    outcomes = load_settlement_outcomes(db_path)
+    if not outcomes:
+        log.info(
+            "[bss] settlements table at %s is empty or unavailable -- cannot join "
+            "outcomes. Not writing a report.", db_path,
+        )
+        return 0
+
+    samples, n_no_settlement = join_outcomes(deduped, outcomes)
+    if not samples:
+        log.info("[bss] no rows had a definitive settlement match -- not writing a report.")
+        return 0
+
+    report = build_report(samples, exclusion_counts, n_no_settlement, run_date)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / f"bss_market_vs_model_pass1_{run_date}.md"
+    out_path.write_text(report, encoding="utf-8")
+    log.info("[bss] wrote %s (n=%d)", out_path, len(samples))
+    return 0
+
+
+def main(argv: "list[str] | None" = None) -> int:
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--candidates-csv", type=Path, default=CANDIDATES_CSV)
+    ap.add_argument("--db", type=Path, default=DEFAULT_DB_PATH)
+    ap.add_argument("--out", type=Path, default=DEFAULT_OUT_DIR)
+    ap.add_argument("--run-date", default=None,
+                    help="Report date stamp (default: today, UTC)")
+    args = ap.parse_args(argv)
+    return run_report(args.candidates_csv, args.db, args.out, args.run_date)
+
+
+if __name__ == "__main__":
+    from src.logging_config import setup_logging
+    setup_logging()
+    raise SystemExit(main())
