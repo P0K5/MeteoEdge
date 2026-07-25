@@ -2069,3 +2069,122 @@ class TestPromotionBarEndpoint:
                 assert key in row
         finally:
             dash_api.set_db(original)
+
+
+# ---------------------------------------------------------------------------
+# GET /api/config — hidden parameters (issue #852)
+# ---------------------------------------------------------------------------
+
+class TestConfigEndpoint:
+    """Tests for GET/PATCH /api/config, including hidden parameter filtering."""
+
+    def _setup_db(self):
+        from src.data.db import Database
+        return Database(":memory:")
+
+    def test_get_config_returns_200(self, client):
+        """GET /api/config must return 200."""
+        from src.config import CONFIG_DEFAULTS
+        db = self._setup_db()
+        original = dash_api._db
+        try:
+            dash_api.set_db(db)
+            resp = client.get("/api/config")
+            assert resp.status_code == 200
+        finally:
+            dash_api.set_db(original)
+
+    def test_get_config_returns_dict(self, client):
+        """GET /api/config must return a dict grouped by category."""
+        db = self._setup_db()
+        original = dash_api._db
+        try:
+            dash_api.set_db(db)
+            resp = client.get("/api/config")
+            data = resp.json()
+            assert isinstance(data, dict)
+            # Should have groups like 'forecast', 'strategy', 'promotion', etc.
+            assert len(data) > 0
+        finally:
+            dash_api.set_db(original)
+
+    def test_get_config_excludes_hidden_emos_sigma_source(self, client):
+        """GET /api/config must not include EMOS_SIGMA_SOURCE (hidden/deprecated)."""
+        db = self._setup_db()
+        original = dash_api._db
+        try:
+            dash_api.set_db(db)
+            resp = client.get("/api/config")
+            data = resp.json()
+            # Flatten all groups to find all config keys
+            all_keys = set()
+            for group_dict in data.values():
+                all_keys.update(group_dict.keys())
+            # EMOS_SIGMA_SOURCE should NOT be in the response
+            assert "EMOS_SIGMA_SOURCE" not in all_keys
+        finally:
+            dash_api.set_db(original)
+
+    def test_get_config_includes_non_hidden_keys(self, client):
+        """GET /api/config must include non-hidden parameters like USE_ENSEMBLE_SIGMA."""
+        db = self._setup_db()
+        original = dash_api._db
+        try:
+            dash_api.set_db(db)
+            resp = client.get("/api/config")
+            data = resp.json()
+            # Flatten all groups to find all config keys
+            all_keys = set()
+            for group_dict in data.values():
+                all_keys.update(group_dict.keys())
+            # USE_ENSEMBLE_SIGMA is a related, non-hidden parameter that should appear
+            assert "USE_ENSEMBLE_SIGMA" in all_keys
+        finally:
+            dash_api.set_db(original)
+
+    def test_get_config_grouped_by_category(self, client):
+        """GET /api/config returns params grouped by category."""
+        db = self._setup_db()
+        original = dash_api._db
+        try:
+            dash_api.set_db(db)
+            resp = client.get("/api/config")
+            data = resp.json()
+            # Check that common groups exist
+            assert "forecast" in data
+            # 'forecast' group should have non-hidden forecast params
+            assert isinstance(data["forecast"], dict)
+            assert len(data["forecast"]) > 0
+        finally:
+            dash_api.set_db(original)
+
+    def test_patch_config_still_accepts_hidden_keys(self, client):
+        """PATCH /api/config still accepts hidden keys for backward compatibility."""
+        db = self._setup_db()
+        original = dash_api._db
+        try:
+            dash_api.set_db(db)
+            # Try to PATCH a hidden key (EMOS_SIGMA_SOURCE)
+            # This tests that the hidden field only affects GET visibility, not PATCH validation
+            resp = client.patch("/api/config", json={"key": "EMOS_SIGMA_SOURCE", "value": "ensemble"})
+            # Should succeed (200 or similar) because it's a valid config key
+            assert resp.status_code == 200
+        finally:
+            dash_api.set_db(original)
+
+    def test_config_entry_has_required_fields(self, client):
+        """Each config entry must have required fields."""
+        db = self._setup_db()
+        original = dash_api._db
+        try:
+            dash_api.set_db(db)
+            resp = client.get("/api/config")
+            data = resp.json()
+            # Pick first param from any group
+            first_group = next(iter(data.values()))
+            first_param = next(iter(first_group.values()))
+            # Check required fields
+            for key in ("value", "description", "type"):
+                assert key in first_param, f"Missing field: {key}"
+        finally:
+            dash_api.set_db(original)

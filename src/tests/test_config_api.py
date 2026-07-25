@@ -20,6 +20,7 @@ from fastapi.testclient import TestClient
 
 from src.data.db import Database
 from src.config import CONFIG_DEFAULTS, seed_config, get_live_config
+from src.dashboard.api import _CONFIG_META
 
 
 # ---------------------------------------------------------------------------
@@ -219,10 +220,16 @@ class TestGetConfigEndpoint:
                 assert "type" in entry, f"{key} missing 'type'"
 
     def test_all_config_keys_present(self, api_client):
+        """Every non-hidden config key must be present. Hidden keys (issue #852 —
+        deprecated/no-op parameters like EMOS_SIGMA_SOURCE) are deliberately
+        excluded from the response, so they're excluded from this check too."""
         client, _ = api_client
         data = client.get("/api/config").json()
         all_keys = {k for group in data.values() for k in group}
         for key in CONFIG_DEFAULTS:
+            if _CONFIG_META.get(key, {}).get("hidden", False):
+                assert key not in all_keys, f"Hidden key {key!r} unexpectedly present"
+                continue
             assert key in all_keys, f"Key {key!r} missing from response"
 
     def test_value_types_are_correct(self, api_client):

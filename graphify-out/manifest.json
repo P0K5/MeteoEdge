@@ -60,8 +60,8 @@
     "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
   },
   "src/dashboard/api.py": {
-    "mtime": 1784981101.533754,
-    "ast_hash": "4f78646cae29a7a61db638f9d66439c2",
+    "mtime": 1784984047.1870236,
+    "ast_hash": "c8e7b10f923bf44639366d1a6c0e3626",
     "semantic_hash": ""
   },
   "src/dashboard/data.py": {
@@ -340,8 +340,8 @@
     "semantic_hash": ""
   },
   "src/tests/test_config_api.py": {
-    "mtime": 1784981101.544025,
-    "ast_hash": "5462a70103d8e83379344e7312b5ea16",
+    "mtime": 1784984047.1870236,
+    "ast_hash": "8b68cdf0167650103243dcd45e6e9099",
     "semantic_hash": ""
   },
   "src/tests/test_crps_score.py": {
@@ -350,8 +350,8 @@
     "semantic_hash": ""
   },
   "src/tests/test_dashboard.py": {
-    "mtime": 1784981101.544025,
-    "ast_hash": "affd350fe2593ba4a35f152550c9c66b",
+    "mtime": 1784984047.1870236,
+    "ast_hash": "4e9a2eaa9cf44fbd55c2f143f8113b2c",
     "semantic_hash": ""
   },
   "src/tests/test_db.py": {
@@ -925,8 +925,8 @@
     "semantic_hash": ""
   },
   "src/tests/test_capture_forecasts.py": {
-    "mtime": 1784981101.544025,
-    "ast_hash": "a3d6eb67c09c516543b5c4598581a886",
+    "mtime": 1784983850.039012,
+    "ast_hash": "5638d03bf5b581fe18305fadeeb38803",
     "semantic_hash": ""
   },
   "src/tests/test_cooling_rates.py": {

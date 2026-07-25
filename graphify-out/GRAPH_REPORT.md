@@ -1,16 +1,16 @@
 # Graph Report - agent-mid-850-resolve-bracket-outcomes  (2026-07-25)
 
 ## Corpus Check
-- 326 files · ~433,677 words
+- 326 files · ~434,296 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 8404 nodes · 16055 edges · 431 communities (355 shown, 76 thin omitted)
-- Extraction: 93% EXTRACTED · 7% INFERRED · 0% AMBIGUOUS · INFERRED: 1110 edges (avg confidence: 0.52)
+- 8422 nodes · 16082 edges · 427 communities (356 shown, 71 thin omitted)
+- Extraction: 93% EXTRACTED · 7% INFERRED · 0% AMBIGUOUS · INFERRED: 1111 edges (avg confidence: 0.52)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `07f3ca92`
+- Built from commit: `cd36a119`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -394,20 +394,16 @@
 - test_edge_tab_js_logic.py
 - TestFitEmos
 - _cache_key
-- _is_conus
 - ._calibrated_db
-- Database
 - TestHealthEndpoint
-- TestGetCityModeLegacyDefault
+- datetime
 - Junior Developer
 - Mid Developer
 - Issue Creation & Board Registration (Tech Lead PM)
 - Design Spec Format & Frontend PR Review Rubric
 - Reflect — Continuous Improvement Loop (v1)
-- TestEcmwfForecastHours3Hourly
-- test_promotion_gate.py
-- TestConfigEndpointsWithoutDb
 - test_station_toggle.py
+- .test_replay_delta_others_cold_start
 - integration/conftest.py
 - Graphify Usage Rules — SINGLE SOURCE OF TRUTH
 - TestFitEmos
@@ -421,14 +417,14 @@
 - extract_data.sh
 - test_cleanup_settlement_timestamps.py
 - data/__init__.py
-- TestDatabaseNone
 - Key Findings
 - TestComputeWeightsPhantomGuard
+- TestMultipleGateFail
 - TestClimbRateGate
 - InsufficientDataError
 
 ## God Nodes (most connected - your core abstractions)
-1. `Database` - 859 edges
+1. `Database` - 861 edges
 2. `Bracket` - 145 edges
 3. `WeatherState` - 140 edges
 4. `ArchiveDatabase` - 89 edges
@@ -454,47 +450,47 @@
 ## Import Cycles
 - None detected.
 
-## Communities (431 total, 76 thin omitted)
+## Communities (427 total, 71 thin omitted)
 
 ### Community 0 - "Database Core Functions"
-Cohesion: 0.03
-Nodes (94): Bracket, Weather envelope model: computes plausible daily high range and YES probability., WeatherState, Increment the open-position counter when a trade is entered., Decrement the open-position counter when a trade is exited., Determine whether a new trade is permitted under current risk limits.          A, Gates trade execution against daily-loss, position, drawdown, and liquidity limi, Seed _daily_pnl from DB if db is provided. (+86 more)
+Cohesion: 0.04
+Nodes (47): _candidate_with_p_yes_raw(), _low_shadow_candidate(), _noop(), _poll_once_with_candidate(), Tests for run.py Sprint 1 wiring — issue #125.  Verifies: - _start_collector_thr, Issue #657: the intraday correction and obs_bias_offset_f carry the     same phy, Run _build_weather with a deterministic mock stack and return the         WSSS W, Verify that main() starts all four collector threads after db initialisation. (+39 more)
 
 ### Community 1 - "MSS Data Collector"
-Cohesion: 0.05
-Nodes (44): build_dry_run_report(), compute_observed_highs(), _connect_ro(), cross_check_against_settlements(), dedupe_one_per_bracket_day(), load_bracket_eval_rows(), load_settlement_outcomes(), main() (+36 more)
+Cohesion: 0.27
+Nodes (6): Integration-style tests that verify the MAE gate inside scan_markets()     force, Build minimal weather, markets, and db objects for a NO scan., When rolling MAE > threshold, NO candidate shadow flag is True., When rolling MAE <= threshold, NO candidate shadow flag is False., MAE gate only affects NO side; YES candidates are unaffected., TestScannerMaeGate
 
 ### Community 2 - "Spike Detection"
-Cohesion: 0.06
-Nodes (34): 1. EMOS Calibration Layer (New), 2. TAF Integration (Enhanced), 3. Forecast Persistence (New), 4. Intraday Correction Model (Enhanced), 5. Risk Management Hardening, Adjusted Profitability Projections, Appendix: Key Assumptions & Sensitivity, Capital Requirements & Scaling (+26 more)
+Cohesion: 0.05
+Nodes (32): apply_residual_correction(), Apply residual bias correction to *mu_f* for *city*.      Returns ``(corrected_m, _make_db_with_deltas(), Fewer than min_samples rows → returns None silently., Exactly min_samples rows → correction is applied., More than min_samples rows → correction applies., Zero rows → returns None (no error)., All positive deltas: warm bias. (+24 more)
 
 ### Community 3 - "Risk Management"
 Cohesion: 0.05
-Nodes (54): Settle shadow trades for *target* using real outcomes from *truth*.      Shadow, settle_shadow_trades(), _fresh_db(), _insert_shadow(), _insert_shadow_direction(), _insert_shadow_no(), Path, Unit tests for settle_shadow_trades() in src/scripts/settle.py.  Covers: - Shado (+46 more)
+Nodes (51): Settle shadow trades for *target* using real outcomes from *truth*.      Shadow, settle_shadow_trades(), _fresh_db(), _insert_shadow(), _insert_shadow_direction(), _insert_shadow_no(), Path, Unit tests for settle_shadow_trades() in src/scripts/settle.py.  Covers: - Shado (+43 more)
 
 ### Community 4 - "Settlement Logic Tests"
-Cohesion: 0.03
-Nodes (72): no_entry_margin_gap(), date, Distance in °F between the bracket and the expected daily high, for NO entries., Scan all Polymarket markets against current weather states.      Args:         w, scan_markets(), _bracket(), _low_market(), _low_market_with() (+64 more)
+Cohesion: 0.05
+Nodes (44): parse_bracket_from_market(), Parse a Polymarket bracket market into a Bracket using the `groupItemTitle`, Scan all Polymarket markets against current weather states.      Args:         w, scan_markets(), Markets that don't match any station return no candidates., Tests for skip-reason logging in scan_markets()., Build a Miami highest-temp market with defaults, override with kwargs., not_highest_temp' gate: markets for unknown stations are silently skipped. (+36 more)
 
 ### Community 5 - "Agent Roles & Docs"
-Cohesion: 0.06
-Nodes (36): AmosCollector, AMOS collector — RETIRED (issue #740).  Historical context: this module used to, Retired (issue #740). See module docstring for background.      Kept as a no-op, No-op. Returns False for both stations -- nothing is fetched or stored., No-op. Logs once and returns immediately (thread exits)., MssCollector, MSS 1-minute observation ingestion adapter for Singapore.  Fetches real-time tem, Fetch and parse the MSS data.gov.sg API.          Tries stations in priority ord (+28 more)
+Cohesion: 0.08
+Nodes (31): AmosCollector, AMOS collector — RETIRED (issue #740).  Historical context: this module used to, Retired (issue #740). See module docstring for background.      Kept as a no-op, No-op. Returns False for both stations -- nothing is fetched or stored., No-op. Logs once and returns immediately (thread exits)., FreshnessMonitor, Monitor observation staleness per source and station., _db() (+23 more)
 
 ### Community 6 - "Model Retraining"
-Cohesion: 0.11
-Nodes (15): get_canonical_station_feeds(), Return all DB ``station`` keys under which *station*'s observations are stored., _icao_to_city(), Return MAX(temp_f) from observations for *station* on *date* (YYYY-MM-DD)., Return {date_str: max_temp_f} for all dates >= since_date for *station*., Resolve an ICAO station code to its Polymarket city name, or None if unknown., get_canonical_station_feeds maps ICAO → list of DB station keys., WSSS (Singapore) has an MSS high-cadence feed → [city, ICAO]. (+7 more)
+Cohesion: 0.15
+Nodes (11): get_canonical_station_feeds(), Return all DB ``station`` keys under which *station*'s observations are stored., get_canonical_station_feeds maps ICAO → list of DB station keys., WSSS (Singapore) has an MSS high-cadence feed → [city, ICAO]., Issue #740: amos is retired, so RKSI (Seoul) no longer has a         city-keyed, Issue #740: amos is retired, so RKPK (Busan) no longer has a         city-keyed, RJTT (Tokyo) has a JMA AMeDAS feed → [city, ICAO]., KORD (Chicago) has no city-keyed high-cadence feed → [ICAO]. (+3 more)
 
 ### Community 7 - "EMOS Mode Management"
 Cohesion: 0.04
 Nodes (56): InsufficientDataError, Raised when the training dataset has fewer than min_samples triples.      This t, _db(), Tests for EMOS shadow scaffolding: CRPS/DEB logging, promotion guard, runner, AP, When InsufficientDataError is raised in the runner, it must be         caught at, With 5 CRPS samples and EMOS_MIN_SAMPLES_PROMOTION=20, get_city_mode returns 'em, With 25 CRPS samples and EMOS_MIN_SAMPLES_PROMOTION=20, get_city_mode returns 'e, db.log_crps inserts a row into emos_crps_log. (+48 more)
 
 ### Community 8 - "Bracket Market Parsing"
-Cohesion: 0.06
-Nodes (26): _make_om(), Path, timeout record for token NOT in wallet is left alone., filled' outcome for a held token is NOT overwritten., Falls back to 'no_token_id' field when 'asset_id' is absent., All timeout records for held tokens are patched in one pass., Malformed JSON lines are passed through unchanged., Blank lines in the JSONL are preserved as-is (not counted as patches). (+18 more)
+Cohesion: 0.03
+Nodes (58): _make_jsonl_record(), _make_om(), Path, Unit tests for src/execution/order_manager.py.  Covers: - OrderManager.reconcile, timeout record for token NOT in wallet is left alone., filled' outcome for a held token is NOT overwritten., reconcile_wallet_to_db inserts DB rows for orphan wallet positions., Return a mock db whose get_open_positions returns rows for given token_ids. (+50 more)
 
 ### Community 9 - "Envelope Tests"
-Cohesion: 0.05
-Nodes (29): _orderbook(), _position_state(), Tests for the model-confidence stop-loss (issue #177).  Covers: - LiveTrader.sel, Triggered but bid under STOP_LOSS_MIN_BID_CENTS — hold, keep strikes., Triggered but best-bid depth too thin — skip this poll, keep strikes., sell_position_immediate -> None (cancelled unfilled): no resting order,, Model eval failed (fair None) — never strike or sell on missing data., Generic sell exception → warning logged, position NOT marked sold (will retry ne (+21 more)
+Cohesion: 0.07
+Nodes (21): _position_state(), Triggered but bid under STOP_LOSS_MIN_BID_CENTS — hold, keep strikes., Triggered but best-bid depth too thin — skip this poll, keep strikes., sell_position_immediate -> None (cancelled unfilled): no resting order,, Model eval failed (fair None) — never strike or sell on missing data., Generic sell exception → warning logged, position NOT marked sold (will retry ne, Hotfix guards added 2026-06-13 after 3 wins were cut in one day., current_high 1.8F below bracket_low (>0.5F buffer) -- hold, keep strikes. (+13 more)
 
 ### Community 10 - "Weather Envelope Model"
 Cohesion: 0.07
@@ -505,20 +501,20 @@ Cohesion: 0.06
 Nodes (29): expected_additional_drop(), datetime, Per-station per-month cooling rate tables (°F of additional drop possible from e, Return p95 additional °F drop from now_local.hour to overnight daily low.      A, datetime, Unit tests for src/model/cooling_rates.py., Station path must return a float., All hours for no-station path must return non-negative values. (+21 more)
 
 ### Community 12 - "Freshness Monitoring"
-Cohesion: 0.08
-Nodes (25): _make_bracket_no(), _make_bracket_yes(), _make_market(), _make_weather_state(), _mem_db(), Unit tests for per-side station shadow overrides (issue #271).  Covers:   - DB m, Run scan_markets with controlled settings; bracket yields NO candidate., Fresh DB must have yes_enabled and no_enabled in station_overrides. (+17 more)
+Cohesion: 0.07
+Nodes (30): Candidate, A market where our model sees a tradeable edge., _make_bracket_no(), _make_bracket_yes(), _make_market(), _make_weather_state(), _mem_db(), Unit tests for per-side station shadow overrides (issue #271).  Covers:   - DB m (+22 more)
 
 ### Community 13 - "Intraday Correction Backtest"
-Cohesion: 0.06
-Nodes (30): Unit tests for RiskManager with Database persistence.  Tests the seeding of _dai, record_pnl() does not raise when db=None., allow_trade() works correctly when db=None., record_pnl() persists changes to DB when db is set., Call record_pnl(), verify the DB row is updated., Create a RiskManager with an in-memory database and explicit limits., Multiple record_pnl() calls accumulate in the DB., _reset_if_new_day() clears PnL and resets the DB when the day changes. (+22 more)
+Cohesion: 0.04
+Nodes (43): Risk manager — gates every trade before execution.  All limits are read from src, Increment the open-position counter when a trade is entered., Decrement the open-position counter when a trade is exited., Determine whether a new trade is permitted under current risk limits.          A, Gates trade execution against daily-loss, position, drawdown, and liquidity limi, Seed _daily_pnl from DB if db is provided., Reset daily PnL accumulator when the UTC calendar day has rolled over., Accumulate realised PnL for the current trading day.          Call this after ev (+35 more)
 
 ### Community 14 - "METAR Data Fetcher"
 Cohesion: 0.04
 Nodes (40): _load_script(), _make_triples(), Unit tests for scripts/auto_retrain_probability_calibration.py.  Tests cover: 1., ready_for_promotion=1 when crps_holdout < threshold AND samples >= min_samples., ready_for_promotion=0 when crps_holdout >= promote_threshold., Boundary: crps_holdout exactly equal to threshold => not ready., main() skips cities when fetch_training_data raises InsufficientDataError., Script's main() must silently skip a city that raises InsufficientDataError. (+32 more)
 
 ### Community 15 - "TAF Disruption Check"
-Cohesion: 0.16
-Nodes (9): fetch_ecmwf_hourly(), Fetch ECMWF HRES hourly 2-m temperature forecasts for the next 24 hours.      Re, ECMWF covers global domain — Tokyo should work., fetch_ecmwf_daily_high must accept target_date as an ISO string (bug #500)., All 24 forecast hours return a valid temperature., Number of results equals len(_ECMWF_FORECAST_HOURS) (3-hourly steps)., TestEcmwfStrDateCoercion, TestFetchEcmwfHourlyHappyPath (+1 more)
+Cohesion: 0.05
+Nodes (41): _cache_path_ecmwf_daily(), EcmwfForecast, _fetch_ecmwf_2t(), fetch_ecmwf_daily_high(), _fetch_ecmwf_ens_members_2t(), fetch_ecmwf_hourly(), _floor_to_ecmwf_cycle(), _get_cache_dir() (+33 more)
 
 ### Community 16 - "Live Trading Execution"
 Cohesion: 0.06
@@ -529,8 +525,8 @@ Cohesion: 0.09
 Nodes (23): no_admission_gates_pass(), Replicates the NO-entry branch of scan_markets(): confidence, edge, price gates., Simulate NO-side trade count / win rate / PnL at each cap value.      Two popula, Compare the scan-order pick vs the raw-edge-ranked pick within each poll.      C, simulate_cap_values(), simulate_rank_on_raw_prob(), simulated_ev_no(), _norm_row() (+15 more)
 
 ### Community 18 - "Candidate & TAF Disruption"
-Cohesion: 0.08
-Nodes (34): _capture_kwargs(), _db(), _FakeEcmwfForecast, Silence all sources so individual tests only exercise the one under test., GFS capture with the post-#548 (mu_f, None) return shape.      fetch_gfs_with_sp, (mu, None) must log without a formatting error and upsert sigma_f=None., Defensive: if a future sigma policy (#555) returns a float again,         the lo, GEFS ensemble ingestion into _capture_station. (+26 more)
+Cohesion: 0.13
+Nodes (15): fetch_secondary_forecast(), Fetch forecast daily high (°F) from Open-Meteo for the given coordinates.      C, _call_with_timeout(), _capture_station(), Call *func(*args, **kwargs)* with a hard wall-clock timeout.      Runs func in a, Fetch and log forecasts for a single station at a given lead-time., _FakeEcmwfForecast, ECMWF shadow ingestion into _capture_station (#492).      #824: sigma_f is now d (+7 more)
 
 ### Community 19 - "CRPS Score Calculation"
 Cohesion: 0.07
@@ -541,28 +537,28 @@ Cohesion: 0.13
 Nodes (20): _db(), _insert_obs(), _profile(), Tests for --from-db climb-rate backfill: DB method and computation logic.  Issue, Some ICAO stations have a high-cadence feed persisted under the city     name (e, A city-keyed (MSS) observation for "Singapore" must count toward         WSSS's, KORD has no city-keyed high-cadence feed -- behaviour is unchanged,         and, The builder must recover remaining-climb = peak - profile[hour], binned     by L (+12 more)
 
 ### Community 21 - "Weather Envelope & Ensemble"
-Cohesion: 0.08
-Nodes (28): _db(), _make_response(), _mss_response(), Unit tests for src/data/collectors/mss.py.  All HTTP calls are mocked via patch, cadence_min defaults to 1., MSS_CADENCE_MINUTES env var is respected., SGT 10:30 → UTC 02:30 is stored correctly., SGT 00:00 (midnight) = UTC -8h = previous day 16:00 UTC. (+20 more)
+Cohesion: 0.07
+Nodes (37): MssCollector, MSS 1-minute observation ingestion adapter for Singapore.  Fetches real-time tem, Fetch and parse the MSS data.gov.sg API.          Tries stations in priority ord, Emit CRITICAL if no data for more than 2 × cadence_min minutes., Run the polling loop indefinitely, sleeping cadence_min between polls., Poll MSS data.gov.sg API for Singapore 1-minute temperature observations.      U, Fetch the latest MSS observation and persist it.          Returns True if a new, Upsert the latest poll's evaluated-bracket decision row.          Idempotent per (+29 more)
 
 ### Community 22 - "Forecast Data Fetching"
-Cohesion: 0.05
-Nodes (51): main(), Unified config for Polymarket weather arbitrage. Environment vars override defau, _midpoint_cents(), Single-token midpoint for a given token., get_orderbook(), Fetch live CLOB order book for a single token (YES or NO side).      Not cached, _execute_live(), Single-order execution lifecycle for live trading.  _execute_live is extracted f (+43 more)
+Cohesion: 0.04
+Nodes (61): get_take_profit_buffer_cents(), Unified config for Polymarket weather arbitrage. Environment vars override defau, Return the take-profit buffer (¢) for *station*.      Checks for a station-speci, get_orderbook(), get_weather_markets(), Polymarket API client. No authentication required for read-only access., Fetch live CLOB order book for a single token (YES or NO side).      Not cached, Fetch all active weather-tagged markets via Polymarket Gamma API.      Paginated (+53 more)
 
 ### Community 23 - "Data Source Adapters"
-Cohesion: 0.09
-Nodes (33): date, Path, Tests for src/utils/log_rotation.py.  Covers: - Date-based file naming - Symlink, Tests for the optional retain_days override added for per-file retention., Create a dated file at directory/base_name.YYYY-MM-DD.suffix., With retain_days=365, a 40-day-old file is NOT deleted (may be compressed)., Without override (default 30 days), a 40-day-old file IS deleted., With retain_days=365 override, a 2-day-old file is still gzip-compressed. (+25 more)
+Cohesion: 0.05
+Nodes (54): get_db(), load_live_trades(), load_position_snapshots(), load_snapshots(), Path, Shared data-access layer for dashboard. All JSONL reads go through mtime-keyed c, Return all records from snapshots, spanning every rotated source., Return all records from position_snapshots, spanning every rotated source. (+46 more)
 
 ### Community 24 - "Settlement Report Tests"
 Cohesion: 0.06
-Nodes (44): Open *path* with cfgrib and return the value at the nearest grid point.      Ext, _read_grib_nearest(), _cache_path_nbm(), fetch_nbm_daily_high(), _fetch_tmax_herbie(), _fetch_tmp_hourly_max(), _floor_to_nbm_cycle(), _fxx_range_for_date() (+36 more)
+Nodes (44): _cache_path_nbm(), fetch_nbm_daily_high(), _fetch_tmax_herbie(), _fetch_tmp_hourly_max(), _floor_to_nbm_cycle(), _fxx_range_for_date(), _get_cache_dir(), _get_cache_ttl_hours() (+36 more)
 
 ### Community 25 - "EMOS API & Status"
-Cohesion: 0.15
-Nodes (10): fetch_icon_hourly(), Fetch ICON-EU hourly 2-m temperature forecasts for the next 24 forecast hours., Path, All 24 forecast hours return a valid temperature., Ensure the function accepts a station kwarg without error., Some forecast hours fail; only successful ones are returned., TestFetchIconHourlyHappyPath, TestFetchIconHourlyMissingCycle (+2 more)
+Cohesion: 0.09
+Nodes (25): _dwd_filename(), _dwd_url(), _fetch_icon_grib(), fetch_icon_hourly(), _floor_to_icon_cycle(), _kelvin_to_fahrenheit(), datetime, Path (+17 more)
 
 ### Community 26 - "Risk Manager Core"
-Cohesion: 0.08
-Nodes (23): _make_fill(), balance error on first call → retries with avail_shares, returns sold., When order is no_fill with partial > 0, append partial_fill record to JSONL., check_take_profit_exits sells when best_bid >= target, skips otherwise., best_bid >= predicted_price - buffer → sell is placed and position recorded., best_bid < target → position is not touched., Tokens in _sold_positions are skipped without fetching the orderbook., Empty position list → nothing happens. (+15 more)
+Cohesion: 0.05
+Nodes (33): _make_fill(), balance error on first call → retries with avail_shares, returns sold., balance error with 0 available shares closes the DB row, returns error., Non-balance exceptions are re-raised unchanged., With db=None and a today-dated filled JSONL record, a sell is attempted., With db=None and only a prior-day filled record, not_found is returned., When order is no_fill with partial > 0, append partial_fill record to JSONL., check_take_profit_exits sells when best_bid >= target, skips otherwise. (+25 more)
 
 ### Community 27 - "Project Documentation & Plans"
 Cohesion: 0.05
@@ -578,7 +574,7 @@ Nodes (34): main(), _process_table(), Path, Archival ETL: ingest snapshot JSONL 
 
 ### Community 30 - "Settlement Recording"
 Cohesion: 0.06
-Nodes (33): Persist EMOS coefficients to the emos_calibration table.      Always writes mode, save_coefficients(), _db(), save_coefficients persists to DB correctly; second call overwrites., save_coefficients then get_emos_coefficients returns matching values., Calling save_coefficients twice must overwrite — no duplicate rows., Two cities can each have their own emos_shadow row independently., Return a fresh in-memory Database instance. (+25 more)
+Nodes (25): _db(), InsufficientDataError must be raised correctly from fetch_training_data., Empty model_forecast_log → InsufficientDataError (city maps to station)., Only a few forecast + observation rows → InsufficientDataError., City not in STATIONS config → InsufficientDataError., Sufficient paired data returns the correct number of triples., save_coefficients persists to DB correctly; second call overwrites., save_coefficients then get_emos_coefficients returns matching values. (+17 more)
 
 ### Community 31 - "Decay Function Library"
 Cohesion: 0.09
@@ -597,12 +593,12 @@ Cohesion: 0.12
 Nodes (5): Unit tests for src/dashboard/api.py (Issue 2 — Epic 4).  Updated in Issue #369:, Even with a failing orderbook, /api/portfolio returns 200., Portfolio endpoint returns 200 even when _db is None (no enrichment)., TestHealthEndpoint, TestPortfolioEndpoint
 
 ### Community 35 - "TAF Database Schema"
-Cohesion: 0.05
-Nodes (47): compute_daily_high(), compute_daily_low_window(), fetch_all_metars_today(), low_window_bounds(), now_local(), datetime, METAR data fetcher — aviation weather observations for each station.  All HTTP c, Compute the running minimum temperature observed since *window_start_local*. (+39 more)
+Cohesion: 0.06
+Nodes (28): _make_fake_weather_state(), _patch_build_deps(), Regression tests for issue #425: Decouple held-position re-pricer from scanner a, A station inside its active window must be included in scanner output., health_out must contain a 'degraded' entry for out-of-window stations., build_weather_for_pricing() must include stations regardless of local hour., Station outside its active window must still appear in pricing output., Pricing output for overnight station must have valid high_f and latest_temp_f. (+20 more)
 
 ### Community 36 - "Risk PnL Recording Tests"
-Cohesion: 0.02
-Nodes (113): apply_residual_correction(), _build_stats(), compute_residual_stats(), compute_residual_stats_per_pair(), _get_top_priority_pair(), _query_trailing_deltas(), Per-city rolling residual bias correction for MeteoEdge.  Computes a rolling sig, Return delta_f values for *city* in the trailing *window_days* calendar days. (+105 more)
+Cohesion: 0.04
+Nodes (69): _build_stats(), compute_residual_stats(), compute_residual_stats_per_pair(), _get_top_priority_pair(), _query_trailing_deltas(), Per-city rolling residual bias correction for MeteoEdge.  Computes a rolling sig, Return delta_f values for *city* in the trailing *window_days* calendar days., Build a ResidualStats from a list of deltas. (+61 more)
 
 ### Community 37 - "Spike Detection Core"
 Cohesion: 0.10
@@ -617,32 +613,32 @@ Cohesion: 0.10
 Nodes (16): PaperTrader, datetime, Path, Paper trading engine with realistic slippage, queue delays, and capital tracking, Save all trades to JSONL (backward compat for non-DB mode)., Random slippage model: 0.5 to 3 cents with distribution favoring smaller slips., Simulate realistic order queue delay: 50-500ms., Trade (+8 more)
 
 ### Community 40 - "Climb Rate Tables"
-Cohesion: 0.09
-Nodes (23): Launch the MeteoEdge dashboard server on the local network.  Reuses the guarded, _BridgeModule, _compute_win_rate(), _get_api(), _latest_capital(), _load_trades(), Path, Bridge stub — delegates to the consolidated dashboard at src/dashboard/api.py. (+15 more)
+Cohesion: 0.10
+Nodes (20): Launch the MeteoEdge dashboard server on the local network.  Reuses the guarded, _BridgeModule, _compute_win_rate(), _get_api(), _latest_capital(), _load_trades(), Bridge stub — delegates to the consolidated dashboard at src/dashboard/api.py., Module that mirrors last_poll_ts / _db writes to src.dashboard.api.      - Reads (+12 more)
 
 ### Community 41 - "Dashboard API Tests"
 Cohesion: 0.09
 Nodes (13): _db(), Unit tests for src/data/collectors/amos.py.  Issue #740: AmosCollector is retire, The module must not import fetch() at all -- it makes no HTTP calls., The constructor must not read KMA_API_KEY -- confirm no attribute         is der, Fresh in-memory Database with cadence_min/is_official columns applied.      Thes, Issue #740: poll() and run_loop() are no-ops., No new source='amos' rows are written by poll() -- the whole point         of re, No KMA_API_KEY handling remains -- poll() must not depend on it. (+5 more)
 
 ### Community 42 - "Database Thread Safety"
-Cohesion: 0.07
-Nodes (22): compute_deb_mu_f(), Return DEB-weighted forecast high (°F).      Replaces the static 60/40 ensemble_, When forecast_ecmwf is None for US station, no warning is emitted., Verify compute_deb_mu_f handles 4-model and graceful-degradation cases., 4-model weighted average: nws=0.3, om=0.2, hrrr=0.3, nbm=0.2., When HRRR is None, remaining 3 models renormalise to 1.0., When NBM is None, remaining 3 models renormalise to 1.0., When both HRRR and NBM are None, falls back to 2-model NWS+OM blend. (+14 more)
+Cohesion: 0.05
+Nodes (32): compute_deb_mu_f(), Return DEB-weighted forecast high (°F).      Replaces the static 60/40 ensemble_, _make_hourly_data(), Unit tests for src/model/deb_hourly_consensus.py — no API calls., Build a minimal Open-Meteo-shaped hourly payload for testing., Only today's slots are returned; values are renormalized over hourly-capable sou, Same input temps must produce same consensus output regardless of weight dict., Returns None when _fetch_open_meteo_hourly returns None. (+24 more)
 
 ### Community 43 - "LiveTrader DB Integration"
 Cohesion: 0.14
-Nodes (11): _fresh_db(), _insert_obs(), Two captures for same station/model/date at different lead times are separate ro, fetch_training_data returns triples only for the requested lead_hours bin., Only rows at lead_hours=24 are returned when lead_hours=24 is requested., lead_hours=12 rows are not included when lead_hours=24 is requested., When sigma_f is in the DB, fetch_training_data returns it (not the constant)., When sigma_f is NULL in the DB, FORECAST_STDDEV_F is used as fallback. (+3 more)
+Nodes (12): _fresh_db(), _insert_obs(), Tests for model_forecast_log schema migration (#422 / #423).  Coverage: 1. Schem, Two captures for same station/model/date at different lead times are separate ro, fetch_training_data returns triples only for the requested lead_hours bin., Only rows at lead_hours=24 are returned when lead_hours=24 is requested., lead_hours=12 rows are not included when lead_hours=24 is requested., When sigma_f is in the DB, fetch_training_data returns it (not the constant). (+4 more)
 
 ### Community 44 - "EMOS Coefficients Persistence"
-Cohesion: 0.16
-Nodes (14): backfill(), _connect(), _ensure_marker_column(), main(), Connection, Path, One-off backfill for the shadow NO-side price-semantics bug (issue #737).  Backg, Add the idempotency marker column if it does not already exist. (+6 more)
+Cohesion: 0.11
+Nodes (17): backfill(), _connect(), _ensure_marker_column(), main(), Connection, Path, One-off backfill for the shadow NO-side price-semantics bug (issue #737).  Backg, Add the idempotency marker column if it does not already exist. (+9 more)
 
 ### Community 45 - "TAF Parser"
-Cohesion: 0.06
-Nodes (44): compute_weights(), Compute inverse-error weights for each model over the last *window_days* days., _log_rows(), _make_db(), date, When all models have fewer than MIN_SAMPLES entries, return EQUAL_WEIGHTS., Verify _compute_weights_with_metadata returns real RMSE and sample counts., Calibrated model should return computed RMSE, not 0.0. (+36 more)
+Cohesion: 0.08
+Nodes (28): _log_rows(), _make_db(), date, Verify _compute_weights_with_metadata returns real RMSE and sample counts., Calibrated model should return computed RMSE, not 0.0., Cold-start model (insufficient samples) should return rmse=0.0., When all models are cold-start, still return sample counts., Mixed scenario: some models calibrated, others cold-start. (+20 more)
 
 ### Community 46 - "Partial Fill Tracking"
-Cohesion: 0.11
-Nodes (22): _fake_execute_factory(), _make_candidate(), _make_risk(), _make_trader(), _poll_ctx(), Regression tests for the issue #611 live entry gate in run.py.  The bug: candida, Context-manager patches to run poll_once in live mode without real I/O., Two consecutive polls flagging the same bracket -> exactly one live order. (+14 more)
+Cohesion: 0.09
+Nodes (26): db(), _fake_execute_factory(), _make_candidate(), _make_risk(), _make_trader(), _poll_ctx(), Regression tests for the issue #611 live entry gate in run.py.  The bug: candida, Context-manager patches to run poll_once in live mode without real I/O. (+18 more)
 
 ### Community 47 - "Market Scanner"
 Cohesion: 0.11
@@ -650,27 +646,27 @@ Nodes (23): _fresh_db(), _insert_live(), _no_jsonl(), Path, Unit tests for the D
 
 ### Community 48 - "Station Data Polling"
 Cohesion: 0.06
-Nodes (23): Unit tests for src/risk/manager.py.  Each of the 4 block conditions is tested in, Block when _open_positions >= max_open_positions., Block when (starting_capital - capital) / starting_capital >= drawdown_stop_pct., Create a RiskManager with explicit limits (no env-var side effects in tests)., Block when liquidity_contracts < min_market_liquidity., record_pnl accumulates realised PnL within the same day., _reset_if_new_day() clears PnL when the UTC date has changed., Verify that run.py can instantiate RiskManager and block trades when limit=0. (+15 more)
+Nodes (19): Block when _open_positions >= max_open_positions., Block when (starting_capital - capital) / starting_capital >= drawdown_stop_pct., Create a RiskManager with explicit limits (no env-var side effects in tests)., Block when liquidity_contracts < min_market_liquidity., record_pnl accumulates realised PnL within the same day., _reset_if_new_day() clears PnL when the UTC date has changed., allow_trade() returns (True, "") when all limits are clear., Callers that omit liquidity_contracts should not be blocked. (+11 more)
 
 ### Community 49 - "Email Alert System"
 Cohesion: 0.11
 Nodes (23): _fresh_db(), _insert_settled_trade(), _insert_stuck_trade(), Path, _query_stuck_trades(), Tests for stuck-trade detection in src/scripts/settle.py.  Covers: - Detection o, Tests for stuck-trade detection logic., Single stuck trade (> 36h old, no outcome, no open_position) is detected. (+15 more)
 
 ### Community 50 - "Alert Manager Tests"
-Cohesion: 0.11
-Nodes (15): _fetch_open_meteo_hourly(), Fetch raw Open-Meteo hourly payload for the given coordinates.      Cached 30 mi, build_consensus(), DEB hourly consensus temperature path builder., Return DEB-weighted hourly temperature path for today (UTC).      Renormalises t, _make_hourly_data(), Unit tests for src/model/deb_hourly_consensus.py — no API calls., Build a minimal Open-Meteo-shaped hourly payload for testing. (+7 more)
+Cohesion: 0.05
+Nodes (44): build_dry_run_report(), compute_observed_highs(), _connect_ro(), cross_check_against_settlements(), dedupe_one_per_bracket_day(), load_bracket_eval_rows(), load_settlement_outcomes(), main() (+36 more)
 
 ### Community 51 - "Portfolio API Tests"
-Cohesion: 0.07
-Nodes (40): JmaAmedasCollector, Fetch and persist the latest JMA AMeDAS reading for Tokyo Haneda.          Retur, Fetch the most recent 10-minute reading from the JMA AMeDAS API.          JMA se, FALLBACK: Fetch current temperature from Open-Meteo for Haneda.          Used wh, Emit CRITICAL if no data for more than 2 × cadence_min minutes., Run the polling loop indefinitely., Poll JMA AMeDAS for Tokyo Haneda 10-minute temperature observations.      Usage:, _db() (+32 more)
+Cohesion: 0.08
+Nodes (35): JmaAmedasCollector, Poll JMA AMeDAS for Tokyo Haneda 10-minute temperature observations.      Usage:, _db(), _jma_response(), _make_response(), _open_meteo_response(), Unit tests for src/data/collectors/jma_ameidas.py.  All HTTP calls are mocked vi, When multiple time slots exist, the lexicographically last is used. (+27 more)
 
 ### Community 52 - "EMOS Mark-Ready API"
-Cohesion: 0.16
-Nodes (11): build_report(), compute_bss(), format_sharpness(), market_p_yes(), Market-implied P(YES), symmetrized across both sides of the book.      ``yes_ask, Count of predictions per probability bucket (distribution shape only)., Compute BS_model, BS_market, BSS over de-duped, outcome-joined rows.      *sampl, Map a BSS value to the decision-gate language (informational only for Pass 1). (+3 more)
+Cohesion: 0.09
+Nodes (31): build_report(), compute_bss(), _connect_ro(), _f(), format_sharpness(), _iter_csv_rows(), join_outcomes(), load_candidate_rows() (+23 more)
 
 ### Community 53 - "Station Toggle API"
-Cohesion: 0.08
-Nodes (22): emos_serving_mu(), Return the sigma_raw EMOS serving should feed into apply_emos (issue #448)., Return (mu_final, sigma_cal) for EMOS serving, or None if unservable.      The #, resolve_sigma_raw(), Issue #658 layer contract: EMOS serves on the plain equal-weight stack     mean, Without coefficients apply_emos passes through, so serving equals         plain, Issue #760: emos_serving_mu must average exactly the WeatherState     attributes, Active stack = hrrr_nbm: mu_raw must be the mean of all 4 members. (+14 more)
+Cohesion: 0.09
+Nodes (18): emos_serving_mu(), Return (mu_final, sigma_cal) for EMOS serving, or None if unservable.      The #, Issue #658 layer contract: EMOS serves on the plain equal-weight stack     mean, Without coefficients apply_emos passes through, so serving equals         plain, Issue #760: emos_serving_mu must average exactly the WeatherState     attributes, Active stack = hrrr_nbm: mu_raw must be the mean of all 4 members., Active stack = intl_ecmwf_icon: mu_raw must be the mean of all 4 members., A station without HRRR/NBM data yet (active stack hrrr_nbm) must         still s (+10 more)
 
 ### Community 54 - "EMOS Calibration Fitting"
 Cohesion: 0.12
@@ -678,43 +674,43 @@ Nodes (19): _connect(), main(), merge_duplicates(), _most_protective(), Connecti
 
 ### Community 55 - "Taker Fee Estimation"
 Cohesion: 0.07
-Nodes (26): load_records(), main(), Settlement writer for MeteoEdge — records resolved market outcomes., Writes settlement records to the settlements table.      One settlement per mark, Upsert a settlement record. ticker is UNIQUE — idempotent., SettlementWriter, _db(), Tests for SettlementWriter and settlement writer integration. (+18 more)
+Nodes (28): load_records(), main(), Settlement writer for MeteoEdge — records resolved market outcomes., Writes settlement records to the settlements table.      One settlement per mark, Upsert a settlement record. ticker is UNIQUE — idempotent., SettlementWriter, Upsert one settlement row per market resolved on *target*.      Market identity, _write_db_settlements() (+20 more)
 
 ### Community 56 - "Freshness Monitor Tests"
-Cohesion: 0.18
-Nodes (10): _cleanup(), Issue #799: with no USE_ENSEMBLE_SIGMA config row, the active resolver         d, USE_ENSEMBLE_SIGMA='false' in bot_config resolves the legacy 'fixed' track., USE_ENSEMBLE_SIGMA (issue #799) -- not the now-legacy EMOS_SIGMA_SOURCE, Issue #799: setting the legacy EMOS_SIGMA_SOURCE key alone must NOT         chan, A DB with the pre-#449 UNIQUE(city, model_mode, forecast_source) schema, The oldest schema (pre-#659, city+model_mode only) also migrates cleanly, _real_db() (+2 more)
+Cohesion: 0.28
+Nodes (7): _cleanup(), Issue #799: with no USE_ENSEMBLE_SIGMA config row, the active resolver         d, USE_ENSEMBLE_SIGMA='false' in bot_config resolves the legacy 'fixed' track., USE_ENSEMBLE_SIGMA (issue #799) -- not the now-legacy EMOS_SIGMA_SOURCE, Issue #799: setting the legacy EMOS_SIGMA_SOURCE key alone must NOT         chan, _real_db(), TestUpsertEmosCoefficientsSigmaSource
 
 ### Community 57 - "True Probability Tests"
-Cohesion: 0.10
-Nodes (18): _make_jsonl_record(), reconcile_wallet_to_db inserts DB rows for orphan wallet positions., Return a mock db whose get_open_positions returns rows for given token_ids., Token A already has an open_positions row → no DB writes., Token B found in JSONL as 'timeout' → trade + open_position inserted., Token found in JSONL as 'filled' is also recovered (not just 'timeout')., Wallet size (authoritative) is used for shares, not JSONL size_eur., JSONL record with no order_id gets a synthetic orphan-recovery order_id. (+10 more)
+Cohesion: 0.07
+Nodes (19): Trade stats (trade_count, filled_count, win_rate, total_pnl) must come from the, open_positions_count must reflect the DB open_positions table., yes_enabled and no_enabled must reflect the DB per-side override., When both yes_enabled=False and no_enabled=False, enabled must be False., Tests for GET/PATCH /api/config, including hidden parameter filtering., GET /api/config must return 200., GET /api/config must return a dict grouped by category., GET /api/config must not include EMOS_SIGMA_SOURCE (hidden/deprecated). (+11 more)
 
 ### Community 58 - "Live State Management"
-Cohesion: 0.10
-Nodes (27): compute_envelope_low(), Daily-low predictor: computes plausible overnight low range and probability.  Ob, Return (min_plausible_low, max_plausible_low) for the rest of the night.      ma, Compute P(daily low falls in [bracket.low_f, bracket.high_f]).      Analogous to, true_probability_low_in_bracket(), WeatherStateLow, Boost confidence as settlement approaches and actual temp is nearly determined., time_to_settlement_boost() (+19 more)
+Cohesion: 0.08
+Nodes (36): Bracket, ensemble_forecast(), compute_envelope_low(), Daily-low predictor: computes plausible overnight low range and probability.  Ob, Return (min_plausible_low, max_plausible_low) for the rest of the night.      ma, Compute P(daily low falls in [bracket.low_f, bracket.high_f]).      Analogous to, true_probability_low_in_bracket(), WeatherStateLow (+28 more)
 
 ### Community 59 - "Bot Configuration API"
 Cohesion: 0.11
 Nodes (14): _fresh_db(), _old_db(), Path, Unit tests for shadow-mode schema migration in src/data/db.py.  Covers: - _migra, Existing live rows survive the migration without data loss., Running _migrate() twice on a new-schema DB causes no error and no duplicate dat, A DB created from scratch (via _DDL) already accepts mode='shadow'., The CHECK constraint rejects unknown mode values. (+6 more)
 
 ### Community 60 - "EMOS Calibration Training"
-Cohesion: 0.07
-Nodes (31): get_take_profit_buffer_cents(), Return the take-profit buffer (¢) for *station*.      Checks for a station-speci, OrderManager, Return full position data for non-redeemable wallet tokens (size > 0.01).      E, Manages open-order state for the live trading loop.      Thread-safe: all mutati, Insert DB rows for wallet positions that have no open_positions entry., Refresh _open_orders from exchange open orders + today's filled positions., _wallet_held_positions() (+23 more)
+Cohesion: 0.13
+Nodes (17): _check_forced_exits(), Force-close NO positions within *force_exit_minutes* of settlement.      When a, _make_fill(), _make_position_state(), _make_snap(), _check_forced_exits fires inside window with adequate depth, skips otherwise., Fresh OrderManager singleton state per test., Forced exit fires when minutes_remaining < threshold and depth >= floor. (+9 more)
 
 ### Community 61 - "Station Override Database"
 Cohesion: 0.13
 Nodes (10): _fresh_db(), Tests for direction column on candidates/trades/settlements (Issue #456)., Fresh DB must have direction column in all three tables., Rows inserted without direction must read back as 'high'., _migrate() must add the column idempotently to an existing DB missing it., Simulate a pre-direction DB by dropping the direction column after init., Writes with direction='low' and reads filtering by direction work correctly., TestDirectionColumnFreshInstall (+2 more)
 
 ### Community 62 - "Order Sync Logic"
-Cohesion: 0.15
+Cohesion: 0.13
 Nodes (13): compute_promotion_bar(), Compute the statistical promotion bar for every shadow station+side.      ADVISO, _FakeDB, Minimal fake DB for compute_promotion_bar — avoids per-call config reads     by, Build a shadow trade row the way settle_shadow_trades() leaves it:     pnl set d, compute_promotion_bar() -- calls the real wilson_lower_bound/breakeven_win_rate, Issue #655 regression: a shadow trade settled by the real         settle_shadow_, Issue #823: compute_promotion_bar must exclude "certainty-shortcut"     rows (p_ (+5 more)
 
 ### Community 63 - "Stop-Loss Safety Guards"
-Cohesion: 0.11
-Nodes (31): RuntimeError, build_graphify_context(), build_review_packet(), call_nim(), create_check_run(), create_failure_check_run(), _env(), extract_linked_issue_numbers() (+23 more)
+Cohesion: 0.14
+Nodes (28): build_graphify_context(), build_review_packet(), call_nim(), create_check_run(), create_failure_check_run(), _env(), extract_linked_issue_numbers(), fetch_issue() (+20 more)
 
 ### Community 64 - "Full TAF Parse Tests"
-Cohesion: 0.06
-Nodes (35): _enabled(), main(), main_with_db(), Entry point for callers that already have a Database instance., Return False when EMOS_SHADOW_ENABLED is explicitly disabled., Fit emos_shadow coefficients for every city and log a daily CRPS row.      For e, _run_calibration(), Return the Polymarket city name from a STATIONS entry (index 3). (+27 more)
+Cohesion: 0.23
+Nodes (8): _forecast_row(), _make_db_with_rows(), sigma_source='fixed' always uses FORECAST_STDDEV_F, even when sigma_f is populat, Same raw rows, different sigma_source -> different sigma_f in the triples., Dropped NaN triples reduce the effective sample count for the min_samples gate., Default (unparametrised) call keeps pre-#449 behaviour: prefer sigma_f., TestFetchTrainingDataNaNHandling, TestFetchTrainingDataSigmaSource
 
 ### Community 65 - "Probability Distribution Tests"
 Cohesion: 0.14
@@ -733,40 +729,40 @@ Cohesion: 0.10
 Nodes (19): _base_trade_kwargs(), _db(), Thread-safety stress tests for src/data/db.py.  Verifies that concurrent writes, Concurrent inserts across multiple tables must not corrupt each other., Threads inserting observations, trades, and risk state simultaneously., Return a fresh in-memory Database instance., RLock must allow the same thread to re-enter (e.g., callback triggering another, on_insert_callback that calls another DB method on the same thread must not dead (+11 more)
 
 ### Community 69 - "TAF Text Parser"
-Cohesion: 0.16
-Nodes (19): _cache_path_ecmwf_daily(), _fetch_ecmwf_2t(), fetch_ecmwf_daily_high(), _fetch_ecmwf_ens_members_2t(), _floor_to_ecmwf_cycle(), _get_cache_dir(), _get_cache_ttl_hours(), _is_cache_valid() (+11 more)
+Cohesion: 0.08
+Nodes (12): _models_for_region(), Return registry entries applicable to *station_region*.      A model is applicab, Verify HRRR and NBM are registered with correct metadata., HRRR and NBM are US-only; must not appear for EU stations., Verify ECMWF and ICON are registered with correct metadata., ECMWF is global, so it is technically included for US stations., ICON is EU-only; must not appear for US stations., ICON is EU-only; must not appear for Asia stations. (+4 more)
 
 ### Community 70 - "EMOS Coefficients Database"
-Cohesion: 0.12
-Nodes (13): _FakeHourlyTemp, _FakeMember, _hang(), Tests for forecast ingestion in capture_forecasts.py.  Covers: - GFS single-mode, Minimal stand-in for GEFSMemberForecast — only temp_k is needed., Return a fetch stand-in that sleeps *seconds* then returns a valid result., A hung fetch inside _capture_station must time out, log, and let the     loop co, NWS fetch hangs well past the (patched, tiny) timeout -- _capture_station (+5 more)
+Cohesion: 0.14
+Nodes (13): main(), Cron capture worker — log model forecasts at fixed lead-time bins.  This script, Return the ISO date string for today+day_offset in UTC., Run all captures appropriate for the current UTC hour.      For each station and, run_captures(), _target_date(), _FakeHourlyTemp, _FakeMember (+5 more)
 
 ### Community 71 - "Immediate Sell Tests"
-Cohesion: 0.16
-Nodes (12): _load_open_fills_for_token(), Return today's filled, not-yet-sold fills for *token_id* (any side).      Unlike, Unit tests for src/execution/order_manager.py.  Covers: - OrderManager.reconcile, The token-fills loader used to size a manual sell., A settled prior-day 'filled' record must not be returned as sellable today., Persist partial fills on no_fill path to survive process restart., _load_open_fills_for_token accounts for partial_fill records when sizing., When partial shares equal or exceed total shares, return empty list. (+4 more)
+Cohesion: 0.06
+Nodes (34): 1. EMOS Calibration Layer (New), 2. TAF Integration (Enhanced), 3. Forecast Persistence (New), 4. Intraday Correction Model (Enhanced), 5. Risk Management Hardening, Adjusted Profitability Projections, Appendix: Key Assumptions & Sensitivity, Capital Requirements & Scaling (+26 more)
 
 ### Community 72 - "Envelope Computation Tests"
 Cohesion: 0.17
 Nodes (10): _db(), Return the maximum when multiple observations on the same local day., Return the maximum temperature for the date., Return a fresh in-memory Database instance., get_daily_obs_high() must group by station-local calendar day., Test basic get_daily_obs_high with a simple UTC date., Test with observation just after local midnight (before UTC midnight)., Return None when no observations exist for the date. (+2 more)
 
 ### Community 73 - "Intraday Correction API"
-Cohesion: 0.12
-Nodes (17): _common_ctx(), _make_live_trader(), _make_mock_db(), _make_mock_risk(), Tests for balance-check fix (issue #286).  Covers: - Exception path: balance che, _wallet_cooldown_until is set ~1800s ahead when balance falls below position siz, When cooldown is active, poll_once returns early without calling get_usdc_balanc, Once the cooldown window passes, normal scanning resumes. (+9 more)
+Cohesion: 0.11
+Nodes (19): RuntimeError, Place a GTC limit order. Returns order_id string., _common_ctx(), _make_live_trader(), _make_mock_db(), _make_mock_risk(), Tests for balance-check fix (issue #286).  Covers: - Exception path: balance che, _wallet_cooldown_until is set ~1800s ahead when balance falls below position siz (+11 more)
 
 ### Community 74 - "EMOS Status API"
 Cohesion: 0.20
 Nodes (8): _db(), _filled_record(), _insert_trade(), Tests for the DB settlement pipeline (issue #198).  Covers Database.update_trade, TestAddSettledPnl, TestRepairDb, TestSettleLiveTradesDb, TestUpdateTradeByOrder
 
 ### Community 75 - "Portfolio Statistics"
-Cohesion: 0.08
-Nodes (16): Trade stats (trade_count, filled_count, win_rate, total_pnl) must come from the, open_positions_count must reflect the DB open_positions table., Two rapid requests must return identical data (cache hit on second)., Each record must include yes_enabled and no_enabled fields., yes_enabled and no_enabled must reflect the DB per-side override., When both yes_enabled=False and no_enabled=False, enabled must be False., Tests for the /api/stations/overview endpoint (issue #229)., Inject db and clear the stations overview cache. (+8 more)
+Cohesion: 0.12
+Nodes (9): Two rapid requests must return identical data (cache hit on second)., Each record must include yes_enabled and no_enabled fields., Tests for the /api/stations/overview endpoint (issue #229)., Endpoint must return 200 and a list., One entry per configured STATION must appear., Each record must include all required fields., A station in DISABLED_STATIONS must have status='disabled' and enabled=False., A station outside its active hours must have status='outside_hours'. (+1 more)
 
 ### Community 76 - "Intraday Correction Model"
 Cohesion: 0.12
 Nodes (11): expected_additional_rise(), datetime, Per-station per-month climb rate tables (°F of additional rise possible from eac, Return p95 additional °F rise from now_local.hour to end-of-day.      Args:, datetime, Unit tests for src/model/climb_rates.py., Midnight has the most rise still ahead., After 7pm no further rise is expected. (+3 more)
 
 ### Community 77 - "Alert System Tests"
-Cohesion: 0.13
-Nodes (13): is_highest_temp_market(), is_lowest_temp_market(), Return (True, station_code) if this is a 'Will the highest temperature in     <c, Return (True, station_code) for 'lowest temperature in <city>' markets.      Use, _market(), is_highest_temp_market must not match lowest-temp markets., TestHighestTempMarketRegressions, TestIsLowestTempMarket (+5 more)
+Cohesion: 0.06
+Nodes (30): is_highest_temp_market(), is_lowest_temp_market(), Return (True, station_code) if this is a 'Will the highest temperature in     <c, Return (True, station_code) for 'lowest temperature in <city>' markets.      Use, _low_market(), _low_market_with(), _make_weather_low(), _market() (+22 more)
 
 ### Community 78 - "Poll Alert Integration"
 Cohesion: 0.08
@@ -786,7 +782,7 @@ Nodes (36): analytics_intraday(), Return the intra-day snapshot series for *stat
 
 ### Community 82 - "Database Update Operations"
 Cohesion: 0.06
-Nodes (27): db(), _mock_response(), collector(), Tests for src/data/collectors/jma_ameidas.py — JmaAmedasCollector class.  Uses a, Test 3-hour bucket URL format (YYYYMMDD_HH.json)., URL should contain 3-hour bucket format (YYYYMMDD_HH.json)., URL for hour 5 should snap to bucket hour 03., URL for hour 23 should snap to bucket hour 21. (+19 more)
+Nodes (29): JMA AMeDAS 10-minute observation adapter for Tokyo Haneda Airport.  Fetches real, SQLite persistence layer for MeteoEdge., db(), _mock_response(), collector(), Tests for src/data/collectors/jma_ameidas.py — JmaAmedasCollector class.  Uses a, Test 3-hour bucket URL format (YYYYMMDD_HH.json)., URL should contain 3-hour bucket format (YYYYMMDD_HH.json). (+21 more)
 
 ### Community 83 - "Open-Meteo Forecast"
 Cohesion: 0.15
@@ -797,8 +793,8 @@ Cohesion: 0.11
 Nodes (40): _active_stack(), _deb_weights_for_city(), _emos_bias_correct(), get_ensemble_distribution(), _latest_model_weights(), _lowest_lead_per_model(), Ensemble distribution exposure for the Edge tab (issue #511).  Builds a read-onl, Return True when *latest_date* (YYYY-MM-DD) is more than the staleness     thres (+32 more)
 
 ### Community 85 - "Stop-Loss Sell Logic"
-Cohesion: 0.14
-Nodes (17): _insert_taf_window(), _make_market(), _make_state(), Run scan_markets with permissive config so candidates are generated., Without db arg, candidates have taf_disruption=False., Without db arg, confidence is not scaled by TAF factor., DB with no TAF windows → taf_disruption=False on candidate., FM window (Definite Change) with TS → taf_disruption=False. (+9 more)
+Cohesion: 0.13
+Nodes (19): _insert_taf_window(), _make_market(), _make_state(), Run scan_markets with permissive config so candidates are generated., Without db arg, candidates have taf_disruption=False., Without db arg, confidence is not scaled by TAF factor., DB with no TAF windows → taf_disruption=False on candidate., FM window (Definite Change) with TS → taf_disruption=False. (+11 more)
 
 ### Community 86 - "Climb Table Builder"
 Cohesion: 0.10
@@ -809,8 +805,8 @@ Cohesion: 0.10
 Nodes (13): Tests for GET /api/stations/perf: {real, shadow} × {YES, NO} quadrants., Helper: insert a trade and update outcome/pnl., A station with no trades must not appear in the response., Each station entry must have real and shadow, each with YES and NO quadrants., An empty quadrant must return count=0, win_rate=null, pnl=0.0,         avg_entry, Real YES quadrant computes metrics correctly from live-mode YES trades., Real NO quadrant is computed independently of real YES., Shadow YES quadrant is computed from mode='shadow' trades only. (+5 more)
 
 ### Community 88 - "TAF Collector Tests"
-Cohesion: 0.16
-Nodes (11): _patch_low_build_deps(), Tests for the low-side weather builder (issue #554).  Root cause of #554: the lo, Pre-dawn (well before Houston's ~06:1x CDT June sunrise): window should, Milan (LIMC) has no 'lowest temperature in Milan' Polymarket market --         b, When fetch_nws_forecast_low() returns None (e.g. non-US station or         NWS o, forecast_low_f must be wired from fetch_nws_forecast_low(lat, lon) --         th, Late evening (well after Houston's ~20:2x CDT June sunset): window should, TestBuildWeatherLowForScanning (+3 more)
+Cohesion: 0.27
+Nodes (7): _patch_low_build_deps(), Milan (LIMC) has no 'lowest temperature in Milan' Polymarket market --         b, When fetch_nws_forecast_low() returns None (e.g. non-US station or         NWS o, forecast_low_f must be wired from fetch_nws_forecast_low(lat, lon) --         th, TestBuildWeatherLowForScanning, build_weather_low_for_scanning(), Assemble per-station WeatherStateLow for the SCANNER low-side path.      Epic-C
 
 ### Community 89 - "Closed Position Exit Reasons"
 Cohesion: 0.13
@@ -821,20 +817,20 @@ Cohesion: 0.08
 Nodes (14): Unit tests for GZipMiddleware on dashboard API (Issue #807).  Tests verify: 1. J, Verify middleware chain works: CORS and GZIP together., Verify middleware handles multiple Accept-Encoding values., Verify requests with empty Accept-Encoding work., Regression test: verify /status endpoint still works., Test gzip compression middleware on dashboard API., Verify GZipMiddleware is installed in the app., Verify JSON responses are sent correctly with gzip Accept-Encoding. (+6 more)
 
 ### Community 91 - "Collector Thread Management"
-Cohesion: 0.21
-Nodes (11): compute_correction(), Compute intraday-corrected forecast mean for city.      Args:         city:  Cit, _fresh_obs(), _make_state(), When decay=0.0 (inside peak window), corrected_mu_f == deb_mu_f., Tests that compute_correction() feeds live DEB weights into     build_consensus(, build_consensus() receives the live DEB weights, not a hardcoded basis., The exact live weights used are persisted as a JSON snapshot so the         resi (+3 more)
+Cohesion: 0.09
+Nodes (18): main(), Mark the BUY trade row of each fill as sold with its realised PnL.      When clo, _record_sell_in_db(), Promotion prerequisites checker — ensures shadow stations have sufficient data c, estimate_fee_cents(), Polymarket taker fee approximation.  Polymarket's taker fee schedule applies to, Rough Polymarket taker fee in cents per contract.      Approximation: max(1.0, 7, Unit tests for src/strategy/fee.py. (+10 more)
 
 ### Community 92 - "Settlement Execution"
-Cohesion: 0.10
-Nodes (12): Tests for POST /api/emos/{city}/mark-ready., mark-ready toggles ready_for_promotion from 0 to 1., mark-ready toggles ready_for_promotion from 1 back to 0., mark-ready returns 409 when no shadow row exists., mark-ready returns 404 for unknown city., Calling mark-ready twice returns to the original state., mark-ready (issue #696) only flips the active forecast_source/         sigma_sou, mark-ready?all_tracks=true reproduces the pre-#696 city-wide toggle. (+4 more)
+Cohesion: 0.12
+Nodes (9): Tests for POST /api/emos/{city}/mark-ready., mark-ready toggles ready_for_promotion from 0 to 1., mark-ready toggles ready_for_promotion from 1 back to 0., mark-ready returns 409 when no shadow row exists., mark-ready returns 404 for unknown city., Calling mark-ready twice returns to the original state., mark-ready (issue #696) only flips the active forecast_source/         sigma_sou, mark-ready?all_tracks=true reproduces the pre-#696 city-wide toggle. (+1 more)
 
 ### Community 93 - "Bot Config Database"
 Cohesion: 0.08
 Nodes (24): Check 1: Bot is Running, Check 2: Dashboard is Running, Check 3: Open Position Count is Consistent, Check 4: Recent Bot Log Entries, Check 5: No Excessive CRITICAL Logs, Common Failure Modes and Recovery, Contact and Escalation, Dashboard Troubleshooting Guide (+16 more)
 
 ### Community 94 - "Config Patch API"
-Cohesion: 0.06
-Nodes (26): get_source_priority(), get_training_eligible_since(), _load_source_priority(), Return the date from which *city* becomes training-eligible, if gated.      Some, Tests for src/config.py source priority configuration., Test source priority config loader., Tests for issue #766: get_training_eligible_since() date-scoped accessor., Shenzhen (ZGSZ) is eligible only from its 2026-07-14 cadence upgrade. (+18 more)
+Cohesion: 0.07
+Nodes (19): get_source_priority(), _load_source_priority(), Test source priority config loader., Tokyo should have jma_ameidas as first priority., Issue #740: amos is retired -- Seoul's sole source is METAR (RKSI)., Issue #740: amos is retired -- Busan's sole source is METAR (RKPK)., Singapore should have mss as first priority., Each city should return a non-empty list of dicts. (+11 more)
 
 ### Community 95 - "Observation Database Tests"
 Cohesion: 0.14
@@ -845,12 +841,12 @@ Cohesion: 0.18
 Nodes (14): _db(), _insert_settlement(), _insert_trade(), Tests for P&L scaling by position size (issue #292).  Verifies that per-unit P&L, Create an in-memory test database., Test P&L scaling for a NO-side trade (bracket NOT hit = win).          Example:, Test P&L scaling with fractional shares and rounding.          Example:, Helper to insert a settlement record. (+6 more)
 
 ### Community 97 - "Observation Schema Migration"
-Cohesion: 0.03
-Nodes (119): BaseModel, analysis_station(), AnalysisOut, AnalysisStationOut, bot_log(), BracketOut, _build_param_entry(), _build_perf_quadrant() (+111 more)
+Cohesion: 0.02
+Nodes (124): BaseModel, analysis_station(), AnalysisOut, AnalysisStationOut, _batch_midpoints(), bot_log(), BracketOut, _build_param_entry() (+116 more)
 
 ### Community 98 - "TAF Disruption API"
-Cohesion: 0.10
-Nodes (13): integration_db(), Integration tests for GET /api/analysis/{station} (issue #757).  These tests exe, Return a real Database() backed by a temp file, seeded with fixture data.      U, Every per-bracket numeric field must round-trip exactly through the real     SQL, Requests for a station not in _KNOWN_METARS must return 404., Malformed date strings must yield 422., Omitting the date param must default to today (UTC), resolved through     a real, Insert scan_decisions fixture rows into *db* for the integration suite.      Ins (+5 more)
+Cohesion: 0.05
+Nodes (27): Inject the Database instance from run.py so endpoints read from SQLite., set_db(), no_db_client(), TestClient with _db set to None to simulate uninitialised database., client(), integration_db(), Integration tests for GET /api/analysis/{station} (issue #757).  These tests exe, Return a real Database() backed by a temp file, seeded with fixture data.      U (+19 more)
 
 ### Community 99 - "Analysis & Portfolio API"
 Cohesion: 0.14
@@ -873,8 +869,8 @@ Cohesion: 0.11
 Nodes (14): _make_window(), Tests for GET /api/cities/{city}/taf endpoint in src/dashboard/api.py., ?hours=48 is accepted and passed through., ?hours=100 is clamped to 48 max., Default ?hours=24 when no param given., Known city with TAF windows → 200 with array., TEMPO window with TS → taf_disruption=True in response., FM window with TS → taf_disruption=False (wrong group type). (+6 more)
 
 ### Community 104 - "City Deb Endpoint"
-Cohesion: 0.12
-Nodes (10): Resolve the forecast_source key for emos_calibration rows.          The active F, Resolve the sigma_source key for emos_calibration rows (issue #799).          De, Insert or replace EMOS calibration coefficients for a (city, mode, source,, Return EMOS coefficients dict for (city, model_mode, forecast_source,         si, Return {lead_hours: coefficients} for every lead bin fitted for this         (ci, Toggle ready_for_promotion (0 ↔ 1) on the emos_shadow row for city.          Iss, Return the stored value for *key*, or None if no row exists., Insert a CRPS score record for *city* on *date*.          forecast_source=None r (+2 more)
+Cohesion: 0.06
+Nodes (33): _enabled(), main(), main_with_db(), Entry point for callers that already have a Database instance., Return False when EMOS_SHADOW_ENABLED is explicitly disabled., Fit emos_shadow coefficients for every city and log a daily CRPS row.      For e, _run_calibration(), Return the Polymarket city name from a STATIONS entry (index 3). (+25 more)
 
 ### Community 105 - "Emos Demote Endpoint"
 Cohesion: 0.16
@@ -885,24 +881,24 @@ Cohesion: 0.15
 Nodes (17): get_city_for_station(), main(), print_sigma_quality_report(), Map METAR station code to city name., Print per-model sigma_f quality: floor-saturation and NULL rates.      #555: a f, db_path(), datetime, Tests for readiness projection logic in check_emos_data_quality.py (issue #781). (+9 more)
 
 ### Community 107 - "Stations Overview Override"
-Cohesion: 0.08
-Nodes (21): check_promotion_prerequisites(), Return pass/fail status for each data-coverage prerequisite.      Args:, Station with 0 models fails the gate., Station with exactly 2 models passes the gate., Test TAF coverage gate (≥60 windows by default)., Station with 0 TAF windows fails the gate., Station with < 60 TAF windows fails the gate., Station with exactly 60 TAF windows passes the gate. (+13 more)
+Cohesion: 0.07
+Nodes (25): _check_climb_rate(), check_promotion_prerequisites(), _count_distinct_models(), _count_taf_windows(), _has_secondary_observation_source(), Check if climb-rate data exists for current month., Count distinct models in model_forecast_log over trailing window., Count TAF windows in trailing days. (+17 more)
 
 ### Community 108 - "Intraday Bias Correction"
 Cohesion: 0.09
 Nodes (12): Tests for issue #274: archive shadow candidates ported to src/config.py., Every archive candidate ICAO must be present in STATIONS., STATIONS must not contain duplicate ICAO codes., Every archive ICAO must have an entry in STATION_ACTIVE_HOURS., Every archive ICAO must have an entry in STATION_TZ., All STATIONS entries must be 7-tuples (icao, lat, lon, name, res_stn, unit, tz)., SHADOW_STATIONS_ARCHIVE must contain exactly the 19 archive ICAOs., STATION_ACTIVE_HOURS entries for archive stations must be (start, end) with 0<=s (+4 more)
 
 ### Community 109 - "EMOS Retraining Script"
-Cohesion: 0.15
-Nodes (10): _mock_response(), Successful query-param call: outcomePrices ~100 → returns ~100., outcomePrices ~0 → returns ~0., If server returns 422 (as old path form did), function returns None gracefully., Empty list from API → return None., Network failure → return None without raising., Market entry with no outcomePrices key → return None., outcomePrices already a list (not string) is handled. (+2 more)
+Cohesion: 0.11
+Nodes (18): fetch_market_final_price(), fetch_market_resolution(), Return the definitive resolution of a market, or None if not resolved.      True, Fetch the final resolved YES price (in cents) for a closed market.      Queries, main(), _mock_response(), Unit tests for fetch_market_final_price() in src/data/polymarket.py.  Covers: -, fetch_market_resolution() only accepts definitive extreme prices (#644). (+10 more)
 
 ### Community 110 - "Database Connection Management"
 Cohesion: 0.13
 Nodes (15): _make_bracket(), _make_market(), _make_weather_state(), Unit tests for RANK_ON_RAW_PROB (issue #551, stage 1).  Covers: - p_yes_raw / ev, TICK-A: raw_p_yes=0.05 == capped p_yes=0.05 (no clamp effect)., TICK-B: raw_p_yes=0.0 clamped up to capped p_yes=0.05., Regression: flag off reproduces today's behaviour exactly., Flag on: ordering follows the raw-probability-derived edge; gates unchanged. (+7 more)
 
 ### Community 111 - "Bridge Stub Compatibility"
-Cohesion: 0.06
-Nodes (27): Email alert system for MeteoEdge.  Fires email alerts via smtplib when risk thre, Risk manager — gates every trade before execution.  All limits are read from src, _append_candidate(), _append_snapshot(), _check_zero_eval_watchdog(), _maybe_run_emos_shadow(), _persist_scan_decisions(), poll_once() (+19 more)
+Cohesion: 0.12
+Nodes (14): _check_zero_eval_watchdog(), Watchdog for silent zero-evaluation ticks: alert when N consecutive polls     pr, Unit tests for zero-evaluation watchdog (issue #686).  Tests verify that the wat, If DB is None, default threshold (4) is used., If DB get_config fails, fall back to default threshold., Once threshold is reached, watchdog keeps alerting on each subsequent tick., Reset the global watchdog counter before each test., Test the zero-evaluation watchdog state machine. (+6 more)
 
 ### Community 112 - "Model Weights UPSERT"
 Cohesion: 0.13
@@ -913,8 +909,8 @@ Cohesion: 0.09
 Nodes (12): Tests for dashboard logo asset optimization (issue #806).  Verifies that: 1. Log, Tests for logo asset optimization and markup correctness., Logo PNG file must exist at src/dashboard/static/logo.png., Logo must be under 10KB after optimization (issue #806 requirement)., Logo dimensions must be 96x96 pixels.          Resizing from 1254x1254 to 96x96, Logo must be in PNG format.          Checks the first 8 bytes are the PNG magic, The logo <img> tag must have an explicit width attribute to prevent layout shift, The logo <img> tag must have an explicit height attribute to prevent layout shif (+4 more)
 
 ### Community 114 - "Deb Backtest Report"
-Cohesion: 0.11
-Nodes (17): cadence_staleness_threshold_min(), FreshnessMonitor, datetime, Monitor freshness of observations by source and station (issue #745).  Threshold, Staleness threshold (minutes) derived from a feed's cadence (issue #745).      A, Monitor observation staleness per source and station., Check whether the latest observation for source/station is fresh.          Retur, Emit one CRITICAL on the fresh->stale transition, DEBUG thereafter. (+9 more)
+Cohesion: 0.09
+Nodes (15): cadence_staleness_threshold_min(), datetime, Monitor freshness of observations by source and station (issue #745).  Threshold, Staleness threshold (minutes) derived from a feed's cadence (issue #745).      A, Check whether the latest observation for source/station is fresh.          Retur, Emit one CRITICAL on the fresh->stale transition, DEBUG thereafter., Check freshness for all sources in a list.          Skips chronically-dead / del, _db() (+7 more)
 
 ### Community 115 - "TAF Collector Error Isolation"
 Cohesion: 0.09
@@ -925,20 +921,20 @@ Cohesion: 0.17
 Nodes (14): _make_candidate(), _make_db(), Tests for live config reading in _execute_live (issue #662).  Verifies that _exe, DB value of 2.0 is used instead of the module-level default., Sizing mode read from DB is recorded in the trade record., When db=None the module-level POSITION_SIZE_EUR constant is used., If POSITION_SIZE_EUR is absent from get_live_config, fall back to constant., An unrecognised SIZING_MODE value in the DB falls back to the constant. (+6 more)
 
 ### Community 117 - "Weather Build HighFreq"
-Cohesion: 0.10
-Nodes (16): datetime, JMA AMeDAS 10-minute observation adapter for Tokyo Haneda Airport.  Fetches real, Fetch and parse the AMeDAS 3-hour bucket file for *base_jst*.          Snaps *ba, get_weather_markets(), Fetch all active weather-tagged markets via Polymarket Gamma API.      Paginated, cached_fetch_json(), _CacheEntry, DomainRateLimiter (+8 more)
+Cohesion: 0.07
+Nodes (39): compute_daily_high(), compute_daily_low_window(), fetch_all_metars_today(), fetch_metar(), low_window_bounds(), now_local(), datetime, METAR data fetcher — aviation weather observations for each station.  All HTTP c (+31 more)
 
 ### Community 118 - "Live Config Retrieval"
 Cohesion: 0.21
 Nodes (16): backfill_trade_pnl(), _buy_order_for_sell(), clean_open_positions(), dedupe_trades(), load_records(), main(), Connection, Path (+8 more)
 
 ### Community 119 - "Daily Climate High"
-Cohesion: 0.18
-Nodes (15): _dwd_filename(), _dwd_url(), _fetch_icon_grib(), _floor_to_icon_cycle(), _kelvin_to_fahrenheit(), datetime, Path, DWD ICON-EU hourly 2-m temperature ingestion for European stations.  Fetches hou (+7 more)
+Cohesion: 0.29
+Nodes (7): _forecast_row(), _make_30_training_pairs(), _make_db_with_rows(), Build a mock DB returning given forecast_rows and obs_highs., 30 varied forecast+obs pairs., Calling fetch_training_data without regime or forecast_source raises ValueError., TestFetchTrainingDataForecastSource
 
 ### Community 120 - "Operations Runbook"
-Cohesion: 0.33
-Nodes (5): Return non-redeemable token_ids currently held in the wallet (size > 0.01)., Update (or insert) the DB trades row for a just-reconciled JSONL record.      Ca, Patch timeout JSONL records whose tokens still appear in the wallet.          GT, _reconcile_db_row(), _wallet_held_token_ids()
+Cohesion: 0.12
+Nodes (10): Resolve the forecast_source key for emos_calibration rows.          The active F, Resolve the sigma_source key for emos_calibration rows (issue #799).          De, Insert or replace EMOS calibration coefficients for a (city, mode, source,, Return EMOS coefficients dict for (city, model_mode, forecast_source,         si, Return {lead_hours: coefficients} for every lead bin fitted for this         (ci, Toggle ready_for_promotion (0 ↔ 1) on the emos_shadow row for city.          Iss, Return the stored value for *key*, or None if no row exists., Insert a CRPS score record for *city* on *date*.          forecast_source=None r (+2 more)
 
 ### Community 121 - "Config Endpoint Tests"
 Cohesion: 0.23
@@ -961,24 +957,24 @@ Cohesion: 0.13
 Nodes (15): _connect_ro(), distinct_dates_with_raw_data_db(), guardrail_cap_applied_count(), latest_archived_snapshot_ts(), load_actual_high_lookup_db(), Connection, Open *db_path* read-only. Returns None if missing or unopenable.      Never crea, DB-backed self-gate: distinct UTC dates with >=1 settled trades.p_yes_raw row. (+7 more)
 
 ### Community 126 - "JSON Wrapped Input"
-Cohesion: 0.06
-Nodes (49): fetch_metar(), Fetch the latest METAR observation for a station.      Returns the most recent M, fetch_market_final_price(), fetch_market_resolution(), Polymarket API client. No authentication required for read-only access., Return the definitive resolution of a market, or None if not resolved.      True, Fetch the final resolved YES price (in cents) for a closed market.      Queries, fetch() (+41 more)
+Cohesion: 0.09
+Nodes (33): main(), _observed_daily_high(), _pending_by_date(), date, Path, One-off backfill for issue #609: settle live held-to-expiry trades that were str, Settle stranded live trades in [date_from, date_to] via settle_live_trades()., MAX(temp_f) among *station*'s DB observations that fall on *target* in     the s (+25 more)
 
 ### Community 127 - "JSONL File Reading"
-Cohesion: 0.11
-Nodes (11): EcmwfForecast, _kelvin_to_f(), Result of a successful ECMWF daily-high fetch.      Attributes:         forecast, Convert Kelvin to degrees Fahrenheit., Unit tests for src/data/ecmwf_open.py.  All network calls and herbie I/O are moc, forecast_high_f should be the max across the 24h window., fetch_ecmwf_hourly and fetch_ecmwf_daily_high must call resolver with fxx=3., TestAttribution (+3 more)
+Cohesion: 0.16
+Nodes (12): _main(), TAF ingestion module — polls aviationweather.gov every 30 minutes.  Fetches raw, Poll all configured airports in a continuous loop.          Each iteration fetch, Fetch TAF data for all configured airports and persist to the DB.      Args:, Fetch, parse, and persist TAF windows for *icao* / *city*.          Returns the, TafCollector, collector(), db() (+4 more)
 
 ### Community 128 - "Polymarket API Client"
 Cohesion: 0.19
 Nodes (12): _db(), _log(), _patch_build_deps(), Tests for scan-time per-model forecast carrying (issue #760).  Covers: - src.wea, Issue #760 DoD: baseline serving is byte-for-byte unchanged --         even with, db=None (e.g. some pricing-path callers) must not blow up and must         leave, Issue #760 DoD: baseline serving is byte-for-byte unchanged --         this must, Same source/selection rule as get_ensemble_distribution: lowest         lead_hou (+4 more)
 
 ### Community 129 - "SMTP Not Configured"
-Cohesion: 0.12
-Nodes (9): Tests for USE_ENSEMBLE_SIGMA flag wiring (issue #451)., USE_ENSEMBLE_SIGMA must be in CONFIG_DEFAULTS.          Issue #799: default flip, USE_ENSEMBLE_SIGMA must seed to True by default (issue #799)., USE_ENSEMBLE_SIGMA must still accept an explicit False (legacy 'fixed' track)., USE_ENSEMBLE_SIGMA must accept True value., GET /api/config must include USE_ENSEMBLE_SIGMA., PATCH /api/config must accept USE_ENSEMBLE_SIGMA changes., USE_ENSEMBLE_SIGMA must have a description in metadata. (+1 more)
+Cohesion: 0.06
+Nodes (29): get_live_config(), Seed bot_config from env vars / hardcoded defaults on first run.      For each k, Return current bot_config values as a typed dict.      Reads all rows from the b, seed_config(), api_client(), _db(), Tests for the DB-backed config parameter store (issue #234).  Covers: - bot_conf, If a DB row already exists, seed_config must leave it alone. (+21 more)
 
 ### Community 130 - "Daily Loss Warning"
-Cohesion: 0.16
-Nodes (12): _main(), TAF ingestion module — polls aviationweather.gov every 30 minutes.  Fetches raw, Poll all configured airports in a continuous loop.          Each iteration fetch, Fetch TAF data for all configured airports and persist to the DB.      Args:, Fetch, parse, and persist TAF windows for *icao* / *city*.          Returns the, TafCollector, collector(), db() (+4 more)
+Cohesion: 0.08
+Nodes (27): _active_stack_models(), _check_ready_for_promotion(), _emos_min_samples(), _primary_allowed(), EMOS deployment mode helpers.  Controls whether each city uses legacy Gaussian,, Return the CRPS-logged shadow-day minimum for promotion to emos_primary.      De, Return the WeatherState attribute names to average for *stack_models*.      Maps, Resolve the active FORECAST_STACK's model set from live config.      Same live-r (+19 more)
 
 ### Community 131 - "Weather METAR Persistence"
 Cohesion: 0.19
@@ -993,8 +989,8 @@ Cohesion: 0.29
 Nodes (7): Q: Can I modify the model?, Q: How much capital is needed?, Q: Is this a real trading system?, Q: What's the expected win rate in live trading?, Q: Why does Denver fail?, Q: Why only > 15¢ edges?, Questions & Answers
 
 ### Community 134 - "test_deb_weighting.py"
-Cohesion: 0.05
-Nodes (46): _compute_weights_with_history(), main(), Backtest script: per-model DEB weight contribution over 30 days.  Reports per-mo, Print per-model weight evolution and contribution summary., Return per-day weight snapshots for the trailing *window_days* window.      For, run_backtest(), is_training_eligible(), Return whether *city* is eligible for use in training-data construction.      Re (+38 more)
+Cohesion: 0.08
+Nodes (37): _compute_weights_with_history(), main(), Backtest script: per-model DEB weight contribution over 30 days.  Reports per-mo, Print per-model weight evolution and contribution summary., Return per-day weight snapshots for the trailing *window_days* window.      For, run_backtest(), is_training_eligible(), Return whether *city* is eligible for use in training-data construction.      Re (+29 more)
 
 ### Community 135 - "PowerShell Venv Activate"
 Cohesion: 0.06
@@ -1005,8 +1001,8 @@ Cohesion: 0.22
 Nodes (15): call_nim(), chunk_transcript(), extract_turn_text(), main(), parse_findings(), Best-effort compact text rendering of one transcript record., Yield (start_turn, text) chunks under MAX_CHUNK_CHARS., Tests for the pure (non-network) helpers in scripts/reflect_triage.py — the cost (+7 more)
 
 ### Community 137 - "Promotion CRPS Threshold"
-Cohesion: 0.11
-Nodes (9): balance error with 0 available shares closes the DB row, returns error., Non-balance exceptions are re-raised unchanged., With db=None and a today-dated filled JSONL record, a sell is attempted., With db=None and only a prior-day filled record, not_found is returned., Operator-triggered immediate sell of an open position., No open fills for the token → not_found, no sell attempted., A token already in _sold_positions is not sold again., Fresh process (_sold_positions empty) but the bot already closed the DB (+1 more)
+Cohesion: 0.14
+Nodes (10): _load_open_fills_for_token(), Return today's filled, not-yet-sold fills for *token_id* (any side).      Unlike, The token-fills loader used to size a manual sell., A settled prior-day 'filled' record must not be returned as sellable today., Persist partial fills on no_fill path to survive process restart., _load_open_fills_for_token accounts for partial_fill records when sizing., When partial shares equal or exceed total shares, return empty list., Multiple partial_fill records accumulate before being subtracted from size. (+2 more)
 
 ### Community 138 - "Station Active Window"
 Cohesion: 0.21
@@ -1033,8 +1029,8 @@ Cohesion: 0.17
 Nodes (6): AlertManager, Fires and deduplicates email alerts for MeteoEdge risk events.      All state is, Naive datetime (no tzinfo) should be treated as UTC without crashing., TestDailyLossStop, TestPollLoopMissed, TestWinRateDegradation
 
 ### Community 144 - "Station Toggle Tests"
-Cohesion: 0.25
-Nodes (6): Verify compute_weights() never returns a "gfs" weight and remaining     channel, Even with plenty of well-formed "gfs" rows (any date, including         recent o, When the only forecast_log data is for "gfs" (no registered model         has an, Renormalization check: even when "gfs" rows would (if consumed)         have the, gfs" rows (any date) must never influence nws/open_meteo         calibration — t, TestGfsDropPath
+Cohesion: 0.11
+Nodes (16): compute_weights(), Compute inverse-error weights for each model over the last *window_days* days., Verify compute_weights() never returns a "gfs" weight and remaining     channel, Even with plenty of well-formed "gfs" rows (any date, including         recent o, When the only forecast_log data is for "gfs" (no registered model         has an, Renormalization check: even when "gfs" rows would (if consumed)         have the, gfs" rows (any date) must never influence nws/open_meteo         calibration — t, 2-model path: nws + open_meteo calibrated; others cold-start. (+8 more)
 
 ### Community 145 - "Report Summary"
 Cohesion: 0.21
@@ -1045,24 +1041,24 @@ Cohesion: 0.19
 Nodes (9): _db(), Unit tests for Database.get_distinct_pairs() method., Test Database.get_distinct_pairs() method., get_distinct_pairs should return distinct (station, source) tuples., get_distinct_pairs should filter by city and date., Return a fresh in-memory Database instance., get_distinct_pairs should return empty list when no rows match., get_distinct_pairs should filter by since_date (inclusive). (+1 more)
 
 ### Community 147 - "Prob40 Tests"
-Cohesion: 0.13
-Nodes (15): _build_four_model_db(), _fresh_db(), _insert_forecast(), _insert_obs(), Tests for EMOS regime filter (issue #494).  Verifies that fetch_training_data co, forecast_source string equality filter works unchanged when regime is None., save_coefficients passes forecast_source to db.upsert_emos_coefficients., Return a DB with nws=72, open_meteo=74, hrrr=80, nbm=82 on 2026-01-01. (+7 more)
+Cohesion: 0.15
+Nodes (13): _build_four_model_db(), _fresh_db(), _insert_forecast(), _insert_obs(), Tests for EMOS regime filter (issue #494).  Verifies that fetch_training_data co, forecast_source string equality filter works unchanged when regime is None., Return a DB with nws=72, open_meteo=74, hrrr=80, nbm=82 on 2026-01-01., Regression lock: baseline regime must never include hrrr/nbm rows. (+5 more)
 
 ### Community 148 - "LiveTrader"
-Cohesion: 0.13
-Nodes (12): _make_trader(), _mock_orderbook(), Tests for stop-loss IOC partial fill tracking (#204)., After 5-share partial fill, retry should sell only (total - 5) shares., Remaining shares below min lot after partial fill → skip, mark sold., Full fill on first attempt: single clean record, _partial_fill_shares not touche, LiveTrader.get_order_fill_size() should return filled shares, never raise., sell_position_immediate() should return (None, order_id) on cancel so caller can (+4 more)
+Cohesion: 0.08
+Nodes (20): LiveTrader, ClobClient, Return the shares matched/filled for *order_id* so far (0.0 on error)., Sell NO tokens immediately or not at all — never leaves a resting order., Cancel an open order. Returns True if cancelled.          Uses py_clob_client_v2, Return available USDC in the CLOB (internal balance, not on-chain)., Return current status of an order. Never raises., Sell NO tokens at the current best bid price.          Used for METAR-triggered (+12 more)
 
 ### Community 149 - "Install Script"
 Cohesion: 0.19
 Nodes (9): _mem_db(), Return a fresh in-memory Database., Tests for seed_station_overrides() function., seed_station_overrides creates RKSI row if it does not exist., Seed creates RKSI with enabled=1 (checked via enabled field)., seed_station_overrides is idempotent: second call doesn't change state., Seeding does NOT overwrite a manually-edited DB row., Seeding only touches RKSI; other stations are unaffected. (+1 more)
 
 ### Community 150 - "Count Candidates Today"
-Cohesion: 0.15
-Nodes (12): check_climb_lookup_dirty(), Check if src/data/climb_lookup.py differs from HEAD.      Args:         force: I, Tests for scripts/build_climb_lookup.py dirty-baseline guard.  Each test builds, Create a temporary git repo with src/data/climb_lookup.py committed clean., Tests for check_climb_lookup_dirty against a real tmp git repo., Clean committed file must NOT raise SystemExit., Dirty file with force=False must raise SystemExit(1) with actionable message., Dirty file with force=True must proceed (no raise) and log a warning. (+4 more)
+Cohesion: 0.33
+Nodes (4): Database.close() and context manager support., Calling close() should close the underlying connection., Using Database in a with statement should close the connection on exit., TestDatabaseClose
 
 ### Community 151 - "Context Manager Enter"
-Cohesion: 0.23
-Nodes (3): Tests for _should_log_weather in src.weather.builder., After a suppressed log, state should stay unchanged., TestWeatherDeltaLogging
+Cohesion: 0.19
+Nodes (5): Tests for _should_log_weather in src.weather.builder., After a suppressed log, state should stay unchanged., TestWeatherDeltaLogging, Return True if this poll's weather should be logged at INFO level.      Logs whe, _should_log_weather()
 
 ### Community 152 - "Config Getter"
 Cohesion: 0.08
@@ -1070,31 +1066,31 @@ Nodes (24): 1. Acceptance criteria, 1. Identity and mission, 2. Tests, 2. What y
 
 ### Community 153 - "main"
 Cohesion: 0.06
-Nodes (35): SQLite persistence layer for MeteoEdge., Shared logging configuration for MeteoEdge.  Call setup_logging() once at each e, Configure the root logger with a standard format.      Format: %(asctime)s %(lev, setup_logging(), _build_daily_stats(), compute_rmse(), main(), Backtest script for intraday bias correction.  Compares corrected forecast RMSE (+27 more)
+Nodes (34): Shared logging configuration for MeteoEdge.  Call setup_logging() once at each e, Configure the root logger with a standard format.      Format: %(asctime)s %(lev, setup_logging(), _build_daily_stats(), compute_rmse(), main(), Backtest script for intraday bias correction.  Compares corrected forecast RMSE, Return RMSE for a list of absolute errors (already non-negative).      Args: (+26 more)
 
 ### Community 154 - "Settled Days Count"
 Cohesion: 0.11
 Nodes (16): _db(), _make_trader(), Tests for LiveTrader DB integration (Issue B: replace live_state.json with DB)., v2 API: cancel_order failures now raise exceptions (hard error)., v2 API: if response has an error field, cancel_order() returns False., live_trader.py must not import or reference persist_state., place_order() must not write any .json state files., Return a LiveTrader with a mock ClobClient. (+8 more)
 
 ### Community 155 - "Insert Candidate"
-Cohesion: 0.16
-Nodes (8): compute_ensemble_sigma(), Return calibrated σ in °F from GEFS ensemble member spread.      Args:         m, DB with < 30 calibration pairs → naive estimator., DB with >= 30 varied calibration pairs → calibrated estimator used., compute_ensemble_sigma must never write to the DB., Locks in pre-#555 behaviour for compute_ensemble_sigma() so a future     change, TestComputeEnsembleSigma, TestComputeEnsembleSigmaUnchangedByIssue555
+Cohesion: 0.06
+Nodes (27): _calibrated_sigma(), compute_ensemble_sigma(), _load_calibration_pairs(), _naive_sigma(), Per-station conditional sigma estimator from GEFS ensemble spread.  Given the 30, Return (sigma_naive, abs_error) pairs from historical data.      Pairs are built, Apply linear regression calibration: sigma_cal = slope * sigma_naive + intercept, Return calibrated σ in °F from GEFS ensemble member spread.      Args:         m (+19 more)
 
 ### Community 156 - "true_probability_yes"
-Cohesion: 0.09
-Nodes (22): make_bracket(), make_state(), Markets resolve [lo, hi): a zero-width bracket is empty, and a high         AT t, The non-degenerate version of the old intent: [high, high+2) with         the en, Partial bracket in mid-day uncertainty window returns 0 < p < 1., With no forecast, bracket containing full envelope returns 1.0., Bracket far above max envelope returns 0.0., true_probability_yes must work with just bracket and state. (+14 more)
+Cohesion: 0.11
+Nodes (17): make_bracket(), make_state(), Markets resolve [lo, hi): a zero-width bracket is empty, and a high         AT t, The non-degenerate version of the old intent: [high, high+2) with         the en, Partial bracket in mid-day uncertainty window returns 0 < p < 1., With no forecast, bracket containing full envelope returns 1.0., Bracket far above max envelope returns 0.0., true_probability_yes must work with just bracket and state. (+9 more)
 
 ### Community 157 - "fetch_gfs_forecast_high"
-Cohesion: 0.13
-Nodes (15): fetch_gfs_forecast_high(), _fetch_open_meteo_gfs_hourly(), Fetch raw Open-Meteo GFS hourly payload for the given coordinates.      Uses Ope, Fetch GFS forecast daily high (°F) from Open-Meteo for the given coordinates., _gfs_payload(), Returns None and does not raise when the API returns unexpected JSON., Minimal Open-Meteo-shaped payload as returned by the GFS endpoint., Tests for the new GFS collector function. (+7 more)
+Cohesion: 0.06
+Nodes (36): fetch_nws_forecast_high(), NWS forecast fetcher — uses http_client's NWS /points permanent cache and 30-min, Return today's forecast high (°F) for lat/lon using NWS hourly forecast.      Us, fetch_gfs_forecast_high(), _fetch_open_meteo_gfs_hourly(), _fetch_open_meteo_hourly(), fetch_open_meteo_with_spread(), Open-Meteo secondary forecast source.  Used as a weighted secondary input (40%) (+28 more)
 
 ### Community 158 - "Shadow Loop Config"
 Cohesion: 0.19
 Nodes (20): _b(), distinct_dates_with_raw_data(), _f(), _iter_csv_rows(), load_settled_candidates(), load_snapshots(), main(), population_saturation_from_recent_jsonl() (+12 more)
 
 ### Community 159 - "Run Dashboard"
-Cohesion: 0.08
-Nodes (25): _cache_path(), _evict_expired(), _fetch_grib_slice(), fetch_hrrr_field(), _get_cache_dir(), _get_cache_ttl_hours(), _is_cache_valid(), Path (+17 more)
+Cohesion: 0.07
+Nodes (27): _cache_path(), _evict_expired(), _fetch_grib_slice(), fetch_hrrr_field(), _get_cache_dir(), _get_cache_ttl_hours(), _is_cache_valid(), Path (+19 more)
 
 ### Community 160 - "Legacy Live State"
 Cohesion: 0.19
@@ -1109,36 +1105,36 @@ Cohesion: 0.40
 Nodes (5): Decision 1: Only Trade Edges > 15¢, Decision 2: Fixed €5 Position Size, Decision 3: Realistic Slippage Model, Decision 4: Filter by MIN_EDGE_CENTS Only, Phase 4: Implementation Decisions
 
 ### Community 163 - "Proximity Guard Disabled"
-Cohesion: 0.23
-Nodes (3): _is_eu_domain(), Return True if (lat, lon) falls within the approximate ICON-EU domain., TestIsEuDomain
+Cohesion: 0.15
+Nodes (12): check_climb_lookup_dirty(), Check if src/data/climb_lookup.py differs from HEAD.      Args:         force: I, Tests for scripts/build_climb_lookup.py dirty-baseline guard.  Each test builds, Create a temporary git repo with src/data/climb_lookup.py committed clean., Tests for check_climb_lookup_dirty against a real tmp git repo., Clean committed file must NOT raise SystemExit., Dirty file with force=False must raise SystemExit(1) with actionable message., Dirty file with force=True must proceed (no raise) and log a warning. (+4 more)
 
 ### Community 164 - "KATL False Fire"
 Cohesion: 0.18
-Nodes (8): Issue #657: the intraday correction and obs_bias_offset_f carry the     same phy, Run _build_weather with a deterministic mock stack and return the         WSSS W, compute_correction returned a value → the anomaly lives in         corrected_mu_, compute_correction returned None → legacy fallback: the offset         (latest_t, The residual correction is a day-scale bias signal, not the         intraday obs, Residual on top of an active intraday correction must not         resurrect the, The residual correction mutates corrected_mu_f AFTER the delta is         captur, TestObsBiasIntradayExclusivity
+Nodes (8): _orderbook(), Tests for the model-confidence stop-loss (issue #177).  Covers: - LiveTrader.sel, Limit is priced through the bid (70c - 2c = 68c) and fill is reported., If the order does not cross it must be cancelled — returns (None, order_id)., Cancel refused + check_fill confirms filled → treat as sold., Aggression below the 1c tick floor clamps to 1c, never 0 or negative., TestSellPositionImmediate, _trader()
 
 ### Community 165 - "Polymarket Shadow Reqs"
-Cohesion: 0.17
-Nodes (14): _decode_temp(), _extract_raw_taf(), _extract_sig_wx(), _extract_temp(), _extract_wind_kt(), datetime, TAF (Terminal Aerodrome Forecast) parser.  Converts raw TAF text into structured, Extract temperature from TX or T notation; returns Celsius or None. (+6 more)
+Cohesion: 0.23
+Nodes (3): _is_eu_domain(), Return True if (lat, lon) falls within the approximate ICON-EU domain., TestIsEuDomain
 
 ### Community 167 - "Package Init"
 Cohesion: 0.12
 Nodes (16): 1. Tab bar, station selector, Today/D+1 toggle — reused unchanged, 2. Scan summary bar (replaces the 5-card KPI strip), 3. Forecast inputs (collapsed secondary block), 4. Per-bracket decision table, 5. The gate-verdict chip, 6. Gate legend (collapsed disclosure), 7. Loading / empty / stale / error states, Accessibility notes (+8 more)
 
 ### Community 168 - "Package Init"
-Cohesion: 0.23
-Nodes (12): _connect_ro(), _f(), _iter_csv_rows(), load_candidate_rows(), main(), Path, Market-vs-model Brier Skill Score report — Pass 1 (issue #822).  **THIS IS PASS, Yield dict rows across every rotated (and possibly gzipped) source for *base*. (+4 more)
+Cohesion: 0.17
+Nodes (14): _decode_temp(), _extract_raw_taf(), _extract_sig_wx(), _extract_temp(), _extract_wind_kt(), datetime, TAF (Terminal Aerodrome Forecast) parser.  Converts raw TAF text into structured, Extract temperature from TX or T notation; returns Celsius or None. (+6 more)
 
 ### Community 169 - "Package Init"
-Cohesion: 0.23
-Nodes (8): join_outcomes(), load_settlement_outcomes(), Return {ticker: resolved_yes} from the settlements table., Attach ``yes_won`` to each row; drop rows with no definitive settlement.      Re, Tests for src/scripts/bss_market_vs_model_report.py (issue #822, Pass 1).  Cover, settlements: list of (ticker, resolved_yes), TestJoinOutcomes, _write_settlements_db()
+Cohesion: 0.28
+Nodes (14): celsius_to_fahrenheit(), compute_from_db(), compute_p95_climb(), compute_synthetic_climb(), fetch_meteostat(), fetch_open_meteo(), _fill_missing(), main() (+6 more)
 
 ### Community 170 - "Climb Lookup"
 Cohesion: 0.26
 Nodes (6): compute_consensus_high(), Multi-source observation consensus and outlier rejection for daily high.  Algori, Return the consensus daily-high temperature from a list of observations.      Ar, _obs(), Tests for obs_consensus.compute_consensus_high (issue #322)., TestComputeConsensusHigh
 
 ### Community 171 - "Package Init"
-Cohesion: 0.15
-Nodes (11): Start a collector in a daemon thread; log WARNING on any startup exception., _start_collector_thread(), _noop(), _raising(), Even a crashing collector must not crash the caller (run.py)., Collector function that returns immediately., Collector function that raises an exception., Thread must be a daemon so it doesn't block process shutdown. (+3 more)
+Cohesion: 0.13
+Nodes (7): Atomically accumulate *pnl_delta* into the daily risk row for *date_str*., Accumulate settlement PnL into the daily risk row for *date_str*         without, Upsert a forecast log record (unique on station, model, date, lead_hours=NULL)., Upsert a forecast log record keyed on (station, model, date, lead_hours)., Upsert the effective EMOS mode for a city., Upsert a config value. Thread-safe via the existing RLock., Upsert yes_enabled, no_enabled, and low_no_enabled for *station*.
 
 ### Community 172 - "Package Init"
 Cohesion: 0.50
@@ -1197,8 +1193,8 @@ Cohesion: 0.50
 Nodes (4): Model Calibration, Success Metrics, System Reliability, Trading Performance
 
 ### Community 186 - "_positions_from_wallet"
-Cohesion: 0.28
-Nodes (14): celsius_to_fahrenheit(), compute_from_db(), compute_p95_climb(), compute_synthetic_climb(), fetch_meteostat(), fetch_open_meteo(), _fill_missing(), main() (+6 more)
+Cohesion: 0.09
+Nodes (16): get_training_eligible_since(), Return the date from which *city* becomes training-eligible, if gated.      Some, _icao_to_city(), Return MAX(temp_f) from observations for *station* on *date* (YYYY-MM-DD)., Return {date_str: max_temp_f} for all dates >= since_date for *station*., Resolve an ICAO station code to its Polymarket city name, or None if unknown., Tests for src/config.py source priority configuration., Tests for issue #766: get_training_eligible_since() date-scoped accessor. (+8 more)
 
 ### Community 187 - "TestAnalysisEndpoint"
 Cohesion: 0.14
@@ -1209,8 +1205,8 @@ Cohesion: 0.15
 Nodes (8): Tests for POST /api/emos/{city}/promote., Promote succeeds when shadow exists and ready_for_promotion=1., Promote returns 409 when no shadow row exists., Promote returns 409 when shadow exists but ready_for_promotion=0., Promote returns 404 for an unknown city name., Promote works with URL-encoded city names (spaces → %20)., Promoting while MODEL_PROB_CAP < 1.0 logs the post-EMOS cleanup warning., TestEmosPromoteEndpoint
 
 ### Community 189 - "_db_settled_positions"
-Cohesion: 0.17
-Nodes (8): _db_settled_positions() reads settle_live_trades()-settled rows     directly fro, Mirrors test_settled_position_won_exit_reason: side=YES, pnl=5.0,         shares, Mirrors test_settled_position_lost_exit_reason: side=NO, pnl=-2.5,         share, Mirrors test_settled_position_zero_pnl_is_lost: pnl == 0 -> lost., Early exits (outcome='sold') are NOT returned here -- those stay         sourced, Only mode='live' settled rows feed the closed-positions panel., Must degrade gracefully (empty list + empty set) when _db is None., TestDbSettledPositionsParity
+Cohesion: 0.18
+Nodes (10): _db_settled_positions(), Return held-to-expiry settled live positions from the trades table (#617)., _db_settled_positions() reads settle_live_trades()-settled rows     directly fro, Mirrors test_settled_position_won_exit_reason: side=YES, pnl=5.0,         shares, Mirrors test_settled_position_lost_exit_reason: side=NO, pnl=-2.5,         share, Mirrors test_settled_position_zero_pnl_is_lost: pnl == 0 -> lost., Early exits (outcome='sold') are NOT returned here -- those stay         sourced, Only mode='live' settled rows feed the closed-positions panel. (+2 more)
 
 ### Community 190 - "TestStationsTradeStatsUnification"
 Cohesion: 0.17
@@ -1229,36 +1225,36 @@ Cohesion: 0.31
 Nodes (6): load_settled_candidates_db(), DB-backed replacement for load_settled_candidates(): meteoedge.db::trades., _make_trades_db(), Minimal synthetic meteoedge.db::trades fixture (issue #682 DB path).      is_nex, Issue #704: this is exactly the settled-candidates population         Amendment, TestLoadSettledCandidatesDb
 
 ### Community 194 - "_is_eu_domain"
-Cohesion: 0.27
-Nodes (7): _load_calibration_pairs(), Return (sigma_naive, abs_error) pairs from historical data.      Pairs are built, Test against a real in-memory SQLite DB., model_forecast_log without sigma_f column → empty list (graceful)., Forecast rows but no settlements → no pairs., Synthetic DB with sigma_f + settlements → correct (sigma, abs_err) pairs., TestLoadCalibrationPairs
+Cohesion: 0.15
+Nodes (7): datetime, Fetch and persist the latest JMA AMeDAS reading for Tokyo Haneda.          Retur, Fetch the most recent 10-minute reading from the JMA AMeDAS API.          JMA se, Fetch and parse the AMeDAS 3-hour bucket file for *base_jst*.          Snaps *ba, FALLBACK: Fetch current temperature from Open-Meteo for Haneda.          Used wh, Emit CRITICAL if no data for more than 2 × cadence_min minutes., Run the polling loop indefinitely.
 
 ### Community 195 - "_candidate_row"
 Cohesion: 0.38
 Nodes (5): _candidate_row(), _settlement_row(), TestSelfGating, _write_csv(), _write_jsonl()
 
 ### Community 196 - "p_normal_between"
-Cohesion: 0.21
-Nodes (6): p_normal_between(), P(low <= X <= high) for X ~ N(mean, stddev^2)., Unit tests for src/model/envelope.py — pure math functions, no API calls.  Porte, P(mean - sigma <= X <= mean + sigma) ≈ 0.6827., P(80 <= X <= 82) where X~N(81, 2^2) ≈ 0.3829., TestPNormalBetween
+Cohesion: 0.11
+Nodes (14): next_day_probability_yes(), p_normal_between(), P(low <= X <= high) for X ~ N(mean, stddev^2)., P(next-day daily high falls in this bracket) -- forecast-only path (issue #687)., Unit tests for src/model/envelope.py — pure math functions, no API calls.  Porte, P(mean - sigma <= X <= mean + sigma) ≈ 0.6827., P(80 <= X <= 82) where X~N(81, 2^2) ≈ 0.3829., Unit tests for the forecast-only next-day probability path.      Distinct from t (+6 more)
 
 ### Community 197 - "TestPollOnceAlertIntegration"
 Cohesion: 0.25
 Nodes (8): Verify that poll_once() passes the PREVIOUS poll's timestamp to     alert_manage, Return a dict of module-name -> MagicMock stubs for missing imports., Import (or re-import) src.scripts.run with stub modules in place.          Retur, Restore sys.modules to the exact objects present before stubbing.          Criti, If the previous poll ran >20 min ago, the alert must fire., If the previous poll ran <20 min ago, the poll-missed alert must not fire., On the very first poll (last_poll_ts is None), the alert must not fire., TestPollOnceAlertIntegration
 
 ### Community 198 - "iter_rotated_jsonl"
-Cohesion: 0.04
-Nodes (72): _batch_midpoints(), _cached_live_trades(), ClosedPositionOut, _db_settled_positions(), _jsonl_cache_get(), _jsonl_cache_get_rotated(), _JsonlCache, _latest_model_probs() (+64 more)
+Cohesion: 0.06
+Nodes (41): _cached_live_trades(), ClosedPositionOut, _jsonl_cache_get(), _JsonlCache, _nws_forecast_for_title(), _parse_live_trades(), position_snapshots(), Return cached result, re-parsing only when file mtime/size changes.      Args: (+33 more)
 
 ### Community 199 - "TestDebEndpoint"
 Cohesion: 0.15
 Nodes (8): Tests for GET /api/cities/{city}/deb endpoint in src/dashboard/api.py., GET with lowercase city 'singapore' should normalize to 'Singapore' and return 2, Model with sample_count < MIN_SAMPLES (10) should be marked as cold-start., Insert rows for a test city → GET returns 200 with correct weights., A city with several days of history returns one row per model (#607).          m, No rows in model_weights for city → 404 with expected detail message., TestDebEndpoint, _weight_rows()
 
 ### Community 200 - "archive_snapshots.py"
-Cohesion: 0.19
-Nodes (9): _get_consensus_weights(), Return the DEB weights to use as the intraday consensus basis for *city*.      U, Unit tests for the DEB-weights basis resolution (issue #572).      Covers: calib, When DEB has calibrated weights, they are passed through unchanged., station_region passed to get_weights() matches the city's DEB region., get_weights() raising an exception falls back to the open_meteo-only basis., A weights dict without an 'open_meteo' key is treated as unavailable., DEB's own equal-weight cold-start dict is a legitimate live basis —         it i (+1 more)
+Cohesion: 0.17
+Nodes (11): Archive Cleanup Guide, Disk Space Recovered, How to Remove, If Folder is Locked, ✅ Kept, On Linux/Unix (systemd deployment):, On Windows (development):, Status (+3 more)
 
 ### Community 201 - "HRRR + NBM Ensemble Skill Backtest"
-Cohesion: 0.08
-Nodes (27): fetch_gfs_with_spread(), fetch_open_meteo_with_spread(), fetch_secondary_forecast(), Open-Meteo secondary forecast source.  Used as a weighted secondary input (40%), Fetch Open-Meteo forecast (mu_f, sigma_f) for the given coordinates.      Querie, Fetch a genuine single-model GFS forecast (mu_f) via Open-Meteo.      Unlike fet, Fetch forecast daily high (°F) from Open-Meteo for the given coordinates.      C, _call_with_timeout() (+19 more)
+Cohesion: 0.15
+Nodes (11): fetch_gfs_with_spread(), Fetch a genuine single-model GFS forecast (mu_f) via Open-Meteo.      Unlike fet, _fetch_next_day_forecast(), Fetch (mu_f, sigma_f) for a station's next-day forecast (issue #687).      Follo, Regression tests for issue #548: fetch_gfs_with_spread() must no longer     be a, The URL fetch_gfs_with_spread issues must request models=gfs_seamless         an, fetch_gfs_with_spread and fetch_open_meteo_with_spread must issue         differ, A single deterministic GFS run has no ensemble spread — sigma_f         must alw (+3 more)
 
 ### Community 202 - "test_grib_tz_fix.py"
 Cohesion: 0.18
@@ -1285,16 +1281,16 @@ Cohesion: 0.33
 Nodes (8): compute_rmse(), get_db_connection(), get_latest_model_weights(), main(), Connection, Open database connection or exit with code 1 on failure., Fetch latest model weights by (city, model) as of today.      Returns dict mappi, Compute RMSE from list of residuals.
 
 ### Community 208 - "status"
-Cohesion: 0.16
-Nodes (14): _compute_win_rate(), _latest_capital(), _open_positions_count(), Summary of current capital, today's PnL, trade count, win rate, and open positio, Return today's date as YYYY-MM-DD in UTC., Compute win rate over the last *n* settled trades (excluding shadow).      Only, Sum PnL for trades whose timestamp falls on today (UTC), excluding shadow rows., Count trades whose timestamp falls on today (UTC). (+6 more)
+Cohesion: 0.12
+Nodes (18): _compute_win_rate(), _dashboard_load_trades(), _latest_capital(), _open_positions_count(), Summary of current capital, today's PnL, trade count, win rate, and open positio, Last 50 trade records, newest first., Return today's date as YYYY-MM-DD in UTC., Return all trade records (excluding shadow), newest first. Prefers DB when avail (+10 more)
 
 ### Community 209 - "calibration_report.py"
 Cohesion: 0.13
 Nodes (16): brier_score(), build_reliability(), format_reliability(), load_resolutions(), load_snapshots(), main(), pick_samples(), Model calibration report: raw_p_yes vs actual market resolutions (issue #648). (+8 more)
 
 ### Community 210 - "taf_parser.py"
-Cohesion: 0.14
-Nodes (8): Test the canonical win-rate computation (compute_win_rate from src.data.db)., compute_win_rate(filled=5, wins=5) == 1.0., compute_win_rate(filled=4, wins=2) == 0.5., compute_win_rate(filled=3, wins=0) == 0.0., compute_win_rate(filled=0, wins=0) returns None (no data)., pnl=0 is settled (filled_count increments) but does not increment wins., compute_win_rate(filled=1, wins=1) == 1.0., TestWinRateCanonical
+Cohesion: 0.12
+Nodes (12): fetch_orderbooks_batch(), Fetch orderbooks for multiple tokens in parallel.      Each token is fetched ind, Tests for batch CLOB orderbook fetching (issue #171).  Covers: - fetch_orderbook, _log_open_position_snapshots must NOT call get_orderbook when a shared         o, When orderbooks=None, get_orderbook must be called for each token., When there are no open positions, no orderbook lookup should occur., Duplicate token IDs must result in exactly one get_orderbook call., A RuntimeError for one token must not abort the batch; other tokens succeed. (+4 more)
 
 ### Community 211 - "TestGetObsHighsRange"
 Cohesion: 0.14
@@ -1314,23 +1310,23 @@ Nodes (6): _make_candidate(), _make_db(), Tests for issue #743: one reprice-retr
 
 ### Community 215 - "no_entry_margin_gap"
 Cohesion: 0.07
-Nodes (24): _decode_json_string(), minutes_to_settlement(), parse_bracket_from_market(), Market scanner — identifies mispriced Polymarket temperature brackets.  For each, # NOTE: skipped_reason is mislabeled "min_edge" here for the, Polymarket Gamma API returns several fields as JSON-encoded strings., Convert val to °F if unit_char is 'C', otherwise return as-is., Parse a Polymarket bracket market into a Bracket using the `groupItemTitle` (+16 more)
+Nodes (37): WeatherState, no_entry_margin_gap(), date, Distance in °F between the bracket and the expected daily high, for NO entries., EGLC (London City), January hour=0: per-station climb is 3.6F.          The old, ZGGG (Guangzhou), January hour=0: per-station climb is 7.0F.          ZGGG is sl, TestPreviouslyFallbackInternationalStations, _bracket() (+29 more)
 
 ### Community 216 - "TestStationsOverviewWithDbOverrides"
 Cohesion: 0.15
 Nodes (7): GET /api/stations/overview returns a non-empty list., After toggling KORD off (both sides), overview shows enabled=false for KORD., DB override with both enabled lifts env-based disable for a station., Station with yes=False, no=True is counted as enabled (one side live)., Without a DB override, env DISABLED_STATIONS controls enabled., Toggling via API endpoint and then querying overview shows updated state., TestStationsOverviewWithDbOverrides
 
 ### Community 217 - "EmosCityStatus"
-Cohesion: 0.25
-Nodes (5): Tests for issue #558: is_training_eligible() per-city accessor., The 3 unconditionally excluded cities must be ineligible., Cities without an explicit training_eligible: false flag default to True., Cities absent from source_priority.yaml entirely default to eligible., TestIsTrainingEligible
+Cohesion: 0.29
+Nodes (3): _is_conus(), Return True if (lat, lon) falls within the approximate CONUS bounding box., TestIsConus
 
 ### Community 218 - "test_settle_csv_deprecated.py"
 Cohesion: 0.23
 Nodes (7): _candidate_row(), date, Path, Regression tests for the settlements.csv deprecation (issue #683).  ``settle_yes, SETTLEMENTS_CSV is no longer referenced by settle.py's write path., TestSettlementsCsvDeprecated, _write_candidates_csv()
 
 ### Community 219 - "_jsonl_cache_get"
-Cohesion: 0.21
-Nodes (8): _make_state(), Edge case unit tests for src/model/intraday_correction.py., Build a minimal WeatherState mock., obs_temp_f == model_temp_f → delta_f == 0.0, corrected_mu_f == deb_mu_f., Obs age > 2x cadence_min → compute_correction returns None., db.get_latest_observation returns None → returns None, no exception., City not in PEAK_WINDOWS → compute_correction does not raise., TestComputeCorrectionEdgeCases
+Cohesion: 0.25
+Nodes (6): Migration renames old table to legacy_v1 and preserves its rows., Create a SQLite file that looks like a pre-#422 database., Legacy table retains all 670 original rows after migration., After migration, model_forecast_log (new) is empty — no rows migrated forward., Re-opening a fully-migrated DB does not raise or corrupt data., TestMigrationWithLegacyRows
 
 ### Community 221 - "TestEMOSFitWithVariableSigma"
 Cohesion: 0.14
@@ -1349,24 +1345,24 @@ Cohesion: 0.17
 Nodes (7): Tests for the deb_enabled parameter (resolved from live config by the scanner)., deb_enabled=True (live-config value) -> deb_mu_f is used., deb_enabled=False (live-config value) -> deb_mu_f is ignored., Caller-passed deb_enabled=True (live config) overrides env var false., deb_enabled=None -> env var is used (backward compatibility)., corrected_mu_f takes precedence even when deb_enabled=True., TestDebMuFLiveConfig
 
 ### Community 225 - "setup_logging"
-Cohesion: 0.20
-Nodes (13): compute_calibration_report(), fetch_fills(), main(), print_report(), Fee model calibration against actual CLOB fill history.  Fetches all live filled, Compute error statistics by price decile.      Returns dict with keys: decile_ta, Fetch taker-side fill records from CLOB trade history.      Returns a list of di, check_clob_health() (+5 more)
+Cohesion: 0.12
+Nodes (19): compute_calibration_report(), fetch_fills(), main(), print_report(), Fee model calibration against actual CLOB fill history.  Fetches all live filled, Compute error statistics by price decile.      Returns dict with keys: decile_ta, Fetch taker-side fill records from CLOB trade history.      Returns a list of di, check_clob_health() (+11 more)
 
 ### Community 226 - "MeteoEdge — Implementation Plan"
-Cohesion: 0.03
-Nodes (82): apply_emos(), _check_ready_for_promotion(), _default_mode(), _emos_min_samples(), get_city_mode(), _primary_allowed(), EMOS deployment mode helpers.  Controls whether each city uses legacy Gaussian,, Return the CRPS-logged shadow-day minimum for promotion to emos_primary.      De (+74 more)
+Cohesion: 0.07
+Nodes (32): apply_emos(), Apply EMOS linear correction: mu_cal = a + b*mu, sigma_cal = c + d*sigma.      F, _db(), emos_shadow row present → get_city_mode returns 'emos_shadow'., Only shadow row → returns 'emos_shadow', not 'legacy'., emos_primary row with ready_for_promotion=0 → returns 'legacy'., emos_primary unready + shadow row → returns 'emos_shadow'., _check_ready_for_promotion returns False when ready_for_promotion=0. (+24 more)
 
 ### Community 227 - "TestClosedPositionsExitReason"
 Cohesion: 0.23
 Nodes (7): With mock data where corrected_mu_f is closer to actual, report shows improvemen, Run main() with injected DB data that shows correction improvement., Report shows positive improvement when corrected < baseline RMSE., Report header includes city name and days count., Report shows correct count of dates with data., Rows with improvement (delta < 0) show the 'ok' marker., TestReportShowsImprovement
 
 ### Community 228 - "run"
-Cohesion: 0.14
-Nodes (15): _nws_forecast_for_title(), Return today's NWS forecast high (°F) for the city mentioned in *title*.      NO, fetch_nws_forecast_high(), fetch_nws_forecast_low(), fetch_nws_with_spread(), _nws_sigma_for_lead(), NWS forecast fetcher — uses http_client's NWS /points permanent cache and 30-min, Return climatological NWS forecast σ (°F) for a given lead time.      Uses exact (+7 more)
+Cohesion: 0.25
+Nodes (6): fetch_nws_forecast_low(), Return the upcoming overnight low forecast (°F) for lat/lon using NWS hourly for, _make_periods(), Tests for src/data/nws.py.  Covers fetch_nws_forecast_low (issue #583) -- the lo, Sanity check that low and high sourcing are consistent: for the same         for, TestFetchNwsForecastLow
 
 ### Community 229 - "Open-Meteo Usage"
-Cohesion: 0.17
-Nodes (11): Archive Cleanup Guide, Disk Space Recovered, How to Remove, If Folder is Locked, ✅ Kept, On Linux/Unix (systemd deployment):, On Windows (development):, Status (+3 more)
+Cohesion: 0.24
+Nodes (7): _capture_kwargs(), GEFS ensemble ingestion into _capture_station., When fetch_gefs_ensemble returns 30 members, upsert_forecast_log_v2         must, When raw_member_sigma() returns None (e.g. <2 usable members), the         captu, When fetch_gefs_ensemble raises, upsert_forecast_log_v2 must NOT be         call, Return a minimal set of kwargs for _capture_station., TestGefsCapture
 
 ### Community 230 - "EMOS Retrain for New Forecast Stack"
 Cohesion: 0.27
@@ -1377,20 +1373,20 @@ Cohesion: 0.17
 Nodes (7): Tests for observations table schema migration., Tests for cadence_min and is_official column migration., Fresh database should have both cadence_min and is_official columns., Running migration twice should not raise any error., Insert observation with cadence_min and is_official should work., Verify is_official gets default value of 1 on new inserts., TestObservationsMigration
 
 ### Community 232 - "HRRR + NBM Ensemble Skill Backtest"
-Cohesion: 0.09
-Nodes (20): fetch_orderbooks_batch(), Fetch orderbooks for multiple tokens in parallel.      Each token is fetched ind, _log_open_position_snapshots(), Write one snapshot per open NO position per poll, capturing weather +     orderb, _enrich_from_clob(), Overwrite bracket ask prices with live CLOB data.      Only called when ENABLE_C, Tests for batch CLOB orderbook fetching (issue #171).  Covers: - fetch_orderbook, When orderbooks is provided, get_orderbook must not be called. (+12 more)
+Cohesion: 0.13
+Nodes (15): _decode_json_string(), _enrich_from_clob(), minutes_to_settlement(), Market scanner — identifies mispriced Polymarket temperature brackets.  For each, # NOTE: skipped_reason is mislabeled "min_edge" here for the, Polymarket Gamma API returns several fields as JSON-encoded strings., Convert val to °F if unit_char is 'C', otherwise return as-is., Resolve (mu, sigma) for a next-day candidate (issue #687).      Implements the r (+7 more)
 
 ### Community 233 - "_get_consensus_weights"
 Cohesion: 0.36
 Nodes (4): Seed station_overrides on first run for shadow-mode stations.      Idempotent: e, seed_station_overrides(), Multiple calls to seed_station_overrides produce the same result., TestSeedStationOverridesEpicC
 
 ### Community 234 - "TestOpenClosePosition"
-Cohesion: 0.29
-Nodes (5): _calibrated_sigma(), Per-station conditional sigma estimator from GEFS ensemble spread.  Given the 30, Apply linear regression calibration: sigma_cal = slope * sigma_naive + intercept, Tests for per-station ensemble sigma estimator (Issue #447)., TestCalibratedSigma
+Cohesion: 0.24
+Nodes (7): _db(), Return an in-memory Database for testing., ICON shadow ingestion into _capture_station (#492)., When fetch_icon_hourly returns rows, upsert_forecast_log_v2 must be         call, When fetch_icon_hourly returns [] (outside EU domain), no upsert for 'icon'., When fetch_icon_hourly raises, no exception propagates and no upsert for 'icon'., TestIconCapture
 
 ### Community 235 - "TestStatusDbCapital"
-Cohesion: 0.31
-Nodes (4): Return the UNFLOORED sample stdev of ensemble members (capture-time).      This, raw_member_sigma(), raw_member_sigma() must return the true sample stdev with NO floor     applied,, TestRawMemberSigma
+Cohesion: 0.22
+Nodes (8): Exclusion funnel, Global result, Market-vs-Model Skill Test -- Pass 1 (issue #822), Methodology notes, Reliability, Segment: same-day vs. next-day, Segment: UTC-offset bucket, Sharpness
 
 ### Community 236 - "TestHealthEndpoint"
 Cohesion: 0.18
@@ -1413,8 +1409,8 @@ Cohesion: 0.18
 Nodes (6): Tests for POST /api/emos/{city}/demote., Demote sets effective mode to legacy., Demote is safe to call when already in legacy mode., Demote returns 404 for an unknown city name., Demote preserves shadow/primary calibration rows., TestEmosDemoteEndpoint
 
 ### Community 241 - "main"
-Cohesion: 0.23
-Nodes (7): get_live_config(), Return current bot_config values as a typed dict.      Reads all rows from the b, _active_stack_models(), Resolve the active FORECAST_STACK's model set from live config.      Same live-r, get_live_config must return typed values for all seeded keys., TestGetLiveConfig, Guard: live active FORECAST_STACK is matched by its serving members.          Th
+Cohesion: 0.22
+Nodes (8): **Decision: HOLD**, Edge-Sign Analysis, Global Skill Summary, HRRR + NBM Ensemble Skill Backtest, Methodology Notes, Per-Station MAE — Before vs After, Recommendation, Simulated PnL Projection (US Stations)
 
 ### Community 242 - "EMOS Data Reset"
 Cohesion: 0.20
@@ -1429,16 +1425,16 @@ Cohesion: 0.50
 Nodes (3): Per-$1-notional synthetic PnL for a NO position entered at *price_cents*.      A, synthetic_no_pnl_cents(), TestSyntheticNoPnl
 
 ### Community 245 - "TestQueryHelpers"
-Cohesion: 0.29
-Nodes (3): _is_conus(), Return True if (lat, lon) falls within the approximate CONUS bounding box., TestIsConus
+Cohesion: 0.22
+Nodes (6): _FakeNbmForecast, NBM shadow ingestion into _capture_station (#492)., When fetch_nbm_daily_high returns a result, upsert_forecast_log_v2 must be, When fetch_nbm_daily_high returns None (out of CONUS), no upsert for 'nbm'., When fetch_nbm_daily_high raises, no exception propagates and no upsert for 'nbm, TestNbmCapture
 
 ### Community 246 - "Archive Cleanup Guide"
-Cohesion: 0.21
-Nodes (8): next_day_probability_yes(), P(next-day daily high falls in this bracket) -- forecast-only path (issue #687)., Unit tests for the forecast-only next-day probability path.      Distinct from t, next_day_probability_yes is a thin pass-through to p_normal_between --         n, A bracket entirely below mu is NOT forced to 0 the way the same-day         floo, Without max_env truncation, a bracket well above mu still gets         some prob, No floor/ceiling asymmetry: brackets equidistant from mu on either         side, TestNextDayProbabilityYes
+Cohesion: 0.33
+Nodes (6): _make_bracket(), _make_state(), EMOS_DEFAULT_MODE=legacy and no DB → true_probability_yes output byte-identical, DB with no EMOS row → get_city_mode returns 'legacy' → probability unchanged., emos_shadow mode: calibrated params logged but p_yes served from legacy path unc, TestLegacyUnchangedOutput
 
 ### Community 247 - "TestSeedConfig"
-Cohesion: 0.36
-Nodes (3): _naive_sigma(), Return max(stdev(members), SIGMA_FLOOR_F).      Uses population stdev with ddof=, TestNaiveSigma
+Cohesion: 0.22
+Nodes (5): Issue #761: 'gfs' was removed from MODELS — it double-counted the         same p, EQUAL_WEIGHTS must not include gfs (issue #761)., EQUAL_WEIGHTS values must sum to 1.0., All models in EQUAL_WEIGHTS must carry equal weight., TestModelsConstants
 
 ### Community 248 - "_make_state"
 Cohesion: 0.20
@@ -1454,7 +1450,7 @@ Nodes (6): Issue #766: training_eligible_since date-scoped re-entry for Shenzhen
 
 ### Community 251 - "DEB Channel Group Assignments (issue #550)"
 Cohesion: 0.01
-Nodes (109): main(), Database, Return every evaluated bracket's latest-poll decision row for (station, date)., Insert a trade record; returns the new row id.          ``end_date`` (YYYY-MM-DD, Update the trade row(s) matching *order_id*; only non-None fields         are wr, Update the trade row matching *trade_id* by primary key.          Used for shado, Write close telemetry columns onto the trade row matching *order_id*.          C, Backfill cost accounting columns on the trade row matching *order_id*. (+101 more)
+Nodes (88): main(), Database, Return every evaluated bracket's latest-poll decision row for (station, date)., Insert a trade record; returns the new row id.          ``end_date`` (YYYY-MM-DD, Update the trade row(s) matching *order_id*; only non-None fields         are wr, Update the trade row matching *trade_id* by primary key.          Used for shado, Write close telemetry columns onto the trade row matching *order_id*.          C, Backfill cost accounting columns on the trade row matching *order_id*. (+80 more)
 
 ### Community 252 - "open_meteo.py"
 Cohesion: 0.20
@@ -1464,13 +1460,17 @@ Nodes (6): Default scoping returns None when only a non-active track has a row, 
 Cohesion: 0.20
 Nodes (6): upsert_model_weight / get_model_weights and upsert_forecast_log / get_forecast_l, Insert two weight rows for the same city (different models), retrieve and verify, Insert same (city, model, date) twice with different rmse, verify only one row w, Insert two forecast log rows for same station (different models), retrieve and v, Insert same (station, model, date) twice with different forecast_high_f, verify, TestModelWeightsTables
 
+### Community 254 - "README.md"
+Cohesion: 0.20
+Nodes (3): Issue #761: "gfs" must no longer be a registered DEB channel., When all models have fewer than MIN_SAMPLES entries, return EQUAL_WEIGHTS., TestBackwardCompat
+
 ### Community 255 - "Settlement"
 Cohesion: 0.27
 Nodes (4): _mock_response(), Inserting a second time for the same issued_at should not duplicate rows., TestFetchOne, TestStaleWindowDeletion
 
 ### Community 256 - "Guardrail Telemetry"
-Cohesion: 0.22
-Nodes (3): Verify HRRR and NBM are registered with correct metadata., HRRR and NBM are US-only; must not appear for EU stations., TestHrrrNbmRegistry
+Cohesion: 0.25
+Nodes (7): Methodology (what the script computes, once real data is available), Per-station / per-side breakdown (required by this issue, stage 2), Prob-cap shadow report -- 2026-07-10 (issue #551 stage 2), Recommendation (this report, today), STATUS: BLOCKED -- no usable production data in this environment, Structural template (NOT real data -- do not cite these numbers), What this means for the #551 timeline
 
 ### Community 257 - "Recovery & Restart"
 Cohesion: 0.20
@@ -1485,24 +1485,24 @@ Cohesion: 0.16
 Nodes (9): fetch_ecmwf_ensemble_spread(), Fetch the raw (unfloored) ECMWF ENS member-spread for sigma_f (issue #824)., ENS members are available -> raw (unfloored) stdev in °F is returned., Unlike compute_ensemble_sigma(), no SIGMA_FLOOR_F clamp at capture time., The fxx passed to _fetch_ecmwf_ens_members_2t must land inside         target_da, cycle_dt so old that no 3-hourly step (0..90h) reaches target_date., fetch_ecmwf_ensemble_spread() itself does not add a try/except         around _f, TestFetchEcmwfEnsembleSpreadHappyPath (+1 more)
 
 ### Community 260 - "TestGetConsensusWeights"
-Cohesion: 0.26
-Nodes (5): _db(), Return a fresh in-memory Database instance., bot_config table must exist and support CRUD via the three helpers., Second set_config for same key overwrites, not duplicates., TestBotConfigTable
+Cohesion: 0.25
+Nodes (7): Cap simulation (NO side only -- protected side), Clamp saturation, Distribution of p_yes_raw within the clamped population, Population-level clamp saturation (all evaluated brackets), Prob-cap shadow report -- 2026-07-11, RANK_ON_RAW_PROB=true simulated ordering effect, Recommendation
 
 ### Community 261 - "conftest.py"
 Cohesion: 0.18
 Nodes (6): Certainty shortcuts must not fire when the WeatherState's local day     differs, Evening window: state is from yesterday (after peak), market settles         tod, When local day == settlement day, shortcuts fire normally., When days differ, forecast_mean must not be clamped to yesterday's         envel, A bracket spanning the observation envelope must NOT return 1.0         when day, TestDayMismatchGuard
 
 ### Community 262 - "intraday_correction.py"
-Cohesion: 0.17
-Nodes (7): reconcile_timeout_fills must iterate all rotated JSONL sources correctly., Plain file has token-A (not in wallet); dated file has token-B (in wallet)., Records in .gz archives are visible for reads but the archive is never rewritten, All dated JSONL files with matching tokens are patched in one reconcile pass., No plain file, no dated files -> _wallet_held_token_ids never called., Running reconcile twice produces zero new patches on the second pass., TestReconcileRotationAware
+Cohesion: 0.25
+Nodes (7): Cap simulation (NO side only -- protected side), Clamp saturation, Distribution of p_yes_raw within the clamped population, Population-level clamp saturation (all evaluated brackets), Prob-cap shadow report -- 2026-07-19, RANK_ON_RAW_PROB=true simulated ordering effect, Recommendation
 
 ### Community 263 - "__init__.py"
 Cohesion: 0.29
 Nodes (6): Behavioural rules, Procedural skills (invoke, don't inline), Status reporting format, Team, Tech Lead PM (Orchestrator), Workflow for an objective
 
 ### Community 264 - "__init__.py"
-Cohesion: 0.20
-Nodes (6): reconcile_timeout_fills must keep the DB trades table in sync., After reconcile, existing DB trades row has outcome='filled'., When no DB row exists for the order_id, one is inserted with outcome='filled'., Idempotent: second reconcile triggers 0 new DB writes (outcome already filled)., Passing db=None must not raise -- JSONL is still patched., TestReconcileDbSync
+Cohesion: 0.36
+Nodes (4): breakeven_win_rate(), Return the win rate required to break even at *avg_entry_price_cents*.      Deri, Break-even threshold must derive from entry price + the real fee model., TestBreakevenWinRate
 
 ### Community 266 - "__init__.py"
 Cohesion: 0.29
@@ -1513,16 +1513,16 @@ Cohesion: 0.22
 Nodes (8): Frontend PRs, GitHub Governance Protocol — SINGLE SOURCE OF TRUTH, Governance checklist (every agent, every task), Issue and PR linking rules, Mandatory status transitions, PR merge gate — CI must be green (NON-NEGOTIABLE), Status management rules, Tokens
 
 ### Community 268 - "TestMultipleGateFail"
-Cohesion: 0.25
-Nodes (6): Seed bot_config from env vars / hardcoded defaults on first run.      For each k, seed_config(), If a DB row already exists, seed_config must leave it alone., Calling seed_config twice must not raise or change values., seed_config seeds from env/defaults on first run; skips existing rows., TestSeedConfig
+Cohesion: 0.24
+Nodes (7): Silence all sources so individual tests only exercise the one under test., HRRR shadow ingestion into _capture_station (#492)., When fetch_hrrr_hourly returns rows, upsert_forecast_log_v2 must be         call, When fetch_hrrr_hourly returns [] (out of CONUS), no upsert for 'hrrr'., When fetch_hrrr_hourly raises, no exception propagates and no upsert for 'hrrr'., _silence_base_sources(), TestHrrrCapture
 
 ### Community 269 - "_rm_no_db"
-Cohesion: 0.25
-Nodes (6): Migration renames old table to legacy_v1 and preserves its rows., Create a SQLite file that looks like a pre-#422 database., Legacy table retains all 670 original rows after migration., After migration, model_forecast_log (new) is empty — no rows migrated forward., Re-opening a fully-migrated DB does not raise or corrupt data., TestMigrationWithLegacyRows
+Cohesion: 0.32
+Nodes (5): scan_markets() must receive weather_low= and prob_low_fn= from poll_once()., Run poll_once() under the standard patch stack; return         (mock_build_low,, With ENABLE_LOW_MARKETS on, the #554 wiring must stay intact., Issue #733 rollback: with defaults (flag unset in DB and env),         poll_once, TestPollOncePassesWeatherLow
 
 ### Community 270 - "TestDebMuF"
-Cohesion: 0.22
-Nodes (6): ensemble_forecast(), Combine multiple forecast sources., WeatherState with deb_mu_f=90.0, DEB_ENABLED=true -> forecast_mean equals deb_mu, DEB_ENABLED=false (default) -> result equals baseline even with deb_mu_f set., deb_mu_f=None with DEB_ENABLED=true -> falls back to ensemble_forecast() unchang, TestDebMuF
+Cohesion: 0.29
+Nodes (4): WeatherState with deb_mu_f=90.0, DEB_ENABLED=true -> forecast_mean equals deb_mu, DEB_ENABLED=false (default) -> result equals baseline even with deb_mu_f set., deb_mu_f=None with DEB_ENABLED=true -> falls back to ensemble_forecast() unchang, TestDebMuF
 
 ### Community 271 - "_make_state"
 Cohesion: 0.33
@@ -1537,92 +1537,104 @@ Cohesion: 0.28
 Nodes (5): Issue #741: the raw_json LIKE '%source_fallback%' condition is a second,     ind, A row tagged is_official=1 (mistakenly, as if the flag were never         set) b, A row with raw_json set but NOT containing 'source_fallback' must         not be, Rows with no raw_json at all (the common case) must not be dropped         by th, TestFallbackRawJsonSecondSignal
 
 ### Community 274 - "breakeven_win_rate"
-Cohesion: 0.33
-Nodes (3): Cost of the side actually "bought" for a shadow row's ``actual_price``.      Iss, _shadow_bought_side_cost_cents(), TestShadowBoughtSideCost
+Cohesion: 0.22
+Nodes (5): A positive obs_bias_offset_f shifts forecast_mean up, raising p for high bracket, A negative obs_bias_offset_f shifts forecast_mean down, lowering p for high brac, obs_bias_offset_f=None must produce identical result to no offset field at all., A huge positive offset must clamp at max_env — result bounded [0, 1], not NaN., TestObsBiasCorrection
 
 ### Community 275 - "install.sh"
-Cohesion: 0.22
-Nodes (8): Exclusion funnel, Global result, Market-vs-Model Skill Test -- Pass 1 (issue #822), Methodology notes, Reliability, Segment: same-day vs. next-day, Segment: UTC-offset bucket, Sharpness
+Cohesion: 0.29
+Nodes (6): **Decision: KILL**, ECMWF + ICON International Ensemble Skill Backtest, Global Skill Summary, Methodology Notes, Per-Station MAE — Baseline vs Ensemble, Recommendation
 
 ### Community 278 - "run_dashboard.py"
-Cohesion: 0.27
-Nodes (5): _nearest_lead_hours(), Return the entry of *available* nearest to *lead_hours* (issue #665).      Same, Mirrors src/data/nws.py:_nws_sigma_for_lead's nearest-match idiom., Missing-bin fallback degenerate case: only one bin fitted., TestNearestLeadHours
+Cohesion: 0.22
+Nodes (7): _nearest_lead_hours(), Return the entry of *available* nearest to *lead_hours* (issue #665).      Same, Return the emos_calibration row apply_emos should use for *city*.      emos_prim, _select_emos_row(), Mirrors src/data/nws.py:_nws_sigma_for_lead's nearest-match idiom., Missing-bin fallback degenerate case: only one bin fitted., TestNearestLeadHours
 
 ### Community 282 - "_start_collector_thread"
-Cohesion: 0.22
-Nodes (8): **Decision: HOLD**, Edge-Sign Analysis, Global Skill Summary, HRRR + NBM Ensemble Skill Backtest, Methodology Notes, Per-Station MAE — Before vs After, Recommendation, Simulated PnL Projection (US Stations)
+Cohesion: 0.29
+Nodes (3): Tests for GET /api/promotion-bar., A station+side with >=30 settled wins clearing break-even is green/eligible., TestPromotionBarEndpoint
 
 ### Community 283 - "test_live_state.py"
-Cohesion: 0.24
-Nodes (6): breakeven_win_rate(), Return the win rate required to break even at *avg_entry_price_cents*.      Deri, Break-even threshold must derive from entry price + the real fee model., Issue #738: once #737 stores the NO cost in trades.actual_price, the     promoti, TestBreakevenWinRate, TestPromotionBarNoSideBoughtCost737
+Cohesion: 0.11
+Nodes (15): _db(), Tests for promotion gate prerequisites., Return an in-memory database for testing., Test case: all gates pass → promotable=True., When all prerequisites are met, promotable=True and reason is empty., Test behavior when database is None., When db is None, all gates fail and promotable=False., Issue #610: compute_promotion_bar must filter to direction='high' so     residua (+7 more)
 
 ### Community 314 - "analytics.db"
 Cohesion: 0.19
 Nodes (6): datetime, Unit tests for src/monitoring/alerts.py.  All SMTP calls are mocked. Tests verif, Sending a warning alert should not suppress the stop alert., TestCheckIntegration, TestDeduplication, _utcnow()
 
 ### Community 315 - "meteoedge.db"
-Cohesion: 0.22
-Nodes (6): _FakeNbmForecast, NBM shadow ingestion into _capture_station (#492)., When fetch_nbm_daily_high returns a result, upsert_forecast_log_v2 must be, When fetch_nbm_daily_high returns None (out of CONUS), no upsert for 'nbm'., When fetch_nbm_daily_high raises, no exception propagates and no upsert for 'nbm, TestNbmCapture
+Cohesion: 0.29
+Nodes (6): _hang(), Return a fetch stand-in that sleeps *seconds* then returns a valid result., A hung fetch inside _capture_station must time out, log, and let the     loop co, NWS fetch hangs well past the (patched, tiny) timeout -- _capture_station, Same guard for a channel that already had its own try/except (HRRR) --         t, TestFetchTimeout
 
 ### Community 326 - "TestRefreshWeightsExclusion"
-Cohesion: 0.20
-Nodes (6): Verify refresh_weights skips cities marked training_ineligible in     config/sou, When a city is ineligible (training_eligible: false), refresh_weights         sh, When DEB_ENABLED is false, refresh_weights should return early         regardles, When weights were already refreshed today, skip even if eligible., Verify that all 4 cities from issue #558 (ZSJN/ZGSZ/ZHHH/ZHCC) are         prope, TestRefreshWeightsExclusion
+Cohesion: 0.17
+Nodes (7): Verify refresh_weights skips cities marked training_ineligible in     config/sou, When a city is ineligible (training_eligible: false), refresh_weights         sh, When a city is eligible, refresh_weights should proceed and call         upsert_, When DEB_ENABLED is false, refresh_weights should return early         regardles, When weights were already refreshed today, skip even if eligible., Verify that all 4 cities from issue #558 (ZSJN/ZGSZ/ZHHH/ZHCC) are         prope, TestRefreshWeightsExclusion
 
 ### Community 327 - "README.md"
-Cohesion: 0.24
-Nodes (7): compute_win_rate(), Canonical win-rate definition: wins / filled. None when filled == 0.      Args:, Test the canonical compute_win_rate helper function., compute_win_rate should return wins / filled., compute_win_rate should return None when filled == 0., Wins should not exceed filled, but the function doesn't validate., TestComputeWinRate
+Cohesion: 0.11
+Nodes (15): compute_win_rate(), Canonical win-rate definition: wins / filled. None when filled == 0.      Args:, Test the canonical compute_win_rate helper function., compute_win_rate should return wins / filled., compute_win_rate should return None when filled == 0., Wins should not exceed filled, but the function doesn't validate., TestComputeWinRate, Test the canonical win-rate computation (compute_win_rate from src.data.db). (+7 more)
 
 ### Community 333 - "Junior Developer"
 Cohesion: 0.29
 Nodes (5): _make_stats(), mean_signed_error=+8.0 with max=5.0 → clamped to +5.0., mean_signed_error=-7.5 with max=5.0 → clamped to -5.0., Exactly at the boundary is not clamped., TestResidualStatsClamped
 
 ### Community 334 - "TestEMOSFitWithVariableSigma"
-Cohesion: 0.22
-Nodes (5): Issue #761: 'gfs' was removed from MODELS — it double-counted the         same p, EQUAL_WEIGHTS must not include gfs (issue #761)., EQUAL_WEIGHTS values must sum to 1.0., All models in EQUAL_WEIGHTS must carry equal weight., TestModelsConstants
+Cohesion: 0.32
+Nodes (5): EMOS fit on data with varying sigma_raw recovers non-trivial (c, d)., Generate (mu_raw, sigma_raw, y) with sigma varying per sample.          sigma_ra, With variable sigma_raw, fitted (c,d) departs from (FORECAST_STDDEV_F, 1)., c_fit + d_fit * sigma_raw > 0 for all samples even with variable spread., TestEMOSFitWithVariableSigma
 
 ### Community 335 - "position_snapshots.jsonl"
 Cohesion: 0.36
 Nodes (4): Issue #654: torn-DB tolerance and mid-run cache flushing., A DB whose settlements read raises must not crash the report --         the Gamm, With CACHE_FLUSH_EVERY=2 and 5 tickers the cache must be written         to disk, TestLoadResolutionsHardening
 
 ### Community 336 - "snapshots.jsonl"
-Cohesion: 0.25
-Nodes (7): Methodology (what the script computes, once real data is available), Per-station / per-side breakdown (required by this issue, stage 2), Prob-cap shadow report -- 2026-07-10 (issue #551 stage 2), Recommendation (this report, today), STATUS: BLOCKED -- no usable production data in this environment, Structural template (NOT real data -- do not cite these numbers), What this means for the #551 timeline
+Cohesion: 0.27
+Nodes (6): Issue #586: the rolling window must exclude deltas recorded under a     prior co, Insert one intraday_corrections row *offset_days* before *today*., CRITICAL DESIGN DECISION (#586): once mixed-basis rows are excluded,         if, Rolling mean must be computed only from post-deploy-date deltas,         even wh, The 'applying bias correction' log line must state the basis         (deploy-dat, TestBasisRegimeExclusion
 
 ### Community 338 - "Mid Developer"
 Cohesion: 0.25
-Nodes (7): Cap simulation (NO side only -- protected side), Clamp saturation, Distribution of p_yes_raw within the clamped population, Population-level clamp saturation (all evaluated brackets), Prob-cap shadow report -- 2026-07-11, RANK_ON_RAW_PROB=true simulated ordering effect, Recommendation
+Nodes (5): Database method for targeted token_id lookup to avoid full table scan., Happy path: returns rows for the specified token_id., No-match case: returns empty list when token_id does not exist., Result includes bracket_low, bracket_high, predicted_price from trades join., TestGetOpenPositionByToken
 
 ### Community 340 - "__init__.py"
-Cohesion: 0.25
-Nodes (7): Cap simulation (NO side only -- protected side), Clamp saturation, Distribution of p_yes_raw within the clamped population, Population-level clamp saturation (all evaluated brackets), Prob-cap shadow report -- 2026-07-19, RANK_ON_RAW_PROB=true simulated ordering effect, Recommendation
+Cohesion: 0.07
+Nodes (22): _default_mode(), get_city_mode(), Resolve the EMOS fallback mode for cities with no calibration rows.      Reads t, Fall back to emos_shadow when a shadow row exists, else EMOS_DEFAULT_MODE., Return the deployment mode for a city: 'legacy', 'emos_shadow', or 'emos_primary, _shadow_or_default(), Issue #680: the dashboard edits EMOS_DEFAULT_MODE in bot_config, so the     fall, bot_config EMOS_DEFAULT_MODE=emos_shadow → returned for a city         with no c (+14 more)
 
 ### Community 341 - "__init__.py"
-Cohesion: 0.25
-Nodes (5): Happy-path: KORD with three seeded scan_decisions brackets., Status 200 and all top-level schema fields are present and typed correctly., forecast_inputs.ensemble_members must equal the seeded member count., Brackets come back ordered ascending by bracket_low (Database.get_scan_decisions, TestIntegration200FullResponse
+Cohesion: 0.33
+Nodes (5): Before / after: DB-derived cell coverage per station, Climb-table regeneration report — 2026-07-12 (#669 host step), Downstream consumer, Per-station hour-6 p95 climb (°F) by month, post-regen, Values worth a reviewer's glance
 
 ### Community 342 - "TestScannerUsesDbAsAuthoritative"
 Cohesion: 0.25
 Nodes (5): Verify that the scanner prioritizes DB rows over env vars., When a DB row exists, scanner reads from it, not from env vars.          This is, When no DB row exists, scanner falls back to env vars.          Direct test: KOR, DB row takes precedence even when SHADOW_STATIONS env says otherwise.          S, TestScannerUsesDbAsAuthoritative
 
 ### Community 344 - "__init__.py"
-Cohesion: 0.29
-Nodes (6): **Decision: KILL**, ECMWF + ICON International Ensemble Skill Backtest, Global Skill Summary, Methodology Notes, Per-Station MAE — Baseline vs Ensemble, Recommendation
+Cohesion: 0.40
+Nodes (4): Blocker: no real archived data reachable in this environment, Market-vs-Model Skill Test -- Pass 1 status (issue #822), What is needed to unblock, What this is
 
 ### Community 345 - "__init__.py"
 Cohesion: 0.29
 Nodes (6): 1. AI-first triage — always start here, 2. Review dimensions, 3. Review output format, 4. CI gate — approval requires green checks (NON-NEGOTIABLE), 5. Post-review actions (review is NOT complete without these), PR Review Protocol (Tech Lead PM)
 
 ### Community 346 - "__init__.py"
-Cohesion: 0.09
-Nodes (19): fetch_gefs_ensemble(), GEFSMemberForecast, _member_label(), GEFS (Global Ensemble Forecast System) 2-m temperature ingestion.  Fetches 2-m t, Return the human-readable GEFS member label for integer member *i*.      Args:, Single hourly temperature forecast from one GEFS ensemble member.      Attribute, Fetch GEFS TMP_2m for all 31 ensemble members at a single forecast hour.      Re, Unit tests for src/data/gefs.py.  All network calls and GRIB I/O are mocked; the (+11 more)
+Cohesion: 0.06
+Nodes (25): fetch_gefs_ensemble(), GEFSMemberForecast, _member_label(), GEFS (Global Ensemble Forecast System) 2-m temperature ingestion.  Fetches 2-m t, Return the human-readable GEFS member label for integer member *i*.      Args:, Single hourly temperature forecast from one GEFS ensemble member.      Attribute, Fetch GEFS TMP_2m for all 31 ensemble members at a single forecast hour.      Re, _cache_key() (+17 more)
 
 ### Community 347 - "__init__.py"
 Cohesion: 0.43
 Nodes (5): Tests for scripts/check_prompt_drift.sh — the single-source-of-truth guard that, _run(), test_detects_reinlined_graphify_rules(), test_detects_reinlined_graphql_mutation(), test_passes_on_the_committed_tree()
 
+### Community 348 - "__init__.py"
+Cohesion: 0.25
+Nodes (3): GET /api/config must return all parameters grouped by category., Every non-hidden config key must be present. Hidden keys (issue #852 —         d, TestGetConfigEndpoint
+
+### Community 349 - "__init__.py"
+Cohesion: 0.09
+Nodes (8): client(), Unit tests for the consolidated dashboard at src/dashboard/api.py.  Tests use tm, POST /api/positions/{token_id}/sell — operator-triggered manual sell., Create a fresh TestClient for each test to avoid state leakage.      Also resets, Health endpoint must not crash when log directory does not exist., TestHealthEndpoint, TestSellPositionEndpoint, TestWeatherHealthEndpoint
+
 ### Community 350 - "TestOpenClosePosition"
 Cohesion: 0.38
 Nodes (3): open_position / close_position atomicity and correctness., Inserting duplicate order_id must raise an IntegrityError., TestOpenClosePosition
+
+### Community 351 - "__init__.py"
+Cohesion: 0.40
+Nodes (3): A DB with the pre-#449 UNIQUE(city, model_mode, forecast_source) schema, The oldest schema (pre-#659, city+model_mode only) also migrates cleanly, TestMigrationWidensUniqueConstraint
 
 ### Community 352 - "Tech Lead PM"
 Cohesion: 0.29
@@ -1632,25 +1644,21 @@ Nodes (4): Acceptance criterion for #761: dropping "gfs" from the DEB channel se
 Cohesion: 0.14
 Nodes (11): clamp_saturation_stats(), classify_new_admission_channel(), distribution_stats(), Share of candidates where p_yes_raw != p_yes, overall / per side / per station., Attribute a newly-admitted NO candidate to one of two coupled channels.      - ", recommend(), Tests for scripts/prob_cap_shadow_report.py (issue #570, DB path #682).  Covers:, TestClampSaturation (+3 more)
 
-### Community 357 - "HRRR + NBM Ensemble Skill Backtest"
-Cohesion: 0.33
-Nodes (5): Before / after: DB-derived cell coverage per station, Climb-table regeneration report — 2026-07-12 (#669 host step), Downstream consumer, Per-station hour-6 p95 climb (°F) by month, post-regen, Values worth a reviewer's glance
-
 ### Community 358 - "TestModelsConstants"
-Cohesion: 0.33
-Nodes (3): Sell NO tokens immediately or not at all — never leaves a resting order., Cancel an open order. Returns True if cancelled.          Uses py_clob_client_v2, Return current status of an order. Never raises.
+Cohesion: 0.50
+Nodes (4): fetch_nws_with_spread(), _nws_sigma_for_lead(), Return climatological NWS forecast σ (°F) for a given lead time.      Uses exact, Fetch NWS forecast high (°F) and climatological σ for the given lead time.
+
+### Community 359 - "TestGEFSMembers"
+Cohesion: 0.50
+Nodes (3): YES bracket was NOT hit — trade lost., pnl = -(yes_ask) / 100 when the YES bracket is not hit., TestSettleShadowTradesLost
 
 ### Community 360 - "clamp_p_yes"
 Cohesion: 0.43
 Nodes (3): clamp_p_yes(), Reproduce scanner.py's symmetric clamp, including the round() IEEE-creep guard., TestClampMath
 
-### Community 361 - "TestAllowTradeNormalCase"
-Cohesion: 0.08
-Nodes (20): _make_fake_weather_state(), _patch_build_deps(), Regression tests for issue #425: Decouple held-position re-pricer from scanner a, A station inside its active window must be included in scanner output., build_weather_for_pricing() must include stations regardless of local hour., _build_weather() backward-compat wrapper must delegate to build_weather_for_scan, _build_weather (legacy) must exclude out-of-window stations via delegation., Return a minimal WeatherState-like object. (+12 more)
-
 ### Community 364 - "compute_correction"
-Cohesion: 0.13
-Nodes (16): _city_stations(), _get_cadence_for_city(), _get_lat_lon(), _interpolate_model_temp(), datetime, Intraday real-time bias correction for MeteoEdge.  Computes a corrected forecast, Return all station codes associated with a city from STATIONS., Return the minimum cadence_min across all sources for a city. (+8 more)
+Cohesion: 0.05
+Nodes (46): build_consensus(), Return DEB-weighted hourly temperature path for today (UTC).      Renormalises t, _city_stations(), compute_correction(), _get_cadence_for_city(), _get_consensus_weights(), _get_lat_lon(), _interpolate_model_temp() (+38 more)
 
 ### Community 365 - "tests/conftest.py"
 Cohesion: 0.33
@@ -1668,10 +1676,6 @@ Nodes (3): When SMTP credentials are absent, alerts are logged via the logging m
 Cohesion: 0.47
 Nodes (3): dedupe_one_per_bracket_day(), Keep exactly one row per (station, ticker, end_date).      Keeps the row with th, TestDedupe
 
-### Community 369 - "Components"
-Cohesion: 0.33
-Nodes (3): Tests for GET /api/promotion-bar., A station+side with >=30 settled wins clearing break-even is green/eligible., TestPromotionBarEndpoint
-
 ### Community 370 - "TestGetTradeByOrderId"
 Cohesion: 0.33
 Nodes (4): Test Database.get_trade_by_order_id() method., Insert a trade with a known order_id, assert method returns full row dict., Assert returns None for unknown order_id., TestGetTradeByOrderId
@@ -1681,8 +1685,8 @@ Cohesion: 0.29
 Nodes (7): 1. [TECHNICAL_SPECIFICATION.md](TECHNICAL_SPECIFICATION.md), 2. [SPIKE_DOCUMENTATION.md](SPIKE_DOCUMENTATION.md), 3. [../BACKTEST_SUMMARY.md](../BACKTEST_SUMMARY.md), 4. [../SIMULATION_RESULTS.md](../SIMULATION_RESULTS.md), Core Documentation, Documentation Files, Result Documentation
 
 ### Community 373 - "TestComputeResidualStatsPairScoped"
-Cohesion: 0.40
-Nodes (4): Blocker: no real archived data reachable in this environment, Market-vs-Model Skill Test -- Pass 1 status (issue #822), What is needed to unblock, What this is
+Cohesion: 0.33
+Nodes (4): GFS capture with the post-#548 (mu_f, None) return shape.      fetch_gfs_with_sp, (mu, None) must log without a formatting error and upsert sigma_f=None., Defensive: if a future sigma policy (#555) returns a float again,         the lo, TestGfsCapture
 
 ### Community 374 - "Designer"
 Cohesion: 0.40
@@ -1697,20 +1701,16 @@ Cohesion: 0.40
 Nodes (4): Always-loaded surface, Dynamic metric — tokens per completed issue, Pay-per-use surface (loads only when invoked), Prompt-Surface Baseline — before/after #748 restructure
 
 ### Community 377 - "_run_scan"
-Cohesion: 0.40
-Nodes (3): A station with no scan_decisions rows for the date must return 200     with an e, KMIA has no seeded scan_decisions rows — 200 with an empty list, not 503., TestIntegration200NoRecentScan
+Cohesion: 0.08
+Nodes (23): _make_bracket(), _make_market(), _make_weather_state(), Unit tests for shadow candidate detection in src/strategy/scanner.py.  Tests the, With yes_enabled=False and a YES-eligible market, get shadow=True., With yes_enabled=True and a YES-eligible market, get shadow=False., Shadow candidate carries the correct metadata., The Candidate dataclass default for shadow must be False. (+15 more)
 
 ### Community 379 - "test_edge_tab_js_logic.py"
 Cohesion: 0.50
 Nodes (4): _extract_inline_script(), Unit tests for the Edge tab's client-side gate/decision logic (issue #758).  The, Executes the real shipped dashboard script under Node and exercises     the gate, test_edge_tab_gate_and_emphasis_logic()
 
 ### Community 380 - "TestFitEmos"
-Cohesion: 0.03
-Nodes (63): _check_not_on_vps(), get_all_cities(), main(), Offline EMOS retraining script.  CRITICAL: Run on a LOCAL copy of the production, Guard: abort immediately if running on the VPS.      Checks two signals:     - P, Raise ValueError if any city entry is missing required fields., Return list of city names from the STATIONS config., Entry point for the offline EMOS retraining script. (+55 more)
-
-### Community 381 - "_cache_key"
-Cohesion: 0.27
-Nodes (4): _cache_key(), Build a unique string key for a cached GRIB slice.      When *member* is provide, TestCacheKeyDistinctPerMember, TestCacheKey
+Cohesion: 0.06
+Nodes (39): _check_not_on_vps(), get_all_cities(), main(), Offline EMOS retraining script.  CRITICAL: Run on a LOCAL copy of the production, Guard: abort immediately if running on the VPS.      Checks two signals:     - P, Raise ValueError if any city entry is missing required fields., Return list of city names from the STATIONS config., Entry point for the offline EMOS retraining script. (+31 more)
 
 ### Community 383 - "._calibrated_db"
 Cohesion: 0.38
@@ -1719,6 +1719,10 @@ Nodes (4): End-to-end sanity check (issue #550 acceptance criterion, still valid
 ### Community 385 - "TestHealthEndpoint"
 Cohesion: 0.40
 Nodes (3): Integration test: real in-memory DB + real JSONL file for KORD 80-81., Load a 2026-06-20 JSONL record + mock wallet with KORD 80-81 token →         ass, TestReconcileWalletToDbIntegration
+
+### Community 387 - "datetime"
+Cohesion: 0.33
+Nodes (4): Test settled loss gate (rejects pure win streaks)., Station with 100% win rate but no losses fails the gate., Station with at least one loss passes the gate., TestSettledLossGate
 
 ### Community 389 - "Junior Developer"
 Cohesion: 0.50
@@ -1740,17 +1744,13 @@ Nodes (3): Design Spec Format & Frontend PR Review Rubric, Design spec template,
 Cohesion: 0.50
 Nodes (3): Hard rules, Reflect — Continuous Improvement Loop (v1), Workflow
 
-### Community 401 - "test_promotion_gate.py"
-Cohesion: 0.12
-Nodes (11): _db(), Tests for promotion gate prerequisites., Return an in-memory database for testing., Test case: all gates pass → promotable=True., When all prerequisites are met, promotable=True and reason is empty., Test case: multiple gates fail., When multiple gates fail, reason includes all failures., Issue #610: compute_promotion_bar must filter to direction='high' so     residua (+3 more)
-
-### Community 403 - "TestConfigEndpointsWithoutDb"
-Cohesion: 0.15
-Nodes (11): Inject the Database instance from run.py so endpoints read from SQLite., set_db(), api_client(), no_db_client(), Tests for the DB-backed config parameter store (issue #234).  Covers: - bot_conf, Return a FastAPI TestClient with a seeded in-memory Database injected.      Rest, TestClient with _db set to None to simulate uninitialised database., GET and PATCH /api/config must return 503 when _db is None. (+3 more)
-
 ### Community 404 - "test_station_toggle.py"
 Cohesion: 0.50
 Nodes (3): client_with_db(), Tests for station enable/disable toggle — DB methods and API endpoint.  Covers:, TestClient with a fresh in-memory Database injected, cache cleared.
+
+### Community 405 - ".test_replay_delta_others_cold_start"
+Cohesion: 0.40
+Nodes (4): Verify that for 3-channel data the new code produces weights consistent     with, Reimplementation of the original 2-model compute_weights logic., With hrrr/nbm/ecmwf cold-start, nws+open_meteo weights track old 2-model output, TestLegacyReplayDelta
 
 ### Community 406 - "integration/conftest.py"
 Cohesion: 0.50
@@ -1776,10 +1776,6 @@ Nodes (7): main(), _create_test_db(), Tests for scripts/cleanup_settlement_times
 Cohesion: 0.50
 Nodes (3): Deliver an email via SMTP, or log to stderr if SMTP is not configured., Send a test email to verify SMTP configuration.      Run with: python -m src.mon, test_alert()
 
-### Community 439 - "TestDatabaseNone"
-Cohesion: 0.50
-Nodes (3): Test behavior when database is None., When db is None, all gates fail and promotable=False., TestDatabaseNone
-
 ### Community 440 - "Key Findings"
 Cohesion: 0.29
 Nodes (7): Approach, Edge Analysis, Key Findings, Objective, Phase 1: Research & Validation (Completed May 2026), Real Edge Confirmed ✅, Station Performance
@@ -1788,30 +1784,34 @@ Nodes (7): Approach, Edge Analysis, Key Findings, Objective, Phase 1: Research &
 Cohesion: 0.24
 Nodes (6): Tests that NWS (zero rows) is excluded from the blend for international stations, Build a mock DB with n days of open_meteo forecast rows, plus "gfs"         rows, With enough open_meteo rows (plus ignored "gfs" rows) but zero NWS         rows,, Falls back to EQUAL_WEIGHTS when all models have < MIN_SAMPLES pairs., If HRRR rows are absent but NWS + open_meteo have enough data,         HRRR gets, TestComputeWeightsPhantomGuard
 
+### Community 442 - "TestMultipleGateFail"
+Cohesion: 0.50
+Nodes (3): Test case: multiple gates fail., When multiple gates fail, reason includes all failures., TestMultipleGateFail
+
 ### Community 443 - "TestClimbRateGate"
 Cohesion: 0.50
 Nodes (3): Test climb-rate history gate., Station with no climb-rate data fails the gate., TestClimbRateGate
 
 ### Community 446 - "InsufficientDataError"
-Cohesion: 0.09
-Nodes (17): Partial-pooling weight for a city's own EMOS fit (issue #798).      Replaces run, shrinkage_weight(), _db(), Cities strictly between POOLED_MIN_CITY_SAMPLES (5) and     FULL_WEIGHT_SAMPLES, London with 30 own triples (well inside the 5..59 band) must land         strict, At n_city == 60 (the old hard threshold), the persisted fit must         be bit-, Below POOLED_MIN_CITY_SAMPLES (5), a city still gets no         coefficients at, Tel Aviv (station LLBG) is a midlat_c pooling-group member (lat 32.0,     unit ' (+9 more)
+Cohesion: 0.06
+Nodes (26): blend_coefficients(), pooling_group(), Return the cross-station pooling group for *city* (issue #659).      Per-station, Partial-pooling weight for a city's own EMOS fit (issue #798).      Replaces run, Weighted average of a city's own EMOS fit and its pooling group's fit.      ``we, shrinkage_weight(), TestPoolingGroup, _db() (+18 more)
 
 ## Knowledge Gaps
 - **327 isolated node(s):** `install.sh script`, `fetch_remote_data.sh script`, `Scope`, `Design principles (in priority order)`, `Collaboration and escalation` (+322 more)
   These have ≤1 connection - possible missing edges or undocumented components.
-- **76 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **71 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `Database` connect `DEB Channel Group Assignments (issue #550)` to `Database Core Functions`, `Risk Management`, `Agent Roles & Docs`, `Model Retraining`, `EMOS Mode Management`, `Bracket Market Parsing`, `Weather Envelope Model`, `Freshness Monitoring`, `Intraday Correction Backtest`, `METAR Data Fetcher`, `Live Trading Execution`, `Candidate & TAF Disruption`, `AMOS Collector`, `Weather Envelope & Ensemble`, `Forecast Data Fetching`, `Risk Manager Core`, `Project Documentation & Plans`, `Take-Profit Exit Logic`, `Settlement Recording`, `Source Priority Configuration`, `Risk PnL Recording Tests`, `Spike Detection Core`, `Stations API Tests`, `Climb Rate Tables`, `Dashboard API Tests`, `LiveTrader DB Integration`, `EMOS Coefficients Persistence`, `Partial Fill Tracking`, `Market Scanner`, `Email Alert System`, `Portfolio API Tests`, `Station Toggle API`, `EMOS Calibration Fitting`, `Taker Fee Estimation`, `Freshness Monitor Tests`, `True Probability Tests`, `Bot Configuration API`, `EMOS Calibration Training`, `Station Override Database`, `Order Sync Logic`, `Full TAF Parse Tests`, `Probability Distribution Tests`, `DEB Consensus Model`, `Database Repair Scripts`, `Stop-Loss Exit Logic`, `EMOS Coefficients Database`, `Immediate Sell Tests`, `Envelope Computation Tests`, `EMOS Status API`, `Portfolio Statistics`, `EMOS Promote API`, `Dashboard Data Access`, `Database Update Operations`, `TAF Data Collector`, `Stop-Loss Sell Logic`, `Climb Table Builder`, `Intraday Correction Edge Cases`, `Closed Position Exit Reasons`, `Settlement Execution`, `Config Patch API`, `Observation Database Tests`, `Correction Improvement Report`, `Observation Schema Migration`, `TAF Disruption API`, `Analysis & Portfolio API`, `Backtest Real Data`, `Config Seeding`, `Config API with DB`, `Normal Probability Tests`, `City Deb Endpoint`, `Bracket Regex Parsing`, `Stations Overview Override`, `Bridge Stub Compatibility`, `Deb Backtest Report`, `Weather Build HighFreq`, `Config Endpoint Tests`, `Health Endpoint Tests`, `Hours Parameter Handling`, `JSON Wrapped Input`, `Polymarket API Client`, `SMTP Not Configured`, `Daily Loss Warning`, `test_deb_weighting.py`, `PowerShell Venv Activate`, `Promotion CRPS Threshold`, `Station Active Window`, `TAF Endpoint 404`, `SQLite Connection Close`, `Simulation Test`, `Prob40 Tests`, `Install Script`, `main`, `Settled Days Count`, `Insert Candidate`, `Shadow Loop Config`, `Legacy Live State`, `KATL False Fire`, `CI Workflow`, `Package Init`, `Package Init`, `Package Init`, `_positions_from_wallet`, `TestEmosPromoteEndpoint`, `_db_settled_positions`, `TestStationsTradeStatsUnification`, `TestEmosCalibrationTable`, `_is_eu_domain`, `iter_rotated_jsonl`, `HRRR + NBM Ensemble Skill Backtest`, `TafParser`, `calibration_report.py`, `taf_parser.py`, `TestGetObsHighsRange`, `TestFallbackTruthExclusion`, `no_entry_margin_gap`, `TestStationsOverviewWithDbOverrides`, `TestPatchConfigEndpoint`, `Quick Start`, `TestHealthEndpoint`, `setup_logging`, `MeteoEdge — Implementation Plan`, `TestBasisRegimeExclusion`, `_get_consensus_weights`, `TestOpenClosePosition`, `TestStatusDbCapital`, `TestHealthEndpoint`, `breakeven_win_rate`, `TestJsonWrappedInput`, `main`, `TestSeedConfig`, `_make_state`, `TestGetTradeByOrderId`, `get_live_config`, `open_meteo.py`, `backfill_live_settlements.py`, `Settlement`, `TestGetConsensusWeights`, `intraday_correction.py`, `__init__.py`, `OrderManager`, `TestMultipleGateFail`, `_rm_no_db`, `_make_state`, `_trade_is_win`, `TestFallbackRawJsonSecondSignal`, `breakeven_win_rate`, `run_dashboard.py`, `test_scan_decisions.py`, `test_live_state.py`, `meteoedge.db`, `README.md`, `Junior Developer`, `__init__.py`, `TestScannerUsesDbAsAuthoritative`, `__init__.py`, `__init__.py`, `TestOpenClosePosition`, `fetch_gefs_ensemble`, `TestAllowTradeNormalCase`, `Components`, `TestGetTradeByOrderId`, `_run_scan`, `test_risk.py`, `TestFitEmos`, `_is_conus`, `TestHealthEndpoint`, `test_promotion_gate.py`, `TestConfigEndpointsWithoutDb`, `test_station_toggle.py`, `TestDatabaseNone`, `TestClimbRateGate`, `InsufficientDataError`?**
-  _High betweenness centrality (0.551) - this node is a cross-community bridge._
-- **Why does `Bracket` connect `Database Core Functions` to `Weather METAR Persistence`, `Settlement Logic Tests`, `conftest.py`, `Freshness Monitoring`, `TestDebMuF`, `Forecast Data Fetching`, `run_dashboard.py`, `test_scan_decisions.py`, `true_probability_yes`, `KATL False Fire`, `Risk PnL Recording Tests`, `Settlement Pipeline Tests`, `Partial Fill Tracking`, `Station Toggle API`, `Live State Management`, `p_normal_between`, `Alert System Tests`, `no_entry_margin_gap`, `TestBackwardCompat`, `MeteoEdge — Implementation Plan`, `HRRR + NBM Ensemble Skill Backtest`, `TestAllowTradeNormalCase`, `Database Connection Management`, `Archive Cleanup Guide`, `Position Atomicity`?**
-  _High betweenness centrality (0.047) - this node is a cross-community bridge._
-- **Why does `WeatherState` connect `Database Core Functions` to `Weather METAR Persistence`, `Settlement Logic Tests`, `conftest.py`, `Freshness Monitoring`, `TestDebMuF`, `run_dashboard.py`, `test_scan_decisions.py`, `true_probability_yes`, `TAF Database Schema`, `Risk PnL Recording Tests`, `KATL False Fire`, `Settlement Pipeline Tests`, `Station Toggle API`, `p_normal_between`, `Junior Developer`, `Alert System Tests`, `Stop-Loss Sell Logic`, `no_entry_margin_gap`, `TestBackwardCompat`, `MeteoEdge — Implementation Plan`, `TestAllowTradeNormalCase`, `Database Connection Management`, `Archive Cleanup Guide`, `Position Atomicity`?**
-  _High betweenness centrality (0.040) - this node is a cross-community bridge._
-- **Are the 441 inferred relationships involving `Database` (e.g. with `AnalysisOut` and `AnalysisStationOut`) actually correct?**
-  _`Database` has 441 INFERRED edges - model-reasoned connections that need verification._
+- **Why does `Database` connect `DEB Channel Group Assignments (issue #550)` to `Database Core Functions`, `MSS Data Collector`, `Spike Detection`, `Risk Management`, `Agent Roles & Docs`, `Model Retraining`, `EMOS Mode Management`, `Bracket Market Parsing`, `Weather Envelope Model`, `Freshness Monitoring`, `Intraday Correction Backtest`, `METAR Data Fetcher`, `Live Trading Execution`, `Candidate & TAF Disruption`, `AMOS Collector`, `Weather Envelope & Ensemble`, `Forecast Data Fetching`, `Risk Manager Core`, `Project Documentation & Plans`, `Take-Profit Exit Logic`, `Settlement Recording`, `Source Priority Configuration`, `Risk PnL Recording Tests`, `Spike Detection Core`, `Stations API Tests`, `Climb Rate Tables`, `Dashboard API Tests`, `LiveTrader DB Integration`, `EMOS Coefficients Persistence`, `Partial Fill Tracking`, `Market Scanner`, `Email Alert System`, `Portfolio API Tests`, `Station Toggle API`, `EMOS Calibration Fitting`, `Taker Fee Estimation`, `Freshness Monitor Tests`, `True Probability Tests`, `Live State Management`, `Bot Configuration API`, `EMOS Calibration Training`, `Station Override Database`, `Order Sync Logic`, `Full TAF Parse Tests`, `Probability Distribution Tests`, `DEB Consensus Model`, `Database Repair Scripts`, `Stop-Loss Exit Logic`, `EMOS Coefficients Database`, `Envelope Computation Tests`, `EMOS Status API`, `Portfolio Statistics`, `EMOS Promote API`, `Dashboard Data Access`, `Database Update Operations`, `TAF Data Collector`, `Stop-Loss Sell Logic`, `Climb Table Builder`, `Intraday Correction Edge Cases`, `Closed Position Exit Reasons`, `Collector Thread Management`, `Settlement Execution`, `Config Patch API`, `Observation Database Tests`, `Correction Improvement Report`, `Observation Schema Migration`, `TAF Disruption API`, `Analysis & Portfolio API`, `Backtest Real Data`, `Config Seeding`, `Config API with DB`, `Normal Probability Tests`, `City Deb Endpoint`, `Bracket Regex Parsing`, `Stations Overview Override`, `EMOS Retraining Script`, `Deb Backtest Report`, `Daily Climate High`, `Operations Runbook`, `Config Endpoint Tests`, `Health Endpoint Tests`, `Hours Parameter Handling`, `JSON Wrapped Input`, `JSONL File Reading`, `Polymarket API Client`, `SMTP Not Configured`, `Daily Loss Warning`, `test_deb_weighting.py`, `PowerShell Venv Activate`, `Promotion CRPS Threshold`, `Station Active Window`, `TAF Endpoint 404`, `SQLite Connection Close`, `Simulation Test`, `Prob40 Tests`, `Install Script`, `Count Candidates Today`, `main`, `Settled Days Count`, `Insert Candidate`, `Shadow Loop Config`, `Legacy Live State`, `Package Init`, `Package Init`, `CI Workflow`, `Package Init`, `Package Init`, `Package Init`, `_positions_from_wallet`, `TestEmosPromoteEndpoint`, `_db_settled_positions`, `TestStationsTradeStatsUnification`, `TestEmosCalibrationTable`, `iter_rotated_jsonl`, `TafParser`, `calibration_report.py`, `TestGetObsHighsRange`, `TestFallbackTruthExclusion`, `no_entry_margin_gap`, `TestStationsOverviewWithDbOverrides`, `_jsonl_cache_get`, `TestPatchConfigEndpoint`, `Quick Start`, `TestHealthEndpoint`, `setup_logging`, `MeteoEdge — Implementation Plan`, `Open-Meteo Usage`, `TestBasisRegimeExclusion`, `_get_consensus_weights`, `TestOpenClosePosition`, `TestHealthEndpoint`, `breakeven_win_rate`, `TestJsonWrappedInput`, `TestQueryHelpers`, `Archive Cleanup Guide`, `_make_state`, `TestGetTradeByOrderId`, `get_live_config`, `open_meteo.py`, `backfill_live_settlements.py`, `Settlement`, `__init__.py`, `OrderManager`, `TestMultipleGateFail`, `_rm_no_db`, `_make_state`, `_trade_is_win`, `TestFallbackRawJsonSecondSignal`, `run_dashboard.py`, `test_scan_decisions.py`, `_start_collector_thread`, `test_live_state.py`, `meteoedge.db`, `README.md`, `Junior Developer`, `TestEMOSFitWithVariableSigma`, `snapshots.jsonl`, `Mid Developer`, `__init__.py`, `TestScannerUsesDbAsAuthoritative`, `__init__.py`, `__init__.py`, `TestOpenClosePosition`, `__init__.py`, `fetch_gefs_ensemble`, `HRRR + NBM Ensemble Skill Backtest`, `TestGEFSMembers`, `TestAllowTradeNormalCase`, `Components`, `TestGetTradeByOrderId`, `TestComputeResidualStatsPairScoped`, `TestFitEmos`, `TestHealthEndpoint`, `datetime`, `test_station_toggle.py`, `TestMultipleGateFail`, `TestClimbRateGate`, `InsufficientDataError`?**
+  _High betweenness centrality (0.522) - this node is a cross-community bridge._
+- **Why does `scan_markets()` connect `Settlement Logic Tests` to `SMTP Not Configured`, `Daily Loss Warning`, `MSS Data Collector`, `Freshness Monitoring`, `Forecast Data Fetching`, `Risk PnL Recording Tests`, `Spike Detection Core`, `Settlement Pipeline Tests`, `Station Toggle API`, `p_normal_between`, `Alert System Tests`, `__init__.py`, `TAF Data Collector`, `Stop-Loss Sell Logic`, `no_entry_margin_gap`, `Collector Thread Management`, `HRRR + NBM Ensemble Skill Backtest`, `Database Connection Management`, `_run_scan`, `Position Atomicity`?**
+  _High betweenness centrality (0.043) - this node is a cross-community bridge._
+- **Why does `WeatherState` connect `no_entry_margin_gap` to `Database Core Functions`, `MSS Data Collector`, `Daily Loss Warning`, `Weather METAR Persistence`, `Spike Detection`, `conftest.py`, `Settlement Logic Tests`, `Freshness Monitoring`, `_rm_no_db`, `TestDebMuF`, `breakeven_win_rate`, `run_dashboard.py`, `test_scan_decisions.py`, `true_probability_yes`, `TAF Database Schema`, `Risk PnL Recording Tests`, `Settlement Pipeline Tests`, `Station Toggle API`, `Live State Management`, `p_normal_between`, `Junior Developer`, `snapshots.jsonl`, `__init__.py`, `Stop-Loss Sell Logic`, `TestBackwardCompat`, `MeteoEdge — Implementation Plan`, `HRRR + NBM Ensemble Skill Backtest`, `Database Connection Management`, `Weather Build HighFreq`, `Archive Cleanup Guide`, `_run_scan`, `Position Atomicity`?**
+  _High betweenness centrality (0.039) - this node is a cross-community bridge._
+- **Are the 442 inferred relationships involving `Database` (e.g. with `AnalysisOut` and `AnalysisStationOut`) actually correct?**
+  _`Database` has 442 INFERRED edges - model-reasoned connections that need verification._
 - **Are the 98 inferred relationships involving `Bracket` (e.g. with `WeatherStateLow` and `Candidate`) actually correct?**
   _`Bracket` has 98 INFERRED edges - model-reasoned connections that need verification._
 - **Are the 94 inferred relationships involving `WeatherState` (e.g. with `Candidate` and `TestApplyEmosCorrect`) actually correct?**
