@@ -29,9 +29,11 @@ from src.scripts.resolve_bracket_outcomes import (
     build_dry_run_report,
     compute_observed_highs,
     cross_check_against_settlements,
+    cross_check_against_settlements_direct,
     dedupe_one_per_bracket_day,
     load_bracket_eval_rows,
     load_settlement_outcomes,
+    load_settlement_rows,
     resolve_bracket_outcomes,
     resolve_bracket_rows,
     resolve_outcome,
@@ -103,6 +105,60 @@ def _write_settlements_db(path, settlements):
             "('2026-07-05T00:00:00Z', ?, ?, ?, ?, ?, ?, 'polymarket', 'high')",
             (station, ticker, bracket_low, bracket_high, actual_high_f, int(resolved_yes)),
         )
+    con.commit()
+    con.close()
+
+
+def _write_trades_table(con, trades):
+    """trades: list of (ticker, station, ts, end_date) tuples. end_date may be
+    None to exercise the station-local-ts fallback in resolve_trade_date().
+    """
+    con.execute(
+        "CREATE TABLE trades (id INTEGER PRIMARY KEY, ts TEXT, station TEXT, ticker TEXT, "
+        "bracket_low REAL, bracket_high REAL, side TEXT, predicted_price INTEGER, "
+        "actual_price INTEGER, predicted_edge REAL, mode TEXT, capital_before REAL, "
+        "end_date TEXT)"
+    )
+    for ticker, station, ts, end_date in trades:
+        con.execute(
+            "INSERT INTO trades (ts, station, ticker, bracket_low, bracket_high, side, "
+            "predicted_price, actual_price, predicted_edge, mode, capital_before, end_date) "
+            "VALUES (?, ?, ?, 0, 0, 'YES', 50, 50, 0, 'live', 1, ?)",
+            (ts, station, ticker, end_date),
+        )
+
+
+def _write_settlements_direct_db(path, observations=(), settlements=(), trades=()):
+    """Build a DB with (a subset of) observations/settlements/trades tables,
+    for the settlements-direct correctness check (issue #858).
+
+    settlements: list of (ticker, station, bracket_low, bracket_high,
+        actual_high_f, resolved_yes) tuples -- settlements.ts is deliberately
+        NOT the settlement date (always a fixed run timestamp) to prove the
+        direct check does not rely on it.
+    trades: list of (ticker, station, ts, end_date) tuples -- the source of
+        truth for each settlement's actual settlement date.
+    """
+    if observations:
+        _write_observations_db(path, observations)
+    con = sqlite3.connect(str(path))
+    con.execute(
+        "CREATE TABLE settlements (id INTEGER PRIMARY KEY, ts TEXT, station TEXT, "
+        "ticker TEXT UNIQUE, bracket_low REAL, bracket_high REAL, actual_high_f REAL, "
+        "resolved_yes INTEGER, market_final_price INTEGER, source TEXT, direction TEXT)"
+    )
+    for ticker, station, bracket_low, bracket_high, actual_high_f, resolved_yes in settlements:
+        con.execute(
+            "INSERT INTO settlements (ts, station, ticker, bracket_low, bracket_high, "
+            "actual_high_f, resolved_yes, source, direction) VALUES "
+            # Deliberately a run timestamp far from any settlement date under
+            # test -- if the direct check ever fell back to reading this, the
+            # date-derived tests below would fail loudly.
+            "('2099-01-01T00:00:00Z', ?, ?, ?, ?, ?, ?, 'polymarket', 'high')",
+            (station, ticker, bracket_low, bracket_high, actual_high_f, int(resolved_yes)),
+        )
+    if trades:
+        _write_trades_table(con, trades)
     con.commit()
     con.close()
 
@@ -455,6 +511,197 @@ class TestCrossCheck:
 
 
 # ---------------------------------------------------------------------------
+# cross_check_against_settlements_direct (issue #858) -- resolves directly
+# from settlements' own fields, bypassing bracket_evals entirely
+# ---------------------------------------------------------------------------
+
+class TestLoadSettlementRows:
+    def test_loads_full_columns(self, tmp_path):
+        db_path = tmp_path / "meteoedge.db"
+        _write_settlements_direct_db(db_path, settlements=[
+            ("t1", "KORD", 81.0, 83.0, 82.0, True),
+        ])
+        rows = load_settlement_rows(db_path)
+        assert len(rows) == 1
+        assert rows[0]["ticker"] == "t1"
+        assert rows[0]["station"] == "KORD"
+        assert rows[0]["bracket_low"] == 81.0
+        assert rows[0]["bracket_high"] == 83.0
+        assert rows[0]["actual_high_f"] == 82.0
+        assert rows[0]["resolved_yes"] == 1
+
+    def test_missing_db_returns_empty(self, tmp_path):
+        assert load_settlement_rows(tmp_path / "does_not_exist.db") == []
+
+    def test_missing_settlements_table_returns_empty(self, tmp_path):
+        db_path = tmp_path / "meteoedge.db"
+        _write_observations_db(db_path, [("KORD", "2026-07-05T14:00:00+00:00", 80.0)])
+        assert load_settlement_rows(db_path) == []
+
+
+class TestCrossCheckDirect:
+    def test_correctly_resolves_yes(self, tmp_path):
+        """Settlement row: bracket [81,83] contains the observed high 82.0 --
+        settlements.resolved_yes=True agrees with the independently
+        recomputed outcome. Dated via trades.end_date, NOT settlements.ts
+        (which is a deliberately wrong fixed run timestamp)."""
+        db_path = tmp_path / "meteoedge.db"
+        _write_settlements_direct_db(
+            db_path,
+            observations=[("KORD", "2026-07-05T18:00:00+00:00", 82.0)],
+            settlements=[("t-yes", "KORD", 81.0, 83.0, 82.0, True)],
+            trades=[("t-yes", "KORD", "2026-07-05T12:00:00+00:00", "2026-07-05")],
+        )
+        result = cross_check_against_settlements_direct(db_path)
+        assert result["n_settlement_rows"] == 1
+        assert result["n_no_trade_date"] == 0
+        assert result["n_no_observed_high"] == 0
+        assert result["n_checked"] == 1
+        assert result["n_match"] == 1
+        assert result["n_mismatch"] == 0
+        assert result["mismatches"] == []
+
+    def test_correctly_resolves_no(self, tmp_path):
+        """Bracket [70,72] does NOT contain the observed high 82.0 --
+        settlements.resolved_yes=False agrees with the recomputed outcome."""
+        db_path = tmp_path / "meteoedge.db"
+        _write_settlements_direct_db(
+            db_path,
+            observations=[("KORD", "2026-07-05T18:00:00+00:00", 82.0)],
+            settlements=[("t-no", "KORD", 70.0, 72.0, 82.0, False)],
+            trades=[("t-no", "KORD", "2026-07-05T12:00:00+00:00", "2026-07-05")],
+        )
+        result = cross_check_against_settlements_direct(db_path)
+        assert result["n_checked"] == 1
+        assert result["n_match"] == 1
+        assert result["n_mismatch"] == 0
+
+    def test_catches_a_real_mismatch(self, tmp_path):
+        """Proves the check actually catches disagreement, not just always
+        passing: bracket [81,83] contains the observed high 82.0 (so the
+        independently-recomputed outcome is YES), but settlements.resolved_yes
+        is stored as False -- a genuine disagreement that must be reported."""
+        db_path = tmp_path / "meteoedge.db"
+        _write_settlements_direct_db(
+            db_path,
+            observations=[("KORD", "2026-07-05T18:00:00+00:00", 82.0)],
+            settlements=[("t-bad", "KORD", 81.0, 83.0, 82.0, False)],
+            trades=[("t-bad", "KORD", "2026-07-05T12:00:00+00:00", "2026-07-05")],
+        )
+        result = cross_check_against_settlements_direct(db_path)
+        assert result["n_checked"] == 1
+        assert result["n_match"] == 0
+        assert result["n_mismatch"] == 1
+        mismatch = result["mismatches"][0]
+        assert mismatch["ticker"] == "t-bad"
+        assert mismatch["station"] == "KORD"
+        assert mismatch["settlement_date"] == "2026-07-05"
+        assert mismatch["observed_high"] == 82.0
+        assert mismatch["direct_resolved_yes"] is True
+        assert mismatch["settlements_resolved_yes"] is False
+
+    def test_date_derived_from_trades_end_date_not_settlements_ts(self, tmp_path):
+        """settlements.ts in the fixture is always the wrong, fixed
+        2099-01-01 run timestamp -- if the direct check used it, it would
+        never find a matching observation and the row would be excluded as
+        n_no_observed_high instead of checked. This proves date derivation
+        goes through trades.end_date."""
+        db_path = tmp_path / "meteoedge.db"
+        _write_settlements_direct_db(
+            db_path,
+            observations=[("KORD", "2026-07-05T18:00:00+00:00", 82.0)],
+            settlements=[("t-yes", "KORD", 81.0, 83.0, 82.0, True)],
+            trades=[("t-yes", "KORD", "2026-07-06T09:00:00+00:00", "2026-07-05")],
+        )
+        result = cross_check_against_settlements_direct(db_path)
+        assert result["n_checked"] == 1
+        assert result["n_no_observed_high"] == 0
+
+    def test_date_falls_back_to_station_local_ts_when_end_date_missing(self, tmp_path):
+        """Legacy trades rows (pre-#609) have no end_date -- resolve_trade_date
+        falls back to the trade row's own station-local ts day. KATL is
+        America/New_York (UTC-4 in July): 2026-07-06T03:30:00 UTC is
+        2026-07-05T23:30:00 EDT local, i.e. still settlement date 2026-07-05."""
+        db_path = tmp_path / "meteoedge.db"
+        _write_settlements_direct_db(
+            db_path,
+            observations=[("KATL", "2026-07-05T18:00:00+00:00", 82.0)],
+            settlements=[("t-legacy", "KATL", 81.0, 83.0, 82.0, True)],
+            trades=[("t-legacy", "KATL", "2026-07-06T03:30:00+00:00", None)],
+        )
+        result = cross_check_against_settlements_direct(db_path)
+        assert result["n_checked"] == 1
+        assert result["n_match"] == 1
+
+    def test_no_matching_trade_row_is_skipped_not_guessed(self, tmp_path):
+        db_path = tmp_path / "meteoedge.db"
+        _write_settlements_direct_db(
+            db_path,
+            observations=[("KORD", "2026-07-05T18:00:00+00:00", 82.0)],
+            settlements=[("t-orphan", "KORD", 81.0, 83.0, 82.0, True)],
+            trades=[],
+        )
+        result = cross_check_against_settlements_direct(db_path)
+        assert result["n_settlement_rows"] == 1
+        assert result["n_no_trade_date"] == 1
+        assert result["n_checked"] == 0
+        assert result["n_match"] == 0
+        assert result["n_mismatch"] == 0
+
+    def test_no_observation_for_dated_row_is_skipped_not_guessed(self, tmp_path):
+        db_path = tmp_path / "meteoedge.db"
+        _write_settlements_direct_db(
+            db_path,
+            observations=[("KORD", "2026-01-01T18:00:00+00:00", 40.0)],  # wrong date
+            settlements=[("t-nodata", "KORD", 81.0, 83.0, 82.0, True)],
+            trades=[("t-nodata", "KORD", "2026-07-05T12:00:00+00:00", "2026-07-05")],
+        )
+        result = cross_check_against_settlements_direct(db_path)
+        assert result["n_no_trade_date"] == 0
+        assert result["n_no_observed_high"] == 1
+        assert result["n_checked"] == 0
+
+    def test_empty_settlements_table_returns_zeros(self, tmp_path):
+        db_path = tmp_path / "meteoedge.db"
+        _write_settlements_direct_db(db_path, settlements=[], trades=[])
+        result = cross_check_against_settlements_direct(db_path)
+        assert result == {
+            "n_settlement_rows": 0, "n_no_trade_date": 0, "n_no_observed_high": 0,
+            "n_checked": 0, "n_match": 0, "n_mismatch": 0, "mismatches": [],
+        }
+
+    def test_missing_db_returns_zeros(self, tmp_path):
+        result = cross_check_against_settlements_direct(tmp_path / "does_not_exist.db")
+        assert result["n_settlement_rows"] == 0
+        assert result["n_checked"] == 0
+
+    def test_multiple_rows_mixed_outcomes(self, tmp_path):
+        """One YES, one NO, one mismatch, in the same run -- demonstrates the
+        check discriminates between rows rather than trivially passing/failing
+        everything the same way."""
+        db_path = tmp_path / "meteoedge.db"
+        _write_settlements_direct_db(
+            db_path,
+            observations=[("KORD", "2026-07-05T18:00:00+00:00", 82.0)],
+            settlements=[
+                ("t-yes", "KORD", 81.0, 83.0, 82.0, True),
+                ("t-no", "KORD", 70.0, 72.0, 82.0, False),
+                ("t-bad", "KORD", 81.0, 83.0, 82.0, False),
+            ],
+            trades=[
+                ("t-yes", "KORD", "2026-07-05T12:00:00+00:00", "2026-07-05"),
+                ("t-no", "KORD", "2026-07-05T12:00:00+00:00", "2026-07-05"),
+                ("t-bad", "KORD", "2026-07-05T12:00:00+00:00", "2026-07-05"),
+            ],
+        )
+        result = cross_check_against_settlements_direct(db_path)
+        assert result["n_checked"] == 3
+        assert result["n_match"] == 2
+        assert result["n_mismatch"] == 1
+        assert result["mismatches"][0]["ticker"] == "t-bad"
+
+
+# ---------------------------------------------------------------------------
 # build_dry_run_report / run_dry_run
 # ---------------------------------------------------------------------------
 
@@ -471,10 +718,16 @@ class TestDryRunReport:
             "missing_bracket_bounds": 0, "n_bracket_rows": 1, "n_station_days": 1,
         }
         cross_check = {"n_overlap": 1, "n_match": 1, "n_mismatch": 0, "mismatches": []}
-        report = build_dry_run_report(resolved_rows, counts, cross_check, "2026-07-25")
+        direct_check = {
+            "n_settlement_rows": 2, "n_no_trade_date": 0, "n_no_observed_high": 0,
+            "n_checked": 2, "n_match": 2, "n_mismatch": 0, "mismatches": [],
+        }
+        report = build_dry_run_report(resolved_rows, counts, cross_check, direct_check, "2026-07-25")
         assert "Bracket Outcome Resolution" in report
         assert "**1**" in report  # n_bracket_rows / n_station_days both 1
         assert "settlements" in report.lower()
+        assert "Correctness check #2" in report
+        assert "issue #858" in report
 
     def test_report_includes_mismatch_table_when_present(self):
         counts = {"raw_rows": 1, "deduped_bracket_rows": 1, "n_bracket_rows": 1, "n_station_days": 1}
@@ -486,9 +739,29 @@ class TestDryRunReport:
                 "resolver_resolved_yes": True, "settlements_resolved_yes": False,
             }],
         }
-        report = build_dry_run_report([], counts, cross_check, "2026-07-25")
+        direct_check = {
+            "n_settlement_rows": 0, "n_no_trade_date": 0, "n_no_observed_high": 0,
+            "n_checked": 0, "n_match": 0, "n_mismatch": 0, "mismatches": [],
+        }
+        report = build_dry_run_report([], counts, cross_check, direct_check, "2026-07-25")
         assert "Mismatches" in report
         assert "t1" in report
+
+    def test_report_includes_direct_check_mismatch_table_when_present(self):
+        counts = {"raw_rows": 0, "deduped_bracket_rows": 0, "n_bracket_rows": 0, "n_station_days": 0}
+        cross_check = {"n_overlap": 0, "n_match": 0, "n_mismatch": 0, "mismatches": []}
+        direct_check = {
+            "n_settlement_rows": 1, "n_no_trade_date": 0, "n_no_observed_high": 0,
+            "n_checked": 1, "n_match": 0, "n_mismatch": 1,
+            "mismatches": [{
+                "station": "KORD", "ticker": "t-bad", "settlement_date": "2026-07-05",
+                "bracket_low": 81, "bracket_high": 83, "observed_high": 82.0,
+                "direct_resolved_yes": True, "settlements_resolved_yes": False,
+            }],
+        }
+        report = build_dry_run_report([], counts, cross_check, direct_check, "2026-07-25")
+        assert "t-bad" in report
+        assert report.count("Mismatches") >= 1
 
 
 class TestRunDryRun:
@@ -529,3 +802,54 @@ class TestRunDryRun:
         text = out_file.read_text()
         assert "Resolved bracket-rows" in text
         assert "Overlap with settlements" in text
+        # The settlements-direct check (issue #858) section is present, even
+        # though this fixture has no `trades` table (so it reads zeros --
+        # self-gated, not fabricated).
+        assert "Correctness check #2" in text
+        assert "Settlements rows read" in text
+
+    def test_report_written_from_settlements_direct_even_with_empty_bracket_evals(self, tmp_path):
+        """The exact production scenario from issue #858: bracket_evals has
+        NO data at all (as it didn't before #826), but settlements/trades/
+        observations do. The report must still be written, carrying the
+        settlements-direct check's real numbers -- not silently skipped just
+        because bracket_evals is empty.
+        """
+        bracket_evals = tmp_path / "no_bracket_evals.jsonl"
+        db_path = tmp_path / "meteoedge.db"
+        _write_settlements_direct_db(
+            db_path,
+            observations=[("KORD", "2026-07-05T18:00:00+00:00", 82.0)],
+            settlements=[("t-yes", "KORD", 81.0, 83.0, 82.0, True)],
+            trades=[("t-yes", "KORD", "2026-07-05T12:00:00+00:00", "2026-07-05")],
+        )
+
+        rc = run_dry_run(bracket_evals, db_path, tmp_path / "out", run_date="2026-07-25")
+        assert rc == 0
+        out_file = tmp_path / "out" / "bracket_outcome_resolution_dryrun_2026-07-25.md"
+        assert out_file.exists()
+        text = out_file.read_text()
+        assert "Correctness check #2" in text
+        assert "| Settlements rows read (n) | 1 |" in text
+        assert "| **Checked (n)** | **1** |" in text
+        assert "| Matches | 1 |" in text
+        # No bracket_evals data -- the first check's headline n is zero, but
+        # that must not have suppressed the whole report.
+        assert "| **Resolved bracket-rows (n)** | **0** |" in text
+
+    def test_report_surfaces_a_settlements_direct_mismatch(self, tmp_path):
+        bracket_evals = tmp_path / "no_bracket_evals.jsonl"
+        db_path = tmp_path / "meteoedge.db"
+        _write_settlements_direct_db(
+            db_path,
+            observations=[("KORD", "2026-07-05T18:00:00+00:00", 82.0)],
+            settlements=[("t-bad", "KORD", 81.0, 83.0, 82.0, False)],  # wrong: should be YES
+            trades=[("t-bad", "KORD", "2026-07-05T12:00:00+00:00", "2026-07-05")],
+        )
+
+        rc = run_dry_run(bracket_evals, db_path, tmp_path / "out", run_date="2026-07-25")
+        assert rc == 0
+        out_file = tmp_path / "out" / "bracket_outcome_resolution_dryrun_2026-07-25.md"
+        text = out_file.read_text()
+        assert "| Mismatches | 1 |" in text
+        assert "t-bad" in text
