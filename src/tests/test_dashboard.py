@@ -1508,6 +1508,10 @@ class TestEmosMarkReadyEndpoint:
         """mark-ready (issue #696) only flips the active forecast_source/
         sigma_source/lead_hours=24 track, not other tracks for the same city."""
         db = self._setup_db()
+        # Issue #799: sigma_source now derives from USE_ENSEMBLE_SIGMA (default
+        # True) instead of the legacy EMOS_SIGMA_SOURCE key -- pin it off here
+        # so the active track resolves to 'fixed', matching this test's rows.
+        db.set_config("USE_ENSEMBLE_SIGMA", "false")
         db.upsert_emos_coefficients(
             city="Chicago", model_mode="emos_shadow",
             a=0.0, b=1.0, c=0.5, d=1.0,

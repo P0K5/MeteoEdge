@@ -338,11 +338,12 @@ def _check_ready_for_promotion(city: str, db) -> bool:
     returns ``emos_primary``; honouring the override here keeps the two in sync,
     so a dashboard-promoted city is not silently dropped back to legacy.
 
-    Issue #449: ``db.get_emos_coefficients`` below resolves forecast_source AND
-    sigma_source from the active FORECAST_STACK / EMOS_SIGMA_SOURCE bot_config
-    keys (both default to their pre-#449 values), so this check transparently
-    follows whichever sigma track an operator has made active — no signature
-    change needed here, same as it already did for forecast_source (#659).
+    Issue #449/#799: ``db.get_emos_coefficients`` below resolves forecast_source
+    from the active FORECAST_STACK bot_config key and sigma_source from the
+    active USE_ENSEMBLE_SIGMA bot_config key (via Database._active_sigma_source,
+    which derives directly from it), so this check transparently follows
+    whichever sigma track an operator has made active — no signature change
+    needed here, same as it already did for forecast_source (#659).
     """
     if db.get_emos_effective_mode(city) == "emos_primary":
         # Mirror get_city_mode exactly — the CRPS sample guard still applies.

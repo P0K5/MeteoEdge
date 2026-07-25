@@ -287,10 +287,25 @@ class TestUpsertEmosCoefficientsSigmaSource:
         finally:
             _cleanup(db, path)
 
-    def test_default_sigma_source_resolves_to_fixed(self):
-        """With no EMOS_SIGMA_SOURCE config row, the active resolver defaults to 'fixed'."""
+    def test_default_sigma_source_resolves_to_ensemble(self):
+        """Issue #799: with no USE_ENSEMBLE_SIGMA config row, the active resolver
+        defaults to 'ensemble' -- CONFIG_DEFAULTS["USE_ENSEMBLE_SIGMA"] flipped
+        to True as part of switching ensemble sigma on."""
         db, path = _real_db()
         try:
+            db.upsert_emos_coefficients(
+                city="Miami", model_mode="emos_shadow", a=1.0, b=1.0, c=0.5, d=1.0,
+            )
+            rows = db.get_all_emos_calibration()
+            assert rows[0]["sigma_source"] == "ensemble"
+        finally:
+            _cleanup(db, path)
+
+    def test_use_ensemble_sigma_false_resolves_to_fixed(self):
+        """USE_ENSEMBLE_SIGMA='false' in bot_config resolves the legacy 'fixed' track."""
+        db, path = _real_db()
+        try:
+            db.set_config("USE_ENSEMBLE_SIGMA", "false")
             db.upsert_emos_coefficients(
                 city="Miami", model_mode="emos_shadow", a=1.0, b=1.0, c=0.5, d=1.0,
             )
@@ -300,15 +315,32 @@ class TestUpsertEmosCoefficientsSigmaSource:
             _cleanup(db, path)
 
     def test_config_driven_active_sigma_source(self):
-        """EMOS_SIGMA_SOURCE='ensemble' in bot_config changes the default resolution."""
+        """USE_ENSEMBLE_SIGMA (issue #799) -- not the now-legacy EMOS_SIGMA_SOURCE
+        key -- is what changes the default sigma_source resolution."""
         db, path = _real_db()
         try:
-            db.set_config("EMOS_SIGMA_SOURCE", "ensemble")
+            db.set_config("USE_ENSEMBLE_SIGMA", "true")
             db.upsert_emos_coefficients(
                 city="Seattle", model_mode="emos_shadow", a=1.0, b=1.0, c=0.5, d=1.0,
             )
             rows = db.get_all_emos_calibration()
             assert rows[0]["sigma_source"] == "ensemble"
+        finally:
+            _cleanup(db, path)
+
+    def test_emos_sigma_source_key_is_now_a_noop(self):
+        """Issue #799: setting the legacy EMOS_SIGMA_SOURCE key alone must NOT
+        change the resolved sigma_source -- only USE_ENSEMBLE_SIGMA does. This
+        is the regression guard for the exact decoupling this issue closes."""
+        db, path = _real_db()
+        try:
+            db.set_config("USE_ENSEMBLE_SIGMA", "false")
+            db.set_config("EMOS_SIGMA_SOURCE", "ensemble")  # legacy key, ignored
+            db.upsert_emos_coefficients(
+                city="Denver", model_mode="emos_shadow", a=1.0, b=1.0, c=0.5, d=1.0,
+            )
+            rows = db.get_all_emos_calibration()
+            assert rows[0]["sigma_source"] == "fixed"
         finally:
             _cleanup(db, path)
 

@@ -885,6 +885,11 @@ class TestToggleEmosReadyForPromotion:
         """Default scoping flips only the active (forecast_source, sigma_source,
         lead_hours=24) row, leaving other tracks for the same city untouched."""
         db = _db()
+        # Issue #799: sigma_source now derives from USE_ENSEMBLE_SIGMA (default
+        # True) instead of a separately-settable EMOS_SIGMA_SOURCE key -- pin it
+        # off here so the active track resolves to 'fixed', matching this
+        # test's fixture rows.
+        db.set_config("USE_ENSEMBLE_SIGMA", "false")
         db.upsert_emos_coefficients(
             city="Chicago", model_mode="emos_shadow",
             a=0.0, b=1.0, c=0.5, d=1.0,
@@ -911,7 +916,8 @@ class TestToggleEmosReadyForPromotion:
         )
 
         # Active track defaults: forecast_source="baseline" (FORECAST_STACK
-        # unset), sigma_source="fixed" (EMOS_SIGMA_SOURCE unset), lead_hours=24.
+        # unset), sigma_source="fixed" (USE_ENSEMBLE_SIGMA pinned false above),
+        # lead_hours=24.
         new_val = db.toggle_emos_ready_for_promotion("Chicago")
         assert new_val == 1
 
@@ -936,11 +942,11 @@ class TestToggleEmosReadyForPromotion:
             )
 
     def test_active_track_follows_bot_config(self):
-        """When FORECAST_STACK/EMOS_SIGMA_SOURCE bot_config keys are set, the
+        """When FORECAST_STACK/USE_ENSEMBLE_SIGMA bot_config keys are set, the
         default scoping follows them instead of the 'baseline'/'fixed' defaults."""
         db = _db()
         db.set_config("FORECAST_STACK", "hrrr_nbm")
-        db.set_config("EMOS_SIGMA_SOURCE", "ensemble")
+        db.set_config("USE_ENSEMBLE_SIGMA", "true")
         db.upsert_emos_coefficients(
             city="Denver", model_mode="emos_shadow",
             a=0.0, b=1.0, c=0.5, d=1.0,
