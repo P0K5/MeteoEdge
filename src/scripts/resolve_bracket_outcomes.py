@@ -1019,10 +1019,20 @@ def build_dry_run_report(
         lines.append("**Mismatches by the settlements row's OWN resolution source (issue #860):**\n")
         lines.append("| settlements.resolution_source | Mismatches | Interpretation |")
         lines.append("|---|---|---|")
+        gamma_family = (
+            "**Expected.** That row was settled from Polymarket's official resolution, "
+            "which #644 measured as disagreeing with METAR ~22% of the time. Not "
+            "evidence this resolver is broken."
+        )
         interpretations = {
-            "gamma": "**Expected.** That row was settled from Polymarket's official "
-                     "resolution, which #644 measured as disagreeing with METAR ~22% of "
-                     "the time. Not evidence this resolver is broken.",
+            "gamma": gamma_family,
+            # repair_settlements_from_gamma.py's back-fill pass, which OVERWRITES a
+            # settlement using the market's official final price -- authoritative
+            # gamma truth, and deliberately so, hence the same reading as 'gamma'.
+            "gamma_repair": (
+                gamma_family + " (Written by the `repair_settlements_from_gamma` "
+                "back-fill, which corrected this row from the official final price.)"
+            ),
             "metar": "**Investigate.** Both sides claim to compute the observed daily "
                      "high from the same observations, so a disagreement here is "
                      "unexplained.",
@@ -1030,8 +1040,21 @@ def build_dry_run_report(
                        "so cannot be attributed either way.",
         }
         for source, n in sorted(by_source.items(), key=lambda kv: -kv[1]):
-            lines.append(f"| `{source}` | {n} | {interpretations.get(source, '--')} |")
+            # Any future gamma-derived source name still reads as gamma-family rather
+            # than rendering as an unexplained blank (which is what 'gamma_repair'
+            # itself did on the 2026-07-25 run).
+            default = gamma_family if str(source).startswith("gamma") else "--"
+            lines.append(f"| `{source}` | {n} | {interpretations.get(source, default)} |")
         lines.append("")
+
+        unexplained = sum(
+            n for s, n in by_source.items() if not str(s).startswith("gamma") and s != "unknown"
+        )
+        lines.append(
+            f"**Unexplained mismatches (non-gamma-sourced): {unexplained}.** This is the "
+            "number that indicates a defect in this resolver; gamma-sourced disagreement "
+            "is the documented #644 divergence, not a bug.\n"
+        )
 
     if direct_check.get("mismatches"):
         lines.append("### Mismatches\n")
