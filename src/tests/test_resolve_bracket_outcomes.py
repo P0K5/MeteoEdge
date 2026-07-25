@@ -1248,3 +1248,84 @@ class TestReportGammaSections:
         text = (tmp_path / "out" / "bracket_outcome_resolution_dryrun_2026-07-25.md").read_text()
         assert "Gamma resolution DISABLED" in text
         assert "Not suitable for the #822 M3 verdict" in text
+
+
+class TestGammaRepairAttribution:
+    """gamma_repair rendered as a blank '--' on the 2026-07-25 production run,
+    leaving 28 of 30 mismatches unexplained in the report even though they are
+    authoritative gamma truth (written by repair_settlements_from_gamma's
+    official-final-price back-fill)."""
+
+    def _report_with_sources(self, tmp_path, settlements, trades, observations):
+        db_path = tmp_path / "meteoedge.db"
+        _write_settlements_db_with_source(
+            db_path, settlements=settlements, trades=trades, observations=observations
+        )
+        direct = cross_check_against_settlements_direct(db_path)
+        return build_dry_run_report(
+            [], {}, {"n_overlap": 0, "n_match": 0, "n_mismatch": 0, "mismatches": []},
+            direct, "2026-07-25",
+        )
+
+    def test_gamma_repair_is_labelled_not_blank(self, tmp_path):
+        text = self._report_with_sources(
+            tmp_path,
+            settlements=[("0xaaa", "KORD", 81.0, 83.0, 82.0, False, "gamma_repair")],
+            trades=[("0xaaa", "KORD", "2026-07-05T12:00:00+00:00", "2026-07-05")],
+            observations=[("KORD", "2026-07-05T18:00:00+00:00", 82.0)],
+        )
+        assert "| `gamma_repair` | 1 |" in text
+        assert "| `gamma_repair` | 1 | -- |" not in text
+        assert "Expected." in text
+
+    def test_unknown_gamma_family_source_still_reads_as_gamma(self, tmp_path):
+        text = self._report_with_sources(
+            tmp_path,
+            settlements=[("0xaaa", "KORD", 81.0, 83.0, 82.0, False, "gamma_v2_future")],
+            trades=[("0xaaa", "KORD", "2026-07-05T12:00:00+00:00", "2026-07-05")],
+            observations=[("KORD", "2026-07-05T18:00:00+00:00", 82.0)],
+        )
+        assert "| `gamma_v2_future` | 1 | -- |" not in text
+        assert "Expected." in text
+
+    def test_unexplained_count_excludes_gamma_family(self, tmp_path):
+        text = self._report_with_sources(
+            tmp_path,
+            settlements=[
+                ("0xa", "KORD", 81.0, 83.0, 82.0, False, "gamma_repair"),
+                ("0xb", "KLAX", 81.0, 83.0, 82.0, False, "gamma"),
+                ("0xc", "KATL", 81.0, 83.0, 82.0, False, "metar"),
+            ],
+            trades=[
+                ("0xa", "KORD", "2026-07-05T12:00:00+00:00", "2026-07-05"),
+                ("0xb", "KLAX", "2026-07-05T12:00:00+00:00", "2026-07-05"),
+                ("0xc", "KATL", "2026-07-05T12:00:00+00:00", "2026-07-05"),
+            ],
+            observations=[
+                ("KORD", "2026-07-05T18:00:00+00:00", 82.0),
+                ("KLAX", "2026-07-05T18:00:00+00:00", 82.0),
+                ("KATL", "2026-07-05T18:00:00+00:00", 82.0),
+            ],
+        )
+        # Only the metar-sourced one counts as a defect signal.
+        assert "**Unexplained mismatches (non-gamma-sourced): 1.**" in text
+
+    def test_all_gamma_sourced_reports_zero_unexplained(self, tmp_path):
+        """The 2026-07-25 production shape: every mismatch gamma-sourced, so
+        the resolver itself has no evidence against it."""
+        text = self._report_with_sources(
+            tmp_path,
+            settlements=[
+                ("0xa", "KORD", 81.0, 83.0, 82.0, False, "gamma_repair"),
+                ("0xb", "KLAX", 81.0, 83.0, 82.0, False, "gamma"),
+            ],
+            trades=[
+                ("0xa", "KORD", "2026-07-05T12:00:00+00:00", "2026-07-05"),
+                ("0xb", "KLAX", "2026-07-05T12:00:00+00:00", "2026-07-05"),
+            ],
+            observations=[
+                ("KORD", "2026-07-05T18:00:00+00:00", 82.0),
+                ("KLAX", "2026-07-05T18:00:00+00:00", 82.0),
+            ],
+        )
+        assert "**Unexplained mismatches (non-gamma-sourced): 0.**" in text
