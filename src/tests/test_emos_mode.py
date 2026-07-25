@@ -254,6 +254,83 @@ class TestPromotionGuardScopedByForecastSource:
 
 
 # ---------------------------------------------------------------------------
+# Test 3c: promotion guard counts the ACTIVE sigma_source only (#851)
+# ---------------------------------------------------------------------------
+
+class TestPromotionGuardScopedBySigmaSource:
+    def test_primary_blocked_when_samples_belong_to_a_different_sigma_track(self):
+        """CRPS evidence logged under a sigma_source other than the active
+        USE_ENSEMBLE_SIGMA-derived track must not count toward promotion --
+        otherwise a sigma_source switch (issue #799) would let leftover
+        'fixed'-era evidence wrongly unblock the freshly-retrained
+        'ensemble' lineage before it has accrued any evidence of its own
+        (the pooled-clock bug issue #851 exists to close).
+        """
+        db = _db()
+        seed_config(db)
+        db.set_config("EMOS_MIN_SAMPLES_PROMOTION", "20")
+        db.set_config("USE_ENSEMBLE_SIGMA", "true")
+        _upsert(db, "Chicago", "emos_primary", ready_for_promotion=1)
+        # 20 samples logged for 'fixed' -- NOT the active sigma_source.
+        for i in range(20):
+            db.log_crps("Chicago", f"2026-05-{i + 1:02d}", 1.5, sigma_source="fixed")
+
+        result = get_city_mode("Chicago", db=db)
+        assert result != "emos_primary"
+
+    def test_primary_allowed_once_active_sigma_track_accrues_its_own_samples(self):
+        """Once the active sigma_source itself has enough CRPS evidence,
+        promotion proceeds normally -- sigma_source scoping doesn't
+        otherwise change the promotion threshold/behavior."""
+        db = _db()
+        seed_config(db)
+        db.set_config("EMOS_MIN_SAMPLES_PROMOTION", "20")
+        db.set_config("USE_ENSEMBLE_SIGMA", "true")
+        _upsert(db, "Chicago", "emos_primary", ready_for_promotion=1)
+        for i in range(20):
+            db.log_crps("Chicago", f"2026-05-{i + 1:02d}", 1.5, sigma_source="ensemble")
+
+        result = get_city_mode("Chicago", db=db)
+        assert result == "emos_primary"
+
+    def test_sigma_source_switch_resets_the_promotion_clock(self):
+        """The exact #851 scenario: a city already cleared the sample bar
+        under sigma_source='fixed'; USE_ENSEMBLE_SIGMA then flips true
+        (issue #799), a fresh 'ensemble' calibration row is retrained and
+        marked ready (the normal post-#799 operator flow), but no
+        'ensemble' shadow evidence has accrued yet. The city must NOT be
+        immediately eligible for emos_primary again just because the old
+        'fixed' evidence still exists in emos_crps_log -- the clock resets
+        for the new lineage. Isolates the CRPS-count gate itself (both
+        scenarios have a ready emos_primary row for the active sigma_source,
+        so get_emos_coefficients's own sigma_source resolution is not the
+        thing under test here -- get_emos_crps_count's is).
+        """
+        db = _db()
+        seed_config(db)
+        db.set_config("EMOS_MIN_SAMPLES_PROMOTION", "20")
+        db.set_config("USE_ENSEMBLE_SIGMA", "false")
+        _upsert(db, "Chicago", "emos_primary", ready_for_promotion=1)
+        for i in range(25):
+            db.log_crps("Chicago", f"2026-05-{i + 1:02d}", 1.5)  # sigma_source='fixed'
+        assert get_city_mode("Chicago", db=db) == "emos_primary"
+
+        # Flip to the ensemble track and retrain/mark-ready a primary row
+        # under it -- no ensemble CRPS evidence logged yet.
+        db.set_config("USE_ENSEMBLE_SIGMA", "true")
+        _upsert(db, "Chicago", "emos_primary", ready_for_promotion=1)
+        assert get_city_mode("Chicago", db=db) != "emos_primary", (
+            "the promotion clock must reset for the new sigma_source lineage, "
+            "not inherit the old lineage's already-accumulated evidence"
+        )
+
+        # Once the new lineage accrues its own evidence, promotion resumes.
+        for i in range(20):
+            db.log_crps("Chicago", f"2026-06-{i + 1:02d}", 1.5)  # sigma_source='ensemble'
+        assert get_city_mode("Chicago", db=db) == "emos_primary"
+
+
+# ---------------------------------------------------------------------------
 # Test 4b: operator override (dashboard promote/demote) is authoritative
 # ---------------------------------------------------------------------------
 

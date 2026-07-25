@@ -434,6 +434,74 @@ class TestRunnerSigmaSourceCoupling:
 
 
 # ---------------------------------------------------------------------------
+# Test 7c: the daily runner tags CRPS log rows with sigma_source too (#851)
+# ---------------------------------------------------------------------------
+
+class TestRunnerCrpsLogTaggedBySigmaSource:
+    """TestRunnerSigmaSourceCoupling above covers emos_calibration coefficient
+    rows; this covers the emos_crps_log rows the promotion guard actually
+    counts against EMOS_MIN_SAMPLES_PROMOTION -- the specific gap issue #851
+    closes (the runner resolved sigma_source for save_coefficients but never
+    threaded it through db.log_crps/emos_crps_logged_for_date, so shadow-day
+    evidence from every sigma_source lineage silently pooled into one count).
+    """
+
+    def _patch_fit(self, monkeypatch):
+        monkeypatch.setattr(
+            "src.model.emos_calibration.fit_emos", lambda data: (0.0, 1.0, 0.5, 1.0)
+        )
+        monkeypatch.setattr(
+            "src.model.emos_calibration.fetch_training_data",
+            lambda city, db, **kw: [(80.0, 2.0, 81.0)] * 60,
+        )
+
+    def test_crps_row_tagged_with_the_active_sigma_source(self, monkeypatch):
+        import scripts.run_emos_shadow as runner
+
+        db = _db()
+        db.set_config("USE_ENSEMBLE_SIGMA", "true")
+        self._patch_fit(monkeypatch)
+
+        runner._run_calibration(db)
+
+        row = db._conn.execute(
+            "SELECT sigma_source FROM emos_crps_log "
+            "WHERE city='Chicago' AND model_mode='emos_shadow'"
+        ).fetchone()
+        assert row is not None
+        assert row[0] == "ensemble"
+
+    def test_sigma_source_switch_does_not_inherit_the_old_lineages_count(self, monkeypatch):
+        """The exact #851 regression scenario: 25 days of shadow evidence
+        accrue under sigma_source='fixed' (enough to clear a 20-sample
+        promotion bar); USE_ENSEMBLE_SIGMA then flips true (#799) and the
+        runner logs its first 'ensemble' row. The 'ensemble' lineage's
+        count must start from zero (well, one), not inherit the 25 'fixed'
+        samples -- otherwise the promotion guard would let a
+        just-retrained, unevaluated coefficient set serve emos_primary
+        immediately.
+        """
+        import scripts.run_emos_shadow as runner
+
+        db = _db()
+        db.set_config("USE_ENSEMBLE_SIGMA", "false")
+        self._patch_fit(monkeypatch)
+        for i in range(25):
+            db.log_crps("Chicago", f"2026-05-{i + 1:02d}", 1.5, sigma_source="fixed")
+        assert db.get_emos_crps_count("Chicago") == 25  # active track is still 'fixed'
+
+        db.set_config("USE_ENSEMBLE_SIGMA", "true")
+        runner._run_calibration(db)
+
+        # The active track is now 'ensemble' -- its count reflects only the
+        # single row the runner just logged, not the 25 pre-switch samples.
+        assert db.get_emos_crps_count("Chicago") == 1
+        # The pre-switch evidence is untouched, just no longer counted by
+        # the (now sigma_source='ensemble') default resolution.
+        assert db.get_emos_crps_count("Chicago", sigma_source="fixed") == 25
+
+
+# ---------------------------------------------------------------------------
 # Test 7c: the daily runner also logs a legacy CRPS baseline row (issue #667)
 # ---------------------------------------------------------------------------
 
