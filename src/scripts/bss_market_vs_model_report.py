@@ -32,15 +32,35 @@ Methodology (docs/REMEDIATION_PLAN.md, "The decision gate (#822)")::
     BS_market = mean( (p_market_yes - outcome)^2 )
     BSS       = 1 - (BS_model / BS_market)
 
-Data sources (host-local, no network):
+Data sources:
 
   * ``logs/candidates.*.csv.gz`` (date-rotated + gzip-compressed, see
     ``src/utils/log_rotation.py``) -- one row per *poll* for every candidate
     that already cleared the live entry gates. Carries ``p_yes_raw``,
     ``yes_ask``, ``no_ask``, ``end_date``, ``minutes_to_settlement``.
-  * ``data/meteoedge.db`` :: ``settlements`` table -- realized market
-    outcomes (``resolved_yes``), keyed by ``ticker`` (issue #644's Gamma-first
-    resolution; the same table ``src/scripts/calibration_report.py`` reads).
+  * Outcome truth -- see "Outcome resolution" below.
+
+**Outcome resolution (issue #865).** Pass 1 originally joined outcomes from
+``data/meteoedge.db`` :: ``settlements``, and that join is what destroyed the
+sample: ``settlements`` is only written for brackets MeteoEdge actually
+**traded** (~156 rows all-time), so the 2026-07-25 production run dropped 360
+of 380 de-duplicated brackets for "no definitive settlement match" and scored
+BSS on **n=20** -- 6.7% of the ``n >= 300`` the decision rule requires. That
+exclusion was never methodologically motivated: whether a bracket resolved
+YES or NO is a fact about the weather and about Polymarket's on-chain
+resolution, not about whether we traded it.
+
+So outcomes now come from ``src/scripts/resolve_bracket_outcomes`` (issues
+#850/#858/#860/#863), the same resolution capability #822's Pass 2 uses:
+Polymarket's definitive resolution where available, falling back to the
+station-local observed daily high from ``observations`` -- the precedence
+``settle.py`` itself uses, so this repo has one resolution policy rather than
+two. ``--outcome-source settlements`` reverts to the original join and
+reproduces the 2026-07-25 report exactly.
+
+This changes only *which brackets can be scored*, never how a scored bracket
+is scored: the BSS math, the row exclusions, the de-duplication rule and the
+market-price convention are all untouched.
 
 Required row-level exclusions (issue #822, issue #820):
 
@@ -53,7 +73,8 @@ Required row-level exclusions (issue #822, issue #820):
     and ceiling. A rail price is not really "the market's implied
     probability" (it is clipped), so keeping these rows would flatter or
     penalize BS_market on a value the market itself did not freely produce.
-  * No definitive settlement match in the ``settlements`` table.
+  * No outcome resolvable -- Polymarket has not resolved the market decisively
+    AND no observation exists for that station-day. Never guessed.
 
 De-duplication: one row per (station, ticker, settlement date) -- a bracket
 is polled repeatedly before its market closes, and the entry gates already
@@ -88,6 +109,13 @@ Usage::
     python -m src.scripts.bss_market_vs_model_report
     python -m src.scripts.bss_market_vs_model_report --candidates-csv logs/candidates.csv \
         --db data/meteoedge.db --out backtest_results
+
+    # cache-only, zero HTTP requests (any ticker not already cached falls
+    # back to the observed daily high):
+    python -m src.scripts.bss_market_vs_model_report --no-network
+
+    # reproduce the original 2026-07-25 settlements-join report:
+    python -m src.scripts.bss_market_vs_model_report --outcome-source settlements
 """
 from __future__ import annotations
 
@@ -108,6 +136,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.config import CANDIDATES_CSV, STATION_TZ  # noqa: E402
 from src.scripts.calibration_report import (  # noqa: E402
     BUCKET_EDGES, brier_score, build_reliability, format_reliability,
+)
+from src.scripts.resolve_bracket_outcomes import (  # noqa: E402
+    _DEFAULT_CACHE, compute_observed_highs, detect_multi_yes_station_days,
+    resolve_bracket_rows, resolve_gamma_outcomes,
 )
 from src.utils.log_rotation import rotated_sources  # noqa: E402
 
@@ -131,6 +163,14 @@ RAIL_HIGH_CENTS = 99
 
 DEFAULT_DB_PATH = Path(os.getenv("DB_PATH", "data/meteoedge.db"))
 DEFAULT_OUT_DIR = Path("backtest_results")
+
+# Outcome-truth sources (issue #865). "resolver" is the default: Gamma-first
+# with an observed-daily-high fallback, scoring every evaluated bracket.
+# "settlements" is the original traded-only join, kept solely to reproduce the
+# 2026-07-25 report -- it is not the recommended way to run Pass 1.
+OUTCOME_SOURCE_RESOLVER = "resolver"
+OUTCOME_SOURCE_SETTLEMENTS = "settlements"
+OUTCOME_SOURCES = (OUTCOME_SOURCE_RESOLVER, OUTCOME_SOURCE_SETTLEMENTS)
 
 
 # ---------------------------------------------------------------------------
@@ -281,6 +321,10 @@ def join_outcomes(rows: "list[dict]", outcomes: "dict[str, bool]") -> "tuple[lis
     """Attach ``yes_won`` to each row; drop rows with no definitive settlement.
 
     Returns (rows_with_outcome, n_dropped_no_settlement).
+
+    This is the LEGACY (``--outcome-source settlements``) path -- see the
+    module docstring's "Outcome resolution" note for why it collapses the
+    sample, and ``resolve_candidate_outcomes`` for the default.
     """
     out = []
     dropped = 0
@@ -291,6 +335,73 @@ def join_outcomes(rows: "list[dict]", outcomes: "dict[str, bool]") -> "tuple[lis
             continue
         out.append({**row, "yes_won": yes_won})
     return out, dropped
+
+
+# ---------------------------------------------------------------------------
+# Outcome resolution: Gamma-first, observed-high fallback (issue #865)
+# ---------------------------------------------------------------------------
+
+def resolve_candidate_outcomes(
+    rows: "list[dict]",
+    db_path: "Path | None",
+    use_gamma: bool = True,
+    allow_network: bool = True,
+    gamma_cache_path: "Path | None" = _DEFAULT_CACHE,
+) -> "tuple[list[dict], dict]":
+    """Attach ``yes_won`` to de-duplicated candidate rows without touching
+    ``settlements``.
+
+    Delegates entirely to ``src.scripts.resolve_bracket_outcomes`` (issues
+    #850/#860) rather than reimplementing resolution here, so Pass 1 and
+    Pass 2 can never drift into two different notions of what "the bracket
+    resolved YES" means. This function's only real job is adapting the
+    candidate-row shape to that module's contract.
+
+    The one field that needs mapping: candidate rows carry ``end_date`` where
+    ``bracket_evals`` rows carry ``settlement_date``. They denote the same
+    thing -- the market's settlement day -- and ``settle.resolve_trade_date``
+    already treats ``end_date`` as the authoritative settlement date for
+    exactly this purpose, so the mapping is a rename, not a reinterpretation.
+
+    Returns (rows_with_outcome, counts). ``counts`` carries the funnel and
+    ground-truth breakdown the report prints:
+    ``n_unresolvable`` (dropped -- never guessed), ``resolved_from_gamma``,
+    ``resolved_from_metar``, ``n_station_days`` (the effective sample size --
+    all brackets on a station-day share one daily high) and ``gamma`` (the
+    fetch/cache stats).
+    """
+    keyed = []
+    for row in rows:
+        end_date = (row.get("end_date") or "")[:10]
+        if not end_date:
+            continue
+        keyed.append({**row, "settlement_date": end_date})
+
+    n_undatable = len(rows) - len(keyed)
+
+    station_dates = {
+        (r["station"], r["settlement_date"]) for r in keyed
+        if r.get("station") and r.get("settlement_date")
+    }
+    observed_highs = compute_observed_highs(db_path, station_dates)
+
+    gamma_resolutions: "dict[str, bool]" = {}
+    gamma_stats: dict = {}
+    if use_gamma:
+        tickers = {r["ticker"] for r in keyed if r.get("ticker")}
+        gamma_resolutions, gamma_stats = resolve_gamma_outcomes(
+            tickers, cache_path=gamma_cache_path, allow_network=allow_network
+        )
+
+    resolved_rows, counts = resolve_bracket_rows(keyed, observed_highs, gamma_resolutions)
+
+    out = [{**r, "yes_won": bool(r["resolved_yes"])} for r in resolved_rows]
+    counts["n_missing_end_date"] = n_undatable
+    counts["n_unresolvable"] = len(rows) - len(out)
+    counts["n_station_days"] = len({(r["station"], r["settlement_date"]) for r in out})
+    counts["gamma"] = gamma_stats
+    counts["gamma_enabled"] = bool(use_gamma)
+    return out, dict(counts)
 
 
 # ---------------------------------------------------------------------------
@@ -433,8 +544,94 @@ def verdict_label(bss: "float | None") -> str:
 # Report assembly
 # ---------------------------------------------------------------------------
 
+def _ground_truth_section(samples: "list[dict]", ocounts: dict) -> "list[str]":
+    """Render the outcome-provenance section for the resolver path.
+
+    Two things a reader needs before trusting the BSS above:
+
+    1. **Which ground truth decided each bracket.** Gamma is Polymarket's
+       official on-chain outcome; METAR is our observed daily high, which
+       #644 measured disagreeing with the official result ~22% of the time.
+       A report dominated by METAR rows deserves more scepticism than one
+       dominated by Gamma rows, so the split is stated rather than buried.
+    2. **The #861 boundary exposure.** ``resolve_outcome`` treats brackets as
+       ``[low, high]`` -- inclusive at both ends -- so an observed high landing
+       exactly on the shared edge of two adjacent (Celsius-derived) brackets
+       resolves YES for both, which is physically impossible. #861 is open
+       because production data fits neither half-open convention. Gamma-first
+       precedence means a Gamma-resolved bracket never consults the interval
+       logic at all, so the exposure is bounded -- but it must be *counted*
+       here, not assumed away, since it biases the YES rate the BSS is
+       computed against.
+    """
+    lines = ["## Outcome ground truth\n"]
+    gamma_n = ocounts.get("resolved_from_gamma", 0)
+    metar_n = ocounts.get("resolved_from_metar", 0)
+    total = (gamma_n + metar_n) or 1
+    lines.append("| Source | n | Share |")
+    lines.append("|---|---|---|")
+    lines.append(f"| Polymarket definitive resolution (`gamma`) | {gamma_n} | "
+                 f"{100 * gamma_n / total:.1f}% |")
+    lines.append(f"| Observed daily high fallback (`metar`) | {metar_n} | "
+                 f"{100 * metar_n / total:.1f}% |")
+    lines.append("")
+
+    gamma_stats = ocounts.get("gamma") or {}
+    if gamma_stats:
+        lines.append(
+            f"Gamma lookups: {gamma_stats.get('n_cache_hits', 0)} cache hits, "
+            f"{gamma_stats.get('n_fetched', 0)} fetched "
+            f"({gamma_stats.get('n_newly_resolved', 0)} newly resolved, "
+            f"{gamma_stats.get('n_indecisive', 0)} indecisive, "
+            f"{gamma_stats.get('n_fetch_errors', 0)} errors, "
+            f"{gamma_stats.get('n_skipped_offline', 0)} skipped offline). "
+            f"Indecisive/errored tickers fall back to the observed high.\n"
+        )
+    elif not ocounts.get("gamma_enabled", True):
+        lines.append("Gamma resolution DISABLED (`--no-gamma`): every row above was "
+                     "resolved from the observed daily high, a proxy #644 measured "
+                     "disagreeing with the official outcome ~22% of the time.\n")
+
+    multi_yes = detect_multi_yes_station_days(samples)
+    if multi_yes:
+        affected = sum(m["n_yes"] for m in multi_yes)
+        lines.append(
+            f"⚠️ **Boundary-convention exposure (issue #861): {len(multi_yes)} station-day(s), "
+            f"{affected} bracket-rows** resolved YES on more than one bracket. A station-day "
+            f"has one daily high, so at most one bracket can contain it -- these rows inflate "
+            f"the YES count and bias BS_model/BS_market. Diagnostic only; nothing is "
+            f"auto-corrected.\n"
+        )
+        lines.append("| Station | Settlement date | YES brackets | Observed high |")
+        lines.append("|---|---|---|---|")
+        for m in multi_yes[:20]:
+            brackets = ", ".join(
+                f"{lo}-{hi} ({src})" for lo, hi, src in m["brackets"]
+            )
+            lines.append(f"| {m['station']} | {m['settlement_date']} | {brackets} | "
+                         f"{m['observed_high']} |")
+        if len(multi_yes) > 20:
+            lines.append(f"| … | {len(multi_yes) - 20} more | | |")
+        lines.append("")
+    else:
+        lines.append("Boundary-convention check (issue #861): **0** station-days resolved "
+                     "YES on more than one bracket.\n")
+    return lines
+
+
 def build_report(samples: "list[dict]", exclusion_counts: dict, n_no_settlement: int,
-                 run_date: str) -> str:
+                 run_date: str, outcome_meta: "dict | None" = None) -> str:
+    """Assemble the Pass-1 markdown report.
+
+    *outcome_meta* describes how outcomes were resolved --
+    ``{"source": OUTCOME_SOURCE_*, "counts": {...}}``. Defaults to the legacy
+    settlements join so the original call signature keeps working.
+    """
+    outcome_meta = outcome_meta or {"source": OUTCOME_SOURCE_SETTLEMENTS, "counts": {}}
+    source = outcome_meta.get("source", OUTCOME_SOURCE_SETTLEMENTS)
+    ocounts = outcome_meta.get("counts") or {}
+    is_resolver = source == OUTCOME_SOURCE_RESOLVER
+
     global_stats = compute_bss(samples)
 
     by_segment: "dict[str, list[dict]]" = defaultdict(list)
@@ -453,8 +650,16 @@ def build_report(samples: "list[dict]", exclusion_counts: dict, n_no_settlement:
     lines = []
     lines.append("# Market-vs-Model Skill Test -- Pass 1 (issue #822)\n")
     lines.append(f"**Run date:** {run_date}  ")
-    lines.append("**Data source:** `logs/candidates.*.csv.gz` (archived, gate-selected) "
-                 "joined to `settlements` (meteoedge.db)  \n")
+    if is_resolver:
+        lines.append(
+            "**Data source:** `logs/candidates.*.csv.gz` (archived, gate-selected)  \n"
+            "**Outcome truth:** `resolve_bracket_outcomes` -- Polymarket definitive "
+            "resolution, falling back to the station-local observed daily high "
+            "(issues #850/#860/#865)  \n"
+        )
+    else:
+        lines.append("**Data source:** `logs/candidates.*.csv.gz` (archived, gate-selected) "
+                     "joined to `settlements` (meteoedge.db)  \n")
     lines.append(REQUIRED_DISCLAIMER)
     lines.append("\n---\n")
 
@@ -470,8 +675,23 @@ def build_report(samples: "list[dict]", exclusion_counts: dict, n_no_settlement:
     lines.append(f"| Excluded: missing market price | {exclusion_counts.get('missing_market_price', 0)} |")
     lines.append(f"| Excluded: 1c/99c rail | {exclusion_counts.get('rail_1c_99c', 0)} |")
     lines.append(f"| Kept after row exclusions | {exclusion_counts.get('kept_after_row_exclusions', 0)} |")
-    lines.append(f"| Excluded: no definitive settlement match | {n_no_settlement} |")
+    if is_resolver:
+        lines.append(
+            f"| De-duplicated to one row per (station, ticker, settlement date) | "
+            f"{ocounts.get('input_rows', global_stats['n'] + n_no_settlement)} |"
+        )
+        lines.append(
+            f"| Excluded: no outcome resolvable (no Gamma resolution, no observed high) | "
+            f"{n_no_settlement} |"
+        )
+    else:
+        lines.append(f"| Excluded: no definitive settlement match | {n_no_settlement} |")
     lines.append(f"| **Final de-duplicated sample (n)** | **{global_stats['n']}** |")
+    if is_resolver:
+        lines.append(
+            f"| **Effective sample size (station-days)** | "
+            f"**{ocounts.get('n_station_days', 0)}** |"
+        )
     lines.append("")
 
     lines.append("## Global result\n")
@@ -486,10 +706,22 @@ def build_report(samples: "list[dict]", exclusion_counts: dict, n_no_settlement:
     lines.append(f"| BSS | {bss:.4f} |" if bss is not None else "| BSS | n/a |")
     lines.append(f"| Pass-1 reading (NOT the M3 verdict) | {verdict_label(bss)} |")
     lines.append("")
-    lines.append("Note on power (docs/REMEDIATION_PLAN.md): all brackets on a station-day "
-                 "share one daily-high outcome, so the effective sample size is "
-                 "station-days, not bracket-rows. This report states the de-duplicated "
-                 "bracket-row n; it does not further collapse to station-days.\n")
+    if is_resolver:
+        lines.append(
+            f"Note on power (docs/REMEDIATION_PLAN.md): all brackets on a station-day "
+            f"share one daily-high outcome, so they are not independent draws -- the "
+            f"effective sample size is **{ocounts.get('n_station_days', 0)} station-days**, "
+            f"not the {global_stats['n']} bracket-rows the BSS above is computed over. "
+            f"Read the station-day figure against the decision rule's power requirement.\n"
+        )
+    else:
+        lines.append("Note on power (docs/REMEDIATION_PLAN.md): all brackets on a station-day "
+                     "share one daily-high outcome, so the effective sample size is "
+                     "station-days, not bracket-rows. This report states the de-duplicated "
+                     "bracket-row n; it does not further collapse to station-days.\n")
+
+    if is_resolver:
+        lines.extend(_ground_truth_section(samples, ocounts))
 
     lines.append("## Segment: same-day vs. next-day\n")
     lines.append("(Derived from station-local `ts` date vs. `end_date` -- `logs/candidates.csv` "
@@ -533,7 +765,25 @@ def build_report(samples: "list[dict]", exclusion_counts: dict, n_no_settlement:
     lines.append("- De-duplication keeps the final (lowest `minutes_to_settlement`) poll per "
                  "(station, ticker, settlement date), mirroring "
                  "`calibration_report.pick_samples`.")
-    lines.append("- Outcome truth: `settlements.resolved_yes` (meteoedge.db), keyed by ticker.")
+    if is_resolver:
+        lines.append(
+            "- Outcome truth: `resolve_bracket_outcomes.resolve_bracket_rows()` -- "
+            "Polymarket's definitive resolution where available, else YES iff the "
+            "station-local observed daily high falls in `[bracket_low, bracket_high]`. "
+            "This is the same precedence `settle.py` applies and the same capability "
+            "#822's Pass 2 uses. Brackets that neither source can resolve are dropped, "
+            "never guessed.")
+        lines.append(
+            "- **Not joined to `settlements`** (issue #865). That table only covers "
+            "brackets MeteoEdge actually traded (~156 rows all-time); joining it dropped "
+            "360 of 380 de-duplicated brackets on the 2026-07-25 run, leaving n=20. "
+            "Whether a bracket resolved YES is a fact about the weather, not about "
+            "whether we traded it. Use `--outcome-source settlements` to reproduce that "
+            "earlier report.")
+    else:
+        lines.append("- Outcome truth: `settlements.resolved_yes` (meteoedge.db), keyed by ticker. "
+                     "**Legacy path** (`--outcome-source settlements`): scores only brackets "
+                     "MeteoEdge traded. See issue #865.")
     lines.append("")
     return "\n".join(lines)
 
@@ -543,17 +793,29 @@ def build_report(samples: "list[dict]", exclusion_counts: dict, n_no_settlement:
 # ---------------------------------------------------------------------------
 
 def run_report(candidates_csv: Path, db_path: Path, out_dir: Path,
-               run_date: "str | None" = None) -> int:
-    """Load, filter, join, score, and (if there is real data) write the report.
+               run_date: "str | None" = None,
+               outcome_source: str = OUTCOME_SOURCE_RESOLVER,
+               use_gamma: bool = True,
+               allow_network: bool = True,
+               gamma_cache_path: "Path | None" = _DEFAULT_CACHE) -> int:
+    """Load, filter, resolve outcomes, score, and (if there is real data) write
+    the report.
 
-    Self-gating at three points -- each logs a clear reason and returns 0
-    (safe to schedule any day) rather than writing a report with no real
-    signal in it:
+    Self-gating -- each point logs a clear reason and returns 0 (safe to
+    schedule any day) rather than writing a report with no real signal in it:
+
       1. no candidate rows at all (no local ``logs/`` data),
-      2. no settlement outcomes at all (no local ``settlements`` table data),
-      3. no row survives the settlement join.
+      2. resolver path: no readable ``data/meteoedge.db`` (checked BEFORE any
+         Gamma fetch, so a sandbox run costs zero HTTP requests),
+      3. settlements path: no settlement outcomes at all,
+      4. no row survives outcome resolution.
     """
     run_date = run_date or datetime.now(timezone.utc).date().isoformat()
+
+    if outcome_source not in OUTCOME_SOURCES:
+        raise ValueError(
+            f"outcome_source must be one of {OUTCOME_SOURCES}, got {outcome_source!r}"
+        )
 
     raw_rows = load_candidate_rows(candidates_csv)
     if not raw_rows:
@@ -567,20 +829,50 @@ def run_report(candidates_csv: Path, db_path: Path, out_dir: Path,
 
     kept_rows, exclusion_counts = apply_exclusions(raw_rows)
     deduped = dedupe_one_per_bracket_day(kept_rows)
-    outcomes = load_settlement_outcomes(db_path)
-    if not outcomes:
-        log.info(
-            "[bss] settlements table at %s is empty or unavailable -- cannot join "
-            "outcomes. Not writing a report.", db_path,
+
+    if outcome_source == OUTCOME_SOURCE_RESOLVER:
+        # Gate on the DB before resolve_candidate_outcomes() so a run with no
+        # local database never issues a Gamma request it cannot use.
+        if _connect_ro(db_path) is None:
+            log.info(
+                "[bss] no readable database at %s -- cannot resolve observed daily "
+                "highs. Not writing a report.", db_path,
+            )
+            return 0
+        samples, outcome_counts = resolve_candidate_outcomes(
+            deduped, db_path, use_gamma=use_gamma, allow_network=allow_network,
+            gamma_cache_path=gamma_cache_path,
         )
-        return 0
+        n_unresolved = outcome_counts.get("n_unresolvable", 0)
+        if not samples:
+            log.info("[bss] no row could be resolved from Gamma or observations "
+                     "-- not writing a report.")
+            return 0
+        log.info(
+            "[bss] resolved %d/%d de-duplicated brackets (%d gamma, %d metar) "
+            "across %d station-days",
+            len(samples), len(deduped), outcome_counts.get("resolved_from_gamma", 0),
+            outcome_counts.get("resolved_from_metar", 0),
+            outcome_counts.get("n_station_days", 0),
+        )
+    else:
+        outcomes = load_settlement_outcomes(db_path)
+        if not outcomes:
+            log.info(
+                "[bss] settlements table at %s is empty or unavailable -- cannot join "
+                "outcomes. Not writing a report.", db_path,
+            )
+            return 0
+        samples, n_unresolved = join_outcomes(deduped, outcomes)
+        outcome_counts = {}
+        if not samples:
+            log.info("[bss] no rows had a definitive settlement match -- not writing a report.")
+            return 0
 
-    samples, n_no_settlement = join_outcomes(deduped, outcomes)
-    if not samples:
-        log.info("[bss] no rows had a definitive settlement match -- not writing a report.")
-        return 0
-
-    report = build_report(samples, exclusion_counts, n_no_settlement, run_date)
+    report = build_report(
+        samples, exclusion_counts, n_unresolved, run_date,
+        outcome_meta={"source": outcome_source, "counts": outcome_counts},
+    )
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"bss_market_vs_model_pass1_{run_date}.md"
     out_path.write_text(report, encoding="utf-8")
@@ -595,8 +887,26 @@ def main(argv: "list[str] | None" = None) -> int:
     ap.add_argument("--out", type=Path, default=DEFAULT_OUT_DIR)
     ap.add_argument("--run-date", default=None,
                     help="Report date stamp (default: today, UTC)")
+    ap.add_argument("--outcome-source", choices=OUTCOME_SOURCES,
+                    default=OUTCOME_SOURCE_RESOLVER,
+                    help="'resolver' (default): Gamma-first with observed-daily-high "
+                         "fallback, scores every evaluated bracket. 'settlements': the "
+                         "legacy traded-only join that produced the n=20 2026-07-25 "
+                         "report (issue #865).")
+    ap.add_argument("--no-gamma", action="store_true",
+                    help="Resolve purely from observed daily highs -- a proxy #644 "
+                         "measured disagreeing with the official outcome ~22%% of the "
+                         "time. Diagnostic use only.")
+    ap.add_argument("--no-network", action="store_true",
+                    help="Serve Gamma resolutions from the local cache only; issue zero "
+                         "HTTP requests. Uncached tickers fall back to the observed high.")
     args = ap.parse_args(argv)
-    return run_report(args.candidates_csv, args.db, args.out, args.run_date)
+    return run_report(
+        args.candidates_csv, args.db, args.out, args.run_date,
+        outcome_source=args.outcome_source,
+        use_gamma=not args.no_gamma,
+        allow_network=not args.no_network,
+    )
 
 
 if __name__ == "__main__":

@@ -82,6 +82,48 @@ not a general calibration measure.
 **Outcome:** an early directional read, weeks before the formal gate.
 **Issue:** #822 (pass 1).
 
+**Status 2026-07-25 — executed, then re-scoped.** The first run
+(`backtest_results/bss_market_vs_model_pass1_2026-07-25.md`) returned **BSS = 0.0503 on
+n = 20** — 6.7% of the `n ≥ 300` the decision rule requires, with the topline carried
+entirely by two n=2 segments while `same_day` (n=18) sat at BSS = −0.0025. **Not a
+result.** The one finding robust to the sample size: the pre-fix model's near-certainty NO
+calls (`p_yes` 0.00–0.02, 13 of 20 rows) had a real-world YES rate of 15.4%, a +15.1pp
+calibration gap — #820's failure mode, visible in the data.
+
+The sample did not die from missing data; it died on the **outcome join**. Pass 1 keyed
+outcomes off `settlements`, which only covers brackets we actually *traded* (~156 rows
+all-time), so 360 of 380 de-duplicated brackets were dropped for "no definitive settlement
+match". Whether a bracket resolved YES is a fact about the weather, not about whether we
+traded it.
+
+**#865 re-points Pass 1 at `resolve_bracket_outcomes`** (the Gamma-first capability built
+for Pass 2 in #850/#858/#860/#863), lifting n from 20 to roughly the full ~380 on the
+*same archived data* — no waiting. Still Pass 1: pre-fix probabilities, gate-selected
+sample, not the M3 gate.
+
+#### Runbook — running Pass 1 on the bot host
+
+```bash
+python -m src.scripts.bss_market_vs_model_report \
+    --candidates-csv logs/candidates.csv --db data/meteoedge.db --out backtest_results
+```
+
+Writes `backtest_results/bss_market_vs_model_pass1_<date>.md`. Read-only against the
+database; self-gates and writes nothing if `logs/` or the DB is absent, so it is safe to run
+anywhere. Gamma resolutions are fetched once per ticker and cached permanently in
+`logs/gamma_resolution_cache.json` — the first run fetches ~380 tickers, later runs are
+near-instant.
+
+- `--no-network` — cache only, zero HTTP requests; uncached tickers fall back to the
+  observed daily high.
+- `--outcome-source settlements` — reproduces the original n=20 report.
+
+**Check before citing the number:** the report's *Outcome ground truth* section states the
+`gamma` / `metar` split and counts the #861 boundary exposure. A result dominated by `metar`
+rows deserves more scepticism — #644 measured that proxy disagreeing with the official
+outcome ~22% of the time. Read the **station-day** count, not the bracket-row `n`, against
+the power requirement.
+
 ### M2 · Make the model honest — target 2026-08-07
 
 Switch on ensemble spread and retrain, **coupling train and serve** (decoupling them
@@ -146,28 +188,35 @@ The rule is fixed **before** the number is seen, so it cannot be rationalised af
 
 ## Open work, in dependency order
 
+*Status as of 2026-07-25. M0 and M2 are complete, both ahead of target — the plan is now
+purely data-bound: the only thing between here and M3 is station-days accruing.*
+
 | Issue | What | Stage | Status |
 |---|---|---|---|
-| #820 | Evening entries price tomorrow with today's observations | M0 | **Blocking** |
-| — | Persist all evaluated-bracket snapshots | M0 (parallel) | Start now |
-| #822 | Market-vs-model skill test | M1 · M3 | **Decision** |
-| #799 | σ unidentifiable — switch on ensemble spread, retrain | M2 | Highest leverage |
-| #798 | Partial pooling instead of hard 60-sample cutover | M2 | Ready |
-| #823 | Recompute promotion bars excluding artifact rows | M2 | Ready |
-| #824 | Capture ECMWF ensemble spread (2,750 rows have none) | M2 | Ready |
-| #782 | Anchor day partitions to settlement window | after M0 | **Hold** |
-| #591 | Climb tables / entry windows — same mechanism as #820 | after M0 | **Hold** |
+| #820 | Evening entries price tomorrow with today's observations | M0 | ✅ Merged |
+| #826 | Persist all evaluated-bracket snapshots | M0 (parallel) | ✅ Merged — clean-data clock started 2026-07-24 |
+| #865 | Re-point Pass 1 at `resolve_bracket_outcomes` (n=20 → ~380) | M1 | **Next** |
+| #822 | Market-vs-model skill test | M1 · M3 | Pass 1 run (inconclusive); **Pass 2 = the decision** |
+| #799 | σ unidentifiable — switch on ensemble spread, retrain | M2 | ✅ Merged |
+| #798 | Partial pooling instead of hard 60-sample cutover | M2 | ✅ Merged |
+| #823 | Recompute promotion bars excluding artifact rows | M2 | ✅ Merged |
+| #824 | Capture ECMWF ensemble spread (2,750 rows have none) | M2 | ✅ Merged |
+| #861 | Bracket-boundary convention (adjacent brackets both YES) | before M3 | **Open — resolve before the verdict** |
+| #450 | Calibration backtest: reliability + CRPS over 30 days | M3 | Open |
+| #782 | Anchor day partitions to settlement window | after M0 | Unblocked — #820 is merged |
+| #591 | Climb tables / entry windows — same mechanism as #820 | after M0 | Unblocked — #820 is merged |
 | #825 | Optional historical-forecast backfill (separate regime) | deferred | Not the unlock |
-| #819 | Gate-column chip prefix (completes #811) | anytime | Quick win |
+| #819 | Gate-column chip prefix (completes #811) | anytime | ✅ Merged |
 
 ### Standing guardrails
 
-- **Do not change `MIN_PRICE_CENTS` (74) or `MAX_EDGE_CENTS` (20)** while #820/#822 are open.
-  Every live fill sits in the 74–78¢ band those two knobs create; moving either destroys the
-  population we are trying to measure.
-- **Do not implement #782 or #591 before #820.** Both move the same mechanism; starting
-  either early reclassifies the evening entries as `is_next_day=1`, force-shadows them under
-  #687, and zeroes the live book silently with no failing test.
+- **Do not change `MIN_PRICE_CENTS` (74) or `MAX_EDGE_CENTS` (20)** while #822 is open
+  (still binding — #820 merged 2026-07-25, #822 did not). Every live fill sits in the 74–78¢
+  band those two knobs create; moving either destroys the population we are trying to measure.
+- **Do not implement #782 or #591 before #820.** *Satisfied as of 2026-07-25 — #820 is
+  merged, so both are now unblocked.* Kept for the record: starting either early would have
+  reclassified the evening entries as `is_next_day=1`, force-shadowed them under #687, and
+  zeroed the live book silently with no failing test.
 - Whoever takes #619 must not regress the merged #810 `utc_offset_seconds` fix.
 - **Never** use ERA5 / reanalysis as a forecast feature (see #825) — it is a lookahead leak.
   Only forecasts-as-issued are admissible predictors.
