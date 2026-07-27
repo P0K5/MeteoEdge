@@ -1233,6 +1233,29 @@ class TestClassifyMultiYes:
         assert out[0]["collision_kind"] == COLLISION_DISJOINT
         assert out[0]["sources"] == ["gamma"]
 
+    def test_entry_contract_is_complete_for_both_consumers(self):
+        """``detect_multi_yes_station_days`` has exactly two consumers --
+        ``build_dry_run_report`` here and ``bss_market_vs_model_report.
+        _ground_truth_section`` -- and both index these keys directly. Pinning
+        the contract means adding a third consumer, or dropping a key, fails
+        here rather than at report-render time on the production host.
+        """
+        rows = [
+            {"station": "ZGSZ", "settlement_date": "2026-06-12", "resolved_yes": True,
+             "bracket_low": 84.2, "bracket_high": 86.0, "observed_high": 86.0,
+             "resolution_source": "metar"},
+            {"station": "ZGSZ", "settlement_date": "2026-06-12", "resolved_yes": True,
+             "bracket_low": 86.0, "bracket_high": 87.8, "observed_high": 86.0,
+             "resolution_source": "metar"},
+        ]
+        entry = detect_multi_yes_station_days(rows)[0]
+        assert set(entry) == {
+            "station", "settlement_date", "n_yes", "observed_high", "brackets",
+            "collision_kind", "sources",
+        }
+        # brackets is the (low, high, source) triple both reports unpack.
+        assert all(len(b) == 3 for b in entry["brackets"])
+
     def test_dry_run_report_splits_the_two_shapes(self):
         """The report must not present one conflated count."""
         rows = [
