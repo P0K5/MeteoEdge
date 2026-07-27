@@ -36,8 +36,11 @@ from src.scripts.resolve_bracket_outcomes import (
     compute_observed_highs,
     cross_check_against_settlements,
     cross_check_against_settlements_direct,
+    cross_check_gamma_vs_metar,
     dedupe_one_per_bracket_day,
     detect_multi_yes_station_days,
+    detect_zero_yes_station_days,
+    ladder_completeness,
     load_bracket_eval_rows,
     load_gamma_cache,
     load_settlement_outcomes,
@@ -1254,6 +1257,138 @@ class TestClassifyMultiYes:
         assert "| `boundary` (adjacent/overlapping) | 1 |" in report
         assert "| `disjoint` (brackets do not touch) | 1 |" in report
         assert "#867" in report
+
+
+class TestGroundTruthQuality:
+    """Issue #870 -- M3 is ~95% Gamma-scored, and until these run we do not
+    know that ground truth's error rate on the population it will be scored on."""
+
+    def test_gamma_vs_metar_disagreement_is_measured_on_the_full_population(self):
+        rows = [
+            # Gamma YES, observed high inside the bracket -> agree.
+            {"station": "KORD", "settlement_date": "2026-07-05", "resolved_yes": True,
+             "bracket_low": 80.0, "bracket_high": 82.0, "observed_high": 81.0,
+             "resolution_source": "gamma"},
+            # Gamma YES, observed high far outside -> disagree (the #867 shape).
+            {"station": "RKSI", "settlement_date": "2026-07-05", "resolved_yes": True,
+             "bracket_low": 75.2, "bracket_high": 77.0, "observed_high": 80.6,
+             "resolution_source": "gamma"},
+        ]
+        out = cross_check_gamma_vs_metar(rows)
+        assert out["n_comparable"] == 2
+        assert out["n_disagree"] == 1
+        assert out["disagreement_rate"] == 0.5
+        assert out["n_gamma_yes_metar_no"] == 1
+        assert out["by_station"]["RKSI"]["rate"] == 1.0
+
+    def test_metar_resolved_rows_are_not_self_compared(self):
+        """A METAR row would trivially agree with itself and dilute the rate."""
+        rows = [
+            {"station": "KORD", "settlement_date": "2026-07-05", "resolved_yes": True,
+             "bracket_low": 80.0, "bracket_high": 82.0, "observed_high": 81.0,
+             "resolution_source": "metar"},
+        ]
+        assert cross_check_gamma_vs_metar(rows)["n_comparable"] == 0
+
+    def test_gamma_row_without_observed_high_is_counted_not_compared(self):
+        rows = [
+            {"station": "KORD", "settlement_date": "2026-07-05", "resolved_yes": True,
+             "bracket_low": 80.0, "bracket_high": 82.0, "observed_high": None,
+             "resolution_source": "gamma"},
+        ]
+        out = cross_check_gamma_vs_metar(rows)
+        assert out["n_comparable"] == 0
+        assert out["n_gamma_rows_without_observed_high"] == 1
+        assert out["disagreement_rate"] is None
+
+    def test_both_disagreement_directions_are_tracked(self):
+        rows = [
+            {"station": "A", "settlement_date": "2026-07-05", "resolved_yes": False,
+             "bracket_low": 80.0, "bracket_high": 82.0, "observed_high": 81.0,
+             "resolution_source": "gamma"},   # gamma NO, metar YES
+            {"station": "B", "settlement_date": "2026-07-05", "resolved_yes": True,
+             "bracket_low": 80.0, "bracket_high": 82.0, "observed_high": 90.0,
+             "resolution_source": "gamma"},   # gamma YES, metar NO
+        ]
+        out = cross_check_gamma_vs_metar(rows)
+        assert out["n_gamma_no_metar_yes"] == 1
+        assert out["n_gamma_yes_metar_no"] == 1
+
+    def test_zero_yes_day_with_high_in_a_gap_is_not_flagged_suspicious(self):
+        """US integer-F ladders have real gaps (#861) -- a high landing in one
+        correctly resolves everything NO. That is geometry, not a bug."""
+        rows = [
+            {"station": "KORD", "settlement_date": "2026-07-05", "resolved_yes": False,
+             "bracket_low": 76.0, "bracket_high": 77.0, "observed_high": 77.5,
+             "resolution_source": "metar"},
+            {"station": "KORD", "settlement_date": "2026-07-05", "resolved_yes": False,
+             "bracket_low": 78.0, "bracket_high": 79.0, "observed_high": 77.5,
+             "resolution_source": "metar"},
+        ]
+        out = detect_zero_yes_station_days(rows)
+        assert len(out) == 1
+        assert out[0]["observed_high_in_a_gap"] is True
+
+    def test_zero_yes_day_with_a_covered_high_is_flagged_suspicious(self):
+        """A high inside an evaluated bracket MUST resolve exactly one YES."""
+        rows = [
+            {"station": "RKSI", "settlement_date": "2026-07-05", "resolved_yes": False,
+             "bracket_low": 80.0, "bracket_high": 82.0, "observed_high": 81.0,
+             "resolution_source": "gamma"},
+        ]
+        out = detect_zero_yes_station_days(rows)
+        assert out[0]["observed_high_in_a_gap"] is False
+        assert out[0]["sources"] == ["gamma"]
+
+    def test_day_with_a_yes_is_not_returned(self):
+        rows = [
+            {"station": "KORD", "settlement_date": "2026-07-05", "resolved_yes": True,
+             "bracket_low": 80.0, "bracket_high": 82.0, "observed_high": 81.0,
+             "resolution_source": "metar"},
+        ]
+        assert detect_zero_yes_station_days(rows) == []
+
+    def test_zero_yes_without_observed_high_is_undeterminable(self):
+        rows = [
+            {"station": "KORD", "settlement_date": "2026-07-05", "resolved_yes": False,
+             "bracket_low": 80.0, "bracket_high": 82.0, "observed_high": None,
+             "resolution_source": "gamma"},
+        ]
+        assert detect_zero_yes_station_days(rows)[0]["observed_high_in_a_gap"] is None
+
+    def test_ladder_completeness_distribution(self):
+        rows = (
+            [{"station": "KORD", "settlement_date": "2026-07-05"} for _ in range(11)]
+            + [{"station": "KLAX", "settlement_date": "2026-07-05"} for _ in range(3)]
+        )
+        out = ladder_completeness(rows)
+        assert out["n_station_days"] == 2
+        assert out["min"] == 3
+        assert out["max"] == 11
+        assert out["histogram"] == {3: 1, 11: 1}
+
+    def test_ladder_completeness_on_empty_input(self):
+        assert ladder_completeness([])["n_station_days"] == 0
+
+    def test_dry_run_report_renders_all_three_checks(self):
+        rows = [
+            {"station": "RKSI", "settlement_date": "2026-07-05", "resolved_yes": True,
+             "bracket_low": 75.2, "bracket_high": 77.0, "observed_high": 80.6,
+             "resolution_source": "gamma"},
+            {"station": "KORD", "settlement_date": "2026-07-06", "resolved_yes": False,
+             "bracket_low": 80.0, "bracket_high": 82.0, "observed_high": 81.0,
+             "resolution_source": "gamma"},
+        ]
+        report = build_dry_run_report(
+            rows, {"n_bracket_rows": 2, "n_station_days": 2}, {}, {}, "2026-02-15"
+        )
+        assert "Ground-truth quality 1/3: Gamma vs METAR" in report
+        assert "Ground-truth quality 2/3: station-days with NO YES bracket" in report
+        assert "Ground-truth quality 3/3: ladder completeness" in report
+        # Both rows disagree with METAR -> 100%.
+        assert "| **Disagreement rate** | **100.0%** |" in report
+        # KORD 2026-07-06: high covered by the bracket yet nothing resolved YES.
+        assert "**Suspicious**" in report
 
 
 class TestDirectCheckResolutionSource:

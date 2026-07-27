@@ -166,6 +166,37 @@ accepted or abandoned.** See the decision rule below.
 **Outcome:** a written verdict.
 **Issues:** #822 (pass 2), #450.
 
+#### Checks that do NOT require waiting
+
+M3 is data-bound, but two classes of check are available *now* and can shorten it.
+
+**Leading indicators (#869) — no outcomes required at all.** These score the prediction
+side, so they run on data already accruing:
+
+```bash
+python -m src.scripts.post_fix_model_health
+python -m src.scripts.post_fix_model_health --since 2026-07-25   # rows after a fix landed
+```
+
+Writes `backtest_results/post_fix_model_health_<date>.md`. Three measurements against
+pre-fix baselines: rail concentration (**62.6%** of pre-fix output sat at a rail), the
+exact `p_yes_raw == 0.0` artifact rate (**17.8%** pre-fix), and EMOS `d` identifiability
+(`d ≈ 0.001` pre-fix). **If the rail share is still near 62.6% after the σ work, M3 is a
+foregone conclusion and the remaining spend should stop** — sharpness is the only lever
+that could carry a model from −0.28 to positive.
+
+**Ground-truth quality (#870)** — folded into the resolver dry run, so a warm Gamma cache
+makes it free:
+
+```bash
+python -m src.scripts.resolve_bracket_outcomes --no-network
+```
+
+Reports the Gamma-vs-METAR disagreement rate on the full evaluated population, zero-YES
+station-days split by whether the observed high fell in a real bracket gap, and the
+brackets-per-station-day distribution. M3 will be ~95% Gamma-scored; this is how that
+truth's error rate stops being unknown.
+
 ### M4 · Rebuild the entry rule — conditional, ~2026-09-05
 
 Only if M3 passes. Replace the near-certainty gate with an EV-based rule on calibrated
@@ -220,6 +251,8 @@ purely data-bound: the only thing between here and M3 is station-days accruing.*
 | #826 | Persist all evaluated-bracket snapshots | M0 (parallel) | ✅ Merged — clean-data clock started 2026-07-24 |
 | #865 | Re-point Pass 1 at `resolve_bracket_outcomes` (n=20 → 404) | M1 | ✅ Merged — Pass 1 complete |
 | #867 | Gamma resolves DISJOINT brackets as YES on one station-day | before M3 | **Open — blocks M3 ground truth** |
+| #869 | Post-fix model health — rail concentration, artifact rate, σ identifiability | **now, no waiting** | Shipped — run it |
+| #870 | Ground-truth quality — Gamma-vs-METAR rate, zero-YES days, ladder completeness | **now, no waiting** | Shipped — run it |
 | #822 | Market-vs-model skill test | M1 · M3 | Pass 1 done (**BSS −0.28**); **Pass 2 = the decision** |
 | #799 | σ unidentifiable — switch on ensemble spread, retrain | M2 | ✅ Merged |
 | #798 | Partial pooling instead of hard 60-sample cutover | M2 | ✅ Merged |

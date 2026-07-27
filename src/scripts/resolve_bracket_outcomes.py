@@ -662,6 +662,162 @@ def detect_multi_yes_station_days(resolved_rows: "list[dict]") -> "list[dict]":
     return out
 
 
+def cross_check_gamma_vs_metar(resolved_rows: "list[dict]") -> dict:
+    """Measure how often the two ground truths disagree (issue #870).
+
+    ``cross_check_against_settlements`` and ``..._direct`` (#858) both compare
+    against ``settlements`` -- the ~156 brackets MeteoEdge actually traded.
+    This compares the two ground truths on the FULL evaluated population: for
+    every Gamma-resolved row that also has an observed daily high on record,
+    what would METAR have said, and how often does that differ?
+
+    Why it matters: #822's M3 verdict is scored on a population that was 95.3%
+    Gamma-resolved on 2026-07-26, and we do not otherwise know that truth's
+    error rate. #867 found four Gamma collisions, but
+    ``detect_multi_yes_station_days`` only sees a collision when BOTH colliding
+    brackets are in the sample -- so it reports a floor, not a count. This
+    measures the whole overlap.
+
+    **A disagreement is not automatically a Gamma error.** METAR is the known-
+    weaker proxy -- #644 measured it booking the wrong outcome in ~22% of
+    audited settlements, which is precisely why #860 made Gamma authoritative.
+    What the rate bounds is the size of the region where the two truths are
+    inconsistent, i.e. how much of an M3 verdict could turn on which one was
+    picked. Disagreement concentrated on Celsius-denominated stations would
+    corroborate #867's keying hypothesis.
+
+    Returns a dict with ``n_comparable``, ``n_agree``, ``n_disagree``,
+    ``disagreement_rate``, the two directional counts, and ``by_station``.
+    """
+    stats: dict = {
+        "n_comparable": 0,
+        "n_agree": 0,
+        "n_disagree": 0,
+        "n_gamma_yes_metar_no": 0,
+        "n_gamma_no_metar_yes": 0,
+        "n_gamma_rows_without_observed_high": 0,
+    }
+    by_station: "dict[str, dict]" = defaultdict(lambda: {"n": 0, "n_disagree": 0})
+
+    for row in resolved_rows:
+        if row.get("resolution_source") != "gamma":
+            continue
+        observed_high = row.get("observed_high")
+        if observed_high is None:
+            stats["n_gamma_rows_without_observed_high"] += 1
+            continue
+        metar_yes = resolve_outcome(
+            row.get("bracket_low"), row.get("bracket_high"), observed_high
+        )
+        if metar_yes is None:
+            stats["n_gamma_rows_without_observed_high"] += 1
+            continue
+
+        gamma_yes = bool(row.get("resolved_yes"))
+        station = str(row.get("station") or "?")
+        stats["n_comparable"] += 1
+        by_station[station]["n"] += 1
+        if gamma_yes == metar_yes:
+            stats["n_agree"] += 1
+        else:
+            stats["n_disagree"] += 1
+            by_station[station]["n_disagree"] += 1
+            if gamma_yes:
+                stats["n_gamma_yes_metar_no"] += 1
+            else:
+                stats["n_gamma_no_metar_yes"] += 1
+
+    stats["disagreement_rate"] = (
+        stats["n_disagree"] / stats["n_comparable"] if stats["n_comparable"] else None
+    )
+    stats["by_station"] = {
+        st: {**v, "rate": v["n_disagree"] / v["n"] if v["n"] else None}
+        for st, v in sorted(by_station.items())
+    }
+    return stats
+
+
+def detect_zero_yes_station_days(resolved_rows: "list[dict]") -> "list[dict]":
+    """Return station-days where NO bracket resolved YES (issue #870).
+
+    The mirror of ``detect_multi_yes_station_days``, and the reason it exists:
+    that function flags only MORE than one YES, so a station-day resolving
+    nothing was invisible -- and it biases toward NO, the direction that makes
+    the model look bad.
+
+    **Not automatically a bug.** Per #861, US stations carry integer-Fahrenheit
+    brackets with genuine GAPS between them (KORD 76-77 then 78-79), so an
+    observed high landing in a gap legitimately resolves every bracket NO. The
+    signal is therefore in the RATE, and specifically in comparing the
+    Gamma-sourced rate against the METAR-sourced rate on comparable days: a
+    Gamma-only excess points at the resolution source, while a shared rate is
+    bracket geometry doing what it is supposed to do.
+
+    ``observed_high_in_a_gap`` records whether the day's observed high fell
+    outside every evaluated bracket, which is what distinguishes the two.
+    """
+    by_day: "dict[tuple, list[dict]]" = defaultdict(list)
+    for row in resolved_rows:
+        by_day[(row.get("station"), row.get("settlement_date"))].append(row)
+
+    out = []
+    for (station, settlement_date), rows in sorted(by_day.items(), key=lambda kv: str(kv[0])):
+        if any(r.get("resolved_yes") for r in rows):
+            continue
+        observed_high = next(
+            (r.get("observed_high") for r in rows if r.get("observed_high") is not None), None
+        )
+        in_a_gap = None
+        if observed_high is not None:
+            covered = False
+            for r in rows:
+                if resolve_outcome(r.get("bracket_low"), r.get("bracket_high"), observed_high):
+                    covered = True
+                    break
+            in_a_gap = not covered
+        out.append({
+            "station": station,
+            "settlement_date": settlement_date,
+            "n_brackets": len(rows),
+            "observed_high": observed_high,
+            "observed_high_in_a_gap": in_a_gap,
+            "sources": sorted({
+                str(r.get("resolution_source")) for r in rows if r.get("resolution_source")
+            }),
+        })
+    return out
+
+
+def ladder_completeness(resolved_rows: "list[dict]") -> dict:
+    """Brackets-per-station-day distribution (issue #870).
+
+    A Polymarket temperature ladder is ~11 brackets. Wide variance means
+    brackets are being dropped before ``_write_bracket_evaluations`` logs them,
+    and a partial ladder is not the "full evaluated population" #822's Pass 2
+    assumes it is scoring.
+    """
+    per_day: "dict[tuple, int]" = defaultdict(int)
+    for row in resolved_rows:
+        per_day[(row.get("station"), row.get("settlement_date"))] += 1
+
+    counts = sorted(per_day.values())
+    if not counts:
+        return {"n_station_days": 0, "histogram": {}, "median": None, "min": None, "max": None}
+
+    histogram: "dict[int, int]" = defaultdict(int)
+    for c in counts:
+        histogram[c] += 1
+    mid = len(counts) // 2
+    median = counts[mid] if len(counts) % 2 else (counts[mid - 1] + counts[mid]) / 2
+    return {
+        "n_station_days": len(counts),
+        "histogram": dict(sorted(histogram.items())),
+        "median": median,
+        "min": counts[0],
+        "max": counts[-1],
+    }
+
+
 # ---------------------------------------------------------------------------
 # Correctness check: compare against settlements.resolved_yes
 # ---------------------------------------------------------------------------
@@ -908,6 +1064,119 @@ def cross_check_against_settlements_direct(db_path: "Path | None") -> dict:
 # Dry-run CLI
 # ---------------------------------------------------------------------------
 
+def _ground_truth_quality_sections(resolved_rows: "list[dict]") -> "list[str]":
+    """Render the three ground-truth quality checks of issue #870.
+
+    Read together they answer one question: **how much can the M3 verdict turn
+    on the quality of the outcomes it was scored against?** M3 is ~95%
+    Gamma-resolved, and until these run that error rate is simply unknown.
+    """
+    lines: "list[str]" = []
+
+    # --- 1. Gamma vs METAR -------------------------------------------------
+    gm = cross_check_gamma_vs_metar(resolved_rows)
+    lines.append("## Ground-truth quality 1/3: Gamma vs METAR (issue #870)\n")
+    lines.append(
+        "Both truths on the FULL evaluated population, not just the ~156 traded brackets "
+        "`cross_check_against_settlements` can see. A disagreement is NOT automatically a "
+        "Gamma error -- METAR is the weaker proxy (#644: wrong ~22% of audited "
+        "settlements, which is why #860 made Gamma authoritative). What this bounds is how "
+        "much of an M3 verdict could turn on which truth was picked.\n"
+    )
+    if not gm["n_comparable"]:
+        lines.append(
+            "No Gamma-resolved row also has an observed daily high on record -- nothing to "
+            "compare. (Expected when running `--no-gamma`, or before `observations` covers "
+            "the Gamma-resolved station-days.)\n"
+        )
+    else:
+        rate = gm["disagreement_rate"]
+        lines.append("| Metric | Value |")
+        lines.append("|---|---|")
+        lines.append(f"| Comparable rows (Gamma-resolved AND observed high known) | {gm['n_comparable']} |")
+        lines.append(f"| Agree | {gm['n_agree']} |")
+        lines.append(f"| **Disagree** | **{gm['n_disagree']}** |")
+        lines.append(f"| **Disagreement rate** | **{rate:.1%}** |")
+        lines.append(f"| Gamma YES / METAR NO | {gm['n_gamma_yes_metar_no']} |")
+        lines.append(f"| Gamma NO / METAR YES | {gm['n_gamma_no_metar_yes']} |")
+        lines.append(
+            f"| Gamma rows with no observed high (not comparable) | "
+            f"{gm['n_gamma_rows_without_observed_high']} |"
+        )
+        lines.append("")
+        worst = sorted(
+            (s for s in gm["by_station"].items() if s[1]["n_disagree"]),
+            key=lambda kv: (-kv[1]["rate"], kv[0]),
+        )[:15]
+        if worst:
+            lines.append("Stations with any disagreement (worst rate first) -- a cluster on "
+                         "Celsius-denominated stations would corroborate #867's keying "
+                         "hypothesis:\n")
+            lines.append("| Station | Comparable | Disagree | Rate |")
+            lines.append("|---|---|---|---|")
+            for station, v in worst:
+                lines.append(f"| {station} | {v['n']} | {v['n_disagree']} | {v['rate']:.1%} |")
+            lines.append("")
+
+    # --- 2. Zero-YES station-days -----------------------------------------
+    zero_yes = detect_zero_yes_station_days(resolved_rows)
+    n_gap = sum(1 for z in zero_yes if z["observed_high_in_a_gap"] is True)
+    n_not_gap = sum(1 for z in zero_yes if z["observed_high_in_a_gap"] is False)
+    n_unknown_gap = sum(1 for z in zero_yes if z["observed_high_in_a_gap"] is None)
+
+    lines.append("## Ground-truth quality 2/3: station-days with NO YES bracket (issue #870)\n")
+    lines.append(
+        "The mirror of the multi-YES check above, which sees only MORE than one YES -- so a "
+        "day resolving nothing was invisible, and it biases toward NO (the direction that "
+        "flatters the market). NOT automatically a bug: US stations have integer-Fahrenheit "
+        "brackets with real GAPS between them (#861), so a high landing in a gap correctly "
+        "resolves everything NO.\n"
+    )
+    lines.append("| Shape | Station-days | Reading |")
+    lines.append("|---|---|---|")
+    lines.append(f"| Observed high fell in a bracket GAP | {n_gap} | Expected -- bracket "
+                 f"geometry working correctly |")
+    lines.append(f"| Observed high WAS covered by a bracket, yet nothing resolved YES | "
+                 f"{n_not_gap} | **Suspicious** -- a covered high must resolve exactly one "
+                 f"bracket YES |")
+    lines.append(f"| No observed high on record | {n_unknown_gap} | Undeterminable |")
+    lines.append("")
+    suspicious = [z for z in zero_yes if z["observed_high_in_a_gap"] is False]
+    if suspicious:
+        lines.append("| Station | Settlement date | Brackets | Observed high | Sources |")
+        lines.append("|---|---|---|---|---|")
+        for z in suspicious[:25]:
+            lines.append(
+                f"| {z['station']} | {z['settlement_date']} | {z['n_brackets']} | "
+                f"{z['observed_high']} | {', '.join(z['sources']) or '-'} |"
+            )
+        if len(suspicious) > 25:
+            lines.append(f"| ... | _{len(suspicious) - 25} more_ | | | |")
+        lines.append("")
+
+    # --- 3. Ladder completeness -------------------------------------------
+    ladder = ladder_completeness(resolved_rows)
+    lines.append("## Ground-truth quality 3/3: ladder completeness (issue #870)\n")
+    lines.append(
+        "A Polymarket temperature ladder is ~11 brackets. Wide variance means brackets are "
+        "dropped before `_write_bracket_evaluations` logs them, and a partial ladder is not "
+        "the full evaluated population #822's Pass 2 assumes it is scoring.\n"
+    )
+    if not ladder["n_station_days"]:
+        lines.append("No station-days to measure.\n")
+    else:
+        lines.append(
+            f"**Station-days: {ladder['n_station_days']} | brackets per station-day -- "
+            f"min {ladder['min']}, median {ladder['median']}, max {ladder['max']}**\n"
+        )
+        lines.append("| Brackets on the day | Station-days |")
+        lines.append("|---|---|")
+        for n_brackets, n_days in ladder["histogram"].items():
+            lines.append(f"| {n_brackets} | {n_days} |")
+        lines.append("")
+    return lines
+
+
 def build_dry_run_report(
     resolved_rows: "list[dict]", counts: dict, cross_check: dict, direct_check: dict, run_date: str
 ) -> str:
@@ -1032,6 +1301,8 @@ def build_dry_run_report(
         "inclusive interval expression, so changing one call site alone would diverge the "
         "two resolution paths.\n"
     )
+
+    lines.extend(_ground_truth_quality_sections(resolved_rows))
     lines.append(
         "Note on power: all brackets evaluated on a station-day share the SAME observed "
         "daily high, so they are not independent draws. The station-day figure above, not "
