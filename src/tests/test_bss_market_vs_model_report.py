@@ -635,7 +635,8 @@ class TestResolverEndToEnd:
 
     def test_multi_yes_boundary_exposure_is_reported(self, tmp_path):
         """#861: adjacent Celsius-derived brackets sharing an edge both resolve
-        YES under the inclusive interval. The report must count it, loudly."""
+        YES under the inclusive interval. The report must count it, loudly --
+        and attribute it to #861, not #867."""
         rows = [
             _row(ticker="0x001", bracket_low="84.2", bracket_high="86.0", p_yes_raw="0.30"),
             _row(ticker="0x002", bracket_low="86.0", bracket_high="87.8", p_yes_raw="0.30"),
@@ -652,7 +653,38 @@ class TestResolverEndToEnd:
         )
         assert rc == 0
         text = (out_dir / "bss_market_vs_model_pass1_2026-02-15.md").read_text()
-        assert "Boundary-convention exposure (issue #861): 1 station-day(s)" in text
+        assert "Impossible-outcome exposure: 1 station-day(s), 2 bracket-rows" in text
+        assert "| `boundary` — brackets touch or overlap | 1 |" in text
+        assert "| `disjoint` — brackets do not touch | 0 |" in text
+
+    def test_disjoint_collision_is_attributed_to_867_not_861(self, tmp_path):
+        """The defect in the 2026-07-26 report: brackets 3.6F apart cannot be an
+        interval-convention problem, and must not be filed under #861."""
+        rows = [
+            _row(ticker="0x001", bracket_low="75.2", bracket_high="77.0", p_yes_raw="0.30"),
+            _row(ticker="0x002", bracket_low="80.6", bracket_high="82.4", p_yes_raw="0.30"),
+        ]
+        candidates_csv, db_path = self._setup(
+            tmp_path, rows, [("KORD", "2026-02-01T20:00:00+00:00", 81.0)]
+        )
+        out_dir = tmp_path / "backtest_results"
+
+        # Gamma returns YES for both -- the #867 signature.
+        with patch(
+            "src.scripts.resolve_bracket_outcomes.fetch_market_resolution",
+            return_value=True,
+        ):
+            rc = run_report(
+                candidates_csv=candidates_csv, db_path=db_path, out_dir=out_dir,
+                run_date="2026-02-15", outcome_source=OUTCOME_SOURCE_RESOLVER,
+                gamma_cache_path=tmp_path / "cache.json",
+            )
+        assert rc == 0
+        text = (out_dir / "bss_market_vs_model_pass1_2026-02-15.md").read_text()
+        assert "| `disjoint` — brackets do not touch | 1 |" in text
+        assert "| `boundary` — brackets touch or overlap | 0 |" in text
+        assert "`disjoint`" in text
+        assert "#867" in text
 
     def test_clean_data_reports_zero_boundary_exposure(self, tmp_path):
         rows = [_row(ticker="0x001", bracket_low="60", bracket_high="65", p_yes_raw="0.20")]
@@ -668,7 +700,7 @@ class TestResolverEndToEnd:
         )
         assert rc == 0
         text = (out_dir / "bss_market_vs_model_pass1_2026-02-15.md").read_text()
-        assert "**0** station-days resolved YES on more than one bracket" in text
+        assert "Impossible-outcome check (issues #861 / #867): **0** station-days" in text
 
     def test_settlements_source_still_reproduces_legacy_report(self, tmp_path):
         """--outcome-source settlements must keep working unchanged, so the
