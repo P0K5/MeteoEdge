@@ -31,6 +31,7 @@ from src.scripts.resolve_bracket_outcomes import (
     COLLISION_BOUNDARY,
     COLLISION_DISJOINT,
     COLLISION_UNKNOWN,
+    GAMMA_CACHE_FORMAT_VERSION,
     build_dry_run_report,
     classify_multi_yes,
     compute_observed_highs,
@@ -950,13 +951,46 @@ class TestGammaCache:
 
     def test_non_bool_values_are_dropped(self, tmp_path):
         p = tmp_path / "cache.json"
-        p.write_text('{"0xaaa": true, "0xjunk": "maybe"}')
+        p.write_text(json.dumps({
+            "_cache_version": GAMMA_CACHE_FORMAT_VERSION,
+            "resolutions": {"0xaaa": True, "0xjunk": "maybe"},
+        }))
         assert load_gamma_cache(p) == {"0xaaa": True}
 
     def test_save_to_unwritable_path_does_not_raise(self, tmp_path):
         blocker = tmp_path / "afile"
         blocker.write_text("x")
         save_gamma_cache(blocker / "nested" / "cache.json", {"0xaaa": True})
+
+    def test_prefix_unversioned_cache_is_discarded(self, tmp_path):
+        """Issue #867: pre-fix caches may hold outcomes read from a
+        mismatched market (fetch_market_final_price took result[0] blindly).
+        A cache with no ``_cache_version`` marker at all predates the fix and
+        must be discarded on load, not trusted -- this is the exact
+        "pre-fix reads survive forever" gap the versioning closes."""
+        p = tmp_path / "cache.json"
+        p.write_text(json.dumps({"0xaaa": True, "0xbbb": False}))
+        assert load_gamma_cache(p) == {}
+
+    def test_wrong_version_cache_is_discarded(self, tmp_path):
+        """A cache written with a different (older or newer) version marker
+        is discarded, not partially trusted."""
+        p = tmp_path / "cache.json"
+        p.write_text(json.dumps({
+            "_cache_version": GAMMA_CACHE_FORMAT_VERSION + 1,
+            "resolutions": {"0xaaa": True},
+        }))
+        assert load_gamma_cache(p) == {}
+
+    def test_current_version_roundtrips(self, tmp_path):
+        """save_gamma_cache writes the current format version, and
+        load_gamma_cache trusts it back."""
+        p = tmp_path / "cache.json"
+        save_gamma_cache(p, {"0xaaa": True})
+        raw = json.loads(p.read_text())
+        assert raw["_cache_version"] == GAMMA_CACHE_FORMAT_VERSION
+        assert raw["resolutions"] == {"0xaaa": True}
+        assert load_gamma_cache(p) == {"0xaaa": True}
 
 
 class TestResolveGammaOutcomes:

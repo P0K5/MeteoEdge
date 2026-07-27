@@ -321,6 +321,18 @@ def resolve_outcome(
 # to be wrong ~1 time in 5. So this module now mirrors ``settle.py``'s
 # precedence exactly -- one resolution policy in this repo, not two.
 
+# Cache file format version. Bump this whenever a change to how entries are
+# RESOLVED could make previously-cached values wrong (not merely when the
+# on-disk shape changes) -- #867 found that fetch_market_final_price() could
+# blindly trust a non-matching market's price, so caches written before that
+# fix may hold wrong resolutions that would otherwise survive forever (a
+# decisive resolution is never re-fetched once cached). Any cache file that
+# doesn't carry this exact version marker -- including every pre-#867 cache,
+# which predates the marker entirely -- is discarded on load rather than
+# trusted.
+GAMMA_CACHE_FORMAT_VERSION = 2
+
+
 def load_gamma_cache(path: "Path | None") -> "dict[str, bool]":
     """Load the persistent {ticker: resolved_yes} Gamma cache.
 
@@ -329,7 +341,9 @@ def load_gamma_cache(path: "Path | None") -> "dict[str, bool]":
     is never fetched again -- this is what keeps the network cost of scoring
     hundreds of brackets/day bounded (issue #860).
 
-    A missing/corrupt/unreadable cache file is treated as an empty cache
+    A missing/corrupt/unreadable cache file, OR one whose format version
+    doesn't match ``GAMMA_CACHE_FORMAT_VERSION`` (including any pre-#867
+    cache, which has no version marker at all), is treated as an empty cache
     (warned, never raised): a cache is an optimisation, and losing it must
     only cost time, never correctness.
     """
@@ -346,7 +360,27 @@ def load_gamma_cache(path: "Path | None") -> "dict[str, bool]":
     if not isinstance(raw, dict):
         log.warning("[resolve_bracket_outcomes] gamma cache malformed (%s), ignoring", path)
         return {}
-    return {str(k): bool(v) for k, v in raw.items() if isinstance(v, bool)}
+
+    version = raw.get("_cache_version")
+    if version != GAMMA_CACHE_FORMAT_VERSION:
+        if version is None:
+            log.warning(
+                "[resolve_bracket_outcomes] gamma cache (%s) predates format "
+                "versioning (issue #867) -- discarding untrusted entries and "
+                "starting fresh", path,
+            )
+        else:
+            log.warning(
+                "[resolve_bracket_outcomes] gamma cache (%s) has version %r, "
+                "expected %r -- discarding", path, version, GAMMA_CACHE_FORMAT_VERSION,
+            )
+        return {}
+
+    entries = raw.get("resolutions")
+    if not isinstance(entries, dict):
+        log.warning("[resolve_bracket_outcomes] gamma cache malformed (%s), ignoring", path)
+        return {}
+    return {str(k): bool(v) for k, v in entries.items() if isinstance(v, bool)}
 
 
 def save_gamma_cache(path: "Path | None", cache: "dict[str, bool]") -> None:
@@ -355,9 +389,10 @@ def save_gamma_cache(path: "Path | None", cache: "dict[str, bool]") -> None:
     if path is None:
         return
     path = Path(path)
+    payload = {"_cache_version": GAMMA_CACHE_FORMAT_VERSION, "resolutions": cache}
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(cache, indent=2, sort_keys=True), encoding="utf-8")
+        path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
     except OSError as exc:
         log.warning("[resolve_bracket_outcomes] could not write gamma cache (%s): %s", path, exc)
 

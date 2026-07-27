@@ -3,9 +3,14 @@
 Covers:
 - Old path-form (GET /markets/<ticker>) returns 422 → function returns None gracefully
 - New query-param form (GET /markets?condition_ids=<ticker>&closed=true) returns market list
-- Parses outcomePrices from response[0] correctly
+- Parses outcomePrices from the entry whose conditionId matches the requested ticker
 - Returns None for empty response
 - Returns None for network errors
+- Returns None when the response contains no entry matching the requested ticker
+  (issue #867 -- Gamma's condition_ids filter is not a guarantee, and blindly
+  trusting result[0] resolved multiple DISJOINT brackets on the same
+  station-day as YES)
+- Selects the matching entry out of a multi-element response, wherever it sits
 """
 from unittest.mock import MagicMock, patch
 
@@ -32,7 +37,7 @@ TICKER = "0xabc123def456"
 class TestFetchMarketFinalPrice:
     def test_query_param_form_yes_won(self):
         """Successful query-param call: outcomePrices ~100 → returns ~100."""
-        market_data = [{"outcomePrices": '["0.97", "0.03"]'}]
+        market_data = [{"conditionId": TICKER, "outcomePrices": '["0.97", "0.03"]'}]
         mock_resp = _mock_response(200, market_data)
         with patch("src.data.polymarket.fetch", return_value=mock_resp) as mock_fetch:
             result = fetch_market_final_price(TICKER)
@@ -45,7 +50,7 @@ class TestFetchMarketFinalPrice:
 
     def test_query_param_form_no_won(self):
         """outcomePrices ~0 → returns ~0."""
-        market_data = [{"outcomePrices": '["0.02", "0.98"]'}]
+        market_data = [{"conditionId": TICKER, "outcomePrices": '["0.02", "0.98"]'}]
         mock_resp = _mock_response(200, market_data)
         with patch("src.data.polymarket.fetch", return_value=mock_resp):
             result = fetch_market_final_price(TICKER)
@@ -81,7 +86,7 @@ class TestFetchMarketFinalPrice:
 
     def test_outcome_prices_as_list(self):
         """outcomePrices already a list (not string) is handled."""
-        market_data = [{"outcomePrices": [0.99, 0.01]}]
+        market_data = [{"conditionId": TICKER, "outcomePrices": [0.99, 0.01]}]
         mock_resp = _mock_response(200, market_data)
         with patch("src.data.polymarket.fetch", return_value=mock_resp):
             result = fetch_market_final_price(TICKER)
@@ -89,12 +94,67 @@ class TestFetchMarketFinalPrice:
 
     def test_url_contains_closed_true(self):
         """URL must include closed=true filter."""
-        market_data = [{"outcomePrices": '["0.50", "0.50"]'}]
+        market_data = [{"conditionId": TICKER, "outcomePrices": '["0.50", "0.50"]'}]
         mock_resp = _mock_response(200, market_data)
         with patch("src.data.polymarket.fetch", return_value=mock_resp) as mock_fetch:
             fetch_market_final_price(TICKER)
         called_url = mock_fetch.call_args[0][0]
         assert "closed=true" in called_url
+
+    def test_non_matching_condition_id_returns_none(self):
+        """Issue #867: Gamma's condition_ids filter is a hint, not a guarantee.
+
+        A response whose only entry has a DIFFERENT condition ID than the one
+        requested must never be trusted -- it must degrade to None (indecisive,
+        falls back to METAR) rather than attribute another market's price to
+        this ticker.
+        """
+        market_data = [{"conditionId": "0xSOMEOTHERMARKET", "outcomePrices": '["0.97", "0.03"]'}]
+        mock_resp = _mock_response(200, market_data)
+        with patch("src.data.polymarket.fetch", return_value=mock_resp):
+            result = fetch_market_final_price(TICKER)
+        assert result is None
+
+    def test_multi_element_response_selects_matching_entry(self):
+        """A multi-element response must select the entry matching the
+        requested ticker, not blindly take result[0]."""
+        market_data = [
+            {"conditionId": TICKER, "outcomePrices": '["0.97", "0.03"]'},
+            {"conditionId": "0xanothermarket", "outcomePrices": '["0.10", "0.90"]'},
+        ]
+        mock_resp = _mock_response(200, market_data)
+        with patch("src.data.polymarket.fetch", return_value=mock_resp):
+            result = fetch_market_final_price(TICKER)
+        assert result == 97
+
+    def test_matching_entry_not_first_is_still_selected(self):
+        """The matching entry must be picked even when it isn't result[0] --
+        this is the exact scenario that produced #867's DISJOINT-bracket
+        collisions."""
+        market_data = [
+            {"conditionId": "0xanothermarket", "outcomePrices": '["0.97", "0.03"]'},
+            {"conditionId": TICKER, "outcomePrices": '["0.02", "0.98"]'},
+        ]
+        mock_resp = _mock_response(200, market_data)
+        with patch("src.data.polymarket.fetch", return_value=mock_resp):
+            result = fetch_market_final_price(TICKER)
+        assert result == 2
+
+    def test_condition_id_match_is_case_insensitive(self):
+        """0x hex condition IDs vary in case between requests/responses."""
+        market_data = [{"conditionId": TICKER.upper(), "outcomePrices": '["0.97", "0.03"]'}]
+        mock_resp = _mock_response(200, market_data)
+        with patch("src.data.polymarket.fetch", return_value=mock_resp):
+            result = fetch_market_final_price(TICKER)
+        assert result == 97
+
+    def test_snake_case_condition_id_field_is_recognised(self):
+        """Some responses use condition_id instead of conditionId."""
+        market_data = [{"condition_id": TICKER, "outcomePrices": '["0.97", "0.03"]'}]
+        mock_resp = _mock_response(200, market_data)
+        with patch("src.data.polymarket.fetch", return_value=mock_resp):
+            result = fetch_market_final_price(TICKER)
+        assert result == 97
 
 
 class TestFetchMarketResolution:

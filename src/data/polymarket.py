@@ -67,9 +67,33 @@ def fetch_market_final_price(ticker: str) -> int | None:
         if not result:
             log.warning("[polymarket] fetch_market_final_price(%s...): empty response", ticker[:14])
             return None
-        market = result[0]
     except Exception as e:
         log.warning("[polymarket] fetch_market_final_price(%s...): %s", ticker[:14], e)
+        return None
+
+    # Gamma's ?condition_ids= filter is a hint, not a guarantee -- it has been
+    # observed to return entries for OTHER condition IDs alongside (or instead
+    # of) the one requested. Blindly trusting result[0] silently attributed
+    # another market's outcome to this ticker, which resolved multiple
+    # DISJOINT brackets on the same station-day as YES (issue #867). Every
+    # candidate must be checked against the requested ticker before its price
+    # is trusted; hex condition IDs vary in case, so compare lower-cased.
+    market = None
+    wanted = ticker.lower()
+    for candidate in result:
+        if not isinstance(candidate, dict):
+            continue
+        cid = candidate.get("conditionId") or candidate.get("condition_id")
+        if isinstance(cid, str) and cid.lower() == wanted:
+            market = candidate
+            break
+
+    if market is None:
+        log.warning(
+            "[polymarket] fetch_market_final_price(%s...): response contained no "
+            "entry matching the requested condition ID -- treating as unresolved",
+            ticker[:14],
+        )
         return None
 
     raw = market.get("outcomePrices")
