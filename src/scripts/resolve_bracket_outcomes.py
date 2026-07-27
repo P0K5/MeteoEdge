@@ -568,6 +568,52 @@ def resolve_bracket_outcomes(
     return resolved_rows, counts
 
 
+#: Multi-YES collision kinds -- see ``classify_multi_yes``.
+COLLISION_BOUNDARY = "boundary"    # adjacent/overlapping brackets -- issue #861
+COLLISION_DISJOINT = "disjoint"    # brackets that do not touch -- issue #867
+COLLISION_UNKNOWN = "unknown"      # bracket bounds missing, cannot classify
+
+
+def classify_multi_yes(brackets: "list[tuple]") -> str:
+    """Classify a multi-YES station-day by the SHAPE of its colliding brackets.
+
+    The distinction matters because the two shapes have entirely different
+    causes and entirely different fixes, and conflating them sends a reader to
+    the wrong issue (which is exactly what the 2026-07-26 Pass-1 report did):
+
+    - ``boundary`` -- the YES brackets touch or overlap. An observed high
+      landing on a shared edge satisfies ``resolve_outcome``'s inclusive
+      ``lo <= x <= hi`` for both. This is issue #861, and it is a question
+      about which interval convention is correct.
+    - ``disjoint`` -- the YES brackets do not touch, so NO interval convention
+      of any kind can produce both. Something upstream returned the wrong
+      outcome: on 2026-07-26 four such station-days were all Gamma-resolved,
+      with brackets 3.6-21.6 F apart. This is issue #867, and it is a question
+      about whether the resolution is keyed to the right market.
+
+    *brackets* is the ``(low, high, source)`` list carried by
+    ``detect_multi_yes_station_days`` entries. A bracket with a missing bound
+    cannot be placed on the number line, so the day is ``unknown`` rather than
+    forced into one bucket.
+    """
+    bounds = []
+    for lo, hi, _source in brackets:
+        if lo is None or hi is None:
+            return COLLISION_UNKNOWN
+        try:
+            bounds.append((float(lo), float(hi)))
+        except (TypeError, ValueError):
+            return COLLISION_UNKNOWN
+    if len(bounds) < 2:
+        return COLLISION_UNKNOWN
+
+    bounds.sort()
+    for (_prev_lo, prev_hi), (next_lo, _next_hi) in zip(bounds, bounds[1:]):
+        if next_lo > prev_hi:
+            return COLLISION_DISJOINT
+    return COLLISION_BOUNDARY
+
+
 def detect_multi_yes_station_days(resolved_rows: "list[dict]") -> "list[dict]":
     """Return station-days where MORE THAN ONE bracket resolved YES.
 
@@ -575,16 +621,19 @@ def detect_multi_yes_station_days(resolved_rows: "list[dict]") -> "list[dict]":
     contain it -- two YES brackets on the same station-day is a logical
     impossibility and means the resolution is wrong somewhere.
 
-    This is a DIAGNOSTIC, not a fix. The 2026-07-25 production report showed
-    it happening on Celsius-derived brackets whose Fahrenheit conversions
-    share an edge (e.g. ZGSZ 84.2-86.0 and 86.0-87.8 are 29-30C and 30-31C;
-    an observed 86.0F == 30C sits exactly on the shared boundary and
-    ``resolve_outcome``'s inclusive ``lo <= x <= hi`` puts it in both).
-    The correct interval convention is NOT yet established -- the production
-    data is consistent with neither half-open form (see issue #861), and
-    ``settle.py`` shares the same inclusive expression, so guessing here
-    would silently diverge the two. Surfacing the count is the honest step
-    until the real convention is confirmed.
+    This is a DIAGNOSTIC, not a fix. Each entry carries a ``collision_kind``
+    (see ``classify_multi_yes``) separating the two distinct failure modes:
+    ``boundary`` collisions are the interval-convention question of issue #861
+    (Celsius-derived brackets whose Fahrenheit conversions share an edge --
+    e.g. ZGSZ 84.2-86.0 and 86.0-87.8 are 29-30C and 30-31C, and an observed
+    86.0F sits on the shared edge), while ``disjoint`` collisions cannot be an
+    interval question at all and point at the resolution source itself
+    (issue #867).
+
+    Nothing is auto-corrected in either case: the correct interval convention
+    is not yet established (production data fits neither half-open form), and
+    ``settle.py`` shares the same inclusive expression, so guessing here would
+    silently diverge the two.
     """
     by_day: "dict[tuple, list[dict]]" = defaultdict(list)
     for row in resolved_rows:
@@ -594,15 +643,21 @@ def detect_multi_yes_station_days(resolved_rows: "list[dict]") -> "list[dict]":
     out = []
     for (station, settlement_date), rows in sorted(by_day.items(), key=lambda kv: str(kv[0])):
         if len(rows) > 1:
+            brackets = [
+                (r.get("bracket_low"), r.get("bracket_high"), r.get("resolution_source"))
+                for r in rows
+            ]
             out.append({
                 "station": station,
                 "settlement_date": settlement_date,
                 "n_yes": len(rows),
                 "observed_high": rows[0].get("observed_high"),
-                "brackets": [
-                    (r.get("bracket_low"), r.get("bracket_high"), r.get("resolution_source"))
-                    for r in rows
-                ],
+                "brackets": brackets,
+                "collision_kind": classify_multi_yes(brackets),
+                "sources": sorted({
+                    str(r.get("resolution_source")) for r in rows
+                    if r.get("resolution_source")
+                }),
             })
     return out
 
@@ -928,29 +983,55 @@ def build_dry_run_report(
     lines.append("")
 
     multi_yes = detect_multi_yes_station_days(resolved_rows)
+    n_boundary = sum(1 for m in multi_yes if m["collision_kind"] == COLLISION_BOUNDARY)
+    n_disjoint = sum(1 for m in multi_yes if m["collision_kind"] == COLLISION_DISJOINT)
+    n_unknown = sum(1 for m in multi_yes if m["collision_kind"] == COLLISION_UNKNOWN)
+
     lines.append("## Diagnostic: station-days with more than one YES bracket\n")
     lines.append(
         "A station-day has exactly ONE daily high, so at most one bracket can contain it. "
         "More than one YES is a logical impossibility and means resolution is wrong "
-        "somewhere. Known cause on Celsius-derived brackets: their Fahrenheit conversions "
-        "share an edge (ZGSZ 84.2-86.0 and 86.0-87.8 are 29-30C and 30-31C), and "
-        "`resolve_outcome`'s inclusive `lo <= x <= hi` puts a value sitting exactly on the "
-        "boundary in both. The correct convention is not yet established -- see issue "
-        "#861; this is reported, deliberately not silently 'fixed'.\n"
+        "somewhere. The two shapes below have different causes and different fixes -- "
+        "do not read them as one number.\n"
     )
+    lines.append("| Collision shape | Station-days | What it means |")
+    lines.append("|---|---|---|")
+    lines.append(
+        f"| `boundary` (adjacent/overlapping) | {n_boundary} | Issue #861 -- Celsius-derived "
+        f"brackets whose Fahrenheit conversions share an edge (ZGSZ 84.2-86.0 and 86.0-87.8 "
+        f"are 29-30C and 30-31C); `resolve_outcome`'s inclusive `lo <= x <= hi` puts a value "
+        f"on the shared edge in both. Correct convention not yet established. |"
+    )
+    lines.append(
+        f"| `disjoint` (brackets do not touch) | {n_disjoint} | Issue #867 -- NO interval "
+        f"convention can produce both. The resolution source itself returned the wrong "
+        f"outcome; suspect ticker/market keying. |"
+    )
+    if n_unknown:
+        lines.append(
+            f"| `unknown` | {n_unknown} | Bracket bounds missing -- cannot be placed on the "
+            f"number line. |"
+        )
+    lines.append("")
     lines.append(f"**Affected station-days: {len(multi_yes)}**\n")
     if multi_yes:
-        lines.append("| station | settlement_date | n_yes | observed_high | brackets (low, high, source) |")
-        lines.append("|---|---|---|---|---|")
+        lines.append("| station | settlement_date | shape | n_yes | observed_high | "
+                     "brackets (low, high, source) |")
+        lines.append("|---|---|---|---|---|---|")
         for m in multi_yes[:25]:
             brackets = "; ".join(f"({b[0]}, {b[1]}, {b[2]})" for b in m["brackets"])
             lines.append(
-                f"| {m['station']} | {m['settlement_date']} | {m['n_yes']} | "
-                f"{m['observed_high']} | {brackets} |"
+                f"| {m['station']} | {m['settlement_date']} | `{m['collision_kind']}` | "
+                f"{m['n_yes']} | {m['observed_high']} | {brackets} |"
             )
         if len(multi_yes) > 25:
-            lines.append(f"| ... | ... | ... | ... | _{len(multi_yes) - 25} more_ |")
+            lines.append(f"| ... | ... | ... | ... | ... | _{len(multi_yes) - 25} more_ |")
         lines.append("")
+    lines.append(
+        "Reported, deliberately not silently 'fixed' -- `settle.py` shares the same "
+        "inclusive interval expression, so changing one call site alone would diverge the "
+        "two resolution paths.\n"
+    )
     lines.append(
         "Note on power: all brackets evaluated on a station-day share the SAME observed "
         "daily high, so they are not independent draws. The station-day figure above, not "

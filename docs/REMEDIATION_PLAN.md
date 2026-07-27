@@ -19,6 +19,7 @@
 | Next-day shadow, NO side | **75%** win rate, **−$1.64** over 84 settled | Breakeven at a 76¢ entry is **76%**. We are just under water |
 | EMOS shadow vs legacy (Chicago CRPS) | **2.79 vs 2.74** | Shadow is currently *worse* than the baseline it should replace |
 | KORD live entries on a false signal | **100%** | Every live entry fires at the 19:00-CDT UTC rollover on an exact `p_yes = 0.0` code artifact |
+| **Pass-1 skill test vs. the market** (2026-07-26) | **BSS = −0.2813** over 404 brackets / 300 station-days | The pre-fix model's probabilities are **28% worse than the market's own prices**. See M1 below |
 
 ### The one-line diagnosis
 
@@ -82,24 +83,46 @@ not a general calibration measure.
 **Outcome:** an early directional read, weeks before the formal gate.
 **Issue:** #822 (pass 1).
 
-**Status 2026-07-25 — executed, then re-scoped.** The first run
-(`backtest_results/bss_market_vs_model_pass1_2026-07-25.md`) returned **BSS = 0.0503 on
-n = 20** — 6.7% of the `n ≥ 300` the decision rule requires, with the topline carried
-entirely by two n=2 segments while `same_day` (n=18) sat at BSS = −0.0025. **Not a
-result.** The one finding robust to the sample size: the pre-fix model's near-certainty NO
-calls (`p_yes` 0.00–0.02, 13 of 20 rows) had a real-world YES rate of 15.4%, a +15.1pp
-calibration gap — #820's failure mode, visible in the data.
+**Status 2026-07-26 — COMPLETE. Verdict: the pre-fix model has no edge over the market.**
 
-The sample did not die from missing data; it died on the **outcome join**. Pass 1 keyed
-outcomes off `settlements`, which only covers brackets we actually *traded* (~156 rows
-all-time), so 360 of 380 de-duplicated brackets were dropped for "no definitive settlement
-match". Whether a bracket resolved YES is a fact about the weather, not about whether we
-traded it.
+| Run | n | Station-days | BSS | Reading |
+|---|---|---|---|---|
+| 2026-07-25 (settlements join) | 20 | — | +0.0503 | Not a result — 6.7% of required power |
+| **2026-07-26 (#865, resolver)** | **404** | **300** | **−0.2813** | **No edge (BSS ≤ 0)** |
 
-**#865 re-points Pass 1 at `resolve_bracket_outcomes`** (the Gamma-first capability built
-for Pass 2 in #850/#858/#860/#863), lifting n from 20 to roughly the full ~380 on the
-*same archived data* — no waiting. Still Pass 1: pre-fix probabilities, gate-selected
-sample, not the M3 gate.
+The first run died on the **outcome join**, not on missing data: Pass 1 keyed outcomes off
+`settlements`, which only covers brackets we actually *traded* (~156 rows all-time), so 360
+of 380 de-duplicated brackets were dropped. #865 re-pointed Pass 1 at
+`resolve_bracket_outcomes` (the Gamma-first capability built for Pass 2 in
+#850/#858/#860/#863), lifting n to 404 across **300 station-days** — the decision rule's
+power bar, on the *same archived data*, with no waiting.
+
+Ground truth is strong: **95.3% Gamma** (Polymarket's official on-chain resolution), 4.7%
+METAR fallback — so the result is not an artefact of the proxy #644 measured as wrong ~22%
+of the time.
+
+**No pocket of skill anywhere.** All ten UTC buckets negative; `same_day` −0.2744,
+`next_day` −0.2969. Least-bad bucket UTC+8 at −0.0787.
+
+**The mechanism, from the reliability table.** 62.6% of the model's output sits at a rail —
+33.4% at `p_yes` 0.00–0.02 (observed YES rate **24.4%**) and 29.2% at 0.95–1.00 (observed
+**81.4%**). Meanwhile the market puts 63.9% of its mass in 0.20–0.35 and lands at 22.9%
+observed against 23.5% predicted: **a 0.6pp calibration gap.** The market is nearly perfectly
+calibrated on the exact population where the model emits false certainties. This is the
+one-line diagnosis at the top of this document, now measured at scale.
+
+**Known contamination, bounded.** The 2026-07-26 run flagged 5 station-days resolving YES on
+more than one bracket — 1 boundary collision (#861) and 4 *disjoint* Gamma collisions (#867,
+opened from this run). 10 rows of 404 = 2.5%; flipping all five spurious YES to NO in the
+maximally model-favourable direction moves `BS_model` by at most 5/404 = 0.0124, taking BSS
+to ≈ −0.21. **The verdict does not turn on it.** #867 is nonetheless blocking for M3, where
+the sample is Gamma-resolved at ~95% and the verdict actually binds.
+
+**What this does NOT settle: M3.** This archive predates every M0/M2 fix — #810, #820, #799,
+#798, #823, #824. Per this plan's own terms, a negative Pass 1 condemns the *old* model, not
+the fixed one. It does raise the prior on M3 sharply. The one genuine mechanism by which M3
+could differ: this model's failure is pathological overconfidence, and the σ work
+(#799/#798/#824) is precisely the lever that governs sharpness.
 
 #### Runbook — running Pass 1 on the bot host
 
@@ -195,13 +218,14 @@ purely data-bound: the only thing between here and M3 is station-days accruing.*
 |---|---|---|---|
 | #820 | Evening entries price tomorrow with today's observations | M0 | ✅ Merged |
 | #826 | Persist all evaluated-bracket snapshots | M0 (parallel) | ✅ Merged — clean-data clock started 2026-07-24 |
-| #865 | Re-point Pass 1 at `resolve_bracket_outcomes` (n=20 → ~380) | M1 | **Next** |
-| #822 | Market-vs-model skill test | M1 · M3 | Pass 1 run (inconclusive); **Pass 2 = the decision** |
+| #865 | Re-point Pass 1 at `resolve_bracket_outcomes` (n=20 → 404) | M1 | ✅ Merged — Pass 1 complete |
+| #867 | Gamma resolves DISJOINT brackets as YES on one station-day | before M3 | **Open — blocks M3 ground truth** |
+| #822 | Market-vs-model skill test | M1 · M3 | Pass 1 done (**BSS −0.28**); **Pass 2 = the decision** |
 | #799 | σ unidentifiable — switch on ensemble spread, retrain | M2 | ✅ Merged |
 | #798 | Partial pooling instead of hard 60-sample cutover | M2 | ✅ Merged |
 | #823 | Recompute promotion bars excluding artifact rows | M2 | ✅ Merged |
 | #824 | Capture ECMWF ensemble spread (2,750 rows have none) | M2 | ✅ Merged |
-| #861 | Bracket-boundary convention (adjacent brackets both YES) | before M3 | **Open — resolve before the verdict** |
+| #861 | Bracket-boundary convention (**adjacent** brackets both YES) | before M3 | Open — 1 station-day in the 2026-07-26 run |
 | #450 | Calibration backtest: reliability + CRPS over 30 days | M3 | Open |
 | #782 | Anchor day partitions to settlement window | after M0 | Unblocked — #820 is merged |
 | #591 | Climb tables / entry windows — same mechanism as #820 | after M0 | Unblocked — #820 is merged |
@@ -241,6 +265,13 @@ Development is fast. These are not:
 A 75% win rate against a 76% breakeven, and EMOS shadow trailing legacy on CRPS, are not the
 fingerprints of a system beating its market. **The most likely outcome of M3 is `BSS ≤ 0`.**
 This plan is built so that discovering it is cheap and fast rather than expensive and slow.
+
+**Updated 2026-07-26.** Pass 1 came in at **BSS = −0.2813** on 300 station-days — full power,
+95% official ground truth, negative in every segment. That is the pre-fix model, so it does
+not pre-empt M3; but the base case above should now be read as the *strong* case, not the
+cautious one. M3 has to travel from −0.28 to positive, and the only lever that could carry it
+is the σ work's effect on sharpness. Plan accordingly: the cost of reaching M3 is already
+sunk and small, but M4/M5 should be treated as unlikely to be reached.
 
 ---
 

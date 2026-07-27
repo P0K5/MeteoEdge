@@ -28,7 +28,11 @@ import pytest
 from unittest.mock import patch
 
 from src.scripts.resolve_bracket_outcomes import (
+    COLLISION_BOUNDARY,
+    COLLISION_DISJOINT,
+    COLLISION_UNKNOWN,
     build_dry_run_report,
+    classify_multi_yes,
     compute_observed_highs,
     cross_check_against_settlements,
     cross_check_against_settlements_direct,
@@ -1132,6 +1136,8 @@ class TestDetectMultiYesStationDays:
         assert len(out) == 1
         assert out[0]["station"] == "ZGSZ"
         assert out[0]["n_yes"] == 2
+        # Adjacent brackets sharing edge 86.0 -- the interval-convention question.
+        assert out[0]["collision_kind"] == COLLISION_BOUNDARY
 
     def test_single_yes_is_not_flagged(self):
         rows = [
@@ -1154,6 +1160,100 @@ class TestDetectMultiYesStationDays:
              "resolution_source": "metar"},
         ]
         assert detect_multi_yes_station_days(rows) == []
+
+
+class TestClassifyMultiYes:
+    """A multi-YES station-day is impossible either way, but the SHAPE of the
+    collision says which bug caused it -- #861 (interval convention) or #867
+    (the resolution source itself). Conflating them sends readers to the wrong
+    issue, which is exactly what the 2026-07-26 Pass-1 report did."""
+
+    def test_adjacent_brackets_sharing_an_edge_are_boundary(self):
+        # ZGSZ 29-30C and 30-31C in Fahrenheit -- share edge 86.0.
+        assert classify_multi_yes([
+            (84.2, 86.0, "metar"), (86.0, 87.8, "metar"),
+        ]) == COLLISION_BOUNDARY
+
+    def test_overlapping_brackets_are_boundary(self):
+        assert classify_multi_yes([
+            (80.0, 86.0, "metar"), (84.0, 90.0, "metar"),
+        ]) == COLLISION_BOUNDARY
+
+    def test_brackets_that_do_not_touch_are_disjoint(self):
+        # RKSI 2026-07-05: 3.6F apart, both Gamma-resolved. No interval
+        # convention produces both -- issue #867.
+        assert classify_multi_yes([
+            (75.2, 77.0, "gamma"), (80.6, 82.4, "gamma"),
+        ]) == COLLISION_DISJOINT
+
+    def test_far_apart_brackets_are_disjoint(self):
+        # LFPB 2026-07-03: 21.6F apart.
+        assert classify_multi_yes([
+            (59.0, 60.8, "gamma"), (82.4, 84.2, "gamma"),
+        ]) == COLLISION_DISJOINT
+
+    def test_unsorted_input_is_classified_on_the_number_line_not_input_order(self):
+        # RJTT 2026-07-06 as it appeared in the report: higher bracket first.
+        assert classify_multi_yes([
+            (78.8, 80.6, "gamma"), (69.8, 71.6, "gamma"),
+        ]) == COLLISION_DISJOINT
+
+    def test_three_brackets_with_one_gap_are_disjoint(self):
+        """Any gap anywhere makes the day unexplainable by an interval rule."""
+        assert classify_multi_yes([
+            (60.0, 62.0, "gamma"), (62.0, 64.0, "gamma"), (80.0, 82.0, "gamma"),
+        ]) == COLLISION_DISJOINT
+
+    def test_missing_bound_is_unknown_not_forced_into_a_bucket(self):
+        assert classify_multi_yes([
+            (None, 86.0, "metar"), (86.0, 87.8, "metar"),
+        ]) == COLLISION_UNKNOWN
+
+    def test_non_numeric_bound_is_unknown(self):
+        assert classify_multi_yes([
+            ("n/a", 86.0, "metar"), (86.0, 87.8, "metar"),
+        ]) == COLLISION_UNKNOWN
+
+    def test_single_bracket_is_unknown(self):
+        assert classify_multi_yes([(84.2, 86.0, "metar")]) == COLLISION_UNKNOWN
+
+    def test_detect_attaches_kind_and_sources(self):
+        rows = [
+            {"station": "RKSI", "settlement_date": "2026-07-05", "resolved_yes": True,
+             "bracket_low": 75.2, "bracket_high": 77.0, "observed_high": 80.6,
+             "resolution_source": "gamma"},
+            {"station": "RKSI", "settlement_date": "2026-07-05", "resolved_yes": True,
+             "bracket_low": 80.6, "bracket_high": 82.4, "observed_high": 80.6,
+             "resolution_source": "gamma"},
+        ]
+        out = detect_multi_yes_station_days(rows)
+        assert out[0]["collision_kind"] == COLLISION_DISJOINT
+        assert out[0]["sources"] == ["gamma"]
+
+    def test_dry_run_report_splits_the_two_shapes(self):
+        """The report must not present one conflated count."""
+        rows = [
+            # boundary pair (#861)
+            {"station": "ZGSZ", "settlement_date": "2026-06-12", "resolved_yes": True,
+             "bracket_low": 84.2, "bracket_high": 86.0, "observed_high": 86.0,
+             "resolution_source": "metar"},
+            {"station": "ZGSZ", "settlement_date": "2026-06-12", "resolved_yes": True,
+             "bracket_low": 86.0, "bracket_high": 87.8, "observed_high": 86.0,
+             "resolution_source": "metar"},
+            # disjoint pair (#867)
+            {"station": "RKSI", "settlement_date": "2026-07-05", "resolved_yes": True,
+             "bracket_low": 75.2, "bracket_high": 77.0, "observed_high": 80.6,
+             "resolution_source": "gamma"},
+            {"station": "RKSI", "settlement_date": "2026-07-05", "resolved_yes": True,
+             "bracket_low": 80.6, "bracket_high": 82.4, "observed_high": 80.6,
+             "resolution_source": "gamma"},
+        ]
+        report = build_dry_run_report(
+            rows, {"n_bracket_rows": 4, "n_station_days": 2}, {}, {}, "2026-02-15"
+        )
+        assert "| `boundary` (adjacent/overlapping) | 1 |" in report
+        assert "| `disjoint` (brackets do not touch) | 1 |" in report
+        assert "#867" in report
 
 
 class TestDirectCheckResolutionSource:

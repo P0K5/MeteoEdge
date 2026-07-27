@@ -138,8 +138,9 @@ from src.scripts.calibration_report import (  # noqa: E402
     BUCKET_EDGES, brier_score, build_reliability, format_reliability,
 )
 from src.scripts.resolve_bracket_outcomes import (  # noqa: E402
-    _DEFAULT_CACHE, compute_observed_highs, detect_multi_yes_station_days,
-    resolve_bracket_rows, resolve_gamma_outcomes,
+    COLLISION_BOUNDARY, COLLISION_DISJOINT, COLLISION_UNKNOWN, _DEFAULT_CACHE,
+    compute_observed_highs, detect_multi_yes_station_days, resolve_bracket_rows,
+    resolve_gamma_outcomes,
 )
 from src.utils.log_rotation import rotated_sources  # noqa: E402
 
@@ -554,15 +555,24 @@ def _ground_truth_section(samples: "list[dict]", ocounts: dict) -> "list[str]":
        #644 measured disagreeing with the official result ~22% of the time.
        A report dominated by METAR rows deserves more scepticism than one
        dominated by Gamma rows, so the split is stated rather than buried.
-    2. **The #861 boundary exposure.** ``resolve_outcome`` treats brackets as
-       ``[low, high]`` -- inclusive at both ends -- so an observed high landing
-       exactly on the shared edge of two adjacent (Celsius-derived) brackets
-       resolves YES for both, which is physically impossible. #861 is open
-       because production data fits neither half-open convention. Gamma-first
-       precedence means a Gamma-resolved bracket never consults the interval
-       logic at all, so the exposure is bounded -- but it must be *counted*
-       here, not assumed away, since it biases the YES rate the BSS is
-       computed against.
+    2. **Impossible outcomes.** A station-day has one daily high, so at most
+       one bracket can contain it. Multiple YES brackets on the same
+       station-day means the ground truth is wrong somewhere, and it biases
+       the YES rate the BSS is computed against -- so it is *counted* here,
+       never assumed away. The count is split by collision shape because the
+       two shapes have different causes and different fixes, and reporting one
+       number sends the reader to the wrong issue (which is what the
+       2026-07-26 run did):
+
+       - ``boundary`` -- the brackets touch or overlap, so an observed high on
+         the shared edge satisfies ``resolve_outcome``'s inclusive
+         ``lo <= x <= hi`` for both. Issue #861; a question about which
+         interval convention is correct.
+       - ``disjoint`` -- the brackets do not touch, so NO interval convention
+         can produce both and the resolution source itself is wrong. Issue
+         #867. This is the more serious of the two: on 2026-07-26 all four
+         such station-days were Gamma-resolved, and Gamma decides ~95% of the
+         population the M3 verdict will be scored on.
     """
     lines = ["## Outcome ground truth\n"]
     gamma_n = ocounts.get("resolved_from_gamma", 0)
@@ -595,27 +605,40 @@ def _ground_truth_section(samples: "list[dict]", ocounts: dict) -> "list[str]":
     multi_yes = detect_multi_yes_station_days(samples)
     if multi_yes:
         affected = sum(m["n_yes"] for m in multi_yes)
+        n_boundary = sum(1 for m in multi_yes if m["collision_kind"] == COLLISION_BOUNDARY)
+        n_disjoint = sum(1 for m in multi_yes if m["collision_kind"] == COLLISION_DISJOINT)
+        n_unknown = sum(1 for m in multi_yes if m["collision_kind"] == COLLISION_UNKNOWN)
         lines.append(
-            f"⚠️ **Boundary-convention exposure (issue #861): {len(multi_yes)} station-day(s), "
+            f"⚠️ **Impossible-outcome exposure: {len(multi_yes)} station-day(s), "
             f"{affected} bracket-rows** resolved YES on more than one bracket. A station-day "
             f"has one daily high, so at most one bracket can contain it -- these rows inflate "
             f"the YES count and bias BS_model/BS_market. Diagnostic only; nothing is "
             f"auto-corrected.\n"
         )
-        lines.append("| Station | Settlement date | YES brackets | Observed high |")
-        lines.append("|---|---|---|---|")
+        lines.append("| Collision shape | Station-days | Issue |")
+        lines.append("|---|---|---|")
+        lines.append(f"| `boundary` — brackets touch or overlap | {n_boundary} | "
+                     f"#861 (which interval convention is correct) |")
+        lines.append(f"| `disjoint` — brackets do not touch | {n_disjoint} | "
+                     f"#867 (no interval convention can produce this — the resolution "
+                     f"source is wrong) |")
+        if n_unknown:
+            lines.append(f"| `unknown` — bracket bounds missing | {n_unknown} | — |")
+        lines.append("")
+        lines.append("| Station | Settlement date | Shape | YES brackets | Observed high |")
+        lines.append("|---|---|---|---|---|")
         for m in multi_yes[:20]:
             brackets = ", ".join(
                 f"{lo}-{hi} ({src})" for lo, hi, src in m["brackets"]
             )
-            lines.append(f"| {m['station']} | {m['settlement_date']} | {brackets} | "
-                         f"{m['observed_high']} |")
+            lines.append(f"| {m['station']} | {m['settlement_date']} | "
+                         f"`{m['collision_kind']}` | {brackets} | {m['observed_high']} |")
         if len(multi_yes) > 20:
-            lines.append(f"| … | {len(multi_yes) - 20} more | | |")
+            lines.append(f"| … | {len(multi_yes) - 20} more | | | |")
         lines.append("")
     else:
-        lines.append("Boundary-convention check (issue #861): **0** station-days resolved "
-                     "YES on more than one bracket.\n")
+        lines.append("Impossible-outcome check (issues #861 / #867): **0** station-days "
+                     "resolved YES on more than one bracket.\n")
     return lines
 
 
