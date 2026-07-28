@@ -731,7 +731,7 @@ def scan_markets(
                 # mins_left here is this market's own lead time (its close is
                 # the next-day date, not today's), so it doubles as the lead
                 # hours the #665 lead-bin machinery expects.
-                emos_mode_used = "next_day"
+                emos_mode_used = get_city_mode(city, db) if db is not None else "legacy"
                 # Issue #704 (Gap 2): record whether a same-station LIVE
                 # position is open right now, so the shadow window can
                 # quantify cross-day exposure overlap for the deferred
