@@ -17,7 +17,16 @@ Output:
     - Flag cities at risk (< 60 rows)
     - Estimated readiness date: reset_date + (60 - current_rows) days
     - Sigma quality per model: % of rows at exactly SIGMA_FLOOR_F (floor
-      saturation) and % of rows with NULL sigma_f (see issue #555)
+      saturation) and % of rows with NULL sigma_f (see issue #555), plus
+      % of rows with sigma_f < SIGMA_FLOOR_F -- the sub-floor share (issue
+      #887) -- the raw, unfloored spread #555 started persisting to
+      model_forecast_log.sigma_f. A high sub-floor share is EXPECTED for
+      gefs (63% at #887's baseline) and is not itself a problem for EMOS
+      training, which deliberately consumes this raw column -- but it is
+      exactly why #887 decided serving must floor its OWN consumption of
+      ensemble_sigma_f rather than assume the persisted column already
+      does. Tracked here so a future regression (e.g. a capture change
+      that suddenly floors sigma_f before persisting) is visible.
 """
 import argparse
 import math
@@ -47,13 +56,21 @@ def get_city_for_station(station: str) -> str:
 
 
 def print_sigma_quality_report(db: Database) -> None:
-    """Print per-model sigma_f quality: floor-saturation and NULL rates.
+    """Print per-model sigma_f quality: floor-saturation, sub-floor share, and NULL rates.
 
     #555: a floored or NULL sigma_f starves EMOS's spread coefficient ``d``
     of signal. This flags, per model:
       - % of rows with sigma_f exactly == SIGMA_FLOOR_F (floor-saturated —
         only meaningful for channels that attempt to derive a sigma, e.g.
         gefs; a high rate there means the real spread is being clamped away)
+      - % of rows with sigma_f < SIGMA_FLOOR_F (sub-floor share, issue #887)
+        — the under-dispersive signature the #887 raw-vs-calibrated serving
+        decision was made against (63% of gefs rows at the 2026-07-28
+        baseline). Expected to be nonzero and is NOT itself a defect: EMOS
+        training deliberately consumes this raw column (fetch_training_data
+        default sigma_source="ensemble"). Watched here so a capture-side
+        regression that started flooring sigma_f before persisting it (which
+        would silently undo #555) shows up as this metric dropping to ~0.
       - % of rows with sigma_f IS NULL (channel has no sigma source at all)
     """
     cursor = db._conn.execute(
@@ -62,19 +79,20 @@ def print_sigma_quality_report(db: Database) -> None:
             model,
             COUNT(*) as total,
             SUM(CASE WHEN sigma_f IS NULL THEN 1 ELSE 0 END) as null_count,
-            SUM(CASE WHEN sigma_f = ? THEN 1 ELSE 0 END) as floor_count
+            SUM(CASE WHEN sigma_f = ? THEN 1 ELSE 0 END) as floor_count,
+            SUM(CASE WHEN sigma_f < ? THEN 1 ELSE 0 END) as sub_floor_count
         FROM model_forecast_log
         GROUP BY model
         ORDER BY model
         """,
-        (SIGMA_FLOOR_F,),
+        (SIGMA_FLOOR_F, SIGMA_FLOOR_F),
     )
     rows = cursor.fetchall()
 
     print("=" * 80)
     print(f"Sigma Quality by Model (SIGMA_FLOOR_F = {SIGMA_FLOOR_F:.2f}F):")
     print("-" * 80)
-    print(f"{'Model':<15} {'Rows':>8} {'NULL sigma_f':>16} {'At floor':>16}")
+    print(f"{'Model':<15} {'Rows':>8} {'NULL sigma_f':>16} {'At floor':>16} {'Below floor':>16}")
     print("-" * 80)
 
     if not rows:
@@ -82,11 +100,16 @@ def print_sigma_quality_report(db: Database) -> None:
         print()
         return
 
-    for model, total, null_count, floor_count in rows:
+    for model, total, null_count, floor_count, sub_floor_count in rows:
         null_pct = f"{null_count}/{total} ({100.0 * null_count / total:.0f}%)"
         floor_pct = f"{floor_count}/{total} ({100.0 * floor_count / total:.0f}%)"
-        print(f"{model:<15} {total:>8} {null_pct:>16} {floor_pct:>16}")
+        sub_floor_pct = f"{sub_floor_count}/{total} ({100.0 * sub_floor_count / total:.0f}%)"
+        print(f"{model:<15} {total:>8} {null_pct:>16} {floor_pct:>16} {sub_floor_pct:>16}")
 
+    print()
+    print("Below-floor share (#887): expected/non-zero for gefs -- EMOS training")
+    print("consumes this raw column on purpose. A sudden drop toward 0% would mean")
+    print("capture is flooring sigma_f before persisting it (a #555 regression).")
     print()
 
 

@@ -52,8 +52,6 @@ from __future__ import annotations
 import statistics
 from datetime import datetime, timedelta, timezone
 
-from scipy.stats import linregress
-
 SIGMA_FLOOR_F: float = 1.0
 MIN_CALIBRATION_SAMPLES: int = 30
 
@@ -171,6 +169,12 @@ def _calibrated_sigma(sigma_naive: float, pairs: list[tuple[float, float]]) -> f
     if len(set(xs)) < 2:
         # All x-values identical — regression is undefined; return naive
         return max(sigma_naive, SIGMA_FLOOR_F)
+
+    # Imported lazily (issue #887): this is the only function in the module
+    # that needs scipy, and SIGMA_FLOOR_F is a lightweight constant other
+    # modules (e.g. src.model.envelope) need without pulling in scipy as a
+    # transitive import just to read a float.
+    from scipy.stats import linregress
 
     result = linregress(xs, ys)
     sigma_cal = result.slope * sigma_naive + result.intercept

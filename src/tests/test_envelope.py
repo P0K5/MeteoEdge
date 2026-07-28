@@ -768,6 +768,79 @@ class TestEnsembleSigma:
             f"narrow ensemble_sigma_f, got {p_narrow_sigma:.4f}"
         )
 
+    def test_sub_floor_ensemble_sigma_is_floored_at_sigma_floor_f(self):
+        """Issue #887: 63% of GEFS sigma_f rows sit below SIGMA_FLOOR_F (1.0F).
+        With no remaining climb to fall back on (sigma_climb_fraction floor
+        inactive), a raw sub-floor ensemble_sigma_f must still be floored at
+        SIGMA_FLOOR_F before it reaches p_normal_between -- never fed through
+        raw, which would reproduce the overconfidence M0 (#820) removed."""
+        from unittest.mock import patch
+        from src.model.ensemble_sigma import SIGMA_FLOOR_F
+
+        state, bracket = self._state_and_bracket(ensemble_sigma_f=0.3)
+        with patch("src.model.envelope.expected_additional_rise", return_value=0.0):
+            p_sub_floor = true_probability_yes(
+                bracket, state, use_ensemble_sigma=True, sigma_climb_fraction=0.5,
+            )
+
+        state_at_floor, bracket_at_floor = self._state_and_bracket(
+            ensemble_sigma_f=SIGMA_FLOOR_F
+        )
+        with patch("src.model.envelope.expected_additional_rise", return_value=0.0):
+            p_at_floor = true_probability_yes(
+                bracket_at_floor, state_at_floor, use_ensemble_sigma=True,
+                sigma_climb_fraction=0.5,
+            )
+
+        assert p_sub_floor == p_at_floor, (
+            f"ensemble_sigma_f=0.3 (below SIGMA_FLOOR_F={SIGMA_FLOOR_F}) must "
+            f"be clamped to the same result as ensemble_sigma_f=SIGMA_FLOOR_F; "
+            f"got sub_floor={p_sub_floor:.6f}, at_floor={p_at_floor:.6f}"
+        )
+
+    def test_sub_floor_ensemble_sigma_not_more_confident_than_floor(self):
+        """A near-zero ensemble_sigma_f must not push p_yes closer to a rail
+        than the floored value would (issue #887 regression guard). Bracket
+        edge sits just below the forecast mean so a tiny sigma collapses the
+        CDF toward the rail -- exactly the M0 (#820) failure mode this floor
+        prevents."""
+        from unittest.mock import patch
+        from src.model.ensemble_sigma import SIGMA_FLOOR_F
+
+        state, _ = self._state_and_bracket(ensemble_sigma_f=0.05)
+        bracket = make_bracket(low_f=80.95, high_f=85.0)
+
+        with patch("src.model.envelope.expected_additional_rise", return_value=0.0):
+            p_floored = true_probability_yes(
+                bracket, state, use_ensemble_sigma=True, sigma_climb_fraction=0.0,
+            )
+            # What serving would produce if the floor were NOT applied here:
+            # the same raw 0.05F sigma fed straight into the pipeline.
+            p_unfloored_would_be = true_probability_yes(
+                bracket, state, use_ensemble_sigma=False, forecast_stddev=0.05,
+                sigma_climb_fraction=0.0,
+            )
+            # Sanity anchor: the floored path must match SIGMA_FLOOR_F fed
+            # in directly.
+            p_floor_direct = true_probability_yes(
+                bracket, state, use_ensemble_sigma=False,
+                forecast_stddev=SIGMA_FLOOR_F, sigma_climb_fraction=0.0,
+            )
+
+        assert p_floored != p_unfloored_would_be, (
+            f"SIGMA_FLOOR_F must actually change the outcome for a sub-floor "
+            f"ensemble_sigma_f; got floored={p_floored:.6f}, "
+            f"unfloored_would_be={p_unfloored_would_be:.6f}"
+        )
+        assert isclose(p_floored, p_floor_direct, abs_tol=1e-9), (
+            f"floored ensemble path must match feeding SIGMA_FLOOR_F directly; "
+            f"got {p_floored:.6f} vs {p_floor_direct:.6f}"
+        )
+        # The unfloored 0.05F sigma is far more "certain" (closer to the p=1
+        # rail) than the floored 1.0F sigma -- the overconfidence pattern #887
+        # exists to prevent.
+        assert p_unfloored_would_be > p_floored
+
 
 # ---------------------------------------------------------------------------
 # next_day_probability_yes (issue #687)

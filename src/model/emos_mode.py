@@ -178,6 +178,15 @@ def resolve_sigma_raw(state, use_ensemble_sigma: "bool | None", fallback_sigma: 
     returns fallback_sigma (FORECAST_STDDEV_F) unchanged -- the default,
     behaviour-preserving path while USE_ENSEMBLE_SIGMA stays off.
 
+    Deliberately returns ensemble_sigma_f UNFLOORED (issue #887): apply_emos's
+    own (c, d) transform was fit against the same raw, unfloored sigma_f
+    fetch_training_data reads from model_forecast_log, so flooring the value
+    here before it reaches apply_emos would feed the regression an input
+    distribution it was never trained on -- train/serve parity, not an
+    oversight. Contrast with src.model.envelope.true_probability_yes's
+    direct-substitution path, which has no such transform downstream and
+    floors at SIGMA_FLOOR_F itself.
+
     Args:
         state: WeatherState for the station being scored.
         use_ensemble_sigma: Resolved USE_ENSEMBLE_SIGMA flag. Callers with DB
