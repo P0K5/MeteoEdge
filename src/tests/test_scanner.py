@@ -703,3 +703,25 @@ class TestNextDayEvaluation:
 
         assert len(snapshots) == 1
         assert candidates == []
+
+    def test_next_day_emos_mode_is_never_next_day_string(self, monkeypatch):
+        """Regression test for #871: next-day evaluation must record the
+        city's actual EMOS mode (legacy/emos_shadow/emos_primary), never the
+        day-classification string "next_day"."""
+        monkeypatch.setenv("NEXT_DAY_EVALUATION", "true")
+        weather = {"KMIA": self._weather_state()}
+        tomorrow = datetime.now(timezone.utc) + timedelta(days=1, hours=6)
+        market = self._market(tomorrow, prices='["0.30","0.70"]')
+
+        with patch("src.strategy.scanner._fetch_next_day_forecast", return_value=(82.0, 3.0)):
+            _candidates, snapshots = scan_markets(weather, [market])
+
+        assert len(snapshots) >= 1
+        for snap in snapshots:
+            assert snap["is_next_day"] == 1
+            assert snap["emos_mode"] != "next_day", (
+                f"emos_mode must not be 'next_day'; got '{snap['emos_mode']}'"
+            )
+            assert snap["emos_mode"] in ("legacy", "emos_shadow", "emos_primary"), (
+                f"emos_mode must be a valid model mode; got '{snap['emos_mode']}'"
+            )
