@@ -38,9 +38,15 @@ bug, not an edge. The wins come from day-to-day temperature autocorrelation we n
   collapses onto the finished day's high, and the envelope certainty shortcuts emit an exact
   `p_yes = 0.0`. This violates #687's own stated invariant: *"never trade a bracket using
   another day's weather observations."*
-- **#799 (open)** — `σ_raw` is the constant `FORECAST_STDDEV_F = 2.0`, so the EMOS `c`/`d`
-  coefficients are unidentifiable (`d ≈ 0.001` across all 30 cities). No quantity of extra
-  data fixes a coefficient on a constant predictor.
+- **#799 (merged; premise re-verified 2026-07-28)** — `σ_raw` is the constant
+  `FORECAST_STDDEV_F = 2.0`, so the EMOS `c`/`d` coefficients are unidentifiable. No quantity
+  of extra data fixes a coefficient on a constant predictor.
+  *Verification note:* with σ constant, `c` and `d` enter the objective only as `c + d·σ` — a
+  flat ridge, so **any** `(c, d)` on that line fits identically. A fitted `d` on the `fixed`
+  track is therefore optimizer position, not signal: the originally-recorded `d ≈ 0.001` and
+  the later-observed median `d = 0.88` are the same fit at different points on the same ridge.
+  The premise is correct; #872 closed on this. The `ensemble` track is genuinely identifiable —
+  σ there varies 0.0–9.9 with 100% coverage — but see M2's status note: it is not served.
 
 ### Verified *not* affected
 
@@ -167,6 +173,41 @@ sits at `False`.
 lever that could legitimately reopen the 74–79¢ band.
 **Issues:** #799, #798, #823, #824.
 
+**Status 2026-07-28 — TRAINING ONLY. The serving half was never wired.** M2 was previously
+recorded here as complete. It is not, and the distinction is material to M3.
+
+`USE_ENSEMBLE_SIGMA` is `true` in `bot_config` (set 2026-07-25) and the ensemble EMOS track
+has fitted coefficients (27 rows, retrained 2026-07-28). **Neither reaches a served
+probability.** Two independent blocks, either sufficient on its own:
+
+| Layer | State | Consequence |
+|---|---|---|
+| Ensemble spread → `WeatherState` | `ensemble_sigma_f` has **zero assignment sites** in `src/` (AST-verified) | `resolve_sigma_raw()` always returns `FORECAST_STDDEV_F = 2.0` |
+| EMOS calibrated σ → probability | **Zero `emos_primary` rows** — all 57 coefficient rows are `emos_shadow` | `emos_stddev_override` never set; `scanner.py`'s shadow branch is *"logging only; legacy probabilities are served unchanged"* |
+
+`compute_ensemble_sigma()` — which applies `SIGMA_FLOOR_F` and the calibration regression —
+has no production callers. Its own docstring says integration is tracked in **#448 (Week 3)**,
+still open. Live serving is the legacy envelope at fixed σ = 2.0, exactly as pre-M2.
+
+**Three consequences that follow directly:**
+
+1. **#874's null result is explained.** A CRPS delta of −0.0041 "within noise" is what you
+   get comparing two coefficient tracks when *neither* is served.
+2. **The 2026-07-28 sharpness gain is NOT attributable to M2.** High rail 0.4% against a 9.1%
+   structural ceiling, middle mass 37.0% against 0.0% pre-fix — real, but served σ is
+   unchanged, so the cause is **M0 (#820)**, which was manufacturing exact-`0.0` certainties
+   at scale. #798's shrinkage blend is a secondary candidate.
+3. **M3 currently tests M0, not M2.** This plan's premise is that sharpness is *"the only lever
+   that could carry a model from −0.28 to positive"*. **That lever has not been pulled.** A
+   negative M3 verdict would not have tested the sharper model, because none is running.
+
+A second, independent problem blocks simply switching it on: **63% of GEFS `sigma_f` values sit
+below the 1.0 °F floor** (2,095 of 3,330), the classic under-dispersive signature. Feeding raw
+spread into live probabilities would reproduce the overconfidence M0 just removed.
+
+**Issues:** #885 (wire `ensemble_sigma_f` — the real remaining M2 work), #886 (no city ever
+promoted to `emos_primary`), #887 (raw-vs-calibrated σ decision), #888 (zero-σ guard).
+
 ### M3 · Decision gate — target 2026-08-22
 
 Re-run the skill test on clean, post-fix, all-bracket data. **This is the moment the thesis is
@@ -259,7 +300,7 @@ purely data-bound: the only thing between here and M3 is station-days accruing.*
 | #820 | Evening entries price tomorrow with today's observations | M0 | ✅ Merged |
 | #826 | Persist all evaluated-bracket snapshots | M0 (parallel) | ✅ Merged — clean-data clock started 2026-07-24 |
 | #865 | Re-point Pass 1 at `resolve_bracket_outcomes` (n=20 → 404) | M1 | ✅ Merged — Pass 1 complete |
-| #867 | Gamma resolves DISJOINT brackets as YES on one station-day | before M3 | **Open — blocks M3 ground truth** |
+| #867 | Gamma resolves DISJOINT brackets as YES on one station-day | before M3 | ✅ Merged (#875) — root cause was direction-blindness, not wrong-market reads; 4 → 0 collisions |
 | #869 | Post-fix model health — rail concentration, artifact rate, σ identifiability | **now, no waiting** | Shipped — run it |
 | #870 | Ground-truth quality — Gamma-vs-METAR rate, zero-YES days, ladder completeness | **now, no waiting** | Shipped — run it |
 | #822 | Market-vs-model skill test | M1 · M3 | Pass 1 done (**BSS −0.28**); **Pass 2 = the decision** |
@@ -267,10 +308,17 @@ purely data-bound: the only thing between here and M3 is station-days accruing.*
 | #798 | Partial pooling instead of hard 60-sample cutover | M2 | ✅ Merged |
 | #823 | Recompute promotion bars excluding artifact rows | M2 | ✅ Merged |
 | #824 | Capture ECMWF ensemble spread (2,750 rows have none) | M2 | ✅ Merged |
-| #861 | Bracket-boundary convention (**adjacent** brackets both YES) | before M3 | **Open — HIGHEST pre-M3 priority. 70 of 105 station-days (67%) under METAR resolution** |
-| #871 | `bracket_evals.emos_mode` overwritten with `next_day` on half the rows | **now** | Open — blinds per-mode analysis of the M3 population |
-| #872 | M2 premise check — constant-σ rows show median `d` = 0.88, not 0.001 | before citing #799 | Open — investigation only, no code change during collection |
-| #450 | Calibration backtest: reliability + CRPS over 30 days | M3 | Open |
+| #861 | Bracket-boundary convention (**adjacent** brackets both YES) | before M3 | ✅ Merged (#881) — `[lo, hi)` matches Gamma on 96.9% of 2,619 settlements (vs 48.8% inclusive); 70 → 0 collisions |
+| #871 | `bracket_evals.emos_mode` overwritten with `next_day` on half the rows | **now** | ✅ Merged (#880) — verified live. **10,503 pre-fix rows keep the corrupted value permanently** |
+| #872 | M2 premise check — constant-σ rows show median `d` = 0.88, not 0.001 | before citing #799 | ✅ Resolved — premise CORRECT. On a constant σ, `c`/`d` lie on a flat ridge (`c + d·σ`), so a fitted `d` is optimizer position, not evidence. #869's check 3 measured nothing |
+| #450 | Calibration backtest: reliability + CRPS over 30 days | M3 | ✅ Merged (#874) — HOLD ensemble sigma, CRPS delta −0.0041 (within noise; see #885 for why) |
+| **#885** | **`ensemble_sigma_f` never populated — `USE_ENSEMBLE_SIGMA` is a no-op at serving** | **M2 (real remaining work)** | **Open — M2 BLOCKER** |
+| #886 | No city ever promoted to `emos_primary` — EMOS has never served a probability | M2 | Open — investigation |
+| #887 | 63% of GEFS σ below the 1 °F floor; raw-vs-calibrated decision | before #885 | Open — blocks #885 |
+| #888 | `p_normal_between()` ZeroDivisionError on σ=0 | before #885 | Open — Simple, cheap now |
+| #844 | Test suite flakes in the 15 min before UTC midnight | anytime | ✅ Merged (#882) |
+| #876 | Carry `direction` in candidates CSV / bracket_evals | supports #867 | ✅ Merged (#884) |
+| #877 | Windows `read_text()` encoding crash | anytime | ✅ Merged (#883) |
 | #782 | Anchor day partitions to settlement window | after M0 | Unblocked — #820 is merged |
 | #591 | Climb tables / entry windows — same mechanism as #820 | after M0 | Unblocked — #820 is merged |
 | #825 | Optional historical-forecast backfill (separate regime) | deferred | Not the unlock |
@@ -316,6 +364,26 @@ not pre-empt M3; but the base case above should now be read as the *strong* case
 cautious one. M3 has to travel from −0.28 to positive, and the only lever that could carry it
 is the σ work's effect on sharpness. Plan accordingly: the cost of reaching M3 is already
 sunk and small, but M4/M5 should be treated as unlikely to be reached.
+
+**Updated 2026-07-28 — the sharpness lever has not actually been pulled.** See M2's status
+note: `ensemble_sigma_f` is never populated and no city has ever been promoted to
+`emos_primary`, so served σ is still the fixed 2.0 and M2 delivered training infrastructure
+only. The measured sharpness gain (high rail at 4% of its structural ceiling; middle mass
+37% against a pre-fix 0.0%) is real but attributable to **M0**, not M2.
+
+This does not make M3 pointless — the model genuinely is better behaved, and a gate on the
+post-#820 model is worth running. It does mean **M3 as currently configured measures M0's
+effect, and a negative verdict would leave the plan's own stated lever untested.** The
+sequencing decision is therefore explicit and belongs to the Tech Lead PM:
+
+- **Run M3 on the M0-fixed model as-is** (~2026-08-05 at current accrual). Cheapest, and a
+  clean read on what is actually deployed. If it fails, the σ lever is still untried, so the
+  verdict condemns the current serving stack rather than the thesis.
+- **Or wire #885/#886/#887/#888 first, then start a fresh collection window.** Tests the model
+  the plan intended, but resets the clean-data clock — switching serving σ mid-collection
+  would split the sample and invalidate the accrued station-days.
+
+Doing both in sequence is the only way to attribute a result to the σ work at all.
 
 ---
 
