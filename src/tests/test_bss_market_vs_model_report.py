@@ -653,9 +653,9 @@ class TestResolverEndToEnd:
         )
         assert rc == 0
         text = (out_dir / "bss_market_vs_model_pass1_2026-02-15.md").read_text()
-        assert "Impossible-outcome exposure: 1 station-day(s), 2 bracket-rows" in text
+        assert "Impossible-outcome exposure: 1 station-day-direction(s), 2 bracket-rows" in text
         assert "| `boundary` — brackets touch or overlap | 1 |" in text
-        assert "| `disjoint` — brackets do not touch | 0 |" in text
+        assert "| `disjoint` — brackets do not touch, same direction | 0 |" in text
 
     def test_disjoint_collision_is_attributed_to_867_not_861(self, tmp_path):
         """The defect in the 2026-07-26 report: brackets 3.6F apart cannot be an
@@ -681,7 +681,7 @@ class TestResolverEndToEnd:
             )
         assert rc == 0
         text = (out_dir / "bss_market_vs_model_pass1_2026-02-15.md").read_text()
-        assert "| `disjoint` — brackets do not touch | 1 |" in text
+        assert "| `disjoint` — brackets do not touch, same direction | 1 |" in text
         assert "| `boundary` — brackets touch or overlap | 0 |" in text
         assert "`disjoint`" in text
         assert "#867" in text
