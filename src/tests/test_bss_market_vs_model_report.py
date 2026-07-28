@@ -28,12 +28,15 @@ from __future__ import annotations
 
 import csv
 import gzip
+import json
 import sqlite3
 from unittest.mock import patch
 
 import pytest
 
 from src.scripts.bss_market_vs_model_report import (
+    POPULATION_ALL_BRACKET,
+    POPULATION_GATE_SELECTED,
     OUTCOME_SOURCE_RESOLVER,
     OUTCOME_SOURCE_SETTLEMENTS,
     REQUIRED_DISCLAIMER,
@@ -43,6 +46,7 @@ from src.scripts.bss_market_vs_model_report import (
     compute_bss,
     dedupe_one_per_bracket_day,
     join_outcomes,
+    load_bracket_eval_rows,
     load_candidate_rows,
     load_settlement_outcomes,
     market_p_yes,
@@ -725,3 +729,200 @@ class TestResolverEndToEnd:
         assert "joined to `settlements`" in text
         assert "Excluded: no definitive settlement match" in text
         assert "## Outcome ground truth" not in text
+
+
+# ---------------------------------------------------------------------------
+# Pass 2 / M3 decision gate (issue #822)
+# ---------------------------------------------------------------------------
+
+def _eval_row(**overrides) -> dict:
+    """A bracket_evals JSONL row as _write_bracket_evaluations emits it."""
+    base = {
+        "station": "KORD",
+        "ticker": "0xabc001",
+        "bracket_low": 60.0,
+        "bracket_high": 65.0,
+        "poll_ts": "2026-02-01T18:00:00+00:00",
+        "yes_ask": 20.0,
+        "no_ask": 82.0,
+        "p_yes": 0.2,
+        "p_yes_raw": 0.2,
+        "emos_mode": "emos_shadow",
+        "is_next_day": 0,
+        "minutes_to_settlement": 300.0,
+        "execution_mode": "paper",
+        "settlement_date": "2026-02-01",
+        "direction": "high",
+    }
+    base.update(overrides)
+    return base
+
+
+def _write_bracket_evals(path, rows):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w") as f:
+        for r in rows:
+            f.write(json.dumps(r) + "\n")
+
+
+class TestLoadBracketEvalRows:
+    """Pass 2's loader must normalize onto the SAME row shape Pass 1 produces,
+    so every downstream stage is shared verbatim between the passes."""
+
+    def test_field_renames(self, tmp_path):
+        path = tmp_path / "logs" / "bracket_evals.jsonl"
+        _write_bracket_evals(path, [_eval_row()])
+        rows = load_bracket_eval_rows(path)
+        assert rows[0]["ts"] == "2026-02-01T18:00:00+00:00"     # from poll_ts
+        assert rows[0]["end_date"] == "2026-02-01"              # from settlement_date
+        assert rows[0]["p_yes_raw"] == 0.2
+
+    def test_settlement_date_is_truncated_to_a_date(self, tmp_path):
+        path = tmp_path / "logs" / "bracket_evals.jsonl"
+        _write_bracket_evals(path, [_eval_row(settlement_date="2026-02-01T00:00:00Z")])
+        assert load_bracket_eval_rows(path)[0]["end_date"] == "2026-02-01"
+
+    def test_direction_is_carried_for_the_resolver(self, tmp_path):
+        """#867: low-direction markets must score against the observed daily LOW."""
+        path = tmp_path / "logs" / "bracket_evals.jsonl"
+        _write_bracket_evals(path, [_eval_row(direction="low")])
+        assert load_bracket_eval_rows(path)[0]["direction"] == "low"
+
+    def test_rows_survive_the_shared_exclusion_and_dedupe_stages(self, tmp_path):
+        """The whole design: Pass 2 rows flow through Pass 1's pipeline unchanged."""
+        path = tmp_path / "logs" / "bracket_evals.jsonl"
+        _write_bracket_evals(path, [
+            _eval_row(ticker="0x1", p_yes_raw=0.2, minutes_to_settlement=600.0),
+            _eval_row(ticker="0x1", p_yes_raw=0.3, minutes_to_settlement=60.0),
+            _eval_row(ticker="0x2", p_yes_raw=0.0),      # #820 artifact
+        ])
+        kept, counts = apply_exclusions(load_bracket_eval_rows(path))
+        assert counts["p_yes_raw_zero_artifact"] == 1
+        deduped = dedupe_one_per_bracket_day(kept)
+        assert len(deduped) == 1
+        assert deduped[0]["p_yes_raw"] == 0.3    # lowest minutes_to_settlement
+
+
+class TestPass2Segmentation:
+    """bracket_evals RECORDS is_next_day; Pass 1 had to reconstruct it. A
+    reconstruction that disagrees with what the scanner actually decided would
+    mis-segment the decision gate."""
+
+    def test_recorded_flag_is_preferred_over_derivation(self):
+        # ts/end_date would derive 'same_day'; the recorded flag says next_day.
+        row = {"ts": "2026-02-01T18:00:00+00:00", "station": "KORD",
+               "end_date": "2026-02-01", "is_next_day_flag": 1}
+        assert classify_day_segment(row) == "next_day"
+
+    def test_recorded_zero_means_same_day(self):
+        row = {"ts": "2026-02-01T18:00:00+00:00", "station": "KORD",
+               "end_date": "2026-02-02", "is_next_day_flag": 0}
+        assert classify_day_segment(row) == "same_day"
+
+    def test_falls_back_to_derivation_when_flag_absent(self):
+        """Pass 1 rows carry no flag and must keep working unchanged."""
+        row = {"ts": "2026-02-01T12:00:00+00:00", "station": "KORD",
+               "end_date": "2026-02-01"}
+        assert classify_day_segment(row) == "same_day"
+
+
+class TestDecisionGateSection:
+    """The rule is pre-registered in docs/REMEDIATION_PLAN.md. The report must
+    state it, and must refuse to call an underpowered number a verdict."""
+
+    def _report(self, station_days, bss_rows):
+        return build_report(
+            bss_rows, {"input_rows": len(bss_rows)}, 0, "2026-08-05",
+            outcome_meta={"source": OUTCOME_SOURCE_RESOLVER,
+                          "counts": {"n_station_days": station_days}},
+            population=POPULATION_ALL_BRACKET,
+        )
+
+    def _sample(self, p, won):
+        return {"station": "KORD", "ticker": "0x1", "end_date": "2026-02-01",
+                "ts": "2026-02-01T18:00:00+00:00", "p_yes_raw": p,
+                "yes_ask": 20.0, "no_ask": 82.0, "yes_won": won,
+                "bracket_low": 60.0, "bracket_high": 65.0,
+                "settlement_date": "2026-02-01", "is_next_day_flag": 0}
+
+    def test_pass2_uses_the_gate_disclaimer_not_pass1s(self):
+        report = self._report(300, [self._sample(0.2, False)])
+        assert "THIS IS THE M3 DECISION GATE" in report
+        assert "PASS 1 -- NOT THE DECISION GATE" not in report
+
+    def test_decision_rule_is_stated_before_the_verdict(self):
+        report = self._report(300, [self._sample(0.2, False)])
+        assert "pre-registered rule" in report
+        assert report.index("BSS > 0.05") < report.index("### Verdict")
+
+    def test_underpowered_run_is_not_a_verdict(self):
+        """The n=20 Pass-1 trap: a BSS on too few station-days is not a weaker
+        verdict, it is not a verdict at all."""
+        report = self._report(111, [self._sample(0.2, False)])
+        assert "UNDERPOWERED -- THIS IS NOT A VERDICT" in report
+        assert "### Verdict" not in report
+        assert "37%" in report            # 111/300
+
+    def test_powered_run_states_the_verdict(self):
+        report = self._report(300, [self._sample(0.2, False)])
+        assert "### Verdict" in report
+        assert "UNDERPOWERED" not in report
+
+    def test_pass1_report_has_no_gate_section(self):
+        report = build_report(
+            [self._sample(0.2, False)], {"input_rows": 1}, 0, "2026-02-15",
+            outcome_meta={"source": OUTCOME_SOURCE_RESOLVER,
+                          "counts": {"n_station_days": 300}},
+            population=POPULATION_GATE_SELECTED,
+        )
+        # The Pass-1 disclaimer legitimately mentions the gate when pointing
+        # forward to Pass 2 -- assert on the SECTION, not the phrase.
+        assert "## M3 decision gate -- the pre-registered rule" not in report
+        assert "### Verdict" not in report
+        assert "PASS 1 -- NOT THE DECISION GATE" in report
+
+
+class TestPass2EndToEnd:
+    def test_writes_a_pass2_filename_and_gate_report(self, tmp_path):
+        evals = tmp_path / "logs" / "bracket_evals.jsonl"
+        _write_bracket_evals(evals, [
+            _eval_row(ticker="0x1", bracket_low=60.0, bracket_high=65.0, p_yes_raw=0.20),
+            _eval_row(ticker="0x2", bracket_low=66.0, bracket_high=70.0, p_yes_raw=0.40,
+                      yes_ask=35.0, no_ask=67.0),
+        ])
+        db_path = tmp_path / "data" / "meteoedge.db"
+        _write_observations_db(db_path, [("KORD", "2026-02-01T20:00:00+00:00", 62.0)])
+        out_dir = tmp_path / "backtest_results"
+
+        rc = run_report(
+            candidates_csv=tmp_path / "nope.csv", db_path=db_path, out_dir=out_dir,
+            run_date="2026-08-05", outcome_source=OUTCOME_SOURCE_RESOLVER,
+            use_gamma=False, gamma_cache_path=tmp_path / "cache.json",
+            population=POPULATION_ALL_BRACKET, bracket_evals=evals,
+        )
+        assert rc == 0
+        report_path = out_dir / "bss_market_vs_model_pass2_2026-08-05.md"
+        assert report_path.exists(), "Pass 2 must not overwrite the Pass 1 report"
+        assert not (out_dir / "bss_market_vs_model_pass1_2026-08-05.md").exists()
+        text = report_path.read_text(encoding="utf-8")
+        assert "PASS 2 / M3 DECISION GATE" in text
+        assert "UNDERPOWERED" in text          # 1 station-day of fixture data
+
+    def test_no_bracket_evals_writes_nothing(self, tmp_path):
+        rc = run_report(
+            candidates_csv=tmp_path / "nope.csv",
+            db_path=tmp_path / "data" / "meteoedge.db",
+            out_dir=tmp_path / "backtest_results",
+            population=POPULATION_ALL_BRACKET,
+            bracket_evals=tmp_path / "logs" / "bracket_evals.jsonl",
+        )
+        assert rc == 0
+        assert not (tmp_path / "backtest_results").exists()
+
+    def test_rejects_unknown_population(self, tmp_path):
+        with pytest.raises(ValueError, match="population"):
+            run_report(
+                candidates_csv=tmp_path / "nope.csv",
+                db_path=tmp_path / "db", out_dir=tmp_path / "out",
+                population="everything",
+            )

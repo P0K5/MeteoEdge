@@ -45,8 +45,10 @@ bug, not an edge. The wins come from day-to-day temperature autocorrelation we n
   flat ridge, so **any** `(c, d)` on that line fits identically. A fitted `d` on the `fixed`
   track is therefore optimizer position, not signal: the originally-recorded `d ≈ 0.001` and
   the later-observed median `d = 0.88` are the same fit at different points on the same ridge.
-  The premise is correct; #872 closed on this. The `ensemble` track is genuinely identifiable —
-  σ there varies 0.0–9.9 with 100% coverage — but see M2's status note: it is not served.
+  The premise is correct; #872 closed on this. The `ensemble` track is identifiable *in the raw
+  `gefs` column* (σ varies 0.0–9.9 at 100% coverage) — but per #893 that column is filtered out
+  of training by the baseline regime, and 5 US stations train on a constant instead. See M2's
+  status note.
 
 ### Verified *not* affected
 
@@ -189,6 +191,19 @@ probability.** Two independent blocks, either sufficient on its own:
 has no production callers. Its own docstring says integration is tracked in **#448 (Week 3)**,
 still open. Live serving is the legacy envelope at fixed σ = 2.0, exactly as pre-M2.
 
+**And the training half is compromised too (#893, triaged 2026-07-28).** `fetch_training_data`
+filters rows to the active regime *before* selecting σ, and `FORECAST_STACK = baseline` resolves
+to `frozenset({"nws", "open_meteo"})` — **`gefs` is not in it**. σ is then whichever model sorts
+first with a non-NULL value, an artifact of `ORDER BY date ASC` plus alphabetical model names.
+`nws` sorts before `open_meteo` and has 0% NULL σ, so for all **5 US stations** (KATL, KHOU,
+KLAX, KMIA, KORD) the training σ is `nws`'s per-lead climatological **constant**, on 100% of
+dates. `c` and `d` collapse onto the flat `c + d·σ` ridge and **`d` is unidentifiable** — the
+#799 condition the ensemble track existed to escape. The 25 non-US stations get `open_meteo`'s
+varying cross-model stdev and are fine.
+
+So the "ensemble" σ track never sees GEFS ensemble spread at all under the baseline stack —
+a third independent reason #874's CRPS delta came out within noise.
+
 **Three consequences that follow directly:**
 
 1. **#874's null result is explained.** A CRPS delta of −0.0041 "within noise" is what you
@@ -290,6 +305,53 @@ accepted or abandoned.** See the decision rule below.
 **Outcome:** a written verdict.
 **Issues:** #822 (pass 2), #450.
 
+**Status 2026-07-28 — tooling READY, waiting on data.**
+
+| Prerequisite | State |
+|---|---|
+| Pass 2 tool | ✅ Built — `bss_market_vs_model_report --population all-bracket` |
+| Ground truth | ✅ Clean — 0 boundary + 0 disjoint collisions, Gamma-vs-METAR disagreement **1.7%** (was 8.8% pre-#881), ladder completeness 11/11 |
+| Station-days | ⏳ **111 of 300** on 2026-07-28, ~25/day → **~2026-08-05** |
+
+#### Runbook — running Pass 2 (the gate) on the bot host
+
+```bash
+python -m src.scripts.bss_market_vs_model_report --population all-bracket
+```
+
+Writes `backtest_results/bss_market_vs_model_pass2_<date>.md` — a distinct filename from
+Pass 1's, so the two never overwrite each other. Read-only against the database; self-gates and
+writes nothing without real data.
+
+Both passes share one module. Everything about **how** a bracket is scored is identical — the
+BSS math, the row exclusions, the de-duplication rule, outcome resolution, the market-price
+convention. Only **which** brackets are in scope differs. That is deliberate: the gate must not
+be able to drift from the read that preceded it.
+
+**The report refuses to call an underpowered run a verdict.** Below 300 station-days it prints
+`UNDERPOWERED — THIS IS NOT A VERDICT` and omits the verdict section entirely, in either
+direction. That guard exists because the n=20 Pass-1 run was briefly read as "edge appears real"
+at 6.7% of the required sample.
+
+**Pass 1 and Pass 2 are not comparable.** Pass 1 was gate-selected and answered *"on the brackets
+we chose to trade, were we better than the market?"*; Pass 2 scores every evaluated bracket and
+answers the general calibration question. A different number is expected from population alone —
+recorded here **before** the number exists.
+
+#### What M3 will and will not have tested
+
+Per M2's status note, the σ lever was never pulled: `ensemble_sigma_f` is unpopulated (#885), no
+city is promoted (#886), and the training σ is a constant for 5 US stations (#893). **M3 as
+configured measures M0's effect, not M2's.**
+
+That does not make it a formality. M0 produced a materially different model — Pass 1's had
+*literally zero* probability mass between 0.05 and 0.95; the current one has **37.0%**, with the
+high rail at **4% of its structural ceiling**. Testing it is a real experiment.
+
+But if M3 comes back negative, the plan's own stated lever remains untested, and that is a
+**second** experiment rather than a refutation of the thesis. Sequential beats confounded: fixing
+#885/#893 first would reset the clean-data clock and push the gate into September for no gain.
+
 #### Checks that do NOT require waiting
 
 M3 is data-bound, but two classes of check are available *now* and can shorten it.
@@ -387,9 +449,12 @@ purely data-bound: the only thing between here and M3 is station-days accruing.*
 | #872 | M2 premise check — constant-σ rows show median `d` = 0.88, not 0.001 | before citing #799 | ✅ Resolved — premise CORRECT. On a constant σ, `c`/`d` lie on a flat ridge (`c + d·σ`), so a fitted `d` is optimizer position, not evidence. #869's check 3 measured nothing |
 | #450 | Calibration backtest: reliability + CRPS over 30 days | M3 | ✅ Merged (#874) — HOLD ensemble sigma, CRPS delta −0.0041 (within noise; see #885 for why) |
 | **#885** | **`ensemble_sigma_f` never populated — `USE_ENSEMBLE_SIGMA` is a no-op at serving** | **M2 (real remaining work)** | **Open — M2 BLOCKER** |
-| #886 | No city ever promoted to `emos_primary` — EMOS has never served a probability | M2 | Investigated — bar unmet (60-sample clock at ~day 33/60, further reset by the 07-25 `USE_ENSEMBLE_SIGMA` flip); not a defect, not a general shadow regression. See #886 investigation note above. No code change; re-check ~mid-Sept, then still requires manual mark-ready + promote per city |
-| #887 | 63% of GEFS σ below the 1 °F floor; raw-vs-calibrated decision | before #885 | ✅ Decided — train-raw/serve-calibrated; `true_probability_yes` now floors its direct-substitution consumption at `SIGMA_FLOOR_F`, sub-floor-share monitor added |
-| #888 | `p_normal_between()` ZeroDivisionError on σ=0 | before #885 | ✅ Merged (#891) — `[low, high)` boundary convention + point-mass handling for σ ≤ 0 |
+| #886 | No city ever promoted to `emos_primary` | M2 | ✅ Resolved (#890) — bar unmet by design, ~mid-Sept, needs manual promotion |
+| #887 | 63% of GEFS σ below the 1 °F floor; raw-vs-calibrated decision | before #885 | ✅ Resolved (#892) — train raw, serve calibrated |
+| #888 | `p_normal_between()` ZeroDivisionError on σ=0 | before #885 | ✅ Merged (#891) |
+| #893 | EMOS training σ chosen by sort order — 5 US stations train on a constant | after M3 | Open — triaged; fix is Simple (exclude constant σ sources) |
+| #894 | 329 legacy clamped σ rows in the training window | done | ✅ Merged (#896) — inert under `baseline`, live under `full` |
+| #895 | KORD eats the GEFS cold-start timeout (sorts first in `STATIONS`) | done | ✅ Merged (#896) |
 | #844 | Test suite flakes in the 15 min before UTC midnight | anytime | ✅ Merged (#882) |
 | #876 | Carry `direction` in candidates CSV / bracket_evals | supports #867 | ✅ Merged (#884) |
 | #877 | Windows `read_text()` encoding crash | anytime | ✅ Merged (#883) |

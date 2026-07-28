@@ -1,12 +1,28 @@
-"""Market-vs-model Brier Skill Score report — Pass 1 (issue #822).
+"""Market-vs-model Brier Skill Score report — Pass 1 and Pass 2 (issue #822).
 
-**THIS IS PASS 1 ONLY** — see ``docs/REMEDIATION_PLAN.md`` ("M1 · Fast
-verdict") for the full plan. Pass 1 is an early, retrospective, directional
-read on the 37 days of archived ``logs/candidates.*.csv.gz`` -- the data that
-already exists, so no waiting is required. It is explicitly **not** the
-decision-gate verdict (that is Pass 2, run at M3 on clean, post-#820-fix,
-all-bracket data once #826 -- persisting *every* evaluated bracket, not just
-gate-selected candidates -- has accumulated enough history).
+Both passes run through this one module; ``--population`` selects which.
+Everything about HOW a bracket is scored is shared verbatim -- the BSS math,
+the row exclusions, the de-duplication rule, outcome resolution, the
+market-price convention, reliability and sharpness. Only WHICH brackets are in
+scope differs, plus the framing around the number. That is deliberate: the
+decision gate must not be able to drift from the read that preceded it.
+
+**Pass 1 -- ``--population gate-selected`` (default).** An early, retrospective,
+directional read on the archived ``logs/candidates.*.csv.gz``, which existed
+already so no waiting was required. Explicitly **not** the decision-gate
+verdict. Ran 2026-07-26: BSS = -0.2813 over 404 brackets / 300 station-days.
+
+**Pass 2 -- ``--population all-bracket``. THIS IS THE M3 DECISION GATE.** Scores
+#826's ``logs/bracket_evals.*.jsonl`` -- every bracket the scanner evaluated,
+which is the population ``docs/REMEDIATION_PLAN.md``'s decision rule specifies.
+The rule and its ``n >= 300`` station-day power requirement are encoded in
+``DECISION_RULE`` / ``M3_MIN_STATION_DAYS`` and were fixed **before** any Pass-2
+number existed, so the verdict cannot be rationalised after the fact.
+
+**The two passes are not directly comparable.** Pass 1 answered "on the brackets
+we chose to trade, were we better than the market?"; Pass 2 answers the general
+calibration question over every evaluated bracket. A different number is
+expected from population alone.
 
 Two reasons Pass 1 cannot be read as a settling verdict, both structural, not
 implementation details:
@@ -116,6 +132,9 @@ Usage::
 
     # reproduce the original 2026-07-25 settlements-join report:
     python -m src.scripts.bss_market_vs_model_report --outcome-source settlements
+
+    # PASS 2 -- the M3 decision gate, on the full evaluated-bracket population:
+    python -m src.scripts.bss_market_vs_model_report --population all-bracket
 """
 from __future__ import annotations
 
@@ -133,7 +152,7 @@ from typing import Iterator
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from src.config import CANDIDATES_CSV, STATION_TZ  # noqa: E402
+from src.config import BRACKET_EVALS_JSONL, CANDIDATES_CSV, STATION_TZ  # noqa: E402
 from src.scripts.calibration_report import (  # noqa: E402
     BUCKET_EDGES, brier_score, build_reliability, format_reliability,
 )
@@ -143,7 +162,7 @@ from src.scripts.resolve_bracket_outcomes import (  # noqa: E402
     load_candidate_directions, resolve_bracket_rows, resolve_gamma_outcomes,
     resolve_row_direction,
 )
-from src.utils.log_rotation import rotated_sources  # noqa: E402
+from src.utils.log_rotation import iter_rotated_jsonl, rotated_sources  # noqa: E402
 
 log = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
@@ -157,6 +176,43 @@ REQUIRED_DISCLAIMER = """\
 > all-bracket data once #826 has accumulated enough history. **Do not treat
 > the number below as settling whether the trading edge is real.**
 """
+
+PASS2_DISCLAIMER = """\
+> **PASS 2 -- THIS IS THE M3 DECISION GATE (issue #822).** This scores the
+> POST-FIX model on the FULL evaluated-bracket population (`bracket_evals`,
+> issue #826), not the gate-selected archive Pass 1 used. The decision rule
+> below was fixed in `docs/REMEDIATION_PLAN.md` **before** any number was seen,
+> so it cannot be rationalised afterwards.
+>
+> **The two passes are not directly comparable.** Pass 1 answered *"on the
+> brackets we chose to trade, were we better than the market?"*; Pass 2 answers
+> the general calibration question over every bracket evaluated. A different
+> number is expected from population alone.
+"""
+
+# The decision rule, quoted from docs/REMEDIATION_PLAN.md ("The decision gate").
+# Stated as data so the report cannot drift from the plan's wording.
+DECISION_RULE = (
+    ("BSS > 0.05", "The edge is real. Proceed to M4."),
+    ("0 < BSS <= 0.05", "Marginal. Stay shadow-only; re-test after the sigma work "
+                        "bites. Do not re-enable live."),
+    ("BSS <= 0", "**It was a dream.** The public price forecasts weather at least "
+                 "as well as we do. Stop the thesis -- pivot the model materially "
+                 "or shut the live path down."),
+)
+
+# docs/REMEDIATION_PLAN.md: "Requires n >= 300 de-duplicated settled brackets.
+# Note on power: all ~11 brackets on a station-day are determined by one daily
+# high, so effective sample size is STATION-DAYS (~30/day), not bracket-rows."
+# The station-day figure is the one the gate is read against.
+M3_MIN_STATION_DAYS = 300
+
+# Population selectors. Pass 1 reads the gate-selected candidate archive; Pass 2
+# reads #826's full evaluated-bracket log -- the population the decision rule
+# specifies.
+POPULATION_GATE_SELECTED = "gate-selected"
+POPULATION_ALL_BRACKET = "all-bracket"
+POPULATIONS = (POPULATION_GATE_SELECTED, POPULATION_ALL_BRACKET)
 
 # Exchange price rails (cents). A yes_ask/no_ask sitting at the floor/ceiling
 # is a clipped, not a freely-produced, market price.
@@ -234,6 +290,59 @@ def load_candidate_rows(candidates_csv: "Path" = CANDIDATES_CSV) -> "list[dict]"
             "no_ask": _f(row, "no_ask"),
             "p_yes_raw": _f(row, "p_yes_raw"),
             "minutes_to_settlement": _f(row, "minutes_to_settlement"),
+        })
+    return out
+
+
+def load_bracket_eval_rows(base: "Path" = BRACKET_EVALS_JSONL) -> "list[dict]":
+    """Load #826's full evaluated-bracket log for Pass 2 (issue #822).
+
+    This is the population the M3 decision rule specifies: EVERY bracket the
+    scanner evaluated, not just those that cleared the live entry gates. Pass 1
+    read ``logs/candidates.*.csv.gz``, which is gate-selected and therefore
+    answers a narrower, operational question.
+
+    Rows are normalized onto the SAME shape ``load_candidate_rows`` returns, so
+    every downstream stage -- exclusions, de-duplication, outcome resolution,
+    the BSS math, reliability and sharpness -- is shared verbatim between the
+    two passes. Nothing about how a scored bracket is scored differs; only
+    which brackets are in scope.
+
+    Two field mappings and one genuine improvement:
+
+    - ``poll_ts`` -> ``ts`` and ``settlement_date`` -> ``end_date``: renames.
+      Both denote the same quantities the candidate CSV names differently.
+    - ``is_next_day`` is carried through as ``is_next_day_flag``. Pass 1 had to
+      *derive* the same/next-day split from station-local ``ts`` vs ``end_date``
+      because the CSV has no such column; ``bracket_evals`` records it directly,
+      so Pass 2 segments on the recorded value rather than a reconstruction.
+    - ``direction`` (issue #876) flows through to ``resolve_bracket_rows``,
+      which needs it to score low-direction markets against the observed daily
+      LOW rather than the high (issue #867).
+
+    ``emos_mode`` is carried for segmentation, with the #871 caveat: rows logged
+    before that fix carry the literal string ``"next_day"`` instead of a model
+    mode, and their true mode is NOT recoverable. Any per-mode cut must exclude
+    them rather than average them in.
+    """
+    out = []
+    for row in iter_rotated_jsonl(base):
+        out.append({
+            "ts": str(row.get("poll_ts") or ""),
+            "station": str(row.get("station") or ""),
+            "ticker": str(row.get("ticker") or ""),
+            "end_date": str(row.get("settlement_date") or "")[:10],
+            "question": "",
+            "bracket_low": _f(row, "bracket_low"),
+            "bracket_high": _f(row, "bracket_high"),
+            "yes_ask": _f(row, "yes_ask"),
+            "no_ask": _f(row, "no_ask"),
+            "p_yes_raw": _f(row, "p_yes_raw"),
+            "minutes_to_settlement": _f(row, "minutes_to_settlement"),
+            "direction": row.get("direction"),
+            "is_next_day_flag": row.get("is_next_day"),
+            "emos_mode": row.get("emos_mode"),
+            "execution_mode": row.get("execution_mode"),
         })
     return out
 
@@ -465,7 +574,16 @@ def classify_day_segment(row: dict) -> "str | None":
     ``logs/candidates.csv`` carries no ``is_next_day`` column (unlike the DB
     ``candidates``/``trades`` tables written alongside it) -- derived here
     from the station-local calendar date of ``ts`` vs. ``end_date``.
+
+    Pass 2's ``bracket_evals`` rows DO record it (``is_next_day_flag``), so the
+    recorded value is preferred when present and the derivation is used only as
+    a fallback. A reconstruction that disagrees with what the scanner actually
+    decided would mis-segment the decision gate.
     """
+    flag = row.get("is_next_day_flag")
+    if flag is not None:
+        return "next_day" if int(flag) == 1 else "same_day"
+
     local_date = station_local_date(row.get("ts", ""), row.get("station", ""))
     end_date_str = row.get("end_date", "")
     if local_date is None or not end_date_str:
@@ -683,18 +801,86 @@ def _ground_truth_section(samples: "list[dict]", ocounts: dict) -> "list[str]":
     return lines
 
 
+def _decision_gate_section(global_stats: dict, ocounts: dict) -> "list[str]":
+    """Render the M3 verdict against the pre-registered decision rule (#822).
+
+    The rule and its power requirement are quoted from
+    ``docs/REMEDIATION_PLAN.md`` and were fixed **before** any Pass-2 number
+    existed. This section states the rule first and the number second, in that
+    order, so the verdict reads as an application of a standing rule rather
+    than a judgement formed after seeing the result.
+
+    The power check is deliberately a separate line from the verdict. A BSS
+    computed on too few station-days is not a weaker verdict -- it is not a
+    verdict at all, which is exactly how the n=20 Pass-1 run came to be briefly
+    read as "edge appears real".
+    """
+    lines = ["## M3 decision gate -- the pre-registered rule\n"]
+    lines.append("Fixed in `docs/REMEDIATION_PLAN.md` before this number was seen.\n")
+    lines.append("| Result | Verdict |")
+    lines.append("|---|---|")
+    for condition, verdict in DECISION_RULE:
+        lines.append(f"| **{condition}** | {verdict} |")
+    lines.append("")
+
+    station_days = ocounts.get("n_station_days", 0)
+    bss = global_stats.get("bss")
+    powered = station_days >= M3_MIN_STATION_DAYS
+
+    lines.append("### Power check\n")
+    lines.append(
+        f"The rule requires **n >= {M3_MIN_STATION_DAYS}**. All ~11 brackets on a "
+        f"station-day are determined by one daily high, so the effective sample size "
+        f"is **station-days**, not bracket-rows.\n"
+    )
+    lines.append("| Measure | Value | Required | Met |")
+    lines.append("|---|---|---|---|")
+    lines.append(
+        f"| Station-days | **{station_days}** | {M3_MIN_STATION_DAYS} | "
+        f"{'YES' if powered else '**NO**'} |"
+    )
+    lines.append(f"| De-duplicated bracket-rows | {global_stats.get('n', 0)} | — | — |")
+    lines.append("")
+
+    if not powered:
+        lines.append(
+            f"> **UNDERPOWERED -- THIS IS NOT A VERDICT.** {station_days} station-days is "
+            f"{100 * station_days / M3_MIN_STATION_DAYS:.0f}% of the required sample. The "
+            f"BSS below is reported for completeness and **must not be read as the M3 "
+            f"decision**, in either direction. Re-run once the population reaches "
+            f"{M3_MIN_STATION_DAYS} station-days.\n"
+        )
+    elif bss is None:
+        lines.append("> **NO VERDICT** -- BSS is undefined (degenerate BS_market).\n")
+    else:
+        lines.append(f"### Verdict: {verdict_label(bss)}\n")
+        lines.append(
+            f"BSS = **{bss:.4f}** on {station_days} station-days, at or above the "
+            f"required power. Per the rule above, this is the M3 decision.\n"
+        )
+    return lines
+
+
 def build_report(samples: "list[dict]", exclusion_counts: dict, n_no_settlement: int,
-                 run_date: str, outcome_meta: "dict | None" = None) -> str:
-    """Assemble the Pass-1 markdown report.
+                 run_date: str, outcome_meta: "dict | None" = None,
+                 population: str = POPULATION_GATE_SELECTED) -> str:
+    """Assemble the markdown report for either pass.
 
     *outcome_meta* describes how outcomes were resolved --
     ``{"source": OUTCOME_SOURCE_*, "counts": {...}}``. Defaults to the legacy
     settlements join so the original call signature keeps working.
+
+    *population* selects Pass 1 (``gate-selected``) or Pass 2
+    (``all-bracket``). Only the framing differs -- the disclaimer, the verdict
+    section and the power gate. Every computed quantity below is identical
+    between the two passes, which is the point: the decision rule must not be
+    able to drift from the read that preceded it.
     """
     outcome_meta = outcome_meta or {"source": OUTCOME_SOURCE_SETTLEMENTS, "counts": {}}
     source = outcome_meta.get("source", OUTCOME_SOURCE_SETTLEMENTS)
     ocounts = outcome_meta.get("counts") or {}
     is_resolver = source == OUTCOME_SOURCE_RESOLVER
+    is_pass2 = population == POPULATION_ALL_BRACKET
 
     global_stats = compute_bss(samples)
 
@@ -712,7 +898,11 @@ def build_report(samples: "list[dict]", exclusion_counts: dict, n_no_settlement:
     market_samples = [(market_p_yes(r), r["yes_won"]) for r in samples]
 
     lines = []
-    lines.append("# Market-vs-Model Skill Test -- Pass 1 (issue #822)\n")
+    if is_pass2:
+        lines.append("# Market-vs-Model Skill Test -- PASS 2 / M3 DECISION GATE "
+                     "(issue #822)\n")
+    else:
+        lines.append("# Market-vs-Model Skill Test -- Pass 1 (issue #822)\n")
     lines.append(f"**Run date:** {run_date}  ")
     if is_resolver:
         lines.append(
@@ -724,7 +914,7 @@ def build_report(samples: "list[dict]", exclusion_counts: dict, n_no_settlement:
     else:
         lines.append("**Data source:** `logs/candidates.*.csv.gz` (archived, gate-selected) "
                      "joined to `settlements` (meteoedge.db)  \n")
-    lines.append(REQUIRED_DISCLAIMER)
+    lines.append(PASS2_DISCLAIMER if is_pass2 else REQUIRED_DISCLAIMER)
     lines.append("\n---\n")
 
     lines.append("## Exclusion funnel\n")
@@ -768,7 +958,10 @@ def build_report(samples: "list[dict]", exclusion_counts: dict, n_no_settlement:
     lines.append(f"| BS_model | {bs_m:.4f} |" if bs_m is not None else "| BS_model | n/a |")
     lines.append(f"| BS_market | {bs_k:.4f} |" if bs_k is not None else "| BS_market | n/a |")
     lines.append(f"| BSS | {bss:.4f} |" if bss is not None else "| BSS | n/a |")
-    lines.append(f"| Pass-1 reading (NOT the M3 verdict) | {verdict_label(bss)} |")
+    if is_pass2:
+        lines.append(f"| **M3 VERDICT** | **{verdict_label(bss)}** |")
+    else:
+        lines.append(f"| Pass-1 reading (NOT the M3 verdict) | {verdict_label(bss)} |")
     lines.append("")
     if is_resolver:
         lines.append(
@@ -783,6 +976,9 @@ def build_report(samples: "list[dict]", exclusion_counts: dict, n_no_settlement:
                      "share one daily-high outcome, so the effective sample size is "
                      "station-days, not bracket-rows. This report states the de-duplicated "
                      "bracket-row n; it does not further collapse to station-days.\n")
+
+    if is_pass2:
+        lines.extend(_decision_gate_section(global_stats, ocounts))
 
     if is_resolver:
         lines.extend(_ground_truth_section(samples, ocounts))
@@ -861,7 +1057,9 @@ def run_report(candidates_csv: Path, db_path: Path, out_dir: Path,
                outcome_source: str = OUTCOME_SOURCE_RESOLVER,
                use_gamma: bool = True,
                allow_network: bool = True,
-               gamma_cache_path: "Path | None" = _DEFAULT_CACHE) -> int:
+               gamma_cache_path: "Path | None" = _DEFAULT_CACHE,
+               population: str = POPULATION_GATE_SELECTED,
+               bracket_evals: "Path | None" = None) -> int:
     """Load, filter, resolve outcomes, score, and (if there is real data) write
     the report.
 
@@ -880,14 +1078,24 @@ def run_report(candidates_csv: Path, db_path: Path, out_dir: Path,
         raise ValueError(
             f"outcome_source must be one of {OUTCOME_SOURCES}, got {outcome_source!r}"
         )
+    if population not in POPULATIONS:
+        raise ValueError(
+            f"population must be one of {POPULATIONS}, got {population!r}"
+        )
 
-    raw_rows = load_candidate_rows(candidates_csv)
+    is_pass2 = population == POPULATION_ALL_BRACKET
+    if is_pass2:
+        source_path = bracket_evals or BRACKET_EVALS_JSONL
+        raw_rows = load_bracket_eval_rows(source_path)
+    else:
+        source_path = candidates_csv
+        raw_rows = load_candidate_rows(source_path)
     if not raw_rows:
         log.info(
             "[bss] no rows found under %s (rotated sources) -- nothing to score. "
             "This is expected in a fresh checkout / dev sandbox; logs/ is "
             "gitignored and lives on the bot host. Not writing a report.",
-            candidates_csv,
+            source_path,
         )
         return 0
 
@@ -936,11 +1144,23 @@ def run_report(candidates_csv: Path, db_path: Path, out_dir: Path,
     report = build_report(
         samples, exclusion_counts, n_unresolved, run_date,
         outcome_meta={"source": outcome_source, "counts": outcome_counts},
+        population=population,
     )
     out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / f"bss_market_vs_model_pass1_{run_date}.md"
+    stem = "bss_market_vs_model_pass2" if is_pass2 else "bss_market_vs_model_pass1"
+    out_path = out_dir / f"{stem}_{run_date}.md"
     out_path.write_text(report, encoding="utf-8")
-    log.info("[bss] wrote %s (n=%d)", out_path, len(samples))
+    if is_pass2:
+        station_days = outcome_counts.get("n_station_days", 0)
+        log.info(
+            "[bss] PASS 2 / M3 GATE -- wrote %s | n=%d bracket-rows, %d station-days "
+            "(need %d) | %s",
+            out_path, len(samples), station_days, M3_MIN_STATION_DAYS,
+            "POWERED" if station_days >= M3_MIN_STATION_DAYS
+            else "UNDERPOWERED -- not a verdict",
+        )
+    else:
+        log.info("[bss] wrote %s (n=%d)", out_path, len(samples))
     return 0
 
 
@@ -951,6 +1171,16 @@ def main(argv: "list[str] | None" = None) -> int:
     ap.add_argument("--out", type=Path, default=DEFAULT_OUT_DIR)
     ap.add_argument("--run-date", default=None,
                     help="Report date stamp (default: today, UTC)")
+    ap.add_argument("--population", choices=POPULATIONS,
+                    default=POPULATION_GATE_SELECTED,
+                    help="'gate-selected' (default, Pass 1): score the archived "
+                         "candidates CSV -- only brackets that cleared the live entry "
+                         "gates. 'all-bracket' (Pass 2 / M3 DECISION GATE): score "
+                         "#826's full bracket_evals log, the population the decision "
+                         "rule specifies.")
+    ap.add_argument("--bracket-evals", type=Path, default=None,
+                    help="Override the bracket_evals JSONL path "
+                         "(--population all-bracket only)")
     ap.add_argument("--outcome-source", choices=OUTCOME_SOURCES,
                     default=OUTCOME_SOURCE_RESOLVER,
                     help="'resolver' (default): Gamma-first with observed-daily-high "
@@ -970,6 +1200,8 @@ def main(argv: "list[str] | None" = None) -> int:
         outcome_source=args.outcome_source,
         use_gamma=not args.no_gamma,
         allow_network=not args.no_network,
+        population=args.population,
+        bracket_evals=args.bracket_evals,
     )
 
 
