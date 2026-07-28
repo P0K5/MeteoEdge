@@ -423,7 +423,7 @@ class TestEndToEnd:
         assert rc == 0
         report_path = out_dir / "bss_market_vs_model_pass1_2026-02-15.md"
         assert report_path.exists()
-        text = report_path.read_text()
+        text = report_path.read_text(encoding="utf-8")
         assert "PASS 1 -- NOT THE DECISION GATE" in text
         assert "gate-selected" in text.lower() or "gate-selected" in REQUIRED_DISCLAIMER.lower()
         # Only 0x001 survives every filter (0x002 artifact, 0x003 rail, 0x004 no
@@ -622,7 +622,7 @@ class TestResolverEndToEnd:
                 gamma_cache_path=tmp_path / "cache.json",
             )
         assert rc == 0
-        text = (out_dir / "bss_market_vs_model_pass1_2026-02-15.md").read_text()
+        text = (out_dir / "bss_market_vs_model_pass1_2026-02-15.md").read_text(encoding="utf-8")
 
         # The Pass-1 caveat survives the change -- this is still not the M3 gate.
         assert "PASS 1 -- NOT THE DECISION GATE" in text
@@ -653,7 +653,7 @@ class TestResolverEndToEnd:
             use_gamma=False, gamma_cache_path=tmp_path / "cache.json",
         )
         assert rc == 0
-        text = (out_dir / "bss_market_vs_model_pass1_2026-02-15.md").read_text()
+        text = (out_dir / "bss_market_vs_model_pass1_2026-02-15.md").read_text(encoding="utf-8")
         # The fix eliminates boundary collisions entirely; the
         # Impossible-outcome-exposure section is only emitted when >0.
         assert "Impossible-outcome exposure" not in text
@@ -683,7 +683,7 @@ class TestResolverEndToEnd:
                 gamma_cache_path=tmp_path / "cache.json",
             )
         assert rc == 0
-        text = (out_dir / "bss_market_vs_model_pass1_2026-02-15.md").read_text()
+        text = (out_dir / "bss_market_vs_model_pass1_2026-02-15.md").read_text(encoding="utf-8")
         assert "| `disjoint` — brackets do not touch, same direction | 1 |" in text
         assert "| `boundary` — brackets touch or overlap | 0 |" in text
         assert "`disjoint`" in text
@@ -702,7 +702,7 @@ class TestResolverEndToEnd:
             use_gamma=False, gamma_cache_path=tmp_path / "cache.json",
         )
         assert rc == 0
-        text = (out_dir / "bss_market_vs_model_pass1_2026-02-15.md").read_text()
+        text = (out_dir / "bss_market_vs_model_pass1_2026-02-15.md").read_text(encoding="utf-8")
         assert "Impossible-outcome check (issues #861 / #867): **0** station-days" in text
 
     def test_settlements_source_still_reproduces_legacy_report(self, tmp_path):
@@ -721,7 +721,7 @@ class TestResolverEndToEnd:
             run_date="2026-02-15", outcome_source=OUTCOME_SOURCE_SETTLEMENTS,
         )
         assert rc == 0
-        text = (out_dir / "bss_market_vs_model_pass1_2026-02-15.md").read_text()
+        text = (out_dir / "bss_market_vs_model_pass1_2026-02-15.md").read_text(encoding="utf-8")
         assert "joined to `settlements`" in text
         assert "Excluded: no definitive settlement match" in text
         assert "## Outcome ground truth" not in text
