@@ -891,6 +891,7 @@ def scan_markets(
                 "minutes_to_settlement": round(mins_left, 1),
                 "emos_mode": emos_mode_used,
                 "is_next_day": 1 if is_next_day_eval else 0,
+                "direction": "high",  # issue #876 -- all high-side snapshots
                 # scan_decisions fields (issue #756) -- date/poll_ts key + persist
                 # the poll this bracket was evaluated in; side/gate_* are filled
                 # in below once the gate outcome for this bracket is known.
