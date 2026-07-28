@@ -24,12 +24,60 @@ pooling_group, shrinkage_weight, and blend_coefficients below.
 """
 from __future__ import annotations
 
+import logging
 import math
 from datetime import datetime, timezone
 
 from scipy.optimize import minimize
 
 from src.config import FORECAST_STDDEV_F, STATIONS
+from src.model.ensemble_sigma import SIGMA_FLOOR_F
+
+log = logging.getLogger(__name__)
+
+# Issue #894: a 2026-06-29 → 2026-07-02 window of `gefs` rows was persisted with
+# SIGMA_FLOOR_F already applied, before #555 moved the floor from capture-time to
+# consumption-time. 329 rows sit at exactly 1.0 against an otherwise continuous
+# distribution (every neighbouring value has n=1-2), spanning 5 of 27 distinct
+# training dates at lead 24.
+#
+# Those rows break the premise #887's train-on-raw decision rests on:
+# `sigma_cal = c + d*sigma_ens` cannot learn `d` from a sigma_ens clamped before
+# it was logged. ~63% of GEFS spread is sub-floor, so most affected dates had a
+# true value BELOW 1.0 flattened to exactly 1.0 -- compressing precisely the low
+# end of the range `d` needs to see.
+#
+# The window is closed and cannot grow: capture has written raw, unfloored sigma
+# via raw_member_sigma() since #555 landed ~2026-07-02, and capture_forecasts.py
+# has a single `gefs` write path. So this is a fixed historical range, not a
+# rule that needs to generalise.
+_CLAMPED_SIGMA_WINDOW_START = "2026-06-29"
+_CLAMPED_SIGMA_WINDOW_END = "2026-07-02"
+_CLAMPED_SIGMA_MODEL = "gefs"
+
+# Distinct from None. A clamped date must be DROPPED, not merely left unset:
+# `None` falls through to `default_sigma` (FORECAST_STDDEV_F = 2.0), which is
+# further from the true sub-floor value than the clamped 1.0 it would replace.
+_CLAMPED_SIGMA_SENTINEL = object()
+
+
+def _is_clamped_legacy_sigma(row: dict) -> bool:
+    """True if *row* carries a sigma_f clamped by pre-#555 capture (issue #894).
+
+    Matches only the exact (model, date-range, value) signature of the known
+    window -- a row inside the window whose sigma_f is genuinely above the floor
+    was never clamped and is kept.
+    """
+    if row.get("model") != _CLAMPED_SIGMA_MODEL:
+        return False
+    date_str = str(row.get("date") or "")[:10]
+    if not (_CLAMPED_SIGMA_WINDOW_START <= date_str <= _CLAMPED_SIGMA_WINDOW_END):
+        return False
+    raw_sigma = row.get("sigma_f")
+    try:
+        return float(raw_sigma) == SIGMA_FLOOR_F
+    except (TypeError, ValueError):
+        return False
 from src.model.crps_score import crps_gaussian
 
 
@@ -251,12 +299,24 @@ def fetch_training_data(
         # for a given date (unchanged pre-#449 behaviour).
         if date_sigma.get(d) is None:
             raw_sigma = row.get("sigma_f")
+            if raw_sigma is not None and _is_clamped_legacy_sigma(row):
+                # Issue #894: reject, don't just skip -- leaving it None would
+                # fall through to `default_sigma` (FORECAST_STDDEV_F = 2.0)
+                # below, which is further from the true sub-floor value than the
+                # clamped 1.0 it replaced. Setting the sentinel keeps the date
+                # out of the fit entirely (see the _CLAMPED_* docs).
+                date_sigma[d] = _CLAMPED_SIGMA_SENTINEL
+                continue
             date_sigma[d] = float(raw_sigma) if raw_sigma is not None else None
 
     result: list[tuple[float, float, float]] = []
+    n_clamped_excluded = 0
     for date_str, mu_list in date_mu_accum.items():
         mu_f = sum(mu_list) / len(mu_list)
         sigma_f = date_sigma.get(date_str)
+        if sigma_f is _CLAMPED_SIGMA_SENTINEL:
+            n_clamped_excluded += 1
+            continue  # issue #894 -- clamped legacy sigma, drop the whole date
         if sigma_f is None:
             sigma_f = default_sigma  # fallback for rows without persisted spread
         # daily high = MAX(temp_f) for this station on this date
@@ -273,6 +333,14 @@ def fetch_training_data(
         if any(math.isnan(v) or math.isinf(v) for v in (mu_f, sigma_f, obs_high)):
             continue
         result.append((mu_f, sigma_f, obs_high))
+
+    if n_clamped_excluded:
+        log.info(
+            "[emos] %s lead=%dh: dropped %d date(s) with pre-#555 clamped gefs "
+            "sigma_f (%s..%s) -- issue #894",
+            station, lead_hours, n_clamped_excluded,
+            _CLAMPED_SIGMA_WINDOW_START, _CLAMPED_SIGMA_WINDOW_END,
+        )
 
     if len(result) < min_samples:
         raise InsufficientDataError(

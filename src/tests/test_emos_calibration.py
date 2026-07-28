@@ -17,6 +17,8 @@ import random
 import pytest
 
 from src.data.db import Database
+from src.config import FORECAST_STDDEV_F
+from src.model.ensemble_sigma import SIGMA_FLOOR_F
 from src.model.emos_calibration import (
     InsufficientDataError,
     fetch_training_data,
@@ -510,3 +512,84 @@ class TestTrainingEligibilityExclusionEndToEnd:
         assert len(pooled) == 10
         assert per_city == {"Chicago": 10}
         assert "Shenzhen" not in per_city
+
+
+# ---------------------------------------------------------------------------
+# Issue #894: pre-#555 clamped gefs sigma_f must not train the ensemble track
+# ---------------------------------------------------------------------------
+
+class TestClampedLegacySigmaExcluded:
+    """A 2026-06-29..07-02 window of `gefs` rows was persisted with
+    SIGMA_FLOOR_F already applied, before #555 moved the floor to
+    consumption-time. Those rows break #887's train-on-raw premise --
+    `sigma_cal = c + d*sigma_ens` cannot learn `d` from a pre-clamped sigma --
+    so the affected DATES must leave the fit entirely."""
+
+    def _seed(self, db, date_str, sigma_f, model="gefs"):
+        db.upsert_forecast_log_v2(
+            station="KORD", model=model, date=date_str,
+            forecast_high_f=75.0, lead_hours=24, sigma_f=sigma_f,
+        )
+        db.insert_observation(
+            ts=f"{date_str}T18:00:00+00:00", station="KORD",
+            temp_f=76.0, temp_native=76.0, unit="F", source="metar",
+        )
+
+    def test_clamped_row_inside_window_drops_the_date(self):
+        db = _db()
+        self._seed(db, "2026-06-30", SIGMA_FLOOR_F)      # clamped -> excluded
+        self._seed(db, "2026-07-10", 0.42)               # clean -> kept
+        data = fetch_training_data("Chicago", db, min_samples=1, lead_hours=24,
+                                   forecast_source="gefs", sigma_source="ensemble")
+        assert len(data) == 1
+        assert data[0][1] == pytest.approx(0.42)
+
+    def test_clamped_date_is_dropped_not_defaulted_to_forecast_stddev(self):
+        """The trap this guards: leaving sigma unset falls through to
+        FORECAST_STDDEV_F (2.0), which is FURTHER from the true sub-floor value
+        than the clamped 1.0 it replaced."""
+        db = _db()
+        self._seed(db, "2026-06-30", SIGMA_FLOOR_F)
+        with pytest.raises(InsufficientDataError):
+            fetch_training_data("Chicago", db, min_samples=1, lead_hours=24,
+                                forecast_source="gefs", sigma_source="ensemble")
+
+    def test_unclamped_row_inside_window_is_kept(self):
+        """Only the exact clamp signature is rejected -- a row inside the window
+        whose sigma is genuinely above the floor was never clamped."""
+        db = _db()
+        self._seed(db, "2026-06-30", 3.75)
+        data = fetch_training_data("Chicago", db, min_samples=1, lead_hours=24,
+                                   forecast_source="gefs", sigma_source="ensemble")
+        assert len(data) == 1
+        assert data[0][1] == pytest.approx(3.75)
+
+    def test_floor_valued_row_outside_the_window_is_kept(self):
+        """The window is closed and cannot grow -- capture has written raw sigma
+        since #555. A later 1.0 is a genuine measurement, not a clamp."""
+        db = _db()
+        self._seed(db, "2026-07-20", SIGMA_FLOOR_F)
+        data = fetch_training_data("Chicago", db, min_samples=1, lead_hours=24,
+                                   forecast_source="gefs", sigma_source="ensemble")
+        assert len(data) == 1
+        assert data[0][1] == pytest.approx(SIGMA_FLOOR_F)
+
+    def test_non_gefs_floor_value_inside_window_is_kept(self):
+        """nws sigma is a climatological lookup whose 3h entry IS 1.0 --
+        rejecting it would discard legitimate data."""
+        db = _db()
+        self._seed(db, "2026-06-30", SIGMA_FLOOR_F, model="nws")
+        data = fetch_training_data("Chicago", db, min_samples=1, lead_hours=24,
+                                   forecast_source="nws", sigma_source="ensemble")
+        assert len(data) == 1
+        assert data[0][1] == pytest.approx(SIGMA_FLOOR_F)
+
+    def test_fixed_track_is_untouched(self):
+        """sigma_source='fixed' ignores sigma_f entirely, so the clamp is
+        irrelevant there and the date must survive."""
+        db = _db()
+        self._seed(db, "2026-06-30", SIGMA_FLOOR_F)
+        data = fetch_training_data("Chicago", db, min_samples=1, lead_hours=24,
+                                   forecast_source="gefs", sigma_source="fixed")
+        assert len(data) == 1
+        assert data[0][1] == pytest.approx(FORECAST_STDDEV_F)

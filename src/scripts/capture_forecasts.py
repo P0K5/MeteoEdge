@@ -140,6 +140,7 @@ import argparse
 import logging
 import os
 import statistics
+import time
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from datetime import datetime, timedelta, timezone
@@ -178,28 +179,99 @@ _CAPTURE_SCHEDULE: dict[int, list[tuple[int, int]]] = {
 CAPTURE_FETCH_TIMEOUT_SECONDS = float(os.getenv("CAPTURE_FETCH_TIMEOUT_SECONDS", "90"))
 
 
-def _call_with_timeout(func, *args, _label: str = "", **kwargs):
+# Issue #895: the GEFS cache warm-up gets its own, larger budget. It is doing
+# 31 member GRIB downloads in one call -- structurally ~31x the work of every
+# other per-station fetch -- so holding it to the same per-fetch timeout is what
+# produced the bug this exists to fix.
+CAPTURE_GEFS_WARMUP_TIMEOUT_SECONDS = float(
+    os.getenv("CAPTURE_GEFS_WARMUP_TIMEOUT_SECONDS", "600")
+)
+
+
+def _warm_gefs_cache(dry_run: bool = False) -> None:
+    """Pre-download the GEFS member GRIB slices once per run (issue #895).
+
+    **The bug this fixes.** ``fetch_gefs_ensemble`` downloads 31 member GRIB
+    files, cached by ``(model, var, cycle, fxx, member)`` -- *not* by station.
+    So on a fresh GEFS cycle the FIRST station in ``STATIONS`` pays for all 31
+    downloads while stations 2..30 read from the warm cache. ``STATIONS[0]`` is
+    KORD, which therefore blew the 90s per-fetch timeout on nearly every run:
+    98 failures against 8-10 for every other station, 100% of them
+    ``exceeded 90s timeout``, clustered at capture-run start times.
+
+    The downstream cost was not a missing row. With no ``gefs`` row, EMOS
+    training for KORD fell through to the next model with a non-NULL sigma_f --
+    ``nws``, whose sigma is a per-lead climatological CONSTANT. With sigma
+    constant, ``c`` and ``d`` in ``sigma_cal = c + d*sigma_raw`` collapse onto a
+    flat ridge and ``d`` is unidentifiable (see issue #893). KORD -- the
+    most-traded station and the one docs/REMEDIATION_PLAN.md's diagnosis is
+    built on -- had degenerate sigma calibration because it sorts first in a
+    Python list.
+
+    Warming the shared cache once, before the loop, means no station pays the
+    cold start. Deliberately NOT fixed by reordering ``STATIONS``: that only
+    moves the penalty to whichever station lands first, and silently changes
+    which station ends up degenerate.
+
+    Failure here is non-fatal and unlogged beyond a warning -- every station
+    still attempts its own fetch, so a failed warm-up restores exactly the
+    previous behaviour rather than skipping GEFS.
+    """
+    if dry_run:
+        log.info("[capture] gefs warm-up skipped (dry run)")
+        return
+    # Any station's coordinates warm the same per-cycle member cache; the
+    # lat/lon only selects the grid point read out of the already-downloaded
+    # slice. STATIONS[0] is the one that would otherwise pay this cost.
+    _, lat, lon, *_rest = STATIONS[0]
+    started = time.monotonic()
+    try:
+        members = _call_with_timeout(
+            fetch_gefs_ensemble, lat, lon,
+            station="__warmup__", _label="gefs-warmup",
+            _timeout=CAPTURE_GEFS_WARMUP_TIMEOUT_SECONDS,
+        )
+    except Exception as exc:
+        log.warning(
+            "[capture] gefs cache warm-up failed after %.0fs: %s -- "
+            "per-station fetches will fall back to cold-start behaviour",
+            time.monotonic() - started, exc,
+        )
+        return
+    log.info(
+        "[capture] gefs cache warmed: %d members in %.0fs",
+        len(members or []), time.monotonic() - started,
+    )
+
+
+def _call_with_timeout(func, *args, _label: str = "", _timeout: "float | None" = None,
+                       **kwargs):
     """Call *func(*args, **kwargs)* with a hard wall-clock timeout.
 
-    Runs func in a single-use worker thread and waits up to
-    CAPTURE_FETCH_TIMEOUT_SECONDS. Raises TimeoutError if it does not
-    complete in time -- callers must catch this (along with any exception
-    func itself might raise) and continue with the next station/model rather
-    than letting it propagate (issue #717).
+    Runs func in a single-use worker thread and waits up to *_timeout*
+    seconds, defaulting to CAPTURE_FETCH_TIMEOUT_SECONDS. Raises TimeoutError
+    if it does not complete in time -- callers must catch this (along with any
+    exception func itself might raise) and continue with the next
+    station/model rather than letting it propagate (issue #717).
+
+    *_timeout* exists for the GEFS warm-up (issue #895), which does 31 member
+    GRIB downloads in one call and legitimately needs a larger budget than a
+    single-endpoint per-station fetch.
 
     The worker thread is NOT forcibly killed on timeout (Python has no safe
     way to do that); it is abandoned to finish or error out on its own in the
     background while this function returns immediately, which is exactly what
     keeps the capture loop from stalling the way it did on 2026-07-07.
     """
+    timeout = CAPTURE_FETCH_TIMEOUT_SECONDS if _timeout is None else _timeout
     pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix=f"capture-{_label or 'fetch'}")
     future = pool.submit(func, *args, **kwargs)
     try:
-        return future.result(timeout=CAPTURE_FETCH_TIMEOUT_SECONDS)
+        return future.result(timeout=timeout)
     except FutureTimeoutError:
         raise TimeoutError(
             f"{_label or getattr(func, '__name__', 'fetch')} "
-            f"exceeded {CAPTURE_FETCH_TIMEOUT_SECONDS:.0f}s timeout"
+            f"exceeded {timeout:.0f}s timeout"
         )
     finally:
         pool.shutdown(wait=False)
@@ -250,6 +322,8 @@ def run_captures(db, *, dry_run: bool = False, force: bool = False) -> None:
     )
 
     issued_at = datetime.now(timezone.utc).isoformat()
+
+    _warm_gefs_cache(dry_run=dry_run)
 
     for station, lat, lon, city, *_ in STATIONS:
         for day_offset, lead_hours in captures:

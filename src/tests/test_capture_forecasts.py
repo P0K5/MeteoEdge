@@ -725,3 +725,74 @@ class TestRunCapturesResilience:
         assert any(
             "capture failed unexpectedly" in r.getMessage() for r in caplog.records
         ), [r.getMessage() for r in caplog.records]
+
+
+# ---------------------------------------------------------------------------
+# Issue #895: GEFS cache warm-up (KORD cold-start timeout)
+# ---------------------------------------------------------------------------
+
+class TestGefsCacheWarmup:
+    """fetch_gefs_ensemble downloads 31 member GRIB files cached by
+    (model, var, cycle, fxx, member) -- NOT by station. So the first station in
+    STATIONS paid for all 31 downloads on a fresh cycle and blew the 90s
+    per-fetch timeout (98 failures vs 8-10 for every other station). Warming the
+    shared cache once, before the loop, means no station pays the cold start."""
+
+    def test_warmup_runs_before_the_station_loop(self):
+        """The whole point: the warm-up must precede station iteration, or the
+        first station still pays the cold start."""
+        calls: list[str] = []
+        with (
+            patch("src.scripts.capture_forecasts._warm_gefs_cache",
+                  side_effect=lambda **kw: calls.append("warmup")),
+            patch("src.scripts.capture_forecasts._capture_station",
+                  side_effect=lambda *a, **kw: calls.append("station")),
+        ):
+            run_captures(db=None, dry_run=True, force=True)
+        assert calls[0] == "warmup", f"warm-up did not run first: {calls[:3]}"
+
+    def test_warmup_gets_a_larger_budget_than_a_per_station_fetch(self):
+        """31 member downloads is structurally ~31x a single-endpoint fetch;
+        holding it to the same timeout is what caused the bug."""
+        assert (capture_forecasts_module.CAPTURE_GEFS_WARMUP_TIMEOUT_SECONDS
+                > capture_forecasts_module.CAPTURE_FETCH_TIMEOUT_SECONDS)
+
+    def test_warmup_failure_is_non_fatal(self):
+        """A failed warm-up must restore previous behaviour, not skip GEFS --
+        every station still attempts its own fetch."""
+        with patch("src.scripts.capture_forecasts.fetch_gefs_ensemble",
+                   side_effect=TimeoutError("boom")):
+            capture_forecasts_module._warm_gefs_cache(dry_run=False)  # must not raise
+
+    def test_warmup_skipped_on_dry_run(self):
+        with patch("src.scripts.capture_forecasts.fetch_gefs_ensemble") as mock_fetch:
+            capture_forecasts_module._warm_gefs_cache(dry_run=True)
+        mock_fetch.assert_not_called()
+
+    def test_warmup_uses_first_station_coordinates(self):
+        """Any station's lat/lon warms the same per-cycle member cache; using
+        STATIONS[0] targets the one that would otherwise pay the cost."""
+        from src.config import STATIONS
+        with patch("src.scripts.capture_forecasts.fetch_gefs_ensemble",
+                   return_value=[]) as mock_fetch:
+            capture_forecasts_module._warm_gefs_cache(dry_run=False)
+        mock_fetch.assert_called_once()
+        args, _kwargs = mock_fetch.call_args
+        assert args[0] == pytest.approx(STATIONS[0][1])
+        assert args[1] == pytest.approx(STATIONS[0][2])
+
+
+class TestCallWithTimeoutBudget:
+    def test_explicit_timeout_overrides_the_default(self):
+        with pytest.raises(TimeoutError, match="exceeded 1s timeout"):
+            capture_forecasts_module._call_with_timeout(
+                lambda: time.sleep(5), _label="slow", _timeout=1.0,
+            )
+
+    def test_default_timeout_still_applies_when_unset(self):
+        with patch.object(capture_forecasts_module,
+                          "CAPTURE_FETCH_TIMEOUT_SECONDS", 1.0):
+            with pytest.raises(TimeoutError, match="exceeded 1s timeout"):
+                capture_forecasts_module._call_with_timeout(
+                    lambda: time.sleep(5), _label="slow",
+                )
