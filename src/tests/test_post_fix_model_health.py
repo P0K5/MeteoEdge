@@ -28,11 +28,14 @@ from src.scripts.post_fix_model_health import (
     D_IDENTIFIABLE_THRESHOLD,
     build_report,
     emos_d_coefficients,
+    future_day_zero_violations,
+    ladder_size,
     load_bracket_eval_rows,
     rail_concentration,
     rail_concentration_by_mode,
     run_report,
     sigma_f_coverage,
+    structural_high_rail_ceiling,
     zero_artifact_rate,
 )
 
@@ -245,16 +248,18 @@ class TestEndToEnd:
         )
         assert rc == 0
         text = (out_dir / "post_fix_model_health_2026-02-15.md").read_text()
-        assert "## 1. Rail concentration" in text
+        assert "## 1. Sharpness" in text
         assert "`emos_calibration` unavailable" in text
 
-    def test_report_states_baselines_and_the_pass_fail_rule(self, tmp_path):
-        """A number without its baseline is not a finding -- the whole point is
-        reading post-fix against the pre-fix 62.6%."""
+    def test_report_marks_pass1_figures_as_not_comparable(self, tmp_path):
+        """The defect this replaced: Pass-1's gate-selected baselines were
+        presented as a direct comparison against full-ladder numbers, and the
+        2026-07-28 run duly read as a catastrophic regression that was mostly
+        population. They may still appear -- as labelled context only."""
         path = tmp_path / "logs" / "bracket_evals.jsonl"
         _write_evals(path, [
-            _eval_row(p_yes_raw=0.0), _eval_row(p_yes_raw=1.0),
-            _eval_row(p_yes_raw=0.45), _eval_row(p_yes_raw=0.55),
+            _eval_row(ticker="0x1", p_yes_raw=0.0), _eval_row(ticker="0x2", p_yes_raw=1.0),
+            _eval_row(ticker="0x3", p_yes_raw=0.45), _eval_row(ticker="0x4", p_yes_raw=0.55),
         ])
         db = tmp_path / "data" / "meteoedge.db"
         _write_db(db, emos_rows=[("chicago", "ensemble", 1.0, 0.42)],
@@ -266,11 +271,11 @@ class TestEndToEnd:
         text = (out_dir / "post_fix_model_health_2026-02-15.md").read_text()
 
         assert "NOT A SKILL TEST" in text
-        assert "62.6%" in text                    # the rail baseline
-        assert "17.8%" in text                    # the zero-artifact baseline
-        assert "50.0%" in text                    # this fixture's rail share
+        assert "not directly comparable" in text.lower()
+        assert "different population -- not a comparison" in text
+        assert "structural ceiling" in text
+        assert "Middle mass" in text
         assert "## What a pass and a fail look like" in text
-        # Check 3 present with the ensemble row readable on its own.
         assert "| ensemble |" in text
 
     def test_no_usable_p_yes_raw_writes_no_report(self, tmp_path):
@@ -295,3 +300,121 @@ class TestBuildReportDirectly:
             {"available": False, "by_model": {}}, "2026-02-15", None,
         )
         assert f"{BASELINE_RAIL_SHARE:.1%}" in report
+
+
+class TestMiddleMassAndCeiling:
+    """The two population-robust measures that replaced the invalid
+    cross-population baseline comparison."""
+
+    def test_middle_mass_counts_the_range_the_pre_fix_model_never_used(self):
+        rows = [
+            _eval_row(p_yes_raw=0.0),    # rail
+            _eval_row(p_yes_raw=0.30),   # middle
+            _eval_row(p_yes_raw=0.60),   # middle
+            _eval_row(p_yes_raw=1.0),    # rail
+        ]
+        assert rail_concentration(rows)["middle_share"] == 0.5
+
+    def test_middle_mass_excludes_the_rails_at_its_own_edges(self):
+        rows = [_eval_row(p_yes_raw=0.049), _eval_row(p_yes_raw=0.95)]
+        assert rail_concentration(rows)["middle_share"] == 0.0
+
+    def test_ladder_size_counts_distinct_tickers_per_station_day(self):
+        """Rows are per POLL -- a bracket polled 20 times is still one bracket."""
+        rows = (
+            [_eval_row(ticker="0x1") for _ in range(20)]
+            + [_eval_row(ticker="0x2") for _ in range(20)]
+            + [_eval_row(ticker="0x3")]
+        )
+        assert ladder_size(rows) == 3
+
+    def test_structural_ceiling_is_one_over_ladder_size(self):
+        """At most one bracket on a station-day can contain the daily high, so a
+        maximally overconfident model tops out at 1/N near-certain YES calls."""
+        rows = [_eval_row(ticker=f"0x{i}") for i in range(11)]
+        assert structural_high_rail_ceiling(rows) == 1 / 11
+
+    def test_ceiling_is_none_when_ladder_is_unknowable(self):
+        assert structural_high_rail_ceiling([]) is None
+
+    def test_report_states_high_rail_as_a_fraction_of_the_ceiling(self):
+        """0.4% against a 9.1% ceiling is the number that carries the verdict --
+        composition explains 29.2% -> ~9%, not ~9% -> 0.4%."""
+        rows = [_eval_row(ticker=f"0x{i}", p_yes_raw=0.30) for i in range(11)]
+        rows[0]["p_yes_raw"] = 1.0     # 1 of 11 at the high rail == the ceiling
+        rails = rail_concentration(rows)
+        report = build_report(
+            rails, {}, zero_artifact_rate(rows),
+            {"available": False, "by_sigma_source": {}},
+            {"available": False, "by_model": {}}, "2026-02-15", None,
+            inv=future_day_zero_violations(rows), rows_for_ceiling=rows,
+        )
+        assert "structural ceiling (1 / 11-bracket ladder)" in report
+        assert "**100%** of the ceiling" in report
+
+
+class TestFutureDayZeroInvariant:
+    """#820's bug shape, tested as an invariant: a bracket cannot be impossible
+    on a day that has not begun. Needs no baseline, so it cannot be confounded
+    by ladder composition the way the raw exact-zero rate was."""
+
+    def test_zero_before_the_settlement_day_is_a_violation(self):
+        # 2026-02-01T18:00Z is 12:00 local in Chicago on 02-01, pricing 02-02.
+        row = _eval_row(poll_ts="2026-02-01T18:00:00+00:00",
+                        settlement_date="2026-02-02", p_yes_raw=0.0)
+        out = future_day_zero_violations([row])
+        assert out["n_future_day"] == 1
+        assert out["n_violations"] == 1
+        assert out["violation_rate"] == 1.0
+
+    def test_zero_on_the_settlement_day_is_legitimate(self):
+        """Past the peak, brackets above the achieved high really are
+        unreachable -- an exact 0.0 is the correct answer, not the bug."""
+        row = _eval_row(poll_ts="2026-02-01T23:00:00+00:00",
+                        settlement_date="2026-02-01", p_yes_raw=0.0)
+        out = future_day_zero_violations([row])
+        assert out["n_violations"] == 0
+        assert out["n_same_or_past_day_zero"] == 1
+
+    def test_nonzero_on_a_future_day_is_not_a_violation(self):
+        row = _eval_row(poll_ts="2026-02-01T18:00:00+00:00",
+                        settlement_date="2026-02-02", p_yes_raw=0.15)
+        out = future_day_zero_violations([row])
+        assert out["n_future_day"] == 1
+        assert out["n_violations"] == 0
+
+    def test_local_date_not_utc_date_decides(self):
+        """2026-02-02T01:00Z is still 2026-02-01 in Chicago. Judging by the UTC
+        date would call this a same-day poll and miss the violation."""
+        row = _eval_row(station="KORD", poll_ts="2026-02-02T01:00:00+00:00",
+                        settlement_date="2026-02-02", p_yes_raw=0.0)
+        out = future_day_zero_violations([row])
+        assert out["n_violations"] == 1
+
+    def test_undatable_row_is_counted_not_silently_dropped(self):
+        row = _eval_row(station="ZZZZ", p_yes_raw=0.0)
+        out = future_day_zero_violations([row])
+        assert out["n_undatable"] == 1
+        assert out["n_violations"] == 0
+
+    def test_report_calls_out_violations_loudly(self):
+        rows = [_eval_row(poll_ts="2026-02-01T18:00:00+00:00",
+                          settlement_date="2026-02-02", p_yes_raw=0.0)]
+        report = build_report(
+            rail_concentration(rows), {}, zero_artifact_rate(rows),
+            {"available": False, "by_sigma_source": {}},
+            {"available": False, "by_model": {}}, "2026-02-15", None,
+            inv=future_day_zero_violations(rows), rows_for_ceiling=rows,
+        )
+        assert "#820 IS NOT FULLY CLOSED" in report
+
+    def test_report_confirms_a_clean_population(self):
+        rows = [_eval_row(poll_ts="2026-02-01T23:00:00+00:00",
+                          settlement_date="2026-02-01", p_yes_raw=0.0)]
+        report = build_report(
+            rail_concentration(rows), {}, zero_artifact_rate(rows),
+            {"available": False, "by_sigma_source": {}},
+            {"available": False, "by_model": {}}, "2026-02-15", None,
+            inv=future_day_zero_violations(rows), rows_for_ceiling=rows,
+        )
+        assert "No violations" in report

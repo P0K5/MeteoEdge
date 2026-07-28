@@ -142,10 +142,18 @@ near-instant.
 - `--outcome-source settlements` — reproduces the original n=20 report.
 
 **Check before citing the number:** the report's *Outcome ground truth* section states the
-`gamma` / `metar` split and counts the #861 boundary exposure. A result dominated by `metar`
-rows deserves more scepticism — #644 measured that proxy disagreeing with the official
+`gamma` / `metar` split and counts the impossible-outcome exposure. A result dominated by
+`metar` rows deserves more scepticism — #644 measured that proxy disagreeing with the official
 outcome ~22% of the time. Read the **station-day** count, not the bracket-row `n`, against
 the power requirement.
+
+> **Keep the Gamma cache warm.** This is now operational, not an optimisation. Gamma-resolved
+> brackets never touch the interval logic, so they are immune to #861; METAR-resolved ones
+> are not. The 2026-07-26 run was 95% Gamma and showed 5 collisions in 300 station-days. The
+> 2026-07-28 run used `--no-network` against a cache holding only the older tickers, fell
+> back to 88% METAR, and showed **70 collisions in 105 station-days**. Run the resolver
+> **without** `--no-network` regularly so newly-logged tickers get cached while their markets
+> are settling.
 
 ### M2 · Make the model honest — target 2026-08-07
 
@@ -258,7 +266,9 @@ purely data-bound: the only thing between here and M3 is station-days accruing.*
 | #798 | Partial pooling instead of hard 60-sample cutover | M2 | ✅ Merged |
 | #823 | Recompute promotion bars excluding artifact rows | M2 | ✅ Merged |
 | #824 | Capture ECMWF ensemble spread (2,750 rows have none) | M2 | ✅ Merged |
-| #861 | Bracket-boundary convention (**adjacent** brackets both YES) | before M3 | Open — 1 station-day in the 2026-07-26 run |
+| #861 | Bracket-boundary convention (**adjacent** brackets both YES) | before M3 | **Open — HIGHEST pre-M3 priority. 70 of 105 station-days (67%) under METAR resolution** |
+| #871 | `bracket_evals.emos_mode` overwritten with `next_day` on half the rows | **now** | Open — blinds per-mode analysis of the M3 population |
+| #872 | M2 premise check — constant-σ rows show median `d` = 0.88, not 0.001 | before citing #799 | Open — investigation only, no code change during collection |
 | #450 | Calibration backtest: reliability + CRPS over 30 days | M3 | Open |
 | #782 | Anchor day partitions to settlement window | after M0 | Unblocked — #820 is merged |
 | #591 | Climb tables / entry windows — same mechanism as #820 | after M0 | Unblocked — #820 is merged |

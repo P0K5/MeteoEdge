@@ -81,15 +81,39 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(messag
 DEFAULT_DB_PATH = Path(os.getenv("DB_PATH", "data/meteoedge.db"))
 DEFAULT_OUT_DIR = Path("backtest_results")
 
-# Pre-fix baselines, measured on the 2026-07-26 Pass-1 run
-# (backtest_results/bss_market_vs_model_pass1_2026-07-26.md). Every table below
-# states the post-fix number against these, because "29% at the top rail" only
-# means something next to the 29.2% it is supposed to have improved on.
-BASELINE_LOW_RAIL_SHARE = 0.334      # p_yes_raw in [0.00, 0.02)
-BASELINE_HIGH_RAIL_SHARE = 0.292     # p_yes_raw in [0.95, 1.00]
-BASELINE_RAIL_SHARE = 0.626          # combined
-BASELINE_ZERO_ARTIFACT_RATE = 0.178  # 2265 / 12698 archived rows
+# Pre-fix reference points, measured on the 2026-07-26 Pass-1 run
+# (backtest_results/bss_market_vs_model_pass1_2026-07-26.md).
+#
+# **These are NOT directly comparable to this report's numbers, and the first
+# version of this script wrongly presented them as if they were.** Pass 1 read
+# `logs/candidates.*.csv.gz` -- the GATE-SELECTED population, only brackets that
+# cleared MIN_PRICE_CENTS / MAX_EDGE_CENTS / the near-certainty check. This
+# report reads `bracket_evals` -- the FULL ~11-bracket ladder. The two differ in
+# exactly the dimension being measured: a full ladder is mostly far-out-of-the-
+# money brackets, which legitimately sit near zero and legitimately trip the
+# envelope's impossibility shortcut. A higher low-rail share and a higher
+# exact-zero rate are therefore expected from population alone, whether or not
+# any fix worked.
+#
+# No pre-fix `bracket_evals` exists either -- #826 started logging 2026-07-24,
+# after #820 -- so a true like-for-like pre/post is not available at all.
+#
+# They are kept as CONTEXT, printed with that caveat attached, and the report's
+# actual pass/fail rests on the two population-robust measures below:
+# STRUCTURAL_HIGH_RAIL_CEILING and middle mass.
+BASELINE_LOW_RAIL_SHARE = 0.334      # p_yes_raw in [0.00, 0.02), gate-selected
+BASELINE_HIGH_RAIL_SHARE = 0.292     # p_yes_raw in [0.95, 1.00], gate-selected
+BASELINE_RAIL_SHARE = 0.626          # combined, gate-selected
+BASELINE_ZERO_ARTIFACT_RATE = 0.178  # 2265 / 12698 gate-selected rows
 BASELINE_D_COEFFICIENT = 0.001       # d ~ 0.001 across all 30 cities (#799)
+
+# The "middle" -- probabilities that are neither near-impossible nor
+# near-certain. A model with NO middle is the pathology Pass 1 found: its
+# pre-fix sharpness histogram had exactly 0.0% between 0.05 and 0.95. Unlike a
+# rail share, this is robust to ladder composition, because adding far-OTM
+# brackets adds mass at the bottom without removing mass from the middle.
+MIDDLE_LOW = 0.05
+MIDDLE_HIGH = 0.95
 
 # A fitted d at or below this is indistinguishable from the unidentifiable
 # regime #799 set out to escape -- an order of magnitude above the 0.001
@@ -180,15 +204,64 @@ def rail_concentration(rows: "list[dict]", edges: "list[float]" = BUCKET_EDGES) 
 
     n_low = sum(1 for p in probs if p <= LOW_RAIL_MAX)
     n_high = sum(1 for p in probs if p >= HIGH_RAIL_MIN)
+    n_middle = sum(1 for p in probs if MIDDLE_LOW <= p < MIDDLE_HIGH)
     return {
         "n": n,
         "histogram": histogram,
         "n_low_rail": n_low,
         "n_high_rail": n_high,
+        "n_middle": n_middle,
         "low_rail_share": n_low / n if n else None,
         "high_rail_share": n_high / n if n else None,
         "rail_share": (n_low + n_high) / n if n else None,
+        "middle_share": n_middle / n if n else None,
     }
+
+
+def ladder_size(rows: "list[dict]") -> "int | None":
+    """Median brackets per station-day -- the ladder's width (issue #869).
+
+    Counts distinct tickers per (station, settlement_date), since rows are one
+    per POLL and a bracket is polled repeatedly.
+
+    This is what makes the high-rail number interpretable without a
+    cross-population baseline: at most ONE bracket on a station-day can contain
+    the day's high, so at most ``1 / ladder_size`` of rows can legitimately
+    carry a near-certain YES -- see ``structural_high_rail_ceiling``.
+    """
+    per_day: "dict[tuple, set]" = defaultdict(set)
+    for row in rows:
+        station = row.get("station")
+        settlement_date = row.get("settlement_date")
+        ticker = row.get("ticker")
+        if not station or not settlement_date or not ticker:
+            continue
+        per_day[(station, settlement_date)].add(ticker)
+    sizes = sorted(len(v) for v in per_day.values() if v)
+    if not sizes:
+        return None
+    mid = len(sizes) // 2
+    return sizes[mid] if len(sizes) % 2 else (sizes[mid - 1] + sizes[mid]) // 2
+
+
+def structural_high_rail_ceiling(rows: "list[dict]") -> "float | None":
+    """The highest high-rail share a maximally overconfident model could show.
+
+    A station-day has exactly one daily high, so exactly one bracket on the
+    ladder can resolve YES. A model that called every single day with total
+    confidence would therefore put a near-1.0 on ``1 / ladder_size`` of rows and
+    no more.
+
+    That makes it the correct benchmark for a full-ladder population -- it is
+    derived from THIS data rather than imported from a differently-selected one,
+    so it cannot be confounded the way the Pass-1 baselines are. A high-rail
+    share far BELOW the ceiling is genuine evidence the model stopped emitting
+    false certainties; a share AT the ceiling means it did not.
+    """
+    size = ladder_size(rows)
+    if not size:
+        return None
+    return 1.0 / size
 
 
 def rail_concentration_by_mode(rows: "list[dict]") -> "dict[str, dict]":
@@ -207,6 +280,103 @@ def rail_concentration_by_mode(rows: "list[dict]") -> "dict[str, dict]":
 # ---------------------------------------------------------------------------
 # Check 2: p_yes_raw == 0.0 artifact rate (M0 regression check)
 # ---------------------------------------------------------------------------
+
+def _station_local_date(row: dict) -> "str | None":
+    """Station-local calendar date of ``poll_ts`` as YYYY-MM-DD."""
+    tz_name = STATION_TZ.get(str(row.get("station") or ""))
+    ts_str = row.get("poll_ts")
+    if not tz_name or not ts_str:
+        return None
+    try:
+        tz = pytz.timezone(tz_name)
+        t = dtparse.parse(str(ts_str))
+        if t.tzinfo is None:
+            t = t.replace(tzinfo=timezone.utc)
+        return t.astimezone(tz).date().isoformat()
+    except (ValueError, OverflowError, TypeError, pytz.UnknownTimeZoneError):
+        return None
+
+
+def future_day_zero_violations(rows: "list[dict]") -> dict:
+    """Exact ``p_yes_raw == 0.0`` on a market whose settlement day has not yet
+    STARTED -- #820's bug shape, tested as an invariant (issue #869).
+
+    **Why this replaced a baseline comparison.** The first version of this check
+    reported the raw exact-zero rate against Pass 1's 17.8%. That was invalid:
+    17.8% came from the gate-selected candidate archive while this reads the
+    full ladder, and a full ladder legitimately contains far-out-of-the-money
+    brackets that the envelope's impossibility shortcut correctly prices at
+    exactly 0.0. The comparison could not distinguish "#820 is broken" from
+    "this population has more unreachable brackets", which is the only question
+    it existed to answer. The 2026-07-28 run duly produced 38.0% vs 17.8% and
+    read as a catastrophic regression that was mostly population.
+
+    The invariant needs no baseline and cannot be confounded by ladder
+    composition:
+
+        A bracket cannot be *impossible* on a day that has not begun.
+
+    When the poll fires on a station-local date strictly BEFORE the settlement
+    date, the entire diurnal cycle that sets the day's high is still in the
+    future. No amount of legitimate envelope narrowing can justify an exact
+    0.0 there -- that is precisely #820's failure, where ``max_env`` collapsed
+    onto a FINISHED day's high while pricing tomorrow's market.
+
+    Same-day zeros are reported separately and are NOT violations: once the day
+    is under way and the peak has passed, brackets above the achieved high are
+    genuinely unreachable and an exact 0.0 is the correct answer.
+
+    Returns counts plus ``violations`` (up to a sample for the report) and the
+    same-day breakdown for context.
+    """
+    n_future_day = 0
+    n_violations = 0
+    n_same_or_past_day = 0
+    n_same_or_past_day_zero = 0
+    n_undatable = 0
+    violations: "list[dict]" = []
+
+    for row in rows:
+        p = _f(row.get("p_yes_raw"))
+        if p is None:
+            continue
+        local_date = _station_local_date(row)
+        settlement_date = str(row.get("settlement_date") or "")[:10]
+        if local_date is None or not settlement_date:
+            n_undatable += 1
+            continue
+
+        if local_date < settlement_date:
+            n_future_day += 1
+            if p == 0.0:
+                n_violations += 1
+                if len(violations) < 25:
+                    violations.append({
+                        "station": row.get("station"),
+                        "poll_ts": row.get("poll_ts"),
+                        "local_date": local_date,
+                        "settlement_date": settlement_date,
+                        "bracket_low": row.get("bracket_low"),
+                        "bracket_high": row.get("bracket_high"),
+                    })
+        else:
+            n_same_or_past_day += 1
+            if p == 0.0:
+                n_same_or_past_day_zero += 1
+
+    return {
+        "n_future_day": n_future_day,
+        "n_violations": n_violations,
+        "violation_rate": n_violations / n_future_day if n_future_day else None,
+        "n_same_or_past_day": n_same_or_past_day,
+        "n_same_or_past_day_zero": n_same_or_past_day_zero,
+        "same_or_past_day_zero_rate": (
+            n_same_or_past_day_zero / n_same_or_past_day if n_same_or_past_day else None
+        ),
+        "n_undatable": n_undatable,
+        "violations": violations,
+    }
+
 
 def _station_local_hour(row: dict) -> "int | None":
     """Hour-of-day of ``poll_ts`` in the station's local timezone.
@@ -379,7 +549,11 @@ def _delta(value: "float | None", baseline: float) -> str:
 
 
 def build_report(rails: dict, rails_by_mode: dict, zeros: dict, d_coeffs: dict,
-                 sigma_cov: dict, run_date: str, since: "str | None") -> str:
+                 sigma_cov: dict, run_date: str, since: "str | None",
+                 inv: "dict | None" = None,
+                 rows_for_ceiling: "list[dict] | None" = None) -> str:
+    inv = inv or future_day_zero_violations([])
+    rows_for_ceiling = rows_for_ceiling or []
     lines = []
     lines.append("# Post-Fix Model Health -- leading indicator (issue #869)\n")
     lines.append(f"**Run date:** {run_date}  ")
@@ -397,26 +571,63 @@ def build_report(rails: dict, rails_by_mode: dict, zeros: dict, d_coeffs: dict,
     lines.append("\n---\n")
 
     # --- Check 1 -----------------------------------------------------------
-    lines.append("## 1. Rail concentration -- the headline\n")
+    lines.append("## 1. Sharpness -- the headline\n")
     lines.append(
         "Sharpness is the only lever that could carry a model from BSS -0.28 to positive. "
-        "The pre-fix model put **62.6%** of its output at a probability rail and was wrong "
-        "24.4% / 18.6% of the time there.\n"
+        "Pass 1's pre-fix model put 62.6% of its output at a probability rail, was wrong "
+        "24.4% / 18.6% of the time there, and had **exactly 0.0%** of its mass between 0.05 "
+        "and 0.95.\n"
     )
-    lines.append("| Metric | Post-fix | Pre-fix baseline | Change |")
+    lines.append(
+        "> Those Pass-1 figures are measured on the GATE-SELECTED candidate archive; this "
+        "> report reads the FULL bracket ladder. **The two are not directly comparable** -- "
+        "> a full ladder is mostly far-out-of-the-money brackets, which legitimately sit "
+        "> near zero, so a higher low-rail share is expected from population alone. The two "
+        "> measures below are population-robust and carry this section's verdict; the "
+        "> Pass-1 numbers are context only.\n"
+    )
+
+    ceiling = structural_high_rail_ceiling(rows_for_ceiling)
+    size = ladder_size(rows_for_ceiling)
+    lines.append("### The two measures that carry the verdict\n")
+    lines.append("| Measure | Value | Benchmark | Reading |")
     lines.append("|---|---|---|---|")
-    lines.append(f"| n (rows with `p_yes_raw`) | {rails['n']} | 12230 | — |")
-    lines.append(f"| Low rail (`<= {LOW_RAIL_MAX}`) | {_pct(rails['low_rail_share'])} | "
-                 f"{_pct(BASELINE_LOW_RAIL_SHARE)} | {_delta(rails['low_rail_share'], BASELINE_LOW_RAIL_SHARE)} |")
-    lines.append(f"| High rail (`>= {HIGH_RAIL_MIN}`) | {_pct(rails['high_rail_share'])} | "
-                 f"{_pct(BASELINE_HIGH_RAIL_SHARE)} | {_delta(rails['high_rail_share'], BASELINE_HIGH_RAIL_SHARE)} |")
-    lines.append(f"| **Combined at a rail** | **{_pct(rails['rail_share'])}** | "
-                 f"**{_pct(BASELINE_RAIL_SHARE)}** | "
-                 f"**{_delta(rails['rail_share'], BASELINE_RAIL_SHARE)}** |")
+    if ceiling:
+        ratio = (rails["high_rail_share"] / ceiling) if rails["high_rail_share"] else 0.0
+        lines.append(
+            f"| High rail (`>= {HIGH_RAIL_MIN}`) | **{_pct(rails['high_rail_share'])}** | "
+            f"**{_pct(ceiling)}** structural ceiling (1 / {size}-bracket ladder) | "
+            f"**{ratio:.0%}** of the ceiling |"
+        )
+    else:
+        lines.append(f"| High rail (`>= {HIGH_RAIL_MIN}`) | {_pct(rails['high_rail_share'])} | "
+                     f"ladder size unknown | — |")
+    lines.append(
+        f"| Middle mass (`{MIDDLE_LOW}`–`{MIDDLE_HIGH}`) | **{_pct(rails['middle_share'])}** | "
+        f"**0.0%** pre-fix (Pass 1) | a model with no middle is the pathology |"
+    )
     lines.append("")
-    lines.append("**Reading:** a combined rail share still near 60% means the sigma work did "
-                 "not change the model's character, and M3 is a foregone conclusion. A "
-                 "material drop is the first real evidence M2 bit.\n")
+    lines.append(
+        "**Why the ceiling is the right benchmark.** A station-day has exactly one daily "
+        "high, so exactly one bracket on the ladder can resolve YES. A model calling every "
+        "day with total confidence would put a near-1.0 on `1 / ladder_size` of rows and no "
+        "more. It is computed from THIS data, so unlike the Pass-1 baselines it cannot be "
+        "confounded by population. **A high-rail share far below the ceiling is genuine "
+        "evidence the model stopped emitting false certainties; a share at the ceiling means "
+        "it did not.**\n"
+    )
+
+    lines.append("### Pre-fix context (different population -- not a comparison)\n")
+    lines.append("| Metric | This report (full ladder) | Pass 1 (gate-selected) |")
+    lines.append("|---|---|---|")
+    lines.append(f"| n (rows with `p_yes_raw`) | {rails['n']} | 12230 |")
+    lines.append(f"| Low rail (`<= {LOW_RAIL_MAX}`) | {_pct(rails['low_rail_share'])} | "
+                 f"{_pct(BASELINE_LOW_RAIL_SHARE)} |")
+    lines.append(f"| High rail (`>= {HIGH_RAIL_MIN}`) | {_pct(rails['high_rail_share'])} | "
+                 f"{_pct(BASELINE_HIGH_RAIL_SHARE)} |")
+    lines.append(f"| Combined at a rail | {_pct(rails['rail_share'])} | "
+                 f"{_pct(BASELINE_RAIL_SHARE)} |")
+    lines.append("")
 
     lines.append("### Sharpness histogram\n")
     lines.append("| Bucket | n | Share |")
@@ -437,18 +648,55 @@ def build_report(rails: dict, rails_by_mode: dict, zeros: dict, d_coeffs: dict,
         lines.append("")
 
     # --- Check 2 -----------------------------------------------------------
-    lines.append("## 2. `p_yes_raw == 0.0` artifact rate -- M0 regression check\n")
+    lines.append("## 2. Impossible-on-a-future-day -- M0 invariant check\n")
     lines.append(
-        "An exact zero is not a forecast: it is the envelope model reporting impossibility "
-        "after `expected_additional_rise` returned 0 past the diurnal peak. Every live entry "
-        "in the pre-fix regime fired on one. #820 should have collapsed this toward zero.\n"
+        "**The invariant: a bracket cannot be impossible on a day that has not begun.** When "
+        "the poll fires on a station-local date strictly BEFORE the settlement date, the "
+        "whole diurnal cycle that sets the day's high is still ahead. No legitimate envelope "
+        "narrowing justifies an exact `p_yes_raw == 0.0` there -- that is exactly #820, where "
+        "`max_env` collapsed onto a FINISHED day's high while pricing tomorrow's market.\n"
     )
-    lines.append("| Metric | Post-fix | Pre-fix baseline | Change |")
-    lines.append("|---|---|---|---|")
-    lines.append(f"| n | {zeros['n']} | 12698 | — |")
-    lines.append(f"| Exact `p_yes_raw == 0.0` | {zeros['n_zero']} | 2265 | — |")
-    lines.append(f"| **Rate** | **{_pct(zeros['rate'])}** | **{_pct(BASELINE_ZERO_ARTIFACT_RATE)}** | "
-                 f"**{_delta(zeros['rate'], BASELINE_ZERO_ARTIFACT_RATE)}** |")
+    lines.append(
+        "> Replaces a raw exact-zero rate compared against Pass 1's 17.8%. That comparison "
+        "> was invalid -- gate-selected vs. full ladder -- and could not tell \"#820 is "
+        "> broken\" from \"this population has more unreachable brackets\", which was the only "
+        "> question it existed to answer. This invariant needs no baseline.\n"
+    )
+    lines.append("| Metric | Value |")
+    lines.append("|---|---|")
+    lines.append(f"| Polls priced BEFORE their settlement day began | {inv['n_future_day']} |")
+    lines.append(f"| **...of which exact `p_yes_raw == 0.0` (VIOLATIONS)** | "
+                 f"**{inv['n_violations']}** |")
+    lines.append(f"| **Violation rate** | **{_pct(inv['violation_rate'])}** |")
+    lines.append(f"| Polls on/after the settlement day | {inv['n_same_or_past_day']} |")
+    lines.append(f"| ...of which exact 0.0 (legitimate -- peak passed, bracket unreachable) | "
+                 f"{inv['n_same_or_past_day_zero']} ({_pct(inv['same_or_past_day_zero_rate'])}) |")
+    lines.append(f"| Undatable (no station timezone or settlement date) | {inv['n_undatable']} |")
+    lines.append("")
+    if inv["n_violations"]:
+        lines.append("**#820 IS NOT FULLY CLOSED.** Sample of violating rows:\n")
+        lines.append("| Station | Poll ts | Local date | Settlement date | Bracket |")
+        lines.append("|---|---|---|---|---|")
+        for v in inv["violations"]:
+            lines.append(
+                f"| {v['station']} | {v['poll_ts']} | {v['local_date']} | "
+                f"{v['settlement_date']} | {v['bracket_low']}-{v['bracket_high']} |"
+            )
+        lines.append("")
+    else:
+        lines.append("**No violations. The #820 failure mode does not appear in this "
+                     "population.**\n")
+
+    lines.append("### Raw exact-zero rate, for reference only\n")
+    lines.append(
+        "Not a pass/fail number -- on a full ladder most exact zeros are the envelope "
+        "correctly pricing an unreachable bracket. Shown because the shape is diagnostic: "
+        "#820's residue would cluster in the station-local EVENING.\n"
+    )
+    lines.append("| Metric | Value |")
+    lines.append("|---|---|")
+    lines.append(f"| n | {zeros['n']} |")
+    lines.append(f"| Exact `p_yes_raw == 0.0` | {zeros['n_zero']} ({_pct(zeros['rate'])}) |")
     lines.append("")
     lines.append("| Segment | n | Zeros | Rate |")
     lines.append("|---|---|---|---|")
@@ -515,10 +763,13 @@ def build_report(rails: dict, rails_by_mode: dict, zeros: dict, d_coeffs: dict,
     lines.append("## What a pass and a fail look like\n")
     lines.append("| | Pass | Fail |")
     lines.append("|---|---|---|")
-    lines.append("| Rail concentration | Materially below 62.6% | Still ~60% → M3 is decided; "
-                 "stop spending on it |")
-    lines.append("| Zero artifact rate | Near 0% | Still material → #820 incomplete, every "
-                 "downstream number inherits it |")
+    lines.append("| High rail vs. structural ceiling | Far below the ceiling — the model "
+                 "stopped emitting false certainties | At the ceiling → still maximally "
+                 "overconfident; M3 is decided, stop spending on it |")
+    lines.append("| Middle mass | Materially above the pre-fix 0.0% | Still ~0% → the model "
+                 "has no middle, which is the pathology itself |")
+    lines.append("| Future-day zero violations | 0 | Any → #820 incomplete, every downstream "
+                 "number inherits it |")
     lines.append("| `d` identifiability | `d` moved off ~0.001 on ensemble rows | Still pinned "
                  "→ #799 changed plumbing, not the fit |")
     lines.append("")
@@ -560,16 +811,20 @@ def run_report(bracket_evals_base: Path, db_path: Path, out_dir: Path,
 
     rails_by_mode = rail_concentration_by_mode(rows)
     zeros = zero_artifact_rate(rows)
+    inv = future_day_zero_violations(rows)
     d_coeffs = emos_d_coefficients(db_path)
     sigma_cov = sigma_f_coverage(db_path)
 
+    ceiling = structural_high_rail_ceiling(rows)
     log.info(
-        "[health] %d rows | rail share %s (baseline %s) | zero-artifact rate %s (baseline %s)",
-        rails["n"], _pct(rails["rail_share"]), _pct(BASELINE_RAIL_SHARE),
-        _pct(zeros["rate"]), _pct(BASELINE_ZERO_ARTIFACT_RATE),
+        "[health] %d rows | high rail %s vs %s structural ceiling | middle mass %s "
+        "(pre-fix 0.0%%) | future-day zero violations: %d",
+        rails["n"], _pct(rails["high_rail_share"]), _pct(ceiling),
+        _pct(rails["middle_share"]), inv["n_violations"],
     )
 
-    report = build_report(rails, rails_by_mode, zeros, d_coeffs, sigma_cov, run_date, since)
+    report = build_report(rails, rails_by_mode, zeros, d_coeffs, sigma_cov, run_date, since,
+                          inv=inv, rows_for_ceiling=rows)
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"post_fix_model_health_{run_date}.md"
     out_path.write_text(report, encoding="utf-8")
