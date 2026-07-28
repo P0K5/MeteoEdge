@@ -22,10 +22,15 @@ from src.data.db import Database
 from src.strategy.scanner import Candidate
 from src.model.envelope import Bracket, WeatherState
 
+# Frozen reference datetime (mid-day UTC, well clear of midnight) so fixture
+# times are deterministic regardless of when CI runs (issue #844).
+_FROZEN_NOW = datetime.now(timezone.utc).replace(hour=12, minute=0, second=0, microsecond=0)
+
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _mem_db() -> Database:
     return Database(":memory:")
@@ -36,15 +41,14 @@ def _now_iso():
 
 
 def _make_weather_state(station: str = "KORD") -> WeatherState:
-    now = datetime.now(timezone.utc)
     return WeatherState(
         station=station,
-        now_local=now,
-        sunset_local=now,
+        now_local=_FROZEN_NOW,
+        sunset_local=_FROZEN_NOW,
         current_high_f=70.0,
-        current_high_time=now,
+        current_high_time=_FROZEN_NOW,
         latest_temp_f=68.0,
-        latest_temp_time=now,
+        latest_temp_time=_FROZEN_NOW,
         forecast_high_f=82.0,
     )
 
@@ -81,6 +85,13 @@ def _make_bracket_no(yes_ask: int = 24, no_ask: int = 78) -> Bracket:
 
 
 def _make_market(bracket: Bracket) -> dict:
+    """A minimal Polymarket-style market dict.
+
+    The endDate uses the real wall-clock date (not _FROZEN_NOW) because the
+    scanner's wrong_date gate compares it against the real today_utc.  The
+    15-minute outside_window flake is eliminated by the MIN_MINUTES_TO_SETTLEMENT=0
+    patch in _run_yes_scan() / _run_no_scan() (issue #844).
+    """
     today_str = datetime.now(timezone.utc).strftime("%Y-%m-%dT23:59:00Z")
     return {
         "question": "Will the highest temperature in Chicago be 81-83°F on test date?",
@@ -116,6 +127,7 @@ def _run_yes_scan(weather, market, *,
         patch("src.strategy.scanner._check_ready_for_promotion", return_value=False),
         patch("src.strategy.scanner.true_probability_yes", return_value=0.90),
         patch("src.strategy.scanner.estimate_fee_cents", return_value=1.0),
+        patch("src.strategy.scanner.MIN_MINUTES_TO_SETTLEMENT", 0),
     ]
     from contextlib import ExitStack
     with ExitStack() as stack:
@@ -152,6 +164,7 @@ def _run_no_scan(weather, market, *, shadow_stations=None, shadow_stations_no=No
         patch("src.strategy.scanner.estimate_fee_cents", return_value=1.0),
         # Disable margin gate so NO candidate is created
         patch.object(_scanner_mod, "MIN_FORECAST_BRACKET_MARGIN_F", -999.0),
+        patch("src.strategy.scanner.MIN_MINUTES_TO_SETTLEMENT", 0),
     ]
     from contextlib import ExitStack
     with ExitStack() as stack:
