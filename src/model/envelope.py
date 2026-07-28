@@ -71,7 +71,15 @@ class Bracket:
 
 
 def p_normal_between(low: float, high: float, mean: float, stddev: float) -> float:
-    """P(low <= X <= high) for X ~ N(mean, stddev^2)."""
+    """P(low <= X <= high) for X ~ N(mean, stddev^2).
+
+    When stddev=0, treats the distribution as a point mass at the mean:
+    - Returns 1 if low <= mean <= high, else 0.
+    """
+    # Handle point mass case (stddev=0)
+    if stddev == 0:
+        return 1.0 if (low <= mean <= high) else 0.0
+
     def cdf(x):
         return 0.5 * (1 + erf((x - mean) / (stddev * sqrt(2))))
     return max(0.0, min(1.0, cdf(high) - cdf(low)))
