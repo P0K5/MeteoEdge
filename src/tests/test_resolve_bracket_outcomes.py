@@ -497,6 +497,39 @@ class TestResolveRowDirection:
         row = {"ticker": "0x001", "question": "Will the lowest temperature..."}
         assert resolve_row_direction(row, {"0x001": "low"}) == DIRECTION_LOW
 
+    # issue #876 -- logged direction field is the first-class source
+    def test_logged_direction_preferred_over_db(self):
+        """A row carrying direction='high' uses it even when DB says 'low'."""
+        row = {
+            "ticker": "0x001",
+            "question": "Will the lowest temperature...",
+            "direction": "high",
+        }
+        assert resolve_row_direction(row, {"0x001": "low"}) == DIRECTION_HIGH
+
+    def test_logged_direction_preferred_over_parse(self):
+        """A row carrying direction='low' uses it even when question text says 'highest'."""
+        row = {
+            "ticker": "0x001",
+            "question": "Will the highest temperature...",
+            "direction": "low",
+        }
+        assert resolve_row_direction(row, {}) == DIRECTION_LOW
+
+    def test_falls_back_when_logged_direction_is_unknown(self):
+        """An unknown logged direction should fall back to DB/parse."""
+        row = {
+            "ticker": "0x001",
+            "question": "Will the highest temperature...",
+            "direction": "unknown",
+        }
+        assert resolve_row_direction(row, {}) == DIRECTION_HIGH
+
+    def test_falls_back_when_logged_direction_missing(self):
+        """A row without a direction field falls back to DB/parse (legacy path)."""
+        row = {"ticker": "0x999", "question": "Will the highest temperature..."}
+        assert resolve_row_direction(row, {}) == DIRECTION_HIGH
+
 
 # ---------------------------------------------------------------------------
 # resolve_outcome
@@ -630,6 +663,53 @@ class TestResolveBracketOutcomesEndToEnd:
         resolved_rows, counts = resolve_bracket_outcomes(bracket_evals, tmp_path / "no.db")
         assert resolved_rows == []
         assert counts["n_bracket_rows"] == 0
+
+    def test_direction_field_round_trips_through_resolver(self, tmp_path):
+        """Issue #876: a row carrying direction='high' as a first-class field
+        must retain it through the full resolution pipeline, even when no DB
+        candidates table exists to supply a fallback."""
+        bracket_evals = tmp_path / "bracket_evals.jsonl"
+        db_path = tmp_path / "meteoedge.db"
+
+        observations = [
+            ("KORD", "2026-07-05T18:00:00+00:00", 82.0),
+        ]
+        rows = [
+            _eval_row(
+                station="KORD",
+                ticker="KORD-high-81-83",
+                bracket_low=81.0,
+                bracket_high=83.0,
+                settlement_date="2026-07-05",
+                direction="high",
+            ),
+            # A row without direction -- still resolves via observed high
+            _eval_row(
+                station="KORD",
+                ticker="KORD-legacy-79-81",
+                bracket_low=79.0,
+                bracket_high=81.0,
+                settlement_date="2026-07-05",
+                # no direction field -- exercises fallback path
+            ),
+        ]
+        _write_bracket_evals_jsonl(bracket_evals, rows)
+        _write_observations_db(db_path, observations)
+
+        resolved_rows, counts = resolve_bracket_outcomes(bracket_evals, db_path)
+
+        # Both rows resolved (82.0 is in [81,83) only)
+        assert counts["n_bracket_rows"] == 2
+        # Direction counts: one explicit 'high', one unknown (no DB fallback)
+        assert counts["direction"] == {"high": 1, "unknown": 1}
+
+        by_ticker = {r["ticker"]: r for r in resolved_rows}
+        # The direction-fortified row carries 'high' through
+        assert by_ticker["KORD-high-81-83"]["direction"] == DIRECTION_HIGH
+        assert by_ticker["KORD-high-81-83"]["resolved_yes"] is True
+        # The legacy row without direction resolves correctly via observed high
+        assert by_ticker["KORD-legacy-79-81"]["direction"] == DIRECTION_UNKNOWN
+        assert by_ticker["KORD-legacy-79-81"]["resolved_yes"] is False
 
     def test_hundreds_of_station_days_not_collapsed_to_twenty(self, tmp_path):
         """Directly demonstrates the n-collapse fix from the issue: with 200

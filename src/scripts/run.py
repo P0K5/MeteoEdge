@@ -231,6 +231,7 @@ def _write_bracket_evaluations(
             "minutes_to_settlement": snap.get("minutes_to_settlement"),
             "execution_mode": exec_mode,
             "settlement_date": snap.get("settlement_date"),
+            "direction": snap.get("direction"),  # issue #876 -- carry direction from scanner
         }
 
         LOG_DIR.mkdir(exist_ok=True)
@@ -630,6 +631,7 @@ def poll_once(
             "flagged_price": cand.price_cents,
             "flagged_confidence": round(cand.confidence, 4),
             "minutes_to_settlement": round(cand.minutes_to_settlement, 1),
+            "direction": cand.direction,  # issue #876 -- carry direction from scanner
         }
         _append_candidate(row)
 

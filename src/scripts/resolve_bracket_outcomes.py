@@ -456,14 +456,18 @@ def load_candidate_directions(
 
 
 def resolve_row_direction(row: dict, db_directions: "dict[str, str]") -> str:
-    """Return the best-available direction for *row*: DB ``candidates.direction``
-    when present (authoritative backstop), else the question-text parse, else
-    ``DIRECTION_UNKNOWN``.
+    """Return the best-available direction for *row*: the logged ``direction``
+    field when present (issue #876 -- first-class CSV/JSONL field), else
+    DB ``candidates.direction`` when present (authoritative backstop for older
+    rows), else the question-text parse, else ``DIRECTION_UNKNOWN``.
 
-    A disagreement between the two sources is warned and resolved in favour
-    of the DB value (it reflects the live scanner's own read of the market
-    metadata, not a text heuristic).
+    A disagreement between sources is warned and resolved in favour of the
+    higher-precedence source.
     """
+    logged = row.get("direction")
+    if logged in (DIRECTION_HIGH, DIRECTION_LOW):
+        return logged
+
     ticker = row.get("ticker")
     db_dir = db_directions.get(ticker) if ticker else None
     parsed = infer_bracket_direction(row.get("question"))
