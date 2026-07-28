@@ -8,6 +8,12 @@ from src.strategy.scanner import (
 )
 from src.model.envelope import Bracket, WeatherState
 
+# Frozen reference datetime (mid-day UTC, well clear of midnight) so fixture
+# times are deterministic regardless of when CI runs (issue #844).  Tests that
+# construct a market with today's endDate also patch MIN_MINUTES_TO_SETTLEMENT=0
+# to eliminate the 15-minute outside_window flake window.
+_FROZEN_NOW = datetime.now(timezone.utc).replace(hour=12, minute=0, second=0, microsecond=0)
+
 
 def _market(group_title: str, question: str = "", condition_id: str = "0xabc") -> dict:
     """Build a minimal market dict matching Polymarket's Gamma API shape."""
@@ -134,15 +140,14 @@ class TestScanMarketsSkipReasons:
 
     def _weather_state(self) -> WeatherState:
         """Build a minimal WeatherState for testing."""
-        now = datetime.now(timezone.utc)
         return WeatherState(
             station="KMIA",
-            now_local=now,
-            sunset_local=now.replace(hour=20),
+            now_local=_FROZEN_NOW,
+            sunset_local=_FROZEN_NOW.replace(hour=20),
             current_high_f=75.0,
-            current_high_time=now,
+            current_high_time=_FROZEN_NOW,
             latest_temp_f=72.0,
-            latest_temp_time=now,
+            latest_temp_time=_FROZEN_NOW,
             forecast_high_f=80.0,
         )
 
@@ -219,8 +224,9 @@ class TestScanMarketsSkipReasons:
             outcomePrices='["0.90", "0.10"]'  # YES price 90¢ (attractive)
         )
 
-        with caplog.at_level(logging.DEBUG):
-            candidates, snapshots = scan_markets(weather, [market])
+        with patch("src.strategy.scanner.MIN_MINUTES_TO_SETTLEMENT", 0):
+            with caplog.at_level(logging.DEBUG):
+                candidates, snapshots = scan_markets(weather, [market])
 
         # Should skip because p_yes will be low for such a high bracket
         # and won't meet MIN_CONFIDENCE_YES
@@ -235,8 +241,9 @@ class TestScanMarketsSkipReasons:
             outcomePrices='["0.10", "0.90"]'  # NO price 90¢ (attractive)
         )
 
-        with caplog.at_level(logging.DEBUG):
-            candidates, snapshots = scan_markets(weather, [market])
+        with patch("src.strategy.scanner.MIN_MINUTES_TO_SETTLEMENT", 0):
+            with caplog.at_level(logging.DEBUG):
+                candidates, snapshots = scan_markets(weather, [market])
 
         # Should skip because p_yes will be high for such a low bracket
         # and won't meet MAX_CONFIDENCE_YES_FOR_NO for NO side trading
@@ -267,8 +274,9 @@ class TestScanMarketsSkipReasons:
             outcomePrices='["0.99", "0.01"]'  # Extremely skewed prices
         )
 
-        with caplog.at_level(logging.DEBUG):
-            candidates, snapshots = scan_markets(weather, [market])
+        with patch("src.strategy.scanner.MIN_MINUTES_TO_SETTLEMENT", 0):
+            with caplog.at_level(logging.DEBUG):
+                candidates, snapshots = scan_markets(weather, [market])
 
         # Should skip if edge exceeds MAX_EDGE_CENTS
         if candidates:
@@ -314,15 +322,14 @@ class TestScanMarketsSkipReasons:
 
 def _state(forecast: float | None, current: float | None,
            secondary: float | None = None) -> WeatherState:
-    now = datetime.now(timezone.utc)
     return WeatherState(
         station="KMIA",
-        now_local=now,
-        sunset_local=now.replace(hour=20),
+        now_local=_FROZEN_NOW,
+        sunset_local=_FROZEN_NOW.replace(hour=20),
         current_high_f=current,
-        current_high_time=now,
+        current_high_time=_FROZEN_NOW,
         latest_temp_f=current,
-        latest_temp_time=now,
+        latest_temp_time=_FROZEN_NOW,
         forecast_high_f=forecast,
         secondary_forecast_f=secondary,
     )
@@ -576,15 +583,14 @@ class TestNextDayEvaluation:
     """
 
     def _weather_state(self, station="KMIA") -> WeatherState:
-        now = datetime.now(timezone.utc)
         return WeatherState(
             station=station,
-            now_local=now,
-            sunset_local=now.replace(hour=20),
+            now_local=_FROZEN_NOW,
+            sunset_local=_FROZEN_NOW.replace(hour=20),
             current_high_f=75.0,
-            current_high_time=now,
+            current_high_time=_FROZEN_NOW,
             latest_temp_f=72.0,
-            latest_temp_time=now,
+            latest_temp_time=_FROZEN_NOW,
             forecast_high_f=80.0,
         )
 

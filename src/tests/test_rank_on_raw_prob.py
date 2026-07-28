@@ -15,17 +15,20 @@ from unittest.mock import MagicMock, patch
 from src.model.envelope import Bracket, WeatherState
 from src.strategy.scanner import scan_markets
 
+# Frozen reference datetime (mid-day UTC, well clear of midnight) so fixture
+# times are deterministic regardless of when CI runs (issue #844).
+_FROZEN_NOW = datetime.now(timezone.utc).replace(hour=12, minute=0, second=0, microsecond=0)
+
 
 def _make_weather_state() -> WeatherState:
-    now = datetime.now(timezone.utc)
     return WeatherState(
         station="KORD",
-        now_local=now,
-        sunset_local=now,
+        now_local=_FROZEN_NOW,
+        sunset_local=_FROZEN_NOW,
         current_high_f=70.0,
-        current_high_time=now,
+        current_high_time=_FROZEN_NOW,
         latest_temp_f=68.0,
-        latest_temp_time=now,
+        latest_temp_time=_FROZEN_NOW,
         forecast_high_f=82.0,
     )
 
@@ -43,6 +46,13 @@ def _make_bracket(ticker: str, yes_ask: int = 5, no_ask: int = 79) -> Bracket:
 
 
 def _make_market(ticker: str) -> dict:
+    """A minimal Polymarket-style market dict.
+
+    The endDate uses the real wall-clock date (not _FROZEN_NOW) because the
+    scanner's wrong_date gate compares it against the real today_utc.  The
+    15-minute outside_window flake is eliminated by the MIN_MINUTES_TO_SETTLEMENT=0
+    patch in _run_scan_two() (issue #844).
+    """
     today_str = datetime.now(timezone.utc).strftime("%Y-%m-%dT23:59:00Z")
     return {
         "question": "Will the highest temperature in Chicago be 81-83°F on test date?",
@@ -88,6 +98,8 @@ def _run_scan_two(rank_on_raw_prob: bool):
         patch("src.strategy.scanner.true_probability_yes", side_effect=[0.05, 0.0]),
         patch("src.strategy.scanner.estimate_fee_cents", return_value=1.0),
         patch("src.strategy.scanner.get_live_config", return_value={"RANK_ON_RAW_PROB": rank_on_raw_prob}),
+        # Prevent outside_window flakes near UTC midnight (issue #844)
+        patch("src.strategy.scanner.MIN_MINUTES_TO_SETTLEMENT", 0),
     ):
         candidates, _ = scan_markets(weather, [market_a, market_b], db=mock_db)
     return candidates

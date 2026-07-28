@@ -14,6 +14,12 @@ from src.strategy.scanner import (
     scan_markets,
 )
 
+# Frozen reference datetime (mid-day UTC, well clear of midnight) so fixture
+# times are deterministic regardless of when CI runs (issue #844).  Tests that
+# construct a market with today's endDate also patch MIN_MINUTES_TO_SETTLEMENT=0
+# to eliminate the 15-minute outside_window flake window.
+_FROZEN_NOW = datetime.now(timezone.utc).replace(hour=12, minute=0, second=0, microsecond=0)
+
 
 # ---------------------------------------------------------------------------
 # is_lowest_temp_market detection
@@ -139,20 +145,27 @@ class TestCandidateDirectionField:
 # ---------------------------------------------------------------------------
 
 def _make_weather_low(station: str, current_low_f: float = 62.0) -> WeatherStateLow:
-    now = datetime.now(timezone.utc)
     return WeatherStateLow(
         station=station,
-        now_local=now,
-        sunrise_local=now,
+        now_local=_FROZEN_NOW,
+        sunrise_local=_FROZEN_NOW,
         current_low_f=current_low_f,
-        current_low_time=now,
+        current_low_time=_FROZEN_NOW,
         latest_temp_f=current_low_f + 2.0,
-        latest_temp_time=now,
+        latest_temp_time=_FROZEN_NOW,
         forecast_low_f=60.0,
     )
 
 
 def _low_market(city: str, group_title: str = "55-59°F") -> dict:
+    """Build a low-side market with today's end-of-day UTC as endDate.
+
+    Uses the real wall-clock date (not _FROZEN_NOW) because the scanner's
+    wrong_date gate compares it against the real today_utc.  The 15-minute
+    outside_window flake is eliminated by the MIN_MINUTES_TO_SETTLEMENT=0
+    patch in the test methods (issue #844).
+    """
+    today_end = datetime.now(timezone.utc).strftime("%Y-%m-%dT23:59:00Z")
     return {
         "question": f"Will the lowest temperature in {city} be {group_title}?",
         "groupItemTitle": group_title,
@@ -160,7 +173,7 @@ def _low_market(city: str, group_title: str = "55-59°F") -> dict:
         "outcomes": '["Yes","No"]',
         "outcomePrices": '[0.3, 0.7]',
         "clobTokenIds": '["tok1","tok2"]',
-        "endDate": datetime.now(timezone.utc).isoformat(),
+        "endDate": today_end,
     }
 
 
@@ -180,8 +193,9 @@ class TestScanMarketsLowSide:
         markets = [_low_market("Chicago", "55-59°F")]
         weather_low = {"KORD": _make_weather_low("KORD", current_low_f=70.0)}
         prob_low_fn = lambda b, s, m, f: 0.05  # noqa: E731
-        candidates, _ = scan_markets(weather={}, markets=markets,
-                                     weather_low=weather_low, prob_low_fn=prob_low_fn)
+        with patch("src.strategy.scanner.MIN_MINUTES_TO_SETTLEMENT", 0):
+            candidates, _ = scan_markets(weather={}, markets=markets,
+                                         weather_low=weather_low, prob_low_fn=prob_low_fn)
         # With current_low_f=70 and bracket 55-59, the bracket ceiling (59) < current_low (70)
         # → running-low exclusion triggers → p_yes≈0 → only NO has edge
         low_cands = [c for c in candidates if c.direction == "low"]
@@ -195,8 +209,9 @@ class TestScanMarketsLowSide:
         markets = [_low_market("Chicago")]
         weather_low = {"KORD": _make_weather_low("KORD")}
         prob_low_fn = lambda b, s, m, f: 0.05  # noqa: E731
-        candidates, _ = scan_markets(weather={}, markets=markets,
-                                     weather_low=weather_low, prob_low_fn=prob_low_fn)
+        with patch("src.strategy.scanner.MIN_MINUTES_TO_SETTLEMENT", 0):
+            candidates, _ = scan_markets(weather={}, markets=markets,
+                                         weather_low=weather_low, prob_low_fn=prob_low_fn)
         for c in candidates:
             if c.direction == "low":
                 assert c.shadow is True
@@ -204,18 +219,20 @@ class TestScanMarketsLowSide:
     def test_high_side_unaffected_by_weather_low(self):
         """Adding weather_low must not change high-side candidate behaviour."""
         # An empty high-side weather dict → no high-side candidates
+        today_end = datetime.now(timezone.utc).strftime("%Y-%m-%dT23:59:00Z")
         markets = [
             {"question": "Will the highest temperature in Chicago be 82-84°F?",
              "groupItemTitle": "82-84°F", "conditionId": "0xHIGH",
              "outcomes": '["Yes","No"]', "outcomePrices": '[0.4,0.6]',
              "clobTokenIds": '["t1","t2"]',
-             "endDate": datetime.now(timezone.utc).isoformat()},
+             "endDate": today_end},
         ]
         prob_low_fn = lambda b, s, m, f: 0.05  # noqa: E731
-        candidates_without_low, _ = scan_markets(weather={}, markets=markets, weather_low=None)
-        candidates_with_low, _ = scan_markets(weather={}, markets=markets,
-                                              weather_low={"KORD": _make_weather_low("KORD")},
-                                              prob_low_fn=prob_low_fn)
+        with patch("src.strategy.scanner.MIN_MINUTES_TO_SETTLEMENT", 0):
+            candidates_without_low, _ = scan_markets(weather={}, markets=markets, weather_low=None)
+            candidates_with_low, _ = scan_markets(weather={}, markets=markets,
+                                                  weather_low={"KORD": _make_weather_low("KORD")},
+                                                  prob_low_fn=prob_low_fn)
         # High-side count must be identical (both 0 because KORD not in weather dict)
         high_without = [c for c in candidates_without_low if c.direction == "high"]
         high_with = [c for c in candidates_with_low if c.direction == "high"]
@@ -225,7 +242,8 @@ class TestScanMarketsLowSide:
         """Market for a city whose state isn't in weather_low must not raise."""
         markets = [_low_market("Tokyo")]
         weather_low = {}  # no state for RJTT
-        candidates, _ = scan_markets(weather={}, markets=markets, weather_low=weather_low)
+        with patch("src.strategy.scanner.MIN_MINUTES_TO_SETTLEMENT", 0):
+            candidates, _ = scan_markets(weather={}, markets=markets, weather_low=weather_low)
         assert all(c.direction != "low" for c in candidates)
 
 
@@ -244,9 +262,13 @@ def _low_market_with(city: str, group_title: str, yes_price: float, no_price: fl
                      station_hint: str) -> dict:
     """Like _low_market but with controllable outcome prices and a far-enough
     endDate (end of today UTC) so the MIN_MINUTES_TO_SETTLEMENT window gate
-    doesn't swallow the candidate (see bug #554 -- the default `_low_market`
-    endDate of "now" reliably fails that gate, which is part of why the
-    low-side scanner recorded zero shadow trades)."""
+    doesn't swallow the candidate (see bug #554).
+
+    Uses the real wall-clock date (not _FROZEN_NOW) because the scanner's
+    wrong_date gate compares it against the real today_utc.  The 15-minute
+    outside_window flake is eliminated by the MIN_MINUTES_TO_SETTLEMENT=0
+    patch in the test methods (issue #844).
+    """
     today_end = datetime.now(timezone.utc).strftime("%Y-%m-%dT23:59:00Z")
     return {
         "question": f"Will the lowest temperature in {city} be {group_title}?",
@@ -282,7 +304,8 @@ class TestLowSideClampSymmetry:
         weather_low = {"KORD": _make_weather_low("KORD", current_low_f=50.0)}
         prob_low_fn = lambda b, s, m, f: 0.001  # noqa: E731
 
-        with patch.object(_scanner_mod, "MODEL_PROB_CAP", 0.95):
+        with patch.object(_scanner_mod, "MODEL_PROB_CAP", 0.95), \
+                patch("src.strategy.scanner.MIN_MINUTES_TO_SETTLEMENT", 0):
             candidates, _ = scan_markets(weather={}, markets=[market],
                                          weather_low=weather_low, prob_low_fn=prob_low_fn)
 
@@ -305,7 +328,8 @@ class TestLowSideClampSymmetry:
         weather_low = {"KORD": _make_weather_low("KORD", current_low_f=50.0)}
         prob_low_fn = lambda b, s, m, f: 0.90  # noqa: E731
 
-        with patch.object(_scanner_mod, "MODEL_PROB_CAP", 0.95):
+        with patch.object(_scanner_mod, "MODEL_PROB_CAP", 0.95), \
+                patch("src.strategy.scanner.MIN_MINUTES_TO_SETTLEMENT", 0):
             candidates, _ = scan_markets(weather={}, markets=[market],
                                          weather_low=weather_low, prob_low_fn=prob_low_fn)
 
@@ -334,7 +358,8 @@ class TestLowMarketsDisabledByDefault:
         weather_low = {"KORD": _make_weather_low("KORD", current_low_f=50.0)}
         prob_low_fn = lambda b, s, m, f: 0.001  # noqa: E731
 
-        with patch.object(_scanner_mod, "MODEL_PROB_CAP", 0.95):
+        with patch.object(_scanner_mod, "MODEL_PROB_CAP", 0.95), \
+                patch("src.strategy.scanner.MIN_MINUTES_TO_SETTLEMENT", 0):
             candidates, _ = scan_markets(weather={}, markets=markets,
                                          weather_low=weather_low, prob_low_fn=prob_low_fn)
 
@@ -351,7 +376,8 @@ class TestLowMarketsDisabledByDefault:
         weather_low = {"KORD": _make_weather_low("KORD", current_low_f=50.0)}
         prob_low_fn = lambda b, s, m, f: 0.001  # noqa: E731
 
-        with patch.object(_scanner_mod, "MODEL_PROB_CAP", 0.95):
+        with patch.object(_scanner_mod, "MODEL_PROB_CAP", 0.95), \
+                patch("src.strategy.scanner.MIN_MINUTES_TO_SETTLEMENT", 0):
             candidates, _ = scan_markets(weather={}, markets=markets,
                                          weather_low=weather_low, prob_low_fn=prob_low_fn)
 
@@ -360,16 +386,18 @@ class TestLowMarketsDisabledByDefault:
     def test_high_side_unchanged_with_flag_off(self):
         """A HIGH market scan produces identical results whether weather_low is
         passed or not while the flag is off."""
+        today_end = datetime.now(timezone.utc).strftime("%Y-%m-%dT23:59:00Z")
         markets = [
             {"question": "Will the highest temperature in Chicago be 82-84°F?",
              "groupItemTitle": "82-84°F", "conditionId": "0xHIGH",
              "outcomes": '["Yes","No"]', "outcomePrices": '[0.4,0.6]',
              "clobTokenIds": '["t1","t2"]',
-             "endDate": datetime.now(timezone.utc).isoformat()},
+             "endDate": today_end},
         ]
         prob_low_fn = lambda b, s, m, f: 0.05  # noqa: E731
-        without_low, _ = scan_markets(weather={}, markets=markets, weather_low=None)
-        with_low, _ = scan_markets(weather={}, markets=markets,
-                                   weather_low={"KORD": _make_weather_low("KORD")},
-                                   prob_low_fn=prob_low_fn)
+        with patch("src.strategy.scanner.MIN_MINUTES_TO_SETTLEMENT", 0):
+            without_low, _ = scan_markets(weather={}, markets=markets, weather_low=None)
+            with_low, _ = scan_markets(weather={}, markets=markets,
+                                       weather_low={"KORD": _make_weather_low("KORD")},
+                                       prob_low_fn=prob_low_fn)
         assert [c.direction for c in without_low] == [c.direction for c in with_low]
