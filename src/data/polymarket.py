@@ -44,13 +44,47 @@ def get_weather_markets() -> list[dict]:
     return all_markets
 
 
+def _select_matching_market(result: "list[dict]", ticker: str) -> "dict | None":
+    """Return the entry in *result* whose condition ID equals *ticker*.
+
+    The Gamma ``/markets?condition_ids=...`` endpoint is expected to return
+    exactly the requested market, but nothing guarantees that: a filter that
+    is silently ignored/mis-applied, or a response with more than one
+    element, would previously have been resolved via a blind ``result[0]``
+    -- reading an arbitrary market's price as this ticker's resolution
+    (issue #867).
+
+    - If any entry carries an identifiable condition ID (``conditionId`` or
+      ``condition_id``) that matches *ticker* (case-insensitive), that entry
+      is returned -- regardless of its position in the list.
+    - If entries carry condition IDs and NONE of them match, the response is
+      positively for the wrong market(s): returns ``None``.
+    - If no entry carries an identifiable condition ID at all (e.g. a stub
+      response), the match cannot be verified either way -- falls back to
+      ``result[0]`` for backward compatibility.
+    """
+    saw_any_condition_id = False
+    for market in result:
+        cid = market.get("conditionId") or market.get("condition_id")
+        if cid is None:
+            continue
+        saw_any_condition_id = True
+        if str(cid).lower() == str(ticker).lower():
+            return market
+    if saw_any_condition_id:
+        return None
+    return result[0]
+
+
 def fetch_market_final_price(ticker: str) -> int | None:
     """Fetch the final resolved YES price (in cents) for a closed market.
 
     Queries the Polymarket Gamma API for the market identified by *ticker*
     (the 0x condition ID). Returns the YES ``outcomePrices`` value rounded to
     the nearest integer cent, or ``None`` if the market is not found, not yet
-    resolved, or the API call fails.
+    resolved, the API call fails, or the response does not verifiably match
+    *ticker* (see ``_select_matching_market`` -- issue #867: a market whose
+    ``conditionId`` disagrees with the requested ticker is never trusted).
 
     The ``outcomePrices`` field is a JSON-encoded list of decimal strings where
     index 0 is the YES price and index 1 is the NO price, e.g.
@@ -67,7 +101,14 @@ def fetch_market_final_price(ticker: str) -> int | None:
         if not result:
             log.warning("[polymarket] fetch_market_final_price(%s...): empty response", ticker[:14])
             return None
-        market = result[0]
+        market = _select_matching_market(result, ticker)
+        if market is None:
+            log.warning(
+                "[polymarket] fetch_market_final_price(%s...): response condition_id(s) "
+                "did not match the requested ticker -- refusing to read a foreign market",
+                ticker[:14],
+            )
+            return None
     except Exception as e:
         log.warning("[polymarket] fetch_market_final_price(%s...): %s", ticker[:14], e)
         return None

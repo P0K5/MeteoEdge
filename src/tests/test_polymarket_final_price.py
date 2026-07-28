@@ -96,6 +96,75 @@ class TestFetchMarketFinalPrice:
         called_url = mock_fetch.call_args[0][0]
         assert "closed=true" in called_url
 
+    # -- issue #867: reject/select on conditionId instead of blind result[0] --
+
+    def test_mismatched_condition_id_returns_none(self):
+        """A single-element response whose conditionId != the requested ticker
+        must never be read -- that is exactly the wrong-market-read defect
+        #867 flagged (a spuriously YES bracket 3.6-21.6F away from the true
+        one). Regardless of how plausible-looking its outcomePrices are, the
+        function must return None (falls back to METAR) rather than trust it.
+        """
+        market_data = [{"conditionId": "0xSOMEOTHERMARKETENTIRELY", "outcomePrices": '["0.97", "0.03"]'}]
+        mock_resp = _mock_response(200, market_data)
+        with patch("src.data.polymarket.fetch", return_value=mock_resp):
+            result = fetch_market_final_price(TICKER)
+        assert result is None
+
+    def test_mismatched_condition_id_snake_case_field_returns_none(self):
+        """Same guard, but the API used the snake_case field name."""
+        market_data = [{"condition_id": "0xSOMEOTHERMARKETENTIRELY", "outcomePrices": '["0.97", "0.03"]'}]
+        mock_resp = _mock_response(200, market_data)
+        with patch("src.data.polymarket.fetch", return_value=mock_resp):
+            result = fetch_market_final_price(TICKER)
+        assert result is None
+
+    def test_multi_element_response_selects_matching_entry_not_first(self):
+        """A multi-element response must have its matching entry selected --
+        never blindly `result[0]`. Here the first element is a foreign market
+        that would (before the fix) have been misread as this ticker's price;
+        the correct entry, carrying the requested conditionId, is second.
+        """
+        market_data = [
+            {"conditionId": "0xWRONGMARKETFIRSTINLIST", "outcomePrices": '["0.02", "0.98"]'},
+            {"conditionId": TICKER, "outcomePrices": '["0.97", "0.03"]'},
+        ]
+        mock_resp = _mock_response(200, market_data)
+        with patch("src.data.polymarket.fetch", return_value=mock_resp):
+            result = fetch_market_final_price(TICKER)
+        assert result == 97
+
+    def test_multi_element_response_matching_entry_first_still_selected(self):
+        """Matching entry already at index 0 among several -- still correct
+        (guards against an off-by-one in the selection logic)."""
+        market_data = [
+            {"conditionId": TICKER, "outcomePrices": '["0.97", "0.03"]'},
+            {"conditionId": "0xANOTHERFOREIGNMARKET", "outcomePrices": '["0.02", "0.98"]'},
+        ]
+        mock_resp = _mock_response(200, market_data)
+        with patch("src.data.polymarket.fetch", return_value=mock_resp):
+            result = fetch_market_final_price(TICKER)
+        assert result == 97
+
+    def test_matching_condition_id_is_case_insensitive(self):
+        """0x hex condition IDs must match regardless of case."""
+        market_data = [{"conditionId": TICKER.upper(), "outcomePrices": '["0.97", "0.03"]'}]
+        mock_resp = _mock_response(200, market_data)
+        with patch("src.data.polymarket.fetch", return_value=mock_resp):
+            result = fetch_market_final_price(TICKER)
+        assert result == 97
+
+    def test_no_identifiable_condition_id_falls_back_to_first(self):
+        """When NO entry carries a conditionId/condition_id at all, the match
+        cannot be verified either way -- falls back to the legacy result[0]
+        behaviour (this is also what every pre-#867 test stub above relies
+        on: their mocked market dicts omit conditionId entirely)."""
+        market_data = [{"outcomePrices": '["0.97", "0.03"]'}]
+        mock_resp = _mock_response(200, market_data)
+        with patch("src.data.polymarket.fetch", return_value=mock_resp):
+            result = fetch_market_final_price(TICKER)
+        assert result == 97
+
 
 class TestFetchMarketResolution:
     """fetch_market_resolution() only accepts definitive extreme prices (#644)."""

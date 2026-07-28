@@ -134,8 +134,9 @@ python -m src.scripts.bss_market_vs_model_report \
 Writes `backtest_results/bss_market_vs_model_pass1_<date>.md`. Read-only against the
 database; self-gates and writes nothing if `logs/` or the DB is absent, so it is safe to run
 anywhere. Gamma resolutions are fetched once per ticker and cached permanently in
-`logs/gamma_resolution_cache.json` — the first run fetches ~380 tickers, later runs are
-near-instant.
+`logs/gamma_resolution_cache.v2.json` (bumped from `.json` by issue #867's wrong-market-read
+fix — the old file is orphaned and no longer read) — the first run fetches ~380 tickers, later
+runs are near-instant.
 
 - `--no-network` — cache only, zero HTTP requests; uncached tickers fall back to the
   observed daily high.

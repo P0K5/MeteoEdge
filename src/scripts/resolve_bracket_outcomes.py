@@ -131,7 +131,16 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(messag
 
 DEFAULT_DB_PATH = Path(os.getenv("DB_PATH", "data/meteoedge.db"))
 DEFAULT_OUT_DIR = Path("backtest_results")
-DEFAULT_GAMMA_CACHE_PATH = LOG_DIR / "gamma_resolution_cache.json"
+
+# v2 (issue #867): fetch_market_final_price previously took an unverified
+# `result[0]` from the Gamma response, which could cache a wrong-market read
+# under a ticker forever (see docstring on resolve_gamma_outcomes -- a cached
+# resolution is never re-fetched). The filename is bumped so this fix cannot
+# be silently defeated by a pre-existing on-disk cache: any prior contaminated
+# entries are simply orphaned under the old v1 filename and never read again.
+# `logs/gamma_resolution_cache.json` (v1) can be deleted during deploy; it is
+# no longer read by this module.
+DEFAULT_GAMMA_CACHE_PATH = LOG_DIR / "gamma_resolution_cache.v2.json"
 
 # Sentinel for "caller didn't specify a cache path -- use the module default".
 # Needed because a plain `cache_path=DEFAULT_GAMMA_CACHE_PATH` default binds the
