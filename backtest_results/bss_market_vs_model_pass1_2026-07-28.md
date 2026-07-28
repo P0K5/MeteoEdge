@@ -1,6 +1,6 @@
 # Market-vs-Model Skill Test -- Pass 1 (issue #822)
 
-**Run date:** 2026-07-28-postfix  
+**Run date:** 2026-07-28  
 **Data source:** `logs/candidates.*.csv.gz` (archived, gate-selected)  
 **Outcome truth:** `resolve_bracket_outcomes` -- Polymarket definitive resolution, falling back to the station-local observed daily high (issues #850/#860/#865)  
 
@@ -49,21 +49,11 @@ Note on power (docs/REMEDIATION_PLAN.md): all brackets on a station-day share on
 | Polymarket definitive resolution (`gamma`) | 422 | 99.3% |
 | Observed daily high fallback (`metar`) | 3 | 0.7% |
 
-Gamma lookups: 0 cache hits, 427 fetched (422 newly resolved, 5 indecisive, 0 errors, 0 skipped offline). Indecisive/errored tickers fall back to the observed high.
+Market direction (issue #867 -- parsed from question text, cross-checked against `candidates.direction`): 384 high, 43 low, 0 unknown.
 
-⚠️ **Impossible-outcome exposure: 4 station-day(s), 8 bracket-rows** resolved YES on more than one bracket. A station-day has one daily high, so at most one bracket can contain it -- these rows inflate the YES count and bias BS_model/BS_market. Diagnostic only; nothing is auto-corrected.
+Gamma lookups: 422 cache hits, 5 fetched (0 newly resolved, 5 indecisive, 0 errors, 0 skipped offline). Indecisive/errored tickers fall back to the observed high.
 
-| Collision shape | Station-days | Issue |
-|---|---|---|
-| `boundary` — brackets touch or overlap | 0 | #861 (which interval convention is correct) |
-| `disjoint` — brackets do not touch | 4 | #867 (no interval convention can produce this — the resolution source is wrong) |
-
-| Station | Settlement date | Shape | YES brackets | Observed high |
-|---|---|---|---|---|
-| LFPB | 2026-07-03 | `disjoint` | 59.0-60.8 (gamma), 82.4-84.2 (gamma) | 82.4 |
-| RJTT | 2026-07-06 | `disjoint` | 78.8-80.6 (gamma), 69.8-71.6 (gamma) | 78.8 |
-| RKSI | 2026-07-05 | `disjoint` | 75.2-77.0 (gamma), 80.6-82.4 (gamma) | 80.6 |
-| RKSI | 2026-07-09 | `disjoint` | 73.4-75.2 (gamma), 80.6-82.4 (gamma) | 80.6 |
+Impossible-outcome check (issues #861 / #867): **0** station-days resolved YES on more than one bracket of the same direction.
 
 ## Segment: same-day vs. next-day
 

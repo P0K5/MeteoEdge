@@ -139,8 +139,9 @@ from src.scripts.calibration_report import (  # noqa: E402
 )
 from src.scripts.resolve_bracket_outcomes import (  # noqa: E402
     COLLISION_BOUNDARY, COLLISION_DISJOINT, COLLISION_UNKNOWN, _DEFAULT_CACHE,
-    compute_observed_highs, detect_multi_yes_station_days, resolve_bracket_rows,
-    resolve_gamma_outcomes,
+    compute_observed_highs, compute_observed_lows, detect_multi_yes_station_days,
+    load_candidate_directions, resolve_bracket_rows, resolve_gamma_outcomes,
+    resolve_row_direction,
 )
 from src.utils.log_rotation import rotated_sources  # noqa: E402
 
@@ -213,8 +214,11 @@ def load_candidate_rows(candidates_csv: "Path" = CANDIDATES_CSV) -> "list[dict]"
     """Load and numerically normalize every row across the rotated archive.
 
     Returns dicts with the raw string columns preserved (``ts``, ``station``,
-    ``ticker``, ``end_date``) plus normalized floats for ``p_yes_raw``,
-    ``yes_ask``, ``no_ask``, ``minutes_to_settlement``.
+    ``ticker``, ``end_date``, ``question``) plus normalized floats for
+    ``p_yes_raw``, ``yes_ask``, ``no_ask``, ``minutes_to_settlement``.
+    ``question`` (issue #867) is the Gamma market's own question text, e.g.
+    "Will the highest temperature in Paris be 28C on July 3?" -- kept as-is
+    so ``infer_bracket_direction`` can parse it downstream.
     """
     out = []
     for row in _iter_csv_rows(candidates_csv):
@@ -223,6 +227,7 @@ def load_candidate_rows(candidates_csv: "Path" = CANDIDATES_CSV) -> "list[dict]"
             "station": row.get("station", ""),
             "ticker": row.get("ticker", ""),
             "end_date": row.get("end_date", ""),
+            "question": row.get("question", ""),
             "bracket_low": _f(row, "bracket_low"),
             "bracket_high": _f(row, "bracket_high"),
             "yes_ask": _f(row, "yes_ask"),
@@ -370,6 +375,18 @@ def resolve_candidate_outcomes(
     ``resolved_from_metar``, ``n_station_days`` (the effective sample size --
     all brackets on a station-day share one daily high) and ``gamma`` (the
     fetch/cache stats).
+
+    Also attaches ``direction`` ('high'/'low'/'unknown', issue #867) to every
+    row before resolution -- parsed from the candidate's own Gamma
+    ``question`` text (``infer_bracket_direction``, unambiguous per #867's
+    live-API verification), cross-checked/backfilled against the DB
+    ``candidates.direction`` column where a matching ticker row exists (the
+    authoritative backstop -- see ``resolve_row_direction``). Direction feeds
+    two things downstream: ``resolve_bracket_rows`` scores ``direction='low'``
+    rows against the observed daily LOW rather than the daily HIGH, and
+    ``detect_multi_yes_station_days`` groups collisions per-direction so a
+    low-temperature YES and a high-temperature YES on the same station-day
+    are correctly not flagged as impossible.
     """
     keyed = []
     for row in rows:
@@ -380,21 +397,31 @@ def resolve_candidate_outcomes(
 
     n_undatable = len(rows) - len(keyed)
 
+    tickers = {r["ticker"] for r in keyed if r.get("ticker")}
+    db_directions = load_candidate_directions(db_path, tickers)
+    direction_counts: dict = defaultdict(int)
+    for row in keyed:
+        direction = resolve_row_direction(row, db_directions)
+        row["direction"] = direction
+        direction_counts[direction] += 1
+
     station_dates = {
         (r["station"], r["settlement_date"]) for r in keyed
         if r.get("station") and r.get("settlement_date")
     }
     observed_highs = compute_observed_highs(db_path, station_dates)
+    observed_lows = compute_observed_lows(db_path, station_dates)
 
     gamma_resolutions: "dict[str, bool]" = {}
     gamma_stats: dict = {}
     if use_gamma:
-        tickers = {r["ticker"] for r in keyed if r.get("ticker")}
         gamma_resolutions, gamma_stats = resolve_gamma_outcomes(
             tickers, cache_path=gamma_cache_path, allow_network=allow_network
         )
 
-    resolved_rows, counts = resolve_bracket_rows(keyed, observed_highs, gamma_resolutions)
+    resolved_rows, counts = resolve_bracket_rows(
+        keyed, observed_highs, gamma_resolutions, observed_lows
+    )
 
     out = [{**r, "yes_won": bool(r["resolved_yes"])} for r in resolved_rows]
     counts["n_missing_end_date"] = n_undatable
@@ -402,6 +429,7 @@ def resolve_candidate_outcomes(
     counts["n_station_days"] = len({(r["station"], r["settlement_date"]) for r in out})
     counts["gamma"] = gamma_stats
     counts["gamma_enabled"] = bool(use_gamma)
+    counts["direction"] = dict(direction_counts)
     return out, dict(counts)
 
 
@@ -586,6 +614,17 @@ def _ground_truth_section(samples: "list[dict]", ocounts: dict) -> "list[str]":
                  f"{100 * metar_n / total:.1f}% |")
     lines.append("")
 
+    dir_counts = ocounts.get("direction") or {}
+    if dir_counts:
+        d_high = dir_counts.get("high", 0)
+        d_low = dir_counts.get("low", 0)
+        d_unknown = dir_counts.get("unknown", 0)
+        lines.append(
+            f"Market direction (issue #867 -- parsed from question text, cross-checked "
+            f"against `candidates.direction`): {d_high} high, {d_low} low, {d_unknown} "
+            f"unknown.\n"
+        )
+
     gamma_stats = ocounts.get("gamma") or {}
     if gamma_stats:
         lines.append(
@@ -609,36 +648,38 @@ def _ground_truth_section(samples: "list[dict]", ocounts: dict) -> "list[str]":
         n_disjoint = sum(1 for m in multi_yes if m["collision_kind"] == COLLISION_DISJOINT)
         n_unknown = sum(1 for m in multi_yes if m["collision_kind"] == COLLISION_UNKNOWN)
         lines.append(
-            f"⚠️ **Impossible-outcome exposure: {len(multi_yes)} station-day(s), "
-            f"{affected} bracket-rows** resolved YES on more than one bracket. A station-day "
-            f"has one daily high, so at most one bracket can contain it -- these rows inflate "
-            f"the YES count and bias BS_model/BS_market. Diagnostic only; nothing is "
-            f"auto-corrected.\n"
+            f"⚠️ **Impossible-outcome exposure: {len(multi_yes)} station-day-direction(s), "
+            f"{affected} bracket-rows** resolved YES on more than one bracket of the SAME "
+            f"direction (high vs. low temperature markets are grouped separately -- issue "
+            f"#867). A station-day has one daily high and one daily low, so at most one "
+            f"bracket per direction can contain it -- these rows inflate the YES count and "
+            f"bias BS_model/BS_market. Diagnostic only; nothing is auto-corrected.\n"
         )
         lines.append("| Collision shape | Station-days | Issue |")
         lines.append("|---|---|---|")
         lines.append(f"| `boundary` — brackets touch or overlap | {n_boundary} | "
                      f"#861 (which interval convention is correct) |")
-        lines.append(f"| `disjoint` — brackets do not touch | {n_disjoint} | "
+        lines.append(f"| `disjoint` — brackets do not touch, same direction | {n_disjoint} | "
                      f"#867 (no interval convention can produce this — the resolution "
                      f"source is wrong) |")
         if n_unknown:
             lines.append(f"| `unknown` — bracket bounds missing | {n_unknown} | — |")
         lines.append("")
-        lines.append("| Station | Settlement date | Shape | YES brackets | Observed high |")
-        lines.append("|---|---|---|---|---|")
+        lines.append("| Station | Settlement date | Direction | Shape | YES brackets | Observed high | Observed low |")
+        lines.append("|---|---|---|---|---|---|---|")
         for m in multi_yes[:20]:
             brackets = ", ".join(
                 f"{lo}-{hi} ({src})" for lo, hi, src in m["brackets"]
             )
             lines.append(f"| {m['station']} | {m['settlement_date']} | "
-                         f"`{m['collision_kind']}` | {brackets} | {m['observed_high']} |")
+                         f"{m.get('direction', '?')} | `{m['collision_kind']}` | {brackets} | "
+                         f"{m['observed_high']} | {m.get('observed_low')} |")
         if len(multi_yes) > 20:
-            lines.append(f"| … | {len(multi_yes) - 20} more | | | |")
+            lines.append(f"| … | {len(multi_yes) - 20} more | | | | | |")
         lines.append("")
     else:
         lines.append("Impossible-outcome check (issues #861 / #867): **0** station-days "
-                     "resolved YES on more than one bracket.\n")
+                     "resolved YES on more than one bracket of the same direction.\n")
     return lines
 
 

@@ -211,18 +211,33 @@ def _connect_ro(db_path: "Path | None") -> "sqlite3.Connection | None":
         return None
 
 
-def compute_observed_highs(
-    db_path: "Path | None", station_dates: "set[tuple[str, str]]"
+def _compute_observed_extreme(
+    db_path: "Path | None", station_dates: "set[tuple[str, str]]", *, want_max: bool,
 ) -> "dict[tuple[str, str], float]":
-    """Return {(station, settlement_date): observed_high_f} for every pair in
-    *station_dates* that has at least one observation on record.
+    """Shared implementation for ``compute_observed_highs``/``compute_observed_lows``.
 
-    ``observed_high`` = MAX(temp_f) among ``observations`` rows for that
-    station whose timestamp falls on ``settlement_date`` in the station's
-    LOCAL calendar day (``STATION_TZ``) -- NOT the observation's raw UTC
-    date (issue #810: that was the timezone bug). A (station, date) pair
-    absent from ``observations`` is simply absent from the returned dict --
-    this function never guesses a value.
+    Returns {(station, settlement_date): observed_temp_f} for every pair in
+    *station_dates* that has at least one observation on record -- MAX
+    (``want_max=True``) or MIN (``want_max=False``) of ``temp_f`` among
+    ``observations`` rows for that station whose timestamp falls on
+    ``settlement_date`` in the station's LOCAL calendar day (``STATION_TZ``)
+    -- NOT the observation's raw UTC date (issue #810: that was the timezone
+    bug). A (station, date) pair absent from ``observations`` is simply
+    absent from the returned dict -- this function never guesses a value.
+
+    Note this uses the simple station-local CALENDAR day for both the high
+    and the low, unlike the live overnight-low observation window
+    (``src.data.metar.low_window_bounds`` -- previous local sunset to next
+    local sunrise). That's a deliberate simplification for this diagnostic/
+    ground-truth-resolution module (issue #867): reusing the exact
+    calendar-day grouping ``compute_observed_highs`` already used keeps the
+    two aggregates consistent with each other and avoids a heavier
+    per-station sunrise/sunset dependency here, at the cost of the low
+    possibly differing slightly from the true overnight-window low right at
+    the day boundary. Low-direction rows are a small fraction of the
+    population (~0.65% of ``candidates``, 0 of ``settlements`` as of #867) --
+    this is a correctness/future-proofing fix, not the live trading engine's
+    settlement window.
 
     Read-only: opens *db_path* via ``mode=ro`` and never writes.
     """
@@ -259,7 +274,7 @@ def compute_observed_highs(
         )
 
         tz_cache: "dict[str, object]" = {}
-        highs: "dict[tuple[str, str], float]" = {}
+        extremes: "dict[tuple[str, str], float]" = {}
         for row in cur.fetchall():
             station, ts_str, temp_f = row["station"], row["ts"], row["temp_f"]
             tz_name = STATION_TZ.get(station)
@@ -287,14 +302,34 @@ def compute_observed_highs(
                 temp_f = float(temp_f)
             except (TypeError, ValueError):
                 continue
-            if key not in highs or temp_f > highs[key]:
-                highs[key] = temp_f
-        return highs
+            if key not in extremes or (
+                temp_f > extremes[key] if want_max else temp_f < extremes[key]
+            ):
+                extremes[key] = temp_f
+        return extremes
     except sqlite3.OperationalError as exc:
         log.warning("[resolve_bracket_outcomes] observations read failed: %s", exc)
         return {}
     finally:
         con.close()
+
+
+def compute_observed_highs(
+    db_path: "Path | None", station_dates: "set[tuple[str, str]]"
+) -> "dict[tuple[str, str], float]":
+    """Return {(station, settlement_date): observed_high_f} -- MAX(temp_f)
+    per station-local calendar day. See ``_compute_observed_extreme``."""
+    return _compute_observed_extreme(db_path, station_dates, want_max=True)
+
+
+def compute_observed_lows(
+    db_path: "Path | None", station_dates: "set[tuple[str, str]]"
+) -> "dict[tuple[str, str], float]":
+    """Return {(station, settlement_date): observed_low_f} -- MIN(temp_f)
+    per station-local calendar day (issue #867: needed to correctly score
+    ``direction='low'`` brackets, which must never be checked against the
+    daily HIGH). See ``_compute_observed_extreme``."""
+    return _compute_observed_extreme(db_path, station_dates, want_max=False)
 
 
 def resolve_outcome(
@@ -311,6 +346,128 @@ def resolve_outcome(
         return float(bracket_low) <= float(observed_high) <= float(bracket_high)
     except (TypeError, ValueError):
         return None
+
+
+# ---------------------------------------------------------------------------
+# Market direction (high vs. low temperature market) -- issue #867
+# ---------------------------------------------------------------------------
+#
+# Two disjoint (non-adjacent) brackets on the same station-day resolving YES
+# looked like a logical impossibility -- but 4 of the 5 station-days flagged
+# by the 2026-07-26 Pass-1 report turned out to be a lowest-temperature
+# market and a highest-temperature market, both legitimately, independently
+# YES. Grouping bracket rows purely by (station, settlement_date) -- with no
+# awareness that "lowest temperature" and "highest temperature" are two
+# different questions about two different physical quantities -- is what
+# manufactured the false collision. `direction` distinguishes the two so
+# they group and score separately.
+
+DIRECTION_HIGH = "high"
+DIRECTION_LOW = "low"
+DIRECTION_UNKNOWN = "unknown"
+
+
+def infer_bracket_direction(question: "str | None") -> str:
+    """Infer market direction from a Gamma market's own ``question`` text.
+
+    Looks for "highest"/"lowest" (case-insensitive) -- the market's own
+    stated semantics, not a fragile heuristic: live-API verification of all
+    8 tickers behind #867's 4 flagged disjoint pairs confirmed every single
+    one splits unambiguously into "Will the highest temperature..." vs.
+    "Will the lowest temperature...".
+
+    Returns ``DIRECTION_UNKNOWN`` -- never silently ``DIRECTION_HIGH`` --
+    when *question* is missing or contains neither/both keywords: a bracket
+    whose direction can't be determined must never be scored as if it were
+    known to be a high-temperature bracket.
+    """
+    if not question:
+        return DIRECTION_UNKNOWN
+    q = question.lower()
+    has_high = "highest" in q
+    has_low = "lowest" in q
+    if has_high and not has_low:
+        return DIRECTION_HIGH
+    if has_low and not has_high:
+        return DIRECTION_LOW
+    return DIRECTION_UNKNOWN
+
+
+def load_candidate_directions(
+    db_path: "Path | None", tickers: "set[str]"
+) -> "dict[str, str]":
+    """Return {ticker: direction} from the DB ``candidates`` table for the
+    subset of *tickers* that have at least one row there.
+
+    ``candidates.direction`` (``docs/DB_SCHEMA.md`` -- 'high'/'low', Epic C)
+    is written directly by the live market scanner from the market metadata
+    it scanned, independent of any question-text parsing -- the authoritative
+    backstop for ``infer_bracket_direction``'s CSV/JSONL question-text parse.
+    Coverage is partial (only tickers the live scanner actually evaluated),
+    so this is a cross-check/backfill, not a replacement.
+
+    A ticker with more than one distinct direction on record (should not
+    happen -- a ticker denotes one market) keeps the most recently logged
+    row's value and is warned, never silently averaged/guessed.
+
+    Read-only: opens *db_path* via ``mode=ro`` and never writes.
+    """
+    if not tickers:
+        return {}
+    con = _connect_ro(db_path)
+    if con is None:
+        return {}
+    try:
+        placeholders = ",".join("?" * len(tickers))
+        cur = con.execute(
+            f"SELECT ticker, direction FROM candidates "
+            f"WHERE ticker IN ({placeholders}) AND direction IS NOT NULL "
+            f"ORDER BY ts",
+            tuple(tickers),
+        )
+        out: "dict[str, str]" = {}
+        seen_conflict: "set[str]" = set()
+        for row in cur.fetchall():
+            ticker, direction = row["ticker"], row["direction"]
+            if direction not in (DIRECTION_HIGH, DIRECTION_LOW):
+                continue
+            if ticker in out and out[ticker] != direction and ticker not in seen_conflict:
+                seen_conflict.add(ticker)
+                log.warning(
+                    "[resolve_bracket_outcomes] candidates.direction disagrees across rows "
+                    "for ticker %s...: %s vs %s -- keeping the most recent",
+                    ticker[:14], out[ticker], direction,
+                )
+            out[ticker] = direction  # ORDER BY ts -- last write wins (most recent)
+        return out
+    except sqlite3.OperationalError as exc:
+        log.warning("[resolve_bracket_outcomes] candidates.direction read failed: %s", exc)
+        return {}
+    finally:
+        con.close()
+
+
+def resolve_row_direction(row: dict, db_directions: "dict[str, str]") -> str:
+    """Return the best-available direction for *row*: DB ``candidates.direction``
+    when present (authoritative backstop), else the question-text parse, else
+    ``DIRECTION_UNKNOWN``.
+
+    A disagreement between the two sources is warned and resolved in favour
+    of the DB value (it reflects the live scanner's own read of the market
+    metadata, not a text heuristic).
+    """
+    ticker = row.get("ticker")
+    db_dir = db_directions.get(ticker) if ticker else None
+    parsed = infer_bracket_direction(row.get("question"))
+    if db_dir in (DIRECTION_HIGH, DIRECTION_LOW):
+        if parsed in (DIRECTION_HIGH, DIRECTION_LOW) and parsed != db_dir:
+            log.warning(
+                "[resolve_bracket_outcomes] direction mismatch for ticker %s...: "
+                "question-text parse says %s, candidates.direction says %s -- using DB",
+                str(ticker)[:14], parsed, db_dir,
+            )
+        return db_dir
+    return parsed
 
 
 # ---------------------------------------------------------------------------
@@ -447,25 +604,39 @@ def resolve_bracket_rows(
     rows: "list[dict]",
     observed_highs: "dict[tuple[str, str], float]",
     gamma_resolutions: "dict[str, bool] | None" = None,
+    observed_lows: "dict[tuple[str, str], float] | None" = None,
 ) -> "tuple[list[dict], dict]":
-    """Attach ``observed_high``, ``resolved_yes`` and ``resolution_source`` to
-    every resolvable row.
+    """Attach ``observed_high``, ``observed_low``, ``resolved_yes`` and
+    ``resolution_source`` to every resolvable row.
 
     Resolution precedence mirrors ``settle.py``'s exactly (issue #860):
     Polymarket's definitive resolution wins when available
-    (``resolution_source='gamma'``), otherwise the observed daily high decides
-    (``resolution_source='metar'``).
+    (``resolution_source='gamma'``), otherwise the observed daily extreme
+    decides (``resolution_source='metar'``).
 
     Note a Gamma-resolved row survives even when no observation exists for
     that station-day -- the official outcome does not need METAR to
-    corroborate it -- so switching Gamma on can only grow the resolved
-    population, never shrink it. ``observed_high`` is still attached when
-    known (it stays useful for diagnostics), and is None when not.
+    corroborate it, and it is already direction-correct (it IS the market's
+    own official outcome) -- so switching Gamma on can only grow the
+    resolved population, never shrink it. ``observed_high``/``observed_low``
+    are still attached when known (useful for diagnostics), and are None
+    when not.
 
-    Rows that Gamma cannot resolve AND that have no observed high on record
-    are dropped (counted, never guessed). Returns (resolved_rows, counts).
+    The METAR fallback path is direction-aware (issue #867): a
+    ``direction='low'`` row (see ``resolve_row_direction``) is checked
+    against ``observed_lows``, never ``observed_highs`` -- a lowest-
+    temperature bracket has nothing to do with the day's high, and scoring
+    it against the wrong extreme is exactly the kind of manufactured
+    "impossible outcome" #867 diagnosed. A ``direction='low'`` row with no
+    observed low on record is dropped (counted as ``no_observed_low``), not
+    silently scored against the high. Rows with unknown/high direction keep
+    the original observed-high behaviour unchanged.
+
+    Rows Gamma cannot resolve AND that have no matching observed extreme on
+    record are dropped (counted, never guessed). Returns (resolved_rows, counts).
     """
     gamma_resolutions = gamma_resolutions or {}
+    observed_lows = observed_lows or {}
     counts: dict = defaultdict(int)
     counts["input_rows"] = len(rows)
     out = []
@@ -476,12 +647,26 @@ def resolve_bracket_rows(
             counts["missing_station_or_settlement_date"] += 1
             continue
         observed_high = observed_highs.get((station, settlement_date))
+        observed_low = observed_lows.get((station, settlement_date))
+        direction = row.get("direction") or DIRECTION_UNKNOWN
 
         gamma_yes = gamma_resolutions.get(row.get("ticker"))
         if gamma_yes is not None:
             resolved_yes = bool(gamma_yes)
             resolution_source = "gamma"
             counts["resolved_from_gamma"] += 1
+        elif direction == DIRECTION_LOW:
+            if observed_low is None:
+                counts["no_observed_low"] += 1
+                continue
+            resolved_yes = resolve_outcome(
+                row.get("bracket_low"), row.get("bracket_high"), observed_low
+            )
+            if resolved_yes is None:
+                counts["missing_bracket_bounds"] += 1
+                continue
+            resolution_source = "metar"
+            counts["resolved_from_metar"] += 1
         else:
             if observed_high is None:
                 counts["no_observed_high"] += 1
@@ -497,7 +682,9 @@ def resolve_bracket_rows(
 
         out.append({
             **row,
+            "direction": direction,
             "observed_high": observed_high,
+            "observed_low": observed_low,
             "resolved_yes": resolved_yes,
             "resolution_source": resolution_source,
         })
@@ -553,11 +740,21 @@ def resolve_bracket_outcomes(
     raw_rows = load_bracket_eval_rows(bracket_evals_base)
     deduped = dedupe_one_per_bracket_day(raw_rows)
 
+    # bracket_evals rows carry no `question` text (unlike the candidates.csv
+    # rows bss_market_vs_model_report.py resolves), so infer_bracket_direction
+    # has nothing to parse here -- but the DB `candidates.direction` backstop
+    # (issue #867) still applies wherever the live scanner logged the ticker.
+    all_tickers = {r["ticker"] for r in deduped if r.get("ticker")}
+    db_directions = load_candidate_directions(db_path, all_tickers)
+    for row in deduped:
+        row["direction"] = resolve_row_direction(row, db_directions)
+
     station_dates = {
         (r["station"], r["settlement_date"]) for r in deduped
         if r.get("station") and r.get("settlement_date")
     }
     observed_highs = compute_observed_highs(db_path, station_dates)
+    observed_lows = compute_observed_lows(db_path, station_dates)
 
     gamma_resolutions: "dict[str, bool]" = {}
     gamma_stats: dict = {}
@@ -567,13 +764,19 @@ def resolve_bracket_outcomes(
             tickers, cache_path=gamma_cache_path, allow_network=allow_network
         )
 
-    resolved_rows, counts = resolve_bracket_rows(deduped, observed_highs, gamma_resolutions)
+    resolved_rows, counts = resolve_bracket_rows(
+        deduped, observed_highs, gamma_resolutions, observed_lows
+    )
     counts["raw_rows"] = len(raw_rows)
     counts["deduped_bracket_rows"] = len(deduped)
     counts["n_bracket_rows"] = len(resolved_rows)
     counts["n_station_days"] = len({(r["station"], r["settlement_date"]) for r in resolved_rows})
     counts["gamma"] = gamma_stats
     counts["gamma_enabled"] = bool(use_gamma)
+    direction_counts: dict = defaultdict(int)
+    for row in deduped:
+        direction_counts[row.get("direction") or DIRECTION_UNKNOWN] += 1
+    counts["direction"] = dict(direction_counts)
     return resolved_rows, counts
 
 
@@ -624,20 +827,32 @@ def classify_multi_yes(brackets: "list[tuple]") -> str:
 
 
 def detect_multi_yes_station_days(resolved_rows: "list[dict]") -> "list[dict]":
-    """Return station-days where MORE THAN ONE bracket resolved YES.
+    """Return station-day-directions where MORE THAN ONE bracket resolved YES.
 
-    A station-day has exactly one daily high, so at most one bracket can
-    contain it -- two YES brackets on the same station-day is a logical
-    impossibility and means the resolution is wrong somewhere.
+    A station-day has exactly one daily high AND (independently) exactly one
+    daily low, so at most one HIGH-direction bracket and at most one
+    LOW-direction bracket can legitimately resolve YES for the same
+    station-day -- grouping is therefore keyed on
+    ``(station, settlement_date, direction)``, not just
+    ``(station, settlement_date)`` (issue #867: 4 of the 5 station-days the
+    2026-07-26 Pass-1 report flagged were exactly this -- one lowest-
+    temperature market and one highest-temperature market, both correctly,
+    independently YES, wrongly treated as a collision because direction
+    wasn't part of the key). A row with unresolved direction (see
+    ``resolve_row_direction``) groups under ``DIRECTION_UNKNOWN`` rather than
+    being assumed high -- this is deliberately conservative: it can only ever
+    ADD candidate collisions (an unknown-direction row can still collide with
+    another unknown-direction row), never hide a real one.
 
     This is a DIAGNOSTIC, not a fix. Each entry carries a ``collision_kind``
-    (see ``classify_multi_yes``) separating the two distinct failure modes:
-    ``boundary`` collisions are the interval-convention question of issue #861
+    (see ``classify_multi_yes``) separating the two remaining distinct
+    failure modes once same-direction grouping is applied: ``boundary``
+    collisions are the interval-convention question of issue #861
     (Celsius-derived brackets whose Fahrenheit conversions share an edge --
     e.g. ZGSZ 84.2-86.0 and 86.0-87.8 are 29-30C and 30-31C, and an observed
-    86.0F sits on the shared edge), while ``disjoint`` collisions cannot be an
-    interval question at all and point at the resolution source itself
-    (issue #867).
+    86.0F sits on the shared edge), while ``disjoint`` collisions -- among
+    brackets that ARE the same direction -- cannot be an interval question at
+    all and point at the resolution source itself.
 
     Nothing is auto-corrected in either case: the correct interval convention
     is not yet established (production data fits neither half-open form), and
@@ -647,10 +862,13 @@ def detect_multi_yes_station_days(resolved_rows: "list[dict]") -> "list[dict]":
     by_day: "dict[tuple, list[dict]]" = defaultdict(list)
     for row in resolved_rows:
         if row.get("resolved_yes"):
-            by_day[(row.get("station"), row.get("settlement_date"))].append(row)
+            direction = row.get("direction") or DIRECTION_UNKNOWN
+            by_day[(row.get("station"), row.get("settlement_date"), direction)].append(row)
 
     out = []
-    for (station, settlement_date), rows in sorted(by_day.items(), key=lambda kv: str(kv[0])):
+    for (station, settlement_date, direction), rows in sorted(
+        by_day.items(), key=lambda kv: str(kv[0])
+    ):
         if len(rows) > 1:
             brackets = [
                 (r.get("bracket_low"), r.get("bracket_high"), r.get("resolution_source"))
@@ -659,8 +877,10 @@ def detect_multi_yes_station_days(resolved_rows: "list[dict]") -> "list[dict]":
             out.append({
                 "station": station,
                 "settlement_date": settlement_date,
+                "direction": direction,
                 "n_yes": len(rows),
                 "observed_high": rows[0].get("observed_high"),
+                "observed_low": rows[0].get("observed_low"),
                 "brackets": brackets,
                 "collision_kind": classify_multi_yes(brackets),
                 "sources": sorted({
@@ -1267,10 +1487,14 @@ def build_dry_run_report(
 
     lines.append("## Diagnostic: station-days with more than one YES bracket\n")
     lines.append(
-        "A station-day has exactly ONE daily high, so at most one bracket can contain it. "
-        "More than one YES is a logical impossibility and means resolution is wrong "
-        "somewhere. The two shapes below have different causes and different fixes -- "
-        "do not read them as one number.\n"
+        "A station-day has exactly ONE daily high and (independently) exactly ONE daily "
+        "low, so at most one YES per direction is possible -- collisions are grouped by "
+        "`(station, settlement_date, direction)`, not just `(station, settlement_date)` "
+        "(issue #867: a lowest-temperature market and a highest-temperature market both "
+        "resolving YES on the same station-day is NOT a collision -- they're two different "
+        "questions). More than one YES *within the same direction* is a logical "
+        "impossibility and means resolution is wrong somewhere. The two shapes below have "
+        "different causes and different fixes -- do not read them as one number.\n"
     )
     lines.append("| Collision shape | Station-days | What it means |")
     lines.append("|---|---|---|")
@@ -1281,9 +1505,10 @@ def build_dry_run_report(
         f"on the shared edge in both. Correct convention not yet established. |"
     )
     lines.append(
-        f"| `disjoint` (brackets do not touch) | {n_disjoint} | Issue #867 -- NO interval "
+        f"| `disjoint` (brackets do not touch, same direction) | {n_disjoint} | NO interval "
         f"convention can produce both. The resolution source itself returned the wrong "
-        f"outcome; suspect ticker/market keying. |"
+        f"outcome for one of them; suspect ticker/market keying (see `_select_matching_market` "
+        f"guard in `src/data/polymarket.py`, issue #867). |"
     )
     if n_unknown:
         lines.append(
@@ -1293,17 +1518,18 @@ def build_dry_run_report(
     lines.append("")
     lines.append(f"**Affected station-days: {len(multi_yes)}**\n")
     if multi_yes:
-        lines.append("| station | settlement_date | shape | n_yes | observed_high | "
-                     "brackets (low, high, source) |")
-        lines.append("|---|---|---|---|---|---|")
+        lines.append("| station | settlement_date | direction | shape | n_yes | observed_high | "
+                     "observed_low | brackets (low, high, source) |")
+        lines.append("|---|---|---|---|---|---|---|---|")
         for m in multi_yes[:25]:
             brackets = "; ".join(f"({b[0]}, {b[1]}, {b[2]})" for b in m["brackets"])
             lines.append(
-                f"| {m['station']} | {m['settlement_date']} | `{m['collision_kind']}` | "
-                f"{m['n_yes']} | {m['observed_high']} | {brackets} |"
+                f"| {m['station']} | {m['settlement_date']} | {m.get('direction', '?')} | "
+                f"`{m['collision_kind']}` | {m['n_yes']} | {m['observed_high']} | "
+                f"{m.get('observed_low')} | {brackets} |"
             )
         if len(multi_yes) > 25:
-            lines.append(f"| ... | ... | ... | ... | ... | _{len(multi_yes) - 25} more_ |")
+            lines.append(f"| ... | ... | ... | ... | ... | ... | ... | _{len(multi_yes) - 25} more_ |")
         lines.append("")
     lines.append(
         "Reported, deliberately not silently 'fixed' -- `settle.py` shares the same "

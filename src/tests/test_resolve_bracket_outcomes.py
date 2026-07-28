@@ -31,17 +31,23 @@ from src.scripts.resolve_bracket_outcomes import (
     COLLISION_BOUNDARY,
     COLLISION_DISJOINT,
     COLLISION_UNKNOWN,
+    DIRECTION_HIGH,
+    DIRECTION_LOW,
+    DIRECTION_UNKNOWN,
     build_dry_run_report,
     classify_multi_yes,
     compute_observed_highs,
+    compute_observed_lows,
     cross_check_against_settlements,
     cross_check_against_settlements_direct,
     cross_check_gamma_vs_metar,
     dedupe_one_per_bracket_day,
     detect_multi_yes_station_days,
     detect_zero_yes_station_days,
+    infer_bracket_direction,
     ladder_completeness,
     load_bracket_eval_rows,
+    load_candidate_directions,
     load_gamma_cache,
     load_settlement_outcomes,
     load_settlement_rows,
@@ -49,6 +55,7 @@ from src.scripts.resolve_bracket_outcomes import (
     resolve_bracket_rows,
     resolve_gamma_outcomes,
     resolve_outcome,
+    resolve_row_direction,
     run_dry_run,
     save_gamma_cache,
 )
@@ -120,6 +127,23 @@ def _write_observations_db(path, observations):
             "INSERT INTO observations (ts, station, temp_f, temp_native, unit, source) "
             "VALUES (?, ?, ?, ?, 'F', 'metar')",
             (ts, station, temp_f, temp_f),
+        )
+    con.commit()
+    con.close()
+
+
+def _write_candidates_db(path, candidates):
+    """candidates: list of (ticker, direction, ts) tuples -- minimal shape of
+    the DB `candidates` table needed by `load_candidate_directions` (#867)."""
+    con = sqlite3.connect(str(path))
+    con.execute(
+        "CREATE TABLE candidates (id INTEGER PRIMARY KEY, ts TEXT, station TEXT, "
+        "ticker TEXT, direction TEXT)"
+    )
+    for ticker, direction, ts in candidates:
+        con.execute(
+            "INSERT INTO candidates (ts, station, ticker, direction) VALUES (?, '', ?, ?)",
+            (ts, ticker, direction),
         )
     con.commit()
     con.close()
@@ -335,6 +359,143 @@ class TestComputeObservedHighs:
         ])
         highs = compute_observed_highs(db_path, {("KORD", "2026-07-05"), ("KMIA", "2026-07-05")})
         assert highs == {("KORD", "2026-07-05"): 84.0, ("KMIA", "2026-07-05"): 91.0}
+
+
+class TestComputeObservedLows:
+    """Mirror of TestComputeObservedHighs -- MIN instead of MAX (issue #867:
+    needed to correctly score direction='low' brackets)."""
+
+    def test_simple_grouping(self, tmp_path):
+        db_path = tmp_path / "meteoedge.db"
+        _write_observations_db(db_path, [
+            ("KORD", "2026-07-05T06:00:00+00:00", 60.0),
+            ("KORD", "2026-07-05T16:00:00+00:00", 82.0),
+        ])
+        lows = compute_observed_lows(db_path, {("KORD", "2026-07-05")})
+        assert lows == {("KORD", "2026-07-05"): 60.0}
+
+    def test_high_and_low_independent_over_same_data(self, tmp_path):
+        """The same observation set must give a DIFFERENT answer from
+        compute_observed_highs -- they are not accidentally aliased."""
+        db_path = tmp_path / "meteoedge.db"
+        obs = [
+            ("KORD", "2026-07-05T06:00:00+00:00", 60.0),
+            ("KORD", "2026-07-05T16:00:00+00:00", 82.0),
+        ]
+        _write_observations_db(db_path, obs)
+        wanted = {("KORD", "2026-07-05")}
+        assert compute_observed_lows(db_path, wanted) == {("KORD", "2026-07-05"): 60.0}
+        assert compute_observed_highs(db_path, wanted) == {("KORD", "2026-07-05"): 82.0}
+
+    def test_no_observations_for_requested_day_absent(self, tmp_path):
+        db_path = tmp_path / "meteoedge.db"
+        _write_observations_db(db_path, [("KORD", "2026-07-01T14:00:00+00:00", 70.0)])
+        lows = compute_observed_lows(db_path, {("KORD", "2026-07-05")})
+        assert ("KORD", "2026-07-05") not in lows
+
+    def test_missing_db_returns_empty(self, tmp_path):
+        lows = compute_observed_lows(tmp_path / "does_not_exist.db", {("KORD", "2026-07-05")})
+        assert lows == {}
+
+
+# ---------------------------------------------------------------------------
+# Market direction (high vs. low) -- issue #867
+# ---------------------------------------------------------------------------
+
+class TestInferBracketDirection:
+    def test_highest_question_is_high(self):
+        assert infer_bracket_direction(
+            "Will the highest temperature in Paris be 28C on July 3?"
+        ) == DIRECTION_HIGH
+
+    def test_lowest_question_is_low(self):
+        assert infer_bracket_direction(
+            "Will the lowest temperature in Seoul be 24C on July 5?"
+        ) == DIRECTION_LOW
+
+    def test_case_insensitive(self):
+        assert infer_bracket_direction("Will the HIGHEST Temperature...") == DIRECTION_HIGH
+        assert infer_bracket_direction("will the LOWEST temperature...") == DIRECTION_LOW
+
+    def test_none_is_unknown(self):
+        assert infer_bracket_direction(None) == DIRECTION_UNKNOWN
+
+    def test_empty_string_is_unknown(self):
+        assert infer_bracket_direction("") == DIRECTION_UNKNOWN
+
+    def test_neither_keyword_is_unknown(self):
+        assert infer_bracket_direction("Will it rain in Tokyo tomorrow?") == DIRECTION_UNKNOWN
+
+    def test_both_keywords_is_unknown(self):
+        """Never guess -- an ambiguous question must not be scored as if its
+        direction were known."""
+        assert infer_bracket_direction(
+            "Will the highest and lowest temperature both exceed 20C?"
+        ) == DIRECTION_UNKNOWN
+
+
+class TestLoadCandidateDirections:
+    def test_returns_direction_for_known_tickers(self, tmp_path):
+        db_path = tmp_path / "meteoedge.db"
+        _write_candidates_db(db_path, [
+            ("0x001", "high", "2026-07-05T00:00:00Z"),
+            ("0x002", "low", "2026-07-05T00:00:00Z"),
+        ])
+        out = load_candidate_directions(db_path, {"0x001", "0x002"})
+        assert out == {"0x001": "high", "0x002": "low"}
+
+    def test_ticker_not_in_db_absent_from_result(self, tmp_path):
+        db_path = tmp_path / "meteoedge.db"
+        _write_candidates_db(db_path, [("0x001", "high", "2026-07-05T00:00:00Z")])
+        out = load_candidate_directions(db_path, {"0x001", "0xNOTPRESENT"})
+        assert "0xNOTPRESENT" not in out
+
+    def test_empty_tickers_returns_empty_without_opening_db(self, tmp_path):
+        assert load_candidate_directions(tmp_path / "does_not_exist.db", set()) == {}
+
+    def test_missing_db_returns_empty(self, tmp_path):
+        out = load_candidate_directions(tmp_path / "does_not_exist.db", {"0x001"})
+        assert out == {}
+
+    def test_missing_candidates_table_returns_empty(self, tmp_path):
+        """A DB that exists but has no `candidates` table (e.g. a synthetic
+        test fixture DB with only `observations`) must degrade to {}, never
+        raise."""
+        db_path = tmp_path / "meteoedge.db"
+        _write_observations_db(db_path, [("KORD", "2026-07-05T14:00:00+00:00", 80.0)])
+        out = load_candidate_directions(db_path, {"0x001"})
+        assert out == {}
+
+    def test_conflicting_rows_keep_most_recent(self, tmp_path):
+        """A ticker denotes one market -- more than one direction on record
+        should not happen, but if it does, the most recent write wins rather
+        than raising or averaging."""
+        db_path = tmp_path / "meteoedge.db"
+        _write_candidates_db(db_path, [
+            ("0x001", "high", "2026-07-05T00:00:00Z"),
+            ("0x001", "low", "2026-07-06T00:00:00Z"),
+        ])
+        out = load_candidate_directions(db_path, {"0x001"})
+        assert out == {"0x001": "low"}
+
+
+class TestResolveRowDirection:
+    def test_db_direction_used_when_present(self):
+        row = {"ticker": "0x001", "question": "Will the lowest temperature..."}
+        # DB says high, question text says low -- DB (authoritative) wins.
+        assert resolve_row_direction(row, {"0x001": "high"}) == DIRECTION_HIGH
+
+    def test_falls_back_to_question_parse_when_ticker_not_in_db(self):
+        row = {"ticker": "0x999", "question": "Will the highest temperature..."}
+        assert resolve_row_direction(row, {"0x001": "low"}) == DIRECTION_HIGH
+
+    def test_unknown_when_neither_source_available(self):
+        row = {"ticker": "0x999", "question": None}
+        assert resolve_row_direction(row, {}) == DIRECTION_UNKNOWN
+
+    def test_agreement_no_warning_needed_but_still_correct(self):
+        row = {"ticker": "0x001", "question": "Will the lowest temperature..."}
+        assert resolve_row_direction(row, {"0x001": "low"}) == DIRECTION_LOW
 
 
 # ---------------------------------------------------------------------------
@@ -1250,8 +1411,8 @@ class TestClassifyMultiYes:
         ]
         entry = detect_multi_yes_station_days(rows)[0]
         assert set(entry) == {
-            "station", "settlement_date", "n_yes", "observed_high", "brackets",
-            "collision_kind", "sources",
+            "station", "settlement_date", "direction", "n_yes", "observed_high",
+            "observed_low", "brackets", "collision_kind", "sources",
         }
         # brackets is the (low, high, source) triple both reports unpack.
         assert all(len(b) == 3 for b in entry["brackets"])
@@ -1278,7 +1439,7 @@ class TestClassifyMultiYes:
             rows, {"n_bracket_rows": 4, "n_station_days": 2}, {}, {}, "2026-02-15"
         )
         assert "| `boundary` (adjacent/overlapping) | 1 |" in report
-        assert "| `disjoint` (brackets do not touch) | 1 |" in report
+        assert "| `disjoint` (brackets do not touch, same direction) | 1 |" in report
         assert "#867" in report
 
 
