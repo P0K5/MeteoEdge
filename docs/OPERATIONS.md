@@ -239,6 +239,104 @@ sudo journalctl -u meteoedge-prob-cap-report.service -f
 tail -f logs/prob_cap_report.log
 ```
 
+#### meteoedge-resolve-outcomes.service / meteoedge-resolve-outcomes.timer
+
+One-shot service, run daily at **13:00 UTC** (after `meteoedge-settle.timer` at
+12:00 and the 12:30 report jobs) by `meteoedge-resolve-outcomes.timer`. Runs
+`src/scripts/resolve_bracket_outcomes.py` — the outcome-resolution dry run
+(issue #850) with the ground-truth quality checks (issue #870).
+
+```ini
+[Unit]
+Description=MeteoEdge bracket-outcome resolution + Gamma cache warm (issues #850 / #870 / #861)
+After=network-online.target meteoedge-settle.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=p0k5
+WorkingDirectory=/home/p0k5/MeteoEdge
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=/home/p0k5/MeteoEdge/.env
+ExecStart=/home/p0k5/MeteoEdge/.venv/bin/python -u -m src.scripts.resolve_bracket_outcomes --out logs/reports
+StandardOutput=append:/home/p0k5/MeteoEdge/logs/resolve_outcomes.log
+StandardError=append:/home/p0k5/MeteoEdge/logs/resolve_outcomes.log
+```
+
+```ini
+[Unit]
+Description=Run MeteoEdge bracket-outcome resolution daily at 13:00 UTC (after settlement)
+
+[Timer]
+OnCalendar=*-*-* 13:00:00 UTC
+AccuracySec=1m
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+```
+
+**Why it runs on a timer — the Gamma cache is the point.** Polymarket's official
+on-chain resolution is the authoritative ground truth (#860), and a
+Gamma-resolved bracket **never consults the bracket-interval logic**, so it is
+immune to the boundary-convention bug in #861. A METAR-resolved bracket is not.
+The difference is large and measured:
+
+| Run | Gamma share | Boundary collisions |
+|---|---|---|
+| 2026-07-26 (warm cache) | 95% | 5 / 300 station-days |
+| 2026-07-28 (`--no-network`, cold cache) | 12% | **70 / 105 station-days** |
+
+Running daily keeps the cache ahead of the accruing population (~290 brackets/day
+at 11 brackets × ~26 station-days), so #822's M3 gate is scored on
+Gamma-dominated truth by default rather than by remembering to warm it first.
+It also amortises the fetch: a cold-cache Pass 2 near the M3 date would be
+several thousand sequential HTTP requests in one run.
+
+There is **no data-loss window** — a settled market's outcome never changes, so
+a ticker fetched late resolves identically, and the cache is permanent for that
+reason. `BRACKET_EVAL_RETAIN_DAYS` is 90, so nothing ages out of
+`logs/bracket_evals.*.jsonl` before M3 either. This timer is about cache warmth
+and daily monitoring, not about catching a closing window.
+
+**What it does:**
+- **Read-only.** Opens `meteoedge.db` `mode=ro`, writes only a markdown report
+  plus the Gamma cache at `logs/gamma_resolution_cache.json`. Never touches
+  trading config, the model, or any table.
+- Self-gating: with no `logs/bracket_evals.*.jsonl` and no database it logs one
+  line and exits 0 — safe to install from day one.
+- Writes `logs/reports/bracket_outcome_resolution_dryrun_<date>.md`. Note
+  `--out logs/reports`, **not** the default `backtest_results/` — otherwise a
+  dated report accumulates in the repo every day.
+- Doubles as daily monitoring: the report carries the multi-YES collision counts
+  split `boundary` (#861) vs `disjoint` (#867), the Gamma-vs-METAR disagreement
+  rate, zero-YES station-days, and ladder completeness. Watch for ladder
+  completeness slipping off 11/11 or the disagreement rate moving.
+- Failure-tolerant: a per-ticker Gamma fetch error degrades that bracket to
+  METAR and never aborts the run, so a bad night costs one day of warming.
+- Markets that have not resolved decisively are deliberately **not** cached, so
+  they are retried on the next run. This leaves a small permanent retry tail for
+  anything that never settles — expected, and bounded at this scale.
+
+**Operational commands:**
+```bash
+# Check next scheduled run
+sudo systemctl list-timers meteoedge-resolve-outcomes.timer
+
+# Manually trigger a run (e.g. to warm the cache immediately)
+sudo systemctl start meteoedge-resolve-outcomes.service
+
+# Or run directly, cache-only with zero HTTP requests
+python -m src.scripts.resolve_bracket_outcomes --no-network --out logs/reports
+
+# View logs
+sudo journalctl -u meteoedge-resolve-outcomes.service -f
+tail -f logs/resolve_outcomes.log
+
+# Confirm the cache is growing
+python -c "import json; print(len(json.load(open('logs/gamma_resolution_cache.json'))))"
+```
+
 #### meteoedge-purge-retention.service / meteoedge-purge-retention.timer
 
 One-shot service, run daily at **01:00 UTC** by

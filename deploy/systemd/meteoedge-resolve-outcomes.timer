@@ -1,0 +1,10 @@
+[Unit]
+Description=Run MeteoEdge bracket-outcome resolution daily at 13:00 UTC (after settlement)
+
+[Timer]
+OnCalendar=*-*-* 13:00:00 UTC
+AccuracySec=1m
+Persistent=true
+
+[Install]
+WantedBy=timers.target
