@@ -228,6 +228,60 @@ is visible as this share dropping toward 0%.
 decision), #886 (no city ever promoted to `emos_primary`), #887 (raw-vs-calibrated σ decision) —
 ✅ resolved, #888 (zero-σ guard).
 
+#### #886 investigation (2026-07-28) — verdict: **bar unmet, not a defect, not a general shadow regression**
+
+Of the issue's three candidate explanations, the evidence supports the first and rules out the
+other two:
+
+1. **The promotion bar has genuinely never been met — CONFIRMED, this is the cause.**
+   `emos_mode.py::_primary_allowed` requires `db.get_emos_crps_count(city) >=
+   EMOS_MIN_SAMPLES_PROMOTION` (default **60**, `src/config.py`). `model_forecast_log` was reset
+   2026-06-25; issue #556's own documented timeline puts the *shadow* threshold (35 samples) at
+   "late July (July 28–31)" and promotion (60 samples) at ~August 23 **for the original clock**.
+   The 2026-07-28 `ensemble_sigma_calibration` backtest confirms this empirically: max **28**
+   triples for any city, and its own text states *"No station has >= 60 triples yet."*
+   `emos_crps_log`'s per-track counts (the exact quantity `_primary_allowed` reads) confirm it a
+   second way: the `fixed` track has ~15 samples/city (453 rows / 30 cities, 2026-07-09 to
+   2026-07-25); the `sigma_source` that is **actually active** (`ensemble`, since
+   `USE_ENSEMBLE_SIGMA` flipped true 2026-07-25) has only **~3 samples/city** (81 rows / 27
+   cities, 2026-07-25 to 2026-07-27) — `get_emos_crps_count`/`emos_crps_logged_for_date` key on
+   `(city, model_mode, forecast_source, sigma_source)` by design (#759, #851), so that flip
+   correctly started a fresh clock for the served track rather than pooling incompatible
+   evidence, but the side effect is that the currently-active track is further from 60 than the
+   dormant `fixed` track was. `docs/OPERATIONS.md`'s own forecast-stack-expansion note already
+   projects **baseline promotion at ~mid-September**, consistent with this reading.
+
+2. **"Blocked by a defect" — NOT SUPPORTED.** `get_emos_crps_count`, `_primary_allowed`, and
+   `get_city_mode` were read end-to-end; the per-track isolation, the sample-count comparison,
+   and the operator-override precedence all match their docstrings and are covered by
+   `test_emos_shadow_scaffolding.py` (which explicitly asserts, by design,
+   `ready_for_promotion` can never be set to 1 by any automated path). Separately —
+   independent of the sample bar — promotion also requires an explicit two-step **manual**
+   operator action (`POST /api/emos/{city}/mark-ready` then `POST /api/emos/{city}/promote}`,
+   `src/dashboard/api.py`); `save_coefficients()` never sets `ready_for_promotion=1` itself,
+   by design (issue #556). No evidence either step has ever been invoked for any city. This is
+   a deliberate safety gate, not a bug — but it means the sample bar alone is not the only thing
+   standing between here and a first promotion; a human action is also required once it clears.
+
+3. **"Shadow genuinely worse than legacy" — NOT the general explanation.** The production
+   `emos_crps_log` cross-check shows `emos_shadow` beating `legacy` on mean CRPS by a wide
+   margin in aggregate, on both currently-populated tracks: `fixed` 1.4896 vs 2.0768 (30
+   cities), `ensemble` 1.2982 vs 2.0267 (27 cities). Issue #762's per-city triage (2026-07-21)
+   found EMOS beat legacy in **23 of 30 cities**; the four regressions (Jinan, Shenzhen, Tel
+   Aviv, Manila) each have a documented, city-specific cause and are already held out via
+   `emos_mode_override` (follow-ups #765/#766/#767). This plan's earlier "Chicago 2.79 vs 2.74"
+   line (see "Where we actually stand" above) is a real but isolated data point, not
+   representative of the cohort — it predates the #798 partial-pooling shrinkage blend and
+   should be re-measured before being cited as evidence of a general regression.
+
+**Conclusion:** #886 is not a blocker to fix — it is the expected, by-design state at day 33
+of a reset-then-re-reset 60-day clock, compounded by a promotion step that additionally requires
+manual operator action. No code change is proposed. Re-check once the active (`ensemble`)
+track's per-city CRPS counts approach 60 (~mid-September at current accrual, per #556/OPERATIONS)
+and, at that point, an operator must still explicitly mark-ready + promote per city — this will
+not happen automatically. **No city was promoted to `emos_primary` as part of this
+investigation**, consistent with not disturbing the M3 clean-data collection window.
+
 ### M3 · Decision gate — target 2026-08-22
 
 Re-run the skill test on clean, post-fix, all-bracket data. **This is the moment the thesis is
@@ -333,9 +387,9 @@ purely data-bound: the only thing between here and M3 is station-days accruing.*
 | #872 | M2 premise check — constant-σ rows show median `d` = 0.88, not 0.001 | before citing #799 | ✅ Resolved — premise CORRECT. On a constant σ, `c`/`d` lie on a flat ridge (`c + d·σ`), so a fitted `d` is optimizer position, not evidence. #869's check 3 measured nothing |
 | #450 | Calibration backtest: reliability + CRPS over 30 days | M3 | ✅ Merged (#874) — HOLD ensemble sigma, CRPS delta −0.0041 (within noise; see #885 for why) |
 | **#885** | **`ensemble_sigma_f` never populated — `USE_ENSEMBLE_SIGMA` is a no-op at serving** | **M2 (real remaining work)** | **Open — M2 BLOCKER** |
-| #886 | No city ever promoted to `emos_primary` — EMOS has never served a probability | M2 | Open — investigation |
+| #886 | No city ever promoted to `emos_primary` — EMOS has never served a probability | M2 | Investigated — bar unmet (60-sample clock at ~day 33/60, further reset by the 07-25 `USE_ENSEMBLE_SIGMA` flip); not a defect, not a general shadow regression. See #886 investigation note above. No code change; re-check ~mid-Sept, then still requires manual mark-ready + promote per city |
 | #887 | 63% of GEFS σ below the 1 °F floor; raw-vs-calibrated decision | before #885 | ✅ Decided — train-raw/serve-calibrated; `true_probability_yes` now floors its direct-substitution consumption at `SIGMA_FLOOR_F`, sub-floor-share monitor added |
-| #888 | `p_normal_between()` ZeroDivisionError on σ=0 | before #885 | Open — Simple, cheap now |
+| #888 | `p_normal_between()` ZeroDivisionError on σ=0 | before #885 | ✅ Merged (#891) — `[low, high)` boundary convention + point-mass handling for σ ≤ 0 |
 | #844 | Test suite flakes in the 15 min before UTC midnight | anytime | ✅ Merged (#882) |
 | #876 | Carry `direction` in candidates CSV / bracket_evals | supports #867 | ✅ Merged (#884) |
 | #877 | Windows `read_text()` encoding crash | anytime | ✅ Merged (#883) |
