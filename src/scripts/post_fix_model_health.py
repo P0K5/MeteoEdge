@@ -19,10 +19,15 @@ outcome settles:
 
 1. **Rail concentration** -- the headline. Still ~60% at the rails after the
    sigma work means M3 is a foregone conclusion and the spend should stop.
-2. **``p_yes_raw == 0.0`` artifact rate** -- an M0 regression check. This exact
-   certainty shortcut was 2265/12698 = **17.8%** of archived rows; #820 should
-   have collapsed it toward zero. If it has not, M0 is incomplete and every
-   downstream number inherits the problem.
+2. **Interior-zero (ladder contiguity) check** -- an M0 invariant. A finite
+   envelope produces exact ``p_yes_raw == 0.0`` only as a contiguous run at the
+   TOP and/or BOTTOM of a station-day's sorted bracket ladder -- brackets
+   entirely above or below ``[min_env, max_env]``. No finite envelope can ever
+   produce a zero bracket sitting BETWEEN two non-zero brackets: that is a
+   logical gap, not a tail, and #820's failure mode (``max_env`` collapsing
+   onto a finished day's high while pricing tomorrow) is exactly the kind of
+   defect that creates one. See ``interior_zero_violations`` for two earlier,
+   wrong versions of this check and why each was replaced.
 3. **Sigma identifiability** -- an M2 regression check. The M2 thesis was that
    ``sigma_raw`` being the constant ``FORECAST_STDDEV_F = 2.0`` made the EMOS
    ``c``/``d`` coefficients unfittable (``d ~ 0.001`` across all 30 cities).
@@ -281,98 +286,113 @@ def rail_concentration_by_mode(rows: "list[dict]") -> "dict[str, dict]":
 # Check 2: p_yes_raw == 0.0 artifact rate (M0 regression check)
 # ---------------------------------------------------------------------------
 
-def _station_local_date(row: dict) -> "str | None":
-    """Station-local calendar date of ``poll_ts`` as YYYY-MM-DD."""
-    tz_name = STATION_TZ.get(str(row.get("station") or ""))
-    ts_str = row.get("poll_ts")
-    if not tz_name or not ts_str:
-        return None
-    try:
-        tz = pytz.timezone(tz_name)
-        t = dtparse.parse(str(ts_str))
-        if t.tzinfo is None:
-            t = t.replace(tzinfo=timezone.utc)
-        return t.astimezone(tz).date().isoformat()
-    except (ValueError, OverflowError, TypeError, pytz.UnknownTimeZoneError):
-        return None
+def interior_zero_violations(rows: "list[dict]", min_ladder: int = 3) -> dict:
+    """Exact ``p_yes_raw == 0.0`` brackets sitting BETWEEN two non-zero
+    brackets on the same station-day ladder snapshot -- #820's bug shape,
+    tested as a structural invariant (issue #869).
 
+    **Two earlier, wrong versions of this check, for the record:**
 
-def future_day_zero_violations(rows: "list[dict]") -> dict:
-    """Exact ``p_yes_raw == 0.0`` on a market whose settlement day has not yet
-    STARTED -- #820's bug shape, tested as an invariant (issue #869).
+    1. A raw exact-zero rate compared against Pass 1's 17.8% baseline. Invalid
+       cross-population comparison (gate-selected candidates vs. the full
+       ladder); could not separate "#820 is broken" from "this population has
+       more far-out-of-the-money brackets", which legitimately price at exactly
+       0.0. Produced "38.0% vs 17.8%, +20.2pp" and read as a catastrophic
+       regression that was mostly population.
+    2. "Zero on a day that has not started yet." An improvement -- needed no
+       baseline -- but conflated the bug with ordinary envelope truncation: an
+       envelope ``[min_env, max_env]`` legitimately produces a run of exact
+       zeros below and above its bounds regardless of whether the settlement
+       day has begun (e.g. "London above 95F tomorrow = 0.0" is the model being
+       RIGHT). It also pooled rows logged in the 3-minute window between
+       #826's bracket-eval logging going live and #820's fix landing (both
+       merged 2026-07-24, three minutes apart) -- genuinely pre-fix rows with
+       no way to exclude them, since ``--since`` filters on settlement_date and
+       these are next-day polls whose settlement_date is already >= the fix
+       date. Reported 2483 "violations" that were mostly legitimate tails plus
+       a slice of genuinely pre-fix data.
 
-    **Why this replaced a baseline comparison.** The first version of this check
-    reported the raw exact-zero rate against Pass 1's 17.8%. That was invalid:
-    17.8% came from the gate-selected candidate archive while this reads the
-    full ladder, and a full ladder legitimately contains far-out-of-the-money
-    brackets that the envelope's impossibility shortcut correctly prices at
-    exactly 0.0. The comparison could not distinguish "#820 is broken" from
-    "this population has more unreachable brackets", which is the only question
-    it existed to answer. The 2026-07-28 run duly produced 38.0% vs 17.8% and
-    read as a catastrophic regression that was mostly population.
+    **This version is a structural invariant that needs neither a baseline nor
+    a fix-landing date.** Within one poll snapshot (station, settlement_date,
+    poll_ts), sort the evaluated brackets by ``bracket_low``. A finite envelope
+    ``[min_env, max_env]`` can only produce exact zeros as a CONTIGUOUS run at
+    the bottom (brackets entirely below ``min_env``) and/or the top (entirely
+    above ``max_env``) of that sorted sequence -- brackets inside the envelope
+    have some positive probability of containing the day's high, however small.
+    A zero bracket with a non-zero bracket on BOTH sides of it in sorted order
+    is therefore a GAP, not a tail, and no finite envelope can produce one. That
+    is exactly #820's failure: ``max_env`` collapsing onto a finished day's
+    high mid-ladder while the market being priced is tomorrow's.
 
-    The invariant needs no baseline and cannot be confounded by ladder
-    composition:
+    Ladders with fewer than *min_ladder* dated brackets are skipped -- with
+    only 1-2 brackets there is no way to distinguish an interior gap from a
+    tail. Ladders where every bracket is zero are counted separately
+    (``n_all_zero_ladders``): plausibly a real forecast miss (the whole ladder
+    misjudged the day), not this check's target, and not double-counted as a
+    gap.
 
-        A bracket cannot be *impossible* on a day that has not begun.
-
-    When the poll fires on a station-local date strictly BEFORE the settlement
-    date, the entire diurnal cycle that sets the day's high is still in the
-    future. No amount of legitimate envelope narrowing can justify an exact
-    0.0 there -- that is precisely #820's failure, where ``max_env`` collapsed
-    onto a FINISHED day's high while pricing tomorrow's market.
-
-    Same-day zeros are reported separately and are NOT violations: once the day
-    is under way and the peak has passed, brackets above the achieved high are
-    genuinely unreachable and an exact 0.0 is the correct answer.
-
-    Returns counts plus ``violations`` (up to a sample for the report) and the
-    same-day breakdown for context.
+    Returns counts plus ``violations`` (up to a sample of the offending rows).
     """
-    n_future_day = 0
-    n_violations = 0
-    n_same_or_past_day = 0
-    n_same_or_past_day_zero = 0
+    snapshots: "dict[tuple, list[dict]]" = defaultdict(list)
     n_undatable = 0
-    violations: "list[dict]" = []
-
     for row in rows:
         p = _f(row.get("p_yes_raw"))
-        if p is None:
-            continue
-        local_date = _station_local_date(row)
-        settlement_date = str(row.get("settlement_date") or "")[:10]
-        if local_date is None or not settlement_date:
+        bracket_low = _f(row.get("bracket_low"))
+        station = row.get("station")
+        settlement_date = row.get("settlement_date")
+        poll_ts = row.get("poll_ts")
+        if p is None or bracket_low is None or not station or not settlement_date or not poll_ts:
             n_undatable += 1
             continue
+        snapshots[(station, settlement_date, poll_ts)].append({**row, "_p": p, "_lo": bracket_low})
 
-        if local_date < settlement_date:
-            n_future_day += 1
-            if p == 0.0:
+    n_ladders_checked = 0
+    n_too_small = 0
+    n_all_zero_ladders = 0
+    n_violations = 0
+    violations: "list[dict]" = []
+
+    for (station, settlement_date, poll_ts), ladder_rows in snapshots.items():
+        # One row per bracket -- de-dupe defensively on ticker in case a
+        # snapshot ever logs the same bracket twice.
+        by_ticker: "dict[str, dict]" = {}
+        for r in ladder_rows:
+            by_ticker.setdefault(r.get("ticker") or id(r), r)
+        ladder = sorted(by_ticker.values(), key=lambda r: r["_lo"])
+
+        if len(ladder) < min_ladder:
+            n_too_small += 1
+            continue
+        n_ladders_checked += 1
+
+        ps = [r["_p"] for r in ladder]
+        nonzero_idxs = [i for i, p in enumerate(ps) if p != 0.0]
+        if not nonzero_idxs:
+            n_all_zero_ladders += 1
+            continue
+
+        lo_idx, hi_idx = min(nonzero_idxs), max(nonzero_idxs)
+        for i in range(lo_idx + 1, hi_idx):
+            if ps[i] == 0.0:
                 n_violations += 1
                 if len(violations) < 25:
+                    r = ladder[i]
                     violations.append({
-                        "station": row.get("station"),
-                        "poll_ts": row.get("poll_ts"),
-                        "local_date": local_date,
+                        "station": station,
                         "settlement_date": settlement_date,
-                        "bracket_low": row.get("bracket_low"),
-                        "bracket_high": row.get("bracket_high"),
+                        "poll_ts": poll_ts,
+                        "bracket_low": r.get("bracket_low"),
+                        "bracket_high": r.get("bracket_high"),
+                        "ladder": [(rr.get("bracket_low"), rr.get("bracket_high"), rr["_p"])
+                                   for rr in ladder],
                     })
-        else:
-            n_same_or_past_day += 1
-            if p == 0.0:
-                n_same_or_past_day_zero += 1
 
     return {
-        "n_future_day": n_future_day,
+        "n_ladders_checked": n_ladders_checked,
+        "n_too_small": n_too_small,
+        "n_all_zero_ladders": n_all_zero_ladders,
         "n_violations": n_violations,
-        "violation_rate": n_violations / n_future_day if n_future_day else None,
-        "n_same_or_past_day": n_same_or_past_day,
-        "n_same_or_past_day_zero": n_same_or_past_day_zero,
-        "same_or_past_day_zero_rate": (
-            n_same_or_past_day_zero / n_same_or_past_day if n_same_or_past_day else None
-        ),
+        "violation_rate": n_violations / n_ladders_checked if n_ladders_checked else None,
         "n_undatable": n_undatable,
         "violations": violations,
     }
@@ -552,7 +572,7 @@ def build_report(rails: dict, rails_by_mode: dict, zeros: dict, d_coeffs: dict,
                  sigma_cov: dict, run_date: str, since: "str | None",
                  inv: "dict | None" = None,
                  rows_for_ceiling: "list[dict] | None" = None) -> str:
-    inv = inv or future_day_zero_violations([])
+    inv = inv or interior_zero_violations([])
     rows_for_ceiling = rows_for_ceiling or []
     lines = []
     lines.append("# Post-Fix Model Health -- leading indicator (issue #869)\n")
@@ -648,43 +668,54 @@ def build_report(rails: dict, rails_by_mode: dict, zeros: dict, d_coeffs: dict,
         lines.append("")
 
     # --- Check 2 -----------------------------------------------------------
-    lines.append("## 2. Impossible-on-a-future-day -- M0 invariant check\n")
+    lines.append("## 2. Interior-zero ladder contiguity -- M0 invariant check\n")
     lines.append(
-        "**The invariant: a bracket cannot be impossible on a day that has not begun.** When "
-        "the poll fires on a station-local date strictly BEFORE the settlement date, the "
-        "whole diurnal cycle that sets the day's high is still ahead. No legitimate envelope "
-        "narrowing justifies an exact `p_yes_raw == 0.0` there -- that is exactly #820, where "
-        "`max_env` collapsed onto a FINISHED day's high while pricing tomorrow's market.\n"
+        "**The invariant: a finite envelope produces exact `p_yes_raw == 0.0` only as a "
+        "CONTIGUOUS run at the top and/or bottom of a station-day's sorted bracket ladder** "
+        "-- brackets entirely below `min_env` or above `max_env`. A zero bracket with a "
+        "non-zero bracket on BOTH sides of it, in sorted order, is a GAP: no finite envelope "
+        "can produce one. That is exactly #820's failure -- `max_env` collapsing onto a "
+        "finished day's high mid-ladder while the market being priced is tomorrow's.\n"
     )
     lines.append(
-        "> Replaces a raw exact-zero rate compared against Pass 1's 17.8%. That comparison "
-        "> was invalid -- gate-selected vs. full ladder -- and could not tell \"#820 is "
-        "> broken\" from \"this population has more unreachable brackets\", which was the only "
-        "> question it existed to answer. This invariant needs no baseline.\n"
+        "> Replaces two earlier, wrong versions of this check: a raw exact-zero rate compared "
+        "> against Pass 1's 17.8% (invalid cross-population comparison), then a "
+        "> \"zero on a day that has not started yet\" heuristic (conflated the bug with "
+        "> ordinary envelope truncation, and pooled genuinely pre-fix rows logged in the "
+        "> 3-minute gap between #826's bracket-eval logging and #820's fix, both merged "
+        "> 2026-07-24). This version is a structural invariant -- it needs neither a baseline "
+        "> nor a fix-landing date. See `interior_zero_violations`'s docstring for the full "
+        "> account.\n"
     )
     lines.append("| Metric | Value |")
     lines.append("|---|---|")
-    lines.append(f"| Polls priced BEFORE their settlement day began | {inv['n_future_day']} |")
-    lines.append(f"| **...of which exact `p_yes_raw == 0.0` (VIOLATIONS)** | "
-                 f"**{inv['n_violations']}** |")
-    lines.append(f"| **Violation rate** | **{_pct(inv['violation_rate'])}** |")
-    lines.append(f"| Polls on/after the settlement day | {inv['n_same_or_past_day']} |")
-    lines.append(f"| ...of which exact 0.0 (legitimate -- peak passed, bracket unreachable) | "
-                 f"{inv['n_same_or_past_day_zero']} ({_pct(inv['same_or_past_day_zero_rate'])}) |")
-    lines.append(f"| Undatable (no station timezone or settlement date) | {inv['n_undatable']} |")
+    lines.append(f"| Station-day ladder snapshots checked (>= 3 dated brackets) | "
+                 f"{inv['n_ladders_checked']} |")
+    lines.append(f"| Skipped -- too few dated brackets to judge interior vs. tail | "
+                 f"{inv['n_too_small']} |")
+    lines.append(f"| Ladders where every bracket priced 0.0 (not this check's target -- "
+                 f"see docstring) | {inv['n_all_zero_ladders']} |")
+    lines.append(f"| **Interior-zero GAPS (VIOLATIONS)** | **{inv['n_violations']}** |")
+    lines.append(f"| **Violation rate (ladders with >= 1 gap)** | {_pct(inv['violation_rate'])} |")
+    lines.append(f"| Rows skipped -- missing station/settlement_date/poll_ts/bracket_low | "
+                 f"{inv['n_undatable']} |")
     lines.append("")
     if inv["n_violations"]:
-        lines.append("**#820 IS NOT FULLY CLOSED.** Sample of violating rows:\n")
-        lines.append("| Station | Poll ts | Local date | Settlement date | Bracket |")
-        lines.append("|---|---|---|---|---|")
+        lines.append("**#820 IS NOT FULLY CLOSED.** Sample of violating ladders "
+                     "(`*` marks the interior-zero bracket):\n")
+        lines.append("| Station | Settlement date | Poll ts | Ladder (low-high: p_yes_raw) |")
+        lines.append("|---|---|---|---|")
         for v in inv["violations"]:
-            lines.append(
-                f"| {v['station']} | {v['poll_ts']} | {v['local_date']} | "
-                f"{v['settlement_date']} | {v['bracket_low']}-{v['bracket_high']} |"
+            ladder_str = ", ".join(
+                f"*{lo}-{hi}: {p}*" if (lo, hi) == (v["bracket_low"], v["bracket_high"])
+                else f"{lo}-{hi}: {p}"
+                for lo, hi, p in v["ladder"]
             )
+            lines.append(f"| {v['station']} | {v['settlement_date']} | {v['poll_ts']} | "
+                         f"{ladder_str} |")
         lines.append("")
     else:
-        lines.append("**No violations. The #820 failure mode does not appear in this "
+        lines.append("**No interior-zero gaps. The #820 failure mode does not appear in this "
                      "population.**\n")
 
     lines.append("### Raw exact-zero rate, for reference only\n")
@@ -768,8 +799,8 @@ def build_report(rails: dict, rails_by_mode: dict, zeros: dict, d_coeffs: dict,
                  "overconfident; M3 is decided, stop spending on it |")
     lines.append("| Middle mass | Materially above the pre-fix 0.0% | Still ~0% → the model "
                  "has no middle, which is the pathology itself |")
-    lines.append("| Future-day zero violations | 0 | Any → #820 incomplete, every downstream "
-                 "number inherits it |")
+    lines.append("| Interior-zero gaps | 0 | Any → #820 incomplete, every downstream number "
+                 "inherits it |")
     lines.append("| `d` identifiability | `d` moved off ~0.001 on ensemble rows | Still pinned "
                  "→ #799 changed plumbing, not the fit |")
     lines.append("")
@@ -811,16 +842,16 @@ def run_report(bracket_evals_base: Path, db_path: Path, out_dir: Path,
 
     rails_by_mode = rail_concentration_by_mode(rows)
     zeros = zero_artifact_rate(rows)
-    inv = future_day_zero_violations(rows)
+    inv = interior_zero_violations(rows)
     d_coeffs = emos_d_coefficients(db_path)
     sigma_cov = sigma_f_coverage(db_path)
 
     ceiling = structural_high_rail_ceiling(rows)
     log.info(
         "[health] %d rows | high rail %s vs %s structural ceiling | middle mass %s "
-        "(pre-fix 0.0%%) | future-day zero violations: %d",
+        "(pre-fix 0.0%%) | interior-zero gaps: %d (of %d ladders checked)",
         rails["n"], _pct(rails["high_rail_share"]), _pct(ceiling),
-        _pct(rails["middle_share"]), inv["n_violations"],
+        _pct(rails["middle_share"]), inv["n_violations"], inv["n_ladders_checked"],
     )
 
     report = build_report(rails, rails_by_mode, zeros, d_coeffs, sigma_cov, run_date, since,

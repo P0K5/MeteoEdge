@@ -8,7 +8,15 @@ pass/fail readable against the pre-fix baselines:
 - rail_concentration: the headline. Share of p_yes_raw at <=0.02 / >=0.95,
   the buckets where the pre-fix model kept 62.6% of its mass.
 - zero_artifact_rate: #820's exact-0.0 certainty shortcut, broken out by
-  is_next_day and station-local hour (its diagnosed home is the evening).
+  is_next_day and station-local hour (its diagnosed home is the evening) --
+  reference context only, not a pass/fail (see interior_zero_violations).
+- interior_zero_violations: the M0 structural invariant. A finite envelope
+  produces exact-zero brackets only as a contiguous run at the top/bottom of a
+  station-day's sorted ladder; a zero with non-zero brackets on both sides is a
+  gap no envelope can produce. Replaced two earlier, wrong versions -- a raw
+  rate compared against a mismatched-population baseline, then a "zero before
+  the settlement day" heuristic that conflated the bug with ordinary envelope
+  truncation and pooled genuinely pre-fix rows. This version needs neither.
 - emos_d_coefficients / sigma_f_coverage: #799's identifiability question,
   grouped by sigma_source so constant-sigma and ensemble-sigma fits are never
   averaged together.
@@ -28,7 +36,7 @@ from src.scripts.post_fix_model_health import (
     D_IDENTIFIABLE_THRESHOLD,
     build_report,
     emos_d_coefficients,
-    future_day_zero_violations,
+    interior_zero_violations,
     ladder_size,
     load_bracket_eval_rows,
     rail_concentration,
@@ -347,74 +355,123 @@ class TestMiddleMassAndCeiling:
             rails, {}, zero_artifact_rate(rows),
             {"available": False, "by_sigma_source": {}},
             {"available": False, "by_model": {}}, "2026-02-15", None,
-            inv=future_day_zero_violations(rows), rows_for_ceiling=rows,
+            inv=interior_zero_violations(rows), rows_for_ceiling=rows,
         )
         assert "structural ceiling (1 / 11-bracket ladder)" in report
         assert "**100%** of the ceiling" in report
 
 
-class TestFutureDayZeroInvariant:
-    """#820's bug shape, tested as an invariant: a bracket cannot be impossible
-    on a day that has not begun. Needs no baseline, so it cannot be confounded
-    by ladder composition the way the raw exact-zero rate was."""
+def _ladder(zeros_at, n=5, station="KORD", settlement_date="2026-02-01",
+            poll_ts="2026-02-01T18:00:00+00:00"):
+    """n brackets at consecutive 2-degree steps, ticker-per-bracket, all in one
+    poll snapshot. zeros_at: set of bracket indices (0-based, sorted by
+    bracket_low) that price at exactly 0.0; every other bracket gets 0.3."""
+    rows = []
+    for i in range(n):
+        rows.append(_eval_row(
+            ticker=f"0x{i}", station=station, settlement_date=settlement_date,
+            poll_ts=poll_ts, bracket_low=60.0 + 2 * i, bracket_high=62.0 + 2 * i,
+            p_yes_raw=(0.0 if i in zeros_at else 0.3),
+        ))
+    return rows
 
-    def test_zero_before_the_settlement_day_is_a_violation(self):
-        # 2026-02-01T18:00Z is 12:00 local in Chicago on 02-01, pricing 02-02.
-        row = _eval_row(poll_ts="2026-02-01T18:00:00+00:00",
-                        settlement_date="2026-02-02", p_yes_raw=0.0)
-        out = future_day_zero_violations([row])
-        assert out["n_future_day"] == 1
-        assert out["n_violations"] == 1
-        assert out["violation_rate"] == 1.0
 
-    def test_zero_on_the_settlement_day_is_legitimate(self):
-        """Past the peak, brackets above the achieved high really are
-        unreachable -- an exact 0.0 is the correct answer, not the bug."""
-        row = _eval_row(poll_ts="2026-02-01T23:00:00+00:00",
-                        settlement_date="2026-02-01", p_yes_raw=0.0)
-        out = future_day_zero_violations([row])
+class TestInteriorZeroViolations:
+    """The M0 structural invariant that replaced two earlier, wrong versions
+    (see the function's own docstring for the full account): a finite envelope
+    produces exact zeros only as a contiguous run at the top/bottom of a
+    station-day's sorted ladder. A zero with non-zero brackets on both sides is
+    a gap no envelope can produce -- exactly #820's failure shape."""
+
+    def test_zero_at_the_bottom_tail_is_legitimate(self):
+        """Brackets entirely below min_env -- ordinary envelope truncation."""
+        rows = _ladder(zeros_at={0, 1})
+        out = interior_zero_violations(rows)
         assert out["n_violations"] == 0
-        assert out["n_same_or_past_day_zero"] == 1
+        assert out["n_ladders_checked"] == 1
 
-    def test_nonzero_on_a_future_day_is_not_a_violation(self):
-        row = _eval_row(poll_ts="2026-02-01T18:00:00+00:00",
-                        settlement_date="2026-02-02", p_yes_raw=0.15)
-        out = future_day_zero_violations([row])
-        assert out["n_future_day"] == 1
+    def test_zero_at_the_top_tail_is_legitimate(self):
+        rows = _ladder(zeros_at={3, 4})
+        assert interior_zero_violations(rows)["n_violations"] == 0
+
+    def test_zeros_at_both_tails_are_legitimate(self):
+        """The common envelope shape: narrow band of live brackets in the
+        middle, zeros tapering off both above and below."""
+        rows = _ladder(zeros_at={0, 4}, n=5)
+        assert interior_zero_violations(rows)["n_violations"] == 0
+
+    def test_zero_sandwiched_between_nonzero_brackets_is_a_violation(self):
+        """The #820 shape: a gap where no finite envelope can produce one."""
+        rows = _ladder(zeros_at={2}, n=5)   # nonzero, nonzero, ZERO, nonzero, nonzero
+        out = interior_zero_violations(rows)
+        assert out["n_violations"] == 1
+        assert out["violations"][0]["bracket_low"] == 64.0   # index 2 -> 60+2*2
+
+    def test_multiple_interior_gaps_all_counted(self):
+        rows = _ladder(zeros_at={1, 3}, n=5)  # nonzero, ZERO, nonzero, ZERO, nonzero
+        assert interior_zero_violations(rows)["n_violations"] == 2
+
+    def test_all_zero_ladder_is_not_a_violation(self):
+        """A full-ladder miss is a plausibly-real forecast failure, not this
+        check's target -- and every zero there is technically 'between' other
+        zeros only, never a gap next to a nonzero, so it must not double-count."""
+        rows = _ladder(zeros_at={0, 1, 2, 3, 4}, n=5)
+        out = interior_zero_violations(rows)
+        assert out["n_violations"] == 0
+        assert out["n_all_zero_ladders"] == 1
+
+    def test_ladder_below_min_size_is_skipped_not_judged(self):
+        """With 2 brackets there is no way to tell an interior gap from a
+        tail -- must not guess."""
+        rows = _ladder(zeros_at={0}, n=2)
+        out = interior_zero_violations(rows)
+        assert out["n_too_small"] == 1
+        assert out["n_ladders_checked"] == 0
+
+    def test_different_poll_snapshots_are_not_merged_into_one_ladder(self):
+        """Two different hourly snapshots of the same station-day must not be
+        treated as one combined ladder -- that would fabricate contiguity."""
+        rows = (
+            _ladder(zeros_at={0}, n=3, poll_ts="2026-02-01T12:00:00+00:00")
+            + _ladder(zeros_at={2}, n=3, poll_ts="2026-02-01T13:00:00+00:00")
+        )
+        out = interior_zero_violations(rows)
+        assert out["n_ladders_checked"] == 2
+        assert out["n_violations"] == 0   # both are tail zeros within their own snapshot
+
+    def test_different_settlement_dates_are_not_merged(self):
+        """Same-day and next-day markets for the same station, polled in the
+        same hour, are different ladders and must not be combined."""
+        rows = (
+            _ladder(zeros_at={0}, n=3, settlement_date="2026-02-01")
+            + _ladder(zeros_at={2}, n=3, settlement_date="2026-02-02")
+        )
+        out = interior_zero_violations(rows)
+        assert out["n_ladders_checked"] == 2
         assert out["n_violations"] == 0
 
-    def test_local_date_not_utc_date_decides(self):
-        """2026-02-02T01:00Z is still 2026-02-01 in Chicago. Judging by the UTC
-        date would call this a same-day poll and miss the violation."""
-        row = _eval_row(station="KORD", poll_ts="2026-02-02T01:00:00+00:00",
-                        settlement_date="2026-02-02", p_yes_raw=0.0)
-        out = future_day_zero_violations([row])
-        assert out["n_violations"] == 1
-
-    def test_undatable_row_is_counted_not_silently_dropped(self):
-        row = _eval_row(station="ZZZZ", p_yes_raw=0.0)
-        out = future_day_zero_violations([row])
+    def test_row_missing_bracket_low_is_counted_not_silently_dropped(self):
+        row = _eval_row(bracket_low=None, p_yes_raw=0.0)
+        out = interior_zero_violations([row])
         assert out["n_undatable"] == 1
-        assert out["n_violations"] == 0
 
     def test_report_calls_out_violations_loudly(self):
-        rows = [_eval_row(poll_ts="2026-02-01T18:00:00+00:00",
-                          settlement_date="2026-02-02", p_yes_raw=0.0)]
+        rows = _ladder(zeros_at={2}, n=5)
         report = build_report(
             rail_concentration(rows), {}, zero_artifact_rate(rows),
             {"available": False, "by_sigma_source": {}},
             {"available": False, "by_model": {}}, "2026-02-15", None,
-            inv=future_day_zero_violations(rows), rows_for_ceiling=rows,
+            inv=interior_zero_violations(rows), rows_for_ceiling=rows,
         )
         assert "#820 IS NOT FULLY CLOSED" in report
+        assert "*64.0-66.0: 0.0*" in report   # the flagged bracket, marked
 
     def test_report_confirms_a_clean_population(self):
-        rows = [_eval_row(poll_ts="2026-02-01T23:00:00+00:00",
-                          settlement_date="2026-02-01", p_yes_raw=0.0)]
+        rows = _ladder(zeros_at={0, 4}, n=5)
         report = build_report(
             rail_concentration(rows), {}, zero_artifact_rate(rows),
             {"available": False, "by_sigma_source": {}},
             {"available": False, "by_model": {}}, "2026-02-15", None,
-            inv=future_day_zero_violations(rows), rows_for_ceiling=rows,
+            inv=interior_zero_violations(rows), rows_for_ceiling=rows,
         )
-        assert "No violations" in report
+        assert "No interior-zero gaps" in report
