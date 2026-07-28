@@ -71,7 +71,18 @@ class Bracket:
 
 
 def p_normal_between(low: float, high: float, mean: float, stddev: float) -> float:
-    """P(low <= X <= high) for X ~ N(mean, stddev^2)."""
+    """P(low <= X < high) for X ~ N(mean, stddev^2).
+
+    Bracket convention: [low, high) — lower bound inclusive, upper bound exclusive.
+    This prevents double-counting at bracket boundaries (see issues #861, #881).
+
+    When stddev <= 0, treats the distribution as a point mass at the mean:
+    - Returns 1 if low <= mean < high, else 0.
+    """
+    # Handle point mass case (stddev <= 0)
+    if stddev <= 0:
+        return 1.0 if (low <= mean < high) else 0.0
+
     def cdf(x):
         return 0.5 * (1 + erf((x - mean) / (stddev * sqrt(2))))
     return max(0.0, min(1.0, cdf(high) - cdf(low)))
@@ -110,8 +121,6 @@ def next_day_probability_yes(bracket: Bracket, mu: float, sigma: float) -> float
             see the round-2 #687 review's calibration consistency rule. This
             function does not enforce that; it is the caller's contract.
     """
-    if sigma <= 0:
-        raise ValueError(f"next_day_probability_yes: sigma must be positive, got {sigma!r}")
     return p_normal_between(bracket.low_f, bracket.high_f, mu, sigma)
 
 

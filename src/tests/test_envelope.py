@@ -106,6 +106,37 @@ class TestPNormalBetween:
         result = p_normal_between(mean - stddev, mean + stddev, mean=mean, stddev=stddev)
         assert isclose(result, 0.6827, abs_tol=0.001), f"Got {result}"
 
+    def test_stddev_zero_mean_inside_bracket(self):
+        """When stddev=0, distribution is point mass at mean.
+        P(low <= mean <= high) = 1 when low <= mean <= high."""
+        result = p_normal_between(79.0, 83.0, mean=81.0, stddev=0.0)
+        assert result == 1.0
+
+    def test_stddev_zero_mean_below_bracket(self):
+        """When stddev=0 and mean < low, probability is 0."""
+        result = p_normal_between(82.0, 84.0, mean=81.0, stddev=0.0)
+        assert result == 0.0
+
+    def test_stddev_zero_mean_above_bracket(self):
+        """When stddev=0 and mean > high, probability is 0."""
+        result = p_normal_between(78.0, 80.0, mean=81.0, stddev=0.0)
+        assert result == 0.0
+
+    def test_stddev_zero_mean_at_low_edge(self):
+        """When stddev=0 and mean equals low edge (inclusive), probability is 1."""
+        result = p_normal_between(81.0, 83.0, mean=81.0, stddev=0.0)
+        assert result == 1.0
+
+    def test_stddev_zero_mean_at_high_edge(self):
+        """When stddev=0 and mean equals high edge (exclusive), probability is 0."""
+        result = p_normal_between(79.0, 81.0, mean=81.0, stddev=0.0)
+        assert result == 0.0
+
+    def test_stddev_zero_point_mass(self):
+        """When stddev=0 and the bracket is [81, 81) (empty range), probability is 0."""
+        result = p_normal_between(81.0, 81.0, mean=81.0, stddev=0.0)
+        assert result == 0.0
+
 
 # ---------------------------------------------------------------------------
 # compute_envelope — climb_rates values (May): hour14=4.5, hour12=6, hour21=0, hour15=3.5
@@ -947,9 +978,46 @@ class TestDayMismatchGuard:
         assert 0.0 < p_with < 1.0, \
             f"expected non-certain probability, got {p_with}"
 
-    def test_raises_on_nonpositive_sigma(self):
+    def test_sigma_zero_mean_inside_bracket(self):
+        """When sigma=0, next_day_probability_yes returns point-mass probability.
+        P(low <= mu < high) = 1 when low <= mu < high."""
         bracket = make_bracket(low_f=80.0, high_f=82.0)
-        with pytest.raises(ValueError):
-            next_day_probability_yes(bracket, mu=81.0, sigma=0.0)
-        with pytest.raises(ValueError):
-            next_day_probability_yes(bracket, mu=81.0, sigma=-1.0)
+        result = next_day_probability_yes(bracket, mu=81.0, sigma=0.0)
+        assert result == 1.0
+
+    def test_sigma_zero_mean_at_low_edge(self):
+        """When sigma=0 and mean equals low edge (inclusive), probability is 1."""
+        bracket = make_bracket(low_f=81.0, high_f=83.0)
+        result = next_day_probability_yes(bracket, mu=81.0, sigma=0.0)
+        assert result == 1.0
+
+    def test_sigma_zero_mean_at_high_edge(self):
+        """When sigma=0 and mean equals high edge (exclusive), probability is 0."""
+        bracket = make_bracket(low_f=79.0, high_f=81.0)
+        result = next_day_probability_yes(bracket, mu=81.0, sigma=0.0)
+        assert result == 0.0
+
+    def test_sigma_zero_mean_below_bracket(self):
+        """When sigma=0 and mean < low, probability is 0."""
+        bracket = make_bracket(low_f=82.0, high_f=84.0)
+        result = next_day_probability_yes(bracket, mu=81.0, sigma=0.0)
+        assert result == 0.0
+
+    def test_sigma_zero_mean_above_bracket(self):
+        """When sigma=0 and mean > high, probability is 0."""
+        bracket = make_bracket(low_f=78.0, high_f=80.0)
+        result = next_day_probability_yes(bracket, mu=81.0, sigma=0.0)
+        assert result == 0.0
+
+    def test_sigma_negative_mean_inside_bracket(self):
+        """When sigma<0, next_day_probability_yes returns point-mass probability.
+        Negative sigma is treated like zero (degenerate case)."""
+        bracket = make_bracket(low_f=80.0, high_f=82.0)
+        result = next_day_probability_yes(bracket, mu=81.0, sigma=-1.0)
+        assert result == 1.0
+
+    def test_sigma_negative_mean_at_high_edge(self):
+        """When sigma<0 and mean equals high edge (exclusive), probability is 0."""
+        bracket = make_bracket(low_f=79.0, high_f=81.0)
+        result = next_day_probability_yes(bracket, mu=81.0, sigma=-1.0)
+        assert result == 0.0
