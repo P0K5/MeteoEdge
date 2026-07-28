@@ -123,6 +123,52 @@ def test_stalled_city_reports_distinctly(db_path, capsys):
     assert ("STALLED" in output) or ("rate:" in output)
 
 
+def test_sigma_quality_report_below_floor_share(tmp_path, capsys):
+    """print_sigma_quality_report reports the sub-floor share of sigma_f
+    (issue #887) separately from the exactly-at-floor and NULL rates."""
+    sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+    from scripts.check_emos_data_quality import print_sigma_quality_report
+    from src.model.ensemble_sigma import SIGMA_FLOOR_F
+
+    path = tmp_path / "sigma-quality-test.db"
+    db = Database(str(path))
+
+    # 10 gefs rows: 6 below the floor (raw, unfloored per #555), 2 exactly
+    # at the floor, 2 above, so sub_floor=6/10=60%, at_floor=2/10=20%.
+    sigma_values = [0.3, 0.5, 0.6, 0.7, 0.8, 0.9, SIGMA_FLOOR_F, SIGMA_FLOOR_F, 1.5, 2.0]
+    for i, sigma in enumerate(sigma_values):
+        date = (_ts(30 - i)).date()
+        db._conn.execute(
+            """
+            INSERT INTO model_forecast_log
+            (station, date, lead_hours, model, forecast_high_f, logged_at, sigma_f)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            ("KORD", str(date), 24, "gefs", 75.0, datetime.now(timezone.utc).isoformat(), sigma),
+        )
+    # One NULL-sigma row on a different channel, to confirm NULL accounting
+    # is unaffected by the new column.
+    db._conn.execute(
+        """
+        INSERT INTO model_forecast_log
+        (station, date, lead_hours, model, forecast_high_f, logged_at, sigma_f)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        ("KORD", str(_ts(1).date()), 24, "nws", 75.0, datetime.now(timezone.utc).isoformat(), None),
+    )
+    db._conn.commit()
+
+    print_sigma_quality_report(db)
+    db.close()
+
+    output = capsys.readouterr().out
+    assert "gefs" in output
+    assert "6/10 (60%)" in output, output
+    assert "2/10 (20%)" in output, output
+    assert "1/1 (100%)" in output, output
+    assert "Below-floor share (#887)" in output
+
+
 def test_rate_calculation_valid(db_path, capsys):
     """Output should show rate calculation for non-stalled feeds."""
     sys.path.insert(0, str(Path(__file__).parent.parent.parent))

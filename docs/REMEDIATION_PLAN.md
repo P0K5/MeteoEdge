@@ -205,8 +205,28 @@ A second, independent problem blocks simply switching it on: **63% of GEFS `sigm
 below the 1.0 °F floor** (2,095 of 3,330), the classic under-dispersive signature. Feeding raw
 spread into live probabilities would reproduce the overconfidence M0 just removed.
 
-**Issues:** #885 (wire `ensemble_sigma_f` — the real remaining M2 work), #886 (no city ever
-promoted to `emos_primary`), #887 (raw-vs-calibrated σ decision), #888 (zero-σ guard).
+**#887 decision (2026-07-28): train-raw / serve-calibrated.** EMOS training keeps consuming
+`sigma_f` exactly as persisted — raw, unfloored (`fetch_training_data`'s `sigma_source="ensemble"`
+default is unchanged) — so its `(c, d)` regression learns the real spread-vs-error relationship
+instead of one starved by a pre-applied floor (this is what #555 already established for capture
+vs. consumption; #887 does not touch it). The open question was serving: `state.ensemble_sigma_f`
+has **two** downstream consumers with different needs once #885 wires it —
+`resolve_sigma_raw → apply_emos` (EMOS-served cities), which must keep receiving the SAME raw
+value training saw (`apply_emos`'s own `c/d` transform IS its calibration step — flooring here
+would feed the regression an input distribution it never trained on), and
+`true_probability_yes`'s direct substitution (still every station's *only* serving path per #886 —
+zero cities are `emos_primary`), which has no transform downstream at all. Fixed in this issue:
+`true_probability_yes` now floors that direct substitution at `SIGMA_FLOOR_F` itself
+(`src/model/envelope.py`), so #885 can populate `ensemble_sigma_f` with the raw quantity
+everywhere and each consumer stays responsible for its own floor/calibration. Added
+`scripts/check_emos_data_quality.py`'s sigma report as the sub-floor-share monitor: it now prints
+`sigma_f < SIGMA_FLOOR_F` per model alongside the existing exactly-at-floor and NULL rates, so a
+future capture-side regression that started flooring `sigma_f` before persisting it (undoing #555)
+is visible as this share dropping toward 0%.
+
+**Issues:** #885 (wire `ensemble_sigma_f` — the real remaining M2 work, now unblocked by #887's
+decision), #886 (no city ever promoted to `emos_primary`), #887 (raw-vs-calibrated σ decision) —
+✅ resolved, #888 (zero-σ guard).
 
 #### #886 investigation (2026-07-28) — verdict: **bar unmet, not a defect, not a general shadow regression**
 
@@ -368,8 +388,8 @@ purely data-bound: the only thing between here and M3 is station-days accruing.*
 | #450 | Calibration backtest: reliability + CRPS over 30 days | M3 | ✅ Merged (#874) — HOLD ensemble sigma, CRPS delta −0.0041 (within noise; see #885 for why) |
 | **#885** | **`ensemble_sigma_f` never populated — `USE_ENSEMBLE_SIGMA` is a no-op at serving** | **M2 (real remaining work)** | **Open — M2 BLOCKER** |
 | #886 | No city ever promoted to `emos_primary` — EMOS has never served a probability | M2 | Investigated — bar unmet (60-sample clock at ~day 33/60, further reset by the 07-25 `USE_ENSEMBLE_SIGMA` flip); not a defect, not a general shadow regression. See #886 investigation note above. No code change; re-check ~mid-Sept, then still requires manual mark-ready + promote per city |
-| #887 | 63% of GEFS σ below the 1 °F floor; raw-vs-calibrated decision | before #885 | Open — blocks #885 |
-| #888 | `p_normal_between()` ZeroDivisionError on σ=0 | before #885 | Open — Simple, cheap now |
+| #887 | 63% of GEFS σ below the 1 °F floor; raw-vs-calibrated decision | before #885 | ✅ Decided — train-raw/serve-calibrated; `true_probability_yes` now floors its direct-substitution consumption at `SIGMA_FLOOR_F`, sub-floor-share monitor added |
+| #888 | `p_normal_between()` ZeroDivisionError on σ=0 | before #885 | ✅ Merged (#891) — `[low, high)` boundary convention + point-mass handling for σ ≤ 0 |
 | #844 | Test suite flakes in the 15 min before UTC midnight | anytime | ✅ Merged (#882) |
 | #876 | Carry `direction` in candidates CSV / bracket_evals | supports #867 | ✅ Merged (#884) |
 | #877 | Windows `read_text()` encoding crash | anytime | ✅ Merged (#883) |

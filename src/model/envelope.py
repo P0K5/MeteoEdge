@@ -10,6 +10,7 @@ from datetime import date, datetime
 from math import erf, sqrt
 
 from src.model.climb_rates import expected_additional_rise
+from src.model.ensemble_sigma import SIGMA_FLOOR_F
 
 log = logging.getLogger(__name__)
 
@@ -38,9 +39,23 @@ class WeatherState:
     intraday_delta_f: float | None = None
     # Per-station GEFS ensemble-spread sigma (°F), from src/model/ensemble_sigma.py
     # via src/scripts/capture_forecasts.py. None when GEFS is unavailable for the
-    # station or a caller hasn't wired the producer yet. Consumed by
+    # station or a caller hasn't wired the producer yet (#885). Consumed by
     # true_probability_yes (and the EMOS-shadow serving path) instead of the
     # fixed FORECAST_STDDEV_F only when USE_ENSEMBLE_SIGMA is enabled (#448).
+    #
+    # Contract (#887): this must carry the SAME raw, unfloored quantity EMOS
+    # trains on (src.model.ensemble_sigma.raw_member_sigma /
+    # model_forecast_log.sigma_f) -- never SIGMA_FLOOR_F-floored or
+    # regression-calibrated here on WeatherState. #885's wiring must NOT
+    # source this from compute_ensemble_sigma() (that applies the floor +
+    # calibration meant for a caller with no other transform downstream,
+    # which floors twice for EMOS-served cities and breaks train/serve
+    # parity). Each of this field's two consumers is responsible for its
+    # own floor/calibration: true_probability_yes's direct-substitution
+    # branch floors at SIGMA_FLOOR_F itself (see its use_ensemble_sigma
+    # docstring); resolve_sigma_raw -> apply_emos deliberately does not,
+    # because apply_emos's (c, d) transform IS the calibration step for
+    # that path.
     ensemble_sigma_f: float | None = None
     # Per-model forecast-highs (°F) for the expanded FORECAST_STACK regimes
     # (hrrr_nbm / intl_ecmwf_icon). Populated by src.weather.builder from the
@@ -168,7 +183,11 @@ def true_probability_yes(bracket: Bracket, state: WeatherState,
         minutes_to_settlement: Time until market resolves (default 9999 = far in future)
         forecast_stddev: Forecast uncertainty (default 2.0 degrees F). Overridden by
             state.ensemble_sigma_f when use_ensemble_sigma resolves True and the
-            field is set (issue #448) -- see use_ensemble_sigma below.
+            field is set (issue #448) -- see use_ensemble_sigma below. The
+            SIGMA_FLOOR_F floor is applied to that override (issue #887): this
+            direct-substitution path has no EMOS transform downstream of it, so
+            it is the one ensemble_sigma_f consumer that must floor for itself
+            (see the #887 note on use_ensemble_sigma below).
         deb_enabled: Resolved DEB_ENABLED flag. Callers with DB access should pass
             the value from get_live_config (read once per scan cycle, not per bracket).
             When None, falls back to the DEB_ENABLED env var (backward compatibility).
@@ -182,10 +201,35 @@ def true_probability_yes(bracket: Bracket, state: WeatherState,
             per scan cycle. When None, falls back to the USE_ENSEMBLE_SIGMA env
             var (backward compatibility). When the resolved flag is True AND
             state.ensemble_sigma_f is not None, forecast_stddev is replaced by
-            state.ensemble_sigma_f before the climb-fraction floor is applied.
-            When False, or when ensemble_sigma_f is None (e.g. GEFS unavailable),
-            behaviour is unchanged -- the legacy fixed-sigma (forecast_stddev)
-            path is used.
+            ``max(state.ensemble_sigma_f, SIGMA_FLOOR_F)`` before the
+            climb-fraction floor is applied. When False, or when
+            ensemble_sigma_f is None (e.g. GEFS unavailable), behaviour is
+            unchanged -- the legacy fixed-sigma (forecast_stddev) path is used.
+
+            Issue #887 (train-raw / serve-calibrated decision): 63% of GEFS
+            sigma_f rows sit below SIGMA_FLOOR_F (1.0F) -- the classic
+            under-dispersive ensemble signature. EMOS training deliberately
+            keeps consuming that RAW, unfloored sigma_f (src.model.
+            emos_calibration.fetch_training_data / #555's capture-vs-
+            consumption split) so its own (c, d) regression learns the real
+            spread-vs-error relationship instead of one starved by a
+            pre-applied floor. Whatever populates state.ensemble_sigma_f
+            (#885) should carry that SAME raw quantity, so
+            src.model.emos_mode.resolve_sigma_raw -> apply_emos keeps
+            train/serve parity for EMOS-served cities (apply_emos's own
+            c/d transform is the "calibrated" half of that path -- do not
+            floor ensemble_sigma_f before it reaches apply_emos). BUT this
+            function's direct substitution above has no such transform: it
+            is what scanner.py's "legacy" branch (mode != emos_primary) --
+            still every station's SOLE serving path per #886, zero cities
+            promoted to emos_primary -- feeds straight into
+            p_normal_between. Without a floor here, a genuine 0.2-0.9F raw
+            ensemble spread would reproduce exactly the overconfidence M0
+            (#820) removed. Hence the floor is applied HERE, at this one
+            consumption site, and nowhere else -- the same "floor only at
+            consumption, per-consumer" principle #555 established for
+            capture vs. compute_ensemble_sigma(), extended to cover the
+            second, non-EMOS consumer #555 didn't have to consider.
         settlement_date: The market's settlement date (issue #820). When provided
             and the WeatherState's local day differs from the settlement date,
             observation-based certainty shortcuts are skipped -- current_high_f
@@ -217,7 +261,13 @@ def true_probability_yes(bracket: Bracket, state: WeatherState,
     if use_ensemble_sigma is None:
         use_ensemble_sigma = os.getenv("USE_ENSEMBLE_SIGMA", "false").lower() == "true"
     if use_ensemble_sigma and state.ensemble_sigma_f is not None:
-        forecast_stddev = state.ensemble_sigma_f
+        # #887: floor the raw ensemble spread HERE, at this direct-
+        # substitution consumption site only -- see the use_ensemble_sigma
+        # docstring above for why this must not move upstream onto
+        # state.ensemble_sigma_f itself (that would break EMOS train/serve
+        # parity for resolve_sigma_raw/apply_emos, the other consumer of
+        # the same field).
+        forecast_stddev = max(state.ensemble_sigma_f, SIGMA_FLOOR_F)
 
     # Priority: corrected_mu_f (intraday) > deb_mu_f (DEB-enabled) > ensemble fallback.
     # Compute before early exits so a high forecast can expand max_env.
