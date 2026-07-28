@@ -509,8 +509,9 @@ class TestResolveOutcome:
     def test_yes_on_boundary_low(self):
         assert resolve_outcome(81.0, 83.0, 81.0) is True
 
-    def test_yes_on_boundary_high(self):
-        assert resolve_outcome(81.0, 83.0, 83.0) is True
+    def test_no_on_boundary_high(self):
+        """Upper bound is EXCLUSIVE (#861): 83.0 in [81.0, 83.0) is False."""
+        assert resolve_outcome(81.0, 83.0, 83.0) is False
 
     def test_no_when_high_outside_bracket(self):
         assert resolve_outcome(81.0, 83.0, 84.0) is False
@@ -520,6 +521,14 @@ class TestResolveOutcome:
         assert resolve_outcome(None, 83.0, 82.0) is None
         assert resolve_outcome(81.0, None, 82.0) is None
         assert resolve_outcome(81.0, 83.0, None) is None
+
+    def test_adjacent_brackets_only_one_yes(self):
+        """Regression test for #861: two adjacent Celsius-derived brackets
+        [64.4, 66.2) and [66.2, 68.0) with observed_high=66.2 must NOT both
+        resolve YES.  The upper-bound-exclusive convention puts the shared
+        edge in the second bracket only."""
+        assert resolve_outcome(64.4, 66.2, 66.2) is False  # 64.4 <= 66.2 < 66.2 = False
+        assert resolve_outcome(66.2, 68.0, 66.2) is True   # 66.2 <= 66.2 < 68.0 = True
 
 
 # ---------------------------------------------------------------------------

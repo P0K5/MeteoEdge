@@ -304,7 +304,7 @@ def _write_db_settlements(records: list[dict], target: date, truth: dict[str, fl
             resolved_yes = market_final_price >= 95
             resolution_source = "gamma"
         else:
-            resolved_yes = lo <= actual <= hi
+            resolved_yes = lo <= actual < hi
             resolution_source = "metar"
         try:
             writer.record_settlement(

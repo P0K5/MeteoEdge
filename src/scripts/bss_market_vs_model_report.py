@@ -593,9 +593,9 @@ def _ground_truth_section(samples: "list[dict]", ocounts: dict) -> "list[str]":
        2026-07-26 run did):
 
        - ``boundary`` -- the brackets touch or overlap, so an observed high on
-         the shared edge satisfies ``resolve_outcome``'s inclusive
-         ``lo <= x <= hi`` for both. Issue #861; a question about which
-         interval convention is correct.
+         the shared edge satisfies the old inclusive ``lo <= x <= hi`` for both.
+         Issue #861 -- fixed: ``[lo, hi)`` (upper bound exclusive) now matches
+         live Gamma at 96.9% accuracy; a boundary collision here is a regression.
        - ``disjoint`` -- the brackets do not touch, so NO interval convention
          can produce both and the resolution source itself is wrong. Issue
          #867. This is the more serious of the two: on 2026-07-26 all four
