@@ -633,10 +633,11 @@ class TestResolverEndToEnd:
         assert "Observed daily high fallback (`metar`) | 2" in text
         assert "Not joined to `settlements`" in text
 
-    def test_multi_yes_boundary_exposure_is_reported(self, tmp_path):
-        """#861: adjacent Celsius-derived brackets sharing an edge both resolve
-        YES under the inclusive interval. The report must count it, loudly --
-        and attribute it to #861, not #867."""
+    def test_boundary_collision_no_longer_occurs_after_861_fix(self, tmp_path):
+        """#861: adjacent Celsius-derived brackets sharing an edge (84.2-86.0
+        and 86.0-87.8, which are 29-30C and 30-31C) with observed_high=86.0
+        no longer produce a multi-YES collision — the [lo, hi) upper-bound
+        exclusive convention puts 86.0 in the second bracket only."""
         rows = [
             _row(ticker="0x001", bracket_low="84.2", bracket_high="86.0", p_yes_raw="0.30"),
             _row(ticker="0x002", bracket_low="86.0", bracket_high="87.8", p_yes_raw="0.30"),
@@ -653,9 +654,11 @@ class TestResolverEndToEnd:
         )
         assert rc == 0
         text = (out_dir / "bss_market_vs_model_pass1_2026-02-15.md").read_text()
-        assert "Impossible-outcome exposure: 1 station-day-direction(s), 2 bracket-rows" in text
-        assert "| `boundary` — brackets touch or overlap | 1 |" in text
-        assert "| `disjoint` — brackets do not touch, same direction | 0 |" in text
+        # The fix eliminates boundary collisions entirely; the
+        # Impossible-outcome-exposure section is only emitted when >0.
+        assert "Impossible-outcome exposure" not in text
+        # Both brackets are still scored (n=2 sample, 1 station-day).
+        assert "| **Final de-duplicated sample (n)** | **2** |" in text
 
     def test_disjoint_collision_is_attributed_to_867_not_861(self, tmp_path):
         """The defect in the 2026-07-26 report: brackets 3.6F apart cannot be an
