@@ -29,6 +29,8 @@ install -m 0644 "$SRC_DIR/meteoedge-purge-retention.service"      "$UNIT_DIR/met
 install -m 0644 "$SRC_DIR/meteoedge-purge-retention.timer"        "$UNIT_DIR/meteoedge-purge-retention.timer"
 install -m 0644 "$SRC_DIR/meteoedge-resolve-outcomes.service"     "$UNIT_DIR/meteoedge-resolve-outcomes.service"
 install -m 0644 "$SRC_DIR/meteoedge-resolve-outcomes.timer"       "$UNIT_DIR/meteoedge-resolve-outcomes.timer"
+install -m 0644 "$SRC_DIR/meteoedge-health-report.service"        "$UNIT_DIR/meteoedge-health-report.service"
+install -m 0644 "$SRC_DIR/meteoedge-health-report.timer"          "$UNIT_DIR/meteoedge-health-report.timer"
 
 echo "Reloading systemd..."
 systemctl daemon-reload
@@ -42,10 +44,11 @@ systemctl enable --now meteoedge-capture-forecasts.timer
 systemctl enable --now meteoedge-prob-cap-report.timer
 systemctl enable --now meteoedge-purge-retention.timer
 systemctl enable --now meteoedge-resolve-outcomes.timer
+systemctl enable --now meteoedge-health-report.timer
 
 echo
 echo "Done. Current status:"
-systemctl --no-pager status meteoedge.service meteoedge-dashboard.service meteoedge-settle.timer meteoedge-archive.timer meteoedge-capture-forecasts.timer meteoedge-prob-cap-report.timer meteoedge-purge-retention.timer meteoedge-resolve-outcomes.timer || true
+systemctl --no-pager status meteoedge.service meteoedge-dashboard.service meteoedge-settle.timer meteoedge-archive.timer meteoedge-capture-forecasts.timer meteoedge-prob-cap-report.timer meteoedge-purge-retention.timer meteoedge-resolve-outcomes.timer meteoedge-health-report.timer || true
 echo
 echo "Tail the bot log with:  journalctl -u meteoedge.service -f"
 echo "Tail dashboard log with:  journalctl -u meteoedge-dashboard.service -f"
@@ -54,3 +57,4 @@ echo "Next archive run:  systemctl list-timers meteoedge-archive.timer"
 echo "Next capture run:  systemctl list-timers meteoedge-capture-forecasts.timer"
 echo "Next prob-cap report run:  systemctl list-timers meteoedge-prob-cap-report.timer"
 echo "Next purge-retention run:  systemctl list-timers meteoedge-purge-retention.timer"
+echo "Next health report run:  systemctl list-timers meteoedge-health-report.timer"
