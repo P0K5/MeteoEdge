@@ -601,6 +601,70 @@ class TestResolveBracketRows:
         resolved, _ = resolve_bracket_rows(rows, {("KORD", "2026-07-05"): 82.0})
         assert resolved[0]["observed_high"] == 82.0
 
+    # -- LOW-direction paths (issue #867 / #902) -----------------------------
+
+    def test_low_direction_resolves_against_observed_low_metar_path(self):
+        """A direction='low' row must be scored against the day's MIN, not MAX.
+        observed_low=50.0 inside bracket [48, 52) -> YES; 54.0 outside -> NO."""
+        # Inside bracket -> YES
+        rows_yes = [_eval_row(
+            direction="low", bracket_low=48.0, bracket_high=52.0,
+            ticker="KORD-low-48-52",
+        )]
+        resolved, counts = resolve_bracket_rows(
+            rows_yes, {}, {}, observed_lows={("KORD", "2026-07-05"): 50.0}
+        )
+        assert len(resolved) == 1
+        assert resolved[0]["resolved_yes"] is True
+        assert resolved[0]["resolution_source"] == "metar"
+        assert counts["resolved_from_metar"] == 1
+
+        # Outside bracket -> NO
+        rows_no = [_eval_row(
+            direction="low", bracket_low=48.0, bracket_high=52.0,
+            ticker="KORD-low-48-52-outside",
+        )]
+        resolved, counts = resolve_bracket_rows(
+            rows_no, {}, {}, observed_lows={("KORD", "2026-07-05"): 54.0}
+        )
+        assert resolved[0]["resolved_yes"] is False
+        assert resolved[0]["resolution_source"] == "metar"
+
+    def test_low_direction_row_dropped_when_no_observed_low(self):
+        """A direction='low' row with no observed_low on record must be
+        dropped (as no_observed_low), never silently scored against the high."""
+        rows = [_eval_row(direction="low")]
+        resolved, counts = resolve_bracket_rows(rows, {}, {}, observed_lows={})
+        assert resolved == []
+        assert counts["no_observed_low"] == 1
+
+    def test_low_direction_gamma_overrides_metar(self):
+        """Gamma resolution wins over METAR for LOW-direction rows, same as for
+        HIGH. Gamma says YES even when observed_low says NO."""
+        rows = [_eval_row(
+            ticker="0xlow", direction="low",
+            bracket_low=48.0, bracket_high=52.0,
+        )]
+        # METAR says NO (54.0 is outside [48, 52)), Gamma says YES.
+        resolved, counts = resolve_bracket_rows(
+            rows, {},
+            {"0xlow": True},
+            observed_lows={("KORD", "2026-07-05"): 54.0},
+        )
+        assert resolved[0]["resolved_yes"] is True
+        assert resolved[0]["resolution_source"] == "gamma"
+        assert counts["resolved_from_gamma"] == 1
+
+    def test_observed_low_is_attached_to_output_row(self):
+        """A resolved LOW row must carry the observed_low value used for
+        resolution, for downstream diagnostics."""
+        rows = [_eval_row(direction="low")]
+        resolved, _ = resolve_bracket_rows(
+            rows, {}, {},
+            observed_lows={("KORD", "2026-07-05"): 50.0},
+        )
+        assert resolved[0]["observed_low"] == 50.0
+
 
 # ---------------------------------------------------------------------------
 # resolve_bracket_outcomes -- end-to-end, independent of settlements
