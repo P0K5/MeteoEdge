@@ -292,6 +292,7 @@ CREATE TABLE IF NOT EXISTS scan_decisions (
     ensemble_members      INTEGER,
     ensemble_range_low    REAL,
     ensemble_range_high   REAL,
+    direction             TEXT NOT NULL DEFAULT 'high',
     PRIMARY KEY (station, ticker, date)
 );
 CREATE INDEX IF NOT EXISTS idx_scan_decisions_station_date ON scan_decisions(station, date);
