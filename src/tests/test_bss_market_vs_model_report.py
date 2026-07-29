@@ -35,6 +35,7 @@ from unittest.mock import patch
 import pytest
 
 from src.scripts.bss_market_vs_model_report import (
+    LOW_MARKET_ROLLBACK_DATE,
     POPULATION_ALL_BRACKET,
     POPULATION_GATE_SELECTED,
     OUTCOME_SOURCE_RESOLVER,
@@ -52,6 +53,7 @@ from src.scripts.bss_market_vs_model_report import (
     market_p_yes,
     resolve_candidate_outcomes,
     run_report,
+    sample_date_span,
     sharpness_histogram,
     station_local_date,
     utc_offset_bucket,
@@ -880,6 +882,65 @@ class TestDecisionGateSection:
         assert "## M3 decision gate -- the pre-registered rule" not in report
         assert "### Verdict" not in report
         assert "PASS 1 -- NOT THE DECISION GATE" in report
+
+
+class TestDirectionGapNote:
+    """Unknown-direction rows are scored against the daily HIGH, so the report
+    has to say whether a LOW market could be hiding among them.
+
+    The answer is a DATE question, never a flag question: ``ENABLE_LOW_MARKETS``
+    was introduced by #733/#734 (2026-07-17) to switch low markets OFF, and they
+    were scanned by default before that. Reading the flag's current value tells
+    you nothing about a population collected earlier.
+    """
+
+    def _report(self, end_date, direction_counts):
+        sample = {"station": "KORD", "ticker": "0x1", "end_date": end_date,
+                  "ts": end_date + "T18:00:00+00:00", "p_yes_raw": 0.2,
+                  "yes_ask": 20.0, "no_ask": 82.0, "yes_won": False,
+                  "bracket_low": 60.0, "bracket_high": 65.0,
+                  "settlement_date": end_date, "is_next_day_flag": 0}
+        return build_report(
+            [sample], {"input_rows": 1}, 0, "2026-07-29",
+            outcome_meta={"source": OUTCOME_SOURCE_RESOLVER,
+                          "counts": {"n_station_days": 300,
+                                     "direction": direction_counts}},
+            population=POPULATION_ALL_BRACKET,
+        )
+
+    def test_post_rollback_population_is_cleared_by_its_dates(self):
+        report = self._report("2026-07-25", {"high": 1, "unknown": 5})
+        assert "Not a contamination risk" in report
+        assert "2026-07-25" in report
+        assert "CONTAMINATION RISK" not in report
+
+    def test_pre_rollback_population_is_flagged_as_contaminated(self):
+        report = self._report("2026-07-10", {"high": 1, "unknown": 5})
+        assert "CONTAMINATION RISK" in report
+        assert LOW_MARKET_ROLLBACK_DATE in report
+        assert "Not a contamination risk" not in report
+
+    def test_the_safety_claim_is_never_the_flags_current_value(self):
+        """Guards the exact error this note was rewritten to remove: citing
+        ``ENABLE_LOW_MARKETS`` being off *now* as evidence about the past."""
+        report = self._report("2026-07-25", {"high": 1, "unknown": 5})
+        assert "safe only while low-direction markets are disabled" not in report.lower()
+
+    def test_no_unknown_rows_means_no_note(self):
+        report = self._report("2026-07-10", {"high": 6, "unknown": 0})
+        assert "CONTAMINATION RISK" not in report
+        assert "Not a contamination risk" not in report
+
+    def test_span_spanning_the_rollback_is_treated_as_contaminated(self):
+        """A population that merely *ends* after the rollback is not cleared --
+        the earliest date is what decides it."""
+        assert sample_date_span([{"end_date": "2026-07-10"},
+                                 {"end_date": "2026-07-25"}]) == ("2026-07-10", "2026-07-25")
+
+    def test_undatable_rows_are_ignored_by_the_span(self):
+        assert sample_date_span([{"end_date": ""}, {"end_date": "2026-07-25"}]) == \
+            ("2026-07-25", "2026-07-25")
+        assert sample_date_span([{"end_date": ""}]) is None
 
 
 class TestPass2EndToEnd:
