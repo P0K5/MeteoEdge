@@ -499,7 +499,7 @@ purely data-bound: the only thing between here and M3 is station-days accruing.*
 | #870 | Ground-truth quality — Gamma-vs-METAR rate, zero-YES days, ladder completeness | **now, no waiting** | Shipped — run it |
 | #822 | Market-vs-model skill test | M1 · M3 | Pass 1 ran (**BSS −0.28**, direction-contaminated — re-run pending, see M1); Pass 2 built and run 2026-07-29 (**underpowered: 139/300 station-days**); **Pass 2 = the decision** |
 | — | **Re-run Pass 1** with the direction-aware resolver (#875) — same archive, no new data | M1 | ✅ **Done (2026-07-29)** — BSS −0.2752, clean. Direction dispatch verified working (#867), test coverage added (#902 → #903) |
-| — | **Decide the `p_yes_raw == 0.0` exclusion** — post-#820 it may no longer be an artifact; it removes 38.1% of rows. Must be settled **before** the powered Pass-2 run, i.e. before ~2026-08-05 | M3 | **Tool built** — `certainty_exclusion_check`, rule pre-registered. Run it, then record the verdict here |
+| **#909** | **Decide the certainty exclusions** — post-#820 the `p_yes_raw == 0.0` premise may no longer hold; the two exclusions remove 64.4% of rows between them. Must be settled **before** the powered Pass-2 run, i.e. before ~2026-08-05 | M3 | **Tool built** (`certainty_exclusion_check`, rule pre-registered). Still to do: run it, settle provenance in the code, record the verdict here |
 | #799 | σ unidentifiable — switch on ensemble spread, retrain | M2 | ✅ Merged |
 | #798 | Partial pooling instead of hard 60-sample cutover | M2 | ✅ Merged |
 | #823 | Recompute promotion bars excluding artifact rows | M2 | ✅ Merged |
