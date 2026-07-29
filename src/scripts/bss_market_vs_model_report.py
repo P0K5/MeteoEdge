@@ -1112,11 +1112,15 @@ def build_report(samples: "list[dict]", exclusion_counts: dict, n_no_settlement:
     if is_resolver:
         lines.append(
             "- Outcome truth: `resolve_bracket_outcomes.resolve_bracket_rows()` -- "
-            "Polymarket's definitive resolution where available, else YES iff the "
-            "station-local observed daily high falls in `[bracket_low, bracket_high]`. "
-            "This is the same precedence `settle.py` applies and the same capability "
-            "#822's Pass 2 uses. Brackets that neither source can resolve are dropped, "
-            "never guessed.")
+            "Polymarket's definitive resolution where available, else the station-local "
+            "observed daily temperature, **dispatched on market direction**: a `high` "
+            "market is YES iff the observed daily HIGH falls in the bracket, a `low` "
+            "market iff the observed daily LOW does. A low market is never scored "
+            "against the high (issue #867). The interval is `[bracket_low, "
+            "bracket_high)` -- upper bound EXCLUSIVE, which #861 measured against live "
+            "Gamma at 96.9% agreement vs. 48.8% for the inclusive reading. This is the "
+            "same precedence `settle.py` applies and the same capability #822's Pass 2 "
+            "uses. Brackets that neither source can resolve are dropped, never guessed.")
         lines.append(
             "- **Not joined to `settlements`** (issue #865). That table only covers "
             "brackets MeteoEdge actually traded (~156 rows all-time); joining it dropped "
