@@ -2,7 +2,7 @@
 
 Gathers a snapshot of bot health, trading activity, data pipeline status,
 guardrail events, EMOS progress, and M3 remediation-plan metrics, then
-emails it as a plain-text report via the existing SMTP infrastructure.
+emails it as a plain-text report via SMTP.
 
 Usage::
 
@@ -12,12 +12,19 @@ Usage::
 Schedule: systemd timer ``meteoedge-health-report.timer`` fires daily at
 14:00 UTC (after settlement, resolve-outcomes, and prob-cap report).
 
+Configuration (all from environment / ``.env``):
+
+    SMTP_HOST        — SMTP server (default: smtp.gmail.com)
+    SMTP_PORT        — SMTP port (default: 587)
+    SMTP_USER        — SMTP sender address / login
+    SMTP_PASS        — SMTP password or app password
+    ALERT_EMAIL_TO   — recipient address (default: andre.freixo.santos@gmail.com)
+
 Design constraints:
 - Runs in ~seconds; all queries are lightweight aggregates.
 - Degrades gracefully: if a section's data is unavailable it reports
   "(unavailable)" rather than crashing.
-- Reuses ``AlertManager._send()`` from ``src.monitoring.alerts`` -- no new
-  SMTP plumbing.
+- All SMTP config comes from environment variables -- nothing committed.
 """
 
 from __future__ import annotations
@@ -45,7 +52,7 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # SMTP / email constants (mirrors src/monitoring/alerts.py)
 # ---------------------------------------------------------------------------
-ALERT_EMAIL_TO = "andre.freixo.santos@gmail.com"
+ALERT_EMAIL_TO = os.getenv("ALERT_EMAIL_TO", "andre.freixo.santos@gmail.com")
 SMTP_HOST = os.getenv("SMTP_HOST", "smtp.gmail.com")
 SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
 SMTP_USER = os.getenv("SMTP_USER", "")
