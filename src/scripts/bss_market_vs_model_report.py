@@ -691,6 +691,75 @@ def verdict_label(bss: "float | None") -> str:
 # Report assembly
 # ---------------------------------------------------------------------------
 
+#: Date LOW-direction market scanning was rolled back behind ``ENABLE_LOW_MARKETS``
+#: (issues #733/#734, merged 2026-07-17). Before this date the scanner emitted low
+#: markets by default; after it, it does not. The flag's *current* value says
+#: nothing about a historical collection window — only the window's dates do.
+LOW_MARKET_ROLLBACK_DATE = "2026-07-17"
+
+
+def sample_date_span(samples: "list[dict]") -> "tuple[str, str] | None":
+    """Earliest and latest settlement date (``end_date``) present in *samples*.
+
+    Used to date-check a population against a code-history cutover. Rows with no
+    parseable ``end_date`` are ignored; ``None`` means no row carried one.
+    """
+    dates = sorted({(r.get("end_date") or "")[:10] for r in samples} - {""})
+    return (dates[0], dates[-1]) if dates else None
+
+
+def _direction_gap_note(samples: "list[dict]", d_unknown: int) -> "list[str]":
+    """Explain rows whose market direction could not be resolved.
+
+    Direction matters because an unknown-direction row is scored against the
+    observed daily HIGH. A LOW market scored that way is scored on the wrong
+    physical quantity, so the BSS above would be measuring the wrong thing.
+
+    The safety argument here is deliberately **date-based, not flag-based**.
+    ``ENABLE_LOW_MARKETS`` being off today is not evidence about a historical
+    collection window: the flag was *introduced* by #733/#734 to switch low
+    markets off, and they were scanned by default before that. So the question is
+    never "is the flag off?" but "does this population's date span start after the
+    rollback?" — which is what this note answers from the data itself.
+    """
+    span = sample_date_span(samples)
+    lines = [
+        f"> {d_unknown} row(s) carry no resolvable direction and are scored against "
+        f"the observed daily HIGH. `bracket_evals` gained a `direction` field only in "
+        f"#876 (2026-07-28) and logs no question text, so earlier rows depend on the "
+        f"`candidates.direction` backstop.\n"
+    ]
+    if span is None:
+        lines.append(
+            f"> **Direction exposure UNKNOWN.** No row carries a settlement date, so this "
+            f"population cannot be dated against the {LOW_MARKET_ROLLBACK_DATE} "
+            f"LOW-market rollback (#733/#734). Do not cite a verdict from it.\n"
+        )
+        return lines
+    first, last = span
+    if first >= LOW_MARKET_ROLLBACK_DATE:
+        lines.append(
+            f"> **Not a contamination risk for this population.** It spans "
+            f"`{first}`..`{last}`, entirely after the {LOW_MARKET_ROLLBACK_DATE} rollback "
+            f"of LOW-direction scanning (#733/#734), so no low market could have entered "
+            f"it and an unknown-direction row is a high market. Note the argument is the "
+            f"*date span*, not the current value of `ENABLE_LOW_MARKETS`: that flag was "
+            f"introduced to turn low markets off, and they were scanned by default before "
+            f"it existed.\n"
+        )
+    else:
+        lines.append(
+            f"> **CONTAMINATION RISK — this population predates the rollback.** It spans "
+            f"`{first}`..`{last}`, and LOW-direction scanning was only switched off on "
+            f"{LOW_MARKET_ROLLBACK_DATE} (#733/#734). Rows before that date can be low "
+            f"markets scored against the daily HIGH. #875's confirmation run found 43 low "
+            f"markets in 425 pre-rollback brackets (~10%), so treat the BSS above as "
+            f"contaminated and re-run on a post-{LOW_MARKET_ROLLBACK_DATE} population "
+            f"before citing any verdict.\n"
+        )
+    return lines
+
+
 def _ground_truth_section(samples: "list[dict]", ocounts: dict) -> "list[str]":
     """Render the outcome-provenance section for the resolver path.
 
@@ -738,10 +807,12 @@ def _ground_truth_section(samples: "list[dict]", ocounts: dict) -> "list[str]":
         d_low = dir_counts.get("low", 0)
         d_unknown = dir_counts.get("unknown", 0)
         lines.append(
-            f"Market direction (issue #867 -- parsed from question text, cross-checked "
-            f"against `candidates.direction`): {d_high} high, {d_low} low, {d_unknown} "
-            f"unknown.\n"
+            f"Market direction (issue #867 -- the logged `direction` field, else "
+            f"`candidates.direction`, else the question text): {d_high} high, {d_low} low, "
+            f"{d_unknown} unknown.\n"
         )
+        if d_unknown:
+            lines.extend(_direction_gap_note(samples, d_unknown))
 
     gamma_stats = ocounts.get("gamma") or {}
     if gamma_stats:
@@ -905,8 +976,11 @@ def build_report(samples: "list[dict]", exclusion_counts: dict, n_no_settlement:
         lines.append("# Market-vs-Model Skill Test -- Pass 1 (issue #822)\n")
     lines.append(f"**Run date:** {run_date}  ")
     if is_resolver:
+        src = ("`logs/bracket_evals.*.jsonl` (issue #826, FULL evaluated-bracket "
+               "population)" if is_pass2 else
+               "`logs/candidates.*.csv.gz` (archived, gate-selected)")
         lines.append(
-            "**Data source:** `logs/candidates.*.csv.gz` (archived, gate-selected)  \n"
+            f"**Data source:** {src}  \n"
             "**Outcome truth:** `resolve_bracket_outcomes` -- Polymarket definitive "
             "resolution, falling back to the station-local observed daily high "
             "(issues #850/#860/#865)  \n"
@@ -984,8 +1058,13 @@ def build_report(samples: "list[dict]", exclusion_counts: dict, n_no_settlement:
         lines.extend(_ground_truth_section(samples, ocounts))
 
     lines.append("## Segment: same-day vs. next-day\n")
-    lines.append("(Derived from station-local `ts` date vs. `end_date` -- `logs/candidates.csv` "
-                 "carries no `is_next_day` column.)\n")
+    if is_pass2:
+        lines.append("(From the `is_next_day` flag `bracket_evals` RECORDS -- not a "
+                     "reconstruction. Pass 1 had to derive this from station-local `ts` vs "
+                     "`end_date` because the candidates CSV carries no such column.)\n")
+    else:
+        lines.append("(Derived from station-local `ts` date vs. `end_date` -- "
+                     "`logs/candidates.csv` carries no `is_next_day` column.)\n")
     lines.append("| Segment | n | BS_model | BS_market | BSS |")
     lines.append("|---|---|---|---|---|")
     for seg in sorted(by_segment):
@@ -1017,7 +1096,12 @@ def build_report(samples: "list[dict]", exclusion_counts: dict, n_no_settlement:
 
     lines.append("\n---\n")
     lines.append("## Methodology notes\n")
-    lines.append("- `p_model` = `p_yes_raw` (pre-clamp, pre-#820-fix probability).")
+    if is_pass2:
+        lines.append("- `p_model` = `p_yes_raw` (pre-clamp). **POST-#820-fix** -- "
+                     "`bracket_evals` logging began 2026-07-24, so every row here was "
+                     "produced by the fixed model.")
+    else:
+        lines.append("- `p_model` = `p_yes_raw` (pre-clamp, pre-#820-fix probability).")
     lines.append("- `p_market` = `(yes_ask + (100 - no_ask)) / 200` -- symmetrized across both "
                  "sides of the book (see `market_p_yes()`); using `yes_ask` alone is an "
                  "equally defensible alternative and would read slightly differently on wide "
