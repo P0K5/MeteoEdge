@@ -1064,6 +1064,7 @@ class Database:
         ensemble_members: "int | None" = None,
         ensemble_range_low: "float | None" = None,
         ensemble_range_high: "float | None" = None,
+        direction: str = "high",
     ) -> None:
         """Upsert the latest poll's evaluated-bracket decision row.
 
@@ -1103,8 +1104,8 @@ class Database:
                 "p_yes,raw_p_yes,capped_p_yes,ev_yes,ev_no,ev_yes_raw,ev_no_raw,"
                 "minutes_to_settlement,emos_mode,is_next_day,gate_verdict,"
                 "gate_actual,gate_threshold,gate_unit,gate_detail,execution_mode,"
-                "ensemble_mean,ensemble_members,ensemble_range_low,ensemble_range_high) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+                "ensemble_mean,ensemble_members,ensemble_range_low,ensemble_range_high,direction) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
                 "ON CONFLICT(station, ticker, date) DO UPDATE SET "
                 "ts=excluded.ts, poll_ts=excluded.poll_ts, "
                 "bracket_low=excluded.bracket_low, bracket_high=excluded.bracket_high, "
@@ -1122,14 +1123,14 @@ class Database:
                 "ensemble_mean=excluded.ensemble_mean, "
                 "ensemble_members=excluded.ensemble_members, "
                 "ensemble_range_low=excluded.ensemble_range_low, "
-                "ensemble_range_high=excluded.ensemble_range_high",
+                "ensemble_range_high=excluded.ensemble_range_high, direction=excluded.direction",
                 (
                     station, ticker, date, ts, poll_ts or ts, bracket_low, bracket_high, side,
                     yes_ask, no_ask, current_high, latest_temp, forecast_high,
                     p_yes, raw_p_yes, capped_p_yes, ev_yes, ev_no, ev_yes_raw, ev_no_raw,
                     minutes_to_settlement, emos_mode, int(is_next_day), gate_verdict,
                     gate_actual, gate_threshold, gate_unit, gate_detail, execution_mode,
-                    ensemble_mean, ensemble_members, ensemble_range_low, ensemble_range_high,
+                    ensemble_mean, ensemble_members, ensemble_range_low, ensemble_range_high, direction,
                 ),
             )
             self._conn.commit()
@@ -1146,7 +1147,7 @@ class Database:
             "p_yes,raw_p_yes,capped_p_yes,ev_yes,ev_no,ev_yes_raw,ev_no_raw,"
             "minutes_to_settlement,emos_mode,is_next_day,gate_verdict,"
             "gate_actual,gate_threshold,gate_unit,gate_detail,execution_mode,"
-            "ensemble_mean,ensemble_members,ensemble_range_low,ensemble_range_high "
+            "ensemble_mean,ensemble_members,ensemble_range_low,ensemble_range_high,direction "
             "FROM scan_decisions WHERE station=? AND date=? ORDER BY bracket_low ASC",
             (station, date),
         )
