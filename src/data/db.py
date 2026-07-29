@@ -292,6 +292,7 @@ CREATE TABLE IF NOT EXISTS scan_decisions (
     ensemble_members      INTEGER,
     ensemble_range_low    REAL,
     ensemble_range_high   REAL,
+    direction             TEXT NOT NULL DEFAULT 'high',
     PRIMARY KEY (station, ticker, date)
 );
 CREATE INDEX IF NOT EXISTS idx_scan_decisions_station_date ON scan_decisions(station, date);
@@ -440,6 +441,19 @@ class Database:
             # row conservatively (never claim a legacy row as a confirmed
             # live fill it can't prove).
             ("scan_decisions", "execution_mode", "TEXT NOT NULL DEFAULT 'paper'"),
+            # Issue #900: scan_decisions never carried the high/low market
+            # discriminator that candidates/trades/settlements already have
+            # (see the direction migrations above) -- the scanner has stamped
+            # every snapshot dict with a direction key since #876 (high-side
+            # "high", low-side "low"), but upsert_scan_decision() had no
+            # direction parameter at all, so every call raised TypeError:
+            # unexpected keyword argument 'direction'. Adding the column here
+            # alongside the new parameter (see upsert_scan_decision below) so
+            # both fresh and existing DBs accept it in this same PR. Default
+            # 'high' matches every row written before this migration --
+            # scan_decisions only started existing after the high-side
+            # scanner did, so every legacy row is genuinely high-side.
+            ("scan_decisions", "direction", "TEXT NOT NULL DEFAULT 'high'"),
         ]:
             try:
                 self._conn.execute(

@@ -404,6 +404,27 @@ class TestScanDecisionsUpsert:
                 execution_mode="not_a_real_mode",
             )
 
+    def test_direction_defaults_to_high(self, db):
+        """Issue #887: a caller that never passes direction gets the
+        legacy default -- every scan_decisions row predates the low-side
+        scanner and was genuinely high-side."""
+        db.upsert_scan_decision(
+            ts="2026-07-21T10:00:00Z", station="KMIA", ticker="0xabc",
+            date="2026-07-21", bracket_low=80.0, bracket_high=85.0,
+            gate_verdict="below_min_edge",
+        )
+        rows = db.get_scan_decisions("KMIA", "2026-07-21")
+        assert rows[0]["direction"] == "high"
+
+    def test_direction_low_round_trips(self, db):
+        db.upsert_scan_decision(
+            ts="2026-07-21T10:00:00Z", station="KMIA", ticker="0xabc",
+            date="2026-07-21", bracket_low=80.0, bracket_high=85.0,
+            gate_verdict="shadow_only", direction="low",
+        )
+        rows = db.get_scan_decisions("KMIA", "2026-07-21")
+        assert rows[0]["direction"] == "low"
+
 
 # ---------------------------------------------------------------------------
 # run.py: the verdict seam + N-brackets-N-rows / candidates unaffected
