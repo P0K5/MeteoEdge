@@ -19,7 +19,7 @@
 | Next-day shadow, NO side | **75%** win rate, **−$1.64** over 84 settled | Breakeven at a 76¢ entry is **76%**. We are just under water |
 | EMOS shadow vs legacy (Chicago CRPS) | **2.79 vs 2.74** | Shadow is currently *worse* than the baseline it should replace |
 | KORD live entries on a false signal | **100%** | Every live entry fires at the 19:00-CDT UTC rollover on an exact `p_yes = 0.0` code artifact |
-| **Pass-1 skill test vs. the market** (2026-07-26) | **BSS = −0.2813** over 404 brackets / 300 station-days — ⚠️ **direction-contaminated, re-run pending** | The pre-fix model's probabilities are materially worse than the market's own prices. The magnitude is not quotable until Pass 1 is re-run: ~10% of its pre-2026-07-17 rows are LOW markets scored against the daily HIGH (#875). See M1 below |
+| **Pass-1 skill test vs. the market** (2026-07-29 re-run, clean) | **BSS = −0.2752** over 442 brackets / 332 station-days — ✅ **direction-clean** (43 low markets all resolved against observed daily LOW per #875/#902) | The pre-fix model's probabilities are materially worse than the market's own prices. 96.8% Gamma-resolved, 0 impossible outcomes. See M1 below |
 
 ### The one-line diagnosis
 
@@ -126,27 +126,13 @@ maximally model-favourable direction moves `BS_model` by at most 5/404 = 0.0124,
 to ≈ −0.21. **The verdict does not turn on it.** #867 is nonetheless blocking for M3, where
 the sample is Gamma-resolved at ~95% and the verdict actually binds.
 
-**Second contamination — direction, and this one is NOT bounded (found 2026-07-29).** Pass 1
-ran on 2026-07-26, two days *before* #875 taught the resolver to read market direction. Its
-~37-day candidates archive therefore reaches back well before **2026-07-17**, the date
-#733/#734 rolled LOW-direction market scanning behind `ENABLE_LOW_MARKETS`. Before that date
-low markets were scanned by default, and #875's own confirmation run found **43 low markets in
-425 pre-rollback brackets (~10%)**. Pass 1 resolved every one of them against the observed
-daily **high** — the wrong physical quantity for a market asking about the low.
-
-Unlike the collision contamination above, this one has **no clean bound**: a mislabelled
-outcome inflates `BS_model` and `BS_market` alike, and the *ratio* the BSS is built from can
-move in either direction. So −0.2813 cannot be repaired by argument.
-
-**Remedy: re-run Pass 1.** It is cheap and fully unblocks the number — the candidates archive
-carries the market `question` text, so today's direction-aware resolver (#875) classifies those
-rows correctly on a fresh pass over the *same* data. No new collection needed. Until that
-re-run lands, quote the M1 verdict as *directionally* negative rather than as −0.2813.
-
-> Do **not** cite `ENABLE_LOW_MARKETS` being off today as evidence any historical population is
-> clean. That flag was *introduced* to switch low markets off; its current value says nothing
-> about data collected before it existed. The only valid test is the population's **date span**
-> against 2026-07-17 — which `bss_market_vs_model_report` now performs and prints itself.
+**Second contamination — direction — RESOLVED (2026-07-29).** Pass 1 was re-run with the
+direction-aware resolver (#875), which correctly dispatches LOW-direction markets against
+the observed daily LOW (the fix was already in place from #867; #902 verified it via code
+audit and added the missing test coverage, merged as #903). The re-run found **43 low
+markets** in the archive, all correctly classified and resolved — 0 unknown directions,
+0 impossible outcomes. BSS moved from −0.2813 to **−0.2752**; the small delta confirms the
+contamination was not the dominant issue, and the verdict does not turn on it.
 
 **What this does NOT settle: M3.** This archive predates every M0/M2 fix — #810, #820, #799,
 #798, #823, #824. Per this plan's own terms, a negative Pass 1 condemns the *old* model, not
@@ -478,7 +464,7 @@ purely data-bound: the only thing between here and M3 is station-days accruing.*
 | #869 | Post-fix model health — rail concentration, artifact rate, σ identifiability | **now, no waiting** | Shipped — run it |
 | #870 | Ground-truth quality — Gamma-vs-METAR rate, zero-YES days, ladder completeness | **now, no waiting** | Shipped — run it |
 | #822 | Market-vs-model skill test | M1 · M3 | Pass 1 ran (**BSS −0.28**, direction-contaminated — re-run pending, see M1); Pass 2 built and run 2026-07-29 (**underpowered: 139/300 station-days**); **Pass 2 = the decision** |
-| — | **Re-run Pass 1** with the direction-aware resolver (#875) — same archive, no new data | M1 | **Open — do next** |
+| — | **Re-run Pass 1** with the direction-aware resolver (#875) — same archive, no new data | M1 | ✅ **Done (2026-07-29)** — BSS −0.2752, clean. Direction dispatch verified working (#867), test coverage added (#902 → #903) |
 | — | **Decide the `p_yes_raw == 0.0` exclusion** — post-#820 it may no longer be an artifact; it removes 38.1% of rows. Must be settled **before** the powered Pass-2 run, i.e. before ~2026-08-05 | M3 | **Open — pre-registration deadline** |
 | #799 | σ unidentifiable — switch on ensemble spread, retrain | M2 | ✅ Merged |
 | #798 | Partial pooling instead of hard 60-sample cutover | M2 | ✅ Merged |
