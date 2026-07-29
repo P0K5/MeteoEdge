@@ -2970,8 +2970,8 @@
       "source_location": "L206",
       "_origin": "ast",
       "id": "src_dashboard_api_today_utc",
-      "community": 130,
-      "community_name": "status",
+      "community": 219,
+      "community_name": "api.py",
       "norm_label": "_today_utc()"
     },
     {
@@ -2992,8 +2992,8 @@
       "source_location": "L228",
       "_origin": "ast",
       "id": "src_dashboard_api_compute_win_rate",
-      "community": 130,
-      "community_name": "status",
+      "community": 219,
+      "community_name": "api.py",
       "norm_label": "_compute_win_rate()"
     },
     {
@@ -3003,8 +3003,8 @@
       "source_location": "L244",
       "_origin": "ast",
       "id": "src_dashboard_api_today_pnl",
-      "community": 130,
-      "community_name": "status",
+      "community": 219,
+      "community_name": "api.py",
       "norm_label": "_today_pnl()"
     },
     {
@@ -3014,8 +3014,8 @@
       "source_location": "L255",
       "_origin": "ast",
       "id": "src_dashboard_api_today_trade_count",
-      "community": 130,
-      "community_name": "status",
+      "community": 219,
+      "community_name": "api.py",
       "norm_label": "_today_trade_count()"
     },
     {
@@ -3025,8 +3025,8 @@
       "source_location": "L261",
       "_origin": "ast",
       "id": "src_dashboard_api_latest_capital",
-      "community": 130,
-      "community_name": "status",
+      "community": 219,
+      "community_name": "api.py",
       "norm_label": "_latest_capital()"
     },
     {
@@ -3036,8 +3036,8 @@
       "source_location": "L279",
       "_origin": "ast",
       "id": "src_dashboard_api_open_positions_count",
-      "community": 130,
-      "community_name": "status",
+      "community": 219,
+      "community_name": "api.py",
       "norm_label": "_open_positions_count()"
     },
     {
@@ -3047,8 +3047,8 @@
       "source_location": "L312",
       "_origin": "ast",
       "id": "src_dashboard_api_positionout",
-      "community": 53,
-      "community_name": "_positions_from_wallet",
+      "community": 219,
+      "community_name": "api.py",
       "norm_label": "positionout"
     },
     {
@@ -3058,8 +3058,8 @@
       "source_location": "",
       "_origin": "ast",
       "id": "basemodel",
-      "community": 219,
-      "community_name": "api.py",
+      "community": 53,
+      "community_name": "BaseModel",
       "norm_label": "basemodel"
     },
     {
@@ -3080,8 +3080,8 @@
       "source_location": "L347",
       "_origin": "ast",
       "id": "src_dashboard_api_portfolioout",
-      "community": 53,
-      "community_name": "_positions_from_wallet",
+      "community": 219,
+      "community_name": "api.py",
       "norm_label": "portfolioout"
     },
     {
@@ -3102,8 +3102,8 @@
       "source_location": "L364",
       "_origin": "ast",
       "id": "src_dashboard_api_debweightout",
-      "community": 219,
-      "community_name": "api.py",
+      "community": 53,
+      "community_name": "BaseModel",
       "norm_label": "debweightout"
     },
     {
@@ -3113,8 +3113,8 @@
       "source_location": "L371",
       "_origin": "ast",
       "id": "src_dashboard_api_debout",
-      "community": 219,
-      "community_name": "api.py",
+      "community": 53,
+      "community_name": "BaseModel",
       "norm_label": "debout"
     },
     {
@@ -3146,8 +3146,8 @@
       "source_location": "L408",
       "_origin": "ast",
       "id": "src_dashboard_api_perfquadrantout",
-      "community": 219,
-      "community_name": "api.py",
+      "community": 53,
+      "community_name": "BaseModel",
       "norm_label": "perfquadrantout"
     },
     {
@@ -3157,8 +3157,8 @@
       "source_location": "L417",
       "_origin": "ast",
       "id": "src_dashboard_api_stationsideperfout",
-      "community": 219,
-      "community_name": "api.py",
+      "community": 53,
+      "community_name": "BaseModel",
       "norm_label": "stationsideperfout"
     },
     {
@@ -3168,8 +3168,8 @@
       "source_location": "L423",
       "_origin": "ast",
       "id": "src_dashboard_api_stationperfout",
-      "community": 219,
-      "community_name": "api.py",
+      "community": 53,
+      "community_name": "BaseModel",
       "norm_label": "stationperfout"
     },
     {
@@ -3179,8 +3179,8 @@
       "source_location": "L429",
       "_origin": "ast",
       "id": "src_dashboard_api_promotionprerequisitesout",
-      "community": 219,
-      "community_name": "api.py",
+      "community": 254,
+      "community_name": "check_promotion_prerequisites",
       "norm_label": "promotionprerequisitesout"
     },
     {
@@ -3190,8 +3190,8 @@
       "source_location": "L442",
       "_origin": "ast",
       "id": "src_dashboard_api_promotionbarout",
-      "community": 219,
-      "community_name": "api.py",
+      "community": 53,
+      "community_name": "BaseModel",
       "norm_label": "promotionbarout"
     },
     {
@@ -3256,8 +3256,8 @@
       "source_location": "L585",
       "_origin": "ast",
       "id": "src_dashboard_api_parse_snapshots",
-      "community": 53,
-      "community_name": "_positions_from_wallet",
+      "community": 219,
+      "community_name": "api.py",
       "norm_label": "_parse_snapshots()"
     },
     {
@@ -3267,8 +3267,8 @@
       "source_location": "L608",
       "_origin": "ast",
       "id": "src_dashboard_api_latest_model_probs",
-      "community": 53,
-      "community_name": "_positions_from_wallet",
+      "community": 219,
+      "community_name": "api.py",
       "norm_label": "_latest_model_probs()"
     },
     {
@@ -3278,8 +3278,8 @@
       "source_location": "L617",
       "_origin": "ast",
       "id": "src_dashboard_api_parse_position_snap_probs",
-      "community": 53,
-      "community_name": "_positions_from_wallet",
+      "community": 219,
+      "community_name": "api.py",
       "norm_label": "_parse_position_snap_probs()"
     },
     {
@@ -3289,8 +3289,8 @@
       "source_location": "L640",
       "_origin": "ast",
       "id": "src_dashboard_api_latest_position_snap_probs",
-      "community": 53,
-      "community_name": "_positions_from_wallet",
+      "community": 219,
+      "community_name": "api.py",
       "norm_label": "_latest_position_snap_probs()"
     },
     {
@@ -3388,8 +3388,8 @@
       "source_location": "L924",
       "_origin": "ast",
       "id": "src_dashboard_api_batch_midpoints",
-      "community": 53,
-      "community_name": "_positions_from_wallet",
+      "community": 219,
+      "community_name": "api.py",
       "norm_label": "_batch_midpoints()"
     },
     {
@@ -3421,8 +3421,8 @@
       "source_location": "L974",
       "_origin": "ast",
       "id": "src_dashboard_api_cash_usdc",
-      "community": 53,
-      "community_name": "_positions_from_wallet",
+      "community": 219,
+      "community_name": "api.py",
       "norm_label": "_cash_usdc()"
     },
     {
@@ -3432,8 +3432,8 @@
       "source_location": "L984",
       "_origin": "ast",
       "id": "src_dashboard_api_positions_from_wallet",
-      "community": 53,
-      "community_name": "_positions_from_wallet",
+      "community": 219,
+      "community_name": "api.py",
       "norm_label": "_positions_from_wallet()"
     },
     {
@@ -3465,8 +3465,8 @@
       "source_location": "L1206",
       "_origin": "ast",
       "id": "src_dashboard_api_status",
-      "community": 130,
-      "community_name": "status",
+      "community": 219,
+      "community_name": "api.py",
       "norm_label": "status()"
     },
     {
@@ -3531,8 +3531,8 @@
       "source_location": "L1299",
       "_origin": "ast",
       "id": "src_dashboard_api_portfolio",
-      "community": 53,
-      "community_name": "_positions_from_wallet",
+      "community": 219,
+      "community_name": "api.py",
       "norm_label": "portfolio()"
     },
     {
@@ -3586,8 +3586,8 @@
       "source_location": "L1397",
       "_origin": "ast",
       "id": "src_dashboard_api_get_city_deb",
-      "community": 219,
-      "community_name": "api.py",
+      "community": 53,
+      "community_name": "BaseModel",
       "norm_label": "get_city_deb()"
     },
     {
@@ -3630,8 +3630,8 @@
       "source_location": "L1634",
       "_origin": "ast",
       "id": "src_dashboard_api_build_perf_quadrant",
-      "community": 219,
-      "community_name": "api.py",
+      "community": 53,
+      "community_name": "BaseModel",
       "norm_label": "_build_perf_quadrant()"
     },
     {
@@ -3641,8 +3641,8 @@
       "source_location": "L1685",
       "_origin": "ast",
       "id": "src_dashboard_api_stations_perf",
-      "community": 219,
-      "community_name": "api.py",
+      "community": 53,
+      "community_name": "BaseModel",
       "norm_label": "stations_perf()"
     },
     {
@@ -3795,8 +3795,8 @@
       "source_location": "L2141",
       "_origin": "ast",
       "id": "src_dashboard_api_promotion_prerequisites",
-      "community": 219,
-      "community_name": "api.py",
+      "community": 254,
+      "community_name": "check_promotion_prerequisites",
       "norm_label": "promotion_prerequisites()"
     },
     {
@@ -3894,8 +3894,8 @@
       "source_location": "L2635",
       "_origin": "ast",
       "id": "src_dashboard_api_residualstatsout",
-      "community": 219,
-      "community_name": "api.py",
+      "community": 53,
+      "community_name": "BaseModel",
       "norm_label": "residualstatsout"
     },
     {
@@ -3905,8 +3905,8 @@
       "source_location": "L2646",
       "_origin": "ast",
       "id": "src_dashboard_api_residual_stats",
-      "community": 219,
-      "community_name": "api.py",
+      "community": 53,
+      "community_name": "BaseModel",
       "norm_label": "residual_stats()"
     },
     {
@@ -3916,8 +3916,8 @@
       "source_location": "L2702",
       "_origin": "ast",
       "id": "src_dashboard_api_stationresidualout",
-      "community": 219,
-      "community_name": "api.py",
+      "community": 53,
+      "community_name": "BaseModel",
       "norm_label": "stationresidualout"
     },
     {
@@ -3927,8 +3927,8 @@
       "source_location": "L2717",
       "_origin": "ast",
       "id": "src_dashboard_api_station_residual",
-      "community": 219,
-      "community_name": "api.py",
+      "community": 53,
+      "community_name": "BaseModel",
       "norm_label": "station_residual()"
     },
     {
@@ -3971,8 +3971,8 @@
       "source_location": "L2878",
       "_origin": "ast",
       "id": "src_dashboard_api_format_bracket_range",
-      "community": 219,
-      "community_name": "api.py",
+      "community": 53,
+      "community_name": "BaseModel",
       "norm_label": "_format_bracket_range()"
     },
     {
@@ -3982,8 +3982,8 @@
       "source_location": "L2893",
       "_origin": "ast",
       "id": "src_dashboard_api_bracketout",
-      "community": 219,
-      "community_name": "api.py",
+      "community": 53,
+      "community_name": "BaseModel",
       "norm_label": "bracketout"
     },
     {
@@ -3993,8 +3993,8 @@
       "source_location": "L2917",
       "_origin": "ast",
       "id": "src_dashboard_api_forecastinputsout",
-      "community": 219,
-      "community_name": "api.py",
+      "community": 53,
+      "community_name": "BaseModel",
       "norm_label": "forecastinputsout"
     },
     {
@@ -4004,8 +4004,8 @@
       "source_location": "L2928",
       "_origin": "ast",
       "id": "src_dashboard_api_analysisstationout",
-      "community": 219,
-      "community_name": "api.py",
+      "community": 53,
+      "community_name": "BaseModel",
       "norm_label": "analysisstationout"
     },
     {
@@ -4015,8 +4015,8 @@
       "source_location": "L2939",
       "_origin": "ast",
       "id": "src_dashboard_api_analysis_station",
-      "community": 219,
-      "community_name": "api.py",
+      "community": 53,
+      "community_name": "BaseModel",
       "norm_label": "analysis_station()"
     },
     {
@@ -4070,8 +4070,8 @@
       "source_location": "L207",
       "_origin": "ast",
       "id": "src_dashboard_api_rationale_207",
-      "community": 130,
-      "community_name": "status",
+      "community": 219,
+      "community_name": "api.py",
       "norm_label": "return today's date as yyyy-mm-dd in utc."
     },
     {
@@ -4092,8 +4092,8 @@
       "source_location": "L229",
       "_origin": "ast",
       "id": "src_dashboard_api_rationale_229",
-      "community": 130,
-      "community_name": "status",
+      "community": 219,
+      "community_name": "api.py",
       "norm_label": "compute win rate over the last *n* settled trades (excluding shadow). only..."
     },
     {
@@ -4103,8 +4103,8 @@
       "source_location": "L245",
       "_origin": "ast",
       "id": "src_dashboard_api_rationale_245",
-      "community": 130,
-      "community_name": "status",
+      "community": 219,
+      "community_name": "api.py",
       "norm_label": "sum pnl for trades whose timestamp falls on today (utc), excluding shadow rows."
     },
     {
@@ -4114,8 +4114,8 @@
       "source_location": "L256",
       "_origin": "ast",
       "id": "src_dashboard_api_rationale_256",
-      "community": 130,
-      "community_name": "status",
+      "community": 219,
+      "community_name": "api.py",
       "norm_label": "count trades whose timestamp falls on today (utc)."
     },
     {
@@ -4125,8 +4125,8 @@
       "source_location": "L262",
       "_origin": "ast",
       "id": "src_dashboard_api_rationale_262",
-      "community": 130,
-      "community_name": "status",
+      "community": 219,
+      "community_name": "api.py",
       "norm_label": "return the most recent capital value (excluding shadow). prefers db; falls back..."
     },
     {
@@ -4136,8 +4136,8 @@
       "source_location": "L280",
       "_origin": "ast",
       "id": "src_dashboard_api_rationale_280",
-      "community": 130,
-      "community_name": "status",
+      "community": 219,
+      "community_name": "api.py",
       "norm_label": "return today's open position count from risk_state, or 0."
     },
     {
@@ -4147,8 +4147,8 @@
       "source_location": "L409",
       "_origin": "ast",
       "id": "src_dashboard_api_rationale_409",
-      "community": 219,
-      "community_name": "api.py",
+      "community": 53,
+      "community_name": "BaseModel",
       "norm_label": "metrics for one (mode, side) quadrant of the performance matrix."
     },
     {
@@ -4158,8 +4158,8 @@
       "source_location": "L418",
       "_origin": "ast",
       "id": "src_dashboard_api_rationale_418",
-      "community": 219,
-      "community_name": "api.py",
+      "community": 53,
+      "community_name": "BaseModel",
       "norm_label": "per-side breakdown for one mode (real or shadow)."
     },
     {
@@ -4169,8 +4169,8 @@
       "source_location": "L424",
       "_origin": "ast",
       "id": "src_dashboard_api_rationale_424",
-      "community": 219,
-      "community_name": "api.py",
+      "community": 53,
+      "community_name": "BaseModel",
       "norm_label": "2\u00d72 performance matrix for a single station: {real, shadow} \u00d7 {yes, no}."
     },
     {
@@ -4180,8 +4180,8 @@
       "source_location": "L430",
       "_origin": "ast",
       "id": "src_dashboard_api_rationale_430",
-      "community": 219,
-      "community_name": "api.py",
+      "community": 254,
+      "community_name": "check_promotion_prerequisites",
       "norm_label": "promotion gate status for a shadow station."
     },
     {
@@ -4191,8 +4191,8 @@
       "source_location": "L443",
       "_origin": "ast",
       "id": "src_dashboard_api_rationale_443",
-      "community": 219,
-      "community_name": "api.py",
+      "community": 53,
+      "community_name": "BaseModel",
       "norm_label": "statistical promotion bar status for one shadow station+side (issue #559)...."
     },
     {
@@ -4213,8 +4213,8 @@
       "source_location": "L586",
       "_origin": "ast",
       "id": "src_dashboard_api_rationale_586",
-      "community": 53,
-      "community_name": "_positions_from_wallet",
+      "community": 219,
+      "community_name": "api.py",
       "norm_label": "parse snapshots into a (station, bracket_low, bracket_high) \u2192 (p_yes, ts) dict...."
     },
     {
@@ -4224,8 +4224,8 @@
       "source_location": "L609",
       "_origin": "ast",
       "id": "src_dashboard_api_rationale_609",
-      "community": 53,
-      "community_name": "_positions_from_wallet",
+      "community": 219,
+      "community_name": "api.py",
       "norm_label": "latest model p_yes per (station, bracket_low, bracket_high). reads across every..."
     },
     {
@@ -4235,8 +4235,8 @@
       "source_location": "L618",
       "_origin": "ast",
       "id": "src_dashboard_api_rationale_618",
-      "community": 53,
-      "community_name": "_positions_from_wallet",
+      "community": 219,
+      "community_name": "api.py",
       "norm_label": "parse position_snapshots.jsonl into a prob map keyed by (station, bl, bh,..."
     },
     {
@@ -4246,8 +4246,8 @@
       "source_location": "L641",
       "_origin": "ast",
       "id": "src_dashboard_api_rationale_641",
-      "community": 53,
-      "community_name": "_positions_from_wallet",
+      "community": 219,
+      "community_name": "api.py",
       "norm_label": "cached read of position_snapshots.jsonl for dashboard fallback (issue #425)."
     },
     {
@@ -4345,8 +4345,8 @@
       "source_location": "L925",
       "_origin": "ast",
       "id": "src_dashboard_api_rationale_925",
-      "community": 53,
-      "community_name": "_positions_from_wallet",
+      "community": 219,
+      "community_name": "api.py",
       "norm_label": "fetch midpoints for all token_ids in a single clob request."
     },
     {
@@ -4367,8 +4367,8 @@
       "source_location": "L985",
       "_origin": "ast",
       "id": "src_dashboard_api_rationale_985",
-      "community": 53,
-      "community_name": "_positions_from_wallet",
+      "community": 219,
+      "community_name": "api.py",
       "norm_label": "fetch positions directly from polymarket data api by wallet address."
     },
     {
@@ -4389,8 +4389,8 @@
       "source_location": "L1207",
       "_origin": "ast",
       "id": "src_dashboard_api_rationale_1207",
-      "community": 130,
-      "community_name": "status",
+      "community": 219,
+      "community_name": "api.py",
       "norm_label": "summary of current capital, today's pnl, trade count, win rate, and open..."
     },
     {
@@ -4455,8 +4455,8 @@
       "source_location": "L1398",
       "_origin": "ast",
       "id": "src_dashboard_api_rationale_1398",
-      "community": 219,
-      "community_name": "api.py",
+      "community": 53,
+      "community_name": "BaseModel",
       "norm_label": "return deb model weights and rmse for *city*. city name is normalised to title-..."
     },
     {
@@ -4499,8 +4499,8 @@
       "source_location": "L1635",
       "_origin": "ast",
       "id": "src_dashboard_api_rationale_1635",
-      "community": 219,
-      "community_name": "api.py",
+      "community": 53,
+      "community_name": "BaseModel",
       "norm_label": "compute the 5 metrics for a single (mode, side) quadrant. args: trades: pre-..."
     },
     {
@@ -4510,8 +4510,8 @@
       "source_location": "L1686",
       "_origin": "ast",
       "id": "src_dashboard_api_rationale_1686",
-      "community": 219,
-      "community_name": "api.py",
+      "community": 53,
+      "community_name": "BaseModel",
       "norm_label": "return a 2\u00d72 performance matrix per station: {real, shadow} \u00d7 {yes, no}. real..."
     },
     {
@@ -4664,8 +4664,8 @@
       "source_location": "L2142",
       "_origin": "ast",
       "id": "src_dashboard_api_rationale_2142",
-      "community": 219,
-      "community_name": "api.py",
+      "community": 254,
+      "community_name": "check_promotion_prerequisites",
       "norm_label": "return promotion gate status for all shadow stations. checks each shadow..."
     },
     {
@@ -4741,8 +4741,8 @@
       "source_location": "L2636",
       "_origin": "ast",
       "id": "src_dashboard_api_rationale_2636",
-      "community": 219,
-      "community_name": "api.py",
+      "community": 53,
+      "community_name": "BaseModel",
       "norm_label": "rolling residual bias statistics for a single city."
     },
     {
@@ -4752,8 +4752,8 @@
       "source_location": "L2647",
       "_origin": "ast",
       "id": "src_dashboard_api_rationale_2647",
-      "community": 219,
-      "community_name": "api.py",
+      "community": 53,
+      "community_name": "BaseModel",
       "norm_label": "return rolling residual bias stats per city. for each configured city, returns:..."
     },
     {
@@ -4763,8 +4763,8 @@
       "source_location": "L2703",
       "_origin": "ast",
       "id": "src_dashboard_api_rationale_2703",
-      "community": 219,
-      "community_name": "api.py",
+      "community": 53,
+      "community_name": "BaseModel",
       "norm_label": "residual bias stats for one (station, source) pair within a metar city."
     },
     {
@@ -4774,8 +4774,8 @@
       "source_location": "L2718",
       "_origin": "ast",
       "id": "src_dashboard_api_rationale_2718",
-      "community": 219,
-      "community_name": "api.py",
+      "community": 53,
+      "community_name": "BaseModel",
       "norm_label": "return per-(station, source) residual bias stats for the city behind *metar*...."
     },
     {
@@ -4818,8 +4818,8 @@
       "source_location": "L2879",
       "_origin": "ast",
       "id": "src_dashboard_api_rationale_2879",
-      "community": 219,
-      "community_name": "api.py",
+      "community": 53,
+      "community_name": "BaseModel",
       "norm_label": "human-readable bracket label, e.g. ``\"82\u201384\u00b0f\"``. mirrors the open-ended-..."
     },
     {
@@ -4829,8 +4829,8 @@
       "source_location": "L2918",
       "_origin": "ast",
       "id": "src_dashboard_api_rationale_2918",
-      "community": 219,
-      "community_name": "api.py",
+      "community": 53,
+      "community_name": "BaseModel",
       "norm_label": "demoted secondary block (design spec \u00a73) -- the ensemble summary the scanner..."
     },
     {
@@ -4840,8 +4840,8 @@
       "source_location": "L2944",
       "_origin": "ast",
       "id": "src_dashboard_api_rationale_2944",
-      "community": 219,
-      "community_name": "api.py",
+      "community": 53,
+      "community_name": "BaseModel",
       "norm_label": "return the bot's-eye per-bracket decision view for a station (issue #757)...."
     },
     {
@@ -5038,8 +5038,8 @@
       "source_location": "L21",
       "_origin": "ast",
       "id": "src_execution_auth_get_clob_client",
-      "community": 53,
-      "community_name": "_positions_from_wallet",
+      "community": 219,
+      "community_name": "api.py",
       "norm_label": "get_clob_client()"
     },
     {
@@ -5049,8 +5049,8 @@
       "source_location": "",
       "_origin": "ast",
       "id": "src_execution_auth_py_clobclient",
-      "community": 53,
-      "community_name": "_positions_from_wallet",
+      "community": 219,
+      "community_name": "api.py",
       "norm_label": "clobclient"
     },
     {
@@ -7777,7 +7777,7 @@
       "source_location": "L169",
       "_origin": "ast",
       "id": "src_model_envelope_true_probability_yes",
-      "community": 69,
+      "community": 154,
       "community_name": "true_probability_yes",
       "norm_label": "true_probability_yes()"
     },
@@ -7854,7 +7854,7 @@
       "source_location": "L176",
       "_origin": "ast",
       "id": "src_model_envelope_rationale_176",
-      "community": 69,
+      "community": 154,
       "community_name": "true_probability_yes",
       "norm_label": "compute p(daily high falls in this bracket). enhanced: uses ensemble forecast..."
     },
@@ -13046,8 +13046,8 @@
       "source_location": "L1421",
       "_origin": "ast",
       "id": "src_scripts_resolve_bracket_outcomes_build_dry_run_report",
-      "community": 194,
-      "community_name": "TestClassifyMultiYes",
+      "community": 169,
+      "community_name": "build_dry_run_report",
       "norm_label": "build_dry_run_report()"
     },
     {
@@ -21164,8 +21164,8 @@
       "source_location": "L126",
       "_origin": "ast",
       "id": "src_tests_test_capture_forecasts_testgfscapture",
-      "community": 381,
-      "community_name": ".test_none_sigma_logs_cleanly_and_persists_null",
+      "community": 229,
+      "community_name": "_capture_station",
       "norm_label": "testgfscapture"
     },
     {
@@ -21175,8 +21175,8 @@
       "source_location": "L139",
       "_origin": "ast",
       "id": "src_tests_test_capture_forecasts_testgfscapture_test_none_sigma_logs_cleanly_and_persists_null",
-      "community": 381,
-      "community_name": ".test_none_sigma_logs_cleanly_and_persists_null",
+      "community": 229,
+      "community_name": "_capture_station",
       "norm_label": ".test_none_sigma_logs_cleanly_and_persists_null()"
     },
     {
@@ -21186,8 +21186,8 @@
       "source_location": "L172",
       "_origin": "ast",
       "id": "src_tests_test_capture_forecasts_testgfscapture_test_float_sigma_still_formats",
-      "community": 18,
-      "community_name": "_db",
+      "community": 229,
+      "community_name": "_capture_station",
       "norm_label": ".test_float_sigma_still_formats()"
     },
     {
@@ -21307,8 +21307,8 @@
       "source_location": "L372",
       "_origin": "ast",
       "id": "src_tests_test_capture_forecasts_testnbmcapture_test_out_of_domain_does_not_write",
-      "community": 18,
-      "community_name": "_db",
+      "community": 271,
+      "community_name": ".test_fetch_failure_does_not_raise",
       "norm_label": ".test_out_of_domain_does_not_write()"
     },
     {
@@ -21681,8 +21681,8 @@
       "source_location": "L127",
       "_origin": "ast",
       "id": "src_tests_test_capture_forecasts_rationale_127",
-      "community": 381,
-      "community_name": ".test_none_sigma_logs_cleanly_and_persists_null",
+      "community": 229,
+      "community_name": "_capture_station",
       "norm_label": "gfs capture with the post-#548 (mu_f, none) return shape...."
     },
     {
@@ -21692,8 +21692,8 @@
       "source_location": "L140",
       "_origin": "ast",
       "id": "src_tests_test_capture_forecasts_rationale_140",
-      "community": 381,
-      "community_name": ".test_none_sigma_logs_cleanly_and_persists_null",
+      "community": 229,
+      "community_name": "_capture_station",
       "norm_label": "(mu, none) must log without a formatting error and upsert sigma_f=none."
     },
     {
@@ -21703,8 +21703,8 @@
       "source_location": "L173",
       "_origin": "ast",
       "id": "src_tests_test_capture_forecasts_rationale_173",
-      "community": 18,
-      "community_name": "_db",
+      "community": 229,
+      "community_name": "_capture_station",
       "norm_label": "defensive: if a future sigma policy (#555) returns a float again, the log line..."
     },
     {
@@ -21824,8 +21824,8 @@
       "source_location": "L373",
       "_origin": "ast",
       "id": "src_tests_test_capture_forecasts_rationale_373",
-      "community": 18,
-      "community_name": "_db",
+      "community": 271,
+      "community_name": ".test_fetch_failure_does_not_raise",
       "norm_label": "when fetch_nbm_daily_high returns none (out of conus), no upsert for 'nbm'."
     },
     {
@@ -45079,7 +45079,7 @@
       "_origin": "ast",
       "id": "src_tests_test_envelope_make_state",
       "community": 154,
-      "community_name": "make_bracket",
+      "community_name": "true_probability_yes",
       "norm_label": "make_state()"
     },
     {
@@ -45090,7 +45090,7 @@
       "_origin": "ast",
       "id": "src_tests_test_envelope_make_bracket",
       "community": 154,
-      "community_name": "make_bracket",
+      "community_name": "true_probability_yes",
       "norm_label": "make_bracket()"
     },
     {
@@ -45387,7 +45387,7 @@
       "_origin": "ast",
       "id": "src_tests_test_envelope_testtrueprobabilityyes",
       "community": 154,
-      "community_name": "make_bracket",
+      "community_name": "true_probability_yes",
       "norm_label": "testtrueprobabilityyes"
     },
     {
@@ -45398,7 +45398,7 @@
       "_origin": "ast",
       "id": "src_tests_test_envelope_testtrueprobabilityyes_test_bracket_below_current_high_returns_zero",
       "community": 154,
-      "community_name": "make_bracket",
+      "community_name": "true_probability_yes",
       "norm_label": ".test_bracket_below_current_high_returns_zero()"
     },
     {
@@ -45409,7 +45409,7 @@
       "_origin": "ast",
       "id": "src_tests_test_envelope_testtrueprobabilityyes_test_bracket_above_envelope_returns_zero",
       "community": 154,
-      "community_name": "make_bracket",
+      "community_name": "true_probability_yes",
       "norm_label": ".test_bracket_above_envelope_returns_zero()"
     },
     {
@@ -45420,7 +45420,7 @@
       "_origin": "ast",
       "id": "src_tests_test_envelope_testtrueprobabilityyes_test_bracket_contains_full_envelope_returns_one",
       "community": 154,
-      "community_name": "make_bracket",
+      "community_name": "true_probability_yes",
       "norm_label": ".test_bracket_contains_full_envelope_returns_one()"
     },
     {
@@ -45431,7 +45431,7 @@
       "_origin": "ast",
       "id": "src_tests_test_envelope_testtrueprobabilityyes_test_degenerate_bracket_at_high_returns_zero",
       "community": 154,
-      "community_name": "make_bracket",
+      "community_name": "true_probability_yes",
       "norm_label": ".test_degenerate_bracket_at_high_returns_zero()"
     },
     {
@@ -45442,7 +45442,7 @@
       "_origin": "ast",
       "id": "src_tests_test_envelope_testtrueprobabilityyes_test_bracket_starting_at_high_returns_one_when_no_rise_left",
       "community": 154,
-      "community_name": "make_bracket",
+      "community_name": "true_probability_yes",
       "norm_label": ".test_bracket_starting_at_high_returns_one_when_no_rise_left()"
     },
     {
@@ -45453,7 +45453,7 @@
       "_origin": "ast",
       "id": "src_tests_test_envelope_testtrueprobabilityyes_test_bayesian_case_uses_forecast",
       "community": 154,
-      "community_name": "make_bracket",
+      "community_name": "true_probability_yes",
       "norm_label": ".test_bayesian_case_uses_forecast()"
     },
     {
@@ -45464,7 +45464,7 @@
       "_origin": "ast",
       "id": "src_tests_test_envelope_testtrueprobabilityyes_test_no_forecast_falls_back_to_midpoint",
       "community": 154,
-      "community_name": "make_bracket",
+      "community_name": "true_probability_yes",
       "norm_label": ".test_no_forecast_falls_back_to_midpoint()"
     },
     {
@@ -45475,7 +45475,7 @@
       "_origin": "ast",
       "id": "src_tests_test_envelope_testtrueprobabilityyes_test_high_confidence_no_side",
       "community": 154,
-      "community_name": "make_bracket",
+      "community_name": "true_probability_yes",
       "norm_label": ".test_high_confidence_no_side()"
     },
     {
@@ -45486,7 +45486,7 @@
       "_origin": "ast",
       "id": "src_tests_test_envelope_testtrueprobabilityyes_test_probability_bounded_zero_to_one",
       "community": 154,
-      "community_name": "make_bracket",
+      "community_name": "true_probability_yes",
       "norm_label": ".test_probability_bounded_zero_to_one()"
     },
     {
@@ -45497,7 +45497,7 @@
       "_origin": "ast",
       "id": "src_tests_test_envelope_testtrueprobabilityyes_test_minutes_to_settlement_optional",
       "community": 154,
-      "community_name": "make_bracket",
+      "community_name": "true_probability_yes",
       "norm_label": ".test_minutes_to_settlement_optional()"
     },
     {
@@ -45507,8 +45507,8 @@
       "source_location": "L350",
       "_origin": "ast",
       "id": "src_tests_test_envelope_testobsbiascorrection",
-      "community": 265,
-      "community_name": "TestObsBiasCorrection",
+      "community": 154,
+      "community_name": "true_probability_yes",
       "norm_label": "testobsbiascorrection"
     },
     {
@@ -45518,8 +45518,8 @@
       "source_location": "L351",
       "_origin": "ast",
       "id": "src_tests_test_envelope_testobsbiascorrection_test_positive_offset_increases_probability_above_mean",
-      "community": 265,
-      "community_name": "TestObsBiasCorrection",
+      "community": 154,
+      "community_name": "true_probability_yes",
       "norm_label": ".test_positive_offset_increases_probability_above_mean()"
     },
     {
@@ -45529,8 +45529,8 @@
       "source_location": "L366",
       "_origin": "ast",
       "id": "src_tests_test_envelope_testobsbiascorrection_test_negative_offset_decreases_probability_above_mean",
-      "community": 265,
-      "community_name": "TestObsBiasCorrection",
+      "community": 154,
+      "community_name": "true_probability_yes",
       "norm_label": ".test_negative_offset_decreases_probability_above_mean()"
     },
     {
@@ -45540,8 +45540,8 @@
       "source_location": "L381",
       "_origin": "ast",
       "id": "src_tests_test_envelope_testobsbiascorrection_test_none_offset_is_identical_to_baseline",
-      "community": 265,
-      "community_name": "TestObsBiasCorrection",
+      "community": 154,
+      "community_name": "true_probability_yes",
       "norm_label": ".test_none_offset_is_identical_to_baseline()"
     },
     {
@@ -45551,8 +45551,8 @@
       "source_location": "L394",
       "_origin": "ast",
       "id": "src_tests_test_envelope_testobsbiascorrection_test_large_offset_clamps_to_envelope_bounds",
-      "community": 265,
-      "community_name": "TestObsBiasCorrection",
+      "community": 154,
+      "community_name": "true_probability_yes",
       "norm_label": ".test_large_offset_clamps_to_envelope_bounds()"
     },
     {
@@ -45584,8 +45584,8 @@
       "source_location": "L434",
       "_origin": "ast",
       "id": "src_tests_test_envelope_testdebmuf_test_deb_mu_f_ignored_when_disabled",
-      "community": 264,
-      "community_name": "test_envelope.py",
+      "community": 154,
+      "community_name": "true_probability_yes",
       "norm_label": ".test_deb_mu_f_ignored_when_disabled()"
     },
     {
@@ -45673,7 +45673,7 @@
       "_origin": "ast",
       "id": "src_tests_test_envelope_testexclusivetopedge",
       "community": 154,
-      "community_name": "make_bracket",
+      "community_name": "true_probability_yes",
       "norm_label": "testexclusivetopedge"
     },
     {
@@ -45684,7 +45684,7 @@
       "_origin": "ast",
       "id": "src_tests_test_envelope_testexclusivetopedge_test_current_high_exactly_at_top_edge_is_zero",
       "community": 154,
-      "community_name": "make_bracket",
+      "community_name": "true_probability_yes",
       "norm_label": ".test_current_high_exactly_at_top_edge_is_zero()"
     },
     {
@@ -45695,7 +45695,7 @@
       "_origin": "ast",
       "id": "src_tests_test_envelope_testexclusivetopedge_test_current_high_above_top_edge_is_zero",
       "community": 154,
-      "community_name": "make_bracket",
+      "community_name": "true_probability_yes",
       "norm_label": ".test_current_high_above_top_edge_is_zero()"
     },
     {
@@ -45706,7 +45706,7 @@
       "_origin": "ast",
       "id": "src_tests_test_envelope_testexclusivetopedge_test_current_high_at_bottom_edge_still_in_bracket",
       "community": 154,
-      "community_name": "make_bracket",
+      "community_name": "true_probability_yes",
       "norm_label": ".test_current_high_at_bottom_edge_still_in_bracket()"
     },
     {
@@ -45717,7 +45717,7 @@
       "_origin": "ast",
       "id": "src_tests_test_envelope_testexclusivetopedge_test_current_high_strictly_inside_still_certain",
       "community": 154,
-      "community_name": "make_bracket",
+      "community_name": "true_probability_yes",
       "norm_label": ".test_current_high_strictly_inside_still_certain()"
     },
     {
@@ -45727,8 +45727,8 @@
       "source_location": "L623",
       "_origin": "ast",
       "id": "src_tests_test_envelope_testsigmaclimbfloor",
-      "community": 154,
-      "community_name": "make_bracket",
+      "community": 264,
+      "community_name": "test_envelope.py",
       "norm_label": "testsigmaclimbfloor"
     },
     {
@@ -45739,7 +45739,7 @@
       "_origin": "ast",
       "id": "src_tests_test_envelope_testsigmaclimbfloor_test_morning_open_low_bracket_not_certain",
       "community": 154,
-      "community_name": "make_bracket",
+      "community_name": "true_probability_yes",
       "norm_label": ".test_morning_open_low_bracket_not_certain()"
     },
     {
@@ -45749,8 +45749,8 @@
       "source_location": "L641",
       "_origin": "ast",
       "id": "src_tests_test_envelope_testsigmaclimbfloor_test_past_peak_behavior_unchanged",
-      "community": 154,
-      "community_name": "make_bracket",
+      "community": 264,
+      "community_name": "test_envelope.py",
       "norm_label": ".test_past_peak_behavior_unchanged()"
     },
     {
@@ -45761,7 +45761,7 @@
       "_origin": "ast",
       "id": "src_tests_test_envelope_testsigmaclimbfloor_test_fraction_zero_restores_old_behavior",
       "community": 154,
-      "community_name": "make_bracket",
+      "community_name": "true_probability_yes",
       "norm_label": ".test_fraction_zero_restores_old_behavior()"
     },
     {
@@ -45772,7 +45772,7 @@
       "_origin": "ast",
       "id": "src_tests_test_envelope_testensemblesigma",
       "community": 69,
-      "community_name": "true_probability_yes",
+      "community_name": "TestEnsembleSigma",
       "norm_label": "testensemblesigma"
     },
     {
@@ -45783,7 +45783,7 @@
       "_origin": "ast",
       "id": "src_tests_test_envelope_testensemblesigma_state_and_bracket",
       "community": 69,
-      "community_name": "true_probability_yes",
+      "community_name": "TestEnsembleSigma",
       "norm_label": "._state_and_bracket()"
     },
     {
@@ -45794,7 +45794,7 @@
       "_origin": "ast",
       "id": "src_tests_test_envelope_testensemblesigma_test_ensemble_sigma_used_when_flag_true_and_field_set",
       "community": 69,
-      "community_name": "true_probability_yes",
+      "community_name": "TestEnsembleSigma",
       "norm_label": ".test_ensemble_sigma_used_when_flag_true_and_field_set()"
     },
     {
@@ -45805,7 +45805,7 @@
       "_origin": "ast",
       "id": "src_tests_test_envelope_testensemblesigma_test_legacy_fallback_when_ensemble_sigma_f_none",
       "community": 69,
-      "community_name": "true_probability_yes",
+      "community_name": "TestEnsembleSigma",
       "norm_label": ".test_legacy_fallback_when_ensemble_sigma_f_none()"
     },
     {
@@ -45816,7 +45816,7 @@
       "_origin": "ast",
       "id": "src_tests_test_envelope_testensemblesigma_test_flag_false_ignores_ensemble_sigma_f_even_when_set",
       "community": 69,
-      "community_name": "true_probability_yes",
+      "community_name": "TestEnsembleSigma",
       "norm_label": ".test_flag_false_ignores_ensemble_sigma_f_even_when_set()"
     },
     {
@@ -45827,7 +45827,7 @@
       "_origin": "ast",
       "id": "src_tests_test_envelope_testensemblesigma_test_default_off_matches_legacy_behavior",
       "community": 69,
-      "community_name": "true_probability_yes",
+      "community_name": "TestEnsembleSigma",
       "norm_label": ".test_default_off_matches_legacy_behavior()"
     },
     {
@@ -45838,7 +45838,7 @@
       "_origin": "ast",
       "id": "src_tests_test_envelope_testensemblesigma_test_caller_value_takes_precedence_over_env",
       "community": 69,
-      "community_name": "true_probability_yes",
+      "community_name": "TestEnsembleSigma",
       "norm_label": ".test_caller_value_takes_precedence_over_env()"
     },
     {
@@ -45849,7 +45849,7 @@
       "_origin": "ast",
       "id": "src_tests_test_envelope_testensemblesigma_test_env_var_fallback_when_use_ensemble_sigma_none",
       "community": 69,
-      "community_name": "true_probability_yes",
+      "community_name": "TestEnsembleSigma",
       "norm_label": ".test_env_var_fallback_when_use_ensemble_sigma_none()"
     },
     {
@@ -45860,7 +45860,7 @@
       "_origin": "ast",
       "id": "src_tests_test_envelope_testensemblesigma_test_env_var_false_by_default",
       "community": 69,
-      "community_name": "true_probability_yes",
+      "community_name": "TestEnsembleSigma",
       "norm_label": ".test_env_var_false_by_default()"
     },
     {
@@ -45870,7 +45870,7 @@
       "source_location": "L781",
       "_origin": "ast",
       "id": "src_tests_test_envelope_testensemblesigma_test_climb_floor_still_applies_on_top_of_ensemble_sigma",
-      "community": 69,
+      "community": 154,
       "community_name": "true_probability_yes",
       "norm_label": ".test_climb_floor_still_applies_on_top_of_ensemble_sigma()"
     },
@@ -45882,7 +45882,7 @@
       "_origin": "ast",
       "id": "src_tests_test_envelope_testensemblesigma_test_sub_floor_ensemble_sigma_is_floored_at_sigma_floor_f",
       "community": 69,
-      "community_name": "true_probability_yes",
+      "community_name": "TestEnsembleSigma",
       "norm_label": ".test_sub_floor_ensemble_sigma_is_floored_at_sigma_floor_f()"
     },
     {
@@ -45893,7 +45893,7 @@
       "_origin": "ast",
       "id": "src_tests_test_envelope_testensemblesigma_test_sub_floor_ensemble_sigma_not_more_confident_than_floor",
       "community": 69,
-      "community_name": "true_probability_yes",
+      "community_name": "TestEnsembleSigma",
       "norm_label": ".test_sub_floor_ensemble_sigma_not_more_confident_than_floor()"
     },
     {
@@ -45969,8 +45969,8 @@
       "source_location": "L934",
       "_origin": "ast",
       "id": "src_tests_test_envelope_testdaymismatchguard_test_certainty_shortcuts_bypassed_when_days_differ",
-      "community": 38,
-      "community_name": "next_day_probability_yes",
+      "community": 154,
+      "community_name": "true_probability_yes",
       "norm_label": ".test_certainty_shortcuts_bypassed_when_days_differ()"
     },
     {
@@ -45981,7 +45981,7 @@
       "_origin": "ast",
       "id": "src_tests_test_envelope_testdaymismatchguard_test_days_match_behavior_unchanged",
       "community": 154,
-      "community_name": "make_bracket",
+      "community_name": "true_probability_yes",
       "norm_label": ".test_days_match_behavior_unchanged()"
     },
     {
@@ -46102,7 +46102,7 @@
       "_origin": "ast",
       "id": "src_tests_test_envelope_rationale_35",
       "community": 154,
-      "community_name": "make_bracket",
+      "community_name": "true_probability_yes",
       "norm_label": "build a weatherstate with sensible defaults for testing."
     },
     {
@@ -46278,7 +46278,7 @@
       "_origin": "ast",
       "id": "src_tests_test_envelope_rationale_294",
       "community": 154,
-      "community_name": "make_bracket",
+      "community_name": "true_probability_yes",
       "norm_label": "markets resolve [lo, hi): a zero-width bracket is empty, and a high at the top..."
     },
     {
@@ -46289,7 +46289,7 @@
       "_origin": "ast",
       "id": "src_tests_test_envelope_rationale_302",
       "community": 154,
-      "community_name": "make_bracket",
+      "community_name": "true_probability_yes",
       "norm_label": "the non-degenerate version of the old intent: [high, high+2) with the envelope..."
     },
     {
@@ -46300,7 +46300,7 @@
       "_origin": "ast",
       "id": "src_tests_test_envelope_rationale_309",
       "community": 154,
-      "community_name": "make_bracket",
+      "community_name": "true_probability_yes",
       "norm_label": "partial bracket in mid-day uncertainty window returns 0 < p < 1."
     },
     {
@@ -46311,7 +46311,7 @@
       "_origin": "ast",
       "id": "src_tests_test_envelope_rationale_318",
       "community": 154,
-      "community_name": "make_bracket",
+      "community_name": "true_probability_yes",
       "norm_label": "with no forecast, bracket containing full envelope returns 1.0."
     },
     {
@@ -46322,7 +46322,7 @@
       "_origin": "ast",
       "id": "src_tests_test_envelope_rationale_325",
       "community": 154,
-      "community_name": "make_bracket",
+      "community_name": "true_probability_yes",
       "norm_label": "bracket far above max envelope returns 0.0."
     },
     {
@@ -46333,7 +46333,7 @@
       "_origin": "ast",
       "id": "src_tests_test_envelope_rationale_339",
       "community": 154,
-      "community_name": "make_bracket",
+      "community_name": "true_probability_yes",
       "norm_label": "true_probability_yes must work with just bracket and state."
     },
     {
@@ -46343,8 +46343,8 @@
       "source_location": "L352",
       "_origin": "ast",
       "id": "src_tests_test_envelope_rationale_352",
-      "community": 265,
-      "community_name": "TestObsBiasCorrection",
+      "community": 154,
+      "community_name": "true_probability_yes",
       "norm_label": "a positive obs_bias_offset_f shifts forecast_mean up, raising p for high..."
     },
     {
@@ -46354,8 +46354,8 @@
       "source_location": "L367",
       "_origin": "ast",
       "id": "src_tests_test_envelope_rationale_367",
-      "community": 265,
-      "community_name": "TestObsBiasCorrection",
+      "community": 154,
+      "community_name": "true_probability_yes",
       "norm_label": "a negative obs_bias_offset_f shifts forecast_mean down, lowering p for high..."
     },
     {
@@ -46365,8 +46365,8 @@
       "source_location": "L382",
       "_origin": "ast",
       "id": "src_tests_test_envelope_rationale_382",
-      "community": 265,
-      "community_name": "TestObsBiasCorrection",
+      "community": 154,
+      "community_name": "true_probability_yes",
       "norm_label": "obs_bias_offset_f=none must produce identical result to no offset field at all."
     },
     {
@@ -46376,8 +46376,8 @@
       "source_location": "L395",
       "_origin": "ast",
       "id": "src_tests_test_envelope_rationale_395",
-      "community": 265,
-      "community_name": "TestObsBiasCorrection",
+      "community": 154,
+      "community_name": "true_probability_yes",
       "norm_label": "a huge positive offset must clamp at max_env \u2014 result bounded [0, 1], not nan."
     },
     {
@@ -46398,8 +46398,8 @@
       "source_location": "L435",
       "_origin": "ast",
       "id": "src_tests_test_envelope_rationale_435",
-      "community": 264,
-      "community_name": "test_envelope.py",
+      "community": 154,
+      "community_name": "true_probability_yes",
       "norm_label": "deb_enabled=false (default) -> result equals baseline even with deb_mu_f set."
     },
     {
@@ -46487,7 +46487,7 @@
       "_origin": "ast",
       "id": "src_tests_test_envelope_rationale_585",
       "community": 154,
-      "community_name": "make_bracket",
+      "community_name": "true_probability_yes",
       "norm_label": "issue #652 bug a: markets resolve [lo, hi) \u2014 a running high at the top edge..."
     },
     {
@@ -46498,7 +46498,7 @@
       "_origin": "ast",
       "id": "src_tests_test_envelope_rationale_605",
       "community": 154,
-      "community_name": "make_bracket",
+      "community_name": "true_probability_yes",
       "norm_label": "lo is inclusive: high == lo means yes is currently winning."
     },
     {
@@ -46509,7 +46509,7 @@
       "_origin": "ast",
       "id": "src_tests_test_envelope_rationale_613",
       "community": 154,
-      "community_name": "make_bracket",
+      "community_name": "true_probability_yes",
       "norm_label": "past peak, high strictly inside the bracket \u2192 certainty unchanged."
     },
     {
@@ -46519,8 +46519,8 @@
       "source_location": "L624",
       "_origin": "ast",
       "id": "src_tests_test_envelope_rationale_624",
-      "community": 154,
-      "community_name": "make_bracket",
+      "community": 264,
+      "community_name": "test_envelope.py",
       "norm_label": "issue #652 bug b: the effective stddev is floored at a fraction of the climb..."
     },
     {
@@ -46530,8 +46530,8 @@
       "source_location": "L642",
       "_origin": "ast",
       "id": "src_tests_test_envelope_rationale_642",
-      "community": 154,
-      "community_name": "make_bracket",
+      "community": 264,
+      "community_name": "test_envelope.py",
       "norm_label": "no remaining climb \u2192 floor inactive \u2192 identical to fixed stddev."
     },
     {
@@ -46542,7 +46542,7 @@
       "_origin": "ast",
       "id": "src_tests_test_envelope_rationale_670",
       "community": 69,
-      "community_name": "true_probability_yes",
+      "community_name": "TestEnsembleSigma",
       "norm_label": "weatherstate.ensemble_sigma_f replaces the fixed forecast_stddev when..."
     },
     {
@@ -46553,7 +46553,7 @@
       "_origin": "ast",
       "id": "src_tests_test_envelope_rationale_686",
       "community": 69,
-      "community_name": "true_probability_yes",
+      "community_name": "TestEnsembleSigma",
       "norm_label": "use_ensemble_sigma=true + ensemble_sigma_f set -> differs from the fixed-stddev..."
     },
     {
@@ -46564,7 +46564,7 @@
       "_origin": "ast",
       "id": "src_tests_test_envelope_rationale_700",
       "community": 69,
-      "community_name": "true_probability_yes",
+      "community_name": "TestEnsembleSigma",
       "norm_label": "use_ensemble_sigma=true but ensemble_sigma_f=none (e.g. gefs unavailable) ->..."
     },
     {
@@ -46575,7 +46575,7 @@
       "_origin": "ast",
       "id": "src_tests_test_envelope_rationale_713",
       "community": 69,
-      "community_name": "true_probability_yes",
+      "community_name": "TestEnsembleSigma",
       "norm_label": "use_ensemble_sigma=false -> ensemble_sigma_f is ignored, identical to a state..."
     },
     {
@@ -46586,7 +46586,7 @@
       "_origin": "ast",
       "id": "src_tests_test_envelope_rationale_727",
       "community": 69,
-      "community_name": "true_probability_yes",
+      "community_name": "TestEnsembleSigma",
       "norm_label": "default (use_ensemble_sigma unset, use_ensemble_sigma env unset) ->..."
     },
     {
@@ -46597,7 +46597,7 @@
       "_origin": "ast",
       "id": "src_tests_test_envelope_rationale_742",
       "community": 69,
-      "community_name": "true_probability_yes",
+      "community_name": "TestEnsembleSigma",
       "norm_label": "caller-passed use_ensemble_sigma=true (live config) overrides env var false."
     },
     {
@@ -46608,7 +46608,7 @@
       "_origin": "ast",
       "id": "src_tests_test_envelope_rationale_755",
       "community": 69,
-      "community_name": "true_probability_yes",
+      "community_name": "TestEnsembleSigma",
       "norm_label": "use_ensemble_sigma=none -> use_ensemble_sigma env var is used (backward..."
     },
     {
@@ -46619,7 +46619,7 @@
       "_origin": "ast",
       "id": "src_tests_test_envelope_rationale_769",
       "community": 69,
-      "community_name": "true_probability_yes",
+      "community_name": "TestEnsembleSigma",
       "norm_label": "use_ensemble_sigma=none with no env var set -> defaults to off."
     },
     {
@@ -46629,7 +46629,7 @@
       "source_location": "L782",
       "_origin": "ast",
       "id": "src_tests_test_envelope_rationale_782",
-      "community": 69,
+      "community": 154,
       "community_name": "true_probability_yes",
       "norm_label": "the remaining-climb sigma floor (#652) still wins over a narrow..."
     },
@@ -46641,7 +46641,7 @@
       "_origin": "ast",
       "id": "src_tests_test_envelope_rationale_803",
       "community": 69,
-      "community_name": "true_probability_yes",
+      "community_name": "TestEnsembleSigma",
       "norm_label": "issue #887: 63% of gefs sigma_f rows sit below sigma_floor_f (1.0f). with no..."
     },
     {
@@ -46652,7 +46652,7 @@
       "_origin": "ast",
       "id": "src_tests_test_envelope_rationale_833",
       "community": 69,
-      "community_name": "true_probability_yes",
+      "community_name": "TestEnsembleSigma",
       "norm_label": "a near-zero ensemble_sigma_f must not push p_yes closer to a rail than the..."
     },
     {
@@ -46728,8 +46728,8 @@
       "source_location": "L935",
       "_origin": "ast",
       "id": "src_tests_test_envelope_rationale_935",
-      "community": 38,
-      "community_name": "next_day_probability_yes",
+      "community": 154,
+      "community_name": "true_probability_yes",
       "norm_label": "evening window: state is from yesterday (after peak), market settles today. old..."
     },
     {
@@ -46740,7 +46740,7 @@
       "_origin": "ast",
       "id": "src_tests_test_envelope_rationale_977",
       "community": 154,
-      "community_name": "make_bracket",
+      "community_name": "true_probability_yes",
       "norm_label": "when local day == settlement day, shortcuts fire normally."
     },
     {
@@ -54715,7 +54715,7 @@
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_collector_py_src_tests_test_jma_ameidas_collector",
       "community": 51,
-      "community_name": "_make_response",
+      "community_name": "_db",
       "norm_label": "test_jma_ameidas_collector.py"
     },
     {
@@ -54725,7 +54725,7 @@
       "source_location": "L24",
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_collector_db",
-      "community": 396,
+      "community": 51,
       "community_name": "_db",
       "norm_label": "_db()"
     },
@@ -54736,7 +54736,7 @@
       "source_location": "",
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_collector_py_database",
-      "community": 396,
+      "community": 51,
       "community_name": "_db",
       "norm_label": "database"
     },
@@ -54748,7 +54748,7 @@
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_collector_make_response",
       "community": 51,
-      "community_name": "_make_response",
+      "community_name": "_db",
       "norm_label": "_make_response()"
     },
     {
@@ -54758,8 +54758,8 @@
       "source_location": "L46",
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_collector_jma_response",
-      "community": 260,
-      "community_name": "_jma_response",
+      "community": 51,
+      "community_name": "_db",
       "norm_label": "_jma_response()"
     },
     {
@@ -54770,7 +54770,7 @@
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_collector_open_meteo_response",
       "community": 51,
-      "community_name": "_make_response",
+      "community_name": "_db",
       "norm_label": "_open_meteo_response()"
     },
     {
@@ -54781,7 +54781,7 @@
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_collector_testjmahappypath",
       "community": 51,
-      "community_name": "_make_response",
+      "community_name": "_db",
       "norm_label": "testjmahappypath"
     },
     {
@@ -54792,7 +54792,7 @@
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_collector_testjmahappypath_test_inserts_row_on_success",
       "community": 51,
-      "community_name": "_make_response",
+      "community_name": "_db",
       "norm_label": ".test_inserts_row_on_success()"
     },
     {
@@ -54803,7 +54803,7 @@
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_collector_testjmahappypath_test_temp_f_conversion",
       "community": 51,
-      "community_name": "_make_response",
+      "community_name": "_db",
       "norm_label": ".test_temp_f_conversion()"
     },
     {
@@ -54814,7 +54814,7 @@
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_collector_testjmahappypath_test_latest_time_slot_used_when_multiple",
       "community": 51,
-      "community_name": "_make_response",
+      "community_name": "_db",
       "norm_label": ".test_latest_time_slot_used_when_multiple()"
     },
     {
@@ -54825,7 +54825,7 @@
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_collector_testjmahappypath_test_bad_quality_slot_skipped",
       "community": 51,
-      "community_name": "_make_response",
+      "community_name": "_db",
       "norm_label": ".test_bad_quality_slot_skipped()"
     },
     {
@@ -54836,7 +54836,7 @@
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_collector_testjmahappypath_test_raw_json_stored",
       "community": 51,
-      "community_name": "_make_response",
+      "community_name": "_db",
       "norm_label": ".test_raw_json_stored()"
     },
     {
@@ -54847,7 +54847,7 @@
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_collector_testjsttoutcconversion",
       "community": 51,
-      "community_name": "_make_response",
+      "community_name": "_db",
       "norm_label": "testjsttoutcconversion"
     },
     {
@@ -54858,7 +54858,7 @@
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_collector_testjsttoutcconversion_test_jst_9am_stored_as_utc_midnight",
       "community": 51,
-      "community_name": "_make_response",
+      "community_name": "_db",
       "norm_label": ".test_jst_9am_stored_as_utc_midnight()"
     },
     {
@@ -54869,7 +54869,7 @@
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_collector_testerrorhandling",
       "community": 51,
-      "community_name": "_make_response",
+      "community_name": "_db",
       "norm_label": "testerrorhandling"
     },
     {
@@ -54880,7 +54880,7 @@
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_collector_testerrorhandling_test_404_falls_back_to_open_meteo",
       "community": 51,
-      "community_name": "_make_response",
+      "community_name": "_db",
       "norm_label": ".test_404_falls_back_to_open_meteo()"
     },
     {
@@ -54891,7 +54891,7 @@
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_collector_testerrorhandling_test_network_error_falls_back_to_open_meteo",
       "community": 51,
-      "community_name": "_make_response",
+      "community_name": "_db",
       "norm_label": ".test_network_error_falls_back_to_open_meteo()"
     },
     {
@@ -54902,7 +54902,7 @@
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_collector_testerrorhandling_test_both_sources_fail_returns_false",
       "community": 51,
-      "community_name": "_make_response",
+      "community_name": "_db",
       "norm_label": ".test_both_sources_fail_returns_false()"
     },
     {
@@ -54913,7 +54913,7 @@
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_collector_testerrorhandling_test_empty_data_falls_back_to_open_meteo",
       "community": 51,
-      "community_name": "_make_response",
+      "community_name": "_db",
       "norm_label": ".test_empty_data_falls_back_to_open_meteo()"
     },
     {
@@ -54924,7 +54924,7 @@
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_collector_teststaleness",
       "community": 396,
-      "community_name": "_db",
+      "community_name": "TestStaleness",
       "norm_label": "teststaleness"
     },
     {
@@ -54935,7 +54935,7 @@
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_collector_teststaleness_test_critical_logged_when_stale",
       "community": 396,
-      "community_name": "_db",
+      "community_name": "TestStaleness",
       "norm_label": ".test_critical_logged_when_stale()"
     },
     {
@@ -54946,7 +54946,7 @@
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_collector_teststaleness_test_no_critical_when_fresh",
       "community": 396,
-      "community_name": "_db",
+      "community_name": "TestStaleness",
       "norm_label": ".test_no_critical_when_fresh()"
     },
     {
@@ -54957,7 +54957,7 @@
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_collector_teststaleness_test_no_critical_on_first_poll",
       "community": 396,
-      "community_name": "_db",
+      "community_name": "TestStaleness",
       "norm_label": ".test_no_critical_on_first_poll()"
     },
     {
@@ -54968,7 +54968,7 @@
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_collector_testcadenceenvvar",
       "community": 51,
-      "community_name": "_make_response",
+      "community_name": "_db",
       "norm_label": "testcadenceenvvar"
     },
     {
@@ -54979,7 +54979,7 @@
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_collector_testcadenceenvvar_test_cadence_from_env",
       "community": 51,
-      "community_name": "_make_response",
+      "community_name": "_db",
       "norm_label": ".test_cadence_from_env()"
     },
     {
@@ -54989,8 +54989,8 @@
       "source_location": "L319",
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_collector_testpublicationlagandfuturetimestamps",
-      "community": 260,
-      "community_name": "_jma_response",
+      "community": 51,
+      "community_name": "_db",
       "norm_label": "testpublicationlagandfuturetimestamps"
     },
     {
@@ -55001,7 +55001,7 @@
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_collector_py_patch",
       "community": 51,
-      "community_name": "_make_response",
+      "community_name": "_db",
       "norm_label": "patch"
     },
     {
@@ -55011,8 +55011,8 @@
       "source_location": "L335",
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_collector_testpublicationlagandfuturetimestamps_test_primary_request_targets_current_3h_bucket",
-      "community": 260,
-      "community_name": "_jma_response",
+      "community": 51,
+      "community_name": "_db",
       "norm_label": ".test_primary_request_targets_current_3h_bucket()"
     },
     {
@@ -55022,8 +55022,8 @@
       "source_location": "L356",
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_collector_testpublicationlagandfuturetimestamps_test_publication_lag_avoids_just_opened_bucket",
-      "community": 260,
-      "community_name": "_jma_response",
+      "community": 51,
+      "community_name": "_db",
       "norm_label": ".test_publication_lag_avoids_just_opened_bucket()"
     },
     {
@@ -55033,8 +55033,8 @@
       "source_location": "L379",
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_collector_testpublicationlagandfuturetimestamps_test_previous_bucket_reachable_on_404",
-      "community": 260,
-      "community_name": "_jma_response",
+      "community": 51,
+      "community_name": "_db",
       "norm_label": ".test_previous_bucket_reachable_on_404()"
     },
     {
@@ -55044,7 +55044,7 @@
       "source_location": "L407",
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_collector_testpublicationlagandfuturetimestamps_test_stored_timestamp_not_in_future",
-      "community": 396,
+      "community": 51,
       "community_name": "_db",
       "norm_label": ".test_stored_timestamp_not_in_future()"
     },
@@ -55055,8 +55055,8 @@
       "source_location": "L440",
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_collector_testpublicationlagandfuturetimestamps_test_tokyo_cadence_unchanged",
-      "community": 260,
-      "community_name": "_jma_response",
+      "community": 51,
+      "community_name": "_db",
       "norm_label": ".test_tokyo_cadence_unchanged()"
     },
     {
@@ -55067,7 +55067,7 @@
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_collector_rationale_1",
       "community": 51,
-      "community_name": "_make_response",
+      "community_name": "_db",
       "norm_label": "unit tests for src/data/collectors/jma_ameidas.py. all http calls are mocked..."
     },
     {
@@ -55077,7 +55077,7 @@
       "source_location": "L25",
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_collector_rationale_25",
-      "community": 396,
+      "community": 51,
       "community_name": "_db",
       "norm_label": "fresh in-memory database with cadence_min/is_official columns applied."
     },
@@ -55088,8 +55088,8 @@
       "source_location": "L47",
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_collector_rationale_47",
-      "community": 260,
-      "community_name": "_jma_response",
+      "community": 51,
+      "community_name": "_db",
       "norm_label": "build a minimal jma amedas json response for one time slot. post-#739 the jma..."
     },
     {
@@ -55100,7 +55100,7 @@
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_collector_rationale_78",
       "community": 51,
-      "community_name": "_make_response",
+      "community_name": "_db",
       "norm_label": "valid jma response inserts one observation row for tokyo."
     },
     {
@@ -55111,7 +55111,7 @@
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_collector_rationale_98",
       "community": 51,
-      "community_name": "_make_response",
+      "community_name": "_db",
       "norm_label": "temperature is converted correctly: 0\u00b0c = 32\u00b0f."
     },
     {
@@ -55122,7 +55122,7 @@
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_collector_rationale_110",
       "community": 51,
-      "community_name": "_make_response",
+      "community_name": "_db",
       "norm_label": "when multiple time slots exist, the lexicographically last is used."
     },
     {
@@ -55133,7 +55133,7 @@
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_collector_rationale_127",
       "community": 51,
-      "community_name": "_make_response",
+      "community_name": "_db",
       "norm_label": "slots with quality_flag != 0 are skipped."
     },
     {
@@ -55144,7 +55144,7 @@
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_collector_rationale_144",
       "community": 51,
-      "community_name": "_make_response",
+      "community_name": "_db",
       "norm_label": "raw_json field contains the time_key and slot data."
     },
     {
@@ -55155,7 +55155,7 @@
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_collector_rationale_163",
       "community": 51,
-      "community_name": "_make_response",
+      "community_name": "_db",
       "norm_label": "jst 09:00 converts to utc 00:00."
     },
     {
@@ -55166,7 +55166,7 @@
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_collector_rationale_191",
       "community": 51,
-      "community_name": "_make_response",
+      "community_name": "_db",
       "norm_label": "http 404 triggers open-meteo fallback, not a crash."
     },
     {
@@ -55177,7 +55177,7 @@
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_collector_rationale_208",
       "community": 51,
-      "community_name": "_make_response",
+      "community_name": "_db",
       "norm_label": "network exception triggers open-meteo fallback."
     },
     {
@@ -55188,7 +55188,7 @@
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_collector_rationale_225",
       "community": 51,
-      "community_name": "_make_response",
+      "community_name": "_db",
       "norm_label": "when both jma and open-meteo fail, poll() returns false without crashing."
     },
     {
@@ -55199,7 +55199,7 @@
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_collector_rationale_240",
       "community": 51,
-      "community_name": "_make_response",
+      "community_name": "_db",
       "norm_label": "empty jma response triggers fallback."
     },
     {
@@ -55210,7 +55210,7 @@
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_collector_rationale_259",
       "community": 396,
-      "community_name": "_db",
+      "community_name": "TestStaleness",
       "norm_label": "critical logged when last observation is older than 2\u00d7 cadence_min."
     },
     {
@@ -55221,7 +55221,7 @@
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_collector_rationale_272",
       "community": 396,
-      "community_name": "_db",
+      "community_name": "TestStaleness",
       "norm_label": "no critical logged when data is within 2\u00d7 cadence_min."
     },
     {
@@ -55232,7 +55232,7 @@
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_collector_rationale_284",
       "community": 396,
-      "community_name": "_db",
+      "community_name": "TestStaleness",
       "norm_label": "no critical on the very first poll (last_obs_ts is none)."
     },
     {
@@ -55243,7 +55243,7 @@
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_collector_rationale_301",
       "community": 51,
-      "community_name": "_make_response",
+      "community_name": "_db",
       "norm_label": "jma_cadence_minutes env var is applied."
     },
     {
@@ -55253,8 +55253,8 @@
       "source_location": "L320",
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_collector_rationale_320",
-      "community": 260,
-      "community_name": "_jma_response",
+      "community": 51,
+      "community_name": "_db",
       "norm_label": "the collector must never request an unpublished jma file nor store a future..."
     },
     {
@@ -55264,8 +55264,8 @@
       "source_location": "L338",
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_collector_rationale_338",
-      "community": 260,
-      "community_name": "_jma_response",
+      "community": 51,
+      "community_name": "_db",
       "norm_label": "mid-bucket (09:17 jst) the primary request targets the 09:00 bucket file..."
     },
     {
@@ -55275,8 +55275,8 @@
       "source_location": "L359",
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_collector_rationale_359",
-      "community": 260,
-      "community_name": "_jma_response",
+      "community": 51,
+      "community_name": "_db",
       "norm_label": "at 09:01 jst the 09:00 bucket only just opened; the 2-min lag anchor (08:59)..."
     },
     {
@@ -55286,8 +55286,8 @@
       "source_location": "L382",
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_collector_rationale_382",
-      "community": 260,
-      "community_name": "_jma_response",
+      "community": 51,
+      "community_name": "_db",
       "norm_label": "if the current bucket 404s, the fallback chain must still reach the previous..."
     },
     {
@@ -55297,7 +55297,7 @@
       "source_location": "L410",
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_collector_rationale_410",
-      "community": 396,
+      "community": 51,
       "community_name": "_db",
       "norm_label": "the stored observation timestamp is the newest published slot in the bucket and..."
     },
@@ -55308,8 +55308,8 @@
       "source_location": "L443",
       "_origin": "ast",
       "id": "src_tests_test_jma_ameidas_collector_rationale_443",
-      "community": 260,
-      "community_name": "_jma_response",
+      "community": 51,
+      "community_name": "_db",
       "norm_label": "tokyo observation cadence is unchanged (still 10 minutes) after the fix."
     },
     {
@@ -62865,8 +62865,8 @@
       "source_location": "L79",
       "_origin": "ast",
       "id": "src_tests_test_partial_fill_tracking_testcheckstoplosspartialfilltracking",
-      "community": 228,
-      "community_name": "TestCheckStopLossPartialFillTracking",
+      "community": 168,
+      "community_name": "LiveTrader",
       "norm_label": "testcheckstoplosspartialfilltracking"
     },
     {
@@ -62876,8 +62876,8 @@
       "source_location": "L82",
       "_origin": "ast",
       "id": "src_tests_test_partial_fill_tracking_testcheckstoplosspartialfilltracking_make_position_state",
-      "community": 228,
-      "community_name": "TestCheckStopLossPartialFillTracking",
+      "community": 168,
+      "community_name": "LiveTrader",
       "norm_label": "._make_position_state()"
     },
     {
@@ -62887,8 +62887,8 @@
       "source_location": "L102",
       "_origin": "ast",
       "id": "src_tests_test_partial_fill_tracking_testcheckstoplosspartialfilltracking_test_partial_fill_then_retry_sells_remainder",
-      "community": 228,
-      "community_name": "TestCheckStopLossPartialFillTracking",
+      "community": 168,
+      "community_name": "LiveTrader",
       "norm_label": ".test_partial_fill_then_retry_sells_remainder()"
     },
     {
@@ -62898,8 +62898,8 @@
       "source_location": "L148",
       "_origin": "ast",
       "id": "src_tests_test_partial_fill_tracking_testcheckstoplosspartialfilltracking_test_remaining_below_min_lot_skips_dust_sell",
-      "community": 228,
-      "community_name": "TestCheckStopLossPartialFillTracking",
+      "community": 168,
+      "community_name": "LiveTrader",
       "norm_label": ".test_remaining_below_min_lot_skips_dust_sell()"
     },
     {
@@ -62909,8 +62909,8 @@
       "source_location": "L178",
       "_origin": "ast",
       "id": "src_tests_test_partial_fill_tracking_testcheckstoplosspartialfilltracking_test_full_fill_path_unaffected",
-      "community": 228,
-      "community_name": "TestCheckStopLossPartialFillTracking",
+      "community": 168,
+      "community_name": "LiveTrader",
       "norm_label": ".test_full_fill_path_unaffected()"
     },
     {
@@ -62953,8 +62953,8 @@
       "source_location": "L80",
       "_origin": "ast",
       "id": "src_tests_test_partial_fill_tracking_rationale_80",
-      "community": 228,
-      "community_name": "TestCheckStopLossPartialFillTracking",
+      "community": 168,
+      "community_name": "LiveTrader",
       "norm_label": "_check_stop_loss_exits should track partial fills and sell only the remainder."
     },
     {
@@ -62964,8 +62964,8 @@
       "source_location": "L103",
       "_origin": "ast",
       "id": "src_tests_test_partial_fill_tracking_rationale_103",
-      "community": 228,
-      "community_name": "TestCheckStopLossPartialFillTracking",
+      "community": 168,
+      "community_name": "LiveTrader",
       "norm_label": "after 5-share partial fill, retry should sell only (total - 5) shares."
     },
     {
@@ -62975,8 +62975,8 @@
       "source_location": "L149",
       "_origin": "ast",
       "id": "src_tests_test_partial_fill_tracking_rationale_149",
-      "community": 228,
-      "community_name": "TestCheckStopLossPartialFillTracking",
+      "community": 168,
+      "community_name": "LiveTrader",
       "norm_label": "remaining shares below min lot after partial fill \u2192 skip, mark sold."
     },
     {
@@ -62986,8 +62986,8 @@
       "source_location": "L179",
       "_origin": "ast",
       "id": "src_tests_test_partial_fill_tracking_rationale_179",
-      "community": 228,
-      "community_name": "TestCheckStopLossPartialFillTracking",
+      "community": 168,
+      "community_name": "LiveTrader",
       "norm_label": "full fill on first attempt: single clean record, _partial_fill_shares not..."
     },
     {
@@ -70906,8 +70906,8 @@
       "source_location": "L993",
       "_origin": "ast",
       "id": "src_tests_test_resolve_bracket_outcomes_testdryrunreport",
-      "community": 194,
-      "community_name": "TestClassifyMultiYes",
+      "community": 169,
+      "community_name": "build_dry_run_report",
       "norm_label": "testdryrunreport"
     },
     {
@@ -70917,8 +70917,8 @@
       "source_location": "L994",
       "_origin": "ast",
       "id": "src_tests_test_resolve_bracket_outcomes_testdryrunreport_test_report_contains_headline_counts",
-      "community": 194,
-      "community_name": "TestClassifyMultiYes",
+      "community": 169,
+      "community_name": "build_dry_run_report",
       "norm_label": ".test_report_contains_headline_counts()"
     },
     {
@@ -70928,8 +70928,8 @@
       "source_location": "L1017",
       "_origin": "ast",
       "id": "src_tests_test_resolve_bracket_outcomes_testdryrunreport_test_report_includes_mismatch_table_when_present",
-      "community": 194,
-      "community_name": "TestClassifyMultiYes",
+      "community": 169,
+      "community_name": "build_dry_run_report",
       "norm_label": ".test_report_includes_mismatch_table_when_present()"
     },
     {
@@ -70939,8 +70939,8 @@
       "source_location": "L1035",
       "_origin": "ast",
       "id": "src_tests_test_resolve_bracket_outcomes_testdryrunreport_test_report_includes_direct_check_mismatch_table_when_present",
-      "community": 194,
-      "community_name": "TestClassifyMultiYes",
+      "community": 169,
+      "community_name": "build_dry_run_report",
       "norm_label": ".test_report_includes_direct_check_mismatch_table_when_present()"
     },
     {
@@ -71478,8 +71478,8 @@
       "source_location": "L1509",
       "_origin": "ast",
       "id": "src_tests_test_resolve_bracket_outcomes_testclassifymultiyes_test_dry_run_report_splits_the_two_shapes",
-      "community": 194,
-      "community_name": "TestClassifyMultiYes",
+      "community": 169,
+      "community_name": "build_dry_run_report",
       "norm_label": ".test_dry_run_report_splits_the_two_shapes()"
     },
     {
@@ -71610,8 +71610,8 @@
       "source_location": "L1646",
       "_origin": "ast",
       "id": "src_tests_test_resolve_bracket_outcomes_testgroundtruthquality_test_dry_run_report_renders_all_three_checks",
-      "community": 194,
-      "community_name": "TestClassifyMultiYes",
+      "community": 169,
+      "community_name": "build_dry_run_report",
       "norm_label": ".test_dry_run_report_renders_all_three_checks()"
     },
     {
@@ -71699,7 +71699,7 @@
       "_origin": "ast",
       "id": "src_tests_test_resolve_bracket_outcomes_testgammarepairattribution",
       "community": 169,
-      "community_name": "._report_with_sources",
+      "community_name": "build_dry_run_report",
       "norm_label": "testgammarepairattribution"
     },
     {
@@ -71710,7 +71710,7 @@
       "_origin": "ast",
       "id": "src_tests_test_resolve_bracket_outcomes_testgammarepairattribution_report_with_sources",
       "community": 169,
-      "community_name": "._report_with_sources",
+      "community_name": "build_dry_run_report",
       "norm_label": "._report_with_sources()"
     },
     {
@@ -71721,7 +71721,7 @@
       "_origin": "ast",
       "id": "src_tests_test_resolve_bracket_outcomes_testgammarepairattribution_test_gamma_repair_is_labelled_not_blank",
       "community": 169,
-      "community_name": "._report_with_sources",
+      "community_name": "build_dry_run_report",
       "norm_label": ".test_gamma_repair_is_labelled_not_blank()"
     },
     {
@@ -71732,7 +71732,7 @@
       "_origin": "ast",
       "id": "src_tests_test_resolve_bracket_outcomes_testgammarepairattribution_test_unknown_gamma_family_source_still_reads_as_gamma",
       "community": 169,
-      "community_name": "._report_with_sources",
+      "community_name": "build_dry_run_report",
       "norm_label": ".test_unknown_gamma_family_source_still_reads_as_gamma()"
     },
     {
@@ -71743,7 +71743,7 @@
       "_origin": "ast",
       "id": "src_tests_test_resolve_bracket_outcomes_testgammarepairattribution_test_unexplained_count_excludes_gamma_family",
       "community": 169,
-      "community_name": "._report_with_sources",
+      "community_name": "build_dry_run_report",
       "norm_label": ".test_unexplained_count_excludes_gamma_family()"
     },
     {
@@ -71754,7 +71754,7 @@
       "_origin": "ast",
       "id": "src_tests_test_resolve_bracket_outcomes_testgammarepairattribution_test_all_gamma_sourced_reports_zero_unexplained",
       "community": 169,
-      "community_name": "._report_with_sources",
+      "community_name": "build_dry_run_report",
       "norm_label": ".test_all_gamma_sourced_reports_zero_unexplained()"
     },
     {
@@ -72193,8 +72193,8 @@
       "source_location": "L1510",
       "_origin": "ast",
       "id": "src_tests_test_resolve_bracket_outcomes_rationale_1510",
-      "community": 194,
-      "community_name": "TestClassifyMultiYes",
+      "community": 169,
+      "community_name": "build_dry_run_report",
       "norm_label": "the report must not present one conflated count."
     },
     {
@@ -72282,7 +72282,7 @@
       "_origin": "ast",
       "id": "src_tests_test_resolve_bracket_outcomes_rationale_1762",
       "community": 169,
-      "community_name": "._report_with_sources",
+      "community_name": "build_dry_run_report",
       "norm_label": "gamma_repair rendered as a blank '--' on the 2026-07-25 production run, leaving..."
     },
     {
@@ -72293,7 +72293,7 @@
       "_origin": "ast",
       "id": "src_tests_test_resolve_bracket_outcomes_rationale_1822",
       "community": 169,
-      "community_name": "._report_with_sources",
+      "community_name": "build_dry_run_report",
       "norm_label": "the 2026-07-25 production shape: every mismatch gamma-sourced, so the resolver..."
     },
     {
@@ -75699,7 +75699,7 @@
       "label": "_make_candidate()",
       "file_type": "code",
       "source_file": "src/tests/test_scan_decisions.py",
-      "source_location": "L432",
+      "source_location": "L433",
       "_origin": "ast",
       "id": "src_tests_test_scan_decisions_make_candidate",
       "community": 270,
@@ -75710,7 +75710,7 @@
       "label": "_make_risk()",
       "file_type": "code",
       "source_file": "src/tests/test_scan_decisions.py",
-      "source_location": "L450",
+      "source_location": "L451",
       "_origin": "ast",
       "id": "src_tests_test_scan_decisions_make_risk",
       "community": 270,
@@ -75721,7 +75721,7 @@
       "label": "_make_trader()",
       "file_type": "code",
       "source_file": "src/tests/test_scan_decisions.py",
-      "source_location": "L457",
+      "source_location": "L458",
       "_origin": "ast",
       "id": "src_tests_test_scan_decisions_make_trader",
       "community": 270,
@@ -75732,7 +75732,7 @@
       "label": "_poll_ctx()",
       "file_type": "code",
       "source_file": "src/tests/test_scan_decisions.py",
-      "source_location": "L464",
+      "source_location": "L465",
       "_origin": "ast",
       "id": "src_tests_test_scan_decisions_poll_ctx",
       "community": 270,
@@ -75743,7 +75743,7 @@
       "label": "db()",
       "file_type": "code",
       "source_file": "src/tests/test_scan_decisions.py",
-      "source_location": "L490",
+      "source_location": "L491",
       "_origin": "ast",
       "id": "src_tests_test_scan_decisions_db",
       "community": 135,
@@ -75754,7 +75754,7 @@
       "label": "_reset_run_state()",
       "file_type": "code",
       "source_file": "src/tests/test_scan_decisions.py",
-      "source_location": "L495",
+      "source_location": "L496",
       "_origin": "ast",
       "id": "src_tests_test_scan_decisions_reset_run_state",
       "community": 135,
@@ -75765,7 +75765,7 @@
       "label": "_run_poll()",
       "file_type": "code",
       "source_file": "src/tests/test_scan_decisions.py",
-      "source_location": "L506",
+      "source_location": "L507",
       "_origin": "ast",
       "id": "src_tests_test_scan_decisions_run_poll",
       "community": 270,
@@ -75776,7 +75776,7 @@
       "label": "TestRunVerdictSeam",
       "file_type": "code",
       "source_file": "src/tests/test_scan_decisions.py",
-      "source_location": "L518",
+      "source_location": "L519",
       "_origin": "ast",
       "id": "src_tests_test_scan_decisions_testrunverdictseam",
       "community": 270,
@@ -75787,7 +75787,7 @@
       "label": ".test_confirmed_fill_stays_traded_live()",
       "file_type": "code",
       "source_file": "src/tests/test_scan_decisions.py",
-      "source_location": "L523",
+      "source_location": "L524",
       "_origin": "ast",
       "id": "src_tests_test_scan_decisions_testrunverdictseam_test_confirmed_fill_stays_traded_live",
       "community": 270,
@@ -75798,7 +75798,7 @@
       "label": ".test_execution_timeout_downgrades_to_timeout_today()",
       "file_type": "code",
       "source_file": "src/tests/test_scan_decisions.py",
-      "source_location": "L536",
+      "source_location": "L537",
       "_origin": "ast",
       "id": "src_tests_test_scan_decisions_testrunverdictseam_test_execution_timeout_downgrades_to_timeout_today",
       "community": 270,
@@ -75809,7 +75809,7 @@
       "label": ".test_entry_guard_block_downgrades_to_entry_guard()",
       "file_type": "code",
       "source_file": "src/tests/test_scan_decisions.py",
-      "source_location": "L547",
+      "source_location": "L548",
       "_origin": "ast",
       "id": "src_tests_test_scan_decisions_testrunverdictseam_test_entry_guard_block_downgrades_to_entry_guard",
       "community": 270,
@@ -75820,7 +75820,7 @@
       "label": ".test_placeholder_never_resolved_downgrades_to_entry_guard()",
       "file_type": "code",
       "source_file": "src/tests/test_scan_decisions.py",
-      "source_location": "L578",
+      "source_location": "L579",
       "_origin": "ast",
       "id": "src_tests_test_scan_decisions_testrunverdictseam_test_placeholder_never_resolved_downgrades_to_entry_guard",
       "community": 270,
@@ -75831,7 +75831,7 @@
       "label": ".test_paper_mode_leaves_placeholder_as_traded_live()",
       "file_type": "code",
       "source_file": "src/tests/test_scan_decisions.py",
-      "source_location": "L593",
+      "source_location": "L594",
       "_origin": "ast",
       "id": "src_tests_test_scan_decisions_testrunverdictseam_test_paper_mode_leaves_placeholder_as_traded_live",
       "community": 270,
@@ -75842,7 +75842,7 @@
       "label": "TestScanDecisionsRowCount",
       "file_type": "code",
       "source_file": "src/tests/test_scan_decisions.py",
-      "source_location": "L608",
+      "source_location": "L609",
       "_origin": "ast",
       "id": "src_tests_test_scan_decisions_testscandecisionsrowcount",
       "community": 270,
@@ -75853,7 +75853,7 @@
       "label": ".test_n_brackets_yields_n_rows_and_candidates_unaffected()",
       "file_type": "code",
       "source_file": "src/tests/test_scan_decisions.py",
-      "source_location": "L609",
+      "source_location": "L610",
       "_origin": "ast",
       "id": "src_tests_test_scan_decisions_testscandecisionsrowcount_test_n_brackets_yields_n_rows_and_candidates_unaffected",
       "community": 270,
@@ -75864,7 +75864,7 @@
       "label": ".test_second_poll_same_day_upserts_not_appends()",
       "file_type": "code",
       "source_file": "src/tests/test_scan_decisions.py",
-      "source_location": "L633",
+      "source_location": "L634",
       "_origin": "ast",
       "id": "src_tests_test_scan_decisions_testscandecisionsrowcount_test_second_poll_same_day_upserts_not_appends",
       "community": 270,
@@ -75996,9 +75996,9 @@
       "label": "live_trader defaults to a mock live trader; pass live_trader=None explicitly to\u2026",
       "file_type": "rationale",
       "source_file": "src/tests/test_scan_decisions.py",
-      "source_location": "L507",
+      "source_location": "L508",
       "_origin": "ast",
-      "id": "src_tests_test_scan_decisions_rationale_507",
+      "id": "src_tests_test_scan_decisions_rationale_508",
       "community": 270,
       "community_name": "ResidualStats",
       "norm_label": "live_trader defaults to a mock live trader; pass live_trader=none explicitly to..."
@@ -76007,9 +76007,9 @@
       "label": "The scanner's 'traded_live' placeholder is upgraded to the real per-bracket\u2026",
       "file_type": "rationale",
       "source_file": "src/tests/test_scan_decisions.py",
-      "source_location": "L519",
+      "source_location": "L520",
       "_origin": "ast",
-      "id": "src_tests_test_scan_decisions_rationale_519",
+      "id": "src_tests_test_scan_decisions_rationale_520",
       "community": 270,
       "community_name": "ResidualStats",
       "norm_label": "the scanner's 'traded_live' placeholder is upgraded to the real per-bracket..."
@@ -76018,9 +76018,9 @@
       "label": "A duplicate open position for the token blocks the candidate before it ever\u2026",
       "file_type": "rationale",
       "source_file": "src/tests/test_scan_decisions.py",
-      "source_location": "L548",
+      "source_location": "L549",
       "_origin": "ast",
-      "id": "src_tests_test_scan_decisions_rationale_548",
+      "id": "src_tests_test_scan_decisions_rationale_549",
       "community": 270,
       "community_name": "ResidualStats",
       "norm_label": "a duplicate open position for the token blocks the candidate before it ever..."
@@ -76029,9 +76029,9 @@
       "label": "Wallet-empty cooldown short-circuits the poll before the candidate loop ever\u2026",
       "file_type": "rationale",
       "source_file": "src/tests/test_scan_decisions.py",
-      "source_location": "L579",
+      "source_location": "L580",
       "_origin": "ast",
-      "id": "src_tests_test_scan_decisions_rationale_579",
+      "id": "src_tests_test_scan_decisions_rationale_580",
       "community": 270,
       "community_name": "ResidualStats",
       "norm_label": "wallet-empty cooldown short-circuits the poll before the candidate loop ever..."
@@ -76040,9 +76040,9 @@
       "label": "No live_trader -- there is no entry-guard/execution seam at all, so the\u2026",
       "file_type": "rationale",
       "source_file": "src/tests/test_scan_decisions.py",
-      "source_location": "L594",
+      "source_location": "L595",
       "_origin": "ast",
-      "id": "src_tests_test_scan_decisions_rationale_594",
+      "id": "src_tests_test_scan_decisions_rationale_595",
       "community": 270,
       "community_name": "ResidualStats",
       "norm_label": "no live_trader -- there is no entry-guard/execution seam at all, so the..."
@@ -76051,9 +76051,9 @@
       "label": "N evaluated brackets -> N scan_decisions rows; the candidates list acted on\u2026",
       "file_type": "rationale",
       "source_file": "src/tests/test_scan_decisions.py",
-      "source_location": "L610",
+      "source_location": "L611",
       "_origin": "ast",
-      "id": "src_tests_test_scan_decisions_rationale_610",
+      "id": "src_tests_test_scan_decisions_rationale_611",
       "community": 270,
       "community_name": "ResidualStats",
       "norm_label": "n evaluated brackets -> n scan_decisions rows; the candidates list acted on..."
@@ -76062,9 +76062,9 @@
       "label": "Idempotent-per-poll semantics through the full run.py path, not just the raw DB\u2026",
       "file_type": "rationale",
       "source_file": "src/tests/test_scan_decisions.py",
-      "source_location": "L634",
+      "source_location": "L635",
       "_origin": "ast",
-      "id": "src_tests_test_scan_decisions_rationale_634",
+      "id": "src_tests_test_scan_decisions_rationale_635",
       "community": 270,
       "community_name": "ResidualStats",
       "norm_label": "idempotent-per-poll semantics through the full run.py path, not just the raw db..."
@@ -124147,7 +124147,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_scan_decisions.py",
-      "source_location": "L435",
+      "source_location": "L436",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_tests_test_scan_decisions_make_candidate",
@@ -145557,7 +145557,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_scan_decisions.py",
-      "source_location": "L514",
+      "source_location": "L515",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_tests_test_scan_decisions_run_poll",
@@ -148076,7 +148076,7 @@
       "context": "import",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_scan_decisions.py",
-      "source_location": "L433",
+      "source_location": "L434",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_tests_test_scan_decisions",
@@ -148087,7 +148087,7 @@
       "relation": "uses",
       "confidence": "INFERRED",
       "source_file": "src/tests/test_scan_decisions.py",
-      "source_location": "L433",
+      "source_location": "L434",
       "weight": 0.8,
       "_origin": "ast",
       "source": "src_tests_test_scan_decisions_frozendatetime",
@@ -148099,7 +148099,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_scan_decisions.py",
-      "source_location": "L441",
+      "source_location": "L442",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_tests_test_scan_decisions_make_candidate",
@@ -148110,7 +148110,7 @@
       "relation": "uses",
       "confidence": "INFERRED",
       "source_file": "src/tests/test_scan_decisions.py",
-      "source_location": "L433",
+      "source_location": "L434",
       "weight": 0.8,
       "_origin": "ast",
       "source": "src_tests_test_scan_decisions_testgateverdicts",
@@ -148121,7 +148121,7 @@
       "relation": "uses",
       "confidence": "INFERRED",
       "source_file": "src/tests/test_scan_decisions.py",
-      "source_location": "L433",
+      "source_location": "L434",
       "weight": 0.8,
       "_origin": "ast",
       "source": "src_tests_test_scan_decisions_testrunverdictseam",
@@ -148132,7 +148132,7 @@
       "relation": "uses",
       "confidence": "INFERRED",
       "source_file": "src/tests/test_scan_decisions.py",
-      "source_location": "L433",
+      "source_location": "L434",
       "weight": 0.8,
       "_origin": "ast",
       "source": "src_tests_test_scan_decisions_testscandecisionsrowcount",
@@ -148143,7 +148143,7 @@
       "relation": "uses",
       "confidence": "INFERRED",
       "source_file": "src/tests/test_scan_decisions.py",
-      "source_location": "L433",
+      "source_location": "L434",
       "weight": 0.8,
       "_origin": "ast",
       "source": "src_tests_test_scan_decisions_testscandecisionsupsert",
@@ -240642,7 +240642,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_scan_decisions.py",
-      "source_location": "L490",
+      "source_location": "L491",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_tests_test_scan_decisions",
@@ -240686,7 +240686,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_scan_decisions.py",
-      "source_location": "L432",
+      "source_location": "L433",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_tests_test_scan_decisions",
@@ -240697,7 +240697,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_scan_decisions.py",
-      "source_location": "L450",
+      "source_location": "L451",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_tests_test_scan_decisions",
@@ -240708,7 +240708,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_scan_decisions.py",
-      "source_location": "L457",
+      "source_location": "L458",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_tests_test_scan_decisions",
@@ -240730,7 +240730,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_scan_decisions.py",
-      "source_location": "L464",
+      "source_location": "L465",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_tests_test_scan_decisions",
@@ -240753,7 +240753,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_scan_decisions.py",
-      "source_location": "L495",
+      "source_location": "L496",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_tests_test_scan_decisions",
@@ -240764,7 +240764,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_scan_decisions.py",
-      "source_location": "L506",
+      "source_location": "L507",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_tests_test_scan_decisions",
@@ -240797,7 +240797,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_scan_decisions.py",
-      "source_location": "L518",
+      "source_location": "L519",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_tests_test_scan_decisions",
@@ -240808,7 +240808,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_scan_decisions.py",
-      "source_location": "L608",
+      "source_location": "L609",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_tests_test_scan_decisions",
@@ -241258,7 +241258,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_scan_decisions.py",
-      "source_location": "L440",
+      "source_location": "L441",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_tests_test_scan_decisions_make_candidate",
@@ -241294,7 +241294,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_scan_decisions.py",
-      "source_location": "L559",
+      "source_location": "L560",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_tests_test_scan_decisions_testrunverdictseam_test_entry_guard_block_downgrades_to_entry_guard",
@@ -241638,7 +241638,7 @@
       "relation": "references",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_scan_decisions.py",
-      "source_location": "L489",
+      "source_location": "L490",
       "weight": 1.0,
       "context": "decorator",
       "_origin": "ast",
@@ -241650,7 +241650,7 @@
       "relation": "references",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_scan_decisions.py",
-      "source_location": "L494",
+      "source_location": "L495",
       "weight": 1.0,
       "context": "decorator",
       "_origin": "ast",
@@ -241686,7 +241686,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_scan_decisions.py",
-      "source_location": "L525",
+      "source_location": "L526",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_tests_test_scan_decisions_testrunverdictseam_test_confirmed_fill_stays_traded_live",
@@ -241698,7 +241698,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_scan_decisions.py",
-      "source_location": "L554",
+      "source_location": "L555",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_tests_test_scan_decisions_testrunverdictseam_test_entry_guard_block_downgrades_to_entry_guard",
@@ -241710,7 +241710,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_scan_decisions.py",
-      "source_location": "L538",
+      "source_location": "L539",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_tests_test_scan_decisions_testrunverdictseam_test_execution_timeout_downgrades_to_timeout_today",
@@ -241722,7 +241722,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_scan_decisions.py",
-      "source_location": "L598",
+      "source_location": "L599",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_tests_test_scan_decisions_testrunverdictseam_test_paper_mode_leaves_placeholder_as_traded_live",
@@ -241734,7 +241734,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_scan_decisions.py",
-      "source_location": "L584",
+      "source_location": "L585",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_tests_test_scan_decisions_testrunverdictseam_test_placeholder_never_resolved_downgrades_to_entry_guard",
@@ -241746,214 +241746,11 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_scan_decisions.py",
-      "source_location": "L613",
+      "source_location": "L614",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_tests_test_scan_decisions_testscandecisionsrowcount_test_n_brackets_yields_n_rows_and_candidates_unaffected",
       "target": "src_tests_test_scan_decisions_snap",
-      "confidence_score": 1.0
-    },
-    {
-      "relation": "calls",
-      "context": "call",
-      "confidence": "EXTRACTED",
-      "source_file": "src/tests/test_scan_decisions.py",
-      "source_location": "L637",
-      "weight": 1.0,
-      "_origin": "ast",
-      "source": "src_tests_test_scan_decisions_testscandecisionsrowcount_test_second_poll_same_day_upserts_not_appends",
-      "target": "src_tests_test_scan_decisions_snap",
-      "confidence_score": 1.0
-    },
-    {
-      "relation": "calls",
-      "context": "call",
-      "confidence": "EXTRACTED",
-      "source_file": "src/tests/test_scan_decisions.py",
-      "source_location": "L524",
-      "weight": 1.0,
-      "_origin": "ast",
-      "source": "src_tests_test_scan_decisions_testrunverdictseam_test_confirmed_fill_stays_traded_live",
-      "target": "src_tests_test_scan_decisions_make_candidate",
-      "confidence_score": 1.0
-    },
-    {
-      "relation": "calls",
-      "context": "call",
-      "confidence": "EXTRACTED",
-      "source_file": "src/tests/test_scan_decisions.py",
-      "source_location": "L553",
-      "weight": 1.0,
-      "_origin": "ast",
-      "source": "src_tests_test_scan_decisions_testrunverdictseam_test_entry_guard_block_downgrades_to_entry_guard",
-      "target": "src_tests_test_scan_decisions_make_candidate",
-      "confidence_score": 1.0
-    },
-    {
-      "relation": "calls",
-      "context": "call",
-      "confidence": "EXTRACTED",
-      "source_file": "src/tests/test_scan_decisions.py",
-      "source_location": "L537",
-      "weight": 1.0,
-      "_origin": "ast",
-      "source": "src_tests_test_scan_decisions_testrunverdictseam_test_execution_timeout_downgrades_to_timeout_today",
-      "target": "src_tests_test_scan_decisions_make_candidate",
-      "confidence_score": 1.0
-    },
-    {
-      "relation": "calls",
-      "context": "call",
-      "confidence": "EXTRACTED",
-      "source_file": "src/tests/test_scan_decisions.py",
-      "source_location": "L596",
-      "weight": 1.0,
-      "_origin": "ast",
-      "source": "src_tests_test_scan_decisions_testrunverdictseam_test_paper_mode_leaves_placeholder_as_traded_live",
-      "target": "src_tests_test_scan_decisions_make_candidate",
-      "confidence_score": 1.0
-    },
-    {
-      "relation": "calls",
-      "context": "call",
-      "confidence": "EXTRACTED",
-      "source_file": "src/tests/test_scan_decisions.py",
-      "source_location": "L583",
-      "weight": 1.0,
-      "_origin": "ast",
-      "source": "src_tests_test_scan_decisions_testrunverdictseam_test_placeholder_never_resolved_downgrades_to_entry_guard",
-      "target": "src_tests_test_scan_decisions_make_candidate",
-      "confidence_score": 1.0
-    },
-    {
-      "relation": "calls",
-      "context": "call",
-      "confidence": "EXTRACTED",
-      "source_file": "src/tests/test_scan_decisions.py",
-      "source_location": "L618",
-      "weight": 1.0,
-      "_origin": "ast",
-      "source": "src_tests_test_scan_decisions_testscandecisionsrowcount_test_n_brackets_yields_n_rows_and_candidates_unaffected",
-      "target": "src_tests_test_scan_decisions_make_candidate",
-      "confidence_score": 1.0
-    },
-    {
-      "relation": "calls",
-      "context": "call",
-      "confidence": "EXTRACTED",
-      "source_file": "src/tests/test_scan_decisions.py",
-      "source_location": "L514",
-      "weight": 1.0,
-      "_origin": "ast",
-      "source": "src_tests_test_scan_decisions_run_poll",
-      "target": "src_tests_test_scan_decisions_make_risk",
-      "confidence_score": 1.0
-    },
-    {
-      "relation": "calls",
-      "context": "call",
-      "confidence": "EXTRACTED",
-      "source_file": "src/tests/test_scan_decisions.py",
-      "source_location": "L510",
-      "weight": 1.0,
-      "_origin": "ast",
-      "source": "src_tests_test_scan_decisions_run_poll",
-      "target": "src_tests_test_scan_decisions_make_trader",
-      "confidence_score": 1.0
-    },
-    {
-      "relation": "calls",
-      "context": "call",
-      "confidence": "EXTRACTED",
-      "source_file": "src/tests/test_scan_decisions.py",
-      "source_location": "L512",
-      "weight": 1.0,
-      "_origin": "ast",
-      "source": "src_tests_test_scan_decisions_run_poll",
-      "target": "src_tests_test_scan_decisions_poll_ctx",
-      "confidence_score": 1.0
-    },
-    {
-      "relation": "rationale_for",
-      "confidence": "EXTRACTED",
-      "source_file": "src/tests/test_scan_decisions.py",
-      "source_location": "L507",
-      "weight": 1.0,
-      "_origin": "ast",
-      "source": "src_tests_test_scan_decisions_rationale_507",
-      "target": "src_tests_test_scan_decisions_run_poll",
-      "confidence_score": 1.0
-    },
-    {
-      "relation": "calls",
-      "context": "call",
-      "confidence": "EXTRACTED",
-      "source_file": "src/tests/test_scan_decisions.py",
-      "source_location": "L528",
-      "weight": 1.0,
-      "_origin": "ast",
-      "source": "src_tests_test_scan_decisions_testrunverdictseam_test_confirmed_fill_stays_traded_live",
-      "target": "src_tests_test_scan_decisions_run_poll",
-      "confidence_score": 1.0
-    },
-    {
-      "relation": "calls",
-      "context": "call",
-      "confidence": "EXTRACTED",
-      "source_file": "src/tests/test_scan_decisions.py",
-      "source_location": "L570",
-      "weight": 1.0,
-      "_origin": "ast",
-      "source": "src_tests_test_scan_decisions_testrunverdictseam_test_entry_guard_block_downgrades_to_entry_guard",
-      "target": "src_tests_test_scan_decisions_run_poll",
-      "confidence_score": 1.0
-    },
-    {
-      "relation": "calls",
-      "context": "call",
-      "confidence": "EXTRACTED",
-      "source_file": "src/tests/test_scan_decisions.py",
-      "source_location": "L540",
-      "weight": 1.0,
-      "_origin": "ast",
-      "source": "src_tests_test_scan_decisions_testrunverdictseam_test_execution_timeout_downgrades_to_timeout_today",
-      "target": "src_tests_test_scan_decisions_run_poll",
-      "confidence_score": 1.0
-    },
-    {
-      "relation": "calls",
-      "context": "call",
-      "confidence": "EXTRACTED",
-      "source_file": "src/tests/test_scan_decisions.py",
-      "source_location": "L600",
-      "weight": 1.0,
-      "_origin": "ast",
-      "source": "src_tests_test_scan_decisions_testrunverdictseam_test_paper_mode_leaves_placeholder_as_traded_live",
-      "target": "src_tests_test_scan_decisions_run_poll",
-      "confidence_score": 1.0
-    },
-    {
-      "relation": "calls",
-      "context": "call",
-      "confidence": "EXTRACTED",
-      "source_file": "src/tests/test_scan_decisions.py",
-      "source_location": "L586",
-      "weight": 1.0,
-      "_origin": "ast",
-      "source": "src_tests_test_scan_decisions_testrunverdictseam_test_placeholder_never_resolved_downgrades_to_entry_guard",
-      "target": "src_tests_test_scan_decisions_run_poll",
-      "confidence_score": 1.0
-    },
-    {
-      "relation": "calls",
-      "context": "call",
-      "confidence": "EXTRACTED",
-      "source_file": "src/tests/test_scan_decisions.py",
-      "source_location": "L620",
-      "weight": 1.0,
-      "_origin": "ast",
-      "source": "src_tests_test_scan_decisions_testscandecisionsrowcount_test_n_brackets_yields_n_rows_and_candidates_unaffected",
-      "target": "src_tests_test_scan_decisions_run_poll",
       "confidence_score": 1.0
     },
     {
@@ -241965,6 +241762,209 @@
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_tests_test_scan_decisions_testscandecisionsrowcount_test_second_poll_same_day_upserts_not_appends",
+      "target": "src_tests_test_scan_decisions_snap",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_scan_decisions.py",
+      "source_location": "L525",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "src_tests_test_scan_decisions_testrunverdictseam_test_confirmed_fill_stays_traded_live",
+      "target": "src_tests_test_scan_decisions_make_candidate",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_scan_decisions.py",
+      "source_location": "L554",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "src_tests_test_scan_decisions_testrunverdictseam_test_entry_guard_block_downgrades_to_entry_guard",
+      "target": "src_tests_test_scan_decisions_make_candidate",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_scan_decisions.py",
+      "source_location": "L538",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "src_tests_test_scan_decisions_testrunverdictseam_test_execution_timeout_downgrades_to_timeout_today",
+      "target": "src_tests_test_scan_decisions_make_candidate",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_scan_decisions.py",
+      "source_location": "L597",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "src_tests_test_scan_decisions_testrunverdictseam_test_paper_mode_leaves_placeholder_as_traded_live",
+      "target": "src_tests_test_scan_decisions_make_candidate",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_scan_decisions.py",
+      "source_location": "L584",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "src_tests_test_scan_decisions_testrunverdictseam_test_placeholder_never_resolved_downgrades_to_entry_guard",
+      "target": "src_tests_test_scan_decisions_make_candidate",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_scan_decisions.py",
+      "source_location": "L619",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "src_tests_test_scan_decisions_testscandecisionsrowcount_test_n_brackets_yields_n_rows_and_candidates_unaffected",
+      "target": "src_tests_test_scan_decisions_make_candidate",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_scan_decisions.py",
+      "source_location": "L515",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "src_tests_test_scan_decisions_run_poll",
+      "target": "src_tests_test_scan_decisions_make_risk",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_scan_decisions.py",
+      "source_location": "L511",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "src_tests_test_scan_decisions_run_poll",
+      "target": "src_tests_test_scan_decisions_make_trader",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_scan_decisions.py",
+      "source_location": "L513",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "src_tests_test_scan_decisions_run_poll",
+      "target": "src_tests_test_scan_decisions_poll_ctx",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_scan_decisions.py",
+      "source_location": "L508",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "src_tests_test_scan_decisions_rationale_508",
+      "target": "src_tests_test_scan_decisions_run_poll",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_scan_decisions.py",
+      "source_location": "L529",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "src_tests_test_scan_decisions_testrunverdictseam_test_confirmed_fill_stays_traded_live",
+      "target": "src_tests_test_scan_decisions_run_poll",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_scan_decisions.py",
+      "source_location": "L571",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "src_tests_test_scan_decisions_testrunverdictseam_test_entry_guard_block_downgrades_to_entry_guard",
+      "target": "src_tests_test_scan_decisions_run_poll",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_scan_decisions.py",
+      "source_location": "L541",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "src_tests_test_scan_decisions_testrunverdictseam_test_execution_timeout_downgrades_to_timeout_today",
+      "target": "src_tests_test_scan_decisions_run_poll",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_scan_decisions.py",
+      "source_location": "L601",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "src_tests_test_scan_decisions_testrunverdictseam_test_paper_mode_leaves_placeholder_as_traded_live",
+      "target": "src_tests_test_scan_decisions_run_poll",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_scan_decisions.py",
+      "source_location": "L587",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "src_tests_test_scan_decisions_testrunverdictseam_test_placeholder_never_resolved_downgrades_to_entry_guard",
+      "target": "src_tests_test_scan_decisions_run_poll",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_scan_decisions.py",
+      "source_location": "L621",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "src_tests_test_scan_decisions_testscandecisionsrowcount_test_n_brackets_yields_n_rows_and_candidates_unaffected",
+      "target": "src_tests_test_scan_decisions_run_poll",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "src/tests/test_scan_decisions.py",
+      "source_location": "L639",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "src_tests_test_scan_decisions_testscandecisionsrowcount_test_second_poll_same_day_upserts_not_appends",
       "target": "src_tests_test_scan_decisions_run_poll",
       "confidence_score": 1.0
     },
@@ -241972,10 +241972,10 @@
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_scan_decisions.py",
-      "source_location": "L519",
+      "source_location": "L520",
       "weight": 1.0,
       "_origin": "ast",
-      "source": "src_tests_test_scan_decisions_rationale_519",
+      "source": "src_tests_test_scan_decisions_rationale_520",
       "target": "src_tests_test_scan_decisions_testrunverdictseam",
       "confidence_score": 1.0
     },
@@ -241983,7 +241983,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_scan_decisions.py",
-      "source_location": "L523",
+      "source_location": "L524",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_tests_test_scan_decisions_testrunverdictseam",
@@ -241994,7 +241994,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_scan_decisions.py",
-      "source_location": "L547",
+      "source_location": "L548",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_tests_test_scan_decisions_testrunverdictseam",
@@ -242005,7 +242005,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_scan_decisions.py",
-      "source_location": "L536",
+      "source_location": "L537",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_tests_test_scan_decisions_testrunverdictseam",
@@ -242016,7 +242016,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_scan_decisions.py",
-      "source_location": "L593",
+      "source_location": "L594",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_tests_test_scan_decisions_testrunverdictseam",
@@ -242027,7 +242027,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_scan_decisions.py",
-      "source_location": "L578",
+      "source_location": "L579",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_tests_test_scan_decisions_testrunverdictseam",
@@ -242038,10 +242038,10 @@
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_scan_decisions.py",
-      "source_location": "L548",
+      "source_location": "L549",
       "weight": 1.0,
       "_origin": "ast",
-      "source": "src_tests_test_scan_decisions_rationale_548",
+      "source": "src_tests_test_scan_decisions_rationale_549",
       "target": "src_tests_test_scan_decisions_testrunverdictseam_test_entry_guard_block_downgrades_to_entry_guard",
       "confidence_score": 1.0
     },
@@ -242049,10 +242049,10 @@
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_scan_decisions.py",
-      "source_location": "L579",
+      "source_location": "L580",
       "weight": 1.0,
       "_origin": "ast",
-      "source": "src_tests_test_scan_decisions_rationale_579",
+      "source": "src_tests_test_scan_decisions_rationale_580",
       "target": "src_tests_test_scan_decisions_testrunverdictseam_test_placeholder_never_resolved_downgrades_to_entry_guard",
       "confidence_score": 1.0
     },
@@ -242060,10 +242060,10 @@
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_scan_decisions.py",
-      "source_location": "L594",
+      "source_location": "L595",
       "weight": 1.0,
       "_origin": "ast",
-      "source": "src_tests_test_scan_decisions_rationale_594",
+      "source": "src_tests_test_scan_decisions_rationale_595",
       "target": "src_tests_test_scan_decisions_testrunverdictseam_test_paper_mode_leaves_placeholder_as_traded_live",
       "confidence_score": 1.0
     },
@@ -242071,7 +242071,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_scan_decisions.py",
-      "source_location": "L609",
+      "source_location": "L610",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_tests_test_scan_decisions_testscandecisionsrowcount",
@@ -242082,7 +242082,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_scan_decisions.py",
-      "source_location": "L633",
+      "source_location": "L634",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_tests_test_scan_decisions_testscandecisionsrowcount",
@@ -242093,10 +242093,10 @@
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_scan_decisions.py",
-      "source_location": "L610",
+      "source_location": "L611",
       "weight": 1.0,
       "_origin": "ast",
-      "source": "src_tests_test_scan_decisions_rationale_610",
+      "source": "src_tests_test_scan_decisions_rationale_611",
       "target": "src_tests_test_scan_decisions_testscandecisionsrowcount_test_n_brackets_yields_n_rows_and_candidates_unaffected",
       "confidence_score": 1.0
     },
@@ -242104,10 +242104,10 @@
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/tests/test_scan_decisions.py",
-      "source_location": "L634",
+      "source_location": "L635",
       "weight": 1.0,
       "_origin": "ast",
-      "source": "src_tests_test_scan_decisions_rationale_634",
+      "source": "src_tests_test_scan_decisions_rationale_635",
       "target": "src_tests_test_scan_decisions_testscandecisionsrowcount_test_second_poll_same_day_upserts_not_appends",
       "confidence_score": 1.0
     },
@@ -266926,5 +266926,5 @@
     }
   ],
   "hyperedges": [],
-  "built_at_commit": "2f962fbd1b7be2e8e1827aeca034177fa2f6c70c"
+  "built_at_commit": "fa7edf775950c0a9413c8b0ee0d5bd9007053837"
 }
