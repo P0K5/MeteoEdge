@@ -1,0 +1,10 @@
+[Unit]
+Description=Run MeteoEdge daily health report at 14:00 UTC (after all daily pipelines)
+
+[Timer]
+OnCalendar=*-*-* 14:00:00 UTC
+AccuracySec=1m
+Persistent=true
+
+[Install]
+WantedBy=timers.target
