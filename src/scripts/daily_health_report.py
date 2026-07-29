@@ -18,7 +18,9 @@ Configuration (all from environment / ``.env``):
     SMTP_PORT        — SMTP port (default: 587)
     SMTP_USER        — SMTP sender address / login
     SMTP_PASS        — SMTP password or app password
-    ALERT_EMAIL_TO   — recipient address (required)
+    ALERT_EMAIL_TO   — recipient address (required).
+                        If == SMTP_USER (self-send), Gmail drops delivery.
+                        Use a +alias: your_email+meteoedge@gmail.com
 
 Design constraints:
 - Runs in ~seconds; all queries are lightweight aggregates.
