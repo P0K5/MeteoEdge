@@ -337,6 +337,40 @@ Two things it did establish, which are not power-dependent:
 - **Ground truth held up at scale**: 80.6% Gamma / 19.4% METAR, **0** impossible-outcome
   collisions across 139 station-days.
 
+#### Before the gate — settle the certainty exclusions
+
+The gate's exclusion funnel drops **64.4%** of input rows across two exclusions, and whether
+the first is still justified moves the verdict a long way in either direction. It must be
+decided **blind**, before the powered run:
+
+```bash
+python -m src.scripts.certainty_exclusion_check --population all-bracket
+```
+
+Writes `backtest_results/certainty_exclusion_check_<date>.md`. **It computes no BSS** — the
+Brier machinery is not even imported, and a test asserts that — so running it before the gate
+cannot spoil the pre-registration.
+
+It reports both certainty classes, never one alone. `p_yes_raw == 0.0` removes rows the
+**model** is certain about; the 1¢/99¢ rail removes rows the **market** is certain about.
+Dropping one while keeping the other would restore one side's easy wins and not the other's,
+which reads as skill and is not. **Any change applies to both classes or to neither.**
+
+The rule it applies, pre-registered in the module:
+
+| Condition | Verdict |
+|---|---|
+| 95% interval straddles the 2% bar | **Underpowered — not a decision.** Keep the exclusion, re-run when the class is larger |
+| Model-certain rows resolve YES at **> 2%** | **The certainty is false.** Keep the exclusion and file it — something still emits false certainty post-#820 |
+| **≤ 2%**, but the zeros are still bit-exact | **Honest, still artifact-shaped.** Keep it; provenance is a code question |
+| **≤ 2%** and no bit-exact zeros remain | **A genuine opinion.** Drop it — together with the market-certain class |
+
+Two halves have to agree before an exclusion is dropped: *calibration* (are the certain rows
+right?) and *provenance* (is an exact 0.0 computed, or asserted by the shortcut?). The tool
+answers the first and reports a signal on the second — bit-exact zeros vs. tiny-but-computed
+probabilities — while stating plainly that no outcome rate can close it. **An artifact that
+happens to be right is still an artifact.**
+
 #### Runbook — running Pass 2 (the gate) on the bot host
 
 ```bash
@@ -465,7 +499,7 @@ purely data-bound: the only thing between here and M3 is station-days accruing.*
 | #870 | Ground-truth quality — Gamma-vs-METAR rate, zero-YES days, ladder completeness | **now, no waiting** | Shipped — run it |
 | #822 | Market-vs-model skill test | M1 · M3 | Pass 1 ran (**BSS −0.28**, direction-contaminated — re-run pending, see M1); Pass 2 built and run 2026-07-29 (**underpowered: 139/300 station-days**); **Pass 2 = the decision** |
 | — | **Re-run Pass 1** with the direction-aware resolver (#875) — same archive, no new data | M1 | ✅ **Done (2026-07-29)** — BSS −0.2752, clean. Direction dispatch verified working (#867), test coverage added (#902 → #903) |
-| — | **Decide the `p_yes_raw == 0.0` exclusion** — post-#820 it may no longer be an artifact; it removes 38.1% of rows. Must be settled **before** the powered Pass-2 run, i.e. before ~2026-08-05 | M3 | **Open — pre-registration deadline** |
+| **#909** | **Decide the certainty exclusions** — post-#820 the `p_yes_raw == 0.0` premise may no longer hold; the two exclusions remove 64.4% of rows between them. Must be settled **before** the powered Pass-2 run, i.e. before ~2026-08-05 | M3 | **Tool built** (`certainty_exclusion_check`, rule pre-registered). Still to do: run it, settle provenance in the code, record the verdict here |
 | #799 | σ unidentifiable — switch on ensemble spread, retrain | M2 | ✅ Merged |
 | #798 | Partial pooling instead of hard 60-sample cutover | M2 | ✅ Merged |
 | #823 | Recompute promotion bars excluding artifact rows | M2 | ✅ Merged |
