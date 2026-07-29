@@ -337,6 +337,74 @@ tail -f logs/resolve_outcomes.log
 python -c "import json; print(len(json.load(open('logs/gamma_resolution_cache.json'))))"
 ```
 
+#### meteoedge-health-report.service / meteoedge-health-report.timer
+
+One-shot service, run daily at **14:00 UTC** (after settlement at 12:00,
+resolve-outcomes at 13:00, and prob-cap-report at 12:30) by
+`meteoedge-health-report.timer`. Runs `src/scripts/daily_health_report.py`,
+which queries the database for bot health, trading activity, data pipeline
+status, guardrail events, M3 station-day accrual, EMOS shadow progress, and
+open blocker status, then emails a plain-text summary via the existing SMTP
+infrastructure (`src/monitoring/alerts.py`).
+
+```ini
+[Unit]
+Description=MeteoEdge daily health report email
+After=network-online.target meteoedge-settle.service meteoedge-resolve-outcomes.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=p0k5
+WorkingDirectory=/home/p0k5/MeteoEdge
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=/home/p0k5/MeteoEdge/.env
+ExecStart=/home/p0k5/MeteoEdge/.venv/bin/python -u -m src.scripts.daily_health_report
+StandardOutput=append:/home/p0k5/MeteoEdge/logs/health_report.log
+StandardError=append:/home/p0k5/MeteoEdge/logs/health_report.log
+```
+
+```ini
+[Unit]
+Description=Run MeteoEdge daily health report at 14:00 UTC (after all daily pipelines)
+
+[Timer]
+OnCalendar=*-*-* 14:00:00 UTC
+AccuracySec=1m
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+```
+
+**What it does:**
+- Read-only. Queries `data/meteoedge.db` for health metrics across `trades`,
+  `scan_decisions`, `observations`, `model_forecast_log`, `settlements`,
+  `guardrail_events`, `open_positions`, `emos_crps_log`, and
+  `emos_calibration` tables. Never writes.
+- Sends a plain-text email to `andre.freixo.santos@gmail.com` via Gmail SMTP
+  (configured in `.env` as `SMTP_USER` / `SMTP_PASS`). If SMTP is not
+  configured, logs a warning and exits 0.
+- Emails a structured report with sections for Bot Pulse, Trading, Data
+  Pipeline, Guardrails, M3 Progress, EMOS Status, Open Blockers, and a
+  one-line Verdict.
+
+**Operational commands:**
+```bash
+# Check next scheduled run
+sudo systemctl list-timers meteoedge-health-report.timer
+
+# Manually trigger a run (sends a real email)
+sudo systemctl start meteoedge-health-report.service
+
+# Dry-run locally (prints to stdout, no email)
+python -m src.scripts.daily_health_report --dry-run
+
+# View logs
+sudo journalctl -u meteoedge-health-report.service -f
+tail -f logs/health_report.log
+```
+
 #### meteoedge-purge-retention.service / meteoedge-purge-retention.timer
 
 One-shot service, run daily at **01:00 UTC** by

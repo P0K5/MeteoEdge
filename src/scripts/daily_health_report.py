@@ -76,8 +76,8 @@ def _iso(dt: "datetime | None") -> str:
 def _fmt_pnl(eur: "float | None") -> str:
     if eur is None:
         return "N/A"
-    sign = "+" if eur >= 0 else ""
-    return f"{sign}EUR{eur:,.2f}"
+    sign = "+" if eur >= 0 else "-"
+    return f"{sign}EUR{abs(eur):,.2f}"
 
 
 def _fmt_pct(value: "float | None", digits: int = 1) -> str:
@@ -468,24 +468,26 @@ def _build_blockers(db, today: datetime) -> list[str]:
 def _build_verdict(body_lines: list[str]) -> list[str]:
     """One-line health verdict based on sections above."""
     all_text = "\n".join(body_lines)
-    issues = []
-    if "[CRIT]" in all_text:
-        issues.append("bot stale")
-    if "p_yes=0.0 artifact:" in all_text and "[WARN]" in all_text:
-        issues.append("artifact rate high")
-    if "GEFS gap confirmed" in all_text:
-        issues.append("#897 KORD gap")
-    if "NO GEFS DATA" in all_text:
-        issues.append("#885 no GEFS data")
-    if "unavailable" in all_text:
-        issues.append("partial data only")
+    crit_issues = []
+    warn_issues = []
 
-    if not issues:
-        verdict = "[OK] Healthy -- all systems nominal, M3 accruing on track"
-    elif len(issues) <= 2:
-        verdict = f"[WARN] Stable -- watch: {', '.join(issues)}"
+    if "[CRIT]" in all_text:
+        crit_issues.append("bot stale")
+    if "p_yes=0.0 artifact:" in all_text and "[WARN]" in all_text:
+        warn_issues.append("artifact rate high")
+    if "[WARN] gap confirmed" in all_text:
+        warn_issues.append("#897 KORD gap")
+    if "NO GEFS DATA" in all_text:
+        warn_issues.append("#885 no GEFS data")
+    if "unavailable" in all_text:
+        warn_issues.append("partial data only")
+
+    if crit_issues:
+        verdict = f"[CRIT] Degrading -- {', '.join(crit_issues + warn_issues)}"
+    elif warn_issues:
+        verdict = f"[WARN] Stable -- watch: {', '.join(warn_issues)}"
     else:
-        verdict = f"[CRIT] Degrading -- {', '.join(issues)}"
+        verdict = "[OK] Healthy -- all systems nominal, M3 accruing on track"
 
     return ["Verdict", "-" * 6, f"  {verdict}", ""]
 
