@@ -412,7 +412,7 @@ class TestScanDecisionsUpsert:
 
 def _snap(ticker: str, station: str = "KATL", gate_verdict: str = "traded_live",
           side: "str | None" = None, bracket_low=98.0, bracket_high=99.0,
-          date: "str | None" = None) -> dict:
+          date: "str | None" = None, direction: str = "high") -> dict:
     ts = datetime.now(timezone.utc).isoformat()
     return {
         "ts": ts, "station": station, "ticker": ticker,
@@ -424,6 +424,7 @@ def _snap(ticker: str, station: str = "KATL", gate_verdict: str = "traded_live",
         "date": date or datetime.now(timezone.utc).date().isoformat(), "poll_ts": ts,
         "side": side, "gate_verdict": gate_verdict, "gate_actual": None,
         "gate_threshold": None, "gate_unit": None, "gate_detail": None,
+        "direction": direction,
         "ensemble_mean": None, "ensemble_members": None,
         "ensemble_range_low": None, "ensemble_range_high": None,
     }
