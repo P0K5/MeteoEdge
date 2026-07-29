@@ -884,6 +884,40 @@ class TestDecisionGateSection:
         assert "PASS 1 -- NOT THE DECISION GATE" in report
 
 
+class TestMethodologyNoteMatchesTheResolver:
+    """The methodology note is what a reader trusts instead of reading the code.
+
+    It previously described only the HIGH path and an inclusive interval, both
+    of which the resolver stopped doing (#867 direction dispatch, #861 `[lo,
+    hi)`). That prose was mistaken for a defect report and cost a wrongly-filed
+    issue (#902), so the note's two load-bearing claims are pinned here.
+    """
+
+    def _report(self):
+        sample = {"station": "KORD", "ticker": "0x1", "end_date": "2026-07-25",
+                  "ts": "2026-07-25T18:00:00+00:00", "p_yes_raw": 0.2,
+                  "yes_ask": 20.0, "no_ask": 82.0, "yes_won": False,
+                  "bracket_low": 60.0, "bracket_high": 65.0,
+                  "settlement_date": "2026-07-25", "is_next_day_flag": 0}
+        return build_report(
+            [sample], {"input_rows": 1}, 0, "2026-07-29",
+            outcome_meta={"source": OUTCOME_SOURCE_RESOLVER,
+                          "counts": {"n_station_days": 300}},
+            population=POPULATION_ALL_BRACKET,
+        )
+
+    def test_it_documents_the_low_direction_path(self):
+        report = self._report()
+        assert "dispatched on market direction" in report
+        assert "observed daily LOW" in report
+
+    def test_it_states_the_upper_bound_is_exclusive(self):
+        """`resolve_outcome` is `[lo, hi)`. The note used to print `[lo, hi]`."""
+        report = self._report()
+        assert "[bracket_low, bracket_high)" in report
+        assert "[bracket_low, bracket_high]" not in report
+
+
 class TestDirectionGapNote:
     """Unknown-direction rows are scored against the daily HIGH, so the report
     has to say whether a LOW market could be hiding among them.
