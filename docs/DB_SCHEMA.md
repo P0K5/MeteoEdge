@@ -486,6 +486,7 @@ CREATE TABLE IF NOT EXISTS emos_crps_log (
 | `ensemble_mean` | REAL | °F | Yes | Weighted ensemble forecast mean for `(station, date)`, sourced read-only from `get_ensemble_distribution()` (same `model_forecast_log`-backed function the pre-#756 Edge tab used) — demoted into the "Forecast inputs" collapsed detail, not retired |
 | `ensemble_members` | INTEGER | count | Yes | Number of distinct forecast models contributing to `ensemble_mean` |
 | `ensemble_range_low` / `ensemble_range_high` | REAL | °F | Yes | Min/max forecast value across contributing models (labelled "5th–95th pct" in the UI, matching the pre-#756 KPI strip's existing min/max-as-range convention) |
+| `direction` | TEXT NOT NULL DEFAULT `'high'` | `'high'` / `'low'` | No | Issue #900: daily-high vs daily-low market, mirroring `candidates`/`trades`/`settlements`' own `direction` column — stamped by `scan_markets` on every snapshot (`'high'` for the high-side scan, `'low'` for the shadow-only low-side scan, issue #733). Every pre-#900 row defaults to `'high'` — `scan_decisions` only started existing after the high-side scanner did, so the default is historically accurate, not just a placeholder |
 
 **DDL:**
 ```sql
@@ -527,6 +528,7 @@ CREATE TABLE IF NOT EXISTS scan_decisions (
     ensemble_members      INTEGER,
     ensemble_range_low    REAL,
     ensemble_range_high   REAL,
+    direction             TEXT NOT NULL DEFAULT 'high',
     PRIMARY KEY (station, ticker, date)
 );
 CREATE INDEX IF NOT EXISTS idx_scan_decisions_station_date ON scan_decisions(station, date);
@@ -539,6 +541,10 @@ column on this table. The `ALTER TABLE` omits the `CHECK` constraint (SQLite
 allows it, but no other migration in this codebase adds one); validity is
 instead enforced in Python by `Database.upsert_scan_decision`, same as
 `gate_verdict`'s own `ValueError`-on-invalid-value guard.
+
+Existing (pre-#900) installations pick up `direction` the same way, via
+`ALTER TABLE ... ADD COLUMN direction TEXT NOT NULL DEFAULT 'high'` in
+`Database._migrate`.
 
 **Upsert-per-poll semantics:**
 - `Database.upsert_scan_decision(...)` is an `INSERT ... ON CONFLICT(station, ticker, date) DO UPDATE SET ...` — a fresh poll for the same key **replaces** the prior row's every column in place. The table always reflects the single most recent scan for a bracket, never an accumulating history.
