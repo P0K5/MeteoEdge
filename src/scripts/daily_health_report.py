@@ -18,7 +18,7 @@ Configuration (all from environment / ``.env``):
     SMTP_PORT        — SMTP port (default: 587)
     SMTP_USER        — SMTP sender address / login
     SMTP_PASS        — SMTP password or app password
-    ALERT_EMAIL_TO   — recipient address (default: andre.freixo.santos@gmail.com)
+    ALERT_EMAIL_TO   — recipient address (required)
 
 Design constraints:
 - Runs in ~seconds; all queries are lightweight aggregates.
@@ -52,7 +52,7 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # SMTP / email constants (mirrors src/monitoring/alerts.py)
 # ---------------------------------------------------------------------------
-ALERT_EMAIL_TO = os.getenv("ALERT_EMAIL_TO", "andre.freixo.santos@gmail.com")
+ALERT_EMAIL_TO = os.getenv("ALERT_EMAIL_TO", "")
 SMTP_HOST = os.getenv("SMTP_HOST", "smtp.gmail.com")
 SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
 SMTP_USER = os.getenv("SMTP_USER", "")
@@ -99,7 +99,7 @@ def _fmt_pct(value: "float | None", digits: int = 1) -> str:
 
 def _send_email(subject: str, body: str) -> bool:
     """Deliver an email via SMTP.  Returns True on success."""
-    if not SMTP_USER or not SMTP_PASS:
+    if not SMTP_USER or not SMTP_PASS or not ALERT_EMAIL_TO:
         log.warning("SMTP not configured -- email not sent")
         return False
     msg = EmailMessage()

@@ -268,19 +268,29 @@ class TestBuildReport:
 class TestSendEmail:
     def test_returns_false_when_smtp_not_configured(self):
         with patch("src.scripts.daily_health_report.SMTP_USER", ""), \
-             patch("src.scripts.daily_health_report.SMTP_PASS", ""):
+             patch("src.scripts.daily_health_report.SMTP_PASS", ""), \
+             patch("src.scripts.daily_health_report.ALERT_EMAIL_TO", ""):
             result = _send_email("Subject", "Body")
         assert result is False
 
     def test_returns_false_when_smtp_user_set_but_pass_empty(self):
         with patch("src.scripts.daily_health_report.SMTP_USER", "user@x.com"), \
-             patch("src.scripts.daily_health_report.SMTP_PASS", ""):
+             patch("src.scripts.daily_health_report.SMTP_PASS", ""), \
+             patch("src.scripts.daily_health_report.ALERT_EMAIL_TO", "to@x.com"):
+            result = _send_email("Subject", "Body")
+        assert result is False
+
+    def test_returns_false_when_alert_email_to_empty(self):
+        with patch("src.scripts.daily_health_report.SMTP_USER", "user@x.com"), \
+             patch("src.scripts.daily_health_report.SMTP_PASS", "pass"), \
+             patch("src.scripts.daily_health_report.ALERT_EMAIL_TO", ""):
             result = _send_email("Subject", "Body")
         assert result is False
 
     def test_attempts_smtp_when_configured(self):
         with patch("src.scripts.daily_health_report.SMTP_USER", "user@x.com"), \
              patch("src.scripts.daily_health_report.SMTP_PASS", "pass"), \
+             patch("src.scripts.daily_health_report.ALERT_EMAIL_TO", "to@x.com"), \
              patch("smtplib.SMTP") as mock_smtp:
             mock_conn = MagicMock()
             mock_smtp.return_value.__enter__.return_value = mock_conn
@@ -291,6 +301,7 @@ class TestSendEmail:
     def test_returns_false_on_smtp_error(self):
         with patch("src.scripts.daily_health_report.SMTP_USER", "user@x.com"), \
              patch("src.scripts.daily_health_report.SMTP_PASS", "pass"), \
+             patch("src.scripts.daily_health_report.ALERT_EMAIL_TO", "to@x.com"), \
              patch("smtplib.SMTP") as mock_smtp:
             mock_smtp.side_effect = ConnectionRefusedError("refused")
             result = _send_email("Subject", "Body")
