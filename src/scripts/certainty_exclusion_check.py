@@ -69,6 +69,7 @@ from src.scripts.bss_market_vs_model_report import (
     POPULATIONS,
     RAIL_HIGH_CENTS,
     RAIL_LOW_CENTS,
+    apply_exclusions,
     dedupe_one_per_bracket_day,
     load_bracket_eval_rows,
     load_candidate_rows,
@@ -270,6 +271,105 @@ def verdict(model_stats: dict, provenance: dict) -> "tuple[str, str]":
             f"well-calibrated opinions and the #820 premise no longer holds.")
 
 
+def bracket_day_key(row: dict) -> tuple:
+    """(station, ticker, settlement day) -- one market's one settlement."""
+    return (row.get("station"), row.get("ticker"),
+            (row.get("end_date") or row.get("settlement_date") or "")[:10])
+
+
+def non_final_poll_population(raw_rows: "list[dict]") -> dict:
+    """How many bracket-days reach the gate only through a non-final poll?
+
+    ``bss_market_vs_model_report`` excludes rows and *then* de-duplicates
+    (``:1190-1191``), so when a bracket-day's final poll is excluded the
+    bracket-day is not dropped -- it re-enters represented by the last
+    *surviving* poll instead. The report's methodology note nonetheless states
+    that de-duplication "keeps the final (lowest ``minutes_to_settlement``)
+    poll", which is true only for bracket-days whose final poll happened to
+    survive.
+
+    Nobody chose this: it falls out of statement order. It matters because the
+    M3 power bar is counted in station-days, and a station-day admitted this
+    way is not the same statistical object as one whose closest-to-settlement
+    poll was genuinely scoreable.
+
+    Compares the two orderings directly rather than inferring the gap across
+    two run dates:
+
+    * ``gate`` -- exclude, then de-duplicate (what the gate does today)
+    * ``final_poll`` -- de-duplicate, then exclude (one row per bracket-day,
+      always its last word)
+
+    Returns counts plus the bracket-days present under ``gate`` but not under
+    ``final_poll`` -- exactly the rows admitted on a non-final poll.
+    """
+    gate_kept, _ = apply_exclusions(raw_rows)
+    gate_days = {bracket_day_key(r) for r in dedupe_one_per_bracket_day(gate_kept)}
+
+    final_kept, _ = apply_exclusions(dedupe_one_per_bracket_day(raw_rows))
+    final_days = {bracket_day_key(r) for r in final_kept}
+
+    non_final = gate_days - final_days
+    return {
+        "gate_bracket_days": len(gate_days),
+        "final_poll_bracket_days": len(final_days),
+        "non_final_bracket_days": len(non_final),
+        "gate_station_days": len({(k[0], k[2]) for k in gate_days}),
+        "final_poll_station_days": len({(k[0], k[2]) for k in final_days}),
+        "non_final_station_days": len(
+            {(k[0], k[2]) for k in gate_days} - {(k[0], k[2]) for k in final_days}),
+        "share_non_final": (len(non_final) / len(gate_days)) if gate_days else None,
+    }
+
+
+def _ordering_section(stats: dict) -> "list[str]":
+    """Render the poll-ordering diagnostic."""
+    share = stats.get("share_non_final")
+    lines = [
+        "## Poll ordering -- how many bracket-days enter on a non-final poll?\n",
+        "The gate excludes rows and *then* de-duplicates "
+        "(`bss_market_vs_model_report.py:1190-1191`). A bracket-day whose final poll is "
+        "excluded is therefore not dropped -- it re-enters represented by the last "
+        "*surviving* poll. Both orderings are run here on the same data so the size of "
+        "that population is measured, not inferred.\n",
+        "| Ordering | bracket-days | station-days |",
+        "|---|---|---|",
+        f"| `gate` -- exclude, then de-duplicate (today) | {stats['gate_bracket_days']} | "
+        f"{stats['gate_station_days']} |",
+        f"| `final_poll` -- de-duplicate, then exclude | {stats['final_poll_bracket_days']} | "
+        f"{stats['final_poll_station_days']} |",
+        f"| **Admitted on a non-final poll** | **{stats['non_final_bracket_days']}** | "
+        f"**{stats['non_final_station_days']}** |",
+        "",
+    ]
+    if share is not None and share > 0:
+        lines.append(
+            f"**{share:.1%} of the gate's bracket-days are represented by a poll that is "
+            f"not the market's last word.** Two consequences worth settling before the "
+            f"powered run:\n"
+        )
+        lines.append(
+            "1. The report's methodology note says de-duplication \"keeps the final "
+            "(lowest `minutes_to_settlement`) poll\". It keeps the final *surviving* "
+            "poll -- true only where the final poll was not excluded.\n"
+            "2. The **300-station-day power bar** is partly met by these rows. Under the "
+            "`final_poll` ordering the gate is at the station-day count in the middle row "
+            "above, which is the number to read against the bar if that ordering is "
+            "chosen.\n"
+        )
+        lines.append(
+            "> Which ordering is correct is a **population-definition question that was "
+            "never actually decided** -- it fell out of statement order. Settle it "
+            "explicitly, and settle it before the number exists.\n"
+        )
+    else:
+        lines.append(
+            "No bracket-day enters on a non-final poll: the two orderings agree on this "
+            "population, and the report's \"keeps the final poll\" claim holds.\n"
+        )
+    return lines
+
+
 def outcome_key(row: dict) -> tuple:
     """Join key between a classified row and its resolved copy.
 
@@ -319,7 +419,7 @@ def _class_table(name: str, stats: dict) -> "list[str]":
 
 
 def build_report(classes: dict, counts: dict, run_date: str, population: str,
-                 resolved_counts: dict) -> str:
+                 resolved_counts: dict, ordering: "dict | None" = None) -> str:
     """Render the check. Deliberately contains no BSS and no skill number."""
     model_s = class_stats(classes[CLASS_MODEL_CERTAIN] + classes[CLASS_BOTH_CERTAIN])
     market_s = class_stats(classes[CLASS_MARKET_CERTAIN] + classes[CLASS_BOTH_CERTAIN])
@@ -404,6 +504,9 @@ def build_report(classes: dict, counts: dict, run_date: str, population: str,
         "answer it -- an artifact that happens to be right is still an artifact.\n"
     )
 
+    if ordering:
+        lines.extend(_ordering_section(ordering))
+
     label, reasoning = verdict(model_s, provenance)
     lines.append("## Verdict\n")
     lines.append(f"**{label}**\n")
@@ -453,6 +556,7 @@ def run_check(db_path: Path, out_dir: Path, run_date: "str | None" = None, *,
     # survivors, so a bracket whose last poll reads 0.0 can still enter the gate
     # through an earlier, non-zero poll -- counting polls here instead of
     # bracket-days would blur that.
+    ordering = non_final_poll_population(rows)
     deduped = dedupe_one_per_bracket_day(rows)
     classes, counts = classify_certainty(deduped)
 
@@ -466,7 +570,7 @@ def run_check(db_path: Path, out_dir: Path, run_date: "str | None" = None, *,
                   "refusing to report rates off an empty join", len(resolved))
         return 1
 
-    report = build_report(classes, counts, run_date, population, rcounts)
+    report = build_report(classes, counts, run_date, population, rcounts, ordering)
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"certainty_exclusion_check_{run_date}.md"
     out_path.write_text(report, encoding="utf-8")

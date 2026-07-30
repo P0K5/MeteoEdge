@@ -20,6 +20,8 @@ from pathlib import Path
 import pytest
 
 from src.scripts.certainty_exclusion_check import (
+    _ordering_section,
+    non_final_poll_population,
     CLASS_BOTH_CERTAIN,
     CLASS_CONTESTED,
     CLASS_MARKET_CERTAIN,
@@ -259,6 +261,57 @@ class TestReportContainsNoSkillNumber:
         report = self._report()
         assert "What this check cannot tell you" in report
         assert "not conclusive from data" in report
+
+
+class TestNonFinalPollPopulation:
+    """The gate excludes then de-duplicates, so a bracket-day whose final poll
+    is excluded re-enters on an earlier surviving poll. Measured, not inferred
+    across two run dates."""
+
+    def _polls(self, finals_excluded: bool):
+        """Two polls on one bracket-day; the later one optionally excluded."""
+        early = _row(p_yes_raw=0.3, ticker="0x1", minutes_to_settlement=600.0)
+        late = _row(p_yes_raw=0.0 if finals_excluded else 0.25,
+                    ticker="0x1", minutes_to_settlement=10.0)
+        return [early, late]
+
+    def test_counts_a_bracket_day_admitted_on_an_earlier_poll(self):
+        stats = non_final_poll_population(self._polls(finals_excluded=True))
+        assert stats["gate_bracket_days"] == 1        # survives via the early poll
+        assert stats["final_poll_bracket_days"] == 0  # its last word is excluded
+        assert stats["non_final_bracket_days"] == 1
+        assert stats["share_non_final"] == 1.0
+
+    def test_orderings_agree_when_the_final_poll_survives(self):
+        stats = non_final_poll_population(self._polls(finals_excluded=False))
+        assert stats["gate_bracket_days"] == 1
+        assert stats["final_poll_bracket_days"] == 1
+        assert stats["non_final_bracket_days"] == 0
+        assert stats["share_non_final"] == 0.0
+
+    def test_station_days_are_reported_alongside_bracket_days(self):
+        """The power bar is read in station-days, so the gap must be visible in
+        that unit too."""
+        stats = non_final_poll_population(self._polls(finals_excluded=True))
+        assert stats["gate_station_days"] == 1
+        assert stats["final_poll_station_days"] == 0
+        assert stats["non_final_station_days"] == 1
+
+    def test_empty_input_does_not_divide_by_zero(self):
+        stats = non_final_poll_population([])
+        assert stats["share_non_final"] is None
+
+    def test_section_names_the_consequence_for_the_power_bar(self):
+        stats = non_final_poll_population(self._polls(finals_excluded=True))
+        text = "\n".join(_ordering_section(stats))
+        assert "300-station-day power bar" in text
+        assert "never actually decided" in text
+
+    def test_section_says_so_when_the_orderings_agree(self):
+        stats = non_final_poll_population(self._polls(finals_excluded=False))
+        text = "\n".join(_ordering_section(stats))
+        assert "No bracket-day enters on a non-final poll" in text
+        assert "power bar" not in text
 
 
 class TestEndToEnd:
