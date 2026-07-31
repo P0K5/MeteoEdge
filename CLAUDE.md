@@ -37,7 +37,7 @@ Shared instruction fragments (single source of truth — never re-inline them):
 
 Procedural workflows live in `.claude/skills/` and load only when invoked:
 `board-status`, `dev-workflow`, `pr-review`, `design-spec`, `create-issues`,
-`reflect`.
+`health-triage`, `reflect`.
 
 ## Operating modes
 
