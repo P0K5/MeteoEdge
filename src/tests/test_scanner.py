@@ -6,7 +6,7 @@ import pytest
 from src.strategy.scanner import (
     parse_bracket_from_market, scan_markets, is_highest_temp_market, no_entry_margin_gap,
 )
-from src.model.envelope import Bracket, WeatherState
+from src.model.envelope import Bracket, WeatherState, p_normal_between
 
 # Frozen reference datetime (mid-day UTC, well clear of midnight) so fixture
 # times are deterministic regardless of when CI runs (issue #844).  Tests that
@@ -31,20 +31,20 @@ class TestParseBracketFromMarket:
     """Tests for all 4 bracket label formats that Polymarket uses."""
 
     def test_lte_or_below(self):
-        """'55°F or below' → low=-50, high=55."""
+        """'55°F or below' → [−50, 56): 55 itself must be inside the integral (#917)."""
         b = parse_bracket_from_market(_market("55°F or below"))
         assert b is not None
         assert b.low_f == -50.0
-        assert b.high_f == 55.0
+        assert b.high_f == 56.0
 
     def test_lte_or_less(self):
-        """'60°F or less' → low=-50, high=60."""
+        """'60°F or less' → [−50, 61) (#917)."""
         b = parse_bracket_from_market(_market("60°F or less"))
         assert b is not None
-        assert b.high_f == 60.0
+        assert b.high_f == 61.0
 
     def test_gte_or_above(self):
-        """'92°F or above' → low=92, high=200."""
+        """'92°F or above' → low=92, high=200 (lower bound already inclusive, unaffected by #917)."""
         b = parse_bracket_from_market(_market("92°F or above"))
         assert b is not None
         assert b.low_f == 92.0
@@ -57,25 +57,50 @@ class TestParseBracketFromMarket:
         assert b.low_f == 85.0
 
     def test_between_and(self):
-        """'between 56 and 57°F' → low=56, high=57."""
+        """'between 56 and 57°F' → [56, 58): 57 itself must be inside the integral (#917)."""
         b = parse_bracket_from_market(_market("between 56 and 57°F"))
         assert b is not None
         assert b.low_f == 56.0
-        assert b.high_f == 57.0
+        assert b.high_f == 58.0
+
+    def test_between_celsius_plus_one_before_conversion(self):
+        """'between 28-30°C' → [28C, 31C) in source units, THEN converted to °F.
+
+        Locks in ordering: +1 must be applied BEFORE _to_f, not after (#917).
+        31°C = 87.8°F; applying +1 in °F instead would give 87.4°F (wrong).
+        """
+        b = parse_bracket_from_market(_market("between 28-30°C"))
+        assert b is not None
+        assert b.low_f == pytest.approx(28 * 9 / 5 + 32)   # 82.4
+        assert b.high_f == pytest.approx(31 * 9 / 5 + 32)  # 87.8
 
     def test_range_dash(self):
-        """'58-60°F' → low=58, high=60."""
+        """'58-60°F' → [58, 61): 60 itself must be inside the integral (#917)."""
         b = parse_bracket_from_market(_market("58-60°F"))
         assert b is not None
         assert b.low_f == 58.0
-        assert b.high_f == 60.0
+        assert b.high_f == 61.0
 
     def test_range_em_dash(self):
-        """'82–84°F' (em-dash) → low=82, high=84."""
+        """'82–84°F' (em-dash) → [82, 85) (#917)."""
         b = parse_bracket_from_market(_market("82–84°F"))
         assert b is not None
         assert b.low_f == 82.0
-        assert b.high_f == 84.0
+        assert b.high_f == 85.0
+
+    def test_range_dash_celsius_plus_one_before_conversion(self):
+        """'21-22°C' (dash form) → [21C, 23C) in source units, THEN converted (#917)."""
+        b = parse_bracket_from_market(_market("21-22°C"))
+        assert b is not None
+        assert b.low_f == pytest.approx(21 * 9 / 5 + 32)
+        assert b.high_f == pytest.approx(23 * 9 / 5 + 32)
+
+    def test_exact_single_value(self):
+        """'21°C' (bare single value, _LABEL_EXACT) → [21C, 22C) — already correct pre-#917."""
+        b = parse_bracket_from_market(_market("21°C"))
+        assert b is not None
+        assert b.low_f == pytest.approx(21 * 9 / 5 + 32)
+        assert b.high_f == pytest.approx(22 * 9 / 5 + 32)
 
     def test_unparseable_returns_none(self):
         """Unrecognized label returns None."""
@@ -93,6 +118,56 @@ class TestParseBracketFromMarket:
         b = parse_bracket_from_market(_market("58-60°F"))
         assert b is not None
         assert b.yes_ask_cents == 60  # 0.60 * 100
+
+
+class TestBracketLadderMassConservation:
+    """Mass-conservation invariant (#917): a full, gap-free bracket ladder must
+    integrate to ~1.0 total probability under p_normal_between's [low, high)
+    convention. This is the invariant whose absence let the inclusive/exclusive
+    off-by-one survive undetected -- it must exist going forward.
+    """
+
+    # A real 2°F-wide US ladder (station-poll convention from #917's diagnosis:
+    # dash labels like "88-89°F" cover TWO integers) tiling the full real line
+    # with the two open-ended tails, and NO gaps once the parser is correct.
+    _LADDER_LABELS = (
+        ["55°F or below"]
+        + [f"{lo}-{lo + 1}°F" for lo in range(56, 92, 2)]  # 56-57, 58-59, ..., 90-91
+        + ["92°F or above"]
+    )
+
+    def _ladder_brackets(self):
+        brackets = [parse_bracket_from_market(_market(label)) for label in self._LADDER_LABELS]
+        assert all(b is not None for b in brackets), "every ladder label must parse"
+        return brackets
+
+    def test_ladder_is_gap_free_and_non_overlapping(self):
+        """Adjacent brackets must share exactly one boundary point, no gap or overlap."""
+        brackets = sorted(self._ladder_brackets(), key=lambda b: b.low_f)
+        for prev, nxt in zip(brackets, brackets[1:]):
+            assert prev.high_f == nxt.low_f, (
+                f"gap/overlap between [{prev.low_f}, {prev.high_f}) and "
+                f"[{nxt.low_f}, {nxt.high_f})"
+            )
+
+    def test_sum_of_p_yes_conserves_mass(self):
+        """SUM(p_normal_between) over the full ladder must be ~1.0 (tolerance <= 0.02).
+
+        Before #917's fix this summed to ~0.53 for °F dash-range brackets --
+        exactly half the true mass, since each 2-degree-wide market was
+        integrated as if it were 1 degree wide.
+        """
+        brackets = self._ladder_brackets()
+        mean, stddev = 75.0, 4.0  # well inside the ladder body
+        total = sum(p_normal_between(b.low_f, b.high_f, mean, stddev) for b in brackets)
+        assert total == pytest.approx(1.0, abs=0.02)
+
+    def test_sum_of_p_yes_conserves_mass_near_tail(self):
+        """Same invariant with the mean shifted toward an open-ended tail bracket."""
+        brackets = self._ladder_brackets()
+        mean, stddev = 58.0, 4.0
+        total = sum(p_normal_between(b.low_f, b.high_f, mean, stddev) for b in brackets)
+        assert total == pytest.approx(1.0, abs=0.02)
 
 
 class TestScanMarkets:
