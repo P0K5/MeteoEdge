@@ -456,6 +456,36 @@ CREATE TABLE IF NOT EXISTS emos_crps_log (
 
 ---
 
+### poll_runs
+
+**Purpose:** Unconditional poll heartbeat — written once per poll cycle before any bracket evaluation (issue #914). Provides the daily health report with an accurate poll cadence and gap metric, decoupled from `scan_decisions` (which is only written when brackets are actually evaluated, a much rarer event). This is an append-only log; its only purpose is the health report's "Polls 24h" / gap calculation.
+
+**Writer:** `Database.record_poll_run(poll_ts, mode)`, called at the top of `src.scripts.run.poll_once()`, before any bracket scanning/evaluation. The write is wrapped in try/except — a DB hiccup here must never block the rest of the poll cycle.
+
+**Reader:** `src.scripts.daily_health_report._build_bot_health` — counts rows within the last 24h for the "Polls 24h" metric and computes the max inter-poll gap from the timestamp sequence.
+
+| Column | Type | Units | Nullable | Description |
+|--------|------|-------|----------|-------------|
+| `id` | INTEGER PRIMARY KEY AUTOINCREMENT | — | No | Row ID |
+| `poll_ts` | TEXT NOT NULL | ISO-8601 UTC | No | When the poll cycle started |
+| `mode` | TEXT NOT NULL DEFAULT `'paper'` | — | No | `'live'` or `'paper'` — mirrors the poll's trading mode |
+
+```sql
+CREATE TABLE IF NOT EXISTS poll_runs (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    poll_ts     TEXT NOT NULL,
+    mode        TEXT NOT NULL DEFAULT 'paper'
+);
+CREATE INDEX IF NOT EXISTS idx_poll_runs_poll_ts ON poll_runs(poll_ts);
+```
+
+**Notes:**
+- Created idempotently via `CREATE TABLE IF NOT EXISTS` in `Database.__init__` — no migration script needed.
+- This table is intentionally decoupled from `scan_decisions`. A poll that evaluates zero brackets still writes a heartbeat row here, which is the whole point (defect #1).
+- No retention policy currently applied — a week of 5-min polls is ~2,016 rows, so this table stays small indefinitely.
+
+---
+
 ### scan_decisions
 
 **Purpose:** The bot's-eye per-bracket decision view for the Edge tab (epic #754). One row per `(station, ticker, date)` holding the **most recent poll's** evaluated bracket — the same `p_yes`/`ev_yes`/`ev_no`/`emos_mode` numbers the scanner traded on (never a parallel recompute), plus the `gate_verdict` naming the exact reason that bracket did or didn't trade. Upserted every poll — this is a live "last known state" table, not an append-only log (`candidates`/`snapshots.jsonl` remain the historical record).
