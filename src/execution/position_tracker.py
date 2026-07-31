@@ -20,7 +20,7 @@ import math
 import os
 import threading
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from src.utils.log_rotation import rotated_path, housekeep, SNAPSHOT_RETAIN_DAYS
 from src.config import (
@@ -148,7 +148,10 @@ def _log_open_position_snapshots(
                     yes_ask_cents=50, yes_ask_size=0,
                     no_ask_cents=50, no_ask_size=0,
                 )
-                p_yes_now = true_probability_yes(bracket_stub, state)
+                p_yes_now = true_probability_yes(
+                    bracket_stub, state,
+                    settlement_date=date.fromisoformat(today),
+                )
                 if side == "YES":
                     fair_value_now = max(1, min(99, round(p_yes_now * 100)))
                 else:
