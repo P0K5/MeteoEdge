@@ -6413,7 +6413,7 @@
       "source_location": "L375",
       "_origin": "ast",
       "id": "src_model_deb_weighting_compute_weights",
-      "community": 227,
+      "community": 104,
       "community_name": "compute_weights",
       "norm_label": "compute_weights()"
     },
@@ -6545,7 +6545,7 @@
       "source_location": "L382",
       "_origin": "ast",
       "id": "src_model_deb_weighting_rationale_382",
-      "community": 227,
+      "community": 104,
       "community_name": "compute_weights",
       "norm_label": "compute inverse-error weights for each model over the last *window_days* days...."
     },
@@ -10018,7 +10018,7 @@
       "label": "_iter_csv_rows()",
       "file_type": "code",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L238",
+      "source_location": "L240",
       "_origin": "ast",
       "id": "src_scripts_bss_market_vs_model_report_iter_csv_rows",
       "community": 210,
@@ -10040,7 +10040,7 @@
       "label": "_f()",
       "file_type": "code",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L259",
+      "source_location": "L261",
       "_origin": "ast",
       "id": "src_scripts_bss_market_vs_model_report_f",
       "community": 210,
@@ -10051,7 +10051,7 @@
       "label": "load_candidate_rows()",
       "file_type": "code",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L269",
+      "source_location": "L271",
       "_origin": "ast",
       "id": "src_scripts_bss_market_vs_model_report_load_candidate_rows",
       "community": 210,
@@ -10062,7 +10062,7 @@
       "label": "load_bracket_eval_rows()",
       "file_type": "code",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L297",
+      "source_location": "L299",
       "_origin": "ast",
       "id": "src_scripts_bss_market_vs_model_report_load_bracket_eval_rows",
       "community": 210,
@@ -10073,7 +10073,7 @@
       "label": "apply_exclusions()",
       "file_type": "code",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L354",
+      "source_location": "L356",
       "_origin": "ast",
       "id": "src_scripts_bss_market_vs_model_report_apply_exclusions",
       "community": 237,
@@ -10084,7 +10084,7 @@
       "label": "dedupe_one_per_bracket_day()",
       "file_type": "code",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L378",
+      "source_location": "L380",
       "_origin": "ast",
       "id": "src_scripts_bss_market_vs_model_report_dedupe_one_per_bracket_day",
       "community": 247,
@@ -10095,7 +10095,7 @@
       "label": "_connect_ro()",
       "file_type": "code",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L400",
+      "source_location": "L402",
       "_origin": "ast",
       "id": "src_scripts_bss_market_vs_model_report_connect_ro",
       "community": 210,
@@ -10106,7 +10106,7 @@
       "label": "load_settlement_outcomes()",
       "file_type": "code",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L420",
+      "source_location": "L422",
       "_origin": "ast",
       "id": "src_scripts_bss_market_vs_model_report_load_settlement_outcomes",
       "community": 247,
@@ -10117,7 +10117,7 @@
       "label": "join_outcomes()",
       "file_type": "code",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L435",
+      "source_location": "L437",
       "_origin": "ast",
       "id": "src_scripts_bss_market_vs_model_report_join_outcomes",
       "community": 247,
@@ -10128,7 +10128,7 @@
       "label": "resolve_candidate_outcomes()",
       "file_type": "code",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L459",
+      "source_location": "L461",
       "_origin": "ast",
       "id": "src_scripts_bss_market_vs_model_report_resolve_candidate_outcomes",
       "community": 110,
@@ -10139,7 +10139,7 @@
       "label": "station_local_date()",
       "file_type": "code",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L549",
+      "source_location": "L551",
       "_origin": "ast",
       "id": "src_scripts_bss_market_vs_model_report_station_local_date",
       "community": 91,
@@ -10150,7 +10150,7 @@
       "label": "classify_day_segment()",
       "file_type": "code",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L571",
+      "source_location": "L573",
       "_origin": "ast",
       "id": "src_scripts_bss_market_vs_model_report_classify_day_segment",
       "community": 91,
@@ -10161,7 +10161,7 @@
       "label": "utc_offset_bucket()",
       "file_type": "code",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L603",
+      "source_location": "L605",
       "_origin": "ast",
       "id": "src_scripts_bss_market_vs_model_report_utc_offset_bucket",
       "community": 91,
@@ -10172,7 +10172,7 @@
       "label": "market_p_yes()",
       "file_type": "code",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L630",
+      "source_location": "L632",
       "_origin": "ast",
       "id": "src_scripts_bss_market_vs_model_report_market_p_yes",
       "community": 210,
@@ -10183,7 +10183,7 @@
       "label": "sharpness_histogram()",
       "file_type": "code",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L641",
+      "source_location": "L643",
       "_origin": "ast",
       "id": "src_scripts_bss_market_vs_model_report_sharpness_histogram",
       "community": 210,
@@ -10194,7 +10194,7 @@
       "label": "format_sharpness()",
       "file_type": "code",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L650",
+      "source_location": "L652",
       "_origin": "ast",
       "id": "src_scripts_bss_market_vs_model_report_format_sharpness",
       "community": 210,
@@ -10205,7 +10205,7 @@
       "label": "compute_bss()",
       "file_type": "code",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L658",
+      "source_location": "L660",
       "_origin": "ast",
       "id": "src_scripts_bss_market_vs_model_report_compute_bss",
       "community": 210,
@@ -10216,7 +10216,7 @@
       "label": "verdict_label()",
       "file_type": "code",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L679",
+      "source_location": "L681",
       "_origin": "ast",
       "id": "src_scripts_bss_market_vs_model_report_verdict_label",
       "community": 210,
@@ -10227,7 +10227,7 @@
       "label": "sample_date_span()",
       "file_type": "code",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L701",
+      "source_location": "L703",
       "_origin": "ast",
       "id": "src_scripts_bss_market_vs_model_report_sample_date_span",
       "community": 52,
@@ -10238,7 +10238,7 @@
       "label": "_direction_gap_note()",
       "file_type": "code",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L711",
+      "source_location": "L713",
       "_origin": "ast",
       "id": "src_scripts_bss_market_vs_model_report_direction_gap_note",
       "community": 210,
@@ -10249,7 +10249,7 @@
       "label": "_ground_truth_section()",
       "file_type": "code",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L763",
+      "source_location": "L765",
       "_origin": "ast",
       "id": "src_scripts_bss_market_vs_model_report_ground_truth_section",
       "community": 210,
@@ -10260,7 +10260,7 @@
       "label": "_decision_gate_section()",
       "file_type": "code",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L875",
+      "source_location": "L877",
       "_origin": "ast",
       "id": "src_scripts_bss_market_vs_model_report_decision_gate_section",
       "community": 210,
@@ -10271,7 +10271,7 @@
       "label": "build_report()",
       "file_type": "code",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L935",
+      "source_location": "L937",
       "_origin": "ast",
       "id": "src_scripts_bss_market_vs_model_report_build_report",
       "community": 210,
@@ -10282,7 +10282,7 @@
       "label": "run_report()",
       "file_type": "code",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L1143",
+      "source_location": "L1147",
       "_origin": "ast",
       "id": "src_scripts_bss_market_vs_model_report_run_report",
       "community": 239,
@@ -10293,7 +10293,7 @@
       "label": "main()",
       "file_type": "code",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L1255",
+      "source_location": "L1259",
       "_origin": "ast",
       "id": "src_scripts_bss_market_vs_model_report_main",
       "community": 210,
@@ -10315,9 +10315,9 @@
       "label": "Yield dict rows across every rotated (and possibly gzipped) source for *base*.\u2026",
       "file_type": "rationale",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L239",
+      "source_location": "L241",
       "_origin": "ast",
-      "id": "src_scripts_bss_market_vs_model_report_rationale_239",
+      "id": "src_scripts_bss_market_vs_model_report_rationale_241",
       "community": 210,
       "community_name": "bss_market_vs_model_report.py",
       "norm_label": "yield dict rows across every rotated (and possibly gzipped) source for *base*...."
@@ -10326,9 +10326,9 @@
       "label": "Load and numerically normalize every row across the rotated archive. Returns\u2026",
       "file_type": "rationale",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L270",
+      "source_location": "L272",
       "_origin": "ast",
-      "id": "src_scripts_bss_market_vs_model_report_rationale_270",
+      "id": "src_scripts_bss_market_vs_model_report_rationale_272",
       "community": 210,
       "community_name": "bss_market_vs_model_report.py",
       "norm_label": "load and numerically normalize every row across the rotated archive. returns..."
@@ -10337,9 +10337,9 @@
       "label": "Load #826's full evaluated-bracket log for Pass 2 (issue #822). This is the\u2026",
       "file_type": "rationale",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L298",
+      "source_location": "L300",
       "_origin": "ast",
-      "id": "src_scripts_bss_market_vs_model_report_rationale_298",
+      "id": "src_scripts_bss_market_vs_model_report_rationale_300",
       "community": 210,
       "community_name": "bss_market_vs_model_report.py",
       "norm_label": "load #826's full evaluated-bracket log for pass 2 (issue #822). this is the..."
@@ -10348,9 +10348,9 @@
       "label": "Apply the mandatory Pass-1 row exclusions. Returns (kept, counts).",
       "file_type": "rationale",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L355",
+      "source_location": "L357",
       "_origin": "ast",
-      "id": "src_scripts_bss_market_vs_model_report_rationale_355",
+      "id": "src_scripts_bss_market_vs_model_report_rationale_357",
       "community": 237,
       "community_name": "apply_exclusions",
       "norm_label": "apply the mandatory pass-1 row exclusions. returns (kept, counts)."
@@ -10359,9 +10359,9 @@
       "label": "Keep exactly one row per (station, ticker, end_date). Keeps the row with the\u2026",
       "file_type": "rationale",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L379",
+      "source_location": "L381",
       "_origin": "ast",
-      "id": "src_scripts_bss_market_vs_model_report_rationale_379",
+      "id": "src_scripts_bss_market_vs_model_report_rationale_381",
       "community": 247,
       "community_name": "test_bss_market_vs_model_report.py",
       "norm_label": "keep exactly one row per (station, ticker, end_date). keeps the row with the..."
@@ -10370,9 +10370,9 @@
       "label": "Open *db_path* read-only. Returns None if missing/unopenable. Never creates the\u2026",
       "file_type": "rationale",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L401",
+      "source_location": "L403",
       "_origin": "ast",
-      "id": "src_scripts_bss_market_vs_model_report_rationale_401",
+      "id": "src_scripts_bss_market_vs_model_report_rationale_403",
       "community": 210,
       "community_name": "bss_market_vs_model_report.py",
       "norm_label": "open *db_path* read-only. returns none if missing/unopenable. never creates the..."
@@ -10381,9 +10381,9 @@
       "label": "Return {ticker: resolved_yes} from the settlements table.",
       "file_type": "rationale",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L421",
+      "source_location": "L423",
       "_origin": "ast",
-      "id": "src_scripts_bss_market_vs_model_report_rationale_421",
+      "id": "src_scripts_bss_market_vs_model_report_rationale_423",
       "community": 247,
       "community_name": "test_bss_market_vs_model_report.py",
       "norm_label": "return {ticker: resolved_yes} from the settlements table."
@@ -10392,9 +10392,9 @@
       "label": "Attach ``yes_won`` to each row; drop rows with no definitive settlement.\u2026",
       "file_type": "rationale",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L436",
+      "source_location": "L438",
       "_origin": "ast",
-      "id": "src_scripts_bss_market_vs_model_report_rationale_436",
+      "id": "src_scripts_bss_market_vs_model_report_rationale_438",
       "community": 247,
       "community_name": "test_bss_market_vs_model_report.py",
       "norm_label": "attach ``yes_won`` to each row; drop rows with no definitive settlement...."
@@ -10403,9 +10403,9 @@
       "label": "Attach ``yes_won`` to de-duplicated candidate rows without touching\u2026",
       "file_type": "rationale",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L466",
+      "source_location": "L468",
       "_origin": "ast",
-      "id": "src_scripts_bss_market_vs_model_report_rationale_466",
+      "id": "src_scripts_bss_market_vs_model_report_rationale_468",
       "community": 110,
       "community_name": "_write_observations_db",
       "norm_label": "attach ``yes_won`` to de-duplicated candidate rows without touching..."
@@ -10414,9 +10414,9 @@
       "label": "Return the station-local calendar date of *ts_str*, or None. Mirrors\u2026",
       "file_type": "rationale",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L550",
+      "source_location": "L552",
       "_origin": "ast",
-      "id": "src_scripts_bss_market_vs_model_report_rationale_550",
+      "id": "src_scripts_bss_market_vs_model_report_rationale_552",
       "community": 91,
       "community_name": "classify_day_segment",
       "norm_label": "return the station-local calendar date of *ts_str*, or none. mirrors..."
@@ -10425,9 +10425,9 @@
       "label": "Return 'same_day', 'next_day', 'other', or None (undeterminable).\u2026",
       "file_type": "rationale",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L572",
+      "source_location": "L574",
       "_origin": "ast",
-      "id": "src_scripts_bss_market_vs_model_report_rationale_572",
+      "id": "src_scripts_bss_market_vs_model_report_rationale_574",
       "community": 91,
       "community_name": "classify_day_segment",
       "norm_label": "return 'same_day', 'next_day', 'other', or none (undeterminable)...."
@@ -10436,9 +10436,9 @@
       "label": "Return a 'UTC+H'/'UTC-H' label for the station's offset at ``ts``.",
       "file_type": "rationale",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L604",
+      "source_location": "L606",
       "_origin": "ast",
-      "id": "src_scripts_bss_market_vs_model_report_rationale_604",
+      "id": "src_scripts_bss_market_vs_model_report_rationale_606",
       "community": 91,
       "community_name": "classify_day_segment",
       "norm_label": "return a 'utc+h'/'utc-h' label for the station's offset at ``ts``."
@@ -10447,9 +10447,9 @@
       "label": "Market-implied P(YES), symmetrized across both sides of the book. ``yes_ask``\u2026",
       "file_type": "rationale",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L631",
+      "source_location": "L633",
       "_origin": "ast",
-      "id": "src_scripts_bss_market_vs_model_report_rationale_631",
+      "id": "src_scripts_bss_market_vs_model_report_rationale_633",
       "community": 210,
       "community_name": "bss_market_vs_model_report.py",
       "norm_label": "market-implied p(yes), symmetrized across both sides of the book. ``yes_ask``..."
@@ -10458,9 +10458,9 @@
       "label": "Count of predictions per probability bucket (distribution shape only).",
       "file_type": "rationale",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L642",
+      "source_location": "L644",
       "_origin": "ast",
-      "id": "src_scripts_bss_market_vs_model_report_rationale_642",
+      "id": "src_scripts_bss_market_vs_model_report_rationale_644",
       "community": 210,
       "community_name": "bss_market_vs_model_report.py",
       "norm_label": "count of predictions per probability bucket (distribution shape only)."
@@ -10469,9 +10469,9 @@
       "label": "Compute BS_model, BS_market, BSS over de-duped, outcome-joined rows. *samples*\u2026",
       "file_type": "rationale",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L659",
+      "source_location": "L661",
       "_origin": "ast",
-      "id": "src_scripts_bss_market_vs_model_report_rationale_659",
+      "id": "src_scripts_bss_market_vs_model_report_rationale_661",
       "community": 210,
       "community_name": "bss_market_vs_model_report.py",
       "norm_label": "compute bs_model, bs_market, bss over de-duped, outcome-joined rows. *samples*..."
@@ -10480,9 +10480,9 @@
       "label": "Map a BSS value to the decision-gate language (informational only for Pass 1).",
       "file_type": "rationale",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L680",
+      "source_location": "L682",
       "_origin": "ast",
-      "id": "src_scripts_bss_market_vs_model_report_rationale_680",
+      "id": "src_scripts_bss_market_vs_model_report_rationale_682",
       "community": 210,
       "community_name": "bss_market_vs_model_report.py",
       "norm_label": "map a bss value to the decision-gate language (informational only for pass 1)."
@@ -10491,9 +10491,9 @@
       "label": "Earliest and latest settlement date (``end_date``) present in *samples*. Used\u2026",
       "file_type": "rationale",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L702",
+      "source_location": "L704",
       "_origin": "ast",
-      "id": "src_scripts_bss_market_vs_model_report_rationale_702",
+      "id": "src_scripts_bss_market_vs_model_report_rationale_704",
       "community": 52,
       "community_name": "._report",
       "norm_label": "earliest and latest settlement date (``end_date``) present in *samples*. used..."
@@ -10502,9 +10502,9 @@
       "label": "Explain rows whose market direction could not be resolved. Direction matters\u2026",
       "file_type": "rationale",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L712",
+      "source_location": "L714",
       "_origin": "ast",
-      "id": "src_scripts_bss_market_vs_model_report_rationale_712",
+      "id": "src_scripts_bss_market_vs_model_report_rationale_714",
       "community": 210,
       "community_name": "bss_market_vs_model_report.py",
       "norm_label": "explain rows whose market direction could not be resolved. direction matters..."
@@ -10513,9 +10513,9 @@
       "label": "Render the outcome-provenance section for the resolver path. Two things a\u2026",
       "file_type": "rationale",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L764",
+      "source_location": "L766",
       "_origin": "ast",
-      "id": "src_scripts_bss_market_vs_model_report_rationale_764",
+      "id": "src_scripts_bss_market_vs_model_report_rationale_766",
       "community": 210,
       "community_name": "bss_market_vs_model_report.py",
       "norm_label": "render the outcome-provenance section for the resolver path. two things a..."
@@ -10524,9 +10524,9 @@
       "label": "Render the M3 verdict against the pre-registered decision rule (#822). The rule\u2026",
       "file_type": "rationale",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L876",
+      "source_location": "L878",
       "_origin": "ast",
-      "id": "src_scripts_bss_market_vs_model_report_rationale_876",
+      "id": "src_scripts_bss_market_vs_model_report_rationale_878",
       "community": 210,
       "community_name": "bss_market_vs_model_report.py",
       "norm_label": "render the m3 verdict against the pre-registered decision rule (#822). the rule..."
@@ -10535,9 +10535,9 @@
       "label": "Assemble the markdown report for either pass. *outcome_meta* describes how\u2026",
       "file_type": "rationale",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L938",
+      "source_location": "L940",
       "_origin": "ast",
-      "id": "src_scripts_bss_market_vs_model_report_rationale_938",
+      "id": "src_scripts_bss_market_vs_model_report_rationale_940",
       "community": 210,
       "community_name": "bss_market_vs_model_report.py",
       "norm_label": "assemble the markdown report for either pass. *outcome_meta* describes how..."
@@ -10546,9 +10546,9 @@
       "label": "Load, filter, resolve outcomes, score, and (if there is real data) write the\u2026",
       "file_type": "rationale",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L1151",
+      "source_location": "L1155",
       "_origin": "ast",
-      "id": "src_scripts_bss_market_vs_model_report_rationale_1151",
+      "id": "src_scripts_bss_market_vs_model_report_rationale_1155",
       "community": 239,
       "community_name": "run_report",
       "norm_label": "load, filter, resolve outcomes, score, and (if there is real data) write the..."
@@ -10857,8 +10857,8 @@
       "source_location": "L139",
       "_origin": "ast",
       "id": "src_scripts_certainty_exclusion_check_is_model_certain",
-      "community": 402,
-      "community_name": "classify_certainty",
+      "community": 32,
+      "community_name": "certainty_exclusion_check.py",
       "norm_label": "is_model_certain()"
     },
     {
@@ -10868,8 +10868,8 @@
       "source_location": "L144",
       "_origin": "ast",
       "id": "src_scripts_certainty_exclusion_check_is_market_certain",
-      "community": 402,
-      "community_name": "classify_certainty",
+      "community": 32,
+      "community_name": "certainty_exclusion_check.py",
       "norm_label": "is_market_certain()"
     },
     {
@@ -10879,8 +10879,8 @@
       "source_location": "L153",
       "_origin": "ast",
       "id": "src_scripts_certainty_exclusion_check_classify_certainty",
-      "community": 402,
-      "community_name": "classify_certainty",
+      "community": 32,
+      "community_name": "certainty_exclusion_check.py",
       "norm_label": "classify_certainty()"
     },
     {
@@ -10975,7 +10975,7 @@
       "label": "run_check()",
       "file_type": "code",
       "source_file": "src/scripts/certainty_exclusion_check.py",
-      "source_location": "L435",
+      "source_location": "L437",
       "_origin": "ast",
       "id": "src_scripts_certainty_exclusion_check_run_check",
       "community": 32,
@@ -10997,7 +10997,7 @@
       "label": "main()",
       "file_type": "code",
       "source_file": "src/scripts/certainty_exclusion_check.py",
-      "source_location": "L483",
+      "source_location": "L484",
       "_origin": "ast",
       "id": "src_scripts_certainty_exclusion_check_main",
       "community": 32,
@@ -11033,8 +11033,8 @@
       "source_location": "L140",
       "_origin": "ast",
       "id": "src_scripts_certainty_exclusion_check_rationale_140",
-      "community": 402,
-      "community_name": "classify_certainty",
+      "community": 32,
+      "community_name": "certainty_exclusion_check.py",
       "norm_label": "the model claims impossibility: an exact-zero raw probability."
     },
     {
@@ -11044,8 +11044,8 @@
       "source_location": "L145",
       "_origin": "ast",
       "id": "src_scripts_certainty_exclusion_check_rationale_145",
-      "community": 402,
-      "community_name": "classify_certainty",
+      "community": 32,
+      "community_name": "certainty_exclusion_check.py",
       "norm_label": "a quoted side sits at the exchange's 1c/99c rail -- a clipped price."
     },
     {
@@ -11055,8 +11055,8 @@
       "source_location": "L154",
       "_origin": "ast",
       "id": "src_scripts_certainty_exclusion_check_rationale_154",
-      "community": 402,
-      "community_name": "classify_certainty",
+      "community": 32,
+      "community_name": "certainty_exclusion_check.py",
       "norm_label": "split *rows* into the four certainty classes. ``apply_exclusions`` tests..."
     },
     {
@@ -14762,8 +14762,8 @@
       "source_location": "L376",
       "_origin": "ast",
       "id": "src_strategy_scanner_candidate",
-      "community": 0,
-      "community_name": "WeatherState",
+      "community": 4,
+      "community_name": "Bracket",
       "norm_label": "candidate"
     },
     {
@@ -14905,8 +14905,8 @@
       "source_location": "L377",
       "_origin": "ast",
       "id": "src_strategy_scanner_rationale_377",
-      "community": 0,
-      "community_name": "WeatherState",
+      "community": 4,
+      "community_name": "Bracket",
       "norm_label": "a market where our model sees a tradeable edge."
     },
     {
@@ -23364,8 +23364,8 @@
       "source_location": "L77",
       "_origin": "ast",
       "id": "src_tests_test_certainty_exclusion_check_testclassification",
-      "community": 402,
-      "community_name": "classify_certainty",
+      "community": 456,
+      "community_name": "_row",
       "norm_label": "testclassification"
     },
     {
@@ -23375,8 +23375,8 @@
       "source_location": "L78",
       "_origin": "ast",
       "id": "src_tests_test_certainty_exclusion_check_testclassification_test_model_certain_is_exact_zero_only",
-      "community": 402,
-      "community_name": "classify_certainty",
+      "community": 456,
+      "community_name": "_row",
       "norm_label": ".test_model_certain_is_exact_zero_only()"
     },
     {
@@ -23386,8 +23386,8 @@
       "source_location": "L82",
       "_origin": "ast",
       "id": "src_tests_test_certainty_exclusion_check_testclassification_test_rail_detected_on_either_side_of_the_book",
-      "community": 402,
-      "community_name": "classify_certainty",
+      "community": 456,
+      "community_name": "_row",
       "norm_label": ".test_rail_detected_on_either_side_of_the_book()"
     },
     {
@@ -23397,8 +23397,8 @@
       "source_location": "L87",
       "_origin": "ast",
       "id": "src_tests_test_certainty_exclusion_check_testclassification_test_the_four_classes_partition_the_rows",
-      "community": 402,
-      "community_name": "classify_certainty",
+      "community": 456,
+      "community_name": "_row",
       "norm_label": ".test_the_four_classes_partition_the_rows()"
     },
     {
@@ -23408,8 +23408,8 @@
       "source_location": "L100",
       "_origin": "ast",
       "id": "src_tests_test_certainty_exclusion_check_testclassification_test_rows_missing_inputs_are_dropped_not_assumed",
-      "community": 402,
-      "community_name": "classify_certainty",
+      "community": 456,
+      "community_name": "_row",
       "norm_label": ".test_rows_missing_inputs_are_dropped_not_assumed()"
     },
     {
@@ -23793,8 +23793,8 @@
       "source_location": "L101",
       "_origin": "ast",
       "id": "src_tests_test_certainty_exclusion_check_rationale_101",
-      "community": 402,
-      "community_name": "classify_certainty",
+      "community": 456,
+      "community_name": "_row",
       "norm_label": "neither certainty question is askable without both a model probability and a..."
     },
     {
@@ -36476,8 +36476,8 @@
       "source_location": "L599",
       "_origin": "ast",
       "id": "src_tests_test_deb_weighting_testensemblenmodels",
-      "community": 104,
-      "community_name": "._make_calibrated_db",
+      "community": 45,
+      "community_name": "_make_db",
       "norm_label": "testensemblenmodels"
     },
     {
@@ -36487,8 +36487,8 @@
       "source_location": "L602",
       "_origin": "ast",
       "id": "src_tests_test_deb_weighting_testensemblenmodels_make_calibrated_db",
-      "community": 104,
-      "community_name": "._make_calibrated_db",
+      "community": 45,
+      "community_name": "_make_db",
       "norm_label": "._make_calibrated_db()"
     },
     {
@@ -36499,7 +36499,7 @@
       "_origin": "ast",
       "id": "src_tests_test_deb_weighting_testensemblenmodels_test_2_models_nws_open_meteo_sums_to_one",
       "community": 104,
-      "community_name": "._make_calibrated_db",
+      "community_name": "compute_weights",
       "norm_label": ".test_2_models_nws_open_meteo_sums_to_one()"
     },
     {
@@ -36510,7 +36510,7 @@
       "_origin": "ast",
       "id": "src_tests_test_deb_weighting_testensemblenmodels_test_3_models_adds_nbm_sums_to_one",
       "community": 104,
-      "community_name": "._make_calibrated_db",
+      "community_name": "compute_weights",
       "norm_label": ".test_3_models_adds_nbm_sums_to_one()"
     },
     {
@@ -36521,7 +36521,7 @@
       "_origin": "ast",
       "id": "src_tests_test_deb_weighting_testensemblenmodels_test_4_models_adds_hrrr_sums_to_one",
       "community": 104,
-      "community_name": "._make_calibrated_db",
+      "community_name": "compute_weights",
       "norm_label": ".test_4_models_adds_hrrr_sums_to_one()"
     },
     {
@@ -36542,8 +36542,8 @@
       "source_location": "L656",
       "_origin": "ast",
       "id": "src_tests_test_deb_weighting_testensemblenmodels_test_noaa_us_group_cap_includes_hrrr_nbm",
-      "community": 104,
-      "community_name": "._make_calibrated_db",
+      "community": 35,
+      "community_name": "test_deb_weighting.py",
       "norm_label": ".test_noaa_us_group_cap_includes_hrrr_nbm()"
     },
     {
@@ -36818,7 +36818,7 @@
       "_origin": "ast",
       "id": "src_tests_test_deb_weighting_testregionalensembles",
       "community": 104,
-      "community_name": "._make_calibrated_db",
+      "community_name": "compute_weights",
       "norm_label": "testregionalensembles"
     },
     {
@@ -36829,7 +36829,7 @@
       "_origin": "ast",
       "id": "src_tests_test_deb_weighting_testregionalensembles_make_calibrated_db",
       "community": 104,
-      "community_name": "._make_calibrated_db",
+      "community_name": "compute_weights",
       "norm_label": "._make_calibrated_db()"
     },
     {
@@ -36840,7 +36840,7 @@
       "_origin": "ast",
       "id": "src_tests_test_deb_weighting_testregionalensembles_test_us_ensemble_excludes_icon",
       "community": 104,
-      "community_name": "._make_calibrated_db",
+      "community_name": "compute_weights",
       "norm_label": ".test_us_ensemble_excludes_icon()"
     },
     {
@@ -36851,7 +36851,7 @@
       "_origin": "ast",
       "id": "src_tests_test_deb_weighting_testregionalensembles_test_eu_ensemble_includes_ecmwf_and_icon",
       "community": 104,
-      "community_name": "._make_calibrated_db",
+      "community_name": "compute_weights",
       "norm_label": ".test_eu_ensemble_includes_ecmwf_and_icon()"
     },
     {
@@ -36862,7 +36862,7 @@
       "_origin": "ast",
       "id": "src_tests_test_deb_weighting_testregionalensembles_test_asia_ensemble_includes_ecmwf_excludes_icon",
       "community": 104,
-      "community_name": "._make_calibrated_db",
+      "community_name": "compute_weights",
       "norm_label": ".test_asia_ensemble_includes_ecmwf_excludes_icon()"
     },
     {
@@ -36927,7 +36927,7 @@
       "source_location": "L1061",
       "_origin": "ast",
       "id": "src_tests_test_deb_weighting_testgfsdroppath",
-      "community": 227,
+      "community": 104,
       "community_name": "compute_weights",
       "norm_label": "testgfsdroppath"
     },
@@ -36938,7 +36938,7 @@
       "source_location": "L1066",
       "_origin": "ast",
       "id": "src_tests_test_deb_weighting_testgfsdroppath_rows",
-      "community": 227,
+      "community": 104,
       "community_name": "compute_weights",
       "norm_label": "._rows()"
     },
@@ -36949,7 +36949,7 @@
       "source_location": "L1069",
       "_origin": "ast",
       "id": "src_tests_test_deb_weighting_testgfsdroppath_test_gfs_rows_present_never_contribute_a_weight",
-      "community": 227,
+      "community": 104,
       "community_name": "compute_weights",
       "norm_label": ".test_gfs_rows_present_never_contribute_a_weight()"
     },
@@ -36960,7 +36960,7 @@
       "source_location": "L1092",
       "_origin": "ast",
       "id": "src_tests_test_deb_weighting_testgfsdroppath_test_gfs_only_data_is_full_cold_start_without_gfs_key",
-      "community": 227,
+      "community": 104,
       "community_name": "compute_weights",
       "norm_label": ".test_gfs_only_data_is_full_cold_start_without_gfs_key()"
     },
@@ -36971,7 +36971,7 @@
       "source_location": "L1110",
       "_origin": "ast",
       "id": "src_tests_test_deb_weighting_testgfsdroppath_test_remaining_weights_renormalize_to_one_with_gfs_dominant_errors",
-      "community": 227,
+      "community": 104,
       "community_name": "compute_weights",
       "norm_label": ".test_remaining_weights_renormalize_to_one_with_gfs_dominant_errors()"
     },
@@ -36982,7 +36982,7 @@
       "source_location": "L1139",
       "_origin": "ast",
       "id": "src_tests_test_deb_weighting_testgfsdroppath_test_other_channels_unaffected_by_gfs_rows_at_any_date",
-      "community": 227,
+      "community": 104,
       "community_name": "compute_weights",
       "norm_label": ".test_other_channels_unaffected_by_gfs_rows_at_any_date()"
     },
@@ -37455,8 +37455,8 @@
       "source_location": "L600",
       "_origin": "ast",
       "id": "src_tests_test_deb_weighting_rationale_600",
-      "community": 104,
-      "community_name": "._make_calibrated_db",
+      "community": 45,
+      "community_name": "_make_db",
       "norm_label": "verify compute_weights works correctly with 2, 3, and 4 active models."
     },
     {
@@ -37467,7 +37467,7 @@
       "_origin": "ast",
       "id": "src_tests_test_deb_weighting_rationale_611",
       "community": 104,
-      "community_name": "._make_calibrated_db",
+      "community_name": "compute_weights",
       "norm_label": "2-model path: nws + open_meteo calibrated; others cold-start."
     },
     {
@@ -37478,7 +37478,7 @@
       "_origin": "ast",
       "id": "src_tests_test_deb_weighting_rationale_619",
       "community": 104,
-      "community_name": "._make_calibrated_db",
+      "community_name": "compute_weights",
       "norm_label": "3-model path: nws + open_meteo + nbm calibrated."
     },
     {
@@ -37489,7 +37489,7 @@
       "_origin": "ast",
       "id": "src_tests_test_deb_weighting_rationale_628",
       "community": 104,
-      "community_name": "._make_calibrated_db",
+      "community_name": "compute_weights",
       "norm_label": "4-model path: nws + open_meteo + nbm + hrrr all calibrated."
     },
     {
@@ -37510,8 +37510,8 @@
       "source_location": "L657",
       "_origin": "ast",
       "id": "src_tests_test_deb_weighting_rationale_657",
-      "community": 104,
-      "community_name": "._make_calibrated_db",
+      "community": 35,
+      "community_name": "test_deb_weighting.py",
       "norm_label": "nws + hrrr + nbm are all in noaa_us group; their combined weight is capped...."
     },
     {
@@ -37687,7 +37687,7 @@
       "_origin": "ast",
       "id": "src_tests_test_deb_weighting_rationale_903",
       "community": 104,
-      "community_name": "._make_calibrated_db",
+      "community_name": "compute_weights",
       "norm_label": "verify compute_weights produces correct model sets for us, eu, and asia."
     },
     {
@@ -37698,7 +37698,7 @@
       "_origin": "ast",
       "id": "src_tests_test_deb_weighting_rationale_913",
       "community": 104,
-      "community_name": "._make_calibrated_db",
+      "community_name": "compute_weights",
       "norm_label": "us ensemble: nws+hrrr+nbm+open_meteo+ecmwf \u2014 icon excluded, gfs rows present in..."
     },
     {
@@ -37709,7 +37709,7 @@
       "_origin": "ast",
       "id": "src_tests_test_deb_weighting_rationale_924",
       "community": 104,
-      "community_name": "._make_calibrated_db",
+      "community_name": "compute_weights",
       "norm_label": "eu ensemble: open_meteo+ecmwf+icon \u2014 nws/hrrr/nbm excluded, gfs rows present in..."
     },
     {
@@ -37720,7 +37720,7 @@
       "_origin": "ast",
       "id": "src_tests_test_deb_weighting_rationale_938",
       "community": 104,
-      "community_name": "._make_calibrated_db",
+      "community_name": "compute_weights",
       "norm_label": "asia ensemble: open_meteo+ecmwf \u2014 icon excluded (eu-only), gfs rows present in..."
     },
     {
@@ -37785,7 +37785,7 @@
       "source_location": "L1062",
       "_origin": "ast",
       "id": "src_tests_test_deb_weighting_rationale_1062",
-      "community": 227,
+      "community": 104,
       "community_name": "compute_weights",
       "norm_label": "verify compute_weights() never returns a \"gfs\" weight and remaining channel..."
     },
@@ -37796,7 +37796,7 @@
       "source_location": "L1070",
       "_origin": "ast",
       "id": "src_tests_test_deb_weighting_rationale_1070",
-      "community": 227,
+      "community": 104,
       "community_name": "compute_weights",
       "norm_label": "even with plenty of well-formed \"gfs\" rows (any date, including recent ones),..."
     },
@@ -37807,7 +37807,7 @@
       "source_location": "L1093",
       "_origin": "ast",
       "id": "src_tests_test_deb_weighting_rationale_1093",
-      "community": 227,
+      "community": 104,
       "community_name": "compute_weights",
       "norm_label": "when the only forecast_log data is for \"gfs\" (no registered model has any..."
     },
@@ -37818,7 +37818,7 @@
       "source_location": "L1111",
       "_origin": "ast",
       "id": "src_tests_test_deb_weighting_rationale_1111",
-      "community": 227,
+      "community": 104,
       "community_name": "compute_weights",
       "norm_label": "renormalization check: even when \"gfs\" rows would (if consumed) have the..."
     },
@@ -37829,7 +37829,7 @@
       "source_location": "L1140",
       "_origin": "ast",
       "id": "src_tests_test_deb_weighting_rationale_1140",
-      "community": 227,
+      "community": 104,
       "community_name": "compute_weights",
       "norm_label": "gfs\" rows (any date) must never influence nws/open_meteo calibration \u2014 they are..."
     },
@@ -41624,8 +41624,8 @@
       "source_location": "L858",
       "_origin": "ast",
       "id": "src_tests_test_emos_mode_testservingmembersparityguard",
-      "community": 340,
-      "community_name": "TestServingMembersParityGuard",
+      "community": 0,
+      "community_name": "WeatherState",
       "norm_label": "testservingmembersparityguard"
     },
     {
@@ -41635,8 +41635,8 @@
       "source_location": "L871",
       "_origin": "ast",
       "id": "src_tests_test_emos_mode_testservingmembersparityguard_test_baseline_stack_has_sufficient_serving_members",
-      "community": 340,
-      "community_name": "TestServingMembersParityGuard",
+      "community": 0,
+      "community_name": "WeatherState",
       "norm_label": ".test_baseline_stack_has_sufficient_serving_members()"
     },
     {
@@ -41657,8 +41657,8 @@
       "source_location": "",
       "_origin": "ast",
       "id": "src_tests_test_emos_mode_py_parametrize",
-      "community": 340,
-      "community_name": "TestServingMembersParityGuard",
+      "community": 0,
+      "community_name": "WeatherState",
       "norm_label": "parametrize"
     },
     {
@@ -41668,8 +41668,8 @@
       "source_location": "L919",
       "_origin": "ast",
       "id": "src_tests_test_emos_mode_testservingmembersparityguard_test_serving_members_parity_guard",
-      "community": 340,
-      "community_name": "TestServingMembersParityGuard",
+      "community": 0,
+      "community_name": "WeatherState",
       "norm_label": ".test_serving_members_parity_guard()"
     },
     {
@@ -42460,8 +42460,8 @@
       "source_location": "L859",
       "_origin": "ast",
       "id": "src_tests_test_emos_mode_rationale_859",
-      "community": 340,
-      "community_name": "TestServingMembersParityGuard",
+      "community": 0,
+      "community_name": "WeatherState",
       "norm_label": "issue #666/#760: guard that forecast_stack expansion does not break train/serve..."
     },
     {
@@ -42471,8 +42471,8 @@
       "source_location": "L872",
       "_origin": "ast",
       "id": "src_tests_test_emos_mode_rationale_872",
-      "community": 340,
-      "community_name": "TestServingMembersParityGuard",
+      "community": 0,
+      "community_name": "WeatherState",
       "norm_label": "sanity check: baseline stack (nws, open_meteo) has 2 serving members."
     },
     {
@@ -42493,8 +42493,8 @@
       "source_location": "L920",
       "_origin": "ast",
       "id": "src_tests_test_emos_mode_rationale_920",
-      "community": 340,
-      "community_name": "TestServingMembersParityGuard",
+      "community": 0,
+      "community_name": "WeatherState",
       "norm_label": "issue #760 dod: the parity guard passes for both promotable expanded stacks \u2014..."
     },
     {
@@ -47036,8 +47036,8 @@
       "source_location": "L181",
       "_origin": "ast",
       "id": "src_tests_test_entry_guard_testconsecutivepolls",
-      "community": 12,
-      "community_name": "test_entry_guard.py",
+      "community": 4,
+      "community_name": "Bracket",
       "norm_label": "testconsecutivepolls"
     },
     {
@@ -47069,8 +47069,8 @@
       "source_location": "L229",
       "_origin": "ast",
       "id": "src_tests_test_entry_guard_testsamepolldedup",
-      "community": 12,
-      "community_name": "test_entry_guard.py",
+      "community": 4,
+      "community_name": "Bracket",
       "norm_label": "testsamepolldedup"
     },
     {
@@ -47091,8 +47091,8 @@
       "source_location": "L242",
       "_origin": "ast",
       "id": "src_tests_test_entry_guard_testnooverblocking",
-      "community": 12,
-      "community_name": "test_entry_guard.py",
+      "community": 4,
+      "community_name": "Bracket",
       "norm_label": "testnooverblocking"
     },
     {
@@ -47168,8 +47168,8 @@
       "source_location": "L350",
       "_origin": "ast",
       "id": "src_tests_test_entry_guard_testguardcountersurface",
-      "community": 12,
-      "community_name": "test_entry_guard.py",
+      "community": 4,
+      "community_name": "Bracket",
       "norm_label": "testguardcountersurface"
     },
     {
@@ -47630,8 +47630,8 @@
       "source_location": "L199",
       "_origin": "ast",
       "id": "src_tests_test_envelope_testpreviouslyfallbackinternationalstations",
-      "community": 119,
-      "community_name": "compute_envelope",
+      "community": 0,
+      "community_name": "WeatherState",
       "norm_label": "testpreviouslyfallbackinternationalstations"
     },
     {
@@ -47641,8 +47641,8 @@
       "source_location": "L200",
       "_origin": "ast",
       "id": "src_tests_test_envelope_testpreviouslyfallbackinternationalstations_test_eglc_january_midnight_uses_per_station_table_not_flat_default",
-      "community": 119,
-      "community_name": "compute_envelope",
+      "community": 0,
+      "community_name": "WeatherState",
       "norm_label": ".test_eglc_january_midnight_uses_per_station_table_not_flat_default()"
     },
     {
@@ -47652,8 +47652,8 @@
       "source_location": "L238",
       "_origin": "ast",
       "id": "src_tests_test_envelope_testpreviouslyfallbackinternationalstations_test_zggg_january_midnight_uses_per_station_table_not_flat_default",
-      "community": 119,
-      "community_name": "compute_envelope",
+      "community": 0,
+      "community_name": "WeatherState",
       "norm_label": ".test_zggg_january_midnight_uses_per_station_table_not_flat_default()"
     },
     {
@@ -47949,8 +47949,8 @@
       "source_location": "L584",
       "_origin": "ast",
       "id": "src_tests_test_envelope_testexclusivetopedge",
-      "community": 270,
-      "community_name": "test_envelope.py",
+      "community": 340,
+      "community_name": "TestExclusiveTopEdge",
       "norm_label": "testexclusivetopedge"
     },
     {
@@ -47982,8 +47982,8 @@
       "source_location": "L604",
       "_origin": "ast",
       "id": "src_tests_test_envelope_testexclusivetopedge_test_current_high_at_bottom_edge_still_in_bracket",
-      "community": 270,
-      "community_name": "test_envelope.py",
+      "community": 340,
+      "community_name": "TestExclusiveTopEdge",
       "norm_label": ".test_current_high_at_bottom_edge_still_in_bracket()"
     },
     {
@@ -47993,8 +47993,8 @@
       "source_location": "L612",
       "_origin": "ast",
       "id": "src_tests_test_envelope_testexclusivetopedge_test_current_high_strictly_inside_still_certain",
-      "community": 270,
-      "community_name": "test_envelope.py",
+      "community": 340,
+      "community_name": "TestExclusiveTopEdge",
       "norm_label": ".test_current_high_strictly_inside_still_certain()"
     },
     {
@@ -48180,8 +48180,8 @@
       "source_location": "L880",
       "_origin": "ast",
       "id": "src_tests_test_envelope_testnextdayprobabilityyes",
-      "community": 58,
-      "community_name": "next_day_probability_yes",
+      "community": 270,
+      "community_name": "test_envelope.py",
       "norm_label": "testnextdayprobabilityyes"
     },
     {
@@ -48202,8 +48202,8 @@
       "source_location": "L896",
       "_origin": "ast",
       "id": "src_tests_test_envelope_testnextdayprobabilityyes_test_no_observed_high_floor",
-      "community": 58,
-      "community_name": "next_day_probability_yes",
+      "community": 270,
+      "community_name": "test_envelope.py",
       "norm_label": ".test_no_observed_high_floor()"
     },
     {
@@ -48224,8 +48224,8 @@
       "source_location": "L914",
       "_origin": "ast",
       "id": "src_tests_test_envelope_testnextdayprobabilityyes_test_symmetric_around_mu",
-      "community": 58,
-      "community_name": "next_day_probability_yes",
+      "community": 270,
+      "community_name": "test_envelope.py",
       "norm_label": ".test_symmetric_around_mu()"
     },
     {
@@ -48532,8 +48532,8 @@
       "source_location": "L201",
       "_origin": "ast",
       "id": "src_tests_test_envelope_rationale_201",
-      "community": 119,
-      "community_name": "compute_envelope",
+      "community": 0,
+      "community_name": "WeatherState",
       "norm_label": "eglc (london city), january hour=0: per-station climb is 3.6f. the old flat..."
     },
     {
@@ -48543,8 +48543,8 @@
       "source_location": "L239",
       "_origin": "ast",
       "id": "src_tests_test_envelope_rationale_239",
-      "community": 119,
-      "community_name": "compute_envelope",
+      "community": 0,
+      "community_name": "WeatherState",
       "norm_label": "zggg (guangzhou), january hour=0: per-station climb is 7.0f. zggg is slated for..."
     },
     {
@@ -48763,8 +48763,8 @@
       "source_location": "L585",
       "_origin": "ast",
       "id": "src_tests_test_envelope_rationale_585",
-      "community": 270,
-      "community_name": "test_envelope.py",
+      "community": 340,
+      "community_name": "TestExclusiveTopEdge",
       "norm_label": "issue #652 bug a: markets resolve [lo, hi) \u2014 a running high at the top edge..."
     },
     {
@@ -48774,8 +48774,8 @@
       "source_location": "L605",
       "_origin": "ast",
       "id": "src_tests_test_envelope_rationale_605",
-      "community": 270,
-      "community_name": "test_envelope.py",
+      "community": 340,
+      "community_name": "TestExclusiveTopEdge",
       "norm_label": "lo is inclusive: high == lo means yes is currently winning."
     },
     {
@@ -48785,8 +48785,8 @@
       "source_location": "L613",
       "_origin": "ast",
       "id": "src_tests_test_envelope_rationale_613",
-      "community": 270,
-      "community_name": "test_envelope.py",
+      "community": 340,
+      "community_name": "TestExclusiveTopEdge",
       "norm_label": "past peak, high strictly inside the bracket \u2192 certainty unchanged."
     },
     {
@@ -48939,8 +48939,8 @@
       "source_location": "L881",
       "_origin": "ast",
       "id": "src_tests_test_envelope_rationale_881",
-      "community": 58,
-      "community_name": "next_day_probability_yes",
+      "community": 270,
+      "community_name": "test_envelope.py",
       "norm_label": "unit tests for the forecast-only next-day probability path. distinct from..."
     },
     {
@@ -48961,8 +48961,8 @@
       "source_location": "L897",
       "_origin": "ast",
       "id": "src_tests_test_envelope_rationale_897",
-      "community": 58,
-      "community_name": "next_day_probability_yes",
+      "community": 270,
+      "community_name": "test_envelope.py",
       "norm_label": "a bracket entirely below mu is not forced to 0 the way the same-day floor (hi..."
     },
     {
@@ -48983,8 +48983,8 @@
       "source_location": "L915",
       "_origin": "ast",
       "id": "src_tests_test_envelope_rationale_915",
-      "community": 58,
-      "community_name": "next_day_probability_yes",
+      "community": 270,
+      "community_name": "test_envelope.py",
       "norm_label": "no floor/ceiling asymmetry: brackets equidistant from mu on either side get..."
     },
     {
@@ -52394,7 +52394,7 @@
       "_origin": "ast",
       "id": "src_tests_test_gfs_forecast_testcomputeweightsphantomguard",
       "community": 227,
-      "community_name": "compute_weights",
+      "community_name": "TestComputeWeightsPhantomGuard",
       "norm_label": "testcomputeweightsphantomguard"
     },
     {
@@ -52405,7 +52405,7 @@
       "_origin": "ast",
       "id": "src_tests_test_gfs_forecast_testcomputeweightsphantomguard_make_db_with_open_meteo_and_gfs",
       "community": 227,
-      "community_name": "compute_weights",
+      "community_name": "TestComputeWeightsPhantomGuard",
       "norm_label": "._make_db_with_open_meteo_and_gfs()"
     },
     {
@@ -52416,7 +52416,7 @@
       "_origin": "ast",
       "id": "src_tests_test_gfs_forecast_testcomputeweightsphantomguard_test_nws_phantom_excluded_from_blend",
       "community": 227,
-      "community_name": "compute_weights",
+      "community_name": "TestComputeWeightsPhantomGuard",
       "norm_label": ".test_nws_phantom_excluded_from_blend()"
     },
     {
@@ -52427,7 +52427,7 @@
       "_origin": "ast",
       "id": "src_tests_test_gfs_forecast_testcomputeweightsphantomguard_test_fallback_when_insufficient_samples",
       "community": 227,
-      "community_name": "compute_weights",
+      "community_name": "TestComputeWeightsPhantomGuard",
       "norm_label": ".test_fallback_when_insufficient_samples()"
     },
     {
@@ -52438,7 +52438,7 @@
       "_origin": "ast",
       "id": "src_tests_test_gfs_forecast_testcomputeweightsphantomguard_test_hrrr_phantom_excluded_from_blend",
       "community": 227,
-      "community_name": "compute_weights",
+      "community_name": "TestComputeWeightsPhantomGuard",
       "norm_label": ".test_hrrr_phantom_excluded_from_blend()"
     },
     {
@@ -52746,7 +52746,7 @@
       "_origin": "ast",
       "id": "src_tests_test_gfs_forecast_rationale_329",
       "community": 227,
-      "community_name": "compute_weights",
+      "community_name": "TestComputeWeightsPhantomGuard",
       "norm_label": "tests that nws (zero rows) is excluded from the blend for international..."
     },
     {
@@ -52757,7 +52757,7 @@
       "_origin": "ast",
       "id": "src_tests_test_gfs_forecast_rationale_332",
       "community": 227,
-      "community_name": "compute_weights",
+      "community_name": "TestComputeWeightsPhantomGuard",
       "norm_label": "build a mock db with n days of open_meteo forecast rows, plus \"gfs\" rows (issue..."
     },
     {
@@ -52768,7 +52768,7 @@
       "_origin": "ast",
       "id": "src_tests_test_gfs_forecast_rationale_358",
       "community": 227,
-      "community_name": "compute_weights",
+      "community_name": "TestComputeWeightsPhantomGuard",
       "norm_label": "with enough open_meteo rows (plus ignored \"gfs\" rows) but zero nws rows, nws..."
     },
     {
@@ -52779,7 +52779,7 @@
       "_origin": "ast",
       "id": "src_tests_test_gfs_forecast_rationale_370",
       "community": 227,
-      "community_name": "compute_weights",
+      "community_name": "TestComputeWeightsPhantomGuard",
       "norm_label": "falls back to equal_weights when all models have < min_samples pairs."
     },
     {
@@ -52790,7 +52790,7 @@
       "_origin": "ast",
       "id": "src_tests_test_gfs_forecast_rationale_377",
       "community": 227,
-      "community_name": "compute_weights",
+      "community_name": "TestComputeWeightsPhantomGuard",
       "norm_label": "if hrrr rows are absent but nws + open_meteo have enough data, hrrr gets cold-..."
     },
     {
@@ -76692,8 +76692,8 @@
       "source_location": "L478",
       "_origin": "ast",
       "id": "src_tests_test_run_wiring_candidate_with_p_yes_raw",
-      "community": 0,
-      "community_name": "WeatherState",
+      "community": 4,
+      "community_name": "Bracket",
       "norm_label": "_candidate_with_p_yes_raw()"
     },
     {
@@ -76780,8 +76780,8 @@
       "source_location": "L624",
       "_origin": "ast",
       "id": "src_tests_test_run_wiring_testbuildweatherhighfreqobs",
-      "community": 338,
-      "community_name": "TestBuildWeatherHighFreqObs",
+      "community": 0,
+      "community_name": "WeatherState",
       "norm_label": "testbuildweatherhighfreqobs"
     },
     {
@@ -76791,8 +76791,8 @@
       "source_location": "L627",
       "_origin": "ast",
       "id": "src_tests_test_run_wiring_testbuildweatherhighfreqobs_make_mock_db",
-      "community": 338,
-      "community_name": "TestBuildWeatherHighFreqObs",
+      "community": 0,
+      "community_name": "WeatherState",
       "norm_label": "._make_mock_db()"
     },
     {
@@ -76802,8 +76802,8 @@
       "source_location": "L632",
       "_origin": "ast",
       "id": "src_tests_test_run_wiring_testbuildweatherhighfreqobs_run_build_weather",
-      "community": 338,
-      "community_name": "TestBuildWeatherHighFreqObs",
+      "community": 0,
+      "community_name": "WeatherState",
       "norm_label": "._run_build_weather()"
     },
     {
@@ -76813,8 +76813,8 @@
       "source_location": "L681",
       "_origin": "ast",
       "id": "src_tests_test_run_wiring_testbuildweatherhighfreqobs_test_fresh_high_freq_obs_overrides_metar_temp",
-      "community": 338,
-      "community_name": "TestBuildWeatherHighFreqObs",
+      "community": 0,
+      "community_name": "WeatherState",
       "norm_label": ".test_fresh_high_freq_obs_overrides_metar_temp()"
     },
     {
@@ -76824,8 +76824,8 @@
       "source_location": "L694",
       "_origin": "ast",
       "id": "src_tests_test_run_wiring_testbuildweatherhighfreqobs_test_no_db_produces_none_bias_offset",
-      "community": 338,
-      "community_name": "TestBuildWeatherHighFreqObs",
+      "community": 0,
+      "community_name": "WeatherState",
       "norm_label": ".test_no_db_produces_none_bias_offset()"
     },
     {
@@ -76835,8 +76835,8 @@
       "source_location": "L699",
       "_origin": "ast",
       "id": "src_tests_test_run_wiring_testbuildweatherhighfreqobs_test_stale_high_freq_obs_falls_back_to_metar",
-      "community": 338,
-      "community_name": "TestBuildWeatherHighFreqObs",
+      "community": 0,
+      "community_name": "WeatherState",
       "norm_label": ".test_stale_high_freq_obs_falls_back_to_metar()"
     },
     {
@@ -76846,8 +76846,8 @@
       "source_location": "L713",
       "_origin": "ast",
       "id": "src_tests_test_run_wiring_testbuildweatherhighfreqobs_test_bias_offset_computed_correctly",
-      "community": 338,
-      "community_name": "TestBuildWeatherHighFreqObs",
+      "community": 0,
+      "community_name": "WeatherState",
       "norm_label": ".test_bias_offset_computed_correctly()"
     },
     {
@@ -76978,8 +76978,8 @@
       "source_location": "L889",
       "_origin": "ast",
       "id": "src_tests_test_run_wiring_testintradaycorrectionwiring_test_corrected_mu_f_none_falls_through_to_deb",
-      "community": 4,
-      "community_name": "Bracket",
+      "community": 0,
+      "community_name": "WeatherState",
       "norm_label": ".test_corrected_mu_f_none_falls_through_to_deb()"
     },
     {
@@ -77418,8 +77418,8 @@
       "source_location": "L479",
       "_origin": "ast",
       "id": "src_tests_test_run_wiring_rationale_479",
-      "community": 0,
-      "community_name": "WeatherState",
+      "community": 4,
+      "community_name": "Bracket",
       "norm_label": "a non-shadow no candidate with p_yes_raw populated, as scan_markets() builds..."
     },
     {
@@ -77484,8 +77484,8 @@
       "source_location": "L625",
       "_origin": "ast",
       "id": "src_tests_test_run_wiring_rationale_625",
-      "community": 338,
-      "community_name": "TestBuildWeatherHighFreqObs",
+      "community": 0,
+      "community_name": "WeatherState",
       "norm_label": "_build_weather() must prefer fresh high-freq obs over metar when available."
     },
     {
@@ -77495,8 +77495,8 @@
       "source_location": "L633",
       "_origin": "ast",
       "id": "src_tests_test_run_wiring_rationale_633",
-      "community": 338,
-      "community_name": "TestBuildWeatherHighFreqObs",
+      "community": 0,
+      "community_name": "WeatherState",
       "norm_label": "run _build_weather() with mocked metar and return the weatherstate for wsss..."
     },
     {
@@ -77539,8 +77539,8 @@
       "source_location": "L890",
       "_origin": "ast",
       "id": "src_tests_test_run_wiring_rationale_890",
-      "community": 4,
-      "community_name": "Bracket",
+      "community": 0,
+      "community_name": "WeatherState",
       "norm_label": "when corrected_mu_f is none and deb_enabled, deb_mu_f is used. uses a fixed..."
     },
     {
@@ -79486,8 +79486,8 @@
       "source_location": "L573",
       "_origin": "ast",
       "id": "src_tests_test_scanner_testentrygates_test_margin_gate_fires_cross_day_despite_stale_current_high",
-      "community": 23,
-      "community_name": "test_scanner.py",
+      "community": 36,
+      "community_name": "._market",
       "norm_label": ".test_margin_gate_fires_cross_day_despite_stale_current_high()"
     },
     {
@@ -79497,8 +79497,8 @@
       "source_location": "L610",
       "_origin": "ast",
       "id": "src_tests_test_scanner_testentrygates_test_day_mismatch_forces_shadow_with_sufficient_edge",
-      "community": 36,
-      "community_name": "._market",
+      "community": 23,
+      "community_name": "test_scanner.py",
       "norm_label": ".test_day_mismatch_forces_shadow_with_sufficient_edge()"
     },
     {
@@ -80245,8 +80245,8 @@
       "source_location": "L574",
       "_origin": "ast",
       "id": "src_tests_test_scanner_rationale_574",
-      "community": 23,
-      "community_name": "test_scanner.py",
+      "community": 36,
+      "community_name": "._market",
       "norm_label": "issue #784 / #820: evening window cross-day guard. same-day-by-utc evening..."
     },
     {
@@ -80256,8 +80256,8 @@
       "source_location": "L611",
       "_origin": "ast",
       "id": "src_tests_test_scanner_rationale_611",
-      "community": 36,
-      "community_name": "._market",
+      "community": 23,
+      "community_name": "test_scanner.py",
       "norm_label": "issue #820: evening-window candidate with enough edge is forced to shadow with..."
     },
     {
@@ -85591,8 +85591,8 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "src_tests_test_station_side_overrides",
-      "community": 0,
-      "community_name": "WeatherState",
+      "community": 338,
+      "community_name": "test_station_side_overrides.py",
       "norm_label": "test_station_side_overrides.py"
     },
     {
@@ -85602,8 +85602,8 @@
       "source_location": "L35",
       "_origin": "ast",
       "id": "src_tests_test_station_side_overrides_mem_db",
-      "community": 0,
-      "community_name": "WeatherState",
+      "community": 338,
+      "community_name": "test_station_side_overrides.py",
       "norm_label": "_mem_db()"
     },
     {
@@ -85613,8 +85613,8 @@
       "source_location": "",
       "_origin": "ast",
       "id": "src_tests_test_station_side_overrides_py_database",
-      "community": 0,
-      "community_name": "WeatherState",
+      "community": 338,
+      "community_name": "test_station_side_overrides.py",
       "norm_label": "database"
     },
     {
@@ -85624,8 +85624,8 @@
       "source_location": "L39",
       "_origin": "ast",
       "id": "src_tests_test_station_side_overrides_now_iso",
-      "community": 0,
-      "community_name": "WeatherState",
+      "community": 338,
+      "community_name": "test_station_side_overrides.py",
       "norm_label": "_now_iso()"
     },
     {
@@ -85635,8 +85635,8 @@
       "source_location": "L43",
       "_origin": "ast",
       "id": "src_tests_test_station_side_overrides_make_weather_state",
-      "community": 0,
-      "community_name": "WeatherState",
+      "community": 338,
+      "community_name": "test_station_side_overrides.py",
       "norm_label": "_make_weather_state()"
     },
     {
@@ -85646,8 +85646,8 @@
       "source_location": "L56",
       "_origin": "ast",
       "id": "src_tests_test_station_side_overrides_make_bracket_yes",
-      "community": 0,
-      "community_name": "WeatherState",
+      "community": 338,
+      "community_name": "test_station_side_overrides.py",
       "norm_label": "_make_bracket_yes()"
     },
     {
@@ -85657,8 +85657,8 @@
       "source_location": "L69",
       "_origin": "ast",
       "id": "src_tests_test_station_side_overrides_make_bracket_no",
-      "community": 0,
-      "community_name": "WeatherState",
+      "community": 338,
+      "community_name": "test_station_side_overrides.py",
       "norm_label": "_make_bracket_no()"
     },
     {
@@ -85668,8 +85668,8 @@
       "source_location": "L87",
       "_origin": "ast",
       "id": "src_tests_test_station_side_overrides_make_market",
-      "community": 0,
-      "community_name": "WeatherState",
+      "community": 338,
+      "community_name": "test_station_side_overrides.py",
       "norm_label": "_make_market()"
     },
     {
@@ -85679,8 +85679,8 @@
       "source_location": "L106",
       "_origin": "ast",
       "id": "src_tests_test_station_side_overrides_run_yes_scan",
-      "community": 0,
-      "community_name": "WeatherState",
+      "community": 338,
+      "community_name": "test_station_side_overrides.py",
       "norm_label": "_run_yes_scan()"
     },
     {
@@ -85690,8 +85690,8 @@
       "source_location": "L141",
       "_origin": "ast",
       "id": "src_tests_test_station_side_overrides_run_no_scan",
-      "community": 0,
-      "community_name": "WeatherState",
+      "community": 338,
+      "community_name": "test_station_side_overrides.py",
       "norm_label": "_run_no_scan()"
     },
     {
@@ -85701,8 +85701,8 @@
       "source_location": "L182",
       "_origin": "ast",
       "id": "src_tests_test_station_side_overrides_testmigrationaddscolumns",
-      "community": 0,
-      "community_name": "WeatherState",
+      "community": 338,
+      "community_name": "test_station_side_overrides.py",
       "norm_label": "testmigrationaddscolumns"
     },
     {
@@ -85712,8 +85712,8 @@
       "source_location": "L183",
       "_origin": "ast",
       "id": "src_tests_test_station_side_overrides_testmigrationaddscolumns_test_fresh_db_has_yes_no_enabled_columns",
-      "community": 0,
-      "community_name": "WeatherState",
+      "community": 338,
+      "community_name": "test_station_side_overrides.py",
       "norm_label": ".test_fresh_db_has_yes_no_enabled_columns()"
     },
     {
@@ -85723,8 +85723,8 @@
       "source_location": "L191",
       "_origin": "ast",
       "id": "src_tests_test_station_side_overrides_testmigrationaddscolumns_test_migration_adds_yes_no_to_existing_db",
-      "community": 0,
-      "community_name": "WeatherState",
+      "community": 338,
+      "community_name": "test_station_side_overrides.py",
       "norm_label": ".test_migration_adds_yes_no_to_existing_db()"
     },
     {
@@ -85734,8 +85734,8 @@
       "source_location": "L223",
       "_origin": "ast",
       "id": "src_tests_test_station_side_overrides_testmigrationaddscolumns_test_migration_idempotent",
-      "community": 0,
-      "community_name": "WeatherState",
+      "community": 338,
+      "community_name": "test_station_side_overrides.py",
       "norm_label": ".test_migration_idempotent()"
     },
     {
@@ -85745,8 +85745,8 @@
       "source_location": "L245",
       "_origin": "ast",
       "id": "src_tests_test_station_side_overrides_testlegacyenabledfalsemigration",
-      "community": 0,
-      "community_name": "WeatherState",
+      "community": 338,
+      "community_name": "test_station_side_overrides.py",
       "norm_label": "testlegacyenabledfalsemigration"
     },
     {
@@ -85756,8 +85756,8 @@
       "source_location": "L246",
       "_origin": "ast",
       "id": "src_tests_test_station_side_overrides_testlegacyenabledfalsemigration_test_legacy_enabled_false_maps_to_both_shadow",
-      "community": 0,
-      "community_name": "WeatherState",
+      "community": 338,
+      "community_name": "test_station_side_overrides.py",
       "norm_label": ".test_legacy_enabled_false_maps_to_both_shadow()"
     },
     {
@@ -85767,8 +85767,8 @@
       "source_location": "L285",
       "_origin": "ast",
       "id": "src_tests_test_station_side_overrides_testlegacyenabledfalsemigration_test_legacy_enabled_true_not_affected_by_backcompat_migration",
-      "community": 0,
-      "community_name": "WeatherState",
+      "community": 338,
+      "community_name": "test_station_side_overrides.py",
       "norm_label": ".test_legacy_enabled_true_not_affected_by_backcompat_migration()"
     },
     {
@@ -85778,8 +85778,8 @@
       "source_location": "L328",
       "_origin": "ast",
       "id": "src_tests_test_station_side_overrides_testgetsetstationoverridedict",
-      "community": 0,
-      "community_name": "WeatherState",
+      "community": 338,
+      "community_name": "test_station_side_overrides.py",
       "norm_label": "testgetsetstationoverridedict"
     },
     {
@@ -85789,8 +85789,8 @@
       "source_location": "L329",
       "_origin": "ast",
       "id": "src_tests_test_station_side_overrides_testgetsetstationoverridedict_test_get_returns_none_when_no_row",
-      "community": 0,
-      "community_name": "WeatherState",
+      "community": 338,
+      "community_name": "test_station_side_overrides.py",
       "norm_label": ".test_get_returns_none_when_no_row()"
     },
     {
@@ -85800,8 +85800,8 @@
       "source_location": "L333",
       "_origin": "ast",
       "id": "src_tests_test_station_side_overrides_testgetsetstationoverridedict_test_set_get_both_enabled",
-      "community": 0,
-      "community_name": "WeatherState",
+      "community": 338,
+      "community_name": "test_station_side_overrides.py",
       "norm_label": ".test_set_get_both_enabled()"
     },
     {
@@ -85811,8 +85811,8 @@
       "source_location": "L338",
       "_origin": "ast",
       "id": "src_tests_test_station_side_overrides_testgetsetstationoverridedict_test_set_get_yes_shadow",
-      "community": 0,
-      "community_name": "WeatherState",
+      "community": 338,
+      "community_name": "test_station_side_overrides.py",
       "norm_label": ".test_set_get_yes_shadow()"
     },
     {
@@ -85822,8 +85822,8 @@
       "source_location": "L343",
       "_origin": "ast",
       "id": "src_tests_test_station_side_overrides_testgetsetstationoverridedict_test_set_get_no_shadow",
-      "community": 0,
-      "community_name": "WeatherState",
+      "community": 338,
+      "community_name": "test_station_side_overrides.py",
       "norm_label": ".test_set_get_no_shadow()"
     },
     {
@@ -85833,8 +85833,8 @@
       "source_location": "L348",
       "_origin": "ast",
       "id": "src_tests_test_station_side_overrides_testgetsetstationoverridedict_test_set_get_both_shadow",
-      "community": 0,
-      "community_name": "WeatherState",
+      "community": 338,
+      "community_name": "test_station_side_overrides.py",
       "norm_label": ".test_set_get_both_shadow()"
     },
     {
@@ -85844,8 +85844,8 @@
       "source_location": "L353",
       "_origin": "ast",
       "id": "src_tests_test_station_side_overrides_testgetsetstationoverridedict_test_upsert_overwrites",
-      "community": 0,
-      "community_name": "WeatherState",
+      "community": 338,
+      "community_name": "test_station_side_overrides.py",
       "norm_label": ".test_upsert_overwrites()"
     },
     {
@@ -85855,8 +85855,8 @@
       "source_location": "L359",
       "_origin": "ast",
       "id": "src_tests_test_station_side_overrides_testgetsetstationoverridedict_test_get_all_returns_dict_of_dicts",
-      "community": 0,
-      "community_name": "WeatherState",
+      "community": 338,
+      "community_name": "test_station_side_overrides.py",
       "norm_label": ".test_get_all_returns_dict_of_dicts()"
     },
     {
@@ -85866,8 +85866,8 @@
       "source_location": "L374",
       "_origin": "ast",
       "id": "src_tests_test_station_side_overrides_testscannerpersideshadow",
-      "community": 0,
-      "community_name": "WeatherState",
+      "community": 338,
+      "community_name": "test_station_side_overrides.py",
       "norm_label": "testscannerpersideshadow"
     },
     {
@@ -85877,8 +85877,8 @@
       "source_location": "L375",
       "_origin": "ast",
       "id": "src_tests_test_station_side_overrides_testscannerpersideshadow_setup_method",
-      "community": 0,
-      "community_name": "WeatherState",
+      "community": 338,
+      "community_name": "test_station_side_overrides.py",
       "norm_label": ".setup_method()"
     },
     {
@@ -85888,8 +85888,8 @@
       "source_location": "L380",
       "_origin": "ast",
       "id": "src_tests_test_station_side_overrides_testscannerpersideshadow_test_scanner_live_when_both_enabled",
-      "community": 0,
-      "community_name": "WeatherState",
+      "community": 338,
+      "community_name": "test_station_side_overrides.py",
       "norm_label": ".test_scanner_live_when_both_enabled()"
     },
     {
@@ -85899,8 +85899,8 @@
       "source_location": "L392",
       "_origin": "ast",
       "id": "src_tests_test_station_side_overrides_testscannerpersideshadow_test_scanner_shadow_yes_when_yes_enabled_false",
-      "community": 0,
-      "community_name": "WeatherState",
+      "community": 338,
+      "community_name": "test_station_side_overrides.py",
       "norm_label": ".test_scanner_shadow_yes_when_yes_enabled_false()"
     },
     {
@@ -85910,8 +85910,8 @@
       "source_location": "L404",
       "_origin": "ast",
       "id": "src_tests_test_station_side_overrides_testscannerpersideshadow_test_scanner_shadow_no_when_no_enabled_false",
-      "community": 0,
-      "community_name": "WeatherState",
+      "community": 338,
+      "community_name": "test_station_side_overrides.py",
       "norm_label": ".test_scanner_shadow_no_when_no_enabled_false()"
     },
     {
@@ -85921,8 +85921,8 @@
       "source_location": "L416",
       "_origin": "ast",
       "id": "src_tests_test_station_side_overrides_testscannerpersideshadow_test_scanner_live_no_when_no_enabled_true",
-      "community": 0,
-      "community_name": "WeatherState",
+      "community": 338,
+      "community_name": "test_station_side_overrides.py",
       "norm_label": ".test_scanner_live_no_when_no_enabled_true()"
     },
     {
@@ -85932,8 +85932,8 @@
       "source_location": "L428",
       "_origin": "ast",
       "id": "src_tests_test_station_side_overrides_testscannerpersideshadow_test_yes_enabled_true_in_db_produces_live_candidate",
-      "community": 0,
-      "community_name": "WeatherState",
+      "community": 338,
+      "community_name": "test_station_side_overrides.py",
       "norm_label": ".test_yes_enabled_true_in_db_produces_live_candidate()"
     },
     {
@@ -85943,8 +85943,8 @@
       "source_location": "L440",
       "_origin": "ast",
       "id": "src_tests_test_station_side_overrides_testscannerpersideshadow_test_scanner_no_db_falls_back_to_env_all_live",
-      "community": 0,
-      "community_name": "WeatherState",
+      "community": 338,
+      "community_name": "test_station_side_overrides.py",
       "norm_label": ".test_scanner_no_db_falls_back_to_env_all_live()"
     },
     {
@@ -85954,8 +85954,8 @@
       "source_location": "L458",
       "_origin": "ast",
       "id": "src_tests_test_station_side_overrides_testshadowstationsenvvars",
-      "community": 0,
-      "community_name": "WeatherState",
+      "community": 338,
+      "community_name": "test_station_side_overrides.py",
       "norm_label": "testshadowstationsenvvars"
     },
     {
@@ -85965,8 +85965,8 @@
       "source_location": "L459",
       "_origin": "ast",
       "id": "src_tests_test_station_side_overrides_testshadowstationsenvvars_setup_method",
-      "community": 0,
-      "community_name": "WeatherState",
+      "community": 338,
+      "community_name": "test_station_side_overrides.py",
       "norm_label": ".setup_method()"
     },
     {
@@ -85976,8 +85976,8 @@
       "source_location": "L464",
       "_origin": "ast",
       "id": "src_tests_test_station_side_overrides_testshadowstationsenvvars_test_shadow_stations_yes_env_shadows_yes_only",
-      "community": 0,
-      "community_name": "WeatherState",
+      "community": 338,
+      "community_name": "test_station_side_overrides.py",
       "norm_label": ".test_shadow_stations_yes_env_shadows_yes_only()"
     },
     {
@@ -85987,8 +85987,8 @@
       "source_location": "L489",
       "_origin": "ast",
       "id": "src_tests_test_station_side_overrides_testshadowstationsenvvars_test_shadow_stations_no_env_shadows_no_only",
-      "community": 0,
-      "community_name": "WeatherState",
+      "community": 338,
+      "community_name": "test_station_side_overrides.py",
       "norm_label": ".test_shadow_stations_no_env_shadows_no_only()"
     },
     {
@@ -85998,8 +85998,8 @@
       "source_location": "L514",
       "_origin": "ast",
       "id": "src_tests_test_station_side_overrides_testshadowstationsenvvars_test_shadow_stations_both_sides_shadows_both",
-      "community": 0,
-      "community_name": "WeatherState",
+      "community": 338,
+      "community_name": "test_station_side_overrides.py",
       "norm_label": ".test_shadow_stations_both_sides_shadows_both()"
     },
     {
@@ -86009,8 +86009,8 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "src_tests_test_station_side_overrides_rationale_1",
-      "community": 0,
-      "community_name": "WeatherState",
+      "community": 338,
+      "community_name": "test_station_side_overrides.py",
       "norm_label": "unit tests for per-side station shadow overrides (issue #271). covers: - db..."
     },
     {
@@ -86020,8 +86020,8 @@
       "source_location": "L57",
       "_origin": "ast",
       "id": "src_tests_test_station_side_overrides_rationale_57",
-      "community": 0,
-      "community_name": "WeatherState",
+      "community": 338,
+      "community_name": "test_station_side_overrides.py",
       "norm_label": "yes-eligible bracket: p_yes=0.90, ev_yes=17\u00a2 (min=15, max=20)."
     },
     {
@@ -86031,8 +86031,8 @@
       "source_location": "L70",
       "_origin": "ast",
       "id": "src_tests_test_station_side_overrides_rationale_70",
-      "community": 0,
-      "community_name": "WeatherState",
+      "community": 338,
+      "community_name": "test_station_side_overrides.py",
       "norm_label": "no-eligible bracket: p_yes=0.05, no_ask=78\u00a2. ev_no = (1-0.05)*100 - 78 - 1 =..."
     },
     {
@@ -86042,8 +86042,8 @@
       "source_location": "L88",
       "_origin": "ast",
       "id": "src_tests_test_station_side_overrides_rationale_88",
-      "community": 0,
-      "community_name": "WeatherState",
+      "community": 338,
+      "community_name": "test_station_side_overrides.py",
       "norm_label": "a minimal polymarket-style market dict. the enddate uses the real wall-clock..."
     },
     {
@@ -86053,8 +86053,8 @@
       "source_location": "L109",
       "_origin": "ast",
       "id": "src_tests_test_station_side_overrides_rationale_109",
-      "community": 0,
-      "community_name": "WeatherState",
+      "community": 338,
+      "community_name": "test_station_side_overrides.py",
       "norm_label": "run scan_markets with controlled settings; bracket yields yes candidate."
     },
     {
@@ -86064,8 +86064,8 @@
       "source_location": "L143",
       "_origin": "ast",
       "id": "src_tests_test_station_side_overrides_rationale_143",
-      "community": 0,
-      "community_name": "WeatherState",
+      "community": 338,
+      "community_name": "test_station_side_overrides.py",
       "norm_label": "run scan_markets with controlled settings; bracket yields no candidate."
     },
     {
@@ -86075,8 +86075,8 @@
       "source_location": "L184",
       "_origin": "ast",
       "id": "src_tests_test_station_side_overrides_rationale_184",
-      "community": 0,
-      "community_name": "WeatherState",
+      "community": 338,
+      "community_name": "test_station_side_overrides.py",
       "norm_label": "fresh db must have yes_enabled and no_enabled in station_overrides."
     },
     {
@@ -86086,8 +86086,8 @@
       "source_location": "L192",
       "_origin": "ast",
       "id": "src_tests_test_station_side_overrides_rationale_192",
-      "community": 0,
-      "community_name": "WeatherState",
+      "community": 338,
+      "community_name": "test_station_side_overrides.py",
       "norm_label": "migration must add yes_enabled/no_enabled to a legacy db that lacks them."
     },
     {
@@ -86097,8 +86097,8 @@
       "source_location": "L224",
       "_origin": "ast",
       "id": "src_tests_test_station_side_overrides_rationale_224",
-      "community": 0,
-      "community_name": "WeatherState",
+      "community": 338,
+      "community_name": "test_station_side_overrides.py",
       "norm_label": "running database() twice on the same file must not raise errors."
     },
     {
@@ -86108,8 +86108,8 @@
       "source_location": "L247",
       "_origin": "ast",
       "id": "src_tests_test_station_side_overrides_rationale_247",
-      "community": 0,
-      "community_name": "WeatherState",
+      "community": 338,
+      "community_name": "test_station_side_overrides.py",
       "norm_label": "a legacy row with enabled=0 must get yes_enabled=0, no_enabled=0 after..."
     },
     {
@@ -86119,8 +86119,8 @@
       "source_location": "L286",
       "_origin": "ast",
       "id": "src_tests_test_station_side_overrides_rationale_286",
-      "community": 0,
-      "community_name": "WeatherState",
+      "community": 338,
+      "community_name": "test_station_side_overrides.py",
       "norm_label": "a legacy row with enabled=1 must keep yes_enabled=1, no_enabled=1."
     },
     {
@@ -86130,8 +86130,8 @@
       "source_location": "L381",
       "_origin": "ast",
       "id": "src_tests_test_station_side_overrides_rationale_381",
-      "community": 0,
-      "community_name": "WeatherState",
+      "community": 338,
+      "community_name": "test_station_side_overrides.py",
       "norm_label": "with both sides enabled in db, yes candidate is not shadow."
     },
     {
@@ -86141,8 +86141,8 @@
       "source_location": "L393",
       "_origin": "ast",
       "id": "src_tests_test_station_side_overrides_rationale_393",
-      "community": 0,
-      "community_name": "WeatherState",
+      "community": 338,
+      "community_name": "test_station_side_overrides.py",
       "norm_label": "db yes_enabled=false \u2192 yes candidate has shadow=true."
     },
     {
@@ -86152,8 +86152,8 @@
       "source_location": "L405",
       "_origin": "ast",
       "id": "src_tests_test_station_side_overrides_rationale_405",
-      "community": 0,
-      "community_name": "WeatherState",
+      "community": 338,
+      "community_name": "test_station_side_overrides.py",
       "norm_label": "db no_enabled=false \u2192 no candidate has shadow=true."
     },
     {
@@ -86163,8 +86163,8 @@
       "source_location": "L417",
       "_origin": "ast",
       "id": "src_tests_test_station_side_overrides_rationale_417",
-      "community": 0,
-      "community_name": "WeatherState",
+      "community": 338,
+      "community_name": "test_station_side_overrides.py",
       "norm_label": "db no_enabled=true \u2192 no candidate is not shadow."
     },
     {
@@ -86174,8 +86174,8 @@
       "source_location": "L429",
       "_origin": "ast",
       "id": "src_tests_test_station_side_overrides_rationale_429",
-      "community": 0,
-      "community_name": "WeatherState",
+      "community": 338,
+      "community_name": "test_station_side_overrides.py",
       "norm_label": "db yes_enabled=true \u2192 yes candidate is live (shadow=false), station override is..."
     },
     {
@@ -86185,8 +86185,8 @@
       "source_location": "L441",
       "_origin": "ast",
       "id": "src_tests_test_station_side_overrides_rationale_441",
-      "community": 0,
-      "community_name": "WeatherState",
+      "community": 338,
+      "community_name": "test_station_side_overrides.py",
       "norm_label": "with no db and empty shadow_stations, both sides are live."
     },
     {
@@ -86196,8 +86196,8 @@
       "source_location": "L465",
       "_origin": "ast",
       "id": "src_tests_test_station_side_overrides_rationale_465",
-      "community": 0,
-      "community_name": "WeatherState",
+      "community": 338,
+      "community_name": "test_station_side_overrides.py",
       "norm_label": "shadow_stations_yes=kord shadows yes; no side is still live."
     },
     {
@@ -86207,8 +86207,8 @@
       "source_location": "L490",
       "_origin": "ast",
       "id": "src_tests_test_station_side_overrides_rationale_490",
-      "community": 0,
-      "community_name": "WeatherState",
+      "community": 338,
+      "community_name": "test_station_side_overrides.py",
       "norm_label": "shadow_stations_no=kord shadows no; yes side is still live."
     },
     {
@@ -86218,8 +86218,8 @@
       "source_location": "L515",
       "_origin": "ast",
       "id": "src_tests_test_station_side_overrides_rationale_515",
-      "community": 0,
-      "community_name": "WeatherState",
+      "community": 338,
+      "community_name": "test_station_side_overrides.py",
       "norm_label": "shadow_stations=kord shadows both yes and no."
     },
     {
@@ -89067,8 +89067,8 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "src_tests_test_taf_disruption_injection",
-      "community": 85,
-      "community_name": "test_taf_disruption_injection.py",
+      "community": 4,
+      "community_name": "Bracket",
       "norm_label": "test_taf_disruption_injection.py"
     },
     {
@@ -89079,7 +89079,7 @@
       "_origin": "ast",
       "id": "src_tests_test_taf_disruption_injection_make_state",
       "community": 85,
-      "community_name": "test_taf_disruption_injection.py",
+      "community_name": "_make_state",
       "norm_label": "_make_state()"
     },
     {
@@ -89090,7 +89090,7 @@
       "_origin": "ast",
       "id": "src_tests_test_taf_disruption_injection_make_market",
       "community": 85,
-      "community_name": "test_taf_disruption_injection.py",
+      "community_name": "_make_state",
       "norm_label": "_make_market()"
     },
     {
@@ -89101,7 +89101,7 @@
       "_origin": "ast",
       "id": "src_tests_test_taf_disruption_injection_insert_taf_window",
       "community": 85,
-      "community_name": "test_taf_disruption_injection.py",
+      "community_name": "_make_state",
       "norm_label": "_insert_taf_window()"
     },
     {
@@ -89112,7 +89112,7 @@
       "_origin": "ast",
       "id": "src_tests_test_taf_disruption_injection_py_database",
       "community": 85,
-      "community_name": "test_taf_disruption_injection.py",
+      "community_name": "_make_state",
       "norm_label": "database"
     },
     {
@@ -89156,7 +89156,7 @@
       "_origin": "ast",
       "id": "src_tests_test_taf_disruption_injection_scan_patched",
       "community": 85,
-      "community_name": "test_taf_disruption_injection.py",
+      "community_name": "_make_state",
       "norm_label": "_scan_patched()"
     },
     {
@@ -89166,8 +89166,8 @@
       "source_location": "L147",
       "_origin": "ast",
       "id": "src_tests_test_taf_disruption_injection_testscanmarketsnodb",
-      "community": 85,
-      "community_name": "test_taf_disruption_injection.py",
+      "community": 4,
+      "community_name": "Bracket",
       "norm_label": "testscanmarketsnodb"
     },
     {
@@ -89178,7 +89178,7 @@
       "_origin": "ast",
       "id": "src_tests_test_taf_disruption_injection_testscanmarketsnodb_test_no_db_returns_candidates_with_taf_false",
       "community": 85,
-      "community_name": "test_taf_disruption_injection.py",
+      "community_name": "_make_state",
       "norm_label": ".test_no_db_returns_candidates_with_taf_false()"
     },
     {
@@ -89189,7 +89189,7 @@
       "_origin": "ast",
       "id": "src_tests_test_taf_disruption_injection_testscanmarketsnodb_test_no_db_confidence_unchanged",
       "community": 85,
-      "community_name": "test_taf_disruption_injection.py",
+      "community_name": "_make_state",
       "norm_label": ".test_no_db_confidence_unchanged()"
     },
     {
@@ -89199,8 +89199,8 @@
       "source_location": "L174",
       "_origin": "ast",
       "id": "src_tests_test_taf_disruption_injection_testscanmarketsdbnotaf",
-      "community": 85,
-      "community_name": "test_taf_disruption_injection.py",
+      "community": 4,
+      "community_name": "Bracket",
       "norm_label": "testscanmarketsdbnotaf"
     },
     {
@@ -89211,7 +89211,7 @@
       "_origin": "ast",
       "id": "src_tests_test_taf_disruption_injection_testscanmarketsdbnotaf_test_no_taf_data_taf_disruption_false",
       "community": 85,
-      "community_name": "test_taf_disruption_injection.py",
+      "community_name": "_make_state",
       "norm_label": ".test_no_taf_data_taf_disruption_false()"
     },
     {
@@ -89222,7 +89222,7 @@
       "_origin": "ast",
       "id": "src_tests_test_taf_disruption_injection_testscanmarketsdbnotaf_test_fm_window_with_ts_not_disruption",
       "community": 85,
-      "community_name": "test_taf_disruption_injection.py",
+      "community_name": "_make_state",
       "norm_label": ".test_fm_window_with_ts_not_disruption()"
     },
     {
@@ -89233,7 +89233,7 @@
       "_origin": "ast",
       "id": "src_tests_test_taf_disruption_injection_testscanmarketsdbwithtaf",
       "community": 85,
-      "community_name": "test_taf_disruption_injection.py",
+      "community_name": "_make_state",
       "norm_label": "testscanmarketsdbwithtaf"
     },
     {
@@ -89244,7 +89244,7 @@
       "_origin": "ast",
       "id": "src_tests_test_taf_disruption_injection_testscanmarketsdbwithtaf_test_tempo_ts_sets_taf_disruption_true",
       "community": 85,
-      "community_name": "test_taf_disruption_injection.py",
+      "community_name": "_make_state",
       "norm_label": ".test_tempo_ts_sets_taf_disruption_true()"
     },
     {
@@ -89255,7 +89255,7 @@
       "_origin": "ast",
       "id": "src_tests_test_taf_disruption_injection_testscanmarketsdbwithtaf_test_tempo_sh_sets_taf_disruption_true",
       "community": 85,
-      "community_name": "test_taf_disruption_injection.py",
+      "community_name": "_make_state",
       "norm_label": ".test_tempo_sh_sets_taf_disruption_true()"
     },
     {
@@ -89266,7 +89266,7 @@
       "_origin": "ast",
       "id": "src_tests_test_taf_disruption_injection_testscanmarketsdbwithtaf_test_confidence_scaled_by_default_factor",
       "community": 85,
-      "community_name": "test_taf_disruption_injection.py",
+      "community_name": "_make_state",
       "norm_label": ".test_confidence_scaled_by_default_factor()"
     },
     {
@@ -89277,7 +89277,7 @@
       "_origin": "ast",
       "id": "src_tests_test_taf_disruption_injection_testscanmarketsdbwithtaf_test_confidence_scaled_by_custom_factor",
       "community": 85,
-      "community_name": "test_taf_disruption_injection.py",
+      "community_name": "_make_state",
       "norm_label": ".test_confidence_scaled_by_custom_factor()"
     },
     {
@@ -89288,7 +89288,7 @@
       "_origin": "ast",
       "id": "src_tests_test_taf_disruption_injection_testscanmarketsdbwithtaf_test_no_disruption_confidence_unchanged",
       "community": 85,
-      "community_name": "test_taf_disruption_injection.py",
+      "community_name": "_make_state",
       "norm_label": ".test_no_disruption_confidence_unchanged()"
     },
     {
@@ -89299,7 +89299,7 @@
       "_origin": "ast",
       "id": "src_tests_test_taf_disruption_injection_testscanmarketsdbwithtaf_test_wrong_city_taf_window_not_disruption",
       "community": 85,
-      "community_name": "test_taf_disruption_injection.py",
+      "community_name": "_make_state",
       "norm_label": ".test_wrong_city_taf_window_not_disruption()"
     },
     {
@@ -89309,8 +89309,8 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "src_tests_test_taf_disruption_injection_rationale_1",
-      "community": 85,
-      "community_name": "test_taf_disruption_injection.py",
+      "community": 4,
+      "community_name": "Bracket",
       "norm_label": "tests for taf disruption injection into scan_markets() \u2014 issue #104. verifies..."
     },
     {
@@ -89321,7 +89321,7 @@
       "_origin": "ast",
       "id": "src_tests_test_taf_disruption_injection_rationale_29",
       "community": 85,
-      "community_name": "test_taf_disruption_injection.py",
+      "community_name": "_make_state",
       "norm_label": "minimal weatherstate that the envelope model can score."
     },
     {
@@ -89332,7 +89332,7 @@
       "_origin": "ast",
       "id": "src_tests_test_taf_disruption_injection_rationale_51",
       "community": 85,
-      "community_name": "test_taf_disruption_injection.py",
+      "community_name": "_make_state",
       "norm_label": "minimal polymarket market dict (today's settlement date)."
     },
     {
@@ -89365,7 +89365,7 @@
       "_origin": "ast",
       "id": "src_tests_test_taf_disruption_injection_rationale_130",
       "community": 85,
-      "community_name": "test_taf_disruption_injection.py",
+      "community_name": "_make_state",
       "norm_label": "run scan_markets with permissive config so candidates are generated."
     },
     {
@@ -89376,7 +89376,7 @@
       "_origin": "ast",
       "id": "src_tests_test_taf_disruption_injection_rationale_149",
       "community": 85,
-      "community_name": "test_taf_disruption_injection.py",
+      "community_name": "_make_state",
       "norm_label": "without db arg, candidates have taf_disruption=false."
     },
     {
@@ -89387,7 +89387,7 @@
       "_origin": "ast",
       "id": "src_tests_test_taf_disruption_injection_rationale_158",
       "community": 85,
-      "community_name": "test_taf_disruption_injection.py",
+      "community_name": "_make_state",
       "norm_label": "without db arg, confidence is not scaled by taf factor."
     },
     {
@@ -89398,7 +89398,7 @@
       "_origin": "ast",
       "id": "src_tests_test_taf_disruption_injection_rationale_176",
       "community": 85,
-      "community_name": "test_taf_disruption_injection.py",
+      "community_name": "_make_state",
       "norm_label": "db with no taf windows \u2192 taf_disruption=false on candidate."
     },
     {
@@ -89409,7 +89409,7 @@
       "_origin": "ast",
       "id": "src_tests_test_taf_disruption_injection_rationale_186",
       "community": 85,
-      "community_name": "test_taf_disruption_injection.py",
+      "community_name": "_make_state",
       "norm_label": "fm window (definite change) with ts \u2192 taf_disruption=false."
     },
     {
@@ -89420,7 +89420,7 @@
       "_origin": "ast",
       "id": "src_tests_test_taf_disruption_injection_rationale_203",
       "community": 85,
-      "community_name": "test_taf_disruption_injection.py",
+      "community_name": "_make_state",
       "norm_label": "tempo window with ts \u2192 taf_disruption=true on candidate."
     },
     {
@@ -89431,7 +89431,7 @@
       "_origin": "ast",
       "id": "src_tests_test_taf_disruption_injection_rationale_214",
       "community": 85,
-      "community_name": "test_taf_disruption_injection.py",
+      "community_name": "_make_state",
       "norm_label": "tempo window with sh \u2192 taf_disruption=true."
     },
     {
@@ -89442,7 +89442,7 @@
       "_origin": "ast",
       "id": "src_tests_test_taf_disruption_injection_rationale_224",
       "community": 85,
-      "community_name": "test_taf_disruption_injection.py",
+      "community_name": "_make_state",
       "norm_label": "taf disruption with default factor (0.85) scales confidence."
     },
     {
@@ -89453,7 +89453,7 @@
       "_origin": "ast",
       "id": "src_tests_test_taf_disruption_injection_rationale_238",
       "community": 85,
-      "community_name": "test_taf_disruption_injection.py",
+      "community_name": "_make_state",
       "norm_label": "taf_disruption_confidence_factor env var controls the multiplier."
     },
     {
@@ -89464,7 +89464,7 @@
       "_origin": "ast",
       "id": "src_tests_test_taf_disruption_injection_rationale_252",
       "community": 85,
-      "community_name": "test_taf_disruption_injection.py",
+      "community_name": "_make_state",
       "norm_label": "without taf disruption, confidence equals raw p_yes/1-p_yes (no scaling)."
     },
     {
@@ -89475,7 +89475,7 @@
       "_origin": "ast",
       "id": "src_tests_test_taf_disruption_injection_rationale_265",
       "community": 85,
-      "community_name": "test_taf_disruption_injection.py",
+      "community_name": "_make_state",
       "norm_label": "taf window for chicago does not affect miami candidate."
     },
     {
@@ -89496,8 +89496,8 @@
       "source_location": "",
       "_origin": "ast",
       "id": "src_tests_test_taf_parser_py_fixture",
-      "community": 373,
-      "community_name": "parser",
+      "community": 203,
+      "community_name": "test_taf_parser.py",
       "norm_label": "fixture"
     },
     {
@@ -89507,8 +89507,8 @@
       "source_location": "L55",
       "_origin": "ast",
       "id": "src_tests_test_taf_parser_parser",
-      "community": 373,
-      "community_name": "parser",
+      "community": 203,
+      "community_name": "test_taf_parser.py",
       "norm_label": "parser()"
     },
     {
@@ -89518,8 +89518,8 @@
       "source_location": "",
       "_origin": "ast",
       "id": "tafparser",
-      "community": 373,
-      "community_name": "parser",
+      "community": 203,
+      "community_name": "test_taf_parser.py",
       "norm_label": "tafparser"
     },
     {
@@ -89859,8 +89859,8 @@
       "source_location": "L213",
       "_origin": "ast",
       "id": "src_tests_test_taf_parser_testprob40",
-      "community": 377,
-      "community_name": "TestProb40",
+      "community": 203,
+      "community_name": "test_taf_parser.py",
       "norm_label": "testprob40"
     },
     {
@@ -89870,8 +89870,8 @@
       "source_location": "L214",
       "_origin": "ast",
       "id": "src_tests_test_taf_parser_testprob40_test_prob40_label_is_temporary_fluctuation",
-      "community": 377,
-      "community_name": "TestProb40",
+      "community": 203,
+      "community_name": "test_taf_parser.py",
       "norm_label": ".test_prob40_label_is_temporary_fluctuation()"
     },
     {
@@ -89881,8 +89881,8 @@
       "source_location": "L219",
       "_origin": "ast",
       "id": "src_tests_test_taf_parser_testprob40_test_prob40_sig_wx_has_ts",
-      "community": 377,
-      "community_name": "TestProb40",
+      "community": 203,
+      "community_name": "test_taf_parser.py",
       "norm_label": ".test_prob40_sig_wx_has_ts()"
     },
     {
@@ -89892,8 +89892,8 @@
       "source_location": "L230",
       "_origin": "ast",
       "id": "src_tests_test_taf_parser_testemptyinput",
-      "community": 203,
-      "community_name": "test_taf_parser.py",
+      "community": 373,
+      "community_name": "TestEmptyInput",
       "norm_label": "testemptyinput"
     },
     {
@@ -89903,8 +89903,8 @@
       "source_location": "L231",
       "_origin": "ast",
       "id": "src_tests_test_taf_parser_testemptyinput_test_empty_string",
-      "community": 203,
-      "community_name": "test_taf_parser.py",
+      "community": 373,
+      "community_name": "TestEmptyInput",
       "norm_label": ".test_empty_string()"
     },
     {
@@ -89914,8 +89914,8 @@
       "source_location": "L234",
       "_origin": "ast",
       "id": "src_tests_test_taf_parser_testemptyinput_test_whitespace_only",
-      "community": 203,
-      "community_name": "test_taf_parser.py",
+      "community": 373,
+      "community_name": "TestEmptyInput",
       "norm_label": ".test_whitespace_only()"
     },
     {
@@ -89925,8 +89925,8 @@
       "source_location": "L237",
       "_origin": "ast",
       "id": "src_tests_test_taf_parser_testemptyinput_test_garbage_string",
-      "community": 203,
-      "community_name": "test_taf_parser.py",
+      "community": 373,
+      "community_name": "TestEmptyInput",
       "norm_label": ".test_garbage_string()"
     },
     {
@@ -89936,8 +89936,8 @@
       "source_location": "L240",
       "_origin": "ast",
       "id": "src_tests_test_taf_parser_testemptyinput_test_json_empty_array",
-      "community": 203,
-      "community_name": "test_taf_parser.py",
+      "community": 373,
+      "community_name": "TestEmptyInput",
       "norm_label": ".test_json_empty_array()"
     },
     {
@@ -103809,7 +103809,7 @@
       "context": "import",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L155",
+      "source_location": "L157",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report",
@@ -114635,7 +114635,7 @@
       "context": "import",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L1297",
+      "source_location": "L1301",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report",
@@ -114671,7 +114671,7 @@
       "context": "import",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/certainty_exclusion_check.py",
-      "source_location": "L507",
+      "source_location": "L508",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_certainty_exclusion_check",
@@ -114802,7 +114802,7 @@
       "context": "import",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L1297",
+      "source_location": "L1301",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report",
@@ -114850,7 +114850,7 @@
       "context": "import",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/certainty_exclusion_check.py",
-      "source_location": "L507",
+      "source_location": "L508",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_certainty_exclusion_check",
@@ -119611,7 +119611,7 @@
       "confidence": "INFERRED",
       "confidence_score": 0.8,
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L1166",
+      "source_location": "L1170",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report_run_report",
@@ -136161,7 +136161,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L354",
+      "source_location": "L356",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report",
@@ -136172,7 +136172,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L935",
+      "source_location": "L937",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report",
@@ -136183,7 +136183,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L571",
+      "source_location": "L573",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report",
@@ -136194,7 +136194,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L658",
+      "source_location": "L660",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report",
@@ -136205,7 +136205,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L400",
+      "source_location": "L402",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report",
@@ -136216,7 +136216,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L875",
+      "source_location": "L877",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report",
@@ -136227,7 +136227,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L378",
+      "source_location": "L380",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report",
@@ -136238,7 +136238,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L711",
+      "source_location": "L713",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report",
@@ -136249,7 +136249,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L259",
+      "source_location": "L261",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report",
@@ -136260,7 +136260,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L650",
+      "source_location": "L652",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report",
@@ -136271,7 +136271,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L763",
+      "source_location": "L765",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report",
@@ -136282,7 +136282,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L238",
+      "source_location": "L240",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report",
@@ -136293,7 +136293,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L435",
+      "source_location": "L437",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report",
@@ -136304,7 +136304,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L297",
+      "source_location": "L299",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report",
@@ -136315,7 +136315,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L269",
+      "source_location": "L271",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report",
@@ -136326,7 +136326,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L420",
+      "source_location": "L422",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report",
@@ -136337,7 +136337,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L1255",
+      "source_location": "L1259",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report",
@@ -136348,7 +136348,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L630",
+      "source_location": "L632",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report",
@@ -136359,7 +136359,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L459",
+      "source_location": "L461",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report",
@@ -136370,7 +136370,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L1143",
+      "source_location": "L1147",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report",
@@ -136381,7 +136381,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L701",
+      "source_location": "L703",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report",
@@ -136392,7 +136392,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L641",
+      "source_location": "L643",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report",
@@ -136403,7 +136403,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L549",
+      "source_location": "L551",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report",
@@ -136414,7 +136414,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L603",
+      "source_location": "L605",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report",
@@ -136425,7 +136425,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L679",
+      "source_location": "L681",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report",
@@ -136437,7 +136437,7 @@
       "context": "import",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L156",
+      "source_location": "L158",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report",
@@ -136449,7 +136449,7 @@
       "context": "import",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L156",
+      "source_location": "L158",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report",
@@ -136461,7 +136461,7 @@
       "context": "import",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L156",
+      "source_location": "L158",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report",
@@ -136473,7 +136473,7 @@
       "context": "import",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L156",
+      "source_location": "L158",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report",
@@ -136485,7 +136485,7 @@
       "context": "import",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L159",
+      "source_location": "L161",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report",
@@ -136497,7 +136497,7 @@
       "context": "import",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L159",
+      "source_location": "L161",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report",
@@ -136509,7 +136509,7 @@
       "context": "import",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L159",
+      "source_location": "L161",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report",
@@ -136521,7 +136521,7 @@
       "context": "import",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L159",
+      "source_location": "L161",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report",
@@ -136533,7 +136533,7 @@
       "context": "import",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L159",
+      "source_location": "L161",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report",
@@ -136545,7 +136545,7 @@
       "context": "import",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L159",
+      "source_location": "L161",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report",
@@ -136557,7 +136557,7 @@
       "context": "import",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L159",
+      "source_location": "L161",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report",
@@ -136569,7 +136569,7 @@
       "context": "import",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L159",
+      "source_location": "L161",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report",
@@ -136581,7 +136581,7 @@
       "context": "import",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L165",
+      "source_location": "L167",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report",
@@ -136593,7 +136593,7 @@
       "context": "import",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L165",
+      "source_location": "L167",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report",
@@ -136605,7 +136605,7 @@
       "context": "import",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L165",
+      "source_location": "L167",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report",
@@ -136652,7 +136652,7 @@
       "context": "parameter_type",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L238",
+      "source_location": "L240",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report_iter_csv_rows",
@@ -136664,7 +136664,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L246",
+      "source_location": "L248",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report_iter_csv_rows",
@@ -136676,7 +136676,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L280",
+      "source_location": "L282",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report_load_candidate_rows",
@@ -136687,10 +136687,10 @@
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L239",
+      "source_location": "L241",
       "weight": 1.0,
       "_origin": "ast",
-      "source": "src_scripts_bss_market_vs_model_report_rationale_239",
+      "source": "src_scripts_bss_market_vs_model_report_rationale_241",
       "target": "src_scripts_bss_market_vs_model_report_iter_csv_rows",
       "confidence_score": 1.0
     },
@@ -136699,7 +136699,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L408",
+      "source_location": "L410",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report_connect_ro",
@@ -136711,7 +136711,7 @@
       "context": "parameter_type",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L1143",
+      "source_location": "L1147",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report_run_report",
@@ -136723,7 +136723,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L336",
+      "source_location": "L338",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report_load_bracket_eval_rows",
@@ -136735,7 +136735,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L287",
+      "source_location": "L289",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report_load_candidate_rows",
@@ -136746,10 +136746,10 @@
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L270",
+      "source_location": "L272",
       "weight": 1.0,
       "_origin": "ast",
-      "source": "src_scripts_bss_market_vs_model_report_rationale_270",
+      "source": "src_scripts_bss_market_vs_model_report_rationale_272",
       "target": "src_scripts_bss_market_vs_model_report_load_candidate_rows",
       "confidence_score": 1.0
     },
@@ -136758,7 +136758,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L1180",
+      "source_location": "L1184",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report_run_report",
@@ -136782,7 +136782,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/certainty_exclusion_check.py",
-      "source_location": "L445",
+      "source_location": "L447",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_certainty_exclusion_check_run_check",
@@ -136818,7 +136818,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L329",
+      "source_location": "L331",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report_load_bracket_eval_rows",
@@ -136829,10 +136829,10 @@
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L298",
+      "source_location": "L300",
       "weight": 1.0,
       "_origin": "ast",
-      "source": "src_scripts_bss_market_vs_model_report_rationale_298",
+      "source": "src_scripts_bss_market_vs_model_report_rationale_300",
       "target": "src_scripts_bss_market_vs_model_report_load_bracket_eval_rows",
       "confidence_score": 1.0
     },
@@ -136841,7 +136841,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L1177",
+      "source_location": "L1181",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report_run_report",
@@ -136865,7 +136865,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/certainty_exclusion_check.py",
-      "source_location": "L443",
+      "source_location": "L445",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_certainty_exclusion_check_run_check",
@@ -136936,10 +136936,10 @@
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L355",
+      "source_location": "L357",
       "weight": 1.0,
       "_origin": "ast",
-      "source": "src_scripts_bss_market_vs_model_report_rationale_355",
+      "source": "src_scripts_bss_market_vs_model_report_rationale_357",
       "target": "src_scripts_bss_market_vs_model_report_apply_exclusions",
       "confidence_score": 1.0
     },
@@ -136948,7 +136948,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L1190",
+      "source_location": "L1195",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report_run_report",
@@ -137055,10 +137055,10 @@
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L379",
+      "source_location": "L381",
       "weight": 1.0,
       "_origin": "ast",
-      "source": "src_scripts_bss_market_vs_model_report_rationale_379",
+      "source": "src_scripts_bss_market_vs_model_report_rationale_381",
       "target": "src_scripts_bss_market_vs_model_report_dedupe_one_per_bracket_day",
       "confidence_score": 1.0
     },
@@ -137067,7 +137067,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L1191",
+      "source_location": "L1194",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report_run_report",
@@ -137091,7 +137091,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/certainty_exclusion_check.py",
-      "source_location": "L456",
+      "source_location": "L457",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_certainty_exclusion_check_run_check",
@@ -137163,7 +137163,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L422",
+      "source_location": "L424",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report_load_settlement_outcomes",
@@ -137174,10 +137174,10 @@
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L401",
+      "source_location": "L403",
       "weight": 1.0,
       "_origin": "ast",
-      "source": "src_scripts_bss_market_vs_model_report_rationale_401",
+      "source": "src_scripts_bss_market_vs_model_report_rationale_403",
       "target": "src_scripts_bss_market_vs_model_report_connect_ro",
       "confidence_score": 1.0
     },
@@ -137186,7 +137186,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L1196",
+      "source_location": "L1200",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report_run_report",
@@ -137197,10 +137197,10 @@
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L421",
+      "source_location": "L423",
       "weight": 1.0,
       "_origin": "ast",
-      "source": "src_scripts_bss_market_vs_model_report_rationale_421",
+      "source": "src_scripts_bss_market_vs_model_report_rationale_423",
       "target": "src_scripts_bss_market_vs_model_report_load_settlement_outcomes",
       "confidence_score": 1.0
     },
@@ -137209,7 +137209,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L1219",
+      "source_location": "L1223",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report_run_report",
@@ -137256,10 +137256,10 @@
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L436",
+      "source_location": "L438",
       "weight": 1.0,
       "_origin": "ast",
-      "source": "src_scripts_bss_market_vs_model_report_rationale_436",
+      "source": "src_scripts_bss_market_vs_model_report_rationale_438",
       "target": "src_scripts_bss_market_vs_model_report_join_outcomes",
       "confidence_score": 1.0
     },
@@ -137268,7 +137268,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L1226",
+      "source_location": "L1230",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report_run_report",
@@ -137303,10 +137303,10 @@
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L466",
+      "source_location": "L468",
       "weight": 1.0,
       "_origin": "ast",
-      "source": "src_scripts_bss_market_vs_model_report_rationale_466",
+      "source": "src_scripts_bss_market_vs_model_report_rationale_468",
       "target": "src_scripts_bss_market_vs_model_report_resolve_candidate_outcomes",
       "confidence_score": 1.0
     },
@@ -137315,7 +137315,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L521",
+      "source_location": "L523",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report_resolve_candidate_outcomes",
@@ -137327,7 +137327,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L522",
+      "source_location": "L524",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report_resolve_candidate_outcomes",
@@ -137339,7 +137339,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L510",
+      "source_location": "L512",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report_resolve_candidate_outcomes",
@@ -137351,7 +137351,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L531",
+      "source_location": "L533",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report_resolve_candidate_outcomes",
@@ -137363,7 +137363,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L527",
+      "source_location": "L529",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report_resolve_candidate_outcomes",
@@ -137375,7 +137375,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L513",
+      "source_location": "L515",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report_resolve_candidate_outcomes",
@@ -137387,7 +137387,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L1202",
+      "source_location": "L1206",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report_run_report",
@@ -137411,7 +137411,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/certainty_exclusion_check.py",
-      "source_location": "L461",
+      "source_location": "L462",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_certainty_exclusion_check_run_check",
@@ -137531,7 +137531,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L587",
+      "source_location": "L589",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report_classify_day_segment",
@@ -137542,10 +137542,10 @@
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L550",
+      "source_location": "L552",
       "weight": 1.0,
       "_origin": "ast",
-      "source": "src_scripts_bss_market_vs_model_report_rationale_550",
+      "source": "src_scripts_bss_market_vs_model_report_rationale_552",
       "target": "src_scripts_bss_market_vs_model_report_station_local_date",
       "confidence_score": 1.0
     },
@@ -137578,7 +137578,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L960",
+      "source_location": "L962",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report_build_report",
@@ -137589,10 +137589,10 @@
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L572",
+      "source_location": "L574",
       "weight": 1.0,
       "_origin": "ast",
-      "source": "src_scripts_bss_market_vs_model_report_rationale_572",
+      "source": "src_scripts_bss_market_vs_model_report_rationale_574",
       "target": "src_scripts_bss_market_vs_model_report_classify_day_segment",
       "confidence_score": 1.0
     },
@@ -137697,7 +137697,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L965",
+      "source_location": "L967",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report_build_report",
@@ -137708,10 +137708,10 @@
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L604",
+      "source_location": "L606",
       "weight": 1.0,
       "_origin": "ast",
-      "source": "src_scripts_bss_market_vs_model_report_rationale_604",
+      "source": "src_scripts_bss_market_vs_model_report_rationale_606",
       "target": "src_scripts_bss_market_vs_model_report_utc_offset_bucket",
       "confidence_score": 1.0
     },
@@ -137756,7 +137756,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L969",
+      "source_location": "L971",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report_build_report",
@@ -137768,7 +137768,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L665",
+      "source_location": "L667",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report_compute_bss",
@@ -137779,10 +137779,10 @@
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L631",
+      "source_location": "L633",
       "weight": 1.0,
       "_origin": "ast",
-      "source": "src_scripts_bss_market_vs_model_report_rationale_631",
+      "source": "src_scripts_bss_market_vs_model_report_rationale_633",
       "target": "src_scripts_bss_market_vs_model_report_market_p_yes",
       "confidence_score": 1.0
     },
@@ -137839,7 +137839,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L1094",
+      "source_location": "L1096",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report_build_report",
@@ -137850,10 +137850,10 @@
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L642",
+      "source_location": "L644",
       "weight": 1.0,
       "_origin": "ast",
-      "source": "src_scripts_bss_market_vs_model_report_rationale_642",
+      "source": "src_scripts_bss_market_vs_model_report_rationale_644",
       "target": "src_scripts_bss_market_vs_model_report_sharpness_histogram",
       "confidence_score": 1.0
     },
@@ -137886,7 +137886,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L1094",
+      "source_location": "L1096",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report_build_report",
@@ -137898,7 +137898,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L956",
+      "source_location": "L958",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report_build_report",
@@ -137910,7 +137910,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L666",
+      "source_location": "L668",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report_compute_bss",
@@ -137921,10 +137921,10 @@
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L659",
+      "source_location": "L661",
       "weight": 1.0,
       "_origin": "ast",
-      "source": "src_scripts_bss_market_vs_model_report_rationale_659",
+      "source": "src_scripts_bss_market_vs_model_report_rationale_661",
       "target": "src_scripts_bss_market_vs_model_report_compute_bss",
       "confidence_score": 1.0
     },
@@ -137993,7 +137993,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L1036",
+      "source_location": "L1038",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report_build_report",
@@ -138005,7 +138005,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L927",
+      "source_location": "L929",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report_decision_gate_section",
@@ -138016,10 +138016,10 @@
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L680",
+      "source_location": "L682",
       "weight": 1.0,
       "_origin": "ast",
-      "source": "src_scripts_bss_market_vs_model_report_rationale_680",
+      "source": "src_scripts_bss_market_vs_model_report_rationale_682",
       "target": "src_scripts_bss_market_vs_model_report_verdict_label",
       "confidence_score": 1.0
     },
@@ -138052,7 +138052,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L725",
+      "source_location": "L727",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report_direction_gap_note",
@@ -138063,10 +138063,10 @@
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L702",
+      "source_location": "L704",
       "weight": 1.0,
       "_origin": "ast",
-      "source": "src_scripts_bss_market_vs_model_report_rationale_702",
+      "source": "src_scripts_bss_market_vs_model_report_rationale_704",
       "target": "src_scripts_bss_market_vs_model_report_sample_date_span",
       "confidence_score": 1.0
     },
@@ -138111,7 +138111,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L815",
+      "source_location": "L817",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report_ground_truth_section",
@@ -138122,10 +138122,10 @@
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L712",
+      "source_location": "L714",
       "weight": 1.0,
       "_origin": "ast",
-      "source": "src_scripts_bss_market_vs_model_report_rationale_712",
+      "source": "src_scripts_bss_market_vs_model_report_rationale_714",
       "target": "src_scripts_bss_market_vs_model_report_direction_gap_note",
       "confidence_score": 1.0
     },
@@ -138134,7 +138134,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L1058",
+      "source_location": "L1060",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report_build_report",
@@ -138146,7 +138146,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L833",
+      "source_location": "L835",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report_ground_truth_section",
@@ -138157,10 +138157,10 @@
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L764",
+      "source_location": "L766",
       "weight": 1.0,
       "_origin": "ast",
-      "source": "src_scripts_bss_market_vs_model_report_rationale_764",
+      "source": "src_scripts_bss_market_vs_model_report_rationale_766",
       "target": "src_scripts_bss_market_vs_model_report_ground_truth_section",
       "confidence_score": 1.0
     },
@@ -138169,7 +138169,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L1055",
+      "source_location": "L1057",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report_build_report",
@@ -138180,10 +138180,10 @@
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L876",
+      "source_location": "L878",
       "weight": 1.0,
       "_origin": "ast",
-      "source": "src_scripts_bss_market_vs_model_report_rationale_876",
+      "source": "src_scripts_bss_market_vs_model_report_rationale_878",
       "target": "src_scripts_bss_market_vs_model_report_decision_gate_section",
       "confidence_score": 1.0
     },
@@ -138192,7 +138192,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L1090",
+      "source_location": "L1092",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report_build_report",
@@ -138204,7 +138204,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L1090",
+      "source_location": "L1092",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report_build_report",
@@ -138215,10 +138215,10 @@
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L938",
+      "source_location": "L940",
       "weight": 1.0,
       "_origin": "ast",
-      "source": "src_scripts_bss_market_vs_model_report_rationale_938",
+      "source": "src_scripts_bss_market_vs_model_report_rationale_940",
       "target": "src_scripts_bss_market_vs_model_report_build_report",
       "confidence_score": 1.0
     },
@@ -138227,7 +138227,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L1232",
+      "source_location": "L1236",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report_run_report",
@@ -138299,7 +138299,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L1286",
+      "source_location": "L1290",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_bss_market_vs_model_report_main",
@@ -138310,10 +138310,10 @@
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/bss_market_vs_model_report.py",
-      "source_location": "L1151",
+      "source_location": "L1155",
       "weight": 1.0,
       "_origin": "ast",
-      "source": "src_scripts_bss_market_vs_model_report_rationale_1151",
+      "source": "src_scripts_bss_market_vs_model_report_rationale_1155",
       "target": "src_scripts_bss_market_vs_model_report_run_report",
       "confidence_score": 1.0
     },
@@ -139526,7 +139526,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/certainty_exclusion_check.py",
-      "source_location": "L483",
+      "source_location": "L484",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_certainty_exclusion_check",
@@ -139559,7 +139559,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/certainty_exclusion_check.py",
-      "source_location": "L435",
+      "source_location": "L437",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_certainty_exclusion_check",
@@ -139804,7 +139804,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/certainty_exclusion_check.py",
-      "source_location": "L457",
+      "source_location": "L458",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_certainty_exclusion_check_run_check",
@@ -139887,7 +139887,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/certainty_exclusion_check.py",
-      "source_location": "L476",
+      "source_location": "L477",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_certainty_exclusion_check_run_check",
@@ -139946,7 +139946,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/certainty_exclusion_check.py",
-      "source_location": "L474",
+      "source_location": "L475",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_certainty_exclusion_check_run_check",
@@ -140018,7 +140018,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/certainty_exclusion_check.py",
-      "source_location": "L407",
+      "source_location": "L409",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_certainty_exclusion_check_build_report",
@@ -140041,7 +140041,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/certainty_exclusion_check.py",
-      "source_location": "L475",
+      "source_location": "L476",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_certainty_exclusion_check_run_check",
@@ -140135,7 +140135,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/certainty_exclusion_check.py",
-      "source_location": "L463",
+      "source_location": "L464",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_certainty_exclusion_check_run_check",
@@ -140195,7 +140195,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/certainty_exclusion_check.py",
-      "source_location": "L478",
+      "source_location": "L479",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_certainty_exclusion_check_run_check",
@@ -140207,7 +140207,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/certainty_exclusion_check.py",
-      "source_location": "L368",
+      "source_location": "L370",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_certainty_exclusion_check_build_report",
@@ -140230,7 +140230,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/certainty_exclusion_check.py",
-      "source_location": "L469",
+      "source_location": "L470",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_certainty_exclusion_check_run_check",
@@ -140266,7 +140266,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/certainty_exclusion_check.py",
-      "source_location": "L496",
+      "source_location": "L497",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_certainty_exclusion_check_main",
@@ -140278,7 +140278,7 @@
       "context": "parameter_type",
       "confidence": "EXTRACTED",
       "source_file": "src/scripts/certainty_exclusion_check.py",
-      "source_location": "L435",
+      "source_location": "L437",
       "weight": 1.0,
       "_origin": "ast",
       "source": "src_scripts_certainty_exclusion_check_run_check",
@@ -275557,5 +275557,5 @@
     }
   ],
   "hyperedges": [],
-  "built_at_commit": "db70acf3baf9c29671b09e8f06232d28e87f7ab0"
+  "built_at_commit": "54b1a95e0f3e43de94146b7e5571893494e6f25f"
 }
