@@ -479,7 +479,7 @@ CREATE TABLE IF NOT EXISTS emos_crps_log (
 | `minutes_to_settlement` | REAL | minutes | Yes | Time to market close at scan time |
 | `emos_mode` | TEXT | `'legacy'` / `'emos_shadow'` / `'emos_primary'` / `'next_day'` | Yes | Which forecast-serving path produced `p_yes` this poll |
 | `is_next_day` | INTEGER NOT NULL DEFAULT 0 | boolean (0/1) | No | 1 when this bracket came from next-day evaluation (issue #687) |
-| `gate_verdict` | TEXT NOT NULL | enum, 11 values | No | Exactly one of `traded_live`, `shadow_only`, `next_day_shadow`, `entry_guard`, `timeout_today`, `below_min_edge`, `above_max_edge`, `below_min_price`, `below_min_confidence`, `margin_gate`, `mae_gate` — enforced by a `CHECK` constraint and by `Database.upsert_scan_decision` raising `ValueError` on any other value. Names locked with the design spec (`docs/design/edge-tab-bracket-decisions.md`) |
+| `gate_verdict` | TEXT NOT NULL | enum, 12 values | No | Exactly one of `traded_live`, `shadow_only`, `next_day_shadow`, `entry_guard`, `timeout_today`, `below_min_edge`, `above_max_edge`, `below_min_price`, `below_min_confidence`, `margin_gate`, `mae_gate`, `day_mismatch_shadow` — the single source of truth is `src.strategy.gate_verdicts.GATE_VERDICTS`, enforced by `Database.upsert_scan_decision` raising `ValueError` on any other value. **No DDL `CHECK` constraint** (issue #912 — see the DDL note below for why one existed briefly and was removed). Names locked with the design spec (`docs/design/edge-tab-bracket-decisions.md`) |
 | `gate_actual` / `gate_threshold` / `gate_unit` | REAL / REAL / TEXT | varies (`cents`, `degrees_f`, `probability`) | Yes | The compared numbers for the six numeric-rejection verdicts (`below_min_edge`, `above_max_edge`, `below_min_price`, `below_min_confidence`, `margin_gate`, `mae_gate`) — the exact actual-vs-threshold pair `scan_markets` already computed. NULL for every other verdict |
 | `gate_detail` | TEXT | prose | Yes | For `entry_guard`: the guard reason string verbatim from `run.py` (e.g. "open position already exists for this token") — passed through, never reconstructed by a reader. For `timeout_today`: the raw execution outcome (e.g. `execution outcome: timeout`). NULL otherwise |
 | `execution_mode` | TEXT NOT NULL DEFAULT `'paper'` | `'live'` / `'paper'` | No | Issue #780: whether this poll had a live trader configured (`'live'`) or not (`'paper'`), stamped uniformly on every bracket row that poll by `_persist_scan_decisions`. Enforced by a `CHECK` constraint and by `Database.upsert_scan_decision` raising `ValueError` on any other value. Combined with `gate_verdict`, this is what distinguishes a confirmed live exchange fill (`traded_live` + `'live'`) from the scanner's unconfirmed "would trade live" placeholder (`traded_live` + `'paper'`) — every pre-#780 row defaults to `'paper'`, the conservative reading |
@@ -514,11 +514,7 @@ CREATE TABLE IF NOT EXISTS scan_decisions (
     minutes_to_settlement REAL,
     emos_mode             TEXT,
     is_next_day           INTEGER NOT NULL DEFAULT 0,
-    gate_verdict          TEXT NOT NULL CHECK(gate_verdict IN (
-        'traded_live','shadow_only','next_day_shadow','entry_guard','timeout_today',
-        'below_min_edge','above_max_edge','below_min_price','below_min_confidence',
-        'margin_gate','mae_gate'
-    )),
+    gate_verdict          TEXT NOT NULL,
     gate_actual           REAL,
     gate_threshold        REAL,
     gate_unit             TEXT,
@@ -545,6 +541,24 @@ instead enforced in Python by `Database.upsert_scan_decision`, same as
 Existing (pre-#900) installations pick up `direction` the same way, via
 `ALTER TABLE ... ADD COLUMN direction TEXT NOT NULL DEFAULT 'high'` in
 `Database._migrate`.
+
+**gate_verdict's dropped `CHECK` constraint (issue #912):** `gate_verdict`
+briefly had a hand-written `CHECK(gate_verdict IN (...))` alongside this
+table's two other allow-lists (`scanner.GATE_VERDICTS`,
+`Database._SCAN_DECISION_GATE_VERDICTS`). Because that `CHECK` lived inside
+`CREATE TABLE IF NOT EXISTS`, adding `'day_mismatch_shadow'` (issue #820) to
+the other two allow-lists but not the DDL string left every *existing*
+database rejecting that verdict with a raw `sqlite3.IntegrityError` — SQLite
+cannot `ALTER` a `CHECK` constraint in place. The constraint has now been
+removed entirely (not widened): `src.strategy.gate_verdicts.GATE_VERDICTS`
+is the single source of truth, imported by both `scanner.py` and `db.py`,
+and the only validation is `Database.upsert_scan_decision`'s
+`ValueError`-on-invalid-value guard, which runs before the row ever reaches
+SQLite and reports a clearer error than a `CHECK` failure would. Existing
+databases that still carry the old `CHECK` are fixed by an idempotent
+table-rebuild migration in `Database._migrate` (create → copy → drop →
+rename, detected via `sqlite_master`'s stored `CREATE TABLE` text — same
+pattern as the `trades.mode` migration above).
 
 **Upsert-per-poll semantics:**
 - `Database.upsert_scan_decision(...)` is an `INSERT ... ON CONFLICT(station, ticker, date) DO UPDATE SET ...` — a fresh poll for the same key **replaces** the prior row's every column in place. The table always reflects the single most recent scan for a bracket, never an accumulating history.
