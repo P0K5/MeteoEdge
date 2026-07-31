@@ -24,6 +24,7 @@ if str(_HERE.parents[1]) not in sys.path:
 
 from src.scripts.daily_health_report import (  # noqa: E402
     _build_header,
+    _build_m3_progress,
     _build_verdict,
     _fmt_pnl,
     _fmt_pct,
@@ -306,6 +307,86 @@ class TestSendEmail:
             mock_smtp.side_effect = ConnectionRefusedError("refused")
             result = _send_email("Subject", "Body")
         assert result is False
+
+
+# ---------------------------------------------------------------------------
+# M3 Progress: Rail Metric (issue #910)
+# ---------------------------------------------------------------------------
+
+class TestBuildM3ProgressRailMetric:
+    """Verify rail metric uses MODEL_PROB_CAP-derived thresholds (issue #910)."""
+
+    def test_rail_metric_uses_model_prob_cap_thresholds(self):
+        """With default MODEL_PROB_CAP=0.95, rail thresholds should be 0.05 and 0.95."""
+        from src.config import MODEL_PROB_CAP
+
+        # Mock: 1000 brackets, 624 are rail (62.4%)
+        # Use dict with more specific prefixes to avoid conflicts
+        db = _mock_db({
+            # Query for total brackets (first query, minimal filter)
+            "SELECT COUNT(*) FROM scan_decisions WHERE poll_ts >= ?": [(1000,), (624,), (0,)],
+            # Fallback for other queries
+            "SELECT COUNT(DISTINCT station": (194,),
+            "SELECT AVG(": (1.45, 27),
+        })
+        # Patch the execute method to return results in order
+        call_order = [0]
+        def mock_execute(sql, params=None):
+            mock = MagicMock()
+            # Each call to execute gets the next result
+            if "capped_p_yes <= ? OR capped_p_yes >= ?" in sql:
+                # This is the rail count query
+                mock.fetchone.return_value = (624,)
+            elif "raw_p_yes = 0.0" in sql:
+                # This is the zero artifact query
+                mock.fetchone.return_value = (0,)
+            else:
+                # This is the total brackets query
+                mock.fetchone.return_value = (1000,)
+            return mock
+
+        db._conn.execute = mock_execute
+        today = datetime(2026, 7, 31, 14, 0, 0, tzinfo=timezone.utc)
+        result = _build_m3_progress(db, today)
+        text = "\n".join(result)
+
+        # Verify: output shows threshold range derived from MODEL_PROB_CAP
+        expected_lower_pct = round((1.0 - MODEL_PROB_CAP) * 100, 1)
+        expected_upper_pct = round(MODEL_PROB_CAP * 100, 1)
+        assert f"Rail (0-{expected_lower_pct}% / {expected_upper_pct}%-100%)" in text
+        # Verify rail metric shows 62.4% and [WARN]
+        assert "62.4%" in text or "62.3%" in text or "62.5%" in text
+        assert "[WARN]" in text
+
+    def test_rail_metric_low_concentration_ok(self):
+        """With <20% concentration, rail should show [OK]."""
+        # Mock: 1000 brackets, 150 are rail (15%)
+        def mock_execute(sql, params=None):
+            mock = MagicMock()
+            if "capped_p_yes <= ? OR capped_p_yes >= ?" in sql:
+                # Rail count query
+                mock.fetchone.return_value = (150,)
+            elif "raw_p_yes = 0.0" in sql:
+                # Zero artifact query
+                mock.fetchone.return_value = (0,)
+            else:
+                # Total brackets query
+                mock.fetchone.return_value = (1000,)
+            return mock
+
+        db = MagicMock()
+        db._conn.execute = mock_execute
+        db.get_emos_crps_count = MagicMock(return_value=0)
+
+        today = datetime(2026, 7, 31, 14, 0, 0, tzinfo=timezone.utc)
+        result = _build_m3_progress(db, today)
+        text = "\n".join(result)
+
+        # Verify: 15% < 20% threshold, so should show [OK]
+        assert "15.0%" in text
+        # Rail line should have [OK]
+        rail_line = [line for line in result if "Rail" in line][0]
+        assert "[OK]" in rail_line
 
 
 # ---------------------------------------------------------------------------

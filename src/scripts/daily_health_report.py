@@ -45,6 +45,7 @@ _HERE = Path(__file__).resolve().parent
 if str(_HERE.parents[1]) not in sys.path:
     sys.path.insert(0, str(_HERE.parents[1]))
 
+from src.config import MODEL_PROB_CAP  # noqa: E402
 from src.logging_config import setup_logging  # noqa: E402
 
 log = logging.getLogger(__name__)
@@ -364,10 +365,15 @@ def _build_m3_progress(db, today: datetime) -> list[str]:
             (since,),
         ).fetchone()[0] or 1
 
+        # Derive rail thresholds from MODEL_PROB_CAP so the metric follows the clamp.
+        # Symmetric clamp: lower = 1.0 - MODEL_PROB_CAP, upper = MODEL_PROB_CAP.
+        # True rail concentration ~62.4%; see #917 for investigation of mass at clamp floor.
+        rail_lower = round(1.0 - MODEL_PROB_CAP, 10)
+        rail_upper = MODEL_PROB_CAP
         rail_count = db._conn.execute(
             "SELECT COUNT(*) FROM scan_decisions WHERE poll_ts >= ? "
-            "AND (capped_p_yes <= 0.02 OR capped_p_yes >= 0.98)",
-            (since,),
+            "AND (capped_p_yes <= ? OR capped_p_yes >= ?)",
+            (since, rail_lower, rail_upper),
         ).fetchone()[0] or 0
 
         zero_artifact = db._conn.execute(
@@ -382,7 +388,8 @@ def _build_m3_progress(db, today: datetime) -> list[str]:
         rail_ok = rail_pct < 20  # pre-fix was 62.6%
         zero_ok = zero_pct < 10  # pre-fix was 17.8%
 
-        lines.append(f"  Rail (0-2% / 98-100%): {rail_pct:.1f}% {'[OK]' if rail_ok else '[WARN]'} (pre-fix 62.6%)")
+        rail_range_pct = round(rail_lower * 100, 1)
+        lines.append(f"  Rail (0-{rail_range_pct}% / {100-rail_range_pct}%-100%): {rail_pct:.1f}% {'[OK]' if rail_ok else '[WARN]'} (pre-fix 62.6%)")
         lines.append(f"  p_yes=0.0 artifact:     {zero_pct:.1f}% {'[OK]' if zero_ok else '[WARN]'} (pre-fix 17.8%)")
 
     except Exception:
