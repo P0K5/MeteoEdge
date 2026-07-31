@@ -1051,6 +1051,59 @@ class TestDayMismatchGuard:
         assert 0.0 < p_with < 1.0, \
             f"expected non-certain probability, got {p_with}"
 
+    def test_no_settlement_date_skips_all_shortcuts(self):
+        """Regression test for #916: covers the position_tracker scenario where
+        a position was opened for one calendar day but the state reflects a
+        different local day (evening window after UTC rollover).  When
+        settlement_date is passed and differs from the state's local day, ALL
+        three certainty shortcuts must be bypassed and the function must return
+        a computed (non-certainty) probability.
+
+        This mirrors the fix in _log_open_position_snapshots(), which now
+        threads the position's settlement date through to true_probability_yes.
+        """
+        from datetime import date, timedelta
+        yesterday = datetime(2026, 7, 30, 20, 30)  # 8:30pm, past peak
+        state = WeatherState(
+            station="KORD",
+            now_local=yesterday,
+            sunset_local=yesterday.replace(hour=20, minute=15),
+            current_high_f=92.0,
+            current_high_time=yesterday,
+            latest_temp_f=90.0,
+            latest_temp_time=yesterday,
+            forecast_high_f=88.0,
+        )
+        # Position is for "today" but state is from yesterday (UTC rolled over)
+        today = (yesterday + timedelta(days=1)).date()
+
+        # Case 1: bracket below yesterday's high → shortcut would return 0.0
+        bracket_low = make_bracket(low_f=80.0, high_f=83.0)
+        p = true_probability_yes(
+            bracket_low, state, forecast_stddev=3.0,
+            settlement_date=today,
+        )
+        assert 0.0 < p < 1.0, \
+            f"Shortcut hi<=current_high fired: got {p}, expected non-certain"
+
+        # Case 2: bracket spans envelope → shortcut would return 1.0
+        bracket_span = make_bracket(low_f=91.0, high_f=93.0)
+        p = true_probability_yes(
+            bracket_span, state, forecast_stddev=3.0,
+            settlement_date=today,
+        )
+        assert 0.0 < p < 1.0, \
+            f"Shortcut span->1.0 fired: got {p}, expected non-certain"
+
+        # Case 3: bracket above max_env → shortcut would return 0.0
+        bracket_above = make_bracket(low_f=95.0, high_f=98.0)
+        p = true_probability_yes(
+            bracket_above, state, forecast_stddev=3.0,
+            settlement_date=today,
+        )
+        assert 0.0 < p < 1.0, \
+            f"Shortcut lo>max_env fired: got {p}, expected non-certain"
+
     def test_sigma_zero_mean_inside_bracket(self):
         """When sigma=0, next_day_probability_yes returns point-mass probability.
         P(low <= mu < high) = 1 when low <= mu < high."""
