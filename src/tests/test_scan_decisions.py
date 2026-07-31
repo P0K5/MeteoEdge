@@ -174,7 +174,12 @@ class TestGateVerdicts:
         is ever reached."""
         weather = {"KMIA": _kmia_state()}
         end = _FROZEN_NOW.replace(hour=23, minute=59, second=59, microsecond=0)
-        market = _market("78-79°F", "0xconf", end, '["0.30","0.70"]')
+        # "74-75°F" (rather than "78-79°F"): since #917 fixed the dash-range
+        # parser to integrate the true inclusive-upper-bound width (78-79°F
+        # now covers [78, 80) and sits close enough to the forecast_high_f=80
+        # mean to trip below_min_edge, not below_min_confidence), a bracket
+        # further from the mean is needed to still land in the confidence gate.
+        market = _market("74-75°F", "0xconf", end, '["0.30","0.70"]')
         with _frozen_scanner_now(_FROZEN_NOW):
             candidates, snapshots = scan_markets(weather, [market])
         assert candidates == []

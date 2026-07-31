@@ -191,17 +191,26 @@ def parse_bracket_from_market(market: dict) -> "Bracket | None":
         return None
 
     if (m := _LABEL_LTE.search(label)):
+        # Top-of-range label ("55°F or below") includes 55 itself, so the
+        # exclusive-upper integral must extend to 56 (#917).
         unit = m.group(2)
-        lo, hi = -50.0, _to_f(float(m.group(1)), unit)
+        lo, hi = -50.0, _to_f(float(m.group(1)) + 1, unit)
     elif (m := _LABEL_GTE.search(label)):
         unit = m.group(2)
         lo, hi = _to_f(float(m.group(1)), unit), 200.0
     elif (m := _LABEL_BETWEEN.search(label)):
+        # "between 28-30°C" means the daily high is 28, 29, OR 30 -- the real
+        # interval [28, 31). Add 1 to the top edge before unit conversion,
+        # matching _LABEL_EXACT (#917).
         unit = m.group(3)
-        lo, hi = _to_f(float(m.group(1)), unit), _to_f(float(m.group(2)), unit)
+        lo, hi = _to_f(float(m.group(1)), unit), _to_f(float(m.group(2)) + 1, unit)
     elif (m := _LABEL_RANGE_DASH.search(label)):
+        # "88-89°F" means the daily high is 88 OR 89 -- the real interval
+        # [88, 90). Add 1 to the top edge before unit conversion, matching
+        # _LABEL_EXACT (#917). Without this, p_normal_between integrates only
+        # half the bracket's true width.
         unit = m.group(3)
-        lo, hi = _to_f(float(m.group(1)), unit), _to_f(float(m.group(2)), unit)
+        lo, hi = _to_f(float(m.group(1)), unit), _to_f(float(m.group(2)) + 1, unit)
     elif (m := _LABEL_EXACT.search(label)):
         unit = m.group(2)
         val = float(m.group(1))
