@@ -17,6 +17,7 @@ from src.config import (
     get_training_eligible_since,
     is_training_eligible,
 )
+from src.strategy.gate_verdicts import GATE_VERDICTS
 
 log = logging.getLogger(__name__)
 
@@ -278,11 +279,15 @@ CREATE TABLE IF NOT EXISTS scan_decisions (
     minutes_to_settlement REAL,
     emos_mode             TEXT,
     is_next_day           INTEGER NOT NULL DEFAULT 0,
-    gate_verdict          TEXT NOT NULL CHECK(gate_verdict IN (
-        'traded_live','shadow_only','next_day_shadow','entry_guard','timeout_today',
-        'below_min_edge','above_max_edge','below_min_price','below_min_confidence',
-        'margin_gate','mae_gate'
-    )),
+    -- gate_verdict intentionally has NO CHECK constraint (issue #912): SQLite
+    -- cannot ALTER a CHECK in place, so every past addition to the allow-list
+    -- required a table-rebuild migration and one such addition ('day_mismatch_
+    -- shadow', issue #820) shipped without one, breaking every existing DB.
+    -- Validation now lives solely in Database.upsert_scan_decision, which
+    -- checks against src.strategy.gate_verdicts.GATE_VERDICTS (the single
+    -- source of truth) and raises a clear ValueError before the row ever
+    -- reaches SQLite.
+    gate_verdict          TEXT NOT NULL,
     gate_actual           REAL,
     gate_threshold        REAL,
     gate_unit             TEXT,
@@ -694,6 +699,103 @@ class Database:
             finally:
                 self._conn.execute("PRAGMA foreign_keys=ON")
 
+        # Migration: drop the scan_decisions.gate_verdict CHECK constraint
+        # (issue #912). SQLite cannot ALTER a CHECK in place -- requires a
+        # table rebuild. This constraint was hand-maintained separately from
+        # scanner.GATE_VERDICTS/Database._SCAN_DECISION_GATE_VERDICTS and
+        # fell out of sync when 'day_mismatch_shadow' (issue #820) was added
+        # to those two but not here: every existing database kept rejecting
+        # that verdict with a raw sqlite3.IntegrityError even after #820
+        # shipped, because CREATE TABLE IF NOT EXISTS is a no-op against a
+        # table that already exists. The constraint is now removed entirely
+        # (not widened) -- validation lives solely in the Python validator
+        # at upsert_scan_decision, which checks against the single
+        # src.strategy.gate_verdicts.GATE_VERDICTS source of truth and
+        # raises a clear ValueError instead of an opaque CHECK failure.
+        # Detect the old constraint via sqlite_master's stored CREATE TABLE
+        # text -- same pattern as the trades.mode migration above.
+        row = self._conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='scan_decisions'"
+        ).fetchone()
+        if row and row[0] and "CHECK(gate_verdict" in row[0]:
+            with self._conn:
+                self._conn.execute("DROP TABLE IF EXISTS scan_decisions_new")
+                self._conn.execute(
+                    """
+                    CREATE TABLE scan_decisions_new (
+                        station               TEXT NOT NULL,
+                        ticker                TEXT NOT NULL,
+                        date                  TEXT NOT NULL,
+                        ts                    TEXT NOT NULL,
+                        poll_ts               TEXT NOT NULL,
+                        bracket_low           REAL NOT NULL,
+                        bracket_high          REAL NOT NULL,
+                        side                  TEXT CHECK(side IN ('YES','NO') OR side IS NULL),
+                        yes_ask               INTEGER,
+                        no_ask                INTEGER,
+                        current_high          REAL,
+                        latest_temp           REAL,
+                        forecast_high         REAL,
+                        p_yes                 REAL,
+                        raw_p_yes             REAL,
+                        capped_p_yes          REAL,
+                        ev_yes                REAL,
+                        ev_no                 REAL,
+                        ev_yes_raw            REAL,
+                        ev_no_raw             REAL,
+                        minutes_to_settlement REAL,
+                        emos_mode             TEXT,
+                        is_next_day           INTEGER NOT NULL DEFAULT 0,
+                        gate_verdict          TEXT NOT NULL,
+                        gate_actual           REAL,
+                        gate_threshold        REAL,
+                        gate_unit             TEXT,
+                        gate_detail           TEXT,
+                        execution_mode        TEXT NOT NULL DEFAULT 'paper' CHECK(execution_mode IN ('live','paper')),
+                        ensemble_mean         REAL,
+                        ensemble_members      INTEGER,
+                        ensemble_range_low    REAL,
+                        ensemble_range_high   REAL,
+                        direction             TEXT NOT NULL DEFAULT 'high',
+                        PRIMARY KEY (station, ticker, date)
+                    )
+                    """
+                )
+                old_cols = {
+                    r[1] for r in self._conn.execute(
+                        "PRAGMA table_info(scan_decisions)"
+                    ).fetchall()
+                }
+                new_cols = {
+                    r[1] for r in self._conn.execute(
+                        "PRAGMA table_info(scan_decisions_new)"
+                    ).fetchall()
+                }
+                common_cols = [c for c in (
+                    "station", "ticker", "date", "ts", "poll_ts", "bracket_low",
+                    "bracket_high", "side", "yes_ask", "no_ask", "current_high",
+                    "latest_temp", "forecast_high", "p_yes", "raw_p_yes",
+                    "capped_p_yes", "ev_yes", "ev_no", "ev_yes_raw", "ev_no_raw",
+                    "minutes_to_settlement", "emos_mode", "is_next_day",
+                    "gate_verdict", "gate_actual", "gate_threshold", "gate_unit",
+                    "gate_detail", "execution_mode", "ensemble_mean",
+                    "ensemble_members", "ensemble_range_low", "ensemble_range_high",
+                    "direction",
+                ) if c in old_cols and c in new_cols]
+                cols_csv = ",".join(common_cols)
+                self._conn.execute(
+                    f"INSERT INTO scan_decisions_new ({cols_csv}) "
+                    f"SELECT {cols_csv} FROM scan_decisions"
+                )
+                self._conn.execute("DROP TABLE scan_decisions")
+                self._conn.execute(
+                    "ALTER TABLE scan_decisions_new RENAME TO scan_decisions"
+                )
+                self._conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_scan_decisions_station_date "
+                    "ON scan_decisions(station, date)"
+                )
+
         self._purge_stale_deb_weight_log()
 
         # Migration: purge intraday_corrections rows poisoned by the build_consensus
@@ -1031,11 +1133,11 @@ class Database:
     # scan_decisions (issue #756 -- Edge tab bot's-eye per-bracket view)
     # ------------------------------------------------------------------
 
-    _SCAN_DECISION_GATE_VERDICTS = frozenset({
-        "traded_live", "shadow_only", "next_day_shadow", "entry_guard", "timeout_today",
-        "below_min_edge", "above_max_edge", "below_min_price", "below_min_confidence",
-        "margin_gate", "mae_gate",
-    })
+    # Single source of truth: src.strategy.gate_verdicts.GATE_VERDICTS (issue
+    # #912). Kept as a class attribute (rather than referencing the module
+    # constant directly at call sites) so tests/callers that patch
+    # Database._SCAN_DECISION_GATE_VERDICTS keep working unchanged.
+    _SCAN_DECISION_GATE_VERDICTS = GATE_VERDICTS
 
     # Issue #780: 'live' only when the verdict seam confirmed a real exchange
     # fill this poll; 'paper' for every other row, including the scanner's

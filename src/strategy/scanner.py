@@ -39,23 +39,14 @@ from src.data.polymarket import get_orderbook
 from src.data.taf_disruption import check_taf_disruption
 from src.data.open_meteo import fetch_open_meteo_with_spread, fetch_gfs_with_spread
 from src.strategy.fee import estimate_fee_cents
+# Canonical gate-verdict enum -- single source of truth in
+# src.strategy.gate_verdicts (issue #912; see that module's docstring for
+# why this used to be duplicated and broke a production migration).
+# Re-exported here as GATE_VERDICTS so existing call sites/tests that do
+# `from src.strategy.scanner import GATE_VERDICTS` keep working unchanged.
+from src.strategy.gate_verdicts import GATE_VERDICTS
 
 log = logging.getLogger(__name__)
-
-# The 11 canonical gate-verdict enums (issue #756 / epic #754; names locked
-# with the design spec docs/design/edge-tab-bracket-decisions.md). Every
-# evaluated high-side bracket's snap dict carries exactly one of these under
-# "gate_verdict" -- surfacing only, this module never uses it to gate/alter a
-# decision. "traded_live" is also scan_markets()'s pre-execution placeholder
-# for a live (non-shadow, non-next-day) candidate that passed every gate --
-# src.scripts.run.poll_once upgrades it to entry_guard/timeout_today/
-# traded_live once the entry-guard check and (if applicable) the live
-# execution attempt have resolved (the "verdict seam", see run.py).
-GATE_VERDICTS = frozenset({
-    "traded_live", "shadow_only", "next_day_shadow", "entry_guard", "timeout_today",
-    "below_min_edge", "above_max_edge", "below_min_price", "below_min_confidence",
-    "margin_gate", "mae_gate", "day_mismatch_shadow",
-})
 
 # Station -> (lat, lon), for next-day forecast fetches (issue #687). Built
 # from the same STATIONS tuples as POLYMARKET_CITY_TO_STATION/STATION_TO_CITY
