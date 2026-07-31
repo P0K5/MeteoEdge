@@ -84,6 +84,11 @@ function Sync-Directory {
         "-r",
         "-i", $RemoteKeyPath,
         "-o", "StrictHostKeyChecking=no",
+        # Fail fast when the host is unreachable rather than hanging on the
+        # default TCP connect timeout — agent health-triage sessions call this
+        # at startup and must not stall for minutes when the server is down.
+        "-o", "ConnectTimeout=10",
+        "-o", "BatchMode=yes",
         "$RemotePath",
         $ProjectRoot
     )

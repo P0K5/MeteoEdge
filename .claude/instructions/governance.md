@@ -61,7 +61,16 @@ A PR may NEVER be approved or merged unless ALL of the following are true:
    must show green on the PR's **head commit**. Verify via
    `mcp__github__actions_list` (or equivalent) before approving.
 2. **No direct pushes to master** — every change, including one-line hotfixes,
-   goes through a PR. Branch protection enforces this; do not try to bypass it.
+   goes through a PR. **Branch protection does NOT currently block this** —
+   `git push origin master` succeeds. You are the only thing enforcing it.
+
+   Therefore, before the *first* `git commit` of any change, run
+   `git rev-parse --abbrev-ref HEAD`. If it prints `master`, stop and
+   `git checkout -b <type>/<issue>-<slug>` first. Committing on master and
+   branching afterwards is not equivalent: `gh pr create` refuses a
+   head branch equal to base, and the recovery
+   (`git reset --soft HEAD~1` + `git push --force origin master`) rewrites
+   shared history. Never force-push master.
 3. **Approval comes after CI is green** — if CI is still running, wait. If CI is
    red, the author must fix it first; never approve in anticipation of a fix.
 

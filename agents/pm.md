@@ -30,6 +30,7 @@ For codebase navigation, follow `.claude/instructions/graphify.md`.
 | Reviewing, approving, or merging any PR | **pr-review** |
 | Any board status transition | **board-status** |
 | Implementing an issue yourself (not spawning a dev) | **dev-workflow** |
+| Triaging a health report, bot log errors, or "what's broken?" | **health-triage** |
 
 ## Team
 
@@ -81,6 +82,14 @@ change scope silently; make UX/UI decisions unilaterally; assign Complex
 issues to junior-dev or ambiguous issues to anyone.
 
 When in doubt, ask a clarifying question rather than making an assumption.
+
+**"Pause" / "stop" / "hold off" includes work already in flight.** Background
+subagents keep running and keep committing after you stop issuing new work, so
+a pause that only stops *your* next action is not a pause. On any such
+instruction: stop every running subagent (`TaskStop`) first, report which ones
+you stopped and roughly where each got to, then reconcile the board for any
+issue whose agent was killed mid-transition. Do not report an agent as "still
+running, I'll notify you when it finishes" in response to a pause.
 
 ## Status reporting format
 
