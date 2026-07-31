@@ -23,8 +23,10 @@ if str(_HERE.parents[1]) not in sys.path:
     sys.path.insert(0, str(_HERE.parents[1]))
 
 from src.scripts.daily_health_report import (  # noqa: E402
+    _build_bot_health,
     _build_header,
     _build_m3_progress,
+    _build_trading,
     _build_verdict,
     _fmt_pnl,
     _fmt_pct,
@@ -123,54 +125,196 @@ class TestBuildHeader:
 
 
 # ---------------------------------------------------------------------------
+# _build_bot_health (issue #914)
+# ---------------------------------------------------------------------------
+
+class TestBuildBotHealth:
+    def test_returns_tuple_of_lines_and_flags(self):
+        db = _mock_db()
+        lines, flags = _build_bot_health(db, datetime.now(timezone.utc))
+        assert isinstance(lines, list)
+        assert isinstance(flags, dict)
+
+    def test_poll_count_reads_poll_runs_not_scan_decisions(self):
+        """Regression test for defect 1: scan_decisions is written only when
+        brackets are evaluated (a handful of times a day), while the bot
+        polls continuously (~every 5.5 min). Using scan_decisions produces a
+        permanent false "5/288" alarm even though the bot is polling fine.
+        This test fails against the pre-fix code, which counts
+        `scan_decisions` and would report 5/288 here instead of 250/288.
+        """
+        import sqlite3
+        from datetime import timedelta
+
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE poll_runs (id INTEGER PRIMARY KEY, poll_ts TEXT, mode TEXT)")
+        conn.execute("CREATE TABLE scan_decisions (poll_ts TEXT)")
+
+        today = datetime(2026, 7, 30, 14, 0, 0, tzinfo=timezone.utc)
+        # 250 poll heartbeats in the last 24h (bot polling normally)...
+        for i in range(250):
+            ts = (today - timedelta(minutes=5 * i)).isoformat()
+            conn.execute("INSERT INTO poll_runs(poll_ts, mode) VALUES (?, 'live')", (ts,))
+        # ...but only 5 scan_decisions rows (brackets rarely evaluated).
+        for i in range(5):
+            ts = (today - timedelta(hours=4 * i)).isoformat()
+            conn.execute("INSERT INTO scan_decisions(poll_ts) VALUES (?)", (ts,))
+        conn.commit()
+
+        db = MagicMock()
+        db._conn = conn
+
+        lines, flags = _build_bot_health(db, today)
+        text = "\n".join(lines)
+
+        assert "Polls 24h:   250/288" in text
+        assert "5/288" not in text
+        assert flags["poll_count_24h"] == 250
+        assert "Evaluated (scan_decisions) 24h: 5" in text
+        conn.close()
+
+    def test_status_warn_on_poll_count_shortfall_even_if_last_poll_recent(self):
+        """Regression test for defect 2: a bot that polled only a handful of
+        times in 24h but happened to poll 3 minutes ago must not be reported
+        [OK] Healthy -- the 24h shortfall must fold into the status."""
+        import sqlite3
+        from datetime import timedelta
+
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE poll_runs (id INTEGER PRIMARY KEY, poll_ts TEXT, mode TEXT)")
+        conn.execute("CREATE TABLE scan_decisions (poll_ts TEXT)")
+
+        today = datetime(2026, 7, 30, 14, 0, 0, tzinfo=timezone.utc)
+        # Only 5 polls in 24h, but the most recent one is 3 minutes ago.
+        poll_times = [
+            today - timedelta(minutes=3),
+            today - timedelta(hours=5),
+            today - timedelta(hours=10),
+            today - timedelta(hours=15),
+            today - timedelta(hours=20),
+        ]
+        for ts in poll_times:
+            conn.execute("INSERT INTO poll_runs(poll_ts, mode) VALUES (?, 'live')", (ts.isoformat(),))
+        conn.commit()
+
+        db = MagicMock()
+        db._conn = conn
+
+        lines, flags = _build_bot_health(db, today)
+        text = "\n".join(lines)
+
+        assert flags["status"] != "OK"
+        assert "[OK] Healthy" not in text
+        conn.close()
+
+    def test_status_ok_when_poll_count_and_gap_both_healthy(self):
+        import sqlite3
+        from datetime import timedelta
+
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE poll_runs (id INTEGER PRIMARY KEY, poll_ts TEXT, mode TEXT)")
+        conn.execute("CREATE TABLE scan_decisions (poll_ts TEXT)")
+
+        # Use the real current time (not a fixed historical date) so the
+        # most recent poll is genuinely "recent" relative to _utc_now().
+        today = datetime.now(timezone.utc)
+        for i in range(280):
+            ts = (today - timedelta(minutes=5 * i)).isoformat()
+            conn.execute("INSERT INTO poll_runs(poll_ts, mode) VALUES (?, 'live')", (ts,))
+        conn.commit()
+
+        db = MagicMock()
+        db._conn = conn
+
+        lines, flags = _build_bot_health(db, today)
+        text = "\n".join(lines)
+
+        assert flags["status"] == "OK"
+        assert "[OK] Healthy" in text
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# _build_trading win-rate label (issue #914 defect 4)
+# ---------------------------------------------------------------------------
+
+class TestBuildTradingWinRateLabel:
+    def test_win_rate_labeled_all_time_not_24h(self):
+        """Regression test for defect 4: the win-rate query has no time
+        filter (last N settled live trades all-time), but was previously
+        labeled in a way that read as a 24h figure under the "last 24h UTC"
+        heading. Fails against the pre-fix label "Win rate (20 settled):".
+        """
+        db = _mock_db({
+            "SELECT COUNT(*), COALESCE(SUM(pnl)": (0, 0.0),
+            "SELECT COUNT(*), COALESCE(SUM(shares * entry_price": (0, 0.0),
+            "SELECT pnl FROM trades": [(1.0,)] * 12 + [(-1.0,)] * 8,
+            "SELECT daily_pnl FROM risk_state": (None,),
+        })
+        result = _build_trading(db, datetime.now(timezone.utc))
+        text = "\n".join(result)
+        assert "Win rate (last 20 settled, all-time):" in text
+        assert "Win rate (20 settled):" not in text
+
+
+# ---------------------------------------------------------------------------
 # _build_verdict
+#
+# Signature changed under issue #914 (defect 3): _build_verdict now takes
+# `sections: list[tuple[name, lines, flags]]` instead of a flat list of
+# rendered lines, so conditions are evaluated per-section instead of via
+# substring matches over the whole report.
 # ---------------------------------------------------------------------------
 
 class TestBuildVerdict:
     def test_healthy_when_no_issues(self):
-        body = ["Bot Pulse", "Status: [OK] Healthy", "all good"]
-        result = _build_verdict(body)
+        sections = [("bot", ["Bot Pulse", "Status: [OK] Healthy"], {"status": "OK"})]
+        result = _build_verdict(sections)
         text = "\n".join(result)
         assert "[OK] Healthy" in text
 
     def test_warn_when_artifact_rate_high(self):
-        body = ["M3 Progress", "p_yes=0.0 artifact:     17.5% [WARN]"]
-        result = _build_verdict(body)
+        sections = [("m3", ["M3 Progress", "p_yes=0.0 artifact:     17.5% [WARN]"], {})]
+        result = _build_verdict(sections)
         text = "\n".join(result)
         assert "[WARN]" in text
         assert "artifact rate high" in text
 
-    def test_crit_when_stale(self):
-        body = ["Bot Pulse", "Status: [CRIT] STALE", "M3 Progress"]
-        result = _build_verdict(body)
+    def test_crit_when_bot_stale(self):
+        sections = [
+            ("bot", ["Bot Pulse", "Status: [STALE] 90 min since last poll"],
+             {"status": "STALE", "detail": "90 min since last poll"}),
+        ]
+        result = _build_verdict(sections)
         text = "\n".join(result)
         assert "[CRIT]" in text
         assert "bot stale" in text
 
     def test_warn_for_kord_gap(self):
-        body = ["Open Blockers", "KORD GEFS capture gap -- [WARN] gap confirmed"]
-        result = _build_verdict(body)
+        sections = [("blockers", ["Open Blockers", "KORD GEFS capture gap -- [WARN] gap confirmed"], {})]
+        result = _build_verdict(sections)
         text = "\n".join(result)
         assert "[WARN]" in text
         assert "#897 KORD gap" in text
 
     def test_warn_for_no_gefs_data(self):
-        body = ["Open Blockers", "NO GEFS DATA"]
-        result = _build_verdict(body)
+        sections = [("blockers", ["Open Blockers", "NO GEFS DATA"], {})]
+        result = _build_verdict(sections)
         text = "\n".join(result)
         assert "[WARN]" in text
         assert "#885 no GEFS data" in text
 
     def test_multiple_warnings_demoted(self):
         """Multiple WARN-level issues stay at WARN (not CRIT unless there's a CRIT trigger)."""
-        body = [
-            "M3 Progress",
-            "p_yes=0.0 artifact:     17.5% [WARN]",
-            "Open Blockers",
-            "KORD GEFS capture gap -- [WARN] gap confirmed",
-            "NO GEFS DATA",
+        sections = [
+            ("m3", ["M3 Progress", "p_yes=0.0 artifact:     17.5% [WARN]"], {}),
+            ("blockers", [
+                "Open Blockers",
+                "KORD GEFS capture gap -- [WARN] gap confirmed",
+                "NO GEFS DATA",
+            ], {}),
         ]
-        result = _build_verdict(body)
+        result = _build_verdict(sections)
         text = "\n".join(result)
         assert "[WARN]" in text
         assert "artifact rate high" in text
@@ -179,17 +323,54 @@ class TestBuildVerdict:
 
     def test_crit_with_warns_combined(self):
         """CRIT + WARN → CRIT verdict listing all issues."""
-        body = [
-            "Bot Pulse",
-            "Status: [CRIT] STALE",
-            "M3 Progress",
-            "p_yes=0.0 artifact:     17.5% [WARN]",
+        sections = [
+            ("bot", ["Bot Pulse", "Status: [STALE] 90 min since last poll"],
+             {"status": "STALE", "detail": "90 min since last poll"}),
+            ("m3", ["M3 Progress", "p_yes=0.0 artifact:     17.5% [WARN]"], {}),
         ]
-        result = _build_verdict(body)
+        result = _build_verdict(sections)
         text = "\n".join(result)
         assert "[CRIT]" in text
         assert "bot stale" in text
         assert "artifact rate high" in text
+
+    def test_unrelated_warn_not_attributed_to_artifact_rate(self):
+        """Regression test for issue #914 defect 3.
+
+        A [WARN] in the Bot Pulse section (e.g. the max-gap warning) must
+        NOT be attributed to "artifact rate high" just because the phrase
+        "p_yes=0.0 artifact:" appears somewhere else in the report. Before
+        the fix, `_build_verdict` scanned the whole rendered report for
+        "[WARN]" and, independently, for the artifact phrase -- so any WARN
+        anywhere falsely triggered the artifact-rate verdict item even when
+        the M3 section's own artifact line was [OK].
+        """
+        sections = [
+            ("bot", [
+                "Bot Pulse",
+                "  [WARN] Max gap:    298 min (threshold: 20)",
+                "  Status:      [WARN] only 5/288 polls in 24h",
+            ], {"status": "WARN", "detail": "only 5/288 polls in 24h"}),
+            ("m3", ["M3 Progress", "  p_yes=0.0 artifact:     2.0% [OK]"], {}),
+        ]
+        result = _build_verdict(sections)
+        text = "\n".join(result)
+        assert "[WARN]" in text
+        assert "only 5/288 polls in 24h" in text
+        assert "artifact rate high" not in text
+
+    def test_bot_ok_status_not_polluted_by_other_section_crit_text(self):
+        """A literal "[CRIT]" appearing in an unrelated section's text must
+        not escalate the verdict to CRIT -- only the bot section's own
+        structured status flag may do that (defect 3)."""
+        sections = [
+            ("bot", ["Bot Pulse", "Status: [OK] Healthy"], {"status": "OK"}),
+            ("blockers", ["Open Blockers", "some historical note mentioning [CRIT] in passing"], {}),
+        ]
+        result = _build_verdict(sections)
+        text = "\n".join(result)
+        assert "[OK] Healthy" in text
+        assert "bot stale" not in text
 
 
 # ---------------------------------------------------------------------------

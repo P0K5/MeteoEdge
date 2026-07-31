@@ -64,6 +64,9 @@ SMTP_PASS = os.getenv("SMTP_PASS", "")
 # ---------------------------------------------------------------------------
 POLL_WARN_MINUTES = 20
 POLL_STALE_MINUTES = 60
+# issue #914: warn if fewer than this fraction of expected polls landed in
+# the last 24h, even if the most recent single poll was fine.
+POLL_COUNT_WARN_RATIO = 0.7
 WIN_RATE_N = 20
 EMOS_MIN_SAMPLES_PROMOTION = 60
 
@@ -134,12 +137,27 @@ def _build_header(today: datetime) -> list[str]:
     ]
 
 
-def _build_bot_health(db, today: datetime) -> list[str]:
-    """Poll recency, poll count, and systemd status."""
+def _build_bot_health(db, today: datetime) -> "tuple[list[str], dict]":
+    """Poll recency, poll count, and systemd status.
+
+    Poll count and gap are derived from ``poll_runs`` -- an unconditional
+    heartbeat written once per poll cycle by ``poll_once()`` (issue #914).
+    ``scan_decisions`` is deliberately NOT used for this: it is only written
+    when brackets are actually evaluated, which happens far less often than
+    the bot polls, so counting it against a /288 denominator produced
+    permanent false "5/288" alarms. The scan_decisions cadence is still
+    surfaced below as a separate "Evaluated" line, since it is genuinely
+    useful, just not a poll count.
+
+    Returns ``(lines, flags)``. ``flags["status"]`` is one of
+    ``OK / WARN / STALE / CRIT / UNKNOWN`` and is what ``_build_verdict``
+    consumes -- never the rendered text (issue #914 defect 3).
+    """
     lines = ["Bot Pulse", "-" * 10]
+    flags: dict = {"status": "UNKNOWN"}
     try:
         row = db._conn.execute(
-            "SELECT MAX(poll_ts) FROM scan_decisions"
+            "SELECT MAX(poll_ts) FROM poll_runs"
         ).fetchone()
         last_poll_str = row[0] if row and row[0] else None
         if last_poll_str:
@@ -147,45 +165,84 @@ def _build_bot_health(db, today: datetime) -> list[str]:
             gap_min = (_utc_now() - last_poll).total_seconds() / 60
             lines.append(f"  Last poll:   {_iso(last_poll)} ({gap_min:.0f} min ago)")
 
-            # Polls in last 24h
+            # Polls in last 24h -- from the unconditional heartbeat, not
+            # scan_decisions (issue #914 defect 1).
             cutoff = (today - timedelta(hours=24)).isoformat()
             count_row = db._conn.execute(
-                "SELECT COUNT(DISTINCT poll_ts) FROM scan_decisions WHERE poll_ts >= ?",
+                "SELECT COUNT(*) FROM poll_runs WHERE poll_ts >= ?",
                 (cutoff,),
             ).fetchone()
             poll_count = count_row[0] if count_row else 0
             expected = int(24 * 60 / 5)  # 288 polls/day at 5-min interval
             lines.append(f"  Polls 24h:   {poll_count}/{expected}")
 
-            # Check for gaps
+            # Evaluated brackets (scan_decisions) -- a separate, genuinely
+            # useful metric, but NOT a poll count: it is only written when
+            # brackets are actually evaluated.
+            eval_row = db._conn.execute(
+                "SELECT COUNT(DISTINCT poll_ts) FROM scan_decisions WHERE poll_ts >= ?",
+                (cutoff,),
+            ).fetchone()
+            eval_count = eval_row[0] if eval_row else 0
+            lines.append(f"  Evaluated (scan_decisions) 24h: {eval_count}")
+
+            # Check for gaps between heartbeats
             gaps = db._conn.execute(
-                "SELECT poll_ts FROM scan_decisions "
+                "SELECT poll_ts FROM poll_runs "
                 "WHERE poll_ts >= ? ORDER BY poll_ts",
                 (cutoff,),
             ).fetchall()
-            max_gap = 0
+            max_gap = 0.0
             for i in range(1, len(gaps)):
                 dt1 = datetime.fromisoformat(gaps[i - 1][0])
                 dt2 = datetime.fromisoformat(gaps[i][0])
                 gap = (dt2 - dt1).total_seconds() / 60
                 if gap > max_gap:
                     max_gap = gap
-            if len(gaps) >= 2 and max_gap > POLL_WARN_MINUTES:
+            gap_warn = len(gaps) >= 2 and max_gap > POLL_WARN_MINUTES
+            if gap_warn:
                 lines.append(f"  [WARN] Max gap:    {max_gap:.0f} min (threshold: {POLL_WARN_MINUTES})")
 
-            if gap_min <= POLL_WARN_MINUTES:
-                lines.append("  Status:      [OK] Healthy")
-            elif gap_min <= POLL_STALE_MINUTES:
-                lines.append(f"  Status:      [WARN] {gap_min:.0f} min since last poll")
+            count_warn = poll_count < expected * POLL_COUNT_WARN_RATIO
+
+            # issue #914 defect 2: fold the 24h poll-count shortfall and the
+            # max gap into the status, not just the single most-recent gap.
+            if gap_min > POLL_STALE_MINUTES:
+                status = "STALE"
+                detail = f"{gap_min:.0f} min since last poll"
+            elif gap_warn or count_warn:
+                status = "WARN"
+                reasons = []
+                if count_warn:
+                    reasons.append(f"only {poll_count}/{expected} polls in 24h")
+                if gap_warn:
+                    reasons.append(f"max gap {max_gap:.0f} min")
+                detail = ", ".join(reasons)
+            elif gap_min > POLL_WARN_MINUTES:
+                status = "WARN"
+                detail = f"{gap_min:.0f} min since last poll"
             else:
-                lines.append(f"  Status:      [STALE] {gap_min:.0f} min since last poll")
+                status = "OK"
+                detail = "Healthy"
+
+            tag = {"OK": "[OK]", "WARN": "[WARN]", "STALE": "[STALE]", "CRIT": "[CRIT]"}[status]
+            lines.append(f"  Status:      {tag} {detail}")
+            flags = {
+                "status": status,
+                "detail": detail,
+                "poll_count_24h": poll_count,
+                "expected_polls_24h": expected,
+                "max_gap_min": max_gap,
+            }
         else:
-            lines.append("  Status:      [CRIT] No polls found in scan_decisions")
+            lines.append("  Status:      [CRIT] No polls found in poll_runs")
+            flags = {"status": "CRIT", "detail": "No polls found in poll_runs"}
     except Exception:
         log.exception("Bot health query failed")
         lines.append("  (unavailable -- query error)")
+        flags = {"status": "UNKNOWN", "detail": "query error"}
     lines.append("")
-    return lines
+    return lines, flags
 
 
 def _build_trading(db, today: datetime) -> list[str]:
@@ -233,7 +290,10 @@ def _build_trading(db, today: datetime) -> list[str]:
         if wr_rows and len(wr_rows) >= 5:
             wins = sum(1 for (pnl_val,) in wr_rows if pnl_val > 0)
             wr = wins / len(wr_rows)
-            lines.append(f"  Win rate ({len(wr_rows)} settled): {_fmt_pct(wr)} ({wins}/{len(wr_rows)})")
+            # issue #914 defect 4: this query has no time filter -- it's the
+            # last N settled live trades all-time, not "last 24h". Label it
+            # accordingly so it doesn't read as today's win rate.
+            lines.append(f"  Win rate (last {len(wr_rows)} settled, all-time): {_fmt_pct(wr)} ({wins}/{len(wr_rows)})")
         else:
             lines.append(f"  Win rate:      <5 settled trades -- N/A")
 
@@ -478,20 +538,52 @@ def _build_blockers(db, today: datetime) -> list[str]:
     return lines
 
 
-def _build_verdict(body_lines: list[str]) -> list[str]:
-    """One-line health verdict based on sections above."""
-    all_text = "\n".join(body_lines)
-    crit_issues = []
-    warn_issues = []
+def _build_verdict(sections: "list[tuple[str, list[str], dict]]") -> list[str]:
+    """One-line health verdict, built from each section's own structured
+    result -- never a substring scan over the whole rendered report.
 
-    if "[CRIT]" in all_text:
+    ``sections`` is ``[(name, lines, flags), ...]`` as assembled by
+    ``build_report``. Sections that have been migrated to the flags contract
+    (currently: ``bot``) are checked via their ``flags`` dict. Sections that
+    have not yet migrated are checked against *their own* lines only, keyed
+    by section name -- this still eliminates the issue #914 defect-3 bug
+    (a WARN anywhere in the report getting attributed to an unrelated
+    section) because each check is scoped to the section that produced the
+    condition, not the full report text. Full flags migration for the
+    remaining sections is a natural fast-follow once #911's concurrent edit
+    to ``_build_m3_progress`` has landed.
+
+    Add new conditions here by reading ``flags_by_section`` /
+    ``lines_by_section`` -- this is the extension point for #913's
+    error-aggregation section and CRIT path.
+    """
+    lines_by_section = {name: lines for name, lines, _flags in sections}
+    flags_by_section = {name: flags for name, _lines, flags in sections}
+    all_text = "\n".join(line for _name, lines, _flags in sections for line in lines)
+
+    crit_issues: list[str] = []
+    warn_issues: list[str] = []
+
+    bot_flags = flags_by_section.get("bot", {})
+    bot_status = bot_flags.get("status")
+    if bot_status in ("STALE", "CRIT"):
         crit_issues.append("bot stale")
-    if "p_yes=0.0 artifact:" in all_text and "[WARN]" in all_text:
+    elif bot_status == "WARN":
+        warn_issues.append(bot_flags.get("detail") or "bot pulse degraded")
+
+    m3_text = "\n".join(lines_by_section.get("m3", []))
+    if "p_yes=0.0 artifact:" in m3_text and "[WARN]" in m3_text:
         warn_issues.append("artifact rate high")
-    if "[WARN] gap confirmed" in all_text:
+
+    blockers_text = "\n".join(lines_by_section.get("blockers", []))
+    if "[WARN] gap confirmed" in blockers_text:
         warn_issues.append("#897 KORD gap")
-    if "NO GEFS DATA" in all_text:
+    if "NO GEFS DATA" in blockers_text:
         warn_issues.append("#885 no GEFS data")
+
+    # "unavailable" is the shared query-error fallback string emitted by
+    # every section's own except-block -- it is intentionally checked across
+    # the whole report, unlike the section-specific WARN markers above.
     if "unavailable" in all_text:
         warn_issues.append("partial data only")
 
@@ -506,10 +598,16 @@ def _build_verdict(body_lines: list[str]) -> list[str]:
 
 
 def build_report(db) -> str:
-    """Assemble the full report body from all sections."""
+    """Assemble the full report body from all sections.
+
+    Each section builder may return either ``list[str]`` (the legacy
+    contract) or ``(list[str], dict)`` -- lines plus structured status flags
+    (issue #914 defect 3). Both are normalized here so ``_build_verdict`` can
+    always work off structured, per-section results.
+    """
     today = _utc_now()
 
-    sections: list[tuple[str, list[str]]] = []
+    sections: list[tuple[str, list[str], dict]] = []
     for name, builder in [
         ("bot", _build_bot_health),
         ("trading", _build_trading),
@@ -520,16 +618,22 @@ def build_report(db) -> str:
         ("blockers", _build_blockers),
     ]:
         try:
-            sections.append((name, builder(db, today)))
+            result = builder(db, today)
         except Exception:
             log.exception("Section %s failed entirely", name)
-            sections.append((name, [f"({name} -- ERROR, see log)", ""]))
+            sections.append((name, [f"({name} -- ERROR, see log)", ""], {}))
+            continue
+        if isinstance(result, tuple):
+            lines, flags = result
+        else:
+            lines, flags = result, {}
+        sections.append((name, lines, flags))
 
     # Collect all lines + verdict
     body_lines = _build_header(today)
-    for _, lines in sections:
+    for _, lines, _flags in sections:
         body_lines.extend(lines)
-    body_lines.extend(_build_verdict(body_lines))
+    body_lines.extend(_build_verdict(sections))
 
     body_lines.append("-" * 50)
     body_lines.append("MeteoEdge daily health report -- auto-generated")

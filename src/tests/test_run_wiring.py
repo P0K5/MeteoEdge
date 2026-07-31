@@ -207,6 +207,81 @@ class TestPollOncePassesDb:
 
 
 # ---------------------------------------------------------------------------
+# poll_once records an unconditional poll heartbeat (issue #914)
+# ---------------------------------------------------------------------------
+
+class TestPollOnceRecordsHeartbeat:
+    """poll_once() must call db.record_poll_run() every cycle, unconditionally
+    -- this is the fix for issue #914 defect 1 (the daily health report's
+    poll counter previously read scan_decisions, which is only written when
+    brackets are actually evaluated, producing false "5/288" alarms).
+    """
+
+    def test_record_poll_run_called_even_when_no_brackets_evaluated(self):
+        """Regression test: fails against the pre-fix poll_once(), which
+        never calls db.record_poll_run() (the method/call didn't exist), so
+        the health report had no unconditional heartbeat to count.
+        """
+        mock_db = MagicMock()
+
+        import src.scripts.run as run_module
+        with (
+            patch("src.scripts.run.scan_markets", return_value=([], [])),
+            patch("src.scripts.run._build_weather", return_value={"Tokyo": MagicMock()}),
+            patch("src.scripts.run.build_weather_low_for_scanning", return_value={}),
+            patch("src.scripts.run.get_weather_markets", return_value=[]),
+            patch.object(run_module.order_manager, "reconcile_timeout_fills"),
+            patch.object(run_module.order_manager, "sync_open_orders"),
+            patch.object(run_module.order_manager, "check_take_profit_exits"),
+            patch("src.scripts.run._log_open_position_snapshots"),
+            patch("src.scripts.run.FreshnessMonitor"),
+            patch("src.scripts.run.get_source_priority", return_value=[]),
+            patch("src.monitoring.dashboard.last_poll_ts", None, create=True),
+        ):
+            from src.scripts.run import poll_once
+            from src.risk.manager import RiskManager
+
+            mock_risk = MagicMock(spec=RiskManager)
+            mock_risk.allow_trade.return_value = (False, "test block")
+
+            poll_once(mock_risk, live_trader=None, alert_manager=None, db=mock_db)
+
+        assert mock_db.record_poll_run.called, (
+            "poll_once() must call db.record_poll_run() unconditionally, "
+            "even when no brackets are evaluated"
+        )
+
+    def test_heartbeat_failure_does_not_abort_poll(self):
+        """A DB error recording the heartbeat must be swallowed, not raised
+        -- the heartbeat is observability, not part of the trading path."""
+        mock_db = MagicMock()
+        mock_db.record_poll_run.side_effect = RuntimeError("db locked")
+
+        import src.scripts.run as run_module
+        with (
+            patch("src.scripts.run.scan_markets", return_value=([], [])),
+            patch("src.scripts.run._build_weather", return_value={"Tokyo": MagicMock()}),
+            patch("src.scripts.run.build_weather_low_for_scanning", return_value={}),
+            patch("src.scripts.run.get_weather_markets", return_value=[]),
+            patch.object(run_module.order_manager, "reconcile_timeout_fills"),
+            patch.object(run_module.order_manager, "sync_open_orders"),
+            patch.object(run_module.order_manager, "check_take_profit_exits"),
+            patch("src.scripts.run._log_open_position_snapshots"),
+            patch("src.scripts.run.FreshnessMonitor"),
+            patch("src.scripts.run.get_source_priority", return_value=[]),
+            patch("src.monitoring.dashboard.last_poll_ts", None, create=True),
+        ):
+            from src.scripts.run import poll_once
+            from src.risk.manager import RiskManager
+
+            mock_risk = MagicMock(spec=RiskManager)
+            mock_risk.allow_trade.return_value = (False, "test block")
+
+            # Must not raise.
+            poll_once(mock_risk, live_trader=None, alert_manager=None, db=mock_db)
+
+
+# ---------------------------------------------------------------------------
 # The shadow upsert in poll_once() must persist direction=cand.direction —
 # regression test for issue #610.
 #

@@ -254,6 +254,18 @@ CREATE TABLE IF NOT EXISTS deb_weight_log (
     logged_at   TEXT NOT NULL
 );
 
+-- Unconditional poll heartbeat (issue #914). Written once per poll cycle in
+-- poll_once(), regardless of whether any brackets were evaluated that poll.
+-- This is the source for the daily health report's "Polls 24h" / gap metrics
+-- -- scan_decisions is NOT, because it is only written when brackets are
+-- actually evaluated (a much rarer event than a poll).
+CREATE TABLE IF NOT EXISTS poll_runs (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    poll_ts     TEXT NOT NULL,
+    mode        TEXT NOT NULL DEFAULT 'paper'
+);
+CREATE INDEX IF NOT EXISTS idx_poll_runs_poll_ts ON poll_runs(poll_ts);
+
 CREATE TABLE IF NOT EXISTS scan_decisions (
     station               TEXT NOT NULL,
     ticker                TEXT NOT NULL,
@@ -2562,6 +2574,21 @@ class Database:
     # ------------------------------------------------------------------
     # guardrail_events
     # ------------------------------------------------------------------
+
+    def record_poll_run(self, poll_ts: str, mode: str = "paper") -> None:
+        """Record an unconditional poll heartbeat (issue #914).
+
+        Call once per poll cycle from poll_once(), before any bracket
+        evaluation happens. Used by the daily health report to measure real
+        poll cadence/gaps -- NOT scan_decisions, which is only written when
+        brackets are actually evaluated and therefore undercounts polls.
+        """
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO poll_runs(poll_ts, mode) VALUES(?, ?)",
+                (poll_ts, mode),
+            )
+            self._conn.commit()
 
     def log_guardrail_event(
         self,

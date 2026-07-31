@@ -1189,3 +1189,44 @@ class TestGetTradeByOrderId:
         db = _db()
         result = db.get_trade_by_order_id("nonexistent-order-id")
         assert result is None
+
+
+# ---------------------------------------------------------------------------
+# poll_runs / record_poll_run (issue #914)
+# ---------------------------------------------------------------------------
+
+class TestPollRuns:
+    """Database.record_poll_run() writes an unconditional poll heartbeat,
+    independent of scan_decisions (which is only written when brackets are
+    evaluated). See issue #914 defect 1.
+    """
+
+    def test_poll_runs_table_exists(self):
+        db = _db()
+        cur = db._conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='poll_runs'"
+        )
+        assert cur.fetchone() is not None
+
+    def test_record_poll_run_inserts_row(self):
+        db = _db()
+        db.record_poll_run("2026-07-30T13:56:00+00:00", "live")
+        rows = db._conn.execute("SELECT poll_ts, mode FROM poll_runs").fetchall()
+        assert [tuple(r) for r in rows] == [("2026-07-30T13:56:00+00:00", "live")]
+
+    def test_record_poll_run_does_not_require_scan_decisions_row(self):
+        """A poll heartbeat must be recordable with zero scan_decisions
+        activity -- the two are independent (defect 1's whole point)."""
+        db = _db()
+        for i in range(3):
+            db.record_poll_run(f"2026-07-30T{10+i}:00:00+00:00", "live")
+        poll_count = db._conn.execute("SELECT COUNT(*) FROM poll_runs").fetchone()[0]
+        scan_count = db._conn.execute("SELECT COUNT(*) FROM scan_decisions").fetchone()[0]
+        assert poll_count == 3
+        assert scan_count == 0
+
+    def test_default_mode_is_paper(self):
+        db = _db()
+        db.record_poll_run("2026-07-30T13:56:00+00:00")
+        mode = db._conn.execute("SELECT mode FROM poll_runs").fetchone()[0]
+        assert mode == "paper"
