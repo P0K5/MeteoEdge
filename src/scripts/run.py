@@ -359,6 +359,16 @@ def poll_once(
     mode_label = "LIVE" if live_trader else "PAPER"
     log.info("=== Poll [%s] at %s ===", mode_label, ts)
 
+    # Unconditional poll heartbeat (issue #914) -- written every poll cycle,
+    # regardless of whether any brackets get evaluated below. This is what
+    # the daily health report's poll-cadence metrics count; a DB hiccup here
+    # must never block the rest of the poll.
+    if db is not None:
+        try:
+            db.record_poll_run(ts, mode_label.lower())
+        except Exception:
+            log.warning("[run] Failed to record poll heartbeat", exc_info=True)
+
     # Run EMOS shadow calibration once per day (no-op on subsequent polls same day)
     if db is not None:
         _maybe_run_emos_shadow(db)
