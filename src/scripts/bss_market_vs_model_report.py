@@ -98,7 +98,9 @@ select a specific poll's numbers as "the" candidate, so the sample must not
 over-count. This mirrors ``src.scripts.calibration_report.pick_samples``'s
 "final sample" choice: the row with the LOWEST ``minutes_to_settlement`` is
 kept (closest to resolution, i.e. the model/market's last word before the
-outcome is known).
+outcome is known). Exclusions are applied after de-duplication -- if the
+final poll is excluded, the bracket-day is dropped rather than falling
+back to an earlier non-final poll.
 
 Segmentation (issue #822 scope): same-day vs. next-day evaluation (derived
 from the station-local calendar date of ``ts`` vs. ``end_date`` -- the CSV
@@ -1108,7 +1110,9 @@ def build_report(samples: "list[dict]", exclusion_counts: dict, n_no_settlement:
                  "spreads.")
     lines.append("- De-duplication keeps the final (lowest `minutes_to_settlement`) poll per "
                  "(station, ticker, settlement date), mirroring "
-                 "`calibration_report.pick_samples`.")
+                 "`calibration_report.pick_samples`. Exclusions are applied "
+                 "after de-duplication -- if the final poll is excluded, "
+                 "the bracket-day is dropped.")
     if is_resolver:
         lines.append(
             "- Outcome truth: `resolve_bracket_outcomes.resolve_bracket_rows()` -- "
@@ -1187,8 +1191,8 @@ def run_report(candidates_csv: Path, db_path: Path, out_dir: Path,
         )
         return 0
 
-    kept_rows, exclusion_counts = apply_exclusions(raw_rows)
-    deduped = dedupe_one_per_bracket_day(kept_rows)
+    deduped = dedupe_one_per_bracket_day(raw_rows)
+    deduped, exclusion_counts = apply_exclusions(deduped)
 
     if outcome_source == OUTCOME_SOURCE_RESOLVER:
         # Gate on the DB before resolve_candidate_outcomes() so a run with no

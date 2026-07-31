@@ -357,10 +357,12 @@ def build_report(classes: dict, counts: dict, run_date: str, population: str,
     lines.append("## Certainty classes\n")
     lines.append(
         "> **These counts will not match the BSS report's exclusion funnel, and should "
-        "not.** That funnel counts *polls* -- it excludes rows first and de-duplicates "
-        "among the survivors. This check de-duplicates first, so each bracket-day appears "
-        "once and is classified by the model's FINAL word on it. Counting polls here "
-        "would weight a bracket by how many times it happened to be scanned.\n"
+        "not.** That funnel de-duplicates first and then excludes, so the final "
+        "poll's fate determines whether a bracket-day enters the scored population. "
+        "This check de-duplicates first too (same ordering, #915), so each bracket-day "
+        "appears once and is classified by the model's FINAL word on it. The counts "
+        "still differ because the classification logic (certainty vs. undiagnosable vs. "
+        "rail) differs from the report's exclusion funnel.\n"
     )
     lines.append("| Class | rows | resolved | station-days | observed YES | 95% CI (Wilson) "
                  "| mean market P(YES) |")
@@ -449,10 +451,9 @@ def run_check(db_path: Path, out_dir: Path, run_date: "str | None" = None, *,
         return 1
 
     # Dedupe BEFORE classifying: the question is what the model's FINAL word on
-    # each bracket-day was. The report excludes first and dedupes among the
-    # survivors, so a bracket whose last poll reads 0.0 can still enter the gate
-    # through an earlier, non-zero poll -- counting polls here instead of
-    # bracket-days would blur that.
+    # each bracket-day was. The report uses the same ordering (#915) -- dedupe
+    # first, then exclude, so a bracket whose last poll is excluded is dropped
+    # rather than falling back to an earlier one.
     deduped = dedupe_one_per_bracket_day(rows)
     classes, counts = classify_certainty(deduped)
 
