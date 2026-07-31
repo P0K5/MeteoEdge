@@ -321,19 +321,8 @@ class TestBuildM3ProgressRailMetric:
         from src.config import MODEL_PROB_CAP
 
         # Mock: 1000 brackets, 624 are rail (62.4%)
-        # Use dict with more specific prefixes to avoid conflicts
-        db = _mock_db({
-            # Query for total brackets (first query, minimal filter)
-            "SELECT COUNT(*) FROM scan_decisions WHERE poll_ts >= ?": [(1000,), (624,), (0,)],
-            # Fallback for other queries
-            "SELECT COUNT(DISTINCT station": (194,),
-            "SELECT AVG(": (1.45, 27),
-        })
-        # Patch the execute method to return results in order
-        call_order = [0]
         def mock_execute(sql, params=None):
             mock = MagicMock()
-            # Each call to execute gets the next result
             if "capped_p_yes <= ? OR capped_p_yes >= ?" in sql:
                 # This is the rail count query
                 mock.fetchone.return_value = (624,)
@@ -345,6 +334,7 @@ class TestBuildM3ProgressRailMetric:
                 mock.fetchone.return_value = (1000,)
             return mock
 
+        db = MagicMock()
         db._conn.execute = mock_execute
         today = datetime(2026, 7, 31, 14, 0, 0, tzinfo=timezone.utc)
         result = _build_m3_progress(db, today)
@@ -354,8 +344,8 @@ class TestBuildM3ProgressRailMetric:
         expected_lower_pct = round((1.0 - MODEL_PROB_CAP) * 100, 1)
         expected_upper_pct = round(MODEL_PROB_CAP * 100, 1)
         assert f"Rail (0-{expected_lower_pct}% / {expected_upper_pct}%-100%)" in text
-        # Verify rail metric shows 62.4% and [WARN]
-        assert "62.4%" in text or "62.3%" in text or "62.5%" in text
+        # Verify rail metric shows exactly 62.4% and [WARN]
+        assert "62.4%" in text
         assert "[WARN]" in text
 
     def test_rail_metric_low_concentration_ok(self):
@@ -376,7 +366,6 @@ class TestBuildM3ProgressRailMetric:
 
         db = MagicMock()
         db._conn.execute = mock_execute
-        db.get_emos_crps_count = MagicMock(return_value=0)
 
         today = datetime(2026, 7, 31, 14, 0, 0, tzinfo=timezone.utc)
         result = _build_m3_progress(db, today)
@@ -384,9 +373,71 @@ class TestBuildM3ProgressRailMetric:
 
         # Verify: 15% < 20% threshold, so should show [OK]
         assert "15.0%" in text
-        # Rail line should have [OK]
+        # Rail line should have [OK], not just any [OK] in the section
         rail_line = [line for line in result if "Rail" in line][0]
         assert "[OK]" in rail_line
+
+    def test_rail_metric_regression_capped_p_yes_at_floor(self):
+        """Regression test: rows with capped_p_yes at clamp floor are counted as rail.
+
+        This test exercises the actual SQL against real data. It fails with the old
+        hardcoded thresholds (0.02/0.98) because they sit outside the MODEL_PROB_CAP
+        clamp range (0.05/0.95), and passes with the current fix.
+        """
+        import sqlite3
+        from src.config import MODEL_PROB_CAP
+        from datetime import datetime, timezone, timedelta
+
+        # Create in-memory database with scan_decisions table
+        conn = sqlite3.connect(":memory:")
+        conn.execute("""
+            CREATE TABLE scan_decisions (
+                poll_ts TEXT NOT NULL,
+                station TEXT NOT NULL,
+                date TEXT NOT NULL,
+                capped_p_yes REAL NOT NULL,
+                raw_p_yes REAL NOT NULL
+            )
+        """)
+
+        # Insert 1000 brackets total
+        now_str = datetime(2026, 7, 31, 14, 0, 0, tzinfo=timezone.utc).isoformat()
+        since_str = (datetime(2026, 7, 31, 14, 0, 0, tzinfo=timezone.utc) - timedelta(hours=24)).isoformat()
+
+        # Use the same rounding as _build_m3_progress to match the SQL thresholds
+        clamp_floor = round(1.0 - MODEL_PROB_CAP, 10)
+
+        # 600 brackets with capped_p_yes at or below the clamp floor
+        for i in range(600):
+            conn.execute(
+                "INSERT INTO scan_decisions VALUES (?, ?, ?, ?, ?)",
+                (now_str, f"STAT{i}", "2026-07-31", clamp_floor, 0.04),
+            )
+
+        # 400 brackets in the middle (not rail)
+        for i in range(600, 1000):
+            conn.execute(
+                "INSERT INTO scan_decisions VALUES (?, ?, ?, ?, ?)",
+                (now_str, f"STAT{i}", "2026-07-31", 0.50, 0.50),
+            )
+
+        conn.commit()
+
+        # Create mock db with real connection
+        db = MagicMock()
+        db._conn = conn
+
+        today = datetime(2026, 7, 31, 14, 0, 0, tzinfo=timezone.utc)
+        result = _build_m3_progress(db, today)
+        text = "\n".join(result)
+
+        # With the fix, 600/1000 = 60.0% should be counted as rail
+        assert "60.0%" in text
+        # Should show [WARN] because 60% > 20% threshold
+        rail_line = [line for line in result if "Rail" in line][0]
+        assert "[WARN]" in rail_line
+
+        conn.close()
 
 
 # ---------------------------------------------------------------------------

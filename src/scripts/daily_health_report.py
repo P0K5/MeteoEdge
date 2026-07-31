@@ -385,12 +385,11 @@ def _build_m3_progress(db, today: datetime) -> list[str]:
         rail_pct = rail_count / total_brackets * 100
         zero_pct = zero_artifact / total_brackets * 100
 
-        rail_ok = rail_pct < 20  # pre-fix was 62.6%
-        zero_ok = zero_pct < 10  # pre-fix was 17.8%
+        rail_ok = rail_pct < 20
+        zero_ok = zero_pct < 10
 
-        rail_range_pct = round(rail_lower * 100, 1)
-        lines.append(f"  Rail (0-{rail_range_pct}% / {100-rail_range_pct}%-100%): {rail_pct:.1f}% {'[OK]' if rail_ok else '[WARN]'} (pre-fix 62.6%)")
-        lines.append(f"  p_yes=0.0 artifact:     {zero_pct:.1f}% {'[OK]' if zero_ok else '[WARN]'} (pre-fix 17.8%)")
+        lines.append(f"  Rail (0-{rail_lower*100:.1f}% / {rail_upper*100:.1f}%-100%): {rail_pct:.1f}% {'[OK]' if rail_ok else '[WARN]'}")
+        lines.append(f"  p_yes=0.0 artifact:     {zero_pct:.1f}% {'[OK]' if zero_ok else '[WARN]'}")
 
     except Exception:
         log.exception("M3 progress query failed")
