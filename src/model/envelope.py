@@ -166,6 +166,70 @@ def compute_envelope(state: WeatherState, minutes_to_settlement: float = 9999.0)
     return min_high, max_high
 
 
+#: Below this, the surviving interval has collapsed and the conditional is not
+#: computable in floating point. Handled explicitly rather than clamped, so a
+#: degenerate day never silently produces a near-arbitrary ratio.
+_MASS_EPS = 1e-12
+
+
+def conditional_bracket_probability(lo: float, hi: float, current_high: float,
+                                    max_env: float, mean: float,
+                                    stddev: float) -> float:
+    """P(daily high in ``[lo, hi)`` | it lies in ``[current_high, max_env]``).
+
+    The day's high is known to sit inside that interval: it cannot fall below
+    a running maximum already observed, and it cannot exceed the temperature-
+    progression ceiling. Reporting the *unconditional* normal probability for
+    each bracket therefore leaks every unit of mass outside the interval --
+    which is what issue #920 measured, and why production ladders summed to
+    0.80 rather than 1.0.
+
+    Conditioning fixes it by construction: clip the bracket to the surviving
+    interval, then divide by that interval's own mass. The ladder sums to 1.0
+    for any bracket set that partitions the interval, with no ladder-level pass
+    and no cross-bracket state -- which matters, because the scanner evaluates
+    one bracket at a time and cannot see the others.
+
+    This subsumes the three certainty shortcuts it replaces, rather than
+    sitting alongside them:
+
+    * ``hi <= current_high`` -> the clipped interval is empty -> 0.0
+    * ``lo > max_env``       -> the clipped interval is empty -> 0.0
+    * bracket spans the whole interval -> numerator == denominator -> 1.0
+
+    So the old behaviour is preserved exactly at those three boundaries, and
+    the previously-unnormalised middle is what changes.
+
+    **The top clip is the expensive one.** Brackets below an observed high hold
+    almost no mass anyway -- a running maximum cannot decrease -- so the bottom
+    clip costs ~3%. Brackets above ``max_env`` hold real mass, because the day
+    can still warm, so the top clip costs ~15% (measured 2026-08-05 across
+    5,829 production ladders). #920 as filed covered only the bottom.
+    """
+    # Collapse is checked FIRST, and must be: past the peak the interval is a
+    # single point, so every bracket's clipped width is zero and the empty-clip
+    # branch below would return 0.0 for all of them -- a ladder summing to 0
+    # instead of 1. The degenerate day is the one where mass conservation is
+    # most obviously required, not least.
+    if max_env <= current_high:
+        return 1.0 if lo <= current_high < hi else 0.0
+
+    lo_eff = max(lo, current_high)
+    hi_eff = min(hi, max_env)
+    if hi_eff <= lo_eff:
+        return 0.0
+
+    surviving = p_normal_between(current_high, max_env, mean, stddev)
+    if surviving <= _MASS_EPS:
+        # Numerically collapsed rather than geometrically: the interval has
+        # width but the forecast puts effectively no mass in it (a badly wrong
+        # forecast against a high already observed). Same resolution -- pin to
+        # the bracket containing the observed high rather than divide by ~zero.
+        return 1.0 if lo <= current_high < hi else 0.0
+
+    return p_normal_between(lo_eff, hi_eff, mean, stddev) / surviving
+
+
 def true_probability_yes(bracket: Bracket, state: WeatherState,
                          minutes_to_settlement: float = 9999.0,
                          forecast_stddev: float = 2.0,
@@ -290,18 +354,23 @@ def true_probability_yes(bracket: Bracket, state: WeatherState,
     _day_mismatch = (settlement_date is not None
                      and state.now_local.date() != settlement_date)
 
+    # The three certainty shortcuts that used to sit here -- return 0.0 when
+    # `hi <= current_high`, 0.0 when `lo > max_env`, 1.0 when the bracket spans
+    # the whole envelope -- are now special cases of
+    # conditional_bracket_probability() below, which reproduces all three at
+    # their boundaries and additionally normalises the middle (#920).
+    #
+    # They had to move: the conditional needs forecast_mean and
+    # effective_stddev, which are computed further down. Returning before those
+    # exist is what made normalisation impossible in the first place.
+    #
     # Markets resolve [lo, hi): a running high AT the top edge already belongs
     # to the bracket above and, being a running max, can never come back down.
     # The old `hi < current_high` let boundary-exact highs (every integer-°C
-    # high on C-bucket stations) fall through to the certainty shortcut below,
-    # booking p=1.0 on brackets that resolved NO 96-100% of the time (#652).
-    if not _day_mismatch:
-        if hi <= state.current_high_f:
-            return 0.0
-        if lo > max_env:
-            return 0.0
-        if lo <= state.current_high_f and hi >= max_env:
-            return 1.0
+    # high on C-bucket stations) fall through to the certainty shortcut,
+    # booking p=1.0 on brackets that resolved NO 96-100% of the time (#652) --
+    # the clip preserves that fix, since `hi <= current_high` still empties the
+    # interval.
 
     if forecast_mean is None:
         forecast_mean = (state.current_high_f + max_env) / 2
@@ -325,10 +394,29 @@ def true_probability_yes(bracket: Bracket, state: WeatherState,
     remaining_rise = max(0.0, max_env - state.current_high_f)
     effective_stddev = max(forecast_stddev, sigma_climb_fraction * remaining_rise)
 
-    # Base probability
-    p = p_normal_between(lo, hi, forecast_mean, effective_stddev)
+    if _day_mismatch:
+        # Wrong-day observations (#820): current_high_f and max_env describe a
+        # different day, so conditioning on them would be conditioning on the
+        # wrong evidence. Forecast-only, unconditioned -- the ladder is not
+        # expected to sum to 1.0 in this branch, and that is correct: no
+        # observation has ruled anything out.
+        p = p_normal_between(lo, hi, forecast_mean, effective_stddev)
+    else:
+        p = conditional_bracket_probability(
+            lo, hi, state.current_high_f, max_env,
+            forecast_mean, effective_stddev,
+        )
 
-    # Boost confidence near settlement
+    # Boost confidence near settlement.
+    #
+    # NOTE (#920 follow-up): this is a per-bracket nonlinear transform --
+    # `p + (p-0.5)*0.2*(1-t/60)` -- so inside the final hour it perturbs the
+    # conservation the conditional above establishes. Most ladder brackets sit
+    # below 0.5, where it pulls them down, so a final-hour ladder sums slightly
+    # under 1.0. Deliberately left alone here: landing two probability changes
+    # in one window is what #920 itself warns against, and the conditional
+    # already sharpens naturally as [current_high, max_env] narrows through the
+    # day, which is what this boost was approximating. Filed separately.
     p = time_to_settlement_boost(p, minutes_to_settlement)
 
     return p

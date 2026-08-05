@@ -174,12 +174,21 @@ class TestGateVerdicts:
         is ever reached."""
         weather = {"KMIA": _kmia_state()}
         end = _FROZEN_NOW.replace(hour=23, minute=59, second=59, microsecond=0)
-        # "74-75°F" (rather than "78-79°F"): since #917 fixed the dash-range
-        # parser to integrate the true inclusive-upper-bound width (78-79°F
-        # now covers [78, 80) and sits close enough to the forecast_high_f=80
-        # mean to trip below_min_edge, not below_min_confidence), a bracket
-        # further from the mean is needed to still land in the confidence gate.
-        market = _market("74-75°F", "0xconf", end, '["0.30","0.70"]')
+        # "75-76°F". #917 widened dash-range brackets to their true inclusive
+        # upper bound, which moved this fixture twice: "78-79°F" now covers
+        # [78, 80) and sits close enough to forecast_high_f=80 to trip
+        # below_min_edge, and the "74-75°F" chosen to replace it went too far
+        # the other way -- p fell to 0.0466, so the NO edge reached ~23.5c and
+        # above_max_edge (MAX_EDGE_CENTS=20) fired before the confidence gate
+        # was ever consulted. That left master red from #917's merge on
+        # 2026-07-31 through six subsequent merges.
+        #
+        # The confidence gate is only reachable in the band where the NO edge
+        # lands between MIN_EDGE (15c) and MAX_EDGE (20c) while p is still
+        # under MAX_CONFIDENCE_YES_FOR_NO (0.05 -- note the gate reports the
+        # unclamped 0.0923 against it). [75, 77) sits in that band; the two
+        # neighbouring brackets do not.
+        market = _market("75-76°F", "0xconf", end, '["0.30","0.70"]')
         with _frozen_scanner_now(_FROZEN_NOW):
             candidates, snapshots = scan_markets(weather, [market])
         assert candidates == []
