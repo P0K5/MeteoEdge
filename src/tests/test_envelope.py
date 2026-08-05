@@ -4,7 +4,7 @@ Ported from archive/polymarket-spike/tests/test_envelope.py with imports
 updated to use src.model.envelope (src.model.climb_rates provides climb rates).
 """
 import os
-from datetime import datetime
+from datetime import date, datetime
 from math import isclose
 
 import pytest
@@ -348,16 +348,31 @@ class TestTrueProbabilityYes:
 # ---------------------------------------------------------------------------
 
 class TestObsBiasCorrection:
+    """The bracket here is [82, 84), inside the envelope, not the [83, 87) it
+    used to be.
+
+    That fixture had ``max_env == 83.0`` exactly, so [83, 87) lay entirely on
+    and above the ceiling. It only produced a non-zero probability because the
+    old code's ``lo > max_env`` guard was a strict inequality: a bracket
+    starting at 83.001 returned 0.0 while one starting at 83.0 was integrated
+    in full, above the ceiling. #920's conditional clips to the envelope
+    instead, so the boundary no longer behaves differently from its own
+    neighbourhood -- and the deleted mass was never legitimate.
+
+    The property under test is unchanged: shifting the mean via
+    ``obs_bias_offset_f`` moves probability toward or away from a bracket on
+    the upper side of it. It just needs a bracket the model can actually reach.
+    """
+
+    def _states(self, offset=None):
+        return make_state(current_high_f=80.0, latest_temp_f=79.0, hour=14,
+                          forecast_high_f=82.0, obs_bias_offset_f=offset)
+
     def test_positive_offset_increases_probability_above_mean(self):
         """A positive obs_bias_offset_f shifts forecast_mean up, raising p for high brackets."""
-        state = make_state(current_high_f=80.0, latest_temp_f=79.0, hour=14, forecast_high_f=82.0)
-        state_with_offset = make_state(
-            current_high_f=80.0, latest_temp_f=79.0, hour=14, forecast_high_f=82.0,
-            obs_bias_offset_f=3.0,
-        )
-        bracket = make_bracket(low_f=83.0, high_f=87.0)
-        p_base = true_probability_yes(bracket, state)
-        p_offset = true_probability_yes(bracket, state_with_offset)
+        bracket = make_bracket(low_f=82.0, high_f=84.0)
+        p_base = true_probability_yes(bracket, self._states())
+        p_offset = true_probability_yes(bracket, self._states(3.0))
         assert p_offset > p_base, (
             f"Positive bias offset should raise p for bracket above mean; "
             f"got base={p_base:.4f}, offset={p_offset:.4f}"
@@ -365,18 +380,21 @@ class TestObsBiasCorrection:
 
     def test_negative_offset_decreases_probability_above_mean(self):
         """A negative obs_bias_offset_f shifts forecast_mean down, lowering p for high brackets."""
-        state = make_state(current_high_f=80.0, latest_temp_f=79.0, hour=14, forecast_high_f=82.0)
-        state_with_offset = make_state(
-            current_high_f=80.0, latest_temp_f=79.0, hour=14, forecast_high_f=82.0,
-            obs_bias_offset_f=-3.0,
-        )
-        bracket = make_bracket(low_f=83.0, high_f=87.0)
-        p_base = true_probability_yes(bracket, state)
-        p_offset = true_probability_yes(bracket, state_with_offset)
+        bracket = make_bracket(low_f=82.0, high_f=84.0)
+        p_base = true_probability_yes(bracket, self._states())
+        p_offset = true_probability_yes(bracket, self._states(-3.0))
         assert p_offset < p_base, (
             f"Negative bias offset should lower p for bracket above mean; "
             f"got base={p_base:.4f}, offset={p_offset:.4f}"
         )
+
+    def test_a_bracket_entirely_above_the_ceiling_is_zero(self):
+        """The behaviour change that moved the brackets above, pinned so it
+        cannot silently revert: mass above ``max_env`` is not assignable, and
+        that must not depend on whether the bracket's edge lands exactly on it."""
+        state = self._states()
+        assert true_probability_yes(make_bracket(low_f=83.0, high_f=87.0), state) == 0.0
+        assert true_probability_yes(make_bracket(low_f=83.001, high_f=87.0), state) == 0.0
 
     def test_none_offset_is_identical_to_baseline(self):
         """obs_bias_offset_f=None must produce identical result to no offset field at all."""
@@ -1147,3 +1165,105 @@ class TestDayMismatchGuard:
         bracket = make_bracket(low_f=79.0, high_f=81.0)
         result = next_day_probability_yes(bracket, mu=81.0, sigma=-1.0)
         assert result == 0.0
+
+
+# ---------------------------------------------------------------------------
+# Mass conservation through the SERVING path (issue #920)
+# ---------------------------------------------------------------------------
+
+class TestServedLadderMassConservation:
+    """A full ladder must sum to ~1.0 through ``true_probability_yes`` itself.
+
+    ``TestBracketLadderMassConservation`` in test_scanner.py already asserts
+    this invariant -- but against ``p_normal_between`` directly, one layer
+    below where probabilities are actually served. That is exactly why it
+    stayed green while production ladders summed to 0.80: the parser geometry
+    it checks was correct after #917, and the loss happened afterwards, in the
+    truncation shortcuts that ``true_probability_yes`` applies on top.
+
+    So this asserts the same invariant where it was being violated. The
+    truncated regimes are the point -- an untruncated ladder conserved mass
+    even before the fix.
+    """
+
+    # Real 2°F US ladder, gap-free, with both open-ended tails.
+    _EDGES = [-50.0] + [float(x) for x in range(56, 94, 2)] + [200.0]
+
+    def _ladder_sum(self, state, **kw):
+        return sum(
+            true_probability_yes(make_bracket(low_f=lo, high_f=hi), state, **kw)
+            for lo, hi in zip(self._EDGES, self._EDGES[1:])
+        )
+
+    def test_untruncated_ladder_conserves(self):
+        state = make_state(current_high_f=60.0, latest_temp_f=60.0,
+                           forecast_high_f=80.0, hour=9)
+        assert self._ladder_sum(state) == pytest.approx(1.0, abs=0.02)
+
+    def test_bottom_truncated_ladder_conserves(self):
+        """Brackets below an observed running high are zeroed -- the surviving
+        mass must be renormalised, not simply left short."""
+        state = make_state(current_high_f=78.0, latest_temp_f=78.0,
+                           forecast_high_f=84.0, hour=13)
+        assert self._ladder_sum(state) == pytest.approx(1.0, abs=0.02)
+
+    def test_top_truncated_ladder_conserves(self):
+        """The expensive one: mass above ``max_env`` was being discarded, which
+        measurement put at ~15% against ~3% for the bottom cut."""
+        state = make_state(current_high_f=60.0, latest_temp_f=76.0,
+                           forecast_high_f=78.0, hour=16)
+        assert self._ladder_sum(state) == pytest.approx(1.0, abs=0.02)
+
+    def test_post_peak_ladder_conserves(self):
+        """Both cuts at once -- the RKSI 0.288 case. After the peak
+        ``expected_additional_rise`` -> 0, ``max_env`` collapses onto
+        ``current_high``, and both shortcuts fire together."""
+        state = make_state(current_high_f=86.0, latest_temp_f=82.0,
+                           forecast_high_f=80.0, hour=19)
+        assert self._ladder_sum(state) == pytest.approx(1.0, abs=0.02)
+
+    def test_conserves_when_the_forecast_is_badly_wrong(self):
+        """Forecast far below an already-observed high: the conditional is
+        taken over a region the forecast gives almost no mass, which is where a
+        naive renormalisation divides by ~zero."""
+        state = make_state(current_high_f=95.0, latest_temp_f=95.0,
+                           forecast_high_f=70.0, hour=15)
+        assert self._ladder_sum(state) == pytest.approx(1.0, abs=0.02)
+
+    def test_day_mismatch_branch_rules_nothing_out(self):
+        """#820's wrong-day branch must not condition on the observations at all.
+
+        Conserving mass is *not* the discriminating assertion here -- a
+        conditioned ladder also sums to 1.0, so that alone would pass even if
+        this branch started conditioning on the wrong day's high. What must
+        hold is that a bracket *below* the (wrong-day) running high still
+        carries probability: tomorrow's high is not constrained by today's, and
+        zeroing it is the exact false certainty #820 was opened to remove.
+        """
+        state = make_state(current_high_f=86.0, latest_temp_f=86.0,
+                           forecast_high_f=70.0, hour=19)
+        below_the_wrong_days_high = make_bracket(low_f=68.0, high_f=70.0)
+        tomorrow = date(2026, 5, 16)
+
+        assert true_probability_yes(
+            below_the_wrong_days_high, state, settlement_date=tomorrow) > 0.0
+        # Same bracket, same day -> correctly impossible, because then the high
+        # really has been observed at 86.
+        assert true_probability_yes(
+            below_the_wrong_days_high, state, settlement_date=date(2026, 5, 15)) == 0.0
+        assert self._ladder_sum(state, settlement_date=tomorrow) == pytest.approx(
+            1.0, abs=0.02)
+
+    def test_the_three_legacy_shortcuts_survive_at_their_boundaries(self):
+        """The conditional replaces them; it must not change them."""
+        state = make_state(current_high_f=80.0, latest_temp_f=80.0,
+                           forecast_high_f=84.0, hour=13)
+        env_hi = max(compute_envelope(state)[1], 84.0)
+        # entirely below the running high -> impossible
+        assert true_probability_yes(make_bracket(low_f=70.0, high_f=80.0), state) == 0.0
+        # entirely above the ceiling -> impossible
+        assert true_probability_yes(
+            make_bracket(low_f=env_hi + 1.0, high_f=env_hi + 5.0), state) == 0.0
+        # spans the whole surviving interval -> certain
+        assert true_probability_yes(
+            make_bracket(low_f=80.0, high_f=env_hi), state) == pytest.approx(1.0)
