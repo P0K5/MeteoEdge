@@ -651,158 +651,84 @@ class TestLadderMassIndicator:
     """The check whose absence cost two weeks.
 
     #917 (°F ladders at half width, sum 0.53) and #920 (truncation without
-    renormalisation, sum 0.80) both reached production and survived for weeks.
-    Both were visible in a single number -- SUM(raw_p_yes) per ladder -- from
-    the day they landed. Nothing was watching it. These tests exist so that
-    stays true only once.
+    renormalisation, sum 0.80) both reached production and survived weeks.
+    Both were visible in one number from the day they landed.
+
+    Reads ``bracket_evals``, not ``scan_decisions`` -- see ``_ladder_mass``.
+    Three attempts on the upsert table failed structurally: it keeps only each
+    market's last write, so a ladder frozen at an old poll cannot be recovered
+    by any grouping.
     """
 
-    def _db(self, ladders):
-        """ladders: list of lists of raw_p_yes values, one list per ladder."""
-        conn = sqlite3.connect(":memory:")
-        conn.execute(
+    @staticmethod
+    def _rows(ladders, day="2026-08-07", station_prefix="ST"):
+        """ladders: list of (total, n_brackets). One ladder per station."""
+        out = []
+        for i, (total, n) in enumerate(ladders):
+            for j in range(n):
+                out.append({
+                    "station": f"{station_prefix}{i}",
+                    "ts": f"{day}T12:00:00+00:00",
+                    "end_date": day,
+                    "is_next_day_flag": 0,
+                    "p_yes_raw": total / n,
+                })
+        return out
+
+    def _text(self, rows, today=None, since=None):
+        today = today or datetime(2026, 8, 7, 14, 0, 0, tzinfo=timezone.utc)
+        db = MagicMock()
+        db._conn = sqlite3.connect(":memory:")
+        db._conn.execute(
             "CREATE TABLE scan_decisions (poll_ts TEXT, station TEXT, date TEXT, "
             "raw_p_yes REAL, capped_p_yes REAL, yes_ask INTEGER, no_ask INTEGER)"
         )
-        now = datetime(2026, 8, 7, 14, 0, 0, tzinfo=timezone.utc).isoformat()
-        for i, probs in enumerate(ladders):
-            for j, p in enumerate(probs):
-                conn.execute(
-                    "INSERT INTO scan_decisions VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    (now, f"ST{i}", "2026-08-07", p, p, 20, 82),
-                )
-        conn.commit()
-        db = MagicMock()
-        db._conn = conn
-        return db
-
-    @staticmethod
-    def _ladder(total, n=11):
-        """An n-bracket ladder summing to *total*.
-
-        Real ladders are ~11 brackets; the mass check requires >= 5 so a
-        part-listed station-day is not scored as a deficient ladder. Fixtures
-        use the real shape so they exercise the same path production does.
-        """
-        return [total / n] * n
-
-    def _text(self, ladders):
-        today = datetime(2026, 8, 7, 14, 0, 0, tzinfo=timezone.utc)
-        return "\n".join(_build_m3_progress(self._db(ladders), today))
+        with patch("src.scripts.bss_market_vs_model_report.load_bracket_eval_rows",
+                   return_value=rows):
+            return "\n".join(_build_m3_progress(db, today))
 
     def test_a_conserving_ladder_reads_ok(self):
-        text = self._text([self._ladder(1.00)])
-        assert "Ladder mass:" in text
-        assert "1.000" in text and "[OK]" in text
+        text = self._text(self._rows([(1.00, 11)]))
+        assert "1.000 mean, 1.000 worst (0/1 deficient) [OK]" in text
 
     def test_the_920_signature_warns(self):
-        """0.80 is what production actually showed while #920 was live."""
-        text = self._text([self._ladder(0.80)])
-        assert "[WARN]" in text
-        assert "leaking mass" in text
+        """0.80 -- what production showed while #920 was live."""
+        text = self._text(self._rows([(0.80, 11)]))
+        assert "[WARN]" in text and "leaking mass" in text
 
     def test_the_917_signature_warns(self):
         """0.53 -- °F ladders integrated at half width."""
-        text = self._text([self._ladder(0.53)])
+        text = self._text(self._rows([(0.53, 11)]))
         assert "[WARN]" in text
 
     def test_worst_ladder_is_reported_not_just_the_mean(self):
-        """A defect confined to one station or ladder shape is exactly what a
-        mean hides -- which is how #917 stayed invisible while °C looked fine."""
-        text = self._text([self._ladder(1.00), self._ladder(1.00), self._ladder(0.20)])
+        """A defect confined to one station is exactly what a mean hides."""
+        text = self._text(self._rows([(1.00, 11), (1.00, 11), (0.20, 11)]))
         assert "0.200 worst" in text
         assert "[WARN]" in text
 
-    def test_a_mixed_poll_ladder_is_skipped_not_scored(self):
-        """The false alarm this grouping was changed to remove.
+    def test_same_day_and_next_day_ladders_are_not_pooled(self):
+        """Pooling two distributions manufactures a mass excess that is not
+        in the data -- and #921 is an excess investigation."""
+        rows = self._rows([(1.00, 11)])
+        rows += [dict(r, is_next_day_flag=1) for r in rows]
+        text = self._text(rows)
+        assert "1.000 mean, 1.000 worst (0/2 deficient) [OK]" in text
 
-        scan_decisions upserts on (station, ticker, date), so a market that
-        stops being scanned keeps an older poll_ts. Grouping by poll_ts and
-        filtering on it split such ladders into fragments, each scored as a
-        separate deficient ladder: on 2026-08-06 that reported "0.947 mean,
-        0.464 worst, 10/55 deficient" while all 322 production ladders summed
-        to 1.000.
-        """
-        conn = sqlite3.connect(":memory:")
-        conn.execute(
-            "CREATE TABLE scan_decisions (poll_ts TEXT, station TEXT, date TEXT, "
-            "raw_p_yes REAL, capped_p_yes REAL, yes_ask INTEGER, no_ask INTEGER)"
-        )
-        now = datetime(2026, 8, 7, 14, 0, 0, tzinfo=timezone.utc)
-        for st in range(3):
-            for j in range(11):
-                # 6 brackets written recently, 5 stale -- one intact ladder.
-                ts = (now - timedelta(hours=2 if j < 6 else 30)).isoformat()
-                conn.execute(
-                    "INSERT INTO scan_decisions VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    (ts, f"ST{st}", "2026-08-07", 1.0 / 11, 1.0 / 11, 20, 82),
-                )
-        conn.commit()
-        db = MagicMock()
-        db._conn = conn
-        text = "\n".join(_build_m3_progress(db, now))
-        # A mixed-poll ladder is SKIPPED, not scored: its brackets were
-        # conditioned on different [current_high, max_env] intervals, so no
-        # sum over them is meaningful. Skipping is the conservative choice --
-        # scoring it would manufacture a deficient ladder from correct values,
-        # which is precisely the false alarm this replaced.
-        assert "cannot assess" in text
-        assert "leaking mass" not in text
-
-    def test_a_next_day_market_polled_before_the_clock_is_excluded(self):
-        """The case that made the second version warn: `date` is the SETTLEMENT
-        day, so a next-day market polled the evening BEFORE the clock carries a
-        clean-looking date and contaminated probabilities.
-
-        Production on 2026-08-06 had exactly this -- `KORD | 2026-08-06` summing
-        to 0.464, polled 2026-08-05 before #920 deployed at ~21:23 UTC.
-        Filtering on `date` kept it; filtering on `poll_ts` drops it.
-        """
-        conn = sqlite3.connect(":memory:")
-        conn.execute(
-            "CREATE TABLE scan_decisions (poll_ts TEXT, station TEXT, date TEXT, "
-            "raw_p_yes REAL, capped_p_yes REAL, yes_ask INTEGER, no_ask INTEGER)"
-        )
-        for _ in range(11):
-            # settles inside the clean window, polled before it
-            conn.execute("INSERT INTO scan_decisions VALUES (?, ?, ?, ?, ?, ?, ?)",
-                         ("2026-08-05T20:00:00+00:00", "KORD",
-                          M3_CLEAN_DATA_CLOCK_START, 0.464 / 11, 0.464 / 11, 20, 82))
-        for _ in range(11):
-            conn.execute("INSERT INTO scan_decisions VALUES (?, ?, ?, ?, ?, ?, ?)",
-                         (M3_CLEAN_DATA_CLOCK_START + "T14:00:00+00:00", "EGLC",
-                          M3_CLEAN_DATA_CLOCK_START, 1.0 / 11, 1.0 / 11, 20, 82))
-        conn.commit()
-        db = MagicMock()
-        db._conn = conn
-        text = "\n".join(_build_m3_progress(
-            db, datetime(2026, 8, 6, 14, 52, 0, tzinfo=timezone.utc)))
+    def test_ladders_polled_before_the_clock_are_excluded(self):
+        """Pre-#920 ladders came from a different model; including them would
+        warn forever. Production had exactly this -- 08-05 ladders at 0.22-0.49
+        sitting beside clean 08-06 ones."""
+        rows = self._rows([(0.46, 11)], day="2026-08-05")
+        rows += self._rows([(1.00, 11)], day=M3_CLEAN_DATA_CLOCK_START,
+                           station_prefix="CLEAN")
+        text = self._text(rows, today=datetime(2026, 8, 6, 14, 0, 0,
+                                               tzinfo=timezone.utc))
         assert "1.000 mean, 1.000 worst (0/1 deficient) [OK]" in text
-        assert "leaking mass" not in text
 
-    def test_two_polls_both_inside_the_window_are_still_skipped(self):
-        """Isolates the coherence guard from the clock guard.
-
-        Both polls are AFTER the cutoff, so `MIN(poll_ts) >= ?` passes and only
-        `COUNT(DISTINCT poll_ts) = 1` can exclude this. Without that guard the
-        ladder is scored, and summing brackets conditioned on two different
-        [current_high, max_env] intervals has no reason to reach 1.0.
-        """
-        conn = sqlite3.connect(":memory:")
-        conn.execute(
-            "CREATE TABLE scan_decisions (poll_ts TEXT, station TEXT, date TEXT, "
-            "raw_p_yes REAL, capped_p_yes REAL, yes_ask INTEGER, no_ask INTEGER)"
-        )
-        base = M3_CLEAN_DATA_CLOCK_START
-        for j in range(11):
-            ts = f"{base}T{'12' if j < 6 else '13'}:00:00+00:00"
-            conn.execute("INSERT INTO scan_decisions VALUES (?, ?, ?, ?, ?, ?, ?)",
-                         (ts, "KORD", base, 1.0 / 11, 1.0 / 11, 20, 82))
-        conn.commit()
-        db = MagicMock()
-        db._conn = conn
-        text = "\n".join(_build_m3_progress(
-            db, datetime(2026, 8, 6, 14, 0, 0, tzinfo=timezone.utc)))
+    def test_a_part_listed_ladder_is_not_scored(self):
+        """Too few brackets to mean anything -- not evidence of leaking mass."""
+        text = self._text(self._rows([(0.30, 3)]))
         assert "cannot assess" in text
 
     def test_no_ladders_is_not_reported_as_healthy(self):
@@ -817,26 +743,37 @@ class TestLadderMassIndicator:
     def test_a_met_bar_with_dirty_ladders_is_refused(self):
         """The 2026-08-04 failure in one assertion: '362/300 (121%)' printed
         against a window that was entirely contaminated. A count is only
-        meaningful once the probabilities behind it conserve mass."""
+        meaningful once the probabilities behind it conserve mass.
+
+        The two halves come from different sources now -- station-days from
+        scan_decisions, mass from bracket_evals -- so both are supplied, and
+        the mass side carries genuinely deficient ladders rather than relying
+        on an empty loader.
+        """
         conn = sqlite3.connect(":memory:")
         conn.execute(
             "CREATE TABLE scan_decisions (poll_ts TEXT, station TEXT, date TEXT, "
             "raw_p_yes REAL, capped_p_yes REAL, yes_ask INTEGER, no_ask INTEGER)"
         )
-        now = datetime(2026, 8, 7, 14, 0, 0, tzinfo=timezone.utc).isoformat()
-        # 400 station-days, well past the 300 bar -- but every ladder leaks.
+        now = datetime(2026, 8, 7, 14, 0, 0, tzinfo=timezone.utc)
+        # 400 scoreable station-days -- well past the 300 bar.
         for d in range(20):
             for st in range(20):
                 for _ in range(11):
                     conn.execute(
                         "INSERT INTO scan_decisions VALUES (?, ?, ?, ?, ?, ?, ?)",
-                        (now, f"ST{st}", f"2026-08-{d + 1:02d}", 0.80 / 11, 0.80 / 11, 20, 82),
+                        (now.isoformat(), f"ST{st}", f"2026-08-{d + 1:02d}",
+                         0.80 / 11, 0.80 / 11, 20, 82),
                     )
         conn.commit()
         db = MagicMock()
         db._conn = conn
-        text = "\n".join(_build_m3_progress(db, datetime(2026, 8, 7, 14, 0, 0,
-                                                         tzinfo=timezone.utc)))
+        leaking = self._rows([(0.80, 11)])
+        with patch("src.scripts.bss_market_vs_model_report.load_bracket_eval_rows",
+                   return_value=leaking):
+            text = "\n".join(_build_m3_progress(db, now))
+        assert "300" in text and "/300" in text          # bar reported met
+        assert "leaking mass" in text                    # but mass is not clean
         assert "the gate must NOT run" in text
 
     def test_station_days_count_from_the_clock_constant(self):

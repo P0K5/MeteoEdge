@@ -416,88 +416,69 @@ def _build_guardrails(db, today: datetime) -> list[str]:
     return lines
 
 
-def _ladder_mass(db, since_poll_ts: str) -> "dict[str, float] | None":
-    """Mean SUM(raw_p_yes) per ladder over the last 24h, and its worst kind.
+def _ladder_mass(since_date: str) -> "dict[str, float] | None":
+    """Ladder mass conservation over ``bracket_evals`` -- the gate's own source.
 
-    **The check whose absence cost two weeks.** Two probability defects reached
-    production and survived undetected because nothing asserted the one
-    invariant that makes them obvious on sight: a gap-free bracket ladder must
-    integrate to ~1.0.
+    **The check whose absence cost two weeks.** #917 (degF ladders integrated
+    at half width, sum 0.53) and #920 (truncation without renormalisation, sum
+    0.80) both reached production and survived for weeks. Both were visible in
+    a single number -- SUM(p_yes_raw) over a ladder -- from the day they
+    landed, and nothing was watching it.
 
-    * #917 -- degF dash-range brackets integrated at half width. Ladders summed
-      to **0.53** for a week.
-    * #920 -- truncation without renormalisation. Ladders summed to **0.80**,
-      and the 15% lost at the top was mistaken for the 3% lost at the bottom
-      until it was measured per-end.
+    **Reads ``bracket_evals``, deliberately not ``scan_decisions``.** Three
+    successive attempts to make the upsert table work all failed, and the
+    reason is structural rather than a query bug: ``scan_decisions`` keeps one
+    row per (station, ticker, date), so once a market stops being written to,
+    its row sits there indefinitely carrying whatever it last held. On
+    2026-08-06 it froze KORD's 08-06 ladder at the 11:39 poll while
+    ``bracket_evals`` had 12:00 through 15:00, all conserving. No grouping,
+    coherence guard or clock filter recovers a snapshot the table no longer
+    holds.
 
-    Both were visible in this single number from the day they landed. Neither
-    was being watched, so this is the headline M3 indicator: **a clean count of
-    contaminated station-days is worse than no count at all.**
+    ``bracket_evals`` is append-only and hourly-deduped (#826): one coherent
+    ladder per snapshot, never overwritten. It is also **what the M3 gate
+    scores**, so a monitor built on it measures the population the verdict will
+    actually be computed over -- which is the property that matters, and the
+    one the previous versions kept failing to have.
 
-    Grouped by (station, poll_ts, date) against ``scan_decisions``. That table
-    Three things have to be right at once here, and the first two versions of
-    this each got one of them wrong.
-
-    **Group by (station, date).** ``scan_decisions`` upserts on
-    (station, ticker, date), so that pair already identifies one ladder. The
-    first version also grouped on ``poll_ts``, which split any ladder whose
-    brackets were last written across the window boundary into fragments -- a
-    5-of-11 fragment sums to ~0.46 and scored as a deficient ladder.
-
-    **Filter on poll_ts, never on date.** ``date`` is the SETTLEMENT day;
-    contamination is a property of when the probability was *computed*. The
-    second version filtered ``date >= yesterday`` and so kept next-day markets
-    polled the previous evening -- before #920 deployed at 2026-08-05 ~21:23
-    UTC -- which is why a ladder keyed ``KORD | 2026-08-06`` legitimately
-    summed to 0.464. Same distinction ``--since`` draws for the M3 gate
-    (bss_market_vs_model_report), for the same reason.
-
-    **Score only coherent snapshots.** ``HAVING COUNT(DISTINCT poll_ts) = 1``
-    keeps ladders assembled from a single poll. Brackets last written at
-    different moments were conditioned on different [current_high, max_env]
-    intervals, so summing them across polls has no reason to reach 1.0 even
-    when every value is correct. Such a ladder is *skipped*, never scored --
-    an unmeasurable ladder must not read as a failing one.
-
-    All three tests are ``HAVING`` clauses, deliberately. Filtering brackets in
-    ``WHERE`` is what fragments a ladder: drop half its rows and the remainder
-    is a coherent-looking partial summing to its own fraction, which is exactly
-    how the first version manufactured a "0.464 worst". Deciding per group
-    means a ladder is scored whole or not at all.
-
-    The floor is also never earlier than the clean-data clock: ladders polled
-    before it came from a different model and would warn forever.
+    Ladders are keyed by (station, poll_ts, settlement_date, is_next_day),
+    matching ``m3_window_diagnostics``. ``is_next_day`` belongs in the key
+    because a station can carry a same-day and a next-day ladder in the same
+    poll; pooling them sums two distributions and manufactures a mass excess
+    that is not there.
 
     Returns ``None`` when there is nothing to measure -- absent data must not
     read as a healthy ladder.
     """
-    # Every filter is at the LADDER level (HAVING), not the bracket level
-    # (WHERE). Filtering brackets by poll_ts is what fragments a ladder: drop
-    # half its rows and the remainder is a coherent-looking partial that sums
-    # to its own fraction. Deciding per group instead means a ladder is either
-    # scored whole or not scored at all.
-    rows = db._conn.execute(
-        "SELECT station, date, SUM(raw_p_yes) AS total, COUNT(*) AS n "
-        "FROM scan_decisions WHERE raw_p_yes IS NOT NULL "
-        "GROUP BY station, date "
-        "HAVING COUNT(*) >= 5 "
-        "   AND COUNT(DISTINCT poll_ts) = 1 "
-        "   AND MIN(poll_ts) >= ?",   # MIN == MAX under the guard above
-        (since_poll_ts,),
-    ).fetchall()
-    if not rows:
+    try:
+        from src.scripts.bss_market_vs_model_report import load_bracket_eval_rows
+        rows = load_bracket_eval_rows()
+    except Exception:
+        log.exception("bracket_evals read failed")
         return None
-    # Index 2: the query is (station, date, SUM, COUNT). Dropping poll_ts
-    # from the SELECT shifted this left -- r[3] silently became COUNT(*),
-    # which reported every ladder as '11.000' regardless of its mass.
-    totals = [r[2] for r in rows if r[2] is not None]
+
+    groups: "dict[tuple, list[float]]" = {}
+    for r in rows:
+        ts = r.get("ts") or ""
+        if ts[:10] < since_date:
+            continue
+        p = r.get("p_yes_raw")
+        if p is None:
+            continue
+        key = (r.get("station"), ts, (r.get("end_date") or "")[:10],
+               r.get("is_next_day_flag"))
+        groups.setdefault(key, []).append(p)
+
+    # A part-listed ladder is not evidence of leaking mass; require enough
+    # brackets that the sum means something.
+    totals = [sum(v) for v in groups.values() if len(v) >= 5]
     if not totals:
         return None
-    # Worst individual ladder matters more than the mean: a defect confined to
-    # one station or one ladder shape is exactly what a mean hides, which is
-    # how #917 stayed invisible while degC ladders looked fine.
     return {
         "mean": sum(totals) / len(totals),
+        # The worst ladder matters more than the mean: a defect confined to one
+        # station or ladder shape is exactly what a mean hides, which is how
+        # #917 stayed invisible while degC ladders looked fine.
         "worst": min(totals),
         "n_ladders": len(totals),
         "n_deficient": sum(1 for t in totals if t < 0.90),
@@ -514,9 +495,9 @@ def _build_m3_progress(db, today: datetime) -> list[str]:
         # station-day counted while ladders are leaking mass is a contaminated
         # station-day, and reporting the count above the health check is what
         # let "121% -- power bar met" mean nothing on 2026-08-04.
-        # Recent polls, but never earlier than the clean-data clock: ladders
-        # polled before it came from a pre-#920 model and would warn forever.
-        mass = _ladder_mass(db, max(since, M3_CLEAN_DATA_CLOCK_START))
+        # Never earlier than the clean-data clock: ladders polled before it
+        # came from a pre-#920 model and would warn forever.
+        mass = _ladder_mass(max(since[:10], M3_CLEAN_DATA_CLOCK_START))
         if mass is None:
             lines.append("  Ladder mass:   (no ladders in 24h -- cannot assess)")
             mass_ok = False
