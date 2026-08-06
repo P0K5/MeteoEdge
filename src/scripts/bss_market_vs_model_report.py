@@ -377,6 +377,33 @@ def apply_exclusions(rows: "list[dict]") -> "tuple[list[dict], dict[str, int]]":
     return kept, dict(counts)
 
 
+def filter_rows_since(rows: "list[dict]", since: "str | None") -> "tuple[list[dict], int]":
+    """Keep only rows POLLED on or after *since* (``YYYY-MM-DD``, UTC).
+
+    Filters on the poll timestamp, not the settlement date, and the distinction
+    is the whole point: contamination is a property of *when the probability
+    was computed*, not of when the market resolved. A bracket polled on
+    2026-08-04 for a 2026-08-05 settlement was produced by the pre-#920 code
+    and must be excluded; the weather that settled it is not in question.
+
+    Why this exists at all: probability defects have twice landed mid-window
+    (#917 on 2026-08-01, #920 on 2026-08-05), each splitting `bracket_evals`
+    into incompatible eras. Without a cutoff the gate silently scores every era
+    together -- on 2026-08-11 that would have been ~72% pre-#920 rows, which is
+    precisely the contamination the fix was for.
+
+    Applied BEFORE de-duplication so a bracket-day is represented by its last
+    *clean* poll rather than being dropped because its final poll predates the
+    cutoff.
+
+    Returns (kept, n_dropped). ``since=None`` keeps everything.
+    """
+    if not since:
+        return rows, 0
+    kept = [r for r in rows if (r.get("ts") or "")[:10] >= since]
+    return kept, len(rows) - len(kept)
+
+
 def dedupe_one_per_bracket_day(rows: "list[dict]") -> "list[dict]":
     """Keep exactly one row per (station, ticker, end_date).
 
@@ -934,6 +961,40 @@ def _decision_gate_section(global_stats: dict, ocounts: dict) -> "list[str]":
     return lines
 
 
+def _since_banner(exclusion_counts: dict) -> "list[str]":
+    """State the poll-date window, or warn loudly that there isn't one.
+
+    `bracket_evals` spans multiple incompatible probability eras -- pre-#917,
+    pre-#920, and clean -- so a BSS is only interpretable alongside the window
+    it was computed over. An unwindowed run is not wrong to produce (Pass 1's
+    archive is uniformly pre-fix, and scoring all of it is the point there),
+    but it must never be mistaken for a clean one months later.
+    """
+    since = exclusion_counts.get("since")
+    dropped = exclusion_counts.get("dropped_before_since", 0)
+    total = exclusion_counts.get("input_rows_all_dates", 0)
+    if since:
+        return [
+            f"**Poll-date window:** rows polled on or after **{since}** "
+            f"({dropped} of {total} earlier rows excluded).  ",
+            "",
+            f"> Filtered on POLL time, not settlement date: contamination is a "
+            f"property of when the probability was computed. Probability defects "
+            f"landed mid-window twice (#917 on 2026-08-01, #920 on 2026-08-05), so "
+            f"rows polled before {since} came from a materially different model.\n",
+        ]
+    return [
+        "**Poll-date window:** none — every row in the log, all eras.  ",
+        "",
+        "> ⚠️ **No `--since` given.** `bracket_evals` spans three incompatible "
+        "probability eras: pre-#917 °F ladders integrated at half width, pre-#920 "
+        "ladders leaking up to 20% of their mass to truncation, and clean rows "
+        "after 2026-08-05. Scoring them together measures the defects as much as "
+        "the forecast. Legitimate for a Pass-1 archive read, which is uniformly "
+        "pre-fix; **not legitimate for the M3 gate.**\n",
+    ]
+
+
 def build_report(samples: "list[dict]", exclusion_counts: dict, n_no_settlement: int,
                  run_date: str, outcome_meta: "dict | None" = None,
                  population: str = POPULATION_GATE_SELECTED) -> str:
@@ -990,13 +1051,23 @@ def build_report(samples: "list[dict]", exclusion_counts: dict, n_no_settlement:
     else:
         lines.append("**Data source:** `logs/candidates.*.csv.gz` (archived, gate-selected) "
                      "joined to `settlements` (meteoedge.db)  \n")
+    lines.extend(_since_banner(exclusion_counts))
     lines.append(PASS2_DISCLAIMER if is_pass2 else REQUIRED_DISCLAIMER)
     lines.append("\n---\n")
 
     lines.append("## Exclusion funnel\n")
     lines.append("| Stage | Count |")
     lines.append("|---|---|")
-    lines.append(f"| Input rows (all polls, all dates) | {exclusion_counts.get('input_rows', 0)} |")
+    if exclusion_counts.get("since"):
+        lines.append(
+            f"| Input rows (all polls, all dates) | "
+            f"{exclusion_counts.get('input_rows_all_dates', 0)} |")
+        lines.append(
+            f"| Excluded: polled before `{exclusion_counts['since']}` "
+            f"(contaminated era) | {exclusion_counts.get('dropped_before_since', 0)} |")
+    lines.append(f"| Input rows (all polls, all dates) | {exclusion_counts.get('input_rows', 0)} |"
+                 if not exclusion_counts.get("since") else
+                 f"| Rows in window | {exclusion_counts.get('input_rows', 0)} |")
     lines.append(f"| Excluded: missing `p_yes_raw` | {exclusion_counts.get('missing_p_yes_raw', 0)} |")
     lines.append(
         f"| Excluded: `p_yes_raw == 0.0` (certainty-shortcut artifact, #820) | "
@@ -1151,7 +1222,8 @@ def run_report(candidates_csv: Path, db_path: Path, out_dir: Path,
                allow_network: bool = True,
                gamma_cache_path: "Path | None" = _DEFAULT_CACHE,
                population: str = POPULATION_GATE_SELECTED,
-               bracket_evals: "Path | None" = None) -> int:
+               bracket_evals: "Path | None" = None,
+               since: "str | None" = None) -> int:
     """Load, filter, resolve outcomes, score, and (if there is real data) write
     the report.
 
@@ -1191,8 +1263,21 @@ def run_report(candidates_csv: Path, db_path: Path, out_dir: Path,
         )
         return 0
 
+    n_input_all = len(raw_rows)
+    raw_rows, n_before_since = filter_rows_since(raw_rows, since)
+    if since and not raw_rows:
+        log.info("[bss] no rows polled on or after %s -- nothing to score. "
+                 "Not writing a report.", since)
+        return 0
+    if n_before_since:
+        log.info("[bss] --since %s dropped %d of %d rows polled earlier",
+                 since, n_before_since, n_input_all)
+
     deduped = dedupe_one_per_bracket_day(raw_rows)
     deduped, exclusion_counts = apply_exclusions(deduped)
+    exclusion_counts["input_rows_all_dates"] = n_input_all
+    exclusion_counts["dropped_before_since"] = n_before_since
+    exclusion_counts["since"] = since
 
     if outcome_source == OUTCOME_SOURCE_RESOLVER:
         # Gate on the DB before resolve_candidate_outcomes() so a run with no
@@ -1286,6 +1371,15 @@ def main(argv: "list[str] | None" = None) -> int:
     ap.add_argument("--no-network", action="store_true",
                     help="Serve Gamma resolutions from the local cache only; issue zero "
                          "HTTP requests. Uncached tickers fall back to the observed high.")
+    ap.add_argument("--since", default=None, metavar="YYYY-MM-DD",
+                    help="Score only rows POLLED on or after this UTC date. Filters on "
+                         "poll time, not settlement date -- contamination is a property "
+                         "of when the probability was computed. REQUIRED for the M3 gate: "
+                         "bracket_evals spans three probability eras (pre-#917 half-width "
+                         "ladders, pre-#920 truncation leaks, and clean rows from "
+                         "2026-08-06), and scoring them together measures the defects as "
+                         "much as the forecast. Omit only for a Pass-1 archive read, whose "
+                         "data is uniformly pre-fix.")
     args = ap.parse_args(argv)
     return run_report(
         args.candidates_csv, args.db, args.out, args.run_date,
@@ -1294,6 +1388,7 @@ def main(argv: "list[str] | None" = None) -> int:
         allow_network=not args.no_network,
         population=args.population,
         bracket_evals=args.bracket_evals,
+        since=args.since,
     )
 
 

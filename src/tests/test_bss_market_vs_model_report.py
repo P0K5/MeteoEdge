@@ -46,6 +46,7 @@ from src.scripts.bss_market_vs_model_report import (
     classify_day_segment,
     compute_bss,
     dedupe_one_per_bracket_day,
+    filter_rows_since,
     join_outcomes,
     load_bracket_eval_rows,
     load_candidate_rows,
@@ -1021,3 +1022,90 @@ class TestPass2EndToEnd:
                 db_path=tmp_path / "db", out_dir=tmp_path / "out",
                 population="everything",
             )
+
+
+class TestSinceFilter:
+    """`bracket_evals` spans three incompatible probability eras -- pre-#917
+    half-width °F ladders, pre-#920 truncation leaks, and clean rows from
+    2026-08-06. Without a poll-date cutoff the M3 gate scores them together:
+    run on 2026-08-11 that would have been ~72% pre-#920 rows, silently undoing
+    the fix at the last step.
+    """
+
+    def _row(self, ts, ticker="0x1"):
+        return {"ts": ts, "station": "KORD", "ticker": ticker,
+                "end_date": ts[:10], "settlement_date": ts[:10],
+                "p_yes_raw": 0.2, "yes_ask": 20.0, "no_ask": 82.0,
+                "minutes_to_settlement": 10.0, "bracket_low": 60.0,
+                "bracket_high": 65.0, "question": "", "is_next_day_flag": 0}
+
+    def test_keeps_rows_polled_on_or_after_the_cutoff(self):
+        rows = [self._row("2026-08-05T18:00:00+00:00"),
+                self._row("2026-08-06T18:00:00+00:00"),
+                self._row("2026-08-07T18:00:00+00:00")]
+        kept, dropped = filter_rows_since(rows, "2026-08-06")
+        assert [r["ts"][:10] for r in kept] == ["2026-08-06", "2026-08-07"]
+        assert dropped == 1
+
+    def test_the_cutoff_date_itself_is_included(self):
+        kept, dropped = filter_rows_since([self._row("2026-08-06T00:00:00+00:00")],
+                                          "2026-08-06")
+        assert len(kept) == 1 and dropped == 0
+
+    def test_none_keeps_everything(self):
+        rows = [self._row("2026-07-01T18:00:00+00:00")]
+        assert filter_rows_since(rows, None) == (rows, 0)
+
+    def test_filters_on_poll_time_not_settlement_date(self):
+        """A bracket polled before the cutoff for a settlement after it was
+        still computed by the contaminated code. The weather that settled it is
+        not in question; the probability is."""
+        row = self._row("2026-08-05T22:00:00+00:00")
+        row["end_date"] = row["settlement_date"] = "2026-08-06"
+        kept, dropped = filter_rows_since([row], "2026-08-06")
+        assert kept == [] and dropped == 1
+
+    def test_report_states_the_window(self):
+        report = build_report(
+            [self._row("2026-08-06T18:00:00+00:00", ticker="a") | {"yes_won": False}],
+            {"input_rows": 1, "input_rows_all_dates": 100,
+             "dropped_before_since": 99, "since": "2026-08-06"},
+            0, "2026-08-11",
+            outcome_meta={"source": OUTCOME_SOURCE_RESOLVER,
+                          "counts": {"n_station_days": 300}},
+            population=POPULATION_ALL_BRACKET,
+        )
+        assert "Poll-date window" in report
+        assert "on or after **2026-08-06**" in report
+        assert "99 of 100 earlier rows excluded" in report
+
+    def test_an_unwindowed_gate_run_is_flagged_not_silent(self):
+        """The failure this guards: a gate run over every era looks exactly like
+        a clean one in the output. It must not."""
+        report = build_report(
+            [self._row("2026-08-06T18:00:00+00:00", ticker="a") | {"yes_won": False}],
+            {"input_rows": 1}, 0, "2026-08-11",
+            outcome_meta={"source": OUTCOME_SOURCE_RESOLVER,
+                          "counts": {"n_station_days": 300}},
+            population=POPULATION_ALL_BRACKET,
+        )
+        assert "No `--since` given" in report
+        assert "not legitimate for the M3 gate" in report
+
+    def test_run_report_declines_an_empty_window(self, tmp_path):
+        """A cutoff past every row must not write a report at all -- an empty
+        BSS is worse than none, because it looks like a result."""
+        evals = tmp_path / "logs" / "bracket_evals.jsonl"
+        _write_bracket_evals(evals, [
+            {"poll_ts": "2026-07-01T18:00:00+00:00", "station": "KORD",
+             "ticker": "0x1", "settlement_date": "2026-07-01",
+             "bracket_low": 60.0, "bracket_high": 65.0, "yes_ask": 20,
+             "no_ask": 82, "p_yes_raw": 0.2, "minutes_to_settlement": 10.0,
+             "is_next_day": 0},
+        ])
+        rc = run_report(tmp_path / "c.csv", tmp_path / "db.sqlite", tmp_path / "out",
+                        "2026-08-11", population=POPULATION_ALL_BRACKET,
+                        bracket_evals=evals, since="2026-08-06",
+                        use_gamma=False, allow_network=False)
+        assert rc == 0
+        assert not list((tmp_path / "out").glob("*.md")) if (tmp_path / "out").exists() else True

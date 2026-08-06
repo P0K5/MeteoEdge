@@ -374,12 +374,23 @@ happens to be right is still an artifact.**
 #### Runbook — running Pass 2 (the gate) on the bot host
 
 ```bash
-python -m src.scripts.bss_market_vs_model_report --population all-bracket
+python -m src.scripts.bss_market_vs_model_report --population all-bracket --since 2026-08-06
 ```
 
 Writes `backtest_results/bss_market_vs_model_pass2_<date>.md` — a distinct filename from
 Pass 1's, so the two never overwrite each other. Read-only against the database; self-gates and
 writes nothing without real data.
+
+> **`--since 2026-08-06` is not optional for the gate.** `bracket_evals` spans three
+> incompatible probability eras — pre-#917 °F ladders integrated at half width, pre-#920 ladders
+> leaking up to 20% of their mass to truncation, and clean rows from 2026-08-06. Without the
+> cutoff the gate scores all three together: on 2026-08-11 that is **~72% pre-#920 rows**, which
+> would undo the entire fix at the last step while looking like a normal run.
+>
+> The filter is on **poll time, not settlement date** — contamination is a property of when the
+> probability was computed, not when the market resolved. A run without `--since` prints a
+> warning banner saying it is not a legitimate gate run; that banner is the only thing standing
+> between a mis-invocation and a wrong verdict, so do not remove it.
 
 Both passes share one module. Everything about **how** a bracket is scored is identical — the
 BSS math, the row exclusions, the de-duplication rule, outcome resolution, the market-price
