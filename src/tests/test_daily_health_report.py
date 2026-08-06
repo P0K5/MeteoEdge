@@ -713,7 +713,7 @@ class TestLadderMassIndicator:
         assert "0.200 worst" in text
         assert "[WARN]" in text
 
-    def test_a_ladder_straddling_the_24h_boundary_is_not_fragmented(self):
+    def test_a_mixed_poll_ladder_is_skipped_not_scored(self):
         """The false alarm this grouping was changed to remove.
 
         scan_decisions upserts on (station, ticker, date), so a market that
@@ -741,8 +741,69 @@ class TestLadderMassIndicator:
         db = MagicMock()
         db._conn = conn
         text = "\n".join(_build_m3_progress(db, now))
-        assert "1.000 mean, 1.000 worst (0/3 deficient) [OK]" in text
+        # A mixed-poll ladder is SKIPPED, not scored: its brackets were
+        # conditioned on different [current_high, max_env] intervals, so no
+        # sum over them is meaningful. Skipping is the conservative choice --
+        # scoring it would manufacture a deficient ladder from correct values,
+        # which is precisely the false alarm this replaced.
+        assert "cannot assess" in text
         assert "leaking mass" not in text
+
+    def test_a_next_day_market_polled_before_the_clock_is_excluded(self):
+        """The case that made the second version warn: `date` is the SETTLEMENT
+        day, so a next-day market polled the evening BEFORE the clock carries a
+        clean-looking date and contaminated probabilities.
+
+        Production on 2026-08-06 had exactly this -- `KORD | 2026-08-06` summing
+        to 0.464, polled 2026-08-05 before #920 deployed at ~21:23 UTC.
+        Filtering on `date` kept it; filtering on `poll_ts` drops it.
+        """
+        conn = sqlite3.connect(":memory:")
+        conn.execute(
+            "CREATE TABLE scan_decisions (poll_ts TEXT, station TEXT, date TEXT, "
+            "raw_p_yes REAL, capped_p_yes REAL, yes_ask INTEGER, no_ask INTEGER)"
+        )
+        for _ in range(11):
+            # settles inside the clean window, polled before it
+            conn.execute("INSERT INTO scan_decisions VALUES (?, ?, ?, ?, ?, ?, ?)",
+                         ("2026-08-05T20:00:00+00:00", "KORD",
+                          M3_CLEAN_DATA_CLOCK_START, 0.464 / 11, 0.464 / 11, 20, 82))
+        for _ in range(11):
+            conn.execute("INSERT INTO scan_decisions VALUES (?, ?, ?, ?, ?, ?, ?)",
+                         (M3_CLEAN_DATA_CLOCK_START + "T14:00:00+00:00", "EGLC",
+                          M3_CLEAN_DATA_CLOCK_START, 1.0 / 11, 1.0 / 11, 20, 82))
+        conn.commit()
+        db = MagicMock()
+        db._conn = conn
+        text = "\n".join(_build_m3_progress(
+            db, datetime(2026, 8, 6, 14, 52, 0, tzinfo=timezone.utc)))
+        assert "1.000 mean, 1.000 worst (0/1 deficient) [OK]" in text
+        assert "leaking mass" not in text
+
+    def test_two_polls_both_inside_the_window_are_still_skipped(self):
+        """Isolates the coherence guard from the clock guard.
+
+        Both polls are AFTER the cutoff, so `MIN(poll_ts) >= ?` passes and only
+        `COUNT(DISTINCT poll_ts) = 1` can exclude this. Without that guard the
+        ladder is scored, and summing brackets conditioned on two different
+        [current_high, max_env] intervals has no reason to reach 1.0.
+        """
+        conn = sqlite3.connect(":memory:")
+        conn.execute(
+            "CREATE TABLE scan_decisions (poll_ts TEXT, station TEXT, date TEXT, "
+            "raw_p_yes REAL, capped_p_yes REAL, yes_ask INTEGER, no_ask INTEGER)"
+        )
+        base = M3_CLEAN_DATA_CLOCK_START
+        for j in range(11):
+            ts = f"{base}T{'12' if j < 6 else '13'}:00:00+00:00"
+            conn.execute("INSERT INTO scan_decisions VALUES (?, ?, ?, ?, ?, ?, ?)",
+                         (ts, "KORD", base, 1.0 / 11, 1.0 / 11, 20, 82))
+        conn.commit()
+        db = MagicMock()
+        db._conn = conn
+        text = "\n".join(_build_m3_progress(
+            db, datetime(2026, 8, 6, 14, 0, 0, tzinfo=timezone.utc)))
+        assert "cannot assess" in text
 
     def test_no_ladders_is_not_reported_as_healthy(self):
         """Absent evidence must not be indistinguishable from a clean ladder --
