@@ -34,7 +34,7 @@ import logging
 import os
 import smtplib
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from email.message import EmailMessage
 from pathlib import Path
 
@@ -47,6 +47,16 @@ if str(_HERE.parents[1]) not in sys.path:
 
 from src.config import MODEL_PROB_CAP  # noqa: E402
 from src.logging_config import setup_logging  # noqa: E402
+
+#: Start of the M3 clean-data collection window, and the date station-days are
+#: counted from. This has moved TWICE as probability defects landed mid-window
+#: -- #917 (degF half-width ladders) went live 2026-08-01, #920 (truncation
+#: without renormalisation) on 2026-08-05 -- so it is a constant rather than a
+#: literal buried in a query. Both moves invalidated every station-day
+#: collected before them; leaving the old date in place is how this report came
+#: to print "362/300 (121%)" on 2026-08-04 against a window that was entirely
+#: contaminated. Keep in step with docs/REMEDIATION_PLAN.md's M3 section.
+M3_CLEAN_DATA_CLOCK_START = "2026-08-06"
 
 log = logging.getLogger(__name__)
 
@@ -179,12 +189,19 @@ def _build_bot_health(db, today: datetime) -> "tuple[list[str], dict]":
             # Evaluated brackets (scan_decisions) -- a separate, genuinely
             # useful metric, but NOT a poll count: it is only written when
             # brackets are actually evaluated.
+            # NOT COUNT(DISTINCT poll_ts): scan_decisions upserts on
+            # (station, ticker, date), so each market keeps only its most
+            # recent write and the surviving timestamps collapse to roughly one
+            # per market's last scan. That query returned "4" on 2026-08-04 --
+            # which reads as a dead pipeline and is in fact the expected steady
+            # state of an upsert table. Count the live rows instead: it is
+            # monotonic in coverage and means what the label says.
             eval_row = db._conn.execute(
-                "SELECT COUNT(DISTINCT poll_ts) FROM scan_decisions WHERE poll_ts >= ?",
+                "SELECT COUNT(*) FROM scan_decisions WHERE poll_ts >= ?",
                 (cutoff,),
             ).fetchone()
             eval_count = eval_row[0] if eval_row else 0
-            lines.append(f"  Evaluated (scan_decisions) 24h: {eval_count}")
+            lines.append(f"  Brackets live (scan_decisions, upserted): {eval_count}")
 
             # Check for gaps between heartbeats
             gaps = db._conn.execute(
@@ -399,31 +416,110 @@ def _build_guardrails(db, today: datetime) -> list[str]:
     return lines
 
 
+def _ladder_mass_24h(db, since: str) -> "dict[str, float] | None":
+    """Mean SUM(raw_p_yes) per ladder over the last 24h, and its worst kind.
+
+    **The check whose absence cost two weeks.** Two probability defects reached
+    production and survived undetected because nothing asserted the one
+    invariant that makes them obvious on sight: a gap-free bracket ladder must
+    integrate to ~1.0.
+
+    * #917 -- degF dash-range brackets integrated at half width. Ladders summed
+      to **0.53** for a week.
+    * #920 -- truncation without renormalisation. Ladders summed to **0.80**,
+      and the 15% lost at the top was mistaken for the 3% lost at the bottom
+      until it was measured per-end.
+
+    Both were visible in this single number from the day they landed. Neither
+    was being watched, so this is the headline M3 indicator: **a clean count of
+    contaminated station-days is worse than no count at all.**
+
+    Grouped by (station, poll_ts, date) against ``scan_decisions``. That table
+    upserts on (station, ticker, date), so within one poll cycle a ladder is
+    intact -- adequate for a daily tripwire, though not for forensics, where
+    ``m3_window_diagnostics`` reads the append-only ``bracket_evals`` instead.
+
+    Returns ``None`` when there is nothing to measure -- absent data must not
+    read as a healthy ladder.
+    """
+    rows = db._conn.execute(
+        "SELECT station, poll_ts, date, SUM(raw_p_yes) AS total, COUNT(*) AS n "
+        "FROM scan_decisions WHERE poll_ts >= ? AND raw_p_yes IS NOT NULL "
+        "GROUP BY station, poll_ts, date HAVING n >= 3",
+        (since,),
+    ).fetchall()
+    if not rows:
+        return None
+    totals = [r[3] for r in rows if r[3] is not None]
+    if not totals:
+        return None
+    # Worst individual ladder matters more than the mean: a defect confined to
+    # one station or one ladder shape is exactly what a mean hides, which is
+    # how #917 stayed invisible while degC ladders looked fine.
+    return {
+        "mean": sum(totals) / len(totals),
+        "worst": min(totals),
+        "n_ladders": len(totals),
+        "n_deficient": sum(1 for t in totals if t < 0.90),
+    }
+
+
 def _build_m3_progress(db, today: datetime) -> list[str]:
     """M3 station-day accrual and leading indicators."""
     lines = ["M3 Progress", "-" * 10]
     try:
-        # Count distinct (station, date) pairs in bracket_evals since
-        # the clean-data window started (2026-07-24).
+        since = (today - timedelta(hours=24)).isoformat()
+
+        # Mass conservation FIRST: it qualifies everything below it. A
+        # station-day counted while ladders are leaking mass is a contaminated
+        # station-day, and reporting the count above the health check is what
+        # let "121% -- power bar met" mean nothing on 2026-08-04.
+        mass = _ladder_mass_24h(db, since)
+        if mass is None:
+            lines.append("  Ladder mass:   (no ladders in 24h -- cannot assess)")
+            mass_ok = False
+        else:
+            mass_ok = 0.95 <= mass["mean"] <= 1.05 and mass["n_deficient"] == 0
+            lines.append(
+                f"  Ladder mass:   {mass['mean']:.3f} mean, {mass['worst']:.3f} worst "
+                f"({mass['n_deficient']}/{mass['n_ladders']} deficient) "
+                f"{'[OK]' if mass_ok else '[WARN]'}"
+            )
+            if not mass_ok:
+                lines.append("                 ^ probabilities are leaking mass "
+                             "(cf. #917, #920) -- station-days below are NOT clean")
+
+        # Station-days accrue from the CLEAN-DATA CLOCK, which has moved twice
+        # as probability defects landed mid-window (#917 on 2026-08-01, #920 on
+        # 2026-08-05). Counting from an out-of-date start is not a cosmetic
+        # error: on 2026-08-04 this reported "362/300 (121%)" -- i.e. run the
+        # gate -- against a window that was 100% contaminated.
+        clock_start = M3_CLEAN_DATA_CLOCK_START
         station_days = db._conn.execute(
             "SELECT COUNT(DISTINCT station || '-' || date) FROM scan_decisions "
-            "WHERE poll_ts >= '2026-07-24'"
+            "WHERE poll_ts >= ? AND raw_p_yes IS NOT NULL AND raw_p_yes != 0.0 "
+            "AND yes_ask > 1 AND yes_ask < 99 AND no_ask > 1 AND no_ask < 99",
+            (clock_start,),
         ).fetchone()[0] or 0
 
         pct = station_days / 300 * 100
-        rate = station_days / max(1, (today.date() - datetime(2026, 7, 24).date()).days)
+        elapsed = max(1, (today.date() - date.fromisoformat(clock_start)).days)
+        rate = station_days / elapsed
         days_to_bar = max(0, int((300 - station_days) / max(1, rate)))
 
-        lines.append(f"  Station-days:  {station_days}/300 ({pct:.0f}%)")
+        lines.append(f"  Station-days:  {station_days}/300 ({pct:.0f}%) "
+                     f"scoreable, since {clock_start}")
         lines.append(f"  Accrual rate:  ~{rate:.0f}/day -> power bar ~{today.strftime('%b %d')} + {days_to_bar}d")
+        if station_days >= 300 and not mass_ok:
+            lines.append("                 ^ bar met on COUNT only -- ladder mass is "
+                         "not clean, so the gate must NOT run")
 
         # Leading indicators: rail concentration and p_yes=0 artifact rate
         # from the most recent 24h of scan_decisions
-        since = (today - timedelta(hours=24)).isoformat()
         total_brackets = db._conn.execute(
             "SELECT COUNT(*) FROM scan_decisions WHERE poll_ts >= ?",
             (since,),
-        ).fetchone()[0] or 1
+        ).fetchone()[0] or 0
 
         # Derive rail thresholds from MODEL_PROB_CAP so the metric follows the clamp.
         # Symmetric clamp: lower = 1.0 - MODEL_PROB_CAP, upper = MODEL_PROB_CAP.
@@ -441,6 +537,15 @@ def _build_m3_progress(db, today: datetime) -> list[str]:
             "AND raw_p_yes = 0.0",
             (since,),
         ).fetchone()[0] or 0
+
+        if not total_brackets:
+            # Previously `or 1`, which made an empty 24h render as "0.0% [OK]"
+            # -- no data reading as perfect health, the same failure the ladder
+            # -mass check above exists to prevent. Say there is nothing to
+            # measure instead.
+            lines.append("  Rail / artifact: (no brackets in 24h -- cannot assess)")
+            lines.append("")
+            return lines
 
         rail_pct = rail_count / total_brackets * 100
         zero_pct = zero_artifact / total_brackets * 100

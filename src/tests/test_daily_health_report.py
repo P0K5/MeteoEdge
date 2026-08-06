@@ -11,6 +11,7 @@ All DB queries and SMTP calls are mocked. Tests verify:
 from __future__ import annotations
 
 import sys
+import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -22,7 +23,8 @@ _HERE = Path(__file__).resolve().parent
 if str(_HERE.parents[1]) not in sys.path:
     sys.path.insert(0, str(_HERE.parents[1]))
 
-from src.scripts.daily_health_report import (  # noqa: E402
+from src.scripts.daily_health_report import (
+    M3_CLEAN_DATA_CLOCK_START,  # noqa: E402
     _build_bot_health,
     _build_header,
     _build_m3_progress,
@@ -148,7 +150,7 @@ class TestBuildBotHealth:
 
         conn = sqlite3.connect(":memory:")
         conn.execute("CREATE TABLE poll_runs (id INTEGER PRIMARY KEY, poll_ts TEXT, mode TEXT)")
-        conn.execute("CREATE TABLE scan_decisions (poll_ts TEXT)")
+        conn.execute("CREATE TABLE scan_decisions (poll_ts TEXT, station TEXT, date TEXT, raw_p_yes REAL, capped_p_yes REAL, yes_ask INTEGER, no_ask INTEGER)")
 
         today = datetime(2026, 7, 30, 14, 0, 0, tzinfo=timezone.utc)
         # 250 poll heartbeats in the last 24h (bot polling normally)...
@@ -170,7 +172,7 @@ class TestBuildBotHealth:
         assert "Polls 24h:   250/288" in text
         assert "5/288" not in text
         assert flags["poll_count_24h"] == 250
-        assert "Evaluated (scan_decisions) 24h: 5" in text
+        assert "Brackets live (scan_decisions, upserted): 5" in text
         conn.close()
 
     def test_status_warn_on_poll_count_shortfall_even_if_last_poll_recent(self):
@@ -182,7 +184,7 @@ class TestBuildBotHealth:
 
         conn = sqlite3.connect(":memory:")
         conn.execute("CREATE TABLE poll_runs (id INTEGER PRIMARY KEY, poll_ts TEXT, mode TEXT)")
-        conn.execute("CREATE TABLE scan_decisions (poll_ts TEXT)")
+        conn.execute("CREATE TABLE scan_decisions (poll_ts TEXT, station TEXT, date TEXT, raw_p_yes REAL, capped_p_yes REAL, yes_ask INTEGER, no_ask INTEGER)")
 
         today = datetime(2026, 7, 30, 14, 0, 0, tzinfo=timezone.utc)
         # Only 5 polls in 24h, but the most recent one is 3 minutes ago.
@@ -213,7 +215,7 @@ class TestBuildBotHealth:
 
         conn = sqlite3.connect(":memory:")
         conn.execute("CREATE TABLE poll_runs (id INTEGER PRIMARY KEY, poll_ts TEXT, mode TEXT)")
-        conn.execute("CREATE TABLE scan_decisions (poll_ts TEXT)")
+        conn.execute("CREATE TABLE scan_decisions (poll_ts TEXT, station TEXT, date TEXT, raw_p_yes REAL, capped_p_yes REAL, yes_ask INTEGER, no_ask INTEGER)")
 
         # Use the real current time (not a fixed historical date) so the
         # most recent poll is genuinely "recent" relative to _utc_now().
@@ -410,6 +412,11 @@ class TestBuildReport:
         """With realistic data, sections should show actual numbers."""
         db = _mock_db({
             "SELECT MAX(poll_ts)": ("2026-07-30T13:50:00+00:00",),
+            # Explicit: the poll count comes from poll_runs (#914). This used
+            # to be unset, so poll_count was None and _build_bot_health threw
+            # inside its try -- the "280" the assertion below looks for was
+            # actually matching the Evaluated line by coincidence.
+            "SELECT COUNT(*) FROM poll_runs": (280,),
             "SELECT COUNT(DISTINCT poll_ts)": (280,),
             "SELECT poll_ts FROM scan_decisions": [
                 ("2026-07-30T13:45:00+00:00",),
@@ -577,7 +584,9 @@ class TestBuildM3ProgressRailMetric:
                 station TEXT NOT NULL,
                 date TEXT NOT NULL,
                 capped_p_yes REAL NOT NULL,
-                raw_p_yes REAL NOT NULL
+                raw_p_yes REAL NOT NULL,
+                yes_ask INTEGER,
+                no_ask INTEGER
             )
         """)
 
@@ -591,15 +600,15 @@ class TestBuildM3ProgressRailMetric:
         # 600 brackets with capped_p_yes at or below the clamp floor
         for i in range(600):
             conn.execute(
-                "INSERT INTO scan_decisions VALUES (?, ?, ?, ?, ?)",
-                (now_str, f"STAT{i}", "2026-07-31", clamp_floor, 0.04),
+                "INSERT INTO scan_decisions VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (now_str, f"STAT{i}", "2026-07-31", clamp_floor, 0.04, 20, 82),
             )
 
         # 400 brackets in the middle (not rail)
         for i in range(600, 1000):
             conn.execute(
-                "INSERT INTO scan_decisions VALUES (?, ?, ?, ?, ?)",
-                (now_str, f"STAT{i}", "2026-07-31", 0.50, 0.50),
+                "INSERT INTO scan_decisions VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (now_str, f"STAT{i}", "2026-07-31", 0.50, 0.50, 20, 82),
             )
 
         conn.commit()
@@ -636,3 +645,138 @@ class TestMainDryRun:
         assert rc == 0
         assert "MeteoEdge Daily Health" in captured.out
         assert "Verdict" in captured.out
+
+
+class TestLadderMassIndicator:
+    """The check whose absence cost two weeks.
+
+    #917 (°F ladders at half width, sum 0.53) and #920 (truncation without
+    renormalisation, sum 0.80) both reached production and survived for weeks.
+    Both were visible in a single number -- SUM(raw_p_yes) per ladder -- from
+    the day they landed. Nothing was watching it. These tests exist so that
+    stays true only once.
+    """
+
+    def _db(self, ladders):
+        """ladders: list of lists of raw_p_yes values, one list per ladder."""
+        conn = sqlite3.connect(":memory:")
+        conn.execute(
+            "CREATE TABLE scan_decisions (poll_ts TEXT, station TEXT, date TEXT, "
+            "raw_p_yes REAL, capped_p_yes REAL, yes_ask INTEGER, no_ask INTEGER)"
+        )
+        now = datetime(2026, 8, 7, 14, 0, 0, tzinfo=timezone.utc).isoformat()
+        for i, probs in enumerate(ladders):
+            for p in probs:
+                conn.execute(
+                    "INSERT INTO scan_decisions VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (now, f"ST{i}", "2026-08-07", p, p, 20, 82),
+                )
+        conn.commit()
+        db = MagicMock()
+        db._conn = conn
+        return db
+
+    def _text(self, ladders):
+        today = datetime(2026, 8, 7, 14, 0, 0, tzinfo=timezone.utc)
+        return "\n".join(_build_m3_progress(self._db(ladders), today))
+
+    def test_a_conserving_ladder_reads_ok(self):
+        text = self._text([[0.25, 0.25, 0.25, 0.25]])
+        assert "Ladder mass:" in text
+        assert "1.000" in text and "[OK]" in text
+
+    def test_the_920_signature_warns(self):
+        """0.80 is what production actually showed while #920 was live."""
+        text = self._text([[0.20, 0.30, 0.20, 0.10]])
+        assert "[WARN]" in text
+        assert "leaking mass" in text
+
+    def test_the_917_signature_warns(self):
+        """0.53 -- °F ladders integrated at half width."""
+        text = self._text([[0.13, 0.13, 0.14, 0.13]])
+        assert "[WARN]" in text
+
+    def test_worst_ladder_is_reported_not_just_the_mean(self):
+        """A defect confined to one station or ladder shape is exactly what a
+        mean hides -- which is how #917 stayed invisible while °C looked fine."""
+        text = self._text([[0.25] * 4, [0.25] * 4, [0.05] * 4])
+        assert "0.200 worst" in text
+        assert "[WARN]" in text
+
+    def test_no_ladders_is_not_reported_as_healthy(self):
+        """Absent evidence must not be indistinguishable from a clean ladder --
+        for the mass check OR for the rail/artifact rates below it, which used
+        to divide by `or 1` and render an empty day as a flawless '0.0% [OK]'."""
+        text = self._text([])
+        assert "Ladder mass:   (no ladders in 24h -- cannot assess)" in text
+        assert "Rail / artifact: (no brackets in 24h -- cannot assess)" in text
+        assert "0.0% [OK]" not in text
+
+    def test_a_met_bar_with_dirty_ladders_is_refused(self):
+        """The 2026-08-04 failure in one assertion: '362/300 (121%)' printed
+        against a window that was entirely contaminated. A count is only
+        meaningful once the probabilities behind it conserve mass."""
+        conn = sqlite3.connect(":memory:")
+        conn.execute(
+            "CREATE TABLE scan_decisions (poll_ts TEXT, station TEXT, date TEXT, "
+            "raw_p_yes REAL, capped_p_yes REAL, yes_ask INTEGER, no_ask INTEGER)"
+        )
+        now = datetime(2026, 8, 7, 14, 0, 0, tzinfo=timezone.utc).isoformat()
+        # 400 station-days, well past the 300 bar -- but every ladder leaks.
+        for d in range(20):
+            for st in range(20):
+                for _ in range(4):
+                    conn.execute(
+                        "INSERT INTO scan_decisions VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        (now, f"ST{st}", f"2026-08-{d + 1:02d}", 0.20, 0.20, 20, 82),
+                    )
+        conn.commit()
+        db = MagicMock()
+        db._conn = conn
+        text = "\n".join(_build_m3_progress(db, datetime(2026, 8, 7, 14, 0, 0,
+                                                         tzinfo=timezone.utc)))
+        assert "the gate must NOT run" in text
+
+    def test_station_days_count_from_the_clock_constant(self):
+        """The clock has moved twice (#917, #920). Rows before it are not
+        merely old -- they were produced by a different model."""
+        conn = sqlite3.connect(":memory:")
+        conn.execute(
+            "CREATE TABLE scan_decisions (poll_ts TEXT, station TEXT, date TEXT, "
+            "raw_p_yes REAL, capped_p_yes REAL, yes_ask INTEGER, no_ask INTEGER)"
+        )
+        before = "2026-07-25T14:00:00+00:00"
+        after = M3_CLEAN_DATA_CLOCK_START + "T14:00:00+00:00"
+        for ts, st in ((before, "OLD"), (after, "NEW")):
+            conn.execute("INSERT INTO scan_decisions VALUES (?, ?, ?, ?, ?, ?, ?)",
+                         (ts, st, "2026-08-07", 0.25, 0.25, 20, 82))
+        conn.commit()
+        db = MagicMock()
+        db._conn = conn
+        text = "\n".join(_build_m3_progress(db, datetime(2026, 8, 7, 14, 0, 0,
+                                                         tzinfo=timezone.utc)))
+        assert "1/300" in text
+        assert M3_CLEAN_DATA_CLOCK_START in text
+
+    def test_scoreable_excludes_what_the_gate_excludes(self):
+        """The bar counts SCOREABLE station-days. A station-day whose only rows
+        are zero-artifact or rail-clipped contributes nothing to the gate, and
+        must not inflate the count (#932)."""
+        conn = sqlite3.connect(":memory:")
+        conn.execute(
+            "CREATE TABLE scan_decisions (poll_ts TEXT, station TEXT, date TEXT, "
+            "raw_p_yes REAL, capped_p_yes REAL, yes_ask INTEGER, no_ask INTEGER)"
+        )
+        ts = M3_CLEAN_DATA_CLOCK_START + "T14:00:00+00:00"
+        rows = [("ZERO", 0.0, 20, 82),      # #820 artifact -> excluded
+                ("RAIL", 0.25, 1, 99),      # rail-clipped  -> excluded
+                ("GOOD", 0.25, 20, 82)]     # scoreable
+        for st, p, ya, na in rows:
+            conn.execute("INSERT INTO scan_decisions VALUES (?, ?, ?, ?, ?, ?, ?)",
+                         (ts, st, "2026-08-07", p, p, ya, na))
+        conn.commit()
+        db = MagicMock()
+        db._conn = conn
+        text = "\n".join(_build_m3_progress(db, datetime(2026, 8, 7, 14, 0, 0,
+                                                         tzinfo=timezone.utc)))
+        assert "1/300" in text
