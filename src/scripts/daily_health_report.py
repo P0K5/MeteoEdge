@@ -416,7 +416,7 @@ def _build_guardrails(db, today: datetime) -> list[str]:
     return lines
 
 
-def _ladder_mass(db, since_date: str) -> "dict[str, float] | None":
+def _ladder_mass(db, since_poll_ts: str) -> "dict[str, float] | None":
     """Mean SUM(raw_p_yes) per ladder over the last 24h, and its worst kind.
 
     **The check whose absence cost two weeks.** Two probability defects reached
@@ -435,35 +435,55 @@ def _ladder_mass(db, since_date: str) -> "dict[str, float] | None":
     contaminated station-days is worse than no count at all.**
 
     Grouped by (station, poll_ts, date) against ``scan_decisions``. That table
-    Grouped by **(station, date)** and NOT by ``poll_ts``. ``scan_decisions``
-    upserts on (station, ticker, date), so that pair already identifies exactly
-    one ladder -- every ticker holds a single row carrying its most recent
-    evaluation.
+    Three things have to be right at once here, and the first two versions of
+    this each got one of them wrong.
 
-    The first version of this grouped by (station, poll_ts, date) and filtered
-    ``poll_ts >= 24h ago``, on the reasoning that a ladder is written in one
-    poll cycle and therefore shares a timestamp. That is false: a market that
-    stops being scanned (settled, delisted, outside station hours) keeps an
-    older ``poll_ts``, so any ladder straddling the 24h boundary was split into
-    fragments and each fragment scored as a separate deficient ladder. On
-    2026-08-06 it reported "0.947 mean, 0.464 worst, 10/55 deficient" against a
-    production state where every one of 322 ladders summed to 1.000 -- caught
-    only because ``m3_window_diagnostics`` reads the append-only
-    ``bracket_evals`` and disagreed.
+    **Group by (station, date).** ``scan_decisions`` upserts on
+    (station, ticker, date), so that pair already identifies one ladder. The
+    first version also grouped on ``poll_ts``, which split any ladder whose
+    brackets were last written across the window boundary into fragments -- a
+    5-of-11 fragment sums to ~0.46 and scored as a deficient ladder.
 
-    A monitor that cries wolf is worse than none: it trains the reader to
-    ignore exactly the signal it exists to raise. Hence the date filter now
-    applies to ``date`` (which settlement day the ladder belongs to) rather
-    than to ``poll_ts`` (when a given bracket last happened to be written).
+    **Filter on poll_ts, never on date.** ``date`` is the SETTLEMENT day;
+    contamination is a property of when the probability was *computed*. The
+    second version filtered ``date >= yesterday`` and so kept next-day markets
+    polled the previous evening -- before #920 deployed at 2026-08-05 ~21:23
+    UTC -- which is why a ladder keyed ``KORD | 2026-08-06`` legitimately
+    summed to 0.464. Same distinction ``--since`` draws for the M3 gate
+    (bss_market_vs_model_report), for the same reason.
+
+    **Score only coherent snapshots.** ``HAVING COUNT(DISTINCT poll_ts) = 1``
+    keeps ladders assembled from a single poll. Brackets last written at
+    different moments were conditioned on different [current_high, max_env]
+    intervals, so summing them across polls has no reason to reach 1.0 even
+    when every value is correct. Such a ladder is *skipped*, never scored --
+    an unmeasurable ladder must not read as a failing one.
+
+    All three tests are ``HAVING`` clauses, deliberately. Filtering brackets in
+    ``WHERE`` is what fragments a ladder: drop half its rows and the remainder
+    is a coherent-looking partial summing to its own fraction, which is exactly
+    how the first version manufactured a "0.464 worst". Deciding per group
+    means a ladder is scored whole or not at all.
+
+    The floor is also never earlier than the clean-data clock: ladders polled
+    before it came from a different model and would warn forever.
 
     Returns ``None`` when there is nothing to measure -- absent data must not
     read as a healthy ladder.
     """
+    # Every filter is at the LADDER level (HAVING), not the bracket level
+    # (WHERE). Filtering brackets by poll_ts is what fragments a ladder: drop
+    # half its rows and the remainder is a coherent-looking partial that sums
+    # to its own fraction. Deciding per group instead means a ladder is either
+    # scored whole or not scored at all.
     rows = db._conn.execute(
         "SELECT station, date, SUM(raw_p_yes) AS total, COUNT(*) AS n "
-        "FROM scan_decisions WHERE date >= ? AND raw_p_yes IS NOT NULL "
-        "GROUP BY station, date HAVING n >= 5",
-        (since_date,),
+        "FROM scan_decisions WHERE raw_p_yes IS NOT NULL "
+        "GROUP BY station, date "
+        "HAVING COUNT(*) >= 5 "
+        "   AND COUNT(DISTINCT poll_ts) = 1 "
+        "   AND MIN(poll_ts) >= ?",   # MIN == MAX under the guard above
+        (since_poll_ts,),
     ).fetchall()
     if not rows:
         return None
@@ -494,9 +514,9 @@ def _build_m3_progress(db, today: datetime) -> list[str]:
         # station-day counted while ladders are leaking mass is a contaminated
         # station-day, and reporting the count above the health check is what
         # let "121% -- power bar met" mean nothing on 2026-08-04.
-        # Settlement days from yesterday on: a ladder is keyed by the day it
-        # settles, not by when a bracket was last written.
-        mass = _ladder_mass(db, (today - timedelta(days=1)).date().isoformat())
+        # Recent polls, but never earlier than the clean-data clock: ladders
+        # polled before it came from a pre-#920 model and would warn forever.
+        mass = _ladder_mass(db, max(since, M3_CLEAN_DATA_CLOCK_START))
         if mass is None:
             lines.append("  Ladder mass:   (no ladders in 24h -- cannot assess)")
             mass_ok = False
