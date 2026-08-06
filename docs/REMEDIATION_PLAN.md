@@ -134,11 +134,32 @@ markets** in the archive, all correctly classified and resolved — 0 unknown di
 0 impossible outcomes. BSS moved from −0.2813 to **−0.2752**; the small delta confirms the
 contamination was not the dominant issue, and the verdict does not turn on it.
 
+**The mechanism above is substantially a BUG, not a model property (found 2026-07-31).** The
+reliability reading — 62.6% of output at a rail, false certainty against a well-calibrated
+market — is the fingerprint of two probability-mass defects, not of a badly-tuned forecast.
+Per the #917 diagnosis, the half-width parser is *"very likely the mechanism behind the recorded
+calibration finding that `raw_p_yes` under-predicts YES by 2–3× in the 0.02–0.20 band — i.e.
+precisely the NO entry zone — and behind the 62.4% pile-up at the 0.05 clamp floor."* #920
+(truncation without renormalisation) pushes the same direction, hardest on °C ladders.
+
+Two consequences, and they differ:
+
+- **The verdict stands.** The old model had no edge over the market. Nothing here reverses that.
+- **The explanation does not.** "The model is pathologically overconfident" should read "the
+  ladder lost much of its probability mass before it reached the comparison." The distinction
+  matters because the plan's stated M3 lever is σ/sharpness — and sharpness was never the binding
+  problem on these rows.
+
+**Pass 1 cannot be repaired by re-running it.** The report re-resolves *outcomes*; it does not
+recompute `p_yes_raw`, which is frozen in the archive as the buggy scanner wrote it. M1 is
+therefore retired as a statement about the forecast model, not re-run.
+
 **What this does NOT settle: M3.** This archive predates every M0/M2 fix — #810, #820, #799,
 #798, #823, #824. Per this plan's own terms, a negative Pass 1 condemns the *old* model, not
-the fixed one. It does raise the prior on M3 sharply. The one genuine mechanism by which M3
-could differ: this model's failure is pathological overconfidence, and the σ work
-(#799/#798/#824) is precisely the lever that governs sharpness.
+the fixed one. It does raise the prior on M3 sharply. The mechanism by which M3 could differ was
+originally stated as sharpness (the σ work, #799/#798/#824). After the paragraph above, the
+larger part of that mechanism is simply that the probabilities M3 scores are computed correctly
+and M1's were not.
 
 #### Runbook — running Pass 1 on the bot host
 
@@ -305,7 +326,7 @@ and, at that point, an operator must still explicitly mark-ready + promote per c
 not happen automatically. **No city was promoted to `emos_primary` as part of this
 investigation**, consistent with not disturbing the M3 clean-data collection window.
 
-### M3 · Decision gate — target 2026-08-22
+### M3 · Decision gate — clock restarted **2026-08-06**, gate ~2026-08-11
 
 Re-run the skill test on clean, post-fix, all-bracket data. **This is the moment the thesis is
 accepted or abandoned.** See the decision rule below.
@@ -313,14 +334,75 @@ accepted or abandoned.** See the decision rule below.
 **Outcome:** a written verdict.
 **Issues:** #822 (pass 2), #450.
 
-**Status 2026-07-29 — tooling READY and exercised, waiting on data.**
+> ## The first M3 window was void, and the second one is now running
+>
+> **The 2026-07-24 window collected contaminated data for thirteen days.** Two defects in how
+> bracket probabilities are computed — both feeding `p_yes_raw`, the exact quantity the gate
+> scores — were live for part or all of it. Neither was caught by a test, because **nothing in
+> the stack asserted the one invariant they both violated**: a gap-free bracket ladder must sum
+> to ~1.0. #917 added mass conservation as a *synthetic-ladder* test; nothing checked it against
+> production. That is how two independent defects survived for weeks in the gate's own input.
+>
+> Both are now fixed, deployed, and **verified in the production data rather than by inference**:
+>
+> | Defect | What | Merged | Verified live |
+> |---|---|---|---|
+> | **#917** | °F dash-range brackets integrated at half width | 2026-07-31 | 2026-08-01 — °F ladder mass **0.53 → 0.99**, gap rate **100% → 0%** |
+> | **#920** | Brackets outside the surviving interval zeroed without renormalising the remainder | 2026-08-05 (#934) | 2026-08-06 — every station, both ladder kinds, every cut level reads **1.00** |
+> | #921 | Mild two-sided excess (one poll summed 1.156) | — | Measured at **1.04** on untruncated °C ladders. Real but immaterial; **stood down, not a gate precondition** |
+>
+> ### What #920 actually was — the filed scope was the cheap half
+>
+> Measured 2026-08-05 over 5,829 ladders. Splitting by *which end* the ladder was truncated at:
+>
+> | kind | cut | ladders | mean SUM |
+> |---|---|---|---|
+> | °C | none | 224 | **1.04** |
+> | °C | bottom only | 1292 | 0.97 |
+> | °C | **top only** | 1273 | **0.85** |
+> | °C | both | 1934 | **0.80** |
+> | °F post-#917 | any | 497 | 0.97–1.01 |
+>
+> **Untruncated ladders conserve mass** — so the forecast was never the problem; the whole deficit
+> was truncation without renormalisation. The asymmetry is the finding, and it is physical: the
+> bottom cut costs ~3%, the top cut ~15%. Brackets below an already-observed high carry ~0
+> probability anyway, because a running maximum cannot decrease. Brackets *above* `max_env` carry
+> real mass, because the day can still warm.
+>
+> #920 was filed against the bottom cut. The expensive half was the top one, and measuring only
+> leading zeros is what hid it — a mistake this document records because the same measurement
+> error would hide the next one. The fix replaced all three shortcuts with a single conditional,
+> `P(bracket │ high ∈ [current_high, max_env])`, which renormalises by construction.
+>
+> Likely why °F looked immune: **poll timing against the diurnal peak.** US stations poll at
+> 13:00 UTC ≈ 08:00 local — pre-peak, `max_env` well above the ladder. Asian °C stations poll at
+> 11:42 UTC = 20:42 KST — post-peak, `expected_additional_rise → 0`, `max_env` collapses onto
+> `current_high`, and both cuts fire at once. That predicts the observed pattern exactly and would
+> make severity a function of timezone offset.
+>
+> ### Consequences for the gate
+>
+> - **The clock start is `2026-08-06`**, a constant in `daily_health_report.py`
+>   (`M3_CLEAN_DATA_CLOCK_START`), not a literal buried in a query. It has moved twice; assume it
+>   can move again.
+> - **Every station-day before that date is void for M3.** Leaving the old date in place is how
+>   the health report came to print `362/300 (121%)` on 2026-08-04 against a window that was
+>   entirely contaminated (#932).
+> - **Both the gate and the health report must be run with `--since 2026-08-06`.** The BSS report
+>   filters on **poll time**, not settlement date (#941): contamination is a property of when the
+>   probability was computed, not of when the market resolved.
+> - **The timeline is much shorter than the original 2026-08-22 target.** Scoreable accrual is
+>   **~55 station-days/day**, not the ~25 assumed, so 300 takes **~5 days** from the clock start.
+
+**Status 2026-08-06 — tooling READY, clean window collecting.**
 
 | Prerequisite | State |
 |---|---|
 | Pass 2 tool | ✅ Built and run end-to-end — `bss_market_vs_model_report --population all-bracket` |
 | Ground truth | ✅ Clean — 0 boundary + 0 disjoint collisions, Gamma-vs-METAR disagreement **1.7%** (was 8.8% pre-#881), ladder completeness 11/11 |
 | Direction contamination | ✅ Not applicable — `bracket_evals` starts 2026-07-24, a week after the 2026-07-17 LOW-market rollback (#733/#734), so no low market can be in this population. The report now date-checks this itself |
-| Station-days | ⏳ **139 of 300** on 2026-07-29, ~25/day → **~2026-08-05** |
+| Probability-mass integrity | ✅ Ladders sum to **1.00** across all stations and both ladder kinds from 2026-08-06. Re-checked daily — see the diagnostic runbook below |
+| Station-days | ⏳ Counting from **2026-08-06** at ~55 scoreable/day → gate **~2026-08-11** |
 
 **First real Pass-2 run, 2026-07-29 — UNDERPOWERED, NOT A VERDICT.** 808 de-duplicated brackets
 across **139 station-days** (46% of the bar); BS_model 0.1358 vs BS_market 0.0763. The report
@@ -337,6 +419,32 @@ Two things it did establish, which are not power-dependent:
 - **Ground truth held up at scale**: 80.6% Gamma / 19.4% METAR, **0** impossible-outcome
   collisions across 139 station-days.
 
+#### Runbook — check the window still conserves mass
+
+```bash
+bash scripts/run_m3_diagnostics.sh          # defaults to the live clock window
+bash scripts/run_m3_diagnostics.sh --since 2026-07-24   # re-read the void window
+```
+
+Read-only against `logs/bracket_evals.*.jsonl` — the gate's own population, **not**
+`scan_decisions`, which upserts on `(station, ticker, date)` and so assembles "ladders" from
+brackets observed at different times. The wrapper fast-forwards master, runs the diagnostic,
+publishes the output to a report branch so it can be read from a phone, and leaves the host back
+on master. It reports:
+
+1. **Which parser wrote each day.** Bracket width is the fingerprint: 1.0 °F = pre-#917
+   dash-range, 2.0 °F = fixed, 1.8 °F = °C via `_LABEL_EXACT`, never affected. Confirms a deploy
+   in the data rather than by trusting a systemd timestamp.
+2. **Mass conservation, split by censoring and by which end was cut.** Splitting is the point: an
+   uncensored deficit isolates a parser bug, a censored-only deficit isolates a renormalisation
+   bug, and a `top`/`both` deficit against a healthy `none` column is what #920 looked like.
+3. **The real accrual rate**, in *scoreable* station-days — after the gate's own exclusions, which
+   is what the 300 bar counts and what the health report's raw count overstates (#932).
+
+**This is now a standing regression check, not a one-off triage.** Mass conservation is the
+invariant whose absence let #917 and #920 both live for weeks. Run it before the gate; treat any
+day that fails to conserve as a regression and stop the clock.
+
 #### Before the gate — settle the certainty exclusions
 
 The gate's exclusion funnel drops **64.4%** of input rows across two exclusions, and whether
@@ -344,8 +452,14 @@ the first is still justified moves the verdict a long way in either direction. I
 decided **blind**, before the powered run:
 
 ```bash
-python -m src.scripts.certainty_exclusion_check --population all-bracket
+python -m src.scripts.certainty_exclusion_check --population all-bracket --since 2026-08-06
 ```
+
+> **The 2026-07-30 result is STALE — re-run it on the post-2026-08-06 window.** The exact-zero
+> rows it classified were largely produced by #920's un-renormalised truncation, and that code
+> path no longer exists. The population it measured is not the population the gate will see.
+> Re-run and **record the verdict before the gate**, not after seeing its number — that ordering
+> is the whole point of the pre-registration.
 
 Writes `backtest_results/certainty_exclusion_check_<date>.md`. **It computes no BSS** — the
 Brier machinery is not even imported, and a test asserts that — so running it before the gate
@@ -420,6 +534,18 @@ high rail at **4% of its structural ceiling**. Testing it is a real experiment.
 But if M3 comes back negative, the plan's own stated lever remains untested, and that is a
 **second** experiment rather than a refutation of the thesis. Sequential beats confounded: fixing
 #885/#893 first would reset the clean-data clock and push the gate into September for no gain.
+
+> **This was argued both ways on 2026-08-04/05. The conclusion above is the one that stands.**
+> Recorded because the reasoning is worth keeping, not just the answer.
+>
+> When #920 was open, the sequential argument looked dead: its whole force was "don't reset the
+> clock," and #920 reset it regardless, so bundling #885/#893 into the same window appeared free.
+> That was **reversed once accrual was actually measured.** At ~55 scoreable station-days/day the
+> second window costs about **five days**, not the ~12 assumed when the trade was proposed — and
+> five days is a cheap price for being able to attribute a negative M3 to M0 or to σ rather than
+> to "one of these two things."
+>
+> **Hold #885/#893 until after M3.** The trade only made sense while the wait was long.
 
 #### Checks that do NOT require waiting
 
@@ -497,20 +623,27 @@ The rule is fixed **before** the number is seen, so it cannot be rationalised af
 
 ## Open work, in dependency order
 
-*Status as of 2026-07-25. M0 and M2 are complete, both ahead of target — the plan is now
-purely data-bound: the only thing between here and M3 is station-days accruing.*
+*Status as of 2026-08-06. M0 and M2 are complete. The plan is data-bound again — but on a
+**second** clean-data window, restarted 2026-08-06 after two probability-mass defects voided the
+first. The only thing between here and M3 is station-days accruing on the new window.*
 
 | Issue | What | Stage | Status |
 |---|---|---|---|
 | #820 | Evening entries price tomorrow with today's observations | M0 | ✅ Merged |
-| #826 | Persist all evaluated-bracket snapshots | M0 (parallel) | ✅ Merged — clean-data clock started 2026-07-24 |
+| #826 | Persist all evaluated-bracket snapshots | M0 (parallel) | ✅ Merged — started a clock on 2026-07-24, but **that window is void** (#917/#920). Clock restarted **2026-08-06** |
+| #917 | °F dash-range brackets integrated at half width | M3 | ✅ Merged, live 2026-08-01 (#919) — **verified in production**: °F ladder mass 0.53 → 0.99, gaps 100% → 0% |
+| **#920** | **Truncation without renormalisation.** Filed against the bottom cut; measurement showed the **top** cut cost ~5× more (°C ladders 1.04 untruncated → 0.85 top-cut → 0.80 both) | **was the last M3 blocker** | ✅ Merged 2026-08-05 (#934), verified live 2026-08-06 — all ladders read 1.00. Replaced three shortcuts with one conditional that renormalises by construction |
+| #921 | Mild two-sided excess — untruncated °C ladders average 1.04, one poll 1.156 | after #920 | Open — **stood down as immaterial**; explicitly NOT a gate precondition |
+| #935 | `time_to_settlement_boost` rescales an already-normalised ladder | after M3 | Open — left deliberately untouched by #934 so the mass fix stayed attributable |
+| #942 | One `scan_decisions` ladder sums 0.4644 **after** the #920 deploy, unexplained by parameter sweep or deployment lag | **before the gate** | Open — `bracket_evals` is clean, and that is what M3 scores, but the mechanism is not understood |
+| #944 | Two systemd units failed ~427,000 times unnoticed — nothing queries unit health | **now** | Open — the monitoring gap, not the units themselves (#945 removed those) |
 | #865 | Re-point Pass 1 at `resolve_bracket_outcomes` (n=20 → 404) | M1 | ✅ Merged — Pass 1 complete |
 | #867 | Gamma resolves DISJOINT brackets as YES on one station-day | before M3 | ✅ Merged (#875) — root cause was direction-blindness, not wrong-market reads; 4 → 0 collisions |
 | #869 | Post-fix model health — rail concentration, artifact rate, σ identifiability | **now, no waiting** | Shipped — run it |
 | #870 | Ground-truth quality — Gamma-vs-METAR rate, zero-YES days, ladder completeness | **now, no waiting** | Shipped — run it |
 | #822 | Market-vs-model skill test | M1 · M3 | Pass 1 ran (**BSS −0.28**, direction-contaminated — re-run pending, see M1); Pass 2 built and run 2026-07-29 (**underpowered: 139/300 station-days**); **Pass 2 = the decision** |
 | — | **Re-run Pass 1** with the direction-aware resolver (#875) — same archive, no new data | M1 | ✅ **Done (2026-07-29)** — BSS −0.2752, clean. Direction dispatch verified working (#867), test coverage added (#902 → #903) |
-| **#909** | **Decide the certainty exclusions** — post-#820 the `p_yes_raw == 0.0` premise may no longer hold; the two exclusions remove 64.4% of rows between them. Must be settled **before** the powered Pass-2 run, i.e. before ~2026-08-05 | M3 | **Tool built** (`certainty_exclusion_check`, rule pre-registered). Still to do: run it, settle provenance in the code, record the verdict here |
+| **#909** | **Decide the certainty exclusions** — the two exclusions remove 64.4% of rows between them. Must be settled **blind, before** the powered Pass-2 run | M3 | **Tool built** (`certainty_exclusion_check`, rule pre-registered). Provenance half settled. **The 2026-07-30 calibration result is STALE** — the exact-zero rows it classified were made by #920's un-renormalised truncation, a path that no longer exists. Re-run with `--since 2026-08-06` and record the verdict here |
 | #799 | σ unidentifiable — switch on ensemble spread, retrain | M2 | ✅ Merged |
 | #798 | Partial pooling instead of hard 60-sample cutover | M2 | ✅ Merged |
 | #823 | Recompute promotion bars excluding artifact rows | M2 | ✅ Merged |
@@ -523,7 +656,7 @@ purely data-bound: the only thing between here and M3 is station-days accruing.*
 | #886 | No city ever promoted to `emos_primary` | M2 | ✅ Resolved (#890) — bar unmet by design, ~mid-Sept, needs manual promotion |
 | #887 | 63% of GEFS σ below the 1 °F floor; raw-vs-calibrated decision | before #885 | ✅ Resolved (#892) — train raw, serve calibrated |
 | #888 | `p_normal_between()` ZeroDivisionError on σ=0 | before #885 | ✅ Merged (#891) |
-| #893 | EMOS training σ chosen by sort order — 5 US stations train on a constant | after M3 | Open — triaged; fix is Simple (exclude constant σ sources) |
+| #893 | EMOS training σ chosen by sort order — 5 US stations train on a constant | after M3 | Open — triaged; fix is Simple (exclude constant σ sources). **Held until after M3**: bundling it with #885 into the current window was proposed and then rejected once accrual measured ~55/day — see "What M3 will and will not have tested" |
 | #894 | 329 legacy clamped σ rows in the training window | done | ✅ Merged (#896) — inert under `baseline`, live under `full` |
 | #895 | KORD eats the GEFS cold-start timeout (sorts first in `STATIONS`) | done | ✅ Merged (#896) |
 | #844 | Test suite flakes in the 15 min before UTC midnight | anytime | ✅ Merged (#882) |
@@ -586,14 +719,20 @@ post-#820 model is worth running. It does mean **M3 as currently configured meas
 effect, and a negative verdict would leave the plan's own stated lever untested.** The
 sequencing decision is therefore explicit and belongs to the Tech Lead PM:
 
-- **Run M3 on the M0-fixed model as-is** (~2026-08-05 at current accrual). Cheapest, and a
-  clean read on what is actually deployed. If it fails, the σ lever is still untried, so the
-  verdict condemns the current serving stack rather than the thesis.
+- **Run M3 on the M0-fixed model as-is** (~2026-08-11, counting from the 2026-08-06 clock
+  restart at ~55 scoreable station-days/day). Cheapest, and a clean read on what is actually
+  deployed. If it fails, the σ lever is still untried, so the verdict condemns the current
+  serving stack rather than the thesis.
 - **Or wire #885/#886/#887/#888 first, then start a fresh collection window.** Tests the model
   the plan intended, but resets the clean-data clock — switching serving σ mid-collection
   would split the sample and invalidate the accrued station-days.
 
 Doing both in sequence is the only way to attribute a result to the σ work at all.
+
+**Decided 2026-08-06: the first option.** The second was reconsidered while #920 was open — the
+clock was being reset anyway, so bundling looked free — and then rejected once accrual was
+measured. A second window costs ~5 days, not the ~12 assumed, and five days is cheap for keeping
+a negative M3 attributable.
 
 ---
 
