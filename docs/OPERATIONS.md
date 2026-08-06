@@ -1211,6 +1211,42 @@ tail -f logs/bot.log | grep "=== Poll"
 curl http://localhost:8000/status
 ```
 
+### Ladder Mass Conservation (M3 window integrity)
+
+```bash
+cd ~/MeteoEdge && bash scripts/run_m3_diagnostics.sh
+```
+
+**Read-only.** Opens no database connection and writes nothing under `logs/` or `data/`. Run it
+on the bot host before the M3 decision gate, and any time bracket-probability code changes.
+
+**What it checks.** A gap-free bracket ladder must sum to ~1.0. Nothing else in the stack asserts
+that against production data, and its absence is how two independent probability-mass defects
+(#917, #920) survived for weeks in `p_yes_raw` — the exact quantity the M3 gate scores. Reads
+`logs/bracket_evals.*.jsonl`, **not** `scan_decisions`, which upserts on
+`(station, ticker, date)` and so assembles "ladders" from brackets observed at different times.
+
+**What the wrapper does**, in order: refuses to start if any *tracked* file is modified (the
+working tree on this host is production); fast-forwards master so the report describes the
+deployed code; runs the diagnostic; publishes the output to the `claude/m3-diagnostics-output`
+branch so it can be read from a phone; and returns the checkout to master via an EXIT trap on
+every path, including failures. Untracked files are left alone. If the push fails the full
+report is printed instead of being stranded on the host.
+
+**Reading the verdict.** Expect `VERDICT: mass conserved from 2026-08-06` and every cut level
+(`none` / `bottom` / `top` / `both`) at ~1.00.
+
+| Symptom | Meaning |
+|---|---|
+| A day conserves mass **uncensored** but not **censored** | A truncation is being applied without renormalising — #920's signature. Expected before 2026-08-06; **after it, a regression** |
+| `top` or `both` deficient while `none` is healthy | The upper-envelope cut is losing mass. This is the expensive one (~15%, vs ~3% for the bottom cut) |
+| 1.0 °F-wide ladders still appearing | The #917 parser fix is not deployed — bracket width fingerprints the code version (1.0 °F pre-fix, 2.0 °F post-fix, 1.8 °F = °C) |
+| `VERDICT: no clean day` | **Stop the M3 clock.** The gate must not run on this window |
+
+Extra arguments are forwarded to the diagnostic, so `--since 2026-07-24` re-reads the void first
+window. Without `--since` it defaults to `M3_CLEAN_DATA_CLOCK_START` — see `docs/REMEDIATION_PLAN.md`,
+M3 section.
+
 ---
 
 ## Troubleshooting
