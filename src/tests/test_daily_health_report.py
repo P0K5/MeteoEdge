@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import sys
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -666,7 +666,7 @@ class TestLadderMassIndicator:
         )
         now = datetime(2026, 8, 7, 14, 0, 0, tzinfo=timezone.utc).isoformat()
         for i, probs in enumerate(ladders):
-            for p in probs:
+            for j, p in enumerate(probs):
                 conn.execute(
                     "INSERT INTO scan_decisions VALUES (?, ?, ?, ?, ?, ?, ?)",
                     (now, f"ST{i}", "2026-08-07", p, p, 20, 82),
@@ -676,32 +676,73 @@ class TestLadderMassIndicator:
         db._conn = conn
         return db
 
+    @staticmethod
+    def _ladder(total, n=11):
+        """An n-bracket ladder summing to *total*.
+
+        Real ladders are ~11 brackets; the mass check requires >= 5 so a
+        part-listed station-day is not scored as a deficient ladder. Fixtures
+        use the real shape so they exercise the same path production does.
+        """
+        return [total / n] * n
+
     def _text(self, ladders):
         today = datetime(2026, 8, 7, 14, 0, 0, tzinfo=timezone.utc)
         return "\n".join(_build_m3_progress(self._db(ladders), today))
 
     def test_a_conserving_ladder_reads_ok(self):
-        text = self._text([[0.25, 0.25, 0.25, 0.25]])
+        text = self._text([self._ladder(1.00)])
         assert "Ladder mass:" in text
         assert "1.000" in text and "[OK]" in text
 
     def test_the_920_signature_warns(self):
         """0.80 is what production actually showed while #920 was live."""
-        text = self._text([[0.20, 0.30, 0.20, 0.10]])
+        text = self._text([self._ladder(0.80)])
         assert "[WARN]" in text
         assert "leaking mass" in text
 
     def test_the_917_signature_warns(self):
         """0.53 -- °F ladders integrated at half width."""
-        text = self._text([[0.13, 0.13, 0.14, 0.13]])
+        text = self._text([self._ladder(0.53)])
         assert "[WARN]" in text
 
     def test_worst_ladder_is_reported_not_just_the_mean(self):
         """A defect confined to one station or ladder shape is exactly what a
         mean hides -- which is how #917 stayed invisible while °C looked fine."""
-        text = self._text([[0.25] * 4, [0.25] * 4, [0.05] * 4])
+        text = self._text([self._ladder(1.00), self._ladder(1.00), self._ladder(0.20)])
         assert "0.200 worst" in text
         assert "[WARN]" in text
+
+    def test_a_ladder_straddling_the_24h_boundary_is_not_fragmented(self):
+        """The false alarm this grouping was changed to remove.
+
+        scan_decisions upserts on (station, ticker, date), so a market that
+        stops being scanned keeps an older poll_ts. Grouping by poll_ts and
+        filtering on it split such ladders into fragments, each scored as a
+        separate deficient ladder: on 2026-08-06 that reported "0.947 mean,
+        0.464 worst, 10/55 deficient" while all 322 production ladders summed
+        to 1.000.
+        """
+        conn = sqlite3.connect(":memory:")
+        conn.execute(
+            "CREATE TABLE scan_decisions (poll_ts TEXT, station TEXT, date TEXT, "
+            "raw_p_yes REAL, capped_p_yes REAL, yes_ask INTEGER, no_ask INTEGER)"
+        )
+        now = datetime(2026, 8, 7, 14, 0, 0, tzinfo=timezone.utc)
+        for st in range(3):
+            for j in range(11):
+                # 6 brackets written recently, 5 stale -- one intact ladder.
+                ts = (now - timedelta(hours=2 if j < 6 else 30)).isoformat()
+                conn.execute(
+                    "INSERT INTO scan_decisions VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (ts, f"ST{st}", "2026-08-07", 1.0 / 11, 1.0 / 11, 20, 82),
+                )
+        conn.commit()
+        db = MagicMock()
+        db._conn = conn
+        text = "\n".join(_build_m3_progress(db, now))
+        assert "1.000 mean, 1.000 worst (0/3 deficient) [OK]" in text
+        assert "leaking mass" not in text
 
     def test_no_ladders_is_not_reported_as_healthy(self):
         """Absent evidence must not be indistinguishable from a clean ladder --
@@ -725,10 +766,10 @@ class TestLadderMassIndicator:
         # 400 station-days, well past the 300 bar -- but every ladder leaks.
         for d in range(20):
             for st in range(20):
-                for _ in range(4):
+                for _ in range(11):
                     conn.execute(
                         "INSERT INTO scan_decisions VALUES (?, ?, ?, ?, ?, ?, ?)",
-                        (now, f"ST{st}", f"2026-08-{d + 1:02d}", 0.20, 0.20, 20, 82),
+                        (now, f"ST{st}", f"2026-08-{d + 1:02d}", 0.80 / 11, 0.80 / 11, 20, 82),
                     )
         conn.commit()
         db = MagicMock()
