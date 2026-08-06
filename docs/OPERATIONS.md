@@ -22,7 +22,7 @@ sudo deploy/systemd/install.sh
 This script:
 1. Disables the old meteoedge.timer if present
 2. Installs three service units and one timer to `/etc/systemd/system/`
-3. Reloads systemd and enables the bot, dashboard, and settlement timer
+3. Reloads systemd, removes retired units, and enables the bot and timers
 4. Displays current status
 
 ### Systemd Units
@@ -78,41 +78,27 @@ sudo journalctl -u meteoedge.service -f
 tail -f /home/p0k5/MeteoEdge/logs/bot.log
 ```
 
-#### meteoedge-dashboard.service
-Runs the web dashboard (displays open positions, P&L, trading stats).
+#### The dashboard — served by meteoedge.service, no unit of its own
 
-```ini
-[Unit]
-Description=MeteoEdge portfolio dashboard
-After=network-online.target
-Wants=network-online.target
+`src/scripts/run.py:930` calls `start_dashboard()`, which serves :8000 from a
+background thread inside the bot process. There is no `meteoedge-dashboard.service`
+and no standalone launcher.
 
-[Service]
-Type=simple
-User=p0k5
-WorkingDirectory=/home/p0k5/MeteoEdge
-Environment=PYTHONUNBUFFERED=1
-EnvironmentFile=/home/p0k5/MeteoEdge/.env
-ExecStart=/home/p0k5/MeteoEdge/.venv/bin/python -u run_dashboard.py
-Restart=always
-RestartSec=10s
-StandardOutput=append:/home/p0k5/MeteoEdge/logs/dashboard.log
-StandardError=append:/home/p0k5/MeteoEdge/logs/dashboard.log
+There deliberately isn't one. `start_dashboard()` spawns a `daemon=True` thread and
+returns — correct when called from inside a long-running process, useless as an
+entrypoint, because the process then exits immediately and the daemon thread dies
+with it. A `run_dashboard.py` that did exactly that shipped as
+`meteoedge-dashboard.service` with `Restart=always`, so systemd retried a process
+that exited 0 roughly every ten seconds: **~78,000 restarts over nine days**,
+never serving a request, and invisible because the bot was serving :8000 anyway.
 
-[Install]
-WantedBy=multi-user.target
-```
-
-**Operational commands:**
-```bash
-sudo systemctl start meteoedge-dashboard.service
-sudo systemctl status meteoedge-dashboard.service
-sudo journalctl -u meteoedge-dashboard.service -f
-```
+`install.sh` removes the unit from any host that still has it.
 
 **Access the dashboard:**
 - Navigate to `http://<machine-ip>:8000` on the same network
 - Shows live positions, cash balance, mark-to-market P&L, and trading statistics
+- Its lifecycle is the bot's: `systemctl restart meteoedge.service` restarts both,
+  and `journalctl -u meteoedge.service -f` carries its log
 
 #### meteoedge-settle.service
 One-shot service that runs daily settlement (updates DB with market outcomes, calculates final P&L). Triggered by meteoedge-settle.timer.
@@ -1107,7 +1093,6 @@ Systemd appends logs to files in `logs/`:
 | File | Source | Contents |
 |------|--------|----------|
 | `logs/bot.log` | meteoedge.service | Polling loop, market scans, trade execution |
-| `logs/dashboard.log` | meteoedge-dashboard.service | Web server startup, request handling |
 | `logs/settle.log` | meteoedge-settle.service | Daily settlement (outcomes, P&L) |
 
 **View live:**
@@ -1264,13 +1249,13 @@ python -m src.scripts.settle 2024-06-03
 
 ```bash
 # Check if service is running
-sudo systemctl status meteoedge-dashboard.service
+sudo systemctl status meteoedge.service   # the dashboard runs inside it
 
 # Check the port
 sudo netstat -tlnp | grep 8000
 
-# Restart the dashboard
-sudo systemctl restart meteoedge-dashboard.service
+# Restart the dashboard (it lives inside the bot process)
+sudo systemctl restart meteoedge.service
 ```
 
 ### No Candidates Generated
@@ -1365,8 +1350,8 @@ Before going live, verify:
 - [ ] `POSITION_SIZE_EUR` set appropriately (recommend 5-10 EUR per position)
 - [ ] `RISK_DAILY_LOSS_LIMIT_EUR` set (recommend 10-20% of capital)
 - [ ] Systemd units installed via `deploy/systemd/install.sh`
-- [ ] Services enabled: `sudo systemctl enable meteoedge.service meteoedge-dashboard.service meteoedge-settle.timer`
-- [ ] All services running: `sudo systemctl start meteoedge.service meteoedge-dashboard.service`
+- [ ] Services enabled: `sudo systemctl enable meteoedge.service meteoedge-settle.timer`
+- [ ] All services running: `sudo systemctl start meteoedge.service`
 - [ ] Dashboard accessible at `http://localhost:8000`
 - [ ] Settlement timer scheduled: `sudo systemctl list-timers meteoedge-settle.timer`
 - [ ] Logs flowing: `tail -f logs/bot.log`

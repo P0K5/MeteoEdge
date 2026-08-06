@@ -14,9 +14,27 @@ fi
 echo "Stopping and disabling the old midnight-noon timer (if present)..."
 systemctl disable --now meteoedge.timer 2>/dev/null || true
 
+# Retired units. Left enabled on a host they loop forever, because
+# Restart=always retries a process that exits 0 -- meteoedge-dashboard.service
+# accumulated ~78,000 restarts over nine days before anyone looked.
+#
+#   meteoedge-dashboard.service — redundant. run.py:930 already calls
+#     start_dashboard(), so meteoedge.service serves :8000 from an embedded
+#     thread. The standalone launcher could never work anyway: start_dashboard()
+#     spawns a daemon thread and returns, so as an entrypoint the process exits
+#     immediately and takes the thread with it.
+#   meteoedge-shadow.service — never shipped from this repo. Pointed at a
+#     ~/MeteoEdge-Shadow/ tree that no longer exists and failed at step STDOUT,
+#     so it never started an interpreter. ~348,000 restarts.
+echo "Removing retired units (if present)..."
+for retired in meteoedge-dashboard.service meteoedge-shadow.service; do
+    systemctl disable --now "$retired" 2>/dev/null || true
+    rm -f "$UNIT_DIR/$retired"
+done
+systemctl reset-failed 2>/dev/null || true
+
 echo "Copying unit files from $SRC_DIR to $UNIT_DIR..."
 install -m 0644 "$SRC_DIR/meteoedge.service"            "$UNIT_DIR/meteoedge.service"
-install -m 0644 "$SRC_DIR/meteoedge-dashboard.service"  "$UNIT_DIR/meteoedge-dashboard.service"
 install -m 0644 "$SRC_DIR/meteoedge-settle.service"     "$UNIT_DIR/meteoedge-settle.service"
 install -m 0644 "$SRC_DIR/meteoedge-settle.timer"       "$UNIT_DIR/meteoedge-settle.timer"
 install -m 0644 "$SRC_DIR/meteoedge-archive.service"               "$UNIT_DIR/meteoedge-archive.service"
@@ -37,7 +55,6 @@ systemctl daemon-reload
 
 echo "Enabling and starting services..."
 systemctl enable --now meteoedge.service
-systemctl enable --now meteoedge-dashboard.service
 systemctl enable --now meteoedge-settle.timer
 systemctl enable --now meteoedge-archive.timer
 systemctl enable --now meteoedge-capture-forecasts.timer
@@ -48,10 +65,9 @@ systemctl enable --now meteoedge-health-report.timer
 
 echo
 echo "Done. Current status:"
-systemctl --no-pager status meteoedge.service meteoedge-dashboard.service meteoedge-settle.timer meteoedge-archive.timer meteoedge-capture-forecasts.timer meteoedge-prob-cap-report.timer meteoedge-purge-retention.timer meteoedge-resolve-outcomes.timer meteoedge-health-report.timer || true
+systemctl --no-pager status meteoedge.service meteoedge-settle.timer meteoedge-archive.timer meteoedge-capture-forecasts.timer meteoedge-prob-cap-report.timer meteoedge-purge-retention.timer meteoedge-resolve-outcomes.timer meteoedge-health-report.timer || true
 echo
 echo "Tail the bot log with:  journalctl -u meteoedge.service -f"
-echo "Tail dashboard log with:  journalctl -u meteoedge-dashboard.service -f"
 echo "Next settle run:  systemctl list-timers meteoedge-settle.timer"
 echo "Next archive run:  systemctl list-timers meteoedge-archive.timer"
 echo "Next capture run:  systemctl list-timers meteoedge-capture-forecasts.timer"

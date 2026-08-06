@@ -184,13 +184,19 @@ Useful for testing or cron jobs.
 
 ### Dashboard
 
-View live positions, cash balance, and mark-to-market values via the web dashboard:
+View live positions, cash balance, and mark-to-market values via the web dashboard.
 
-```bash
-python run_dashboard.py
-```
+**No separate command is needed** — `src/scripts/run.py` starts it in a background
+thread, so it is served for as long as the bot is running. Open
+`http://<machine-ip>:8000` on any device on the same network.
 
-Then open `http://<machine-ip>:8000` on any device on the same network.
+There is deliberately no standalone launcher. `start_dashboard()` spawns a daemon
+thread and returns, which is right when called from inside the long-running bot
+and useless as an entrypoint: the process would exit immediately and take the
+thread with it. A `run_dashboard.py` that did exactly that shipped as
+`meteoedge-dashboard.service` and restarted ~78,000 times over nine days without
+ever serving a request, unnoticed because the bot was serving :8000 the whole
+time.
 
 The dashboard shows:
 - Open positions (symbol, entry price, current bid/ask)
@@ -264,8 +270,7 @@ sudo deploy/systemd/install.sh
 ```
 
 This installs:
-- `meteoedge.service` — Main trading bot (live or paper mode)
-- `meteoedge-dashboard.service` — Web dashboard  
+- `meteoedge.service` — Main trading bot (live or paper mode), which also serves the dashboard on :8000
 - `meteoedge-settle.timer` — Daily settlement at 00:00 UTC
 - `capture_forecasts.service` — Forecast persistence worker
 
