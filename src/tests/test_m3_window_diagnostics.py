@@ -270,3 +270,106 @@ class TestReport:
 
         args = build_parser().parse_args([])
         assert args.since == M3_CLEAN_DATA_CLOCK_START
+
+
+class TestRegressionAfterTheClockStarts:
+    """The failure this class exists for: the tool said "mass conserved from
+    2026-08-06" on a run whose own day table showed 2026-08-07 as BAD.
+
+    ``earliest_clean_day`` stops at the first success, so it structurally
+    cannot see a day that breaks afterwards. That was the right question while
+    the question was "when may the clock start" and the wrong one the moment
+    the clock started -- which is exactly when an operator is relying on this
+    to notice a regression.
+    """
+
+    def _days(self, **days):
+        """Build a mass_by_day-shaped dict: {day: {pop: stats}}."""
+        def stats(mean, deficient):
+            return {"n": 10, "mean": mean, "deficient": deficient}
+        return {day: {"censored": stats(*c), "uncensored": stats(*u)}
+                for day, (c, u) in days.items()}
+
+    def test_a_bad_day_after_the_clean_day_is_reported(self):
+        from src.scripts.m3_window_diagnostics import deficient_days_since
+        per_day = self._days(**{
+            "2026-08-06": ((1.00, 0), (1.00, 0)),
+            "2026-08-07": ((0.99, 1), (1.00, 0)),    # one deficient ladder
+        })
+        assert deficient_days_since(per_day, "2026-08-06") == ["2026-08-07"]
+
+    def test_bad_days_BEFORE_the_clean_day_are_not_reported(self):
+        """The void window is expected to be dirty -- re-flagging it would
+        bury the signal that matters under known history."""
+        from src.scripts.m3_window_diagnostics import deficient_days_since
+        per_day = self._days(**{
+            "2026-08-04": ((0.80, 9), (0.99, 0)),
+            "2026-08-06": ((1.00, 0), (1.00, 0)),
+        })
+        assert deficient_days_since(per_day, "2026-08-06") == []
+
+    def test_no_clean_day_means_nothing_to_regress_from(self):
+        from src.scripts.m3_window_diagnostics import deficient_days_since
+        per_day = self._days(**{"2026-08-04": ((0.80, 9), (0.99, 0))})
+        assert deficient_days_since(per_day, None) == []
+
+    def test_the_brief_verdict_says_REGRESSION_not_conserved(self):
+        """The whole point: the one-line verdict an operator reads from a
+        phone must not say "conserved" while a later day is deficient."""
+        from src.scripts.m3_window_diagnostics import brief_report
+        # A clean day needs BOTH populations healthy: an uncensored ladder
+        # and a censored one (leading zeros) that each sum to 1.0.
+        clean_unc = _ladder([0.25] * 4, ts="2026-08-06T13:00:00+00:00",
+                            end_date="2026-08-06")
+        clean_cen = _ladder([0.0, 0.5, 0.5], station="KDEN",
+                            ts="2026-08-06T13:00:00+00:00",
+                            end_date="2026-08-06")
+        # 0.25*2 = 0.50 -- far outside the 0.90-1.10 band
+        broken = _ladder([0.25] * 2, station="KORD",
+                         ts="2026-08-07T13:00:00+00:00",
+                         end_date="2026-08-07")
+        out = brief_report(clean_unc + clean_cen + broken, "2026-08-06")
+        assert "REGRESSION" in out
+        assert "2026-08-07" in out
+        assert "mass conserved from" not in out
+
+    def test_the_offending_ladder_is_named_so_it_can_be_chased(self):
+        from src.scripts.m3_window_diagnostics import deficient_ladders
+        good = _ladder([0.25] * 4)
+        bad = _ladder([0.25] * 2, station="KORD")
+        worst = deficient_ladders(group_ladders(good + bad))
+        assert len(worst) == 1
+        assert worst[0]["station"] == "KORD"
+
+
+class TestAccrualExcludesThePartialDay:
+    """A run at 07:30 UTC has seen a few hours of today's polls. Counting that
+    as a full day dragged the measured rate from ~57 to 44.0/day, which turns
+    a ~5-day wait into a ~7-day one -- an error in the direction that delays
+    the gate for no reason.
+    """
+
+    def test_todays_partial_count_is_excluded(self):
+        from src.scripts.m3_window_diagnostics import accrual_rate
+        rate, n, excluded = accrual_rate(
+            {"2026-08-06": 57, "2026-08-07": 31}, today="2026-08-07")
+        assert rate == 57.0
+        assert n == 1
+        assert excluded == "2026-08-07"
+
+    def test_a_window_of_only_complete_days_excludes_nothing(self):
+        from src.scripts.m3_window_diagnostics import accrual_rate
+        rate, n, excluded = accrual_rate(
+            {"2026-08-05": 50, "2026-08-06": 60}, today="2026-08-07")
+        assert rate == 55.0
+        assert n == 2
+        assert excluded is None
+
+    def test_a_single_partial_day_still_reports_something(self):
+        """First run on the morning the clock starts: falling back to the
+        partial day beats reporting 0.0/day and an infinite wait."""
+        from src.scripts.m3_window_diagnostics import accrual_rate
+        rate, n, excluded = accrual_rate({"2026-08-07": 31},
+                                         today="2026-08-07")
+        assert rate == 31.0
+        assert excluded is None
