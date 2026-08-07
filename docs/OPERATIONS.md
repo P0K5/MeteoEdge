@@ -1242,6 +1242,23 @@ report is printed instead of being stranded on the host.
 | `top` or `both` deficient while `none` is healthy | The upper-envelope cut is losing mass. This is the expensive one (~15%, vs ~3% for the bottom cut) |
 | 1.0 °F-wide ladders still appearing | The #917 parser fix is not deployed — bracket width fingerprints the code version (1.0 °F pre-fix, 2.0 °F post-fix, 1.8 °F = °C) |
 | `VERDICT: no clean day` | **Stop the M3 clock.** The gate must not run on this window |
+| `VERDICT: REGRESSION -- clean from <date>, N bad day(s) since` | A day **after** the clock start has a deficient ladder that could not be excused. Every station-day since the first bad day is suspect. The offending ladders are named beneath the verdict — go look at them |
+| `N short ladder(s) excused (no open tail bracket)` | **Not an alarm.** These ladders lack an open-ended `[-50, lo)` or `[hi, 200)` cap, so the market offered nowhere for that tail's mass to go and they cannot reach 1.0 however correct the arithmetic. Common on next-day markets, which Polymarket lists incrementally |
+| `+Nexc` in the kind table | Same thing, per ladder kind. The `bad` count beside it is judged ladders only, so the table always agrees with the verdict |
+
+**Why excused ladders are not judged.** A ladder missing a tail bracket is
+measuring Polymarket's listing, not our probabilities. Judging it would fire
+most mornings — and a check that cries wolf daily is a check that gets ignored,
+which is exactly how #917 and #920 both survived for weeks. The exemption is
+deliberately narrow, and keyed on the **bracket ranges present**, never on the
+probabilities in them:
+
+- a coverage-limited ladder that *does* conserve still counts as ordinary evidence;
+- an **excess** is never excused — missing brackets can only lose mass;
+- **#920 would still be caught in full**, because it zeroed brackets that still
+  existed, leaving both tails open and the ladder judgeable;
+- a day with no judgeable ladder at all does **not** pass — absent evidence has
+  never been a pass in this tool.
 
 Extra arguments are forwarded to the diagnostic, so `--since 2026-07-24` re-reads the void first
 window. Without `--since` it defaults to `M3_CLEAN_DATA_CLOCK_START` — see `docs/REMEDIATION_PLAN.md`,
