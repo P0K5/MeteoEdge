@@ -179,7 +179,7 @@ def ladder_stats(brackets: "list[dict]") -> dict:
                 "width": None, "kind": "other", "censored": False,
                 "open_bottom": False, "open_top": False, "closed_ladder": True,
                 "gaps": 0, "gap_width": 0.0, "trailing_zeros": 0,
-                "truncation": "none"}
+                "truncation": "none", "coverage_limited": False}
 
     ordered = sorted(usable, key=lambda b: (b.get("bracket_low") is None,
                                             b.get("bracket_low") or 0.0))
@@ -248,6 +248,17 @@ def ladder_stats(brackets: "list[dict]") -> dict:
         "open_bottom": open_bottom,
         "open_top": open_top,
         "closed_ladder": not (open_bottom or open_top),
+        # A ladder missing EITHER open end cannot hold all its mass, however
+        # correct the arithmetic -- the market offers nowhere for that tail to
+        # go. Judging such a ladder against the 1.0 bar measures market
+        # listing, not our probabilities, so conservation is assessed without
+        # them (they are counted and reported, never silently dropped).
+        #
+        # This deliberately does NOT excuse #920-shaped ladders: that defect
+        # zeroed brackets that still EXISTED, so open_top stayed True and such
+        # a ladder is still judged. The exemption keys on the bracket range
+        # actually present, never on the probabilities in it.
+        "coverage_limited": not (open_bottom and open_top),
         "gaps": gaps,
         "gap_width": gap_width,
         "trailing_zeros": trailing,
@@ -307,28 +318,55 @@ def mass_by_day(ladders: "list[dict]") -> "dict[str, dict]":
         if lad["mass"] is None:
             continue
         per_day[lad["day"]]["censored" if lad["censored"] else "uncensored"].append(
-            lad["mass"])
+            lad)
 
     out = {}
     for day, groups in per_day.items():
         row = {}
-        for name, masses in groups.items():
-            if not masses:
+        for name, group in groups.items():
+            if not group:
                 row[name] = None
                 continue
+            # A ladder is EXCUSED only when it is short AND structurally
+            # unable to hold its mass -- missing an open end, so the market
+            # offers nowhere for that tail to go. Short-and-explained is not
+            # evidence of a renormalisation defect, and next-day markets are
+            # listed incrementally, so judging them would fire most mornings
+            # and the check would be ignored by the second week.
+            #
+            # Deliberately narrow in three ways:
+            #   * a coverage-limited ladder that DOES conserve still counts as
+            #     ordinary evidence -- being excusable is not being ignored;
+            #   * only deficits are excusable. Missing brackets can only lose
+            #     mass, so an EXCESS is never explained by coverage and is
+            #     always judged;
+            #   * the test is on the bracket ranges present, never on the
+            #     probabilities in them -- so #920, which zeroed brackets that
+            #     still existed, would still be caught in full.
+            excused = [lad for lad in group
+                       if lad["coverage_limited"] and lad["mass"] < MASS_LOW]
+            judged = [lad["mass"] for lad in group if lad not in excused]
             row[name] = {
-                "n": len(masses),
-                "mean": sum(masses) / len(masses),
-                "deficient": sum(1 for m in masses if m < MASS_LOW),
-                "excessive": sum(1 for m in masses if m > MASS_HIGH),
+                "n": len(group),
+                "n_judged": len(judged),
+                "mean": (sum(judged) / len(judged)) if judged else None,
+                "deficient": sum(1 for m in judged if m < MASS_LOW),
+                "excessive": sum(1 for m in judged if m > MASS_HIGH),
+                "n_excused": len(excused),
             }
         out[day] = row
     return out
 
 
 def conserves(stats: "dict | None") -> bool:
-    """Does a day's population conserve mass? Absent data is not a pass."""
-    if not stats or not stats["n"]:
+    """Does a day's population conserve mass? Absent data is not a pass.
+
+    Judged on ladders that CAN conserve -- see ``coverage_limited``. A day
+    made up entirely of coverage-limited ladders has no evidence either way,
+    so it does not pass: the conservative direction is preserved exactly as it
+    was when the population was unfiltered.
+    """
+    if not stats or not stats.get("n_judged"):
         return False
     return MASS_LOW <= stats["mean"] <= MASS_HIGH and stats["deficient"] == 0
 
@@ -358,10 +396,40 @@ def deficient_days_since(per_day: "dict[str, dict]", start: "str | None") -> "li
     """
     if not start:
         return []
+    out = []
+    for day in sorted(per_day):
+        if day < start:
+            continue
+        pops = [per_day[day].get("censored"), per_day[day].get("uncensored")]
+        # Only a population that HAS judgeable ladders can be in breach. A day
+        # with none is a different condition -- no evidence, not evidence of
+        # breakage -- and reported separately by no_evidence_days_since.
+        # Conflating them would fire REGRESSION on a quiet morning, which is
+        # the false alarm this whole exemption exists to prevent.
+        if any(_has_evidence(pop) and not conserves(pop) for pop in pops):
+            out.append(day)
+    return out
+
+
+def _has_evidence(stats: "dict | None") -> bool:
+    """Does this population contain any ladder that CAN be judged?"""
+    return bool(stats and stats.get("n_judged"))
+
+
+def no_evidence_days_since(per_day: "dict[str, dict]",
+                           start: "str | None") -> "list[str]":
+    """Days at or after ``start`` with no judgeable ladder in a population.
+
+    Not a regression, but not a pass either -- it means the window stopped
+    producing gradeable data, which is worth saying out loud rather than
+    letting it read as silence.
+    """
+    if not start:
+        return []
     return [day for day in sorted(per_day)
             if day >= start
-            and not (conserves(per_day[day].get("censored"))
-                     and conserves(per_day[day].get("uncensored")))]
+            and not all(_has_evidence(per_day[day].get(pop))
+                        for pop in ("censored", "uncensored"))]
 
 
 def deficient_ladders(ladders: "list[dict]") -> "list[dict]":
@@ -429,10 +497,23 @@ def _fmt(v, spec=".3f"):
 
 
 def _cell(stats: "dict | None") -> str:
+    """One day/population cell.
+
+    ``exc=`` is the count of ladders excused as coverage-limited. It is shown
+    rather than folded away so a day that looks clean only because everything
+    in it was excusable is visible as exactly that.
+    """
     if not stats or not stats["n"]:
         return "     --      "
     flag = "ok " if conserves(stats) else "BAD"
-    return f"{stats['mean']:.3f} n={stats['n']:<4d} def={stats['deficient']:<4d} {flag}"
+    exc = stats.get("n_excused", 0)
+    tail = f" exc={exc}" if exc else ""
+    if stats.get("mean") is None:
+        # Every ladder excused: no evidence either way, and conserves() says
+        # so. Printing a mean here would invent one.
+        return f"  --   n={stats['n']:<4d} def=--   {flag}{tail}"
+    return (f"{stats['mean']:.3f} n={stats['n']:<4d} "
+            f"def={stats['deficient']:<4d} {flag}{tail}")
 
 
 def build_report(rows: "list[dict]", since: str) -> str:
@@ -505,8 +586,8 @@ def build_report(rows: "list[dict]", since: str) -> str:
         sub = [lad for lad in ladders if lad["kind"] == kind]
         if not sub:
             continue
-        out.append(f"   {kind_label:<8}{_period_stats(sub, False):<20}"
-                   f"{_period_stats(sub, True):<20}{len(sub):>8}")
+        out.append(f"   {kind_label:<8}{_period_stats(sub, False):<23}"
+                   f"{_period_stats(sub, True):<23}{len(sub):>8}")
     out.append("")
     out.append("   A kind whose censored and uncensored columns agree is a kind")
     out.append("   #920 is NOT the main mass sink for. A deficit present in both")
@@ -584,6 +665,21 @@ def build_report(rows: "list[dict]", since: str) -> str:
                 "   censored -- #920's signature. Expected before 2026-08-06;",
                 "   after it, a renormalisation regression.",
             ]
+    excused = [lad for lad in deficient_ladders(ladders) if lad["coverage_limited"]]
+    if excused:
+        # Reported even when the verdict is clean. These ladders were short and
+        # excused because they had nowhere to put the tail -- that is a market
+        # listing fact worth seeing, and hiding it would make the exemption
+        # unauditable.
+        out += ["",
+                f"   {len(excused)} ladder(s) short but EXCUSED -- no open-ended",
+                "   tail bracket, so the market offered nowhere for that mass to go.",
+                "   Not judged, not evidence of a defect. Worst:"]
+        for lad in excused[:3]:
+            out.append(f"     {lad['mass']:.3f}  {lad['station']:<6} {lad['ts']}  "
+                       f"n={lad['n_brackets']} "
+                       f"open_top={lad['open_top']} open_bottom={lad['open_bottom']}")
+
     if rate > 0:
         out += ["",
                 f"   At {rate:.1f} scoreable station-days/day, 300 takes "
@@ -593,12 +689,25 @@ def build_report(rows: "list[dict]", since: str) -> str:
 
 
 def _period_stats(ladders: "list[dict]", censored: bool) -> str:
-    masses = [lad["mass"] for lad in ladders
-              if lad["mass"] is not None and lad["censored"] is censored]
-    if not masses:
+    """One kind/population cell: mean over judged ladders, bad and excused.
+
+    ``bad`` must agree with the verdict, so it counts judged ladders only --
+    otherwise this table would call a ladder bad that the verdict excused, and
+    a reader would have no way to tell which one was lying.
+    """
+    sub = [lad for lad in ladders
+           if lad["mass"] is not None and lad["censored"] is censored]
+    if not sub:
         return "    --      "
-    bad = sum(1 for m in masses if not MASS_LOW <= m <= MASS_HIGH)
-    return f"{sum(masses) / len(masses):.2f} ({bad}/{len(masses)} bad)"
+    n_exc = sum(1 for lad in sub
+                if lad["coverage_limited"] and lad["mass"] < MASS_LOW)
+    judged = [lad["mass"] for lad in sub
+              if not (lad["coverage_limited"] and lad["mass"] < MASS_LOW)]
+    tail = f"+{n_exc}exc" if n_exc else ""
+    if not judged:
+        return f"  --   (0/0 bad{tail})"
+    bad = sum(1 for m in judged if not MASS_LOW <= m <= MASS_HIGH)
+    return f"{sum(judged) / len(judged):.2f} ({bad}/{len(judged)} bad{tail})"
 
 
 def brief_report(rows: "list[dict]", since: str) -> str:
@@ -648,8 +757,8 @@ def brief_report(rows: "list[dict]", since: str) -> str:
             sub = [x for x in group if x["kind"] == kind]
             if not sub:
                 continue
-            out.append(f"{kind_label:<7}{label:<5}{_period_stats(sub, False):<16}"
-                       f"{_period_stats(sub, True):<16}")
+            out.append(f"{kind_label:<7}{label:<5}{_period_stats(sub, False):<23}"
+                       f"{_period_stats(sub, True):<23}")
 
     # Coverage, per kind. If the low-mass kinds are exactly the ones without
     # open-ended end brackets, their deficit is the market's shape rather than
@@ -671,6 +780,10 @@ def brief_report(rows: "list[dict]", since: str) -> str:
             out.append(f"{kind_label:<7}{cut:<7}{len(grp):<7}"
                        f"{sum(x['mass'] for x in grp) / len(grp):<7.2f}")
 
+    n_excused = sum(1 for lad in deficient_ladders(ladders)
+                    if lad["coverage_limited"])
+    if n_excused:
+        out.append(f"{n_excused} short ladder(s) excused (no open tail bracket)")
     out.append(f"scoreable {rate:.1f}/day (complete days only)")
     if clean and regressed:
         out.append(f"VERDICT: REGRESSION -- clean from {clean}, "

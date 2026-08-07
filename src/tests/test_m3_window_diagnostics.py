@@ -13,6 +13,7 @@ import json
 
 from src.scripts.m3_window_diagnostics import (
     LADDER_KINDS,
+    MASS_LOW,
     build_report,
     classify_width,
     conserves,
@@ -35,8 +36,32 @@ def _b(p, lo, hi, station="KATL", ts="2026-07-29T13:00:00+00:00",
 
 
 def _ladder(masses, width=2.0, start=80.0, **kw):
+    """A bare bracket run, with NO open-ended tail brackets.
+
+    Fine for testing ladder_stats mechanics (widths, zero runs, gaps). NOT
+    valid for testing a mass verdict: without open ends such a ladder is
+    coverage-limited, so a deficit on it is deliberately excused and the test
+    would assert nothing. Use ``_prod_ladder`` for anything that reaches
+    ``conserves`` / ``mass_by_day`` / a report verdict.
+    """
     return [_b(m, start + i * width, start + (i + 1) * width, **kw)
             for i, m in enumerate(masses)]
+
+
+def _prod_ladder(masses, cap_lo=0.0, cap_hi=0.0, width=2.0, start=80.0, **kw):
+    """A ladder shaped like production: open-ended brackets at both tails.
+
+    Real ladders carry ``[-50, lo)`` and ``[hi, 200)`` -- that is where the
+    distribution's tails live, and their presence is what makes a ladder
+    judgeable. ``cap_lo`` defaults to 0.0, which also makes the ladder read as
+    censored (a leading zero run); pass a non-zero ``cap_lo`` for an
+    uncensored one.
+    """
+    end = start + len(masses) * width
+    return ([_b(cap_lo, -50.0, start, **kw)]
+            + [_b(m, start + i * width, start + (i + 1) * width, **kw)
+               for i, m in enumerate(masses)]
+            + [_b(cap_hi, end, 200.0, **kw)])
 
 
 class TestParserFingerprint:
@@ -134,35 +159,40 @@ class TestMassVerdicts:
     def test_absent_data_is_not_a_pass(self):
         """The conservative direction: no ladders must never read as clean."""
         assert conserves(None) is False
-        assert conserves({"n": 0, "mean": 1.0, "deficient": 0}) is False
+        assert conserves({"n": 0, "n_judged": 0, "mean": 1.0, "deficient": 0}) is False
 
     def test_a_deficient_ladder_fails_even_if_the_mean_looks_fine(self):
-        assert conserves({"n": 10, "mean": 1.0, "deficient": 1}) is False
+        assert conserves({"n": 10, "n_judged": 10, "mean": 1.0, "deficient": 1}) is False
 
     def test_healthy_population_passes(self):
-        assert conserves({"n": 10, "mean": 0.99, "deficient": 0}) is True
+        assert conserves({"n": 10, "n_judged": 10, "mean": 0.99, "deficient": 0}) is True
 
     def test_clean_day_requires_both_populations(self):
         """A day healthy only when uncensored is a day #920 is still live --
         today's expected state, and it must not be called clean."""
         per_day = {"2026-08-01": {
-            "uncensored": {"n": 5, "mean": 1.0, "deficient": 0},
-            "censored": {"n": 5, "mean": 0.31, "deficient": 5},
+            "uncensored": {"n": 5, "n_judged": 5, "mean": 1.0, "deficient": 0},
+            "censored": {"n": 5, "n_judged": 5, "mean": 0.31, "deficient": 5},
         }}
         assert earliest_clean_day(per_day) is None
 
     def test_clean_day_found_when_both_conserve(self):
         per_day = {
-            "2026-08-01": {"uncensored": {"n": 5, "mean": 1.0, "deficient": 0},
-                           "censored": {"n": 5, "mean": 0.31, "deficient": 5}},
-            "2026-08-02": {"uncensored": {"n": 5, "mean": 1.0, "deficient": 0},
-                           "censored": {"n": 5, "mean": 0.98, "deficient": 0}},
+            "2026-08-01": {"uncensored": {"n": 5, "n_judged": 5, "mean": 1.0,
+                                          "deficient": 0},
+                           "censored": {"n": 5, "n_judged": 5, "mean": 0.31,
+                                        "deficient": 5}},
+            "2026-08-02": {"uncensored": {"n": 5, "n_judged": 5, "mean": 1.0,
+                                          "deficient": 0},
+                           "censored": {"n": 5, "n_judged": 5, "mean": 0.98,
+                                        "deficient": 0}},
         }
         assert earliest_clean_day(per_day) == "2026-08-02"
 
     def test_censored_and_uncensored_are_reported_apart(self):
-        rows = (_ladder([0.0, 0.0, 0.14, 0.10], station="RKSI")
-                + _ladder([0.25, 0.25, 0.25, 0.25], station="KATL"))
+        rows = (_prod_ladder([0.0, 0.0, 0.14, 0.10], station="RKSI")
+                + _prod_ladder([0.24] * 4, cap_lo=0.02, cap_hi=0.02,
+                               station="KATL"))
         by_day = mass_by_day(group_ladders(rows))["2026-07-29"]
         assert by_day["censored"]["n"] == 1
         assert by_day["uncensored"]["n"] == 1
@@ -188,8 +218,9 @@ class TestScoreableAccrual:
 
 class TestReport:
     def test_it_refuses_to_clear_a_window_that_is_still_censoring(self):
-        rows = (_ladder([0.25] * 4, station="KATL")
-                + _ladder([0.0, 0.0, 0.14, 0.10], station="RKSI"))
+        rows = (_prod_ladder([0.24] * 4, cap_lo=0.02, cap_hi=0.02,
+                             station="KATL")
+                + _prod_ladder([0.0, 0.0, 0.14, 0.10], station="RKSI"))
         report = build_report(rows, "2026-07-24")
         assert "NO day in range conserves mass" in report
         assert "must not run" in report
@@ -214,8 +245,9 @@ class TestReport:
 
     def test_brief_reaches_the_same_verdict_as_the_full_report(self):
         """A smaller rendering, not a different analysis."""
-        rows = (_ladder([0.25] * 4, station="KATL")
-                + _ladder([0.0, 0.0, 0.14, 0.10], station="RKSI"))
+        rows = (_prod_ladder([0.24] * 4, cap_lo=0.02, cap_hi=0.02,
+                             station="KATL")
+                + _prod_ladder([0.0, 0.0, 0.14, 0.10], station="RKSI"))
         from src.scripts.m3_window_diagnostics import brief_report
         assert "no clean day" in brief_report(rows, "2026-07-24")
         assert "NO day in range conserves mass" in build_report(rows, "2026-07-24")
@@ -286,7 +318,8 @@ class TestRegressionAfterTheClockStarts:
     def _days(self, **days):
         """Build a mass_by_day-shaped dict: {day: {pop: stats}}."""
         def stats(mean, deficient):
-            return {"n": 10, "mean": mean, "deficient": deficient}
+            return {"n": 10, "n_judged": 10, "mean": mean,
+                    "deficient": deficient}
         return {day: {"censored": stats(*c), "uncensored": stats(*u)}
                 for day, (c, u) in days.items()}
 
@@ -324,10 +357,11 @@ class TestRegressionAfterTheClockStarts:
         clean_cen = _ladder([0.0, 0.5, 0.5], station="KDEN",
                             ts="2026-08-06T13:00:00+00:00",
                             end_date="2026-08-06")
-        # 0.25*2 = 0.50 -- far outside the 0.90-1.10 band
-        broken = _ladder([0.25] * 2, station="KORD",
-                         ts="2026-08-07T13:00:00+00:00",
-                         end_date="2026-08-07")
+        # 0.50 -- far outside the 0.90-1.10 band. Production-shaped, so both
+        # tails are open and the deficit CANNOT be excused as missing coverage.
+        broken = _prod_ladder([0.0, 0.25, 0.25], station="KORD",
+                              ts="2026-08-07T13:00:00+00:00",
+                              end_date="2026-08-07")
         out = brief_report(clean_unc + clean_cen + broken, "2026-08-06")
         assert "REGRESSION" in out
         assert "2026-08-07" in out
@@ -335,8 +369,8 @@ class TestRegressionAfterTheClockStarts:
 
     def test_the_offending_ladder_is_named_so_it_can_be_chased(self):
         from src.scripts.m3_window_diagnostics import deficient_ladders
-        good = _ladder([0.25] * 4)
-        bad = _ladder([0.25] * 2, station="KORD")
+        good = _prod_ladder([0.24] * 4, cap_lo=0.02, cap_hi=0.02)
+        bad = _prod_ladder([0.0, 0.25, 0.25], station="KORD")
         worst = deficient_ladders(group_ladders(good + bad))
         assert len(worst) == 1
         assert worst[0]["station"] == "KORD"
@@ -373,3 +407,122 @@ class TestAccrualExcludesThePartialDay:
                                          today="2026-08-07")
         assert rate == 31.0
         assert excluded is None
+
+
+class TestCoverageLimitedLadders:
+    """A ladder missing an open-ended tail bracket cannot reach 1.0 however
+    correct the arithmetic is -- the market offers nowhere for that tail to go.
+
+    Judging such a ladder measures Polymarket's listing rather than our
+    probabilities. Next-day markets are listed incrementally, so judging them
+    fires most mornings; a check that cries wolf daily is a check that gets
+    ignored, which is how #917 and #920 both survived for weeks.
+
+    The exemption is dangerous in exactly one direction -- excusing a real
+    defect -- so every test here pins a boundary of it.
+    """
+
+    def test_the_RCSS_case_is_excused(self):
+        """2026-08-07: next-day ladder, 10 brackets topping out at 89.60 with
+        no open cap, mass 0.813. Polymarket had not listed the upper brackets
+        yet. Reported, not judged."""
+        rows = [_b(0.0, -50.0, 73.4), _b(0.0, 73.4, 75.2), _b(0.0, 75.2, 77.0),
+                _b(0.0, 77.0, 78.8), _b(0.0004, 78.8, 80.6),
+                _b(0.0057, 80.6, 82.4), _b(0.0427, 82.4, 84.2),
+                _b(0.1608, 84.2, 86.0), _b(0.3069, 86.0, 87.8),
+                _b(0.2969, 87.8, 89.6)]
+        lad = group_ladders(rows)[0]
+        assert abs(lad["mass"] - 0.8134) < 1e-6
+        assert lad["open_bottom"] is True      # [-50, 73.4] is open
+        assert lad["open_top"] is False        # nothing above 89.6
+        assert lad["coverage_limited"] is True
+
+        stats = mass_by_day([lad])["2026-07-29"]["censored"]
+        assert stats["deficient"] == 0, "an excused ladder is not deficient"
+        assert stats["n_excused"] == 1
+        assert conserves(stats) is False, "one excused ladder is no evidence"
+
+    def test_a_920_SHAPED_LADDER_IS_STILL_JUDGED(self):
+        """The exemption must not reopen the hole it was written beside.
+
+        #920 zeroed brackets that still EXISTED, so both tails stay open and
+        the ladder remains fully judgeable. If this ever passes, the check has
+        stopped catching the defect it was built for.
+        """
+        # Open at both ends, zeroed top and bottom, 0.80 -- degC "both" shape.
+        lad = group_ladders(
+            _prod_ladder([0.0, 0.0, 0.30, 0.50, 0.0, 0.0]))[0]
+        assert lad["open_top"] is True
+        assert lad["open_bottom"] is True
+        assert lad["coverage_limited"] is False
+        assert lad["mass"] < MASS_LOW
+
+        stats = mass_by_day([lad])["2026-07-29"]["censored"]
+        assert stats["deficient"] == 1
+        assert stats["n_excused"] == 0
+        assert conserves(stats) is False
+
+    def test_a_coverage_limited_ladder_that_CONSERVES_still_counts(self):
+        """Being excusable is not being ignored. A short-range ladder summing
+        to 1.0 is ordinary evidence and must not be discarded -- discarding it
+        would shrink the judged population for no reason."""
+        lad = group_ladders(_ladder([0.25] * 4))[0]     # closed, sums 1.0
+        assert lad["coverage_limited"] is True
+        stats = mass_by_day([lad])["2026-07-29"]["uncensored"]
+        assert stats["n_judged"] == 1
+        assert stats["n_excused"] == 0
+        assert conserves(stats) is True
+
+    def test_an_EXCESS_is_never_excused(self):
+        """Missing brackets can only lose mass. An excess has no coverage
+        explanation, so coverage-limited or not, it is judged."""
+        lad = group_ladders(_ladder([0.4] * 4))[0]      # 1.60, closed
+        assert lad["coverage_limited"] is True
+        stats = mass_by_day([lad])["2026-07-29"]["uncensored"]
+        assert stats["n_excused"] == 0
+        assert stats["excessive"] == 1
+
+    def test_a_day_of_only_excused_ladders_does_not_pass(self):
+        """No judgeable ladder means no evidence, and absent evidence has
+        never been a pass in this tool."""
+        short = [_b(0.30, -50.0, 82.0), _b(0.20, 82.0, 84.0)]   # no open top
+        lad = group_ladders(short)[0]
+        assert lad["coverage_limited"] is True
+        stats = mass_by_day([lad])["2026-07-29"]["uncensored"]
+        assert stats["n_judged"] == 0
+        assert stats["mean"] is None
+        assert conserves(stats) is False
+
+    def test_an_excused_ladder_does_not_trigger_REGRESSION(self):
+        from src.scripts.m3_window_diagnostics import brief_report
+        healthy = (_prod_ladder([0.24] * 4, cap_lo=0.02, cap_hi=0.02,
+                                ts="2026-08-06T13:00:00+00:00",
+                                end_date="2026-08-06")
+                   + _prod_ladder([0.0, 0.5, 0.5],
+                                  ts="2026-08-06T13:00:00+00:00",
+                                  end_date="2026-08-06", station="KDEN"))
+        # next day: short, no open top -> excusable
+        excused = [_b(0.30, -50.0, 82.0, station="RCSS",
+                      ts="2026-08-07T06:00:00+00:00", end_date="2026-08-08"),
+                   _b(0.20, 82.0, 84.0, station="RCSS",
+                      ts="2026-08-07T06:00:00+00:00", end_date="2026-08-08")]
+        out = brief_report(healthy + excused, "2026-08-06")
+        assert "REGRESSION" not in out
+        assert "excused" in out, "excused ladders must stay visible"
+
+    def test_a_closed_ladder_short_after_the_clock_STILL_regresses(self):
+        """The other side of the same boundary: an open-ended ladder that is
+        short after the clock started is still a regression."""
+        from src.scripts.m3_window_diagnostics import brief_report
+        healthy = (_prod_ladder([0.24] * 4, cap_lo=0.02, cap_hi=0.02,
+                                ts="2026-08-06T13:00:00+00:00",
+                                end_date="2026-08-06")
+                   + _prod_ladder([0.0, 0.5, 0.5],
+                                  ts="2026-08-06T13:00:00+00:00",
+                                  end_date="2026-08-06", station="KDEN"))
+        broken = _prod_ladder([0.0, 0.30, 0.30], station="KORD",
+                              ts="2026-08-07T13:00:00+00:00",
+                              end_date="2026-08-07")
+        out = brief_report(healthy + broken, "2026-08-06")
+        assert "REGRESSION" in out
+        assert "2026-08-07" in out
