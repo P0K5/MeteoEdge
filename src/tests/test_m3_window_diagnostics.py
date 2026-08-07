@@ -526,3 +526,76 @@ class TestCoverageLimitedLadders:
         out = brief_report(healthy + broken, "2026-08-06")
         assert "REGRESSION" in out
         assert "2026-08-07" in out
+
+
+class TestTableAlignment:
+    """The kind tables are fixed-width, so a cell wider than its column does
+    not fail -- it silently shifts every column to its right. That is exactly
+    what happened when the "+Nexc" suffix was added to the cell and not to the
+    header, and it is invisible to every other test in this file.
+    """
+
+    def _worst_cell(self):
+        """The widest cell the formatter can produce at production scale."""
+        from src.scripts.m3_window_diagnostics import _period_stats
+        # 9999 judged (one bad) + 999 excused, all in one kind/population
+        bad = _prod_ladder([0.0, 0.10, 0.10])            # judged, deficient
+        good = _prod_ladder([0.0, 0.5, 0.5])             # judged, conserving
+        short = [_b(0.30, -50.0, 82.0), _b(0.20, 82.0, 84.0)]   # excused
+        ladders = group_ladders(bad)[:1] * 1
+        ladders += group_ladders(good) * 1
+        ladders += group_ladders(short) * 1
+        return _period_stats(ladders, censored=True)
+
+    def test_a_cell_fits_its_column(self):
+        from src.scripts.m3_window_diagnostics import KIND_COL_W, _period_stats
+        assert len(self._worst_cell()) <= KIND_COL_W
+        # and the synthetic extreme the constant was sized for
+        extreme = "1.00 (9999/9999 bad+999exc)"
+        assert len(extreme) <= KIND_COL_W, (
+            "KIND_COL_W must fit the widest cell _period_stats can emit")
+        assert _period_stats([], censored=True).strip() == "--"
+
+    def test_header_and_data_columns_start_at_the_same_offset(self):
+        """Render a report that actually contains an excused ladder, then
+        check the second column begins at the same character offset in the
+        header and in the data rows."""
+        rows = (_prod_ladder([0.0, 0.5, 0.5], station="KDEN")
+                + _prod_ladder([0.24] * 4, cap_lo=0.02, cap_hi=0.02)
+                + [_b(0.30, -50.0, 82.0, station="RCSS"),
+                   _b(0.20, 82.0, 84.0, station="RCSS")])
+        from src.scripts.m3_window_diagnostics import KIND_SHORT
+        report = build_report(rows, "2026-07-24")
+        lines = report.splitlines()
+        labels = tuple(label for label, _ in KIND_SHORT)
+
+        # Both fixed-width tables: the per-day one and the per-kind one. Prose
+        # in this report mentions "uncensored ladders", so headers are matched
+        # on their leading field rather than on the word appearing anywhere.
+        checked = 0
+        for i, ln in enumerate(lines):
+            if not (ln.startswith("   day ") or ln.startswith("   kind ")):
+                continue
+            if "uncensored" not in ln:
+                continue
+            # NB "uncensored" contains "censored", so the search must start
+            # past the end of the first header, not one char into it.
+            first = ln.index("uncensored")
+            offset = ln.index("censored", first + len("uncensored"))
+            for row in lines[i + 1:i + 9]:
+                body = row.strip()
+                if not body:
+                    break
+                if not (body.startswith("2026-") or body.startswith(labels)):
+                    continue
+                # the second cell must begin exactly where its header does, so
+                # the char before it is padding, not the tail of cell one
+                # The character just before the next column's start must be
+                # padding. If cell one overflowed, its tail sits there instead
+                # -- which is exactly how "ok  exc=1" ran into "1.000 n=1".
+                # A cell may legitimately BEGIN with spaces (a "--" cell), so
+                # only the collision is asserted, not the cell's first char.
+                assert len(row) > offset, f"row shorter than header: {row!r}"
+                assert row[offset - 1] == " ", f"column collision: {row!r}"
+                checked += 1
+        assert checked >= 2, f"expected rows from both tables, got {checked}"
