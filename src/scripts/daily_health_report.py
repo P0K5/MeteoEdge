@@ -457,25 +457,47 @@ def _ladder_mass(since_date: str) -> "dict[str, float] | None":
         log.exception("bracket_evals read failed")
         return None
 
-    groups: "dict[tuple, list[float]]" = {}
+    groups: "dict[tuple, list[dict]]" = {}
     for r in rows:
         ts = r.get("ts") or ""
         if ts[:10] < since_date:
             continue
-        p = r.get("p_yes_raw")
-        if p is None:
+        if r.get("p_yes_raw") is None:
             continue
         key = (r.get("station"), ts, (r.get("end_date") or "")[:10],
                r.get("is_next_day_flag"))
-        groups.setdefault(key, []).append(p)
+        groups.setdefault(key, []).append(r)
 
-    # A part-listed ladder is not evidence of leaking mass; require enough
-    # brackets that the sum means something.
-    totals = [sum(v) for v in groups.values() if len(v) >= 5]
+    # A ladder missing an open-ended tail bracket cannot reach 1.0 however
+    # correct the arithmetic -- the market offered nowhere for that mass to go.
+    # Excusing it is not optional politeness: next-day markets are listed
+    # incrementally, so judging them fires most mornings, and a daily email
+    # that cries wolf is a daily email nobody reads. Same rule and the same
+    # implementation as m3_window_diagnostics, so the two agree by construction
+    # rather than by two people remembering to keep them in step.
+    #
+    # Lazy import: m3_window_diagnostics imports M3_CLEAN_DATA_CLOCK_START from
+    # this module, so a top-level import here would be circular.
+    from src.scripts.m3_window_diagnostics import MASS_LOW, ladder_stats
+
+    totals, n_excused = [], 0
+    for brackets in groups.values():
+        # A part-listed ladder is not evidence of leaking mass; require enough
+        # brackets that the sum means something.
+        if len(brackets) < 5:
+            continue
+        stats = ladder_stats(brackets)
+        if stats["mass"] is None:
+            continue
+        if stats["coverage_limited"] and stats["mass"] < MASS_LOW:
+            n_excused += 1
+            continue
+        totals.append(stats["mass"])
     if not totals:
         return None
     return {
         "mean": sum(totals) / len(totals),
+        "n_excused": n_excused,
         # The worst ladder matters more than the mean: a defect confined to one
         # station or ladder shape is exactly what a mean hides, which is how
         # #917 stayed invisible while degC ladders looked fine.
@@ -483,6 +505,53 @@ def _ladder_mass(since_date: str) -> "dict[str, float] | None":
         "n_ladders": len(totals),
         "n_deficient": sum(1 for t in totals if t < 0.90),
     }
+
+
+def _scoreable_station_days(since_date: str) -> int:
+    """Distinct scoreable station-days since ``since_date`` -- the 300 bar.
+
+    **The definition is the gate's, verbatim**::
+
+        len({(station, settlement_date) for r in rows_after_exclusions})
+
+    Distinct ``(station, settlement_date)`` pairs across the WHOLE window, not
+    per poll day. That distinction is not pedantry. A settlement date is polled
+    both as next-day and as same-day, so a per-poll-day count summed over days
+    double-counts it -- which produced a "113/300, gate on 08-11" reading
+    against a true 85/300 and a mid-August date.
+
+    Reads ``bracket_evals`` for the same reason ``_ladder_mass`` does: it is
+    append-only and is what the gate scores, while ``scan_decisions`` upserts
+    on (station, ticker, date) and holds whatever a market last wrote. This
+    count used to read ``scan_decisions`` even after #943 moved the mass check
+    off it -- the two sat eight lines apart, disagreeing.
+
+    Mirrors the gate's exclusions: exact-zero model probabilities and
+    rail-clipped market prices.
+    """
+    try:
+        from src.scripts.bss_market_vs_model_report import (
+            RAIL_HIGH_CENTS, RAIL_LOW_CENTS, load_bracket_eval_rows)
+        rows = load_bracket_eval_rows()
+    except Exception:
+        log.exception("bracket_evals read failed")
+        return 0
+
+    pairs = set()
+    for r in rows:
+        if (r.get("ts") or "")[:10] < since_date:
+            continue
+        p, yes_ask, no_ask = (r.get("p_yes_raw"), r.get("yes_ask"),
+                              r.get("no_ask"))
+        if p is None or p == 0.0 or yes_ask is None or no_ask is None:
+            continue
+        if (yes_ask <= RAIL_LOW_CENTS or yes_ask >= RAIL_HIGH_CENTS
+                or no_ask <= RAIL_LOW_CENTS or no_ask >= RAIL_HIGH_CENTS):
+            continue
+        station, settle = r.get("station"), (r.get("end_date") or "")[:10]
+        if station and settle:
+            pairs.add((station, settle))
+    return len(pairs)
 
 
 def _build_m3_progress(db, today: datetime) -> list[str]:
@@ -508,6 +577,9 @@ def _build_m3_progress(db, today: datetime) -> list[str]:
                 f"({mass['n_deficient']}/{mass['n_ladders']} deficient) "
                 f"{'[OK]' if mass_ok else '[WARN]'}"
             )
+            if mass.get("n_excused"):
+                lines.append(f"                 ({mass['n_excused']} short ladder(s) "
+                             "excused -- no open-ended tail bracket)")
             if not mass_ok:
                 lines.append("                 ^ probabilities are leaking mass "
                              "(cf. #917, #920) -- station-days below are NOT clean")
@@ -518,21 +590,26 @@ def _build_m3_progress(db, today: datetime) -> list[str]:
         # error: on 2026-08-04 this reported "362/300 (121%)" -- i.e. run the
         # gate -- against a window that was 100% contaminated.
         clock_start = M3_CLEAN_DATA_CLOCK_START
-        station_days = db._conn.execute(
-            "SELECT COUNT(DISTINCT station || '-' || date) FROM scan_decisions "
-            "WHERE poll_ts >= ? AND raw_p_yes IS NOT NULL AND raw_p_yes != 0.0 "
-            "AND yes_ask > 1 AND yes_ask < 99 AND no_ask > 1 AND no_ask < 99",
-            (clock_start,),
-        ).fetchone()[0] or 0
+        station_days = _scoreable_station_days(clock_start)
 
         pct = station_days / 300 * 100
-        elapsed = max(1, (today.date() - date.fromisoformat(clock_start)).days)
+        # Inclusive day count. The clock start is itself a collecting day, so
+        # (today - start).days undercounts by one and doubled the reported
+        # accrual rate on 2026-08-07 -- "~58/day, bar in 4d" against a real
+        # ~28/day and ~8d. An optimistic date here is worse than no date: it
+        # invites running the gate before it has the power to decide anything.
+        elapsed = max(1, (today.date() - date.fromisoformat(clock_start)).days + 1)
         rate = station_days / elapsed
-        days_to_bar = max(0, int((300 - station_days) / max(1, rate)))
+        days_to_bar = (max(0, int((300 - station_days) / rate)) if rate > 0
+                       else None)
 
         lines.append(f"  Station-days:  {station_days}/300 ({pct:.0f}%) "
                      f"scoreable, since {clock_start}")
-        lines.append(f"  Accrual rate:  ~{rate:.0f}/day -> power bar ~{today.strftime('%b %d')} + {days_to_bar}d")
+        if days_to_bar is None:
+            lines.append("  Accrual rate:  no scoreable rows yet -- bar date unknown")
+        else:
+            lines.append(f"  Accrual rate:  ~{rate:.0f}/day -> power bar "
+                         f"~{today.strftime('%b %d')} + {days_to_bar}d")
         if station_days >= 300 and not mass_ok:
             lines.append("                 ^ bar met on COUNT only -- ladder mass is "
                          "not clean, so the gate must NOT run")

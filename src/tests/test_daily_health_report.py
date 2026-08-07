@@ -433,7 +433,6 @@ class TestBuildReport:
             "SELECT COUNT(*) FROM settlements": (28,),
             "SELECT COUNT(*) FROM guardrail_events": (12,),
             "SELECT COUNT(*) FROM trades WHERE close_reason": (0,),
-            "SELECT COUNT(DISTINCT station || '-' || date)": (194,),
             "SELECT COUNT(*) FROM scan_decisions WHERE poll_ts": (500,),
             "SELECT AVG(crps_score), COUNT(*) FROM emos_crps_log": (1.45, 27),
             "SELECT DISTINCT city FROM emos_calibration": [
@@ -442,10 +441,26 @@ class TestBuildReport:
         })
         # Mock get_emos_crps_count per city
         db.get_emos_crps_count = MagicMock(return_value=5)
-        result = build_report(db)
+        # Station-days come from bracket_evals now, not scan_decisions -- the
+        # gate's own source. 3 stations x 2 settlement dates = 6 station-days.
+        evals = []
+        for st in ("KATL", "KORD", "KDEN"):
+            for settle in ("2026-08-06", "2026-08-07"):
+                for j in range(11):
+                    evals.append({
+                        "station": st, "ts": "2026-08-07T12:00:00+00:00",
+                        "end_date": settle, "is_next_day_flag": 0,
+                        "p_yes_raw": 1 / 11,
+                        "bracket_low": -50.0 if j == 0 else 80.0 + (j - 1) * 2.0,
+                        "bracket_high": 200.0 if j == 10 else 80.0 + j * 2.0,
+                        "yes_ask": 30, "no_ask": 70,
+                    })
+        with patch("src.scripts.bss_market_vs_model_report."
+                   "load_bracket_eval_rows", return_value=evals):
+            result = build_report(db)
         assert "280/288" in result or "280" in result
         assert "1,500" in result
-        assert "194/300" in result
+        assert "6/300" in result
         assert "Singapore" in result
         assert "3,445 GEFS rows" in result
 
@@ -661,17 +676,30 @@ class TestLadderMassIndicator:
     """
 
     @staticmethod
-    def _rows(ladders, day="2026-08-07", station_prefix="ST"):
-        """ladders: list of (total, n_brackets). One ladder per station."""
+    def _rows(ladders, day="2026-08-07", station_prefix="ST", open_top=True,
+              yes_ask=30, no_ask=70, settle=None):
+        """ladders: list of (total, n_brackets). One ladder per station.
+
+        Production-shaped: brackets span ``[-50, 200]``, because a ladder
+        without open-ended tails is *coverage-limited* and its deficit is
+        deliberately excused -- a fixture lacking them tests nothing. Pass
+        ``open_top=False`` for the coverage-limited case (the RCSS ladder).
+        """
         out = []
         for i, (total, n) in enumerate(ladders):
+            top = 200.0 if open_top else 80.0 + (n - 1) * 2.0
+            edges = [-50.0] + [80.0 + k * 2.0 for k in range(n - 1)] + [top]
             for j in range(n):
                 out.append({
                     "station": f"{station_prefix}{i}",
                     "ts": f"{day}T12:00:00+00:00",
-                    "end_date": day,
+                    "end_date": settle or day,
                     "is_next_day_flag": 0,
                     "p_yes_raw": total / n,
+                    "bracket_low": edges[j],
+                    "bracket_high": edges[j + 1],
+                    "yes_ask": yes_ask,
+                    "no_ask": no_ask,
                 })
         return out
 
@@ -745,55 +773,29 @@ class TestLadderMassIndicator:
         against a window that was entirely contaminated. A count is only
         meaningful once the probabilities behind it conserve mass.
 
-        The two halves come from different sources now -- station-days from
-        scan_decisions, mass from bracket_evals -- so both are supplied, and
-        the mass side carries genuinely deficient ladders rather than relying
-        on an empty loader.
+        Both halves now come from bracket_evals -- the gate's own source -- so
+        one set of rows supplies the count and the mass together, and they
+        cannot disagree the way scan_decisions and bracket_evals did.
         """
-        conn = sqlite3.connect(":memory:")
-        conn.execute(
-            "CREATE TABLE scan_decisions (poll_ts TEXT, station TEXT, date TEXT, "
-            "raw_p_yes REAL, capped_p_yes REAL, yes_ask INTEGER, no_ask INTEGER)"
-        )
         now = datetime(2026, 8, 7, 14, 0, 0, tzinfo=timezone.utc)
-        # 400 scoreable station-days -- well past the 300 bar.
-        for d in range(20):
-            for st in range(20):
-                for _ in range(11):
-                    conn.execute(
-                        "INSERT INTO scan_decisions VALUES (?, ?, ?, ?, ?, ?, ?)",
-                        (now.isoformat(), f"ST{st}", f"2026-08-{d + 1:02d}",
-                         0.80 / 11, 0.80 / 11, 20, 82),
-                    )
-        conn.commit()
-        db = MagicMock()
-        db._conn = conn
-        leaking = self._rows([(0.80, 11)])
-        with patch("src.scripts.bss_market_vs_model_report.load_bracket_eval_rows",
-                   return_value=leaking):
-            text = "\n".join(_build_m3_progress(db, now))
-        assert "300" in text and "/300" in text          # bar reported met
+        # 30 stations x 11 settlement dates = 330 station-days, past the bar,
+        # every ladder leaking (0.80 -- what production showed under #920).
+        leaking = []
+        for d in range(11):
+            leaking += self._rows([(0.80, 11)] * 30, day="2026-08-07",
+                                  settle=f"2026-08-{6 + d:02d}")
+        text = self._text(leaking, today=now)
+        assert "/300" in text and "330/300" in text      # bar reported met
         assert "leaking mass" in text                    # but mass is not clean
         assert "the gate must NOT run" in text
 
     def test_station_days_count_from_the_clock_constant(self):
         """The clock has moved twice (#917, #920). Rows before it are not
         merely old -- they were produced by a different model."""
-        conn = sqlite3.connect(":memory:")
-        conn.execute(
-            "CREATE TABLE scan_decisions (poll_ts TEXT, station TEXT, date TEXT, "
-            "raw_p_yes REAL, capped_p_yes REAL, yes_ask INTEGER, no_ask INTEGER)"
-        )
-        before = "2026-07-25T14:00:00+00:00"
-        after = M3_CLEAN_DATA_CLOCK_START + "T14:00:00+00:00"
-        for ts, st in ((before, "OLD"), (after, "NEW")):
-            conn.execute("INSERT INTO scan_decisions VALUES (?, ?, ?, ?, ?, ?, ?)",
-                         (ts, st, "2026-08-07", 0.25, 0.25, 20, 82))
-        conn.commit()
-        db = MagicMock()
-        db._conn = conn
-        text = "\n".join(_build_m3_progress(db, datetime(2026, 8, 7, 14, 0, 0,
-                                                         tzinfo=timezone.utc)))
+        rows = (self._rows([(1.0, 11)], day="2026-07-25", station_prefix="OLD")
+                + self._rows([(1.0, 11)], day=M3_CLEAN_DATA_CLOCK_START,
+                             station_prefix="NEW"))
+        text = self._text(rows)
         assert "1/300" in text
         assert M3_CLEAN_DATA_CLOCK_START in text
 
@@ -801,21 +803,120 @@ class TestLadderMassIndicator:
         """The bar counts SCOREABLE station-days. A station-day whose only rows
         are zero-artifact or rail-clipped contributes nothing to the gate, and
         must not inflate the count (#932)."""
-        conn = sqlite3.connect(":memory:")
-        conn.execute(
-            "CREATE TABLE scan_decisions (poll_ts TEXT, station TEXT, date TEXT, "
-            "raw_p_yes REAL, capped_p_yes REAL, yes_ask INTEGER, no_ask INTEGER)"
+        day = M3_CLEAN_DATA_CLOCK_START
+        rows = (
+            # #820 artifact: p_yes_raw == 0.0 -> excluded
+            self._rows([(0.0, 11)], day=day, station_prefix="ZERO")
+            # rail-clipped market price -> excluded
+            + self._rows([(1.0, 11)], day=day, station_prefix="RAIL",
+                         yes_ask=1, no_ask=99)
+            # scoreable
+            + self._rows([(1.0, 11)], day=day, station_prefix="GOOD")
         )
-        ts = M3_CLEAN_DATA_CLOCK_START + "T14:00:00+00:00"
-        rows = [("ZERO", 0.0, 20, 82),      # #820 artifact -> excluded
-                ("RAIL", 0.25, 1, 99),      # rail-clipped  -> excluded
-                ("GOOD", 0.25, 20, 82)]     # scoreable
-        for st, p, ya, na in rows:
-            conn.execute("INSERT INTO scan_decisions VALUES (?, ?, ?, ?, ?, ?, ?)",
-                         (ts, st, "2026-08-07", p, p, ya, na))
-        conn.commit()
-        db = MagicMock()
-        db._conn = conn
-        text = "\n".join(_build_m3_progress(db, datetime(2026, 8, 7, 14, 0, 0,
-                                                         tzinfo=timezone.utc)))
+        text = self._text(rows)
         assert "1/300" in text
+
+
+class TestHealthReportAgreesWithTheGate:
+    """The health report, the diagnostic and the gate must count one thing.
+
+    They have silently diverged twice. #943 moved the mass check to
+    ``bracket_evals`` and left the station-day count on ``scan_decisions``,
+    eight lines apart in the same function. Then the mass check gained no
+    coverage-limited exemption while the diagnostic did, so on 2026-08-07 the
+    email warned "probabilities are leaking mass -- station-days below are NOT
+    clean" about a ladder the diagnostic had correctly excused.
+
+    Both were invisible to every other test here, because each tool was only
+    ever tested against itself.
+    """
+
+    def _rows(self, station, settle, total=1.0, n=11, open_top=True,
+              yes_ask=30, no_ask=70, day="2026-08-07"):
+        top = 200.0 if open_top else 80.0 + (n - 1) * 2.0
+        edges = [-50.0] + [80.0 + k * 2.0 for k in range(n - 1)] + [top]
+        return [{"station": station, "ts": f"{day}T12:00:00+00:00",
+                 "end_date": settle, "is_next_day_flag": 0,
+                 "p_yes_raw": total / n,
+                 "bracket_low": edges[j], "bracket_high": edges[j + 1],
+                 "yes_ask": yes_ask, "no_ask": no_ask} for j in range(n)]
+
+    def test_station_days_match_the_gates_own_definition(self):
+        """`bss_market_vs_model_report` counts distinct (station,
+        settlement_date) over the whole window. Anything else -- notably a
+        per-poll-day count summed across days -- double-counts a settlement
+        date polled as both next-day and same-day."""
+        from src.scripts.daily_health_report import _scoreable_station_days
+        rows = []
+        for st in ("A", "B"):
+            for settle in ("2026-08-06", "2026-08-07", "2026-08-08"):
+                # same pair seen at two different poll times
+                rows += self._rows(st, settle, day="2026-08-06")
+                rows += self._rows(st, settle, day="2026-08-07")
+        with patch("src.scripts.bss_market_vs_model_report."
+                   "load_bracket_eval_rows", return_value=rows):
+            n = _scoreable_station_days("2026-08-06")
+        gate_definition = len({(r["station"], r["end_date"]) for r in rows})
+        assert n == gate_definition == 6, (
+            "a pair polled twice must count once, not twice")
+
+    def test_the_mass_exemption_matches_the_diagnostic(self):
+        """One ladder, judged by both tools, must get the same answer."""
+        from src.scripts.daily_health_report import _ladder_mass
+        from src.scripts.m3_window_diagnostics import (
+            deficient_ladders, group_ladders)
+        # The RCSS shape: short, no open top -> excusable by both.
+        rows = (self._rows("GOOD", "2026-08-07")
+                + self._rows("RCSS", "2026-08-08", total=0.813, n=10,
+                             open_top=False))
+        with patch("src.scripts.bss_market_vs_model_report."
+                   "load_bracket_eval_rows", return_value=rows):
+            mass = _ladder_mass("2026-08-06")
+
+        diag_excused = [lad for lad in deficient_ladders(group_ladders(rows))
+                        if lad["coverage_limited"]]
+        assert mass["n_deficient"] == 0, "health report must not flag it"
+        assert mass["n_excused"] == len(diag_excused) == 1, (
+            "both tools must excuse the same ladder")
+
+    def test_a_real_defect_is_flagged_by_BOTH(self):
+        """The other side of the boundary -- agreement must not mean silence."""
+        from src.scripts.daily_health_report import _ladder_mass
+        from src.scripts.m3_window_diagnostics import (
+            deficient_ladders, group_ladders)
+        # #920 shape: open at both ends, still short.
+        rows = self._rows("KORD", "2026-08-07", total=0.80)
+        with patch("src.scripts.bss_market_vs_model_report."
+                   "load_bracket_eval_rows", return_value=rows):
+            mass = _ladder_mass("2026-08-06")
+        diag_bad = [lad for lad in deficient_ladders(group_ladders(rows))
+                    if not lad["coverage_limited"]]
+        assert mass["n_deficient"] == len(diag_bad) == 1
+        assert mass["n_excused"] == 0
+
+    def test_the_clock_start_day_counts_as_a_collecting_day(self):
+        """``(today - start).days`` undercounts by one: the start day is
+        itself collecting. On 2026-08-07 that halved the divisor and printed
+        "~58/day -> bar in 4d" against a real ~28/day and ~8d.
+
+        An optimistic date is worse than none -- it invites running the gate
+        before it has the power to decide anything.
+        """
+        rows = []
+        for st in range(28):
+            for settle in ("2026-08-06", "2026-08-07"):
+                rows += self._rows(f"ST{st}", settle)
+        today = datetime(2026, 8, 7, 14, 0, 0, tzinfo=timezone.utc)
+        db = MagicMock()
+        db._conn = sqlite3.connect(":memory:")
+        db._conn.execute(
+            "CREATE TABLE scan_decisions (poll_ts TEXT, station TEXT, "
+            "date TEXT, raw_p_yes REAL, capped_p_yes REAL, yes_ask INTEGER, "
+            "no_ask INTEGER)")
+        with patch("src.scripts.bss_market_vs_model_report."
+                   "load_bracket_eval_rows", return_value=rows):
+            text = "\n".join(_build_m3_progress(db, today))
+        # 56 station-days over 2026-08-06 AND 2026-08-07 = two days, ~28/day.
+        assert "56/300" in text
+        assert "~28/day" in text, f"off-by-one in the day count: {text!r}"
+        assert "~28/day" in text and "+ 8d" in text
