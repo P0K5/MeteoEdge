@@ -120,6 +120,19 @@ LADDER_KINDS = ("degF pre-#917 (1.0F)", "degF post-#917 (2.0F)",
 KIND_SHORT = (("F1.0", LADDER_KINDS[0]), ("F2.0", LADDER_KINDS[1]),
               ("degC", LADDER_KINDS[2]), ("othr", "other"))
 
+#: Column width for the kind tables, used by the headers AND the cells so the
+#: two cannot drift apart. They did once: widening a cell to carry the
+#: "+Nexc" suffix without widening its header shifted every column to its
+#: right. Sized for the widest cell this can produce at production scale --
+#: "1.00 (9999/9999 bad+999exc)" -- because a cell that overflows silently
+#: breaks alignment rather than failing.
+KIND_COL_W = 28
+
+#: Same reasoning for the per-day table. Its cells grew an " exc=N" suffix and
+#: overflowed a 30-wide column, running one cell straight into the next
+#: ("... ok  exc=11.000 n=1 ..."). Sized for the widest cell _cell can emit.
+DAY_COL_W = 36
+
 
 def classify_width(width: "float | None") -> str:
     """Map a modal bracket width to the parser version that produced it."""
@@ -563,12 +576,14 @@ def build_report(rows: "list[dict]", since: str) -> str:
         "   censored ladders lose it to #917 AND #920 -- so a deficit that",
         "   persists only in the censored column is #920, still live.",
         "",
-        f"   {'day':<12}{'uncensored':<30}{'censored':<30}",
+        f"   {'day':<12}{'uncensored':<{DAY_COL_W}}"
+        f"{'censored':<{DAY_COL_W}}",
     ]
     for day in sorted(masses):
         row = masses[day]
-        out.append(f"   {day:<12}{_cell(row.get('uncensored')):<30}"
-                   f"{_cell(row.get('censored')):<30}")
+        out.append(f"   {day:<12}"
+                   f"{_cell(row.get('uncensored')):<{DAY_COL_W}}"
+                   f"{_cell(row.get('censored')):<{DAY_COL_W}}")
 
     out += [
         "",
@@ -580,14 +595,16 @@ def build_report(rows: "list[dict]", since: str) -> str:
         "   #920's contribution is only readable by comparing censored to",
         "   uncensored WITHIN a kind, where the mix is held constant.",
         "",
-        f"   {'kind':<8}{'uncensored':<20}{'censored':<20}{'ladders':>8}",
+        f"   {'kind':<8}{'uncensored':<{KIND_COL_W}}"
+        f"{'censored':<{KIND_COL_W}}{'ladders':>8}",
     ]
     for kind_label, kind in KIND_SHORT:
         sub = [lad for lad in ladders if lad["kind"] == kind]
         if not sub:
             continue
-        out.append(f"   {kind_label:<8}{_period_stats(sub, False):<23}"
-                   f"{_period_stats(sub, True):<23}{len(sub):>8}")
+        out.append(f"   {kind_label:<8}"
+                   f"{_period_stats(sub, False):<{KIND_COL_W}}"
+                   f"{_period_stats(sub, True):<{KIND_COL_W}}{len(sub):>8}")
     out.append("")
     out.append("   A kind whose censored and uncensored columns agree is a kind")
     out.append("   #920 is NOT the main mass sink for. A deficit present in both")
@@ -751,14 +768,16 @@ def brief_report(rows: "list[dict]", since: str) -> str:
     # large degF improvement barely moves a pooled mean. Comparing censored to
     # uncensored *within* a kind controls for that mix, which is the only way
     # to read #920's contribution off this data.
-    out.append(f"{'kind':<7}{'per':<5}{'uncensored':<16}{'censored':<16}")
+    out.append(f"{'kind':<7}{'per':<5}{'uncensored':<{KIND_COL_W}}"
+               f"{'censored':<{KIND_COL_W}}")
     for kind_label, kind in KIND_SHORT:
         for label, group in periods:
             sub = [x for x in group if x["kind"] == kind]
             if not sub:
                 continue
-            out.append(f"{kind_label:<7}{label:<5}{_period_stats(sub, False):<23}"
-                       f"{_period_stats(sub, True):<23}")
+            out.append(f"{kind_label:<7}{label:<5}"
+                       f"{_period_stats(sub, False):<{KIND_COL_W}}"
+                       f"{_period_stats(sub, True):<{KIND_COL_W}}")
 
     # Coverage, per kind. If the low-mass kinds are exactly the ones without
     # open-ended end brackets, their deficit is the market's shape rather than
