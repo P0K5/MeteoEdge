@@ -347,6 +347,60 @@ def earliest_clean_day(per_day: "dict[str, dict]") -> "str | None":
     return None
 
 
+def deficient_days_since(per_day: "dict[str, dict]", start: "str | None") -> "list[str]":
+    """Days at or after ``start`` that FAIL to conserve mass.
+
+    ``earliest_clean_day`` answers "when could the clock have started" and
+    stops at the first success -- it cannot see a day that breaks afterwards.
+    That is the wrong question once the clock is running: what matters then is
+    whether the window is *still* clean, and a single deficient day after the
+    start date is a regression that voids everything collected since.
+    """
+    if not start:
+        return []
+    return [day for day in sorted(per_day)
+            if day >= start
+            and not (conserves(per_day[day].get("censored"))
+                     and conserves(per_day[day].get("uncensored")))]
+
+
+def deficient_ladders(ladders: "list[dict]") -> "list[dict]":
+    """Individual ladders outside the mass band, worst first.
+
+    Naming them is the difference between "one ladder is bad" and being able
+    to go look at it. A deficient ladder is usually benign -- a market listed
+    mid-day is genuinely incomplete -- but "usually" is exactly the judgement
+    that needs the station and timestamp to make.
+    """
+    bad = [lad for lad in ladders
+           if lad["mass"] is not None
+           and not (MASS_LOW <= lad["mass"] <= MASS_HIGH)]
+    return sorted(bad, key=lambda lad: abs(lad["mass"] - 1.0), reverse=True)
+
+
+def accrual_rate(scoreable: "dict[str, int]",
+                 today: "str | None" = None) -> "tuple[float, int, str | None]":
+    """Scoreable station-days per day over COMPLETE days only.
+
+    The current UTC day is partial by construction -- a run at 07:30 has seen
+    a few hours of polls -- so including it drags the mean down and overstates
+    how long the 300 bar will take. Returns ``(rate, n_complete_days,
+    excluded_day)`` so the report can say which day it left out rather than
+    quietly dropping data.
+    """
+    if today is None:
+        from datetime import datetime, timezone
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    complete = {d: n for d, n in scoreable.items() if d < today}
+    excluded = today if today in scoreable else None
+    if not complete:
+        # Nothing but today -- fall back to it rather than reporting zero,
+        # but the caller still sees excluded=None so it says nothing false.
+        total = sum(scoreable.values())
+        return (total / max(1, len(scoreable)), len(scoreable), None)
+    return (sum(complete.values()) / len(complete), len(complete), excluded)
+
+
 def scoreable_station_days(rows: "list[dict]") -> "dict[str, int]":
     """Station-days per day that survive the gate's own exclusions.
 
@@ -472,15 +526,43 @@ def build_report(rows: "list[dict]", since: str) -> str:
     for day in sorted(scoreable):
         total += scoreable[day]
         out.append(f"   {day:<12}{scoreable[day]:>11}")
-    n_days = len(scoreable) or 1
+    rate, n_complete, excluded = accrual_rate(scoreable)
     out.append("")
-    out.append(f"   mean {total / n_days:.1f} scoreable station-days/day "
-               f"over {n_days} day(s)")
+    out.append(f"   mean {rate:.1f} scoreable station-days/day "
+               f"over {n_complete} complete day(s)")
+    if excluded:
+        out.append(f"   ({excluded} excluded -- today is partial and would "
+                   f"understate the rate)")
 
     out += ["", "=" * 78, "VERDICT", "=" * 78, ""]
-    if clean:
+    regressed = deficient_days_since(masses, clean)
+    if clean and regressed:
+        out += [
+            f"   REGRESSION -- mass conserved from {clean}, but "
+            f"{len(regressed)} day(s) since have",
+            "   deficient ladders: " + ", ".join(regressed),
+            "",
+            "   The clock started, and something has broken it. Every station-day",
+            "   collected since the first deficient day is suspect, and the gate",
+            "   must not run until this is explained or the window restarted.",
+        ]
+        worst = deficient_ladders(ladders)[:5]
+        if worst:
+            out += ["", "   Worst offenders:"]
+            for lad in worst:
+                out.append(f"     {lad['mass']:.3f}  {lad['station']:<6} "
+                           f"{lad['ts']}  {lad['kind']}  "
+                           f"n={lad['n_brackets']} cut={lad['truncation']}")
+            out += [
+                "",
+                "   A single incomplete ladder is often benign -- a market listed",
+                "   mid-day has genuinely fewer brackets. Check these before",
+                "   concluding either way.",
+            ]
+    elif clean:
         out += [
             f"   Earliest day where BOTH populations conserve mass: {clean}",
+            "   No deficient day since. The window is clean.",
             "",
             "   #917 and #920 are both merged and deployed, so on a window at or",
             "   after 2026-08-06 this is the clock still running clean. Mass",
@@ -502,7 +584,6 @@ def build_report(rows: "list[dict]", since: str) -> str:
                 "   censored -- #920's signature. Expected before 2026-08-06;",
                 "   after it, a renormalisation regression.",
             ]
-    rate = total / n_days
     if rate > 0:
         out += ["",
                 f"   At {rate:.1f} scoreable station-days/day, 300 takes "
@@ -535,11 +616,13 @@ def brief_report(rows: "list[dict]", since: str) -> str:
 
     census = width_census(ladders)
     deployed = deploy_day(census)
-    clean = earliest_clean_day(mass_by_day(ladders))
+    masses = mass_by_day(ladders)
+    clean = earliest_clean_day(masses)
+    regressed = deficient_days_since(masses, clean)
     scoreable = scoreable_station_days(
         [r for r in rows if (r.get("ts") or "")[:10] >= since])
     days = sorted({lad["day"] for lad in ladders})
-    rate = sum(scoreable.values()) / max(1, len(scoreable))
+    rate, _n_complete, _excluded = accrual_rate(scoreable)
 
     out = [f"M3 WINDOW  {days[0]}..{days[-1]}"]
     if deployed:
@@ -588,8 +671,15 @@ def brief_report(rows: "list[dict]", since: str) -> str:
             out.append(f"{kind_label:<7}{cut:<7}{len(grp):<7}"
                        f"{sum(x['mass'] for x in grp) / len(grp):<7.2f}")
 
-    out.append(f"scoreable {rate:.1f}/day")
-    if clean:
+    out.append(f"scoreable {rate:.1f}/day (complete days only)")
+    if clean and regressed:
+        out.append(f"VERDICT: REGRESSION -- clean from {clean}, "
+                   f"{len(regressed)} bad day(s) since: {', '.join(regressed)}")
+        for lad in deficient_ladders(ladders)[:3]:
+            out.append(f"  {lad['mass']:.3f} {lad['station']} {lad['ts']} "
+                       f"n={lad['n_brackets']}")
+        out.append("         gate must not run until explained")
+    elif clean:
         out.append(f"VERDICT: mass conserved from {clean} (clock start 2026-08-06)")
     else:
         out.append("VERDICT: no clean day -- gate must not run")
