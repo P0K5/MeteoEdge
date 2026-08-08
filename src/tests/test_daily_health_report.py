@@ -894,18 +894,27 @@ class TestHealthReportAgreesWithTheGate:
         assert mass["n_deficient"] == len(diag_bad) == 1
         assert mass["n_excused"] == 0
 
-    def test_the_clock_start_day_counts_as_a_collecting_day(self):
-        """``(today - start).days`` undercounts by one: the start day is
-        itself collecting. On 2026-08-07 that halved the divisor and printed
-        "~58/day -> bar in 4d" against a real ~28/day and ~8d.
+    def test_accrual_is_marginal_not_average(self):
+        """The opening day opens TWO settlement dates -- it polls same-day and
+        next-day together -- so ``total / elapsed`` is inflated by it forever
+        and only decays toward the truth.
 
-        An optimistic date is worse than none -- it invites running the gate
-        before it has the power to decide anything.
+        Measured in production: 08-06 contributed 56 station-days, 08-07 and
+        08-08 contributed 28 each. The report read ~42/day then ~38/day while
+        the real increment was 28 both times, understating the wait to 300 by
+        three days. Erring early is the bad direction -- it invites running the
+        gate before it can decide anything.
+
+        This fixture reproduces that shape: two poll days covering three
+        settlement dates. Average = 84/2 = 42. Marginal = 28.
         """
         rows = []
         for st in range(28):
-            for settle in ("2026-08-06", "2026-08-07"):
-                rows += self._rows(f"ST{st}", settle)
+            # poll day 1 prices today and tomorrow; poll day 2 the same
+            rows += self._rows(f"ST{st}", "2026-08-06", day="2026-08-06")
+            rows += self._rows(f"ST{st}", "2026-08-07", day="2026-08-06")
+            rows += self._rows(f"ST{st}", "2026-08-07", day="2026-08-07")
+            rows += self._rows(f"ST{st}", "2026-08-08", day="2026-08-07")
         today = datetime(2026, 8, 7, 14, 0, 0, tzinfo=timezone.utc)
         db = MagicMock()
         db._conn = sqlite3.connect(":memory:")
@@ -916,7 +925,20 @@ class TestHealthReportAgreesWithTheGate:
         with patch("src.scripts.bss_market_vs_model_report."
                    "load_bracket_eval_rows", return_value=rows):
             text = "\n".join(_build_m3_progress(db, today))
-        # 56 station-days over 2026-08-06 AND 2026-08-07 = two days, ~28/day.
-        assert "56/300" in text
-        assert "~28/day" in text, f"off-by-one in the day count: {text!r}"
-        assert "~28/day" in text and "+ 8d" in text
+        assert "84/300" in text
+        assert "~28/day" in text, f"averaged instead of marginal: {text!r}"
+        assert "~42/day" not in text
+        # (300-84)/28 = 7.7 -> 8 whole days. Rounding DOWN would promise the
+        # bar a day before it is met, which is the same optimism in miniature.
+        assert "+ 8d" in text, text
+
+    def test_marginal_rate_is_the_widest_settlement_date(self):
+        """A fully-covered settlement date holds one station-day per
+        contributing station, so it IS the daily increment -- and a partially
+        collected newest date cannot drag it down."""
+        from src.scripts.daily_health_report import _marginal_accrual
+        pairs = {(f"ST{i}", "2026-08-06") for i in range(28)}
+        pairs |= {(f"ST{i}", "2026-08-07") for i in range(28)}
+        pairs |= {("ST0", "2026-08-08")}          # today, barely started
+        assert _marginal_accrual(pairs) == 28
+        assert _marginal_accrual(set()) == 0
