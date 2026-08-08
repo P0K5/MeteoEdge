@@ -508,7 +508,38 @@ def _ladder_mass(since_date: str) -> "dict[str, float] | None":
 
 
 def _scoreable_station_days(since_date: str) -> int:
-    """Distinct scoreable station-days since ``since_date`` -- the 300 bar.
+    """Count of distinct scoreable station-days -- see ``_scoreable_pairs``."""
+    return len(_scoreable_pairs(since_date))
+
+
+def _marginal_accrual(pairs: "set[tuple[str, str]]") -> int:
+    """Station-days gained per additional COLLECTING DAY.
+
+    Not ``total / elapsed``. Each calendar day opens exactly one new settlement
+    date, but the FIRST day opens two at once -- it polls same-day and next-day
+    together -- so an average is permanently inflated by that opening day and
+    decays toward the true rate without ever reaching it.
+
+    Measured: 2026-08-06 contributed 56 station-days (two settlement dates),
+    every day after contributed 28 (one). The average read 42/day then 38/day
+    while the real marginal rate sat at 28 both times, understating the wait to
+    the 300 bar by three days.
+
+    A fully-covered settlement date holds one station-day per contributing
+    station, so the widest settlement date in the window IS the daily
+    increment. Bounded above by the station count, which is why a partially
+    collected newest date cannot inflate it.
+    """
+    if not pairs:
+        return 0
+    per_settlement: "dict[str, int]" = {}
+    for _station, settle in pairs:
+        per_settlement[settle] = per_settlement.get(settle, 0) + 1
+    return max(per_settlement.values())
+
+
+def _scoreable_pairs(since_date: str) -> "set[tuple[str, str]]":
+    """Distinct scoreable ``(station, settlement_date)`` pairs -- the 300 bar.
 
     **The definition is the gate's, verbatim**::
 
@@ -535,9 +566,9 @@ def _scoreable_station_days(since_date: str) -> int:
         rows = load_bracket_eval_rows()
     except Exception:
         log.exception("bracket_evals read failed")
-        return 0
+        return set()
 
-    pairs = set()
+    pairs: "set[tuple[str, str]]" = set()
     for r in rows:
         if (r.get("ts") or "")[:10] < since_date:
             continue
@@ -551,7 +582,7 @@ def _scoreable_station_days(since_date: str) -> int:
         station, settle = r.get("station"), (r.get("end_date") or "")[:10]
         if station and settle:
             pairs.add((station, settle))
-    return len(pairs)
+    return pairs
 
 
 def _build_m3_progress(db, today: datetime) -> list[str]:
@@ -590,17 +621,17 @@ def _build_m3_progress(db, today: datetime) -> list[str]:
         # error: on 2026-08-04 this reported "362/300 (121%)" -- i.e. run the
         # gate -- against a window that was 100% contaminated.
         clock_start = M3_CLEAN_DATA_CLOCK_START
-        station_days = _scoreable_station_days(clock_start)
+        pairs = _scoreable_pairs(clock_start)
+        station_days = len(pairs)
 
         pct = station_days / 300 * 100
-        # Inclusive day count. The clock start is itself a collecting day, so
-        # (today - start).days undercounts by one and doubled the reported
-        # accrual rate on 2026-08-07 -- "~58/day, bar in 4d" against a real
-        # ~28/day and ~8d. An optimistic date here is worse than no date: it
-        # invites running the gate before it has the power to decide anything.
-        elapsed = max(1, (today.date() - date.fromisoformat(clock_start)).days + 1)
-        rate = station_days / elapsed
-        days_to_bar = (max(0, int((300 - station_days) / rate)) if rate > 0
+        # MARGINAL, not average. An average is inflated forever by the opening
+        # day, which opens two settlement dates at once -- it read 42/day and
+        # then 38/day against a measured 28, which is three days of optimism
+        # on the date the gate gets planned around. Erring early is the bad
+        # direction: it invites running the gate before it can decide anything.
+        rate = _marginal_accrual(pairs)
+        days_to_bar = (max(0, -(-(300 - station_days) // rate)) if rate > 0
                        else None)
 
         lines.append(f"  Station-days:  {station_days}/300 ({pct:.0f}%) "
