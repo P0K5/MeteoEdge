@@ -16,6 +16,7 @@ import json
 import os
 import re
 import sys
+import time
 from pathlib import Path
 
 import requests
@@ -42,6 +43,16 @@ SUMMARY_MAX_CHARS = 65535
 
 class NimDegradedError(RuntimeError):
     """Raised when the NIM backend reports the model function as DEGRADED."""
+
+
+class NimTimeoutError(RuntimeError):
+    """Raised when the NIM backend keeps timing out after all retries."""
+
+
+NIM_CONNECT_TIMEOUT = 15
+NIM_READ_TIMEOUT = 150
+NIM_MAX_ATTEMPTS = 3
+NIM_RETRY_BACKOFF_SECONDS = (10, 30)
 
 
 def _env(key: str) -> str:
@@ -338,7 +349,34 @@ def call_nim(
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
-    resp = requests.post(url, json=payload, headers=headers, timeout=120)
+
+    last_timeout_exc = None
+    for attempt in range(1, NIM_MAX_ATTEMPTS + 1):
+        try:
+            resp = requests.post(
+                url,
+                json=payload,
+                headers=headers,
+                timeout=(NIM_CONNECT_TIMEOUT, NIM_READ_TIMEOUT),
+            )
+        except requests.exceptions.Timeout as exc:
+            last_timeout_exc = exc
+            if attempt < NIM_MAX_ATTEMPTS:
+                backoff = NIM_RETRY_BACKOFF_SECONDS[
+                    min(attempt - 1, len(NIM_RETRY_BACKOFF_SECONDS) - 1)
+                ]
+                print(
+                    f"[ai_reviewer] NIM call timed out (attempt {attempt}/"
+                    f"{NIM_MAX_ATTEMPTS}), retrying in {backoff}s...",
+                    file=sys.stderr,
+                )
+                time.sleep(backoff)
+                continue
+            raise NimTimeoutError(
+                f"NIM model {model} timed out after {NIM_MAX_ATTEMPTS} attempts: {exc}"
+            ) from last_timeout_exc
+        break
+
     if not resp.ok:
         body = resp.text[:2000]
         # Surface degraded/unavailable NIM backend as a distinct exception so
@@ -588,6 +626,28 @@ def _run(
             review_text=skip_msg,
         )
         print("[ai_reviewer] Done — verdict=SKIPPED (NIM degraded)")
+        return
+    except NimTimeoutError as exc:
+        # NIM kept timing out despite retries — treat as a transient
+        # infrastructure issue rather than blocking the PR indefinitely.
+        print(f"[ai_reviewer] NIM timed out repeatedly, skipping review: {exc}")
+        skip_msg = (
+            f"⚠️ AI review skipped — NIM model `{nim_model}` did not respond "
+            f"within {NIM_READ_TIMEOUT}s after {NIM_MAX_ATTEMPTS} attempts.\n\n"
+            f"This check passes automatically to avoid blocking PRs during "
+            f"a transient network/latency issue. The review will run "
+            f"normally next time the model responds in time.\n\n"
+            f"Error detail: {exc}"
+        )
+        create_check_run(
+            owner=repo_owner,
+            repo=repo_name,
+            head_sha=pr_head_sha,
+            token=github_token,
+            verdict="PASS",
+            review_text=skip_msg,
+        )
+        print("[ai_reviewer] Done — verdict=SKIPPED (NIM timeout)")
         return
 
     # 8. Parse verdict
