@@ -2352,6 +2352,24 @@ For issues beyond this runbook, escalate to:
 
 ---
 
+## AI PR Review
+
+`AI / NVIDIA NIM review` (`scripts/ai_reviewer.py`, workflow `.github/workflows/ai-review.yml`) is a required check on every PR. It builds a review packet (diff, changed files, graphify context, linked-issue acceptance criteria, CLAUDE.md policy summary) and sends it to NVIDIA NIM (`z-ai/glm-5.2`) for a `PASS`/`BLOCK` verdict, posted as both a Check Run and a PR comment.
+
+### Transient-failure handling (issue #960)
+
+`integrate.api.nvidia.com` intermittently times out or returns 502/503/504 — a known, recurring pattern on NVIDIA's developer forums, not specific to this repo. `call_nim()` retries up to `NIM_MAX_ATTEMPTS` (3) times with backoff (10s, 30s) on:
+
+- client-side timeouts (connect 15s / read 150s), and
+- HTTP 502/503/504 gateway responses.
+
+If every attempt fails, the reviewer **skips gracefully**: it creates a **passing** Check Run with a comment explaining the skip, instead of blocking the PR on an NVIDIA-side outage. A 503 response whose body explicitly says `DEGRADED` is treated as a known backend state and skips immediately, with no retry.
+
+### Troubleshooting
+
+- **Check run shows `AI Review: ERROR` (failure)** — the reviewer hit a non-retryable error (missing env var, bad GitHub token, 4xx from NIM other than DEGRADED, etc.). Check the workflow run logs for `AI reviewer failed: ...`.
+- **Check run passes with a "⚠️ AI review skipped" comment** — NIM was unreachable (timeout) or returned repeated gateway errors across all retry attempts. This is expected during an NVIDIA-side outage and is not a signal about the PR's code quality; the review will run normally next time the endpoint responds.
+
 ## Graphify Knowledge Graph
 
 MeteoEdge uses [Graphify](https://pypi.org/project/graphifyy/) to maintain a knowledge graph of the codebase at `graphify-out/graph.json`.
