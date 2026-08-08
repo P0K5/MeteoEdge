@@ -16,6 +16,7 @@ import json
 import os
 import re
 import sys
+import time
 from pathlib import Path
 
 import requests
@@ -42,6 +43,21 @@ SUMMARY_MAX_CHARS = 65535
 
 class NimDegradedError(RuntimeError):
     """Raised when the NIM backend reports the model function as DEGRADED."""
+
+
+class NimTimeoutError(RuntimeError):
+    """Raised when the NIM backend keeps timing out after all retries."""
+
+
+NIM_CONNECT_TIMEOUT = 15
+NIM_READ_TIMEOUT = 150
+NIM_MAX_ATTEMPTS = 3
+NIM_RETRY_BACKOFF_SECONDS = (10, 30)
+# 502/503/504 are the gateway-level errors NVIDIA's own forums report most
+# often for this endpoint; retry them the same way as a client-side timeout
+# rather than hard-failing on the first bad gateway response. A 503 body
+# that explicitly says DEGRADED is handled separately below (no retry).
+NIM_RETRYABLE_STATUS_CODES = (502, 503, 504)
 
 
 def _env(key: str) -> str:
@@ -338,16 +354,57 @@ def call_nim(
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
-    resp = requests.post(url, json=payload, headers=headers, timeout=120)
-    if not resp.ok:
+
+    for attempt in range(1, NIM_MAX_ATTEMPTS + 1):
+        is_last_attempt = attempt == NIM_MAX_ATTEMPTS
+
+        try:
+            resp = requests.post(
+                url,
+                json=payload,
+                headers=headers,
+                timeout=(NIM_CONNECT_TIMEOUT, NIM_READ_TIMEOUT),
+            )
+        except requests.exceptions.Timeout as exc:
+            if is_last_attempt:
+                raise NimTimeoutError(
+                    f"NIM model {model} timed out after {NIM_MAX_ATTEMPTS} attempts: {exc}"
+                ) from exc
+            _wait_before_retry(attempt, "timed out")
+            continue
+
+        if resp.ok:
+            data = resp.json()
+            return data["choices"][0]["message"]["content"]
+
         body = resp.text[:2000]
         # Surface degraded/unavailable NIM backend as a distinct exception so
         # callers can decide to skip gracefully instead of hard-failing CI.
         if resp.status_code in (400, 503) and "DEGRADED" in body:
             raise NimDegradedError(f"NIM model {model} is DEGRADED: {body}")
+
+        if resp.status_code in NIM_RETRYABLE_STATUS_CODES:
+            if is_last_attempt:
+                raise NimTimeoutError(
+                    f"NIM model {model} kept returning HTTP {resp.status_code} "
+                    f"after {NIM_MAX_ATTEMPTS} attempts: {body}"
+                )
+            _wait_before_retry(attempt, f"returned HTTP {resp.status_code}")
+            continue
+
         raise RuntimeError(f"NIM API {resp.status_code} {resp.reason}: {body}")
-    data = resp.json()
-    return data["choices"][0]["message"]["content"]
+
+
+def _wait_before_retry(attempt: int, reason: str) -> None:
+    backoff = NIM_RETRY_BACKOFF_SECONDS[
+        min(attempt - 1, len(NIM_RETRY_BACKOFF_SECONDS) - 1)
+    ]
+    print(
+        f"[ai_reviewer] NIM call {reason} (attempt {attempt}/{NIM_MAX_ATTEMPTS}), "
+        f"retrying in {backoff}s...",
+        file=sys.stderr,
+    )
+    time.sleep(backoff)
 
 
 def parse_verdict(response_text: str) -> str:
@@ -588,6 +645,29 @@ def _run(
             review_text=skip_msg,
         )
         print("[ai_reviewer] Done — verdict=SKIPPED (NIM degraded)")
+        return
+    except NimTimeoutError as exc:
+        # NIM kept timing out or returning a gateway error (502/503/504)
+        # despite retries — treat as a transient infrastructure issue
+        # rather than blocking the PR indefinitely.
+        print(f"[ai_reviewer] NIM failed repeatedly, skipping review: {exc}")
+        skip_msg = (
+            f"⚠️ AI review skipped — NIM model `{nim_model}` did not return a "
+            f"successful response after {NIM_MAX_ATTEMPTS} attempts.\n\n"
+            f"This check passes automatically to avoid blocking PRs during "
+            f"a transient network/gateway issue. The review will run "
+            f"normally next time the endpoint responds cleanly.\n\n"
+            f"Error detail: {exc}"
+        )
+        create_check_run(
+            owner=repo_owner,
+            repo=repo_name,
+            head_sha=pr_head_sha,
+            token=github_token,
+            verdict="PASS",
+            review_text=skip_msg,
+        )
+        print("[ai_reviewer] Done — verdict=SKIPPED (NIM timeout)")
         return
 
     # 8. Parse verdict
