@@ -327,3 +327,72 @@ class TestEndToEnd:
                        population="all-bracket", bracket_evals=evals,
                        use_gamma=False, allow_network=False)
         assert rc == 1
+
+
+class TestSinceCutoff:
+    """Without a cutoff this check answers a question nobody asked.
+
+    It classifies whether an exact-zero ``p_yes_raw`` is an honest opinion or
+    an artifact. In the 2026-07-24..08-05 window those zeros were *manufactured*
+    by #917 (half-width ladders) and #920 (truncation without renormalisation).
+    Classifying them measures defects that have already been removed, and
+    guarantees "keep the exclusion" no matter what the current code does --
+    a predetermined answer dressed as a measurement.
+
+    The gate learned this the hard way in #936/#941. Same filter, same
+    poll-time semantics, for the same reason.
+    """
+
+    def _row(self, ts, p=0.0, settle="2026-08-10"):
+        return {"station": "KATL", "ts": ts, "end_date": settle,
+                "is_next_day_flag": 0, "p_yes_raw": p,
+                "bracket_low": 80.0, "bracket_high": 82.0,
+                "yes_ask": 30.0, "no_ask": 70.0, "ticker": "0x1"}
+
+    def test_pre_cutoff_rows_are_dropped(self):
+        from src.scripts.bss_market_vs_model_report import filter_rows_since
+        rows = [self._row("2026-08-04T13:00:00+00:00"),   # pre-#920
+                self._row("2026-08-06T13:00:00+00:00")]   # clean
+        kept, dropped = filter_rows_since(rows, "2026-08-06")
+        assert len(kept) == 1 and dropped == 1
+        assert kept[0]["ts"].startswith("2026-08-06")
+
+    def test_the_cutoff_is_POLL_time_not_settlement_date(self):
+        """A bracket polled on 08-04 for an 08-10 settlement was computed by
+        pre-#920 code. The weather that settles it is not in question."""
+        from src.scripts.bss_market_vs_model_report import filter_rows_since
+        rows = [self._row("2026-08-04T13:00:00+00:00", settle="2026-08-10")]
+        kept, dropped = filter_rows_since(rows, "2026-08-06")
+        assert kept == [] and dropped == 1
+
+    def test_the_window_is_recorded_in_the_report(self):
+        """The verdict is pre-registered and read back weeks later. Which rows
+        were classified is the first thing it has to answer."""
+        from src.scripts.certainty_exclusion_check import build_report
+        args = ({k: [] for k in (CLASS_MODEL_CERTAIN, CLASS_MARKET_CERTAIN,
+                                 CLASS_BOTH_CERTAIN, CLASS_CONTESTED)},
+                {}, "2026-08-09", "all-bracket", {})
+        with_since = build_report(*args, since="2026-08-06")
+        assert "polled on or after 2026-08-06" in with_since
+
+    def test_an_absent_cutoff_is_stated_loudly_in_the_report(self):
+        """Silence here would let an unusable run be filed as a decision."""
+        from src.scripts.certainty_exclusion_check import build_report
+        args = ({k: [] for k in (CLASS_MODEL_CERTAIN, CLASS_MARKET_CERTAIN,
+                                 CLASS_BOTH_CERTAIN, CLASS_CONTESTED)},
+                {}, "2026-08-09", "all-bracket", {})
+        without = build_report(*args)
+        assert "NO `--since` CUTOFF" in without
+        assert "not usable" in without
+
+    def test_the_flag_actually_reaches_run_check(self):
+        """The flag existing and the flag being USED are different facts, and
+        only the second one protects the verdict."""
+        from unittest.mock import patch
+        from src.scripts import certainty_exclusion_check as mod
+        with patch.object(mod, "run_check", return_value=0) as rc:
+            mod.main(["--since", "2026-08-06"])
+        assert rc.call_args.kwargs["since"] == "2026-08-06"
+        with patch.object(mod, "run_check", return_value=0) as rc:
+            mod.main([])
+        assert rc.call_args.kwargs["since"] is None
