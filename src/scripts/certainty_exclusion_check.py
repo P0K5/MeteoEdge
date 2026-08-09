@@ -70,6 +70,7 @@ from src.scripts.bss_market_vs_model_report import (
     RAIL_HIGH_CENTS,
     RAIL_LOW_CENTS,
     dedupe_one_per_bracket_day,
+    filter_rows_since,
     load_bracket_eval_rows,
     load_candidate_rows,
     market_p_yes,
@@ -319,7 +320,7 @@ def _class_table(name: str, stats: dict) -> "list[str]":
 
 
 def build_report(classes: dict, counts: dict, run_date: str, population: str,
-                 resolved_counts: dict) -> str:
+                 resolved_counts: dict, since: "str | None" = None) -> str:
     """Render the check. Deliberately contains no BSS and no skill number."""
     model_s = class_stats(classes[CLASS_MODEL_CERTAIN] + classes[CLASS_BOTH_CERTAIN])
     market_s = class_stats(classes[CLASS_MARKET_CERTAIN] + classes[CLASS_BOTH_CERTAIN])
@@ -334,6 +335,13 @@ def build_report(classes: dict, counts: dict, run_date: str, population: str,
         "# Certainty-exclusion check (issue #822)\n",
         f"**Run date:** {run_date}  ",
         f"**Population:** {population} -- {src}  ",
+        # The window belongs in the record, not just in someone's shell
+        # history. This verdict is pre-registered and read back weeks later;
+        # "which rows were classified" is the first thing it must answer.
+        (f"**Window:** brackets polled on or after {since}  " if since else
+         "**Window:** ALL of bracket_evals -- **NO `--since` CUTOFF**. If this "
+         "spans the pre-2026-08-06 window the zeros counted here were "
+         "manufactured by #917/#920 and the result is not usable.  "),
         "**Contains no BSS.** This decides which rows the M3 gate should score; it "
         "deliberately computes no skill number, so it can be run before the gate "
         "without spoiling the pre-registration.\n",
@@ -438,13 +446,34 @@ def run_check(db_path: Path, out_dir: Path, run_date: "str | None" = None, *,
               population: str = POPULATION_ALL_BRACKET,
               candidates_csv: Path = CANDIDATES_CSV,
               bracket_evals: "Path | None" = None,
-              use_gamma: bool = True, allow_network: bool = True) -> int:
+              use_gamma: bool = True, allow_network: bool = True,
+              since: "str | None" = None) -> int:
     run_date = run_date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
     if population == POPULATION_ALL_BRACKET:
         rows = load_bracket_eval_rows(bracket_evals or BRACKET_EVALS_JSONL)
     else:
         rows = load_candidate_rows(candidates_csv)
+
+    # Without this the check reads every era of bracket_evals at once -- and
+    # the eras are not comparable for THIS question in particular. It asks
+    # whether an exact-zero p_yes_raw is an honest opinion or an artifact; in
+    # the 2026-07-24..08-05 window those zeros were manufactured by #917 and
+    # #920, so including them measures defects already removed and guarantees
+    # "keep the exclusion" whatever the current code does.
+    #
+    # Same filter and the same poll-time semantics as the gate (#936, #941):
+    # contamination is a property of when the probability was COMPUTED.
+    if not since:
+        log.warning(
+            "[certainty] NO --since CUTOFF. Classifying every era of "
+            "bracket_evals at once. The pre-2026-08-06 window's exact zeros "
+            "were produced by #917/#920, so including them measures removed "
+            "defects and predetermines 'keep the exclusion'.")
+    rows, n_dropped = filter_rows_since(rows, since)
+    if since:
+        log.info("[certainty] --since %s kept %d rows, dropped %d pre-cutoff",
+                 since, len(rows), n_dropped)
     if not rows:
         log.error("[certainty] no input rows for population=%s -- nothing to check",
                   population)
@@ -467,7 +496,8 @@ def run_check(db_path: Path, out_dir: Path, run_date: "str | None" = None, *,
                   "refusing to report rates off an empty join", len(resolved))
         return 1
 
-    report = build_report(classes, counts, run_date, population, rcounts)
+    report = build_report(classes, counts, run_date, population, rcounts,
+                          since=since)
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"certainty_exclusion_check_{run_date}.md"
     out_path.write_text(report, encoding="utf-8")
@@ -491,6 +521,11 @@ def main(argv: "list[str] | None" = None) -> int:
                          "'all-bracket' -- the population the M3 gate scores.")
     ap.add_argument("--candidates-csv", type=Path, default=CANDIDATES_CSV)
     ap.add_argument("--bracket-evals", type=Path, default=None)
+    ap.add_argument("--since", default=None,
+                    help="Only classify brackets POLLED on or after this date "
+                         "(YYYY-MM-DD, UTC). Use the clean-data clock start -- "
+                         "without it the contaminated pre-fix window is "
+                         "included and the answer is predetermined.")
     ap.add_argument("--no-gamma", action="store_true")
     ap.add_argument("--no-network", action="store_true")
     args = ap.parse_args(argv)
@@ -501,6 +536,7 @@ def main(argv: "list[str] | None" = None) -> int:
         bracket_evals=args.bracket_evals,
         use_gamma=not args.no_gamma,
         allow_network=not args.no_network,
+        since=args.since,
     )
 
 
