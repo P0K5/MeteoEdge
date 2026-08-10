@@ -459,50 +459,46 @@ def deficient_ladders(ladders: "list[dict]") -> "list[dict]":
     return sorted(bad, key=lambda lad: abs(lad["mass"] - 1.0), reverse=True)
 
 
-def accrual_rate(scoreable: "dict[str, int]",
-                 today: "str | None" = None) -> "tuple[float, int, str | None]":
-    """Scoreable station-days per day over COMPLETE days only.
+def scoreable_progress(rows: "list[dict]", since: str) -> "dict":
+    """Progress toward the 300 station-day bar, counted the way the GATE counts.
 
-    The current UTC day is partial by construction -- a run at 07:30 has seen
-    a few hours of polls -- so including it drags the mean down and overstates
-    how long the 300 bar will take. Returns ``(rate, n_complete_days,
-    excluded_day)`` so the report can say which day it left out rather than
-    quietly dropping data.
+    Delegates to ``daily_health_report._scoreable_pairs`` rather than
+    reimplementing it. The previous version here had two defects that a second
+    implementation is exactly how you get:
+
+    * it partitioned by POLL day, so its per-day figures could not be summed --
+      a settlement date is polled both as next-day and as same-day, and
+      summing double-counted it (57+56 read as 113 against a true 85);
+    * it excluded rows WITHOUT de-duplicating first, keeping any bracket-day
+      that was ever contested at any poll. The gate de-duplicates and then
+      excludes, judging a bracket-day on the model's final word about it.
+
+    Together those printed "58.8/day, 300 takes ~5 days" on 2026-08-10 against
+    a measured 111 candidate station-days in five days -- roughly twice the
+    real rate, on the number that decides when the gate may run.
+
+    Returns cumulative progress, not a rate to be multiplied out. ``resolved``
+    is deliberately absent: the gate scores only station-days whose outcomes
+    resolved (81 of those 111), and establishing that needs Gamma/METAR, so
+    this is an upper bound and says so.
     """
-    if today is None:
-        from datetime import datetime, timezone
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    complete = {d: n for d, n in scoreable.items() if d < today}
-    excluded = today if today in scoreable else None
-    if not complete:
-        # Nothing but today -- fall back to it rather than reporting zero,
-        # but the caller still sees excluded=None so it says nothing false.
-        total = sum(scoreable.values())
-        return (total / max(1, len(scoreable)), len(scoreable), None)
-    return (sum(complete.values()) / len(complete), len(complete), excluded)
+    from src.scripts.daily_health_report import _marginal_accrual, _scoreable_pairs
+    pairs = _scoreable_pairs(since, rows=rows)
+    rate = _marginal_accrual(pairs)
+    remaining = max(0, 300 - len(pairs))
+    return {
+        "station_days": len(pairs),
+        "rate": rate,
+        "days_to_bar": (-(-remaining // rate)) if rate > 0 else None,
+        "by_settlement": _by_settlement(pairs),
+    }
 
 
-def scoreable_station_days(rows: "list[dict]") -> "dict[str, int]":
-    """Station-days per day that survive the gate's own exclusions.
-
-    The 300 bar counts these, not raw station-days -- the health report's
-    ``362/300`` counts every station-day whether or not it carries a scoreable
-    row (see #932). Mirrors ``apply_exclusions``: drop exact-zero model
-    probabilities and rail-clipped market prices.
-    """
-    per_day: "dict[str, set]" = defaultdict(set)
-    for row in rows:
-        p = row.get("p_yes_raw")
-        yes_ask, no_ask = row.get("yes_ask"), row.get("no_ask")
-        if p is None or p == 0.0 or yes_ask is None or no_ask is None:
-            continue
-        if (yes_ask <= RAIL_LOW_CENTS or yes_ask >= RAIL_HIGH_CENTS
-                or no_ask <= RAIL_LOW_CENTS or no_ask >= RAIL_HIGH_CENTS):
-            continue
-        day = (row.get("ts") or "")[:10]
-        if day and row.get("station"):
-            per_day[day].add((row["station"], (row.get("end_date") or "")[:10]))
-    return {d: len(v) for d, v in per_day.items()}
+def _by_settlement(pairs: "set[tuple[str, str]]") -> "dict[str, int]":
+    out: "dict[str, int]" = {}
+    for _station, settle in pairs:
+        out[settle] = out.get(settle, 0) + 1
+    return out
 
 
 def _fmt(v, spec=".3f"):
@@ -537,8 +533,7 @@ def build_report(rows: "list[dict]", since: str) -> str:
 
     census = width_census(ladders)
     masses = mass_by_day(ladders)
-    scoreable = scoreable_station_days(
-        [r for r in rows if (r.get("ts") or "")[:10] >= since])
+    progress = scoreable_progress(rows, since)
     deployed = deploy_day(census)
     clean = earliest_clean_day(masses)
 
@@ -616,21 +611,23 @@ def build_report(rows: "list[dict]", since: str) -> str:
         "3. SCOREABLE STATION-DAYS  (what the 300 bar actually counts)",
         "-" * 78,
         "   After the gate's exclusions. The health report's raw count (#932)",
-        "   runs well above this.",
+        "   De-duplicated first and excluded second -- the gate's order. A",
+        "   bracket-day contested at 09:00 but exact-zero at its last poll is",
+        "   dropped, as the gate drops it.",
         "",
-        f"   {'day':<12}{'scoreable':>11}",
+        f"   {'settlement date':<18}{'station-days':>13}",
     ]
-    total = 0
-    for day in sorted(scoreable):
-        total += scoreable[day]
-        out.append(f"   {day:<12}{scoreable[day]:>11}")
-    rate, n_complete, excluded = accrual_rate(scoreable)
+    for settle in sorted(progress["by_settlement"]):
+        out.append(f"   {settle:<18}{progress['by_settlement'][settle]:>13}")
+    rate = progress["rate"]
     out.append("")
-    out.append(f"   mean {rate:.1f} scoreable station-days/day "
-               f"over {n_complete} complete day(s)")
-    if excluded:
-        out.append(f"   ({excluded} excluded -- today is partial and would "
-                   f"understate the rate)")
+    out.append(f"   CUMULATIVE {progress['station_days']}/300 toward the bar, "
+               f"+{rate}/day marginal")
+    if progress["days_to_bar"] is not None:
+        out.append(f"   ~{progress['days_to_bar']} more day(s) at that rate.")
+    out.append("   NOTE: pre-resolution upper bound. The gate scores only")
+    out.append("   station-days whose outcomes RESOLVED -- on 2026-08-10 that")
+    out.append("   was 81 of 111, so the bar arrives later than this implies.")
 
     out += ["", "=" * 78, "VERDICT", "=" * 78, ""]
     regressed = deficient_days_since(masses, clean)
@@ -697,10 +694,11 @@ def build_report(rows: "list[dict]", since: str) -> str:
                        f"n={lad['n_brackets']} "
                        f"open_top={lad['open_top']} open_bottom={lad['open_bottom']}")
 
-    if rate > 0:
+    if progress["days_to_bar"] is not None:
         out += ["",
-                f"   At {rate:.1f} scoreable station-days/day, 300 takes "
-                f"~{300 / rate:.0f} days once the clock starts."]
+                f"   {progress['station_days']}/300 station-days, "
+                f"+{progress['rate']}/day -> ~{progress['days_to_bar']} more "
+                "day(s) (pre-resolution)."]
     out.append("")
     return "\n".join(out)
 
@@ -745,10 +743,8 @@ def brief_report(rows: "list[dict]", since: str) -> str:
     masses = mass_by_day(ladders)
     clean = earliest_clean_day(masses)
     regressed = deficient_days_since(masses, clean)
-    scoreable = scoreable_station_days(
-        [r for r in rows if (r.get("ts") or "")[:10] >= since])
+    progress = scoreable_progress(rows, since)
     days = sorted({lad["day"] for lad in ladders})
-    rate, _n_complete, _excluded = accrual_rate(scoreable)
 
     out = [f"M3 WINDOW  {days[0]}..{days[-1]}"]
     if deployed:
@@ -803,7 +799,8 @@ def brief_report(rows: "list[dict]", since: str) -> str:
                     if lad["coverage_limited"])
     if n_excused:
         out.append(f"{n_excused} short ladder(s) excused (no open tail bracket)")
-    out.append(f"scoreable {rate:.1f}/day (complete days only)")
+    out.append(f"station-days {progress['station_days']}/300 "
+               f"(+{progress['rate']}/day, pre-resolution)")
     if clean and regressed:
         out.append(f"VERDICT: REGRESSION -- clean from {clean}, "
                    f"{len(regressed)} bad day(s) since: {', '.join(regressed)}")
@@ -815,8 +812,8 @@ def brief_report(rows: "list[dict]", since: str) -> str:
         out.append(f"VERDICT: mass conserved from {clean} (clock start 2026-08-06)")
     else:
         out.append("VERDICT: no clean day -- gate must not run")
-        if rate > 0:
-            out.append(f"         then ~{300 / rate:.0f} days to 300")
+        if progress["days_to_bar"] is not None:
+            out.append(f"         then ~{progress['days_to_bar']} day(s) to 300")
     return "\n".join(out)
 
 

@@ -22,7 +22,7 @@ from src.scripts.m3_window_diagnostics import (
     group_ladders,
     ladder_stats,
     mass_by_day,
-    scoreable_station_days,
+    scoreable_progress,
     width_census,
 )
 
@@ -200,20 +200,71 @@ class TestMassVerdicts:
         assert by_day["censored"]["deficient"] == 1
 
 
-class TestScoreableAccrual:
-    def test_exclusions_are_applied(self):
-        """The 300 bar counts scoreable station-days, not raw ones (#932)."""
-        rows = [
-            _b(0.0, 80.0, 82.0, station="A"),                        # zero -> out
-            _b(0.2, 80.0, 82.0, station="B", yes_ask=1.0),           # rail -> out
-            _b(0.2, 80.0, 82.0, station="C"),                        # kept
-        ]
-        assert scoreable_station_days(rows) == {"2026-07-29": 1}
+class TestScoreableProgress:
+    """One counter, shared with the health report.
 
-    def test_a_station_day_counts_once_across_polls(self):
-        rows = [_b(0.2, 80.0, 82.0, ts="2026-07-29T13:00:00+00:00"),
-                _b(0.2, 82.0, 84.0, ts="2026-07-29T14:00:00+00:00")]
-        assert scoreable_station_days(rows) == {"2026-07-29": 1}
+    A second implementation of "station-days toward the 300 bar" is how this
+    went wrong four separate times. The version that lived here partitioned by
+    POLL day (so its figures could not be summed -- a settlement date is polled
+    as next-day and again as same-day) and excluded rows WITHOUT
+    de-duplicating first. On 2026-08-10 it printed "58.8/day, 300 takes ~5
+    days" against a measured 111 in five days.
+
+    It now delegates to ``daily_health_report._scoreable_pairs``. These tests
+    exist to keep it delegating.
+    """
+
+    def _row(self, ts, p, station="KATL", settle="2026-08-07", ticker="0xA",
+             yes_ask=30.0, no_ask=70.0):
+        return {"station": station, "ts": ts, "end_date": settle,
+                "ticker": ticker, "is_next_day_flag": 0, "p_yes_raw": p,
+                "bracket_low": 80.0, "bracket_high": 82.0,
+                "yes_ask": yes_ask, "no_ask": no_ask}
+
+    def test_the_gates_exclusions_are_applied(self):
+        rows = [self._row("2026-08-06T13:00:00+00:00", 0.0, station="A"),
+                self._row("2026-08-06T13:00:00+00:00", 0.2, station="B",
+                          yes_ask=1.0),
+                self._row("2026-08-06T13:00:00+00:00", 0.2, station="C")]
+        assert scoreable_progress(rows, "2026-08-06")["station_days"] == 1
+
+    def test_it_de_duplicates_before_excluding(self):
+        """The gate's order. Contested at 09:00, exact-zero at the last poll
+        -> the gate drops the bracket-day, so this must too."""
+        rows = [self._row("2026-08-07T09:00:00+00:00", 0.25),
+                self._row("2026-08-07T15:00:00+00:00", 0.0)]
+        assert scoreable_progress(rows, "2026-08-06")["station_days"] == 0
+
+    def test_a_settlement_date_polled_on_two_days_counts_ONCE(self):
+        """Polled as next-day and again as same-day. Counting per poll day and
+        summing was the 57+56=113-against-85 error."""
+        rows = [self._row("2026-08-06T13:00:00+00:00", 0.25,
+                          settle="2026-08-07"),
+                self._row("2026-08-07T13:00:00+00:00", 0.25,
+                          settle="2026-08-07")]
+        assert scoreable_progress(rows, "2026-08-06")["station_days"] == 1
+
+    def test_progress_is_cumulative_and_carries_the_marginal_rate(self):
+        rows = []
+        for st in range(28):
+            for settle in ("2026-08-06", "2026-08-07"):
+                rows.append(self._row("2026-08-07T13:00:00+00:00", 0.25,
+                                      station=f"ST{st}", settle=settle))
+        got = scoreable_progress(rows, "2026-08-06")
+        assert got["station_days"] == 56
+        assert got["rate"] == 28
+        # ceiling: (300-56)/28 = 8.7 -> 9. Rounding down promises the bar early.
+        assert got["days_to_bar"] == 9
+        assert got["by_settlement"] == {"2026-08-06": 28, "2026-08-07": 28}
+
+    def test_it_agrees_with_the_health_report_exactly(self):
+        """Same question, same answer -- or the two will drift again."""
+        from src.scripts.daily_health_report import _scoreable_pairs
+        rows = [self._row("2026-08-06T13:00:00+00:00", 0.25, station="A"),
+                self._row("2026-08-07T09:00:00+00:00", 0.25, station="B"),
+                self._row("2026-08-07T15:00:00+00:00", 0.0, station="B")]
+        assert (scoreable_progress(rows, "2026-08-06")["station_days"]
+                == len(_scoreable_pairs("2026-08-06", rows=rows)))
 
 
 class TestReport:
@@ -374,39 +425,6 @@ class TestRegressionAfterTheClockStarts:
         worst = deficient_ladders(group_ladders(good + bad))
         assert len(worst) == 1
         assert worst[0]["station"] == "KORD"
-
-
-class TestAccrualExcludesThePartialDay:
-    """A run at 07:30 UTC has seen a few hours of today's polls. Counting that
-    as a full day dragged the measured rate from ~57 to 44.0/day, which turns
-    a ~5-day wait into a ~7-day one -- an error in the direction that delays
-    the gate for no reason.
-    """
-
-    def test_todays_partial_count_is_excluded(self):
-        from src.scripts.m3_window_diagnostics import accrual_rate
-        rate, n, excluded = accrual_rate(
-            {"2026-08-06": 57, "2026-08-07": 31}, today="2026-08-07")
-        assert rate == 57.0
-        assert n == 1
-        assert excluded == "2026-08-07"
-
-    def test_a_window_of_only_complete_days_excludes_nothing(self):
-        from src.scripts.m3_window_diagnostics import accrual_rate
-        rate, n, excluded = accrual_rate(
-            {"2026-08-05": 50, "2026-08-06": 60}, today="2026-08-07")
-        assert rate == 55.0
-        assert n == 2
-        assert excluded is None
-
-    def test_a_single_partial_day_still_reports_something(self):
-        """First run on the morning the clock starts: falling back to the
-        partial day beats reporting 0.0/day and an infinite wait."""
-        from src.scripts.m3_window_diagnostics import accrual_rate
-        rate, n, excluded = accrual_rate({"2026-08-07": 31},
-                                         today="2026-08-07")
-        assert rate == 31.0
-        assert excluded is None
 
 
 class TestCoverageLimitedLadders:
