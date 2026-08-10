@@ -45,7 +45,6 @@ _HERE = Path(__file__).resolve().parent
 if str(_HERE.parents[1]) not in sys.path:
     sys.path.insert(0, str(_HERE.parents[1]))
 
-from src.config import MODEL_PROB_CAP  # noqa: E402
 from src.logging_config import setup_logging  # noqa: E402
 
 #: Start of the M3 clean-data collection window, and the date station-days are
@@ -507,6 +506,93 @@ def _ladder_mass(since_date: str) -> "dict[str, float] | None":
     }
 
 
+#: WARN when the high rail sits at or above this fraction of its structural
+#: ceiling (``1 / ladder_size`` -- see ``post_fix_model_health
+#: .structural_high_rail_ceiling``). 50% is a judgment call, not a measured
+#: baseline -- unlike the ceiling itself, no population gives a "correct"
+#: cutoff between "far below" and "at" the ceiling. It is deliberately loose:
+#: the ceiling comparison is the population-robust half of the old metric, so
+#: this only needs to catch a share that is clearly *trending toward* maximal
+#: overconfidence, not pin an exact number. Verified against production
+#: (2026-08-10, clean window): actual 1.1% / ceiling 9.1% = 12% -> [OK].
+HIGH_RAIL_WARN_RATIO = 0.5
+
+
+def _rail_and_artifact(since_date: str) -> "dict | None":
+    """High-rail-vs-structural-ceiling and interior-zero-gap indicators.
+
+    Reuses ``post_fix_model_health``'s own computation over ``bracket_evals``
+    -- the gate's population, same source as ``_ladder_mass`` above -- rather
+    than a second implementation (issue #969). The version this replaces
+    queried ``scan_decisions`` and thresholded a FULL bracket ladder (mostly
+    far-out-of-the-money brackets that legitimately sit near a rail) against
+    ``rail_pct < 20`` / ``zero_pct < 10`` -- Pass-1's GATE-SELECTED baselines.
+    A full ladder can essentially never clear ``rail_pct < 20``: an 11-bracket
+    ladder has at most one bracket that can resolve YES, so a ~58% low-rail
+    share is the CORRECT behaviour, not a fault. That produced an
+    unconditional daily ``[WARN]`` that disagreed with ``post_fix_model_health``
+    on the same data. See that module's docstring and ``BASELINE_*``
+    constants for the full population-mismatch account.
+
+    Also conflates the two rails: ``post_fix_model_health`` is explicit that
+    only the HIGH rail is population-robust (it has a computable ceiling,
+    ``1 / ladder_size``, because a station-day has exactly one daily high);
+    the low rail is population-driven and not comparable across ladders. This
+    reports the high rail against its ceiling and drops the low-rail sum.
+
+    The raw ``p_yes_raw == 0.0`` share is likewise population-confounded --
+    most exact zeros on a full ladder are the envelope correctly pricing an
+    unreachable bracket (see ``post_fix_model_health.zero_artifact_rate``'s
+    docstring for its own "two earlier, wrong versions" account). The
+    structural invariant that replaced it -- an exact zero with non-zero
+    brackets on BOTH sides in sorted bracket order, which no finite envelope
+    can produce -- needs no baseline and no population assumption, so that is
+    what is surfaced here instead.
+
+    Returns ``None`` when there is nothing to measure -- absent data must not
+    read as healthy (mirrors ``_ladder_mass``).
+    """
+    try:
+        from src.scripts.bss_market_vs_model_report import load_bracket_eval_rows
+        raw_rows = load_bracket_eval_rows()
+    except Exception:
+        log.exception("bracket_evals read failed")
+        return None
+
+    # Poll time, not settlement date -- matching `_ladder_mass` above.
+    # Contamination is a property of when the probability was computed, not
+    # when the market resolved (#941); a bracket polled before the clock
+    # start but settling after it must still be excluded.
+    rows = [r for r in raw_rows if (r.get("ts") or "")[:10] >= since_date]
+    if not rows:
+        return None
+
+    from src.scripts.post_fix_model_health import (
+        interior_zero_violations, rail_concentration, structural_high_rail_ceiling)
+
+    # post_fix_model_health's checks read `settlement_date` / `poll_ts`;
+    # `bss_market_vs_model_report.load_bracket_eval_rows` renames those to
+    # `end_date` / `ts` (see its own docstring). Map the field names rather
+    # than forking the computation to match this caller.
+    mapped = [{**r, "settlement_date": r.get("end_date"), "poll_ts": r.get("ts")}
+              for r in rows]
+
+    rails = rail_concentration(mapped)
+    if not rails["n"]:
+        return None
+    ceiling = structural_high_rail_ceiling(mapped)
+    inv = interior_zero_violations(mapped)
+    return {
+        "n": rails["n"],
+        "high_rail_share": rails["high_rail_share"],
+        "middle_share": rails["middle_share"],
+        "ceiling": ceiling,
+        "n_violations": inv["n_violations"],
+        "n_ladders_checked": inv["n_ladders_checked"],
+        "violation_rate": inv["violation_rate"],
+    }
+
+
 def _scoreable_station_days(since_date: str) -> int:
     """Count of distinct scoreable station-days -- see ``_scoreable_pairs``."""
     return len(_scoreable_pairs(since_date))
@@ -675,47 +761,47 @@ def _build_m3_progress(db, today: datetime) -> list[str]:
             lines.append("                 ^ bar met on COUNT only -- ladder mass is "
                          "not clean, so the gate must NOT run")
 
-        # Leading indicators: rail concentration and p_yes=0 artifact rate
-        # from the most recent 24h of scan_decisions
-        total_brackets = db._conn.execute(
-            "SELECT COUNT(*) FROM scan_decisions WHERE poll_ts >= ?",
-            (since,),
-        ).fetchone()[0] or 0
+        # Leading indicators: high rail vs. its structural ceiling, and
+        # interior-zero ladder-gap violations -- both computed from
+        # `bracket_evals` (the gate's population, same source and clean-data
+        # clock as the ladder-mass check above) by reusing
+        # `post_fix_model_health`'s own functions. See `_rail_and_artifact`
+        # for why this replaced a `scan_decisions` query thresholded against
+        # gate-selected Pass-1 baselines (issue #969).
+        indicators = _rail_and_artifact(clock_start)
 
-        # Derive rail thresholds from MODEL_PROB_CAP so the metric follows the clamp.
-        # Symmetric clamp: lower = 1.0 - MODEL_PROB_CAP, upper = MODEL_PROB_CAP.
-        # True rail concentration ~62.4%; see #917 for investigation of mass at clamp floor.
-        rail_lower = round(1.0 - MODEL_PROB_CAP, 10)
-        rail_upper = MODEL_PROB_CAP
-        rail_count = db._conn.execute(
-            "SELECT COUNT(*) FROM scan_decisions WHERE poll_ts >= ? "
-            "AND (capped_p_yes <= ? OR capped_p_yes >= ?)",
-            (since, rail_lower, rail_upper),
-        ).fetchone()[0] or 0
-
-        zero_artifact = db._conn.execute(
-            "SELECT COUNT(*) FROM scan_decisions WHERE poll_ts >= ? "
-            "AND raw_p_yes = 0.0",
-            (since,),
-        ).fetchone()[0] or 0
-
-        if not total_brackets:
-            # Previously `or 1`, which made an empty 24h render as "0.0% [OK]"
-            # -- no data reading as perfect health, the same failure the ladder
-            # -mass check above exists to prevent. Say there is nothing to
-            # measure instead.
+        if indicators is None:
+            # No data reading as perfect health is the same failure the
+            # ladder-mass check above exists to prevent -- say there is
+            # nothing to measure instead.
             lines.append("  Rail / artifact: (no brackets in 24h -- cannot assess)")
             lines.append("")
             return lines
 
-        rail_pct = rail_count / total_brackets * 100
-        zero_pct = zero_artifact / total_brackets * 100
+        ceiling = indicators["ceiling"]
+        high_rail = indicators["high_rail_share"]
+        if ceiling:
+            ratio = (high_rail / ceiling) if high_rail is not None else None
+            rail_ok = ratio is not None and ratio < HIGH_RAIL_WARN_RATIO
+            lines.append(
+                f"  High rail (bracket_evals, >= 0.95): {_fmt_pct(high_rail)} vs "
+                f"{_fmt_pct(ceiling)} structural ceiling "
+                f"({ratio:.0%} of it) {'[OK]' if rail_ok else '[WARN]'}"
+            )
+        else:
+            # Ladder size undeterminable -- no ceiling to compare against.
+            # Cannot judge, so do not print a pass/fail tag either.
+            rail_ok = True
+            lines.append(f"  High rail (bracket_evals, >= 0.95): {_fmt_pct(high_rail)} "
+                         f"(ladder size unknown -- no ceiling to compare against)")
 
-        rail_ok = rail_pct < 20
-        zero_ok = zero_pct < 10
-
-        lines.append(f"  Rail (0-{rail_lower*100:.1f}% / {rail_upper*100:.1f}%-100%): {rail_pct:.1f}% {'[OK]' if rail_ok else '[WARN]'}")
-        lines.append(f"  p_yes=0.0 artifact:     {zero_pct:.1f}% {'[OK]' if zero_ok else '[WARN]'}")
+        n_violations = indicators["n_violations"]
+        n_ladders_checked = indicators["n_ladders_checked"]
+        zero_ok = n_violations == 0
+        lines.append(
+            f"  Interior-zero gaps: {n_violations} of {n_ladders_checked} ladders "
+            f"({_fmt_pct(indicators['violation_rate'])}) {'[OK]' if zero_ok else '[WARN]'}"
+        )
 
     except Exception:
         log.exception("M3 progress query failed")
@@ -838,7 +924,7 @@ def _build_verdict(sections: "list[tuple[str, list[str], dict]]") -> list[str]:
         warn_issues.append(bot_flags.get("detail") or "bot pulse degraded")
 
     m3_text = "\n".join(lines_by_section.get("m3", []))
-    if "p_yes=0.0 artifact:" in m3_text and "[WARN]" in m3_text:
+    if "Interior-zero gaps:" in m3_text and "[WARN]" in m3_text:
         warn_issues.append("artifact rate high")
 
     blockers_text = "\n".join(lines_by_section.get("blockers", []))
