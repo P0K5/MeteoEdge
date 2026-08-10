@@ -24,6 +24,7 @@ if str(_HERE.parents[1]) not in sys.path:
     sys.path.insert(0, str(_HERE.parents[1]))
 
 from src.scripts.daily_health_report import (
+    HIGH_RAIL_WARN_RATIO,  # noqa: E402
     M3_CLEAN_DATA_CLOCK_START,  # noqa: E402
     _build_bot_health,
     _build_header,
@@ -276,7 +277,7 @@ class TestBuildVerdict:
         assert "[OK] Healthy" in text
 
     def test_warn_when_artifact_rate_high(self):
-        sections = [("m3", ["M3 Progress", "p_yes=0.0 artifact:     17.5% [WARN]"], {})]
+        sections = [("m3", ["M3 Progress", "Interior-zero gaps: 5 of 20 ladders (25.0%) [WARN]"], {})]
         result = _build_verdict(sections)
         text = "\n".join(result)
         assert "[WARN]" in text
@@ -309,7 +310,7 @@ class TestBuildVerdict:
     def test_multiple_warnings_demoted(self):
         """Multiple WARN-level issues stay at WARN (not CRIT unless there's a CRIT trigger)."""
         sections = [
-            ("m3", ["M3 Progress", "p_yes=0.0 artifact:     17.5% [WARN]"], {}),
+            ("m3", ["M3 Progress", "Interior-zero gaps: 5 of 20 ladders (25.0%) [WARN]"], {}),
             ("blockers", [
                 "Open Blockers",
                 "KORD GEFS capture gap -- [WARN] gap confirmed",
@@ -328,7 +329,7 @@ class TestBuildVerdict:
         sections = [
             ("bot", ["Bot Pulse", "Status: [STALE] 90 min since last poll"],
              {"status": "STALE", "detail": "90 min since last poll"}),
-            ("m3", ["M3 Progress", "p_yes=0.0 artifact:     17.5% [WARN]"], {}),
+            ("m3", ["M3 Progress", "Interior-zero gaps: 5 of 20 ladders (25.0%) [WARN]"], {}),
         ]
         result = _build_verdict(sections)
         text = "\n".join(result)
@@ -341,7 +342,7 @@ class TestBuildVerdict:
 
         A [WARN] in the Bot Pulse section (e.g. the max-gap warning) must
         NOT be attributed to "artifact rate high" just because the phrase
-        "p_yes=0.0 artifact:" appears somewhere else in the report. Before
+        "Interior-zero gaps:" appears somewhere else in the report. Before
         the fix, `_build_verdict` scanned the whole rendered report for
         "[WARN]" and, independently, for the artifact phrase -- so any WARN
         anywhere falsely triggered the artifact-rate verdict item even when
@@ -353,7 +354,7 @@ class TestBuildVerdict:
                 "  [WARN] Max gap:    298 min (threshold: 20)",
                 "  Status:      [WARN] only 5/288 polls in 24h",
             ], {"status": "WARN", "detail": "only 5/288 polls in 24h"}),
-            ("m3", ["M3 Progress", "  p_yes=0.0 artifact:     2.0% [OK]"], {}),
+            ("m3", ["M3 Progress", "  Interior-zero gaps: 0 of 20 ladders (0.0%) [OK]"], {}),
         ]
         result = _build_verdict(sections)
         text = "\n".join(result)
@@ -513,136 +514,161 @@ class TestSendEmail:
 
 
 # ---------------------------------------------------------------------------
-# M3 Progress: Rail Metric (issue #910)
+# M3 Progress: Rail / artifact leading indicators (issue #969)
 # ---------------------------------------------------------------------------
 
-class TestBuildM3ProgressRailMetric:
-    """Verify rail metric uses MODEL_PROB_CAP-derived thresholds (issue #910)."""
+class TestBuildM3ProgressLeadingIndicators:
+    """Rail and interior-zero-gap indicators read `bracket_evals` and agree
+    with `post_fix_model_health` (issue #969).
 
-    def test_rail_metric_uses_model_prob_cap_thresholds(self):
-        """With default MODEL_PROB_CAP=0.95, rail thresholds should be 0.05 and 0.95."""
-        from src.config import MODEL_PROB_CAP
+    Replaces the old `TestBuildM3ProgressRailMetric`, which pinned the
+    `scan_decisions`-based behaviour this issue removes: a query against the
+    FULL bracket ladder thresholded with `rail_pct < 20` / `zero_pct < 10`,
+    Pass-1's GATE-SELECTED baselines. On a full ladder -- mostly
+    far-out-of-the-money brackets that legitimately sit near a rail -- that
+    threshold can essentially never clear (an 11-bracket ladder has at most
+    one bracket that can resolve YES), so it fired `[WARN]` unconditionally.
+    """
 
-        # Mock: 1000 brackets, 624 are rail (62.4%)
-        def mock_execute(sql, params=None):
-            mock = MagicMock()
-            if "capped_p_yes <= ? OR capped_p_yes >= ?" in sql:
-                # This is the rail count query
-                mock.fetchone.return_value = (624,)
-            elif "raw_p_yes = 0.0" in sql:
-                # This is the zero artifact query
-                mock.fetchone.return_value = (0,)
-            else:
-                # This is the total brackets query
-                mock.fetchone.return_value = (1000,)
-            return mock
-
-        db = MagicMock()
-        db._conn.execute = mock_execute
-        today = datetime(2026, 7, 31, 14, 0, 0, tzinfo=timezone.utc)
-        result = _build_m3_progress(db, today)
-        text = "\n".join(result)
-
-        # Verify: output shows threshold range derived from MODEL_PROB_CAP
-        expected_lower_pct = round((1.0 - MODEL_PROB_CAP) * 100, 1)
-        expected_upper_pct = round(MODEL_PROB_CAP * 100, 1)
-        assert f"Rail (0-{expected_lower_pct}% / {expected_upper_pct}%-100%)" in text
-        # Verify rail metric shows exactly 62.4% and [WARN]
-        assert "62.4%" in text
-        assert "[WARN]" in text
-
-    def test_rail_metric_low_concentration_ok(self):
-        """With <20% concentration, rail should show [OK]."""
-        # Mock: 1000 brackets, 150 are rail (15%)
-        def mock_execute(sql, params=None):
-            mock = MagicMock()
-            if "capped_p_yes <= ? OR capped_p_yes >= ?" in sql:
-                # Rail count query
-                mock.fetchone.return_value = (150,)
-            elif "raw_p_yes = 0.0" in sql:
-                # Zero artifact query
-                mock.fetchone.return_value = (0,)
-            else:
-                # Total brackets query
-                mock.fetchone.return_value = (1000,)
-            return mock
-
-        db = MagicMock()
-        db._conn.execute = mock_execute
-
-        today = datetime(2026, 7, 31, 14, 0, 0, tzinfo=timezone.utc)
-        result = _build_m3_progress(db, today)
-        text = "\n".join(result)
-
-        # Verify: 15% < 20% threshold, so should show [OK]
-        assert "15.0%" in text
-        # Rail line should have [OK], not just any [OK] in the section
-        rail_line = [line for line in result if "Rail" in line][0]
-        assert "[OK]" in rail_line
-
-    def test_rail_metric_regression_capped_p_yes_at_floor(self):
-        """Regression test: rows with capped_p_yes at clamp floor are counted as rail.
-
-        This test exercises the actual SQL against real data. It fails with the old
-        hardcoded thresholds (0.02/0.98) because they sit outside the MODEL_PROB_CAP
-        clamp range (0.05/0.95), and passes with the current fix.
+    @staticmethod
+    def _ladder_rows(n_stations, n_brackets=11, high_rail_stations=0,
+                     high_rail_p=0.99, filler_p=0.30, day=None,
+                     station_prefix="ST"):
+        """`n_stations` station-day ladders of `n_brackets` brackets each, one
+        poll snapshot. The first `high_rail_stations` ladders each get exactly
+        one bracket at `high_rail_p` (the true daily high) with the rest at
+        0.02 (comfortably a low rail, i.e. low-rail-high-by-construction); the
+        remaining stations get every bracket at `filler_p` -- no rail at all,
+        matching how a full ladder legitimately looks when the model isn't
+        overconfident.
         """
-        import sqlite3
-        from src.config import MODEL_PROB_CAP
-        from datetime import datetime, timezone, timedelta
+        day = day or M3_CLEAN_DATA_CLOCK_START
+        rows = []
+        for i in range(n_stations):
+            station = f"{station_prefix}{i}"
+            for j in range(n_brackets):
+                if i < high_rail_stations:
+                    p = high_rail_p if j == 0 else 0.02
+                else:
+                    p = filler_p
+                rows.append({
+                    "station": station,
+                    "ts": f"{day}T12:00:00+00:00",
+                    "end_date": day,
+                    "ticker": f"{station}-{j}",
+                    "bracket_low": float(j),
+                    "bracket_high": float(j + 1),
+                    "p_yes_raw": p,
+                })
+        return rows
 
-        # Create in-memory database with scan_decisions table
-        conn = sqlite3.connect(":memory:")
-        conn.execute("""
-            CREATE TABLE scan_decisions (
-                poll_ts TEXT NOT NULL,
-                station TEXT NOT NULL,
-                date TEXT NOT NULL,
-                capped_p_yes REAL NOT NULL,
-                raw_p_yes REAL NOT NULL,
-                yes_ask INTEGER,
-                no_ask INTEGER
-            )
-        """)
-
-        # Insert 1000 brackets total
-        now_str = datetime(2026, 7, 31, 14, 0, 0, tzinfo=timezone.utc).isoformat()
-        since_str = (datetime(2026, 7, 31, 14, 0, 0, tzinfo=timezone.utc) - timedelta(hours=24)).isoformat()
-
-        # Use the same rounding as _build_m3_progress to match the SQL thresholds
-        clamp_floor = round(1.0 - MODEL_PROB_CAP, 10)
-
-        # 600 brackets with capped_p_yes at or below the clamp floor
-        for i in range(600):
-            conn.execute(
-                "INSERT INTO scan_decisions VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (now_str, f"STAT{i}", "2026-07-31", clamp_floor, 0.04, 20, 82),
-            )
-
-        # 400 brackets in the middle (not rail)
-        for i in range(600, 1000):
-            conn.execute(
-                "INSERT INTO scan_decisions VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (now_str, f"STAT{i}", "2026-07-31", 0.50, 0.50, 20, 82),
-            )
-
-        conn.commit()
-
-        # Create mock db with real connection
+    def _text(self, rows, today=None):
+        today = today or datetime(2026, 8, 7, 14, 0, 0, tzinfo=timezone.utc)
         db = MagicMock()
-        db._conn = conn
+        with patch("src.scripts.bss_market_vs_model_report.load_bracket_eval_rows",
+                   return_value=rows):
+            return "\n".join(_build_m3_progress(db, today))
 
-        today = datetime(2026, 7, 31, 14, 0, 0, tzinfo=timezone.utc)
-        result = _build_m3_progress(db, today)
-        text = "\n".join(result)
+    def _rail_line(self, text):
+        return [line for line in text.splitlines() if "High rail" in line][0]
 
-        # With the fix, 600/1000 = 60.0% should be counted as rail
-        assert "60.0%" in text
-        # Should show [WARN] because 60% > 20% threshold
-        rail_line = [line for line in result if "Rail" in line][0]
+    def _artifact_line(self, text):
+        return [line for line in text.splitlines() if "Interior-zero gaps" in line][0]
+
+    def test_no_high_rail_brackets_reads_healthy(self):
+        """Every ladder sits in the middle -- high rail 0% of a non-zero
+        ceiling -- must read [OK], the AC's 'low rail high, high rail near
+        zero' case (no bracket here is even at the low rail, which is a
+        stronger version of the same claim: nothing here should trip a
+        near-zero high-rail share into [WARN])."""
+        rows = self._ladder_rows(n_stations=20, high_rail_stations=0)
+        text = self._text(rows)
+        assert "[OK]" in self._rail_line(text)
+        assert "0.0%" in self._rail_line(text)
+
+    def test_high_rail_at_structural_ceiling_warns(self):
+        """Every ladder's one bracket at 0.99 -- high rail share == exactly
+        1 / ladder_size, i.e. AT the structural ceiling -- must read [WARN]."""
+        rows = self._ladder_rows(n_stations=20, high_rail_stations=20)
+        text = self._text(rows)
+        rail_line = self._rail_line(text)
         assert "[WARN]" in rail_line
+        assert "100%" in rail_line
 
-        conn.close()
+    def test_interior_zero_gap_warns(self):
+        """One ladder with a zero bracket flanked by non-zero brackets on
+        both sides, in sorted bracket order -- the #820 failure shape -- must
+        read [WARN], even while every other ladder is clean."""
+        rows = self._ladder_rows(n_stations=20, high_rail_stations=0)
+        gap_ladder = [
+            {"station": "GAP", "ts": f"{M3_CLEAN_DATA_CLOCK_START}T12:00:00+00:00",
+             "end_date": M3_CLEAN_DATA_CLOCK_START, "ticker": f"GAP-{j}",
+             "bracket_low": float(j), "bracket_high": float(j + 1), "p_yes_raw": p}
+            for j, p in enumerate([0.1, 0.2, 0.0, 0.2, 0.1])
+        ]
+        text = self._text(rows + gap_ladder)
+        artifact_line = self._artifact_line(text)
+        assert "[WARN]" in artifact_line
+        assert "1 of" in artifact_line
+
+    def test_no_interior_zero_gaps_reads_healthy(self):
+        rows = self._ladder_rows(n_stations=20, high_rail_stations=0)
+        text = self._text(rows)
+        artifact_line = self._artifact_line(text)
+        assert "[OK]" in artifact_line
+        assert "0 of" in artifact_line
+
+    def test_row_polled_before_clock_but_settling_after_it_is_excluded(self):
+        """The clean-data clock filters on POLL time, not settlement date
+        (#941 / #969 review). A ladder polled the day before the clock
+        starts, settling ON the clock-start date, is exactly the pre-#920
+        contamination class the clock exists to exclude -- filtering on
+        `end_date` instead would let it through and read healthy."""
+        before_clock = "2026-08-05"
+        assert before_clock < M3_CLEAN_DATA_CLOCK_START
+        contaminated_high_rail = [
+            {"station": "PRECLOCK", "ts": f"{before_clock}T12:00:00+00:00",
+             "end_date": M3_CLEAN_DATA_CLOCK_START, "ticker": f"PRECLOCK-{j}",
+             "bracket_low": float(j), "bracket_high": float(j + 1),
+             "p_yes_raw": 0.99 if j == 0 else 0.02}
+            for j in range(11)
+        ]
+        text = self._text(contaminated_high_rail)
+        # Excluded entirely -> no brackets survive the clock filter.
+        assert "(no brackets in 24h -- cannot assess)" in text
+
+    def test_agrees_with_post_fix_model_health(self):
+        """Regression test (issue #969): the health report and
+        `post_fix_model_health` must read the SAME [OK]/[WARN] verdict on the
+        same fixture window, computed via the same shared functions, so they
+        cannot silently drift apart again."""
+        from src.scripts.post_fix_model_health import (
+            interior_zero_violations, rail_concentration,
+            structural_high_rail_ceiling)
+
+        for rows, expect_warn in [
+            (self._ladder_rows(n_stations=20, high_rail_stations=0), False),
+            (self._ladder_rows(n_stations=20, high_rail_stations=20), True),
+        ]:
+            text = self._text(rows)
+            report_warns = "[WARN]" in self._rail_line(text)
+
+            mapped = [{**r, "settlement_date": r["end_date"], "poll_ts": r["ts"]}
+                      for r in rows]
+            rails = rail_concentration(mapped)
+            ceiling = structural_high_rail_ceiling(mapped)
+            gate_ratio = rails["high_rail_share"] / ceiling
+            gate_warns = gate_ratio >= HIGH_RAIL_WARN_RATIO
+
+            assert report_warns == gate_warns == expect_warn, (
+                f"health report ({report_warns}) and post_fix_model_health "
+                f"({gate_warns}) disagree on the same fixture window"
+            )
+
+    def test_no_brackets_is_not_reported_as_healthy(self):
+        text = self._text([])
+        assert "Rail / artifact: (no brackets in 24h -- cannot assess)" in text
+        assert "0.0% [OK]" not in text
 
 
 # ---------------------------------------------------------------------------
