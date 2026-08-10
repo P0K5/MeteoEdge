@@ -538,7 +538,8 @@ def _marginal_accrual(pairs: "set[tuple[str, str]]") -> int:
     return max(per_settlement.values())
 
 
-def _scoreable_pairs(since_date: str) -> "set[tuple[str, str]]":
+def _scoreable_pairs(since_date: str,
+                     rows: "list[dict] | None" = None) -> "set[tuple[str, str]]":
     """Distinct scoreable ``(station, settlement_date)`` pairs -- the 300 bar.
 
     **The definition is the gate's, verbatim**::
@@ -560,13 +561,14 @@ def _scoreable_pairs(since_date: str) -> "set[tuple[str, str]]":
     Mirrors the gate's exclusions: exact-zero model probabilities and
     rail-clipped market prices.
     """
-    try:
-        from src.scripts.bss_market_vs_model_report import (
-            RAIL_HIGH_CENTS, RAIL_LOW_CENTS, load_bracket_eval_rows)
-        rows = load_bracket_eval_rows()
-    except Exception:
-        log.exception("bracket_evals read failed")
-        return set()
+    from src.scripts.bss_market_vs_model_report import (
+        RAIL_HIGH_CENTS, RAIL_LOW_CENTS, load_bracket_eval_rows)
+    if rows is None:
+        try:
+            rows = load_bracket_eval_rows()
+        except Exception:
+            log.exception("bracket_evals read failed")
+            return set()
 
     # DE-DUPLICATE FIRST, THEN EXCLUDE -- the gate's order, and the order is
     # the whole answer. `apply_exclusions` runs after de-duplication, so a
