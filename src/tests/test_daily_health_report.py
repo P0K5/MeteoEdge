@@ -942,3 +942,84 @@ class TestHealthReportAgreesWithTheGate:
         pairs |= {("ST0", "2026-08-08")}          # today, barely started
         assert _marginal_accrual(pairs) == 28
         assert _marginal_accrual(set()) == 0
+
+
+class TestDedupBeforeExclude:
+    """The gate de-duplicates and THEN excludes, so a bracket-day is judged on
+    the model's final word about it. Counting the other way round -- exclude
+    every row, then take distinct pairs -- keeps any bracket-day that was ever
+    contested at any poll during the day.
+
+    On 2026-08-10 that read 173/300 against a true 111: over half the reported
+    progress was bracket-days the gate would drop. This is the third correction
+    to this counter, and the only one of the three that no test would have
+    caught, because every earlier test used a single poll per bracket.
+    """
+
+    def _row(self, ts, p, station="KATL", settle="2026-08-07", ticker="0xA",
+             yes_ask=30, no_ask=70):
+        return {"station": station, "ts": ts, "end_date": settle,
+                "ticker": ticker, "is_next_day_flag": 0, "p_yes_raw": p,
+                "bracket_low": 80.0, "bracket_high": 82.0,
+                "yes_ask": yes_ask, "no_ask": no_ask}
+
+    def _count(self, rows, since="2026-08-06"):
+        from src.scripts.daily_health_report import _scoreable_pairs
+        with patch("src.scripts.bss_market_vs_model_report."
+                   "load_bracket_eval_rows", return_value=rows):
+            return len(_scoreable_pairs(since))
+
+    def test_contested_early_but_zero_at_the_final_poll_does_NOT_count(self):
+        """The exact case that inflated the count. The gate drops this
+        bracket-day; so must we."""
+        rows = [self._row("2026-08-07T09:00:00+00:00", 0.25),   # contested
+                self._row("2026-08-07T15:00:00+00:00", 0.0)]    # final: zero
+        assert self._count(rows) == 0
+
+    def test_zero_early_but_contested_at_the_final_poll_DOES_count(self):
+        """The mirror image -- excluding on any poll would lose a bracket-day
+        the gate will score."""
+        rows = [self._row("2026-08-07T09:00:00+00:00", 0.0),
+                self._row("2026-08-07T15:00:00+00:00", 0.25)]
+        assert self._count(rows) == 1
+
+    def test_rail_at_the_final_poll_also_drops_the_bracket_day(self):
+        """Both exclusions are applied post-de-duplication, not just the
+        zero one."""
+        rows = [self._row("2026-08-07T09:00:00+00:00", 0.25),
+                self._row("2026-08-07T15:00:00+00:00", 0.25, yes_ask=1,
+                          no_ask=99)]
+        assert self._count(rows) == 0
+
+    def test_a_station_day_survives_if_ANY_of_its_brackets_does(self):
+        """De-duplication is per BRACKET; the station-day enters the scored
+        population if any of its brackets' final polls survive."""
+        rows = [self._row("2026-08-07T15:00:00+00:00", 0.0, ticker="0xA"),
+                self._row("2026-08-07T15:00:00+00:00", 0.25, ticker="0xB")]
+        assert self._count(rows) == 1
+
+    def test_different_settlement_dates_dedup_apart(self):
+        """Same station, same ticker, same poll -- but today's ladder and
+        tomorrow's are different bracket-days and must not collapse."""
+        rows = [self._row("2026-08-07T15:00:00+00:00", 0.25,
+                          settle="2026-08-07"),
+                self._row("2026-08-07T15:00:00+00:00", 0.25,
+                          settle="2026-08-08")]
+        assert self._count(rows) == 2
+
+    def test_the_count_is_labelled_as_a_pre_resolution_upper_bound(self):
+        """The gate scores only RESOLVED station-days -- 81 against 111 on
+        2026-08-10. An unqualified number here reads as progress it isn't."""
+        rows = [self._row("2026-08-07T15:00:00+00:00", 0.25)]
+        today = datetime(2026, 8, 7, 14, 0, 0, tzinfo=timezone.utc)
+        db = MagicMock()
+        db._conn = sqlite3.connect(":memory:")
+        db._conn.execute(
+            "CREATE TABLE scan_decisions (poll_ts TEXT, station TEXT, "
+            "date TEXT, raw_p_yes REAL, capped_p_yes REAL, yes_ask INTEGER, "
+            "no_ask INTEGER)")
+        with patch("src.scripts.bss_market_vs_model_report."
+                   "load_bracket_eval_rows", return_value=rows):
+            text = "\n".join(_build_m3_progress(db, today))
+        assert "upper bound" in text
+        assert "resolved" in text

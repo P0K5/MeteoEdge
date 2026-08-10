@@ -568,10 +568,33 @@ def _scoreable_pairs(since_date: str) -> "set[tuple[str, str]]":
         log.exception("bracket_evals read failed")
         return set()
 
-    pairs: "set[tuple[str, str]]" = set()
+    # DE-DUPLICATE FIRST, THEN EXCLUDE -- the gate's order, and the order is
+    # the whole answer. `apply_exclusions` runs after de-duplication, so a
+    # bracket-day is judged on the model's FINAL word about it: a bracket that
+    # was contested at 09:00 and exact-zero by the last poll is excluded.
+    #
+    # Counting the other way round -- exclude every row, then take distinct
+    # pairs -- keeps any bracket-day that was ever contested at any poll, and
+    # on 2026-08-10 that read 173 against a true 111. Over half the count was
+    # bracket-days the gate would drop.
+    #
+    # This is the third correction to this number. It first read scan_decisions
+    # (an upsert table), then bracket_evals with the right unit but no
+    # de-duplication, and now the gate's actual sequence. Each pass matched one
+    # property of the funnel and missed another, so the invariant worth holding
+    # on to is: mirror `bss_market_vs_model_report`'s pipeline, in its order.
+    last_poll: "dict[tuple, tuple[str, dict]]" = {}
     for r in rows:
-        if (r.get("ts") or "")[:10] < since_date:
+        ts = r.get("ts") or ""
+        if ts[:10] < since_date:
             continue
+        key = (r.get("station"), (r.get("end_date") or "")[:10], r.get("ticker"))
+        prev = last_poll.get(key)
+        if prev is None or ts > prev[0]:
+            last_poll[key] = (ts, r)
+
+    pairs: "set[tuple[str, str]]" = set()
+    for (station, settle, _ticker), (_ts, r) in last_poll.items():
         p, yes_ask, no_ask = (r.get("p_yes_raw"), r.get("yes_ask"),
                               r.get("no_ask"))
         if p is None or p == 0.0 or yes_ask is None or no_ask is None:
@@ -579,7 +602,6 @@ def _scoreable_pairs(since_date: str) -> "set[tuple[str, str]]":
         if (yes_ask <= RAIL_LOW_CENTS or yes_ask >= RAIL_HIGH_CENTS
                 or no_ask <= RAIL_LOW_CENTS or no_ask >= RAIL_HIGH_CENTS):
             continue
-        station, settle = r.get("station"), (r.get("end_date") or "")[:10]
         if station and settle:
             pairs.add((station, settle))
     return pairs
@@ -636,6 +658,12 @@ def _build_m3_progress(db, today: datetime) -> list[str]:
 
         lines.append(f"  Station-days:  {station_days}/300 ({pct:.0f}%) "
                      f"scoreable, since {clock_start}")
+        # Outcome resolution is not done here -- it needs Gamma/METAR and this
+        # runs daily by email. The gate counts only station-days whose outcomes
+        # RESOLVED, which on 2026-08-10 was 81 against 111 here, so this is an
+        # upper bound and the bar is reached later than it implies.
+        lines.append("                 ^ pre-resolution upper bound; the gate "
+                     "scores only resolved station-days (~25-30% fewer)")
         if days_to_bar is None:
             lines.append("  Accrual rate:  no scoreable rows yet -- bar date unknown")
         else:
