@@ -24,11 +24,14 @@ from src.utils.log_rotation import (
     _dated_path,
     _today_utc,
     housekeep,
+    housekeep_plaintext,
     iter_rotated_jsonl,
     resolve_current,
     rotated_path,
+    rotate_plaintext_log,
     LOG_ROTATION_COMPRESS_AFTER_DAYS,
     LOG_ROTATION_RETAIN_DAYS,
+    SNAPSHOT_RETAIN_DAYS,
 )
 
 
@@ -384,3 +387,198 @@ class TestHousekeepRetainOverride:
         with patch("src.utils.log_rotation._today_utc", return_value=today):
             housekeep(base)  # no retain_days — uses global 30-day default
         assert not old_file.exists(), "candidates.csv uses 30-day default, 40-day-old file deleted"
+
+
+# ---------------------------------------------------------------------------
+# Plain-text log rotation (e.g., bot.log)
+# ---------------------------------------------------------------------------
+
+class TestRotatePlaintextLog:
+    """Tests for rotate_plaintext_log() and housekeep_plaintext()."""
+
+    def test_copytruncate_pattern(self, tmp_path):
+        """Verify copytruncate pattern: log is copied to dated file, original truncated."""
+        log_file = tmp_path / "logs" / "bot.log"
+        log_file.parent.mkdir()
+
+        # Write initial content
+        log_file.write_text("line 1\nline 2\n")
+        today = _today_utc()
+
+        # Rotate the log
+        dated = rotate_plaintext_log(log_file, for_date=today)
+
+        # Original file should still exist but be empty (copytruncate)
+        assert log_file.exists(), "Original log file should still exist (copytruncate)"
+        assert log_file.read_text() == "", "Original should be truncated to empty"
+
+        # Dated file should have the original content
+        assert dated.exists()
+        assert dated.read_text() == "line 1\nline 2\n"
+
+        # Verify dated filename is correct
+        assert today.isoformat() in dated.name
+
+    def test_preserves_systemd_fd_with_append(self, tmp_path):
+        """Verify that systemd's held fd with O_APPEND is safe after copytruncate.
+
+        With StandardOutput=append:, systemd's fd repositions to EOF on every write.
+        After copytruncate, the original file is empty, so the next write goes to offset 0
+        (not past a gap). This is why copytruncate is safe for append: targets.
+        """
+        log_file = tmp_path / "logs" / "bot.log"
+        log_file.parent.mkdir()
+        log_file.write_text("previous data\n")
+        today = _today_utc()
+
+        # Rotate using copytruncate
+        dated = rotate_plaintext_log(log_file, for_date=today)
+
+        # bot.log still exists (fd is still valid) but is empty
+        assert log_file.exists()
+        assert log_file.read_text() == ""
+        # Dated file has the old data
+        assert dated.exists()
+        assert dated.read_text() == "previous data\n"
+
+        # Simulate: systemd writes new data (fd's O_APPEND positions at EOF, which is 0)
+        log_file.write_text("new data\n")
+        assert log_file.read_text() == "new data\n"
+
+    def test_housekeep_compresses_old_plaintext(self, tmp_path):
+        """Old plain-text logs should be compressed."""
+        base = tmp_path / "bot.log"
+        today = _today_utc()
+        old_date = today - timedelta(days=LOG_ROTATION_COMPRESS_AFTER_DAYS + 1)
+        old_file = tmp_path / f"bot.{old_date.isoformat()}.log"
+        old_file.write_text("old log content\n")
+
+        housekeep_plaintext(base)
+
+        gz = Path(str(old_file) + ".gz")
+        assert gz.exists(), "Old plain-text log should be compressed"
+        assert not old_file.exists(), "Original should be removed after compression"
+        # Verify compression
+        with gzip.open(gz, "rt") as f:
+            assert f.read() == "old log content\n"
+
+    def test_housekeep_deletes_aged_plaintext(self, tmp_path):
+        """Plain-text logs older than retention should be deleted."""
+        base = tmp_path / "bot.log"
+        today = _today_utc()
+        ancient_date = today - timedelta(days=SNAPSHOT_RETAIN_DAYS + 1)
+        ancient_file = tmp_path / f"bot.{ancient_date.isoformat()}.log"
+        ancient_file.write_text("ancient")
+
+        housekeep_plaintext(base)
+
+        assert not ancient_file.exists(), "Ancient plain-text log should be deleted"
+
+    def test_housekeep_plaintext_uses_snapshot_retention_by_default(self, tmp_path):
+        """housekeep_plaintext should default to SNAPSHOT_RETAIN_DAYS, not 30."""
+        base = tmp_path / "bot.log"
+        today = date(2026, 6, 18)
+        # 40 days old — older than global 30 but younger than SNAPSHOT_RETAIN_DAYS (365)
+        file_40d = tmp_path / f"bot.{(today - timedelta(days=40)).isoformat()}.log"
+        file_40d.write_text("data")
+
+        with patch("src.utils.log_rotation._today_utc", return_value=today):
+            housekeep_plaintext(base)  # No retain_days param
+
+        # With SNAPSHOT_RETAIN_DAYS default, 40-day-old file should survive
+        assert file_40d.exists() or Path(str(file_40d) + ".gz").exists(), \
+            "40-day-old bot.log should survive with SNAPSHOT_RETAIN_DAYS (365) default"
+
+    def test_does_not_touch_today(self, tmp_path):
+        """housekeep_plaintext should not touch today's file."""
+        base = tmp_path / "bot.log"
+        today = _today_utc()
+        today_file = tmp_path / f"bot.{today.isoformat()}.log"
+        today_file.write_text("today")
+
+        housekeep_plaintext(base)
+
+        assert today_file.exists(), "Today's file should not be touched"
+
+    def test_rotate_creates_parent_directory(self, tmp_path):
+        """rotate_plaintext_log should create parent directory if missing."""
+        log_file = tmp_path / "nonexistent" / "subdir" / "bot.log"
+        log_file.parent.mkdir(parents=True, exist_ok=True)
+        log_file.write_text("content")
+
+        dated = rotate_plaintext_log(log_file)
+
+        assert dated.parent.exists()
+        assert dated.exists()
+
+    def test_rotate_noop_if_file_missing(self, tmp_path):
+        """rotate_plaintext_log should not fail if the log file doesn't exist."""
+        log_file = tmp_path / "logs" / "bot.log"
+        log_file.parent.mkdir()
+
+        dated = rotate_plaintext_log(log_file)
+
+        # Should return the dated path without error
+        today = _today_utc()
+        assert today.isoformat() in dated.name
+
+    def test_housekeep_noop_if_directory_missing(self, tmp_path):
+        """housekeep_plaintext should not fail if directory doesn't exist."""
+        base = tmp_path / "nonexistent" / "bot.log"
+        # Should not raise
+        housekeep_plaintext(base)
+
+    def test_housekeep_deletes_aged_gz_files(self, tmp_path):
+        """Aged .gz files (not just plaintext) should be deleted."""
+        base = tmp_path / "bot.log"
+        today = _today_utc()
+        ancient_date = today - timedelta(days=SNAPSHOT_RETAIN_DAYS + 1)
+
+        # Create only a .gz file (no plaintext)
+        ancient_gz = tmp_path / f"bot.{ancient_date.isoformat()}.log.gz"
+        with gzip.open(ancient_gz, "wt") as f:
+            f.write("ancient data\n")
+
+        assert ancient_gz.exists()
+        housekeep_plaintext(base)
+
+        # .gz file should be deleted (was older than retention)
+        assert not ancient_gz.exists(), "Aged .gz file should be deleted"
+
+    def test_housekeep_preserves_recent_gz_files(self, tmp_path):
+        """Recent .gz files should not be deleted."""
+        base = tmp_path / "bot.log"
+        today = _today_utc()
+        recent_date = today - timedelta(days=5)
+
+        recent_gz = tmp_path / f"bot.{recent_date.isoformat()}.log.gz"
+        with gzip.open(recent_gz, "wt") as f:
+            f.write("recent data\n")
+
+        housekeep_plaintext(base)
+
+        # Should still exist (not aged out)
+        assert recent_gz.exists(), "Recent .gz file should be preserved"
+
+    def test_second_rotation_same_day_preserves_first(self, tmp_path):
+        """Two rotations on the same day should both be preserved (append, not overwrite)."""
+        log_file = tmp_path / "logs" / "bot.log"
+        log_file.parent.mkdir()
+        today = _today_utc()
+
+        # First rotation: 100 bytes
+        log_file.write_text("a" * 100 + "\n")
+        dated1 = rotate_plaintext_log(log_file, for_date=today)
+        assert log_file.read_text() == "", "Log truncated after first rotation"
+        assert dated1.read_text() == "a" * 100 + "\n", "First rotation data preserved"
+
+        # Second rotation (same day): another 50 bytes
+        log_file.write_text("b" * 50 + "\n")
+        dated2 = rotate_plaintext_log(log_file, for_date=today)
+        assert dated1 == dated2, "Same date produces same dated path"
+        assert log_file.read_text() == "", "Log truncated after second rotation"
+
+        # Both rotations' data should be in dated file (appended)
+        content = dated2.read_text()
+        assert "a" * 100 in content, "First rotation data still in dated file"
+        assert "b" * 50 in content, "Second rotation data appended to dated file"

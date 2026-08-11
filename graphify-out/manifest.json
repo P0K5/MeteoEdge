@@ -590,8 +590,8 @@
     "semantic_hash": ""
   },
   "docs/OPERATIONS.md": {
-    "mtime": 1786463564.2596025,
-    "ast_hash": "1c9926bc9a94c2f861a49351d17bf3e8",
+    "mtime": 1786464780.018255,
+    "ast_hash": "f5906f432b3b0ecb566245f3eb8b4a4e",
     "semantic_hash": ""
   },
   "docs/README.md": {
@@ -665,8 +665,8 @@
     "semantic_hash": ""
   },
   "src/tests/test_log_rotation.py": {
-    "mtime": 1786463564.4728496,
-    "ast_hash": "7f2d8b85942f3f11f155ce678c0e32b6",
+    "mtime": 1786464780.096269,
+    "ast_hash": "b3c3acc410c2340f7d9a177a843195cc",
     "semantic_hash": ""
   },
   "src/tests/test_pnl_scaling.py": {
@@ -690,8 +690,8 @@
     "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
   },
   "src/utils/log_rotation.py": {
-    "mtime": 1786463564.5186732,
-    "ast_hash": "a24803141616eb5554d9dec7a2d869c7",
+    "mtime": 1786464780.096269,
+    "ast_hash": "9b8f666caf67dc008e785e8c48326c80",
     "semantic_hash": ""
   },
   "scripts/backfill_trade_costs.py": {
@@ -1762,6 +1762,16 @@
   "src/tests/test_issue_977_entry_gate_reconciliation.py": {
     "mtime": 1786464007.5755196,
     "ast_hash": "1d85ac35d99748e5097ed47c9c0d35ba",
+    "semantic_hash": ""
+  },
+  "scripts/rotate_bot_log.py": {
+    "mtime": 1786464780.0942745,
+    "ast_hash": "15ad96433065125e51ab97fc2dce22ff",
+    "semantic_hash": ""
+  },
+  "docs/DEPLOY_BOT_LOG_ROTATION.md": {
+    "mtime": 1786464780.0162535,
+    "ast_hash": "301650eb433c355ea47ff7358a3930e8",
     "semantic_hash": ""
   }
 }

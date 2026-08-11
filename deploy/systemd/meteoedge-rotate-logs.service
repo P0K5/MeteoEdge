@@ -1,0 +1,15 @@
+[Unit]
+Description=MeteoEdge daily log rotation (bot.log)
+After=network-online.target
+Wants=network-online.target
+Documentation=file:///home/p0k5/MeteoEdge/docs/DEPLOY_BOT_LOG_ROTATION.md
+
+[Service]
+Type=oneshot
+User=p0k5
+WorkingDirectory=/home/p0k5/MeteoEdge
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=/home/p0k5/MeteoEdge/.env
+ExecStart=/home/p0k5/MeteoEdge/.venv/bin/python -u /home/p0k5/MeteoEdge/scripts/rotate_bot_log.py
+StandardOutput=journal
+StandardError=journal
