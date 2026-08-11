@@ -396,8 +396,8 @@ class TestHousekeepRetainOverride:
 class TestRotatePlaintextLog:
     """Tests for rotate_plaintext_log() and housekeep_plaintext()."""
 
-    def test_move_then_reopen_pattern(self, tmp_path):
-        """Verify move-then-reopen pattern: log file is moved, not truncated."""
+    def test_copytruncate_pattern(self, tmp_path):
+        """Verify copytruncate pattern: log is copied to dated file, original truncated."""
         log_file = tmp_path / "logs" / "bot.log"
         log_file.parent.mkdir()
 
@@ -408,8 +408,9 @@ class TestRotatePlaintextLog:
         # Rotate the log
         dated = rotate_plaintext_log(log_file, for_date=today)
 
-        # Original file should not exist (it was moved)
-        assert not log_file.exists(), "Original log file should not exist after rotation (move-then-reopen)"
+        # Original file should still exist but be empty (copytruncate)
+        assert log_file.exists(), "Original log file should still exist (copytruncate)"
+        assert log_file.read_text() == "", "Original should be truncated to empty"
 
         # Dated file should have the original content
         assert dated.exists()
@@ -418,26 +419,31 @@ class TestRotatePlaintextLog:
         # Verify dated filename is correct
         assert today.isoformat() in dated.name
 
-    def test_preserves_systemd_fd(self, tmp_path):
-        """Verify that systemd's held fd at offset N is not corrupted.
+    def test_preserves_systemd_fd_with_append(self, tmp_path):
+        """Verify that systemd's held fd with O_APPEND is safe after copytruncate.
 
-        The move-then-reopen pattern leaves systemd's held fd valid.
-        After the move, the caller signals systemd to reopen the original path.
+        With StandardOutput=append:, systemd's fd repositions to EOF on every write.
+        After copytruncate, the original file is empty, so the next write goes to offset 0
+        (not past a gap). This is why copytruncate is safe for append: targets.
         """
         log_file = tmp_path / "logs" / "bot.log"
         log_file.parent.mkdir()
-        log_file.write_text("data")
+        log_file.write_text("previous data\n")
         today = _today_utc()
 
-        # Simulate: systemd has fd to bot.log at offset=4
+        # Rotate using copytruncate
         dated = rotate_plaintext_log(log_file, for_date=today)
 
-        # After move, bot.log doesn't exist, but systemd's fd to the old inode is still valid.
-        # (The actual fd operations happen in systemd, not in this test.)
-        # Caller must signal systemd to reopen.
-        assert not log_file.exists()
+        # bot.log still exists (fd is still valid) but is empty
+        assert log_file.exists()
+        assert log_file.read_text() == ""
+        # Dated file has the old data
         assert dated.exists()
-        assert dated.read_text() == "data"
+        assert dated.read_text() == "previous data\n"
+
+        # Simulate: systemd writes new data (fd's O_APPEND positions at EOF, which is 0)
+        log_file.write_text("new data\n")
+        assert log_file.read_text() == "new data\n"
 
     def test_housekeep_compresses_old_plaintext(self, tmp_path):
         """Old plain-text logs should be compressed."""
@@ -521,3 +527,35 @@ class TestRotatePlaintextLog:
         base = tmp_path / "nonexistent" / "bot.log"
         # Should not raise
         housekeep_plaintext(base)
+
+    def test_housekeep_deletes_aged_gz_files(self, tmp_path):
+        """Aged .gz files (not just plaintext) should be deleted."""
+        base = tmp_path / "bot.log"
+        today = _today_utc()
+        ancient_date = today - timedelta(days=SNAPSHOT_RETAIN_DAYS + 1)
+
+        # Create only a .gz file (no plaintext)
+        ancient_gz = tmp_path / f"bot.{ancient_date.isoformat()}.log.gz"
+        with gzip.open(ancient_gz, "wt") as f:
+            f.write("ancient data\n")
+
+        assert ancient_gz.exists()
+        housekeep_plaintext(base)
+
+        # .gz file should be deleted (was older than retention)
+        assert not ancient_gz.exists(), "Aged .gz file should be deleted"
+
+    def test_housekeep_preserves_recent_gz_files(self, tmp_path):
+        """Recent .gz files should not be deleted."""
+        base = tmp_path / "bot.log"
+        today = _today_utc()
+        recent_date = today - timedelta(days=5)
+
+        recent_gz = tmp_path / f"bot.{recent_date.isoformat()}.log.gz"
+        with gzip.open(recent_gz, "wt") as f:
+            f.write("recent data\n")
+
+        housekeep_plaintext(base)
+
+        # Should still exist (not aged out)
+        assert recent_gz.exists(), "Recent .gz file should be preserved"

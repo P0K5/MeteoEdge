@@ -2,46 +2,51 @@
 
 ## Overview
 
-This document describes how to deploy the bot.log rotation mechanism on the live production host. The rotation uses a safe **move-then-reopen** pattern that does not corrupt systemd's held file descriptor.
+This document describes how to deploy the bot.log rotation mechanism on the live production host. The rotation uses **copytruncate** (safe for systemd's `StandardOutput=append:` targets).
 
 ## Pre-deployment Checklist
 
 - [ ] Code is deployed: `src/utils/log_rotation.py` contains `rotate_plaintext_log()` and `housekeep_plaintext()`
-- [ ] Tests pass: `pytest src/tests/test_log_rotation.py` (41 tests)
+- [ ] Systemd unit files deployed: `deploy/systemd/meteoedge-rotate-logs.{service,timer}`
+- [ ] Rotation script deployed: `scripts/rotate_bot_log.py`
+- [ ] Tests pass: `pytest src/tests/test_log_rotation.py` (43 tests)
 - [ ] No live KORD positions are open (coordinate with #977)
 - [ ] You have `sudo` access on the p0k5 host
 
 ## Architecture
 
-### How It Works
+### How It Works (Copytruncate Pattern)
 
-1. **Move-then-reopen pattern** (safe for systemd logs):
-   - `rotate_plaintext_log()` moves `/home/p0k5/MeteoEdge/logs/bot.log` → `/home/p0k5/MeteoEdge/logs/bot.2026-08-11.log`
-   - The move operation leaves systemd's held file descriptor pointing to the now-orphaned inode (still valid, data preserved)
-   - Signal systemd to reopen its stdout stream, which opens `/home/p0k5/MeteoEdge/logs/bot.log` anew (now empty, at offset 0)
+1. **Read the current log** from `/home/p0k5/MeteoEdge/logs/bot.log`
+2. **Write to a dated file** (e.g., `bot.2026-08-11.log`)
+3. **Truncate the original** to empty
+4. **Fix ownership** of the dated file to `p0k5:p0k5` (from root:root)
+5. **Compress/delete old files** based on retention policy
 
-2. **Ownership fix**:
-   - The moved dated file is chown'd to `p0k5:p0k5` (service user), fixing the root:root inconsistency
-   - Future rotations automatically apply this fix (see `_fix_file_ownership()`)
+### Why Copytruncate Is Safe for `StandardOutput=append:`
 
-3. **Retention policy**:
-   - Aged files (default `SNAPSHOT_RETAIN_DAYS=365` days) are gzip-compressed after 1 day, then deleted after 365 days
-   - Matches the retention for irreproducible snapshot data (weather observations, market data)
+- systemd opens `bot.log` itself at unit start and hands the process file descriptor 1
+- The bot never opens or closes `bot.log`; it just writes to fd 1
+- When we truncate, systemd's held fd remains valid
+- On the next write, systemd's `O_APPEND` flag repositions to EOF (now offset 0), so the next write lands at offset 0, not past a gap
+- **No zero-fill corruption** (unlike truncation without O_APPEND)
+
+### Retention Policy
+
+- **Default**: `SNAPSHOT_RETAIN_DAYS = 365` days (matches irreproducible data retention)
+- Compression: after 1 day
+- Deletion: after 365 days
+- Both plaintext and `.gz` files are deleted when aged out
 
 ### Key Constraints
 
-- **Never truncate in place** (`: > bot.log`). This produces a sparse, corrupt file: systemd has an fd at offset 298 MB, the truncate is instantaneous, the next write lands past the gap, and the kernel zero-fills.
-- **Signal systemd after rotation**. The move alone is not enough; systemd must be told to close and reopen.
-- **Rotation must be atomic** from systemd's perspective. The sequence is:
-  1. Rotate (move) the file
-  2. Fix ownership
-  3. Compress/delete old files
-  4. Signal systemd to reopen
-  5. Verify the new stream is working
+- **Timer runs as root**: Required to chown rotated files from root:root to p0k5:p0k5
+- **Ownership fix fails loudly**: If chown fails (e.g., permission denied), the script exits with error. This enforces criterion 2: no root-owned files left behind
+- **No service restart needed**: copytruncate is safe with held fd + O_APPEND
 
 ## Deployment Steps
 
-### Step 1: Ensure Systemd Service Is Running
+### Step 1: Verify Systemd Service Is Running
 
 ```bash
 sudo systemctl status meteoedge
@@ -56,192 +61,89 @@ Expected output:
 
 If not running, do NOT proceed. Coordinate with the team.
 
-### Step 2: Run the Rotation Script (One-Time + Scheduled)
+### Step 2: Install Systemd Units
 
-#### Option A: Manual rotation (one-time)
-
-On the p0k5 host, as the service user (or sudo):
+Copy the unit files (no installation yet):
 
 ```bash
 cd /home/p0k5/MeteoEdge
-python3 -c "
-from pathlib import Path
-import os
-from src.utils.log_rotation import rotate_plaintext_log, housekeep_plaintext
-
-# Rotate bot.log to dated file + fix ownership
-log_path = Path('/home/p0k5/MeteoEdge/logs/bot.log')
-owner_uid = os.getuid()  # Preserve current user (p0k5)
-owner_gid = os.getgid()
-
-rotated = rotate_plaintext_log(log_path, owner_uid=owner_uid, owner_gid=owner_gid)
-print(f'Rotated: {rotated}')
-
-# Housekeep old dated files
-housekeep_plaintext(log_path)
-print('Housekeeping complete')
-"
+sudo cp deploy/systemd/meteoedge-rotate-logs.service /etc/systemd/system/
+sudo cp deploy/systemd/meteoedge-rotate-logs.timer /etc/systemd/system/
 ```
 
-#### Option B: Scheduled via systemd timer (recommended)
-
-Create a daily timer service:
-
-**File: `/etc/systemd/system/meteoedge-rotate-bot-log.service`**
-
-```ini
-[Unit]
-Description=Rotate MeteoEdge bot.log
-After=meteoedge.service
-Documentation=docs/DEPLOY_BOT_LOG_ROTATION.md
-
-[Service]
-Type=oneshot
-ExecStart=/usr/bin/python3 /home/p0k5/MeteoEdge/scripts/rotate_bot_log.py
-StandardOutput=journal
-StandardError=journal
-```
-
-**File: `/etc/systemd/system/meteoedge-rotate-bot-log.timer`**
-
-```ini
-[Unit]
-Description=Daily rotation timer for MeteoEdge bot.log
-Documentation=docs/DEPLOY_BOT_LOG_ROTATION.md
-
-[Timer]
-# Run at 00:05 UTC daily (after midnight, before market opens)
-OnCalendar=daily
-OnCalendar=*-*-* 00:05:00
-Persistent=true
-
-[Install]
-WantedBy=timers.target
-```
-
-**Script: `/home/p0k5/MeteoEdge/scripts/rotate_bot_log.py`**
-
-```python
-#!/usr/bin/env python3
-"""One-time rotation of bot.log with ownership fix and housekeeping.
-
-Run daily via systemd timer. Rotates the current bot.log to a dated file,
-fixes ownership, compresses old files, then signals systemd to reopen the stream.
-"""
-import os
-import subprocess
-import sys
-from pathlib import Path
-
-# Ensure we're in the repo root
-repo_root = Path(__file__).parent.parent
-os.chdir(repo_root)
-
-# Add repo to path
-sys.path.insert(0, str(repo_root))
-
-from src.utils.log_rotation import rotate_plaintext_log, housekeep_plaintext
-
-def main():
-    log_path = repo_root / "logs" / "bot.log"
-    
-    # Rotation + ownership fix + housekeeping
-    try:
-        # Get p0k5 user's UID/GID
-        # (On Linux: getpwnam("p0k5").pw_uid / pw_gid)
-        # For simplicity, chown to p0k5:p0k5 by name (systemd does this too)
-        owner_uid = None  # Will be set by -o in rotate_plaintext_log call, or chown p0k5 post-rotate
-        owner_gid = None
-        
-        rotated = rotate_plaintext_log(log_path, owner_uid=owner_uid, owner_gid=owner_gid)
-        print(f"[bot.log rotation] Rotated to: {rotated.name}")
-        
-        housekeep_plaintext(log_path)
-        print("[bot.log rotation] Housekeeping complete")
-        
-        # Signal systemd to reopen bot.log
-        # This is the critical step: tells systemd to close its held fd and open a new one
-        result = subprocess.run(
-            ["sudo", "systemctl", "kill", "-s", "SIGHUP", "meteoedge"],
-            capture_output=True,
-            text=True
-        )
-        if result.returncode == 0:
-            print("[bot.log rotation] Signaled meteoedge (SIGHUP) to reopen log stream")
-        else:
-            print(f"[bot.log rotation] WARNING: signal failed: {result.stderr}")
-            sys.exit(1)
-        
-    except Exception as e:
-        print(f"[bot.log rotation] ERROR: {e}", file=sys.stderr)
-        sys.exit(1)
-
-if __name__ == "__main__":
-    main()
-```
-
-Enable the timer:
+Enable and start the timer:
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable meteoedge-rotate-bot-log.timer
-sudo systemctl start meteoedge-rotate-bot-log.timer
+sudo systemctl enable meteoedge-rotate-logs.timer
+sudo systemctl start meteoedge-rotate-logs.timer
 ```
 
 Verify:
 
 ```bash
-sudo systemctl status meteoedge-rotate-bot-log.timer
-sudo systemctl list-timers meteoedge-rotate-bot-log.timer
+sudo systemctl status meteoedge-rotate-logs.timer
+sudo systemctl list-timers meteoedge-rotate-logs.timer
 ```
 
-### Step 3: Verify the Rotation Works
+### Step 3: Run Initial Rotation (One-Time, Before Timer)
 
-Check the timer's status:
+The timer is scheduled for 00:05 UTC. For immediate testing:
 
 ```bash
-sudo systemctl status meteoedge-rotate-bot-log.timer
+sudo systemctl start meteoedge-rotate-logs.service
 ```
 
-Check recent runs:
+Monitor the run:
 
 ```bash
-sudo journalctl -u meteoedge-rotate-bot-log.service -n 20
+sudo journalctl -u meteoedge-rotate-logs.service -n 20 -f
 ```
 
-Verify the dated file was created:
+### Step 4: Verify the Rotation Worked
+
+Check the dated file was created:
 
 ```bash
 ls -la /home/p0k5/MeteoEdge/logs/bot.*.log* | head -5
 ```
 
-Example output:
+Expected output:
 
 ```
 -rw-r--r--  1 p0k5 p0k5      12345 2026-08-11 00:05 /home/p0k5/MeteoEdge/logs/bot.2026-08-11.log
 -rw-r--r--  1 p0k5 p0k5       3421 2026-08-10 00:05 /home/p0k5/MeteoEdge/logs/bot.2026-08-10.log.gz
+-rw-r--r--  1 p0k5 p0k5      .... (timestamp varies, now empty)
 ```
 
-Verify `bot.log` is now writable as p0k5:
+Verify `bot.log` exists and is writable:
 
 ```bash
 ls -la /home/p0k5/MeteoEdge/logs/bot.log
 ```
 
-Expected: `-rw-r--r--  1 p0k5 p0k5  ...`
+Expected: `-rw-r--r--  1 p0k5 p0k5  <size> (recent timestamp)`
 
-### Step 4: Monitor for Errors
+Verify the service is writing to it:
 
-Watch the service log during the first few rotations:
+```bash
+# Should see recent timestamps
+tail -20 /home/p0k5/MeteoEdge/logs/bot.log | head -5
+```
+
+### Step 5: Monitor for Errors
+
+Watch the service log during future rotations:
+
+```bash
+sudo journalctl -u meteoedge-rotate-logs.service -f
+```
+
+Watch meteoedge's output for any issues:
 
 ```bash
 sudo journalctl -u meteoedge -f | grep -i "bot.log\|rotation\|error"
 ```
-
-If you see `ERROR` or `WARNING`, check:
-1. Disk space: `df -h /home/p0k5/MeteoEdge/logs`
-2. Permissions: `ls -la /home/p0k5/MeteoEdge/logs`
-3. Systemd status: `sudo systemctl status meteoedge`
 
 ## Rollback / Disable Rotation
 
@@ -249,66 +151,123 @@ If the rotation causes problems:
 
 ```bash
 # Disable the timer
-sudo systemctl stop meteoedge-rotate-bot-log.timer
-sudo systemctl disable meteoedge-rotate-bot-log.timer
+sudo systemctl stop meteoedge-rotate-logs.timer
+sudo systemctl disable meteoedge-rotate-logs.timer
 
 # Restart the service (if needed)
 sudo systemctl restart meteoedge
 ```
 
-The existing bot.log will continue to grow, but the service will keep working. A new fix will be deployed if issues arise.
+The existing `bot.log` will continue to grow, but the service will keep working. A new fix will be deployed if issues arise.
 
 ## Troubleshooting
 
-### Issue: "bot.log is still root:root after rotation"
+### Issue: "chown failed: Permission denied"
 
-**Cause:** Ownership fix failed, probably due to permissions.
+**Cause**: Timer is not running as root, or there's a permission issue.
 
-**Fix:** Manually fix ownership:
+**Verify**: Check the unit file:
 
 ```bash
-sudo chown p0k5:p0k5 /home/p0k5/MeteoEdge/logs/bot.*.log
+sudo grep "User=" /etc/systemd/system/meteoedge-rotate-logs.service
 ```
 
-Then verify the rotation script has permission to call `os.chown()`. If running as p0k5 (not root), this will fail; adjust the script to run as root or use `sudo chown p0k5:p0k5 $new_log` in the script.
+Should show `User=root`.
 
-### Issue: "bot.log grows in size after rotation"
-
-**Cause:** Systemd did not reopen the stream (the signal was missed or didn't work).
-
-**Fix:** Manually signal the service:
+**Fix**: Edit the unit file if needed:
 
 ```bash
-sudo systemctl kill -s SIGHUP meteoedge
-sleep 1
-ls -la /home/p0k5/MeteoEdge/logs/bot.log  # Should be small or empty
+sudo systemctl edit meteoedge-rotate-logs.service
 ```
 
-If still large, check:
-- Is `meteoedge.service` actually running? `sudo systemctl status meteoedge`
-- Are there other processes writing to bot.log? `lsof | grep bot.log`
+Add:
 
-### Issue: "Compression fails (disk full)"
+```ini
+[Service]
+User=root
+```
 
-**Cause:** Insufficient disk space.
-
-**Fix:** Delete old compressed files manually:
+Then:
 
 ```bash
-ls -ltr /home/p0k5/MeteoEdge/logs/bot.*.log.gz | head -10
+sudo systemctl daemon-reload
+sudo systemctl start meteoedge-rotate-logs.service
+```
+
+### Issue: "bot.log does not exist after rotation"
+
+**Cause**: The truncate operation may have failed, or there was an unexpected error.
+
+**Check**: Look at the service log:
+
+```bash
+sudo journalctl -u meteoedge-rotate-logs.service -n 20
+```
+
+Also check meteoedge's status:
+
+```bash
+sudo systemctl status meteoedge
+```
+
+If meteoedge is not running, start it:
+
+```bash
+sudo systemctl start meteoedge
+```
+
+### Issue: "Rotation runs but bot.log keeps growing"
+
+**Cause**: The rotation may have failed silently, or the truncate didn't work.
+
+**Fix**: Manually check the logs directory:
+
+```bash
+du -sh /home/p0k5/MeteoEdge/logs/
+ls -lh /home/p0k5/MeteoEdge/logs/bot.log
+```
+
+If bot.log is huge, check if rotation is actually running:
+
+```bash
+sudo systemctl status meteoedge-rotate-logs.timer
+sudo journalctl -u meteoedge-rotate-logs.service -n 5
+```
+
+If the service never ran, the timer may not have fired. Check:
+
+```bash
+sudo systemctl list-timers meteoedge-rotate-logs.timer
+```
+
+Look at "NEXT" column — should be soon. If "NEXT" is in the past, reload:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart meteoedge-rotate-logs.timer
+```
+
+### Issue: "Disk fills up with .gz files"
+
+**Cause**: Retention policy not being enforced, or retention_days too high.
+
+**Fix**: Manually delete old files:
+
+```bash
+ls -ltr /home/p0k5/MeteoEdge/logs/bot.*.log.gz | head -20
 # Delete the oldest few:
-rm /home/p0k5/MeteoEdge/logs/bot.2026-07-*.log.gz
+sudo rm /home/p0k5/MeteoEdge/logs/bot.2026-07-*.log.gz
 ```
 
-Then check if there's a quota or capacity planning issue.
+Then check if housekeeping is running. If bot.log is 298 MB and it's all "old" data (from before the fix), you may need to manually rotate it once to clear the backlog.
 
 ## Integration with #977
 
 The deployment of this rotation is sequenced with #977 (KORD position resolution). Key coordination points:
 
 1. Do **not** rotate the existing 298 MB `bot.log` until KORD positions are closed (#977).
-2. Once #977 is done, run the one-time rotation via Step 2A above.
-3. Then enable the scheduled timer (Step 2B) for future rotations.
+2. Once #977 is done, install the systemd units and run the initial rotation (Step 3 above).
+3. Then the scheduled timer takes over for daily rotations.
 
 ## Testing in Development
 
@@ -329,7 +288,9 @@ test_log.write_text('test data\n')
 rotated = rotate_plaintext_log(test_log)
 print(f'Rotated to: {rotated}')
 print(f'Original exists: {test_log.exists()}')
+print(f'Original content: {test_log.read_text()!r}')
 print(f'Dated exists: {rotated.exists()}')
+print(f'Dated content: {rotated.read_text()!r}')
 
 # Housekeep
 housekeep_plaintext(test_log)
@@ -339,8 +300,11 @@ print('Housekeeping done')
 
 ## References
 
-- `src/utils/log_rotation.py`: Implementation of rotation functions
-- `src/tests/test_log_rotation.py`: Test suite (41 tests)
+- `src/utils/log_rotation.py`: Implementation (rotate_plaintext_log, housekeep_plaintext)
+- `src/tests/test_log_rotation.py`: Test suite (43 tests)
+- `scripts/rotate_bot_log.py`: The rotation script (runs daily via timer)
+- `deploy/systemd/meteoedge-rotate-logs.service`: systemd service unit
+- `deploy/systemd/meteoedge-rotate-logs.timer`: systemd timer unit
 - systemd documentation: `man systemd.service` (StandardOutput=append:)
 - Issue #978: bot.log grows unbounded
-- Issue #977: KORD position resolution (coordinated deployment)
+- Issue #977: KORD position resolution (deployment blocker)

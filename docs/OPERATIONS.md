@@ -1093,6 +1093,8 @@ Systemd appends logs to files in `logs/`:
 | File | Source | Contents |
 |------|--------|----------|
 | `logs/bot.log` | meteoedge.service | Polling loop, market scans, trade execution |
+| `logs/bot.YYYY-MM-DD.log` | meteoedge-rotate-logs.timer (daily) | Rotated/archived bot.log (365-day retention) |
+| `logs/bot.YYYY-MM-DD.log.gz` | meteoedge-rotate-logs.timer (daily) | Compressed archived bot.log |
 | `logs/settle.log` | meteoedge-settle.service | Daily settlement (outcomes, P&L) |
 
 **View live:**
@@ -1118,6 +1120,38 @@ sudo journalctl -u meteoedge.service -b
 # View logs for the past hour
 sudo journalctl -u meteoedge.service --since "1 hour ago"
 ```
+
+### Log Rotation (bot.log)
+
+`bot.log` is rotated daily by the `meteoedge-rotate-logs.timer` systemd unit to prevent unbounded growth.
+
+**Rotation details:**
+- **Schedule**: Daily at 00:05 UTC (before market opens)
+- **Method**: Copytruncate (safe for systemd's `StandardOutput=append:` targets)
+- **Retention**: 365 days (matches snapshot/audit-trail retention policy)
+- **Compression**: Files compressed after 1 day, deleted after 365 days
+- **Ownership**: Automatically fixed to `p0k5:p0k5` (from root:root)
+
+**Check rotation status:**
+```bash
+sudo systemctl status meteoedge-rotate-logs.timer
+sudo systemctl list-timers meteoedge-rotate-logs.timer
+sudo journalctl -u meteoedge-rotate-logs.service -n 20
+```
+
+**View archived logs:**
+```bash
+# Recent dated logs (plaintext)
+ls -lh logs/bot.*.log | tail -10
+
+# Compressed archived logs
+ls -lh logs/bot.*.log.gz | tail -10
+
+# Decompress and view an old log
+gunzip -c logs/bot.2026-08-10.log.gz | tail -50
+```
+
+**For detailed deployment and troubleshooting information, see [`DEPLOY_BOT_LOG_ROTATION.md`](DEPLOY_BOT_LOG_ROTATION.md).**
 
 ### Structured Log Files (JSONL)
 
