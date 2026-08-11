@@ -190,39 +190,41 @@ The existing `bot.log` will continue to grow, but the service will keep working.
 
 ### Issue: "chown failed: Permission denied"
 
-**Cause**: Timer is not running as root, or there's a permission issue.
+**Cause**: The one-time ownership fix step (Step 2) was never run, or a new root-owned bot.log was created since by a `sudo` invocation.
 
-**Verify**: Check the unit file:
-
-```bash
-sudo grep "User=" /etc/systemd/system/meteoedge-rotate-logs.service
-```
-
-Should show `User=root`.
-
-**Fix**: Edit the unit file if needed:
+**Verify**: Check the current ownership:
 
 ```bash
-sudo systemctl edit meteoedge-rotate-logs.service
+ls -la /home/p0k5/MeteoEdge/logs/bot.log
 ```
 
-Add:
+If output shows `root:root` (e.g., `-rw-r--r--  1 root root ...`), the fix is needed.
 
-```ini
-[Service]
-User=root
-```
-
-Then:
+**Fix**: Run the one-time ownership fix:
 
 ```bash
-sudo systemctl daemon-reload
+sudo chown p0k5:p0k5 /home/p0k5/MeteoEdge/logs/bot.log
+```
+
+Verify:
+
+```bash
+ls -la /home/p0k5/MeteoEdge/logs/bot.log
+```
+
+Should show: `-rw-r--r--  1 p0k5 p0k5 ...`
+
+Then retry the rotation:
+
+```bash
 sudo systemctl start meteoedge-rotate-logs.service
 ```
 
-### Issue: "bot.log does not exist after rotation"
+Do NOT change `User=` in the timer — it must be `p0k5`, not root.
 
-**Cause**: The truncate operation may have failed, or there was an unexpected error.
+### Issue: "bot.log does not exist" or "bot.log is empty/small after rotation"
+
+**Cause**: Unexpected error during rotation, or systemd not writing to bot.log.
 
 **Check**: Look at the service log:
 
@@ -234,12 +236,20 @@ Also check meteoedge's status:
 
 ```bash
 sudo systemctl status meteoedge
+sudo journalctl -u meteoedge -n 10
 ```
 
-If meteoedge is not running, start it:
+If meteoedge is not running, restart it:
 
 ```bash
-sudo systemctl start meteoedge
+sudo systemctl restart meteoedge
+```
+
+Then verify systemd is writing to bot.log:
+
+```bash
+tail -f /home/p0k5/MeteoEdge/logs/bot.log
+# (watch for new log lines appearing every second or so)
 ```
 
 ### Issue: "Rotation runs but bot.log keeps growing"
