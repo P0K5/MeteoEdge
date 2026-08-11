@@ -430,6 +430,69 @@ class TestBuildVerdict:
         assert "[OK] Healthy" in text
         assert "bot stale" not in text
 
+    def test_all_m3_flags_unknown_yields_unknown_verdict(self):
+        """All three m3 flags UNKNOWN → verdict is NOT [OK] Healthy, and names all three."""
+        sections = [("m3", ["M3 Progress", "(no ladders in 24h -- cannot assess)", "(no brackets in 24h -- cannot assess)"],
+                     {"mass_status": "UNKNOWN", "rail_status": "UNKNOWN", "gaps_status": "UNKNOWN"})]
+        result = _build_verdict(sections)
+        text = "\n".join(result)
+        assert "[UNKNOWN]" in text
+        assert "[OK] Healthy" not in text
+        assert "M3 ladder mass not assessed" in text
+        assert "M3 high rail not assessed" in text
+        assert "M3 gaps not assessed" in text
+
+    def test_one_unknown_others_ok_yields_unknown_verdict(self):
+        """One UNKNOWN, others OK → [UNKNOWN] Cannot fully assess, naming only the unassessed one."""
+        sections = [("m3", ["M3 Progress", "Ladder mass: 1.00 mean [OK]", "High rail ... [OK]", "Interior-zero gaps: 0 of 20 (0.0%) [OK]"],
+                     {"mass_status": "UNKNOWN", "rail_status": "OK", "gaps_status": "OK"})]
+        result = _build_verdict(sections)
+        text = "\n".join(result)
+        assert "[UNKNOWN]" in text
+        assert "[OK] Healthy" not in text
+        assert "M3 ladder mass not assessed" in text
+        assert "M3 high rail not assessed" not in text
+        assert "M3 gaps not assessed" not in text
+
+    def test_one_warn_one_unknown_warn_wins_both_labels_appear(self):
+        """One WARN + one UNKNOWN → [WARN] tag wins, and BOTH labels appear."""
+        sections = [("m3", ["M3 Progress", "Ladder mass: 0.80 mean [WARN]", "High rail: (no ceiling -- cannot assess)", "Interior-zero gaps: 0 of 20 (0.0%) [OK]"],
+                     {"mass_status": "WARN", "rail_status": "UNKNOWN", "gaps_status": "OK"})]
+        result = _build_verdict(sections)
+        text = "\n".join(result)
+        assert "[WARN]" in text
+        assert "[OK] Healthy" not in text
+        assert "M3 ladder mass leaking" in text
+        assert "M3 high rail not assessed" in text
+        assert "M3 gaps not assessed" not in text
+
+    def test_all_m3_ok_still_yields_ok_verdict(self):
+        """All three OK → still [OK] Healthy (regression guard)."""
+        sections = [("m3", ["M3 Progress", "Ladder mass: 1.00 mean [OK]", "High rail ... [OK]", "Interior-zero gaps: 0 of 20 (0.0%) [OK]"],
+                     {"mass_status": "OK", "rail_status": "OK", "gaps_status": "OK"})]
+        result = _build_verdict(sections)
+        text = "\n".join(result)
+        assert "[OK] Healthy" in text
+        assert "[UNKNOWN]" not in text
+        assert "not assessed" not in text
+
+    def test_query_error_yields_partial_data_distinct_from_empty_window(self):
+        """Query-error path yields 'partial data only' and is distinguishable from empty-window path."""
+        # Query-error path: has "unavailable" in the text
+        sections_error = [("m3", ["M3 Progress", "(unavailable -- query error)"], {"mass_status": "UNKNOWN", "rail_status": "UNKNOWN", "gaps_status": "UNKNOWN"})]
+        result_error = _build_verdict(sections_error)
+        text_error = "\n".join(result_error)
+        assert "[WARN]" in text_error  # "partial data only" is a WARN
+        assert "partial data only" in text_error
+
+        # Empty-window path: no "unavailable", just UNKNOWN flags
+        sections_empty = [("m3", ["M3 Progress", "(no ladders in 24h -- cannot assess)"], {"mass_status": "UNKNOWN", "rail_status": "UNKNOWN", "gaps_status": "UNKNOWN"})]
+        result_empty = _build_verdict(sections_empty)
+        text_empty = "\n".join(result_empty)
+        assert "[UNKNOWN]" in text_empty  # Only UNKNOWN flags, no query error
+        assert "partial data only" not in text_empty
+        assert "cannot assess" in text_empty or "not assessed" in text_empty
+
 
 # ---------------------------------------------------------------------------
 # build_report with mocked DB
