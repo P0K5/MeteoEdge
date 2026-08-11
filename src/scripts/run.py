@@ -395,7 +395,7 @@ def poll_once(
             )
 
     if live_trader:
-        order_manager.reconcile_timeout_fills(ts, db=db)
+        order_manager.reconcile_timeout_fills(ts, db=db, live_trader=live_trader)
         order_manager.sync_open_orders(live_trader, db=db)
 
     # Take-profit is weather-independent -- runs every poll, including pre-sunrise.
@@ -742,6 +742,14 @@ def poll_once(
             _guard_reason = None
             if _entry_key in _entry_keys_this_poll:
                 _guard_reason = "duplicate candidate for this bracket in the same poll"
+            elif _cand_token and _cand_token in order_manager._open_orders:
+                # Issue #977 defense-in-depth: order_manager._open_orders is
+                # refreshed every poll from the live exchange (resting GTC
+                # orders + today's filled DB positions) via sync_open_orders().
+                # It can see a still-resting or just-filled order on this token
+                # even in the window before its open_positions/trades rows are
+                # durably reflected in the DB (e.g. right after a restart).
+                _guard_reason = "order already open/pending on the exchange for this token"
             elif db is not None:
                 try:
                     if _cand_token and db.get_open_position_by_token(_cand_token):

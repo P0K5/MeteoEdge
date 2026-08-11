@@ -176,6 +176,7 @@ def _execute_live(
                     price_cents=price_cents,
                     size_usdc=size_eur,
                     station=candidate.station,
+                    ticker=candidate.bracket.ticker,
                     bracket_low=candidate.bracket.low_f,
                     bracket_high=candidate.bracket.high_f,
                     predicted_price=predicted_price,

@@ -30,6 +30,7 @@ class LiveTrader:
         size_usdc: float,   # e.g. 5.0 -> spend up to 5 (denominated in USDC)
         *,
         station: str = "",
+        ticker: str = "",
         bracket_low: float = 0.0,
         bracket_high: float = 0.0,
         predicted_price: int = 0,
@@ -37,7 +38,17 @@ class LiveTrader:
         p_yes_raw: "float | None" = None,
         end_date: str = "",
     ) -> str:
-        """Place a GTC limit order. Returns order_id string."""
+        """Place a GTC limit order. Returns order_id string.
+
+        ``ticker`` should be the market's real condition id (candidate.bracket.ticker).
+        When omitted (legacy callers), a synthetic ``<STATION>-order-<id>`` placeholder
+        is used, but issue #977 found that placeholder breaks
+        Database.has_live_trade_today()'s ticker-matched entry-gate query -- it can
+        never match a live order's trades row, so a same-day re-entry on a bracket
+        whose open_positions row has already been cleaned up (e.g. after a timed-out
+        order was cancelled) sails through unblocked. Always pass the real ticker
+        from the caller.
+        """
         price = round(price_cents / 100, 4)
         size = round(size_usdc / price, 2)  # contracts = USDC / price_per_contract
         args = OrderArgs(
@@ -53,13 +64,15 @@ class LiveTrader:
         if not order_id:
             raise RuntimeError(f"Order placement failed: {resp}")
 
+        resolved_ticker = ticker or f"{station}-order-{order_id[:8]}"
+
         if self._db is not None:
             try:
                 now_utc = datetime.utcnow().isoformat() + "Z"
                 trade_id = self._db.insert_trade(
                     ts=now_utc,
                     station=station,
-                    ticker=f"{station}-order-{order_id[:8]}",
+                    ticker=resolved_ticker,
                     bracket_low=bracket_low,
                     bracket_high=bracket_high,
                     side=side,
@@ -76,7 +89,7 @@ class LiveTrader:
                 self._db.open_position(
                     trade_id=trade_id,
                     station=station,
-                    ticker=f"{station}-order-{order_id[:8]}",
+                    ticker=resolved_ticker,
                     token_id=token_id,
                     side=side,
                     order_id=order_id,
