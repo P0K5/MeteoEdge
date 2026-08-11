@@ -812,6 +812,7 @@ def _build_m3_progress(db, today: datetime) -> "tuple[list[str], dict]":
             # Cannot judge, so do not print a pass/fail tag either, and do
             # not treat it as OK for the verdict -- it was simply not
             # evaluated.
+            flags["rail_status"] = "UNKNOWN"
             lines.append(f"  High rail (bracket_evals, >= 0.95): {_fmt_pct(high_rail)} "
                          f"(ladder size unknown -- no ceiling to compare against)")
 
@@ -941,6 +942,7 @@ def _build_verdict(sections: "list[tuple[str, list[str], dict]]") -> list[str]:
 
     crit_issues: list[str] = []
     warn_issues: list[str] = []
+    unknown_issues: list[str] = []
 
     bot_flags = flags_by_section.get("bot", {})
     bot_status = bot_flags.get("status")
@@ -952,10 +954,18 @@ def _build_verdict(sections: "list[tuple[str, list[str], dict]]") -> list[str]:
     m3_flags = flags_by_section.get("m3", {})
     if m3_flags.get("mass_status") == "WARN":
         warn_issues.append("M3 ladder mass leaking")
+    elif m3_flags.get("mass_status") == "UNKNOWN":
+        unknown_issues.append("M3 ladder mass not assessed")
+
     if m3_flags.get("rail_status") == "WARN":
         warn_issues.append("M3 high rail vs structural ceiling")
+    elif m3_flags.get("rail_status") == "UNKNOWN":
+        unknown_issues.append("M3 high rail not assessed")
+
     if m3_flags.get("gaps_status") == "WARN":
         warn_issues.append("artifact rate high")
+    elif m3_flags.get("gaps_status") == "UNKNOWN":
+        unknown_issues.append("M3 gaps not assessed")
 
     blockers_text = "\n".join(lines_by_section.get("blockers", []))
     if "[WARN] gap confirmed" in blockers_text:
@@ -969,10 +979,15 @@ def _build_verdict(sections: "list[tuple[str, list[str], dict]]") -> list[str]:
     if "unavailable" in all_text:
         warn_issues.append("partial data only")
 
+    # Precedence: CRIT > WARN > UNKNOWN > OK
     if crit_issues:
-        verdict = f"[CRIT] Degrading -- {', '.join(crit_issues + warn_issues)}"
+        all_issues = crit_issues + warn_issues + unknown_issues
+        verdict = f"[CRIT] Degrading -- {', '.join(all_issues)}"
     elif warn_issues:
-        verdict = f"[WARN] Stable -- watch: {', '.join(warn_issues)}"
+        all_issues = warn_issues + unknown_issues
+        verdict = f"[WARN] Stable -- watch: {', '.join(all_issues)}"
+    elif unknown_issues:
+        verdict = f"[UNKNOWN] Cannot fully assess -- {', '.join(unknown_issues)}"
     else:
         verdict = "[OK] Healthy -- all systems nominal, M3 accruing on track"
 
