@@ -1,0 +1,11 @@
+[Unit]
+Description=Run MeteoEdge bot.log rotation daily at 00:05 UTC
+Documentation=file:///home/p0k5/MeteoEdge/docs/DEPLOY_BOT_LOG_ROTATION.md
+
+[Timer]
+OnCalendar=*-*-* 00:05:00 UTC
+AccuracySec=1m
+Persistent=true
+
+[Install]
+WantedBy=timers.target
