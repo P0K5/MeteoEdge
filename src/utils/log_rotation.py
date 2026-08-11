@@ -282,3 +282,125 @@ def _read_jsonl_file(path: Path, is_gz: bool) -> Iterator[dict]:
                         continue
     except OSError as e:
         log.warning("[log_rotation] could not read %s: %s", path, e)
+
+
+# ---------------------------------------------------------------------------
+# Plain-text log rotation (e.g., bot.log from systemd StandardOutput)
+# ---------------------------------------------------------------------------
+
+def rotate_plaintext_log(
+    log_path: Path,
+    owner_uid: int | None = None,
+    owner_gid: int | None = None,
+    for_date: date | None = None,
+) -> Path:
+    """Rotate a plain-text log file using move-then-reopen pattern.
+
+    This is safe for systemd logs: we move the file (so systemd's held fd
+    becomes "orphaned" but still valid), then the caller can signal systemd
+    to reopen its stream (reopening the original path, now empty).
+
+    Args:
+        log_path: Path to the log file (e.g., Path("logs/bot.log"))
+        owner_uid: Optional UID for ownership fix (e.g., p0k5's UID)
+        owner_gid: Optional GID for ownership fix (e.g., p0k5's GID)
+        for_date: Date for the rotation (default: today UTC)
+
+    Returns:
+        Path to the newly dated file (the old file has been moved here)
+    """
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    dated = _dated_path(log_path, for_date=for_date)
+
+    # If the log file exists, move it to the dated filename
+    if log_path.exists() and not log_path.is_symlink():
+        try:
+            shutil.move(str(log_path), str(dated))
+            log.info("[log_rotation] rotated plain-text log: %s → %s", log_path.name, dated.name)
+        except OSError as e:
+            log.warning("[log_rotation] could not rotate %s: %s", log_path, e)
+            return dated
+
+    # Fix ownership if specified (e.g., root:root → p0k5:p0k5)
+    if owner_uid is not None or owner_gid is not None:
+        _fix_file_ownership(dated, owner_uid, owner_gid)
+
+    return dated
+
+
+def housekeep_plaintext(log_path: Path, retain_days: int | None = None) -> None:
+    """Compress and/or delete old plain-text log files.
+
+    Similar to housekeep() but for plain-text logs (not JSONL).
+    Old files are gzip-compressed, then deleted after retention expires.
+
+    Args:
+        log_path: The bare (non-dated) path for the log file (e.g., Path("logs/bot.log"))
+        retain_days: Optional override for retention cutoff. Defaults to SNAPSHOT_RETAIN_DAYS
+                    (matching the retention policy for audit-trail logs like bot.log).
+    """
+    today = _today_utc()
+    _retain = retain_days if retain_days is not None else SNAPSHOT_RETAIN_DAYS
+    stem = log_path.stem
+    suffix = log_path.suffix
+    directory = log_path.parent
+
+    if not directory.exists():
+        return
+
+    for path in directory.glob(f"{stem}.????-??-??{suffix}"):
+        # Extract date from filename
+        date_part = path.stem[len(stem) + 1:]
+        try:
+            file_date = date.fromisoformat(date_part)
+        except ValueError:
+            continue
+
+        age_days = (today - file_date).days
+        if age_days <= 0:
+            continue  # today's file — skip
+
+        if age_days > _retain:
+            # Delete (also remove .gz if present)
+            _safe_remove(path)
+            _safe_remove(Path(str(path) + ".gz"))
+            log.info("[log_rotation] deleted aged-out plain-text log: %s (age=%d days)", path.name, age_days)
+
+        elif age_days >= LOG_ROTATION_COMPRESS_AFTER_DAYS:
+            gz_path = Path(str(path) + ".gz")
+            if not gz_path.exists() and path.exists():
+                _compress(path, gz_path)
+                _safe_remove(path)
+                log.info("[log_rotation] compressed: %s → %s", path.name, gz_path.name)
+
+
+def _fix_file_ownership(path: Path, owner_uid: int | None = None, owner_gid: int | None = None) -> None:
+    """Fix file ownership (e.g., root:root → p0k5:p0k5).
+
+    Calls os.chown if UIDs/GIDs are provided. Silently skips on systems
+    where os.chown is unavailable or permission is denied.
+
+    Args:
+        path: File path to fix
+        owner_uid: Numeric UID (None = do not change)
+        owner_gid: Numeric GID (None = do not change)
+    """
+    if not path.exists():
+        return
+
+    # Skip if neither UID nor GID is specified
+    if owner_uid is None and owner_gid is None:
+        return
+
+    # Use -1 for unchanged (per POSIX chown semantics)
+    uid = owner_uid if owner_uid is not None else -1
+    gid = owner_gid if owner_gid is not None else -1
+
+    try:
+        os.chown(path, uid, gid)
+        log.info("[log_rotation] fixed ownership: %s (uid=%s, gid=%s)", path, uid, gid)
+    except OSError as e:
+        log.warning("[log_rotation] could not fix ownership of %s: %s", path, e)
+    except AttributeError:
+        # os.chown not available on this platform (e.g., Windows)
+        log.debug("[log_rotation] os.chown not available; skipping ownership fix")

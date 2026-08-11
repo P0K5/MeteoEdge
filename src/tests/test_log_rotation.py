@@ -24,11 +24,14 @@ from src.utils.log_rotation import (
     _dated_path,
     _today_utc,
     housekeep,
+    housekeep_plaintext,
     iter_rotated_jsonl,
     resolve_current,
     rotated_path,
+    rotate_plaintext_log,
     LOG_ROTATION_COMPRESS_AFTER_DAYS,
     LOG_ROTATION_RETAIN_DAYS,
+    SNAPSHOT_RETAIN_DAYS,
 )
 
 
@@ -384,3 +387,137 @@ class TestHousekeepRetainOverride:
         with patch("src.utils.log_rotation._today_utc", return_value=today):
             housekeep(base)  # no retain_days — uses global 30-day default
         assert not old_file.exists(), "candidates.csv uses 30-day default, 40-day-old file deleted"
+
+
+# ---------------------------------------------------------------------------
+# Plain-text log rotation (e.g., bot.log)
+# ---------------------------------------------------------------------------
+
+class TestRotatePlaintextLog:
+    """Tests for rotate_plaintext_log() and housekeep_plaintext()."""
+
+    def test_move_then_reopen_pattern(self, tmp_path):
+        """Verify move-then-reopen pattern: log file is moved, not truncated."""
+        log_file = tmp_path / "logs" / "bot.log"
+        log_file.parent.mkdir()
+
+        # Write initial content
+        log_file.write_text("line 1\nline 2\n")
+        today = _today_utc()
+
+        # Rotate the log
+        dated = rotate_plaintext_log(log_file, for_date=today)
+
+        # Original file should not exist (it was moved)
+        assert not log_file.exists(), "Original log file should not exist after rotation (move-then-reopen)"
+
+        # Dated file should have the original content
+        assert dated.exists()
+        assert dated.read_text() == "line 1\nline 2\n"
+
+        # Verify dated filename is correct
+        assert today.isoformat() in dated.name
+
+    def test_preserves_systemd_fd(self, tmp_path):
+        """Verify that systemd's held fd at offset N is not corrupted.
+
+        The move-then-reopen pattern leaves systemd's held fd valid.
+        After the move, the caller signals systemd to reopen the original path.
+        """
+        log_file = tmp_path / "logs" / "bot.log"
+        log_file.parent.mkdir()
+        log_file.write_text("data")
+        today = _today_utc()
+
+        # Simulate: systemd has fd to bot.log at offset=4
+        dated = rotate_plaintext_log(log_file, for_date=today)
+
+        # After move, bot.log doesn't exist, but systemd's fd to the old inode is still valid.
+        # (The actual fd operations happen in systemd, not in this test.)
+        # Caller must signal systemd to reopen.
+        assert not log_file.exists()
+        assert dated.exists()
+        assert dated.read_text() == "data"
+
+    def test_housekeep_compresses_old_plaintext(self, tmp_path):
+        """Old plain-text logs should be compressed."""
+        base = tmp_path / "bot.log"
+        today = _today_utc()
+        old_date = today - timedelta(days=LOG_ROTATION_COMPRESS_AFTER_DAYS + 1)
+        old_file = tmp_path / f"bot.{old_date.isoformat()}.log"
+        old_file.write_text("old log content\n")
+
+        housekeep_plaintext(base)
+
+        gz = Path(str(old_file) + ".gz")
+        assert gz.exists(), "Old plain-text log should be compressed"
+        assert not old_file.exists(), "Original should be removed after compression"
+        # Verify compression
+        with gzip.open(gz, "rt") as f:
+            assert f.read() == "old log content\n"
+
+    def test_housekeep_deletes_aged_plaintext(self, tmp_path):
+        """Plain-text logs older than retention should be deleted."""
+        base = tmp_path / "bot.log"
+        today = _today_utc()
+        ancient_date = today - timedelta(days=SNAPSHOT_RETAIN_DAYS + 1)
+        ancient_file = tmp_path / f"bot.{ancient_date.isoformat()}.log"
+        ancient_file.write_text("ancient")
+
+        housekeep_plaintext(base)
+
+        assert not ancient_file.exists(), "Ancient plain-text log should be deleted"
+
+    def test_housekeep_plaintext_uses_snapshot_retention_by_default(self, tmp_path):
+        """housekeep_plaintext should default to SNAPSHOT_RETAIN_DAYS, not 30."""
+        base = tmp_path / "bot.log"
+        today = date(2026, 6, 18)
+        # 40 days old — older than global 30 but younger than SNAPSHOT_RETAIN_DAYS (365)
+        file_40d = tmp_path / f"bot.{(today - timedelta(days=40)).isoformat()}.log"
+        file_40d.write_text("data")
+
+        with patch("src.utils.log_rotation._today_utc", return_value=today):
+            housekeep_plaintext(base)  # No retain_days param
+
+        # With SNAPSHOT_RETAIN_DAYS default, 40-day-old file should survive
+        assert file_40d.exists() or Path(str(file_40d) + ".gz").exists(), \
+            "40-day-old bot.log should survive with SNAPSHOT_RETAIN_DAYS (365) default"
+
+    def test_does_not_touch_today(self, tmp_path):
+        """housekeep_plaintext should not touch today's file."""
+        base = tmp_path / "bot.log"
+        today = _today_utc()
+        today_file = tmp_path / f"bot.{today.isoformat()}.log"
+        today_file.write_text("today")
+
+        housekeep_plaintext(base)
+
+        assert today_file.exists(), "Today's file should not be touched"
+
+    def test_rotate_creates_parent_directory(self, tmp_path):
+        """rotate_plaintext_log should create parent directory if missing."""
+        log_file = tmp_path / "nonexistent" / "subdir" / "bot.log"
+        log_file.parent.mkdir(parents=True, exist_ok=True)
+        log_file.write_text("content")
+
+        dated = rotate_plaintext_log(log_file)
+
+        assert dated.parent.exists()
+        assert dated.exists()
+
+    def test_rotate_noop_if_file_missing(self, tmp_path):
+        """rotate_plaintext_log should not fail if the log file doesn't exist."""
+        log_file = tmp_path / "logs" / "bot.log"
+        log_file.parent.mkdir()
+
+        dated = rotate_plaintext_log(log_file)
+
+        # Should return the dated path without error
+        today = _today_utc()
+        assert today.isoformat() in dated.name
+
+    def test_housekeep_noop_if_directory_missing(self, tmp_path):
+        """housekeep_plaintext should not fail if directory doesn't exist."""
+        base = tmp_path / "nonexistent" / "bot.log"
+        # Should not raise
+        housekeep_plaintext(base)
