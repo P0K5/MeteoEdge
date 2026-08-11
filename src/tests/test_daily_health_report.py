@@ -277,11 +277,63 @@ class TestBuildVerdict:
         assert "[OK] Healthy" in text
 
     def test_warn_when_artifact_rate_high(self):
-        sections = [("m3", ["M3 Progress", "Interior-zero gaps: 5 of 20 ladders (25.0%) [WARN]"], {})]
+        sections = [("m3", ["M3 Progress", "Interior-zero gaps: 5 of 20 ladders (25.0%) [WARN]"],
+                     {"mass_status": "OK", "rail_status": "OK", "gaps_status": "WARN"})]
         result = _build_verdict(sections)
         text = "\n".join(result)
         assert "[WARN]" in text
         assert "artifact rate high" in text
+
+    def test_m3_high_rail_warns_gaps_ok_names_the_rail_not_artifact_rate(self):
+        """Issue #972: a high-rail WARN must be named as a rail/sharpness
+        problem, not folded into "artifact rate high" just because it is a
+        WARN somewhere in the M3 section."""
+        sections = [("m3", ["M3 Progress", "High rail ... [WARN]", "Interior-zero gaps: 0 of 20 (0.0%) [OK]"],
+                     {"mass_status": "OK", "rail_status": "WARN", "gaps_status": "OK"})]
+        result = _build_verdict(sections)
+        text = "\n".join(result)
+        assert "[WARN]" in text
+        assert "rail" in text.lower()
+        assert "artifact rate high" not in text
+
+    def test_m3_gaps_warn_rail_ok_names_the_gaps(self):
+        sections = [("m3", ["M3 Progress", "High rail ... [OK]", "Interior-zero gaps: 5 of 20 (25.0%) [WARN]"],
+                     {"mass_status": "OK", "rail_status": "OK", "gaps_status": "WARN"})]
+        result = _build_verdict(sections)
+        text = "\n".join(result)
+        assert "[WARN]" in text
+        assert "artifact rate high" in text
+        assert "rail" not in text.lower()
+
+    def test_m3_both_rail_and_gaps_warn_produce_both_labels(self):
+        sections = [("m3", ["M3 Progress", "High rail ... [WARN]", "Interior-zero gaps: 5 of 20 (25.0%) [WARN]"],
+                     {"mass_status": "OK", "rail_status": "WARN", "gaps_status": "WARN"})]
+        result = _build_verdict(sections)
+        text = "\n".join(result)
+        assert "artifact rate high" in text
+        assert "rail" in text.lower()
+
+    def test_m3_healthy_section_produces_no_m3_label(self):
+        sections = [("m3", ["M3 Progress", "everything [OK]"],
+                     {"mass_status": "OK", "rail_status": "OK", "gaps_status": "OK"})]
+        result = _build_verdict(sections)
+        text = "\n".join(result)
+        assert "[OK] Healthy" in text
+        assert "artifact rate high" not in text
+        assert "rail" not in text.lower()
+        assert "mass" not in text.lower()
+
+    def test_m3_ladder_mass_warn_names_mass_not_artifact_rate(self):
+        """Issue #972 required test: a ladder-mass WARN must name the mass
+        problem, not "artifact rate high"."""
+        sections = [("m3", ["M3 Progress", "Ladder mass: 0.80 mean ... [WARN]",
+                             "Interior-zero gaps: 0 of 20 (0.0%) [OK]"],
+                     {"mass_status": "WARN", "rail_status": "OK", "gaps_status": "OK"})]
+        result = _build_verdict(sections)
+        text = "\n".join(result)
+        assert "[WARN]" in text
+        assert "mass" in text.lower()
+        assert "artifact rate high" not in text
 
     def test_crit_when_bot_stale(self):
         sections = [
@@ -310,7 +362,8 @@ class TestBuildVerdict:
     def test_multiple_warnings_demoted(self):
         """Multiple WARN-level issues stay at WARN (not CRIT unless there's a CRIT trigger)."""
         sections = [
-            ("m3", ["M3 Progress", "Interior-zero gaps: 5 of 20 ladders (25.0%) [WARN]"], {}),
+            ("m3", ["M3 Progress", "Interior-zero gaps: 5 of 20 ladders (25.0%) [WARN]"],
+             {"mass_status": "OK", "rail_status": "OK", "gaps_status": "WARN"}),
             ("blockers", [
                 "Open Blockers",
                 "KORD GEFS capture gap -- [WARN] gap confirmed",
@@ -329,7 +382,8 @@ class TestBuildVerdict:
         sections = [
             ("bot", ["Bot Pulse", "Status: [STALE] 90 min since last poll"],
              {"status": "STALE", "detail": "90 min since last poll"}),
-            ("m3", ["M3 Progress", "Interior-zero gaps: 5 of 20 ladders (25.0%) [WARN]"], {}),
+            ("m3", ["M3 Progress", "Interior-zero gaps: 5 of 20 ladders (25.0%) [WARN]"],
+             {"mass_status": "OK", "rail_status": "OK", "gaps_status": "WARN"}),
         ]
         result = _build_verdict(sections)
         text = "\n".join(result)
@@ -354,7 +408,8 @@ class TestBuildVerdict:
                 "  [WARN] Max gap:    298 min (threshold: 20)",
                 "  Status:      [WARN] only 5/288 polls in 24h",
             ], {"status": "WARN", "detail": "only 5/288 polls in 24h"}),
-            ("m3", ["M3 Progress", "  Interior-zero gaps: 0 of 20 ladders (0.0%) [OK]"], {}),
+            ("m3", ["M3 Progress", "  Interior-zero gaps: 0 of 20 ladders (0.0%) [OK]"],
+             {"mass_status": "OK", "rail_status": "OK", "gaps_status": "OK"}),
         ]
         result = _build_verdict(sections)
         text = "\n".join(result)
@@ -567,7 +622,16 @@ class TestBuildM3ProgressLeadingIndicators:
         db = MagicMock()
         with patch("src.scripts.bss_market_vs_model_report.load_bracket_eval_rows",
                    return_value=rows):
-            return "\n".join(_build_m3_progress(db, today))
+            lines, _flags = _build_m3_progress(db, today)
+            return "\n".join(lines)
+
+    def _flags(self, rows, today=None):
+        today = today or datetime(2026, 8, 7, 14, 0, 0, tzinfo=timezone.utc)
+        db = MagicMock()
+        with patch("src.scripts.bss_market_vs_model_report.load_bracket_eval_rows",
+                   return_value=rows):
+            _lines, flags = _build_m3_progress(db, today)
+            return flags
 
     def _rail_line(self, text):
         return [line for line in text.splitlines() if "High rail" in line][0]
@@ -739,7 +803,8 @@ class TestLadderMassIndicator:
         )
         with patch("src.scripts.bss_market_vs_model_report.load_bracket_eval_rows",
                    return_value=rows):
-            return "\n".join(_build_m3_progress(db, today))
+            lines, _flags = _build_m3_progress(db, today)
+            return "\n".join(lines)
 
     def test_a_conserving_ladder_reads_ok(self):
         text = self._text(self._rows([(1.00, 11)]))
@@ -950,7 +1015,8 @@ class TestHealthReportAgreesWithTheGate:
             "no_ask INTEGER)")
         with patch("src.scripts.bss_market_vs_model_report."
                    "load_bracket_eval_rows", return_value=rows):
-            text = "\n".join(_build_m3_progress(db, today))
+            lines, _flags = _build_m3_progress(db, today)
+            text = "\n".join(lines)
         assert "84/300" in text
         assert "~28/day" in text, f"averaged instead of marginal: {text!r}"
         assert "~42/day" not in text
@@ -1046,6 +1112,7 @@ class TestDedupBeforeExclude:
             "no_ask INTEGER)")
         with patch("src.scripts.bss_market_vs_model_report."
                    "load_bracket_eval_rows", return_value=rows):
-            text = "\n".join(_build_m3_progress(db, today))
+            lines, _flags = _build_m3_progress(db, today)
+            text = "\n".join(lines)
         assert "upper bound" in text
         assert "resolved" in text
