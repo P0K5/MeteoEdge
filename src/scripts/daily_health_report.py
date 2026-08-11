@@ -695,9 +695,25 @@ def _scoreable_pairs(since_date: str,
     return pairs
 
 
-def _build_m3_progress(db, today: datetime) -> list[str]:
-    """M3 station-day accrual and leading indicators."""
+def _build_m3_progress(db, today: datetime) -> "tuple[list[str], dict]":
+    """M3 station-day accrual and leading indicators.
+
+    Returns ``(lines, flags)``. The section carries THREE independently
+    WARN-able indicators -- ladder mass, high rail vs. structural ceiling,
+    and interior-zero gaps -- so ``flags`` reports each one under its own
+    key (``mass_status`` / ``rail_status`` / ``gaps_status``, each
+    ``OK / WARN / UNKNOWN``) instead of a single section-wide marker.
+    ``_build_verdict`` reads these directly so a WARN on one indicator is
+    never misattributed to another (issue #972: a bare ``"[WARN]" in
+    m3_text`` scan named every WARN in this section "artifact rate high",
+    even when it was actually the mass or rail indicator that tripped).
+    """
     lines = ["M3 Progress", "-" * 10]
+    flags: dict = {
+        "mass_status": "UNKNOWN",
+        "rail_status": "UNKNOWN",
+        "gaps_status": "UNKNOWN",
+    }
     try:
         since = (today - timedelta(hours=24)).isoformat()
 
@@ -711,8 +727,10 @@ def _build_m3_progress(db, today: datetime) -> list[str]:
         if mass is None:
             lines.append("  Ladder mass:   (no ladders in 24h -- cannot assess)")
             mass_ok = False
+            flags["mass_status"] = "UNKNOWN"
         else:
             mass_ok = 0.95 <= mass["mean"] <= 1.05 and mass["n_deficient"] == 0
+            flags["mass_status"] = "OK" if mass_ok else "WARN"
             lines.append(
                 f"  Ladder mass:   {mass['mean']:.3f} mean, {mass['worst']:.3f} worst "
                 f"({mass['n_deficient']}/{mass['n_ladders']} deficient) "
@@ -776,13 +794,14 @@ def _build_m3_progress(db, today: datetime) -> list[str]:
             # nothing to measure instead.
             lines.append("  Rail / artifact: (no brackets in 24h -- cannot assess)")
             lines.append("")
-            return lines
+            return lines, flags
 
         ceiling = indicators["ceiling"]
         high_rail = indicators["high_rail_share"]
         if ceiling:
             ratio = (high_rail / ceiling) if high_rail is not None else None
             rail_ok = ratio is not None and ratio < HIGH_RAIL_WARN_RATIO
+            flags["rail_status"] = "OK" if rail_ok else "WARN"
             lines.append(
                 f"  High rail (bracket_evals, >= 0.95): {_fmt_pct(high_rail)} vs "
                 f"{_fmt_pct(ceiling)} structural ceiling "
@@ -790,14 +809,16 @@ def _build_m3_progress(db, today: datetime) -> list[str]:
             )
         else:
             # Ladder size undeterminable -- no ceiling to compare against.
-            # Cannot judge, so do not print a pass/fail tag either.
-            rail_ok = True
+            # Cannot judge, so do not print a pass/fail tag either, and do
+            # not treat it as OK for the verdict -- it was simply not
+            # evaluated.
             lines.append(f"  High rail (bracket_evals, >= 0.95): {_fmt_pct(high_rail)} "
                          f"(ladder size unknown -- no ceiling to compare against)")
 
         n_violations = indicators["n_violations"]
         n_ladders_checked = indicators["n_ladders_checked"]
         zero_ok = n_violations == 0
+        flags["gaps_status"] = "OK" if zero_ok else "WARN"
         lines.append(
             f"  Interior-zero gaps: {n_violations} of {n_ladders_checked} ladders "
             f"({_fmt_pct(indicators['violation_rate'])}) {'[OK]' if zero_ok else '[WARN]'}"
@@ -807,7 +828,7 @@ def _build_m3_progress(db, today: datetime) -> list[str]:
         log.exception("M3 progress query failed")
         lines.append("  (unavailable -- query error)")
     lines.append("")
-    return lines
+    return lines, flags
 
 
 def _build_emos_progress(db, today: datetime) -> list[str]:
@@ -896,14 +917,19 @@ def _build_verdict(sections: "list[tuple[str, list[str], dict]]") -> list[str]:
 
     ``sections`` is ``[(name, lines, flags), ...]`` as assembled by
     ``build_report``. Sections that have been migrated to the flags contract
-    (currently: ``bot``) are checked via their ``flags`` dict. Sections that
-    have not yet migrated are checked against *their own* lines only, keyed
-    by section name -- this still eliminates the issue #914 defect-3 bug
-    (a WARN anywhere in the report getting attributed to an unrelated
-    section) because each check is scoped to the section that produced the
-    condition, not the full report text. Full flags migration for the
-    remaining sections is a natural fast-follow once #911's concurrent edit
-    to ``_build_m3_progress`` has landed.
+    (currently: ``bot``, ``m3``) are checked via their ``flags`` dict --
+    ``m3`` in particular reports THREE independent indicators
+    (``mass_status`` / ``rail_status`` / ``gaps_status``) so a WARN on one is
+    never misattributed to another (issue #972: a section-wide
+    ``"[WARN]" in m3_text`` scan used to name every M3 WARN "artifact rate
+    high", even when it was the mass or rail indicator that tripped).
+    Sections that have not yet migrated are checked against *their own*
+    lines only, keyed by section name -- this still eliminates the issue
+    #914 defect-3 bug (a WARN anywhere in the report getting attributed to
+    an unrelated section) because each check is scoped to the section that
+    produced the condition, not the full report text. Full flags migration
+    for the remaining sections (``trading``, ``pipeline``, ``guardrails``,
+    ``emos``, ``blockers``) is a natural fast-follow.
 
     Add new conditions here by reading ``flags_by_section`` /
     ``lines_by_section`` -- this is the extension point for #913's
@@ -923,8 +949,12 @@ def _build_verdict(sections: "list[tuple[str, list[str], dict]]") -> list[str]:
     elif bot_status == "WARN":
         warn_issues.append(bot_flags.get("detail") or "bot pulse degraded")
 
-    m3_text = "\n".join(lines_by_section.get("m3", []))
-    if "Interior-zero gaps:" in m3_text and "[WARN]" in m3_text:
+    m3_flags = flags_by_section.get("m3", {})
+    if m3_flags.get("mass_status") == "WARN":
+        warn_issues.append("M3 ladder mass leaking")
+    if m3_flags.get("rail_status") == "WARN":
+        warn_issues.append("M3 high rail vs structural ceiling")
+    if m3_flags.get("gaps_status") == "WARN":
         warn_issues.append("artifact rate high")
 
     blockers_text = "\n".join(lines_by_section.get("blockers", []))
