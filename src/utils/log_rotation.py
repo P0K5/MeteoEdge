@@ -297,13 +297,15 @@ def rotate_plaintext_log(
     """Rotate a plain-text log file using copytruncate pattern.
 
     Safe for systemd logs with StandardOutput=append:
-    1. Read the current log content
-    2. Create a dated file with the content
-    3. Truncate the original (systemd's fd follows O_APPEND semantics: next write goes to offset 0)
-    4. Fix ownership of the dated file
+    1. Stream-copy the current log content to a dated file (chunked, O(1) RAM)
+    2. Truncate the original (systemd's fd follows O_APPEND semantics: next write goes to offset 0)
+    3. Fix ownership of both the dated file AND the original (bot.log itself)
 
     The systemd process keeps its fd to bot.log, which now points to an empty file.
     Its next write goes to offset 0 (due to O_APPEND), not past a gap (hence safe).
+
+    NOTE: Writes between copy-start and truncate-end are lost. This is inherent to
+    copytruncate and accepted, but means the rotation window should be narrow.
 
     Args:
         log_path: Path to the log file (e.g., Path("logs/bot.log"))
@@ -317,13 +319,12 @@ def rotate_plaintext_log(
     log_path.parent.mkdir(parents=True, exist_ok=True)
     dated = _dated_path(log_path, for_date=for_date)
 
-    # Copytruncate: read content, write to dated file, truncate original
+    # Copytruncate: stream-copy to dated file, then truncate original
     if log_path.exists() and not log_path.is_symlink():
         try:
-            # Read current content
-            content = log_path.read_bytes()
-            # Write to dated file
-            dated.write_bytes(content)
+            # Stream-copy to dated file (append mode, preserves prior rotations on same day)
+            with open(log_path, "rb") as src, open(dated, "ab") as dst:
+                shutil.copyfileobj(src, dst, length=65536)  # 64 KB chunks
             # Truncate original (systemd's fd stays valid, O_APPEND ensures next write at offset 0)
             log_path.write_bytes(b"")
             log.info("[log_rotation] rotated plain-text log: %s → %s (copytruncate)", log_path.name, dated.name)
@@ -331,9 +332,11 @@ def rotate_plaintext_log(
             log.error("[log_rotation] could not rotate %s: %s", log_path, e)
             return dated
 
-    # Fix ownership if specified (e.g., root:root → p0k5:p0k5)
+    # Fix ownership of both the dated file AND the original
+    # (important: original file's ownership is unchanged by truncate)
     if owner_uid is not None or owner_gid is not None:
         _fix_file_ownership(dated, owner_uid, owner_gid)
+        _fix_file_ownership(log_path, owner_uid, owner_gid)
 
     return dated
 

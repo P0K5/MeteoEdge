@@ -40,8 +40,10 @@ This document describes how to deploy the bot.log rotation mechanism on the live
 
 ### Key Constraints
 
-- **Timer runs as root**: Required to chown rotated files from root:root to p0k5:p0k5
-- **Ownership fix fails loudly**: If chown fails (e.g., permission denied), the script exits with error. This enforces criterion 2: no root-owned files left behind
+- **Timer runs as p0k5** (not root): Avoids security issues (Python script executed from p0k5-writable directory)
+- **One-time ownership fix required**: bot.log must be chowned to p0k5:p0k5 before timer starts (documented below)
+- **Ownership fix fails loudly**: If chown fails (e.g., file still root:root), the script exits with error
+- **Copytruncate write loss**: Writes between copy-start and truncate-end are lost (inherent to copytruncate; window is narrow ~100ms)
 - **No service restart needed**: copytruncate is safe with held fd + O_APPEND
 
 ## Deployment Steps
@@ -61,7 +63,31 @@ Expected output:
 
 If not running, do NOT proceed. Coordinate with the team.
 
-### Step 2: Install Systemd Units
+### Step 2: Fix bot.log Ownership (One-Time)
+
+The rotation script runs as p0k5, so bot.log must be owned by p0k5:p0k5 beforehand.
+
+Check current ownership:
+
+```bash
+ls -la /home/p0k5/MeteoEdge/logs/bot.log
+```
+
+If output shows `root:root`, fix it:
+
+```bash
+sudo chown p0k5:p0k5 /home/p0k5/MeteoEdge/logs/bot.log
+```
+
+Verify:
+
+```bash
+ls -la /home/p0k5/MeteoEdge/logs/bot.log
+```
+
+Should show: `-rw-r--r--  1 p0k5 p0k5 ...`
+
+### Step 3: Install Systemd Units
 
 Copy the unit files (no installation yet):
 
@@ -86,7 +112,7 @@ sudo systemctl status meteoedge-rotate-logs.timer
 sudo systemctl list-timers meteoedge-rotate-logs.timer
 ```
 
-### Step 3: Run Initial Rotation (One-Time, Before Timer)
+### Step 4: Run Initial Rotation (One-Time, Before Timer)
 
 The timer is scheduled for 00:05 UTC. For immediate testing:
 
@@ -100,7 +126,7 @@ Monitor the run:
 sudo journalctl -u meteoedge-rotate-logs.service -n 20 -f
 ```
 
-### Step 4: Verify the Rotation Worked
+### Step 5: Verify the Rotation Worked
 
 Check the dated file was created:
 
@@ -131,7 +157,7 @@ Verify the service is writing to it:
 tail -20 /home/p0k5/MeteoEdge/logs/bot.log | head -5
 ```
 
-### Step 5: Monitor for Errors
+### Step 6: Monitor for Errors
 
 Watch the service log during future rotations:
 

@@ -559,3 +559,26 @@ class TestRotatePlaintextLog:
 
         # Should still exist (not aged out)
         assert recent_gz.exists(), "Recent .gz file should be preserved"
+
+    def test_second_rotation_same_day_preserves_first(self, tmp_path):
+        """Two rotations on the same day should both be preserved (append, not overwrite)."""
+        log_file = tmp_path / "logs" / "bot.log"
+        log_file.parent.mkdir()
+        today = _today_utc()
+
+        # First rotation: 100 bytes
+        log_file.write_text("a" * 100 + "\n")
+        dated1 = rotate_plaintext_log(log_file, for_date=today)
+        assert log_file.read_text() == "", "Log truncated after first rotation"
+        assert dated1.read_text() == "a" * 100 + "\n", "First rotation data preserved"
+
+        # Second rotation (same day): another 50 bytes
+        log_file.write_text("b" * 50 + "\n")
+        dated2 = rotate_plaintext_log(log_file, for_date=today)
+        assert dated1 == dated2, "Same date produces same dated path"
+        assert log_file.read_text() == "", "Log truncated after second rotation"
+
+        # Both rotations' data should be in dated file (appended)
+        content = dated2.read_text()
+        assert "a" * 100 in content, "First rotation data still in dated file"
+        assert "b" * 50 in content, "Second rotation data appended to dated file"

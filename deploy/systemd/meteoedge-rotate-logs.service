@@ -6,7 +6,7 @@ Documentation=file:///home/p0k5/MeteoEdge/docs/DEPLOY_BOT_LOG_ROTATION.md
 
 [Service]
 Type=oneshot
-User=root
+User=p0k5
 WorkingDirectory=/home/p0k5/MeteoEdge
 Environment=PYTHONUNBUFFERED=1
 EnvironmentFile=/home/p0k5/MeteoEdge/.env
