@@ -29,8 +29,8 @@ class LiveTrader:
         price_cents: int,   # e.g. 72 -> 0.72 USDC per contract
         size_usdc: float,   # e.g. 5.0 -> spend up to 5 (denominated in USDC)
         *,
+        ticker: str,
         station: str = "",
-        ticker: str = "",
         bracket_low: float = 0.0,
         bracket_high: float = 0.0,
         predicted_price: int = 0,
@@ -40,15 +40,19 @@ class LiveTrader:
     ) -> str:
         """Place a GTC limit order. Returns order_id string.
 
-        ``ticker`` should be the market's real condition id (candidate.bracket.ticker).
-        When omitted (legacy callers), a synthetic ``<STATION>-order-<id>`` placeholder
-        is used, but issue #977 found that placeholder breaks
-        Database.has_live_trade_today()'s ticker-matched entry-gate query -- it can
-        never match a live order's trades row, so a same-day re-entry on a bracket
-        whose open_positions row has already been cleaned up (e.g. after a timed-out
-        order was cancelled) sails through unblocked. Always pass the real ticker
-        from the caller.
+        ``ticker`` must be the market's real condition id (candidate.bracket.ticker)
+        -- required, no synthetic fallback. Issue #977: a prior
+        ``f"{station}-order-{order_id[:8]}"`` placeholder, written when the caller
+        didn't pass a real ticker, broke Database.has_live_trade_today()'s
+        ticker-matched entry-gate query -- it could never match a live order's
+        trades row, so a same-day re-entry on a bracket whose open_positions row
+        had already been cleaned up (e.g. after a timed-out order was cancelled)
+        sailed through unblocked. Making ``ticker`` required (raising before the
+        order ever reaches the exchange) means a future caller that forgets it
+        fails loudly and immediately instead of silently reintroducing that bug.
         """
+        if not ticker:
+            raise ValueError("place_order() requires a non-empty ticker (the market's real condition id)")
         price = round(price_cents / 100, 4)
         size = round(size_usdc / price, 2)  # contracts = USDC / price_per_contract
         args = OrderArgs(
@@ -64,15 +68,13 @@ class LiveTrader:
         if not order_id:
             raise RuntimeError(f"Order placement failed: {resp}")
 
-        resolved_ticker = ticker or f"{station}-order-{order_id[:8]}"
-
         if self._db is not None:
             try:
                 now_utc = datetime.utcnow().isoformat() + "Z"
                 trade_id = self._db.insert_trade(
                     ts=now_utc,
                     station=station,
-                    ticker=resolved_ticker,
+                    ticker=ticker,
                     bracket_low=bracket_low,
                     bracket_high=bracket_high,
                     side=side,
@@ -89,7 +91,7 @@ class LiveTrader:
                 self._db.open_position(
                     trade_id=trade_id,
                     station=station,
-                    ticker=resolved_ticker,
+                    ticker=ticker,
                     token_id=token_id,
                     side=side,
                     order_id=order_id,

@@ -742,12 +742,12 @@ def poll_once(
             _guard_reason = None
             if _entry_key in _entry_keys_this_poll:
                 _guard_reason = "duplicate candidate for this bracket in the same poll"
-            elif _cand_token and _cand_token in order_manager._open_orders:
-                # Issue #977 defense-in-depth: order_manager._open_orders is
-                # refreshed every poll from the live exchange (resting GTC
-                # orders + today's filled DB positions) via sync_open_orders().
-                # It can see a still-resting or just-filled order on this token
-                # even in the window before its open_positions/trades rows are
+            elif _cand_token and order_manager.has_open_order(_cand_token):
+                # Issue #977 defense-in-depth: the dedup guard is refreshed
+                # every poll from the live exchange (resting GTC orders +
+                # today's filled DB positions) via sync_open_orders(). It can
+                # see a still-resting or just-filled order on this token even
+                # in the window before its open_positions/trades rows are
                 # durably reflected in the DB (e.g. right after a restart).
                 _guard_reason = "order already open/pending on the exchange for this token"
             elif db is not None:

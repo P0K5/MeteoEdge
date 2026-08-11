@@ -77,18 +77,35 @@ class TestPlaceOrderRealTicker:
         position = db.get_open_position_by_token("tok-real-ticker")[0]
         assert position["ticker"] == "0xrealcondition123"
 
-    def test_place_order_falls_back_to_synthetic_ticker_when_omitted(self):
-        """Back-compat: legacy callers that don't pass ticker keep the old placeholder."""
+    def test_place_order_omitted_ticker_raises_instead_of_falling_back(self):
+        """PR review on #977: the old synthetic '<STATION>-order-<id>' fallback
+        must not survive -- it's exactly the mechanism that broke the entry gate.
+        A caller that forgets ticker= must fail loudly (TypeError, no default),
+        never silently reintroduce the placeholder."""
         db = _db()
         trader = LiveTrader(MagicMock(), db)
         trader.client.create_and_post_order.return_value = {"orderID": "ord-no-ticker"}
 
-        trader.place_order(
-            token_id="tok-no-ticker", side="NO", price_cents=70, size_usdc=5.0, station="KORD",
-        )
+        with pytest.raises(TypeError):
+            trader.place_order(
+                token_id="tok-no-ticker", side="NO", price_cents=70, size_usdc=5.0, station="KORD",
+            )
+        # The order must never have reached the exchange for a call missing ticker.
+        trader.client.create_and_post_order.assert_not_called()
+        assert db.get_open_positions() == []
 
-        trade = db.get_trade_by_order_id("ord-no-ticker")
-        assert trade["ticker"] == "KORD-order-ord-no-t"
+    def test_place_order_empty_ticker_raises(self):
+        db = _db()
+        trader = LiveTrader(MagicMock(), db)
+        trader.client.create_and_post_order.return_value = {"orderID": "ord-empty-ticker"}
+
+        with pytest.raises(ValueError, match="non-empty ticker"):
+            trader.place_order(
+                token_id="tok-empty-ticker", side="NO", price_cents=70, size_usdc=5.0,
+                station="KORD", ticker="",
+            )
+        trader.client.create_and_post_order.assert_not_called()
+        assert db.get_open_positions() == []
 
 
 class TestHasLiveTradeTodaySurvivesCrashBeforeAppend:
@@ -99,18 +116,28 @@ class TestHasLiveTradeTodaySurvivesCrashBeforeAppend:
     """
 
     def test_synthetic_ticker_defeats_has_live_trade_today(self):
-        """Pre-#977 behaviour, reproduced directly: a synthetic ticker means
-        the same-day guard can never find the row. This is the bug."""
+        """Pre-#977 mechanism, reproduced directly against the DB (place_order()
+        can no longer produce a synthetic ticker itself -- ticker is now a
+        required arg, per PR review -- so this writes the rows the way the old,
+        no-longer-reachable fallback used to): a synthetic ticker means the
+        same-day guard can never find the row. This is the bug that let the
+        second order through."""
         db = _db()
-        trader = LiveTrader(MagicMock(), db)
-        trader.client.create_and_post_order.return_value = {"orderID": "ord-crash-1"}
-        trader.place_order(
-            token_id="tok-crash-1", side="NO", price_cents=70, size_usdc=5.0,
-            station="KORD",  # no ticker passed -- pre-#977 call site
-            bracket_low=32.0, bracket_high=36.0, end_date=_today(),
+        synthetic_ticker = "KORD-order-ord-cras"  # f"{station}-order-{order_id[:8]}"
+        trade_id = db.insert_trade(
+            ts="2026-08-11T11:41:52Z", station="KORD", ticker=synthetic_ticker,
+            bracket_low=32.0, bracket_high=36.0, side="NO", predicted_price=70,
+            actual_price=70, predicted_edge=16.0, mode="live", capital_before=5.0,
+            order_id="ord-crash-1", end_date=_today(),
+        )
+        db.open_position(
+            trade_id=trade_id, station="KORD", ticker=synthetic_ticker,
+            token_id="tok-crash-1", side="NO", order_id="ord-crash-1",
+            entry_price=70, shares=7.14, entry_ts="2026-08-11T11:41:52Z",
         )
         # Simulate a successful cancel (deletes the open_positions row) with
-        # the crash happening before _append_live_trade() corrects the ticker.
+        # the crash happening before _append_live_trade() would have corrected
+        # the ticker.
         db.close_position("ord-crash-1")
 
         assert db.get_open_position_by_token("tok-crash-1") == []

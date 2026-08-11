@@ -412,6 +412,16 @@ class OrderManager:
         self._partial_fill_shares: dict = {}    # no_token_id -> shares already sold via partial fills
         self._reconcile_warned_tokens: set = set()  # tokens warned for missing JSONL (flood protection)
 
+    def has_open_order(self, token_id: str) -> bool:
+        """True if *token_id* has a live GTC order or a today's-filled position
+        tracked in the dedup guard (refreshed every poll by sync_open_orders()).
+
+        Public accessor so callers outside this module (run.py's entry gate,
+        issue #977) don't reach into the private ``_open_orders`` set directly.
+        """
+        with self._open_orders_lock:
+            return token_id in self._open_orders
+
     def reconcile_timeout_fills(self, ts: str, db=None, live_trader=None) -> None:
         """Patch timeout JSONL records whose tokens still appear in the wallet.
 
