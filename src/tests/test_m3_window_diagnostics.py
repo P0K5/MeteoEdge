@@ -13,6 +13,7 @@ import json
 
 from src.scripts.m3_window_diagnostics import (
     LADDER_KINDS,
+    MASS_HIGH,
     MASS_LOW,
     build_report,
     classify_width,
@@ -617,3 +618,95 @@ class TestTableAlignment:
                 assert row[offset - 1] == " ", f"column collision: {row!r}"
                 checked += 1
         assert checked >= 2, f"expected rows from both tables, got {checked}"
+
+
+class TestDuplicateRowsAreNotMassExcess:
+    """A bracket logged twice is not the model emitting too much mass.
+
+    On 2026-08-11 a restart re-wrote the 02:00 snapshot -- #826's hourly
+    de-duplication is in-memory and did not survive it (#977) -- producing 154
+    duplicated rows and a censored mass of 1.035 against ~0.999 on every other
+    day of the window. That was investigated as a possible #921 recurrence
+    before the duplicates were found.
+
+    The two conditions must never be conflated: wrong mass is the #917/#920
+    class and blocks the gate; a duplicated row is cosmetic to it, because
+    ``dedupe_one_per_bracket_day`` collapses duplicates before any Brier maths
+    runs. The dangerous direction here is the de-duplication swallowing a real
+    excess, so both boundaries are pinned.
+    """
+
+    def _b2(self, p, lo, hi, ticker, ts="2026-08-11T02:00:00+00:00"):
+        return {"p_yes_raw": p, "bracket_low": lo, "bracket_high": hi,
+                "station": "RKSI", "ts": ts, "end_date": "2026-08-11",
+                "is_next_day_flag": 0, "yes_ask": 30.0, "no_ask": 70.0,
+                "ticker": ticker}
+
+    def test_a_duplicated_bracket_does_not_inflate_mass(self):
+        clean = [self._b2(0.25, 80.0 + i * 2, 82.0 + i * 2, f"0x{i}")
+                 for i in range(4)]
+        lad = group_ladders(clean)[0]
+        assert abs(lad["mass"] - 1.0) < 1e-9
+
+        # the 2026-08-11 shape: the whole snapshot written twice
+        lad_dup = group_ladders(clean + list(clean))[0]
+        assert abs(lad_dup["mass"] - 1.0) < 1e-9, "duplicates counted twice"
+        assert lad_dup["duplicate_rows"] == 4
+        assert lad_dup["n_brackets"] == 4
+
+    def test_a_GENUINE_excess_is_still_flagged(self):
+        """The exemption must not become a way to hide #921. Distinct tickers
+        summing above the band are still excessive."""
+        rows = [self._b2(0.29, 80.0 + i * 2, 82.0 + i * 2, f"0x{i}")
+                for i in range(4)]                       # 1.16, all distinct
+        lad = group_ladders(rows)[0]
+        assert lad["duplicate_rows"] == 0
+        assert lad["mass"] > MASS_HIGH
+
+    def test_a_ladder_without_tickers_is_not_collapsed(self):
+        """Keying on ticker alone turned a missing field into mass ~0.09 --
+        an absent column must never read as a catastrophic deficit."""
+        rows = [self._b2(0.25, 80.0 + i * 2, 82.0 + i * 2, None)
+                for i in range(4)]
+        lad = group_ladders(rows)[0]
+        assert lad["n_brackets"] == 4
+        assert abs(lad["mass"] - 1.0) < 1e-9
+
+
+class TestAccrualUsesSettledDatesOnly:
+    """A settlement date is not comparable to itself before and after it
+    settles: its final polls are its most certain ones, so more brackets are
+    excluded and its contribution SHRINKS as it matures. Taking ``max`` locked
+    onto the newest, least mature date.
+    """
+
+    def _pairs(self, per_date):
+        out = set()
+        for date, n in per_date.items():
+            for i in range(n):
+                out.add((f"ST{i}", date))
+        return out
+
+    def test_the_unsettled_newest_date_does_not_set_the_rate(self):
+        from src.scripts.daily_health_report import _marginal_accrual
+        pairs = self._pairs({
+            "2026-08-06": 16, "2026-08-07": 16, "2026-08-08": 16,
+            "2026-08-09": 18, "2026-08-10": 15, "2026-08-11": 15,
+            "2026-08-12": 16,
+            "2026-08-13": 28,   # still collecting -- max used to pick this
+            "2026-08-14": 1,
+        })
+        assert _marginal_accrual(pairs, today="2026-08-13") == 16
+
+    def test_an_outage_thinned_date_does_not_drag_the_estimate(self):
+        """Median, not mean: 2026-08-11 collected 15 against a normal 16."""
+        from src.scripts.daily_health_report import _marginal_accrual
+        pairs = self._pairs({"2026-08-06": 16, "2026-08-07": 16,
+                             "2026-08-08": 2, "2026-08-09": 16})
+        assert _marginal_accrual(pairs, today="2026-08-10") == 16
+
+    def test_before_anything_settles_it_still_reports_something(self):
+        from src.scripts.daily_health_report import _marginal_accrual
+        pairs = self._pairs({"2026-08-06": 16, "2026-08-07": 28})
+        assert _marginal_accrual(pairs, today="2026-08-06") == 28
+        assert _marginal_accrual(set(), today="2026-08-06") == 0

@@ -598,30 +598,55 @@ def _scoreable_station_days(since_date: str) -> int:
     return len(_scoreable_pairs(since_date))
 
 
-def _marginal_accrual(pairs: "set[tuple[str, str]]") -> int:
-    """Station-days gained per additional COLLECTING DAY.
+def _marginal_accrual(pairs: "set[tuple[str, str]]",
+                      today: "str | None" = None) -> int:
+    """Station-days gained per additional COLLECTING DAY, from SETTLED dates.
 
-    Not ``total / elapsed``. Each calendar day opens exactly one new settlement
-    date, but the FIRST day opens two at once -- it polls same-day and next-day
-    together -- so an average is permanently inflated by that opening day and
-    decays toward the true rate without ever reaching it.
+    Not ``total / elapsed``: the first day opens two settlement dates at once
+    (same-day and next-day together), so an average is inflated by it forever
+    and only decays toward the truth.
 
-    Measured: 2026-08-06 contributed 56 station-days (two settlement dates),
-    every day after contributed 28 (one). The average read 42/day then 38/day
-    while the real marginal rate sat at 28 both times, understating the wait to
-    the 300 bar by three days.
+    And not ``max`` over settlement dates either, which is what this did until
+    2026-08-12. A settlement date's contribution SHRINKS as it settles -- its
+    final polls are its most certain ones, so more brackets land on zero or the
+    rail and are excluded, and de-duplication keeps the last poll. Measured:
 
-    A fully-covered settlement date holds one station-day per contributing
-    station, so the widest settlement date in the window IS the daily
-    increment. Bounded above by the station count, which is why a partially
-    collected newest date cannot inflate it.
+        2026-08-06  16    2026-08-10  15
+        2026-08-07  16    2026-08-11  15
+        2026-08-08  16    2026-08-12  16
+        2026-08-09  18    2026-08-13  28   <- not settled; max picked this
+                          2026-08-14   1
+
+    ``max`` locks onto the newest, least mature date and reported +28/day
+    against a steady state of 16 -- projecting the 300 bar at 2026-08-18
+    instead of ~2026-08-24, i.e. inviting the gate to run a week early on
+    roughly 230 station-days.
+
+    So: the MEDIAN over settlement dates that have finished collecting, which
+    is every date before today. Median rather than mean because a single
+    outage-thinned date should not drag the estimate (2026-08-11 collected 15
+    against a normal 16). Dates from today onward are still accumulating polls
+    and are excluded -- the same reasoning that excluded the partial current
+    day before, applied to the right axis.
     """
     if not pairs:
         return 0
+    if today is None:
+        from datetime import datetime, timezone
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
     per_settlement: "dict[str, int]" = {}
     for _station, settle in pairs:
         per_settlement[settle] = per_settlement.get(settle, 0) + 1
-    return max(per_settlement.values())
+
+    settled = sorted(n for d, n in per_settlement.items() if d < today)
+    if not settled:
+        # Nothing has finished collecting yet -- fall back to the widest date
+        # rather than reporting zero, but this is an early-window estimate.
+        return max(per_settlement.values())
+    mid = len(settled) // 2
+    return (settled[mid] if len(settled) % 2
+            else (settled[mid - 1] + settled[mid]) // 2)
 
 
 def _scoreable_pairs(since_date: str,
