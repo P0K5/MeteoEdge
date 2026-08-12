@@ -62,6 +62,43 @@ Usage (run against the production DB by the operator; not run in CI):
     python -m src.scripts.merge_duplicate_open_positions            # live run
     python -m src.scripts.merge_duplicate_open_positions --dry-run  # preview only
     python -m src.scripts.merge_duplicate_open_positions --db-path /path/to/meteoedge.db
+
+Runbook: resolving the #977 KORD 2026-08-11 incident (open_positions id 435/436)
+    This is the exact, reviewable procedure for the live rows named in issue
+    #977 -- both on token_id
+    101370671429372224220389749572993685064650155630486212084462717077923353473008:
+    id 435 (trade_id 2161, order_id 0x418b18, real fill, shares=6.67, synthetic
+    ticker "KORD-order-0x418b18") and id 436 (trade_id 2160, order_id
+    0x6f780a, phantom, shares=0.0, real ticker from reconciliation).
+
+    A dry-run transcript against a fixture reproducing this exact row shape
+    (same token_id, tickers, shares, order_ids) is in the PR body for #977 --
+    that is the reviewable evidence of what this invocation does before it
+    touches anything. NOT run against production by the PR author; execution
+    against the live DB is a post-merge step sequenced by the Tech Lead PM,
+    because it's an OPEN position (KORD had not settled as of the incident) --
+    it must not be touched while other automation (take-profit exits, stop-
+    loss, settlement) may still be reading it mid-poll.
+
+    1. Preview (no DB write):
+        python -m src.scripts.merge_duplicate_open_positions --dry-run \
+            --db-path /path/to/meteoedge.db
+       Confirm the output shows exactly one token with one zero-share phantom
+       row dropped (order_id 0x6f780a...) and one ticker repair
+       ('KORD-order-0x418b18' -> the real condition id read off the phantom
+       row) -- and nothing else. If any other token is reported, STOP and
+       investigate before proceeding; this script touches every duplicate
+       token_id in the table, not just this incident's.
+    2. Apply (same command without --dry-run):
+        python -m src.scripts.merge_duplicate_open_positions \
+            --db-path /path/to/meteoedge.db
+    3. Verify:
+        sqlite3 /path/to/meteoedge.db \
+            "SELECT id, trade_id, order_id, ticker, shares FROM open_positions \
+             WHERE token_id='101370671429372224220389749572993685064650155630486212084462717077923353473008'"
+       Expect exactly one row: trade_id 2161, ticker no longer
+       'KORD-order-0x418b18', shares 6.67. trade_id 2160's trades row is left
+       in place (settlement history); only its open_positions row is gone.
 """
 from __future__ import annotations
 
