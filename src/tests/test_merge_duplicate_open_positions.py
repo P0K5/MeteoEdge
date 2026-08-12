@@ -171,3 +171,141 @@ class TestSafety:
 
         assert merge_duplicates(db_path) == 1
         assert len(_rows(db_path)) == 3, "mismatched token must be left untouched"
+
+
+# ===========================================================================
+# Zero-share phantom rows (issue #977)
+# ===========================================================================
+# Reproduces the exact live KORD incident: open_positions id 435 (trade_id
+# 2161, real fill, synthetic ticker "KORD-order-0x418b18") and id 436
+# (trade_id 2160, phantom, shares=0.0, real ticker from reconciliation) on
+# the same token_id.
+
+PHANTOM_TOKEN = "token-kord-phantom-977"
+
+
+def _seed_phantom_scenario(db_path, *, funded_ticker=None, phantom_ticker="0xrealconditionhash"):
+    db = Database(db_path)
+    funded_ticker = funded_ticker or "KORD-order-0x418b18"  # pre-#977 synthetic placeholder
+
+    funded_trade_id = db.insert_trade(
+        ts="2026-08-11T11:47:31.021528Z", station="KORD", ticker=funded_ticker,
+        bracket_low=32.0, bracket_high=36.0, side="NO", predicted_price=70,
+        actual_price=70, predicted_edge=16.0, mode="live", capital_before=5.0,
+        order_id="0x418b18",
+    )
+    db.open_position(
+        trade_id=funded_trade_id, station="KORD", ticker=funded_ticker,
+        token_id=PHANTOM_TOKEN, side="NO", order_id="0x418b18",
+        entry_price=75, shares=6.67, entry_ts="2026-08-11T11:47:31.021528Z",
+    )
+
+    phantom_trade_id = db.insert_trade(
+        ts="2026-08-11T11:41:52+00:00", station="KORD", ticker=phantom_ticker,
+        bracket_low=32.0, bracket_high=36.0, side="NO", predicted_price=70,
+        actual_price=70, predicted_edge=16.0, mode="live", capital_before=0.0,
+        order_id="0x6f780a", outcome="filled",
+    )
+    db.open_position(
+        trade_id=phantom_trade_id, station="KORD", ticker=phantom_ticker,
+        token_id=PHANTOM_TOKEN, side="NO", order_id="0x6f780a",
+        entry_price=0, shares=0.0, entry_ts="2026-08-11T11:41:52.086584+00:00",
+    )
+    return db, funded_trade_id, phantom_trade_id
+
+
+class TestZeroSharePhantomRows:
+    def test_phantom_dropped_real_row_kept(self, tmp_path):
+        db_path = tmp_path / "phantom-test.db"
+        _seed_phantom_scenario(db_path)
+
+        assert merge_duplicates(db_path) == 0
+
+        rows = _rows(db_path, token=PHANTOM_TOKEN)
+        assert len(rows) == 1, "the zero-share phantom row must be dropped, not merged"
+        assert rows[0]["order_id"] == "0x418b18"
+        assert rows[0]["shares"] == pytest.approx(6.67)
+
+    def test_synthetic_ticker_repaired_from_phantom(self, tmp_path):
+        db_path = tmp_path / "phantom-repair-test.db"
+        _seed_phantom_scenario(db_path)
+
+        assert merge_duplicates(db_path) == 0
+
+        rows = _rows(db_path, token=PHANTOM_TOKEN)
+        assert rows[0]["ticker"] == "0xrealconditionhash", (
+            "the funded row's synthetic ticker must be repaired using the "
+            "dropped phantom's real condition-id ticker"
+        )
+        conn = sqlite3.connect(str(db_path))
+        trade_ticker = conn.execute(
+            "SELECT ticker FROM trades WHERE order_id='0x418b18'"
+        ).fetchone()[0]
+        conn.close()
+        assert trade_ticker == "0xrealconditionhash", "trades.ticker must be repaired too"
+
+    def test_phantom_trades_row_left_untouched(self, tmp_path):
+        """Settlement history for the phantom's trade_id is out of scope --
+        only its open_positions row (the thing blocking settle.py) is dropped."""
+        db_path = tmp_path / "phantom-trade-test.db"
+        _seed_phantom_scenario(db_path)
+
+        assert merge_duplicates(db_path) == 0
+
+        conn = sqlite3.connect(str(db_path))
+        phantom_trade = conn.execute(
+            "SELECT id FROM trades WHERE order_id='0x6f780a'"
+        ).fetchone()
+        conn.close()
+        assert phantom_trade is not None, "the phantom's trades row must survive"
+
+    def test_dry_run_previews_without_modifying(self, tmp_path):
+        db_path = tmp_path / "phantom-dryrun-test.db"
+        _seed_phantom_scenario(db_path)
+        before = _rows(db_path, token=PHANTOM_TOKEN)
+
+        assert merge_duplicates(db_path, dry_run=True) == 0
+
+        assert _rows(db_path, token=PHANTOM_TOKEN) == before
+
+    def test_idempotent_second_run_is_noop(self, tmp_path):
+        db_path = tmp_path / "phantom-idem-test.db"
+        _seed_phantom_scenario(db_path)
+
+        assert merge_duplicates(db_path) == 0
+        after_first = _rows(db_path, token=PHANTOM_TOKEN)
+
+        assert merge_duplicates(db_path) == 0
+        assert _rows(db_path, token=PHANTOM_TOKEN) == after_first
+
+    def test_only_phantom_rows_left_untouched_and_flagged(self, tmp_path):
+        """A token with ONLY zero-share rows (no real row to keep) must not
+        be silently dropped -- that needs a human to confirm the order truly
+        never filled before removing the tracking protecting it."""
+        db_path = tmp_path / "phantom-only-test.db"
+        db = Database(db_path)
+        trade_id_a = db.insert_trade(
+            ts="2026-08-11T11:41:52Z", station="KORD", ticker="0xa",
+            bracket_low=32.0, bracket_high=36.0, side="NO", predicted_price=70,
+            actual_price=70, predicted_edge=16.0, mode="live", capital_before=0.0,
+            order_id="ord-only-phantom-a",
+        )
+        db.open_position(
+            trade_id=trade_id_a, station="KORD", ticker="0xa", token_id="tok-only-phantom",
+            side="NO", order_id="ord-only-phantom-a", entry_price=0, shares=0.0,
+            entry_ts="2026-08-11T11:41:52Z",
+        )
+        trade_id_b = db.insert_trade(
+            ts="2026-08-11T11:42:52Z", station="KORD", ticker="0xb",
+            bracket_low=32.0, bracket_high=36.0, side="NO", predicted_price=70,
+            actual_price=70, predicted_edge=16.0, mode="live", capital_before=0.0,
+            order_id="ord-only-phantom-b",
+        )
+        db.open_position(
+            trade_id=trade_id_b, station="KORD", ticker="0xb", token_id="tok-only-phantom",
+            side="NO", order_id="ord-only-phantom-b", entry_price=0, shares=0.0,
+            entry_ts="2026-08-11T11:42:52Z",
+        )
+
+        assert merge_duplicates(db_path) == 1, "all-phantom duplicates must be flagged, not dropped"
+        assert len(_rows(db_path, token="tok-only-phantom")) == 2

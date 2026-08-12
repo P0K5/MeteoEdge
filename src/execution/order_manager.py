@@ -303,7 +303,7 @@ def _wallet_held_positions() -> list:
         return []
 
 
-def _reconcile_db_row(record: dict, ts: str, db=None) -> None:
+def _reconcile_db_row(record: dict, ts: str, db=None, get_fill_size=None) -> None:
     """Update (or insert) the DB trades row for a just-reconciled JSONL record.
 
     Called once per JSONL line that was patched from outcome='timeout' to
@@ -311,7 +311,14 @@ def _reconcile_db_row(record: dict, ts: str, db=None) -> None:
     the trade is not invisible to DB-backed views.
 
     Also inserts an open_positions row when the token has no existing entry,
-    so downstream take-profit / stop-loss logic can see the position.
+    so downstream take-profit / stop-loss logic can see the position -- but
+    ONLY when the order actually has shares matched. Issue #977: this used to
+    compute shares from JSONL fields (``size_matched`` / ``shares``) that
+    ``_append_live_trade()`` never writes, so it always inserted 0.0 -- an
+    unclearable phantom position for an order that (from the DB's point of
+    view) never filled. ``get_fill_size(order_id) -> float`` is the
+    authoritative source (LiveTrader.get_order_fill_size, queries the
+    exchange); a zero/None result means no row is written at all.
     """
     if db is None:
         return
@@ -352,22 +359,38 @@ def _reconcile_db_row(record: dict, ts: str, db=None) -> None:
         return
     try:
         existing = [p for p in db.get_open_positions() if p.get("order_id") == order_id]
-        if not existing:
-            shares = float(record.get("size_matched") or record.get("shares") or 0)
-            # Look up the trade_id we just inserted/updated
-            trade_row = db.get_trade_by_order_id(order_id)
-            trade_id = trade_row["id"] if trade_row else 0
-            db.open_position(
-                trade_id=trade_id,
-                station=record.get("station", ""),
-                ticker=record.get("ticker", ""),
-                token_id=token_id,
-                side=record.get("side", "NO"),
-                order_id=order_id,
-                entry_price=price_cents,
-                shares=shares,
-                entry_ts=record.get("ts", ts),
+        if existing:
+            return
+        shares = 0.0
+        if get_fill_size is not None:
+            try:
+                shares = float(get_fill_size(order_id) or 0)
+            except Exception as e:
+                log.warning(
+                    "[reconcile] fill-size lookup failed for %s...: %s -- "
+                    "not inserting an open_positions row", str(order_id)[:12], e,
+                )
+                return
+        if shares <= 0:
+            log.info(
+                "[reconcile] %s... has no confirmed fill -- skipping open_positions "
+                "insert (no phantom zero-share row)", str(order_id)[:12],
             )
+            return
+        # Look up the trade_id we just inserted/updated
+        trade_row = db.get_trade_by_order_id(order_id)
+        trade_id = trade_row["id"] if trade_row else 0
+        db.open_position(
+            trade_id=trade_id,
+            station=record.get("station", ""),
+            ticker=record.get("ticker", ""),
+            token_id=token_id,
+            side=record.get("side", "NO"),
+            order_id=order_id,
+            entry_price=price_cents,
+            shares=shares,
+            entry_ts=record.get("ts", ts),
+        )
     except Exception as e:
         log.warning("[reconcile] DB open_positions insert failed for %s...: %s", str(order_id)[:12], e)
 
@@ -389,7 +412,17 @@ class OrderManager:
         self._partial_fill_shares: dict = {}    # no_token_id -> shares already sold via partial fills
         self._reconcile_warned_tokens: set = set()  # tokens warned for missing JSONL (flood protection)
 
-    def reconcile_timeout_fills(self, ts: str, db=None) -> None:
+    def has_open_order(self, token_id: str) -> bool:
+        """True if *token_id* has a live GTC order or a today's-filled position
+        tracked in the dedup guard (refreshed every poll by sync_open_orders()).
+
+        Public accessor so callers outside this module (run.py's entry gate,
+        issue #977) don't reach into the private ``_open_orders`` set directly.
+        """
+        with self._open_orders_lock:
+            return token_id in self._open_orders
+
+    def reconcile_timeout_fills(self, ts: str, db=None, live_trader=None) -> None:
         """Patch timeout JSONL records whose tokens still appear in the wallet.
 
         GTC limit orders sometimes fill after our 5-minute wait window expires.
@@ -410,7 +443,14 @@ class OrderManager:
         state.  For every JSONL record patched, the DB trades row is also updated
         (or inserted if absent) so outcome='filled' is consistent across both
         stores.
+
+        ``live_trader`` (optional) supplies the authoritative per-order fill
+        size (LiveTrader.get_order_fill_size) used to decide whether/how much
+        of an open_positions row to write for the patched order (issue #977).
+        Without it, no open_positions row is written for a newly-patched
+        order -- never a zero-share phantom.
         """
+        get_fill_size = live_trader.get_order_fill_size if live_trader is not None else None
         sources = rotated_sources(LIVE_TRADES_JSONL)
         if not sources:
             return
@@ -447,7 +487,7 @@ class OrderManager:
                             new_lines.append(json.dumps(r, default=str) + "\n")
                             file_patched += 1
                             # Sync the DB row so both stores stay consistent
-                            _reconcile_db_row(r, ts, db)
+                            _reconcile_db_row(r, ts, db, get_fill_size=get_fill_size)
                         else:
                             new_lines.append(line)
             except OSError as e:

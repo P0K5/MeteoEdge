@@ -42,6 +42,7 @@ class TestPlaceOrderWritesPosition:
             price_cents=70,
             size_usdc=5.0,
             station="KORD",
+            ticker="0xtok-001-condition",
             bracket_low=32.0,
             bracket_high=36.0,
         )
@@ -61,7 +62,7 @@ class TestPlaceOrderWritesPosition:
 
         trader.place_order(
             token_id="tok-size", side="NO", price_cents=70, size_usdc=5.0,
-            station="KORD", bracket_low=32.0, bracket_high=36.0,
+            station="KORD", ticker="0xtok-size-condition", bracket_low=32.0, bracket_high=36.0,
         )
 
         row = db.get_trade_by_order_id("ord-size1")
@@ -73,7 +74,7 @@ class TestPlaceOrderWritesPosition:
         """place_order() without DB must not raise."""
         trader = _make_trader(db=None)
         trader.client.create_and_post_order.return_value = {"orderID": "ord-xyz"}
-        result = trader.place_order("tok-002", "YES", 60, 5.0)
+        result = trader.place_order("tok-002", "YES", 60, 5.0, ticker="0xtok-002-condition")
         assert result == "ord-xyz"
 
     def test_place_order_db_failure_does_not_swallow_order_id(self):
@@ -83,14 +84,29 @@ class TestPlaceOrderWritesPosition:
         trader = _make_trader(db=db)
         trader.client.create_and_post_order.return_value = {"orderID": "ord-critical"}
 
-        result = trader.place_order("tok-003", "NO", 65, 5.0)
+        result = trader.place_order("tok-003", "NO", 65, 5.0, ticker="0xtok-003-condition")
         assert result == "ord-critical"
 
     def test_place_order_raises_if_no_order_id(self):
         trader = _make_trader()
         trader.client.create_and_post_order.return_value = {}
         with pytest.raises(RuntimeError, match="Order placement failed"):
-            trader.place_order("tok-fail", "NO", 70, 5.0)
+            trader.place_order("tok-fail", "NO", 70, 5.0, ticker="0xtok-fail-condition")
+
+    def test_place_order_requires_ticker_kwarg(self):
+        """Issue #977: omitting ticker must fail loudly (TypeError) -- no silent
+        synthetic-placeholder fallback that could resurface the entry-gate bug."""
+        trader = _make_trader()
+        with pytest.raises(TypeError):
+            trader.place_order("tok-no-ticker-kwarg", "NO", 70, 5.0)
+
+    def test_place_order_rejects_empty_ticker(self):
+        """An explicitly-empty ticker must also fail loudly, before the order
+        ever reaches the exchange (create_and_post_order is never called)."""
+        trader = _make_trader()
+        with pytest.raises(ValueError, match="non-empty ticker"):
+            trader.place_order("tok-empty-ticker", "NO", 70, 5.0, ticker="")
+        trader.client.create_and_post_order.assert_not_called()
 
 
 class TestCancelOrderClosesPosition:
@@ -159,7 +175,7 @@ class TestNoLiveStateJson:
             db = _db()
             trader = _make_trader(db)
             trader.client.create_and_post_order.return_value = {"orderID": "ord-json-test"}
-            trader.place_order("tok-json", "NO", 70, 5.0)
+            trader.place_order("tok-json", "NO", 70, 5.0, ticker="0xtok-json-condition")
             # No .json files should have been created
             json_files = [f for f in os.listdir(tmpdir) if f.endswith(".json")]
             assert json_files == []

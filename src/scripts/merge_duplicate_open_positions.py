@@ -30,6 +30,26 @@ Merge semantics (per token_id with more than one row):
       A warning is printed whenever the duplicate rows disagreed.
     - all other rows for the token are deleted
 
+Zero-share phantom rows (issue #977):
+    A row can have shares<=0 -- an order that was registered as a position by
+    reconciliation despite never (or not yet, per that row) having a matching
+    fill. Unlike the pre-#611 stacking bug, there is nothing to merge here:
+    the zero-share row contributes nothing to the weighted average, and
+    settle.py can never join it to a settlement (Database.close_position()
+    only deletes by order_id, and a never-filled order has no fill to close
+    against). For each token with both a zero-share row and one or more
+    positive-share rows:
+      - the zero-share row(s) are DROPPED outright (not merged), and
+      - if a surviving positive-share row still carries the synthetic
+        ``<STATION>-order-<id>`` ticker placeholder (pre-#977) while a
+        dropped zero-share row carried the real condition-id ticker
+        (reconciliation reads it from the correct field), the real ticker is
+        copied onto the surviving row (open_positions AND its trades row).
+    Remaining positive-share duplicates (if more than one survives) are then
+    merged as above. A token with ONLY zero-share rows is left untouched and
+    reported as a mismatch -- that needs a human to confirm the order truly
+    never filled before removing the position tracking that's protecting it.
+
 Safety:
     - Verify-before-touch: all rows for a token must share the same station,
       side, and ticker prefix pattern; a mismatch is skipped with a loud
@@ -42,11 +62,49 @@ Usage (run against the production DB by the operator; not run in CI):
     python -m src.scripts.merge_duplicate_open_positions            # live run
     python -m src.scripts.merge_duplicate_open_positions --dry-run  # preview only
     python -m src.scripts.merge_duplicate_open_positions --db-path /path/to/meteoedge.db
+
+Runbook: resolving the #977 KORD 2026-08-11 incident (open_positions id 435/436)
+    This is the exact, reviewable procedure for the live rows named in issue
+    #977 -- both on token_id
+    101370671429372224220389749572993685064650155630486212084462717077923353473008:
+    id 435 (trade_id 2161, order_id 0x418b18, real fill, shares=6.67, synthetic
+    ticker "KORD-order-0x418b18") and id 436 (trade_id 2160, order_id
+    0x6f780a, phantom, shares=0.0, real ticker from reconciliation).
+
+    A dry-run transcript against a fixture reproducing this exact row shape
+    (same token_id, tickers, shares, order_ids) is in the PR body for #977 --
+    that is the reviewable evidence of what this invocation does before it
+    touches anything. NOT run against production by the PR author; execution
+    against the live DB is a post-merge step sequenced by the Tech Lead PM,
+    because it's an OPEN position (KORD had not settled as of the incident) --
+    it must not be touched while other automation (take-profit exits, stop-
+    loss, settlement) may still be reading it mid-poll.
+
+    1. Preview (no DB write):
+        python -m src.scripts.merge_duplicate_open_positions --dry-run \
+            --db-path /path/to/meteoedge.db
+       Confirm the output shows exactly one token with one zero-share phantom
+       row dropped (order_id 0x6f780a...) and one ticker repair
+       ('KORD-order-0x418b18' -> the real condition id read off the phantom
+       row) -- and nothing else. If any other token is reported, STOP and
+       investigate before proceeding; this script touches every duplicate
+       token_id in the table, not just this incident's.
+    2. Apply (same command without --dry-run):
+        python -m src.scripts.merge_duplicate_open_positions \
+            --db-path /path/to/meteoedge.db
+    3. Verify:
+        sqlite3 /path/to/meteoedge.db \
+            "SELECT id, trade_id, order_id, ticker, shares FROM open_positions \
+             WHERE token_id='101370671429372224220389749572993685064650155630486212084462717077923353473008'"
+       Expect exactly one row: trade_id 2161, ticker no longer
+       'KORD-order-0x418b18', shares 6.67. trade_id 2160's trades row is left
+       in place (settlement history); only its open_positions row is gone.
 """
 from __future__ import annotations
 
 import argparse
 import os
+import re
 import sqlite3
 from pathlib import Path
 
@@ -58,6 +116,11 @@ def _connect(path: Path) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys=ON")
     return conn
+
+
+def _is_synthetic_ticker(ticker: str, station: str) -> bool:
+    """True if *ticker* is the pre-#977 ``<STATION>-order-<id>`` placeholder."""
+    return bool(ticker) and bool(re.match(rf"^{re.escape(station)}-order-[0-9a-fA-Fx]+$", ticker))
 
 
 def _most_protective(values: list, *, prefer_high: bool) -> "int | None":
@@ -95,6 +158,8 @@ def merge_duplicates(db_path: Path, dry_run: bool = False) -> int:
     n_merged = 0
     n_deleted = 0
     n_mismatched = 0
+    n_phantoms_dropped = 0
+    n_tickers_repaired = 0
 
     for token_id in dup_tokens:
         rows = conn.execute(
@@ -112,6 +177,65 @@ def merge_duplicates(db_path: Path, dry_run: bool = False) -> int:
                 "Refusing to merge; investigate manually."
             )
             n_mismatched += 1
+            continue
+
+        # --- Zero-share phantom rows (issue #977): drop, don't merge -------
+        zero_rows = [r for r in rows if not (float(r["shares"]) > 0)]
+        real_rows = [r for r in rows if float(r["shares"]) > 0]
+        if zero_rows and real_rows:
+            station = real_rows[0]["station"]
+            # Repair a surviving row's synthetic ticker from a dropped
+            # phantom's real ticker, if one is available and needed.
+            real_ticker = next(
+                (r["ticker"] for r in real_rows if not _is_synthetic_ticker(r["ticker"], station)),
+                None,
+            )
+            phantom_ticker = next(
+                (r["ticker"] for r in zero_rows if not _is_synthetic_ticker(r["ticker"], station)),
+                None,
+            )
+            repair_ticker = real_ticker or phantom_ticker
+            for rr in real_rows:
+                if repair_ticker and _is_synthetic_ticker(rr["ticker"], station):
+                    action = "[dry-run] would repair" if dry_run else "repairing"
+                    print(
+                        f"[merge] token {token_id[:14]}...: {action} synthetic ticker "
+                        f"'{rr['ticker']}' -> '{repair_ticker}' on open_positions id={rr['id']} "
+                        f"(trade_id={rr['trade_id']})"
+                    )
+                    if not dry_run:
+                        conn.execute(
+                            "UPDATE open_positions SET ticker=? WHERE id=?",
+                            (repair_ticker, rr["id"]),
+                        )
+                        conn.execute(
+                            "UPDATE trades SET ticker=? WHERE id=?",
+                            (repair_ticker, rr["trade_id"]),
+                        )
+                    n_tickers_repaired += 1
+
+            phantom_ids = [r["id"] for r in zero_rows]
+            action = "[dry-run] would drop" if dry_run else "dropping"
+            print(
+                f"[merge] token {token_id[:14]}... ({station}): {action} "
+                f"{len(phantom_ids)} zero-share phantom row(s) id(s) {phantom_ids} "
+                f"(order_id(s) {[r['order_id'][:16] for r in zero_rows]}); "
+                f"{len(real_rows)} positive-share row(s) kept -- the trades row(s) for "
+                "the phantom's order_id(s) are left untouched (settlement history)."
+            )
+            if not dry_run:
+                conn.execute(
+                    f"DELETE FROM open_positions WHERE id IN ({','.join('?' * len(phantom_ids))})",
+                    phantom_ids,
+                )
+            n_phantoms_dropped += len(phantom_ids)
+            rows = real_rows
+
+        if len(rows) < 2:
+            # Nothing left to merge for this token (either it only had a
+            # single real row plus phantom(s) now dropped, or -- in dry-run,
+            # where the drop above was only previewed -- we still don't want
+            # to also run merge logic against a phantom row).
             continue
 
         bad_rows = [
@@ -179,6 +303,8 @@ def merge_duplicates(db_path: Path, dry_run: bool = False) -> int:
     print(
         f"\n[merge] Summary: {n_merged} token(s) {'would be ' if dry_run else ''}merged, "
         f"{n_deleted} duplicate row(s) {'would be ' if dry_run else ''}deleted, "
+        f"{n_phantoms_dropped} zero-share phantom row(s) {'would be ' if dry_run else ''}dropped, "
+        f"{n_tickers_repaired} synthetic ticker(s) {'would be ' if dry_run else ''}repaired, "
         f"{n_mismatched} mismatched"
     )
     if n_mismatched:
@@ -192,7 +318,10 @@ def main() -> None:
         description=(
             "Merge duplicate open_positions rows per token_id left behind by "
             "the pre-#611 bracket-stacking bug (summed shares, share-weighted "
-            "entry price, earliest entry_ts)."
+            "entry price, earliest entry_ts). Also drops zero-share phantom "
+            "rows left by the pre-#977 reconciliation bug and repairs any "
+            "surviving row's synthetic '<STATION>-order-<id>' ticker from a "
+            "dropped phantom's real ticker."
         )
     )
     parser.add_argument(

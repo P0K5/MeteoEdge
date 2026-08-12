@@ -40,6 +40,31 @@ def _icao_to_city(station: str) -> "str | None":
     return _ICAO_TO_CITY.get(station)
 
 
+def _normalize_iso_ts(ts: str) -> str:
+    """Normalize an ISO-8601 UTC timestamp to a single ``...Z`` convention.
+
+    Issue #977: different open_positions write paths produced different UTC
+    suffixes for the same column -- live_trader.place_order() writes
+    ``datetime.utcnow().isoformat() + "Z"`` while reconciliation paths write
+    ``datetime.now(timezone.utc).isoformat()`` (``+00:00`` suffix). Both are
+    valid ISO-8601 but the inconsistency makes the column harder to reason
+    about / sort lexicographically. Normalizes any parseable timestamp to the
+    ``...Z`` form; unparseable input is returned unchanged (never raises --
+    this must not block a position write).
+    """
+    if not ts:
+        return ts
+    try:
+        dt = dtparse.isoparse(ts) if hasattr(dtparse, "isoparse") else dtparse.parse(ts)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        else:
+            dt = dt.astimezone(timezone.utc)
+        return dt.isoformat().replace("+00:00", "Z")
+    except (ValueError, TypeError, OverflowError):
+        return ts
+
+
 _DDL = """
 CREATE TABLE IF NOT EXISTS observations (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1872,7 +1897,12 @@ class Database:
         entry gate in src/scripts/run.py (has_live_trade_today() +
         get_open_position_by_token()) is the enforcement point that decides
         whether a live candidate should ever reach this call.
+
+        ``entry_ts`` is normalized to a single ``...Z`` UTC convention
+        (issue #977) so every write path produces a consistent format
+        regardless of how the caller formatted its own timestamp.
         """
+        entry_ts = _normalize_iso_ts(entry_ts)
         with self._lock:
             with self._conn:
                 existing = self._conn.execute(
