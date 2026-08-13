@@ -303,6 +303,30 @@ def _wallet_held_positions() -> list:
         return []
 
 
+def _confirmed_fill_size(order_id: str, get_fill_size) -> float:
+    """Return the authoritative shares filled for *order_id*, or 0.0 if unknown.
+
+    ``get_fill_size`` is ``LiveTrader.get_order_fill_size`` -- the same
+    per-order exchange authority #977/#983 wired in for the ``open_positions``
+    insert. Issue #993: wallet-token presence alone is not evidence that
+    *this specific* order filled -- a #743 reprice-retry that replaces a
+    timed-out order on the same token leaves the token in the wallet because
+    of the *replacement* order, not the original. Without a callable, or when
+    the lookup raises or reports no shares, the order must NOT be treated as
+    filled.
+    """
+    if get_fill_size is None or not order_id:
+        return 0.0
+    try:
+        return float(get_fill_size(order_id) or 0)
+    except Exception as e:
+        log.warning(
+            "[reconcile] fill-size lookup failed for %s...: %s -- "
+            "not patching outcome (leaving as timeout)", str(order_id)[:12], e,
+        )
+        return 0.0
+
+
 def _reconcile_db_row(record: dict, ts: str, db=None, get_fill_size=None) -> None:
     """Update (or insert) the DB trades row for a just-reconciled JSONL record.
 
@@ -445,10 +469,15 @@ class OrderManager:
         stores.
 
         ``live_trader`` (optional) supplies the authoritative per-order fill
-        size (LiveTrader.get_order_fill_size) used to decide whether/how much
-        of an open_positions row to write for the patched order (issue #977).
-        Without it, no open_positions row is written for a newly-patched
-        order -- never a zero-share phantom.
+        size (LiveTrader.get_order_fill_size). Issue #993: wallet-token
+        presence alone is NOT sufficient to patch outcome='filled' -- a #743
+        reprice-retry that replaces a timed-out order on the same token
+        leaves the token in the wallet because of the *replacement* order,
+        not the original. So the outcome patch itself (JSONL and the
+        ``trades`` DB row) is now gated on ``get_fill_size(order_id) > 0``,
+        exactly like the ``open_positions`` insert already was (issue #977).
+        Without ``live_trader``, no record is patched at all -- never an
+        unverified fill.
         """
         get_fill_size = live_trader.get_order_fill_size if live_trader is not None else None
         sources = rotated_sources(LIVE_TRADES_JSONL)
@@ -481,13 +510,27 @@ class OrderManager:
                             new_lines.append(line)
                             continue
                         token = r.get("asset_id") or r.get("no_token_id") or ""
+                        order_id = r.get("order_id") or ""
                         if r.get("outcome") == "timeout" and token in held:
+                            fill_size = _confirmed_fill_size(order_id, get_fill_size)
+                            if fill_size <= 0:
+                                # Wallet holds the token, but we have no exchange
+                                # confirmation THIS order is what filled it -- most
+                                # likely a #743 reprice on the same token superseded
+                                # it. Leave the record as outcome='timeout'.
+                                new_lines.append(line)
+                                continue
                             r["outcome"] = "filled"
                             r["reconciled_at"] = ts
                             new_lines.append(json.dumps(r, default=str) + "\n")
                             file_patched += 1
-                            # Sync the DB row so both stores stay consistent
-                            _reconcile_db_row(r, ts, db, get_fill_size=get_fill_size)
+                            # Sync the DB row so both stores stay consistent. Reuse
+                            # the fill size we already confirmed above instead of
+                            # querying the exchange a second time for the same order.
+                            _reconcile_db_row(
+                                r, ts, db,
+                                get_fill_size=lambda _oid, _v=fill_size: _v,
+                            )
                         else:
                             new_lines.append(line)
             except OSError as e:
