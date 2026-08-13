@@ -169,13 +169,48 @@ def group_ladders(rows: "list[dict]") -> "list[dict]":
 
     ladders = []
     for (station, ts, end_date, is_next_day), members in buckets.items():
+        members, n_dup = _dedupe_brackets(members)
         ladders.append({
             "station": station, "ts": ts, "end_date": end_date,
             "is_next_day": is_next_day, "brackets": members,
-            "day": (ts or "")[:10],
+            "day": (ts or "")[:10], "duplicate_rows": n_dup,
             **ladder_stats(members),
         })
     return ladders
+
+
+def _dedupe_brackets(members: "list[dict]") -> "tuple[list[dict], int]":
+    """One row per ticker within a ladder. Returns (rows, n_duplicates_dropped).
+
+    Without this a bracket logged twice is summed twice, and the tool reports
+    a probability excess that is really a logging artifact. On 2026-08-11 a
+    restart re-wrote the 02:00 snapshot -- #826's hourly de-duplication is
+    held in memory and did not survive it (#977) -- producing 154 duplicated
+    rows and a censored mass of 1.035 against ~0.999 every other day.
+
+    Those are two conditions this tool must never conflate: the model
+    emitting the wrong amount of mass is the #917/#920 class and blocks the
+    gate, while a bracket written twice is cosmetic to it -- the gate's own
+    ``dedupe_one_per_bracket_day`` collapses duplicates before any Brier
+    maths runs, so they never reach a score.
+
+    All members of a ladder share one ``ts`` by construction (it is part of
+    the grouping key), so duplicates are byte-identical re-writes rather than
+    successive polls, and the last occurrence is kept -- the most recent
+    write of the same snapshot. Genuine mass excess across DISTINCT tickers
+    is untouched, which is what keeps #921 detectable.
+    """
+    # Keyed on ticker AND bracket range, not ticker alone. A duplicated row is
+    # a byte-identical re-write so it matches on all three, while distinct
+    # brackets always differ in range -- which keeps the ladder intact when
+    # `ticker` is absent. Keying on ticker alone collapsed an entire 11-bracket
+    # ladder to one row whenever ticker was None, reading mass ~0.09 and
+    # turning a missing field into a fabricated catastrophe.
+    seen: "dict" = {}
+    for row in members:
+        key = (row.get("ticker"), row.get("bracket_low"), row.get("bracket_high"))
+        seen[key] = row
+    return list(seen.values()), len(members) - len(seen)
 
 
 def ladder_stats(brackets: "list[dict]") -> dict:
