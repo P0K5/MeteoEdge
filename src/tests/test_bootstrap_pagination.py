@@ -334,12 +334,19 @@ if __name__ == "__main__":
     assert out_file.exists(), "session-context.env was not written"
     text = out_file.read_text(encoding="utf-8")
 
-    # Verify all issues with non-ASCII titles were written
-    assert "ITEM_ID_ISSUE_1" in text and "café" in text
-    assert "ITEM_ID_ISSUE_2" in text and "Ñoño" in text
-    assert "ITEM_ID_ISSUE_3" in text and "中文" in text
-    assert "ITEM_ID_ISSUE_4" in text and "Τεστ" in text
-    assert "ITEM_ID_ISSUE_5" in text and "Emoji" in text
+    # session-context.env only ever records ITEM_ID_ISSUE_<n>=<board item id>
+    # (the bootstrap script never threads issue titles into the file — see
+    # scripts/bootstrap_session.sh, which reads only content["id"] and
+    # content["number"] from the gh response). The regression this test
+    # guards against is a UnicodeDecodeError/TypeError crash when the gh
+    # response contains non-cp1252 characters, so the correct assertions are:
+    # the process exits cleanly (checked above) and every issue survives the
+    # pagination walk despite its title being non-ASCII in the mocked response.
+    assert "ITEM_ID_ISSUE_1" in text
+    assert "ITEM_ID_ISSUE_2" in text
+    assert "ITEM_ID_ISSUE_3" in text
+    assert "ITEM_ID_ISSUE_4" in text
+    assert "ITEM_ID_ISSUE_5" in text
 
 
 @pytest.mark.skipif(shutil.which("bash") is None, reason="bash not available")
