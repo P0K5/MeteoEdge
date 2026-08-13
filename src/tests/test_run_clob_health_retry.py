@@ -1,6 +1,7 @@
 """Tests for issue #1003: Retry CLOB health check with backoff instead of exiting on first failure."""
 from __future__ import annotations
 
+import contextlib
 import logging
 from unittest.mock import MagicMock, patch, call
 
@@ -188,24 +189,37 @@ class TestPaperModeUntouched:
 
         Guards against future refactors that might hoist the health check
         out of the `if args.live:` branch, adding unwanted startup delay to paper mode.
-        """
-        with patch("src.scripts.run.retry_clob_health_with_backoff") as mock_retry:
-            with patch("src.scripts.run.LiveTrader"):
-                with patch("src.execution.auth.get_clob_client"):
-                    with patch("src.data.db.Database"):
-                        with patch("src.scripts.run.setup_logging"):
-                            with patch("src.scripts.run.RiskManager"):
-                                with patch("src.scripts.run.AlertManager"):
-                                    with patch("src.scripts.run.start_dashboard"):
-                                        with patch("src.scripts.run.poll_once"):
-                                            with patch("src.scripts.run._load_open_no_positions", return_value=[]):
-                                                with patch("sys.argv", ["run.py", "--once"]):
-                                                    # --once is paper mode (no --live flag)
-                                                    from src.scripts.run import main
-                                                    try:
-                                                        main()
-                                                    except (SystemExit, Exception):
-                                                        pass  # Expected due to mocking
 
-                                                    # Verify retry function was NOT called in paper mode
-                                                    mock_retry.assert_not_called()
+        Proves main() reached poll_once (past the health check branch), then asserts
+        retry_clob_health_with_backoff was never called. This ensures the test
+        actually detects if the call is moved outside the `if args.live:` guard.
+        """
+        patches = (
+            patch("src.scripts.run.retry_clob_health_with_backoff"),
+            patch("src.scripts.run.LiveTrader"),
+            patch("src.execution.auth.get_clob_client"),
+            patch("src.data.db.Database"),
+            patch("src.scripts.run.setup_logging"),
+            patch("src.scripts.run.RiskManager"),
+            patch("src.scripts.run.AlertManager"),
+            patch("src.scripts.run.start_dashboard"),
+            patch("src.scripts.run.poll_once"),
+            patch("src.scripts.run._load_open_no_positions", return_value=[]),
+            patch("sys.argv", ["run.py", "--once"]),
+        )
+
+        with contextlib.ExitStack() as stack:
+            context_managers = [stack.enter_context(p) for p in patches]
+            mock_retry, mock_live_trader, mock_get_client, mock_db, \
+                mock_setup_logging, mock_risk_mgr, mock_alert_mgr, \
+                mock_dashboard, mock_poll_once, mock_load_positions, \
+                mock_argv = context_managers
+
+            from src.scripts.run import main
+            main()
+
+            # Prove main() reached poll_once, which is after the health check branch
+            mock_poll_once.assert_called()
+
+            # Prove retry_clob_health_with_backoff was NOT called in paper mode
+            mock_retry.assert_not_called()
