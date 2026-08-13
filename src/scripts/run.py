@@ -872,6 +872,56 @@ def _start_collector_thread(collector_fn, name: str) -> None:
     t.start()
 
 
+def retry_clob_health_with_backoff(
+    check_func=None,
+    sleep_func=None,
+) -> None:
+    """Retry CLOB health check with exponential backoff.
+
+    Total backoff across all attempts is ~60 seconds to absorb DNS races
+    during cold boot within a single process lifetime.
+
+    Args:
+        check_func: Health check function returning bool (default: check_clob_health)
+        sleep_func: Sleep function for backoff delays (default: time.sleep)
+
+    Raises:
+        SystemExit(1) if all retry attempts fail
+    """
+    if check_func is None:
+        from src.execution.auth import check_clob_health
+        check_func = check_clob_health
+
+    if sleep_func is None:
+        sleep_func = time.sleep
+
+    # Exponential backoff: 2, 4, 8, 16, 32 seconds = 62 seconds total
+    max_attempts = 6
+    base_delay = 2
+    max_delay = 32
+
+    start_time = time.time()
+
+    for attempt in range(1, max_attempts + 1):
+        if check_func():
+            return
+
+        if attempt == max_attempts:
+            break
+
+        delay = min(base_delay * (2 ** (attempt - 1)), max_delay)
+        sleep_func(delay)
+
+    elapsed = time.time() - start_time
+    log.error(
+        "[run] CLOB health check failed after %d attempts over %.1f seconds -- "
+        "verify POLYMARKET_API_KEY and connectivity",
+        max_attempts,
+        elapsed,
+    )
+    raise SystemExit(1)
+
+
 def main() -> None:
     setup_logging()
     parser = argparse.ArgumentParser(description="MeteoEdge polling loop")
@@ -913,10 +963,9 @@ def main() -> None:
 
     live_trader = None
     if args.live:
-        from src.execution.auth import get_clob_client, check_clob_health
+        from src.execution.auth import get_clob_client
         log.info("Checking CLOB connectivity...")
-        if not check_clob_health():
-            raise SystemExit("[run] CLOB health check failed -- verify POLYMARKET_API_KEY and connectivity")
+        retry_clob_health_with_backoff()
         live_trader = LiveTrader(get_clob_client(), db)
         live_trader._client_factory = get_clob_client  # Each order thread creates its own client
         log.info("MeteoEdge starting in LIVE mode. Real orders will be placed.")
