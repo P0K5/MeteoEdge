@@ -56,6 +56,16 @@ def _write_jsonl(path: Path, records: list) -> None:
     path.write_text("".join(json.dumps(r) + "\n" for r in records))
 
 
+def _live_trader(fill_size: float = 1.0):
+    """A live_trader stub whose get_order_fill_size confirms every order_id
+    filled *fill_size* shares -- used where a test just needs 'reconcile
+    treats this timeout record as a genuine fill' (issue #993 gates the
+    outcome patch on this authority, same as #977/#983 gate open_positions)."""
+    lt = MagicMock()
+    lt.get_order_fill_size.return_value = fill_size
+    return lt
+
+
 # ===========================================================================
 # reconcile_timeout_fills
 # ===========================================================================
@@ -90,12 +100,12 @@ class TestReconcileTimeoutFills:
         """timeout record for a held token is rewritten to filled."""
         om = _make_om()
         f = tmp_path / "live_trades.jsonl"
-        record = {"asset_id": "tok-B", "outcome": "timeout", "station": "KORD"}
+        record = {"asset_id": "tok-B", "outcome": "timeout", "station": "KORD", "order_id": "ord-B"}
         _write_jsonl(f, [record])
 
         with patch("src.execution.order_manager.LIVE_TRADES_JSONL", f), \
              patch("src.execution.order_manager._wallet_held_token_ids", return_value={"tok-B"}):
-            om.reconcile_timeout_fills("ts-2026")
+            om.reconcile_timeout_fills("ts-2026", live_trader=_live_trader())
 
         patched = [json.loads(ln) for ln in f.read_text().splitlines() if ln.strip()]
         assert len(patched) == 1
@@ -123,14 +133,14 @@ class TestReconcileTimeoutFills:
         om = _make_om()
         f = tmp_path / "live_trades.jsonl"
         records = [
-            {"asset_id": "tok-D", "outcome": "filled"},
-            {"asset_id": "tok-D", "outcome": "timeout"},
+            {"asset_id": "tok-D", "outcome": "filled", "order_id": "ord-D1"},
+            {"asset_id": "tok-D", "outcome": "timeout", "order_id": "ord-D2"},
         ]
         _write_jsonl(f, records)
 
         with patch("src.execution.order_manager.LIVE_TRADES_JSONL", f), \
              patch("src.execution.order_manager._wallet_held_token_ids", return_value={"tok-D"}):
-            om.reconcile_timeout_fills("ts-4")
+            om.reconcile_timeout_fills("ts-4", live_trader=_live_trader())
 
         lines = [json.loads(ln) for ln in f.read_text().splitlines() if ln.strip()]
         assert lines[0]["outcome"] == "filled"
@@ -142,12 +152,12 @@ class TestReconcileTimeoutFills:
         """Falls back to 'no_token_id' field when 'asset_id' is absent."""
         om = _make_om()
         f = tmp_path / "live_trades.jsonl"
-        record = {"no_token_id": "tok-E", "outcome": "timeout"}
+        record = {"no_token_id": "tok-E", "outcome": "timeout", "order_id": "ord-E"}
         _write_jsonl(f, [record])
 
         with patch("src.execution.order_manager.LIVE_TRADES_JSONL", f), \
              patch("src.execution.order_manager._wallet_held_token_ids", return_value={"tok-E"}):
-            om.reconcile_timeout_fills("ts-5")
+            om.reconcile_timeout_fills("ts-5", live_trader=_live_trader())
 
         lines = [json.loads(ln) for ln in f.read_text().splitlines() if ln.strip()]
         assert lines[0]["outcome"] == "filled"
@@ -157,15 +167,15 @@ class TestReconcileTimeoutFills:
         om = _make_om()
         f = tmp_path / "live_trades.jsonl"
         records = [
-            {"asset_id": "tok-F", "outcome": "timeout"},
-            {"asset_id": "tok-G", "outcome": "timeout"},
-            {"asset_id": "tok-H", "outcome": "timeout"},
+            {"asset_id": "tok-F", "outcome": "timeout", "order_id": "ord-F"},
+            {"asset_id": "tok-G", "outcome": "timeout", "order_id": "ord-G"},
+            {"asset_id": "tok-H", "outcome": "timeout", "order_id": "ord-H"},
         ]
         _write_jsonl(f, records)
 
         with patch("src.execution.order_manager.LIVE_TRADES_JSONL", f), \
              patch("src.execution.order_manager._wallet_held_token_ids", return_value={"tok-F", "tok-H"}):
-            om.reconcile_timeout_fills("ts-6")
+            om.reconcile_timeout_fills("ts-6", live_trader=_live_trader())
 
         lines = [json.loads(ln) for ln in f.read_text().splitlines() if ln.strip()]
         outcomes = {ln["asset_id"]: ln["outcome"] for ln in lines}
@@ -177,11 +187,11 @@ class TestReconcileTimeoutFills:
         """Malformed JSON lines are passed through unchanged."""
         om = _make_om()
         f = tmp_path / "live_trades.jsonl"
-        f.write_text('NOT_JSON\n{"asset_id": "tok-J", "outcome": "timeout"}\n')
+        f.write_text('NOT_JSON\n{"asset_id": "tok-J", "outcome": "timeout", "order_id": "ord-J"}\n')
 
         with patch("src.execution.order_manager.LIVE_TRADES_JSONL", f), \
              patch("src.execution.order_manager._wallet_held_token_ids", return_value={"tok-J"}):
-            om.reconcile_timeout_fills("ts-8")
+            om.reconcile_timeout_fills("ts-8", live_trader=_live_trader())
 
         lines = f.read_text().splitlines()
         assert lines[0] == "NOT_JSON"
@@ -191,11 +201,11 @@ class TestReconcileTimeoutFills:
         """Blank lines in the JSONL are preserved as-is (not counted as patches)."""
         om = _make_om()
         f = tmp_path / "live_trades.jsonl"
-        f.write_text('{"asset_id": "tok-I", "outcome": "timeout"}\n\n')
+        f.write_text('{"asset_id": "tok-I", "outcome": "timeout", "order_id": "ord-I"}\n\n')
 
         with patch("src.execution.order_manager.LIVE_TRADES_JSONL", f), \
              patch("src.execution.order_manager._wallet_held_token_ids", return_value={"tok-I"}):
-            om.reconcile_timeout_fills("ts-7")
+            om.reconcile_timeout_fills("ts-7", live_trader=_live_trader())
 
         content = f.read_text()
         non_blank = [ln for ln in content.splitlines() if ln.strip()]
@@ -218,14 +228,14 @@ class TestReconcileRotationAware:
         dated = tmp_path / "live_trades.2026-06-20.jsonl"
 
         # Plain file: token-A (not in wallet)
-        _write_jsonl(base, [{"asset_id": "tok-A", "outcome": "timeout"}])
+        _write_jsonl(base, [{"asset_id": "tok-A", "outcome": "timeout", "order_id": "ord-A"}])
         # Dated file: token-B (in wallet)
-        _write_jsonl(dated, [{"asset_id": "tok-B", "outcome": "timeout"}])
+        _write_jsonl(dated, [{"asset_id": "tok-B", "outcome": "timeout", "order_id": "ord-B2"}])
 
         with patch("src.execution.order_manager.LIVE_TRADES_JSONL", base), \
              patch("src.execution.order_manager._wallet_held_token_ids",
                    return_value={"tok-B"}):
-            om.reconcile_timeout_fills("ts-rot-1")
+            om.reconcile_timeout_fills("ts-rot-1", live_trader=_live_trader())
 
         plain_lines = [json.loads(ln) for ln in base.read_text().splitlines() if ln.strip()]
         dated_lines = [json.loads(ln) for ln in dated.read_text().splitlines() if ln.strip()]
@@ -266,14 +276,14 @@ class TestReconcileRotationAware:
         dated2 = tmp_path / "live_trades.2026-06-19.jsonl"
         dated3 = tmp_path / "live_trades.2026-06-20.jsonl"
 
-        _write_jsonl(dated1, [{"asset_id": "tok-d1", "outcome": "timeout"}])
-        _write_jsonl(dated2, [{"asset_id": "tok-d2", "outcome": "timeout"}])
-        _write_jsonl(dated3, [{"asset_id": "tok-d3", "outcome": "timeout"}])
+        _write_jsonl(dated1, [{"asset_id": "tok-d1", "outcome": "timeout", "order_id": "ord-d1"}])
+        _write_jsonl(dated2, [{"asset_id": "tok-d2", "outcome": "timeout", "order_id": "ord-d2"}])
+        _write_jsonl(dated3, [{"asset_id": "tok-d3", "outcome": "timeout", "order_id": "ord-d3"}])
 
         with patch("src.execution.order_manager.LIVE_TRADES_JSONL", base), \
              patch("src.execution.order_manager._wallet_held_token_ids",
                    return_value={"tok-d1", "tok-d3"}):
-            om.reconcile_timeout_fills("ts-rot-3")
+            om.reconcile_timeout_fills("ts-rot-3", live_trader=_live_trader())
 
         d1 = [json.loads(ln) for ln in dated1.read_text().splitlines() if ln.strip()]
         d2 = [json.loads(ln) for ln in dated2.read_text().splitlines() if ln.strip()]
@@ -299,19 +309,19 @@ class TestReconcileRotationAware:
         om = _make_om()
         base = tmp_path / "live_trades.jsonl"
         dated = tmp_path / "live_trades.2026-06-20.jsonl"
-        _write_jsonl(dated, [{"asset_id": "tok-idem", "outcome": "timeout"}])
+        _write_jsonl(dated, [{"asset_id": "tok-idem", "outcome": "timeout", "order_id": "ord-idem"}])
 
         wallet = {"tok-idem"}
         with patch("src.execution.order_manager.LIVE_TRADES_JSONL", base), \
              patch("src.execution.order_manager._wallet_held_token_ids",
                    return_value=wallet):
-            om.reconcile_timeout_fills("ts-idem-1")
+            om.reconcile_timeout_fills("ts-idem-1", live_trader=_live_trader())
 
         # First run patched it. Now run again.
         with patch("src.execution.order_manager.LIVE_TRADES_JSONL", base), \
              patch("src.execution.order_manager._wallet_held_token_ids",
                    return_value=wallet):
-            om.reconcile_timeout_fills("ts-idem-2")
+            om.reconcile_timeout_fills("ts-idem-2", live_trader=_live_trader())
 
         lines = [json.loads(ln) for ln in dated.read_text().splitlines() if ln.strip()]
         assert lines[0]["outcome"] == "filled"
@@ -348,7 +358,7 @@ class TestReconcileDbSync:
         with patch("src.execution.order_manager.LIVE_TRADES_JSONL", base), \
              patch("src.execution.order_manager._wallet_held_token_ids",
                    return_value={"tok-db-1"}):
-            om.reconcile_timeout_fills("ts-db-1", db=db)
+            om.reconcile_timeout_fills("ts-db-1", db=db, live_trader=_live_trader())
 
         cur = db._conn.execute("SELECT outcome FROM trades WHERE order_id=?", ("ord-db-1",))
         row = cur.fetchone()
@@ -375,7 +385,7 @@ class TestReconcileDbSync:
         with patch("src.execution.order_manager.LIVE_TRADES_JSONL", base), \
              patch("src.execution.order_manager._wallet_held_token_ids",
                    return_value={"tok-new"}):
-            om.reconcile_timeout_fills("ts-db-2", db=db)
+            om.reconcile_timeout_fills("ts-db-2", db=db, live_trader=_live_trader())
 
         cur = db._conn.execute(
             "SELECT outcome, order_id FROM trades WHERE order_id=?", ("ord-new-1",)
@@ -399,13 +409,13 @@ class TestReconcileDbSync:
         with patch("src.execution.order_manager.LIVE_TRADES_JSONL", base), \
              patch("src.execution.order_manager._wallet_held_token_ids",
                    return_value=wallet):
-            om.reconcile_timeout_fills("ts-idem-db-1", db=db)
+            om.reconcile_timeout_fills("ts-idem-db-1", db=db, live_trader=_live_trader())
 
         # Second run: JSONL now has outcome='filled', so no patch loop runs -> no DB write.
         with patch("src.execution.order_manager.LIVE_TRADES_JSONL", base), \
              patch("src.execution.order_manager._wallet_held_token_ids",
                    return_value=wallet):
-            om.reconcile_timeout_fills("ts-idem-db-2", db=db)
+            om.reconcile_timeout_fills("ts-idem-db-2", db=db, live_trader=_live_trader())
 
         cur = db._conn.execute("SELECT outcome FROM trades WHERE order_id=?", ("ord-idem-db",))
         assert cur.fetchone()[0] == "filled"
@@ -421,7 +431,7 @@ class TestReconcileDbSync:
         with patch("src.execution.order_manager.LIVE_TRADES_JSONL", base), \
              patch("src.execution.order_manager._wallet_held_token_ids",
                    return_value={"tok-nodb"}):
-            om.reconcile_timeout_fills("ts-nodb", db=None)
+            om.reconcile_timeout_fills("ts-nodb", db=None, live_trader=_live_trader())
 
         lines = [json.loads(ln) for ln in dated.read_text().splitlines() if ln.strip()]
         assert lines[0]["outcome"] == "filled"
