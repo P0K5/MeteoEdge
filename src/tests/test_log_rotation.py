@@ -174,6 +174,40 @@ class TestHousekeep:
         # Should not raise
         housekeep(base)
 
+    def test_deletes_compressed_file_beyond_retain_limit(self, tmp_path):
+        """Compressed files older than retention cutoff should be deleted.
+
+        This test verifies the fix for issue #980: housekeep() must delete aged .gz files,
+        not just aged plaintext files.
+        """
+        base = tmp_path / "snapshots.jsonl"
+        today = _today_utc()
+        ancient_date = today - timedelta(days=LOG_ROTATION_RETAIN_DAYS + 1)
+
+        # Create only the .gz file (simulating a file that was already compressed)
+        gz_file = tmp_path / f"snapshots.{ancient_date.isoformat()}.jsonl.gz"
+        gz_file.write_bytes(b"compressed data")
+
+        housekeep(base)
+
+        # The .gz file should be deleted (this is the fix for #980)
+        assert not gz_file.exists(), "Aged .gz file should be deleted"
+
+    def test_retains_compressed_file_within_retention_window(self, tmp_path):
+        """Compressed files within retention window should be kept."""
+        base = tmp_path / "snapshots.jsonl"
+        today = _today_utc()
+        recent_date = today - timedelta(days=LOG_ROTATION_RETAIN_DAYS - 5)
+
+        # Create a .gz file within retention window
+        gz_file = tmp_path / f"snapshots.{recent_date.isoformat()}.jsonl.gz"
+        gz_file.write_bytes(b"compressed data")
+
+        housekeep(base)
+
+        # The .gz file should be retained
+        assert gz_file.exists(), "Recent .gz file should be retained"
+
 
 # ---------------------------------------------------------------------------
 # iter_rotated_jsonl — multi-file reader
