@@ -625,6 +625,24 @@ def build_report(rows: "list[dict]", since: str) -> str:
                    f"{_cell(row.get('uncensored')):<{DAY_COL_W}}"
                    f"{_cell(row.get('censored')):<{DAY_COL_W}}")
 
+    dup_by_day: "dict[str, int]" = {}
+    for lad in ladders:
+        if lad.get("duplicate_rows"):
+            dup_by_day[lad["day"]] = dup_by_day.get(lad["day"], 0) + lad["duplicate_rows"]
+    if dup_by_day:
+        # Reported, never silently absorbed. De-duplication keeps the MASS
+        # honest -- a row written twice is not the model emitting twice the
+        # probability -- but the duplication is itself a defect in an
+        # append-only log that is supposed to be hourly-deduped (#826), and a
+        # tool that quietly swallows it is hiding a data-integrity problem to
+        # make its own number look right.
+        out += ["", "   DUPLICATE ROWS (de-duplicated before mass; #826 should",
+                "   have prevented these):"]
+        for day in sorted(dup_by_day):
+            out.append(f"     {day}  {dup_by_day[day]:>5} duplicated row(s)")
+        out.append("   Not a mass defect and not scored -- the gate de-duplicates")
+        out.append("   too -- but an append-only log should not need it.")
+
     out += [
         "",
         "2b. MASS BY LADDER KIND  (the mix that a pooled mean hides)",
@@ -840,6 +858,10 @@ def brief_report(rows: "list[dict]", since: str) -> str:
             out.append(f"{kind_label:<7}{cut:<7}{len(grp):<7}"
                        f"{sum(x['mass'] for x in grp) / len(grp):<7.2f}")
 
+    n_dup = sum(lad.get("duplicate_rows", 0) for lad in ladders)
+    if n_dup:
+        out.append(f"{n_dup} duplicated row(s) de-duplicated (#826 gap, not a "
+                   "mass defect)")
     n_excused = sum(1 for lad in deficient_ladders(ladders)
                     if lad["coverage_limited"])
     if n_excused:
