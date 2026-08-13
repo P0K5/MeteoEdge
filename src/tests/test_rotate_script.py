@@ -84,24 +84,28 @@ def test_rotate_all_required_logs(fake_repo_root):
 def test_rotate_preserves_ownership_when_fixed(fake_repo_root):
     """Test that ownership fix is attempted for rotated files.
 
-    On systems with os.chown (Unix-like), verify it's called.
-    On Windows, verify the code doesn't crash (os.chown not available).
+    Mocks os.chown (as the ownership tests in test_log_rotation.py do) so this
+    exercises the call-site wiring without depending on the CI runner's actual
+    privileges — a non-root CI user cannot chown to an arbitrary uid/gid.
     """
-    import os
     from src.utils.log_rotation import rotate_plaintext_log
 
     log_path = fake_repo_root / "logs" / "test.log"
     log_path.write_text("test data\n")
 
-    # Test that ownership fix is attempted (or handled gracefully on Windows)
-    rotated = rotate_plaintext_log(log_path, owner_uid=1000, owner_gid=1000)
+    with mock.patch("src.utils.log_rotation.os.chown", create=True) as mock_chown:
+        rotated = rotate_plaintext_log(log_path, owner_uid=1000, owner_gid=1000)
 
-    # Should successfully rotate without crashing, even if os.chown isn't available
     assert rotated.exists(), "Rotation should succeed even with ownership fix"
     assert log_path.read_text() == "", "Log should be truncated"
 
-    # If we're on a Unix-like system, we'd see os.chown called, but we can't easily
-    # test that without complex mocking that's platform-specific
+    # Ownership fix should be attempted for both the dated file and the
+    # truncated original (per _fix_file_ownership call sites in rotate_plaintext_log).
+    assert mock_chown.call_count == 2, "chown should be called for dated file and original"
+    for call in mock_chown.call_args_list:
+        args = call.args
+        assert args[1] == 1000, "uid should be passed through"
+        assert args[2] == 1000, "gid should be passed through"
 
 
 def test_rotate_handles_missing_log_gracefully(fake_repo_root):
