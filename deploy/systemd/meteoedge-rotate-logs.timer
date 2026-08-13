@@ -1,6 +1,6 @@
 [Unit]
-Description=Run MeteoEdge bot.log rotation daily at 00:05 UTC
-Documentation=file:///home/p0k5/MeteoEdge/docs/DEPLOY_BOT_LOG_ROTATION.md
+Description=Run MeteoEdge systemd log rotation daily at 00:05 UTC
+Documentation=file:///home/p0k5/MeteoEdge/docs/DEPLOY_SYSTEMD_LOG_ROTATION.md
 
 [Timer]
 OnCalendar=*-*-* 00:05:00 UTC
