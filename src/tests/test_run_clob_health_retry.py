@@ -74,30 +74,37 @@ class TestRetryClobHealthWithBackoff:
         assert "verify POLYMARKET_API_KEY and connectivity" in log_msg  # Guidance text
         assert "[run]" in log_msg  # Prefix
 
+    def test_per_attempt_warning_logs(self, caplog):
+        """Each failed attempt logs WARNING with attempt number before sleep."""
+        mock_check = MagicMock(return_value=False)
+        mock_sleep = MagicMock()
+
+        with caplog.at_level(logging.WARNING):
+            with pytest.raises(SystemExit):
+                retry_clob_health_with_backoff(check_func=mock_check, sleep_func=mock_sleep)
+
+        # Should log WARNING once per failed attempt (5 times: attempts 1-5; attempt 6 does not sleep)
+        warning_logs = [record for record in caplog.records if record.levelname == "WARNING"]
+        assert len(warning_logs) == 5
+
+        # Verify each warning has attempt number and total attempts
+        for i, record in enumerate(warning_logs, start=1):
+            log_msg = record.getMessage()
+            assert f"attempt {i}/6" in log_msg
+            assert "retrying in" in log_msg
+
     def test_total_elapsed_time_budget(self):
         """Total elapsed time across all retries is at least ~60s to absorb DNS races."""
         mock_check = MagicMock(return_value=False)
 
-        # Mock sleep to track cumulative sleep time
+        # Track cumulative sleep time across all backoff delays
         cumulative_sleep = [0.0]
 
         def mock_sleep_func(duration):
             cumulative_sleep[0] += duration
 
-        with patch("src.scripts.run.time.time") as mock_time:
-            # Simulate elapsed time equal to sum of sleep durations
-            # Start at 0, then increment by cumulative sleep at each check
-            call_count = [0]
-
-            def time_side_effect():
-                current = cumulative_sleep[0]
-                call_count[0] += 1
-                return current
-
-            mock_time.side_effect = time_side_effect
-
-            with pytest.raises(SystemExit):
-                retry_clob_health_with_backoff(check_func=mock_check, sleep_func=mock_sleep_func)
+        with pytest.raises(SystemExit):
+            retry_clob_health_with_backoff(check_func=mock_check, sleep_func=mock_sleep_func)
 
         # Verify cumulative sleep is at least 60 seconds
         # Backoff: 2 + 4 + 8 + 16 + 32 = 62 seconds
@@ -171,3 +178,34 @@ class TestClobHealthRetryIntegration:
         assert mock_sleep.call_count == 5
         # Verify SystemExit code is 1
         assert exc_info.value.code == 1
+
+
+class TestPaperModeUntouched:
+    """Test that paper mode does not perform health checks."""
+
+    def test_paper_mode_no_health_check_call(self):
+        """Running without --live flag must never call retry_clob_health_with_backoff.
+
+        Guards against future refactors that might hoist the health check
+        out of the `if args.live:` branch, adding unwanted startup delay to paper mode.
+        """
+        with patch("src.scripts.run.retry_clob_health_with_backoff") as mock_retry:
+            with patch("src.scripts.run.LiveTrader"):
+                with patch("src.execution.auth.get_clob_client"):
+                    with patch("src.data.db.Database"):
+                        with patch("src.scripts.run.setup_logging"):
+                            with patch("src.scripts.run.RiskManager"):
+                                with patch("src.scripts.run.AlertManager"):
+                                    with patch("src.scripts.run.start_dashboard"):
+                                        with patch("src.scripts.run.poll_once"):
+                                            with patch("src.scripts.run._load_open_no_positions", return_value=[]):
+                                                with patch("sys.argv", ["run.py", "--once"]):
+                                                    # --once is paper mode (no --live flag)
+                                                    from src.scripts.run import main
+                                                    try:
+                                                        main()
+                                                    except (SystemExit, Exception):
+                                                        pass  # Expected due to mocking
+
+                                                    # Verify retry function was NOT called in paper mode
+                                                    mock_retry.assert_not_called()

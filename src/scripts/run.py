@@ -879,7 +879,10 @@ def retry_clob_health_with_backoff(
     """Retry CLOB health check with exponential backoff.
 
     Total backoff across all attempts is ~60 seconds to absorb DNS races
-    during cold boot within a single process lifetime.
+    during cold boot within a single process lifetime. On all-fail path,
+    total startup cost is ~62s of sleep PLUS ~6 health checks at ~11s each,
+    roughly 2 minutes worst case. This bounds restart cadence under permanent
+    API outage.
 
     Args:
         check_func: Health check function returning bool (default: check_clob_health)
@@ -910,6 +913,12 @@ def retry_clob_health_with_backoff(
             break
 
         delay = min(base_delay * (2 ** (attempt - 1)), max_delay)
+        log.warning(
+            "[run] CLOB health check attempt %d/%d failed -- retrying in %ds",
+            attempt,
+            max_attempts,
+            delay,
+        )
         sleep_func(delay)
 
     elapsed = time.time() - start_time
