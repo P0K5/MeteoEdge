@@ -1,13 +1,18 @@
-"""Tests for issue #1003: Retry CLOB health check with backoff instead of exiting on first failure."""
+"""Tests for issue #1003: Retry CLOB health check with backoff instead of exiting on first failure.
+
+Test additions for issue #1004: Log fatal startup errors before SystemExit so they carry a timestamp.
+"""
 from __future__ import annotations
 
 import contextlib
 import logging
+import re
 from unittest.mock import MagicMock, patch, call
 
 import pytest
 
 from src.scripts.run import retry_clob_health_with_backoff
+from src.logging_config import setup_logging
 
 
 class TestRetryClobHealthWithBackoff:
@@ -223,3 +228,153 @@ class TestPaperModeUntouched:
 
             # Prove retry_clob_health_with_backoff was NOT called in paper mode
             mock_retry.assert_not_called()
+
+
+class TestLoggingWithTimestamp:
+    """Tests for issue #1004: Verify fatal errors are logged with timestamps for greppability.
+
+    The issue requires proving that log.error() is called BEFORE SystemExit(1), and that
+    the log output is formatted with an ISO timestamp so operators can grep logs by time.
+    """
+
+    def test_error_log_recorded_before_systemexit(self, caplog):
+        """Verify that log.error() is called before SystemExit(1) is raised.
+
+        This test captures log records and verifies that when all health check
+        attempts fail, an ERROR level log is emitted with proper content before
+        the SystemExit(1) is raised. This demonstrates that the log message will
+        include a timestamp when formatted by setup_logging()'s configured
+        formatter (which uses datefmt="%Y-%m-%dT%H:%M:%S").
+
+        The actual formatted output (with timestamp) is verified in the
+        integration test below, which uses a custom handler to apply the real
+        formatter outside of pytest's caplog interception.
+        """
+        setup_logging()
+
+        mock_check = MagicMock(return_value=False)
+        mock_sleep = MagicMock()
+
+        with caplog.at_level(logging.ERROR):
+            with pytest.raises(SystemExit) as exc_info:
+                retry_clob_health_with_backoff(check_func=mock_check, sleep_func=mock_sleep)
+
+        # Verify SystemExit code is 1 (int, not string) — this is critical
+        assert exc_info.value.code == 1, "SystemExit must use exit code 1 (int), not a string"
+
+        # Verify ERROR log was recorded before SystemExit was raised
+        error_logs = [r for r in caplog.records if r.levelname == "ERROR"]
+        assert len(error_logs) == 1, f"Expected 1 ERROR log, got {len(error_logs)}"
+
+        error_record = error_logs[0]
+
+        # Verify error message content
+        msg = error_record.getMessage()
+        assert "6 attempts" in msg
+        assert "verify POLYMARKET_API_KEY and connectivity" in msg
+
+    def test_error_log_formatted_includes_iso_timestamp(self):
+        """Verify that logged error includes ISO timestamp when formatted with setup_logging().
+
+        This test verifies the specific complaint from #1004: logs must be greppable by time,
+        meaning they must start with an ISO timestamp (YYYY-MM-DDTHH:MM:SS).
+
+        Critically: this test retrieves the REAL formatter from setup_logging()'s configured
+        root handler, not a hardcoded copy. This ensures we catch if #1005 (or any future change)
+        modifies the format string — if the formatter changes, this test will still pass (because
+        we only assert the invariant: ISO timestamp leads the line) but will validate against
+        the actual configured format, not a stale copy.
+
+        Pytest's caplog interferes with handlers, so we clean and reconfigure logging
+        in isolation, then validate with a custom handler using the real formatter.
+        """
+        root_logger = logging.getLogger()
+
+        # Save and clear existing handlers (pytest's caplog may have added them)
+        original_handlers = root_logger.handlers[:]
+        root_logger.handlers = []
+
+        try:
+            # Setup logging fresh without pytest's interference
+            setup_logging()
+
+            # Retrieve the REAL formatter from the root logger's handlers
+            formatter = None
+            for handler in root_logger.handlers:
+                if handler.formatter:
+                    formatter = handler.formatter
+                    break
+
+            assert formatter is not None, "setup_logging() must configure a formatter on root logger"
+
+            # Create a capture handler with the REAL formatter
+            class CaptureHandler(logging.Handler):
+                def __init__(self):
+                    super().__init__()
+                    self.formatted_records = []
+
+                def emit(self, record):
+                    formatted = self.formatter.format(record)
+                    self.formatted_records.append(formatted)
+
+            capture = CaptureHandler()
+            capture.setFormatter(formatter)
+            root_logger.addHandler(capture)
+
+            # Create a test log record and emit it through the logger
+            logger = logging.getLogger("src.scripts.run")
+            logger.error(
+                "[run] CLOB health check failed after %d attempts over %.1f seconds -- "
+                "verify POLYMARKET_API_KEY and connectivity",
+                6,
+                0.0,
+            )
+
+            # Verify we captured the formatted record
+            assert len(capture.formatted_records) > 0, "Expected at least one formatted record"
+            formatted = capture.formatted_records[0]
+
+            # INVARIANT: Formatted log must start with ISO timestamp (YYYY-MM-DDTHH:MM:SS)
+            # This is the core complaint from #1004 — logs must be greppable by time.
+            # We assert ONLY this invariant, not the full field layout, because #1005
+            # will legitimately add %(process)d and we must not fail on that.
+            iso_timestamp_pattern = r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\s"
+            assert re.match(iso_timestamp_pattern, formatted), (
+                f"Log output must start with ISO timestamp (YYYY-MM-DDTHH:MM:SS). Got: {formatted}"
+            )
+        finally:
+            # Restore original handlers
+            root_logger.handlers = original_handlers
+
+    def test_setup_logging_called_before_health_check_in_main_ordering(self):
+        """Verify that setup_logging() is called before retry_clob_health_with_backoff() in main().
+
+        This is a design requirement of #1004: logging must be configured before any
+        fatal error path is reached, so that log.error() produces formatted output.
+
+        NOTE: This test uses inspect.getsource() and str.find() to locate function calls
+        by string position, which is fragile — it could be fooled by the string appearing
+        in a comment or docstring. However, it serves as a structural guard against
+        major refactoring that moves the health check outside the logging-configured
+        section. A more robust test would require AST analysis, but this is acceptable
+        for catching accidental regressions.
+        """
+        from src.scripts.run import main
+        import inspect
+
+        # Get the source code of main()
+        source = inspect.getsource(main)
+
+        # Find the positions of setup_logging and retry_clob_health_with_backoff
+        setup_logging_pos = source.find("setup_logging()")
+        retry_health_pos = source.find("retry_clob_health_with_backoff()")
+
+        assert setup_logging_pos != -1, "setup_logging() not found in main()"
+        assert retry_health_pos != -1, "retry_clob_health_with_backoff() not found in main()"
+
+        # Verify setup_logging is called before retry_clob_health_with_backoff
+        assert setup_logging_pos < retry_health_pos, (
+            "setup_logging() must be called before retry_clob_health_with_backoff() "
+            f"to ensure logs are formatted with timestamps (setup_logging at {setup_logging_pos}, "
+            f"retry_health at {retry_health_pos})"
+        )
