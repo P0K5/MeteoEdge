@@ -169,11 +169,10 @@ def group_ladders(rows: "list[dict]") -> "list[dict]":
 
     ladders = []
     for (station, ts, end_date, is_next_day), members in buckets.items():
-        members, n_dup = _dedupe_brackets(members)
         ladders.append({
             "station": station, "ts": ts, "end_date": end_date,
             "is_next_day": is_next_day, "brackets": members,
-            "day": (ts or "")[:10], "duplicate_rows": n_dup,
+            "day": (ts or "")[:10],
             **ladder_stats(members),
         })
     return ladders
@@ -221,13 +220,23 @@ def ladder_stats(brackets: "list[dict]") -> dict:
     below an already-observed high. A zero higher up with live mass beneath it
     is something else entirely and is deliberately not counted here.
     """
+    # De-duplicate HERE rather than in group_ladders, because this function is
+    # the shared entry point: daily_health_report._ladder_mass builds its own
+    # groups and calls it directly. Putting the de-duplication one level up
+    # meant the diagnostic got it and the daily email did not -- the health
+    # report read 1.066 [WARN] on 2026-08-13 while the diagnostic read 1.000
+    # on the same data, hours apart. Two implementations of one concept is the
+    # failure this whole counter has now hit four times; the fix is to have one.
+    brackets, n_duplicates = _dedupe_brackets(brackets)
+
     usable = [b for b in brackets if b.get("p_yes_raw") is not None]
     if not usable:
         return {"n_brackets": len(brackets), "mass": None, "leading_zeros": 0,
                 "width": None, "kind": "other", "censored": False,
                 "open_bottom": False, "open_top": False, "closed_ladder": True,
                 "gaps": 0, "gap_width": 0.0, "trailing_zeros": 0,
-                "truncation": "none", "coverage_limited": False}
+                "truncation": "none", "coverage_limited": False,
+                "duplicate_rows": n_duplicates}
 
     ordered = sorted(usable, key=lambda b: (b.get("bracket_low") is None,
                                             b.get("bracket_low") or 0.0))
@@ -290,6 +299,7 @@ def ladder_stats(brackets: "list[dict]") -> dict:
             gap_width += delta
 
     return {
+        "duplicate_rows": n_duplicates,
         "n_brackets": len(ordered),
         "mass": mass,
         "leading_zeros": leading,
