@@ -82,15 +82,16 @@ Runbook: resolving the #977 KORD 2026-08-11 incident (open_positions id 435/436)
 
     1. Preview (no DB write):
         python -m src.scripts.merge_duplicate_open_positions --dry-run \
+            --token-id 101370671429372224220389749572993685064650155630486212084462717077923353473008 \
             --db-path /path/to/meteoedge.db
        Confirm the output shows exactly one token with one zero-share phantom
        row dropped (order_id 0x6f780a...) and one ticker repair
        ('KORD-order-0x418b18' -> the real condition id read off the phantom
-       row) -- and nothing else. If any other token is reported, STOP and
-       investigate before proceeding; this script touches every duplicate
-       token_id in the table, not just this incident's.
+       row) -- and nothing else. --token-id scoping ensures only this
+       incident's token is touched.
     2. Apply (same command without --dry-run):
         python -m src.scripts.merge_duplicate_open_positions \
+            --token-id 101370671429372224220389749572993685064650155630486212084462717077923353473008 \
             --db-path /path/to/meteoedge.db
     3. Verify:
         sqlite3 /path/to/meteoedge.db \
@@ -135,23 +136,46 @@ def _most_protective(values: list, *, prefer_high: bool) -> "int | None":
     return max(non_null) if prefer_high else min(non_null)
 
 
-def merge_duplicates(db_path: Path, dry_run: bool = False) -> int:
-    """Merge duplicate open_positions rows per token_id. Returns exit code."""
+def merge_duplicates(db_path: Path, dry_run: bool = False, token_ids: list[str] | None = None) -> int:
+    """Merge duplicate open_positions rows per token_id. Returns exit code.
+
+    Args:
+        db_path: Path to the SQLite database.
+        dry_run: If True, preview changes without modifying the DB.
+        token_ids: Optional list of specific token_ids to process. If None, process all duplicates.
+    """
     if not db_path.exists():
         print(f"[merge] DB not found: {db_path}")
         return 1
 
     conn = _connect(db_path)
 
-    dup_tokens = [
-        r["token_id"]
-        for r in conn.execute(
+    # Build query to find duplicate tokens, optionally filtered by token_ids list
+    if token_ids:
+        placeholders = ",".join("?" * len(token_ids))
+        query = (
             "SELECT token_id FROM open_positions "
+            f"WHERE token_id IN ({placeholders}) "
             "GROUP BY token_id HAVING COUNT(*) > 1"
-        ).fetchall()
-    ]
+        )
+        dup_tokens = [
+            r["token_id"]
+            for r in conn.execute(query, token_ids).fetchall()
+        ]
+    else:
+        dup_tokens = [
+            r["token_id"]
+            for r in conn.execute(
+                "SELECT token_id FROM open_positions "
+                "GROUP BY token_id HAVING COUNT(*) > 1"
+            ).fetchall()
+        ]
+
     if not dup_tokens:
-        print("[merge] no duplicate token_id rows found -- nothing to do")
+        if token_ids:
+            print(f"[merge] no duplicate token_id rows found for specified token(s) -- nothing to do")
+        else:
+            print("[merge] no duplicate token_id rows found -- nothing to do")
         conn.close()
         return 0
 
@@ -336,8 +360,22 @@ def main() -> None:
         default=_DEFAULT_DB_PATH,
         help=f"Path to the SQLite DB (default: {_DEFAULT_DB_PATH})",
     )
+    parser.add_argument(
+        "--token-id",
+        action="append",
+        dest="token_ids",
+        help="Restrict merging to the specified token_id(s) (repeatable, or comma-separated)",
+    )
     args = parser.parse_args()
-    raise SystemExit(merge_duplicates(args.db_path, dry_run=args.dry_run))
+
+    # Handle comma-separated token_ids: flatten the list if any comma-separated values exist
+    token_ids = None
+    if args.token_ids:
+        token_ids = []
+        for token_id_arg in args.token_ids:
+            token_ids.extend(token_id_arg.split(","))
+
+    raise SystemExit(merge_duplicates(args.db_path, dry_run=args.dry_run, token_ids=token_ids))
 
 
 if __name__ == "__main__":

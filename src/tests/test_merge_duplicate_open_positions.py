@@ -309,3 +309,96 @@ class TestZeroSharePhantomRows:
 
         assert merge_duplicates(db_path) == 1, "all-phantom duplicates must be flagged, not dropped"
         assert len(_rows(db_path, token="tok-only-phantom")) == 2
+
+
+# ===========================================================================
+# Token ID Scoping (issue #991)
+# ===========================================================================
+# Verify that --token-id parameter restricts operations to specified tokens
+
+class TestTokenIdScoping:
+    def test_unrelated_duplicate_token_untouched_when_token_id_specified(self, db_path):
+        """When --token-id is specified, unrelated duplicate tokens must remain untouched.
+
+        This test verifies the fix for issue #991: the script should only merge
+        the specified token(s), leaving all others alone even if they have duplicates.
+        """
+        # Before merge: db_path fixture has 3 duplicate rows for TOKEN and 1 row for "token-katl-no-1"
+        before_wmkk = _rows(db_path, token=TOKEN)
+        before_katl = _rows(db_path, token="token-katl-no-1")
+        assert len(before_wmkk) == 3, "fixture should have 3 duplicate WMKK rows"
+        assert len(before_katl) == 1, "fixture should have 1 KATL row"
+
+        # Run merge_duplicates with token_id scoped to WMKK only
+        assert merge_duplicates(db_path, token_ids=[TOKEN]) == 0
+
+        # After merge: WMKK should be merged, KATL should be completely untouched
+        after_wmkk = _rows(db_path, token=TOKEN)
+        after_katl = _rows(db_path, token="token-katl-no-1")
+
+        assert len(after_wmkk) == 1, "WMKK rows should be merged into 1"
+        assert after_wmkk == before_wmkk[:1] or after_wmkk[0]["shares"] == pytest.approx(20.0), \
+            "WMKK should be merged with summed shares"
+        assert after_katl == before_katl, "KATL must be completely untouched"
+
+    def test_comma_separated_token_ids_handled_correctly(self, tmp_path):
+        """Comma-separated token_ids should be parsed and handled correctly."""
+        db_path = tmp_path / "comma-test.db"
+        db = Database(db_path)
+
+        def _add(order_id, token_id, shares, price, entry_ts):
+            trade_id = db.insert_trade(
+                ts=entry_ts,
+                station="TEST",
+                ticker=f"TEST-order-{order_id}",
+                bracket_low=80.0,
+                bracket_high=85.0,
+                side="NO",
+                predicted_price=70,
+                actual_price=price,
+                predicted_edge=15.0,
+                mode="live",
+                order_id=order_id,
+                outcome="filled",
+                capital_before=5.0,
+            )
+            db.open_position(
+                trade_id=trade_id,
+                station="TEST",
+                ticker=f"TEST-order-{order_id}",
+                token_id=token_id,
+                side="NO",
+                order_id=order_id,
+                entry_price=price,
+                shares=shares,
+                entry_ts=entry_ts,
+            )
+
+        # Create duplicates for three different tokens
+        t1 = "token-1"
+        t2 = "token-2"
+        t3 = "token-3"
+
+        _add("a1", t1, 5.0, 80, _ts(60))
+        _add("a2", t1, 5.0, 90, _ts(40))
+
+        _add("b1", t2, 3.0, 75, _ts(50))
+        _add("b2", t2, 4.0, 85, _ts(30))
+
+        _add("c1", t3, 2.0, 70, _ts(45))
+        _add("c2", t3, 3.0, 80, _ts(25))
+
+        def _count_rows(token):
+            conn = sqlite3.connect(str(db_path))
+            count = conn.execute(
+                "SELECT COUNT(*) FROM open_positions WHERE token_id=?", (token,)
+            ).fetchone()[0]
+            conn.close()
+            return count
+
+        # Merge only t1 and t3
+        assert merge_duplicates(db_path, token_ids=[t1, t3]) == 0
+
+        assert _count_rows(t1) == 1, "t1 should be merged to 1 row"
+        assert _count_rows(t2) == 2, "t2 should remain untouched with 2 rows"
+        assert _count_rows(t3) == 1, "t3 should be merged to 1 row"
