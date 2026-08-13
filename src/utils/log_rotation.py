@@ -162,30 +162,60 @@ def housekeep(base: Path, retain_days: int | None = None) -> None:
     if not directory.exists():
         return
 
+    # Build a dictionary mapping dates to lists of paths (both plaintext and .gz)
+    dated_files: dict[date, list[Path]] = {}
+
+    # Plaintext files: snapshots.2026-06-01.jsonl
     for path in directory.glob(f"{stem}.????-??-??{suffix}"):
-        # Extract date from filename
-        date_part = path.stem[len(stem) + 1:]  # e.g. "2026-06-01"
+        date_part = path.stem[len(stem) + 1:]
         try:
             file_date = date.fromisoformat(date_part)
+            if file_date not in dated_files:
+                dated_files[file_date] = []
+            dated_files[file_date].append(path)
         except ValueError:
             continue
 
+    # Compressed files: snapshots.2026-06-01.jsonl.gz
+    for path in directory.glob(f"{stem}.????-??-??{suffix}.gz"):
+        # Strip .gz suffix and extract date
+        name_without_gz = path.name[:-3]  # Remove .gz
+        stem_match = stem  # e.g., "snapshots"
+        suffix_match = suffix  # e.g., ".jsonl"
+        # Pattern: snapshots.2026-06-01.jsonl (without .gz)
+        date_part = name_without_gz[len(stem_match) + 1:]  # Skip "snapshots."
+        # Remove trailing suffix: "2026-06-01" (remove ".jsonl")
+        if date_part.endswith(suffix_match):
+            date_part = date_part[:-len(suffix_match)]
+        try:
+            file_date = date.fromisoformat(date_part)
+            if file_date not in dated_files:
+                dated_files[file_date] = []
+            dated_files[file_date].append(path)
+        except ValueError:
+            continue
+
+    # Process all dated files
+    for file_date, paths in dated_files.items():
         age_days = (today - file_date).days
         if age_days <= 0:
             continue  # today's file — skip
 
         if age_days > _retain:
-            # Delete (also remove .gz if present)
-            _safe_remove(path)
-            _safe_remove(Path(str(path) + ".gz"))
-            log.info("[log_rotation] deleted aged-out file: %s (age=%d days)", path.name, age_days)
+            # Delete all forms (plaintext and .gz)
+            for path in paths:
+                _safe_remove(path)
+            log.info("[log_rotation] deleted aged-out file: %s (age=%d days)", file_date, age_days)
 
         elif age_days >= LOG_ROTATION_COMPRESS_AFTER_DAYS:
-            gz_path = Path(str(path) + ".gz")
-            if not gz_path.exists() and path.exists():
-                _compress(path, gz_path)
-                _safe_remove(path)
-                log.info("[log_rotation] compressed: %s → %s", path.name, gz_path.name)
+            # Compress plaintext, leave .gz alone
+            for path in paths:
+                if path.suffix != ".gz" and path.exists():
+                    gz_path = Path(str(path) + ".gz")
+                    if not gz_path.exists():
+                        _compress(path, gz_path)
+                        _safe_remove(path)
+                        log.info("[log_rotation] compressed: %s → %s", path.name, gz_path.name)
 
 
 def _compress(src: Path, dst: Path) -> None:
