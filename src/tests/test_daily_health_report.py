@@ -1179,3 +1179,47 @@ class TestDedupBeforeExclude:
             text = "\n".join(lines)
         assert "upper bound" in text
         assert "resolved" in text
+
+    @staticmethod
+    def _ladder_rows(total=1.0, n=11, station="KATL", settle="2026-08-13"):
+        """One production-shaped ladder: open-ended tails, distinct tickers."""
+        top = 200.0
+        edges = [-50.0] + [80.0 + k * 2.0 for k in range(n - 1)] + [top]
+        return [{"station": station, "ts": f"{settle}T12:00:00+00:00",
+                 "end_date": settle, "is_next_day_flag": 0,
+                 "p_yes_raw": total / n, "ticker": f"0x{j}",
+                 "bracket_low": edges[j], "bracket_high": edges[j + 1],
+                 "yes_ask": 30, "no_ask": 70} for j in range(n)]
+
+    def test_the_health_report_mass_check_also_de_duplicates(self):
+        """The gap that let 2026-08-13 read 1.066 [WARN] on data the
+        diagnostic read as 1.000, hours apart.
+
+        `_ladder_mass` builds its own groups and calls `ladder_stats`
+        directly, so a de-duplication placed in `group_ladders` reached the
+        diagnostic and not the daily email. It belongs in `ladder_stats` --
+        the shared entry point -- and this pins it there.
+        """
+        from src.scripts.daily_health_report import _ladder_mass
+        clean = self._ladder_rows()
+        with patch("src.scripts.bss_market_vs_model_report."
+                   "load_bracket_eval_rows", return_value=clean):
+            base = _ladder_mass("2026-08-06")
+        # the 2026-08-11 / 2026-08-13 shape: the snapshot written twice
+        with patch("src.scripts.bss_market_vs_model_report."
+                   "load_bracket_eval_rows", return_value=clean + list(clean)):
+            dup = _ladder_mass("2026-08-06")
+        assert abs(dup["mean"] - base["mean"]) < 1e-9, (
+            f"duplicates inflated the health report: {base['mean']} -> "
+            f"{dup['mean']}")
+        assert dup["n_deficient"] == 0
+
+    def test_a_real_excess_still_reaches_the_health_report(self):
+        """De-duplication must not let the daily email miss a genuine
+        #921-class excess."""
+        from src.scripts.daily_health_report import _ladder_mass
+        rows = self._ladder_rows(total=1.6, station="KORD")
+        with patch("src.scripts.bss_market_vs_model_report."
+                   "load_bracket_eval_rows", return_value=rows):
+            mass = _ladder_mass("2026-08-06")
+        assert mass["mean"] > 1.05

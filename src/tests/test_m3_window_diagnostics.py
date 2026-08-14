@@ -663,6 +663,32 @@ class TestDuplicateRowsAreNotMassExcess:
         assert lad["duplicate_rows"] == 0
         assert lad["mass"] > MASS_HIGH
 
+    def test_duplication_is_REPORTED_not_silently_absorbed(self):
+        """De-duplication keeps the mass honest; it must not hide the fact
+        that an append-only, hourly-deduped log (#826) contained duplicates.
+
+        Measured on the live host: 154 duplicated keys on 2026-08-11, 176 on
+        08-12 (some 3x), 253 on 08-13 -- ongoing and growing, at three
+        different times of day. A tool that quietly swallows that is
+        suppressing a data-integrity defect to make its own number look right.
+        """
+        clean = [self._b2(0.25, 80.0 + i * 2, 82.0 + i * 2, f"0x{i}")
+                 for i in range(4)]
+        report = build_report(clean + list(clean), "2026-08-06")
+        assert "DUPLICATE ROWS" in report
+        assert "4 duplicated row(s)" in report
+
+        from src.scripts.m3_window_diagnostics import brief_report
+        brief = brief_report(clean + list(clean), "2026-08-06")
+        assert "duplicated row(s)" in brief
+
+    def test_a_clean_window_says_nothing_about_duplicates(self):
+        """No duplicates must not produce a line -- a report that always
+        mentions a defect trains the reader to skip it."""
+        clean = [self._b2(0.25, 80.0 + i * 2, 82.0 + i * 2, f"0x{i}")
+                 for i in range(4)]
+        assert "DUPLICATE ROWS" not in build_report(clean, "2026-08-06")
+
     def test_a_ladder_without_tickers_is_not_collapsed(self):
         """Keying on ticker alone turned a missing field into mass ~0.09 --
         an absent column must never read as a catastrophic deficit."""

@@ -169,11 +169,10 @@ def group_ladders(rows: "list[dict]") -> "list[dict]":
 
     ladders = []
     for (station, ts, end_date, is_next_day), members in buckets.items():
-        members, n_dup = _dedupe_brackets(members)
         ladders.append({
             "station": station, "ts": ts, "end_date": end_date,
             "is_next_day": is_next_day, "brackets": members,
-            "day": (ts or "")[:10], "duplicate_rows": n_dup,
+            "day": (ts or "")[:10],
             **ladder_stats(members),
         })
     return ladders
@@ -221,13 +220,23 @@ def ladder_stats(brackets: "list[dict]") -> dict:
     below an already-observed high. A zero higher up with live mass beneath it
     is something else entirely and is deliberately not counted here.
     """
+    # De-duplicate HERE rather than in group_ladders, because this function is
+    # the shared entry point: daily_health_report._ladder_mass builds its own
+    # groups and calls it directly. Putting the de-duplication one level up
+    # meant the diagnostic got it and the daily email did not -- the health
+    # report read 1.066 [WARN] on 2026-08-13 while the diagnostic read 1.000
+    # on the same data, hours apart. Two implementations of one concept is the
+    # failure this whole counter has now hit four times; the fix is to have one.
+    brackets, n_duplicates = _dedupe_brackets(brackets)
+
     usable = [b for b in brackets if b.get("p_yes_raw") is not None]
     if not usable:
         return {"n_brackets": len(brackets), "mass": None, "leading_zeros": 0,
                 "width": None, "kind": "other", "censored": False,
                 "open_bottom": False, "open_top": False, "closed_ladder": True,
                 "gaps": 0, "gap_width": 0.0, "trailing_zeros": 0,
-                "truncation": "none", "coverage_limited": False}
+                "truncation": "none", "coverage_limited": False,
+                "duplicate_rows": n_duplicates}
 
     ordered = sorted(usable, key=lambda b: (b.get("bracket_low") is None,
                                             b.get("bracket_low") or 0.0))
@@ -290,6 +299,7 @@ def ladder_stats(brackets: "list[dict]") -> dict:
             gap_width += delta
 
     return {
+        "duplicate_rows": n_duplicates,
         "n_brackets": len(ordered),
         "mass": mass,
         "leading_zeros": leading,
@@ -615,6 +625,24 @@ def build_report(rows: "list[dict]", since: str) -> str:
                    f"{_cell(row.get('uncensored')):<{DAY_COL_W}}"
                    f"{_cell(row.get('censored')):<{DAY_COL_W}}")
 
+    dup_by_day: "dict[str, int]" = {}
+    for lad in ladders:
+        if lad.get("duplicate_rows"):
+            dup_by_day[lad["day"]] = dup_by_day.get(lad["day"], 0) + lad["duplicate_rows"]
+    if dup_by_day:
+        # Reported, never silently absorbed. De-duplication keeps the MASS
+        # honest -- a row written twice is not the model emitting twice the
+        # probability -- but the duplication is itself a defect in an
+        # append-only log that is supposed to be hourly-deduped (#826), and a
+        # tool that quietly swallows it is hiding a data-integrity problem to
+        # make its own number look right.
+        out += ["", "   DUPLICATE ROWS (de-duplicated before mass; #826 should",
+                "   have prevented these):"]
+        for day in sorted(dup_by_day):
+            out.append(f"     {day}  {dup_by_day[day]:>5} duplicated row(s)")
+        out.append("   Not a mass defect and not scored -- the gate de-duplicates")
+        out.append("   too -- but an append-only log should not need it.")
+
     out += [
         "",
         "2b. MASS BY LADDER KIND  (the mix that a pooled mean hides)",
@@ -830,6 +858,10 @@ def brief_report(rows: "list[dict]", since: str) -> str:
             out.append(f"{kind_label:<7}{cut:<7}{len(grp):<7}"
                        f"{sum(x['mass'] for x in grp) / len(grp):<7.2f}")
 
+    n_dup = sum(lad.get("duplicate_rows", 0) for lad in ladders)
+    if n_dup:
+        out.append(f"{n_dup} duplicated row(s) de-duplicated (#826 gap, not a "
+                   "mass defect)")
     n_excused = sum(1 for lad in deficient_ladders(ladders)
                     if lad["coverage_limited"])
     if n_excused:
