@@ -632,7 +632,9 @@ reason to hold it.
 |---|---|---|
 | **#967** — forecast capture killed by a 45-min timeout; leads 12 and 24 halved since 2026-07-28 | **Yes** — forecast inputs feed the model that computes `p_yes_raw` | **HOLD until after the gate** (decided 2026-08-10) |
 | **#969** — rail / artifact WARN thresholds calibrated on the wrong population | No — reporting only | **Land now** |
-| #885 / #893 — the σ lever | Yes | HOLD until after M3, per the sequencing argument above |
+| #885 / #893 — the σ lever | Yes | HOLD until after M3, per the sequencing argument above — and now also to avoid pooling mislabelled CRPS evidence, see "DECIDED 2026-08-18" below |
+| **EMOS retraining** (`run_emos_shadow`, any cadence) | **No** — shadow coefficients are computed and logged, never served (`scanner.py:773`) | **Land now**, unconditionally, while `primary_rows=0` |
+| **`FORECAST_STACK` switch** (opening the stack) | **Yes** — DEB weights are filtered to the active stack (`deb_weighting.py:565-580`) and legacy serving consumes that blend | **HOLD until after the gate** (decided 2026-08-18) |
 
 **#967, stated explicitly because it is a real trade and should not be made by default.** The
 degradation predates the clean window, so the whole window is affected uniformly:
@@ -652,6 +654,137 @@ Note also that #967 is not merely a tight budget. The 45-minute limit was set by
 backstop against a hung run, on the stated basis that "a full run takes ~15-25min". Runs now take
 41–43 minutes, so the runtime roughly doubled and nothing noticed — raising the number without
 finding out why would remove the only guard against #717's silent six-day stall.
+
+#### DECIDED 2026-08-18 — the EMOS/stack freeze, and why the window was *not* split
+
+An EMOS retrain wrote 27 `emos_shadow` coefficient rows at `2026-08-16T23:05`, nine days into the
+window. This was initially read as a mid-window model change that split the sample and would have
+cost either a revert or a clock restart. **That reading was wrong, and the correction is recorded
+here because the wrong version circulated for a day.**
+
+**Shadow coefficients cannot reach serving.** `src/strategy/scanner.py:773` computes the EMOS
+construction in shadow mode and passes it to `log.debug` only — `state` is never patched,
+`emos_stddev_override` stays `None`, and legacy probabilities are served unchanged. Only the
+`emos_primary` branch does `_dc_replace(state, corrected_mu_f=_mu_final)`. The mode iteration
+inside `emos_mode._select_emos_row` (`("emos_primary", "emos_shadow")`) is real but reachable
+only from that primary branch.
+
+Verified on the live DB, 2026-08-18:
+
+```
+overrides=0 primary_rows=0
+```
+
+With no `emos_mode_override` row and no `emos_primary` calibration row, every city resolves to
+`emos_shadow` through `get_city_mode`. **The window is homogeneous. No revert, no restart — the
+2026-08-06 clock stands and the gate holds at ~2026-08-24/26.**
+
+**Consequence: retraining is unconditionally safe while `primary_rows=0`.** Shadow fits are
+structurally unable to alter `bracket_evals`, so the "does it touch the collected probabilities"
+test above returns *no* for any amount of EMOS training. This is a property of the serving code,
+not a scheduling convention.
+
+**The freeze is one key: `FORECAST_STACK`.** It is not EMOS-only.
+`src/model/deb_weighting.py:565-580` filters DEB weights to the active stack, and legacy serving
+consumes that blend via `corrected_mu_f`/`deb_mu_f` — so switching the stack changes served
+probabilities for every station immediately, with no EMOS involvement. It would *also* reset the
+EMOS promotion counter by design (#759 puts `forecast_source` on `emos_crps_log`). Two resets for
+one switch.
+
+`USE_ENSEMBLE_SIGMA` is currently **inert for serving**: both consumers guard on the value
+existing — `emos_mode.resolve_sigma_raw` (`emos_mode.py:202`) and
+`envelope.true_probability_yes` (`envelope.py:327`) — and nothing under `src/weather/` ever
+assigns `WeatherState.ensemble_sigma_f`, so both always take the fallback to `FORECAST_STDDEV_F`.
+It still must not be touched, but for the counter reason below, not a contamination one.
+
+**"All models" is not an available option.** `FORECAST_STACK_MODELS["full"]` includes `gefs`,
+which has no `MODEL_STATE_ATTRS` entry and fails the serving-member parity guard by design
+(`src/config.py:751-755`); only `hrrr_nbm` and `intl_ecmwf_icon` are promotable today. Both can
+be *evaluated* now without switching anything — `model_forecast_log` captures every channel
+regardless of the active stack — via `src/scripts/ecmwf_icon_backtest.py`.
+
+##### EMOS promotion is ~5 weeks out; M3 lands ~4 weeks before it
+
+`emos_crps_log`, measured 2026-08-18:
+
+| forecast_source | sigma_source | rows | cities | days | first | last |
+|---|---|---|---|---|---|---|
+| baseline | ensemble | 621 | 27 | 23 | 2026-07-25 | 2026-08-17 |
+| baseline | fixed | 453 | 30 | 17 | 2026-07-09 | 2026-07-25 |
+
+Active track is `baseline`/`ensemble` (`FORECAST_STACK=baseline`, `USE_ENSEMBLE_SIGMA=true`).
+621 ÷ 27 = exactly 23 — one entry per city per day, no gaps. `_primary_allowed` requires
+`get_emos_crps_count(city) >= EMOS_MIN_SAMPLES_PROMOTION` (60, confirmed in `bot_config`), and
+that counter counts **rows on the active track**. So every city sits at **23/60 → earliest
+possible promotion ~2026-09-23**, and only then if an operator manually sets
+`ready_for_promotion=1` (no automated path does).
+
+**M3 therefore resolves roughly a month before EMOS could serve anything.** The recurring worry —
+"is M3 decisive if EMOS sharpens the model afterwards?" — is settled by arithmetic, not by
+judgement: they were never in a race, and no change to training cadence moves it, because the
+guard counts days.
+
+The `fixed` track's 453 rows stopped counting the moment `USE_ENSEMBLE_SIGMA` flipped on
+2026-07-25 (#851 keys the counter on `sigma_source`). That is ~15 days per city of promotion
+evidence discarded — the real EMOS clock reset in this project's history, and it happened
+silently through a config flag. It is the precedent for freezing `FORECAST_STACK`.
+
+##### The #885 pooling hazard — DECIDED: hold #885 until after the gate
+
+The 621 rows tagged `sigma_source='ensemble'` were **scored against fixed sigma**, because
+`ensemble_sigma_f` is never populated (above). The label tracks the flag, not the actual input.
+
+So when #885 lands and `ensemble_sigma_f` starts carrying real spread, the sigma input changes
+materially while the track label does not. **The counter will not reset**, and pre-#885 and
+post-#885 evidence will pool — a city could reach 60 on evidence mostly drawn from a different
+sigma regime. This is exactly the train/serve-evidence skew #851 exists to prevent, arriving
+through the unpopulated-field door instead of the flag.
+
+Three options were weighed:
+
+1. Land #885 now and retag or delete the 621 rows — honest, but resets EMOS to day zero
+   (~mid-November).
+2. Land #885 after promotion — worst case: a promoted city's sigma input shifts underneath live
+   coefficients.
+3. **Hold #885 until after the M3 gate, then do (1) as one deliberate reset**, bundled with the
+   `FORECAST_STACK` switch.
+
+**Decision: (3).** It costs nothing extra — EMOS cannot promote before ~2026-09-23 regardless —
+and it collapses the stack switch, the sigma fix, and the counter reset into a single post-gate
+event with one clock instead of three. The cost is accepted knowingly: **the 621 `ensemble`-tagged
+CRPS rows are mislabelled and must be discarded, not pooled, when #885 lands.** If that discard
+is skipped, the promotion decision is made on evidence that does not mean what its label says.
+
+##### Post-gate sequence (one event, one clock)
+
+1. M3 gate resolves on the current model.
+2. Switch `FORECAST_STACK` to whichever of `hrrr_nbm` / `intl_ecmwf_icon` the backtest picks.
+3. Land #885 (and #893).
+4. Discard the pre-#885 `sigma_source='ensemble'` CRPS rows.
+5. Retrain shadow on the new stack + real ensemble sigma; the promotion counter restarts once.
+
+##### Coverage note — the three cities on `fixed` but not `ensemble`
+
+`Wuhan (ZHHH)`, `Jinan (ZSJN)`, `Zhengzhou (ZHCC)`. All three are `training_eligible: false` in
+`config/source_priority.yaml` per the 2026-07-01 audit — ZHHH/ZHCC because a 2-hourly real-world
+METAR cadence undershoots the true daily high by 1–3 °F, ZSJN because the feed went fully dead on
+2026-07-17 (#732, `METAR_SKIP_STATIONS`). Their absence from the `ensemble` track is the audit
+working as intended, not a coverage gap: 27/27 is full coverage of the eligible set.
+
+##### Runbook — confirm nothing is serving EMOS
+
+```bash
+DB=data/meteoedge.db
+sqlite3 -readonly "$DB" "SELECT 'overrides=' || (SELECT COUNT(*) FROM emos_mode_override) || ' primary_rows=' || (SELECT COUNT(*) FROM emos_calibration WHERE model_mode='emos_primary');"
+```
+
+`overrides=0 primary_rows=0` ⇒ shadow is inert and the window is homogeneous. Anything else means
+EMOS is live and the window must be re-examined from the date that row was written.
+
+```bash
+# promotion distance on the active track (mirrors get_emos_crps_count exactly)
+sqlite3 -readonly -header -box "$DB" "SELECT city, COUNT(*) AS n, MIN(date) AS since, MAX(date) AS latest FROM emos_crps_log WHERE model_mode='emos_shadow' AND forecast_source='baseline' AND sigma_source='ensemble' GROUP BY city ORDER BY n DESC;"
+```
 
 #### Checks that do NOT require waiting
 
