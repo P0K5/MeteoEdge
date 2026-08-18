@@ -438,6 +438,46 @@ gets a gate run underpowered. Three tools now share one implementation
 (`daily_health_report._scoreable_pairs`) precisely because four separate implementations is how
 this went wrong four times.
 
+##### Confirmed 2026-08-18 — ~Aug 24 holds, and the resolution gap is a lag, not a haircut
+
+The 2026-08-10 figures above were taken **five days** into the window, when most of it was too
+recent for Gamma to have resolved. That made the pre-resolution-vs-resolved gap look like a
+proportional haircut, and the `~25-30% fewer` caveat the health report still prints was
+calibrated on it (81/111 = a 27% shortfall). **That reading was wrong, and it was wrong in the
+pessimistic direction** — it briefly supported a projected gate slip to ~Aug 30.
+
+Measured twelve days in, from a real Pass-2 invocation:
+
+```
+[bss] resolved 658/815 de-duplicated brackets (613 gamma, 45 metar) across 205 station-days
+[bss] PASS 2 / M3 GATE -- n=658 bracket-rows, 205 station-days (need 300) | UNDERPOWERED -- not a verdict
+```
+
+| Basis | 2026-08-10 | 2026-08-18 | Rate over the 8 days |
+|---|---|---|---|
+| De-dup → exclude (pre-resolution) | 111 | 233 | ~15/day |
+| **…→ resolved (what the gate scores)** | **81** | **205** | **~15.5/day** |
+| Gap | 30 (27%) | 28 (12%) | **flat in absolute terms** |
+
+**The gap is a constant ~28-station-day lag buffer, not a percentage.** It is roughly two days of
+accrual at ~16/day — recent settlement dates awaiting Gamma — and it does not grow with the
+window. So resolved station-days accrue at the same steady-state rate as pre-resolution ones,
+offset by ~2 days, and the shortfall *percentage* shrinks as the window lengthens (27% → 12%).
+
+`(300 − 205) / 15.5 ≈ 6.1 days` → **the gate lands ~2026-08-24**, which is what this section has
+planned against since 2026-08-10. The resolved rate is now measured across two points eight days
+apart, not inferred from one.
+
+**Consequence for the health report.** Its `~25-30% fewer` footnote is a stale constant — the
+measured figure today is 12% — and its `power bar ~<today> + Nd` line computes `N` against the
+*pre-resolution* count while `300` is the *resolved* bar, so it compares two populations. The
+error is real but currently costs ~1-2 days, not the week an earlier draft of this note claimed.
+Tracked in **#1018**, which also covers the missing `--since` on `resolve_bracket_outcomes` —
+the reason the resolved count could not be read without also computing a BSS.
+
+**Also clean at this checkpoint:** 613/658 Gamma (93%, close to the ~95% anticipated), 45 METAR,
+and **0** impossible-outcome station-days (#861/#867) across all 205.
+
 **First real Pass-2 run, 2026-07-29 — UNDERPOWERED, NOT A VERDICT.** 808 de-duplicated brackets
 across **139 station-days** (46% of the bar); BS_model 0.1358 vs BS_market 0.0763. The report
 correctly refused to print a verdict section. Recorded here as a **dry run of the gate, not a
@@ -549,12 +589,31 @@ Full report: `backtest_results/certainty_exclusion_check_2026-08-10.md`.
 #### Runbook — running Pass 2 (the gate) on the bot host
 
 ```bash
-python -m src.scripts.bss_market_vs_model_report --population all-bracket --since 2026-08-06
+.venv/bin/python -m src.scripts.bss_market_vs_model_report --population all-bracket --since 2026-08-06
 ```
 
 Writes `backtest_results/bss_market_vs_model_pass2_<date>.md` — a distinct filename from
 Pass 1's, so the two never overwrite each other. Read-only against the database; self-gates and
 writes nothing without real data.
+
+**Checking progress without reading the score.** The run logs the power line to stderr *before*
+the BSS number appears anywhere on screen:
+
+```
+[bss] PASS 2 / M3 GATE -- wrote <path> | n=NNN bracket-rows, NNN station-days (need 300) | UNDERPOWERED -- not a verdict
+```
+
+That line carries the station-day count and the POWERED/UNDERPOWERED flag and **no BSS value**,
+so a pre-gate progress check can read it off the terminal without opening the report. Same for
+grepping the file — `grep -i "station-day"` returns the effective-sample-size row and the power
+note, neither of which contains the score.
+
+> **The score still lands on disk either way.** Reading only stderr keeps it out of your head,
+> not out of the file. That matters because the decision rule is pre-registered: looking at an
+> underpowered BSS and then looking again at 300 is two looks, and it inflates the false-positive
+> rate whatever the first look concluded. Until `resolve_bracket_outcomes` grows a `--since`
+> (#1018), progress checks and the gate share one instrument, and the discipline has to come
+> from the operator rather than the tool.
 
 > **`--since 2026-08-06` is not optional for the gate.** `bracket_evals` spans three
 > incompatible probability eras — pre-#917 °F ladders integrated at half width, pre-#920 ladders
