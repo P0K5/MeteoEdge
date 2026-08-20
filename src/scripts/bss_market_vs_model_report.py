@@ -367,6 +367,11 @@ def apply_exclusions(rows: "list[dict]") -> "tuple[list[dict], dict[str, int]]":
         if row["yes_ask"] is None or row["no_ask"] is None:
             counts["missing_market_price"] += 1
             continue
+        # Guard for _safe_price fabricated 50/50 (issue #1028). Placed after the
+        # missing_market_price None-check (safe to compare) and before rail_1c_99c.
+        # Ordering is correct: (50, 50) can never satisfy the rail check
+        # (which requires <=1 or >=99 on at least one side), so this placement
+        # does not move rows between buckets.
         if row["yes_ask"] == 50 and row["no_ask"] == 50:
             counts["fabricated_50_50_price"] += 1
             continue

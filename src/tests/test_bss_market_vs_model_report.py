@@ -206,16 +206,6 @@ class TestApplyExclusions:
         assert len(kept) == 1
         assert counts.get("fabricated_50_50_price", 0) == 0
 
-    def test_fabricated_50_50_guard_order(self):
-        """Guard fires after missing_market_price check, before rail_1c_99c check."""
-        # This verifies the ordering: a row with 50/50 prices should be excluded
-        # by the new guard, not fall through to rail check.
-        rows = [{"p_yes_raw": 0.2, "yes_ask": 50.0, "no_ask": 50.0}]
-        kept, counts = apply_exclusions(rows)
-        assert counts["fabricated_50_50_price"] == 1
-        # Ensure it doesn't get counted as a rail row
-        assert counts.get("rail_1c_99c", 0) == 0
-
     def test_fabricated_50_50_with_ladder(self):
         """Regression: 11-leg ladder all at 50/50 should exclude all legs."""
         # Simulate an 11-leg ladder where all legs have (50, 50) pricing
@@ -228,6 +218,87 @@ class TestApplyExclusions:
         assert len(kept) == 0
         assert counts["fabricated_50_50_price"] == 11
         assert counts["input_rows"] == 11
+
+
+class TestApplyExclusionsNonDivergence:
+    """Assert that both Pass 1 and Pass 2 paths call apply_exclusions() exactly
+    once, so neither can diverge from the other via a second call site."""
+
+    def test_apply_exclusions_has_single_call_site(self):
+        """Apply_exclusions must be called exactly once (not counting def line),
+        else Pass 1 (gate-selected) and Pass 2 (all-bracket) can silently diverge."""
+        from pathlib import Path
+        src_path = Path(__file__).resolve().parents[2] / "src" / "scripts" / "bss_market_vs_model_report.py"
+        src = src_path.read_text(encoding="utf-8")
+        # Count call sites: "apply_exclusions(" excluding "def apply_exclusions("
+        lines = src.split('\n')
+        call_count = 0
+        def_count = 0
+        for line in lines:
+            if "apply_exclusions(" in line:
+                if "def apply_exclusions(" in line:
+                    def_count += 1
+                else:
+                    call_count += 1
+        assert def_count == 1, f"Expected exactly one 'def apply_exclusions(', found {def_count}"
+        assert call_count == 1, (
+            f"Expected exactly one call to apply_exclusions(), found {call_count}. "
+            "If you added a second call site, Pass 1 and Pass 2 can now diverge. "
+            "Both paths must use the single apply_exclusions() to stay in sync."
+        )
+
+
+class TestFabricatedPriceFunnelRendering:
+    """Assert that build_report() actually renders the fabricated_50_50_price
+    row in the exclusion funnel table."""
+
+    def _sample(self):
+        """Minimal sample row for build_report."""
+        return {
+            "station": "KORD", "ticker": "0x1", "end_date": "2026-02-01",
+            "ts": "2026-02-01T18:00:00+00:00", "p_yes_raw": 0.2,
+            "yes_ask": 20.0, "no_ask": 82.0, "yes_won": False,
+            "bracket_low": 60.0, "bracket_high": 65.0,
+            "settlement_date": "2026-02-01", "is_next_day_flag": 0
+        }
+
+    def test_fabricated_50_50_row_appears_in_funnel_table(self):
+        """The funnel should render the fabricated_50_50_price row separately."""
+        exclusion_counts = {
+            "input_rows": 5,
+            "missing_p_yes_raw": 0,
+            "p_yes_raw_zero_artifact": 0,
+            "missing_market_price": 0,
+            "fabricated_50_50_price": 2,  # Two rows with exact (50, 50)
+            "rail_1c_99c": 0,
+            "kept_after_row_exclusions": 3,
+        }
+        report = build_report(
+            [self._sample()],
+            exclusion_counts,
+            0,
+            "2026-08-05",
+            outcome_meta={"source": OUTCOME_SOURCE_RESOLVER,
+                          "counts": {"n_station_days": 300}},
+            population=POPULATION_ALL_BRACKET,
+        )
+        # Assert the funnel row appears with the exact count
+        assert "fabricated 50/50 price (#1028)" in report, (
+            "Funnel table must include the fabricated 50/50 price row"
+        )
+        assert "| 2 |" in report, (
+            "Funnel table must show the correct count for fabricated prices"
+        )
+        # Assert it's on its own line, not merged with rail row
+        lines = report.split('\n')
+        fabricated_line = [l for l in lines if "fabricated 50/50 price" in l]
+        rail_line = [l for l in lines if "1c/99c rail" in l]
+        assert len(fabricated_line) == 1, "Should have exactly one fabricated price row"
+        assert len(rail_line) == 1, "Should have exactly one rail row"
+        # Ensure they are distinct rows
+        assert fabricated_line[0] != rail_line[0], (
+            "Fabricated and rail rows must be separate in the funnel table"
+        )
 
 
 # ---------------------------------------------------------------------------
