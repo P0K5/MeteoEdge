@@ -291,8 +291,8 @@ class TestFabricatedPriceFunnelRendering:
         )
         # Assert it's on its own line, not merged with rail row
         lines = report.split('\n')
-        fabricated_line = [l for l in lines if "fabricated 50/50 price" in l]
-        rail_line = [l for l in lines if "1c/99c rail" in l]
+        fabricated_line = [line for line in lines if "fabricated 50/50 price" in line]
+        rail_line = [line for line in lines if "1c/99c rail" in line]
         assert len(fabricated_line) == 1, "Should have exactly one fabricated price row"
         assert len(rail_line) == 1, "Should have exactly one rail row"
         # Ensure they are distinct rows
