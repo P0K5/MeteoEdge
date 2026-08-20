@@ -30,10 +30,24 @@ measures HOW OFTEN and HOW WIDE an arb was quoted, never how much size it would
 have absorbed.  A high hit rate here is a reason to turn CLOB enrichment on and
 measure capacity -- it is not, by itself, money.
 
-Usage:
+Usage -- from the repo root, which must be the cwd (``LOG_DIR`` is relative):
+
     python -m scripts.market_arb_scan
     python scripts/market_arb_scan.py --since 2026-08-06
     python scripts/market_arb_scan.py --since 2026-06-01 --out /tmp/arb.md
+
+On the bot host, prefer the no-checkout form so the working tree never leaves
+master -- the tree there IS production, and a branch switch changes the code
+the bot imports on its next restart:
+
+    cd ~/MeteoEdge
+    git fetch -q origin claude/project-profit-opportunities-af8639
+    git show origin/claude/project-profit-opportunities-af8639:scripts/market_arb_scan.py \
+        > /tmp/market_arb_scan.py
+    .venv/bin/python /tmp/market_arb_scan.py --out /tmp/market_arb_scan.md
+
+``git show`` writes to stdout and touches neither HEAD nor the index, so there
+is no window in which the host is on another branch and no cleanup to forget.
 """
 from __future__ import annotations
 
@@ -45,7 +59,23 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+def _repo_root() -> Path:
+    """Locate the repo whether or not this file lives inside it.
+
+    The intended invocation on the bot host copies this script to /tmp so the
+    checkout never leaves master (see the runbook below), which puts
+    ``__file__`` outside the repo entirely. The current working directory is
+    then the only reliable anchor -- and it has to be the repo regardless,
+    because ``src.config`` defines ``LOG_DIR = Path("logs")``, relative to cwd.
+    """
+    cwd = Path.cwd()
+    for cand in (cwd, *cwd.parents):
+        if (cand / "src" / "config.py").is_file():
+            return cand
+    return Path(__file__).resolve().parent.parent
+
+
+REPO_ROOT = _repo_root()
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
