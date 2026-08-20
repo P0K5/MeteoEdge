@@ -224,7 +224,32 @@ def scan(since: "str | None", path: Path) -> dict:
             "all_rail": all(l["yes"] <= 1 or l["yes"] >= 99 for l in legs),
         })
 
+    # --- 3. price provenance -----------------------------------------------
+    # `yes_ask`/`no_ask` do NOT come from an order book unless CLOB enrichment is
+    # on. They are Gamma `outcomePrices` (scanner.py `_parse_bracket`), clamped to
+    # [1, 99] -- and `_safe_price` returns **0.5** when the field is missing or
+    # unparseable, silently substituting a 50c "market price" for a real quote.
+    prov = {
+        "clamp_lo": sum(1 for r in rows if r["yes"] == 1),
+        "clamp_hi": sum(1 for r in rows if r["yes"] == 99),
+        "fallback_50": sum(1 for r in rows if r["yes"] == 50 and r["no"] == 50),
+        "complement_exact": sum(1 for r in rows if r["yes"] + r["no"] == 100),
+    }
+    fb_by_hour = defaultdict(int)
+    for r in rows:
+        if r["yes"] == 50 and r["no"] == 50:
+            fb_by_hour[(r["poll"], r["station"])] += 1
+
+    # Ladder mass with the 1c-clamped legs removed, to separate a real overround
+    # from the arithmetic of flooring ~7 near-zero legs at 1c on an 11-leg ladder.
+    for l in lad_stats:
+        legs = ladders[l["key"]]
+        l["n_clamped"] = sum(1 for x in legs if x["yes"] == 1)
+        l["n_fallback"] = sum(1 for x in legs if x["yes"] == 50 and x["no"] == 50)
+        l["sum_yes_unclamped"] = sum(x["yes"] for x in legs if x["yes"] != 1)
+
     return {
+        "prov": prov, "fb_by_hour": fb_by_hour,
         "rows": rows, "n_rows": len(rows),
         "skipped_no_price": skipped_no_price, "skipped_pre_since": skipped_pre_since,
         "comp_gross": comp_gross, "comp_net": comp_net, "comp_by_station": comp_by_station,
@@ -330,10 +355,60 @@ def report(res: dict, since: "str | None", path: Path) -> str:
               f"{'yes' if l['all_rail'] else ''} |")
         a("")
 
+    # --- 3. provenance ---
+    pr, n = res["prov"], res["n_rows"]
+    a("## 3. Price provenance — what `yes_ask`/`no_ask` actually are")
+    a("")
+    a("These are **not order-book asks** unless `ENABLE_CLOB_ENRICHMENT=true`. They are "
+      "Gamma `outcomePrices` (`scanner.py::_parse_bracket`), clamped to `[1, 99]`, with "
+      "`_safe_price` returning **0.5** on a missing or unparseable field.")
+    a("")
+    a("| signature | rows | share |")
+    a("|---|---|---|")
+    a(f"| `yes_ask + no_ask == 100` exactly | {pr['complement_exact']:,} | "
+      f"{100*pr['complement_exact']/n:.2f}% |")
+    a(f"| clamped at the 1c floor | {pr['clamp_lo']:,} | {100*pr['clamp_lo']/n:.2f}% |")
+    a(f"| clamped at the 99c ceiling | {pr['clamp_hi']:,} | {100*pr['clamp_hi']/n:.2f}% |")
+    a(f"| **`_safe_price` 0.5 fallback** (`yes==50 and no==50`) | **{pr['fallback_50']:,}** | "
+      f"**{100*pr['fallback_50']/n:.2f}%** |")
+    a("")
+    if res["fb_by_hour"]:
+        a("### Worst 0.5-fallback poll hours (station-level outages)")
+        a("")
+        a("| poll (UTC h) | station | legs at 50/50 |")
+        a("|---|---|---|")
+        for (poll, st), c in sorted(res["fb_by_hour"].items(), key=lambda kv: -kv[1])[:15]:
+            a(f"| {poll} | {st} | {c} |")
+        a("")
+
+    lads = res["ladders"]
+    if lads:
+        clean = [l for l in lads if l["n_fallback"] == 0]
+        a("### Ladder mass, decomposed")
+        a("")
+        a("| population | ladders | median `sum(yes_ask)` |")
+        a("|---|---|---|")
+        a(f"| all complete | {len(lads):,} | {statistics.median(l['sum_yes'] for l in lads):.0f}c |")
+        if clean:
+            a(f"| excluding any 0.5-fallback leg | {len(clean):,} | "
+              f"{statistics.median(l['sum_yes'] for l in clean):.0f}c |")
+            a(f"| …and excluding 1c-clamped legs | {len(clean):,} | "
+              f"{statistics.median(l['sum_yes_unclamped'] for l in clean):.0f}c |")
+        a(f"| median legs clamped at 1c | — | "
+          f"{statistics.median(l['n_clamped'] for l in lads):.0f} of "
+          f"{statistics.median(l['n'] for l in lads):.0f} |")
+        a("")
+
     a("## How to read this")
     a("")
-    a("- **Net hit rate ~0%** closes the question: the arb bots have it, and items 1-2 of "
-      "the alternatives memo are dead. That is a useful, cheap negative.")
+    a("- **Section 1 and 2 are NOT tradable-arb evidence, and section 3 is why.** Gamma "
+      "`outcomePrices` are the two sides of one market and sum to 1 by construction, so "
+      "`no_ask` carries no information `yes_ask` does not, `yes+no==100` is an identity "
+      "rather than a measurement, and the handful of sub-100 rows are rounding. The ladder "
+      "figure reduces exactly to **`sum(yes) - 100`** -- the market's own ladder mass, which "
+      "is worth knowing, but at MID prices with no depth it is not a trade.")
+    a("- **A gross hit rate near 100% means the instrument, not the market.** Check the "
+      "clamp and fallback rows before reading it as overround.")
     a("- **Net hits concentrated in all-rail ladders** is usually not real — a ladder pinned "
       "at 1c/99c across every leg reflects a quote convention, not a fillable book.")
     a("- **Net hits on non-rail ladders, repeatedly, at the same stations/hours** is the "
