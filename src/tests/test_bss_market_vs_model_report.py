@@ -187,6 +187,48 @@ class TestApplyExclusions:
         kept, _ = apply_exclusions(rows)
         assert len(kept) == 1
 
+    def test_fabricated_50_50_price_excluded(self):
+        """Exact pair (50, 50) is fabricated and excluded."""
+        rows = [{"p_yes_raw": 0.2, "yes_ask": 50.0, "no_ask": 50.0}]
+        kept, counts = apply_exclusions(rows)
+        assert kept == []
+        assert counts["fabricated_50_50_price"] == 1
+
+    @pytest.mark.parametrize("yes_ask,no_ask", [
+        (50.0, 49.0),   # not exact pair
+        (49.0, 50.0),   # not exact pair
+        (51.0, 49.0),   # not exact pair
+    ])
+    def test_near_50_50_prices_not_excluded(self, yes_ask, no_ask):
+        """Real markets near 50/50 survive -- only exact (50, 50) is excluded."""
+        rows = [{"p_yes_raw": 0.2, "yes_ask": yes_ask, "no_ask": no_ask}]
+        kept, counts = apply_exclusions(rows)
+        assert len(kept) == 1
+        assert counts.get("fabricated_50_50_price", 0) == 0
+
+    def test_fabricated_50_50_guard_order(self):
+        """Guard fires after missing_market_price check, before rail_1c_99c check."""
+        # This verifies the ordering: a row with 50/50 prices should be excluded
+        # by the new guard, not fall through to rail check.
+        rows = [{"p_yes_raw": 0.2, "yes_ask": 50.0, "no_ask": 50.0}]
+        kept, counts = apply_exclusions(rows)
+        assert counts["fabricated_50_50_price"] == 1
+        # Ensure it doesn't get counted as a rail row
+        assert counts.get("rail_1c_99c", 0) == 0
+
+    def test_fabricated_50_50_with_ladder(self):
+        """Regression: 11-leg ladder all at 50/50 should exclude all legs."""
+        # Simulate an 11-leg ladder where all legs have (50, 50) pricing
+        rows = [
+            {"p_yes_raw": 0.2, "yes_ask": 50.0, "no_ask": 50.0, "station": f"KORD",
+             "ticker": f"0x{i:04x}", "end_date": "2026-02-01"}
+            for i in range(11)
+        ]
+        kept, counts = apply_exclusions(rows)
+        assert len(kept) == 0
+        assert counts["fabricated_50_50_price"] == 11
+        assert counts["input_rows"] == 11
+
 
 # ---------------------------------------------------------------------------
 # dedupe_one_per_bracket_day
