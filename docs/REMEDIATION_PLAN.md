@@ -615,6 +615,19 @@ note, neither of which contains the score.
 > (#1018), progress checks and the gate share one instrument, and the discipline has to come
 > from the operator rather than the tool.
 
+**On the day, run it once and record both lines.** The population, the power treatment and the
+dawn-cohort sensitivity read are pre-registered — see "Pre-registration — signed off
+2026-08-20" under the decision gate. The headline verdict is the **inclusive** run:
+
+```bash
+# verdict (pre-registered population, includes the 12 dawn station-days)
+.venv/bin/python -m src.scripts.bss_market_vs_model_report --population all-bracket --since 2026-08-06
+```
+
+The exclusive figure is recorded alongside it as a sensitivity check and never substituted for
+the verdict. Confirm `station-days >= 300` on the stderr power line — the **resolved** count,
+not the health report's pre-resolution one.
+
 > **`--since 2026-08-06` is not optional for the gate.** `bracket_evals` spans three
 > incompatible probability eras — pre-#917 °F ladders integrated at half width, pre-#920 ladders
 > leaking up to 20% of their mass to truncation, and clean rows from 2026-08-06. Without the
@@ -916,6 +929,106 @@ evaluated bracket and benchmarks against the sharpest baseline available: the ma
 It requires no trading to compute.
 
 The rule is fixed **before** the number is seen, so it cannot be rationalised afterwards.
+
+### Pre-registration — signed off 2026-08-20, before any powered run
+
+The verdict table above fixes *what the number means*. It does not fix the population, the
+power treatment, or what a negative result licenses. Those are specified here, with the gate
+~4 days out and **no BSS figure yet read** for the 2026-08-06 window. Nothing below may change
+after the first powered run.
+
+#### The question
+
+Do the model's bracket probabilities beat the market's own prices, on the population the
+scanner evaluates, over the clean window? Nothing else — not profitability, not execution,
+not whether a better model could exist.
+
+#### Population — fixed now
+
+- `--population all-bracket --since 2026-08-06`.
+- Both certainty exclusions **kept** (#909, decided blind 2026-08-10).
+- De-duplication: one row per `(station, ticker, end_date)`, lowest `minutes_to_settlement`.
+- **The 12 dawn-closing station-days are INCLUDED** — KATL/KHOU/KORD/SBGR, 11:00Z final poll,
+  near-uniform ladders (#1021). They are a different information regime: the final poll sits
+  ~12 h from the outcome where every other station-day's sits minutes away. Both including and
+  excluding them is defensible, so the choice is made **now, blind**. They are additionally
+  reported as a **separate sensitivity line** — BSS with and without the cohort. The inclusive
+  number is the verdict; the exclusive number is recorded, never substituted. A divergence
+  beyond 0.05 is noted in the record and changes nothing about which number governs.
+  *Rationale for including: dropping rows because the model did badly on them is the failure
+  mode this document exists to prevent, and 3.0% cannot move the aggregate either way.*
+- Power bar: **≥ 300 resolved station-days**, read off the `[bss] PASS 2 / M3 GATE` stderr
+  line — not the pre-resolution count, which runs ~28 station-days ahead of it (see
+  "Confirmed 2026-08-18"). The report's `UNDERPOWERED` guard is never overridden.
+
+#### Power and uncertainty
+
+The verdict is read against a **95% bootstrap CI resampled over station-days**, not over
+bracket-rows — all ~11 brackets on a station-day share one daily high and are not independent
+draws. A point estimate on the correct side of a boundary with a CI straddling it is reported
+as straddling, not as clearing.
+
+#### ⚠️ One band boundary is NOT yet settled
+
+A stricter and a looser reading are both on the table, and this document must not quietly
+adopt the looser one:
+
+| | `BSS ≤ 0` | `−0.15 ≤ BSS < −0.05` |
+|---|---|---|
+| **Verdict table above (governs today)** | **Stop the thesis** — "it was a dream" | Stop |
+| **Proposed 2026-08-20 (NOT adopted)** | — | Retest, if #967 is fixed **and** EMOS clears the bar below |
+
+**The existing stricter rule governs.** The proposal to open a retestable band between −0.15
+and −0.05 is recorded here as *considered and not adopted*, because adopting it would loosen a
+pre-registration that was already fixed — the precise move this section exists to prevent.
+Overriding it requires an explicit, dated decision recorded here **before** the gate runs; after
+the number exists, it is not available at all.
+
+#### What a PASS licenses
+
+`BSS > 0.05` licenses **M4 — rebuilding the entry rule**. It does not license live trading;
+M5 is separately gated on M4 holding, through the #559 promotion machinery.
+
+#### The EMOS retest bar
+
+Where the verdict table permits a re-test ("re-test after the σ work bites"), CRPS improvement
+alone is **not sufficient**. Shadow CRPS is already 1.33 vs legacy 2.04 (d = +0.72), and CRPS
+measures distance to the observation while BSS measures skill against the market — the two can
+move independently, and assuming otherwise is how a re-test becomes a second bite.
+
+A re-test requires EMOS to show **BSS improvement on the same window**: EMOS-derived
+probabilities scored against the same market prices and outcomes, beating the market where the
+legacy probabilities did not. **That capability does not exist today** — the shadow path logs
+μ/σ at debug level (`scanner.py:773`) and never computes a ladder. Building shadow-BSS scoring
+is therefore a **prerequisite** for any EMOS-based re-test, named here so it cannot be waived
+later. Note also that EMOS cannot serve before ~2026-09-23 regardless (23/60 CRPS days on the
+active track), so this is not on the critical path to M3.
+
+#### Named alternative explanations
+
+Declared in advance so they cannot be invented afterwards:
+
+- **#967** — forecast capture halved on leads 12 and 24 since 2026-07-28; affects the whole
+  window uniformly (already recorded above as a knowingly accepted cost)
+- **The 12 dawn station-days** — 3.0% of last polls, near-uniform, included per above
+- **#1021** — one unexplained mass deficiency (0.8952, KORD 2026-08-19); and same-day σ ≈ 10 °F
+  from the climb floor against next-day σ ≈ 2 °F from `next_day_probability_yes`, a ~5×
+  disagreement about the same uncertainty
+- **#885** — serving σ is the fixed `FORECAST_STDDEV_F = 2.0`; `ensemble_sigma_f` is never
+  assigned, so ensemble spread does not reach the scanner
+- **#893** — 5 US stations train on a constant σ
+
+**Declaring them does not license dismissing a negative result.** A negative result stands on
+its own. They are named solely so that the re-test conditions are specified in advance, and
+only the pre-specified conditions count.
+
+#### One look
+
+The gate runs **once**, at ≥ 300 resolved station-days. Progress checks before that read the
+stderr station-day count only, never the score (see the Pass 2 runbook). An underpowered run is
+not a verdict in either direction and is not argued from, in either direction. Looking at an
+underpowered BSS and then looking again at 300 is two looks, and it inflates the false-positive
+rate whatever the first look appeared to show.
 
 ---
 
