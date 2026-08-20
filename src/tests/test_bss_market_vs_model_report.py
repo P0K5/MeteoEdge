@@ -45,6 +45,7 @@ from src.scripts.bss_market_vs_model_report import (
     build_report,
     classify_day_segment,
     compute_bss,
+    compute_gate_funnel_statistics,
     dedupe_one_per_bracket_day,
     filter_rows_since,
     join_outcomes,
@@ -1222,3 +1223,210 @@ class TestSinceFilter:
                         use_gamma=False, allow_network=False)
         assert rc == 0
         assert not list((tmp_path / "out").glob("*.md")) if (tmp_path / "out").exists() else True
+
+
+class TestGateFunnelStatistics:
+    """Test compute_gate_funnel_statistics() -- issue #1030 reconciliation.
+
+    This test suite validates that the funnel computation correctly documents
+    and computes statistics at each stage: raw input, de-duplicated, and
+    after exclusions. It tests the regression that failing: stages' counts
+    must never use denominators from a different stage.
+    """
+
+    def test_funnel_stats_on_empty_input(self):
+        """Empty input should produce zero counts without crashing."""
+        stats = compute_gate_funnel_statistics([])
+        assert stats["raw_count"] == 0
+        assert stats["deduped_count"] == 0
+        assert stats["raw_at_rail"] == 0
+        assert stats["deduped_at_rail"] == 0
+        assert stats["excluded_by_rail"] == 0
+
+    def test_funnel_stats_no_rail_prices(self):
+        """When no rows have rail prices, all counts should be zero."""
+        rows = [
+            {
+                "station": "KORD", "ticker": "0x1", "end_date": "2026-02-01",
+                "p_yes_raw": 0.2, "yes_ask": 20.0, "no_ask": 82.0,
+                "minutes_to_settlement": 100,
+            },
+            {
+                "station": "KORD", "ticker": "0x2", "end_date": "2026-02-01",
+                "p_yes_raw": 0.3, "yes_ask": 30.0, "no_ask": 72.0,
+                "minutes_to_settlement": 100,
+            },
+        ]
+        stats = compute_gate_funnel_statistics(rows)
+        assert stats["raw_count"] == 2
+        assert stats["raw_at_rail"] == 0
+        assert stats["deduped_count"] == 2
+        assert stats["deduped_at_rail"] == 0
+        assert stats["excluded_by_rail"] == 0
+        assert stats["percent_rail_raw"] == 0.0
+        assert stats["percent_rail_deduped"] == 0.0
+        assert stats["percent_excluded_by_rail"] == 0.0
+
+    def test_funnel_stats_raw_has_rail_deduped_doesnt(self):
+        """Detect when multiple polls of same bracket have different rail status.
+
+        This can happen if the market price changes across polls. Only the last
+        poll (lowest minutes_to_settlement) is kept in de-duplication.
+        """
+        rows = [
+            {
+                "station": "KORD", "ticker": "0x1", "end_date": "2026-02-01",
+                "p_yes_raw": 0.2, "yes_ask": 1.0, "no_ask": 99.0,
+                "minutes_to_settlement": 1000,  # Earlier poll: rail price
+            },
+            {
+                "station": "KORD", "ticker": "0x1", "end_date": "2026-02-01",
+                "p_yes_raw": 0.2, "yes_ask": 30.0, "no_ask": 72.0,
+                "minutes_to_settlement": 100,  # Later poll: no rail
+            },
+        ]
+        stats = compute_gate_funnel_statistics(rows)
+        assert stats["raw_count"] == 2
+        assert stats["raw_at_rail"] == 1, (
+            "Raw input should count the first poll with rail price"
+        )
+        assert stats["deduped_count"] == 1
+        assert stats["deduped_at_rail"] == 0, (
+            "De-duped should keep only the last poll, which has no rail"
+        )
+        assert stats["excluded_by_rail"] == 0, (
+            "Exclusion count is after de-duplication, so it sees the final poll"
+        )
+
+    def test_funnel_stats_all_at_rail(self):
+        """All rows at rail prices: counts should match at all stages."""
+        rows = [
+            {
+                "station": "KORD", "ticker": f"0x{i}", "end_date": "2026-02-01",
+                "p_yes_raw": 0.2, "yes_ask": 1.0, "no_ask": 99.0,
+                "minutes_to_settlement": 100,
+            }
+            for i in range(10)
+        ]
+        stats = compute_gate_funnel_statistics(rows)
+        assert stats["raw_count"] == 10
+        assert stats["raw_at_rail"] == 10
+        assert stats["deduped_count"] == 10
+        assert stats["deduped_at_rail"] == 10
+        assert stats["excluded_by_rail"] == 10
+        assert stats["percent_rail_raw"] == 100.0
+        assert stats["percent_rail_deduped"] == 100.0
+        assert stats["percent_excluded_by_rail"] == 100.0
+
+    def test_funnel_stats_low_rail_only(self):
+        """Test that yes_ask <= 1 triggers rail exclusion."""
+        rows = [
+            {
+                "station": "KORD", "ticker": "0x1", "end_date": "2026-02-01",
+                "p_yes_raw": 0.2, "yes_ask": 1.0, "no_ask": 50.0,
+                "minutes_to_settlement": 100,
+            },
+        ]
+        stats = compute_gate_funnel_statistics(rows)
+        assert stats["deduped_at_rail"] == 1
+        assert stats["excluded_by_rail"] == 1
+
+    def test_funnel_stats_high_rail_only(self):
+        """Test that no_ask >= 99 triggers rail exclusion."""
+        rows = [
+            {
+                "station": "KORD", "ticker": "0x1", "end_date": "2026-02-01",
+                "p_yes_raw": 0.2, "yes_ask": 50.0, "no_ask": 99.0,
+                "minutes_to_settlement": 100,
+            },
+        ]
+        stats = compute_gate_funnel_statistics(rows)
+        assert stats["deduped_at_rail"] == 1
+        assert stats["excluded_by_rail"] == 1
+
+    def test_funnel_stats_mixed_rail_and_clean(self):
+        """Test a realistic mix of rail and clean rows."""
+        rows = [
+            {
+                "station": "KORD", "ticker": "0x1", "end_date": "2026-02-01",
+                "p_yes_raw": 0.2, "yes_ask": 1.0, "no_ask": 99.0,
+                "minutes_to_settlement": 100,
+            },
+            {
+                "station": "KORD", "ticker": "0x2", "end_date": "2026-02-01",
+                "p_yes_raw": 0.3, "yes_ask": 30.0, "no_ask": 72.0,
+                "minutes_to_settlement": 100,
+            },
+            {
+                "station": "KORD", "ticker": "0x3", "end_date": "2026-02-01",
+                "p_yes_raw": 0.5, "yes_ask": 50.0, "no_ask": 50.0,
+                "minutes_to_settlement": 100,
+            },
+        ]
+        stats = compute_gate_funnel_statistics(rows)
+        assert stats["raw_count"] == 3
+        assert stats["raw_at_rail"] == 1
+        assert stats["deduped_count"] == 3
+        assert stats["deduped_at_rail"] == 1
+        # The 50/50 row is NOT excluded by rail (it's caught earlier by
+        # fabricated price exclusion in apply_exclusions), so only 1 excluded
+        assert stats["excluded_by_rail"] == 1
+        assert stats["percent_rail_deduped"] == pytest.approx(100.0 / 3, rel=0.01)
+
+    def test_funnel_denominator_regression_deduped_vs_raw(self):
+        """Regression test: ensure percentage denominators are never mixed.
+
+        Issue #965 / #1030: funnel stage percentages taken over wrong
+        denominators will silently report a number that looks plausible but
+        measures nothing. This test ensures that each stage's percentage uses
+        the right denominator (raw_at_rail / raw_count, not raw_at_rail /
+        deduped_count, etc.).
+        """
+        rows = [
+            # Multiple polls, 1 de-duped: raw poll 1 with rail
+            {
+                "station": "KORD", "ticker": "0x1", "end_date": "2026-02-01",
+                "p_yes_raw": 0.2, "yes_ask": 1.0, "no_ask": 99.0,
+                "minutes_to_settlement": 1000,
+            },
+            # Multiple polls, 1 de-duped: raw poll 2 without rail
+            {
+                "station": "KORD", "ticker": "0x1", "end_date": "2026-02-01",
+                "p_yes_raw": 0.2, "yes_ask": 30.0, "no_ask": 72.0,
+                "minutes_to_settlement": 100,
+            },
+            # 2 de-duped, 1 poll (no rail)
+            {
+                "station": "KORD", "ticker": "0x2", "end_date": "2026-02-01",
+                "p_yes_raw": 0.3, "yes_ask": 40.0, "no_ask": 62.0,
+                "minutes_to_settlement": 100,
+            },
+        ]
+        stats = compute_gate_funnel_statistics(rows)
+
+        # Raw: 3 rows, 1 at rail -> 33.3%
+        assert stats["raw_count"] == 3
+        assert stats["raw_at_rail"] == 1
+        assert stats["percent_rail_raw"] == pytest.approx(33.33, rel=0.01), (
+            "Raw percentage should be 1/3, not any other denominator"
+        )
+
+        # De-duped: 2 rows (one bracket polled twice), 0 at rail -> 0%
+        assert stats["deduped_count"] == 2
+        assert stats["deduped_at_rail"] == 0
+        assert stats["percent_rail_deduped"] == 0.0, (
+            "De-duped percentage should be 0/2 (final poll has no rail)"
+        )
+
+        # Excluded by rail: 0 of 2 -> 0%
+        assert stats["excluded_by_rail"] == 0
+        assert stats["percent_excluded_by_rail"] == 0.0, (
+            "Exclusion percentage should be 0/2 (final poll not excluded)"
+        )
+
+        # The three percentages must NOT be equal -- they measure different things
+        assert (stats["percent_rail_raw"] != stats["percent_rail_deduped"] or
+                stats["percent_rail_raw"] == 0.0), (
+            "Raw and de-duped percentages should differ when polls have different "
+            "rail status (unless both happen to be 0%)"
+        )
