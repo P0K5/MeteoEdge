@@ -352,16 +352,87 @@ def load_bracket_eval_rows(base: "Path" = BRACKET_EVALS_JSONL) -> "list[dict]":
 # ---------------------------------------------------------------------------
 # Exclusions (issue #822 / #820)
 # ---------------------------------------------------------------------------
+#
+# The two predicates below (``is_model_certain_price`` / ``is_rail_price``) are
+# the SINGLE definition of "the model claimed impossibility" and "the market
+# price is clipped at the rail" (issue #1030). ``apply_exclusions`` is the only
+# place that runs the full cascade -- see
+# ``TestApplyExclusionsNonDivergence.test_apply_exclusions_has_single_call_site``,
+# which stays satisfied because nothing outside this module ever calls
+# ``apply_exclusions`` a second time. What outside modules need instead is just
+# these two predicates (to classify a row, or to count a population, without
+# reproducing the cascade), and they now import them from here rather than
+# re-typing the comparison:
+#
+#   * ``certainty_exclusion_check.is_model_certain`` / ``.is_market_certain``
+#   * ``daily_health_report._scoreable_pairs``
+#
+# Before #1030 each of those re-typed the same ``<= RAIL_LOW_CENTS`` /
+# ``== 0.0`` comparisons inline, three implementations of two predicates that
+# could (and did, per the module's own history -- see ``_scoreable_pairs``'s
+# docstring) drift silently out of step with each other and with the cascade
+# below.
+
+
+def is_model_certain_price(row: dict) -> bool:
+    """The model claims impossibility: an exact-zero raw probability (#820).
+
+    ``p_yes_raw == 0.0`` is the certainty-shortcut artifact diagnosed in #820,
+    not a genuine (if tiny) model opinion -- see
+    ``certainty_exclusion_check``'s module docstring for the provenance
+    argument. A row with ``p_yes_raw is None`` is NOT model-certain; it is
+    undiagnosable and handled by its own funnel stage.
+    """
+    return row.get("p_yes_raw") == 0.0
+
+
+def is_rail_price(row: dict) -> bool:
+    """A quoted side sits at the exchange's ``RAIL_LOW_CENTS``/``RAIL_HIGH_CENTS``
+    rail -- a clipped exchange price, not a freely-produced market opinion.
+
+    **Cannot distinguish a clamp from a genuine rail price (#1030).** Kalshi
+    quotes and ``scanner.py``'s own ``max(1, min(99, round(price * 100)))``
+    clamp both land a sub-cent or super-99-cent market on exactly 1 or 99
+    cents; a genuinely-priced 0.3c market and a clamped one are bit-identical
+    in ``bracket_evals``. This predicate -- like the funnel stage it drives --
+    necessarily counts both together. There is no field in the stored data
+    that would let it do otherwise; only re-instrumenting capture (held,
+    #1029, out of scope here -- report-only) could separate them.
+
+    A row with either price missing is NOT at the rail; it is undiagnosable
+    and handled by ``missing_market_price``.
+    """
+    yes_ask, no_ask = row.get("yes_ask"), row.get("no_ask")
+    if yes_ask is None or no_ask is None:
+        return False
+    return (yes_ask <= RAIL_LOW_CENTS or yes_ask >= RAIL_HIGH_CENTS
+            or no_ask <= RAIL_LOW_CENTS or no_ask >= RAIL_HIGH_CENTS)
+
 
 def apply_exclusions(rows: "list[dict]") -> "tuple[list[dict], dict[str, int]]":
-    """Apply the mandatory Pass-1 row exclusions. Returns (kept, counts)."""
+    """Apply the mandatory Pass-1 row exclusions. Returns (kept, counts).
+
+    Every stage's count is over ``input_rows`` -- i.e. it is the share of the
+    row that would have been excluded at THIS stage had it survived every
+    stage before it, not an unconditional count of the predicate. Two
+    consequences that matter for reading the funnel (#1030):
+
+    * The stage counts are mutually exclusive and sum to ``input_rows`` --
+      each row is counted in exactly one of them, or kept.
+    * Because ``rail_1c_99c`` runs LAST, its count is smaller than
+      ``sum(1 for row in rows if is_rail_price(row))`` would be: any row that
+      is BOTH model-certain (or missing-price, or fabricated-50/50) AND at the
+      market rail is attributed to the earlier stage instead. The two
+      "unconditional" diagnostic counts below make that gap visible without
+      changing which bucket a row lands in.
+    """
     counts: dict = defaultdict(int)
     kept = []
     for row in rows:
         if row["p_yes_raw"] is None:
             counts["missing_p_yes_raw"] += 1
             continue
-        if row["p_yes_raw"] == 0.0:
+        if is_model_certain_price(row):
             counts["p_yes_raw_zero_artifact"] += 1
             continue
         if row["yes_ask"] is None or row["no_ask"] is None:
@@ -375,13 +446,19 @@ def apply_exclusions(rows: "list[dict]") -> "tuple[list[dict], dict[str, int]]":
         if row["yes_ask"] == 50 and row["no_ask"] == 50:
             counts["fabricated_50_50_price"] += 1
             continue
-        if (row["yes_ask"] <= RAIL_LOW_CENTS or row["yes_ask"] >= RAIL_HIGH_CENTS
-                or row["no_ask"] <= RAIL_LOW_CENTS or row["no_ask"] >= RAIL_HIGH_CENTS):
+        if is_rail_price(row):
             counts["rail_1c_99c"] += 1
             continue
         kept.append(row)
     counts["input_rows"] = len(rows)
     counts["kept_after_row_exclusions"] = len(kept)
+    # Diagnostic only -- NOT part of the cascade and NOT subtracted from
+    # anything above. Answers "how many rows are at the rail at all", ignoring
+    # cascade order, so the funnel's cascaded rail_1c_99c figure can be read
+    # against it rather than mistaken for it (#1030).
+    counts["rail_1c_99c_unconditional"] = sum(1 for row in rows if is_rail_price(row))
+    counts["model_certain_unconditional"] = sum(
+        1 for row in rows if is_model_certain_price(row))
     return kept, dict(counts)
 
 
@@ -1063,46 +1140,127 @@ def build_report(samples: "list[dict]", exclusion_counts: dict, n_no_settlement:
     lines.append(PASS2_DISCLAIMER if is_pass2 else REQUIRED_DISCLAIMER)
     lines.append("\n---\n")
 
+    def _pct(n: "int | None", d: "int | None") -> str:
+        if not d:
+            return "n/a"
+        return f"{(n or 0) / d * 100:.1f}%"
+
+    input_rows = exclusion_counts.get("input_rows", 0)
+    input_rows_all_dates = exclusion_counts.get("input_rows_all_dates", 0)
+    dedup_population = ocounts.get("input_rows", global_stats["n"] + n_no_settlement)
+
     lines.append("## Exclusion funnel\n")
-    lines.append("| Stage | Count |")
-    lines.append("|---|---|")
+    lines.append(
+        "Every row-exclusion stage's share below is of **rows in window** "
+        "(the population column names it explicitly per stage) -- the "
+        "cascaded count AFTER every stage above it has already removed its "
+        "rows, per `apply_exclusions`'s single implementation. A row that is "
+        "e.g. both model-certain and rail-clipped is attributed to whichever "
+        "stage runs first, not counted in both (issue #1030).\n")
+    lines.append("| Stage | Count | Share (of population) |")
+    lines.append("|---|---|---|")
     if exclusion_counts.get("since"):
         lines.append(
-            f"| Input rows (all polls, all dates) | "
-            f"{exclusion_counts.get('input_rows_all_dates', 0)} |")
+            f"| Input rows (all polls, all dates) | {input_rows_all_dates} | "
+            f"100% of all polls, all dates |")
+        dropped_before = exclusion_counts.get('dropped_before_since', 0)
         lines.append(
             f"| Excluded: polled before `{exclusion_counts['since']}` "
-            f"(contaminated era) | {exclusion_counts.get('dropped_before_since', 0)} |")
-    lines.append(f"| Input rows (all polls, all dates) | {exclusion_counts.get('input_rows', 0)} |"
-                 if not exclusion_counts.get("since") else
-                 f"| Rows in window | {exclusion_counts.get('input_rows', 0)} |")
-    lines.append(f"| Excluded: missing `p_yes_raw` | {exclusion_counts.get('missing_p_yes_raw', 0)} |")
+            f"(contaminated era) | {dropped_before} | "
+            f"{_pct(dropped_before, input_rows_all_dates)} of all polls, all dates |")
     lines.append(
-        f"| Excluded: `p_yes_raw == 0.0` (certainty-shortcut artifact, #820) | "
-        f"{exclusion_counts.get('p_yes_raw_zero_artifact', 0)} |"
-    )
-    lines.append(f"| Excluded: missing market price | {exclusion_counts.get('missing_market_price', 0)} |")
-    lines.append(f"| Excluded: fabricated 50/50 price (#1028) | {exclusion_counts.get('fabricated_50_50_price', 0)} |")
-    lines.append(f"| Excluded: 1c/99c rail | {exclusion_counts.get('rail_1c_99c', 0)} |")
-    lines.append(f"| Kept after row exclusions | {exclusion_counts.get('kept_after_row_exclusions', 0)} |")
+        (f"| Input rows (all polls, all dates) | {input_rows} | "
+         f"100% of all polls, all dates |")
+        if not exclusion_counts.get("since") else
+        f"| Rows in window | {input_rows} | "
+        f"{_pct(input_rows, input_rows_all_dates)} of all polls, all dates |")
+    for label, key in (
+        ("Excluded: missing `p_yes_raw`", "missing_p_yes_raw"),
+        ("Excluded: `p_yes_raw == 0.0` (certainty-shortcut artifact, #820)",
+         "p_yes_raw_zero_artifact"),
+        ("Excluded: missing market price", "missing_market_price"),
+        ("Excluded: fabricated 50/50 price (#1028)", "fabricated_50_50_price"),
+        ("Excluded: 1c/99c rail", "rail_1c_99c"),
+    ):
+        n = exclusion_counts.get(key, 0)
+        lines.append(f"| {label} | {n} | {_pct(n, input_rows)} of rows in window |")
+    kept_after_row = exclusion_counts.get('kept_after_row_exclusions', 0)
+    lines.append(
+        f"| Kept after row exclusions | {kept_after_row} | "
+        f"{_pct(kept_after_row, input_rows)} of rows in window |")
     if is_resolver:
         lines.append(
             f"| De-duplicated to one row per (station, ticker, settlement date) | "
-            f"{ocounts.get('input_rows', global_stats['n'] + n_no_settlement)} |"
+            f"{dedup_population} | "
+            f"{_pct(dedup_population, kept_after_row)} of rows kept after row "
+            f"exclusions |"
         )
         lines.append(
             f"| Excluded: no outcome resolvable (no Gamma resolution, no observed high) | "
-            f"{n_no_settlement} |"
+            f"{n_no_settlement} | {_pct(n_no_settlement, dedup_population)} of "
+            f"de-duplicated rows |"
         )
     else:
-        lines.append(f"| Excluded: no definitive settlement match | {n_no_settlement} |")
-    lines.append(f"| **Final de-duplicated sample (n)** | **{global_stats['n']}** |")
+        lines.append(
+            f"| Excluded: no definitive settlement match | {n_no_settlement} | "
+            f"{_pct(n_no_settlement, dedup_population)} of de-duplicated rows |")
+    lines.append(
+        f"| **Final de-duplicated sample (n)** | **{global_stats['n']}** | "
+        f"**{_pct(global_stats['n'], dedup_population)} of de-duplicated rows** |")
     if is_resolver:
         lines.append(
             f"| **Effective sample size (station-days)** | "
-            f"**{ocounts.get('n_station_days', 0)}** |"
+            f"**{ocounts.get('n_station_days', 0)}** | station-days, not "
+            f"bracket-rows -- not comparable to any row-population share above |"
         )
     lines.append("")
+
+    # --- Rail-share reconciliation (issue #1030) ------------------------
+    # This is what the CODE'S definitions establish, computed from this run's
+    # own counts. It reconciles two figures that have been read against each
+    # other in `docs/REMEDIATION_PLAN.md` as if they measured the same thing:
+    # a market-price-rail share and a model-probability-rail share.
+    rail_uncond = exclusion_counts.get("rail_1c_99c_unconditional")
+    model_uncond = exclusion_counts.get("model_certain_unconditional")
+    if rail_uncond is not None and input_rows:
+        lines.append(
+            "**Reconciling the rail share against `post_fix_model_health.rail_concentration`.** "
+            "The two are DIFFERENT predicates over DIFFERENT columns, not two counts of the same "
+            "quantity that should agree:\n")
+        lines.append(
+            f"- `apply_exclusions`'s `rail_1c_99c` ({exclusion_counts.get('rail_1c_99c', 0)} rows, "
+            f"{_pct(exclusion_counts.get('rail_1c_99c', 0), input_rows)} of rows in window) is "
+            f"`is_rail_price` -- the **market's** `yes_ask`/`no_ask` cents -- run LAST in the "
+            f"cascade, so it only counts rows that survived every earlier stage. Ignoring cascade "
+            f"order, `is_rail_price` alone is true for "
+            f"{rail_uncond} rows ({_pct(rail_uncond, input_rows)} of rows in window) -- the gap "
+            f"between that and the cascaded count is entirely rows an earlier stage (mostly "
+            f"`p_yes_raw == 0.0`) already removed.\n")
+        lines.append(
+            f"- `post_fix_model_health.rail_concentration`'s rail share is a SEPARATE predicate on "
+            f"the **model's** `p_yes_raw` (`<= 0.02` or `>= 0.95`), computed over its own caller's "
+            f"population with no prior removal -- its low-rail bucket therefore FOLDS IN every "
+            f"`p_yes_raw == 0.0` artifact row this funnel excludes at an earlier, separate stage "
+            f"({exclusion_counts.get('p_yes_raw_zero_artifact', 0)} rows here; unconditionally, "
+            f"model-certain rows are {model_uncond}, {_pct(model_uncond, input_rows)} of rows in "
+            f"window). A model-probability rail share and a market-price rail share are not "
+            f"expected to agree: they read different columns for different purposes.\n")
+        lines.append(
+            "- **What would settle the residual gap exactly** (not established here, no `logs/` "
+            "or `data/` available in this environment to compute it): re-run both this funnel and "
+            "`rail_concentration` over the IDENTICAL windowed, de-duplicated population and print "
+            "both alongside each other in one report -- today they are read off separate report "
+            "runs, sometimes over different `--since` windows, which is enough by itself to move "
+            "either figure independent of any exclusion-logic question.\n")
+        lines.append(
+            "- **The 1c/99c rail cannot distinguish a clamp from a genuine rail price.** "
+            "`scanner.py`'s own `max(1, min(99, round(price * 100)))` clamp lands a genuinely "
+            "sub-cent (e.g. 0.3c) or super-99-cent market on exactly 1 or 99 cents, "
+            "bit-identical in `bracket_evals` to a market that was truly quoted at the rail. "
+            "Nothing in the stored data distinguishes the two cases, and this funnel's "
+            "`rail_1c_99c` count is therefore a count of clamped-OR-genuine rail prices "
+            "together, not of genuine rail prices alone.\n")
+        lines.append("")
 
     lines.append("## Global result\n")
     lines.append("| Metric | Value |")
