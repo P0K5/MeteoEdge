@@ -248,7 +248,32 @@ def scan(since: "str | None", path: Path) -> dict:
         l["n_fallback"] = sum(1 for x in legs if x["yes"] == 50 and x["no"] == 50)
         l["sum_yes_unclamped"] = sum(x["yes"] for x in legs if x["yes"] != 1)
 
+    # --- 4. does a fabricated price survive the gate's de-duplication? -------
+    # The gate keeps ONE row per (station, ticker, settlement_date): the lowest
+    # minutes_to_settlement, i.e. the model's final word on that bracket. A 0.5
+    # fallback from a transient Gamma outage is usually superseded by a later,
+    # healthy poll -- but only usually, and "usually" is not a number.
+    best: dict = {}
+    for r in rows:
+        key = (r["station"], r["ticker"], r["sd"])
+        m = r["mins"] if isinstance(r["mins"], (int, float)) else float("inf")
+        if key not in best or m < best[key][0]:
+            best[key] = (m, r)
+    survivors = [r for _, r in best.values()]
+    surv_fb = [r for r in survivors if r["yes"] == 50 and r["no"] == 50]
+    # Rail/certainty exclusions do not catch 50c, so state that explicitly.
+    surv_rail = sum(1 for r in survivors if r["yes"] <= 1 or r["yes"] >= 99)
+    dedup = {
+        "n": len(survivors),
+        "fb": len(surv_fb),
+        "fb_station_days": len({(r["station"], r["sd"]) for r in surv_fb}),
+        "all_station_days": len({(r["station"], r["sd"]) for r in survivors}),
+        "rail": surv_rail,
+        "fb_rows": sorted(surv_fb, key=lambda r: (r["station"], r["sd"]))[:20],
+    }
+
     return {
+        "dedup": dedup,
         "prov": prov, "fb_by_hour": fb_by_hour,
         "rows": rows, "n_rows": len(rows),
         "skipped_no_price": skipped_no_price, "skipped_pre_since": skipped_pre_since,
@@ -398,6 +423,32 @@ def report(res: dict, since: "str | None", path: Path) -> str:
           f"{statistics.median(l['n_clamped'] for l in lads):.0f} of "
           f"{statistics.median(l['n'] for l in lads):.0f} |")
         a("")
+
+    d = res["dedup"]
+    a("### Do the fabricated prices survive the gate's de-duplication?")
+    a("")
+    a("The gate keeps one row per `(station, ticker, settlement_date)` at the lowest "
+      "`minutes_to_settlement`. Applying that rule here — **row counts only, no score of "
+      "any kind is computed** — leaves:")
+    a("")
+    a("| after de-duplication | value |")
+    a("|---|---|")
+    a(f"| surviving rows | {d['n']:,} |")
+    a(f"| surviving station-days | {d['all_station_days']:,} |")
+    a(f"| at the 1c/99c rail (excluded by the gate) | {d['rail']:,} |")
+    a(f"| **0.5-fallback rows surviving** | **{d['fb']:,}** |")
+    a(f"| station-days containing one | {d['fb_station_days']:,} |")
+    a("")
+    if d["fb_rows"]:
+        a("| station | settlement | poll | mins left |")
+        a("|---|---|---|---|")
+        for r in d["fb_rows"]:
+            a(f"| {r['station']} | {r['sd']} | {r['poll']} | {_fmt(r['mins'],0)} |")
+        a("")
+    a("**Neither certainty exclusion catches these.** 50c is not the 1c/99c rail and not a "
+      "`p_yes_raw == 0.0` artifact, so a surviving fallback row enters the scored population "
+      "carrying a market price that was never quoted.")
+    a("")
 
     a("## How to read this")
     a("")
