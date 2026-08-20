@@ -968,21 +968,43 @@ bracket-rows — all ~11 brackets on a station-day share one daily high and are 
 draws. A point estimate on the correct side of a boundary with a CI straddling it is reported
 as straddling, not as clearing.
 
-#### ⚠️ One band boundary is NOT yet settled
+#### SETTLED 2026-08-20 — the retestable band is ADOPTED
 
-A stricter and a looser reading are both on the table, and this document must not quietly
-adopt the looser one:
+The preceding revision recorded a retestable band between −0.15 and −0.05 as *considered and
+not adopted*, and required "an explicit, dated decision recorded here **before** the gate runs"
+to override it. **This is that decision.** Taken 2026-08-20, with the gate ~4 days out and no
+BSS figure read for the 2026-08-06 window.
 
-| | `BSS ≤ 0` | `−0.15 ≤ BSS < −0.05` |
-|---|---|---|
-| **Verdict table above (governs today)** | **Stop the thesis** — "it was a dream" | Stop |
-| **Proposed 2026-08-20 (NOT adopted)** | — | Retest, if #967 is fixed **and** EMOS clears the bar below |
+**This supersedes the verdict table's `BSS ≤ 0 → stop the thesis` for the range −0.15 to 0
+only.** Below −0.15 that row stands unchanged. The complete ladder is now:
 
-**The existing stricter rule governs.** The proposal to open a retestable band between −0.15
-and −0.05 is recorded here as *considered and not adopted*, because adopting it would loosen a
-pre-registration that was already fixed — the precise move this section exists to prevent.
-Overriding it requires an explicit, dated decision recorded here **before** the gate runs; after
-the number exists, it is not available at all.
+| BSS (point estimate, CI read per "Power and uncertainty" above) | Verdict |
+|---|---|
+| **> 0.05** | Edge is real → **M4**. Unchanged. |
+| **0 < BSS ≤ 0.05** | Marginal → shadow-only, re-test after the σ work bites. Unchanged. |
+| **−0.05 ≤ BSS ≤ 0** | **INCONCLUSIVE** — one re-test permitted after a named change lands. |
+| **−0.15 ≤ BSS < −0.05** | **FAIL, RETESTABLE** — one re-test permitted only if **#967 is fixed AND EMOS clears the BSS bar below**. Both, not either. |
+| **< −0.15** | **STOP.** Unchanged — "it was a dream". Pass 1 measured −0.2813 pre-fix; a result still in that neighbourhood means the M0/M1 fixes did not address the cause, and no further remediation spend on the entry model is warranted. |
+
+**What a re-test costs, stated so the option is not treated as free.** A re-test requires a
+**fresh 300-resolved-station-day window** — re-reading the same window is not a re-test, it is a
+second look at one sample. At the measured ~15.5 resolved station-days/day that is **~19 days**,
+not the ~5 assumed the last time a second window was proposed (see "What M3 will and will not
+have tested").
+
+**One re-test, not a sequence.** If a re-test also lands in a retestable band, the verdict is
+**STOP** regardless of which band. Without this, "one more window" repeats indefinitely and the
+gate stops being a decision at all — the failure mode this plan has already paid for once, when
+the first window was voided and the clock restarted.
+
+**The honest cost of this override.** Widening a stop rule before the number exists is
+legitimate; widening it afterwards would not be. But it does reduce the severity of the test:
+under the superseded rule a result of −0.10 ended the thesis, and under this one it buys another
+19 days conditional on two named fixes. That trade is made knowingly, on the reasoning that
+#967 and the σ work are documented, pre-existing confounds rather than post-hoc excuses — they
+are named in "Named alternative explanations" below, and were named before the number existed.
+**No further widening is available.** Any change to these boundaries after the gate runs is
+rationalisation, not pre-registration.
 
 #### What a PASS licenses
 
