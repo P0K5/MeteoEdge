@@ -67,10 +67,10 @@ from src.scripts.bss_market_vs_model_report import (
     POPULATION_ALL_BRACKET,
     POPULATION_GATE_SELECTED,
     POPULATIONS,
-    RAIL_HIGH_CENTS,
-    RAIL_LOW_CENTS,
     dedupe_one_per_bracket_day,
     filter_rows_since,
+    is_model_certain_price,
+    is_rail_price,
     load_bracket_eval_rows,
     load_candidate_rows,
     market_p_yes,
@@ -138,17 +138,22 @@ def wilson_interval(k: int, n: int, z: float = 1.96) -> "tuple[float, float] | N
 
 
 def is_model_certain(row: dict) -> bool:
-    """The model claims impossibility: an exact-zero raw probability."""
-    return row.get("p_yes_raw") == 0.0
+    """The model claims impossibility: an exact-zero raw probability.
+
+    Delegates to ``bss_market_vs_model_report.is_model_certain_price`` --
+    the SAME predicate ``apply_exclusions`` uses -- so this module's
+    classification can never drift from the report's own cascade (#1030).
+    """
+    return is_model_certain_price(row)
 
 
 def is_market_certain(row: dict) -> bool:
-    """A quoted side sits at the exchange's 1c/99c rail -- a clipped price."""
-    yes_ask, no_ask = row.get("yes_ask"), row.get("no_ask")
-    if yes_ask is None or no_ask is None:
-        return False
-    return (yes_ask <= RAIL_LOW_CENTS or yes_ask >= RAIL_HIGH_CENTS
-            or no_ask <= RAIL_LOW_CENTS or no_ask >= RAIL_HIGH_CENTS)
+    """A quoted side sits at the exchange's 1c/99c rail -- a clipped price.
+
+    Delegates to ``bss_market_vs_model_report.is_rail_price`` -- the SAME
+    predicate ``apply_exclusions`` uses (#1030).
+    """
+    return is_rail_price(row)
 
 
 def classify_certainty(rows: "list[dict]") -> "tuple[dict[str, list[dict]], dict[str, int]]":

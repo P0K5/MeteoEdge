@@ -47,6 +47,8 @@ from src.scripts.bss_market_vs_model_report import (
     compute_bss,
     dedupe_one_per_bracket_day,
     filter_rows_since,
+    is_model_certain_price,
+    is_rail_price,
     join_outcomes,
     load_bracket_eval_rows,
     load_candidate_rows,
@@ -246,6 +248,134 @@ class TestApplyExclusionsNonDivergence:
             "If you added a second call site, Pass 1 and Pass 2 can now diverge. "
             "Both paths must use the single apply_exclusions() to stay in sync."
         )
+
+
+class TestSharedRailPredicates:
+    """Issue #1030: is_model_certain_price / is_rail_price are the ONE
+    definition of "model-certain" / "at the rail", reused by
+    certainty_exclusion_check and daily_health_report._scoreable_pairs
+    instead of each re-typing the comparison."""
+
+    def test_apply_exclusions_uses_the_shared_predicates(self):
+        """apply_exclusions must classify a row exactly as the standalone
+        predicates would -- i.e. it is not a fourth, silently-divergent copy
+        of the same logic."""
+        model_certain_row = {"p_yes_raw": 0.0, "yes_ask": 20.0, "no_ask": 82.0}
+        rail_row = {"p_yes_raw": 0.3, "yes_ask": 1.0, "no_ask": 82.0}
+        clean_row = {"p_yes_raw": 0.3, "yes_ask": 20.0, "no_ask": 82.0}
+
+        assert is_model_certain_price(model_certain_row) is True
+        assert is_rail_price(rail_row) is True
+        assert is_model_certain_price(clean_row) is False
+        assert is_rail_price(clean_row) is False
+
+        kept, counts = apply_exclusions([model_certain_row, rail_row, clean_row])
+        assert counts["p_yes_raw_zero_artifact"] == 1
+        assert counts["rail_1c_99c"] == 1
+        assert len(kept) == 1 and kept[0] is clean_row
+
+    def test_certainty_exclusion_check_delegates_to_shared_predicates(self):
+        """certainty_exclusion_check.is_model_certain/is_market_certain must
+        agree with is_model_certain_price/is_rail_price on every row -- if
+        they ever diverge, the #909 symmetry argument in that module is
+        being computed against a different exclusion than the gate's."""
+        from src.scripts.certainty_exclusion_check import (
+            is_market_certain, is_model_certain)
+
+        rows = [
+            {"p_yes_raw": 0.0, "yes_ask": 20.0, "no_ask": 82.0},
+            {"p_yes_raw": 0.3, "yes_ask": 1.0, "no_ask": 82.0},
+            {"p_yes_raw": 0.3, "yes_ask": 20.0, "no_ask": 82.0},
+            {"p_yes_raw": None, "yes_ask": None, "no_ask": None},
+        ]
+        for row in rows:
+            assert is_model_certain(row) == is_model_certain_price(row)
+            assert is_market_certain(row) == is_rail_price(row)
+
+    def test_scoreable_pairs_uses_shared_predicates(self):
+        """daily_health_report._scoreable_pairs must drop exactly the rows
+        is_model_certain_price/is_rail_price flag -- a station-day rail row
+        must not be counted toward the 300 bar."""
+        from src.scripts.daily_health_report import _scoreable_pairs
+
+        rows = [
+            # Kept: clean row.
+            {"ts": "2026-02-01T12:00:00Z", "station": "KORD", "ticker": "0x1",
+             "end_date": "2026-02-01", "p_yes_raw": 0.3, "yes_ask": 20.0, "no_ask": 82.0},
+            # Dropped: model-certain.
+            {"ts": "2026-02-01T12:00:00Z", "station": "KHOU", "ticker": "0x2",
+             "end_date": "2026-02-01", "p_yes_raw": 0.0, "yes_ask": 20.0, "no_ask": 82.0},
+            # Dropped: at the rail.
+            {"ts": "2026-02-01T12:00:00Z", "station": "KATL", "ticker": "0x3",
+             "end_date": "2026-02-01", "p_yes_raw": 0.3, "yes_ask": 1.0, "no_ask": 82.0},
+        ]
+        pairs = _scoreable_pairs("2026-01-01", rows=rows)
+        assert pairs == {("KORD", "2026-02-01")}
+
+
+class TestFunnelPercentageDenominators:
+    """Issue #1030: every stage's share in the rendered funnel must be taken
+    over the population it actually claims, in the RENDERED report -- a
+    regression that fails loudly if a stage's percentage is silently
+    computed against the wrong denominator."""
+
+    def _sample(self, i=0):
+        return {
+            "station": "KORD", "ticker": f"0x{i}", "end_date": "2026-02-01",
+            "ts": "2026-02-01T18:00:00+00:00", "p_yes_raw": 0.2,
+            "yes_ask": 20.0, "no_ask": 82.0, "yes_won": False,
+            "bracket_low": 60.0, "bracket_high": 65.0,
+            "settlement_date": "2026-02-01", "is_next_day_flag": 0,
+        }
+
+    def test_row_exclusion_stage_share_is_over_input_rows(self):
+        """A stage that excludes 25 of 100 input rows must render '25.0%',
+        not a percentage computed against some other stage's count (e.g. the
+        much smaller kept/final population)."""
+        exclusion_counts = {
+            "input_rows": 100,
+            "missing_p_yes_raw": 0,
+            "p_yes_raw_zero_artifact": 0,
+            "missing_market_price": 0,
+            "fabricated_50_50_price": 0,
+            "rail_1c_99c": 25,
+            "kept_after_row_exclusions": 75,
+        }
+        report = build_report(
+            [self._sample()], exclusion_counts, 0, "2026-08-05",
+            outcome_meta={"source": OUTCOME_SOURCE_RESOLVER,
+                          "counts": {"n_station_days": 1, "input_rows": 1}},
+            population=POPULATION_ALL_BRACKET,
+        )
+        lines = [ln for ln in report.split("\n") if "Excluded: 1c/99c rail" in ln]
+        assert len(lines) == 1
+        assert "25.0% of rows in window" in lines[0], lines[0]
+
+    def test_final_sample_share_is_over_deduplicated_population_not_input_rows(self):
+        """The final-sample row's percentage must be read against the
+        de-duplicated population it is actually a subset of, not against
+        input_rows -- a much larger, wrong denominator."""
+        exclusion_counts = {
+            "input_rows": 100,
+            "missing_p_yes_raw": 0,
+            "p_yes_raw_zero_artifact": 0,
+            "missing_market_price": 0,
+            "fabricated_50_50_price": 0,
+            "rail_1c_99c": 0,
+            "kept_after_row_exclusions": 4,
+        }
+        samples = [self._sample(i) for i in range(2)]
+        report = build_report(
+            samples, exclusion_counts, 0, "2026-08-05",
+            outcome_meta={"source": OUTCOME_SOURCE_RESOLVER,
+                          "counts": {"n_station_days": 2, "input_rows": 4}},
+            population=POPULATION_ALL_BRACKET,
+        )
+        final_lines = [ln for ln in report.split("\n") if "Final de-duplicated sample" in ln]
+        assert len(final_lines) == 1
+        # 2 of 4 de-duplicated rows -- NOT 2 of 100 input rows (2.0%).
+        assert "50.0% of de-duplicated rows" in final_lines[0], final_lines[0]
+        assert "2.0%" not in final_lines[0]
 
 
 class TestFabricatedPriceFunnelRendering:

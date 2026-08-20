@@ -670,10 +670,13 @@ def _scoreable_pairs(since_date: str,
     off it -- the two sat eight lines apart, disagreeing.
 
     Mirrors the gate's exclusions: exact-zero model probabilities and
-    rail-clipped market prices.
+    rail-clipped market prices -- via ``is_model_certain_price`` /
+    ``is_rail_price``, the SAME predicates ``apply_exclusions`` runs, so this
+    count cannot silently re-diverge from the gate's cascade the way it did
+    the three times documented above (#1030).
     """
     from src.scripts.bss_market_vs_model_report import (
-        RAIL_HIGH_CENTS, RAIL_LOW_CENTS, load_bracket_eval_rows)
+        is_model_certain_price, is_rail_price, load_bracket_eval_rows)
     if rows is None:
         try:
             rows = load_bracket_eval_rows()
@@ -708,12 +711,9 @@ def _scoreable_pairs(since_date: str,
 
     pairs: "set[tuple[str, str]]" = set()
     for (station, settle, _ticker), (_ts, r) in last_poll.items():
-        p, yes_ask, no_ask = (r.get("p_yes_raw"), r.get("yes_ask"),
-                              r.get("no_ask"))
-        if p is None or p == 0.0 or yes_ask is None or no_ask is None:
+        if r.get("p_yes_raw") is None or r.get("yes_ask") is None or r.get("no_ask") is None:
             continue
-        if (yes_ask <= RAIL_LOW_CENTS or yes_ask >= RAIL_HIGH_CENTS
-                or no_ask <= RAIL_LOW_CENTS or no_ask >= RAIL_HIGH_CENTS):
+        if is_model_certain_price(r) or is_rail_price(r):
             continue
         if station and settle:
             pairs.add((station, settle))
