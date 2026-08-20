@@ -111,6 +111,29 @@ WIDTH_F_FIXED = 2.0       # degF dash-range, post-#917
 WIDTH_C = 1.8             # degC via _LABEL_EXACT -- never affected
 WIDTH_TOL = 0.15
 
+#: A ladder can conserve mass perfectly and still carry no information: a
+#: uniform distribution sums to 1.0 and says nothing. Mass conservation is
+#: necessary, not sufficient (#1021), and #917/#920 were both mass defects, so
+#: every invariant built to catch them measures mass. This one measures
+#: SHARPNESS -- the share of probability in the modal bracket.
+#:
+#: Applied only to LAST-POLL SAME-DAY ladders, because that is the population
+#: the gate scores and the one where a flat distribution is indefensible: an
+#: hour before settlement the daily high is nearly determined. A next-day
+#: ladder is legitimately diffuse and would fire every morning.
+#:
+#: 0.15 is calibrated, not guessed. Measured over 2026-08-06..08-19 the
+#: last-poll same-day p10 is 0.229 and the median 0.568, so 0.15 sits below
+#: the tenth percentile and flags 12 of 405 ladders -- the 3.0% #1021
+#: characterises. Uniform over an 11-bracket ladder is 0.0909, so the floor
+#: also sits clear of exact uniformity.
+SHARPNESS_FLOOR = 0.15
+
+#: A ladder needs enough brackets for "modal share" to mean anything. Below
+#: this a low modal share is a short ladder, not a flat one. Mirrors the
+#: `len(br) < 5` guard in #1021's characterisation script.
+SHARPNESS_MIN_BRACKETS = 5
+
 LADDER_KINDS = ("degF pre-#917 (1.0F)", "degF post-#917 (2.0F)",
                 "degC (1.8F)", "other")
 
@@ -173,9 +196,90 @@ def group_ladders(rows: "list[dict]") -> "list[dict]":
             "station": station, "ts": ts, "end_date": end_date,
             "is_next_day": is_next_day, "brackets": members,
             "day": (ts or "")[:10],
+            # Lowest `minutes_to_settlement` across the ladder's brackets.
+            # Rows within one poll share a `poll_ts` floored to the hour but
+            # carry the RAW minute value, so the minimum is the ladder's true
+            # distance from settlement -- and it is how `last_poll_same_day`
+            # picks the final poll of a station-day (#1021).
+            "min_minutes": _min_minutes(members),
             **ladder_stats(members),
         })
     return ladders
+
+
+def _min_minutes(members: "list[dict]") -> "float | None":
+    """Closest-to-settlement minute value in a ladder, or None if unrecorded."""
+    mins = [m["minutes_to_settlement"] for m in members
+            if m.get("minutes_to_settlement") is not None]
+    return min(mins) if mins else None
+
+
+def last_poll_same_day(ladders: "list[dict]") -> "list[dict]":
+    """One ladder per (station, settlement date): the final SAME-DAY poll.
+
+    This is the population the gate scores. ``dedupe_one_per_bracket_day``
+    keeps the row with the lowest ``minutes_to_settlement`` per bracket-day,
+    so the ladder selected here is the one whose probabilities actually reach
+    a Brier score -- which is why a sharpness check applied anywhere else
+    would be measuring rows nothing grades.
+
+    Next-day ladders are excluded rather than merely deprioritised: a ladder
+    24 hours out is legitimately diffuse, and pooling the two populations
+    would make the floor either useless or a daily false alarm.
+    """
+    best: "dict[tuple, dict]" = {}
+    for lad in ladders:
+        if lad.get("is_next_day"):
+            continue
+        if lad.get("min_minutes") is None:
+            continue
+        if lad.get("n_brackets", 0) < SHARPNESS_MIN_BRACKETS:
+            continue
+        key = (lad["station"], lad["end_date"])
+        if key not in best or lad["min_minutes"] < best[key]["min_minutes"]:
+            best[key] = lad
+    return sorted(best.values(), key=lambda lad: (lad["station"], lad["end_date"]))
+
+
+def sharpness_stats(ladders: "list[dict]") -> dict:
+    """Modal-share distribution over the last-poll same-day population.
+
+    Returns the percentiles #1021 measured plus the near-uniform count, so the
+    daily report and this tool quote one computation rather than two.
+    """
+    pop = last_poll_same_day(ladders)
+    vals = sorted(lad["max_p"] for lad in pop if lad.get("max_p") is not None)
+    if not vals:
+        return {"n": 0, "median": None, "p10": None, "p90": None,
+                "n_flat": 0, "n_sharp": 0}
+
+    def _pct(frac: float) -> float:
+        # Nearest-rank on a sorted list. The population is a few hundred
+        # ladders, so interpolation would add precision the underlying figure
+        # does not have.
+        idx = min(len(vals) - 1, max(0, int(round(frac * (len(vals) - 1)))))
+        return vals[idx]
+
+    return {
+        "n": len(vals),
+        "median": _pct(0.50),
+        "p10": _pct(0.10),
+        "p90": _pct(0.90),
+        "n_flat": sum(1 for v in vals if v < SHARPNESS_FLOOR),
+        "n_sharp": sum(1 for v in vals if v > 0.40),
+    }
+
+
+def near_uniform_ladders(ladders: "list[dict]") -> "list[dict]":
+    """Last-poll same-day ladders below the sharpness floor, flattest first.
+
+    Named rather than counted, for the reason ``deficient_ladders`` names its
+    own: "3% are flat" is not something anyone can go and check, and the
+    station and timestamp are exactly what turns it into a diagnosis.
+    """
+    flat = [lad for lad in last_poll_same_day(ladders)
+            if lad.get("max_p") is not None and lad["max_p"] < SHARPNESS_FLOOR]
+    return sorted(flat, key=lambda lad: lad["max_p"])
 
 
 def _dedupe_brackets(members: "list[dict]") -> "tuple[list[dict], int]":
@@ -231,7 +335,8 @@ def ladder_stats(brackets: "list[dict]") -> dict:
 
     usable = [b for b in brackets if b.get("p_yes_raw") is not None]
     if not usable:
-        return {"n_brackets": len(brackets), "mass": None, "leading_zeros": 0,
+        return {"n_brackets": len(brackets), "mass": None, "max_p": None,
+                "leading_zeros": 0,
                 "width": None, "kind": "other", "censored": False,
                 "open_bottom": False, "open_top": False, "closed_ladder": True,
                 "gaps": 0, "gap_width": 0.0, "trailing_zeros": 0,
@@ -302,6 +407,13 @@ def ladder_stats(brackets: "list[dict]") -> dict:
         "duplicate_rows": n_duplicates,
         "n_brackets": len(ordered),
         "mass": mass,
+        # Share of the ladder's probability sitting in its modal bracket --
+        # the sharpness measure #1021's invariant reads. Computed here rather
+        # than at the call site for the same single-implementation reason
+        # `_dedupe_brackets` is called here: the daily report builds its own
+        # groups and calls `ladder_stats` directly, and two implementations of
+        # one concept is the failure this file has already hit four times.
+        "max_p": max(b["p_yes_raw"] for b in ordered),
         "leading_zeros": leading,
         "open_bottom": open_bottom,
         "open_top": open_top,
@@ -669,9 +781,46 @@ def build_report(rows: "list[dict]", since: str) -> str:
     out.append("   is something else -- incomplete ladders and the upper-tail")
     out.append("   envelope cut are the first two candidates, and neither is #920.")
 
+    sharp = sharpness_stats(ladders)
     out += [
         "",
-        "3. SCOREABLE STATION-DAYS  (what the 300 bar actually counts)",
+        "3. SHARPNESS  (mass conservation is necessary, not sufficient -- #1021)",
+        "-" * 78,
+        "   Share of probability in the MODAL bracket, over last-poll same-day",
+        "   ladders -- the population the gate scores. A uniform ladder sums to",
+        "   1.0 and passes every mass, gap and rail check while carrying no",
+        "   information; this is the only check that can see it.",
+        "",
+    ]
+    if not sharp["n"]:
+        out.append("   No last-poll same-day ladder in range -- cannot assess.")
+    else:
+        out.append(f"   ladders       {sharp['n']}")
+        out.append(f"   modal share   median {sharp['median']:.3f}   "
+                   f"p10 {sharp['p10']:.3f}   p90 {sharp['p90']:.3f}")
+        out.append(f"   sharp (>0.40) {sharp['n_sharp']} of {sharp['n']}")
+        out.append(f"   near-uniform  {sharp['n_flat']} of {sharp['n']}  "
+                   f"(modal share < {SHARPNESS_FLOOR})")
+        flat = near_uniform_ladders(ladders)
+        if flat:
+            out += ["", "   Flattest:"]
+            for lad in flat[:5]:
+                out.append(f"     maxp={lad['max_p']:.4f}  mass={lad['mass']:.4f}  "
+                           f"{lad['station']:<6} {lad['ts']}  "
+                           f"n={lad['n_brackets']} mins={lad['min_minutes']:.0f}")
+            out += [
+                "",
+                "   These are DIAGNOSTIC, not a gate blocker. A uniform forecast",
+                "   on an ~11-bracket ladder carries a bounded Brier penalty, so a",
+                "   few percent will not move the aggregate BSS. They are named so",
+                "   that a negative M3 verdict has this on the record beforehand",
+                "   as a bounded alternative explanation, rather than discovering",
+                "   it afterwards -- the same reason #967 was named before the gate.",
+            ]
+
+    out += [
+        "",
+        "4. SCOREABLE STATION-DAYS  (what the 300 bar actually counts)",
         "-" * 78,
         "   After the gate's exclusions. The health report's raw count (#932)",
         "   De-duplicated first and excluded second -- the gate's order. A",

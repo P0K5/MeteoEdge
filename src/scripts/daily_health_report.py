@@ -415,6 +415,121 @@ def _build_guardrails(db, today: datetime) -> list[str]:
     return lines
 
 
+def _resolved_station_days(clock_start: str) -> "int | None":
+    """Resolved station-days for the clean window -- the gate's own population.
+
+    Uses ``resolve_bracket_outcomes(since=...)``, the capability #1018 added
+    for exactly this. Before it existed the only tool that reported resolved
+    ``n`` for a window was ``bss_market_vs_model_report``, which also prints
+    the BSS number -- so learning the true gate date meant running the gate and
+    seeing the answer, an optional-stopping problem manufactured by a missing
+    CLI flag.
+
+    **Never issues network requests.** This runs daily by email and must not
+    depend on Polymarket being reachable, so Gamma is served from the
+    persistent cache only; anything uncached falls back to METAR. That makes
+    the figure a slight UNDER-count on a cold cache, which is the safe
+    direction here: it can only push the projected gate date later, and erring
+    early is the direction #1018 exists to stop.
+
+    Returns ``None`` when the figure cannot be computed. Absent data must not
+    silently read as a measured ratio.
+    """
+    try:
+        from src.scripts.resolve_bracket_outcomes import resolve_bracket_outcomes
+        _rows, counts = resolve_bracket_outcomes(
+            since=clock_start, allow_network=False)
+    except Exception:
+        log.exception("resolved station-day count failed")
+        return None
+    n = counts.get("n_station_days")
+    return n if isinstance(n, int) and n > 0 else None
+
+
+def _window_mass(clock_start: str) -> "dict | None":
+    """Window-wide mass verdict since the clean-data clock (#1022).
+
+    ``_ladder_mass`` above is scoped to the last 24 hours, which is the right
+    cadence for catching a defect the day it ships but **structurally cannot
+    see** a deficiency from earlier in the window. #917 and #920 each survived
+    weeks in exactly that blind spot: every day between the bad day and today
+    prints OK on fresh data while the window carries the defect.
+
+    This is the figure that may qualify the cumulative station-day count.
+    It delegates to ``m3_window_diagnostics.deficient_days_since`` rather than
+    re-deriving the rule, so the daily email and the on-demand diagnostic agree
+    **by construction** -- the property the comment at the mass check has
+    always claimed and never had.
+
+    Returns ``None`` when there is nothing to measure; absent data is not a
+    pass.
+    """
+    try:
+        from src.scripts.bss_market_vs_model_report import load_bracket_eval_rows
+        from src.scripts.m3_window_diagnostics import (
+            deficient_days_since,
+            group_ladders,
+            mass_by_day,
+            no_evidence_days_since,
+        )
+        rows = [r for r in load_bracket_eval_rows()
+                if (r.get("ts") or "")[:10] >= clock_start]
+    except Exception:
+        log.exception("window mass read failed")
+        return None
+
+    if not rows:
+        return None
+    masses = mass_by_day(group_ladders(rows))
+    if not masses:
+        return None
+    return {
+        "n_days": len(masses),
+        "deficient_days": deficient_days_since(masses, clock_start),
+        "no_evidence_days": no_evidence_days_since(masses, clock_start),
+    }
+
+
+def _ladder_sharpness(clock_start: str) -> "dict | None":
+    """Modal-share health of last-poll same-day ladders since the clock (#1021).
+
+    Mass conservation is **necessary, not sufficient**. A uniform ladder sums
+    to 1.0 and passes the mass, gap, rail and artifact checks while carrying no
+    information at all -- and 11 of the 12 near-uniform ladders #1021 found
+    were correctly normalised, so every existing invariant was blind to them.
+
+    Scoped to the window rather than 24h because a handful of flat ladders is a
+    slow-accumulating property of the scored population, not a same-day
+    regression. Delegates to ``m3_window_diagnostics`` for the same
+    agree-by-construction reason as ``_window_mass``.
+    """
+    try:
+        from src.scripts.bss_market_vs_model_report import load_bracket_eval_rows
+        from src.scripts.m3_window_diagnostics import (
+            SHARPNESS_FLOOR,
+            group_ladders,
+            near_uniform_ladders,
+            sharpness_stats,
+        )
+        rows = [r for r in load_bracket_eval_rows()
+                if (r.get("ts") or "")[:10] >= clock_start]
+    except Exception:
+        log.exception("sharpness read failed")
+        return None
+
+    if not rows:
+        return None
+    ladders = group_ladders(rows)
+    stats = sharpness_stats(ladders)
+    if not stats["n"]:
+        return None
+    stats["flattest"] = near_uniform_ladders(ladders)[:3]
+    # Carried on the result so the caller quotes the threshold it was actually
+    # measured against, rather than a second copy that can drift from it.
+    stats["floor"] = SHARPNESS_FLOOR
+    return stats
+
+
 def _ladder_mass(since_date: str) -> "dict[str, float] | None":
     """Ladder mass conservation over ``bracket_evals`` -- the gate's own source.
 
@@ -726,7 +841,8 @@ def _build_m3_progress(db, today: datetime) -> "tuple[list[str], dict]":
     Returns ``(lines, flags)``. The section carries THREE independently
     WARN-able indicators -- ladder mass, high rail vs. structural ceiling,
     and interior-zero gaps -- so ``flags`` reports each one under its own
-    key (``mass_status`` / ``rail_status`` / ``gaps_status``, each
+    key (``mass_status`` / ``window_mass_status`` / ``sharpness_status`` /
+    ``rail_status`` / ``gaps_status``, each
     ``OK / WARN / UNKNOWN``) instead of a single section-wide marker.
     ``_build_verdict`` reads these directly so a WARN on one indicator is
     never misattributed to another (issue #972: a bare ``"[WARN]" in
@@ -736,6 +852,8 @@ def _build_m3_progress(db, today: datetime) -> "tuple[list[str], dict]":
     lines = ["M3 Progress", "-" * 10]
     flags: dict = {
         "mass_status": "UNKNOWN",
+        "window_mass_status": "UNKNOWN",
+        "sharpness_status": "UNKNOWN",
         "rail_status": "UNKNOWN",
         "gaps_status": "UNKNOWN",
     }
@@ -748,6 +866,19 @@ def _build_m3_progress(db, today: datetime) -> "tuple[list[str], dict]":
         # let "121% -- power bar met" mean nothing on 2026-08-04.
         # Never earlier than the clean-data clock: ladders polled before it
         # came from a pre-#920 model and would warn forever.
+        # TWO SCOPES, each qualifying only what it covers (#1022).
+        #
+        # The 24h check is the fresh-regression signal -- the right cadence for
+        # catching a defect the day it ships. It is NOT evidence about the
+        # cumulative station-day count below it, and reading it as such is the
+        # defect #1022 records: on 2026-08-19 one deficient ladder in 24h
+        # printed "station-days below are NOT clean" against a 249-station-day
+        # window that `m3_window_diagnostics` confirmed clean on the same host.
+        #
+        # The window-wide check is the one that may qualify the count, and it
+        # closes the blind spot in the other direction, which is the worse one:
+        # a 24h-only check structurally cannot see a deficiency from earlier in
+        # the window, and prints [OK] every day between the bad day and today.
         mass = _ladder_mass(max(since[:10], M3_CLEAN_DATA_CLOCK_START))
         if mass is None:
             lines.append("  Ladder mass:   (no ladders in 24h -- cannot assess)")
@@ -758,15 +889,70 @@ def _build_m3_progress(db, today: datetime) -> "tuple[list[str], dict]":
             flags["mass_status"] = "OK" if mass_ok else "WARN"
             lines.append(
                 f"  Ladder mass:   {mass['mean']:.3f} mean, {mass['worst']:.3f} worst "
-                f"({mass['n_deficient']}/{mass['n_ladders']} deficient) "
+                f"({mass['n_deficient']}/{mass['n_ladders']} deficient, last 24h) "
                 f"{'[OK]' if mass_ok else '[WARN]'}"
             )
             if mass.get("n_excused"):
                 lines.append(f"                 ({mass['n_excused']} short ladder(s) "
                              "excused -- no open-ended tail bracket)")
             if not mass_ok:
-                lines.append("                 ^ probabilities are leaking mass "
-                             "(cf. #917, #920) -- station-days below are NOT clean")
+                # Scoped language: this says a ladder went bad TODAY. Whether
+                # the window is clean is the next check's question, not this
+                # one's.
+                lines.append("                 ^ a ladder went deficient in the "
+                             "last 24h (cf. #917, #920) -- fresh regression, see "
+                             "window mass below for the cumulative verdict")
+
+        window = _window_mass(M3_CLEAN_DATA_CLOCK_START)
+        if window is None:
+            lines.append("  Window mass:   (no ladders since "
+                         f"{M3_CLEAN_DATA_CLOCK_START} -- cannot assess)")
+            window_ok = False
+            flags["window_mass_status"] = "UNKNOWN"
+        else:
+            bad_days = window["deficient_days"]
+            window_ok = not bad_days
+            flags["window_mass_status"] = "OK" if window_ok else "WARN"
+            lines.append(
+                f"  Window mass:   {len(bad_days)}/{window['n_days']} day(s) "
+                f"deficient since {M3_CLEAN_DATA_CLOCK_START} "
+                f"{'[OK]' if window_ok else '[WARN]'}"
+            )
+            if bad_days:
+                lines.append("                 ^ " + ", ".join(bad_days[:5]))
+                lines.append("                 ^ station-days below are NOT clean "
+                             "-- the gate must not run until this is explained "
+                             "or the window restarted")
+            # `no_evidence_days` is deliberately NOT printed here. It requires
+            # BOTH the censored and uncensored populations to carry judgeable
+            # ladders, which is the right bar for the on-demand diagnostic but
+            # fires most days in a daily email: post-#920 truncation is fixed,
+            # so ordinary days legitimately have no censored ladders. A line
+            # that prints every day is a line nobody reads, and #1022 exists
+            # partly because this section already cried wolf once.
+
+        sharp = _ladder_sharpness(M3_CLEAN_DATA_CLOCK_START)
+        if sharp is None:
+            lines.append("  Sharpness:     (no last-poll same-day ladders "
+                         "-- cannot assess)")
+            flags["sharpness_status"] = "UNKNOWN"
+        else:
+            sharp_ok = sharp["n_flat"] == 0
+            flags["sharpness_status"] = "OK" if sharp_ok else "WARN"
+            lines.append(
+                f"  Sharpness:     {sharp['median']:.3f} median modal share, "
+                f"{sharp['n_flat']}/{sharp['n']} near-uniform "
+                f"{'[OK]' if sharp_ok else '[WARN]'}"
+            )
+            if not sharp_ok:
+                lines.append("                 ^ last-poll same-day ladders whose "
+                             "modal bracket holds < "
+                             f"{sharp['floor']:.2f} -- these conserve mass and "
+                             "carry no information (#1021). Diagnostic, not a "
+                             "gate blocker.")
+                for lad in sharp.get("flattest", []):
+                    lines.append(f"                   maxp={lad['max_p']:.4f} "
+                                 f"{lad['station']} {lad['ts']}")
 
         # Station-days accrue from the CLEAN-DATA CLOCK, which has moved twice
         # as probability defects landed mid-window (#917 on 2026-08-01, #920 on
@@ -784,23 +970,66 @@ def _build_m3_progress(db, today: datetime) -> "tuple[list[str], dict]":
         # on the date the gate gets planned around. Erring early is the bad
         # direction: it invites running the gate before it can decide anything.
         rate = _marginal_accrual(pairs)
-        days_to_bar = (max(0, -(-(300 - station_days) // rate)) if rate > 0
-                       else None)
 
         lines.append(f"  Station-days:  {station_days}/300 ({pct:.0f}%) "
                      f"scoreable, since {clock_start}")
-        # Outcome resolution is not done here -- it needs Gamma/METAR and this
-        # runs daily by email. The gate counts only station-days whose outcomes
-        # RESOLVED, which on 2026-08-10 was 81 against 111 here, so this is an
-        # upper bound and the bar is reached later than it implies.
-        lines.append("                 ^ pre-resolution upper bound; the gate "
-                     "scores only resolved station-days (~25-30% fewer)")
+
+        # THE PROJECTION MUST COMPARE LIKE WITH LIKE (#1018).
+        #
+        # `station_days` is a PRE-resolution count; 300 is a RESOLVED bar. The
+        # previous arithmetic -- `(300 - station_days) / rate` -- projected one
+        # population onto the other's bar and printed a date up to a week
+        # early, in the same optimistic direction `_marginal_accrual` was
+        # introduced to stop erring in.
+        #
+        # The haircut is now MEASURED for the current window rather than the
+        # hardcoded "~25-30%", which came from 81/111 on 2026-08-10 -- four
+        # days into the window, when most settlement dates had not had time to
+        # resolve. That figure was lag-dominated, not haircut-dominated, and
+        # nothing re-measured it because nothing could: `resolve_bracket_
+        # outcomes` had no --since. It does now, and this reads the same
+        # capability in-process.
+        resolved = _resolved_station_days(clock_start)
+        if resolved is None or not station_days:
+            ratio = None
+            lines.append("                 ^ pre-resolution upper bound; the gate "
+                         "scores only resolved station-days (ratio not measurable "
+                         "this run)")
+        else:
+            ratio = resolved / station_days
+            lines.append(f"                 ^ pre-resolution upper bound; the gate "
+                         f"scores only resolved station-days -- measured "
+                         f"{resolved}/{station_days} = {ratio:.0%} of these have "
+                         f"resolved so far")
+
+        # Project on the RESOLVED count against the resolved bar. With no
+        # measured ratio, fall back to the raw count -- and say so, rather than
+        # inventing a haircut. The printed date must never be EARLIER than the
+        # resolved-count date, which this guarantees by construction: the
+        # resolved count is <= the pre-resolution count, so the remaining gap
+        # is >= the one the old arithmetic used.
+        if ratio:
+            effective = resolved
+            effective_rate = rate * ratio
+        else:
+            effective = station_days
+            effective_rate = rate
+        # int(): `effective_rate` is a float, so the ceiling division yields
+        # one too, and the line rendered "power bar ~Aug 19 + 30.0d".
+        days_to_bar = (int(max(0, -(-(300 - effective) // effective_rate)))
+                       if effective_rate > 0 else None)
+
         if days_to_bar is None:
             lines.append("  Accrual rate:  no scoreable rows yet -- bar date unknown")
         else:
-            lines.append(f"  Accrual rate:  ~{rate:.0f}/day -> power bar "
+            basis = "resolved" if ratio else "pre-resolution (unadjusted)"
+            lines.append(f"  Accrual rate:  ~{rate:.0f}/day raw, "
+                         f"~{effective_rate:.0f}/day {basis} -> power bar "
                          f"~{today.strftime('%b %d')} + {days_to_bar}d")
-        if station_days >= 300 and not mass_ok:
+        # The CUMULATIVE count is qualified by the WINDOW-wide verdict, never
+        # by 24h of evidence (#1022). Using `mass_ok` here compared one day of
+        # data against a 14-day count.
+        if station_days >= 300 and not window_ok:
             lines.append("                 ^ bar met on COUNT only -- ladder mass is "
                          "not clean, so the gate must NOT run")
 
@@ -945,7 +1174,8 @@ def _build_verdict(sections: "list[tuple[str, list[str], dict]]") -> list[str]:
     ``build_report``. Sections that have been migrated to the flags contract
     (currently: ``bot``, ``m3``) are checked via their ``flags`` dict --
     ``m3`` in particular reports THREE independent indicators
-    (``mass_status`` / ``rail_status`` / ``gaps_status``) so a WARN on one is
+    (``mass_status`` / ``window_mass_status`` / ``sharpness_status`` /
+    ``rail_status`` / ``gaps_status``) so a WARN on one is
     never misattributed to another (issue #972: a section-wide
     ``"[WARN]" in m3_text`` scan used to name every M3 WARN "artifact rate
     high", even when it was the mass or rail indicator that tripped).
@@ -977,10 +1207,24 @@ def _build_verdict(sections: "list[tuple[str, list[str], dict]]") -> list[str]:
         warn_issues.append(bot_flags.get("detail") or "bot pulse degraded")
 
     m3_flags = flags_by_section.get("m3", {})
+    # Three distinct M3 probability indicators, named separately for the same
+    # reason #972 split this block in the first place: a shared label makes a
+    # WARN on one read as a WARN on another. 24h mass, window mass and
+    # sharpness fail for different reasons and imply different responses.
     if m3_flags.get("mass_status") == "WARN":
-        warn_issues.append("M3 ladder mass leaking")
+        warn_issues.append("M3 ladder mass leaking (last 24h)")
     elif m3_flags.get("mass_status") == "UNKNOWN":
-        unknown_issues.append("M3 ladder mass not assessed")
+        unknown_issues.append("M3 ladder mass not assessed (last 24h)")
+
+    if m3_flags.get("window_mass_status") == "WARN":
+        warn_issues.append("M3 window mass deficient -- station-days NOT clean")
+    elif m3_flags.get("window_mass_status") == "UNKNOWN":
+        unknown_issues.append("M3 window mass not assessed")
+
+    if m3_flags.get("sharpness_status") == "WARN":
+        warn_issues.append("M3 near-uniform ladders (#1021)")
+    elif m3_flags.get("sharpness_status") == "UNKNOWN":
+        unknown_issues.append("M3 sharpness not assessed")
 
     if m3_flags.get("rail_status") == "WARN":
         warn_issues.append("M3 high rail vs structural ceiling")

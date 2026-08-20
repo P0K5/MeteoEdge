@@ -871,12 +871,16 @@ class TestLadderMassIndicator:
 
     def test_a_conserving_ladder_reads_ok(self):
         text = self._text(self._rows([(1.00, 11)]))
-        assert "1.000 mean, 1.000 worst (0/1 deficient) [OK]" in text
+        assert "1.000 mean, 1.000 worst (0/1 deficient, last 24h) [OK]" in text
 
     def test_the_920_signature_warns(self):
         """0.80 -- what production showed while #920 was live."""
         text = self._text(self._rows([(0.80, 11)]))
-        assert "[WARN]" in text and "leaking mass" in text
+        # Scoped wording since #1022: the 24h line reports a FRESH regression,
+        # and only the window-wide line condemns the cumulative count.
+        assert "[WARN]" in text
+        assert "a ladder went deficient in the last 24h" in text
+        assert "station-days below are NOT clean" in text  # from window mass
 
     def test_the_917_signature_warns(self):
         """0.53 -- °F ladders integrated at half width."""
@@ -895,7 +899,7 @@ class TestLadderMassIndicator:
         rows = self._rows([(1.00, 11)])
         rows += [dict(r, is_next_day_flag=1) for r in rows]
         text = self._text(rows)
-        assert "1.000 mean, 1.000 worst (0/2 deficient) [OK]" in text
+        assert "1.000 mean, 1.000 worst (0/2 deficient, last 24h) [OK]" in text
 
     def test_ladders_polled_before_the_clock_are_excluded(self):
         """Pre-#920 ladders came from a different model; including them would
@@ -906,7 +910,7 @@ class TestLadderMassIndicator:
                            station_prefix="CLEAN")
         text = self._text(rows, today=datetime(2026, 8, 6, 14, 0, 0,
                                                tzinfo=timezone.utc))
-        assert "1.000 mean, 1.000 worst (0/1 deficient) [OK]" in text
+        assert "1.000 mean, 1.000 worst (0/1 deficient, last 24h) [OK]" in text
 
     def test_a_part_listed_ladder_is_not_scored(self):
         """Too few brackets to mean anything -- not evidence of leaking mass."""
@@ -940,7 +944,11 @@ class TestLadderMassIndicator:
                                   settle=f"2026-08-{6 + d:02d}")
         text = self._text(leaking, today=now)
         assert "/300" in text and "330/300" in text      # bar reported met
-        assert "leaking mass" in text                    # but mass is not clean
+        # Since #1022 the CUMULATIVE count is condemned by the WINDOW-wide
+        # verdict, never by 24h of evidence. The refusal must still fire --
+        # this is the 2026-08-04 regression guard and rescoping must not
+        # weaken it.
+        assert "station-days below are NOT clean" in text
         assert "the gate must NOT run" in text
 
     def test_station_days_count_from_the_clock_constant(self):
@@ -1223,3 +1231,171 @@ class TestDedupBeforeExclude:
                    "load_bracket_eval_rows", return_value=rows):
             mass = _ladder_mass("2026-08-06")
         assert mass["mean"] > 1.05
+
+
+class TestDualScopeLadderMass:
+    """#1022 -- the 24h mass check must not condemn a 14-day count.
+
+    The report printed "station-days below are NOT clean" against a
+    249-station-day cumulative window on the strength of ONE deficient ladder
+    in the previous 24 hours. It fails in both directions, and the second is
+    worse: a 24h check structurally cannot see a deficiency from earlier in the
+    window, so it prints [OK] every day between the bad day and today. #917 and
+    #920 each survived weeks in exactly that blind spot.
+    """
+
+    def _rows(self, total, n=11, day="2026-08-07", settle="2026-08-07",
+              station="S0"):
+        edges = [-50.0] + [80.0 + k * 2.0 for k in range(n - 1)] + [200.0]
+        return [{"station": station, "ts": f"{day}T12:00:00+00:00",
+                 "end_date": settle, "is_next_day_flag": 0,
+                 "p_yes_raw": total / n,
+                 "bracket_low": edges[j], "bracket_high": edges[j + 1],
+                 "yes_ask": 30, "no_ask": 70} for j in range(n)]
+
+    def _run(self, rows, today):
+        db = MagicMock()
+        db._conn = sqlite3.connect(":memory:")
+        db._conn.execute(
+            "CREATE TABLE scan_decisions (poll_ts TEXT, station TEXT, date TEXT, "
+            "raw_p_yes REAL, capped_p_yes REAL, yes_ask INTEGER, no_ask INTEGER)"
+        )
+        with patch("src.scripts.bss_market_vs_model_report.load_bracket_eval_rows",
+                   return_value=rows):
+            lines, flags = _build_m3_progress(db, today)
+        return "\n".join(lines), flags
+
+    def test_both_scopes_are_reported(self):
+        text, _ = self._run(self._rows(1.00),
+                            datetime(2026, 8, 7, 14, 0, 0, tzinfo=timezone.utc))
+        assert "Ladder mass:" in text and "last 24h" in text
+        assert "Window mass:" in text
+
+    def test_a_fresh_deficiency_does_not_by_itself_condemn_the_window(self):
+        """The false-condemnation half. A ladder that went bad today is a
+        fresh-regression signal; the cumulative verdict is the window's."""
+        today = datetime(2026, 8, 19, 14, 0, 0, tzinfo=timezone.utc)
+        # A clean earlier day plus a deficient one today. The WINDOW is dirty
+        # here too, so the discriminating assertion is on the WORDING: the 24h
+        # line must not be the thing that condemns the count.
+        rows = (self._rows(1.00, day="2026-08-07", settle="2026-08-07")
+                + self._rows(0.80, day="2026-08-19", settle="2026-08-19"))
+        text, flags = self._run(rows, today)
+        assert flags["mass_status"] == "WARN"
+        assert "a ladder went deficient in the last 24h" in text
+
+    def test_an_OLD_deficiency_is_still_seen_after_it_leaves_the_24h_window(self):
+        """THE BLIND SPOT, and the reason this issue matters more in this
+        direction. A ladder that went deficient early in the window is
+        invisible to a 24h check forever after -- every subsequent day prints
+        [OK] on fresh data while the window carries the defect."""
+        today = datetime(2026, 8, 19, 14, 0, 0, tzinfo=timezone.utc)
+        rows = (self._rows(0.80, day="2026-08-07", settle="2026-08-07")
+                + self._rows(1.00, day="2026-08-19", settle="2026-08-19"))
+        text, flags = self._run(rows, today)
+        # 24h is clean -- and on its own would have said the window is fine.
+        assert flags["mass_status"] == "OK"
+        # The window is NOT.
+        assert flags["window_mass_status"] == "WARN"
+        assert "2026-08-07" in text
+        assert "station-days below are NOT clean" in text
+
+    def test_a_clean_window_reads_ok_on_both_scopes(self):
+        today = datetime(2026, 8, 19, 14, 0, 0, tzinfo=timezone.utc)
+        rows = (self._rows(1.00, day="2026-08-07", settle="2026-08-07")
+                + self._rows(1.00, day="2026-08-19", settle="2026-08-19"))
+        text, flags = self._run(rows, today)
+        assert flags["mass_status"] == "OK"
+        assert flags["window_mass_status"] == "OK"
+        assert "station-days below are NOT clean" not in text
+
+    def test_window_verdict_agrees_with_the_diagnostic_by_construction(self):
+        """#1022's actual requirement: reuse `deficient_days_since` rather than
+        re-deriving the rule, so the daily email and `m3_window_diagnostics`
+        cannot drift. They have silently diverged twice already."""
+        from src.scripts.m3_window_diagnostics import (
+            deficient_days_since, group_ladders, mass_by_day,
+        )
+        rows = (self._rows(0.80, day="2026-08-07", settle="2026-08-07")
+                + self._rows(1.00, day="2026-08-19", settle="2026-08-19"))
+        expected = deficient_days_since(
+            mass_by_day(group_ladders(rows)), M3_CLEAN_DATA_CLOCK_START)
+        text, _ = self._run(
+            rows, datetime(2026, 8, 19, 14, 0, 0, tzinfo=timezone.utc))
+        assert expected == ["2026-08-07"]
+        for day in expected:
+            assert day in text
+
+    def test_absent_window_data_is_not_a_pass(self):
+        _text, flags = self._run(
+            [], datetime(2026, 8, 19, 14, 0, 0, tzinfo=timezone.utc))
+        assert flags["window_mass_status"] == "UNKNOWN"
+
+
+class TestPowerBarProjection:
+    """#1018 -- the projection compared a PRE-resolution count against a
+    RESOLVED bar, printing a date up to a week early in the same optimistic
+    direction `_marginal_accrual` was introduced to stop erring in.
+    """
+
+    def _rows(self, station, settle, day):
+        n = 11
+        edges = [-50.0] + [80.0 + k * 2.0 for k in range(n - 1)] + [200.0]
+        return [{"station": station, "ts": f"{day}T12:00:00+00:00",
+                 "end_date": settle, "is_next_day_flag": 0, "p_yes_raw": 1.0 / n,
+                 "bracket_low": edges[j], "bracket_high": edges[j + 1],
+                 "yes_ask": 30, "no_ask": 70} for j in range(n)]
+
+    def _run(self, rows, resolved):
+        db = MagicMock()
+        db._conn = sqlite3.connect(":memory:")
+        db._conn.execute(
+            "CREATE TABLE scan_decisions (poll_ts TEXT, station TEXT, date TEXT, "
+            "raw_p_yes REAL, capped_p_yes REAL, yes_ask INTEGER, no_ask INTEGER)"
+        )
+        with patch("src.scripts.bss_market_vs_model_report.load_bracket_eval_rows",
+                   return_value=rows), \
+             patch("src.scripts.daily_health_report._resolved_station_days",
+                   return_value=resolved):
+            lines, _flags = _build_m3_progress(
+                db, datetime(2026, 8, 19, 14, 0, 0, tzinfo=timezone.utc))
+        return "\n".join(lines)
+
+    def _corpus(self):
+        rows = []
+        for d in range(10):
+            day = f"2026-08-{10 + d:02d}"
+            for s in range(10):
+                rows += self._rows(f"S{s}", day, day)
+        return rows
+
+    def test_the_measured_ratio_replaces_the_hardcoded_caveat(self):
+        """"~25-30%" came from 81/111 on 2026-08-10, four days into the window
+        when most settlement dates had not had time to resolve -- a
+        lag-dominated figure nothing could re-measure, because
+        `resolve_bracket_outcomes` had no --since."""
+        text = self._run(self._corpus(), resolved=75)
+        assert "~25-30%" not in text
+        assert "75/100" in text and "75%" in text
+
+    def test_the_projection_is_never_earlier_than_the_resolved_date(self):
+        """#1018's explicit acceptance criterion. A resolved count is <= the
+        pre-resolution count, so the remaining gap -- and the date -- can only
+        move later."""
+        rows = self._corpus()
+        haircut = self._run(rows, resolved=75)
+        full = self._run(rows, resolved=100)
+
+        def days(text):
+            for line in text.splitlines():
+                if "power bar" in line:
+                    return int(line.rsplit("+", 1)[1].strip().rstrip("d"))
+            raise AssertionError("no power bar line")
+
+        assert days(haircut) > days(full)
+
+    def test_an_unmeasurable_ratio_says_so_rather_than_inventing_a_haircut(self):
+        text = self._run(self._corpus(), resolved=None)
+        assert "ratio not measurable this run" in text
+        assert "pre-resolution (unadjusted)" in text
+        assert "~25-30%" not in text

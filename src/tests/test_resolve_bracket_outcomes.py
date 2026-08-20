@@ -1901,3 +1901,110 @@ class TestGammaRepairAttribution:
             ],
         )
         assert "**Unexplained mismatches (non-gamma-sourced): 0.**" in text
+
+
+# ---------------------------------------------------------------------------
+# --since (#1018) -- mirrors #963 in certainty_exclusion_check
+# ---------------------------------------------------------------------------
+
+class TestSinceFilter:
+    """Without a cutoff this tool spans all of bracket_evals from 2026-07-24,
+    void window included. The clean-window resolved station-day count was
+    therefore obtainable only by running the BSS report -- i.e. by running the
+    gate and seeing its answer, an optional-stopping problem manufactured by a
+    missing CLI flag.
+    """
+
+    def _setup(self, tmp_path, rows):
+        evals = tmp_path / "bracket_evals.jsonl"
+        _write_bracket_evals_jsonl(evals, rows)
+        db = tmp_path / "meteoedge.db"
+        _write_observations_db(db, [
+            ("KORD", "2026-07-05T20:00:00+00:00", 82.0),
+            ("KORD", "2026-08-07T20:00:00+00:00", 82.0),
+            ("KORD", "2026-08-10T20:00:00+00:00", 82.0),
+        ])
+        return evals, db
+
+    def test_since_excludes_pre_cutoff_polls(self, tmp_path):
+        evals, db = self._setup(tmp_path, [
+            _eval_row(poll_ts="2026-07-05T14:00:00+00:00",
+                      settlement_date="2026-07-05"),
+            _eval_row(poll_ts="2026-08-07T14:00:00+00:00",
+                      settlement_date="2026-08-07"),
+        ])
+        _rows, counts = resolve_bracket_outcomes(
+            evals, db, use_gamma=False, since="2026-08-06")
+        assert counts["raw_rows"] == 1
+        assert counts["dropped_pre_since"] == 1
+        assert counts["since"] == "2026-08-06"
+
+    def test_without_since_everything_is_kept(self, tmp_path):
+        """The default must not change: existing callers, including the #822
+        Pass 2 entry point, pass no cutoff and expect the full population."""
+        evals, db = self._setup(tmp_path, [
+            _eval_row(poll_ts="2026-07-05T14:00:00+00:00",
+                      settlement_date="2026-07-05"),
+            _eval_row(poll_ts="2026-08-07T14:00:00+00:00",
+                      settlement_date="2026-08-07"),
+        ])
+        _rows, counts = resolve_bracket_outcomes(evals, db, use_gamma=False)
+        assert counts["raw_rows"] == 2
+        assert counts["dropped_pre_since"] == 0
+        assert counts["since"] is None
+
+    def test_the_filter_reads_the_RAW_poll_ts_key(self, tmp_path):
+        """The regression that would make this feature silently useless.
+
+        `filter_rows_since` was written against the BSS loader, which
+        normalises `poll_ts` -> `ts`. This module reads the raw JSONL and keeps
+        `poll_ts`. Reading only `ts` finds "" on every row, compares it as
+        pre-cutoff, and drops the ENTIRE population -- reporting 0 resolved
+        station-days for a healthy window, which reads as "the gate is far
+        away" rather than as a broken filter.
+        """
+        evals, db = self._setup(tmp_path, [
+            _eval_row(poll_ts="2026-08-07T14:00:00+00:00",
+                      settlement_date="2026-08-07"),
+            _eval_row(poll_ts="2026-08-10T14:00:00+00:00",
+                      settlement_date="2026-08-10",
+                      ticker="KORD-high-81-83b"),
+        ])
+        _rows, counts = resolve_bracket_outcomes(
+            evals, db, use_gamma=False, since="2026-08-06")
+        assert counts["raw_rows"] == 2, "since dropped in-window rows"
+        assert counts["n_station_days"] > 0
+
+    def test_station_day_count_is_scoped_to_the_window(self, tmp_path):
+        """The figure #1018 actually wants: resolved station-days for the
+        clean window, without running the BSS report."""
+        evals, db = self._setup(tmp_path, [
+            _eval_row(poll_ts="2026-07-05T14:00:00+00:00",
+                      settlement_date="2026-07-05"),
+            _eval_row(poll_ts="2026-08-07T14:00:00+00:00",
+                      settlement_date="2026-08-07"),
+            _eval_row(poll_ts="2026-08-10T14:00:00+00:00",
+                      settlement_date="2026-08-10",
+                      ticker="KORD-high-81-83b"),
+        ])
+        _r, all_counts = resolve_bracket_outcomes(evals, db, use_gamma=False)
+        _r, win_counts = resolve_bracket_outcomes(
+            evals, db, use_gamma=False, since="2026-08-06")
+        assert win_counts["n_station_days"] < all_counts["n_station_days"]
+
+    def test_filter_runs_before_dedupe(self, tmp_path):
+        """A bracket-day polled both before and after the cutoff must survive
+        on its in-window poll. De-duplicating first would let the pre-cutoff
+        poll win the bracket-day and then be dropped, silently removing a
+        station-day that has a valid in-window poll behind it."""
+        evals, db = self._setup(tmp_path, [
+            # Lower minutes_to_settlement, so it WOULD win the dedupe.
+            _eval_row(poll_ts="2026-08-05T14:00:00+00:00",
+                      settlement_date="2026-08-07", minutes_to_settlement=10.0),
+            _eval_row(poll_ts="2026-08-07T14:00:00+00:00",
+                      settlement_date="2026-08-07", minutes_to_settlement=90.0),
+        ])
+        _rows, counts = resolve_bracket_outcomes(
+            evals, db, use_gamma=False, since="2026-08-06")
+        assert counts["deduped_bracket_rows"] == 1
+        assert counts["n_station_days"] == 1

@@ -396,11 +396,19 @@ def filter_rows_since(rows: "list[dict]", since: "str | None") -> "tuple[list[di
     *clean* poll rather than being dropped because its final poll predates the
     cutoff.
 
+    Accepts both row shapes. This module's ``load_bracket_eval_rows``
+    normalises ``poll_ts`` -> ``ts``, but ``resolve_bracket_outcomes`` reads the
+    RAW JSONL and keeps ``poll_ts`` -- so reading only ``ts`` there would find
+    an empty string on every row, compare it as before any cutoff, and drop the
+    entire population silently (#1018). A filter that returns zero rows must
+    never be reachable through a field-name mismatch.
+
     Returns (kept, n_dropped). ``since=None`` keeps everything.
     """
     if not since:
         return rows, 0
-    kept = [r for r in rows if (r.get("ts") or "")[:10] >= since]
+    kept = [r for r in rows
+            if str(r.get("ts") or r.get("poll_ts") or "")[:10] >= since]
     return kept, len(rows) - len(kept)
 
 

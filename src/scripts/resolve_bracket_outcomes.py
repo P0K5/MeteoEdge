@@ -714,6 +714,7 @@ def resolve_bracket_outcomes(
     use_gamma: bool = True,
     allow_network: bool = True,
     gamma_cache_path: "Path | None" = _DEFAULT_CACHE,
+    since: "str | None" = None,
 ) -> "tuple[list[dict], dict]":
     """Load, dedupe, and resolve the outcome of every evaluated bracket.
 
@@ -733,6 +734,15 @@ def resolve_bracket_outcomes(
                         issues zero requests (the CLI's ``--no-network``).
         gamma_cache_path: persistent {ticker: resolved_yes} cache, so any
                         ticker is fetched at most once ever.
+        since:          ISO date (YYYY-MM-DD); keep only rows whose POLL time
+                        is at or after it, via the shared
+                        ``filter_rows_since``. Without it the population spans
+                        all of ``bracket_evals`` from 2026-07-24, void window
+                        included -- which is why the resolved station-day count
+                        for the clean window was previously obtainable only by
+                        running the BSS report, i.e. by running the gate and
+                        seeing its answer (#1018). Mirrors #963 in
+                        ``certainty_exclusion_check``.
 
     Returns (resolved_rows, counts):
 
@@ -750,6 +760,16 @@ def resolve_bracket_outcomes(
     db_path = Path(db_path) if db_path is not None else DEFAULT_DB_PATH
 
     raw_rows = load_bracket_eval_rows(bracket_evals_base)
+    # Filter BEFORE de-duplicating, and on poll time. Contamination is a
+    # property of when the probability was COMPUTED (#936, #941), and
+    # de-duplicating first would let a pre-cutoff poll win the bracket-day and
+    # then be dropped, silently removing a station-day that has a valid
+    # in-window poll behind it.
+    from src.scripts.bss_market_vs_model_report import filter_rows_since
+    raw_rows, n_dropped_since = filter_rows_since(raw_rows, since)
+    if since:
+        log.info("[resolve_bracket_outcomes] --since %s kept %d rows, "
+                 "dropped %d pre-cutoff", since, len(raw_rows), n_dropped_since)
     deduped = dedupe_one_per_bracket_day(raw_rows)
 
     # bracket_evals rows carry no `question` text (unlike the candidates.csv
@@ -779,6 +799,8 @@ def resolve_bracket_outcomes(
     resolved_rows, counts = resolve_bracket_rows(
         deduped, observed_highs, gamma_resolutions, observed_lows
     )
+    counts["since"] = since
+    counts["dropped_pre_since"] = n_dropped_since
     counts["raw_rows"] = len(raw_rows)
     counts["deduped_bracket_rows"] = len(deduped)
     counts["n_bracket_rows"] = len(resolved_rows)
@@ -1722,6 +1744,7 @@ def run_dry_run(
     use_gamma: bool = True,
     allow_network: bool = True,
     gamma_cache_path: "Path | None" = _DEFAULT_CACHE,
+    since: "str | None" = None,
 ) -> int:
     """Resolve outcomes, run both correctness checks, and (if there is real
     data for at least one of them) write a report. Self-gating, like
@@ -1744,6 +1767,7 @@ def run_dry_run(
         use_gamma=use_gamma,
         allow_network=allow_network,
         gamma_cache_path=gamma_cache_path,
+        since=since,
     )
 
     if counts.get("raw_rows", 0) == 0:
@@ -1808,12 +1832,19 @@ def main(argv: "list[str] | None" = None) -> int:
                     help="Ignore Polymarket resolutions entirely and resolve purely from "
                          "METAR observed highs (pre-#860 behaviour; NOT suitable for the "
                          "#822 M3 verdict -- see #644)")
+    ap.add_argument("--since", default=None, metavar="YYYY-MM-DD",
+                    help="Keep only rows whose POLL time is at or after this date. "
+                         "Without it the population spans all of bracket_evals from "
+                         "2026-07-24, void window included. Use the clean-data clock "
+                         "start to get the resolved station-day count for the M3 "
+                         "window without running the BSS report (#1018).")
     args = ap.parse_args(argv)
     return run_dry_run(
         args.bracket_evals, args.db, args.out, args.run_date,
         use_gamma=not args.no_gamma,
         allow_network=not args.no_network,
         gamma_cache_path=args.gamma_cache,
+        since=args.since,
     )
 
 

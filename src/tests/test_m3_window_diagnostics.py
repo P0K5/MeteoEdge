@@ -13,6 +13,7 @@ import json
 
 from src.scripts.m3_window_diagnostics import (
     LADDER_KINDS,
+    SHARPNESS_FLOOR,
     MASS_HIGH,
     MASS_LOW,
     build_report,
@@ -23,7 +24,9 @@ from src.scripts.m3_window_diagnostics import (
     group_ladders,
     ladder_stats,
     mass_by_day,
+    near_uniform_ladders,
     scoreable_progress,
+    sharpness_stats,
     width_census,
 )
 
@@ -736,3 +739,140 @@ class TestAccrualUsesSettledDatesOnly:
         pairs = self._pairs({"2026-08-06": 16, "2026-08-07": 28})
         assert _marginal_accrual(pairs, today="2026-08-06") == 28
         assert _marginal_accrual(set(), today="2026-08-06") == 0
+
+
+class TestSharpnessInvariant:
+    """#1021 -- mass conservation is necessary but NOT sufficient.
+
+    A uniform ladder sums to 1.0 and passes the mass, gap, rail and
+    exact-zero checks while carrying no information. 11 of the 12 near-uniform
+    ladders #1021 found on the live window were correctly normalised, so every
+    invariant that existed was blind to them. These tests pin the one that is
+    not.
+
+    DIAGNOSTICS ONLY. Nothing here may reach a serving path, and nothing here
+    changes what goes into ``bracket_evals`` -- the model fixes proposed in the
+    same issue (mass normalisation, the same-day/next-day sigma inconsistency,
+    ``minutes_to_settlement``) are held until after the M3 gate.
+    """
+
+    def _lad(self, ps, *, station="KORD", end_date="2026-08-19",
+             ts="2026-08-19T11:00:00+00:00", is_next_day=0, mins=53.0):
+        rows = []
+        for i, p in enumerate(ps):
+            row = _b(p, 68.0 + 2 * i, 70.0 + 2 * i, station=station, ts=ts,
+                     end_date=end_date, is_next_day=is_next_day)
+            row["ticker"] = f"0x{station}{i}"
+            row["minutes_to_settlement"] = mins
+            rows.append(row)
+        return rows
+
+    def test_a_normalised_uniform_ladder_is_flagged(self):
+        """The case no existing invariant can see: mass EXACTLY 1.0, and
+        flat. If this ever stops being flagged the invariant is worthless."""
+        rows = self._lad([1 / 11] * 11)
+        lads = group_ladders(rows)
+        assert abs(lads[0]["mass"] - 1.0) < 1e-9
+        assert MASS_LOW <= lads[0]["mass"] <= MASS_HIGH  # passes mass
+        assert sharpness_stats(lads)["n_flat"] == 1
+        assert len(near_uniform_ladders(lads)) == 1
+
+    def test_the_KORD_2026_08_19_ladder_from_the_issue(self):
+        """The worst live instance: 11 brackets between 0.055 and 0.094,
+        mass 0.8952 -- failing mass by 0.005. At mass 0.95 it would have been
+        invisible, which is the whole point of this check."""
+        ps = [0.0775, 0.0860, 0.0913, 0.0939, 0.0934,
+              0.0901, 0.0840, 0.0757, 0.0659, 0.0553, 0.0821]
+        lads = group_ladders(self._lad(ps))
+        assert round(lads[0]["mass"], 4) == 0.8952
+        assert round(lads[0]["max_p"], 4) == 0.0939
+        assert sharpness_stats(lads)["n_flat"] == 1
+
+    def test_a_sharp_ladder_is_not_flagged(self):
+        """The median live ladder holds 56.8% in its mode. Flagging that would
+        make the check fire constantly and be ignored by the second week."""
+        ps = [0.02] * 10 + [0.58]
+        lads = group_ladders(self._lad(ps))
+        assert sharpness_stats(lads)["n_flat"] == 0
+        assert near_uniform_ladders(lads) == []
+
+    def test_next_day_ladders_are_excluded(self):
+        """A ladder 24h out is legitimately diffuse. Judging it would fire
+        every morning -- and #1021 records the contrast directly: the same
+        poll's next-day ladder was sharp while the same-day one was flat."""
+        lads = group_ladders(self._lad([1 / 11] * 11, is_next_day=1))
+        assert sharpness_stats(lads)["n"] == 0
+        assert near_uniform_ladders(lads) == []
+
+    def test_only_the_LAST_poll_of_a_station_day_is_judged(self):
+        """The gate scores the row with the lowest minutes_to_settlement.
+        A flat ladder at 09:00 that sharpens by the final poll is not in the
+        scored population and must not be flagged."""
+        early = self._lad([1 / 11] * 11, ts="2026-08-19T09:00:00+00:00",
+                          mins=173.0)
+        late = self._lad([0.02] * 10 + [0.58],
+                         ts="2026-08-19T11:00:00+00:00", mins=53.0)
+        lads = group_ladders(early + late)
+        stats = sharpness_stats(lads)
+        assert stats["n"] == 1
+        assert stats["n_flat"] == 0
+
+    def test_a_late_flat_poll_IS_judged_even_after_a_sharp_early_one(self):
+        """The converse, and the direction that matters: sharpening then
+        going flat at the final poll is exactly the #1021 signature --
+        uncertainty growing as settlement approaches."""
+        early = self._lad([0.02] * 10 + [0.58],
+                          ts="2026-08-19T09:00:00+00:00", mins=173.0)
+        late = self._lad([1 / 11] * 11, ts="2026-08-19T11:00:00+00:00",
+                         mins=53.0)
+        stats = sharpness_stats(group_ladders(early + late))
+        assert stats["n"] == 1
+        assert stats["n_flat"] == 1
+
+    def test_short_ladders_are_not_judged(self):
+        """Below 5 brackets a low modal share is a SHORT ladder, not a flat
+        one, and reading it as flat would manufacture findings from partly
+        listed markets."""
+        lads = group_ladders(self._lad([0.14, 0.13, 0.12]))
+        assert sharpness_stats(lads)["n"] == 0
+
+    def test_a_ladder_without_minutes_is_not_judged(self):
+        """No minutes_to_settlement means the last poll cannot be identified.
+        Guessing which row the gate would score is the one thing this must not
+        do."""
+        rows = self._lad([1 / 11] * 11)
+        for r in rows:
+            r["minutes_to_settlement"] = None
+        assert sharpness_stats(group_ladders(rows))["n"] == 0
+
+    def test_stations_are_counted_independently(self):
+        lads = group_ladders(
+            self._lad([1 / 11] * 11, station="KORD")
+            + self._lad([0.02] * 10 + [0.58], station="KATL"))
+        stats = sharpness_stats(lads)
+        assert stats["n"] == 2
+        assert stats["n_flat"] == 1
+
+    def test_percentiles_match_the_measured_window_shape(self):
+        """Sanity on the summary itself: a population whose modes run
+        0.10..0.99 must report a median in the middle, not at an end."""
+        lads = []
+        for i in range(10):
+            ps = [0.01] * 10
+            mode = 0.10 + i * 0.09
+            lads += self._lad(ps + [mode], station=f"S{i}",
+                              end_date=f"2026-08-{10 + i:02d}")
+        stats = sharpness_stats(group_ladders(lads))
+        assert stats["n"] == 10
+        assert stats["p10"] <= stats["median"] <= stats["p90"]
+
+    def test_the_floor_sits_below_the_measured_p10(self):
+        """0.15 is calibrated, not guessed: the live p10 is 0.229 and uniform
+        over 11 brackets is 0.0909. A floor outside that band would either
+        never fire or fire on healthy ladders."""
+        assert 0.0909 < SHARPNESS_FLOOR < 0.229
+
+    def test_empty_population_reports_nothing_rather_than_passing(self):
+        stats = sharpness_stats([])
+        assert stats["n"] == 0 and stats["n_flat"] == 0
+        assert stats["median"] is None
