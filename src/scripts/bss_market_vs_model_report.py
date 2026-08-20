@@ -367,6 +367,14 @@ def apply_exclusions(rows: "list[dict]") -> "tuple[list[dict], dict[str, int]]":
         if row["yes_ask"] is None or row["no_ask"] is None:
             counts["missing_market_price"] += 1
             continue
+        # Guard for _safe_price fabricated 50/50 (issue #1028). Placed after the
+        # missing_market_price None-check (safe to compare) and before rail_1c_99c.
+        # Ordering is correct: (50, 50) can never satisfy the rail check
+        # (which requires <=1 or >=99 on at least one side), so this placement
+        # does not move rows between buckets.
+        if row["yes_ask"] == 50 and row["no_ask"] == 50:
+            counts["fabricated_50_50_price"] += 1
+            continue
         if (row["yes_ask"] <= RAIL_LOW_CENTS or row["yes_ask"] >= RAIL_HIGH_CENTS
                 or row["no_ask"] <= RAIL_LOW_CENTS or row["no_ask"] >= RAIL_HIGH_CENTS):
             counts["rail_1c_99c"] += 1
@@ -1074,6 +1082,7 @@ def build_report(samples: "list[dict]", exclusion_counts: dict, n_no_settlement:
         f"{exclusion_counts.get('p_yes_raw_zero_artifact', 0)} |"
     )
     lines.append(f"| Excluded: missing market price | {exclusion_counts.get('missing_market_price', 0)} |")
+    lines.append(f"| Excluded: fabricated 50/50 price (#1028) | {exclusion_counts.get('fabricated_50_50_price', 0)} |")
     lines.append(f"| Excluded: 1c/99c rail | {exclusion_counts.get('rail_1c_99c', 0)} |")
     lines.append(f"| Kept after row exclusions | {exclusion_counts.get('kept_after_row_exclusions', 0)} |")
     if is_resolver:
