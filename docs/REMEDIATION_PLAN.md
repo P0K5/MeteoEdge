@@ -961,6 +961,43 @@ not whether a better model could exist.
   line — not the pre-resolution count, which runs ~28 station-days ahead of it (see
   "Confirmed 2026-08-18"). The report's `UNDERPOWERED` guard is never overridden.
 
+#### SETTLED 2026-08-20 — a THIRD exclusion: fabricated 50c market prices
+
+Found after the population above was fixed, and recorded here **before any powered run**
+because it changes that population. `scanner.py::_parse_bracket` sources `yes_ask`/`no_ask`
+from Gamma `outcomePrices`; when the field is missing or unparseable, `_safe_price` returns
+**0.5** and the substituted value is written to `bracket_evals` indistinguishable from a real
+quote. `BS_market` is computed from that column.
+
+Measured on the clean window (80,737 rows): **321 fallback rows (0.40%)**, the largest a
+whole-station outage at MPMG `2026-08-15T20` where all 11 legs read 50/50. After the gate's
+own de-duplication, **5 survive**, across 5 station-days of 5,093 surviving rows.
+
+**Decision: exclude rows where `yes_ask == 50 AND no_ask == 50`** from the scored population,
+as a third class alongside the two certainty exclusions (#1028).
+
+The effect is small and the reason for acting is not its size:
+
+- Order of magnitude, assumptions stated: 5 rows x 0.25 spurious `BS_market` over a ~1,107-row
+  contested population is ~0.0011 against Pass 2's ~0.076 — **a BSS inflation of ~+0.015**.
+  It will not decide the gate.
+- It is **one-directional and always in the model's favour** — inflating `BS_market` raises BSS.
+- De-duplication **systematically preserves the worst rows**: it keeps the lowest
+  `minutes_to_settlement` row per bracket, and three of the five survivors sit at 47–58 minutes
+  from settlement, where true prices have collapsed toward 0 or 100 and a 50c stand-in is
+  maximally wrong.
+- Removing it costs nothing.
+
+**Known weakness, stated rather than resolved.** `(50, 50)` is a *signature*, not proof — a
+genuinely 50/50 market is indistinguishable in the JSONL. This is #909's provenance problem
+again, and as there, no outcome rate can close it; `bot.log` can, and confirming the five
+timestamps there before the gate would make the exclusion exact. **The rule as written stands
+either way**; re-reading it after seeing the number is what pre-registration exists to prevent.
+
+**The capture-side fix is HELD** (#1029). Making `_safe_price` skip and alarm changes what
+enters `bracket_evals` and would split the window — same ruling as #967 and the
+`FORECAST_STACK` freeze. It belongs in the post-gate sequence.
+
 #### Power and uncertainty
 
 The verdict is read against a **95% bootstrap CI resampled over station-days**, not over
@@ -1038,6 +1075,8 @@ Declared in advance so they cannot be invented afterwards:
   disagreement about the same uncertainty
 - **#885** — serving σ is the fixed `FORECAST_STDDEV_F = 2.0`; `ensemble_sigma_f` is never
   assigned, so ensemble spread does not reach the scanner
+- **#1028** — `_safe_price`'s 0.5 fallback put 321 fabricated market prices in the window,
+  5 surviving de-duplication; excluded per the decision above, worth ~+0.015 BSS if left in
 - **#893** — 5 US stations train on a constant σ
 
 **Declaring them does not license dismissing a negative result.** A negative result stands on
