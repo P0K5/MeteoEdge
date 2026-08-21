@@ -9,7 +9,7 @@ to only afterwards, to turn confirmed findings into well-written diffs — see
 Env vars (same convention as scripts/ai_reviewer.py):
   NVIDIA_NIM_API_KEY    — NIM API key (required)
   NVIDIA_NIM_BASE_URL   — default https://integrate.api.nvidia.com/v1
-  NVIDIA_NIM_MODEL      — default z-ai/glm-5.2
+  NVIDIA_NIM_MODEL      — default deepseek-ai/deepseek-v4-flash-0731
 
 Usage:
   python scripts/reflect_triage.py <sanitized.jsonl> [...] -o findings.json
@@ -148,7 +148,7 @@ def main():
                  "the cost-guard bypass in the proposal PR.")
     base_url = os.environ.get("NVIDIA_NIM_BASE_URL",
                               "https://integrate.api.nvidia.com/v1")
-    model = os.environ.get("NVIDIA_NIM_MODEL", "z-ai/glm-5.2")
+    model = os.environ.get("NVIDIA_NIM_MODEL", "deepseek-ai/deepseek-v4-flash-0731")
 
     results = []
     for name in args.transcripts:
