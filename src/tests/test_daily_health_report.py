@@ -1223,3 +1223,153 @@ class TestDedupBeforeExclude:
                    "load_bracket_eval_rows", return_value=rows):
             mass = _ladder_mass("2026-08-06")
         assert mass["mean"] > 1.05
+
+
+class TestScoreablePairsExclusionParity:
+    """Regression for #1035: ``_scoreable_pairs`` and ``apply_exclusions``
+    diverged when #1028 added the fabricated-50/50 exclusion to
+    ``apply_exclusions`` only. ``_scoreable_pairs``'s docstring claimed "the
+    definition is the gate's, verbatim" while silently counting rows the
+    gate would have dropped.
+
+    The two functions now share ONE enumeration of row-level exclusion
+    predicates -- ``bss_market_vs_model_report.PRICE_EXCLUSION_PREDICATES``
+    -- rather than each naming individual predicates by hand. This test does
+    not just re-match today's known exclusion classes; it runs both
+    functions over a GRID of ``(p_yes_raw, yes_ask, no_ask)`` combinations
+    covering every predicate's boundary (missing, zero-artifact,
+    fabricated-50/50, both rails, and an ordinary kept price) and asserts,
+    row by row, that a row is scoreable under ``_scoreable_pairs`` if and
+    only if the gate (``apply_exclusions``) keeps it. Any predicate that is
+    added to one path's row-level cascade and not the other -- whatever its
+    trigger condition -- will make some row in this grid disagree, because
+    the grid is built from the space of values the shared fields can take,
+    not from a hand-written list of "the known exclusion classes".
+
+    Known, stated limitation: this grid only varies ``p_yes_raw``,
+    ``yes_ask`` and ``no_ask`` -- the three fields every current predicate
+    inspects. A future exclusion keyed on a DIFFERENT field (e.g.
+    ``minutes_to_settlement``) would not be exercised by this grid and would
+    need the grid extended, not just the predicate tuple. It also cannot
+    catch a predicate added to ``apply_exclusions``'s inline cascade without
+    also being added to ``PRICE_EXCLUSION_PREDICATES`` -- see that tuple's
+    own docstring comment for the same caveat.
+    """
+
+    _PRICE_GRID = (None, 0, 1, 2, 40, 49, 50, 51, 60, 98, 99, 100)
+    _P_YES_GRID = (None, 0.0, 0.001, 0.3, 1.0)
+
+    def _rows(self):
+        from src.scripts.bss_market_vs_model_report import PRICE_EXCLUSION_PREDICATES  # noqa: E501,F401
+        rows = []
+        i = 0
+        for p_yes in self._P_YES_GRID:
+            for yes_ask in self._PRICE_GRID:
+                for no_ask in self._PRICE_GRID:
+                    i += 1
+                    rows.append({
+                        "ts": "2026-08-10T12:00:00+00:00",
+                        "station": f"ST{i}",
+                        "ticker": f"TICK{i}",
+                        "end_date": "2026-08-11",
+                        "question": "",
+                        "bracket_low": 0.0,
+                        "bracket_high": 1.0,
+                        "yes_ask": yes_ask,
+                        "no_ask": no_ask,
+                        "p_yes_raw": p_yes,
+                        "minutes_to_settlement": 60.0,
+                        "direction": "high",
+                        "is_next_day_flag": 0,
+                        "emos_mode": "blend",
+                        "execution_mode": "live",
+                    })
+        return rows
+
+    def test_every_row_agrees_between_the_two_paths(self):
+        from src.scripts.bss_market_vs_model_report import apply_exclusions
+        from src.scripts.daily_health_report import _scoreable_pairs
+
+        rows = self._rows()
+        kept, _counts = apply_exclusions(rows)
+        gate_kept_stations = {r["station"] for r in kept}
+
+        pairs = _scoreable_pairs("2026-08-01", rows=rows)
+        scoreable_stations = {station for station, _settle in pairs}
+
+        disagreements = []
+        for row in rows:
+            st = row["station"]
+            gate_says_kept = st in gate_kept_stations
+            scoreable_says_kept = st in scoreable_stations
+            if gate_says_kept != scoreable_says_kept:
+                disagreements.append((row["p_yes_raw"], row["yes_ask"],
+                                       row["no_ask"], gate_says_kept,
+                                       scoreable_says_kept))
+        assert not disagreements, (
+            "apply_exclusions and _scoreable_pairs disagree on "
+            f"{len(disagreements)} row(s) "
+            "(p_yes_raw, yes_ask, no_ask, gate_kept, scoreable_kept): "
+            f"{disagreements[:10]}")
+        # Sanity: the grid is not vacuous -- both a kept row and an excluded
+        # row must actually appear, or the test above would pass trivially.
+        assert gate_kept_stations, "grid produced no kept rows at all"
+        assert len(gate_kept_stations) < len(rows), (
+            "grid produced no excluded rows at all")
+
+    def test_fabricated_50_50_specifically_is_excluded_by_both(self):
+        """The exact class #1028/#1035 is about, isolated from the grid."""
+        from src.scripts.bss_market_vs_model_report import apply_exclusions
+        from src.scripts.daily_health_report import _scoreable_pairs
+
+        row = {
+            "ts": "2026-08-10T12:00:00+00:00", "station": "FAB",
+            "ticker": "T1", "end_date": "2026-08-11", "question": "",
+            "bracket_low": 0.0, "bracket_high": 1.0,
+            "yes_ask": 50, "no_ask": 50, "p_yes_raw": 0.5,
+            "minutes_to_settlement": 60.0, "direction": "high",
+            "is_next_day_flag": 0, "emos_mode": "blend",
+            "execution_mode": "live",
+        }
+        kept, counts = apply_exclusions([row])
+        assert kept == []
+        assert counts.get("fabricated_50_50_price") == 1
+
+        pairs = _scoreable_pairs("2026-08-01", rows=[row])
+        assert pairs == set(), (
+            "_scoreable_pairs must drop the fabricated-50/50 row like the "
+            "gate does (#1035)")
+
+
+class TestApplyExclusionsRowSetUnchanged:
+    """#1035 must not move a single row between kept/excluded for the gate.
+    Only ``_scoreable_pairs`` may change behaviour; ``apply_exclusions``'s
+    scored population is pinned byte-identical."""
+
+    def test_kept_set_matches_pre_1035_behaviour(self):
+        from src.scripts.bss_market_vs_model_report import apply_exclusions
+
+        rows = [
+            # missing p_yes_raw
+            {"p_yes_raw": None, "yes_ask": 30, "no_ask": 70},
+            # model-certain artifact
+            {"p_yes_raw": 0.0, "yes_ask": 30, "no_ask": 70},
+            # missing market price
+            {"p_yes_raw": 0.4, "yes_ask": None, "no_ask": 70},
+            # fabricated 50/50
+            {"p_yes_raw": 0.4, "yes_ask": 50, "no_ask": 50},
+            # rail-clipped
+            {"p_yes_raw": 0.4, "yes_ask": 1, "no_ask": 99},
+            # ordinary kept row
+            {"p_yes_raw": 0.4, "yes_ask": 30, "no_ask": 70},
+        ]
+        kept, counts = apply_exclusions(rows)
+        assert len(kept) == 1
+        assert kept[0]["yes_ask"] == 30 and kept[0]["p_yes_raw"] == 0.4
+        assert counts["missing_p_yes_raw"] == 1
+        assert counts["p_yes_raw_zero_artifact"] == 1
+        assert counts["missing_market_price"] == 1
+        assert counts["fabricated_50_50_price"] == 1
+        assert counts["rail_1c_99c"] == 1
+        assert counts["kept_after_row_exclusions"] == 1
+        assert counts["input_rows"] == 6

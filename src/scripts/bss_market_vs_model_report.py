@@ -150,7 +150,7 @@ import sys
 from collections import defaultdict
 from datetime import date, datetime, timezone
 from pathlib import Path
-from typing import Iterator
+from typing import Callable, Iterator
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
@@ -353,14 +353,16 @@ def load_bracket_eval_rows(base: "Path" = BRACKET_EVALS_JSONL) -> "list[dict]":
 # Exclusions (issue #822 / #820)
 # ---------------------------------------------------------------------------
 #
-# The two predicates below (``is_model_certain_price`` / ``is_rail_price``) are
-# the SINGLE definition of "the model claimed impossibility" and "the market
-# price is clipped at the rail" (issue #1030). ``apply_exclusions`` is the only
-# place that runs the full cascade -- see
+# The three predicates below (``is_model_certain_price`` / ``is_rail_price`` /
+# ``is_fabricated_50_50_price``) are the SINGLE definition of "the model
+# claimed impossibility", "the market price is clipped at the rail", and "the
+# market price is the ``_safe_price`` fabricated 50/50 placeholder" (issues
+# #1030, #1028, #1035). ``apply_exclusions`` is the only place that runs the
+# full cascade -- see
 # ``TestApplyExclusionsNonDivergence.test_apply_exclusions_has_single_call_site``,
 # which stays satisfied because nothing outside this module ever calls
 # ``apply_exclusions`` a second time. What outside modules need instead is just
-# these two predicates (to classify a row, or to count a population, without
+# these three predicates (to classify a row, or to count a population, without
 # reproducing the cascade), and they now import them from here rather than
 # re-typing the comparison:
 #
@@ -371,7 +373,10 @@ def load_bracket_eval_rows(base: "Path" = BRACKET_EVALS_JSONL) -> "list[dict]":
 # ``== 0.0`` comparisons inline, three implementations of two predicates that
 # could (and did, per the module's own history -- see ``_scoreable_pairs``'s
 # docstring) drift silently out of step with each other and with the cascade
-# below.
+# below. #1035 is exactly that drift recurring for a THIRD predicate
+# (fabricated-50/50, added to the cascade by #1028 without a matching update
+# to ``_scoreable_pairs``) -- the reason to share the predicate rather than
+# re-match the class list by hand again.
 
 
 def is_model_certain_price(row: dict) -> bool:
@@ -409,6 +414,36 @@ def is_rail_price(row: dict) -> bool:
             or no_ask <= RAIL_LOW_CENTS or no_ask >= RAIL_HIGH_CENTS)
 
 
+def is_fabricated_50_50_price(row: dict) -> bool:
+    """A quoted (yes_ask, no_ask) pair is the ``_safe_price`` fabricated 50/50
+    placeholder (#1028), not a genuine market quote.
+
+    A row with either price missing is NOT the fabricated-50/50 signature; it
+    is undiagnosable and handled by ``missing_market_price``.
+    """
+    yes_ask, no_ask = row.get("yes_ask"), row.get("no_ask")
+    if yes_ask is None or no_ask is None:
+        return False
+    return yes_ask == 50 and no_ask == 50
+
+
+# The row-level exclusion predicates ``apply_exclusions`` and
+# ``daily_health_report._scoreable_pairs`` must apply IDENTICALLY (#1035).
+# This tuple is the enumeration both paths are expected to consume, so that
+# a predicate added here is picked up by any caller that iterates it instead
+# of naming individual predicates by hand. ``apply_exclusions`` itself still
+# names each predicate explicitly below (its per-stage counts require a fixed
+# order and distinct labels, and its behaviour is pinned by
+# ``TestApplyExclusionsRowSetUnchanged`` -- #1035 must not move a row between
+# buckets), but every predicate in that cascade is also listed here, and
+# ``_scoreable_pairs`` iterates this tuple rather than re-naming predicates.
+PRICE_EXCLUSION_PREDICATES: "tuple[Callable[[dict], bool], ...]" = (
+    is_model_certain_price,
+    is_fabricated_50_50_price,
+    is_rail_price,
+)
+
+
 def apply_exclusions(rows: "list[dict]") -> "tuple[list[dict], dict[str, int]]":
     """Apply the mandatory Pass-1 row exclusions. Returns (kept, counts).
 
@@ -443,7 +478,7 @@ def apply_exclusions(rows: "list[dict]") -> "tuple[list[dict], dict[str, int]]":
         # Ordering is correct: (50, 50) can never satisfy the rail check
         # (which requires <=1 or >=99 on at least one side), so this placement
         # does not move rows between buckets.
-        if row["yes_ask"] == 50 and row["no_ask"] == 50:
+        if is_fabricated_50_50_price(row):
             counts["fabricated_50_50_price"] += 1
             continue
         if is_rail_price(row):

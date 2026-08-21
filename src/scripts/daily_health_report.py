@@ -653,9 +653,14 @@ def _scoreable_pairs(since_date: str,
                      rows: "list[dict] | None" = None) -> "set[tuple[str, str]]":
     """Distinct scoreable ``(station, settlement_date)`` pairs -- the 300 bar.
 
-    **The definition is the gate's, verbatim**::
+    **The exclusion set is the gate's, verbatim** -- shared predicates, not a
+    re-matched list (see below). The UNIT counted is not verbatim: the gate
+    (``apply_exclusions``) filters and counts ROWS; this counts distinct
+    ``(station, settlement_date)`` PAIRS after de-duplicating each pair to its
+    last poll. That is::
 
-        len({(station, settlement_date) for r in rows_after_exclusions})
+        {(station, settlement_date) for r in last_poll_per_pair
+         if not excluded(r)}
 
     Distinct ``(station, settlement_date)`` pairs across the WHOLE window, not
     per poll day. That distinction is not pedantry. A settlement date is polled
@@ -669,14 +674,30 @@ def _scoreable_pairs(since_date: str,
     count used to read ``scan_decisions`` even after #943 moved the mass check
     off it -- the two sat eight lines apart, disagreeing.
 
-    Mirrors the gate's exclusions: exact-zero model probabilities and
-    rail-clipped market prices -- via ``is_model_certain_price`` /
-    ``is_rail_price``, the SAME predicates ``apply_exclusions`` runs, so this
-    count cannot silently re-diverge from the gate's cascade the way it did
-    the three times documented above (#1030).
+    Mirrors the gate's row exclusions -- missing prices, and every predicate
+    in ``bss_market_vs_model_report.PRICE_EXCLUSION_PREDICATES`` (currently:
+    exact-zero model probabilities, the fabricated-50/50 placeholder, and
+    rail-clipped market prices) -- by iterating that SAME tuple
+    ``apply_exclusions`` builds its cascade from, rather than naming
+    individual predicates here. A predicate added to that tuple is picked up
+    by this function automatically; this count cannot silently re-diverge
+    from the gate's cascade the way it did the three times documented above
+    (#1030), and a fourth time when #1028 added the fabricated-50/50
+    exclusion to ``apply_exclusions`` only (#1035). The residual risk: a
+    predicate added to ``apply_exclusions``'s inline cascade WITHOUT also
+    being added to ``PRICE_EXCLUSION_PREDICATES`` still diverges silently --
+    sharing the enumeration only closes the gap for predicates that go
+    through it.
+
+    One legitimate difference from ``apply_exclusions`` remains, and it is
+    NOT a divergence to fix: this function counts distinct ``(station,
+    settlement_date)`` PAIRS after de-duplicating to each pair's last poll,
+    while ``apply_exclusions`` filters ROWS (every poll of every bracket).
+    The exclusion PREDICATES are shared; the unit counted is not, because the
+    300 bar and the gate's scored population answer different questions.
     """
     from src.scripts.bss_market_vs_model_report import (
-        is_model_certain_price, is_rail_price, load_bracket_eval_rows)
+        PRICE_EXCLUSION_PREDICATES, load_bracket_eval_rows)
     if rows is None:
         try:
             rows = load_bracket_eval_rows()
@@ -713,7 +734,7 @@ def _scoreable_pairs(since_date: str,
     for (station, settle, _ticker), (_ts, r) in last_poll.items():
         if r.get("p_yes_raw") is None or r.get("yes_ask") is None or r.get("no_ask") is None:
             continue
-        if is_model_certain_price(r) or is_rail_price(r):
+        if any(pred(r) for pred in PRICE_EXCLUSION_PREDICATES):
             continue
         if station and settle:
             pairs.add((station, settle))
