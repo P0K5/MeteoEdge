@@ -114,7 +114,7 @@ jobs:
         env:
           NVIDIA_NIM_API_KEY: ${{ secrets.NVIDIA_NIM_API_KEY }}
           GRAPHIFY_LLM_BASE_URL: https://integrate.api.nvidia.com/v1
-          GRAPHIFY_LLM_MODEL: z-ai/glm-5.2
+          GRAPHIFY_LLM_MODEL: meta/llama-3.3-70b-instruct
         run: |
           graphify extract . \
             --backend openai \
@@ -126,7 +126,7 @@ jobs:
         env:
           NVIDIA_NIM_API_KEY: ${{ secrets.NVIDIA_NIM_API_KEY }}
           GRAPHIFY_LLM_BASE_URL: https://integrate.api.nvidia.com/v1
-          GRAPHIFY_LLM_MODEL: z-ai/glm-5.2
+          GRAPHIFY_LLM_MODEL: meta/llama-3.3-70b-instruct
         run: graphify cluster-only . --backend openai
 
       - name: Commit full graph rebuild

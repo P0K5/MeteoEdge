@@ -5,7 +5,7 @@ AI Code Reviewer — context pipeline + NVIDIA NIM call (GLM-5.2)
 Workflow env vars required:
   NVIDIA_NIM_API_KEY    — NIM API key
   NVIDIA_NIM_BASE_URL   — e.g. https://integrate.api.nvidia.com/v1
-  NVIDIA_NIM_MODEL      — e.g. glm-5.2
+  NVIDIA_NIM_MODEL      — e.g. meta/llama-3.3-70b-instruct
   GITHUB_TOKEN          — GitHub token for API calls
   PR_NUMBER             — PR number being reviewed
   PR_HEAD_SHA           — head commit SHA
