@@ -402,7 +402,7 @@ accepted or abandoned.** See the decision rule below.
 | Pass 2 tool | ✅ Built and run end-to-end — `bss_market_vs_model_report --population all-bracket` |
 | Ground truth | ✅ Clean — 0 boundary + 0 disjoint collisions, Gamma-vs-METAR disagreement **1.7%** (was 8.8% pre-#881), ladder completeness 11/11 |
 | Direction contamination | ✅ Not applicable — `bracket_evals` starts 2026-07-24, a week after the 2026-07-17 LOW-market rollback (#733/#734), so no low market can be in this population. The report now date-checks this itself |
-| Probability-mass integrity | ✅ Ladders sum to **1.00** across all stations and both ladder kinds from 2026-08-06. Re-checked daily — see the diagnostic runbook below |
+| Probability-mass integrity | ⚠️ **Qualified 2026-08-21.** Ladders polled **≥ 60 min before settlement** sum to 1.00 — n=7,166, mean 1.0000, range 0.9997–1.0029, every station and both kinds. Ladders inside the final hour **do not**, by deployed design: `time_to_settlement_boost` (#935) removes `0.9·(1 − m/60)` from an 11-bracket ladder. n=431, median 0.9968, worst 0.8952. See "SETTLED 2026-08-21" — this is a transform, not a defect in the collected data, and the distinction is the whole decision |
 | Station-days | ⏳ **81 resolved / 300** on 2026-08-10 at ~16/day → gate **~2026-08-24**. See the counting note below — three earlier estimates (55/day, 29/day, 58.8/day) were all measurement errors, not accrual changes |
 
 #### How the 300 bar is counted — and four ways it was counted wrong
@@ -518,6 +518,14 @@ on master. It reports:
 **This is now a standing regression check, not a one-off triage.** Mass conservation is the
 invariant whose absence let #917 and #920 both live for weeks. Run it before the gate; treat any
 day that fails to conserve as a regression and stop the clock.
+
+**Qualified 2026-08-21 — read the verdict against the final-hour split.** As written the tool
+pools both populations, so a `REGRESSION` verdict may be nothing but a final-hour ladder crossing
+the 0.90 threshold on the continuous #935 effect, and a `def=0` day says nothing about that effect
+at all. Until #935 splits the populations, check any flagged ladder against
+`1 − k·(n/2 − 1)`, `k = 0.2·(1 − m/60)`: if it matches to within 0.01 it is the boost, not a
+regression. A deviation beyond that, or any non-conserving ladder polled ≥ 60 min out, still stops
+the clock.
 
 #### Before the gate — settle the certainty exclusions
 
@@ -1063,6 +1071,93 @@ is therefore a **prerequisite** for any EMOS-based re-test, named here so it can
 later. Note also that EMOS cannot serve before ~2026-09-23 regardless (23/60 CRPS days on the
 active track), so this is not on the critical path to M3.
 
+#### SETTLED 2026-08-21 — the final-hour mass deficit: #935, and what it explains
+
+**One mechanism, found 2026-08-21, three days before the gate and with no BSS figure read.** It
+supersedes the "unexplained anomaly" framing that #942 and #1021 were both filed under.
+
+`time_to_settlement_boost` (`envelope.py:149`) is applied **per bracket, after** #920's conditional
+has already normalised the ladder:
+
+```python
+if minutes_left < 60:
+    return min(1.0, max(0.0, p + (p - 0.5) * 0.2 * (1 - minutes_left / 60)))
+```
+
+It is affine in `p` but not mass-preserving. Over an `n`-bracket ladder summing to 1.0:
+
+    Σp' = 1 + k·(1 − n/2),    k = 0.2·(1 − m/60)
+
+so an 11-bracket ladder loses exactly `4.5k = 0.9·(1 − m/60)`. Everything below follows from that
+one line, and every figure was checked against it rather than inferred from it.
+
+**What it explains.** Measured over the clean window, de-duplicated, coverage-limited ladders
+excluded:
+
+| Population | n | mean | median | min | max |
+|---|---|---|---|---|---|
+| polled **≥ 60 min** before settlement | 7,166 | 1.0000 | 1.0000 | 0.9997 | 1.0029 |
+| polled **inside the final hour** | 431 | 0.9888 | 0.9968 | **0.8952** | 1.0000 |
+
+- **#1021's "unexplained" 0.8952** — KORD 2026-08-19T11:00, `m = 53.0`. Predicted
+  `1 − 0.9·(7/60) = 0.8950`; observed 0.8952, and the pre-boost ladder back-solves to 1.00023.
+- **Every KORD same-day 11:00 ladder in the window** — all 16 days, 0.8952 to 0.9780, each
+  tracking its own `minutes_to_settlement`. Never a regression: present from the clock start.
+- **#942's 0.4644** — `scan_decisions`, KORD 2026-08-06T11:39, back-solves to `m ≈ 24`. Its
+  companion row, `bracket_evals` reading 1.9111 at 11:00 that day, is `0.9111` (same-day, boosted)
+  **+** `1.0000` (next-day, not boosted). **There was never a divergence between the two sinks.**
+  Both faithfully recorded a boosted ladder, at different minutes to settlement.
+- **The 2026-08-19 REGRESSION verdict** — one ladder crossing an 0.90 threshold on a continuous
+  effect. `deficient_days_since` demands "explained or restarted". This is the explanation.
+
+**#942's central claim was wrong, and how it was wrong is worth keeping.** Its parameter sweep
+verified that `conditional_bracket_probability` sums to exactly 1.0 over a partition for every
+combination of inputs, and concluded "the deployed code cannot have produced this row". The sweep
+tested the conditional *in isolation*; the deployed path applies the boost after it. A sweep over
+the wrong end of a pipeline reads as proof of impossibility — and it cost two weeks spent looking
+for a divergent write path that does not exist.
+
+**DECISION: score as deployed. The gate runs. The clock is NOT restarted.**
+
+The distinction this rests on: #917 and #920 were **bugs that destroyed information** — a parser
+integrating at half width, a truncation that failed to renormalise. `time_to_settlement_boost` is
+**deployed model behaviour**: intentional, uniform across the whole window, and applied by the
+model whose skill M3 exists to measure. Brier scores each bracket independently and does not
+require a ladder to normalise, so this is not corrupt data; it is a confidence-sharpening
+transform that helps the score when the model is right and hurts it when the model is wrong.
+
+Same precedent as #967: degraded-but-deployed behaviour stays in the window, is named as an
+alternative explanation, and is fixed after. Restarting the clock would cost ~19 days to remove a
+transform that is arguably part of what is being judged, while **94% of the window's ladders
+(7,166 of 7,597) never touch it**.
+
+**The cost, recorded rather than glossed.** The gate de-duplicates to the last poll per
+bracket-day, and for a same-day market that poll is always inside the final hour. So the boost
+lands on the scored row for essentially every same-day station-day — the subpopulation where it is
+most over-represented, exactly as #935 predicted when it was filed and then judged "not urgent for
+M3". Its effect on BSS is **not determinable without computing BSS**, which is a look at the
+number. So this is decided on principle, in advance, and not on measured impact.
+
+**Guards:**
+
+1. **The conservation precondition is restated, not waived.** Ladders polled ≥ 60 min before
+   settlement must conserve; that is the gate precondition, and it holds at n=7,166. The
+   final-hour subpopulation is exempt *only* to the extent the closed form predicts — any
+   final-hour ladder deviating from `1 − k·(n/2 − 1)` by more than 0.01 is a genuine defect and
+   stops the clock.
+2. **`m3_window_diagnostics` cannot be trusted on this until it splits the two populations.** As
+   written its REGRESSION verdict fires on a threshold artifact, and its `def=0` days are silent
+   about a systematic effect. Tracked on #935.
+3. **No further exemption.** This covers `time_to_settlement_boost` and nothing else. Any other
+   non-conserving population found before the gate is a regression on ordinary terms.
+
+**#921 is unaffected.** The boost can only *remove* mass (`Σp < n/2` for any real ladder), so it
+cannot produce a 1.156 excess. Its stand-down stands on its own two grounds — `scan_decisions`,
+and a week before the clean-data clock — dated 2026-08-21. One thread survives it and is not a
+probability question: the invariant asserts `approx(1.0, abs=0.02)`, which would catch 1.156, and
+it did not fire on production data. A test passing over data that violates its own assertion is a
+test-coverage defect in its own right.
+
 #### Named alternative explanations
 
 Declared in advance so they cannot be invented afterwards:
@@ -1070,7 +1165,11 @@ Declared in advance so they cannot be invented afterwards:
 - **#967** — forecast capture halved on leads 12 and 24 since 2026-07-28; affects the whole
   window uniformly (already recorded above as a knowingly accepted cost)
 - **The 12 dawn station-days** — 3.0% of last polls, near-uniform, included per above
-- **#1021** — one unexplained mass deficiency (0.8952, KORD 2026-08-19); and same-day σ ≈ 10 °F
+- **#935** — `time_to_settlement_boost` deflates every final-hour ladder by `0.9·(1 − m/60)`, and
+  the gate de-duplicates to precisely those polls on same-day markets. Median 0.9968, worst 0.8952.
+  Scored as deployed per the decision above; direction of its effect on BSS unknown by design
+- **#1021** — the 0.8952 deficiency is **#935, explained 2026-08-21**, not an unexplained
+  anomaly. What remains of #1021 is the σ disagreement: same-day σ ≈ 10 °F
   from the climb floor against next-day σ ≈ 2 °F from `next_day_probability_yes`, a ~5×
   disagreement about the same uncertainty
 - **#885** — serving σ is the fixed `FORECAST_STDDEV_F = 2.0`; `ensemble_sigma_f` is never
@@ -1078,6 +1177,10 @@ Declared in advance so they cannot be invented afterwards:
 - **#1028** — `_safe_price`'s 0.5 fallback put 321 fabricated market prices in the window,
   5 surviving de-duplication; excluded per the decision above, worth ~+0.015 BSS if left in
 - **#893** — 5 US stations train on a constant σ
+- ~~**#942** — an unidentified write path~~ **Withdrawn 2026-08-21.** There is no unidentified
+  write path: #942 is #935 at `m ≈ 24`, and the two sinks never disagreed. Left struck through
+  rather than deleted, because it was on this list for one day on the strength of an impossibility
+  proof that had tested the wrong end of the pipeline
 
 **Declaring them does not license dismissing a negative result.** A negative result stands on
 its own. They are named solely so that the re-test conditions are specified in advance, and
@@ -1105,9 +1208,9 @@ first. The only thing between here and M3 is station-days accruing on the new wi
 | #826 | Persist all evaluated-bracket snapshots | M0 (parallel) | ✅ Merged — started a clock on 2026-07-24, but **that window is void** (#917/#920). Clock restarted **2026-08-06** |
 | #917 | °F dash-range brackets integrated at half width | M3 | ✅ Merged, live 2026-08-01 (#919) — **verified in production**: °F ladder mass 0.53 → 0.99, gaps 100% → 0% |
 | **#920** | **Truncation without renormalisation.** Filed against the bottom cut; measurement showed the **top** cut cost ~5× more (°C ladders 1.04 untruncated → 0.85 top-cut → 0.80 both) | **was the last M3 blocker** | ✅ Merged 2026-08-05 (#934), verified live 2026-08-06 — all ladders read 1.00. Replaced three shortcuts with one conditional that renormalises by construction |
-| #921 | Mild two-sided excess — untruncated °C ladders average 1.04, one poll 1.156 | after #920 | Open — **stood down as immaterial**; explicitly NOT a gate precondition |
-| #935 | `time_to_settlement_boost` rescales an already-normalised ladder | after M3 | Open — left deliberately untouched by #934 so the mass fix stayed attributable |
-| #942 | One `scan_decisions` ladder sums 0.4644 **after** the #920 deploy, unexplained by parameter sweep or deployment lag | **before the gate** | Open — `bracket_evals` is clean, and that is what M3 scores, but the mechanism is not understood |
+| #921 | Mild two-sided excess — untruncated °C ladders average 1.04, one poll 1.156 | after #920 | Open — **stood down as immaterial, dated 2026-08-21**: `scan_decisions`, and a week before the clean-data clock. Explicitly NOT a gate precondition. The `abs=0.02` invariant not firing on 1.156 survives as a test-coverage defect |
+| **#935** | **`time_to_settlement_boost` deflates every final-hour ladder by `0.9·(1 − m/60)`** — and the gate de-duplicates to exactly those polls on same-day markets | **fix after M3; scored as deployed** | Open — **the root cause of #942 and of #1021's 0.8952**, measured 2026-08-21: 431 final-hour ladders, median 0.9968, worst 0.8952, against 7,166 clean ones outside the hour. Its "~2pp, not urgent for M3" filing understated both the size and, more importantly, that it lands on ~100% of same-day scored rows. Also owns the `m3_window_diagnostics` population split |
+| #942 | One `scan_decisions` ladder sums 0.4644 **after** the #920 deploy | **explained 2026-08-21 — close as a duplicate of #935** | ✅ Root cause found: `time_to_settlement_boost` at `m ≈ 24`. **No sink divergence ever existed** — the companion `bracket_evals` 1.9111 is `0.9111` boosted same-day + `1.0000` next-day. The impossibility proof in the issue swept `conditional_bracket_probability` in isolation, while the deployed path applies the boost after it |
 | #944 | Two systemd units failed ~427,000 times unnoticed — nothing queries unit health | **now** | Open — the monitoring gap, not the units themselves (#945 removed those) |
 | #865 | Re-point Pass 1 at `resolve_bracket_outcomes` (n=20 → 404) | M1 | ✅ Merged — Pass 1 complete |
 | #867 | Gamma resolves DISJOINT brackets as YES on one station-day | before M3 | ✅ Merged (#875) — root cause was direction-blindness, not wrong-market reads; 4 → 0 collisions |
@@ -1129,7 +1232,7 @@ first. The only thing between here and M3 is station-days accruing on the new wi
 | #887 | 63% of GEFS σ below the 1 °F floor; raw-vs-calibrated decision | before #885 | ✅ Resolved (#892) — train raw, serve calibrated |
 | #888 | `p_normal_between()` ZeroDivisionError on σ=0 | before #885 | ✅ Merged (#891) |
 | **#967** | **Forecast capture killed by a 45-min timeout — the 12:02 and 21:02 UTC runs die daily since 2026-07-28. `model_forecast_log` 712 → 575 rows/day, entirely in lead 12 (143→74) and lead 24 (142→77)** | **after M3 — see the sequencing note** | Open — real data loss, degrades EMOS training input. NOT an M3 mass contaminant (the gate scores `bracket_evals`), but it does mean M3 scores a model on degraded input |
-| **#969** | **Rail and `p_yes=0.0` WARN thresholds calibrated on the gate-selected Pass-1 archive, applied to the full `scan_decisions` ladder — so they fire unconditionally** | **now, before the gate** | Open — on an 11-bracket ladder most brackets sit at the 1¢ rail by construction, so `rail_pct < 20` can essentially never pass. Same left-behind pattern as #943. A WARN that always fires is how "Healthy" printed over two days of data loss (#913) |
+| **#969** | **Rail and `p_yes=0.0` WARN thresholds calibrated on the gate-selected Pass-1 archive, applied to the full `scan_decisions` ladder — so they fire unconditionally** | was: before the gate | ✅ Merged 2026-08-10 (#971) — reads `bracket_evals`, high rail against its `1/ladder_size` structural ceiling, low rail no longer summed in. Verified live on the 2026-08-20 report: `1.1% vs 9.1% structural ceiling (13% of it) [OK]`, interior-zero gaps 0 of 7,108 |
 | #893 | EMOS training σ chosen by sort order — 5 US stations train on a constant | after M3 | Open — triaged; fix is Simple (exclude constant σ sources). **Held until after M3**, but the reasoning weakened on 2026-08-10: it was rejected when a second window looked like ~5 days, and the measured rate makes it ~19 — see "What M3 will and will not have tested" |
 | #894 | 329 legacy clamped σ rows in the training window | done | ✅ Merged (#896) — inert under `baseline`, live under `full` |
 | #895 | KORD eats the GEFS cold-start timeout (sorts first in `STATIONS`) | done | ✅ Merged (#896) |
