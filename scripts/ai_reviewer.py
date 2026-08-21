@@ -628,35 +628,15 @@ def _run(
     except NimDegradedError as exc:
         # NIM backend is temporarily degraded — skip the review rather than
         # blocking all PRs. Create a neutral success check run with a note.
-        print(f"[ai_reviewer] NIM degraded, skipping review: {exc}")
+        print(f"[ai_reviewer] NIM degraded, review did NOT run: {exc}")
         skip_msg = (
-            f"⚠️ AI review skipped — NIM model `{nim_model}` is currently "
-            f"DEGRADED on NVIDIA's infrastructure.\n\n"
-            f"This check passes automatically to avoid blocking PRs during "
-            f"a transient outage. The review will run normally once the "
-            f"model recovers.\n\nError detail: {exc}"
-        )
-        create_check_run(
-            owner=repo_owner,
-            repo=repo_name,
-            head_sha=pr_head_sha,
-            token=github_token,
-            verdict="PASS",
-            review_text=skip_msg,
-        )
-        print("[ai_reviewer] Done — verdict=SKIPPED (NIM degraded)")
-        return
-    except NimTimeoutError as exc:
-        # NIM kept timing out or returning a gateway error (502/503/504)
-        # despite retries — treat as a transient infrastructure issue
-        # rather than blocking the PR indefinitely.
-        print(f"[ai_reviewer] NIM failed repeatedly, skipping review: {exc}")
-        skip_msg = (
-            f"⚠️ AI review skipped — NIM model `{nim_model}` did not return a "
-            f"successful response after {NIM_MAX_ATTEMPTS} attempts.\n\n"
-            f"This check passes automatically to avoid blocking PRs during "
-            f"a transient network/gateway issue. The review will run "
-            f"normally next time the endpoint responds cleanly.\n\n"
+            f"❌ **The AI review did not run.** NIM model `{nim_model}` is "
+            f"reported DEGRADED on NVIDIA's infrastructure.\n\n"
+            f"**This is not a verdict.** No code was reviewed. The check "
+            f"fails so that the merge gate stays honest: a required review "
+            f"that could not run must not report success (#1037).\n\n"
+            f"If the degradation is genuinely transient, re-run this check. "
+            f"If it persists, the model is not usable and must be replaced.\n\n"
             f"Error detail: {exc}"
         )
         create_check_run(
@@ -664,11 +644,38 @@ def _run(
             repo=repo_name,
             head_sha=pr_head_sha,
             token=github_token,
-            verdict="PASS",
+            verdict="UNAVAILABLE",
             review_text=skip_msg,
         )
-        print("[ai_reviewer] Done — verdict=SKIPPED (NIM timeout)")
-        return
+        print("[ai_reviewer] Done — verdict=UNAVAILABLE (NIM degraded)")
+        sys.exit(1)
+    except NimTimeoutError as exc:
+        # NIM kept timing out or returning a gateway error (502/503/504)
+        # despite retries — treat as a transient infrastructure issue
+        # rather than blocking the PR indefinitely.
+        print(f"[ai_reviewer] NIM failed repeatedly, review did NOT run: {exc}")
+        skip_msg = (
+            f"❌ **The AI review did not run.** NIM model `{nim_model}` did "
+            f"not return a successful response after {NIM_MAX_ATTEMPTS} "
+            f"attempts.\n\n"
+            f"**This is not a verdict.** No code was reviewed. The check "
+            f"fails so that the merge gate stays honest: a required review "
+            f"that could not run must not report success (#1037).\n\n"
+            f"A model that times out every attempt is not transient — it is "
+            f"unusable at this timeout and must be replaced or given a "
+            f"budget it can meet.\n\n"
+            f"Error detail: {exc}"
+        )
+        create_check_run(
+            owner=repo_owner,
+            repo=repo_name,
+            head_sha=pr_head_sha,
+            token=github_token,
+            verdict="UNAVAILABLE",
+            review_text=skip_msg,
+        )
+        print("[ai_reviewer] Done — verdict=UNAVAILABLE (NIM timeout)")
+        sys.exit(1)
 
     # 8. Parse verdict
     verdict = parse_verdict(review_text)
