@@ -48,6 +48,22 @@ path this module was never asked to reconstruct).
   ``decay_factor``, are stored columns; this is not a new formula).
 - ``obs_bias_offset_f``: NOT reconstructed (bracket_evals never logged it) --
   left ``None``, the "no signal" default, never a guessed value.
+
+Usage (library only -- this module has no CLI entry point of its own; see
+``src.scripts.emos_shadow_vs_market_report`` for the report that drives it)::
+
+    from pathlib import Path
+    from src.scripts.emos_shadow_reconstruction import (
+        ReadOnlyDatabase, reconstruct_bracket_row,
+    )
+
+    ro_db = ReadOnlyDatabase(Path("data/meteoedge.db"))
+    try:
+        # row is one bracket_evals row (see load_bracket_eval_rows in
+        # bss_market_vs_model_report.py for the exact shape).
+        p_emos_shadow = reconstruct_bracket_row(ro_db, row)  # float | None
+    finally:
+        ro_db._conn.close()
 """
 from __future__ import annotations
 
@@ -94,6 +110,16 @@ _DENIED_ACTIONS = frozenset({
 
 
 def _deny_writes(action: int, arg1, arg2, dbname, source) -> int:
+    """SQLite authorizer callback: deny every write/DDL opcode, allow the rest.
+
+    Installed on ``ReadOnlyDatabase``'s connection via ``set_authorizer``.
+    Signature is dictated by the ``sqlite3`` C API (action code plus four
+    positional args whose meaning varies by *action* -- unused here, since
+    the decision only depends on *action* itself). Returning
+    ``sqlite3.SQLITE_DENY`` makes SQLite raise before the statement runs;
+    returning ``sqlite3.SQLITE_OK`` lets every read-only statement through
+    unchanged.
+    """
     if action in _DENIED_ACTIONS:
         return sqlite3.SQLITE_DENY
     return sqlite3.SQLITE_OK
@@ -129,6 +155,13 @@ class ReadOnlyDatabase(Database):
 
 
 def _to_utc(ts: "str | None") -> "datetime | None":
+    """Parse *ts* (any ISO-8601-ish string) to a tz-aware UTC ``datetime``.
+
+    Naive input is assumed to already be UTC (matches the convention every
+    ``ts``/``poll_ts``/``obs_time`` column in this repo uses). Returns
+    ``None`` for an empty/unparseable string -- never raises, so callers can
+    treat a bad timestamp as "no signal" rather than a crash.
+    """
     if not ts:
         return None
     try:

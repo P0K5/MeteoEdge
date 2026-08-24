@@ -1298,6 +1298,45 @@ Extra arguments are forwarded to the diagnostic, so `--since 2026-07-24` re-read
 window. Without `--since` it defaults to `M3_CLEAN_DATA_CLOCK_START` — see `docs/REMEDIATION_PLAN.md`,
 M3 section.
 
+### EMOS-Shadow-vs-Market Skill Test (issue #1041)
+
+```bash
+python -m src.scripts.emos_shadow_vs_market_report --since 2026-08-06
+```
+
+**Read-only, manually invoked only — not wired into cron/CI/the bot's runtime.** Opens
+`data/meteoedge.db` through a read-only connection (`mode=ro` plus a write-denying SQLite
+authorizer, `src.scripts.emos_shadow_reconstruction.ReadOnlyDatabase`) and is safe to run
+alongside the live bot at any time, including during an active M3 clean-data collection window —
+it cannot affect the M3 gate.
+
+**What it answers.** M3 (`bss_market_vs_model_report.py --population all-bracket`) scores only
+the legacy served model (fixed sigma=2.0, `p_yes_raw`); EMOS is 100% shadow, so nothing it
+computes has ever reached `bracket_evals` and a negative M3 verdict says nothing about EMOS one
+way or the other. This script reconstructs the probability EMOS shadow's *current* coefficients
+would have assigned to every bracket already in the M3 window (calling `apply_emos`,
+`resolve_sigma_raw`, and `true_probability_yes` directly rather than re-deriving their math) and
+scores it against the market with the exact same methodology M3 uses — imported from
+`bss_market_vs_model_report.py`, which this script does not modify.
+
+**Output:** `backtest_results/emos_shadow_vs_market_<date>.md` — never
+`bss_market_vs_model_pass1_*`/`pass2_*`, which are the actual M3 gate artifacts.
+
+**Read every report with these two caveats** (also rendered into the report itself, always):
+
+1. Every city is at roughly 28 of the 60 `EMOS_MIN_SAMPLES_PROMOTION` CRPS-logged shadow days
+   required for promotion in this window — this scores an undertrained model. Treat any BSS the
+   same way Pass 1 is treated: directional, not a verdict, in either direction.
+2. The `sigma_source='ensemble'` coefficients used here were fit against rows that were actually
+   scored with fixed sigma=2.0 (`ensemble_sigma_f` was never populated in this window), so this
+   result reflects EMOS's `(a, b)` mu-correction only, not the sharper-sigma model issues #885/#893
+   are meant to eventually produce.
+
+`--since` defaults to `2026-08-06`, the same window M3 uses, for direct comparability of the two
+BSS numbers; pass a different date to re-window. Scoped to same-day, high-direction rows only —
+see `src.scripts.emos_shadow_reconstruction.reconstruct_bracket_row`'s docstring for what is out
+of scope (next-day and low-direction rows) and why.
+
 ---
 
 ## Troubleshooting

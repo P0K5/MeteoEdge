@@ -10,12 +10,23 @@ outcome resolution, BSS math -- all imported from ``bss_market_vs_model_report``
 UNCHANGED, never re-derived) against a RECONSTRUCTED EMOS-shadow probability
 instead of the legacy ``p_yes_raw`` (``src.scripts.emos_shadow_reconstruction``).
 
+**This module does not modify ``bss_market_vs_model_report.py``; it imports
+it.** That module is not part of this diff at all -- every name this file
+uses from it (``apply_exclusions``, ``dedupe_one_per_bracket_day``,
+``filter_rows_since``, ``resolve_candidate_outcomes``, ``compute_bss``,
+``market_p_yes``, ``build_reliability``/``format_reliability``,
+``sharpness_histogram``/``format_sharpness``, ``verdict_label``,
+``load_bracket_eval_rows``, ``DEFAULT_DB_PATH``) is a plain import, and its
+default CLI invocation (``python -m src.scripts.bss_market_vs_model_report``,
+no flags) is therefore byte-for-byte unaffected by this file's existence --
+see ``test_emos_shadow_vs_market_report.py::TestDoesNotAffectBssMarketVsModelReport``
+for the standing regression check.
+
 **This is a distinct, parallel experiment, not part of M3.** It must not
 touch, slow, or risk the live M3 clean-data collection window in any way:
 
-- It is a standalone module. ``bss_market_vs_model_report.py`` is imported
-  from, never modified -- its default CLI invocation is byte-for-byte
-  unaffected by this file's existence.
+- It is a standalone module (see above -- ``bss_market_vs_model_report.py``
+  is imported from, never modified).
 - Every DB access goes through ``ReadOnlyDatabase``
   (``src.scripts.emos_shadow_reconstruction``), a read-only connection with a
   write-denying SQLite authorizer.
@@ -368,6 +379,16 @@ def run_report(
 
 
 def main(argv: "list[str] | None" = None) -> int:
+    """CLI entry point: parse args and call ``run_report``.
+
+    ``python -m src.scripts.emos_shadow_vs_market_report [--since YYYY-MM-DD]
+    [--bracket-evals PATH] [--db PATH] [--out DIR] [--run-date YYYY-MM-DD]
+    [--no-gamma] [--no-network]``. See each ``--help`` string below for the
+    per-flag contract; ``--since`` defaults to ``DEFAULT_SINCE`` (2026-08-06,
+    M3's window). Returns the process exit code (0 always -- see
+    ``run_report``'s self-gating docstring for why a "nothing to score" run
+    is not an error).
+    """
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--bracket-evals", type=Path, default=None,
                     help="Override the bracket_evals JSONL path")
