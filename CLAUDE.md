@@ -27,7 +27,7 @@ from `.claude/model-config.env`.
 > the **orchestrator** — the root session launched with
 > `claude --system-prompt "$(cat agents/pm.md)"` — and is never spawned as a
 > subagent, so it intentionally stays in the legacy `agents/` directory beside
-> `reviewer_prompt_glm52.md` (a CI-consumed prompt, likewise not a subagent).
+> `reviewer_prompt_deepseek.md` (a CI-consumed prompt, likewise not a subagent).
 > This split is by design, not drift.
 
 Shared instruction fragments (single source of truth — never re-inline them):
@@ -111,11 +111,11 @@ definition, the instruction fragments, and skills.
    transition skipped, every transition gets an issue comment.
 3. Every PR links its issues with `Closes #N` and describes what/why/how-to-test.
 4. No PR is approved or merged unless `CI / lint`, `CI / test`, and
-   `AI / NVIDIA NIM review` are all green on the head commit; no direct
+   `AI / DeepSeek review` are all green on the head commit; no direct
    pushes to master — ever.
 5. Frontend PRs require both Tech Lead PM and Designer approval.
 
-AI reviewer model: GLM-5.2 via NVIDIA NIM. Prompt: `agents/reviewer_prompt_glm52.md`.
+AI reviewer model: DeepSeek. Prompt: `agents/reviewer_prompt_deepseek.md`.
 
 ## graphify
 

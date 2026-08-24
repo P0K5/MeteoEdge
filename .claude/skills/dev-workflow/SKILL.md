@@ -58,7 +58,7 @@ templates: invoke the **board-status** skill. Full protocol:
 12. **Respond to review** — if changes are requested: move the issue back to
     In progress with an "Addressing review feedback: [summary]" comment, fix,
     then back to In review with "Feedback addressed, re-requesting review".
-    When fixing blocking items, read the `AI / NVIDIA NIM review` PR comment
+    When fixing blocking items, read the `AI / DeepSeek review` PR comment
     first and use its checklist as your task list.
 
 ## Pre-review checklist
