@@ -57,7 +57,7 @@ templates, invoke the **board-status** skill.
 
 A PR may NEVER be approved or merged unless ALL of the following are true:
 
-1. **All CI checks pass** — `CI / lint`, `CI / test`, and `AI / NVIDIA NIM review`
+1. **All CI checks pass** — `CI / lint`, `CI / test`, and `AI / DeepSeek review`
    must show green on the PR's **head commit**. Verify via
    `mcp__github__actions_list` (or equivalent) before approving.
 2. **No direct pushes to master** — every change, including one-line hotfixes,

@@ -565,8 +565,8 @@
     "semantic_hash": ""
   },
   "CLAUDE.md": {
-    "mtime": 1787517853.1545405,
-    "ast_hash": "5d448ebd48550889be44f2a7545256d2",
+    "mtime": 1787556735.0177064,
+    "ast_hash": "5f4edd9ed2d6777125f9d76780b34be5",
     "semantic_hash": ""
   },
   "README.md": {
@@ -590,8 +590,8 @@
     "semantic_hash": ""
   },
   "docs/OPERATIONS.md": {
-    "mtime": 1787517853.205755,
-    "ast_hash": "f5906f432b3b0ecb566245f3eb8b4a4e",
+    "mtime": 1787556735.020707,
+    "ast_hash": "b21c27b07fc61425f20db6b8bbe46a72",
     "semantic_hash": ""
   },
   "docs/README.md": {
@@ -650,8 +650,8 @@
     "semantic_hash": ""
   },
   ".github/workflows/graphify-update.yml": {
-    "mtime": 1787517853.1471415,
-    "ast_hash": "daaafc9f1a6127771b7417be5dfa159d",
+    "mtime": 1787556735.0167005,
+    "ast_hash": "34213efba922e04b7e8f2644344ba336",
     "semantic_hash": ""
   },
   "src/tests/test_station_side_overrides.py": {
@@ -1260,8 +1260,8 @@
     "semantic_hash": ""
   },
   "scripts/ai_reviewer.py": {
-    "mtime": 1787517853.30765,
-    "ast_hash": "4ab7269c2fa4f438cfbadf1bdef1b180",
+    "mtime": 1787556735.0950396,
+    "ast_hash": "8597dbc4fa426fc8ef7b745bc11f8119",
     "semantic_hash": ""
   },
   "src/scripts/calibration_report.py": {
@@ -1295,13 +1295,8 @@
     "semantic_hash": ""
   },
   ".github/workflows/ai-review.yml": {
-    "mtime": 1787517853.1461334,
-    "ast_hash": "f675a41ff818eb044f7e390f4d838598",
-    "semantic_hash": ""
-  },
-  "agents/reviewer_prompt_glm52.md": {
-    "mtime": 1787517853.161058,
-    "ast_hash": "0e5786b58ae250cc0318b404121039a5",
+    "mtime": 1787556735.015197,
+    "ast_hash": "68bd02e7aeb3bc58d480486fc5c0d8d1",
     "semantic_hash": ""
   },
   "backtest_results/prob_cap_shadow_2026-07-10.md": {
@@ -1375,8 +1370,8 @@
     "semantic_hash": ""
   },
   "scripts/reflect_triage.py": {
-    "mtime": 1787517853.3413806,
-    "ast_hash": "cbb5ad17045071a7c3d4ab4689bdc550",
+    "mtime": 1787556735.0966759,
+    "ast_hash": "e8758f025d1629900f1ec5ed6fc19586",
     "semantic_hash": ""
   },
   "scripts/reflection_metrics.py": {
@@ -1485,23 +1480,23 @@
     "semantic_hash": ""
   },
   ".claude/agents/junior-dev.md": {
-    "mtime": 1787517853.1225607,
-    "ast_hash": "e03302c42727a3bc3504fdf46b53fafa",
+    "mtime": 1787556735.0061796,
+    "ast_hash": "0f1d5946618e89224bef26d5af41a446",
     "semantic_hash": ""
   },
   ".claude/agents/mid-dev.md": {
-    "mtime": 1787517853.123562,
-    "ast_hash": "47cb2283813912935f439b908611c661",
+    "mtime": 1787556735.0071907,
+    "ast_hash": "9a18a97f3c9c73b073ca17e4c6f71ec4",
     "semantic_hash": ""
   },
   ".claude/instructions/governance.md": {
-    "mtime": 1787517853.1270785,
-    "ast_hash": "47b61783a9183e65123ecae1f8eeb3c5",
+    "mtime": 1787556735.009197,
+    "ast_hash": "800fdc845c0c34eae08d79c5c02674cb",
     "semantic_hash": ""
   },
   ".claude/instructions/graphify.md": {
-    "mtime": 1787517853.1280794,
-    "ast_hash": "73db9a3c8f34ccbea7b31b53716402c4",
+    "mtime": 1787556735.0101953,
+    "ast_hash": "57e90fa9a428f0287dc60ba2bed37afe",
     "semantic_hash": ""
   },
   ".claude/skills/board-status/SKILL.md": {
@@ -1520,18 +1515,18 @@
     "semantic_hash": ""
   },
   ".claude/skills/dev-workflow/SKILL.md": {
-    "mtime": 1787517853.1361046,
-    "ast_hash": "e6e2c040edce54f48c5d586782f8df13",
+    "mtime": 1787556735.0121958,
+    "ast_hash": "05d19039dc7f56221268c598ebe4a33d",
     "semantic_hash": ""
   },
   ".claude/skills/pr-review/SKILL.md": {
-    "mtime": 1787517853.1391113,
-    "ast_hash": "4a2a51ec5d0eea3ef8a9cbf5ce992024",
+    "mtime": 1787556735.013196,
+    "ast_hash": "3e4a699e7436ed5c5580b6021138a9ed",
     "semantic_hash": ""
   },
   ".claude/skills/reflect/SKILL.md": {
-    "mtime": 1787517853.1411142,
-    "ast_hash": "f5e855f06c6c7c021aa179ea00c05d58",
+    "mtime": 1787556735.0141945,
+    "ast_hash": "696b8b3619d60fc684cf8bd028415892",
     "semantic_hash": ""
   },
   "agents/pm.md": {
@@ -1550,8 +1545,8 @@
     "semantic_hash": ""
   },
   "docs/REFLECTION.md": {
-    "mtime": 1787517853.2087603,
-    "ast_hash": "ee45c9b664b0e8005f63ed6aba6930f9",
+    "mtime": 1787556735.0217087,
+    "ast_hash": "3795582d62f2d4893274aa5f16bfdd2c",
     "semantic_hash": ""
   },
   "docs/design/edge-tab-bracket-decisions.md": {
@@ -1740,8 +1735,8 @@
     "semantic_hash": ""
   },
   "src/tests/test_ai_reviewer.py": {
-    "mtime": 1787517853.6437528,
-    "ast_hash": "8df9f7967d64480bbf1cd0dbbb50fb33",
+    "mtime": 1787556735.0976844,
+    "ast_hash": "dbc7339e9b70e95ba9b179a4a5b44883",
     "semantic_hash": ""
   },
   "src/tests/test_audit_multi_fill_groups.py": {
@@ -1837,6 +1832,11 @@
   "src/tests/test_emos_shadow_vs_market_report.py": {
     "mtime": 1787518322.5468628,
     "ast_hash": "849b47bd9cadc867e8b410af00c11394",
+    "semantic_hash": ""
+  },
+  "agents/reviewer_prompt_deepseek.md": {
+    "mtime": 1787556735.0177064,
+    "ast_hash": "53684c482c206db86412c91e68a2352d",
     "semantic_hash": ""
   }
 }

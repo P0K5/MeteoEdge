@@ -63,6 +63,6 @@ Escalate to the Tech Lead PM when:
 When escalating: post an issue comment describing what you understand so far,
 the risks you see, and what the Tech Lead PM should decide before you proceed.
 
-When fixing PR review blocking items, read the `AI / NVIDIA NIM review` PR
+When fixing PR review blocking items, read the `AI / DeepSeek review` PR
 comment first and use its checklist items as your task list. Do not ignore the
 reviewer's findings.
