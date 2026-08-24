@@ -2388,21 +2388,23 @@ For issues beyond this runbook, escalate to:
 
 ## AI PR Review
 
-`AI / NVIDIA NIM review` (`scripts/ai_reviewer.py`, workflow `.github/workflows/ai-review.yml`) is a required check on every PR. It builds a review packet (diff, changed files, graphify context, linked-issue acceptance criteria, CLAUDE.md policy summary) and sends it to NVIDIA NIM (`z-ai/glm-5.2`) for a `PASS`/`BLOCK` verdict, posted as both a Check Run and a PR comment.
+`AI / DeepSeek review` (`scripts/ai_reviewer.py`, workflow `.github/workflows/ai-review.yml`) is a required check on every PR. It builds a review packet (diff, changed files, graphify context, linked-issue acceptance criteria, CLAUDE.md policy summary) and sends it to DeepSeek (`deepseek-chat` by default) for a `PASS`/`BLOCK` verdict, posted as both a Check Run and a PR comment.
 
-### Transient-failure handling (issue #960)
+Previously ran on NVIDIA NIM (`z-ai/glm-5.2`); switched to DeepSeek after NIM's endpoint proved unreliable under load and the EOL'd model had no working replacement on that backend (#1037).
 
-`integrate.api.nvidia.com` intermittently times out or returns 502/503/504 — a known, recurring pattern on NVIDIA's developer forums, not specific to this repo. `call_nim()` retries up to `NIM_MAX_ATTEMPTS` (3) times with backoff (10s, 30s) on:
+### Transient-failure handling, and fail-closed (issues #960, #1037)
+
+`call_deepseek()` retries up to `DEEPSEEK_MAX_ATTEMPTS` (3) times with backoff (10s, 30s) on:
 
 - client-side timeouts (connect 15s / read 150s), and
-- HTTP 502/503/504 gateway responses.
+- HTTP 429/500/502/503/504 gateway/rate-limit responses.
 
-If every attempt fails, the reviewer **skips gracefully**: it creates a **passing** Check Run with a comment explaining the skip, instead of blocking the PR on an NVIDIA-side outage. A 503 response whose body explicitly says `DEGRADED` is treated as a known backend state and skips immediately, with no retry.
+If every attempt fails, the reviewer **fails closed**: it creates a **failing** Check Run (`AI Review: UNAVAILABLE`) explaining the backend could not be reached, and exits non-zero. A required review that could not run must not report success — an earlier version of this reviewer skipped-to-PASS on repeated failure, which is exactly the failure mode #1037 documents (an EOL/unreachable model producing a silent green check). A 5xx response whose body explicitly says `DEGRADED` is treated as a known backend state and fails immediately, with no retry.
 
 ### Troubleshooting
 
-- **Check run shows `AI Review: ERROR` (failure)** — the reviewer hit a non-retryable error (missing env var, bad GitHub token, 4xx from NIM other than DEGRADED, etc.). Check the workflow run logs for `AI reviewer failed: ...`.
-- **Check run passes with a "⚠️ AI review skipped" comment** — NIM was unreachable (timeout) or returned repeated gateway errors across all retry attempts. This is expected during an NVIDIA-side outage and is not a signal about the PR's code quality; the review will run normally next time the endpoint responds.
+- **Check run shows `AI Review: ERROR` (failure)** — the reviewer hit a non-retryable error (missing env var, bad GitHub token, 4xx from DeepSeek other than DEGRADED, etc.). Check the workflow run logs for `AI reviewer failed: ...`.
+- **Check run shows `AI Review: UNAVAILABLE` (failure)** — DeepSeek was unreachable (timeout) or returned repeated gateway/rate-limit errors across all retry attempts. This blocks the PR until the endpoint responds cleanly; it is not a signal about the PR's code quality, but it is a real block — do not merge past it.
 
 ## Graphify Knowledge Graph
 
@@ -2413,33 +2415,28 @@ MeteoEdge uses [Graphify](https://pypi.org/project/graphifyy/) to maintain a kno
 | Job | Trigger | LLM dependency |
 |---|---|---|
 | `incremental-update` | Every push to `master` | None (AST-only, free) |
-| `full-rebuild` | Weekly Monday 03:00 UTC or manual dispatch | NVIDIA NIM GLM-5.2 |
+| `full-rebuild` | Weekly Monday 03:00 UTC or manual dispatch | DeepSeek |
 
-### NVIDIA NIM backend (full-rebuild)
+### DeepSeek backend (full-rebuild)
 
-The `full-rebuild` job uses the OpenAI-compatible NVIDIA NIM endpoint:
+The `full-rebuild` job uses graphify's native `deepseek` backend (previously NVIDIA NIM — switched per #1037):
 
 | Variable | Value |
 |---|---|
-| `NVIDIA_NIM_API_KEY` | Secret — set in repo Settings → Secrets → Actions |
-| `GRAPHIFY_LLM_BASE_URL` | `https://integrate.api.nvidia.com/v1` |
-| `GRAPHIFY_LLM_MODEL` | `z-ai/glm-5.2` |
+| `DEEPSEEK_API_KEY` | Secret — set in repo Settings → Secrets → Actions |
 
-The job passes `--backend openai` to `graphify extract` and `graphify cluster-only`; the env vars above configure the endpoint and model.
+Model and base URL default to `deepseek-v4-flash` / `https://api.deepseek.com` inside graphify; override with `GRAPHIFY_DEEPSEEK_MODEL` if needed. The job passes `--backend deepseek` to `graphify extract` and `graphify cluster-only`.
 
 ### Manual full rebuild
 
 ```bash
 pip install graphifyy
-export NVIDIA_NIM_API_KEY=<your-key>
-export GRAPHIFY_LLM_BASE_URL=https://integrate.api.nvidia.com/v1
-export GRAPHIFY_LLM_MODEL=z-ai/glm-5.2
-graphify extract . --backend openai --max-concurrency 4 --token-budget 32000 --no-cluster
-graphify cluster-only . --backend openai
+export DEEPSEEK_API_KEY=<your-key>
+graphify extract . --backend deepseek --max-concurrency 4 --token-budget 32000 --no-cluster
+graphify cluster-only . --backend deepseek
 ```
 
 ### Troubleshooting
 
-- **`graphify extract` fails with 404:** Verify `GRAPHIFY_LLM_MODEL` is `z-ai/glm-5.2` (not `glm-5.2` or `nvidia/glm-5.2`).
-- **`NVIDIA_NIM_API_KEY` not set:** The full-rebuild job will fail. Add the secret in repo Settings → Secrets → Actions.
+- **`DEEPSEEK_API_KEY` not set:** The full-rebuild job will fail. Add the secret in repo Settings → Secrets → Actions.
 - **Incremental update fails:** This job has no LLM dependency; check for git push permission issues.

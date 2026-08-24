@@ -33,7 +33,7 @@ The skill drives four stages, all local-first:
 2. **Measure** — `scripts/reflection_metrics.py` logs tokens-per-completed-issue
    to `docs/reflection/metrics.jsonl` (committed; this is the convergence metric).
 3. **Triage (cost guard)** — `scripts/reflect_triage.py` runs the cheap first
-   pass on NVIDIA NIM GLM-5.2 (reuses the `NVIDIA_NIM_API_KEY` already wired
+   pass on DeepSeek (reuses the `DEEPSEEK_API_KEY` already wired
    into CI). Claude is used only to turn confirmed findings into diffs.
 4. **Propose** — one PR on branch `reflect/<date>` with the proposal JSON
    (`docs/reflection/proposals/<date>.json`), the metrics entry, and file
@@ -49,7 +49,7 @@ Reject any proposal that fails these gates:
    junior-dev spawn"). Vague benefit claims don't count.
 3. **Surface:** touches only the allowed optimization surface. Changes to the
    reflect skill itself, the sanitizer/triage/metrics scripts, or
-   `agents/reviewer_prompt_glm52.md` are forbidden (no self-modification of
+   `agents/reviewer_prompt_deepseek.md` are forbidden (no self-modification of
    the loop).
 4. **No behavior change:** scope/authority boundaries of agents must carry
    over verbatim — reflection optimizes wording and structure, not permissions.

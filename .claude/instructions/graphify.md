@@ -29,5 +29,5 @@ At the start of any session:
   graph is missing, or a major architecture/doc change requires a fresh
   semantic rebuild.
 
-The weekly full-rebuild CI job uses NVIDIA NIM (GLM-5.2) via
-`NVIDIA_NIM_API_KEY` for semantic extraction and community clustering.
+The weekly full-rebuild CI job uses DeepSeek (`--backend deepseek`) via
+`DEEPSEEK_API_KEY` for semantic extraction and community clustering.

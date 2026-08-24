@@ -1,16 +1,18 @@
 #!/usr/bin/env python3
 """
-AI Code Reviewer — context pipeline + NVIDIA NIM call (GLM-5.2)
+AI Code Reviewer — context pipeline + DeepSeek call
 
 Workflow env vars required:
-  NVIDIA_NIM_API_KEY    — NIM API key
-  NVIDIA_NIM_BASE_URL   — e.g. https://integrate.api.nvidia.com/v1
-  NVIDIA_NIM_MODEL      — e.g. glm-5.2
+  DEEPSEEK_API_KEY      — DeepSeek API key
   GITHUB_TOKEN          — GitHub token for API calls
-  PR_NUMBER             — PR number being reviewed
-  PR_HEAD_SHA           — head commit SHA
-  REPO_OWNER            — repo owner
-  REPO_NAME             — repo name
+  PR_NUMBER              — PR number being reviewed
+  PR_HEAD_SHA            — head commit SHA
+  REPO_OWNER             — repo owner
+  REPO_NAME              — repo name
+
+Optional:
+  DEEPSEEK_BASE_URL     — default https://api.deepseek.com
+  DEEPSEEK_MODEL        — default deepseek-chat
 """
 import json
 import os
@@ -26,9 +28,7 @@ import requests
 # ---------------------------------------------------------------------------
 
 REQUIRED_ENV = [
-    "NVIDIA_NIM_API_KEY",
-    "NVIDIA_NIM_BASE_URL",
-    "NVIDIA_NIM_MODEL",
+    "DEEPSEEK_API_KEY",
     "GITHUB_TOKEN",
     "PR_NUMBER",
     "PR_HEAD_SHA",
@@ -36,28 +36,31 @@ REQUIRED_ENV = [
     "REPO_NAME",
 ]
 
+DEEPSEEK_DEFAULT_BASE_URL = "https://api.deepseek.com"
+DEEPSEEK_DEFAULT_MODEL = "deepseek-chat"
+
 GITHUB_API = "https://api.github.com"
 DIFF_MAX_CHARS = 4000
 SUMMARY_MAX_CHARS = 65535
 
 
-class NimDegradedError(RuntimeError):
-    """Raised when the NIM backend reports the model function as DEGRADED."""
+class DeepSeekDegradedError(RuntimeError):
+    """Raised when the DeepSeek backend reports the model function as DEGRADED."""
 
 
-class NimTimeoutError(RuntimeError):
-    """Raised when the NIM backend keeps timing out after all retries."""
+class DeepSeekTimeoutError(RuntimeError):
+    """Raised when the DeepSeek backend keeps timing out after all retries."""
 
 
-NIM_CONNECT_TIMEOUT = 15
-NIM_READ_TIMEOUT = 150
-NIM_MAX_ATTEMPTS = 3
-NIM_RETRY_BACKOFF_SECONDS = (10, 30)
-# 502/503/504 are the gateway-level errors NVIDIA's own forums report most
-# often for this endpoint; retry them the same way as a client-side timeout
-# rather than hard-failing on the first bad gateway response. A 503 body
-# that explicitly says DEGRADED is handled separately below (no retry).
-NIM_RETRYABLE_STATUS_CODES = (502, 503, 504)
+DEEPSEEK_CONNECT_TIMEOUT = 15
+DEEPSEEK_READ_TIMEOUT = 150
+DEEPSEEK_MAX_ATTEMPTS = 3
+DEEPSEEK_RETRY_BACKOFF_SECONDS = (10, 30)
+# 429/500/502/503/504 are all treated as transient gateway/rate-limit noise
+# and retried the same way as a client-side timeout, rather than hard-failing
+# on the first bad response. A 5xx body that explicitly says DEGRADED is
+# handled separately below (no retry — the model itself is reporting down).
+DEEPSEEK_RETRYABLE_STATUS_CODES = (429, 500, 502, 503, 504)
 
 
 def _env(key: str) -> str:
@@ -330,10 +333,10 @@ def build_review_packet(
 
 
 # ---------------------------------------------------------------------------
-# NVIDIA NIM call
+# DeepSeek call
 # ---------------------------------------------------------------------------
 
-def call_nim(
+def call_deepseek(
     base_url: str,
     api_key: str,
     model: str,
@@ -355,20 +358,20 @@ def call_nim(
         "Content-Type": "application/json",
     }
 
-    for attempt in range(1, NIM_MAX_ATTEMPTS + 1):
-        is_last_attempt = attempt == NIM_MAX_ATTEMPTS
+    for attempt in range(1, DEEPSEEK_MAX_ATTEMPTS + 1):
+        is_last_attempt = attempt == DEEPSEEK_MAX_ATTEMPTS
 
         try:
             resp = requests.post(
                 url,
                 json=payload,
                 headers=headers,
-                timeout=(NIM_CONNECT_TIMEOUT, NIM_READ_TIMEOUT),
+                timeout=(DEEPSEEK_CONNECT_TIMEOUT, DEEPSEEK_READ_TIMEOUT),
             )
         except requests.exceptions.Timeout as exc:
             if is_last_attempt:
-                raise NimTimeoutError(
-                    f"NIM model {model} timed out after {NIM_MAX_ATTEMPTS} attempts: {exc}"
+                raise DeepSeekTimeoutError(
+                    f"DeepSeek model {model} timed out after {DEEPSEEK_MAX_ATTEMPTS} attempts: {exc}"
                 ) from exc
             _wait_before_retry(attempt, "timed out")
             continue
@@ -378,29 +381,30 @@ def call_nim(
             return data["choices"][0]["message"]["content"]
 
         body = resp.text[:2000]
-        # Surface degraded/unavailable NIM backend as a distinct exception so
-        # callers can decide to skip gracefully instead of hard-failing CI.
+        # Surface degraded/unavailable backend as a distinct exception so
+        # callers can fail closed with a specific reason instead of a bare
+        # RuntimeError.
         if resp.status_code in (400, 503) and "DEGRADED" in body:
-            raise NimDegradedError(f"NIM model {model} is DEGRADED: {body}")
+            raise DeepSeekDegradedError(f"DeepSeek model {model} is DEGRADED: {body}")
 
-        if resp.status_code in NIM_RETRYABLE_STATUS_CODES:
+        if resp.status_code in DEEPSEEK_RETRYABLE_STATUS_CODES:
             if is_last_attempt:
-                raise NimTimeoutError(
-                    f"NIM model {model} kept returning HTTP {resp.status_code} "
-                    f"after {NIM_MAX_ATTEMPTS} attempts: {body}"
+                raise DeepSeekTimeoutError(
+                    f"DeepSeek model {model} kept returning HTTP {resp.status_code} "
+                    f"after {DEEPSEEK_MAX_ATTEMPTS} attempts: {body}"
                 )
             _wait_before_retry(attempt, f"returned HTTP {resp.status_code}")
             continue
 
-        raise RuntimeError(f"NIM API {resp.status_code} {resp.reason}: {body}")
+        raise RuntimeError(f"DeepSeek API {resp.status_code} {resp.reason}: {body}")
 
 
 def _wait_before_retry(attempt: int, reason: str) -> None:
-    backoff = NIM_RETRY_BACKOFF_SECONDS[
-        min(attempt - 1, len(NIM_RETRY_BACKOFF_SECONDS) - 1)
+    backoff = DEEPSEEK_RETRY_BACKOFF_SECONDS[
+        min(attempt - 1, len(DEEPSEEK_RETRY_BACKOFF_SECONDS) - 1)
     ]
     print(
-        f"[ai_reviewer] NIM call {reason} (attempt {attempt}/{NIM_MAX_ATTEMPTS}), "
+        f"[ai_reviewer] DeepSeek call {reason} (attempt {attempt}/{DEEPSEEK_MAX_ATTEMPTS}), "
         f"retrying in {backoff}s...",
         file=sys.stderr,
     )
@@ -408,7 +412,7 @@ def _wait_before_retry(attempt: int, reason: str) -> None:
 
 
 def parse_verdict(response_text: str) -> str:
-    """Return 'PASS' or 'BLOCK' from the NIM response."""
+    """Return 'PASS' or 'BLOCK' from the DeepSeek response."""
     upper = response_text.upper()
     if "VERDICT: PASS" in upper:
         return "PASS"
@@ -435,7 +439,7 @@ def create_check_run(
     summary = review_text[:SUMMARY_MAX_CHARS]
 
     payload = {
-        "name": "AI / NVIDIA NIM review",
+        "name": "AI / DeepSeek review",
         "head_sha": head_sha,
         "status": "completed",
         "conclusion": conclusion,
@@ -462,7 +466,7 @@ def post_pr_comment(
     token: str,
     review_text: str,
 ) -> dict:
-    body = f"## AI Code Review (GLM-5.2)\n\n{review_text}"
+    body = f"## AI Code Review (DeepSeek)\n\n{review_text}"
     payload = {"body": body}
     url = f"{GITHUB_API}/repos/{owner}/{repo}/issues/{pr_number}/comments"
     headers = {
@@ -484,7 +488,7 @@ def create_failure_check_run(
 ) -> None:
     """Best-effort: create a failing check run with the error message."""
     payload = {
-        "name": "AI / NVIDIA NIM review",
+        "name": "AI / DeepSeek review",
         "head_sha": head_sha,
         "status": "completed",
         "conclusion": "failure",
@@ -517,9 +521,9 @@ def main() -> None:
         print(f"ERROR: Missing required environment variables: {', '.join(missing)}", file=sys.stderr)
         sys.exit(1)
 
-    api_key = _env("NVIDIA_NIM_API_KEY")
-    nim_base_url = _env("NVIDIA_NIM_BASE_URL")
-    nim_model = _env("NVIDIA_NIM_MODEL")
+    api_key = _env("DEEPSEEK_API_KEY")
+    deepseek_base_url = os.environ.get("DEEPSEEK_BASE_URL") or DEEPSEEK_DEFAULT_BASE_URL
+    deepseek_model = os.environ.get("DEEPSEEK_MODEL") or DEEPSEEK_DEFAULT_MODEL
     github_token = _env("GITHUB_TOKEN")
     pr_number = _env("PR_NUMBER")
     pr_head_sha = _env("PR_HEAD_SHA")
@@ -532,8 +536,8 @@ def main() -> None:
     try:
         _run(
             api_key=api_key,
-            nim_base_url=nim_base_url,
-            nim_model=nim_model,
+            deepseek_base_url=deepseek_base_url,
+            deepseek_model=deepseek_model,
             github_token=github_token,
             pr_number=pr_number,
             pr_head_sha=pr_head_sha,
@@ -544,7 +548,6 @@ def main() -> None:
     except Exception as exc:
         # Mask API key from error output
         error_msg = str(exc)
-        # Replace any accidental key leak pattern (first 8 chars of the key)
         safe_error = f"AI reviewer failed: {error_msg}"
         print(safe_error, file=sys.stderr)
         create_failure_check_run(
@@ -560,8 +563,8 @@ def main() -> None:
 def _run(
     *,
     api_key: str,
-    nim_base_url: str,
-    nim_model: str,
+    deepseek_base_url: str,
+    deepseek_model: str,
     github_token: str,
     pr_number: str,
     pr_head_sha: str,
@@ -610,53 +613,33 @@ def _run(
     )
 
     # 6. Load system prompt
-    system_prompt_path = repo_root / "agents" / "reviewer_prompt_glm52.md"
+    system_prompt_path = repo_root / "agents" / "reviewer_prompt_deepseek.md"
     if not system_prompt_path.exists():
         raise FileNotFoundError(f"System prompt not found: {system_prompt_path}")
     system_prompt = system_prompt_path.read_text()
 
-    # 7. Call NVIDIA NIM
-    print(f"[ai_reviewer] Calling NIM model {nim_model}...")
+    # 7. Call DeepSeek
+    print(f"[ai_reviewer] Calling DeepSeek model {deepseek_model}...")
     try:
-        review_text = call_nim(
-            base_url=nim_base_url,
+        review_text = call_deepseek(
+            base_url=deepseek_base_url,
             api_key=api_key,
-            model=nim_model,
+            model=deepseek_model,
             system_prompt=system_prompt,
             user_content=review_packet,
         )
-    except NimDegradedError as exc:
-        # NIM backend is temporarily degraded — skip the review rather than
-        # blocking all PRs. Create a neutral success check run with a note.
-        print(f"[ai_reviewer] NIM degraded, skipping review: {exc}")
+    except DeepSeekDegradedError as exc:
+        # DeepSeek backend is reporting itself degraded — fail closed rather
+        # than pass automatically. A required review that could not run must
+        # not report success (#1037).
+        print(f"[ai_reviewer] DeepSeek degraded, review did NOT run: {exc}")
         skip_msg = (
-            f"⚠️ AI review skipped — NIM model `{nim_model}` is currently "
-            f"DEGRADED on NVIDIA's infrastructure.\n\n"
-            f"This check passes automatically to avoid blocking PRs during "
-            f"a transient outage. The review will run normally once the "
-            f"model recovers.\n\nError detail: {exc}"
-        )
-        create_check_run(
-            owner=repo_owner,
-            repo=repo_name,
-            head_sha=pr_head_sha,
-            token=github_token,
-            verdict="PASS",
-            review_text=skip_msg,
-        )
-        print("[ai_reviewer] Done — verdict=SKIPPED (NIM degraded)")
-        return
-    except NimTimeoutError as exc:
-        # NIM kept timing out or returning a gateway error (502/503/504)
-        # despite retries — treat as a transient infrastructure issue
-        # rather than blocking the PR indefinitely.
-        print(f"[ai_reviewer] NIM failed repeatedly, skipping review: {exc}")
-        skip_msg = (
-            f"⚠️ AI review skipped — NIM model `{nim_model}` did not return a "
-            f"successful response after {NIM_MAX_ATTEMPTS} attempts.\n\n"
-            f"This check passes automatically to avoid blocking PRs during "
-            f"a transient network/gateway issue. The review will run "
-            f"normally next time the endpoint responds cleanly.\n\n"
+            f"❌ **The AI review did not run.** DeepSeek model `{deepseek_model}` is "
+            f"reported DEGRADED.\n\n"
+            f"**This is not a verdict.** No code was reviewed. The check "
+            f"fails so the merge gate stays honest.\n\n"
+            f"If the degradation is genuinely transient, re-run this check. "
+            f"If it persists, the model is not usable and must be replaced.\n\n"
             f"Error detail: {exc}"
         )
         create_check_run(
@@ -664,11 +647,33 @@ def _run(
             repo=repo_name,
             head_sha=pr_head_sha,
             token=github_token,
-            verdict="PASS",
+            verdict="UNAVAILABLE",
             review_text=skip_msg,
         )
-        print("[ai_reviewer] Done — verdict=SKIPPED (NIM timeout)")
-        return
+        print("[ai_reviewer] Done — verdict=UNAVAILABLE (DeepSeek degraded)")
+        sys.exit(1)
+    except DeepSeekTimeoutError as exc:
+        # DeepSeek kept timing out or returning a gateway/rate-limit error
+        # despite retries — fail closed, same reasoning as above.
+        print(f"[ai_reviewer] DeepSeek failed repeatedly, review did NOT run: {exc}")
+        skip_msg = (
+            f"❌ **The AI review did not run.** DeepSeek model `{deepseek_model}` did "
+            f"not return a successful response after {DEEPSEEK_MAX_ATTEMPTS} "
+            f"attempts.\n\n"
+            f"**This is not a verdict.** No code was reviewed. The check "
+            f"fails so the merge gate stays honest.\n\n"
+            f"Error detail: {exc}"
+        )
+        create_check_run(
+            owner=repo_owner,
+            repo=repo_name,
+            head_sha=pr_head_sha,
+            token=github_token,
+            verdict="UNAVAILABLE",
+            review_text=skip_msg,
+        )
+        print("[ai_reviewer] Done — verdict=UNAVAILABLE (DeepSeek timeout)")
+        sys.exit(1)
 
     # 8. Parse verdict
     verdict = parse_verdict(review_text)

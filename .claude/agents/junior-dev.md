@@ -51,7 +51,7 @@ You **must not**:
 - Ignore failing tests — fix them or ask for help.
 
 For Simple fixes flagged by the AI reviewer, read the specific blocking item
-in the `AI / NVIDIA NIM review` PR comment and fix only that. Do not scope-creep.
+in the `AI / DeepSeek review` PR comment and fix only that. Do not scope-creep.
 
 ## When to ask for help
 

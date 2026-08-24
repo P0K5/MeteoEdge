@@ -9,9 +9,9 @@ Full governance rules: `.claude/instructions/governance.md`.
 
 ## 1. AI-first triage — always start here
 
-Before any manual analysis, read the latest `AI / NVIDIA NIM review` GitHub
-Check and its PR comment summary (reviewer model: GLM-5.2 via NVIDIA NIM;
-prompt: `agents/reviewer_prompt_glm52.md`).
+Before any manual analysis, read the latest `AI / DeepSeek review` GitHub
+Check and its PR comment summary (reviewer model: DeepSeek;
+prompt: `agents/reviewer_prompt_deepseek.md`).
 
 - **Verdict PASS:** validate the checklist items briefly, then proceed toward approval.
 - **Verdict BLOCK:** read each blocking item and either spawn a mid-dev/junior-dev
@@ -66,7 +66,7 @@ Before posting ANY approval:
 1. Retrieve check runs for the PR's **head SHA** (`mcp__github__actions_list`
    or equivalent).
 2. Every check must be `completed` with `conclusion: success` — including
-   `CI / lint`, `CI / test`, and `AI / NVIDIA NIM review`.
+   `CI / lint`, `CI / test`, and `AI / DeepSeek review`.
 3. `in_progress`/`queued` → wait and re-check. `failure`/`cancelled` → comment
    identifying the failing check, move linked issues back to **In progress**
    (board-status skill), request fixes. Do NOT approve.

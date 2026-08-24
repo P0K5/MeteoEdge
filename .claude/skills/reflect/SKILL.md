@@ -18,7 +18,7 @@ comment: manual/batch, no per-session CI plumbing in v1.)
 - **Optimization surface (only these):** `.claude/agents/*.md`,
   `.claude/skills/*/SKILL.md` (except reflect), `.claude/instructions/*.md`,
   `agents/pm.md`, and the CLAUDE.md spawn/task templates.
-  Never `agents/reviewer_prompt_glm52.md` (CI-owned) or any `src/` code.
+  Never `agents/reviewer_prompt_deepseek.md` (CI-owned) or any `src/` code.
 - **Evidence requirement:** every proposed diff must cite the specific
   transcript file and turn indices that motivated it (e.g. "agent re-queried
   the project ID at turns 4, 17, 31 despite it being in the spawn prompt").
@@ -50,9 +50,9 @@ comment: manual/batch, no per-session CI plumbing in v1.)
    the number moved.
 
 4. **Cost-guard triage (default).** Run the cheap-model pass first —
-   NVIDIA NIM GLM-5.2, already wired into CI, not Claude:
+   DeepSeek, already wired into CI, not Claude:
    ```bash
-   NVIDIA_NIM_API_KEY=... python scripts/reflect_triage.py \
+   DEEPSEEK_API_KEY=... python scripts/reflect_triage.py \
        /tmp/reflect-sanitized/*.jsonl -o /tmp/reflect-findings.json
    ```
    Escalate to Claude (yourself) only to turn confirmed findings into

@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """Cost-guard triage pass for the reflection loop (issue #747).
 
-Sends SANITIZED transcript excerpts to NVIDIA NIM GLM-5.2 (the cheap model
-already wired into CI) to flag candidate inefficiencies. Claude is escalated
-to only afterwards, to turn confirmed findings into well-written diffs — see
+Sends SANITIZED transcript excerpts to DeepSeek (the cheap model already
+wired into CI) to flag candidate inefficiencies. Claude is escalated to only
+afterwards, to turn confirmed findings into well-written diffs — see
 .claude/skills/reflect/SKILL.md.
 
 Env vars (same convention as scripts/ai_reviewer.py):
-  NVIDIA_NIM_API_KEY    — NIM API key (required)
-  NVIDIA_NIM_BASE_URL   — default https://integrate.api.nvidia.com/v1
-  NVIDIA_NIM_MODEL      — default z-ai/glm-5.2
+  DEEPSEEK_API_KEY      — DeepSeek API key (required)
+  DEEPSEEK_BASE_URL     — default https://api.deepseek.com
+  DEEPSEEK_MODEL        — default deepseek-chat
 
 Usage:
   python scripts/reflect_triage.py <sanitized.jsonl> [...] -o findings.json
@@ -46,7 +46,7 @@ flag it, or flag it with confidence "low". Return {"findings": []} if clean.
 MAX_CHUNK_CHARS = 60_000  # keep well inside the context window per call
 
 
-def call_nim(base_url, api_key, model, system_prompt, user_content):
+def call_deepseek(base_url, api_key, model, system_prompt, user_content):
     url = f"{base_url.rstrip('/')}/chat/completions"
     payload = {
         "model": model,
@@ -141,22 +141,21 @@ def main():
                         help="Output findings JSON file")
     args = parser.parse_args()
 
-    api_key = os.environ.get("NVIDIA_NIM_API_KEY")
+    api_key = os.environ.get("DEEPSEEK_API_KEY")
     if not api_key:
-        sys.exit("[triage] ERROR: NVIDIA_NIM_API_KEY not set. The reflection "
+        sys.exit("[triage] ERROR: DEEPSEEK_API_KEY not set. The reflection "
                  "skill may fall back to analyzing directly, but must note "
                  "the cost-guard bypass in the proposal PR.")
-    base_url = os.environ.get("NVIDIA_NIM_BASE_URL",
-                              "https://integrate.api.nvidia.com/v1")
-    model = os.environ.get("NVIDIA_NIM_MODEL", "z-ai/glm-5.2")
+    base_url = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
+    model = os.environ.get("DEEPSEEK_MODEL", "deepseek-chat")
 
     results = []
     for name in args.transcripts:
         path = Path(name)
         print(f"[triage] Analyzing {path.name} with {model}...")
         for start, chunk in chunk_transcript(path):
-            raw = call_nim(base_url, api_key, model, TRIAGE_SYSTEM_PROMPT,
-                           f"Transcript: {path.name}\n\n{chunk}")
+            raw = call_deepseek(base_url, api_key, model, TRIAGE_SYSTEM_PROMPT,
+                                f"Transcript: {path.name}\n\n{chunk}")
             for finding in parse_findings(raw):
                 finding["transcript"] = path.name
                 results.append(finding)
