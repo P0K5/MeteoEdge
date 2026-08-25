@@ -46,6 +46,17 @@ path this module was never asked to reconstruct).
   same quantity ``src.model.intraday_correction.compute_correction`` computes
   as ``corrected_mu_f - deb_mu_f`` (both components, ``delta_f`` and
   ``decay_factor``, are stored columns; this is not a new formula).
+- ``current_high``/``latest_temp`` (issue #1044): reconstructed from
+  ``observations`` when absent from the row -- which is effectively always,
+  since ``bracket_evals`` has never logged either field.
+  ``reconstruct_latest_temp`` takes the nearest ``observations`` row at or
+  before ``poll_ts``; ``reconstruct_current_high`` takes
+  ``MAX(temp_f)`` over the station-LOCAL calendar day, ALSO restricted to
+  ``ts <= poll_ts``. That cutoff is load-bearing, not a nice-to-have: without
+  it ``current_high`` would silently become the day's FINAL settled high
+  (``resolve_bracket_outcomes.compute_observed_highs``'s quantity) instead of
+  "the max observed so far, as of the scan" -- leaking the eventual outcome
+  into the probability being reconstructed.
 - ``obs_bias_offset_f``: NOT reconstructed (bracket_evals never logged it) --
   left ``None``, the "no signal" default, never a guessed value.
 
@@ -70,9 +81,10 @@ from __future__ import annotations
 import logging
 import sqlite3
 import threading
-from datetime import date as _date, datetime, timezone
+from datetime import date as _date, datetime, timedelta, timezone
 from pathlib import Path
 
+import pytz
 from dateutil import parser as dtparse
 
 from src.config import FORECAST_STDDEV_F, MODEL_STATE_ATTRS, STATION_TZ, get_live_config
@@ -296,12 +308,114 @@ def _station_local_now(station: str, poll_ts: str) -> "datetime | None":
     poll_dt = _to_utc(poll_ts)
     if tz_name is None or poll_dt is None:
         return None
-    import pytz
     try:
         tz = pytz.timezone(tz_name)
     except pytz.UnknownTimeZoneError:
         return None
     return poll_dt.astimezone(tz)
+
+
+def reconstruct_latest_temp(db: Database, station: str, poll_ts: str) -> "float | None":
+    """Most recent ``observations.temp_f`` for *station* at or before *poll_ts*.
+
+    Issue #1044: ``bracket_evals`` never logs ``latest_temp`` (0% of real
+    rows carry it), so it must be reconstructed from ``observations`` --
+    the same "nearest row at or before poll_ts" idiom
+    ``reconstruct_intraday_delta`` already uses for ``intraday_corrections``,
+    reused verbatim rather than inventing a second lookup pattern. Returns
+    ``None`` (never a guess) when *poll_ts* is unparseable or no
+    ``observations`` row for *station* exists at or before it.
+    """
+    poll_dt = _to_utc(poll_ts)
+    if poll_dt is None:
+        return None
+    # SQL-side window is a generous pre-filter for query efficiency only --
+    # the authoritative ts<=poll_dt cutoff is enforced below in Python on the
+    # parsed datetime, exactly like reconstruct_intraday_delta.
+    window_from = (poll_dt - timedelta(days=2)).isoformat()
+    window_to = (poll_dt + timedelta(days=1)).isoformat()
+    cur = db._conn.execute(
+        "SELECT ts, temp_f FROM observations WHERE station=? AND ts>=? AND ts<? "
+        "AND temp_f IS NOT NULL ORDER BY ts ASC",
+        (station, window_from, window_to),
+    )
+    best: "tuple[datetime, float] | None" = None
+    for ts_str, temp_f in cur.fetchall():
+        obs_dt = _to_utc(ts_str)
+        if obs_dt is None or obs_dt > poll_dt:
+            continue
+        if best is None or obs_dt > best[0]:
+            best = (obs_dt, temp_f)
+    if best is None:
+        return None
+    return float(best[1])
+
+
+def reconstruct_current_high(
+    db: Database, station: str, date_str: str, poll_ts: str,
+) -> "float | None":
+    """``MAX(observations.temp_f)`` for *station* on its LOCAL calendar day
+    *date_str*, restricted to ``ts <= poll_ts`` (issue #1044).
+
+    This is the causal, "as of the scan" quantity ``WeatherState.
+    current_high_f`` carries live -- strictly less-than-or-equal-to the
+    eventual settled daily high, never equal to it in general. **Do not**
+    reuse or adapt ``resolve_bracket_outcomes.compute_observed_highs`` for
+    this: that function deliberately computes the day's FINAL settled high
+    with no ``poll_ts`` cutoff (it scores outcomes *after* the day is over),
+    and feeding that into a mid-day reconstruction would leak the eventual
+    outcome into the probability being reconstructed -- a silent, plausible-
+    looking wrong number, not a loud failure. This is an independent
+    implementation that adds the cutoff on purpose.
+
+    Local-day grouping uses ``STATION_TZ`` (imported, not a hand-rolled UTC
+    offset) -- same convention ``compute_observed_highs``/
+    ``Database.get_daily_obs_high`` use. Returns ``None`` (never a guess)
+    when the station has no known timezone, *date_str*/*poll_ts* are
+    unparseable, or no qualifying ``observations`` row exists.
+    """
+    if station not in STATION_TZ:
+        return None
+    poll_dt = _to_utc(poll_ts)
+    if poll_dt is None:
+        return None
+    try:
+        target_date = _date.fromisoformat(str(date_str)[:10])
+    except (ValueError, TypeError):
+        return None
+    try:
+        tz = pytz.timezone(STATION_TZ[station])
+    except pytz.UnknownTimeZoneError:
+        return None
+
+    # SQL-side window is a generous pre-filter (station-local day can fall on
+    # either UTC neighbour depending on offset); the authoritative ts<=poll_dt
+    # cutoff and local-day match are both enforced below in Python.
+    window_from = (poll_dt - timedelta(days=2)).isoformat()
+    window_to = (poll_dt + timedelta(days=1)).isoformat()
+    cur = db._conn.execute(
+        "SELECT ts, temp_f FROM observations WHERE station=? AND ts>=? AND ts<? "
+        "AND temp_f IS NOT NULL ORDER BY ts ASC",
+        (station, window_from, window_to),
+    )
+    best: "float | None" = None
+    for ts_str, temp_f in cur.fetchall():
+        obs_dt = _to_utc(ts_str)
+        if obs_dt is None or obs_dt > poll_dt:
+            continue  # causal cutoff -- the load-bearing part of issue #1044
+        try:
+            local_date = obs_dt.astimezone(tz).date()
+        except (OverflowError, ValueError):
+            continue
+        if local_date != target_date:
+            continue
+        try:
+            temp_f = float(temp_f)
+        except (TypeError, ValueError):
+            continue
+        if best is None or temp_f > best:
+            best = temp_f
+    return best
 
 
 def reconstruct_bracket_row(
@@ -318,9 +432,14 @@ def reconstruct_bracket_row(
     - non-"high"-direction rows -- ``true_probability_yes`` is the high-side
       integration; a "low" market scored through it would be scored against
       the wrong physical quantity.
-    - rows missing ``current_high``/``latest_temp``/``station``/``end_date``/
-      ``minutes_to_settlement`` -- required WeatherState/lead inputs
-      ``bracket_evals`` did not carry for this row.
+    - rows missing ``station``/``end_date``/``minutes_to_settlement`` --
+      required WeatherState/lead inputs no fallback can reconstruct.
+    - rows where ``current_high``/``latest_temp`` cannot be reconstructed from
+      ``observations`` (issue #1044 -- see ``reconstruct_current_high``/
+      ``reconstruct_latest_temp``; a row's own ``current_high``/
+      ``latest_temp`` keys are used verbatim when present, since
+      ``bracket_evals`` has never populated them this is effectively always
+      the observations-derived path in practice).
     - rows where ``mu_raw`` cannot be reconstructed (no stack-member forecast
       logged for that station/date in ``model_forecast_log``).
     """
@@ -337,6 +456,7 @@ def reconstruct_bracket_row(
     station = row.get("station")
     end_date = (row.get("end_date") or "")[:10]
     mins_left = row.get("minutes_to_settlement")
+    poll_ts = row.get("ts", "")
     current_high = row.get("current_high")
     latest_temp = row.get("latest_temp")
     bracket_low = row.get("bracket_low")
@@ -345,6 +465,14 @@ def reconstruct_bracket_row(
     no_ask = row.get("no_ask")
     if not station or not end_date or mins_left is None:
         return None
+    # bracket_evals has never logged current_high/latest_temp (issue #1044:
+    # 0 of 207,462 real rows carry either) -- reconstruct both from
+    # observations, causally (ts <= poll_ts), rather than requiring them on
+    # the row. A row's own values (if ever present) are used verbatim first.
+    if current_high is None:
+        current_high = reconstruct_current_high(db, station, end_date, poll_ts)
+    if latest_temp is None:
+        latest_temp = reconstruct_latest_temp(db, station, poll_ts)
     if current_high is None or latest_temp is None:
         return None
     if bracket_low is None or bracket_high is None or yes_ask is None or no_ask is None:
@@ -352,13 +480,13 @@ def reconstruct_bracket_row(
 
     city = STATION_TO_CITY.get(station, station)
     resolved = reconstruct_emos_mu_sigma(
-        db, station, city, end_date, row.get("ts", ""), mins_left,
+        db, station, city, end_date, poll_ts, mins_left,
     )
     if resolved is None:
         return None
     mu_final, sigma_cal = resolved
 
-    now_local = _station_local_now(station, row.get("ts", ""))
+    now_local = _station_local_now(station, poll_ts)
     if now_local is None:
         return None
 

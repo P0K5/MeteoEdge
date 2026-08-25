@@ -16,8 +16,10 @@ from src.model.envelope import WeatherState
 from src.scripts.emos_shadow_reconstruction import (
     ReadOnlyDatabase,
     reconstruct_bracket_row,
+    reconstruct_current_high,
     reconstruct_emos_mu_sigma,
     reconstruct_intraday_delta,
+    reconstruct_latest_temp,
     reconstruct_mu_raw,
 )
 
@@ -318,3 +320,215 @@ class TestReconstructBracketRowScope:
         finally:
             ro._conn.close()
         assert p is None
+
+
+# ---------------------------------------------------------------------------
+# current_high / latest_temp reconstruction from observations (issue #1044)
+# ---------------------------------------------------------------------------
+
+def _seed_observations(path, rows) -> None:
+    """Insert *rows* (list of insert_observation kwargs dicts) into an
+    already-created DB at *path*. Separate from ``_seed_db`` since not every
+    test needs observations, and the module under test always reads through
+    a SEPARATE ``ReadOnlyDatabase`` connection than this one."""
+    db = Database(str(path))
+    for row in rows:
+        db.insert_observation(**row)
+    db._conn.commit()
+    db._conn.close()
+
+
+def _obs(ts, temp_f, station=STATION, source="metar"):
+    return {
+        "ts": ts, "station": station, "temp_f": temp_f, "temp_native": temp_f,
+        "unit": "F", "source": source,
+    }
+
+
+class TestReconstructLatestTemp:
+    def test_picks_the_row_at_or_before_poll_ts(self, tmp_path):
+        db_path = tmp_path / "db.sqlite"
+        _seed_db(db_path)
+        _seed_observations(db_path, [
+            _obs("2026-08-10T12:00:00+00:00", 70.0),
+            _obs("2026-08-10T18:00:00+00:00", 85.0),
+            _obs("2026-08-10T19:00:00+00:00", 95.0),  # after poll_ts
+        ])
+        ro = ReadOnlyDatabase(db_path)
+        try:
+            temp = reconstruct_latest_temp(ro, STATION, "2026-08-10T18:30:00+00:00")
+        finally:
+            ro._conn.close()
+        assert temp == pytest.approx(85.0)
+
+    def test_no_observation_before_poll_ts_returns_none(self, tmp_path):
+        db_path = tmp_path / "db.sqlite"
+        _seed_db(db_path)
+        _seed_observations(db_path, [
+            _obs("2026-08-10T18:00:00+00:00", 85.0),
+        ])
+        ro = ReadOnlyDatabase(db_path)
+        try:
+            temp = reconstruct_latest_temp(ro, STATION, "2026-08-10T05:00:00+00:00")
+        finally:
+            ro._conn.close()
+        assert temp is None
+
+
+class TestReconstructCurrentHigh:
+    """STATION=KORD is America/Chicago (UTC-5 in August), so
+    2026-08-10T05:00:00+00:00 -> 2026-08-11T05:00:00+00:00 is the station-
+    local calendar day 2026-08-10."""
+
+    def test_max_within_local_day_at_or_before_poll_ts(self, tmp_path):
+        db_path = tmp_path / "db.sqlite"
+        _seed_db(db_path)
+        _seed_observations(db_path, [
+            _obs("2026-08-10T13:00:00+00:00", 70.0),  # 08:00 local
+            _obs("2026-08-10T18:00:00+00:00", 85.0),  # 13:00 local -- the max at-or-before poll_ts
+        ])
+        ro = ReadOnlyDatabase(db_path)
+        try:
+            high = reconstruct_current_high(ro, STATION, DATE, "2026-08-10T18:30:00+00:00")
+        finally:
+            ro._conn.close()
+        assert high == pytest.approx(85.0)
+
+    def test_causality_post_poll_ts_extreme_observation_is_excluded(self, tmp_path):
+        """Issue #1044's load-bearing acceptance criterion: an observation
+        AFTER poll_ts -- even a more extreme one -- must never change the
+        reconstructed current_high. Feeding it in would leak the eventual
+        settled outcome into a mid-day reconstruction."""
+        db_path = tmp_path / "db.sqlite"
+        _seed_db(db_path)
+        _seed_observations(db_path, [
+            _obs("2026-08-10T13:00:00+00:00", 70.0),  # 08:00 local
+            _obs("2026-08-10T18:00:00+00:00", 85.0),  # 13:00 local -- at-or-before poll_ts
+            _obs("2026-08-10T19:00:00+00:00", 95.0),  # 14:00 local -- AFTER poll_ts, must be ignored
+        ])
+        ro = ReadOnlyDatabase(db_path)
+        try:
+            high = reconstruct_current_high(ro, STATION, DATE, "2026-08-10T18:30:00+00:00")
+        finally:
+            ro._conn.close()
+        assert high == pytest.approx(85.0)
+        assert high != pytest.approx(95.0)
+
+    def test_previous_local_day_observation_excluded(self, tmp_path):
+        """A hot reading on the PREVIOUS station-local calendar day must not
+        leak into today's current_high, even though it's before poll_ts."""
+        db_path = tmp_path / "db.sqlite"
+        _seed_db(db_path)
+        _seed_observations(db_path, [
+            _obs("2026-08-09T20:00:00+00:00", 110.0),  # 15:00 local Aug 9 -- previous local day
+            _obs("2026-08-10T13:00:00+00:00", 70.0),   # 08:00 local Aug 10
+        ])
+        ro = ReadOnlyDatabase(db_path)
+        try:
+            high = reconstruct_current_high(ro, STATION, DATE, "2026-08-10T18:30:00+00:00")
+        finally:
+            ro._conn.close()
+        assert high == pytest.approx(70.0)
+
+    def test_unknown_station_returns_none(self, tmp_path):
+        db_path = tmp_path / "db.sqlite"
+        _seed_db(db_path)
+        ro = ReadOnlyDatabase(db_path)
+        try:
+            high = reconstruct_current_high(ro, "ZZZZ", DATE, "2026-08-10T18:30:00+00:00")
+        finally:
+            ro._conn.close()
+        assert high is None
+
+    def test_no_observations_returns_none(self, tmp_path):
+        db_path = tmp_path / "db.sqlite"
+        _seed_db(db_path)
+        ro = ReadOnlyDatabase(db_path)
+        try:
+            high = reconstruct_current_high(ro, STATION, DATE, "2026-08-10T18:30:00+00:00")
+        finally:
+            ro._conn.close()
+        assert high is None
+
+
+# ---------------------------------------------------------------------------
+# Real bracket_evals row shape (issue #1044 -- #1042 merged broken because no
+# test exercised this shape: real bracket_evals rows carry no
+# current_high/latest_temp keys at all).
+# ---------------------------------------------------------------------------
+
+class TestReconstructionAgainstRealRowShape:
+    def test_unmodified_real_bracket_evals_row_reconstructs(self, tmp_path):
+        """This is an UNMODIFIED line copied verbatim from a production
+        logs/bracket_evals.2026-08-25.jsonl file (station NZWN,
+        2026-08-25T00:00:00+00:00 poll), run through the exact same
+        poll_ts/end_date field mapping
+        ``bss_market_vs_model_report.load_bracket_eval_rows`` applies
+        (poll_ts -> ts, settlement_date -> end_date). It carries NO
+        current_high/latest_temp keys -- confirming 0% of real rows do,
+        which is the whole reason #1042 reconstructed 0/6,374 rows against
+        real data. Given matching observations fixture rows, reconstruction
+        must now succeed (non-None, in [0, 1])."""
+        real_raw_line = {
+            "station": "NZWN",
+            "ticker": "0x8d1a508048248190d8e221edabaf853a2594a2c1d99c05f0741d651c927e425b",
+            "bracket_low": -50.0, "bracket_high": 51.8,
+            "poll_ts": "2026-08-25T00:00:00+00:00",
+            "yes_ask": 1, "no_ask": 99,
+            "p_yes": 0.05, "p_yes_raw": 0.0,
+            "emos_mode": "emos_shadow", "is_next_day": 0,
+            "minutes_to_settlement": 718.1, "execution_mode": "shadow",
+            "settlement_date": "2026-08-25", "direction": "high",
+        }
+        assert "current_high" not in real_raw_line
+        assert "latest_temp" not in real_raw_line
+        row = {
+            "ts": real_raw_line["poll_ts"],
+            "station": real_raw_line["station"],
+            "ticker": real_raw_line["ticker"],
+            "end_date": real_raw_line["settlement_date"][:10],
+            "bracket_low": real_raw_line["bracket_low"],
+            "bracket_high": real_raw_line["bracket_high"],
+            "yes_ask": real_raw_line["yes_ask"],
+            "no_ask": real_raw_line["no_ask"],
+            "minutes_to_settlement": real_raw_line["minutes_to_settlement"],
+            "direction": real_raw_line["direction"],
+            "is_next_day_flag": real_raw_line["is_next_day"],
+        }
+        # real_raw_line.get("current_high")/("latest_temp") -- absent, so
+        # load_bracket_eval_rows_for_reconstruction's norm_row["current_high"]
+        # = raw_row.get("current_high") = None, same as leaving the keys out here.
+
+        station, city, date_str = "NZWN", "Wellington", "2026-08-25"
+        db_path = tmp_path / "db.sqlite"
+        db = Database(str(db_path))
+        db.upsert_forecast_log_v2(
+            station=station, model="nws", date=date_str, forecast_high_f=52.0,
+            lead_hours=12, issued_at="2026-08-24T12:00:00+00:00",
+        )
+        db.upsert_forecast_log_v2(
+            station=station, model="open_meteo", date=date_str, forecast_high_f=53.0,
+            lead_hours=12, issued_at="2026-08-24T12:00:00+00:00",
+        )
+        db.upsert_emos_coefficients(
+            city=city, model_mode="emos_shadow",
+            a=0.5, b=0.95, c=0.4, d=1.0,
+            crps_score=1.0, trained_at="2026-08-24T00:00:00+00:00",
+            ready_for_promotion=0, lead_hours=12,
+        )
+        db._conn.commit()
+        db._conn.close()
+        # NZWN is Pacific/Auckland; 2026-08-25T00:00:00+00:00 poll_ts falls
+        # within the 2026-08-25 station-local calendar day.
+        _seed_observations(db_path, [
+            _obs("2026-08-24T22:00:00+00:00", 50.0, station=station),
+            _obs("2026-08-24T23:30:00+00:00", 52.0, station=station),
+        ])
+
+        ro = ReadOnlyDatabase(db_path)
+        try:
+            p = reconstruct_bracket_row(ro, row)
+        finally:
+            ro._conn.close()
+        assert p is not None
+        assert 0.0 <= p <= 1.0

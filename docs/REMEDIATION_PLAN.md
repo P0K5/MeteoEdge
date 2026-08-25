@@ -897,6 +897,60 @@ station-days split by whether the observed high fell in a real bracket gap, and 
 brackets-per-station-day distribution. M3 will be ~95% Gamma-scored; this is how that
 truth's error rate stops being unknown.
 
+#### RESOLVED 2026-08-25 — M3 verdict, and the EMOS-shadow parallel read
+
+**The gate ran, powered, and came back negative.**
+`backtest_results/bss_market_vs_model_pass2_2026-08-25.md`:
+
+| Metric | Value |
+|---|---|
+| Station-days | **316** (≥300 required — POWERED) |
+| n (bracket-rows) | 1008 |
+| BS_model | 0.1864 |
+| BS_market | 0.1320 |
+| **BSS** | **-0.4123** |
+| **M3 verdict** | **`BSS <= 0` — "It was a dream." Per the pre-registered rule, the public price forecasts weather at least as well as we do** |
+
+This is a real, powered verdict, not an underpowered read — the pre-registration this plan
+built for exactly this moment (station-day power check, blind exclusion-funnel decision,
+`--since 2026-08-06` clean window) held, and the number it produced is negative.
+
+**A parallel, exploratory question was asked alongside the verdict, not instead of it:** does
+EMOS shadow's *current* (undertrained, ~28/60 samples per city) coefficients move the same
+score in the right direction, if its probabilities are reconstructed offline and scored against
+the identical market population (#1041/#1044, `emos_shadow_vs_market_report.py`, read-only,
+never touched `bracket_evals` or this gate)? Same window, same BSS methodology, same de-dup and
+outcome resolution — only the probability column differs.
+`backtest_results/emos_shadow_vs_market_2026-08-25.md`:
+
+| Metric | Legacy (M3) | EMOS-shadow (reconstructed) |
+|---|---|---|
+| Station-days | 316 (powered) | 293 (**below** the 300 bar — directional only) |
+| n | 1008 | 883 |
+| BS_model | 0.1864 | 0.1846 |
+| BS_market | 0.1320 | 0.1357 |
+| BSS | -0.4123 | **-0.3603** |
+
+EMOS moves BSS by **+0.052** — about 13% of the distance from the legacy score to zero — real
+and directionally consistent with the CRPS read (`docs/OPERATIONS.md`'s EMOS status: shadow
+1.20–1.31 vs legacy 2.02–2.04 pooled CRPS, 25/27 cities improved), but nowhere near flipping the
+sign, and this reading carries the same caveats #1041 registered up front: every city is
+undertrained (~28/60 `EMOS_MIN_SAMPLES_PROMOTION` samples), the run is itself underpowered
+(293 < 300), and it can only test EMOS's `(a, b)` mu-correction — `ensemble_sigma_f` is still
+unpopulated, so the `(c, d)` sigma calibration this plan called "the only lever that could carry
+the model from −0.28 to positive" remains completely untested. **Read this as evidence EMOS's
+mu-correction carries some real, non-artifactual signal the legacy model lacks — not as evidence
+of a path to a positive verdict on its own.** Even a fully-realized σ calibration would need to
+close roughly 8× more ground than this reconstruction closed.
+
+**Consequence for M4/M5:** M4 (rebuild the entry rule) and M5 (staged live re-enable) below are
+both explicitly conditional on M3 passing. M3 did not pass. Per the decision rule's own text
+("Stop the thesis — pivot the model materially or shut the live path down"), M4/M5 as specified
+do not proceed on the current model. The one still-open, non-power-bound question is whether the
+σ lever (#885/#893) — untested by both readings above — is worth pursuing as a materially
+different model before making that call final; the EMOS-shadow parallel result is weak
+supporting evidence that it might be, not a case for continuing the live path as it stands today.
+
 ### M4 · Rebuild the entry rule — conditional, ~2026-09-05
 
 Only if M3 passes. Replace the near-certainty gate with an EV-based rule on calibrated
