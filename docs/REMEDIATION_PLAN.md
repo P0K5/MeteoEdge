@@ -1177,6 +1177,92 @@ plan does not pursue a further pivot on the current data/model without a new, se
 proposal bringing genuinely new evidence — not another reconstruction of the same
 population/inputs already exhausted here.
 
+### M3b · Model-certain population tradability test — DOES NOT REOPEN M3
+
+M3's verdict (BSS=−0.4123) stands, final. This is a different question about a population the
+gate excluded **by design**: `#909`'s own DECIDED-2026-08-10 note flagged it explicitly as
+"a question for a *future* gate" — post-#920, `p_yes_raw == 0.0` rows are not artifacts, they are
+`conditional_bracket_probability` returning exactly 0.0 when a bracket sits entirely outside
+`[current_high, max_env]`, a structurally correct envelope/nowcast claim ("the daily high cannot
+reach this bracket"), not a Gaussian forecast one. M3 never scored a skill question about this
+population — it excluded it. This section asks a **trading** question instead: at the market's
+own price for these brackets, is selling them profitable after the spread, independent of whether
+the underlying model claim is "skillful" in the BSS sense.
+
+**The premise, from #909's DECIDED table (2026-08-06 window):**
+
+| class | observed YES | mean market P(YES) |
+|---|---|---|
+| contested (what M3 scored) | 27.4% | 28.4% |
+| model-certain (`p_yes_raw == 0.0`) | **1.0%** | **2.0%** |
+
+The market prices this class at ~2%; it resolves at ~1%. On the full `2026-08-06..2026-08-25`
+gate window the class is 4368 rows (67.0% of rows in window, per the Pass 2 exclusion funnel).
+Nothing has scored it as a trading question before now.
+
+#### Pre-registration — signed off 2026-08-26, before any run
+
+Same discipline as #1047/#1056: the method, population, and stopping rule are fixed here, before
+any number is computed.
+
+**Method.** Read-only against `data/meteoedge.db`. Reuse the M3 row loader
+(`bss_market_vs_model_report.load_bracket_eval_rows`/`filter_rows_since`/
+`dedupe_one_per_bracket_day`) and `resolve_candidate_outcomes` unchanged — same window
+(`--since 2026-08-06`), same de-duplication (one row per station/ticker/end_date at lowest
+`minutes_to_settlement`), same outcome resolution. The population is the rows `apply_exclusions`
+drops at the `p_yes_raw_zero_artifact` stage (`is_model_certain_price`) — i.e. rows the gate never
+scored, not a re-derivation of that predicate.
+
+**This is an EV question, not a Brier question — `market_p_yes()` (the symmetrized mid) must NOT
+be used.** Buying NO costs `no_ask`, not the mid:
+
+```
+EV_per_contract(cents) = (1 - p_yes) * (100 - no_ask)  -  p_yes * no_ask
+```
+
+where `p_yes` is the EMPIRICAL resolution rate of the bucket the row falls in (Wilson CI via
+`certainty_exclusion_check.wilson_interval`, reused, not reimplemented), never a model output —
+the model's own output for this class is uniformly 0.0 by construction and carries no information
+to price with.
+
+**Why bucket by `no_ask` and report each bucket separately — a pooled headline EV is
+meaningless here.** `apply_exclusions` runs `p_yes_raw_zero_artifact` BEFORE `rail_1c_99c`, so
+this population still contains rail-priced rows that never reached the rail test. The edge lives
+entirely in the fill price: at `no_ask=98`, `p_yes=1%` → EV=+1.00¢; at `no_ask=99` → EV=+0.99·1 −
+0.01·99 = **exactly 0.00¢**. Bucket by `no_ask` (≤95, 96, 97, 98, 99) and report n, resolved n,
+Wilson CI, and EV per contract for EACH bucket.
+
+**Also report, all population-stated:**
+- EV by `minutes_to_settlement` bucket — tests the envelope hypothesis: edge should concentrate
+  late in the day, when the envelope is most informative.
+- EV by station, and by ladder kind (bracket width 2.0°F vs 1.8°F, the same parser fingerprint the
+  M3 diagnostics use).
+- Concentration: share of total EV from the top station and the top `no_ask` bucket — an edge
+  that is one station is fragile, and the report must say so plainly if that is what it finds.
+- Tail stress: total EV recomputed at the 95% UPPER bound of the resolution-rate CI, and at 2×
+  the observed rate.
+- Worst realized drawdown playing the rows in chronological order, 1 contract each.
+
+**Stopping rule — fixed now, before any number is computed:**
+
+| Result | Verdict |
+|---|---|
+| Net EV ≥ +0.5¢/contract at the 95% UPPER bound of the YES rate, on n ≥ 1000 resolved rows, AND positive in ≥ 3 separate `no_ask` buckets | **PASS** — a genuine, broad-enough edge to warrant a follow-up proposal (still not a live re-enable on its own — #1053/#1054's halt stays in effect regardless). |
+| Anything else | **FAIL** — the thesis is closed on all three classes (contested/M3, market-certain, model-certain), not just the one M3 scored. |
+
+**Hard constraints:** read-only (`mode=ro`, never writes `bracket_evals` or any live table); no
+live trading regardless of result (#1053/#1054's halt is unconditional); state the population for
+every number (a bucket that looks good only because it contains easy station-days is not good);
+report honestly if the result is breakeven-after-spread — that is the most likely outcome and a
+valid answer, not a failure to find something.
+
+**Context.** This is insurance-writing: a ~99:1 payoff at `no_ask≈98-99`, so one bad resolution
+erases roughly 98 wins, and selling far tails is exactly where informed flow picks off a naive
+seller. A thin positive EV concentrated in a single price bucket or station is not a product, and
+the report must say so plainly if that is what the data shows.
+
+Deliverable: `backtest_results/model_certain_tradability_<date>.md`.
+
 ### M4 · Rebuild the entry rule — conditional, ~2026-09-05
 
 Only if M3 passes. Replace the near-certainty gate with an EV-based rule on calibrated
