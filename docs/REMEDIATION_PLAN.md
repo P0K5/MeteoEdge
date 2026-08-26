@@ -1129,6 +1129,54 @@ justified on sharpening it without a materially different approach. Whether to p
 shut the live path down is a business decision for the Tech Lead PM/stakeholder, not resolved by
 this reconstruction — recorded here as the open item that follows.
 
+#### RESOLVED 2026-08-26 — the pivot measurement is below the bar; shutdown applies
+
+Issue #1057 (merged in #1058) ran the pre-registered forecast-stack x sigma measurement above
+against production `data/meteoedge.db`, read-only, same population/window as the M3 gate:
+
+| Variant | n | Station-days | BSS (own population) |
+|---|---|---|---|
+| Legacy-reconstructed baseline | 864 | 291 | −0.3127 |
+| `hrrr_nbm`-mean | 880 | 297 | −0.3181 |
+| `intl_ecmwf_icon`-mean | 871 | 297 | −0.4071 |
+| `nbm`-alone | 318 | 80 | −0.1588 |
+
+`nbm`-alone won the 3-way mu comparison, but on a much smaller, non-representative subpopulation
+(80 vs ~297 station-days for the other two) — the pre-registration's own same-population-restricted
+convention (used for #1048's sigma deltas too) is exactly what catches this: on the SAME 80
+station-days the joint variant covers, the legacy baseline also scores −0.1778, not −0.3127.
+
+| Joint variant | n (shared) | BSS (joint) | BSS (baseline, same rows) | ΔBSS |
+|---|---|---|---|---|
+| `nbm`-mean + per-day naive-floor σ | 310 | −0.1809 | −0.1778 | **−0.0031** |
+
+**Stopping rule: ΔBSS < +0.15 → BELOW THE BAR.** Per the pre-registration's default, the outcome
+is **shutdown, not another open question.**
+
+**One finding worth recording alongside the verdict, not changing it.** Review of #1058
+(Tech Lead PM) found that the per-day σ substitution changed ZERO of the 880 `nbm`-covered rows'
+served probabilities — `envelope.py`'s `effective_stddev = max(forecast_stddev, sigma_climb_fraction
+* remaining_rise)` floor dominated for every one of them, a real production mechanism, not a
+script defect. Cross-checked against #1048's broader population: there, 97.6% of rows show the
+same floor-dominated behaviour, but the other 2.4% (142 rows) show real, sometimes large (up to
+0.11 probability points) differences — consistent with, and explaining, that PR's own small
+positive ΔBSS reading. So #1048's sigma-lever conclusion is unaffected; this pivot's "joint"
+variant, for its specific `nbm`-covered subpopulation, effectively tested `nbm`-alone mu with zero
+realized σ contribution, and the −0.0031 result should be read as a mu-only test for that reason.
+It does not change the verdict: the correctly population-restricted comparison already reflects
+what actually happened.
+
+Full report: `backtest_results/forecast_stack_pivot_2026-08-26.md`.
+
+**Decision: the live trading thesis is stopped, not paused, on the current model.** All four
+levers tested to date — M0 (via M3 itself), EMOS mu-correction (#1041/#1044), ensemble σ
+(#1048/#1049), and a materially different forecast source combined with σ (#1057/#1058) — have
+now failed to clear their pre-registered bars. Live order placement was already halted explicitly
+before this measurement (#1053/#1054) and stays halted. Per the decision gate's own rule, this
+plan does not pursue a further pivot on the current data/model without a new, separately-scoped
+proposal bringing genuinely new evidence — not another reconstruction of the same
+population/inputs already exhausted here.
+
 ### M4 · Rebuild the entry rule — conditional, ~2026-09-05
 
 Only if M3 passes. Replace the near-certainty gate with an EV-based rule on calibrated
