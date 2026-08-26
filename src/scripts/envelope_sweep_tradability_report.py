@@ -674,17 +674,32 @@ def build_diagnostic_report(
         f"n~={M3B_REFERENCE_N}, observed YES~={_fmt_pct(M3B_REFERENCE_YES_RATE)}.\n"
     )
     lines.append(f"**Control check: {control_verdict}**\n")
+    n_delta = v0_stats["n_resolved"] - M3B_REFERENCE_N
+    lines.append(
+        f"n differs from the M3b reference by {n_delta:+d} rows "
+        f"({100 * n_delta / M3B_REFERENCE_N:+.1f}%). This is NOT expected to "
+        "run in one direction and both push it either way: this module's "
+        "`in_scope` restricts to same-day, high-direction rows only (the "
+        "same restriction `emos_shadow_reconstruction`/"
+        "`sigma_lever_reconstruction_report` carry, because "
+        "`reconstruct_current_high`/`reconstruct_latest_temp` only cover "
+        "that population) -- on its own, a SUBSET of M3b's full population, "
+        "which pushes n DOWN. Independently, this module's reconstructed "
+        "`current_high`/`latest_temp` (causal, from `observations`) can "
+        "disagree with the exact in-memory `WeatherState` values the live "
+        "scanner actually classified against at poll time (e.g. obs-bias "
+        "corrections, feed timing) -- an orthogonal source of error that can "
+        "push n in EITHER direction. The two effects do not cancel by "
+        "construction; the net n and observed-YES-rate are read empirically "
+        "against the tolerance bands (`M3B_MIN_SCALE_RATIO`, "
+        "`M3B_YES_RATE_TOLERANCE`) below, not asserted in advance.\n"
+    )
     if control_verdict == "WARN":
         lines.append(
-            "Expected, documented deviation, not a stop condition: this "
-            "module's reconstruction covers only same-day, high-direction "
-            "rows (`in_scope`) -- the same restriction "
-            "`emos_shadow_reconstruction`/`sigma_lever_reconstruction_report` "
-            "carry, because `reconstruct_current_high`/`reconstruct_latest_temp` "
-            "only cover that population. M3b's own population also includes "
-            "low-direction and next-day rows this module cannot classify, so "
-            "a lower reconstructed n is expected; the observed-YES-rate "
-            "order of magnitude is the more load-bearing part of this check.\n"
+            "**WARN, not a stop condition** -- outside the tolerance bands "
+            "above. Read the rest of this report with that in mind: the "
+            "reconstruction may be classifying a meaningfully different "
+            "population than M3b did.\n"
         )
 
     for variant in variants:
