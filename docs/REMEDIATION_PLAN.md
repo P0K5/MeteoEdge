@@ -1310,6 +1310,85 @@ classes — contested (M3, BSS=−0.4123), market-certain (rail, untested but sy
 
 Full report: `backtest_results/model_certain_tradability_2026-08-26.md`.
 
+### M3c · Envelope sweep — does a better `max_env` improve the only class that beats the price?
+
+**Does not reopen M3.** BSS = −0.4123 stands, final. M3b established that the model-certain
+class is the only one where the price is worse than the truth (#909: observed YES 1.0%, market
+2.0%), but M3b's own verdict was FAIL — positive pooled EV, concentrated in one `no_ask` bucket,
+not broad. This asks about the parameter that *creates* the class, not the class itself:
+
+`conditional_bracket_probability` returns exactly 0.0 when a bracket falls entirely outside
+`[current_high, max_env]`. `max_env = latest_temp + expected_additional_rise(hour, month,
+station)`, and `expected_additional_rise` (`src/model/climb_rates.py`) reads a static p95 climb
+table (`CLIMB_LOOKUP`, `src/data/climb_lookup.py`, built by `scripts/build_climb_lookup.py`, last
+regenerated 2026-07-12) — partly synthetic (a NOAA-normals sinusoid fallback where observations
+are thin, per that module's own docstring) and deliberately conservative (p95, per #652). A
+conservative `max_env` calls FEWER brackets impossible than it could. So the envelope is both the
+generator of the only working signal in this plan and an untouched, partly-fabricated parameter.
+That is what this section tests.
+
+#### Pre-registration — signed off 2026-08-26, before any run
+
+**The economics that constrain the sweep.** Buying NO at `no_ask` cents: `EV = (1-p)*(100-no_ask)
+- p*no_ask`; breakeven miss rate is exactly `(100-no_ask)/100` (`no_ask=98` → 2.0% breakeven,
+currently 1.0% observed, +1.0¢; `no_ask=99` → 1.0% breakeven, currently AT breakeven per M3b). At
+99:1 payoffs the tolerance is tiny — at `no_ask=98`, a miss rate of 2.5% already gives EV=−0.5¢.
+**This is not "maximise the size of the certain class"** — it is "maximise volume subject to the
+miss rate staying clear of `(100-no_ask)/100` in each price bucket." A tighter envelope that
+starts clipping brackets that actually win is catastrophic, not marginal.
+
+**Method.** Read-only. Reuse `src/scripts/emos_shadow_reconstruction.py` (already reconstructs
+`current_high`/`latest_temp` from `observations`, #1044) and the M3 row loader — same window
+(`--since 2026-08-06`), same de-dup, same outcome resolution via `resolve_bracket_outcomes`.
+**Reclassify every row, do not filter the existing zeros** — a tighter `max_env` moves rows from
+contested INTO model-certain, which is the whole effect under test. Recompute
+`conditional_bracket_probability` per row with the variant's `max_env` and re-derive the class
+from that, not from the row's stored `p_yes_raw`.
+
+**Variants:**
+
+| # | Variant |
+|---|---|
+| V0 | Current p95 `CLIMB_LOOKUP` — **CONTROL**. Must reproduce the 4368-row-scale class and ~1.0% observed YES from M3b. If it does not, stop and report why before scoring any other variant. |
+| V1 | p90 climb |
+| V2 | p85 climb |
+| V3 | Anomaly-conditioned climb: remaining rise conditioned on the current departure from the station-month-hour normal, fit from observations |
+| V4 | p95 regenerated from accumulated observations (`build_climb_lookup.py --from-db`, into a **scratch copy** — never overwrite `src/data/climb_lookup.py`) |
+
+**Held-out split — mandatory.** `fit/explore: 2026-08-06..2026-08-15`; `evaluate:
+2026-08-16..2026-08-25`. V3 is fit from observations, so this is a strict train/test split for
+it. V1/V2/V4 fit no per-row parameter, but **choosing among variants on full-sample results is
+itself a fit** — report every variant on BOTH halves, and pre-commit now that the PASS/FAIL
+decision reads the held-out half only. A sweep without this produces a good-looking number and no
+edge.
+
+**Per variant, per half, report:** model-certain class size (rows, resolved, station-days);
+observed YES rate + Wilson 95% CI; breakdown by `no_ask` bucket (`≤95, 96, 97, 98, 99`) with, per
+bucket, the observed rate vs. its breakeven `(100-no_ask)/100` and EV per contract at ACTUAL
+`no_ask` fills (never `market_p_yes()`); **newly-certain rows specifically** — rows V0 scored
+contested that this variant clips to 0.0, with their own observed YES rate reported separately
+(**this is the number that decides the variant** — if newly-clipped brackets win more often than
+breakeven, the variant is worse regardless of volume gained); concentration (share of total EV
+from the top station and top price bucket); total EV at the 95% UPPER bound of the YES rate.
+
+**Stopping rule — fixed now:**
+
+| Result | Verdict |
+|---|---|
+| A variant beats V0 on TOTAL held-out EV by ≥25%, with observed YES rate below breakeven in ≥3 `no_ask` buckets, AND newly-certain rows resolving YES no worse than the existing (V0) class | **FINDING** — proceed to scoping how that envelope change would land (still not a live re-enable — #1053/#1054's halt is unconditional regardless). |
+| Anything else | **NULL** — the envelope is already about as good as this architecture allows; the tradability question rests on V0/M3b alone, which already returned FAIL. |
+
+**Hard constraints:** read-only (`mode=ro`); never write `bracket_evals`; **never overwrite
+`src/data/climb_lookup.py`** — any regenerated table (V4) goes to a scratch path; no config
+changes; live stays halted (#1053/#1054) regardless of outcome. State the population for every
+number — variants have different class sizes by construction (that is the point), so never
+compare an EV total across variants without the row count behind it. Report honestly if V0 wins —
+a tuned envelope losing to the untuned one is a clean, useful result, not a failed sweep.
+
+Deliverable: `backtest_results/envelope_sweep_tradability_<date>.md`, plus a written answer to:
+does a better envelope materially improve the only class where we beat the price, on held-out
+data, after paying the ask?
+
 ### M4 · Rebuild the entry rule — conditional, ~2026-09-05
 
 Only if M3 passes. Replace the near-certainty gate with an EV-based rule on calibrated
