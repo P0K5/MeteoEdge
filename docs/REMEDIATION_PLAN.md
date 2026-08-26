@@ -1043,6 +1043,85 @@ fixed in the pre-registration above, this closes the one open M3 follow-up quest
 is not a materially different model, and #885/#893 are not landed as a live change on this
 evidence.
 
+**The live path is halted, explicitly, independent of the pivot question below** (#1053/#1054,
+2026-08-26). Every station's `station_overrides` now reads `yes_enabled=False, no_enabled=False`
+— KORD was the only station still live-enabled; everything else already was shadow-only. This is
+not conditional on what the pivot measurement below finds: the current model has no untested
+lever, so live order placement stops now, on the SAME production mechanism the dashboard's
+per-station toggle already uses. Shadow logging, `bracket_evals`, and EMOS shadow training are
+unaffected — only order placement stops. Reversible per-station via the existing dashboard toggle
+if a future decision re-enables anything.
+
+#### Pre-registration — the forecast-stack × σ pivot measurement, signed off 2026-08-26, before any run
+
+"Shut down" and "pivot" are not mutually exclusive, and the live path being halted above does not
+answer the pivot question. Three levers have now been tested one at a time and separately: M0
+(certainty-artifact fix, tested by M3 itself), EMOS mu-correction (#1041/#1044, +0.052 BSS,
+directional only), and ensemble σ (#1048/#1049, +0.0083, stood down). None has tested the two
+remaining, genuinely different forecast sources **combined with** real per-day σ — the
+interaction, not either lever alone. This is that measurement, and it is the last one before a
+shutdown decision: fixed now, before any number is seen, exactly like the σ-lever and M3
+pre-registrations before it.
+
+**The question.** Does a materially different mu source (a different forecast stack, or a single
+strong model used unblended) — tested alone, and then combined with the per-day σ variant #1048
+already validated — clear a bar large enough to justify continuing to invest in this model,
+versus shutting the thesis down?
+
+**Method — reuse #1041/#1048's reconstruction machinery, not the June skill backtests.**
+Explicitly **not** `hrrr_nbm_skill_2026-06-26.md`/`ecmwf_icon_skill_2026-06-26.md` (whatever
+script produced them synthesises its own forecast proxies rather than reconstructing from real
+persisted `model_forecast_log` rows) — those predate M0/M2 by two months and answer a different,
+looser question. Read-only against `data/meteoedge.db` via `ReadOnlyDatabase`, same population
+frame as the M3 gate (`--population all-bracket --since 2026-08-06`, both certainty exclusions
+kept, dawn-cohort sensitivity split, n/station-days reported per variant).
+
+Four variants, mu construction only (σ held at `FORECAST_STDDEV_F`=2.0 for the first three, exactly
+isolating the mu question from the σ one already answered):
+
+1. **`hrrr_nbm`-mean** — equal-weight mean of `{nws, open_meteo, hrrr, nbm}` at the nearest lead
+   bin, reusing `emos_shadow_reconstruction.reconstruct_mu_raw`'s construction but parameterized
+   on an EXPLICIT stack name rather than `_active_stack_models(db)` (which reads live config,
+   still `baseline`, and would silently reconstruct the wrong stack for every hypothetical here).
+2. **`intl_ecmwf_icon`-mean** — same construction, `{nws, open_meteo, ecmwf, icon}`.
+3. **`nbm`-alone** — the raw NBM `forecast_high_f` at the nearest lead bin, no blending with any
+   other model. Tests whether a single strong model beats every equal-weight blend tried so far
+   (legacy DEB, EMOS stack-mean, or the two stack variants above).
+4. **Joint** — whichever of variants 1–3 has the best (least negative / most positive) BSS on its
+   own, re-scored with `forecast_stddev` from #1048's `naive_floor` per-day σ variant (identical
+   to `calibrated` in the current regime — see the RESOLVED note above) instead of the constant
+   2.0. This is the one combination no prior measurement has tested — two independently-validated
+   partial signals (EMOS's mu-correction and the per-day σ shape) stacked on top of the winning
+   mu source instead of legacy DEB mu.
+
+Murphy decomposition (Reliability/Resolution/Uncertainty) and BSS-vs-market reported per variant,
+same discipline as #1048 — a variant that helps by Resolution generalizes, one that helps only by
+same-sample Reliability does not and is a caveat, not grounds for the "pivot" verdict below.
+
+**Stopping rule and deadline — fixed now:**
+
+- **Bar: ΔBSS ≥ +0.15** for the JOINT variant (row 4) vs. the legacy-reconstructed baseline
+  (`#1048`'s own baseline, same population restriction convention: compared only over the rows
+  the joint variant itself covers). This is deliberately higher than the σ-lever's +0.05 bar,
+  because this is the last measurement before the pivot/shutdown call is made final — clearing a
+  merely-marginal bar a second time is not sufficient grounds to keep investing. +0.15 is roughly
+  40% of the distance from the current reconstructed baseline toward a zero (breakeven-with-market)
+  score, chosen to require a resolution-driven improvement large enough to plausibly compound with
+  further calibration work, not a same-sample artifact.
+- **Deadline: 2026-08-29, 17:00 UTC.** If the measurement has not produced a report by this time,
+  OR the joint variant's ΔBSS is `< +0.15`, **the default outcome is shutdown — not another
+  open question.** This default is the discipline the M3 gate itself had and the pivot
+  conversation lacked until now: a missed or failed measurement does not extend the runway, it
+  resolves the decision that was already conditional on it.
+- **ΔBSS ≥ +0.15 on the joint variant** → the model is materially different enough to warrant
+  scoping a genuine pivot (new epic: candidate forecast-stack switch, M4-style entry-rule rebuild,
+  a fresh powered M3-style re-gate on the pivoted model) — proceed to that scoping, not directly
+  back to live trading (the halt above stays in effect regardless of this measurement's outcome
+  until a fresh gate passes on the pivoted model).
+
+#893 is NOT reopened for this measurement — it remains held for the post-decision retrain bundle,
+unaffected by whichever of the four variants above wins.
+
 **Consequence:** M3's negative verdict is now final, with no untested lever remaining. Per the
 decision gate's own rule ("`BSS ≤ 0` — stop the thesis, pivot the model materially or shut the
 live path down"), M4/M5 do not proceed on the current model, and no further engineering spend is
