@@ -1,4 +1,6 @@
 """Tests for src/model/murphy_decomposition.py (issue #1048)."""
+import pytest
+
 from src.model.murphy_decomposition import murphy_decomposition
 
 
@@ -27,14 +29,18 @@ class TestMurphyDecomposition:
         decomp = murphy_decomposition(samples)
 
         assert decomp["n"] == 20
-        assert decomp["reliability"] == 0.0
+        # mean_pred is a float SUM over 10 identical 0.10/0.80 literals divided
+        # by n_k, not the literal itself -- it lands within float rounding of
+        # obs_freq, not bit-identical to it, so reliability is near-zero
+        # (~1e-33) rather than exactly 0.0. Assert the tolerance, not equality.
+        assert decomp["reliability"] == pytest.approx(0.0, abs=1e-9)
         assert decomp["resolution"] > 0.0
         assert decomp["base_rate"] == 0.45
         assert decomp["n_buckets_used"] == 2
         # No intra-bucket forecast variance (every sample in a bucket carries
         # the identical p) -- the binned decomposition is exact here, so it
         # must match the true Brier score, not just approximate it.
-        assert decomp["bs_decomposed"] == decomp["bs_actual"]
+        assert decomp["bs_decomposed"] == pytest.approx(decomp["bs_actual"], abs=1e-9)
 
     def test_uncalibrated_forecaster_has_positive_reliability(self):
         """A forecaster that is confidently wrong in one bucket (p=0.90 but
