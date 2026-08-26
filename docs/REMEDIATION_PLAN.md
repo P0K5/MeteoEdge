@@ -1025,6 +1025,31 @@ applies.
 existing post-gate sequence, not reopened for this reconstruction pass. It affects EMOS training
 attribution, not the direct-substitution path this pre-registration scores.
 
+#### RESOLVED 2026-08-26 — the σ lever is stood down; M3's verdict is final
+
+Issue #1048 (merged in #1049) ran the pre-registered reconstruction above against production
+`data/meteoedge.db`, read-only, `--since 2026-08-06` (the M3 gate's own window):
+
+| Sigma variant | n (shared with baseline) | Station-days | ΔBSS vs. baseline |
+|---|---|---|---|
+| `naive_floor` | 857 | 289 | **+0.0083** |
+| `calibrated`  | 857 | 289 | **+0.0083** (identical -- falls back to `naive_floor` per-station where calibration history is under `MIN_CALIBRATION_SAMPLES`=30, the same fallback `compute_ensemble_sigma` uses live) |
+
+Full report: `backtest_results/sigma_lever_reconstruction_2026-08-26.md`.
+
+**Stopping-rule row 1 applies: ΔBSS < +0.05 → stand down.** +0.0083 does not clear the marginal
+bar M3 itself uses (0 < BSS ≤ 0.05), let alone flip a −0.4123 baseline positive. Per the table
+fixed in the pre-registration above, this closes the one open M3 follow-up question: the σ lever
+is not a materially different model, and #885/#893 are not landed as a live change on this
+evidence.
+
+**Consequence:** M3's negative verdict is now final, with no untested lever remaining. Per the
+decision gate's own rule ("`BSS ≤ 0` — stop the thesis, pivot the model materially or shut the
+live path down"), M4/M5 do not proceed on the current model, and no further engineering spend is
+justified on sharpening it without a materially different approach. Whether to pivot the model or
+shut the live path down is a business decision for the Tech Lead PM/stakeholder, not resolved by
+this reconstruction — recorded here as the open item that follows.
+
 ### M4 · Rebuild the entry rule — conditional, ~2026-09-05
 
 Only if M3 passes. Replace the near-certainty gate with an EV-based rule on calibrated
