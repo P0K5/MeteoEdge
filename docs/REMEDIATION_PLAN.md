@@ -951,6 +951,80 @@ do not proceed on the current model. The one still-open, non-power-bound questio
 different model before making that call final; the EMOS-shadow parallel result is weak
 supporting evidence that it might be, not a case for continuing the live path as it stands today.
 
+#### Pre-registration — the σ-lever reconstruction, signed off 2026-08-26, before any run
+
+This settles *what the numbers will mean* for the one open M3 follow-up question above, before
+any of them are computed — the same discipline the M3 gate itself used (pre-registration signed
+off 2026-08-20). Nothing below may change after the first run.
+
+**The question.** Does substituting a real per-station-day ensemble σ for the served constant
+(`FORECAST_STDDEV_F = 2.0`) improve Brier skill against the market on the M3 population, enough
+to justify landing #885/#893 for real ahead of a fresh powered re-gate — or does it not clear the
+bar, in which case the σ lever is stood down and M3's negative verdict stands as final per the
+decision rule ("stop the thesis")?
+
+**Method — reuse, don't re-derive (same constraint #1041 imposed on itself).** Built on
+`src/scripts/emos_shadow_reconstruction.py` and `bss_market_vs_model_report.py`'s row loader —
+read-only against `data/meteoedge.db` via `ReadOnlyDatabase`, never touching `bracket_evals` or
+any live table. This is **not** a re-run of the June `hrrr_nbm_skill`/`ecmwf_icon_skill`
+backtests (those score a different lever — the forecast stack — and predate M0/M2 by two months;
+using them as a stand-in for the σ question would be a placebo). Two reconstructed variants,
+both swapping **only** `forecast_stddev` in `true_probability_yes` — mu, DEB, and intraday
+correction stay exactly as legacy served them, since #885's acceptance criteria wires the
+**direct-substitution** path (`envelope.py:270`), not EMOS:
+
+1. **Per-day naive-floor σ**: `max(raw_member_sigma, SIGMA_FLOOR_F)` where `raw_member_sigma` is
+   the `gefs`-channel `model_forecast_log.sigma_f` for that exact station/date (issue #555: this
+   column already holds the unfloored per-day member stdev — no new capture needed).
+2. **Per-day calibrated σ**: the same per-day value run through `compute_ensemble_sigma`'s
+   regression branch (`_calibrated_sigma`), i.e. what #885's acceptance criteria actually
+   requires be served, not the naive branch.
+
+Explicitly **not** the per-station-mean table from #885's second comment (LLBG 0.771, KORD
+1.595, EGLC 2.657, …) — an average collapses day-to-day variation, which is the entire
+mechanism under test. "Per-day" means literally that: one σ per (station, date), not one per
+station.
+
+**Population — fixed now, reported for every number.** Same frame the M3 gate used:
+`--population all-bracket --since 2026-08-06`, both certainty exclusions kept, one row per
+`(station, ticker, end_date)` at lowest `minutes_to_settlement`, dawn-closing cohort included in
+the headline with the exclusive number reported alongside. Reconstruction has documented,
+non-guessable gaps (next-day rows, low-direction rows, rows with no `gefs` member log for that
+station/date, rows `current_high`/`latest_temp` can't be recovered from `observations`) — the
+reconstructed n and station-day count will be **at or below** 316/300, exactly as #1041's EMOS
+reconstruction landed at 293. Every number in the resulting report — legacy-reconstructed
+baseline and both σ variants — states its own n and station-days; a variant is never compared
+against a headline figure computed on a different population than the one that variant actually
+covers.
+
+**Scoring — Murphy decomposition, not BSS alone.** For the legacy-reconstructed baseline and
+each σ variant, report the full Murphy (1973) Brier decomposition —
+`BS = Reliability − Resolution + Uncertainty` — alongside BSS vs. market, using the gate's own
+bin/de-dup conventions. Decomposition matters here specifically because it separates two
+different failure modes a single BSS number conflates: a σ change that helps by sharpening
+genuinely resolved predictions (Resolution ↑) is a different finding from one that helps only by
+accident of reliability on this particular sample (Reliability ↓ with Resolution flat) — the
+first generalizes to a fresh window, the second doesn't and shouldn't move the stopping-rule
+decision below on its own.
+
+**Stopping rule — fixed now, before any variant is scored:**
+
+| Result (best of the two σ variants, ΔBSS vs. legacy-reconstructed baseline, same population) | Action |
+|---|---|
+| ΔBSS < +0.05 | **Stand down.** Doesn't even clear M3's own "marginal" bar (0 < BSS ≤ 0.05). σ lever stood down; M3's negative verdict stands as final per the decision rule — pivot or shut down, do not land #885/#893 as a live change. |
+| +0.05 ≤ ΔBSS, reconstructed BSS still ≤ 0 | **Land #885/#893, re-test, don't decide on the reconstruction alone.** Crosses the marginal bar but doesn't flip the sign; a reconstruction carries its own error (#1041's gaps above) that a fresh powered live/shadow window resolves and this offline pass cannot. Land for real, then run a new M3-style gate on the post-cutover window — do not treat the offline number itself as the verdict. |
+| Reconstructed BSS > 0 | **Land #885/#893 and prioritize the re-gate immediately** — same action as the row above, higher urgency. |
+
+Resolution-driven improvement is a precondition for either "land" outcome above, not an
+independent path to one: if ΔBSS clears +0.05 but is driven by a Reliability shift with flat or
+negative Resolution, record that explicitly in the report and treat it as a caveat on the
+"land" decision, not an override of the ΔBSS bar — the table above still governs which row
+applies.
+
+**#893 (order-dependent σ source) is held for the post-decision retrain bundle** — per the plan's
+existing post-gate sequence, not reopened for this reconstruction pass. It affects EMOS training
+attribution, not the direct-substitution path this pre-registration scores.
+
 ### M4 · Rebuild the entry rule — conditional, ~2026-09-05
 
 Only if M3 passes. Replace the near-certainty gate with an EV-based rule on calibrated
