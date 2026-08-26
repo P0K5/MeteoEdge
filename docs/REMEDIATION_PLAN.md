@@ -1263,6 +1263,53 @@ the report must say so plainly if that is what the data shows.
 
 Deliverable: `backtest_results/model_certain_tradability_<date>.md`.
 
+#### RESOLVED 2026-08-26 — FAIL. Positive pooled EV, not a broad edge
+
+Issue #1063 (merged in #1064) ran the pre-registered test against production `data/meteoedge.db`,
+read-only, same window as the M3 gate (`--since 2026-08-06`):
+
+- Population: 4374 de-duplicated, model-certain (`p_yes_raw == 0.0`) rows — 4346 resolved, 569
+  station-days. 4109 of those (94%) are ALSO at the 1¢/99¢ rail, exactly as the exclusion-cascade
+  ordering predicted.
+
+| `no_ask` bucket | n | observed YES | EV point | EV @95% upper |
+|---|---|---|---|---|
+| ≤95 | 178 | 19.7% | +8.938¢ | **+2.485¢** |
+| 96 | 21 | 4.8% | −0.762¢ | −18.670¢ |
+| 97 | 10 | 10.0% | −7.000¢ | −37.416¢ |
+| 98 | 63 | 0.0% | +2.000¢ | −3.747¢ |
+| 99 | 4074 | 0.0% | +1.000¢ | **+0.906¢** |
+
+Pooled EV at the 95% upper bound: **+0.993¢/contract** (clears the +0.5¢ bar). n=4346 (clears the
+1000 bar). **Breadth fails**: only 2 of 5 `no_ask` buckets are positive at their OWN 95% upper
+bound (`≤95`, `99`) — 96 and 97 are too thin to trust (n=21, n=10) and 98's apparent point-estimate
+edge (n=63, **zero observed YES events**) evaporates at its own upper bound (−3.747¢), which is
+exactly the small-sample fluke the upper-bound framing exists to filter out.
+
+**A genuine ambiguity in the pre-registration surfaced here and was resolved by the Tech Lead
+PM/stakeholder before recording this outcome, not after preferring a result**: whether the
+"positive in ≥3 buckets" breadth clause is evaluated at point estimate or at each bucket's own
+95% upper bound. Decision: **upper bound governs, for both clauses** — consistent with the rule's
+pessimism throughout, and because the buckets a point-estimate reading would additionally credit
+either don't survive their own confidence interval (98) or are too thin to mean anything (96, 97).
+
+**Verdict: FAIL.** Per the pre-registration's own consequence, the thesis is closed on all three
+classes — contested (M3, BSS=−0.4123), market-certain (rail, untested but symmetric per #909's
+"decide both or neither" rule), and model-certain (this test) — not just the one M3 scored.
+
+**Answer to the two questions this test was built to answer:**
+- *Is there positive EV after paying the spread, at the pessimistic end of the resolution-rate
+  CI?* Pooled, yes (+0.993¢/contract). Per-bucket, only in the two buckets holding real volume
+  (`≤95`, `99`).
+- *Is it concentrated or broad?* **Concentrated, not broad.** 71.4% of total portfolio EV
+  (+4074.00¢ of +5705.00¢) comes from the single `no_ask=99` bucket, which is also 93.8% of all
+  contracts (4074/4346). Station concentration is mild by contrast (top station ZGSZ, 12.7% of
+  EV) — this is a single-price-bucket product, not a single-station one, but it is a single
+  bucket. A thin edge sitting almost entirely in one 1¢-wide price bucket, priced at the
+  exchange's own rail, is not a product per the pre-registration's own stated standard.
+
+Full report: `backtest_results/model_certain_tradability_2026-08-26.md`.
+
 ### M4 · Rebuild the entry rule — conditional, ~2026-09-05
 
 Only if M3 passes. Replace the near-certainty gate with an EV-based rule on calibrated
