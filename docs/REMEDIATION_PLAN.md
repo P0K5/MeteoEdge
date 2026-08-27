@@ -1389,6 +1389,46 @@ Deliverable: `backtest_results/envelope_sweep_tradability_<date>.md`, plus a wri
 does a better envelope materially improve the only class where we beat the price, on held-out
 data, after paying the ask?
 
+#### RESOLVED 2026-08-27 — NULL, decisively. The current envelope is not the bottleneck
+
+Issue #1069 (merged in #1070) ran the pre-registered sweep against production
+`data/meteoedge.db`, read-only. Per the Tech Lead PM's amendment, a cheap price-distribution
+diagnostic ran first (did NOT stop early — V1 materially thickened the `≤95` bucket on the
+evaluate half, so the full analysis proceeded). V0 control check: **OK** (reconstructed n=4490
+vs. M3b's ~4368 reference, 0.9% vs. ~1.0% observed YES — within tolerance).
+
+**Evaluate-half verdicts (held-out only, per the mandatory split):**
+
+| Variant | Total held-out EV | vs. V0 (3734) | Newly-certain observed YES | vs. V0 class (0.8%) |
+|---|---|---|---|---|
+| V1 (p90 climb) | 3443 | **worse** | 16.3% | worse |
+| V2 (p85 climb) | 3405 | **worse** | 17.6% | worse |
+| V3 (anomaly-conditioned, fit-window only) | 3141 | **worse** | 16.5% | worse |
+| V4 (p95 from observations) | 2807 | **worse** | 11.8% | worse |
+
+**All four variants: NULL.** Not merely short of the +25% improvement bar — every variant's
+TOTAL held-out EV is lower than V0's, and every variant's newly-certain rows (the ones a tighter
+envelope reclassifies from contested to model-certain) resolve YES at 12–18%, against V0's
+existing 0.8%. This is the pre-registration's own warned failure mode realized outright: a
+tighter/loosened envelope pulls in materially riskier brackets — "catastrophic, not marginal" —
+not a broader edge.
+
+Full report: `backtest_results/envelope_sweep_tradability_2026-08-27.md`.
+
+**Answer to the written question this test was built to answer:** No. A better envelope does not
+materially improve the only class where the model beats the market's price, on held-out data,
+after paying the ask — the current, static, partly-synthetic p95 `CLIMB_LOOKUP` outperforms every
+tested alternative, decisively. The envelope is not the bottleneck M3b's FAIL result was looking
+for.
+
+**Consequence.** Between M3 (BSS=−0.4123, contested population), M3b (FAIL, model-certain
+population, concentrated EV), and M3c (NULL, the envelope parameter that generates that
+population), every angle this plan has tested on the current model and its inputs has closed
+negative or non-actionable. Live trading remains halted (#1053/#1054), unconditionally and
+independent of all three results. No further reconstruction of this population/model is planned
+without a genuinely new proposal bringing new evidence — not another sweep of an already-tested
+parameter.
+
 ### M4 · Rebuild the entry rule — conditional, ~2026-09-05
 
 Only if M3 passes. Replace the near-certainty gate with an EV-based rule on calibrated
