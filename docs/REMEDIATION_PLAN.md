@@ -1389,6 +1389,115 @@ Deliverable: `backtest_results/envelope_sweep_tradability_<date>.md`, plus a wri
 does a better envelope materially improve the only class where we beat the price, on held-out
 data, after paying the ask?
 
+#### RESOLVED 2026-08-26 — the timing avenue closes: NULL by lead, and the entry rule was firing early
+
+Full report: `backtest_results/bss_by_lead_2026-08-26.md`. Same window, loader, exclusion cascade
+and outcome resolution as the M3 gate, imported unchanged; **only the de-duplication key changed**
+(one row per `(station, ticker, end_date, lead bucket)` instead of lowest-`minutes_to_settlement`).
+The self-check reproduces M3 exactly — classic de-dup gives `BSS = −0.4123` on n=1008 / 316
+station-days — so the reuse is faithful. Read-only; live stays halted (#1053/#1054).
+
+**Verdict: NULL.** No lead bucket has `BSS > 0` on ≥100 station-days, and every bucket with
+`EV ≥ +0.5c` has sign accuracy below a coin flip. The verdict rests on the **pre-registered
+sign-accuracy guard**, fixed before any number existed — not on the null controls below, which
+cannot carry it.
+
+##### H1 was inverted — and the driver is the market, not us
+
+A structural fact fell out first: the lead axis splits same-day from next-day cleanly. A ticker is
+polled the evening before settlement (`next_day`, forecast-only, **no envelope**) and again on the
+settlement day (`same_day`), so `<60`…`360-720` are same-day and `720-1440`/`>1440` are next-day.
+
+On the **intersection subset** — 268 bracket-days present in every bucket, Uncertainty held
+constant at 0.2230 by construction, the only apples-to-apples comparison — BSS collapses
+monotonically as lead shortens:
+
+| Lead | BSS (∩) | BS_model | BS_market | Res(model) | Rel(model) | Res(market) | Rel(market) |
+|---|---|---|---|---|---|---|---|
+| >1440 | **−0.0707** | 0.2175 | 0.2032 | 0.0206 | 0.0151 | 0.0272 | 0.0081 |
+| 720-1440 | −0.1844 | 0.2346 | 0.1980 | 0.0156 | 0.0284 | 0.0360 | 0.0124 |
+| 360-720 | −0.3752 | **0.2620** | 0.1905 | 0.0057 | **0.0461** | 0.0376 | 0.0075 |
+| 180-360 | −0.3296 | 0.2395 | 0.1801 | 0.0172 | 0.0331 | 0.0490 | 0.0040 |
+| 60-180 | −0.3802 | 0.2118 | 0.1534 | 0.0172 | 0.0048 | 0.0755 | 0.0042 |
+| <60 | **−0.6416** | 0.2004 | 0.1221 | 0.0303 | 0.0075 | **0.1076** | 0.0043 |
+
+**0.57 BSS of relative skill lost** between long lead and the final hour, on identical
+bracket-days. H1 (the flat dawn ladder makes us worst early) is **inverted**: we are relatively
+worst in the final hour, so **M3's −0.4123, measured at the last poll, is close to the model's
+worst relative showing, not its best.**
+
+But the decomposition attributes the collapse to the **market**, not to us. `BS_market` falls 40%
+(0.2032 → 0.1221) while `BS_model` falls only 8%; the market's Resolution rises **monotonically
+4×** into settlement (0.0272 → 0.1076) with no Reliability cost. That is a clean nowcasting
+signature. The unrestricted per-bucket table is not monotonic and cannot support this claim —
+question (1) is answered from the intersection table, and only from it.
+
+##### The one architectural signal worth carrying
+
+`BS_model` is **U-shaped**, worst at `360-720` (0.2620) where Reliability peaks at **0.0461 — ten
+times** its 0.0075 at `<60`. The model does improve with information as settlement approaches; it
+just improves far slower than the market. Neither reading explains the mid-lead hump.
+
+**That bucket is the transition into the same-day path** — the earliest bucket where the envelope,
+climb floor and intraday correction engage. That makes it the strongest architectural hint in the
+report: not proof that the same-day machinery is harmful, but the place to look first if the model
+is ever revisited. Recorded, not acted on.
+
+##### H2 — the entry rule fired early and locked itself out
+
+One entry per same-day bracket-day at the actual ask, `|p_model − p_market| ≥ MIN_EDGE_CENTS/100`:
+
+| Policy | n | EV (c/contract) | win rate |
+|---|---|---|---|
+| A — first disagreement poll (**current rule**) | 219 | +0.01 | 0.342 |
+| B — last disagreement poll | 219 | **+3.51** | 0.297 |
+| N1 — cheaper side at A's poll, **no model** | 219 | −1.17 | 0.215 |
+| N2 — cheaper side at B's poll, **no model** | 219 | +0.45 | 0.192 |
+| N3 — random side, 500 seeded reps | 219 | +0.02 (SD 2.66) | — |
+
+Paired A vs B: **+3.50c, SE 1.74c, t≈2.0**. So the rule fired on the first disagreement — early,
+when the ladder is flat — and `LIVE_ALLOW_BRACKET_REENTRY=false` (`run.py:757`, where *"filled,
+sold, or timeout attempt all count"*) then blocked the later, better polls. **~3.5c/contract left
+on the table by entry timing alone.**
+
+##### The null controls are underpowered, not negative — this wording matters
+
+| Comparison | paired diff | SE | t | 95% CI |
+|---|---|---|---|---|
+| A − N1 | +1.19c | 3.93 | 0.30 | **[−6.5, +8.9]** |
+| B − N2 | +3.06c | 3.14 | 0.97 | **[−3.1, +9.2]** |
+
+An earlier revision of the report claimed these *"establish"* the payoff-artifact reading. **That
+was retracted on review (Correction 4).** `t = 0.30` and `t = 0.97` are failures to reject, not
+evidence for the null, and both intervals contain "no signal" and "substantial signal" equally.
+
+Recorded because the direction is consistent and should not be rediscovered later as if it were
+suppressed: **A − N1 = +1.19c** (blind cheap-side buying *loses* 1.17c while A is flat),
+**B − N2 = +3.06c**, and the realized hit rate exceeds its own break-even in **9 of 12**
+side/bucket cells. None is individually significant and they are not independent. The honest
+statement is that **A and B cannot be distinguished from their nulls at this sample size.**
+
+Two further corrections applied on review: the *"YES side is anti-informative"* framing is dropped
+— at an average ask of 10.2c the break-even hit rate is 10.2% and the realized rate was 9.9%, i.e.
+fair-value-adjacent and losing about the spread, not a broken side; and **policy C is reported as
+unstable rather than as a number** — its sweep sign-flips at `T=2` (+6.94c, n=35), `T=3` (−0.60c),
+`T=4` (+3.44c), so quoting "+5.12c at T=6" picks one point off a jagged curve.
+
+##### What this closes, and what it does not
+
+The timing avenue closes with the others. Four independent avenues have now returned nothing:
+calibration (exhausted at the −0.3623 ceiling), σ (ΔBSS +0.0083), forecast stack × σ (−0.0031),
+and lead/timing (NULL). The thesis stays closed.
+
+**The H2 finding survives independently of the edge question.** Even with live halted, the entry
+rule taking the day's *first* disagreement and then locking out the rest of the day is a design
+defect, and the fix is **not** "allow re-entry" — that reopens the stacking #611 was built to
+stop. It is to gate live entry on the model's uncertainty having actually collapsed
+(`remaining_rise` below a threshold, or a `minutes_to_settlement` floor), so the one permitted
+entry per bracket-day is taken when the model knows most rather than least. Recorded for whoever
+finds this next; not scheduled.
+
+
 ### M4 · Rebuild the entry rule — conditional, ~2026-09-05
 
 Only if M3 passes. Replace the near-certainty gate with an EV-based rule on calibrated
