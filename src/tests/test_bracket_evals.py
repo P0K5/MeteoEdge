@@ -435,6 +435,99 @@ class TestBracketEvalsEdgeCases:
         assert rows[0]["yes_price_raw"] == pytest.approx(0.003)
         assert rows[0]["no_price_raw"] == pytest.approx(0.997)
 
+    def test_order_book_fields_survive_end_to_end(self, tmp_path):
+        """Issue #1077: bid + top-3 depth levels + book status round-trip
+        through the JSONL write with full float precision, per side."""
+        from src.scripts.run import _write_bracket_evaluations, _last_bracket_hour
+        _last_bracket_hour.clear()
+
+        yes_bids = [{"price": 0.401, "size": 120.0}, {"price": 0.4, "size": 50.0}]
+        yes_asks = [{"price": 0.403, "size": 30.0}]
+        no_bids = [{"price": 0.596, "size": 15.0}]
+        no_asks = [{"price": 0.599, "size": 200.0}]
+
+        outfile = tmp_path / "bracket_evals.jsonl"
+        with (
+            patch("src.scripts.run.LOG_DIR", tmp_path),
+            patch("src.scripts.run.BRACKET_EVALS_JSONL", outfile),
+            patch("src.scripts.run.rotated_path", return_value=outfile),
+            patch("src.scripts.run.housekeep"),
+        ):
+            _write_bracket_evaluations(
+                [_snap(
+                    yes_bid_raw=0.401, no_bid_raw=0.596,
+                    yes_bid_levels=yes_bids, yes_ask_levels=yes_asks,
+                    no_bid_levels=no_bids, no_ask_levels=no_asks,
+                    yes_book_status="ok", no_book_status="ok",
+                )],
+                has_live_trader=True,
+            )
+
+        rows = _read_jsonl(outfile)
+        assert len(rows) == 1
+        row = rows[0]
+        assert row["yes_bid_raw"] == pytest.approx(0.401)
+        assert row["no_bid_raw"] == pytest.approx(0.596)
+        assert row["yes_bid_levels"] == yes_bids
+        assert row["yes_ask_levels"] == yes_asks
+        assert row["no_bid_levels"] == no_bids
+        assert row["no_ask_levels"] == no_asks
+        assert row["yes_book_status"] == "ok"
+        assert row["no_book_status"] == "ok"
+
+    def test_order_book_fields_default_to_null_when_absent(self, tmp_path):
+        """A snapshot from a poll where enrichment never ran (or was off)
+        writes explicit nulls for every book field -- never a fabricated
+        value or a missing key."""
+        from src.scripts.run import _write_bracket_evaluations, _last_bracket_hour
+        _last_bracket_hour.clear()
+
+        outfile = tmp_path / "bracket_evals.jsonl"
+        with (
+            patch("src.scripts.run.LOG_DIR", tmp_path),
+            patch("src.scripts.run.BRACKET_EVALS_JSONL", outfile),
+            patch("src.scripts.run.rotated_path", return_value=outfile),
+            patch("src.scripts.run.housekeep"),
+        ):
+            _write_bracket_evaluations([_snap()], has_live_trader=True)
+
+        row = _read_jsonl(outfile)[0]
+        for field in (
+            "yes_bid_raw", "no_bid_raw", "yes_bid_levels", "yes_ask_levels",
+            "no_bid_levels", "no_ask_levels", "yes_book_status", "no_book_status",
+        ):
+            assert field in row
+            assert row[field] is None
+
+    def test_fetch_failed_status_distinguishable_from_empty_book(self, tmp_path):
+        """A fetch-failure row and a genuinely-empty-book row must be
+        distinguishable via yes_book_status/no_book_status -- neither ever
+        substitutes a fabricated price."""
+        from src.scripts.run import _write_bracket_evaluations, _last_bracket_hour
+        _last_bracket_hour.clear()
+
+        outfile = tmp_path / "bracket_evals.jsonl"
+        with (
+            patch("src.scripts.run.LOG_DIR", tmp_path),
+            patch("src.scripts.run.BRACKET_EVALS_JSONL", outfile),
+            patch("src.scripts.run.rotated_path", return_value=outfile),
+            patch("src.scripts.run.housekeep"),
+        ):
+            _write_bracket_evaluations(
+                [
+                    _snap(ticker="KORD-high-81-83", poll_ts="2026-07-05T14:03:00+00:00",
+                          yes_book_status="fetch_failed"),
+                    _snap(ticker="KORD-high-84-86", poll_ts="2026-07-05T14:04:00+00:00",
+                          yes_book_status="empty_book"),
+                ],
+                has_live_trader=True,
+            )
+
+        rows = {r["ticker"]: r for r in _read_jsonl(outfile)}
+        assert rows["KORD-high-81-83"]["yes_book_status"] == "fetch_failed"
+        assert rows["KORD-high-84-86"]["yes_book_status"] == "empty_book"
+        assert rows["KORD-high-81-83"]["yes_book_status"] != rows["KORD-high-84-86"]["yes_book_status"]
+
 
 # ---------------------------------------------------------------------------
 # Archive rotation
