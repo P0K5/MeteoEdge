@@ -396,7 +396,7 @@ def _check_stop_loss_exits(live_trader, ts: str, position_states: list,
                 "edge_cents": 0,
                 "pnl": pnl,
                 "outcome": "sold",
-                "actual_fee_cents": estimate_fee_cents(sell_price_cents),
+                "estimated_fee_cents": estimate_fee_cents(sell_price_cents),
                 "close_reason": "stop_loss",
                 "trigger": f"stop_loss@{bid}c_fair{fair}c_entry{round(avg_entry_cents)}c",
             }, db=db)
@@ -453,7 +453,7 @@ def _check_stop_loss_exits(live_trader, ts: str, position_states: list,
                                 "edge_cents": 0,
                                 "pnl": pnl2,
                                 "outcome": "sold",
-                                "actual_fee_cents": estimate_fee_cents(sell_price2),
+                                "estimated_fee_cents": estimate_fee_cents(sell_price2),
                                 "close_reason": "stop_loss_partial_balance",
                                 "trigger": (
                                     f"stop_loss_partial@{bid}c_fair{fair}c"
@@ -636,7 +636,7 @@ def _check_forced_exits(
                 "edge_cents": 0,
                 "pnl": pnl,
                 "outcome": "sold",
-                "actual_fee_cents": estimate_fee_cents(sell_price_cents),
+                "estimated_fee_cents": estimate_fee_cents(sell_price_cents),
                 "close_reason": "forced_exit",
                 "minutes_to_settlement_at_close": round(minutes_remaining, 2),
                 "trigger": (
@@ -694,7 +694,7 @@ def _check_forced_exits(
                             "edge_cents": 0,
                             "pnl": pnl2,
                             "outcome": "sold",
-                            "actual_fee_cents": estimate_fee_cents(sell_price2),
+                            "estimated_fee_cents": estimate_fee_cents(sell_price2),
                             "close_reason": "forced_exit_partial_balance",
                             "minutes_to_settlement_at_close": round(minutes_remaining, 2),
                             "trigger": (
@@ -846,7 +846,7 @@ def _check_metar_exits(weather: dict, live_trader, ts: str, db=None, risk_manage
                 "edge_cents": 0,
                 "pnl": pnl,
                 "outcome": "sold",
-                "actual_fee_cents": estimate_fee_cents(sell_price_cents),
+                "estimated_fee_cents": estimate_fee_cents(sell_price_cents),
                 "trigger": f"metar_high={current_high:.1f}F_expected={expected_high:.1f}F_nws={nws_forecast}",
             }, db=db)
             log.info(
@@ -893,7 +893,7 @@ def _check_metar_exits(weather: dict, live_trader, ts: str, db=None, risk_manage
                             "edge_cents": 0,
                             "pnl": pnl2,
                             "outcome": "sold",
-                            "actual_fee_cents": estimate_fee_cents(sell_price2),
+                            "estimated_fee_cents": estimate_fee_cents(sell_price2),
                             "trigger": (
                                 f"metar_high={current_high:.1f}F_expected={expected_high:.1f}F"
                                 f"_nws={nws_forecast}_wallet{avail_shares}shares"

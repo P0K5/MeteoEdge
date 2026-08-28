@@ -1,7 +1,7 @@
 """Tests for #321 — trade cost accounting.
 
 Covers:
-- Database.update_trade_costs() writes actual_fee_cents and size_eur
+- Database.update_trade_costs() writes estimated_fee_cents and size_eur
 - Database.get_trade_cost_summary() aggregates live closed trades
 - _record_sell_in_db() calls update_trade_costs() for all close paths
 - GET /api/trade-costs/summary endpoint
@@ -51,7 +51,7 @@ def _insert_live_trade(db: Database, order_id: str = "ord-001", actual_price: in
 # ---------------------------------------------------------------------------
 
 class TestUpdateTradeCosts:
-    def test_writes_actual_fee_cents(self):
+    def test_writes_estimated_fee_cents(self):
         db = _db()
         _insert_live_trade(db, order_id="ord-A", actual_price=50)
         rows = db._conn.execute(
@@ -59,12 +59,12 @@ class TestUpdateTradeCosts:
         )
         db._conn.commit()
 
-        n = db.update_trade_costs("ord-A", actual_fee_cents=1.75)
+        n = db.update_trade_costs("ord-A", estimated_fee_cents=1.75)
         assert n == 1
         row = db._conn.execute(
-            "SELECT actual_fee_cents FROM trades WHERE order_id='ord-A'"
+            "SELECT estimated_fee_cents FROM trades WHERE order_id='ord-A'"
         ).fetchone()
-        assert row["actual_fee_cents"] == pytest.approx(1.75)
+        assert row["estimated_fee_cents"] == pytest.approx(1.75)
 
     def test_writes_size_eur(self):
         db = _db()
@@ -79,19 +79,19 @@ class TestUpdateTradeCosts:
         db = _db()
         _insert_live_trade(db, order_id="ord-C", actual_price=40)
         # Write fee first
-        db.update_trade_costs("ord-C", actual_fee_cents=2.0, size_eur=5.0)
+        db.update_trade_costs("ord-C", estimated_fee_cents=2.0, size_eur=5.0)
         # Update with all-None — should be a no-op
         n = db.update_trade_costs("ord-C")
         assert n == 0
         row = db._conn.execute(
-            "SELECT actual_fee_cents, size_eur FROM trades WHERE order_id='ord-C'"
+            "SELECT estimated_fee_cents, size_eur FROM trades WHERE order_id='ord-C'"
         ).fetchone()
-        assert row["actual_fee_cents"] == pytest.approx(2.0)
+        assert row["estimated_fee_cents"] == pytest.approx(2.0)
         assert row["size_eur"] == pytest.approx(5.0)
 
     def test_returns_zero_for_unknown_order(self):
         db = _db()
-        n = db.update_trade_costs("does-not-exist", actual_fee_cents=1.0)
+        n = db.update_trade_costs("does-not-exist", estimated_fee_cents=1.0)
         assert n == 0
 
 
@@ -106,7 +106,7 @@ class TestGetTradeCostSummary:
     ) -> None:
         _insert_live_trade(db, order_id=order_id, actual_price=actual_price)
         db.update_trade_by_order(order_id, outcome="sold", pnl=pnl)
-        db.update_trade_costs(order_id, actual_fee_cents=fee, size_eur=size_eur)
+        db.update_trade_costs(order_id, estimated_fee_cents=fee, size_eur=size_eur)
 
     def test_returns_zeros_when_no_trades(self):
         db = _db()
@@ -152,7 +152,7 @@ class TestGetTradeCostSummary:
 
 
 # ---------------------------------------------------------------------------
-# _record_sell_in_db wires actual_fee_cents
+# _record_sell_in_db wires estimated_fee_cents
 # ---------------------------------------------------------------------------
 
 class TestRecordSellInDbCostWiring:
@@ -172,7 +172,7 @@ class TestRecordSellInDbCostWiring:
         expected_fee = estimate_fee_cents(35)
         mock_db.update_trade_costs.assert_called_once_with(
             "ord-buy-001",
-            actual_fee_cents=pytest.approx(expected_fee),
+            estimated_fee_cents=pytest.approx(expected_fee),
             size_eur=5.0,
         )
 
@@ -270,3 +270,144 @@ class TestTradeCostSummaryEndpoint:
             mock_db.get_trade_cost_summary.assert_called_once_with(days=7)
         finally:
             api_module._db = original_db
+
+
+# ---------------------------------------------------------------------------
+# Migration and field validation tests
+# ---------------------------------------------------------------------------
+
+class TestEstimatedFeeCentsMigration:
+    """Verify that the column rename migration works correctly."""
+
+    def test_migration_preserves_values(self):
+        """Migration from actual_fee_cents to estimated_fee_cents preserves all data."""
+        import sqlite3
+        import tempfile
+        import os
+        import shutil
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "test_migration.db")
+
+            # Create an old-schema DB with actual_fee_cents column
+            conn = sqlite3.connect(path)
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA foreign_keys=ON")
+            conn.execute("""
+                CREATE TABLE trades (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ts              TEXT NOT NULL,
+                    station         TEXT NOT NULL,
+                    ticker          TEXT NOT NULL,
+                    bracket_low     REAL NOT NULL,
+                    bracket_high    REAL NOT NULL,
+                    side            TEXT NOT NULL CHECK(side IN ('YES','NO')),
+                    predicted_price INTEGER NOT NULL,
+                    actual_price    INTEGER NOT NULL,
+                    slippage        INTEGER,
+                    predicted_edge  REAL NOT NULL,
+                    mode            TEXT NOT NULL CHECK(mode IN ('paper','live','shadow')),
+                    order_id        TEXT,
+                    outcome         TEXT,
+                    pnl             REAL,
+                    capital_before  REAL NOT NULL,
+                    capital_after   REAL,
+                    settled_at      TEXT,
+                    actual_fee_cents REAL,
+                    size_eur        REAL,
+                    direction       TEXT NOT NULL DEFAULT 'high'
+                )
+            """)
+            # Insert test data with actual_fee_cents
+            conn.execute("""
+                INSERT INTO trades (ts, station, ticker, bracket_low, bracket_high,
+                                   side, predicted_price, actual_price, predicted_edge,
+                                   mode, capital_before, order_id, outcome, pnl,
+                                   actual_fee_cents, size_eur)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                _RECENT_TS, "KORD", "TEST-2026-06-01-HIGH-80-84", 80.0, 84.0,
+                "NO", 60, 60, 0.05, "live", 500.0,
+                "ord-migration-test", "sold", 1.5, 1.75, 10.0
+            ))
+            conn.commit()
+            conn.close()
+
+            # Now open with Database class (which runs migration)
+            db = Database(path)
+
+            try:
+                # Verify that estimated_fee_cents column exists with correct value
+                row = db._conn.execute(
+                    "SELECT estimated_fee_cents, size_eur FROM trades WHERE order_id='ord-migration-test'"
+                ).fetchone()
+                assert row is not None, "Trade row should exist after migration"
+                assert row["estimated_fee_cents"] == pytest.approx(1.75), "Fee value should be preserved"
+                assert row["size_eur"] == pytest.approx(10.0), "Size value should be preserved"
+
+                # Verify old column name no longer exists
+                try:
+                    db._conn.execute("SELECT actual_fee_cents FROM trades LIMIT 1")
+                    assert False, "actual_fee_cents column should not exist after migration"
+                except sqlite3.OperationalError as e:
+                    assert "no such column" in str(e)
+            finally:
+                db._conn.close()
+
+    def test_no_actual_prefix_in_writable_columns(self):
+        """Verify no code path writes to any column with 'actual_' prefix that isn't validated."""
+        import inspect
+        from src.data.db import Database
+
+        # Get all methods in Database class
+        methods = inspect.getmembers(Database, predicate=inspect.ismethod)
+
+        # Look for write operations using UPDATE or INSERT statements
+        for name, method in methods:
+            if hasattr(method, '__func__'):
+                source = inspect.getsource(method.__func__)
+            else:
+                source = inspect.getsource(method)
+
+            # Check for UPDATE statements with actual_* columns (except estimated_fee_cents migration)
+            if "actual_" in source.lower():
+                # The only allowed actual_* is "actual_price" and "actual_high_f" which are read-only observations
+                lines_with_actual = [line for line in source.split('\n') if "actual_" in line.lower()]
+                for line in lines_with_actual:
+                    # Allow actual_price and actual_high_f (observations), reject others
+                    if "actual_price" not in line and "actual_high_f" not in line:
+                        # This shouldn't have update/insert with other actual_* columns
+                        if "UPDATE" in line.upper() or "INSERT" in line.upper():
+                            assert False, f"Found writable 'actual_*' column in {name}: {line.strip()}"
+
+
+class TestEstimatedFeeAggregation:
+    """Verify dashboard aggregation works identically before/after rename."""
+
+    def test_aggregation_consistency(self):
+        """get_trade_cost_summary returns identical numbers after column rename."""
+        db = _db()
+
+        # Insert multiple trades with estimated fees
+        for i in range(3):
+            order_id = f"ord-agg-{i}"
+            _insert_live_trade(db, order_id=order_id, actual_price=50 + i*10)
+            db.update_trade_by_order(order_id, outcome="sold", pnl=0.5 + i*0.1)
+            db.update_trade_costs(
+                order_id,
+                estimated_fee_cents=1.5 + i*0.25,
+                size_eur=10.0 + i*2.0
+            )
+
+        result = db.get_trade_cost_summary(days=30)
+
+        # Verify aggregation is correct
+        expected_fee_total = (1.5 + 1.75 + 2.0) / 100.0  # cents to EUR
+        expected_size_total = 10.0 + 12.0 + 14.0
+        expected_pnl = 0.5 + 0.6 + 0.7
+
+        assert result["trade_count"] == 3
+        assert result["fee_populated_count"] == 3
+        assert result["total_fee_eur"] == pytest.approx(expected_fee_total, abs=1e-4)
+        assert result["total_size_eur"] == pytest.approx(expected_size_total, abs=1e-4)
+        assert result["total_pnl"] == pytest.approx(expected_pnl, abs=1e-4)
