@@ -25,9 +25,18 @@ empty, or lacks your issue's item ID: run `bash scripts/bootstrap_session.sh`
 
 ## 2. Run the mutation
 
-Use your role's token (`GITHUB_TOKEN_SUPERVISOR` for PM, `GITHUB_TOKEN_OPERATIONAL` for everyone else):
+Use your role's token. **CRITICAL: Always export the correct token BEFORE
+running any `gh` command** — `GITHUB_TOKEN_SUPERVISOR` for PM,
+`GITHUB_TOKEN_OPERATIONAL` for everyone else:
 
 ```bash
+# For developers (use this):
+export GH_TOKEN="$GITHUB_TOKEN_OPERATIONAL"
+
+# For Tech Lead PM (use this):
+export GH_TOKEN="$GITHUB_TOKEN_SUPERVISOR"
+
+# Then run the mutation:
 gh api graphql -f query='
   mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
     updateProjectV2ItemFieldValue(input: {
