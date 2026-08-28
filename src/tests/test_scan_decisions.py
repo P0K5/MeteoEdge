@@ -439,6 +439,34 @@ class TestScanDecisionsUpsert:
         rows = db.get_scan_decisions("KMIA", "2026-07-21")
         assert rows[0]["direction"] == "low"
 
+    def test_price_raw_defaults_to_none(self, db):
+        """Issue #1076: a caller that never passes yes_price_raw/no_price_raw
+        (e.g. every pre-#1076 row) round-trips NULL -- there is nothing to
+        backfill since the clamp already discarded that information."""
+        db.upsert_scan_decision(
+            ts="2026-07-21T10:00:00Z", station="KMIA", ticker="0xabc",
+            date="2026-07-21", bracket_low=80.0, bracket_high=85.0,
+            gate_verdict="below_min_edge",
+        )
+        rows = db.get_scan_decisions("KMIA", "2026-07-21")
+        assert rows[0]["yes_price_raw"] is None
+        assert rows[0]["no_price_raw"] is None
+
+    def test_price_raw_round_trips_with_full_float_precision(self, db):
+        """Issue #1076: sub-penny prices, which yes_ask/no_ask's clamp would
+        destroy, survive a full DB round-trip in yes_price_raw/no_price_raw."""
+        db.upsert_scan_decision(
+            ts="2026-07-21T10:00:00Z", station="KMIA", ticker="0xabc",
+            date="2026-07-21", bracket_low=80.0, bracket_high=85.0,
+            gate_verdict="below_min_price", yes_ask=1, no_ask=99,
+            yes_price_raw=0.003, no_price_raw=0.997,
+        )
+        rows = db.get_scan_decisions("KMIA", "2026-07-21")
+        assert rows[0]["yes_ask"] == 1
+        assert rows[0]["no_ask"] == 99
+        assert rows[0]["yes_price_raw"] == pytest.approx(0.003)
+        assert rows[0]["no_price_raw"] == pytest.approx(0.997)
+
 
 # ---------------------------------------------------------------------------
 # run.py: the verdict seam + N-brackets-N-rows / candidates unaffected

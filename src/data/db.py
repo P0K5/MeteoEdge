@@ -303,6 +303,11 @@ CREATE TABLE IF NOT EXISTS scan_decisions (
     side                  TEXT CHECK(side IN ('YES','NO') OR side IS NULL),
     yes_ask               INTEGER,
     no_ask                INTEGER,
+    -- Unclamped float prices (0 to 1, not cents) alongside yes_ask/no_ask
+    -- above -- issue #1076. yes_ask/no_ask keep clamping to 1..99 -- these
+    -- are additive and read by nothing that gates/trades.
+    yes_price_raw         REAL,
+    no_price_raw          REAL,
     current_high          REAL,
     latest_temp           REAL,
     forecast_high         REAL,
@@ -496,6 +501,17 @@ class Database:
             # scan_decisions only started existing after the high-side
             # scanner did, so every legacy row is genuinely high-side.
             ("scan_decisions", "direction", "TEXT NOT NULL DEFAULT 'high'"),
+            # Issue #1076: unclamped float ask prices ([0,1], not cents)
+            # alongside the existing yes_ask/no_ask integer-cent columns,
+            # which clamp to [1, 99] and destroy sub-penny prices in
+            # exactly the region (>0.96 or <0.04) where 74% of brackets sit
+            # -- see Bracket's own docstring in src/model/envelope.py for
+            # the full rationale. NULL for every row written before this
+            # migration (the clamp already discarded that information, so
+            # there is nothing to backfill). Additive only -- yes_ask/no_ask
+            # and every downstream gate/trading consumer are unchanged.
+            ("scan_decisions", "yes_price_raw", "REAL"),
+            ("scan_decisions", "no_price_raw", "REAL"),
         ]:
             try:
                 self._conn.execute(
@@ -770,6 +786,8 @@ class Database:
                         side                  TEXT CHECK(side IN ('YES','NO') OR side IS NULL),
                         yes_ask               INTEGER,
                         no_ask                INTEGER,
+                        yes_price_raw         REAL,
+                        no_price_raw          REAL,
                         current_high          REAL,
                         latest_temp           REAL,
                         forecast_high         REAL,
@@ -810,7 +828,8 @@ class Database:
                 }
                 common_cols = [c for c in (
                     "station", "ticker", "date", "ts", "poll_ts", "bracket_low",
-                    "bracket_high", "side", "yes_ask", "no_ask", "current_high",
+                    "bracket_high", "side", "yes_ask", "no_ask",
+                    "yes_price_raw", "no_price_raw", "current_high",
                     "latest_temp", "forecast_high", "p_yes", "raw_p_yes",
                     "capped_p_yes", "ev_yes", "ev_no", "ev_yes_raw", "ev_no_raw",
                     "minutes_to_settlement", "emos_mode", "is_next_day",
@@ -1195,6 +1214,8 @@ class Database:
         side: "str | None" = None,
         yes_ask: "int | None" = None,
         no_ask: "int | None" = None,
+        yes_price_raw: "float | None" = None,
+        no_price_raw: "float | None" = None,
         current_high: "float | None" = None,
         latest_temp: "float | None" = None,
         forecast_high: "float | None" = None,
@@ -1235,6 +1256,12 @@ class Database:
         "verdict seam" -- see the PR for #756).
 
         Args:
+            yes_price_raw: Unclamped YES ask price ([0,1], not cents), alongside
+                the clamped ``yes_ask`` integer-cent column -- issue #1076.
+                Prefer this over ``yes_ask`` for true-price analysis (e.g. the
+                rail question); every gate/trading path still reads ``yes_ask``
+                unchanged.
+            no_price_raw: Same as ``yes_price_raw``, for the NO side.
             gate_verdict: one of the 11 canonical verdicts (see
                 ``_SCAN_DECISION_GATE_VERDICTS``); raises ``ValueError`` on
                 any other value so a typo never silently reaches the DB.
@@ -1253,16 +1280,17 @@ class Database:
             self._conn.execute(
                 "INSERT INTO scan_decisions("
                 "station,ticker,date,ts,poll_ts,bracket_low,bracket_high,side,"
-                "yes_ask,no_ask,current_high,latest_temp,forecast_high,"
+                "yes_ask,no_ask,yes_price_raw,no_price_raw,current_high,latest_temp,forecast_high,"
                 "p_yes,raw_p_yes,capped_p_yes,ev_yes,ev_no,ev_yes_raw,ev_no_raw,"
                 "minutes_to_settlement,emos_mode,is_next_day,gate_verdict,"
                 "gate_actual,gate_threshold,gate_unit,gate_detail,execution_mode,"
                 "ensemble_mean,ensemble_members,ensemble_range_low,ensemble_range_high,direction) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
                 "ON CONFLICT(station, ticker, date) DO UPDATE SET "
                 "ts=excluded.ts, poll_ts=excluded.poll_ts, "
                 "bracket_low=excluded.bracket_low, bracket_high=excluded.bracket_high, "
                 "side=excluded.side, yes_ask=excluded.yes_ask, no_ask=excluded.no_ask, "
+                "yes_price_raw=excluded.yes_price_raw, no_price_raw=excluded.no_price_raw, "
                 "current_high=excluded.current_high, latest_temp=excluded.latest_temp, "
                 "forecast_high=excluded.forecast_high, p_yes=excluded.p_yes, "
                 "raw_p_yes=excluded.raw_p_yes, capped_p_yes=excluded.capped_p_yes, "
@@ -1279,7 +1307,7 @@ class Database:
                 "ensemble_range_high=excluded.ensemble_range_high, direction=excluded.direction",
                 (
                     station, ticker, date, ts, poll_ts or ts, bracket_low, bracket_high, side,
-                    yes_ask, no_ask, current_high, latest_temp, forecast_high,
+                    yes_ask, no_ask, yes_price_raw, no_price_raw, current_high, latest_temp, forecast_high,
                     p_yes, raw_p_yes, capped_p_yes, ev_yes, ev_no, ev_yes_raw, ev_no_raw,
                     minutes_to_settlement, emos_mode, int(is_next_day), gate_verdict,
                     gate_actual, gate_threshold, gate_unit, gate_detail, execution_mode,
@@ -1296,7 +1324,7 @@ class Database:
         """
         cur = self._conn.execute(
             "SELECT station,ticker,date,ts,poll_ts,bracket_low,bracket_high,side,"
-            "yes_ask,no_ask,current_high,latest_temp,forecast_high,"
+            "yes_ask,no_ask,yes_price_raw,no_price_raw,current_high,latest_temp,forecast_high,"
             "p_yes,raw_p_yes,capped_p_yes,ev_yes,ev_no,ev_yes_raw,ev_no_raw,"
             "minutes_to_settlement,emos_mode,is_next_day,gate_verdict,"
             "gate_actual,gate_threshold,gate_unit,gate_detail,execution_mode,"

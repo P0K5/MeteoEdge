@@ -501,7 +501,8 @@ CREATE INDEX IF NOT EXISTS idx_poll_runs_poll_ts ON poll_runs(poll_ts);
 | `ts` / `poll_ts` | TEXT NOT NULL | ISO 8601 timestamp (UTC) | No | When this poll ran. Two columns for parity with `snapshots.jsonl`'s `ts` field and the design spec's `poll_ts` freshness-indicator field — always written with the same value |
 | `bracket_low` / `bracket_high` | REAL NOT NULL | °F | No | Bracket bounds (same convention as `candidates`) |
 | `side` | TEXT | `'YES'` / `'NO'` / NULL | Yes | The traded/candidate side, from `Candidate.side` — NULL when this bracket never produced a `Candidate` at all (i.e. every rejection verdict except `mae_gate`, `shadow_only`, `next_day_shadow`, `entry_guard`, `timeout_today`, `traded_live`) |
-| `yes_ask` / `no_ask` | INTEGER | cents | Yes | Market ask price on each side at scan time |
+| `yes_ask` / `no_ask` | INTEGER | cents | Yes | Market ask price on each side at scan time, clamped to `max(1, min(99, round(price * 100)))` (`_safe_price`/`parse_bracket_from_market`, `src/strategy/scanner.py`) — destroys sub-penny prices, which matters because Polymarket's own tick size tightens to $0.001 for price > 0.96 or < 0.04 (issue #1076). Retained unchanged because gates/sizing/fee estimation are all integer-cent-native; prefer `yes_price_raw`/`no_price_raw` below for true-price analysis |
+| `yes_price_raw` / `no_price_raw` | REAL | probability [0,1] | Yes | Unclamped venue price on each side at scan time, alongside `yes_ask`/`no_ask` (issue #1076) — the field that answers the rail question `yes_ask`/`no_ask` cannot. NULL only for rows written before this migration; from this migration forward it mirrors `_safe_price`'s own 0.5 fallback when the venue price is missing/unparseable (see `Bracket` in `src/model/envelope.py`) |
 | `current_high` / `latest_temp` / `forecast_high` | REAL | °F | Yes | Same-day observation/forecast context; NULL for a next-day row (no today-anchored observation exists yet — `forecast_high` instead holds the next-day mean fed into `p_yes`, see `scan_markets`) |
 | `p_yes` / `raw_p_yes` / `capped_p_yes` | REAL | probability [0,1] | Yes | Model probability: capped (served/traded-on), raw (pre-`MODEL_PROB_CAP` clamp, issue #551), and capped again under its own name for `snapshots.jsonl` field parity |
 | `ev_yes` / `ev_no` | REAL | cents | Yes | Expected value of buying YES / NO at the capped probability — the numbers the scanner actually gated on |
@@ -531,6 +532,8 @@ CREATE TABLE IF NOT EXISTS scan_decisions (
     side                  TEXT CHECK(side IN ('YES','NO') OR side IS NULL),
     yes_ask               INTEGER,
     no_ask                INTEGER,
+    yes_price_raw         REAL,
+    no_price_raw          REAL,
     current_high          REAL,
     latest_temp           REAL,
     forecast_high         REAL,
@@ -571,6 +574,10 @@ instead enforced in Python by `Database.upsert_scan_decision`, same as
 Existing (pre-#900) installations pick up `direction` the same way, via
 `ALTER TABLE ... ADD COLUMN direction TEXT NOT NULL DEFAULT 'high'` in
 `Database._migrate`.
+
+Existing (pre-#1076) installations pick up `yes_price_raw`/`no_price_raw` the
+same way, via `ALTER TABLE ... ADD COLUMN yes_price_raw REAL` / `... ADD
+COLUMN no_price_raw REAL` in `Database._migrate`.
 
 **gate_verdict's dropped `CHECK` constraint (issue #912):** `gate_verdict`
 briefly had a hand-written `CHECK(gate_verdict IN (...))` alongside this

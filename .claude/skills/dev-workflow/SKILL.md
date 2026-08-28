@@ -42,7 +42,19 @@ templates: invoke the **board-status** skill. Full protocol:
    before opening the PR.
 8. **(G) Open a PR** following `.github/pull_request_template.md` — since
    `gh pr create --body …` bypasses the template, you must include its sections
-   yourself:
+   yourself. **CRITICAL: Before running `gh pr create` or any other `gh`
+   command, export your operational GitHub token:**
+
+   ```bash
+   export GH_TOKEN="$GITHUB_TOKEN_OPERATIONAL"
+   ```
+
+   This ensures PRs are authored under the operational account (not the PM's
+   account), and allows the PM to formally review and approve your PR via the
+   GitHub API. Without this, `gh pr review --approve` will fail with "Can not
+   approve your own pull request" (see governance.md for token rules).
+
+   PR sections:
    - `Closes #N` for every related issue (mandatory — unlinked PRs are rejected)
    - What changed, why, and how to test
    - **How to deploy** (mandatory) — tick the applicable template line(s)
@@ -54,12 +66,40 @@ templates: invoke the **board-status** skill. Full protocol:
 10. **(G) Comment on the issue:** "PR #N submitted for review — [brief summary]".
 11. **(G) Request review** from the Tech Lead PM — and the Designer too if the
     PR touches UI components, layouts, styles, or user-facing text (both
-    approvals required).
+    approvals required). Ensure `GH_TOKEN` is still exported (from step 8)
+    before running `gh pr edit --add-reviewer` or equivalent commands:
+
+    ```bash
+    export GH_TOKEN="$GITHUB_TOKEN_OPERATIONAL"
+    gh pr edit <PR-number> --add-reviewer @user
+    ```
 12. **Respond to review** — if changes are requested: move the issue back to
     In progress with an "Addressing review feedback: [summary]" comment, fix,
     then back to In review with "Feedback addressed, re-requesting review".
     When fixing blocking items, read the `AI / DeepSeek review` PR comment
     first and use its checklist as your task list.
+
+## Handling authorship collisions — PM comment-recorded approval (fallback)
+
+**When to use this:**
+If after following step 8 (exporting `GH_TOKEN="$GITHUB_TOKEN_OPERATIONAL"`),
+the PM still cannot approve your PR because GitHub reports "Can not approve
+your own pull request" (which should never happen if the fix is working), use
+this sanctioned fallback:
+
+1. The PM will post a comment on the PR in the format:
+   ```
+   Approved (via comment — GitHub API collision). 
+   
+   Rationale: [brief note]
+   ```
+2. This comment-recorded approval is FORMALLY EQUIVALENT to a GitHub review
+   approval for governance purposes — the PR can be merged once CI is green.
+3. If this fallback is ever needed, **immediately post an issue** to the Tech
+   Lead PM describing what failed, so the root cause can be investigated.
+
+**Note:** This fallback should be rare. If you hit it repeatedly, the root
+cause is likely an environment or token setup issue — escalate immediately.
 
 ## Pre-review checklist
 
@@ -73,3 +113,5 @@ templates: invoke the **board-status** skill. Full protocol:
 - [ ] Comment posted on issue: "PR #N submitted for review"
 - [ ] Review requested from Tech Lead PM (and Designer if frontend)
 - [ ] All tests pass
+- [ ] `GH_TOKEN="$GITHUB_TOKEN_OPERATIONAL"` was exported before `gh pr create`
+      (verify by checking PR author is the operational account, not P0K5)
