@@ -295,7 +295,7 @@ BRACKET_EVAL_RETAIN_DAYS: int = int(os.getenv("BRACKET_EVAL_RETAIN_DAYS", "90"))
 # Live execution
 POLYMARKET_HOST = os.getenv("POLYMARKET_HOST", "https://clob.polymarket.com")
 POSITION_SIZE_EUR = float(os.getenv("POSITION_SIZE_EUR", "5.0"))
-# 2% buffer covers Polymarket taker fees (price-dependent, highest ~2% at extreme prices)
+# 2% buffer over-covers Polymarket taker fees (price-dependent, max ~1.25¢ at 50¢ price)
 POSITION_SIZE_WITH_FEES = POSITION_SIZE_EUR * 1.02
 SIZING_MODE: str = os.getenv("SIZING_MODE", "flat")
 
