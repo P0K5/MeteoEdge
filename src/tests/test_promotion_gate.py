@@ -380,14 +380,14 @@ class TestBreakevenWinRate:
     """Break-even threshold must derive from entry price + the real fee model."""
 
     def test_60_cents_hand_computed(self):
-        # fee(60) = max(1.0, 7*0.6*0.4) = max(1.0, 1.68) = 1.68
-        # breakeven = (60 + 1.68) / 100 = 0.6168
-        assert breakeven_win_rate(60) == pytest.approx(0.6168, abs=1e-9)
+        # fee(60) = 100 * 0.05 * 0.60 * 0.40 = 1.2
+        # breakeven = (60 + 1.2) / 100 = 0.612
+        assert breakeven_win_rate(60) == pytest.approx(0.612, abs=1e-9)
 
     def test_75_cents_hand_computed(self):
-        # fee(75) = max(1.0, 7*0.75*0.25) = max(1.0, 1.3125) = 1.3125
-        # breakeven = (75 + 1.3125) / 100 = 0.763125
-        assert breakeven_win_rate(75) == pytest.approx(0.763125, abs=1e-9)
+        # fee(75) = 100 * 0.05 * 0.75 * 0.25 = 0.9375
+        # breakeven = (75 + 0.9375) / 100 = 0.759375
+        assert breakeven_win_rate(75) == pytest.approx(0.759375, abs=1e-9)
 
     def test_derives_from_real_fee_module(self):
         # Cross-check against the actual src.strategy.fee.estimate_fee_cents
@@ -475,7 +475,9 @@ class TestComputePromotionBar:
 
     def test_green_eligible_station(self):
         # WSSS/NO: 30 settled trades, 29 wins, avg entry 65c.
-        # wilson_lower_bound(29,30)=0.833292 > breakeven(65)=0.665925,
+        # fee(65) = 100 * 0.05 * 0.65 * 0.35 = 1.1375
+        # breakeven(65) = (65 + 1.1375) / 100 = 0.661375
+        # wilson_lower_bound(29,30)=0.833292 > breakeven(65)=0.661375,
         # and n=30 >= default PROMOTION_MIN_SETTLED_TRADES=30 -> green/eligible.
         trades = [_trade("WSSS", "NO", f"wsss-{i}", 65, won=True) for i in range(29)]
         trades.append(_trade("WSSS", "NO", "wsss-29", 65, won=False))  # 1 loss
@@ -490,14 +492,15 @@ class TestComputePromotionBar:
         assert row["wins"] == 29
         assert row["win_rate"] == pytest.approx(29 / 30)
         assert row["wilson_lower_bound"] == pytest.approx(0.833292, abs=1e-5)
-        assert row["breakeven_win_rate"] == pytest.approx(0.665925, abs=1e-9)
+        assert row["breakeven_win_rate"] == pytest.approx(0.661375, abs=1e-9)
         assert row["price_valid"] is True
         assert row["eligible"] is True
         assert row["status"] == "green"
 
     def test_amber_insufficient_sample_size(self):
         # ZGSZ/NO: only 10 settled trades, all wins, avg entry 65c.
-        # wilson_lower_bound(10,10)=0.722460 > breakeven(65)=0.665925 (clears
+        # breakeven(65) = 0.661375 (from new fee model: 100*0.05*0.65*0.35=1.1375)
+        # wilson_lower_bound(10,10)=0.722460 > breakeven(65)=0.661375 (clears
         # the statistical bar) but n=10 < 30 -> amber, not eligible.
         trades = [_trade("ZGSZ", "NO", f"zgsz-{i}", 65, won=True) for i in range(10)]
         db = _FakeDB(trades)
