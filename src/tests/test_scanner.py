@@ -119,6 +119,39 @@ class TestParseBracketFromMarket:
         assert b is not None
         assert b.yes_ask_cents == 60  # 0.60 * 100
 
+    def test_sub_penny_yes_price_clamped_but_raw_preserved(self):
+        """Issue #1076: a true 0.3c YES price is clamped to 1c in yes_ask_cents
+        (the tradeable minimum), but yes_price_raw preserves the true float --
+        this is the whole point, since Polymarket's own tick size tightens to
+        $0.001 in exactly this region (price < 0.04)."""
+        market = _market("58-60°F")
+        market["outcomePrices"] = '["0.003","0.997"]'
+        b = parse_bracket_from_market(market)
+        assert b is not None
+        assert b.yes_ask_cents == 1
+        assert b.yes_price_raw == pytest.approx(0.003)
+
+    def test_sub_penny_no_price_clamped_but_raw_preserved(self):
+        """Same as above, mirrored for the NO side: 0.997 stays 99c clamped,
+        but no_price_raw keeps the full float precision."""
+        market = _market("58-60°F")
+        market["outcomePrices"] = '["0.003","0.997"]'
+        b = parse_bracket_from_market(market)
+        assert b is not None
+        assert b.no_ask_cents == 99
+        assert b.no_price_raw == pytest.approx(0.997)
+
+    def test_mid_range_price_raw_matches_clamped_cents(self):
+        """Mid-range prices are unchanged in both fields -- the raw float and
+        the clamped cents value agree (mod the *100 conversion) when nowhere
+        near the clamp boundary."""
+        b = parse_bracket_from_market(_market("58-60°F"))
+        assert b is not None
+        assert b.yes_ask_cents == 60
+        assert b.yes_price_raw == pytest.approx(0.60)
+        assert b.no_ask_cents == 40
+        assert b.no_price_raw == pytest.approx(0.40)
+
 
 class TestBracketLadderMassConservation:
     """Mass-conservation invariant (#917): a full, gap-free bracket ladder must

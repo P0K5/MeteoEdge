@@ -409,6 +409,32 @@ class TestBracketEvalsEdgeCases:
         assert rows[0]["emos_mode"] == "emos_primary"
         assert rows[0]["is_next_day"] == 1
 
+    def test_sub_penny_raw_prices_survive_end_to_end(self, tmp_path):
+        """Issue #1076: a sub-penny yes_price_raw/no_price_raw (which yes_ask/
+        no_ask's clamp would round away) survives a full write + JSONL
+        round-trip with full float precision."""
+        from src.scripts.run import _write_bracket_evaluations, _last_bracket_hour
+        _last_bracket_hour.clear()
+
+        outfile = tmp_path / "bracket_evals.jsonl"
+        with (
+            patch("src.scripts.run.LOG_DIR", tmp_path),
+            patch("src.scripts.run.BRACKET_EVALS_JSONL", outfile),
+            patch("src.scripts.run.rotated_path", return_value=outfile),
+            patch("src.scripts.run.housekeep"),
+        ):
+            _write_bracket_evaluations(
+                [_snap(yes_ask=1, no_ask=99, yes_price_raw=0.003, no_price_raw=0.997)],
+                has_live_trader=True,
+            )
+
+        rows = _read_jsonl(outfile)
+        assert len(rows) == 1
+        assert rows[0]["yes_ask"] == 1
+        assert rows[0]["no_ask"] == 99
+        assert rows[0]["yes_price_raw"] == pytest.approx(0.003)
+        assert rows[0]["no_price_raw"] == pytest.approx(0.997)
+
 
 # ---------------------------------------------------------------------------
 # Archive rotation

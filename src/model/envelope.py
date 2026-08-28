@@ -77,12 +77,33 @@ class Bracket:
     ticker: str
     low_f: float
     high_f: float
+    # `*_ask_cents` are clamped to the tradeable integer-cent range
+    # `max(1, min(99, round(price * 100)))` -- see `_safe_price`/
+    # `parse_bracket_from_market` in src/strategy/scanner.py. This clamp
+    # destroys any true price below 0.5c or above 99.5c, which matters
+    # because Polymarket's own tick size tightens to $0.001 in exactly that
+    # region (price > 0.96 or < 0.04) -- 74% of our brackets sit there
+    # (issue #1076). The clamped fields are retained because every existing
+    # consumer (gates, sizing, fee estimation) is built around integer cents
+    # and changing that is out of scope here.
     yes_ask_cents: int
     yes_ask_size: int
     no_ask_cents: int
     no_ask_size: int
     yes_token_id: str | None = None
     no_token_id: str | None = None
+    # Unclamped float price ([0, 1], not cents) as quoted by the venue,
+    # preserved alongside the clamped integer above so sub-penny prices
+    # survive into `bracket_evals`/`scan_decisions` instead of being
+    # silently rounded away (issue #1076). Callers analysing true price
+    # (e.g. the rail question, dutch-book detection) should prefer these
+    # over `*_ask_cents`; every gate/trading code path is unchanged and
+    # keeps reading the clamped cents fields. Mirrors `_safe_price`'s own
+    # 0.5 fallback when the venue price is missing/unparseable -- #1029
+    # (not this issue) will decide whether that fallback should instead
+    # skip the bracket.
+    yes_price_raw: float | None = None
+    no_price_raw: float | None = None
 
 
 def p_normal_between(low: float, high: float, mean: float, stddev: float) -> float:
