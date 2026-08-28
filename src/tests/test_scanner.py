@@ -450,6 +450,84 @@ def _bracket(low: float, high: float) -> Bracket:
     )
 
 
+class TestScanMarketsOrderBookIntegration:
+    """Integration: one poll cycle against a recorded book fixture produces
+    bracket_evals-bound snapshot rows with real order-book fields populated
+    (issue #1077)."""
+
+    def _weather_state(self) -> WeatherState:
+        return WeatherState(
+            station="KMIA",
+            now_local=_FROZEN_NOW,
+            sunset_local=_FROZEN_NOW.replace(hour=20),
+            current_high_f=75.0,
+            current_high_time=_FROZEN_NOW,
+            latest_temp_f=72.0,
+            latest_temp_time=_FROZEN_NOW,
+            forecast_high_f=80.0,
+        )
+
+    def _miami_market(self, group_title: str = "80-85°F", **kwargs) -> dict:
+        market = _market(
+            group_title=group_title,
+            question="Will the highest temperature in Miami be 80-85°F?",
+            condition_id="0xmia_book_test",
+        )
+        today = datetime.now(timezone.utc).date()
+        default_end = datetime(today.year, today.month, today.day, 23, 59, 59, tzinfo=timezone.utc).isoformat()
+        market.setdefault("endDate", default_end)
+        market.update(kwargs)
+        return market
+
+    def test_one_poll_cycle_produces_populated_book_fields(self):
+        """A recorded orderbooks fixture, threaded through scan_markets(),
+        lands on the snapshot as real bid/ask + depth -- exactly what
+        _write_bracket_evaluations persists to bracket_evals."""
+        weather = {"KMIA": self._weather_state()}
+        market = self._miami_market()
+        orderbooks = {
+            "tok_yes": {
+                "bids": [{"price": "0.581", "size": "40"}, {"price": "0.580", "size": "12"}],
+                "asks": [{"price": "0.583", "size": "25"}],
+            },
+            "tok_no": {
+                "bids": [{"price": "0.415", "size": "18"}],
+                "asks": [{"price": "0.417", "size": "60"}, {"price": "0.419", "size": "3"}],
+            },
+        }
+
+        with patch("src.strategy.scanner.MIN_MINUTES_TO_SETTLEMENT", 0):
+            with patch("src.strategy.scanner.ENABLE_CLOB_ENRICHMENT", True):
+                candidates, snapshots = scan_markets(weather, [market], orderbooks=orderbooks)
+
+        assert len(snapshots) == 1
+        snap = snapshots[0]
+        assert snap["yes_bid_raw"] == pytest.approx(0.581)
+        assert snap["no_bid_raw"] == pytest.approx(0.415)
+        assert snap["yes_price_raw"] == pytest.approx(0.583)  # top-of-book ask
+        assert len(snap["yes_bid_levels"]) == 2
+        assert len(snap["no_ask_levels"]) == 2
+        assert snap["yes_book_status"] == "ok"
+        assert snap["no_book_status"] == "ok"
+
+    def test_disabled_enrichment_leaves_book_fields_null_in_snapshot(self):
+        """With ENABLE_CLOB_ENRICHMENT off (the default), the snapshot still
+        carries the book keys but every value is None -- no silent omission."""
+        weather = {"KMIA": self._weather_state()}
+        market = self._miami_market()
+        orderbooks = {"tok_yes": {"bids": [{"price": "0.5", "size": "1"}], "asks": []}}
+
+        with patch("src.strategy.scanner.MIN_MINUTES_TO_SETTLEMENT", 0):
+            with patch("src.strategy.scanner.ENABLE_CLOB_ENRICHMENT", False):
+                candidates, snapshots = scan_markets(weather, [market], orderbooks=orderbooks)
+
+        assert len(snapshots) == 1
+        snap = snapshots[0]
+        for field in ("yes_bid_raw", "no_bid_raw", "yes_bid_levels", "yes_ask_levels",
+                      "no_bid_levels", "no_ask_levels", "yes_book_status", "no_book_status"):
+            assert snap[field] is None
+
+
 class TestNoEntryMarginGap:
     """Tests for no_entry_margin_gap() — the issue #200 entry filter."""
 

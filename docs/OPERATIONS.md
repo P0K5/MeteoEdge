@@ -686,7 +686,7 @@ Every block is visible in two places:
 |----------|---------|-------------|----------------------|
 | `DB_PATH` | data/meteoedge.db | SQLite database file path | No |
 | `POLYMARKET_HOST` | https://clob.polymarket.com | Polymarket CLOB endpoint | No |
-| `ENABLE_CLOB_ENRICHMENT` | false | Enrich market prices with live CLOB orderbook data (~2 API calls per candidate) | No |
+| `ENABLE_CLOB_ENRICHMENT` | false | Enrich market prices with live CLOB orderbook data (~2 API calls per candidate). Since issue #1077, when on this also persists real bid/ask + top-3-level depth into `bracket_evals` (see below) -- still off by default, no production-enable decision recorded yet. | No |
 | `POLYMARKET_DEPOSIT_WALLET` | (unset) | Your ERC-1967 proxy address for live trading | **Yes (live mode)** |
 | `POLYMARKET_API_KEY` | (unset) | Your wallet private key (L1) for live trading | **Yes (live mode)** |
 | `POLYMARKET_L2_API_KEY` | (unset) | Derived L2 API key for live trading | **Yes (live mode)** |
@@ -698,6 +698,36 @@ Every block is visible in two places:
 - `POLYMARKET_DEPOSIT_WALLET`: Your funded L2 proxy address (see `.env.example`)
 - `POLYMARKET_API_KEY`: Your L1 wallet private key (see `.env.example`)
 - `POLYMARKET_L2_API_*`: Derived credentials (see `.env.example` for derivation command)
+
+**Order-book fields on `bracket_evals` (issue #1077).** When `ENABLE_CLOB_ENRICHMENT=true`,
+every `logs/bracket_evals.*.jsonl` row also carries, per side (`yes`/`no`):
+- `{side}_bid_raw` -- top-of-book bid, unclamped float `[0,1]` (mirrors `{side}_price_raw`,
+  which is already the top-of-book ask)
+- `{side}_bid_levels` / `{side}_ask_levels` -- top 3 price levels, best-first, as
+  `[{"price": float, "size": float}, ...]`
+- `{side}_book_status` -- `"ok"` / `"empty_book"` (fetched, zero levels either side) /
+  `"fetch_failed"` (request errored -- every field above stays `null`, never a fabricated
+  price) / `null` (not attempted: enrichment off, or this side has no token)
+
+No new HTTP requests: this reuses the order book `_enrich_from_clob` was already fetching for
+the ask price alone (`get_orderbook`/`fetch_orderbooks_batch`, `src/data/polymarket.py`) --
+those responses already include bids and further levels that were previously discarded.
+
+**Rate-limit measurement (2026-08-28, for this issue).** The Gamma weather-tag endpoint
+(`tag_id=84`, the same one `get_weather_markets()` paginates) currently returns **~2,100**
+active markets globally. `run.py`'s scan-time token collection, when `ENABLE_CLOB_ENRICHMENT`
+is on, previously iterated **every** returned market regardless of station -- at ~256 polls/day
+(the observed healthy cadence, not the nominal 288) that is on the order of 2,100 markets x 2
+tokens x 256 polls ~= **1.08M requests/day naively**, an order of magnitude past the ~95k/day
+figure in the issue (which already assumed only our 30 stations x ~11 brackets). Fixed as part
+of this issue: the collection loop now filters to `is_highest_temp_market`/`is_lowest_temp_market`
+matches only (our 30 configured stations), the same filter `scan_markets()` itself applies --
+bringing it back down to the ~95k/day naive ballpark, deduplicated further by
+`fetch_orderbooks_batch`'s per-token dedup (repeat tokens across markets/polls collapse to one
+request). **Recommendation:** still leave `ENABLE_CLOB_ENRICHMENT` off in production; before
+flipping it on continuously, either restrict token collection further to legs at a price rail
+(~74% of rows per issue #1076) or reduce book-capture poll frequency independently of the main
+scan cadence. No production-enable decision has been made as of this writing.
 
 ---
 
