@@ -232,12 +232,17 @@ def parse_bracket_from_market(market: dict) -> "Bracket | None":
         ticker=condition_id,
         low_f=lo,
         high_f=hi,
+        # Clamped to the tradeable integer-cent range -- see Bracket's own
+        # docstring comment for why, and yes_price_raw/no_price_raw below
+        # for the unclamped float this destroys (issue #1076).
         yes_ask_cents=max(1, min(99, round(yes_price * 100))),
         yes_ask_size=0,
         no_ask_cents=max(1, min(99, round(no_price * 100))),
         no_ask_size=0,
         yes_token_id=yes_token,
         no_token_id=no_token,
+        yes_price_raw=yes_price,
+        no_price_raw=no_price,
     )
 
 
@@ -354,6 +359,7 @@ def _enrich_from_clob(bracket: Bracket, orderbooks: "dict[str, dict] | None" = N
                 best = min(float(a["price"]) for a in asks)
                 bracket.yes_ask_cents = max(1, min(99, round(best * 100)))
                 bracket.yes_ask_size = sum(max(0, int(float(a["size"]))) for a in asks[:3])
+                bracket.yes_price_raw = best
         except Exception as e:
             log.warning("[clob] YES %s...: %s", bracket.ticker[:14], e)
 
@@ -368,6 +374,7 @@ def _enrich_from_clob(bracket: Bracket, orderbooks: "dict[str, dict] | None" = N
                 best = min(float(a["price"]) for a in asks)
                 bracket.no_ask_cents = max(1, min(99, round(best * 100)))
                 bracket.no_ask_size = sum(max(0, int(float(a["size"]))) for a in asks[:3])
+                bracket.no_price_raw = best
         except Exception as e:
             log.warning("[clob] NO %s...: %s", bracket.ticker[:14], e)
 
@@ -883,6 +890,10 @@ def scan_markets(
                 "ts": ts, "station": station, "ticker": bracket.ticker,
                 "bracket_low": bracket.low_f, "bracket_high": bracket.high_f,
                 "yes_ask": bracket.yes_ask_cents, "no_ask": bracket.no_ask_cents,
+                # Unclamped float prices alongside the clamped cents fields
+                # above -- issue #1076. Additive only; no consumer of
+                # yes_ask/no_ask changes behaviour.
+                "yes_price_raw": bracket.yes_price_raw, "no_price_raw": bracket.no_price_raw,
                 "current_high": _snap_current_high, "latest_temp": _snap_latest_temp,
                 "forecast_high": _snap_forecast_high, "p_yes": round(p_yes, 4),
                 "raw_p_yes": round(raw_p_yes, 4), "capped_p_yes": round(p_yes, 4),

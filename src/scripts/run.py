@@ -224,6 +224,11 @@ def _write_bracket_evaluations(
             "poll_ts": hour_bucket + ":00:00+00:00",
             "yes_ask": snap.get("yes_ask"),
             "no_ask": snap.get("no_ask"),
+            # Unclamped float prices alongside the clamped cents fields
+            # above (issue #1076) -- sub-penny prices survive here even
+            # though yes_ask/no_ask still round-and-clamp to [1, 99].
+            "yes_price_raw": snap.get("yes_price_raw"),
+            "no_price_raw": snap.get("no_price_raw"),
             "p_yes": snap.get("p_yes"),
             "p_yes_raw": snap.get("raw_p_yes"),
             "emos_mode": snap.get("emos_mode"),
