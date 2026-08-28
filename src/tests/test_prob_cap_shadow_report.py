@@ -399,12 +399,15 @@ class TestSimulateCapValues:
 
     def test_edge_channel_discovers_new_no_candidate(self):
         """A snapshot with no matching settled row, sub-threshold at the deployed
-        cap (ev_no=95-79-fee<15) but newly clears MIN_EDGE_CENTS at cap=0.97/0.98
-        (ev_no=97-79-fee / 98-79-fee), is discovered as an "edge" admission.
+        cap but newly clears MIN_EDGE_CENTS at higher cap values due to lower
+        0.05% weather fee (vs old 0.07 crypto rate + 1c floor).
+        With deployed_cap=0.95 and no_ask=80: ev_no = (95-80) - fee(80) = 15 - 0.8 = 14.2 < 15
+        At cap=0.97: ev_no = (97-80) - 0.8 = 16.2 > 15 (NEWLY ADMITTED)
         """
         # Seed the (station, date) -> actual_high lookup via an unrelated settled row.
         baseline = _norm_row(ticker="TICK-BASELINE", actual_high=90.0, yes_won=False)
-        snapshot = _snapshot_row(ticker="TICK-NEW", no_ask=79, raw_p_yes=0.01)
+        # Use no_ask=80c instead of 79c so it remains sub-threshold at deployed_cap=0.95
+        snapshot = _snapshot_row(ticker="TICK-NEW", no_ask=80, raw_p_yes=0.01)
 
         results = simulate_cap_values([baseline], [snapshot], cap_values=(0.95, 0.97, 0.98))
 
@@ -414,13 +417,14 @@ class TestSimulateCapValues:
             assert r["newly_admitted_count"] == 1
             assert r["edge_channel_count"] == 1
             assert r["gate_headroom_channel_count"] == 0
-            # actual_high=90 outside bracket 80-84 -> NO wins -> pnl = 100 - 79 = 21
-            assert r["total_pnl_cents"] == baseline["pnl_cents"] + 21.0
+            # actual_high=90 outside bracket 80-84 -> NO wins -> pnl = 100 - 80 = 20
+            assert r["total_pnl_cents"] == baseline["pnl_cents"] + 20.0
 
     def test_unresolved_new_candidate_excluded_from_pnl(self):
         """A discovered candidate whose (station, date) has no settlement data
-        is counted as unresolved and excluded from win-rate/PnL."""
-        snapshot = _snapshot_row(ticker="TICK-ORPHAN", station="KORPHAN", no_ask=79, raw_p_yes=0.01)
+        is counted as unresolved and excluded from win-rate/PnL.
+        Use no_ask=80c to avoid admission at deployed_cap=0.95."""
+        snapshot = _snapshot_row(ticker="TICK-ORPHAN", station="KORPHAN", no_ask=80, raw_p_yes=0.01)
         results = simulate_cap_values([], [snapshot], cap_values=(0.95, 0.97))
         assert results[0.97]["newly_admitted_count"] == 0
         assert results[0.97]["unresolved_new_count"] == 1
@@ -758,11 +762,10 @@ class TestSimulateCapValuesExtraActualHighLookup:
     def test_extra_lookup_resolves_newly_discovered_candidate(self):
         """DB path has no actual_high on settled rows; the caller (run_report)
         supplies it separately via observations-derived highs. Mirrors
-        TestSimulateCapValues.test_edge_channel_discovers_new_no_candidate but
-        sourcing the resolution from extra_actual_high_lookup instead of a
-        baseline settled row's actual_high field.
+        test_edge_channel_discovers_new_no_candidate using extra_actual_high_lookup.
+        Use no_ask=80c so it remains sub-threshold at deployed_cap=0.95.
         """
-        snapshot = _snapshot_row(ticker="TICK-NEW", station="KNEW", no_ask=79, raw_p_yes=0.01)
+        snapshot = _snapshot_row(ticker="TICK-NEW", station="KNEW", no_ask=80, raw_p_yes=0.01)
         extra_lookup = {("KNEW", "2026-01-01"): 90.0}  # outside bracket 80-84 -> NO wins
 
         results = simulate_cap_values(
@@ -773,7 +776,7 @@ class TestSimulateCapValuesExtraActualHighLookup:
         assert r["newly_admitted_count"] == 1
         assert r["unresolved_new_count"] == 0
         assert r["edge_channel_count"] == 1
-        assert r["total_pnl_cents"] == 21.0  # 100 - no_ask(79)
+        assert r["total_pnl_cents"] == 20.0  # 100 - no_ask(80)
 
     def test_settled_row_actual_high_takes_precedence_over_extra_lookup(self):
         """If a (station, date) is resolvable both ways, the settled-row value
@@ -782,10 +785,11 @@ class TestSimulateCapValuesExtraActualHighLookup:
         precedence. Chosen so the two sources disagree on which side won:
         settled actual_high=82 falls inside bracket 80-84 (YES won, NO loses,
         pnl=-no_ask); the extra lookup's 90 would fall outside (NO wins,
-        pnl=+21) if it were used instead.
+        pnl=+20) if it were used instead.
+        Use no_ask=80c so it's newly admitted at cap=0.97.
         """
         baseline = _norm_row(ticker="TICK-BASELINE", station="KNEW", actual_high=82.0)
-        snapshot = _snapshot_row(ticker="TICK-NEW", station="KNEW", no_ask=79, raw_p_yes=0.01)
+        snapshot = _snapshot_row(ticker="TICK-NEW", station="KNEW", no_ask=80, raw_p_yes=0.01)
         extra_lookup = {("KNEW", "2026-01-01"): 90.0}
 
         results = simulate_cap_values(
@@ -793,8 +797,8 @@ class TestSimulateCapValuesExtraActualHighLookup:
         )
         r = results[0.97]
         assert r["newly_admitted_count"] == 1
-        # -79 (settled row's actual_high used) not +21 (extra lookup's value)
-        assert r["total_pnl_cents"] == baseline["pnl_cents"] + (-79.0)
+        # -80 (settled row's actual_high used) not +20 (extra lookup's value)
+        assert r["total_pnl_cents"] == baseline["pnl_cents"] + (-80.0)
 
 
 class TestRunReportDbPath:
