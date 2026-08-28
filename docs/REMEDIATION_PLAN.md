@@ -1429,16 +1429,68 @@ independent of all three results. No further reconstruction of this population/m
 without a genuinely new proposal bringing new evidence — not another sweep of an already-tested
 parameter.
 
-### M4 · Rebuild the entry rule — conditional, ~2026-09-05
+### M3d · Encompassing test — the last door on forecast skill, closed 2026-08-27
 
-Only if M3 passes. Replace the near-certainty gate with an EV-based rule on calibrated
-probabilities, with position sizing. The current rule demands a 16–21 point disagreement with
-the market, which an honest model will rarely produce.
+**Does not reopen M3, M3b or M3c.** Every prior gate asked "is the model better than the price?"
+— a test of *standalone* skill. That is not the same question as "does the model carry any
+information the price lacks?", the Fair–Shiller / Granger–Ramanathan encompassing test, which is
+what a combined forecast would need. This test had never been run.
 
-### M5 · Staged live re-enable — conditional, from ~2026-09-12
+Run on the M3 gate's own population, importing its own loading, de-duplication, exclusion and
+outcome-resolution code (n=1128 rows, 349 station-days, reproducing BSS=−0.4187 against the
+gate's −0.4123):
 
-Only if M4 holds. Per station and per side, through the existing promotion-bar machinery
-(#559), on clean data, smallest size first.
+```
+logit P(YES) = a + b·logit(p_market) + c·logit(p_model)
+  a = +0.0311
+  b = +1.0373   market weight
+  c = +0.0125   model weight   ← the test
+```
+
+`c` is indistinguishable from zero (95% station-day block-bootstrap CI [−0.0875, +0.1281],
+P(c>0)=0.59). In-sample, adding the model moves Brier by +0.00014 — nothing. **Out of sample**
+(fit 08-06→08-16, test 08-17→08-27), adding the model makes the combined forecast **worse**
+(−0.00024). `b≈1.04`, `a≈0.03`: the market needs no recalibration and is already close to
+perfectly calibrated on the logit scale.
+
+**Conclusion.** The model contains no orthogonal information the market's price doesn't already
+have. This is strictly stronger than "BSS < 0" — it removes the last construction under which a
+BSS-negative model could still have supported a trade via combination. Better stacks, better σ,
+EMOS promotion (all already measured near-zero) cannot beat an encompassing coefficient of 0.01.
+**Stop trying to forecast the weather better than this market.**
+
+Full report: `backtest_results/edge_hunt_2026-08-27.md` (§1).
+
+### M4 · Rebuild the entry rule — CLOSED, will not proceed
+
+~~Conditional, ~2026-09-05~~. Only if M3 passes; M3 did not pass (BSS=−0.4123), and M3d (above)
+additionally shows the model has nothing to add even in combination with the market. There is no
+forecast-skill construction left to rebuild an entry rule on top of. Closed alongside M3/M3b/M3c,
+not revisited without new evidence.
+
+### M5 · Staged live re-enable — CLOSED, will not proceed
+
+~~Conditional, from ~2026-09-12~~. Only if M4 holds; M4 is closed. Live trading remains halted
+(#1053/#1054) unconditionally, independent of this or any other result in this plan.
+
+### Post-thesis: microstructure instrument — epic #1073, opened 2026-08-27
+
+M3/M3b/M3c/M3d together close every construction of "beat this market by forecasting weather
+better." `backtest_results/edge_hunt_2026-08-27.md` (§2, §3) found a second, unrelated question on
+the population the M3 gate excluded: ignoring the model entirely, the 1¢ longshot rail resolves
+YES far below its 1.0% breakeven — but the entire apparent edge (0.86¢, less than one tick) sits
+inside a measurement gap this project has never closed: prices are stored as a clamped mid, never
+a real two-sided book, so the true sub-penny ask is unknown and unrecoverable from any archive.
+
+**This does not reopen M3, M3b, M3c or M3d.** It is a new, narrower question — execution
+microstructure, not forecast skill — on a population the closed thesis explicitly excluded.
+Epic #1073 phases it: Phase 0 (this entry — retire the forecast thesis cleanly before starting a
+new clock), Phase 1 (two real bugs found along the way: `fee.py`'s fabricated crypto-rate floor,
+`scanner.py`'s price clamp — worth fixing regardless of what follows), Phase 2 (persist real
+order-book bid/ask and depth at scan time — the only unlock), Phase 3 (pre-register the
+microstructure thesis, blind, before any book data is read), Phase 4 (collect 2–3 weeks, run the
+test once — **expected outcome is NULL**, stated as the prior up front). Live trading stays
+halted throughout, unconditionally, regardless of outcome.
 
 ---
 
