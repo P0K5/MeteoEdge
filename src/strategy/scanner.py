@@ -333,10 +333,86 @@ def _resolve_next_day_mu_sigma(
     return mu_stack, FORECAST_STDDEV_F * next_day_sigma_multiplier
 
 
-def _enrich_from_clob(bracket: Bracket, orderbooks: "dict[str, dict] | None" = None) -> None:
-    """Overwrite bracket ask prices with live CLOB data.
+def _top_book_levels(entries: "list[dict] | None", best_first_desc: bool) -> "list[dict]":
+    """Parse raw book entries into up to 3 {"price": float, "size": float}
+    levels, sorted best-first (descending price for bids, ascending for asks).
 
-    Only called when ENABLE_CLOB_ENRICHMENT=True.
+    A single malformed entry (missing/unparseable price or size) is dropped
+    rather than raising -- it should not cost us the rest of the book.
+    """
+    levels: "list[dict]" = []
+    for entry in entries or []:
+        try:
+            levels.append({
+                "price": float(entry["price"]),
+                "size": float(entry.get("size") or 0),
+            })
+        except (KeyError, TypeError, ValueError):
+            continue
+    levels.sort(key=lambda lv: lv["price"], reverse=best_first_desc)
+    return levels[:3]
+
+
+def _enrich_side_from_book(
+    bracket: Bracket,
+    side: "Literal['yes', 'no']",
+    token_id: "str | None",
+    orderbooks: "dict[str, dict] | None",
+) -> None:
+    """Populate one side's ask/bid/depth/status fields on *bracket* in place.
+
+    Distinguishes a fetch failure from a genuine empty book WITHOUT changing
+    ``fetch_orderbooks_batch``'s tested contract (it maps a failed fetch to
+    ``{}``, which several other callers already rely on) -- a real CLOB `/book`
+    response always carries "bids"/"asks" keys (even with empty lists when
+    there's no liquidity), so a dict with neither key present is treated as a
+    failed fetch, matching ``fetch_orderbooks_batch``'s ``{}`` sentinel.
+    """
+    if not token_id:
+        return
+    status_attr = f"{side}_book_status"
+    try:
+        if orderbooks is not None:
+            ob = orderbooks.get(token_id)
+        else:
+            ob = get_orderbook(token_id)
+
+        if not isinstance(ob, dict) or ("bids" not in ob and "asks" not in ob):
+            setattr(bracket, status_attr, "fetch_failed")
+            return
+
+        bids = _top_book_levels(ob.get("bids"), best_first_desc=True)
+        asks = _top_book_levels(ob.get("asks"), best_first_desc=False)
+        setattr(bracket, f"{side}_bid_levels", bids or None)
+        setattr(bracket, f"{side}_ask_levels", asks or None)
+
+        if asks:
+            best_ask = asks[0]["price"]
+            setattr(bracket, f"{side}_ask_cents", max(1, min(99, round(best_ask * 100))))
+            setattr(bracket, f"{side}_ask_size", sum(max(0, int(lv["size"])) for lv in asks))
+            setattr(bracket, f"{side}_price_raw", best_ask)
+        if bids:
+            setattr(bracket, f"{side}_bid_raw", bids[0]["price"])
+
+        if not bids and not asks:
+            log.debug("[clob] %s %s...: empty book (no bid or ask levels)",
+                       side.upper(), bracket.ticker[:14])
+            setattr(bracket, status_attr, "empty_book")
+        else:
+            setattr(bracket, status_attr, "ok")
+    except Exception as e:
+        log.warning("[clob] %s %s...: %s", side.upper(), bracket.ticker[:14], e)
+        setattr(bracket, status_attr, "fetch_failed")
+
+
+def _enrich_from_clob(bracket: Bracket, orderbooks: "dict[str, dict] | None" = None) -> None:
+    """Overwrite bracket ask prices with live CLOB data, and record top-of-book
+    bid/ask plus per-level depth (top 3, both sides) -- issue #1077.
+
+    Only called when ENABLE_CLOB_ENRICHMENT=True. Reuses whatever order book
+    was already fetched (no extra HTTP calls beyond what enrichment already
+    made for the ask price alone) -- the book response already contains bids
+    and further ask/bid levels; this just stops discarding them.
 
     Args:
         bracket: The bracket to enrich in-place.
@@ -348,35 +424,8 @@ def _enrich_from_clob(bracket: Bracket, orderbooks: "dict[str, dict] | None" = N
     if not ENABLE_CLOB_ENRICHMENT:
         return
 
-    if bracket.yes_token_id:
-        try:
-            if orderbooks is not None:
-                ob = orderbooks.get(bracket.yes_token_id) or {}
-            else:
-                ob = get_orderbook(bracket.yes_token_id)
-            asks = ob.get("asks") or []
-            if asks:
-                best = min(float(a["price"]) for a in asks)
-                bracket.yes_ask_cents = max(1, min(99, round(best * 100)))
-                bracket.yes_ask_size = sum(max(0, int(float(a["size"]))) for a in asks[:3])
-                bracket.yes_price_raw = best
-        except Exception as e:
-            log.warning("[clob] YES %s...: %s", bracket.ticker[:14], e)
-
-    if bracket.no_token_id:
-        try:
-            if orderbooks is not None:
-                ob = orderbooks.get(bracket.no_token_id) or {}
-            else:
-                ob = get_orderbook(bracket.no_token_id)
-            asks = ob.get("asks") or []
-            if asks:
-                best = min(float(a["price"]) for a in asks)
-                bracket.no_ask_cents = max(1, min(99, round(best * 100)))
-                bracket.no_ask_size = sum(max(0, int(float(a["size"]))) for a in asks[:3])
-                bracket.no_price_raw = best
-        except Exception as e:
-            log.warning("[clob] NO %s...: %s", bracket.ticker[:14], e)
+    _enrich_side_from_book(bracket, "yes", bracket.yes_token_id, orderbooks)
+    _enrich_side_from_book(bracket, "no", bracket.no_token_id, orderbooks)
 
 
 @dataclass
@@ -894,6 +943,15 @@ def scan_markets(
                 # above -- issue #1076. Additive only; no consumer of
                 # yes_ask/no_ask changes behaviour.
                 "yes_price_raw": bracket.yes_price_raw, "no_price_raw": bracket.no_price_raw,
+                # Real order-book bid/ask + top-3 depth per side, captured at
+                # scan time when ENABLE_CLOB_ENRICHMENT=True -- issue #1077.
+                # All None when enrichment is off, a side had no token_id, or
+                # the fetch failed (never a fabricated price -- see
+                # yes_book_status/no_book_status for why a field is None).
+                "yes_bid_raw": bracket.yes_bid_raw, "no_bid_raw": bracket.no_bid_raw,
+                "yes_bid_levels": bracket.yes_bid_levels, "yes_ask_levels": bracket.yes_ask_levels,
+                "no_bid_levels": bracket.no_bid_levels, "no_ask_levels": bracket.no_ask_levels,
+                "yes_book_status": bracket.yes_book_status, "no_book_status": bracket.no_book_status,
                 "current_high": _snap_current_high, "latest_temp": _snap_latest_temp,
                 "forecast_high": _snap_forecast_high, "p_yes": round(p_yes, 4),
                 "raw_p_yes": round(raw_p_yes, 4), "capped_p_yes": round(p_yes, 4),

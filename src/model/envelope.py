@@ -104,6 +104,37 @@ class Bracket:
     # skip the bracket.
     yes_price_raw: float | None = None
     no_price_raw: float | None = None
+    # Real order-book bid/ask + depth, captured at scan time -- issue #1077.
+    # Populated only when ENABLE_CLOB_ENRICHMENT=True (same gate as
+    # yes_price_raw/no_price_raw above); every field stays None otherwise, or
+    # when a side has no token_id. `*_bid_raw` mirrors `*_price_raw` (which is
+    # already the top-of-book ask) so both sides of the spread survive --
+    # before this, nothing in the archive recorded a bid at all (99.34% of
+    # yes_ask+no_ask rows summed to exactly 100, i.e. a single mid-price split
+    # into complements, never a real two-sided quote).
+    yes_bid_raw: float | None = None
+    no_bid_raw: float | None = None
+    # Top-3 price levels per side, best-first, as [{"price": float, "size":
+    # float}, ...]. None (not []) when the book was never attempted or the
+    # side has 0 levels on that edge -- see yes_book_status/no_book_status
+    # for *why* a field is None.
+    yes_bid_levels: "list[dict] | None" = None
+    yes_ask_levels: "list[dict] | None" = None
+    no_bid_levels: "list[dict] | None" = None
+    no_ask_levels: "list[dict] | None" = None
+    # One of:
+    #   None            -- not attempted (ENABLE_CLOB_ENRICHMENT off, or this
+    #                       side has no token_id)
+    #   "fetch_failed"  -- the HTTP request raised/errored; every book field
+    #                       above is left None -- never a fabricated price
+    #                       (the #1028 lesson)
+    #   "empty_book"    -- the request succeeded but returned zero bid AND
+    #                       zero ask levels
+    #   "ok"            -- at least one level was parsed on at least one side
+    # Kept distinct from the book fields themselves so a genuinely empty book
+    # is never confused with a fetch that silently failed.
+    yes_book_status: "str | None" = None
+    no_book_status: "str | None" = None
 
 
 def p_normal_between(low: float, high: float, mean: float, stddev: float) -> float:

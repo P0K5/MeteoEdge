@@ -147,6 +147,144 @@ class TestEnrichFromClobSharedDict:
 
 
 # ---------------------------------------------------------------------------
+# _enrich_from_clob: real bid/ask + depth persistence -- issue #1077
+# ---------------------------------------------------------------------------
+
+class TestEnrichFromClobBookDepth:
+
+    def _make_bracket(self):
+        from src.model.envelope import Bracket
+        return Bracket(
+            ticker="TEST-0x1234",
+            low_f=80.0,
+            high_f=84.0,
+            yes_ask_cents=60,
+            yes_ask_size=0,
+            no_ask_cents=40,
+            no_ask_size=0,
+            yes_token_id="tok-YES",
+            no_token_id="tok-NO",
+        )
+
+    def test_mocked_book_persists_bid_ask_and_depth_at_full_precision(self):
+        """A well-formed book response persists bid/ask + top-3 depth levels
+        on both sides at full sub-penny float precision, and marks status ok."""
+        from src.strategy.scanner import _enrich_from_clob
+
+        shared = {
+            "tok-YES": {
+                "bids": [
+                    {"price": "0.401", "size": "120"},
+                    {"price": "0.400", "size": "50"},
+                    {"price": "0.399", "size": "10"},
+                    {"price": "0.398", "size": "999"},  # 4th level -- must be dropped
+                ],
+                "asks": [{"price": "0.403", "size": "30"}],
+            },
+            "tok-NO": {
+                "bids": [{"price": "0.596", "size": "15"}],
+                "asks": [{"price": "0.599", "size": "200"}, {"price": "0.601", "size": "5"}],
+            },
+        }
+        bracket = self._make_bracket()
+
+        with patch("src.strategy.scanner.ENABLE_CLOB_ENRICHMENT", True):
+            _enrich_from_clob(bracket, orderbooks=shared)
+
+        assert bracket.yes_bid_raw == pytest.approx(0.401)
+        assert bracket.no_bid_raw == pytest.approx(0.596)
+        assert bracket.yes_price_raw == pytest.approx(0.403)  # top-of-book ask
+        assert bracket.no_price_raw == pytest.approx(0.599)
+
+        assert len(bracket.yes_bid_levels) == 3  # capped at top 3
+        assert bracket.yes_bid_levels[0] == {"price": pytest.approx(0.401), "size": 120.0}
+        # best-first: bids descending
+        assert [lv["price"] for lv in bracket.yes_bid_levels] == pytest.approx([0.401, 0.400, 0.399])
+        assert bracket.yes_ask_levels == [{"price": pytest.approx(0.403), "size": 30.0}]
+
+        # asks ascending (best first)
+        assert [lv["price"] for lv in bracket.no_ask_levels] == pytest.approx([0.599, 0.601])
+
+        assert bracket.yes_book_status == "ok"
+        assert bracket.no_book_status == "ok"
+
+    def test_failed_fetch_writes_null_never_a_substituted_price(self):
+        """A raised exception during fetch must never fabricate a price --
+        every book field stays None and status is fetch_failed."""
+        from src.strategy.scanner import _enrich_from_clob
+
+        bracket = self._make_bracket()
+        original_yes_ask = bracket.yes_ask_cents
+
+        with patch("src.strategy.scanner.get_orderbook", side_effect=RuntimeError("CLOB 503")):
+            with patch("src.strategy.scanner.ENABLE_CLOB_ENRICHMENT", True):
+                _enrich_from_clob(bracket, orderbooks=None)
+
+        assert bracket.yes_book_status == "fetch_failed"
+        assert bracket.no_book_status == "fetch_failed"
+        assert bracket.yes_bid_raw is None
+        assert bracket.yes_bid_levels is None
+        assert bracket.yes_ask_levels is None
+        # Never fabricated -- ask price is untouched, not defaulted to 0.5 or similar.
+        assert bracket.yes_ask_cents == original_yes_ask
+
+    def test_empty_book_and_fetch_failed_are_distinguishable(self):
+        """A genuinely empty book (fetched, zero levels) must produce a
+        different status than a fetch failure -- never collapsed together."""
+        from src.strategy.scanner import _enrich_from_clob
+
+        # Batch fetch's own sentinel for a failed token is `{}` (no bids/asks
+        # keys at all -- see fetch_orderbooks_batch); a real empty book still
+        # carries the keys, just with empty lists.
+        shared = {
+            "tok-YES": {},                          # simulates a failed batch fetch
+            "tok-NO": {"bids": [], "asks": []},      # simulates a genuinely empty book
+        }
+        bracket = self._make_bracket()
+
+        with patch("src.strategy.scanner.ENABLE_CLOB_ENRICHMENT", True):
+            _enrich_from_clob(bracket, orderbooks=shared)
+
+        assert bracket.yes_book_status == "fetch_failed"
+        assert bracket.no_book_status == "empty_book"
+        assert bracket.yes_book_status != bracket.no_book_status
+        assert bracket.no_bid_levels is None
+        assert bracket.no_ask_levels is None
+
+    def test_no_token_id_leaves_status_none_not_attempted(self):
+        """A side with no token_id is never attempted -- status stays None,
+        distinguishable from both fetch_failed and empty_book."""
+        from src.model.envelope import Bracket
+        from src.strategy.scanner import _enrich_from_clob
+
+        bracket = Bracket(
+            ticker="TEST-NOTOK", low_f=80.0, high_f=84.0,
+            yes_ask_cents=60, yes_ask_size=0, no_ask_cents=40, no_ask_size=0,
+            yes_token_id=None, no_token_id=None,
+        )
+
+        with patch("src.strategy.scanner.ENABLE_CLOB_ENRICHMENT", True):
+            _enrich_from_clob(bracket, orderbooks={})
+
+        assert bracket.yes_book_status is None
+        assert bracket.no_book_status is None
+
+    def test_disabled_flag_leaves_every_book_field_untouched(self):
+        """ENABLE_CLOB_ENRICHMENT=False must not touch any book field at all."""
+        from src.strategy.scanner import _enrich_from_clob
+
+        shared = {"tok-YES": {"bids": [{"price": "0.4", "size": "1"}], "asks": []}}
+        bracket = self._make_bracket()
+
+        with patch("src.strategy.scanner.ENABLE_CLOB_ENRICHMENT", False):
+            _enrich_from_clob(bracket, orderbooks=shared)
+
+        assert bracket.yes_book_status is None
+        assert bracket.yes_bid_raw is None
+        assert bracket.yes_bid_levels is None
+
+
+# ---------------------------------------------------------------------------
 # _log_open_position_snapshots with shared orderbooks dict
 # ---------------------------------------------------------------------------
 

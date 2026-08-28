@@ -39,7 +39,7 @@ from src.data.freshness_monitor import FreshnessMonitor
 from src.logging_config import setup_logging
 from src.monitoring.alerts import AlertManager
 from src.risk.manager import RiskManager
-from src.strategy.scanner import scan_markets
+from src.strategy.scanner import scan_markets, is_highest_temp_market, is_lowest_temp_market
 from src.weather.builder import (
     _build_weather, _station_in_active_window, build_weather_for_pricing,
     build_weather_low_for_scanning, persist_metar_for_climb_stations,
@@ -229,6 +229,19 @@ def _write_bracket_evaluations(
             # though yes_ask/no_ask still round-and-clamp to [1, 99].
             "yes_price_raw": snap.get("yes_price_raw"),
             "no_price_raw": snap.get("no_price_raw"),
+            # Real order-book bid/ask + top-3 depth per side, captured at scan
+            # time (issue #1077). All None unless ENABLE_CLOB_ENRICHMENT=true
+            # -- never a fabricated value on a fetch failure (the #1028
+            # lesson); yes_book_status/no_book_status distinguish a genuine
+            # empty book from a failed fetch.
+            "yes_bid_raw": snap.get("yes_bid_raw"),
+            "no_bid_raw": snap.get("no_bid_raw"),
+            "yes_bid_levels": snap.get("yes_bid_levels"),
+            "yes_ask_levels": snap.get("yes_ask_levels"),
+            "no_bid_levels": snap.get("no_bid_levels"),
+            "no_ask_levels": snap.get("no_ask_levels"),
+            "yes_book_status": snap.get("yes_book_status"),
+            "no_book_status": snap.get("no_book_status"),
             "p_yes": snap.get("p_yes"),
             "p_yes_raw": snap.get("raw_p_yes"),
             "emos_mode": snap.get("emos_mode"),
@@ -509,10 +522,20 @@ def poll_once(
     # - NO tokens for every open position (for position snapshot + stop-loss)
     # This eliminates duplicate HTTP round-trips when the same token appears in
     # multiple markets or in both the scanner and the position snapshot path.
+    # Issue #1077: `markets` is every active market on the Gamma weather tag
+    # globally (~2,100 as of 2026-08-28), not just our 30 configured stations
+    # -- scan_markets() itself only ever evaluates markets matching one of
+    # these two station filters, so fetching order books for the rest was
+    # pure waste (~1M requests/day naively vs the ~95k/day the issue budgeted
+    # for). Filtering here brings token collection back down to what
+    # scan_markets will actually use; see docs/OPERATIONS.md's rate-limit
+    # note for the measured numbers.
     _market_token_ids: list = []
     if ENABLE_CLOB_ENRICHMENT:
         for _m in markets:
             try:
+                if not (is_highest_temp_market(_m)[0] or is_lowest_temp_market(_m)[0]):
+                    continue
                 _tids = json.loads(_m.get("clobTokenIds") or "[]") if isinstance(_m.get("clobTokenIds"), str) else (_m.get("clobTokenIds") or [])
                 _market_token_ids.extend([t for t in _tids if t])
             except Exception:
