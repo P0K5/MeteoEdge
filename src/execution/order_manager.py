@@ -219,7 +219,7 @@ def _record_sell_in_db(
             try:
                 db.update_trade_costs(
                     order_id,
-                    actual_fee_cents=estimate_fee_cents(sell_price_cents),
+                    estimated_fee_cents=estimate_fee_cents(sell_price_cents),
                     size_eur=f.get("size_eur"),
                 )
             except Exception as ce:

@@ -381,7 +381,7 @@ class Database:
         for table, col, definition in [
             ("observations", "cadence_min", "INTEGER"),
             ("observations", "is_official", "INTEGER DEFAULT 1"),
-            ("trades", "actual_fee_cents", "REAL"),
+            ("trades", "estimated_fee_cents", "REAL"),
             ("trades", "size_eur", "REAL"),
             ("trades", "close_reason", "TEXT"),
             ("trades", "minutes_to_settlement_at_close", "REAL"),
@@ -708,7 +708,7 @@ class Database:
                             capital_before  REAL NOT NULL,
                             capital_after   REAL,
                             settled_at      TEXT,
-                            actual_fee_cents REAL,
+                            estimated_fee_cents REAL,
                             size_eur        REAL,
                             direction       TEXT NOT NULL DEFAULT 'high',
                             p_yes_raw       REAL,
@@ -716,7 +716,7 @@ class Database:
                         )
                         """
                     )
-                    # direction/p_yes_raw/end_date may not exist in old table — coalesce
+                    # direction/p_yes_raw/end_date/estimated_fee_cents may not exist in old table — coalesce
                     old_cols_q = self._conn.execute(
                         "PRAGMA table_info(trades)"
                     ).fetchall()
@@ -730,12 +730,19 @@ class Database:
                     end_date_expr = (
                         "end_date" if "end_date" in old_col_names else "NULL"
                     )
+                    # Migration: rename actual_fee_cents → estimated_fee_cents if old table has it
+                    if "estimated_fee_cents" in old_col_names:
+                        fee_expr = "estimated_fee_cents"
+                    elif "actual_fee_cents" in old_col_names:
+                        fee_expr = "actual_fee_cents"
+                    else:
+                        fee_expr = "NULL"
                     self._conn.execute(
                         "INSERT INTO trades_new SELECT "
                         "id,ts,station,ticker,bracket_low,bracket_high,side,"
                         "predicted_price,actual_price,slippage,predicted_edge,mode,"
                         "order_id,outcome,pnl,capital_before,capital_after,settled_at,"
-                        f"actual_fee_cents,size_eur,{direction_expr},{p_yes_raw_expr},{end_date_expr} "
+                        f"{fee_expr},size_eur,{direction_expr},{p_yes_raw_expr},{end_date_expr} "
                         "FROM trades"
                     )
                     self._conn.execute("DROP TABLE trades")
@@ -850,6 +857,90 @@ class Database:
                 self._conn.execute(
                     "CREATE INDEX IF NOT EXISTS idx_scan_decisions_station_date "
                     "ON scan_decisions(station, date)"
+                )
+
+        # Migration: rename actual_fee_cents → estimated_fee_cents (issue #1075).
+        # This column has always held estimated fees (from estimate_fee_cents model),
+        # never observed fill costs. The rename is idempotent.
+        # If actual_fee_cents has data and estimated_fee_cents is empty, copy the data.
+        old_cols = {
+            r[1] for r in self._conn.execute(
+                "PRAGMA table_info(trades)"
+            ).fetchall()
+        }
+        if "actual_fee_cents" in old_cols:
+            # Copy data from actual_fee_cents to estimated_fee_cents if needed
+            if "estimated_fee_cents" in old_cols:
+                # Both columns exist — copy data and drop the old column
+                self._conn.execute(
+                    "UPDATE trades SET estimated_fee_cents = actual_fee_cents "
+                    "WHERE estimated_fee_cents IS NULL AND actual_fee_cents IS NOT NULL"
+                )
+                # Now rebuild the table to drop actual_fee_cents
+                self._conn.execute("PRAGMA foreign_keys=OFF")
+                try:
+                    with self._conn:
+                        self._conn.execute("DROP TABLE IF EXISTS trades_new")
+                        self._conn.execute(
+                            """
+                            CREATE TABLE trades_new (
+                                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                                ts              TEXT NOT NULL,
+                                station         TEXT NOT NULL,
+                                ticker          TEXT NOT NULL,
+                                bracket_low     REAL NOT NULL,
+                                bracket_high    REAL NOT NULL,
+                                side            TEXT NOT NULL CHECK(side IN ('YES','NO')),
+                                predicted_price INTEGER NOT NULL,
+                                actual_price    INTEGER NOT NULL,
+                                slippage        INTEGER,
+                                predicted_edge  REAL NOT NULL,
+                                mode            TEXT NOT NULL CHECK(mode IN ('paper','live','shadow')),
+                                order_id        TEXT,
+                                outcome         TEXT,
+                                pnl             REAL,
+                                capital_before  REAL NOT NULL,
+                                capital_after   REAL,
+                                settled_at      TEXT,
+                                estimated_fee_cents REAL,
+                                size_eur        REAL,
+                                close_reason    TEXT,
+                                minutes_to_settlement_at_close REAL,
+                                bid_depth_at_close INTEGER,
+                                direction       TEXT NOT NULL DEFAULT 'high',
+                                p_yes_raw       REAL,
+                                end_date        TEXT,
+                                is_next_day     INTEGER NOT NULL DEFAULT 0
+                            )
+                            """
+                        )
+                        self._conn.execute(
+                            "INSERT INTO trades_new SELECT "
+                            "id,ts,station,ticker,bracket_low,bracket_high,side,"
+                            "predicted_price,actual_price,slippage,predicted_edge,mode,"
+                            "order_id,outcome,pnl,capital_before,capital_after,settled_at,"
+                            "estimated_fee_cents,size_eur,close_reason,minutes_to_settlement_at_close,"
+                            "bid_depth_at_close,direction,p_yes_raw,end_date,is_next_day "
+                            "FROM trades"
+                        )
+                        self._conn.execute("DROP TABLE trades")
+                        self._conn.execute(
+                            "ALTER TABLE trades_new RENAME TO trades"
+                        )
+                        self._conn.execute(
+                            "CREATE INDEX IF NOT EXISTS idx_trades_station_ts "
+                            "ON trades(station, ts)"
+                        )
+                        self._conn.execute(
+                            "CREATE INDEX IF NOT EXISTS idx_trades_mode ON trades(mode)"
+                        )
+                finally:
+                    self._conn.execute("PRAGMA foreign_keys=ON")
+            else:
+                # Only actual_fee_cents exists (very old DB) — just rename via ADD
+                self._conn.execute("ALTER TABLE trades ADD COLUMN estimated_fee_cents REAL")
+                self._conn.execute(
+                    "UPDATE trades SET estimated_fee_cents = actual_fee_cents"
                 )
 
         self._purge_stale_deb_weight_log()
@@ -1488,14 +1579,18 @@ class Database:
         self,
         order_id: str,
         *,
-        actual_fee_cents: "float | None" = None,
+        estimated_fee_cents: "float | None" = None,
         size_eur: "float | None" = None,
     ) -> int:
         """Backfill cost accounting columns on the trade row matching *order_id*.
 
         Only non-None values are written; returns rows updated (0 = no match).
+
+        Note: estimated_fee_cents stores the result of estimate_fee_cents(sell_price),
+        not an observed fee from fill receipts. No observed fee is recorded anywhere
+        in this project. For validation of the fee model, see scripts/fee_calibration.py.
         """
-        fields = {"actual_fee_cents": actual_fee_cents, "size_eur": size_eur}
+        fields = {"estimated_fee_cents": estimated_fee_cents, "size_eur": size_eur}
         updates = {k: v for k, v in fields.items() if v is not None}
         if not updates:
             return 0
@@ -1531,11 +1626,11 @@ class Database:
             """
             SELECT
                 COUNT(*)                                          AS trade_count,
-                SUM(CASE WHEN actual_fee_cents IS NOT NULL
+                SUM(CASE WHEN estimated_fee_cents IS NOT NULL
                          THEN 1 ELSE 0 END)                      AS fee_populated_count,
-                ROUND(SUM(COALESCE(actual_fee_cents, 0)) / 100.0, 4)
+                ROUND(SUM(COALESCE(estimated_fee_cents, 0)) / 100.0, 4)
                                                                   AS total_fee_eur,
-                ROUND(AVG(COALESCE(actual_fee_cents, 0)) / 100.0, 4)
+                ROUND(AVG(COALESCE(estimated_fee_cents, 0)) / 100.0, 4)
                                                                   AS avg_fee_eur,
                 ROUND(SUM(COALESCE(size_eur, 0)), 4)              AS total_size_eur,
                 ROUND(SUM(COALESCE(pnl, 0)), 4)                   AS total_pnl
@@ -2892,7 +2987,7 @@ class Database:
         }
 
     def get_trades_missing_fee_costs(self) -> list:
-        """Return live closed trades where actual_fee_cents is NULL.
+        """Return live closed trades where estimated_fee_cents is NULL.
 
         Used by backfill_trade_costs.py. Each row has: id, order_id, actual_price, size_eur.
         """
@@ -2902,7 +2997,7 @@ class Database:
             FROM trades
             WHERE mode = 'live'
               AND outcome = 'sold'
-              AND actual_fee_cents IS NULL
+              AND estimated_fee_cents IS NULL
               AND order_id IS NOT NULL
             ORDER BY ts ASC
             """

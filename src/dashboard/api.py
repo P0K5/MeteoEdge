@@ -2809,7 +2809,7 @@ def trade_cost_summary(days: int = 30) -> dict:
 
     Fields:
       - period_days, trade_count, fee_populated_count
-      - total_fee_eur, avg_fee_eur  (actual_fee_cents summed/averaged, converted to EUR)
+      - total_fee_eur, avg_fee_eur  (estimated_fee_cents summed/averaged, converted to EUR)
       - total_size_eur, total_pnl
     """
     if _db is None:
