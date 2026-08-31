@@ -109,3 +109,8 @@ graphify-out/.graphify_semantic_marker
 
 # Generated temp files
 *.tmp
+
+# cryptoedge research DB (see cryptoedge/README.md)
+data/cryptoedge.db
+data/cryptoedge.db-*
+logs/cryptoedge*.log

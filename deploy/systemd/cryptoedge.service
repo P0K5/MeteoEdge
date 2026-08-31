@@ -1,0 +1,25 @@
+[Unit]
+Description=cryptoedge - Polymarket crypto up/down quote collector (research only)
+Documentation=file:///home/p0k5/MeteoEdge/cryptoedge/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=p0k5
+WorkingDirectory=/home/p0k5/MeteoEdge
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/p0k5/MeteoEdge/.venv/bin/python -u -m cryptoedge.collector \
+    --db /home/p0k5/MeteoEdge/data/cryptoedge.db --interval 15 \
+    --assets btc,eth --windows 5,15
+Restart=always
+RestartSec=15s
+StandardOutput=append:/home/p0k5/MeteoEdge/logs/cryptoedge.log
+StandardError=append:/home/p0k5/MeteoEdge/logs/cryptoedge.log
+
+# Places NO orders and never opens meteoedge.db (cryptoedge/README.md).
+# Deliberately NOT wired to meteoedge.service: it must never be able to
+# affect the live-trading halt (#1053/#1054).
+
+[Install]
+WantedBy=multi-user.target

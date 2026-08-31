@@ -1,0 +1,10 @@
+[Unit]
+Description=Run cryptoedge outcome backfill every 15 minutes
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=15min
+Unit=cryptoedge-resolve.service
+
+[Install]
+WantedBy=timers.target
