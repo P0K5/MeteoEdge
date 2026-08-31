@@ -1,0 +1,12 @@
+[Unit]
+Description=cryptoedge - backfill outcomes for ended up/down windows
+
+[Service]
+Type=oneshot
+User=p0k5
+WorkingDirectory=/home/p0k5/MeteoEdge
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/p0k5/MeteoEdge/.venv/bin/python -u -m cryptoedge.resolve \
+    --db /home/p0k5/MeteoEdge/data/cryptoedge.db
+StandardOutput=append:/home/p0k5/MeteoEdge/logs/cryptoedge.log
+StandardError=append:/home/p0k5/MeteoEdge/logs/cryptoedge.log
