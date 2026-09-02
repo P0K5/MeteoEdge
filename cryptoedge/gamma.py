@@ -27,6 +27,29 @@ def parse_slug(slug: str) -> "tuple[str, int, int] | None":
     return m.group(1), int(m.group(2)), int(m.group(3))
 
 
+def describe_error(exc: BaseException) -> str:
+    """A SHORT, diagnosable description of a fetch failure.
+
+    Written after a 28-hour outage (2026-09-01) that could not be diagnosed
+    from the logs: the previous version collapsed every failure into one
+    generic RuntimeError naming only the URL, so "DNS is down" and "Gamma is
+    throttling us" and "the request timed out" were indistinguishable after
+    the fact. Reproducing the exact request by hand was the only way to tell
+    -- which is not a thing anyone should have to do to read a log.
+
+    Same lesson as #913: a failure you cannot diagnose from what you recorded
+    is a failure you will diagnose twice.
+    """
+    if isinstance(exc, urllib.error.HTTPError):
+        return f"HTTP {exc.code} {exc.reason}"
+    if isinstance(exc, urllib.error.URLError):
+        reason = getattr(exc, "reason", exc)
+        # DNS failure surfaces as socket.gaierror inside URLError.reason
+        kind = type(reason).__name__
+        return f"URLError/{kind}: {reason}"
+    return f"{type(exc).__name__}: {exc}"
+
+
 def _get(url: str, timeout: int = 20, retries: int = 4):
     last = None
     for attempt in range(retries):
@@ -39,7 +62,10 @@ def _get(url: str, timeout: int = 20, retries: int = 4):
             last = exc
             if attempt < retries - 1:
                 time.sleep(1.5 * (attempt + 1))
-    raise RuntimeError(f"gamma GET failed after {retries} attempts: {url}") from last
+    raise RuntimeError(
+        f"gamma GET failed after {retries} attempts "
+        f"({describe_error(last)}): {url[:120]}..."
+    ) from last
 
 
 def fetch_live_updown(limit: int = 100) -> "list[dict]":

@@ -20,6 +20,17 @@ from cryptoedge import gamma
 log = logging.getLogger("cryptoedge.collector")
 _STOP = False
 
+# Exit (rather than loop forever) after this many consecutive failed polls.
+# 20 polls at the default 15s cadence is ~5 minutes of collecting nothing.
+#
+# Written after the 2026-09-01 outage: the host lost network for 28 HOURS and
+# this process stayed `active` the whole time, retrying and logging warnings
+# that nobody read. systemd's Restart=always never fired because nothing
+# crashed. Exiting non-zero converts a silent stall into a restart -- which at
+# minimum re-resolves DNS and drops wedged sockets -- and makes the failure
+# visible in `systemctl status` as NRestarts.
+MAX_CONSECUTIVE_FAILURES = 20
+
 
 def _sig(_s, _f):
     global _STOP
@@ -64,6 +75,7 @@ def poll_once(con, assets=None, windows=None) -> int:
         markets = gamma.fetch_slugs(slugs)
     except RuntimeError as exc:
         log.warning("[poll] gamma fetch failed: %s", exc)
+        note = str(exc)[:300]
         con.execute("INSERT OR REPLACE INTO poll_runs VALUES (?,?,?,?)",
                     (ts, 0, 0, str(exc)[:300]))
         con.commit()
@@ -120,16 +132,31 @@ def main(argv=None) -> int:
     log.info("collector start db=%s interval=%.1fs assets=%s windows=%s",
              a.db, a.interval, assets or "all", sorted(windows))
     n_cycles = 0
+    consecutive_failures = 0
     while not _STOP:
         t0 = time.time()
         try:
             n = poll_once(con, assets, windows)
+            if n > 0:
+                consecutive_failures = 0
+            else:
+                consecutive_failures += 1
             n_cycles += 1
             if n_cycles % 40 == 1:
                 total = con.execute("SELECT count(*) FROM quotes").fetchone()[0]
                 log.info("[poll] %d live markets | %d quotes stored total", n, total)
         except Exception:
-            log.exception("[poll] unexpected error -- continuing")
+            consecutive_failures += 1
+            log.exception("[poll] unexpected error")
+        if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
+            log.error(
+                "[poll] %d consecutive failed polls (~%.0f min collecting nothing)"
+                " -- EXITING NON-ZERO so systemd restarts us. This is deliberate:"
+                " a stalled collector that stays 'active' is invisible, and cost"
+                " 28 hours of data on 2026-09-01.",
+                consecutive_failures, consecutive_failures * a.interval / 60.0)
+            con.close()
+            return 1
         if a.once:
             break
         time.sleep(max(0.0, a.interval - (time.time() - t0)))

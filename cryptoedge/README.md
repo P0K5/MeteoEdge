@@ -86,6 +86,30 @@ python -m cryptoedge.resolve --db data/cryptoedge.db
 python -m cryptoedge.encompass --db data/cryptoedge.db --asset btc --window 5m
 ```
 
+## Health check
+
+```bash
+bash cryptoedge/healthcheck.sh            # defaults to data/cryptoedge.db
+```
+
+Healthy reads: `polls_last_hour` ~240, `FAILED_last_hour` 0, `stuck_resolutions`
+0, and every integrity counter 0.
+
+**`FAILED_last_hour` is the number that matters.** On 2026-09-01 the host lost
+network for 28 hours; the collector stayed `active`, retried, and collected
+nothing, and it was found only because SSH dropped. ~340 windows were lost.
+Since then the collector EXITS non-zero after `MAX_CONSECUTIVE_FAILURES`
+(~5 min of collecting nothing) so systemd restarts it and `NRestarts` makes
+the stall visible.
+
+> **Do not hand-write the time filters.** `poll_runs.ts` is ISO8601 with a `T`
+> separator; `datetime('now')` returns a space separator, and `'T'` (0x54) sorts
+> above `' '` (0x20). So `WHERE ts > datetime('now','-1 hour')` matches every row
+> from the same DATE. That bug reported 3,027 polls / 513 failures for an hour
+> that actually had 240 polls and zero failures, and cost an unnecessary service
+> restart. Always wrap the column: `datetime(ts)`. `healthcheck.sh` does, and a
+> test enforces it.
+
 ## Do not run the test early
 
 `encompass.py` refuses to report below a minimum sample and prints the count
