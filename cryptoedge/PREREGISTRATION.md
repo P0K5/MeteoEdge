@@ -1,7 +1,6 @@
 # Pre-registration — does a model beat the PRICE on Polymarket crypto up/down?
 
-**Status: DRAFT, awaiting sign-off. Nothing below may change after the first
-powered run.**
+**Status: SIGNED OFF 2026-09-05. FIXED. Nothing below may change.**
 
 **Written 2026-09-05, with 1,182 usable BTC-5m windows collected and NO
 outcome-conditional analysis performed.** No win rate, no EV, and no
@@ -219,6 +218,12 @@ a different population. It is not a rescue of any of them.
 
 | | |
 |---|---|
-| Drafted | 2026-09-05, at 1,182 usable windows, no outcome-conditional analysis performed |
-| Approved by | _pending_ |
-| Date fixed | _pending — nothing above may change after this date_ |
+| Drafted | 2026-09-05, at 1,182 usable BTC-5m windows |
+| State of analysis at drafting | **None.** No win rate, no EV, and no encompassing coefficient had been computed on this data by anyone |
+| Approved by | Tech Lead PM (@P0K5), 2026-09-05 |
+| **Date fixed** | **2026-09-05 — nothing above may change from this date** |
+
+Every bar above was set while the answer was unknown. If the test returns NULL,
+that is the result. If it returns a FINDING, it cleared a bar written before
+anyone could see the numbers. Neither outcome may be renegotiated after the
+fact; that is the only thing this document is for.
