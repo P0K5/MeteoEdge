@@ -105,21 +105,29 @@ def test_counter_resets_after_a_good_poll(tmp_path, monkeypatch):
 # --- 3. the timestamp comparison that caused a false alarm ----------------
 
 def test_iso_timestamp_comparison_requires_datetime_wrapper():
-    """'T' (0x54) sorts above ' ' (0x20), so a naive string compare against
-    datetime('now') matches every row from the same DATE, not the last hour.
+    """'T' (0x54) sorts above ' ' (0x20), so a naive string compare against a
+    datetime('now')-style cutoff matches every row from the same DATE.
 
-    That bug reported 3,027 polls / 513 failures for an hour that really had
-    240 polls and zero failures, and triggered an unnecessary restart.
-    healthcheck.sh must wrap the column: datetime(ts).
+    That bug reported 3,027 polls / 513 failures for an hour that really had 240
+    polls and zero failures, and triggered an unnecessary restart.
+
+    Both timestamps are FIXED literals on purpose. An earlier version of this
+    test compared a hardcoded row against a live datetime('now'), which meant it
+    only exercised the trap on the day it was written and silently stopped
+    testing anything three days later (#844's flake class). The trap needs the
+    two values to share a date, so both are pinned here.
     """
     con = sqlite3.connect(":memory:")
     con.execute("CREATE TABLE t(ts TEXT)")
     con.execute("INSERT INTO t VALUES ('2026-09-02T07:01:59.885285+00:00')")
-    naive = con.execute(
-        "SELECT ts > datetime('now','-15 minutes') FROM t").fetchone()[0]
-    fixed = con.execute(
-        "SELECT datetime(ts) > datetime('now','-15 minutes') FROM t").fetchone()[0]
-    assert naive == 1, "documents the trap: naive compare wrongly matches"
+    cutoff = "2026-09-02 17:20:00"        # same date, SPACE separator, 10h later
+
+    naive = con.execute("SELECT ts > ? FROM t", (cutoff,)).fetchone()[0]
+    fixed = con.execute("SELECT datetime(ts) > ? FROM t", (cutoff,)).fetchone()[0]
+
+    assert naive == 1, (
+        "documents the trap: 07:01 wrongly compares as LATER than 17:20 "
+        "because 'T' > ' '")
     assert fixed == 0, "datetime(ts) compares correctly"
 
 
