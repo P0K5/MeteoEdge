@@ -4,6 +4,7 @@ All tests use an in-memory SQLite database (':memory:') to avoid file I/O,
 except test_wal_mode which requires a real file (WAL is a no-op for :memory:).
 """
 import os
+import sqlite3
 import tempfile
 
 import pytest
@@ -1358,3 +1359,254 @@ class TestCopyWalletCandidates:
         rows = db.get_recent_wallet_screenings("0xd3b034d7", limit=10)
         assert len(rows) == 2
         assert {r["n_resolved"] for r in rows} == {7498, 2271}
+
+
+# ---------------------------------------------------------------------------
+# copy_wallets_followed / copy_signals / copy_positions
+# (issue #1121, epic #1101)
+# ---------------------------------------------------------------------------
+
+class TestCopyWalletsFollowed:
+    """One row per followed wallet, mutated in place -- unlike
+    copy_wallet_candidates' append-only history.
+    """
+
+    def _followed_kwargs(self, **overrides):
+        kwargs = dict(
+            address="0xabc",
+            stake_per_trade=25.0,
+            added_at="2026-09-19T00:00:00+00:00",
+        )
+        kwargs.update(overrides)
+        return kwargs
+
+    def test_table_exists(self):
+        db = _db()
+        cur = db._conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' "
+            "AND name='copy_wallets_followed'"
+        )
+        assert cur.fetchone() is not None
+
+    def test_insert_then_get_round_trip(self):
+        db = _db()
+        db.insert_followed_wallet(**self._followed_kwargs())
+        rows = db.get_followed_wallets()
+        assert len(rows) == 1
+        row = rows[0]
+        assert row["address"] == "0xabc"
+        assert row["stake_per_trade"] == 25.0
+        assert row["status"] == "active"
+        assert row["paused_reason"] is None
+        assert row["added_at"] == "2026-09-19T00:00:00+00:00"
+        assert row["last_seen_trade_ts"] is None
+
+    def test_insert_duplicate_address_raises(self):
+        db = _db()
+        db.insert_followed_wallet(**self._followed_kwargs())
+        with pytest.raises(sqlite3.IntegrityError):
+            db.insert_followed_wallet(**self._followed_kwargs())
+
+    def test_insert_non_positive_stake_raises(self):
+        """stake_per_trade CHECK(stake_per_trade > 0) -- negative and zero
+        stakes are both rejected at the DB level, not just by caller
+        discipline."""
+        db = _db()
+        with pytest.raises(sqlite3.IntegrityError):
+            db.insert_followed_wallet(**self._followed_kwargs(address="0xneg", stake_per_trade=-5.0))
+        with pytest.raises(sqlite3.IntegrityError):
+            db.insert_followed_wallet(**self._followed_kwargs(address="0xzero", stake_per_trade=0.0))
+
+    def test_get_followed_wallets_filters_by_status(self):
+        db = _db()
+        db.insert_followed_wallet(**self._followed_kwargs(address="0xactive"))
+        db.insert_followed_wallet(**self._followed_kwargs(address="0xpaused"))
+        db.update_followed_wallet_status("0xpaused", "paused", paused_reason="stale")
+
+        active = db.get_followed_wallets("active")
+        paused = db.get_followed_wallets("paused")
+        assert [r["address"] for r in active] == ["0xactive"]
+        assert [r["address"] for r in paused] == ["0xpaused"]
+
+    def test_update_status_does_not_touch_other_columns(self):
+        db = _db()
+        db.insert_followed_wallet(**self._followed_kwargs())
+        db.update_followed_wallet_status("0xabc", "paused", paused_reason="rug pull risk")
+
+        row = db.get_followed_wallets()[0]
+        assert row["status"] == "paused"
+        assert row["paused_reason"] == "rug pull risk"
+        assert row["stake_per_trade"] == 25.0
+        assert row["added_at"] == "2026-09-19T00:00:00+00:00"
+
+    def test_update_status_back_to_active_clears_paused_reason(self):
+        db = _db()
+        db.insert_followed_wallet(**self._followed_kwargs())
+        db.update_followed_wallet_status("0xabc", "paused", paused_reason="rug pull risk")
+        db.update_followed_wallet_status("0xabc", "active")
+
+        row = db.get_followed_wallets()[0]
+        assert row["status"] == "active"
+        assert row["paused_reason"] is None
+
+    def test_update_last_seen_trade_ts(self):
+        db = _db()
+        db.insert_followed_wallet(**self._followed_kwargs())
+        db.update_followed_wallet_last_seen("0xabc", 1758000000)
+
+        row = db.get_followed_wallets()[0]
+        assert row["last_seen_trade_ts"] == 1758000000
+
+
+class TestCopySignalsAndPositions:
+    """copy_signals (one row per detected BUY) and copy_positions (open,
+    unsettled paper positions -- settled in place, never deleted).
+    """
+
+    def _signal_kwargs(self, **overrides):
+        kwargs = dict(
+            address="0xabc",
+            market="0xmarket1",
+            source_price=0.45,
+            detected_at="2026-09-19T00:00:00+00:00",
+        )
+        kwargs.update(overrides)
+        return kwargs
+
+    def _position_kwargs(self, signal_id, **overrides):
+        kwargs = dict(
+            signal_id=signal_id,
+            address="0xabc",
+            market="0xmarket1",
+            outcome_index=0,
+            entry_price=0.45,
+            stake_usd=25.0,
+            entry_ts="2026-09-19T00:00:00+00:00",
+        )
+        kwargs.update(overrides)
+        return kwargs
+
+    def test_tables_exist(self):
+        db = _db()
+        for table in ("copy_signals", "copy_positions"):
+            cur = db._conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+                (table,),
+            )
+            assert cur.fetchone() is not None, table
+
+    def test_insert_signal_then_position_round_trip(self):
+        db = _db()
+        signal_id = db.insert_copy_signal(**self._signal_kwargs())
+        assert isinstance(signal_id, int)
+
+        position_id = db.insert_copy_position(**self._position_kwargs(signal_id))
+        assert isinstance(position_id, int)
+
+        cur = db._conn.execute("SELECT * FROM copy_signals WHERE id=?", (signal_id,))
+        signal_row = dict(cur.fetchone())
+        assert signal_row["address"] == "0xabc"
+        assert signal_row["market"] == "0xmarket1"
+        assert signal_row["source_price"] == 0.45
+        assert signal_row["order_placed"] == 0
+        assert signal_row["skip_reason"] is None
+
+        cur = db._conn.execute("SELECT * FROM copy_positions WHERE id=?", (position_id,))
+        position_row = dict(cur.fetchone())
+        assert position_row["signal_id"] == signal_id
+        assert position_row["address"] == "0xabc"
+        assert position_row["stake_usd"] == 25.0
+        assert position_row["status"] == "open"
+        assert position_row["settled_pnl_usd"] is None
+
+    def test_get_open_copy_positions_returns_only_open(self):
+        db = _db()
+        signal_id = db.insert_copy_signal(**self._signal_kwargs())
+        open_id = db.insert_copy_position(**self._position_kwargs(signal_id))
+        settled_id = db.insert_copy_position(**self._position_kwargs(signal_id))
+        db._conn.execute(
+            "UPDATE copy_positions SET status='settled', settled_pnl_usd=5.0, "
+            "settled_at='2026-09-20T00:00:00+00:00' WHERE id=?",
+            (settled_id,),
+        )
+        db._conn.commit()
+
+        open_rows = db.get_open_copy_positions()
+        assert [r["id"] for r in open_rows] == [open_id]
+
+    def test_get_open_copy_positions_filters_by_address(self):
+        db = _db()
+        signal_a = db.insert_copy_signal(**self._signal_kwargs(address="0xaaa"))
+        signal_b = db.insert_copy_signal(**self._signal_kwargs(address="0xbbb"))
+        pos_a = db.insert_copy_position(**self._position_kwargs(signal_a, address="0xaaa"))
+        db.insert_copy_position(**self._position_kwargs(signal_b, address="0xbbb"))
+
+        rows = db.get_open_copy_positions("0xaaa")
+        assert [r["id"] for r in rows] == [pos_a]
+
+    def test_settled_position_retained_not_deleted(self):
+        db = _db()
+        signal_id = db.insert_copy_signal(**self._signal_kwargs())
+        position_id = db.insert_copy_position(**self._position_kwargs(signal_id))
+        db._conn.execute(
+            "UPDATE copy_positions SET status='settled', settled_pnl_usd=-3.5, "
+            "settled_at='2026-09-20T00:00:00+00:00' WHERE id=?",
+            (position_id,),
+        )
+        db._conn.commit()
+
+        assert db.get_open_copy_positions() == []
+        cur = db._conn.execute("SELECT * FROM copy_positions WHERE id=?", (position_id,))
+        row = dict(cur.fetchone())
+        assert row["status"] == "settled"
+        assert row["settled_pnl_usd"] == -3.5
+        assert row["settled_at"] == "2026-09-20T00:00:00+00:00"
+
+    def test_insert_signal_with_out_of_range_source_price_raises(self):
+        """source_price CHECK(source_price >= 0 AND source_price <= 1) --
+        a price outside the valid probability range is rejected at the DB
+        level, both above 1 and below 0."""
+        db = _db()
+        with pytest.raises(sqlite3.IntegrityError):
+            db.insert_copy_signal(**self._signal_kwargs(source_price=1.5))
+        with pytest.raises(sqlite3.IntegrityError):
+            db.insert_copy_signal(**self._signal_kwargs(source_price=-0.1))
+
+    def test_insert_signal_with_invalid_outcome_index_raises(self):
+        """outcome_index CHECK(... IN (0,1)) -- only the two valid slots
+        are accepted; NULL is still fine (checked separately)."""
+        db = _db()
+        with pytest.raises(sqlite3.IntegrityError):
+            db.insert_copy_signal(**self._signal_kwargs(outcome_index=2))
+        # NULL (unset) must still be accepted
+        db.insert_copy_signal(**self._signal_kwargs())
+
+    def test_insert_signal_with_non_positive_size_usd_raises(self):
+        """size_usd CHECK(size_usd IS NULL OR size_usd > 0)."""
+        db = _db()
+        with pytest.raises(sqlite3.IntegrityError):
+            db.insert_copy_signal(**self._signal_kwargs(size_usd=-10.0))
+        with pytest.raises(sqlite3.IntegrityError):
+            db.insert_copy_signal(**self._signal_kwargs(size_usd=0.0))
+
+    def test_insert_position_with_out_of_range_entry_price_raises(self):
+        """entry_price CHECK(entry_price >= 0 AND entry_price <= 1)."""
+        db = _db()
+        signal_id = db.insert_copy_signal(**self._signal_kwargs())
+        with pytest.raises(sqlite3.IntegrityError):
+            db.insert_copy_position(**self._position_kwargs(signal_id, entry_price=1.1))
+
+    def test_insert_position_with_non_positive_stake_usd_raises(self):
+        """stake_usd CHECK(stake_usd > 0)."""
+        db = _db()
+        signal_id = db.insert_copy_signal(**self._signal_kwargs())
+        with pytest.raises(sqlite3.IntegrityError):
+            db.insert_copy_position(**self._position_kwargs(signal_id, stake_usd=0.0))
+
+    def test_insert_position_with_invalid_outcome_index_raises(self):
+        """outcome_index CHECK(outcome_index IN (0,1)) -- unlike copy_signals,
+        this column is NOT NULL on copy_positions, so only 0/1 are valid."""
+        db = _db()
+        signal_id = db.insert_copy_signal(**self._signal_kwargs())
+        with pytest.raises(sqlite3.IntegrityError):
+            db.insert_copy_position(**self._position_kwargs(signal_id, outcome_index=2))

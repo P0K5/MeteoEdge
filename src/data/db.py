@@ -368,6 +368,85 @@ CREATE TABLE IF NOT EXISTS copy_wallet_candidates (
 );
 CREATE INDEX IF NOT EXISTS idx_copy_wallet_candidates_address_screened
     ON copy_wallet_candidates(address, screened_at);
+
+-- Copy-trading followed wallets (issue #1121, epic #1101 story B1 -- signal
+-- detection & flat-stake paper execution). The subset of
+-- copy_wallet_candidates actually being copied. Unlike that table, this is
+-- NOT append-only: one row per wallet, mutated in place via UPDATE
+-- (status/paused_reason/last_seen_trade_ts) rather than a new row per
+-- change -- a wallet can't be followed twice, callers un-pause instead of
+-- re-inserting. last_seen_trade_ts is the high-water-mark story B3's
+-- polling will use to detect new trades since the last poll -- NULL until
+-- the first poll runs for a wallet.
+CREATE TABLE IF NOT EXISTS copy_wallets_followed (
+    address              TEXT PRIMARY KEY,
+    stake_per_trade      REAL NOT NULL CHECK(stake_per_trade > 0),
+    status               TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','paused')),
+    paused_reason        TEXT,
+    added_at             TEXT NOT NULL,
+    last_seen_trade_ts   INTEGER
+);
+
+-- Copy-trading detected signals (issue #1121). One row per detected BUY
+-- from a followed wallet, executed or skipped: source_price is the
+-- followed trader's own fill price -- fill_price/size_usd/position_id are
+-- only populated once order_placed=1, skip_reason only when it stays 0.
+--
+-- source_trade_id: verified live against data-api.polymarket.com/trades
+-- 2026-09-19 (see src.data.polymarket_traders module docstring for the
+-- verification note on other fields) -- every raw trade record carries a
+-- stable `transactionHash`, so this column exists per the acceptance
+-- criteria. normalize_trade() (src/data/polymarket_traders.py) does not
+-- yet surface it -- story B3's polling code must add that before this
+-- column can be populated -- until then it stays NULL. No UNIQUE constraint: a
+-- single on-chain transaction can span multiple maker fills at different
+-- price levels, so the same transactionHash can legitimately appear on
+-- more than one BUY row. Story B3 must therefore dedupe on
+-- source_trade_id first but fall back to the full (address, market,
+-- source_price, detected_at) tuple when it collides -- documented here
+-- as the known limitation this story hands off, per the acceptance
+-- criteria.
+CREATE TABLE IF NOT EXISTS copy_signals (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    address          TEXT NOT NULL,
+    market           TEXT NOT NULL,
+    outcome_index    INTEGER CHECK(outcome_index IS NULL OR outcome_index IN (0,1)),
+    source_price     REAL NOT NULL CHECK(source_price >= 0 AND source_price <= 1),
+    source_trade_id  TEXT,
+    detected_at      TEXT NOT NULL,
+    order_placed     INTEGER NOT NULL DEFAULT 0,
+    fill_price       REAL CHECK(fill_price IS NULL OR (fill_price >= 0 AND fill_price <= 1)),
+    size_usd         REAL CHECK(size_usd IS NULL OR size_usd > 0),
+    position_id      INTEGER REFERENCES copy_positions(id),
+    skip_reason      TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_copy_signals_address_detected
+    ON copy_signals(address, detected_at);
+CREATE INDEX IF NOT EXISTS idx_copy_signals_source_trade_id
+    ON copy_signals(source_trade_id);
+
+-- Copy-trading open paper positions (issue #1121). Mirrors open_positions'
+-- shape (docs/DB_SCHEMA.md) conceptually, but is NOT deleted on
+-- settlement the way open_positions is -- epic C needs to read settled
+-- rows later for P&L history, so status flips 'open' -> 'settled' in
+-- place instead. get_open_copy_positions() sums stake_usd over this
+-- table's 'open' rows (rather than an in-memory counter) so story B3's
+-- per-wallet and total exposure checks survive process restarts.
+CREATE TABLE IF NOT EXISTS copy_positions (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    signal_id        INTEGER NOT NULL REFERENCES copy_signals(id),
+    address          TEXT NOT NULL,
+    market           TEXT NOT NULL,
+    outcome_index    INTEGER NOT NULL CHECK(outcome_index IN (0,1)),
+    entry_price      REAL NOT NULL CHECK(entry_price >= 0 AND entry_price <= 1),
+    stake_usd        REAL NOT NULL CHECK(stake_usd > 0),
+    entry_ts         TEXT NOT NULL,
+    status           TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open','settled')),
+    settled_pnl_usd  REAL,
+    settled_at       TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_copy_positions_address_status
+    ON copy_positions(address, status);
 """
 
 
@@ -1509,6 +1588,150 @@ class Database:
             "ORDER BY id DESC LIMIT ?",
             (address, int(limit)),
         )
+        return [dict(row) for row in cur.fetchall()]
+
+    # ------------------------------------------------------------------
+    # copy_wallets_followed / copy_signals / copy_positions (issue #1121,
+    # epic #1101 story B1 -- copy-trading signal detection & flat-stake
+    # paper execution). Fully separate tables from open_positions/trades
+    # per the architecture doc's isolation decision (issue #1100), not a
+    # `strategy` discriminator column on the weather strategy's tables.
+    # ------------------------------------------------------------------
+
+    def insert_followed_wallet(
+        self,
+        *,
+        address: str,
+        stake_per_trade: float,
+        added_at: str,
+        status: str = "active",
+    ) -> None:
+        """Insert one row for a newly-followed wallet.
+
+        Plain INSERT -- raises the underlying ``sqlite3.IntegrityError`` on
+        a duplicate ``address`` (the primary key). A wallet can't be
+        followed twice; callers un-pause an existing row via
+        ``update_followed_wallet_status`` instead of re-inserting.
+        """
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO copy_wallets_followed"
+                "(address,stake_per_trade,status,added_at) VALUES(?,?,?,?)",
+                (address, stake_per_trade, status, added_at),
+            )
+            self._conn.commit()
+
+    def get_followed_wallets(self, status: "str | None" = None) -> list[dict]:
+        """Return all followed wallets, or only those matching *status* if given."""
+        if status is not None:
+            cur = self._conn.execute(
+                "SELECT * FROM copy_wallets_followed WHERE status=?", (status,)
+            )
+        else:
+            cur = self._conn.execute("SELECT * FROM copy_wallets_followed")
+        return [dict(row) for row in cur.fetchall()]
+
+    def update_followed_wallet_status(
+        self, address: str, status: str, paused_reason: "str | None" = None
+    ) -> None:
+        """Set *address*'s status in place -- does not touch any other column
+        (``stake_per_trade``, ``added_at``, ``last_seen_trade_ts``).
+
+        ``paused_reason`` is written as given, including ``None`` -- e.g.
+        un-pausing back to ``'active'`` with the default clears any prior
+        reason rather than leaving it stale.
+        """
+        with self._lock:
+            self._conn.execute(
+                "UPDATE copy_wallets_followed SET status=?, paused_reason=? WHERE address=?",
+                (status, paused_reason, address),
+            )
+            self._conn.commit()
+
+    def update_followed_wallet_last_seen(self, address: str, last_seen_trade_ts: int) -> None:
+        """Set *address*'s high-water-mark trade timestamp in place.
+
+        Story B3's polling loop uses this to only scan trades newer than
+        the last-seen one on each pass.
+        """
+        with self._lock:
+            self._conn.execute(
+                "UPDATE copy_wallets_followed SET last_seen_trade_ts=? WHERE address=?",
+                (int(last_seen_trade_ts), address),
+            )
+            self._conn.commit()
+
+    def insert_copy_signal(
+        self,
+        *,
+        address: str,
+        market: str,
+        source_price: float,
+        detected_at: str,
+        outcome_index: "int | None" = None,
+        source_trade_id: "str | None" = None,
+        order_placed: int = 0,
+        fill_price: "float | None" = None,
+        size_usd: "float | None" = None,
+        position_id: "int | None" = None,
+        skip_reason: "str | None" = None,
+    ) -> int:
+        """Insert one detected-signal row; returns the new row id."""
+        with self._lock:
+            cur = self._conn.execute(
+                "INSERT INTO copy_signals"
+                "(address,market,outcome_index,source_price,source_trade_id,"
+                "detected_at,order_placed,fill_price,size_usd,position_id,skip_reason) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    address, market, outcome_index, source_price, source_trade_id,
+                    detected_at, int(order_placed), fill_price, size_usd, position_id,
+                    skip_reason,
+                ),
+            )
+            self._conn.commit()
+            return cur.lastrowid
+
+    def insert_copy_position(
+        self,
+        *,
+        signal_id: int,
+        address: str,
+        market: str,
+        outcome_index: int,
+        entry_price: float,
+        stake_usd: float,
+        entry_ts: str,
+        status: str = "open",
+    ) -> int:
+        """Insert one open copy-trading position row; returns the new row id."""
+        with self._lock:
+            cur = self._conn.execute(
+                "INSERT INTO copy_positions"
+                "(signal_id,address,market,outcome_index,entry_price,stake_usd,"
+                "entry_ts,status) VALUES(?,?,?,?,?,?,?,?)",
+                (signal_id, address, market, outcome_index, entry_price, stake_usd,
+                 entry_ts, status),
+            )
+            self._conn.commit()
+            return cur.lastrowid
+
+    def get_open_copy_positions(self, address: "str | None" = None) -> list[dict]:
+        """Return ``status='open'`` copy-trading positions, optionally
+        filtered to one wallet.
+
+        Story B3's exposure checks sum ``stake_usd`` over this query's
+        result to compute current per-wallet and total exposure -- reading
+        the DB rather than an in-memory counter, so exposure state
+        survives process restarts.
+        """
+        if address is not None:
+            cur = self._conn.execute(
+                "SELECT * FROM copy_positions WHERE status='open' AND address=?",
+                (address,),
+            )
+        else:
+            cur = self._conn.execute("SELECT * FROM copy_positions WHERE status='open'")
         return [dict(row) for row in cur.fetchall()]
 
     # ------------------------------------------------------------------
