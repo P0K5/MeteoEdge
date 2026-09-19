@@ -447,6 +447,71 @@ sudo journalctl -u meteoedge-purge-retention.service -f
 tail -f logs/purge.log
 ```
 
+#### meteoedge-copy-screening.service / meteoedge-copy-screening.timer
+
+One-shot service, run daily at **03:00 UTC** by `meteoedge-copy-screening.timer`. Runs
+`src/scripts/copy_wallet_screening`, which screens the Polymarket leaderboard for
+profitable traders, persists results to `copy_wallet_candidates` table, and implements
+the stability check required by copy-trading architecture (issue #1099, story 2).
+
+```ini
+[Unit]
+Description=MeteoEdge copy-wallet screening (leaderboard scan)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=p0k5
+WorkingDirectory=/home/p0k5/MeteoEdge
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=/home/p0k5/MeteoEdge/.env
+ExecStart=/home/p0k5/MeteoEdge/.venv/bin/python -u -m src.scripts.copy_wallet_screening
+StandardOutput=append:/home/p0k5/MeteoEdge/logs/copy_screening.log
+StandardError=append:/home/p0k5/MeteoEdge/logs/copy_screening.log
+```
+
+```ini
+[Unit]
+Description=Run MeteoEdge copy-wallet screening daily at 03:00 UTC
+
+[Timer]
+OnCalendar=*-*-* 03:00:00 UTC
+AccuracySec=1m
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+```
+
+**Why 03:00 UTC:** Isolated from the 12:00–14:00 UTC settlement/report cluster
+(settle at 12:00, prob-cap-report at 12:30, resolve-outcomes at 13:00, health-report
+at 14:00) and the 00:05 purge-retention run at 01:00 UTC. No other timer occupies the
+03:00 slot.
+
+**Rate-limit decision — shared host isolation:** The copy-screening job calls both
+`data-api.polymarket.com` and `gamma-api.polymarket.com`, both rate-limited by
+`DomainRateLimiter` (`src/http_client.py:42-63`). That limiter is a process-local
+singleton — running screening as a separate systemd process means its calls are
+**not jointly throttled** with the live weather bot's own traffic on `gamma-api.polymarket.com`
+(via `fetch_market_resolution`). v1 mitigation: `MAX_WALLETS_PER_RUN=50` caps
+worst-case call volume per run, plus the isolated 03:00 UTC schedule. A cross-process
+shared rate limiter is explicitly deferred — no incident has justified that
+complexity yet; revisit if 429s / throttling are observed against either host.
+
+**Operational commands:**
+```bash
+# Check next scheduled run
+sudo systemctl list-timers meteoedge-copy-screening.timer
+
+# Manually trigger a run
+sudo systemctl start meteoedge-copy-screening.service
+
+# View logs
+sudo journalctl -u meteoedge-copy-screening.service -f
+tail -f logs/copy_screening.log
+```
+
 ---
 
 ## Configuration
