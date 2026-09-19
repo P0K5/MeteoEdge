@@ -1230,3 +1230,131 @@ class TestPollRuns:
         db.record_poll_run("2026-07-30T13:56:00+00:00")
         mode = db._conn.execute("SELECT mode FROM poll_runs").fetchone()[0]
         assert mode == "paper"
+
+
+# ---------------------------------------------------------------------------
+# copy_wallet_candidates / insert_wallet_screening / get_recent_wallet_screenings
+# (issue #1108, epic #1099)
+# ---------------------------------------------------------------------------
+
+class TestCopyWalletCandidates:
+    """Append-only wallet-screening-run persistence for the copy-trading
+    pipeline. Unlike scan_decisions (upsert-per-key), every screening run
+    keeps its own row so the stability check (epic #1099 story 2) can diff
+    a wallet's last two runs.
+    """
+
+    def _screening_kwargs(self, **overrides):
+        kwargs = dict(
+            address="0xd3b034d7",
+            window="30d",
+            screened_at="2026-07-30T13:00:00+00:00",
+            n_buy_trades=100,
+            n_resolved=7498,
+            slippage_bps=25.0,
+            win_rate=0.62,
+            mean_roi=0.10,
+            median_roi=0.334,
+            mirrored_dollar_pnl=1000.0,
+            flat_dollar_pnl=500.0,
+            flat_stake=100.0,
+            eligible_to_follow=1,
+        )
+        kwargs.update(overrides)
+        return kwargs
+
+    def test_table_exists(self):
+        db = _db()
+        cur = db._conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' "
+            "AND name='copy_wallet_candidates'"
+        )
+        assert cur.fetchone() is not None
+
+    def test_insert_then_get_round_trip(self):
+        db = _db()
+        row_id = db.insert_wallet_screening(**self._screening_kwargs())
+        assert isinstance(row_id, int)
+
+        rows = db.get_recent_wallet_screenings("0xd3b034d7")
+        assert len(rows) == 1
+        row = rows[0]
+        assert row["address"] == "0xd3b034d7"
+        assert row["window"] == "30d"
+        assert row["screened_at"] == "2026-07-30T13:00:00+00:00"
+        assert row["n_buy_trades"] == 100
+        assert row["n_resolved"] == 7498
+        assert row["win_rate"] == 0.62
+        assert row["mean_roi"] == 0.10
+        assert row["median_roi"] == 0.334
+        assert row["mirrored_dollar_pnl"] == 1000.0
+        assert row["flat_dollar_pnl"] == 500.0
+        assert row["flat_stake"] == 100.0
+        assert row["slippage_bps"] == 25.0
+        assert row["eligible_to_follow"] == 1
+
+    def test_get_recent_respects_limit(self):
+        db = _db()
+        for i in range(5):
+            db.insert_wallet_screening(
+                **self._screening_kwargs(screened_at=f"2026-07-30T1{i}:00:00+00:00")
+            )
+        rows = db.get_recent_wallet_screenings("0xd3b034d7", limit=2)
+        assert len(rows) == 2
+
+    def test_get_recent_orders_newest_first_by_id(self):
+        """id DESC, not screened_at DESC -- two runs can share a timestamp."""
+        db = _db()
+        same_ts = "2026-07-30T13:00:00+00:00"
+        first_id = db.insert_wallet_screening(
+            **self._screening_kwargs(screened_at=same_ts, n_resolved=7498, median_roi=0.334)
+        )
+        second_id = db.insert_wallet_screening(
+            **self._screening_kwargs(screened_at=same_ts, n_resolved=2271, median_roi=-1.0)
+        )
+        assert second_id > first_id
+
+        rows = db.get_recent_wallet_screenings("0xd3b034d7", limit=2)
+        assert [r["n_resolved"] for r in rows] == [2271, 7498]
+
+    def test_unknown_address_returns_empty_list(self):
+        db = _db()
+        db.insert_wallet_screening(**self._screening_kwargs())
+        assert db.get_recent_wallet_screenings("0xnotarealaddress") == []
+
+    def test_no_rows_returns_empty_list_not_raise(self):
+        db = _db()
+        assert db.get_recent_wallet_screenings("0xd3b034d7") == []
+
+    def test_two_inserts_same_address_are_append_only_not_overwritten(self):
+        """The behavior that differentiates this table from scan_decisions:
+        a second insert for the same address must persist as a SEPARATE row,
+        reproducing the 0xd3b034d7 reversal pattern (resolved trades
+        7,498 -> 2,271, median ROI +33.4% -> -100%) across two runs.
+        """
+        db = _db()
+        db.insert_wallet_screening(
+            **self._screening_kwargs(
+                screened_at="2026-07-30T13:00:00+00:00",
+                n_resolved=7498,
+                median_roi=0.334,
+                eligible_to_follow=1,
+            )
+        )
+        db.insert_wallet_screening(
+            **self._screening_kwargs(
+                screened_at="2026-07-31T04:00:00+00:00",
+                n_resolved=2271,
+                median_roi=-1.0,
+                eligible_to_follow=0,
+            )
+        )
+        count = db._conn.execute(
+            "SELECT COUNT(*) FROM copy_wallet_candidates WHERE address=?",
+            ("0xd3b034d7",),
+        ).fetchone()[0]
+        assert count == 2
+
+        rows = db.get_recent_wallet_screenings("0xd3b034d7", limit=10)
+        assert len(rows) == 2
+        assert {r["n_resolved"] for r in rows} == {7498, 2271}
