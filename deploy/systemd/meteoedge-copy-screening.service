@@ -1,0 +1,14 @@
+[Unit]
+Description=MeteoEdge copy-wallet screening (leaderboard scan)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=p0k5
+WorkingDirectory=/home/p0k5/MeteoEdge
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=/home/p0k5/MeteoEdge/.env
+ExecStart=/home/p0k5/MeteoEdge/.venv/bin/python -u -m src.scripts.copy_wallet_screening
+StandardOutput=append:/home/p0k5/MeteoEdge/logs/copy_screening.log
+StandardError=append:/home/p0k5/MeteoEdge/logs/copy_screening.log

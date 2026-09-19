@@ -169,11 +169,14 @@ view can ship as soon as Epic A has data, before execution exists.
    is less duplication; separate tables are cleaner isolation.
 2. Rate-limit budget split between the weather strategy and copy-trading
    on `data-api.polymarket.com`/`gamma-api.polymarket.com` if both run as
-   separate processes.
+   separate processes. **Decision:** See `docs/OPERATIONS.md`'s
+   `meteoedge-copy-screening.service / .timer` section, "Rate-limit decision".
 3. Screening cadence (how often to re-run the leaderboard scan and
    re-validate followed wallets) — the spike's own re-run 15 hours apart
    was enough to catch instability on one wallet; needs a concrete number
    (hourly? daily?) traded off against `data-api.polymarket.com` load.
+   **Decision:** Daily at 03:00 UTC. See `docs/OPERATIONS.md`'s
+   `meteoedge-copy-screening.service / .timer` section, "Why 03:00 UTC".
 4. What "sizing" means beyond flat $5 in v1 — fixed forever, or does the
    Epic D health-monitoring output ever adjust an individual wallet's
    stake (e.g., scale down a wallet whose edge is degrading before fully
