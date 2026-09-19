@@ -16,16 +16,20 @@ Two entry points, both keyed off a wallet ("proxy") address:
   one wallet, paginated. This is the raw data the backtest
   (``src/scripts/copy_trade_backtest.py``) replays.
 
-**Unverified against live traffic.** Outbound access to polymarket.com
-hosts was unavailable in the environment this module was written in, so
-none of the request/response shapes below have been exercised against a
-real wallet. Field names are read defensively (multiple aliases tried,
-mirroring ``polymarket.py``'s ``_select_matching_market`` pattern) and every
-public function fails soft (``[]``/``None``, never raises on a bad
-response) so a wrong guess here degrades to "no data" rather than a crash.
-Before trusting backtest output, run this once against a known wallet
-address and confirm ``get_wallet_trades`` returns non-empty, realistic
-records.
+**Verified against live traffic 2026-09-18.** ``get_wallet_trades`` (the
+``/trades`` endpoint) and ``get_leaderboard`` (``/v1/leaderboard`` -- note
+the ``/v1`` prefix, absent from the first best-guess URL) both confirmed
+returning real, non-empty records with the field names read below. One
+correctness gap found and fixed in that pass: a trade's ``outcome`` field
+is the market's own label text (``"Up"``/``"Down"``, team names, etc. --
+*not* reliably ``"Yes"``/``"No"``), so callers that need to know which side
+of a binary market a trade is on must use ``outcome_index`` (0 == the same
+index-0/"YES" price slot ``fetch_market_final_price`` in ``polymarket.py``
+reads), never a text match against ``outcome``. See
+``copy_trade_backtest.resolve_payout``. Field names are still read
+defensively (multiple aliases tried, mirroring ``polymarket.py``'s
+``_select_matching_market`` pattern) and every public function still fails
+soft (``[]``/``None``, never raises on a bad response).
 """
 import logging
 
@@ -55,7 +59,7 @@ def get_leaderboard(window: str = "month", limit: int = 50) -> list[dict]:
     if window not in LEADERBOARD_WINDOWS:
         raise ValueError(f"window must be one of {sorted(LEADERBOARD_WINDOWS)}, got {window!r}")
 
-    url = f"{POLYMARKET_DATA_API}/leaderboard?window={window}&limit={limit}"
+    url = f"{POLYMARKET_DATA_API}/v1/leaderboard?window={window}&limit={limit}"
     try:
         r = fetch(url, timeout=HTTP_TIMEOUT_SECONDS)
         data = r.json()
@@ -116,7 +120,12 @@ def normalize_trade(raw: dict) -> "dict | None":
     """Normalize one raw trade record to the fields the backtest needs:
     ``market`` (condition ID), ``side`` ("BUY"/"SELL"), ``price`` (0-1
     probability), ``size`` (shares), ``timestamp`` (unix seconds),
-    ``outcome`` ("Yes"/"No" label).
+    ``outcome`` (the market's own outcome label -- e.g. "Yes"/"No", but
+    also "Up"/"Down", a team name, etc., so never text-match it to decide
+    a binary win/lose), ``outcome_index`` (0 or 1 -- the positional slot
+    that lines up with the Gamma API's ``outcomePrices``/``outcomes``
+    arrays, i.e. the reliable way to know which side of a binary market
+    this trade is on).
 
     Returns ``None`` if a required field is missing or unparseable -- an
     unnormalizable record is dropped, never guessed into a value.
@@ -134,6 +143,12 @@ def normalize_trade(raw: dict) -> "dict | None":
     if not market or side not in ("BUY", "SELL"):
         return None
 
+    try:
+        raw_index = raw.get("outcomeIndex")
+        outcome_index = int(raw_index) if raw_index is not None else None
+    except (TypeError, ValueError):
+        outcome_index = None
+
     return {
         "market": market,
         "side": side,
@@ -141,5 +156,6 @@ def normalize_trade(raw: dict) -> "dict | None":
         "size": size,
         "timestamp": ts,
         "outcome": outcome,
+        "outcome_index": outcome_index,
         "asset": raw.get("asset") or raw.get("token_id"),
     }

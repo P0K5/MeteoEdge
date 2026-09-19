@@ -35,6 +35,16 @@ bought, when they bought it, at a worse price." The per-trade ROI stats
 next to it are size-independent (win rate, mean/median ROI per contract)
 and are the more robust read when candidate wallets differ wildly in size.
 
+**Median ROI, not mean, is the sustainability signal -- verified against
+live top-by-profit wallets 2026-09-16.** Mean ROI (and dollar PnL even more
+so) is easily dominated by one or two huge tail-bet payouts: a wallet can
+show a +119% mean copier ROI across 200 trades while its median is +0.01%,
+i.e. the typical trade is flat and the mean is a longshot-payout artifact.
+The report sorts by median ROI and shows both, precisely so a wide
+mean/median gap is visible rather than hidden behind an eye-catching
+average. Treat "high mean, near-zero median" as a lottery-style wallet, not
+a repeatable edge, regardless of its dollar PnL.
+
 Usage::
 
     python -m src.scripts.copy_trade_backtest --window month --top 20
@@ -76,8 +86,20 @@ def apply_slippage(price: float, side: str, slippage_bps: float) -> float:
     return min(max(adjusted, 0.0001), 0.9999)
 
 
-def resolve_payout(market: str, outcome: "str | None", cache: dict) -> "float | None":
-    """1.0 if *outcome* won, 0.0 if it lost, None if unresolved/unknown.
+def resolve_payout(
+    market: str, outcome: "str | None", cache: dict, outcome_index: "int | None" = None,
+) -> "float | None":
+    """1.0 if the trade's side won, 0.0 if it lost, None if unresolved/unknown.
+
+    Winner is decided positionally via *outcome_index* when available: 0
+    is the same index-0/"YES" price slot ``fetch_market_resolution`` (via
+    ``fetch_market_final_price``) reads from the Gamma API. This is NOT
+    the same thing as *outcome*'s text label -- verified 2026-09-18 against
+    live ``data-api.polymarket.com`` trades, most markets label their two
+    outcomes "Up"/"Down", team names, etc., not literally "Yes"/"No", so a
+    naive ``outcome.strip().lower() == "yes"`` match silently misclassifies
+    almost every non-Yes/No-labeled market. That text match is kept only as
+    a fallback for callers that don't have ``outcome_index`` available.
 
     Cached per market in *cache* -- a wallet's trade tape can hit the same
     market many times, and ``fetch_market_resolution`` has no caching of
@@ -86,10 +108,15 @@ def resolve_payout(market: str, outcome: "str | None", cache: dict) -> "float | 
     if market not in cache:
         cache[market] = fetch_market_resolution(market)
     won = cache[market]
-    if won is None or not outcome:
+    if won is None:
         return None
-    outcome_is_yes = outcome.strip().lower() == "yes"
-    return 1.0 if (won == outcome_is_yes) else 0.0
+    if outcome_index is not None:
+        side_is_yes_position = outcome_index == 0
+    else:
+        if not outcome:
+            return None
+        side_is_yes_position = outcome.strip().lower() == "yes"
+    return 1.0 if (won == side_is_yes_position) else 0.0
 
 
 def _stats(rois: "list[float]") -> dict:
@@ -104,8 +131,19 @@ def _stats(rois: "list[float]") -> dict:
     }
 
 
-def backtest_wallet(address: str, slippage_bps: float) -> dict:
+def backtest_wallet(
+    address: str, slippage_bps: float, flat_stake: "float | None" = None,
+) -> dict:
     """Run the copy-trade simulation for one wallet's BUY trades.
+
+    *flat_stake*, when given, adds a second copier scenario alongside the
+    size-mirrored one: instead of buying the same *share count* as the
+    trader (at a worse price), the copier spends a fixed dollar amount on
+    every trade -- "the position from our side is always the same" instead
+    of scaling with whatever the trader risked. ROI stats (win rate,
+    mean/median) are identical between the two scenarios -- ROI is
+    per-contract, not sizing-dependent -- so only a second dollar-PnL
+    figure is added (``copier_flat``), not a second full stats block.
 
     Per-trade fields are only held in memory long enough to aggregate, not
     returned -- keeps the report a fixed size regardless of how many fills
@@ -118,6 +156,7 @@ def backtest_wallet(address: str, slippage_bps: float) -> dict:
     copier_rois: "list[float]" = []
     trader_dollar_pnl = 0.0
     copier_dollar_pnl = 0.0
+    copier_flat_dollar_pnl = 0.0
     n_buy = 0
     n_sell_excluded = 0
 
@@ -130,7 +169,9 @@ def backtest_wallet(address: str, slippage_bps: float) -> dict:
             continue
         n_buy += 1
 
-        payout = resolve_payout(trade["market"], trade["outcome"], resolution_cache)
+        payout = resolve_payout(
+            trade["market"], trade["outcome"], resolution_cache, trade.get("outcome_index"),
+        )
         if payout is None:
             continue
 
@@ -139,12 +180,17 @@ def backtest_wallet(address: str, slippage_bps: float) -> dict:
             continue
         copier_price = apply_slippage(trader_price, "BUY", slippage_bps)
 
-        trader_rois.append((payout - trader_price) / trader_price)
-        copier_rois.append((payout - copier_price) / copier_price)
+        trader_roi = (payout - trader_price) / trader_price
+        copier_roi = (payout - copier_price) / copier_price
+        trader_rois.append(trader_roi)
+        copier_rois.append(copier_roi)
         trader_dollar_pnl += (payout - trader_price) * trade["size"]
         copier_dollar_pnl += (payout - copier_price) * trade["size"]
+        if flat_stake is not None:
+            # flat_stake / copier_price shares bought -> PnL = flat_stake * copier_roi.
+            copier_flat_dollar_pnl += flat_stake * copier_roi
 
-    return {
+    result = {
         "address": address,
         "n_buy_trades": n_buy,
         "n_sell_excluded": n_sell_excluded,
@@ -153,13 +199,22 @@ def backtest_wallet(address: str, slippage_bps: float) -> dict:
         "trader": {**_stats(trader_rois), "dollar_pnl": round(trader_dollar_pnl, 2)},
         "copier": {**_stats(copier_rois), "dollar_pnl": round(copier_dollar_pnl, 2)},
     }
+    if flat_stake is not None:
+        result["copier_flat"] = {
+            **_stats(copier_rois),
+            "dollar_pnl": round(copier_flat_dollar_pnl, 2),
+        }
+    return result
 
 
 def _fmt_pct(v: "float | None") -> str:
     return "n/a" if v is None else f"{100 * v:.1f}%"
 
 
-def build_report(run_date: str, slippage_bps: float, results: "list[dict]") -> str:
+def build_report(
+    run_date: str, slippage_bps: float, results: "list[dict]",
+    flat_stake: "float | None" = None,
+) -> str:
     lines = ["# Copy-Trading Hypothesis Spike (data collection + backtest)\n"]
     lines.append(f"**Run date:** {run_date}  ")
     lines.append(
@@ -176,18 +231,41 @@ def build_report(run_date: str, slippage_bps: float, results: "list[dict]") -> s
 
     lines.append("## Per-wallet summary\n")
     lines.append(
-        "| wallet | BUY trades | resolved | trader win% | trader mean ROI | "
-        "copier win% | copier mean ROI | copier $ PnL (mirrored size) |"
+        "Sorted by copier **median** ROI, not mean or $ PnL -- mean and "
+        "size-mirrored $ PnL are both easily dominated by one or two huge "
+        "tail bets (a wallet can show a triple-digit mean ROI or a "
+        "six-figure $ PnL while its *typical* trade is flat or a loser). "
+        "Median ROI is the size-independent read on whether the typical "
+        "trade actually wins, which is what \"is this a repeatable edge\" "
+        "requires. A wide mean/median gap is itself a flag, not noise.\n"
     )
-    lines.append("|---|---|---|---|---|---|---|---|")
+    has_flat = bool(results) and "copier_flat" in results[0]
+    header = (
+        "| wallet | BUY trades | resolved | trader win% | trader mean ROI | "
+        "trader median ROI | copier win% | copier mean ROI | copier median ROI | "
+        "copier $ PnL (mirrored size)"
+    )
+    sep = "|---|---|---|---|---|---|---|---|---|---|"
+    if has_flat:
+        header += " | copier $ PnL (flat stake)"
+        sep += "---|"
+    header += " |"
+    lines.append(header)
+    lines.append(sep)
     for r in results:
         t, c = r["trader"], r["copier"]
-        lines.append(
+        row = (
             f"| `{r['address'][:10]}…` | {r['n_buy_trades']} | {r['n_resolved']} | "
             f"{_fmt_pct(t['win_rate'])} | {_fmt_pct(t['mean_roi'])} | "
+            f"{_fmt_pct(t['median_roi'])} | "
             f"{_fmt_pct(c['win_rate'])} | {_fmt_pct(c['mean_roi'])} | "
-            f"${c['dollar_pnl']:,.2f} |"
+            f"{_fmt_pct(c['median_roi'])} | "
+            f"${c['dollar_pnl']:,.2f}"
         )
+        if has_flat:
+            row += f" | ${r['copier_flat']['dollar_pnl']:,.2f}"
+        row += " |"
+        lines.append(row)
 
     total_resolved = sum(r["n_resolved"] for r in results)
     total_copier_pnl = sum(r["copier"]["dollar_pnl"] for r in results)
@@ -198,7 +276,7 @@ def build_report(run_date: str, slippage_bps: float, results: "list[dict]") -> s
     lines.append(f"- Wallets evaluated: {len(results)}\n")
     lines.append(f"- Total resolved BUY trades: {total_resolved}\n")
     lines.append(
-        f"- Wallets where the COPIER would have been net positive: "
+        f"- Wallets where the COPIER would have been net positive (mirrored sizing): "
         f"{profitable_copier_wallets}/{len(results)}\n"
     )
     lines.append(f"- Aggregate original-trader $ PnL (mirrored sizing): {total_trader_pnl:,.2f}\n")
@@ -206,12 +284,25 @@ def build_report(run_date: str, slippage_bps: float, results: "list[dict]") -> s
         f"- Aggregate copier $ PnL (mirrored sizing, {slippage_bps:.0f} bps slippage): "
         f"{total_copier_pnl:,.2f}\n"
     )
+    if has_flat:
+        total_flat_pnl = sum(r["copier_flat"]["dollar_pnl"] for r in results)
+        profitable_flat_wallets = sum(1 for r in results if r["copier_flat"]["dollar_pnl"] > 0)
+        stake_note = f" (${flat_stake:.2f}/trade)" if flat_stake is not None else ""
+        lines.append(
+            f"- Wallets where the COPIER would have been net positive (flat stake{stake_note}): "
+            f"{profitable_flat_wallets}/{len(results)}\n"
+        )
+        lines.append(
+            f"- Aggregate copier $ PnL (flat stake{stake_note}, {slippage_bps:.0f} bps "
+            f"slippage): {total_flat_pnl:,.2f}\n"
+        )
     return "\n".join(lines)
 
 
 def run(
     window: str, top: int, wallets: "list[str] | None", slippage_bps: float,
-    out_dir: Path, run_date: "str | None" = None,
+    out_dir: Path, run_date: "str | None" = None, min_trades: int = 0,
+    flat_stake: "float | None" = None,
 ) -> int:
     run_date = run_date or datetime.now(timezone.utc).date().isoformat()
 
@@ -230,13 +321,25 @@ def run(
             )
             return 1
 
-    results = [backtest_wallet(addr, slippage_bps) for addr in addresses]
-    results = [r for r in results if r["n_resolved"] > 0]
+    results = [backtest_wallet(addr, slippage_bps, flat_stake) for addr in addresses]
+    # min_trades screens out small-sample wallets (a handful of huge tail bets
+    # can swing size-mirrored $ PnL wildly without reflecting a repeatable
+    # edge) -- floor of 1 always applies so an unresolved wallet never renders.
+    min_resolved = max(min_trades, 1)
+    results = [r for r in results if r["n_resolved"] >= min_resolved]
     if not results:
-        log.info("[copy-trade] no wallet produced any resolved BUY trade -- nothing to report.")
+        log.info("[copy-trade] no wallet cleared min_trades=%s resolved BUY trades.", min_resolved)
         return 0
 
-    report = build_report(run_date, slippage_bps, results)
+    # Median ROI, not dollar PnL or even mean ROI, is the sustainability
+    # signal: dollar PnL and mean ROI are both dominated by one or two huge
+    # tail bets (verified against live data 2026-09-18 -- a wallet with a
+    # +119% mean copier ROI turned out to have a +0.01% *median*, i.e. a
+    # dead-flat typical trade inflated by rare longshot payouts). Median ROI
+    # reflects whether the typical trade actually wins.
+    results.sort(key=lambda r: r["copier"]["median_roi"], reverse=True)
+
+    report = build_report(run_date, slippage_bps, results, flat_stake)
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"copy_trade_backtest_{run_date}.md"
     out_path.write_text(report, encoding="utf-8")
@@ -255,9 +358,30 @@ def main(argv: "list[str] | None" = None) -> int:
     ap.add_argument("--slippage-bps", type=float, default=DEFAULT_SLIPPAGE_BPS)
     ap.add_argument("--out", type=Path, default=DEFAULT_OUT_DIR)
     ap.add_argument("--run-date", default=None)
+    ap.add_argument(
+        "--min-trades", type=int, default=0,
+        help=(
+            "Drop wallets with fewer resolved BUY trades than this from the "
+            "report -- screens out small-sample wallets whose size-mirrored "
+            "$ PnL is dominated by one or two huge tail bets rather than a "
+            "repeatable edge."
+        ),
+    )
+    ap.add_argument(
+        "--flat-stake", type=float, default=None,
+        help=(
+            "Add a second copier scenario that spends this fixed $ amount "
+            "on every trade instead of mirroring the trader's share count -- "
+            "'our position is always the same' regardless of what the "
+            "trader risked. Omit to report mirrored sizing only."
+        ),
+    )
     args = ap.parse_args(argv)
     wallets = [w.strip() for w in args.wallets.split(",")] if args.wallets else None
-    return run(args.window, args.top, wallets, args.slippage_bps, args.out, args.run_date)
+    return run(
+        args.window, args.top, wallets, args.slippage_bps, args.out, args.run_date,
+        args.min_trades, args.flat_stake,
+    )
 
 
 if __name__ == "__main__":

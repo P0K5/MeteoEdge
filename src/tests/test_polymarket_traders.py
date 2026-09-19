@@ -32,6 +32,7 @@ class TestGetLeaderboard:
             result = get_leaderboard(window="month", limit=10)
         assert result == entries
         called_url = mock_fetch.call_args[0][0]
+        assert "/v1/leaderboard" in called_url
         assert "window=month" in called_url
         assert "limit=10" in called_url
 
@@ -128,6 +129,7 @@ class TestNormalizeTrade:
             "size": "10.5",
             "timestamp": "1700000000",
             "outcome": "Yes",
+            "outcomeIndex": 0,
         }
         result = normalize_trade(raw)
         assert result == {
@@ -137,8 +139,37 @@ class TestNormalizeTrade:
             "size": 10.5,
             "timestamp": 1700000000,
             "outcome": "Yes",
+            "outcome_index": 0,
             "asset": None,
         }
+
+    def test_non_yes_no_outcome_label_kept_verbatim_with_index(self):
+        # Live data-api.polymarket.com trades label outcomes like "Up"/"Down"
+        # or team names, not literally "Yes"/"No" -- outcome_index is what
+        # downstream code must use to know which side of the market this is.
+        raw = {
+            "conditionId": "0xabc", "side": "BUY", "price": "0.65",
+            "size": "10.5", "timestamp": "1700000000",
+            "outcome": "Up", "outcomeIndex": "0",
+        }
+        result = normalize_trade(raw)
+        assert result["outcome"] == "Up"
+        assert result["outcome_index"] == 0
+
+    def test_missing_outcome_index_defaults_to_none(self):
+        raw = {
+            "conditionId": "0xabc", "side": "BUY", "price": "0.65",
+            "size": "10.5", "timestamp": "1700000000", "outcome": "Yes",
+        }
+        assert normalize_trade(raw)["outcome_index"] is None
+
+    def test_unparseable_outcome_index_defaults_to_none(self):
+        raw = {
+            "conditionId": "0xabc", "side": "BUY", "price": "0.65",
+            "size": "10.5", "timestamp": "1700000000", "outcome": "Yes",
+            "outcomeIndex": "not-an-int",
+        }
+        assert normalize_trade(raw)["outcome_index"] is None
 
     def test_missing_market_returns_none(self):
         raw = {"side": "BUY", "price": "0.5", "size": "1", "timestamp": "1"}
