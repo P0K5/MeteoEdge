@@ -343,6 +343,31 @@ CREATE TABLE IF NOT EXISTS scan_decisions (
     PRIMARY KEY (station, ticker, date)
 );
 CREATE INDEX IF NOT EXISTS idx_scan_decisions_station_date ON scan_decisions(station, date);
+
+-- Copy-trading wallet screening runs (issue #1108, epic #1099). Append-only:
+-- every screening run gets its own row, never overwritten -- unlike
+-- scan_decisions above, which upserts per key. The stability check (epic #1099
+-- story 2) needs to diff a wallet's last two runs (e.g. the 0xd3b034d7
+-- reversal: resolved trades 7,498 -> 2,271, median ROI +33.4% -> -100% across
+-- two runs 15 hours apart), which is only possible if prior runs are kept.
+CREATE TABLE IF NOT EXISTS copy_wallet_candidates (
+    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+    address              TEXT NOT NULL,
+    window               TEXT NOT NULL,
+    screened_at          TEXT NOT NULL,
+    n_buy_trades         INTEGER NOT NULL,
+    n_resolved           INTEGER NOT NULL,
+    win_rate             REAL,
+    mean_roi             REAL,
+    median_roi           REAL,
+    mirrored_dollar_pnl  REAL,
+    flat_dollar_pnl      REAL,
+    flat_stake           REAL,
+    slippage_bps         REAL NOT NULL,
+    eligible_to_follow   INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_copy_wallet_candidates_address_screened
+    ON copy_wallet_candidates(address, screened_at);
 """
 
 
@@ -1425,6 +1450,66 @@ class Database:
         )
         cols = [d[0] for d in cur.description]
         return [dict(zip(cols, row)) for row in cur.fetchall()]
+
+    # ------------------------------------------------------------------
+    # copy_wallet_candidates (issue #1108, epic #1099 -- copy-trading wallet
+    # screening pipeline). Isolated from scan_decisions/candidates above:
+    # this table is copy-trading-only, per the architecture doc's isolation
+    # requirement.
+    # ------------------------------------------------------------------
+
+    def insert_wallet_screening(
+        self,
+        *,
+        address: str,
+        window: str,
+        screened_at: str,
+        n_buy_trades: int,
+        n_resolved: int,
+        slippage_bps: float,
+        win_rate: "float | None" = None,
+        mean_roi: "float | None" = None,
+        median_roi: "float | None" = None,
+        mirrored_dollar_pnl: "float | None" = None,
+        flat_dollar_pnl: "float | None" = None,
+        flat_stake: "float | None" = None,
+        eligible_to_follow: int = 0,
+    ) -> int:
+        """Insert one wallet-screening-run row; returns the new row id.
+
+        Always a plain INSERT (never INSERT OR REPLACE / upsert) -- this
+        table is append-only so the stability check (epic #1099 story 2) can
+        diff a wallet's last two runs. Never overwrites a prior run.
+        """
+        with self._lock:
+            cur = self._conn.execute(
+                "INSERT INTO copy_wallet_candidates"
+                "(address,window,screened_at,n_buy_trades,n_resolved,win_rate,"
+                "mean_roi,median_roi,mirrored_dollar_pnl,flat_dollar_pnl,"
+                "flat_stake,slippage_bps,eligible_to_follow) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    address, window, screened_at, n_buy_trades, n_resolved, win_rate,
+                    mean_roi, median_roi, mirrored_dollar_pnl, flat_dollar_pnl,
+                    flat_stake, slippage_bps, int(eligible_to_follow),
+                ),
+            )
+            self._conn.commit()
+            return cur.lastrowid
+
+    def get_recent_wallet_screenings(self, address: str, limit: int = 2) -> list[dict]:
+        """Return *address*'s most recent *limit* screening runs, newest first.
+
+        Ordered by ``id DESC`` (not ``screened_at DESC``) -- two rows can
+        share a timestamp, and ``id`` is the only guaranteed-monotonic
+        tiebreak. Returns ``[]`` for an unknown address, never raises.
+        """
+        cur = self._conn.execute(
+            "SELECT * FROM copy_wallet_candidates WHERE address=? "
+            "ORDER BY id DESC LIMIT ?",
+            (address, int(limit)),
+        )
+        return [dict(row) for row in cur.fetchall()]
 
     # ------------------------------------------------------------------
     # trades
