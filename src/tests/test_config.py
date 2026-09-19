@@ -1,4 +1,5 @@
 """Tests for src/config.py source priority configuration."""
+import importlib
 import pytest
 
 from datetime import date
@@ -239,3 +240,70 @@ class TestArchiveShadowStations:
             assert actual == expected_tuple, (
                 f"Pre-existing station {code} was modified: {actual!r}"
             )
+
+
+class TestCopyTradingCapitalIsolation:
+    """Issue #1115: COPY_TRADING_CAPITAL_USD and STARTING_CAPITAL_EUR must be
+    independent module-level constants — each reads its own env var with its
+    own default, and setting one must not affect the other. Mirrors the
+    monkeypatch + importlib.reload style used elsewhere for module-level
+    env-var-derived constants (see test_quarantine_mislabeled_shadow_trades.py).
+
+    ``config.py`` calls ``load_dotenv()`` at import time, which re-populates
+    any unset env var from a developer's local ``.env`` on every reload — so
+    these tests patch ``dotenv.load_dotenv`` to a no-op for the duration of
+    the reload to keep results independent of what a local ``.env`` happens
+    to contain.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _no_dotenv_reload(self, monkeypatch):
+        """Prevent config.py's module-level load_dotenv() from repopulating
+        env vars out of a local .env file when the module is reloaded."""
+        import dotenv
+
+        monkeypatch.setattr(dotenv, "load_dotenv", lambda *a, **k: False)
+
+    def test_defaults_when_neither_env_var_set(self, monkeypatch):
+        import src.config as config_module
+
+        monkeypatch.delenv("STARTING_CAPITAL_EUR", raising=False)
+        monkeypatch.delenv("COPY_TRADING_CAPITAL_USD", raising=False)
+        importlib.reload(config_module)
+        try:
+            assert config_module.STARTING_CAPITAL_EUR == 500.0
+            assert config_module.COPY_TRADING_CAPITAL_USD == 100.0
+        finally:
+            importlib.reload(config_module)
+
+    def test_setting_starting_capital_eur_does_not_affect_copy_capital(self, monkeypatch):
+        import src.config as config_module
+
+        monkeypatch.setenv("STARTING_CAPITAL_EUR", "999.0")
+        monkeypatch.delenv("COPY_TRADING_CAPITAL_USD", raising=False)
+        importlib.reload(config_module)
+        try:
+            assert config_module.STARTING_CAPITAL_EUR == 999.0
+            assert config_module.COPY_TRADING_CAPITAL_USD == 100.0
+        finally:
+            importlib.reload(config_module)
+
+    def test_setting_copy_trading_capital_does_not_affect_starting_capital(self, monkeypatch):
+        import src.config as config_module
+
+        monkeypatch.setenv("COPY_TRADING_CAPITAL_USD", "42.0")
+        monkeypatch.delenv("STARTING_CAPITAL_EUR", raising=False)
+        importlib.reload(config_module)
+        try:
+            assert config_module.COPY_TRADING_CAPITAL_USD == 42.0
+            assert config_module.STARTING_CAPITAL_EUR == 500.0
+        finally:
+            importlib.reload(config_module)
+
+    def test_copy_trading_capital_not_in_config_defaults(self):
+        """COPY_TRADING_CAPITAL_USD must NOT be live-editable via the dashboard
+        (same convention as STARTING_CAPITAL_EUR — src/config.py:606)."""
+        from src.config import CONFIG_DEFAULTS
+
+        assert "COPY_TRADING_CAPITAL_USD" not in CONFIG_DEFAULTS
+        assert "STARTING_CAPITAL_EUR" not in CONFIG_DEFAULTS

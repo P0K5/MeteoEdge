@@ -36,10 +36,10 @@ strategy.
 The spike was deliberately kept out of `src/scripts/run.py`'s live/paper
 loop. v1 keeps that boundary: copy-trading gets its own scheduler loop,
 its own capital allocation/env vars, its own kill switch, and its own risk
-tables (or a `strategy` discriminator column added to the existing risk
-tables — decide in Epic 1, see open questions). A bug or bad screening
-result in copy-trading must not be able to affect weather positions, and
-vice versa.
+tables — fully separate `copy_*` tables, not a `strategy` discriminator
+column on the existing risk tables (decided, see open question #1 below).
+A bug or bad screening result in copy-trading must not be able to affect
+weather positions, and vice versa.
 
 The one thing that IS genuinely shared and must be budgeted deliberately:
 `src/http_client.py`'s per-domain `DomainRateLimiter` is process-global
@@ -88,12 +88,10 @@ Reuses existing infrastructure rather than parallel-building it:
 - `copy_signals` — one row per detected BUY from a followed wallet:
   source trade id, market/condition id, detected_at, order placed (bool),
   skip_reason (rate-limited, market already closed, risk limit hit, etc).
-- `copy_positions` / `copy_settlements` — mirror the shape of the existing
-  `open_positions` / `settlements` tables if a `strategy` discriminator
-  column is added there instead of new tables (decide in Epic 1 — reusing
-  the existing tables gets shared risk/PnL rollups for free but couples
-  schemas; separate tables keep isolation clean but duplicate settlement
-  logic). **Open question, needs a decision before Epic 1 starts.**
+- `copy_positions` / `copy_settlements` — fully separate tables, structurally
+  mirroring `open_positions` / `settlements` but not sharing schema or rows
+  with them (decided — see open question #1 below). Epic B (#1101) and
+  Epic C (#1102) create these tables.
 
 ### Backend epics
 
@@ -164,9 +162,15 @@ view can ship as soon as Epic A has data, before execution exists.
 
 ## Open questions (need a decision before Epic 1 starts)
 
-1. Reuse `open_positions`/`settlements`/`risk_state` with a `strategy`
-   discriminator column, or fully separate tables for copy-trading? Reuse
-   is less duplication; separate tables are cleaner isolation.
+1. ~~Reuse `open_positions`/`settlements`/`risk_state` with a `strategy`
+   discriminator column, or fully separate tables for copy-trading?~~
+   **Decided (see issue #1100 comment, 2026-09-19): fully separate tables**
+   (`copy_positions`, `copy_settlements`, `copy_risk_state`) — not a
+   `strategy` discriminator column. Matches the isolation theme running
+   through this epic set (dedicated kill switch, dedicated capital
+   allocation, now dedicated tables); a shared table with a discriminator
+   risks one missed `WHERE strategy = ...` filter becoming a live-capital
+   bug. See the #1100 comment for full rationale.
 2. Rate-limit budget split between the weather strategy and copy-trading
    on `data-api.polymarket.com`/`gamma-api.polymarket.com` if both run as
    separate processes. **Decision:** See `docs/OPERATIONS.md`'s

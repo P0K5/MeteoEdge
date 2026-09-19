@@ -2479,6 +2479,39 @@ _CONFIG_META: dict[str, dict] = {
         "min": 1.0,
         "max": 48.0,
     },
+    "COPY_TRADING_ENABLED": {
+        "description": "Master switch — enable copy-trading wallet-following and order placement (issue #1115)",
+        "type": "bool",
+        "group": "copy_trading",
+    },
+    "COPY_DEFAULT_FLAT_STAKE_USD": {
+        "description": "Default flat stake per copy-trade ($) — matches copy_wallet_screening.py's --flat-stake CLI default",
+        "type": "float",
+        "group": "copy_trading",
+        "min": 1.0,
+        "max": 100.0,
+    },
+    "COPY_MAX_WALLETS_FOLLOWED": {
+        "description": "Maximum number of wallets simultaneously followed",
+        "type": "int",
+        "group": "copy_trading",
+        "min": 1,
+        "max": 50,
+    },
+    "COPY_MAX_EXPOSURE_PER_WALLET_USD": {
+        "description": "Maximum total exposure ($) to a single followed wallet",
+        "type": "float",
+        "group": "copy_trading",
+        "min": 1.0,
+        "max": 1000.0,
+    },
+    "COPY_MAX_TOTAL_EXPOSURE_USD": {
+        "description": "Maximum total exposure ($) across all followed wallets combined",
+        "type": "float",
+        "group": "copy_trading",
+        "min": 1.0,
+        "max": 5000.0,
+    },
 }
 
 _EMOS_VALID_MODES = frozenset({"legacy", "emos_shadow", "emos_primary"})
