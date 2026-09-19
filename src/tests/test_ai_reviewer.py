@@ -15,9 +15,11 @@ import requests
 from scripts.ai_reviewer import (
     DEEPSEEK_MAX_ATTEMPTS,
     DEEPSEEK_RETRYABLE_STATUS_CODES,
+    DIFF_MAX_CHARS,
     DeepSeekDegradedError,
     DeepSeekTimeoutError,
     _run,
+    build_review_packet,
     call_deepseek,
 )
 
@@ -155,3 +157,41 @@ def test_run_fails_closed_on_unavailable_backend(monkeypatch, exc, reason):
     assert create_check_run_mock.call_args.kwargs["verdict"] == "UNAVAILABLE"
     # Fails the check, not a silent pass:
     post_pr_comment_mock.assert_not_called()
+
+
+def _minimal_pr_meta(**overrides):
+    base = {
+        "number": 1, "title": "t", "user": {"login": "u"},
+        "base": {"ref": "master"}, "head": {"ref": "feat"}, "body": "Closes #1",
+    }
+    base.update(overrides)
+    return base
+
+
+class TestDiffBudget:
+    """Regression coverage for the diff-truncation budget (#1098: a 10-file,
+    67,962-char PR was silently BLOCKed because path-ordered diff hunks for
+    low-risk backtest_results/*.md reports exhausted a 4000-char budget
+    before the reviewer ever saw the actual src/config.py and
+    src/http_client.py changes it then complained it couldn't verify)."""
+
+    def test_budget_covers_a_realistic_multi_file_pr(self):
+        # Guards against silently shrinking the budget back to something
+        # that would reproduce the #1098 failure.
+        assert DIFF_MAX_CHARS >= 70_000
+
+    def test_diff_under_budget_is_not_truncated(self):
+        diff = "diff --git a/x.py b/x.py\n+line\n" * 10  # well under budget
+        packet = build_review_packet(
+            _minimal_pr_meta(), [], diff, {}, [], "policy",
+        )
+        assert diff in packet
+        assert "diff truncated" not in packet
+
+    def test_diff_over_budget_is_truncated_with_marker(self):
+        diff = "x" * (DIFF_MAX_CHARS + 500)
+        packet = build_review_packet(
+            _minimal_pr_meta(), [], diff, {}, [], "policy",
+        )
+        assert "diff truncated" in packet
+        assert len(diff) > DIFF_MAX_CHARS  # the fixture actually exercises truncation
