@@ -620,7 +620,7 @@ pattern as the `trades.mode` migration above).
 | Column | Type | Units | Nullable | Description |
 |--------|------|-------|----------|-------------|
 | `address` | TEXT PRIMARY KEY | wallet address | No | Followed wallet's proxy address — acts as the row key |
-| `stake_per_trade` | REAL NOT NULL | USD | No | Flat stake used to size every copied trade for this wallet |
+| `stake_per_trade` | REAL NOT NULL CHECK(stake_per_trade > 0) | USD | No | Flat stake used to size every copied trade for this wallet |
 | `status` | TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','paused')) | categorical | No | Whether polling/copying is currently active for this wallet |
 | `paused_reason` | TEXT | free text | Yes | Why the wallet was paused; cleared (`NULL`) when returned to `'active'` |
 | `added_at` | TEXT NOT NULL | ISO 8601 timestamp (UTC) | No | When the wallet was first followed |
@@ -645,13 +645,13 @@ pattern as the `trades.mode` migration above).
 | `id` | INTEGER PRIMARY KEY AUTOINCREMENT | | No | Auto-increment row ID |
 | `address` | TEXT NOT NULL | wallet address | No | Followed wallet this signal came from |
 | `market` | TEXT NOT NULL | Polymarket condition ID | No | Market the source trade was on |
-| `outcome_index` | INTEGER | 0 or 1 | Yes | Positional outcome slot the source trade was on (see `src/data/polymarket_traders.py::normalize_trade`) |
-| `source_price` | REAL NOT NULL | 0–1 probability | No | The followed trader's own fill price |
+| `outcome_index` | INTEGER CHECK(outcome_index IS NULL OR outcome_index IN (0,1)) | 0 or 1 | Yes | Positional outcome slot the source trade was on (see `src/data/polymarket_traders.py::normalize_trade`) |
+| `source_price` | REAL NOT NULL CHECK(source_price >= 0 AND source_price <= 1) | 0–1 probability | No | The followed trader's own fill price |
 | `source_trade_id` | TEXT | Data API `transactionHash` | Yes | Verified present on every live `/trades` record (2026-09-19); `normalize_trade()` does not yet surface it, so this stays `NULL` until story B3 adds that. **No `UNIQUE` constraint** — a single on-chain transaction can span multiple maker fills at different price levels, so the same `transactionHash` can legitimately appear on more than one row; story B3 must dedupe on `source_trade_id` first, falling back to the full `(address, market, source_price, detected_at)` tuple when it collides |
 | `detected_at` | TEXT NOT NULL | ISO 8601 timestamp (UTC) | No | When the bot detected this signal |
 | `order_placed` | INTEGER NOT NULL DEFAULT 0 | boolean (0/1) | No | Whether a copy order was actually placed for this signal |
-| `fill_price` | REAL | 0–1 probability | Yes | Only populated when `order_placed=1` |
-| `size_usd` | REAL | USD | Yes | Only populated when `order_placed=1` |
+| `fill_price` | REAL CHECK(fill_price IS NULL OR (fill_price >= 0 AND fill_price <= 1)) | 0–1 probability | Yes | Only populated when `order_placed=1` |
+| `size_usd` | REAL CHECK(size_usd IS NULL OR size_usd > 0) | USD | Yes | Only populated when `order_placed=1` |
 | `position_id` | INTEGER REFERENCES copy_positions(id) | foreign key | Yes | Only populated when `order_placed=1` — links to the resulting `copy_positions` row |
 | `skip_reason` | TEXT | free text | Yes | Only populated when `order_placed=0` (rate-limited, market already closed, risk limit hit, etc.) |
 
@@ -673,9 +673,9 @@ pattern as the `trades.mode` migration above).
 | `signal_id` | INTEGER NOT NULL REFERENCES copy_signals(id) | foreign key | No | The signal that opened this position |
 | `address` | TEXT NOT NULL | wallet address | No | Followed wallet being copied |
 | `market` | TEXT NOT NULL | Polymarket condition ID | No | Market this position is on |
-| `outcome_index` | INTEGER NOT NULL | 0 or 1 | No | Outcome side this position is on |
-| `entry_price` | REAL NOT NULL | 0–1 probability | No | This position's own fill price (may differ from the signal's `source_price`/`fill_price` due to slippage) |
-| `stake_usd` | REAL NOT NULL | USD | No | Amount staked on this position |
+| `outcome_index` | INTEGER NOT NULL CHECK(outcome_index IN (0,1)) | 0 or 1 | No | Outcome side this position is on |
+| `entry_price` | REAL NOT NULL CHECK(entry_price >= 0 AND entry_price <= 1) | 0–1 probability | No | This position's own fill price (may differ from the signal's `source_price`/`fill_price` due to slippage) |
+| `stake_usd` | REAL NOT NULL CHECK(stake_usd > 0) | USD | No | Amount staked on this position |
 | `entry_ts` | TEXT NOT NULL | ISO 8601 timestamp (UTC) | No | Entry/fill timestamp |
 | `status` | TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open','settled')) | categorical | No | Whether this position is still open or has settled |
 | `settled_pnl_usd` | REAL | USD | Yes | Only populated once `status='settled'` |

@@ -1407,6 +1407,16 @@ class TestCopyWalletsFollowed:
         with pytest.raises(sqlite3.IntegrityError):
             db.insert_followed_wallet(**self._followed_kwargs())
 
+    def test_insert_non_positive_stake_raises(self):
+        """stake_per_trade CHECK(stake_per_trade > 0) -- negative and zero
+        stakes are both rejected at the DB level, not just by caller
+        discipline."""
+        db = _db()
+        with pytest.raises(sqlite3.IntegrityError):
+            db.insert_followed_wallet(**self._followed_kwargs(address="0xneg", stake_per_trade=-5.0))
+        with pytest.raises(sqlite3.IntegrityError):
+            db.insert_followed_wallet(**self._followed_kwargs(address="0xzero", stake_per_trade=0.0))
+
     def test_get_followed_wallets_filters_by_status(self):
         db = _db()
         db.insert_followed_wallet(**self._followed_kwargs(address="0xactive"))
@@ -1551,3 +1561,52 @@ class TestCopySignalsAndPositions:
         assert row["status"] == "settled"
         assert row["settled_pnl_usd"] == -3.5
         assert row["settled_at"] == "2026-09-20T00:00:00+00:00"
+
+    def test_insert_signal_with_out_of_range_source_price_raises(self):
+        """source_price CHECK(source_price >= 0 AND source_price <= 1) --
+        a price outside the valid probability range is rejected at the DB
+        level, both above 1 and below 0."""
+        db = _db()
+        with pytest.raises(sqlite3.IntegrityError):
+            db.insert_copy_signal(**self._signal_kwargs(source_price=1.5))
+        with pytest.raises(sqlite3.IntegrityError):
+            db.insert_copy_signal(**self._signal_kwargs(source_price=-0.1))
+
+    def test_insert_signal_with_invalid_outcome_index_raises(self):
+        """outcome_index CHECK(... IN (0,1)) -- only the two valid slots
+        are accepted; NULL is still fine (checked separately)."""
+        db = _db()
+        with pytest.raises(sqlite3.IntegrityError):
+            db.insert_copy_signal(**self._signal_kwargs(outcome_index=2))
+        # NULL (unset) must still be accepted
+        db.insert_copy_signal(**self._signal_kwargs())
+
+    def test_insert_signal_with_non_positive_size_usd_raises(self):
+        """size_usd CHECK(size_usd IS NULL OR size_usd > 0)."""
+        db = _db()
+        with pytest.raises(sqlite3.IntegrityError):
+            db.insert_copy_signal(**self._signal_kwargs(size_usd=-10.0))
+        with pytest.raises(sqlite3.IntegrityError):
+            db.insert_copy_signal(**self._signal_kwargs(size_usd=0.0))
+
+    def test_insert_position_with_out_of_range_entry_price_raises(self):
+        """entry_price CHECK(entry_price >= 0 AND entry_price <= 1)."""
+        db = _db()
+        signal_id = db.insert_copy_signal(**self._signal_kwargs())
+        with pytest.raises(sqlite3.IntegrityError):
+            db.insert_copy_position(**self._position_kwargs(signal_id, entry_price=1.1))
+
+    def test_insert_position_with_non_positive_stake_usd_raises(self):
+        """stake_usd CHECK(stake_usd > 0)."""
+        db = _db()
+        signal_id = db.insert_copy_signal(**self._signal_kwargs())
+        with pytest.raises(sqlite3.IntegrityError):
+            db.insert_copy_position(**self._position_kwargs(signal_id, stake_usd=0.0))
+
+    def test_insert_position_with_invalid_outcome_index_raises(self):
+        """outcome_index CHECK(outcome_index IN (0,1)) -- unlike copy_signals,
+        this column is NOT NULL on copy_positions, so only 0/1 are valid."""
+        db = _db()
+        signal_id = db.insert_copy_signal(**self._signal_kwargs())
+        with pytest.raises(sqlite3.IntegrityError):
+            db.insert_copy_position(**self._position_kwargs(signal_id, outcome_index=2))
