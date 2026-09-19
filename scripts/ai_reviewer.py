@@ -40,7 +40,16 @@ DEEPSEEK_DEFAULT_BASE_URL = "https://api.deepseek.com"
 DEEPSEEK_DEFAULT_MODEL = "deepseek-chat"
 
 GITHUB_API = "https://api.github.com"
-DIFF_MAX_CHARS = 4000
+# 4000 (~1K tokens) was too small for any non-trivial PR: it silently BLOCKed
+# PR #1098 (a 10-file, 67,962-char diff) because GitHub returns diff hunks in
+# path order, and 16,878 chars of backtest_results/*.md reports exhausted the
+# budget before the reviewer ever saw src/config.py or src/http_client.py --
+# the two files it then complained it couldn't verify. 80000 (~20K tokens) is
+# still well within DeepSeek's context window (leaves room for the rest of
+# the prompt: PR metadata, graphify neighbors, linked-issue body, policy
+# text) but covers realistic multi-file feature PRs whole, instead of
+# truncating mid-file.
+DIFF_MAX_CHARS = 80000
 SUMMARY_MAX_CHARS = 65535
 
 
