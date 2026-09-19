@@ -21,6 +21,7 @@ from scripts.ai_reviewer import (
     _run,
     build_review_packet,
     call_deepseek,
+    fetch_issue,
 )
 
 
@@ -195,3 +196,63 @@ class TestDiffBudget:
         )
         assert "diff truncated" in packet
         assert len(diff) > DIFF_MAX_CHARS  # the fixture actually exercises truncation
+
+
+class TestFetchIssueErrorLogging:
+    """Test that fetch_issue logs errors to stderr (issue #1117: missing
+    issues:read permission should be visible, not silently swallowed)."""
+
+    @patch("scripts.ai_reviewer._github_get")
+    def test_fetch_issue_logs_403_permission_error_to_stderr(
+        self, mock_github_get, capsys
+    ):
+        """When fetch_issue gets a 403 permission error, it should log to
+        stderr so the permission regression is visible in CI logs."""
+        # Mock a 403 response without issues:read permission
+        resp = MagicMock()
+        resp.status_code = 403
+        resp.reason = "Forbidden"
+        resp.text = '{"message": "Resource not accessible by integration"}'
+        exc = requests.exceptions.HTTPError("403 Forbidden")
+        exc.response = resp
+        mock_github_get.side_effect = exc
+
+        result = fetch_issue("owner", "repo", 1117, "token")
+
+        # Should return None (graceful degradation)
+        assert result is None
+
+        # But should log the error to stderr
+        captured = capsys.readouterr()
+        assert "Failed to fetch issue #1117" in captured.err
+        assert "403" in captured.err
+
+    @patch("scripts.ai_reviewer._github_get")
+    def test_fetch_issue_logs_generic_exception_to_stderr(
+        self, mock_github_get, capsys
+    ):
+        """When fetch_issue gets a generic exception (not HTTPError),
+        it should still log it to stderr."""
+        mock_github_get.side_effect = RuntimeError("Network timeout")
+
+        result = fetch_issue("owner", "repo", 1117, "token")
+
+        assert result is None
+        captured = capsys.readouterr()
+        assert "Failed to fetch issue #1117" in captured.err
+        assert "Network timeout" in captured.err
+
+    @patch("scripts.ai_reviewer._github_get")
+    def test_fetch_issue_succeeds_silently_on_success(
+        self, mock_github_get, capsys
+    ):
+        """When fetch_issue succeeds, it should not log anything to stderr."""
+        resp = MagicMock()
+        resp.json.return_value = {"number": 1117, "title": "Test issue"}
+        mock_github_get.return_value = resp
+
+        result = fetch_issue("owner", "repo", 1117, "token")
+
+        assert result == {"number": 1117, "title": "Test issue"}
+        captured = capsys.readouterr()
+        assert captured.err == ""

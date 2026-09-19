@@ -126,7 +126,17 @@ def fetch_issue(owner: str, repo: str, issue_number: int, token: str) -> dict | 
         resp = _github_get(f"/repos/{owner}/{repo}/issues/{issue_number}", token)
         resp.raise_for_status()
         return resp.json()
-    except Exception:
+    except Exception as exc:
+        # Log the error to stderr instead of silently swallowing it
+        # This helps detect permission regressions or API issues
+        error_detail = ""
+        if hasattr(exc, "response") and exc.response is not None:
+            body = exc.response.text[:2000]
+            error_detail = f" — {exc.response.status_code}: {body}"
+        print(
+            f"[ai_reviewer] Failed to fetch issue #{issue_number}: {exc}{error_detail}",
+            file=sys.stderr,
+        )
         return None
 
 
