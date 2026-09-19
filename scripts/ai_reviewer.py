@@ -49,8 +49,31 @@ GITHUB_API = "https://api.github.com"
 # the prompt: PR metadata, graphify neighbors, linked-issue body, policy
 # text) but covers realistic multi-file feature PRs whole, instead of
 # truncating mid-file.
+#
+# Raising this budget fixes each incident it's raised for, but not the root
+# cause: GitHub returns diff hunks in path order, and generated paths
+# (graphify-out/, regenerated on every code-changing PR per CLAUDE.md's
+# `graphify update .` convention and capable of hundreds of thousands of
+# lines -- graphify-out/graph.json alone was +233448/-243790 lines in PR
+# #1116; backtest_results/, the exact path that caused the original
+# #1098/#1107 incident) both sort ahead of src/ alphabetically, so they
+# reliably exhaust any flat character budget before the reviewer ever sees
+# the actual code (#1118). GENERATED_PATH_PREFIXES below excludes those
+# paths from the diff content entirely instead of relying on a bigger budget
+# to outrun them; DIFF_MAX_CHARS remains a safety cap on what's left after
+# that filtering, not the primary defense.
 DIFF_MAX_CHARS = 80000
 SUMMARY_MAX_CHARS = 65535
+
+# Paths whose diffs are excluded from the AI review packet because they are
+# machine-generated and not meaningful for a human/AI code review -- they
+# still appear in the "## Changed Files" listing (so the reviewer knows they
+# changed, per the `graphify update .` policy) but without diff content.
+GENERATED_PATH_PREFIXES = ("graphify-out/", "backtest_results/")
+
+
+def is_generated_path(filename: str) -> bool:
+    return filename.startswith(GENERATED_PATH_PREFIXES)
 
 
 class DeepSeekDegradedError(RuntimeError):
@@ -264,10 +287,30 @@ def load_policy_summary(repo_root: Path) -> str:
 # Build review packet
 # ---------------------------------------------------------------------------
 
+def build_diff_from_files(changed_files: list) -> str:
+    """Assemble the review diff from each file's own patch hunk
+    (`fetch_pr_files()`'s `patch` field) instead of truncating a single
+    flat full-PR diff blob. Generated paths (`GENERATED_PATH_PREFIXES`) are
+    skipped entirely so they can never crowd out real code, no matter how
+    large `DIFF_MAX_CHARS` is (#1118). GitHub omits `patch` for binary files
+    and for diffs too large for a single file entry -- those are silently
+    skipped too, since there is no meaningful hunk to show.
+    """
+    parts = []
+    for f in changed_files:
+        filename = f.get("filename", "")
+        if is_generated_path(filename):
+            continue
+        patch = f.get("patch")
+        if not patch:
+            continue
+        parts.append(f"diff --git a/{filename} b/{filename}\n{patch}")
+    return "\n".join(parts)
+
+
 def build_review_packet(
     pr_meta: dict,
     changed_files: list,
-    diff: str,
     graph: dict,
     linked_issues: list,
     policy_summary: str,
@@ -297,9 +340,12 @@ def build_review_packet(
         status = f.get("status", "")
         additions = f.get("additions", 0)
         deletions = f.get("deletions", 0)
-        packet_parts.append(f"- {fname} [{status}] +{additions}/-{deletions}")
+        suffix = " (generated, diff omitted)" if is_generated_path(fname) else ""
+        packet_parts.append(f"- {fname} [{status}] +{additions}/-{deletions}{suffix}")
 
-    # Diff (truncated)
+    # Diff — built from each file's own patch hunk, excluding generated
+    # paths, then capped at DIFF_MAX_CHARS as a safety net (#1118).
+    diff = build_diff_from_files(changed_files)
     truncated_diff = diff if len(diff) <= DIFF_MAX_CHARS else diff[:DIFF_MAX_CHARS] + "\n... (diff truncated)"
     packet_parts += [
         "",
@@ -599,9 +645,10 @@ def _run(
 
     print("[ai_reviewer] Fetching changed files...")
     changed_files = fetch_pr_files(repo_owner, repo_name, pr_number, github_token)
-
-    print("[ai_reviewer] Fetching PR diff...")
-    diff = fetch_pr_diff(repo_owner, repo_name, pr_number, github_token)
+    # No separate fetch_pr_diff() call: build_review_packet() assembles the
+    # diff from each file's own `patch` field (already present on the
+    # changed_files entries above), filtered by GENERATED_PATH_PREFIXES,
+    # instead of truncating one flat full-PR diff blob (#1118).
 
     # 2. Resolve linked issues
     pr_body = pr_meta.get("body") or ""
@@ -625,7 +672,6 @@ def _run(
     review_packet = build_review_packet(
         pr_meta=pr_meta,
         changed_files=changed_files,
-        diff=diff,
         graph=graph,
         linked_issues=linked_issues,
         policy_summary=policy_summary,
