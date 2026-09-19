@@ -267,6 +267,14 @@ RISK_MAX_OPEN_POSITIONS = int(os.getenv("RISK_MAX_OPEN_POSITIONS", "15"))
 RISK_DRAWDOWN_STOP_PCT = float(os.getenv("RISK_DRAWDOWN_STOP_PCT", "0.15"))
 RISK_MIN_LIQUIDITY = int(os.getenv("RISK_MIN_LIQUIDITY", "50"))
 
+# Copy-trading's own capital pool (issue #1115 / epic #1100). Deliberately NOT
+# derived from or read from STARTING_CAPITAL_EUR -- copy-trading and the
+# weather strategy are isolated capital pools by design (see the "Isolation"
+# section of docs/design/copy-trading-architecture.md and the #1100 comment
+# on separate tables). Not live-editable via the dashboard, for the same
+# reason STARTING_CAPITAL_EUR itself isn't (see CONFIG_DEFAULTS comment below).
+COPY_TRADING_CAPITAL_USD = float(os.getenv("COPY_TRADING_CAPITAL_USD", "100.0"))
+
 # Issue #611: intentional bracket re-entry must be an explicit config decision.
 # false (default): once ANY live order exists today for (station, ticker, side, day)
 #   -- filled, sold, or timeout attempt -- the entry gate in run.py blocks every
@@ -728,6 +736,17 @@ CONFIG_DEFAULTS: "dict[str, str | int | float | bool]" = {
     # estimate, not a fitted value -- only applies to the fully-unfitted case;
     # a matched calibration bin's own sigma is used unchanged.
     "NEXT_DAY_SIGMA_MULTIPLIER": 1.5,
+    # Copy-trading config (issue #1115 / epic #1100). Isolated from the weather
+    # strategy: dedicated kill switch, dedicated exposure limits. Capital
+    # allocation (COPY_TRADING_CAPITAL_USD) deliberately lives OUTSIDE this
+    # dict as a plain module constant -- see the comment above STARTING_CAPITAL_EUR.
+    # Amounts are in USD (`_USD` suffix), not EUR: Polymarket settles in USDC
+    # and this is a separate capital pool from the weather strategy's EUR one.
+    "COPY_TRADING_ENABLED": False,
+    "COPY_DEFAULT_FLAT_STAKE_USD": 5.0,
+    "COPY_MAX_WALLETS_FOLLOWED": 10,
+    "COPY_MAX_EXPOSURE_PER_WALLET_USD": 50.0,
+    "COPY_MAX_TOTAL_EXPOSURE_USD": 250.0,
 }
 
 # Maps each FORECAST_STACK value to the set of model tags whose rows should be

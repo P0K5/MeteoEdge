@@ -346,6 +346,114 @@ class TestConfigEndpointsWithoutDb:
         assert resp.status_code == 503
         assert resp.json()["detail"] == "Database not initialised"
 
+
+# ---------------------------------------------------------------------------
+# Copy-trading config keys (issue #1115 / epic #1100)
+# ---------------------------------------------------------------------------
+
+_COPY_KEYS = (
+    "COPY_TRADING_ENABLED",
+    "COPY_DEFAULT_FLAT_STAKE_USD",
+    "COPY_MAX_WALLETS_FOLLOWED",
+    "COPY_MAX_EXPOSURE_PER_WALLET_USD",
+    "COPY_MAX_TOTAL_EXPOSURE_USD",
+)
+
+
+class TestCopyTradingConfigDefaults:
+    """The five copy-trading keys must load with correctly-typed defaults."""
+
+    def test_all_copy_keys_in_config_defaults(self):
+        for key in _COPY_KEYS:
+            assert key in CONFIG_DEFAULTS, f"{key} missing from CONFIG_DEFAULTS"
+
+    def test_get_live_config_returns_documented_defaults(self):
+        db = _db()
+        seed_config(db)
+        cfg = get_live_config(db)
+        assert cfg["COPY_TRADING_ENABLED"] is False
+        assert isinstance(cfg["COPY_TRADING_ENABLED"], bool)
+        assert cfg["COPY_DEFAULT_FLAT_STAKE_USD"] == pytest.approx(5.0)
+        assert isinstance(cfg["COPY_DEFAULT_FLAT_STAKE_USD"], float)
+        assert cfg["COPY_MAX_WALLETS_FOLLOWED"] == 10
+        assert isinstance(cfg["COPY_MAX_WALLETS_FOLLOWED"], int)
+        assert cfg["COPY_MAX_EXPOSURE_PER_WALLET_USD"] == pytest.approx(50.0)
+        assert isinstance(cfg["COPY_MAX_EXPOSURE_PER_WALLET_USD"], float)
+        assert cfg["COPY_MAX_TOTAL_EXPOSURE_USD"] == pytest.approx(250.0)
+        assert isinstance(cfg["COPY_MAX_TOTAL_EXPOSURE_USD"], float)
+
+    def test_all_copy_keys_have_config_meta(self):
+        for key in _COPY_KEYS:
+            assert key in _CONFIG_META, f"{key} missing from _CONFIG_META"
+            assert _CONFIG_META[key]["group"] == "copy_trading"
+
+    def test_copy_trading_group_present_in_get_config_response(self, api_client):
+        client, _ = api_client
+        data = client.get("/api/config").json()
+        assert "copy_trading" in data
+        for key in _COPY_KEYS:
+            assert key in data["copy_trading"], f"{key} missing from copy_trading group"
+
+
+class TestCopyTradingConfigBounds:
+    """_validate_config_value must accept in-bounds and reject out-of-bounds values."""
+
+    @pytest.mark.parametrize(
+        "key,in_bounds,out_of_bounds",
+        [
+            ("COPY_DEFAULT_FLAT_STAKE_USD", 10.0, 9999.0),
+            ("COPY_MAX_WALLETS_FOLLOWED", 5, 9999),
+            ("COPY_MAX_EXPOSURE_PER_WALLET_USD", 100.0, 9999.0),
+            ("COPY_MAX_TOTAL_EXPOSURE_USD", 500.0, 99999.0),
+        ],
+    )
+    def test_patch_bounds(self, api_client, key, in_bounds, out_of_bounds):
+        client, db = api_client
+        resp = client.patch("/api/config", json={"key": key, "value": in_bounds})
+        assert resp.status_code == 200, f"{key} rejected an in-bounds value: {resp.json()}"
+        assert db.get_config(key) == str(in_bounds)
+
+        resp = client.patch("/api/config", json={"key": key, "value": out_of_bounds})
+        assert resp.status_code == 400, f"{key} accepted an out-of-bounds value"
+
+    def test_patch_kill_switch_happy_path(self, api_client):
+        client, db = api_client
+        resp = client.patch("/api/config", json={"key": "COPY_TRADING_ENABLED", "value": True})
+        assert resp.status_code == 200
+        assert resp.json()["value"] is True
+        assert db.get_config("COPY_TRADING_ENABLED") == "true"
+
+
+class TestCopyTradingKillSwitchIsolation:
+    """Toggling COPY_TRADING_ENABLED must not affect weather-strategy keys, and
+    vice versa (issue #1115 acceptance criteria: kill-switch isolation)."""
+
+    def test_toggling_copy_switch_does_not_change_weather_keys(self):
+        db = _db()
+        seed_config(db)
+        deb_before = get_live_config(db)["DEB_ENABLED"]
+        residual_before = get_live_config(db)["RESIDUAL_CORRECTION_ENABLED"]
+
+        db.set_config("COPY_TRADING_ENABLED", "True")
+
+        cfg = get_live_config(db)
+        assert cfg["COPY_TRADING_ENABLED"] is True
+        assert cfg["DEB_ENABLED"] == deb_before
+        assert cfg["RESIDUAL_CORRECTION_ENABLED"] == residual_before
+
+    def test_toggling_weather_key_does_not_change_copy_switch(self):
+        db = _db()
+        seed_config(db)
+        copy_before = get_live_config(db)["COPY_TRADING_ENABLED"]
+
+        db.set_config("DEB_ENABLED", "True")
+        db.set_config("RESIDUAL_CORRECTION_ENABLED", "False")
+
+        cfg = get_live_config(db)
+        assert cfg["DEB_ENABLED"] is True
+        assert cfg["RESIDUAL_CORRECTION_ENABLED"] is False
+        assert cfg["COPY_TRADING_ENABLED"] == copy_before
+
     def test_patch_config_returns_503_when_db_none(self, no_db_client):
         resp = no_db_client.patch("/api/config", json={"key": "MIN_EDGE_CENTS", "value": 18.0})
         assert resp.status_code == 503
