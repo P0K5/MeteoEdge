@@ -16,7 +16,7 @@ POLYMARKET_CLOB_API = "https://clob.polymarket.com"
 # Polymarket Data API — per-wallet trade/activity history and the official
 # leaderboard. Separate host from Gamma/CLOB above; also unauthenticated for
 # read-only access. Used by src/data/polymarket_traders.py (copy-trading
-# hypothesis spike — see docs/research/copy_trading.md).
+# hypothesis spike — see issue #1097 and docs/design/copy-trading-architecture.md).
 POLYMARKET_DATA_API = "https://data-api.polymarket.com"
 
 # Polymarket Gamma API tag filter for weather/temperature markets.
