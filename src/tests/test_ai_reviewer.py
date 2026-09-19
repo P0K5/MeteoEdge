@@ -16,12 +16,15 @@ from scripts.ai_reviewer import (
     DEEPSEEK_MAX_ATTEMPTS,
     DEEPSEEK_RETRYABLE_STATUS_CODES,
     DIFF_MAX_CHARS,
+    GENERATED_PATH_PREFIXES,
     DeepSeekDegradedError,
     DeepSeekTimeoutError,
     _run,
+    build_diff_from_files,
     build_review_packet,
     call_deepseek,
     fetch_issue,
+    is_generated_path,
 )
 
 
@@ -111,7 +114,6 @@ def _patch_run_dependencies(monkeypatch, *, call_side_effect):
                           "body": "Closes #1"},
     )
     monkeypatch.setattr("scripts.ai_reviewer.fetch_pr_files", lambda *a, **k: [])
-    monkeypatch.setattr("scripts.ai_reviewer.fetch_pr_diff", lambda *a, **k: "")
     monkeypatch.setattr("scripts.ai_reviewer.fetch_issue", lambda *a, **k: None)
     monkeypatch.setattr("scripts.ai_reviewer.load_graph", lambda *a, **k: {})
     monkeypatch.setattr("scripts.ai_reviewer.load_policy_summary", lambda *a, **k: "")
@@ -169,6 +171,16 @@ def _minimal_pr_meta(**overrides):
     return base
 
 
+def _changed_file(filename, patch="+line", status="modified", additions=1, deletions=0):
+    return {
+        "filename": filename,
+        "status": status,
+        "additions": additions,
+        "deletions": deletions,
+        "patch": patch,
+    }
+
+
 class TestDiffBudget:
     """Regression coverage for the diff-truncation budget (#1098: a 10-file,
     67,962-char PR was silently BLOCKed because path-ordered diff hunks for
@@ -182,20 +194,19 @@ class TestDiffBudget:
         assert DIFF_MAX_CHARS >= 70_000
 
     def test_diff_under_budget_is_not_truncated(self):
-        diff = "diff --git a/x.py b/x.py\n+line\n" * 10  # well under budget
+        changed_files = [_changed_file("src/x.py", patch="+line\n" * 10)]
         packet = build_review_packet(
-            _minimal_pr_meta(), [], diff, {}, [], "policy",
+            _minimal_pr_meta(), changed_files, {}, [], "policy",
         )
-        assert diff in packet
+        assert "+line" in packet
         assert "diff truncated" not in packet
 
     def test_diff_over_budget_is_truncated_with_marker(self):
-        diff = "x" * (DIFF_MAX_CHARS + 500)
+        changed_files = [_changed_file("src/x.py", patch="x" * (DIFF_MAX_CHARS + 500))]
         packet = build_review_packet(
-            _minimal_pr_meta(), [], diff, {}, [], "policy",
+            _minimal_pr_meta(), changed_files, {}, [], "policy",
         )
         assert "diff truncated" in packet
-        assert len(diff) > DIFF_MAX_CHARS  # the fixture actually exercises truncation
 
 
 class TestFetchIssueErrorLogging:
@@ -256,3 +267,58 @@ class TestFetchIssueErrorLogging:
         assert result == {"number": 1117, "title": "Test issue"}
         captured = capsys.readouterr()
         assert captured.err == ""
+
+
+class TestGeneratedPathExclusion:
+    """Regression coverage for #1118: graphify-out/** sorts ahead of src/**
+    in GitHub's path-ordered diff, so generated files reliably ate the whole
+    DIFF_MAX_CHARS budget before the reviewer ever saw real code (PR #1116).
+    Generated paths must be excluded from the diff content entirely, not
+    just budget-capped."""
+
+    @pytest.mark.parametrize("prefix", GENERATED_PATH_PREFIXES)
+    def test_is_generated_path_matches_known_prefixes(self, prefix):
+        assert is_generated_path(f"{prefix}some/file.json")
+
+    def test_is_generated_path_does_not_match_src(self):
+        assert not is_generated_path("src/config.py")
+
+    def test_build_diff_from_files_skips_generated_paths(self):
+        changed_files = [
+            _changed_file("graphify-out/graph.json", patch="+" + "x" * 500_000),
+            _changed_file("backtest_results/report.md", patch="+huge backtest dump"),
+            _changed_file("src/config.py", patch="+real code change"),
+        ]
+        diff = build_diff_from_files(changed_files)
+        assert "graphify-out" not in diff
+        assert "backtest_results" not in diff
+        assert "+real code change" in diff
+
+    def test_review_packet_includes_real_code_even_when_generated_files_precede_it(self):
+        # Reproduces #1116/#1118: a huge graphify-out/graph.json diff sorted
+        # (alphabetically) ahead of the actual src/ change. Before the fix,
+        # this would exhaust DIFF_MAX_CHARS before the reviewer ever saw the
+        # src/config.py hunk.
+        changed_files = [
+            _changed_file("graphify-out/graph.json", patch="+" + "x" * (DIFF_MAX_CHARS * 2)),
+            _changed_file("src/config.py", patch="+real trading-safety-relevant change"),
+        ]
+        packet = build_review_packet(
+            _minimal_pr_meta(), changed_files, {}, [], "policy",
+        )
+        assert "+real trading-safety-relevant change" in packet
+        assert "diff truncated" not in packet
+
+    def test_changed_files_listing_marks_generated_files_but_omits_their_diff(self):
+        changed_files = [
+            _changed_file("graphify-out/graph.json", patch="+lots of generated noise"),
+            _changed_file("src/config.py", patch="+real code"),
+        ]
+        packet = build_review_packet(
+            _minimal_pr_meta(), changed_files, {}, [], "policy",
+        )
+        assert "graphify-out/graph.json [modified]" in packet
+        assert "(generated, diff omitted)" in packet
+        assert "generated noise" not in packet
+        # The listing line for the real file must NOT carry the suffix:
+        assert "- src/config.py [modified] +1/-0\n" in packet
