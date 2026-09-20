@@ -130,6 +130,7 @@ WantedBy=multi-user.target
 - **Restart**: Always restarts on failure (10-second delay) — mirrors `meteoedge.service` for safety.
 - **Polling interval**: Reads `COPY_SIGNAL_POLL_INTERVAL_SECONDS` from live config (default 300s / 5 minutes) each cycle. Configurable via dashboard config tab.
 - **Kill switch**: `COPY_TRADING_ENABLED` (live-read each cycle, not just at startup) — operator can disable without stopping the service. When `False` (default), cycles run silently with no signals executed; when `True`, actively detects and executes trades within exposure limits.
+- **Realized-P&L circuit breaker** (issue #1139): checked every cycle, same place as the kill switch. `COPY_DAILY_LOSS_LIMIT_USD` blocks new signal execution for the rest of the UTC day once today's realized copy-trading P&L is `<= -this value`; `COPY_DRAWDOWN_STOP_PCT` blocks it until manually cleared once cumulative realized P&L is a drawdown of at least this fraction of `COPY_TRADING_CAPITAL_USD`. Both are DB-derived (`Database.get_copy_realized_pnl_total[_for_date]`), not in-memory, so they survive a service restart. Unlike the kill switch, a tripped breaker never stops the loop from *detecting* and logging signals — it only blocks execution, and never affects settlement (`copy_settle.py`). Both keys are live-editable via the dashboard config tab (`copy_trading` group).
 - **Logging**: Appends to `/home/p0k5/MeteoEdge/logs/copy_signals.log`. Signal detection, execution, skips, and errors all logged here.
 
 **Operational commands:**

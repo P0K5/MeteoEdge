@@ -39,6 +39,20 @@ Per cycle, for each ``active``-status followed wallet
 top of every cycle -- an operator can flip it off mid-run and have it
 take effect on the very next cycle, not just at process start.
 
+**Realized-P&L circuit breaker (issue #1139), checked once per cycle,
+right after the kill switch.** ``src.risk.copy_risk_manager.allow_copy_signal``
+gates *new* signal execution once realized copy-trading P&L breaches a
+configured daily-loss limit or drawdown-from-capital threshold (both
+DB-derived, not in-memory -- survives this loop's own restarts). Unlike
+the kill switch, a tripped breaker does not skip polling: every detected
+BUY this cycle still gets a ``copy_signals`` row, with
+``skip_reason="circuit_breaker_daily_loss"`` or
+``"circuit_breaker_drawdown"`` -- the activity feed shows *why* nothing
+executed. Never touches settlement (``copy_settle.py``) -- see
+``src/risk/copy_risk_manager.py``'s module docstring for the full
+rationale, including why it does not import ``src/risk/manager.py``
+(the *weather* strategy's risk manager, isolated per issue #1100).
+
 **Bootstrap guard for a newly-followed wallet's first-ever poll.** A
 wallet's ``last_seen_trade_ts`` is ``NULL`` until its first poll
 completes -- with no reference point, "new since last check" would
@@ -84,6 +98,7 @@ from src.config import (  # noqa: E402
 from src.data.db import Database  # noqa: E402
 from src.data.polymarket import fetch_market_resolution  # noqa: E402
 from src.data.polymarket_traders import get_wallet_trades_since, normalize_trade  # noqa: E402
+from src.risk.copy_risk_manager import allow_copy_signal  # noqa: E402
 from src.scripts.copy_trade_backtest import DEFAULT_SLIPPAGE_BPS, apply_slippage  # noqa: E402
 
 log = logging.getLogger(__name__)
@@ -118,11 +133,25 @@ def _raw_trade_timestamp(raw: dict) -> "int | None":
 
 def _handle_buy_trade(
     db, wallet: dict, trade: dict, stake: float, live_config: dict, now_iso: str,
-    first_poll: bool = False,
+    first_poll: bool = False, breaker_reason: "str | None" = None,
 ) -> None:
     """Decide execute-or-skip for one normalized BUY trade and persist the
     outcome (always a copy_signals row; a copy_positions row too if
     executed).
+
+    **Circuit breaker short-circuit (issue #1139).** When *breaker_reason*
+    is not ``None`` (the realized-P&L circuit breaker -- daily-loss or
+    drawdown -- tripped this cycle, decided once in ``run_cycle`` via
+    ``allow_copy_signal``, the same global answer for every signal this
+    cycle), this trade is unconditionally skipped with
+    ``skip_reason=breaker_reason`` before any other check -- market
+    resolution, exposure limits, even the ``first_poll`` bootstrap guard
+    below never run, mirroring the bootstrap guard's own "no point
+    spending a fetch_market_resolution() call on a trade that will be
+    skipped unconditionally regardless of its answer" rationale. The
+    circuit breaker never touches settlement -- it only ever changes
+    what happens here, in the execute-or-skip decision for a brand new
+    signal.
 
     **Bootstrap guard (PR #1128 review, 2026-09-20):** when *first_poll*
     is ``True`` (the wallet's ``last_seen_trade_ts`` was ``NULL`` entering
@@ -167,10 +196,13 @@ def _handle_buy_trade(
     source_price = trade["price"]
     source_trade_id = trade.get("source_trade_id")
 
-    # Bootstrap guard short-circuits before the network call -- no point
-    # spending a fetch_market_resolution() request on a trade that will
-    # be skipped unconditionally regardless of its answer.
-    market_resolved = None if first_poll else fetch_market_resolution(market) is not None
+    # Breaker and bootstrap guards short-circuit before the network call --
+    # no point spending a fetch_market_resolution() request on a trade
+    # that will be skipped unconditionally regardless of its answer.
+    market_resolved = (
+        None if (breaker_reason is not None or first_poll)
+        else fetch_market_resolution(market) is not None
+    )
 
     with db._lock:
         # Crash-recovery guard: if a prior cycle inserted a signal for
@@ -184,7 +216,9 @@ def _handle_buy_trade(
             return
 
         skip_reason = None
-        if first_poll:
+        if breaker_reason is not None:
+            skip_reason = breaker_reason
+        elif first_poll:
             skip_reason = "wallet_newly_followed"
         elif market_resolved:
             skip_reason = "market_resolved"
@@ -226,9 +260,17 @@ def _handle_buy_trade(
         db.link_copy_signal_to_position(signal_id, position_id)
 
 
-def _process_wallet(db, wallet: dict, live_config: dict, now_iso: str) -> None:
+def _process_wallet(
+    db, wallet: dict, live_config: dict, now_iso: str,
+    breaker_reason: "str | None" = None,
+) -> None:
     """Fetch, detect, and act on one followed wallet's new trades, then
     advance its high-water mark past whatever was actually processed.
+
+    *breaker_reason* (issue #1139) is threaded straight through to every
+    ``_handle_buy_trade`` call this cycle -- decided once in ``run_cycle``,
+    it is the same global answer for every wallet and every signal in
+    this cycle, so it is never re-derived per wallet or per trade here.
 
     **Fail-safe watermark advancement (AI review #1128, BLOCK item 2):**
     ``last_seen_trade_ts`` is advanced incrementally, trade by trade, as
@@ -293,6 +335,7 @@ def _process_wallet(db, wallet: dict, live_config: dict, now_iso: str) -> None:
         elif trade["side"] == "BUY":
             _handle_buy_trade(
                 db, wallet, trade, stake, live_config, now_iso, first_poll=first_poll,
+                breaker_reason=breaker_reason,
             )
 
         # Only reached once this trade (BUY, SELL, or unnormalizable) has
@@ -303,16 +346,31 @@ def _process_wallet(db, wallet: dict, live_config: dict, now_iso: str) -> None:
 
 
 def run_cycle(db) -> None:
-    """One poll cycle: kill switch, then per-wallet fetch/detect/execute,
-    with per-wallet failure isolation."""
+    """One poll cycle: kill switch, then the realized-P&L circuit breaker,
+    then per-wallet fetch/detect/execute, with per-wallet failure isolation.
+
+    **Circuit breaker (issue #1139), checked once per cycle -- same place
+    as the kill switch, and for the same reason: it is one global answer
+    for every signal this cycle, not a per-wallet or per-signal decision.**
+    Unlike the kill switch (which skips polling entirely, silently), a
+    tripped breaker still runs the full per-wallet loop below -- every
+    detected BUY still gets fetched, normalized, and logged with a
+    ``copy_signals`` row (``breaker_reason`` as its ``skip_reason``,
+    threaded through ``_process_wallet``/``_handle_buy_trade``) so the
+    activity feed shows *why* nothing executed, rather than nothing
+    appearing at all.
+    """
     live_config = get_live_config(db)
     if not live_config["COPY_TRADING_ENABLED"]:
         return
 
+    breaker_ok, breaker_skip_reason = allow_copy_signal(db, live_config)
+    breaker_reason = None if breaker_ok else breaker_skip_reason
+
     now_iso = datetime.now(timezone.utc).isoformat()
     for wallet in db.get_followed_wallets(status="active"):
         try:
-            _process_wallet(db, wallet, live_config, now_iso)
+            _process_wallet(db, wallet, live_config, now_iso, breaker_reason=breaker_reason)
         except Exception as exc:
             log.warning(
                 "[copy-signal] %s...: cycle processing failed, skipping to "

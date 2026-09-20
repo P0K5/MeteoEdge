@@ -357,11 +357,13 @@ _COPY_KEYS = (
     "COPY_MAX_WALLETS_FOLLOWED",
     "COPY_MAX_EXPOSURE_PER_WALLET_USD",
     "COPY_MAX_TOTAL_EXPOSURE_USD",
+    "COPY_DAILY_LOSS_LIMIT_USD",
+    "COPY_DRAWDOWN_STOP_PCT",
 )
 
 
 class TestCopyTradingConfigDefaults:
-    """The five copy-trading keys must load with correctly-typed defaults."""
+    """The copy-trading keys must load with correctly-typed defaults."""
 
     def test_all_copy_keys_in_config_defaults(self):
         for key in _COPY_KEYS:
@@ -381,6 +383,10 @@ class TestCopyTradingConfigDefaults:
         assert isinstance(cfg["COPY_MAX_EXPOSURE_PER_WALLET_USD"], float)
         assert cfg["COPY_MAX_TOTAL_EXPOSURE_USD"] == pytest.approx(250.0)
         assert isinstance(cfg["COPY_MAX_TOTAL_EXPOSURE_USD"], float)
+        assert cfg["COPY_DAILY_LOSS_LIMIT_USD"] == pytest.approx(25.0)
+        assert isinstance(cfg["COPY_DAILY_LOSS_LIMIT_USD"], float)
+        assert cfg["COPY_DRAWDOWN_STOP_PCT"] == pytest.approx(0.20)
+        assert isinstance(cfg["COPY_DRAWDOWN_STOP_PCT"], float)
 
     def test_all_copy_keys_have_config_meta(self):
         for key in _COPY_KEYS:
@@ -405,6 +411,8 @@ class TestCopyTradingConfigBounds:
             ("COPY_MAX_WALLETS_FOLLOWED", 5, 9999),
             ("COPY_MAX_EXPOSURE_PER_WALLET_USD", 100.0, 9999.0),
             ("COPY_MAX_TOTAL_EXPOSURE_USD", 500.0, 99999.0),
+            ("COPY_DAILY_LOSS_LIMIT_USD", 40.0, 9999.0),
+            ("COPY_DRAWDOWN_STOP_PCT", 0.30, 1.5),
         ],
     )
     def test_patch_bounds(self, api_client, key, in_bounds, out_of_bounds):
