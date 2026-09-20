@@ -286,6 +286,64 @@ class TestLastSeenTradeTsAdvancement:
 
         db.update_followed_wallet_last_seen.assert_not_called()
 
+    def test_unnormalizable_trade_still_advances_watermark_and_warns(self, caplog):
+        """AI review #1128 round 2, BLOCK item 1: unnormalizable trades are
+        watermark-advanced past permanently by design (on-chain records
+        don't change on re-fetch, so retrying is pointless) -- but a
+        warning must be logged so a genuine normalize_trade() regression
+        is observable."""
+        db = _mock_db()
+        malformed = _buy_raw(timestamp="1500")
+        del malformed["conditionId"]  # no market -> normalize_trade() returns None
+        with patch(
+            "src.scripts.copy_signal_loop.get_live_config", return_value=_live_config(),
+        ), patch(
+            "src.scripts.copy_signal_loop.get_wallet_trades_since", return_value=[malformed],
+        ), caplog.at_level("WARNING"):
+            run_cycle(db)
+
+        db.insert_copy_signal.assert_not_called()
+        db.update_followed_wallet_last_seen.assert_called_once_with(ADDRESS, 1500)
+        assert any("unparseable trade record" in rec.message for rec in caplog.records)
+
+
+class TestNetworkNotHeldUnderLock:
+    def test_fetch_market_resolution_called_before_lock_acquired(self):
+        """AI review #1128 round 2, BLOCK item 2: fetch_market_resolution()
+        is a blocking HTTP call and must never run inside db._lock -- a
+        slow/hanging call would otherwise stall every other DB operation
+        sharing this Database instance (e.g. the dashboard's own
+        request-handling threads) for the duration of the timeout."""
+        db = _mock_db()
+        call_order = []
+
+        class _RecordingLock:
+            def __enter__(self):
+                call_order.append("lock_enter")
+                return self
+
+            def __exit__(self, *exc_info):
+                call_order.append("lock_exit")
+                return False
+
+        db._lock = _RecordingLock()
+
+        def _resolution_side_effect(market):
+            call_order.append("fetch_market_resolution")
+            return None
+
+        with patch(
+            "src.scripts.copy_signal_loop.get_live_config", return_value=_live_config(),
+        ), patch(
+            "src.scripts.copy_signal_loop.get_wallet_trades_since", return_value=[_buy_raw()],
+        ), patch(
+            "src.scripts.copy_signal_loop.fetch_market_resolution",
+            side_effect=_resolution_side_effect,
+        ):
+            run_cycle(db)
+
+        assert call_order.index("fetch_market_resolution") < call_order.index("lock_enter")
+
 
 class TestPerWalletFailureIsolation:
     def test_one_wallet_fetch_failure_does_not_block_others(self):

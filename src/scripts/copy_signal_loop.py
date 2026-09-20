@@ -124,12 +124,25 @@ def _handle_buy_trade(
     the nested acquisitions inside ``insert_copy_signal`` /
     ``insert_copy_position`` / ``link_copy_signal_to_position`` (each of
     which takes the same lock internally) are safe.
+
+    **No network I/O under the lock (AI review #1128 round 2, BLOCK item
+    2):** ``fetch_market_resolution()`` is a blocking HTTP call (up to
+    ``HTTP_TIMEOUT_SECONDS``). It runs *before* ``db._lock`` is acquired
+    -- ``run.py``'s dashboard shares one ``Database`` instance across the
+    poll thread and the FastAPI request-handling threads
+    (``_dashboard_module.set_db(db)``), so holding the lock across a
+    slow/hanging resolution call would stall every other DB operation in
+    the process (including unrelated dashboard reads) for the duration
+    of the timeout. Only the DB-only decision logic (dedup check,
+    exposure reads, inserts) needs the lock for atomicity.
     """
     address = wallet["address"]
     market = trade["market"]
     outcome_index = trade.get("outcome_index")
     source_price = trade["price"]
     source_trade_id = trade.get("source_trade_id")
+
+    market_resolved = fetch_market_resolution(market) is not None
 
     with db._lock:
         # Crash-recovery guard: if a prior cycle inserted a signal for
@@ -143,7 +156,7 @@ def _handle_buy_trade(
             return
 
         skip_reason = None
-        if fetch_market_resolution(market) is not None:
+        if market_resolved:
             skip_reason = "market_resolved"
         elif outcome_index is None:
             # Data-integrity guard, not part of the acceptance criteria's
@@ -201,6 +214,21 @@ def _process_wallet(db, wallet: dict, live_config: dict, now_iso: str) -> None:
     ``since_ts``, and any trade that got far enough to have a
     ``copy_signals`` row before failing is additionally caught by
     ``copy_signal_exists_for_trade``'s crash-recovery guard.
+
+    **Unnormalizable trades ARE deliberately watermark-advanced past,
+    permanently (AI review #1128 round 2, BLOCK item 1).** A trade record
+    is on-chain history -- immutable once fetched -- so a record
+    ``normalize_trade()`` can't parse today will still fail to parse on
+    an identical re-fetch tomorrow; retrying gains nothing and would
+    otherwise wedge this wallet on the same bad record forever. This
+    mirrors ``normalize_trade()``'s own documented contract ("an
+    unnormalizable record is dropped, never guessed into a value"). The
+    risk this trades away is a genuine *software* bug (e.g. an API
+    schema change ``normalize_trade()`` doesn't yet handle) permanently
+    losing a trade that a later code fix could have parsed -- mitigated,
+    not eliminated, by the ``log.warning`` below giving an operator
+    visibility to notice and backfill out-of-band if it ever happens at
+    volume.
     """
     address = wallet["address"]
     since_ts = wallet.get("last_seen_trade_ts") or 0
@@ -222,7 +250,16 @@ def _process_wallet(db, wallet: dict, live_config: dict, now_iso: str) -> None:
     max_ts_seen = since_ts
     for raw, ts in dated:
         trade = normalize_trade(raw)
-        if trade is not None and trade["side"] == "BUY":
+        if trade is None:
+            log.warning(
+                "[copy-signal] %s...: unparseable trade record at ts=%s -- "
+                "dropped and watermark advanced past it permanently (see "
+                "_process_wallet's docstring for why retrying is pointless "
+                "for on-chain history; this warning is the visibility "
+                "trade-off if it's actually a normalize_trade() bug).",
+                str(address)[:10], ts,
+            )
+        elif trade["side"] == "BUY":
             _handle_buy_trade(db, wallet, trade, stake, live_config, now_iso)
 
         # Only reached once this trade (BUY, SELL, or unnormalizable) has
