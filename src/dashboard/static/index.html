@@ -793,6 +793,91 @@ a,button,input,select{transition:color var(--transition),background var(--transi
 .bool-toggle.on{background:var(--yes);border-color:var(--yes);}
 .bool-toggle::after{content:'';position:absolute;top:2px;left:2px;width:12px;height:12px;border-radius:50%;background:#fff;transition:left var(--transition);}
 .bool-toggle.on::after{left:18px;}
+
+/* ── COPY-TRADING CANDIDATES VIEW (epic F #1143, story F1 #1146) ── */
+.copy-summary-strip{display:flex;align-items:center;gap:var(--space-3);margin-bottom:var(--space-4);}
+.copy-slots-pill{
+  background:var(--surface-off);color:var(--muted);
+  font-size:var(--text-xs);font-weight:600;padding:4px 12px;
+  border-radius:var(--radius-full);border:1px solid var(--border);
+}
+.copy-table-wrap{overflow-x:auto;}
+.copy-table{width:100%;border-collapse:collapse;font-size:var(--text-xs);font-variant-numeric:tabular-nums;}
+.copy-th{text-align:left;padding:0;font-weight:700;color:var(--muted);letter-spacing:.04em;border-bottom:1px solid var(--divider);white-space:nowrap;}
+.copy-th-btn{
+  display:inline-flex;align-items:center;gap:4px;
+  padding:var(--space-2) var(--space-3);width:100%;
+  font:inherit;font-weight:700;color:var(--muted);
+  cursor:pointer;border-radius:var(--radius-sm);
+}
+.copy-th-btn:hover{color:var(--text);background:var(--surface-off);}
+.copy-th-btn:focus-visible{outline:2px solid var(--primary);outline-offset:-2px;}
+.copy-sort-icon{width:12px;height:12px;flex-shrink:0;opacity:.7;}
+.copy-td{padding:var(--space-2) var(--space-3);vertical-align:middle;color:var(--text);border-bottom:1px solid var(--divider);white-space:nowrap;}
+.copy-row-expandable{cursor:pointer;}
+.copy-row-expandable:hover{background:var(--surface-off);}
+.copy-row-expandable:focus-visible{outline:2px solid var(--primary);outline-offset:-2px;}
+.copy-chevron{width:14px;height:14px;color:var(--muted);transition:transform var(--transition);flex-shrink:0;}
+.copy-detail-td{background:var(--surface-2);padding:0 !important;}
+.copy-detail-panel{padding:var(--space-4) var(--space-5);}
+.copy-detail-grid{display:grid;grid-template-columns:1.4fr 1fr;gap:var(--space-5);}
+@media(max-width:800px){.copy-detail-grid{grid-template-columns:1fr;}}
+.copy-detail-subhdr{font-size:var(--text-xs);font-weight:700;color:var(--muted);margin-bottom:var(--space-2);text-transform:uppercase;letter-spacing:.04em;}
+.copy-sparkline-wrap{height:160px;}
+.copy-address-cell{display:flex;align-items:center;gap:6px;}
+.copy-address-mono{font-family:var(--font-mono);}
+.copy-copy-btn{padding:3px;border-radius:var(--radius-sm);color:var(--muted);display:inline-flex;align-items:center;}
+.copy-copy-btn:hover{background:var(--surface-off);color:var(--text);}
+.copy-copy-btn:focus-visible{outline:2px solid var(--primary);outline-offset:1px;}
+.copy-copy-btn i{width:12px;height:12px;}
+.copy-followed-tag{
+  font-size:10px;font-weight:700;color:var(--yes);background:var(--yes-bg);
+  padding:2px 8px;border-radius:var(--radius-full);
+}
+.badge-unstable,.badge-stable{
+  display:inline-flex;align-items:center;gap:4px;
+  padding:2px 8px;border-radius:var(--radius-full);
+  font-size:var(--text-xs);font-weight:600;
+}
+.badge-unstable{background:var(--warn-bg);color:var(--warn);}
+.badge-unstable i{width:12px;height:12px;}
+.badge-stable{background:var(--surface-off);color:var(--muted);}
+.badge-stable i{width:12px;height:12px;}
+.copy-follow-section{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-2);}
+.btn-follow{
+  padding:6px 14px;border-radius:var(--radius-md);
+  font-size:var(--text-xs);font-weight:700;
+  border:1px solid var(--yes-dim);background:var(--yes-bg);color:var(--yes);
+  display:inline-flex;align-items:center;gap:6px;
+}
+.btn-follow:hover:not(:disabled){background:var(--yes-dim);}
+.btn-follow:disabled{opacity:.5;cursor:default;background:var(--surface-off);color:var(--muted);border-color:var(--border);}
+.btn-follow:focus-visible{outline:2px solid var(--primary);outline-offset:1px;}
+.btn-follow i{width:13px;height:13px;}
+.btn-follow .spinner{display:none;width:10px;height:10px;border-radius:50%;border:2px solid currentColor;border-top-color:transparent;animation:spin 0.6s linear infinite;}
+.btn-follow.loading .spinner{display:inline-block;}
+.btn-follow-cancel{
+  padding:6px 12px;border-radius:var(--radius-md);
+  font-size:var(--text-xs);font-weight:600;color:var(--muted);
+  border:1px solid var(--border);background:var(--surface);
+}
+.btn-follow-cancel:hover{background:var(--surface-off);color:var(--text);}
+.btn-follow-cancel:focus-visible{outline:2px solid var(--primary);outline-offset:1px;}
+.copy-stake-label{font-size:var(--text-xs);color:var(--muted);}
+.copy-stake-input{
+  width:90px;padding:5px 8px;border-radius:var(--radius-md);
+  border:1px solid var(--border);background:var(--surface);color:var(--text);
+  font-family:var(--font-mono);font-size:var(--text-sm);
+}
+.copy-stake-input:focus-visible{outline:2px solid var(--primary);outline-offset:1px;}
+.copy-follow-msg{font-size:var(--text-xs);color:var(--no);width:100%;margin:0;}
+.copy-follow-reason{display:flex;align-items:center;gap:6px;font-size:var(--text-xs);color:var(--warn);margin:0;}
+.copy-follow-reason i{width:13px;height:13px;flex-shrink:0;}
+.copy-followed-note{display:flex;align-items:center;gap:6px;font-size:var(--text-xs);color:var(--yes);margin:0;}
+.copy-followed-note i{width:14px;height:14px;flex-shrink:0;}
+
+/* ── VISUALLY-HIDDEN UTILITY (accessible column label with no visible text) ── */
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;}
 </style>
 </head>
 <body>
@@ -1088,10 +1173,37 @@ a,button,input,select{transition:color var(--transition),background var(--transi
       <div class="section-title"><i data-lucide="copy"></i>Copy-Trading</div>
     </div>
     <div id="copy-trading-content">
-      <div class="empty">
-        <i data-lucide="users"></i>
-        <h3>Copy-trading views coming soon</h3>
-        <p>Candidates, Followed Wallets, Positions &amp; P&amp;L, and the Activity Feed will appear here as each is built.</p>
+      <!-- ── CANDIDATES VIEW (story F1, issue #1146) ── -->
+      <div class="section-hdr">
+        <div class="section-title"><i data-lucide="list-checks"></i>Candidates</div>
+        <div class="copy-summary-strip">
+          <span class="copy-slots-pill" id="copy-slots-pill">— slots remaining</span>
+        </div>
+      </div>
+      <div id="copy-candidates-list">
+        <div class="copy-table-wrap">
+        <table class="copy-table" aria-label="Screened wallet candidates">
+          <thead>
+            <tr>
+              <th class="copy-th" scope="col">Wallet</th>
+              <th class="copy-th" scope="col">Resolved trades</th>
+              <th class="copy-th" scope="col">Win %</th>
+              <th class="copy-th" scope="col">Mean ROI</th>
+              <th class="copy-th" scope="col">Median ROI</th>
+              <th class="copy-th" scope="col">Mirrored $ PnL</th>
+              <th class="copy-th" scope="col">Flat-stake $ PnL</th>
+              <th class="copy-th" scope="col">Last screened</th>
+              <th class="copy-th" scope="col">Stability</th>
+              <th class="copy-th" scope="col"><span class="sr-only">Row details</span></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr class="copy-table-skeleton"><td colspan="10"><span class="skeleton" style="height:1.4em;display:block;"></span></td></tr>
+            <tr class="copy-table-skeleton"><td colspan="10"><span class="skeleton" style="height:1.4em;display:block;"></span></td></tr>
+            <tr class="copy-table-skeleton"><td colspan="10"><span class="skeleton" style="height:1.4em;display:block;"></span></td></tr>
+          </tbody>
+        </table>
+        </div>
       </div>
     </div>
   </main>
@@ -3369,6 +3481,8 @@ function _configRestoreCtrl(key, param) {
 let currentTab = 'portfolio';
 let portfolioIntervalId = null;
 let botLogIntervalId = null;
+let copyTradingLoaded = false;
+let copyTradingIntervalId = null;
 
 function switchTab(tab) {
   // Hide all panels
@@ -3413,6 +3527,12 @@ function switchTab(tab) {
   if (currentTab === 'promotion' && tab !== 'promotion') {
     clearInterval(promotionIntervalId);
     promotionIntervalId = null;
+  }
+
+  // Stop Copy-Trading polling when leaving the Copy-Trading tab
+  if (currentTab === 'copy-trading' && tab !== 'copy-trading') {
+    clearInterval(copyTradingIntervalId);
+    copyTradingIntervalId = null;
   }
 
   currentTab = tab;
@@ -3471,6 +3591,510 @@ function switchTab(tab) {
     if (!configLoaded) {
       configLoaded = true;
       fetchConfig();
+    }
+  }
+
+  // Lazy-load Copy-Trading candidates on first activation; poll every 5
+  // minutes, matching the other advisory/report-style tabs (Promotion, EMOS).
+  if (tab === 'copy-trading') {
+    if (!copyTradingLoaded) {
+      copyTradingLoaded = true;
+      fetchCopyTradingCandidates();
+    }
+    if (!copyTradingIntervalId) {
+      copyTradingIntervalId = setInterval(fetchCopyTradingCandidates, 300_000);
+    }
+  }
+}
+
+/* ─────────────────────────────────────────
+   COPY-TRADING — CANDIDATES VIEW (epic F #1143, story F1 #1146)
+   Data: GET /api/copy-trading/candidates (one response for the whole
+   table — no per-row round-trips), GET /api/copy-trading/wallets/{addr}/
+   history (sparkline), POST /api/copy-trading/wallets/{addr}/follow.
+
+   All interactive elements use data-address + event delegation rather than
+   interpolating the address into inline onclick="fn('...')" strings — an
+   address is API-sourced data, and building an inline event-handler
+   attribute out of unescaped data is a stored-XSS pattern the moment any
+   upstream path stops guaranteeing plain hex (AI review, PR #1152).
+   ───────────────────────────────────────── */
+
+const COPY_CANDIDATE_COLUMNS = [
+  { key: null, label: 'Wallet', sortable: false },
+  { key: 'n_resolved', label: 'Resolved trades', sortable: true },
+  { key: 'win_rate', label: 'Win %', sortable: true },
+  { key: 'mean_roi', label: 'Mean ROI', sortable: true },
+  { key: 'median_roi', label: 'Median ROI', sortable: true },
+  { key: 'mirrored_dollar_pnl', label: 'Mirrored $ PnL', sortable: true },
+  { key: 'flat_dollar_pnl', label: 'Flat-stake $ PnL', sortable: true },
+  { key: 'screened_at', label: 'Last screened', sortable: true },
+  { key: null, label: 'Stability', sortable: false },
+  { key: null, label: '', sortable: false, srOnly: 'Row details' },
+];
+
+// Default sort: median_roi descending, mirroring the backtest report's own
+// methodology -- NEVER mirrored_dollar_pnl/flat_dollar_pnl as the default,
+// the exact mistake the spike already made once (design spec).
+let _copySort = { key: 'median_roi', dir: 'desc' };
+let _copyCandidatesData = null;   // last-fetched payload, cached for re-sort without a re-fetch
+let _copyCandidates = [];         // current sorted row list
+let _copyExpanded = new Set();    // addresses with an open detail panel
+let _copyListenersBound = false;  // delegated listeners are bound once
+
+function _copyFmtPct(x) {
+  return x == null ? '—' : (x * 100).toFixed(1) + '%';
+}
+function _copyFmtRoi(x) {
+  if (x == null) return '—';
+  return (x >= 0 ? '+' : '') + (x * 100).toFixed(1) + '%';
+}
+function _copyFmtUsd(x) {
+  if (x == null) return '—';
+  return (x >= 0 ? '+' : '-') + '$' + Math.abs(x).toFixed(2);
+}
+function _copyTruncateAddress(addr) {
+  return addr && addr.length > 12 ? addr.slice(0, 6) + '…' + addr.slice(-4) : addr;
+}
+function _copyEscapeHtml(str) {
+  return String(str).replace(/[&<>"']/g, ch => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[ch]));
+}
+// DOM ids/lookups derive from this instead of the raw address string --
+// strips anything that could break out of an HTML attribute if an
+// upstream address were ever non-hex (the design spec's single-operator
+// trust model assumes canonical hex addresses; this is cheap
+// defense-in-depth per AI review flag on PR #1152). Actual business data
+// (fetch URLs, clipboard text, API payloads) always uses the raw address.
+function _copySafeId(address) {
+  return String(address).replace(/[^a-zA-Z0-9]/g, '_');
+}
+
+async function copyAddressToClipboard(address, btn) {
+  try {
+    await navigator.clipboard.writeText(address);
+    const icon = btn.querySelector('i');
+    if (icon) {
+      icon.setAttribute('data-lucide', 'check');
+      lucide.createIcons();
+      setTimeout(() => {
+        if (icon.isConnected) {
+          icon.setAttribute('data-lucide', 'copy');
+          lucide.createIcons();
+        }
+      }, 1500);
+    }
+  } catch (e) {
+    console.error('Clipboard copy failed:', e);
+  }
+}
+
+function _copySortedRows(rows) {
+  const { key, dir } = _copySort;
+  return [...rows].sort((a, b) => {
+    const av = a[key], bv = b[key];
+    if (av == null && bv == null) return 0;
+    if (av == null) return 1;
+    if (bv == null) return -1;
+    if (typeof av === 'string') {
+      return dir === 'asc' ? av.localeCompare(bv) : bv.localeCompare(av);
+    }
+    return dir === 'asc' ? av - bv : bv - av;
+  });
+}
+
+function sortCandidates(key) {
+  if (!key) return;
+  if (_copySort.key === key) {
+    _copySort.dir = _copySort.dir === 'asc' ? 'desc' : 'asc';
+  } else {
+    _copySort.key = key;
+    _copySort.dir = 'desc';
+  }
+  if (_copyCandidatesData) renderCopyCandidates(_copyCandidatesData);
+}
+
+// Single delegated click/keydown handler for the whole candidates panel --
+// bound once to the (never-replaced) #copy-candidates-list container, so
+// it keeps working across every innerHTML re-render without rebinding.
+function _copyOnListClick(event) {
+  const copyBtn = event.target.closest('.copy-copy-btn');
+  if (copyBtn) {
+    event.stopPropagation();
+    const address = copyBtn.closest('[data-address]')?.dataset.address;
+    if (address) copyAddressToClipboard(address, copyBtn);
+    return;
+  }
+  const sortBtn = event.target.closest('.copy-th-btn');
+  if (sortBtn) {
+    sortCandidates(sortBtn.dataset.sortKey);
+    return;
+  }
+  const armBtn = event.target.closest('.copy-follow-arm-btn');
+  if (armBtn) {
+    const address = armBtn.closest('[data-address]')?.dataset.address;
+    if (address) _armFollow(address);
+    return;
+  }
+  const cancelBtn = event.target.closest('.btn-follow-cancel');
+  if (cancelBtn) {
+    const address = cancelBtn.closest('[data-address]')?.dataset.address;
+    if (address) _cancelFollow(address);
+    return;
+  }
+  const confirmBtn = event.target.closest('.btn-follow-confirm');
+  if (confirmBtn) {
+    const address = confirmBtn.closest('[data-address]')?.dataset.address;
+    if (address) submitFollow(address, confirmBtn);
+    return;
+  }
+  const row = event.target.closest('.copy-row-expandable');
+  if (row) toggleCandidateDetail(row.dataset.address);
+}
+
+function _copyOnListKeydown(event) {
+  if (event.key !== 'Enter' && event.key !== ' ') return;
+  const row = event.target.closest('.copy-row-expandable');
+  if (!row) return;
+  event.preventDefault();
+  toggleCandidateDetail(row.dataset.address);
+}
+
+function _copyBindListEvents() {
+  if (_copyListenersBound) return;
+  const wrap = document.getElementById('copy-candidates-list');
+  if (!wrap) return;
+  wrap.addEventListener('click', _copyOnListClick);
+  wrap.addEventListener('keydown', _copyOnListKeydown);
+  _copyListenersBound = true;
+}
+
+function _copyColumnHeaderHtml(col) {
+  if (col.srOnly) {
+    return `<th class="copy-th" scope="col"><span class="sr-only">${col.srOnly}</span></th>`;
+  }
+  if (!col.sortable) {
+    return `<th class="copy-th" scope="col">${col.label}</th>`;
+  }
+  const active = _copySort.key === col.key;
+  const dir = active ? _copySort.dir : null;
+  const ariaSort = active ? (dir === 'asc' ? 'ascending' : 'descending') : 'none';
+  const icon = active ? (dir === 'asc' ? 'chevron-up' : 'chevron-down') : 'chevrons-up-down';
+  return `<th class="copy-th" scope="col" aria-sort="${ariaSort}">
+    <button type="button" class="copy-th-btn" data-sort-key="${col.key}"
+            aria-label="Sort by ${col.label}${active ? ', currently ' + ariaSort : ''}">
+      <span>${col.label}</span><i data-lucide="${icon}" class="copy-sort-icon"></i>
+    </button>
+  </th>`;
+}
+
+function _copyStabilityBadgeHtml(candidate) {
+  // A wallet's first-ever screening run has nothing to have "swung"
+  // against yet -- has_prior_run=false means "not yet tested twice", not
+  // "proven unstable". Labeling it identically to a wallet whose re-screen
+  // actually disagreed would mislead operators into unfairly skipping good
+  // new candidates (Designer review, PR #1152). Reuses .badge-stable's
+  // neutral (non-warning) coloring with a distinct icon/label, reserving
+  // .badge-unstable for the proven-disagreement case.
+  if (!candidate.has_prior_run) {
+    return `<span class="badge-stable"><i data-lucide="hourglass"></i>New</span>`;
+  }
+  return candidate.unstable
+    ? `<span class="badge-unstable"><i data-lucide="alert-triangle"></i>Unstable</span>`
+    : `<span class="badge-stable"><i data-lucide="check-circle"></i>Stable</span>`;
+}
+
+function _copyRowHtml(c) {
+  const lastScreened = c.screened_at ? new Date(c.screened_at).toLocaleString() : '—';
+  const followedTag = c.followed ? `<span class="copy-followed-tag">Followed</span>` : '';
+  const safeId = _copySafeId(c.address);
+  const addrEsc = _copyEscapeHtml(c.address);
+  return `
+    <tr class="copy-row copy-row-expandable" tabindex="0" role="button"
+        data-address="${addrEsc}"
+        aria-expanded="${_copyExpanded.has(c.address) ? 'true' : 'false'}"
+        aria-label="Wallet ${addrEsc}, click to view screening history and follow options">
+      <td class="copy-td copy-address-cell">
+        <span class="copy-address-mono" title="${addrEsc}">${_copyEscapeHtml(_copyTruncateAddress(c.address))}</span>
+        <button type="button" class="copy-copy-btn"
+                aria-label="Copy full wallet address to clipboard" title="Copy address">
+          <i data-lucide="copy"></i>
+        </button>
+        ${followedTag}
+      </td>
+      <td class="copy-td">${c.n_resolved}</td>
+      <td class="copy-td">${_copyFmtPct(c.win_rate)}</td>
+      <td class="copy-td">${_copyFmtRoi(c.mean_roi)}</td>
+      <td class="copy-td">${_copyFmtRoi(c.median_roi)}</td>
+      <td class="copy-td">${_copyFmtUsd(c.mirrored_dollar_pnl)}</td>
+      <td class="copy-td">${_copyFmtUsd(c.flat_dollar_pnl)}</td>
+      <td class="copy-td">${lastScreened}</td>
+      <td class="copy-td">${_copyStabilityBadgeHtml(c)}</td>
+      <td class="copy-td"><i data-lucide="chevron-down" class="copy-chevron" id="copy-chev-${safeId}"></i></td>
+    </tr>
+    <tr class="copy-detail-row" id="copy-detail-row-${safeId}" style="display:none">
+      <td class="copy-detail-td" colspan="10">
+        <div class="copy-detail-panel" id="copy-detail-${safeId}">
+          <div class="chart-empty">Loading…</div>
+        </div>
+      </td>
+    </tr>`;
+}
+
+function renderCopyCandidates(data) {
+  _copyCandidatesData = data;
+  _copyBindListEvents();
+  const wrap = document.getElementById('copy-candidates-list');
+  const pill = document.getElementById('copy-slots-pill');
+  if (pill) {
+    pill.textContent = `${data.slots_remaining}/${data.max_followed} follow slots remaining`;
+  }
+
+  if (!data.candidates.length) {
+    wrap.innerHTML = `<div class="empty"><i data-lucide="inbox"></i><h3>No wallets screened yet</h3><p>Run the copy-trading screening pipeline to populate this list.</p></div>`;
+    lucide.createIcons();
+    return;
+  }
+
+  _copyCandidates = _copySortedRows(data.candidates);
+
+  wrap.innerHTML = `
+    <div class="copy-table-wrap">
+    <table class="copy-table" aria-label="Screened wallet candidates">
+      <thead><tr>${COPY_CANDIDATE_COLUMNS.map(_copyColumnHeaderHtml).join('')}</tr></thead>
+      <tbody>${_copyCandidates.map(_copyRowHtml).join('')}</tbody>
+    </table>
+    </div>`;
+  lucide.createIcons();
+  _copyReopenExpandedRows();
+}
+
+function toggleCandidateDetail(address) {
+  const safeId = _copySafeId(address);
+  const row = document.getElementById('copy-detail-row-' + safeId);
+  const chev = document.getElementById('copy-chev-' + safeId);
+  const rowEl = row && row.previousElementSibling;
+  if (!row) return;
+  const opening = row.style.display === 'none' || !row.style.display;
+  row.style.display = opening ? 'table-row' : 'none';
+  if (chev) chev.style.transform = opening ? 'rotate(180deg)' : 'rotate(0deg)';
+  if (rowEl) rowEl.setAttribute('aria-expanded', opening ? 'true' : 'false');
+  if (opening) {
+    _copyExpanded.add(address);
+    _renderCandidateDetail(address);
+  } else {
+    _copyExpanded.delete(address);
+  }
+}
+
+function _copyReopenExpandedRows() {
+  _copyExpanded.forEach(address => {
+    const safeId = _copySafeId(address);
+    const row = document.getElementById('copy-detail-row-' + safeId);
+    const chev = document.getElementById('copy-chev-' + safeId);
+    if (!row) { _copyExpanded.delete(address); return; }
+    row.style.display = 'table-row';
+    if (chev) chev.style.transform = 'rotate(180deg)';
+    _renderCandidateDetail(address);
+  });
+}
+
+function _copyFollowIdleHtml() {
+  return `<button type="button" class="btn-follow copy-follow-arm-btn" aria-label="Follow this wallet">
+    <i data-lucide="user-plus"></i>Follow
+  </button>`;
+}
+
+function _copyFollowArmedHtml(address) {
+  const safeId = _copySafeId(address);
+  return `
+    <label class="copy-stake-label" for="copy-stake-${safeId}">Stake per trade ($)</label>
+    <input type="number" min="0.01" step="0.01" value="5" id="copy-stake-${safeId}" class="copy-stake-input" aria-label="Stake per trade in USD">
+    <button type="button" class="btn-follow btn-follow-confirm" aria-label="Confirm follow at the entered stake">
+      <span class="spinner"></span><i data-lucide="check"></i>Confirm follow
+    </button>
+    <button type="button" class="btn-follow-cancel" aria-label="Cancel follow">Cancel</button>
+    <p class="copy-follow-msg" id="copy-follow-msg-${safeId}" role="status" aria-live="polite"></p>`;
+}
+
+function _armFollow(address) {
+  const section = document.getElementById('copy-follow-section-' + _copySafeId(address));
+  if (!section) return;
+  section.innerHTML = _copyFollowArmedHtml(address);
+  lucide.createIcons();
+  const input = document.getElementById('copy-stake-' + _copySafeId(address));
+  if (input) input.focus();
+}
+
+function _cancelFollow(address) {
+  const section = document.getElementById('copy-follow-section-' + _copySafeId(address));
+  if (!section) return;
+  section.innerHTML = _copyFollowIdleHtml();
+  lucide.createIcons();
+}
+
+function _copyFollowSectionHtml(address, candidate, runCount) {
+  if (!candidate) return '';
+  if (candidate.followed) {
+    const statusNote = candidate.follow_status ? ` (status: ${_copyEscapeHtml(candidate.follow_status)})` : '';
+    return `<p class="copy-followed-note"><i data-lucide="check-circle"></i>Already followed${statusNote}.</p>`;
+  }
+  if (!candidate.eligible_to_follow) {
+    // Adapt the explanation to the actual reason available (design decision):
+    // a wallet with only one screening run ever hasn't been *proven*
+    // unstable, it just hasn't had a second run to confirm stability yet.
+    const reason = runCount < 2
+      ? 'Not yet eligible — needs a second screening run to confirm stability.'
+      : "Unstable — latest re-screen did not reproduce the previous run's result.";
+    return `
+      <button type="button" class="btn-follow" disabled aria-label="Follow unavailable — ${reason}" title="${reason}">
+        <i data-lucide="user-plus"></i>Follow
+      </button>
+      <p class="copy-follow-reason"><i data-lucide="alert-triangle"></i><span>${reason}</span></p>`;
+  }
+  return `<div class="copy-follow-section" data-address="${_copyEscapeHtml(address)}" id="copy-follow-section-${_copySafeId(address)}">${_copyFollowIdleHtml()}</div>`;
+}
+
+function _renderCopySparkline(address, runs) {
+  const canvas = document.getElementById('copy-canvas-' + _copySafeId(address));
+  if (!canvas) return;
+  const cs = getComputedStyle(document.documentElement);
+  const clr = k => cs.getPropertyValue(k).trim();
+  const labels = runs.map(r => new Date(r.screened_at).toLocaleDateString());
+
+  new Chart(canvas, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [{
+        label: 'Median ROI',
+        data: runs.map(r => r.median_roi != null ? r.median_roi * 100 : null),
+        borderColor: clr('--edge'),
+        backgroundColor: 'transparent',
+        borderWidth: 2,
+        pointRadius: 3,
+        pointBackgroundColor: runs.map(r => r.eligible_to_follow ? clr('--yes') : clr('--no')),
+        tension: 0.25,
+        spanGaps: true,
+        fill: false,
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: ctx => 'Median ROI: ' + (ctx.parsed.y != null ? ctx.parsed.y.toFixed(1) + '%' : '—'),
+          },
+        },
+      },
+      scales: {
+        x: { ticks: { color: clr('--muted'), font: { size: 10 } }, grid: { color: clr('--border') + '55' } },
+        y: { ticks: { color: clr('--muted'), font: { size: 10 }, callback: v => v + '%' }, grid: { color: clr('--border') + '55' } },
+      },
+    },
+  });
+}
+
+async function _renderCandidateDetail(address) {
+  const panel = document.getElementById('copy-detail-' + _copySafeId(address));
+  if (!panel) return;
+  const candidate = _copyCandidates.find(c => c.address === address);
+
+  let history;
+  try {
+    const r = await fetch('/api/copy-trading/wallets/' + encodeURIComponent(address) + '/history?limit=10');
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    history = await r.json();
+  } catch (e) {
+    panel.innerHTML = `<div class="chart-empty">Could not load screening history: ${e.message}</div>`;
+    console.error(`Wallet history fetch failed for ${address}:`, e);
+    return;
+  }
+
+  // API returns newest-first; the chart reads left-to-right as oldest-to-newest.
+  const runs = (history.runs || []).slice().reverse();
+
+  panel.innerHTML = `
+    <div class="copy-detail-grid">
+      <div class="copy-detail-chart">
+        <div class="copy-detail-subhdr">Median ROI — last ${runs.length} run${runs.length !== 1 ? 's' : ''}</div>
+        ${runs.length
+          ? `<div class="chart-wrap copy-sparkline-wrap"><canvas id="copy-canvas-${_copySafeId(address)}"></canvas></div>`
+          : `<div class="chart-empty">No screening history recorded for this wallet.</div>`}
+      </div>
+      <div class="copy-detail-follow">
+        <div class="copy-detail-subhdr">Follow this wallet</div>
+        ${_copyFollowSectionHtml(address, candidate, runs.length)}
+      </div>
+    </div>`;
+  lucide.createIcons();
+
+  if (runs.length) _renderCopySparkline(address, runs);
+}
+
+async function submitFollow(address, btn) {
+  const safeId = _copySafeId(address);
+  const input = document.getElementById('copy-stake-' + safeId);
+  const msgEl = document.getElementById('copy-follow-msg-' + safeId);
+  const stake = input ? parseFloat(input.value) : NaN;
+  if (!Number.isFinite(stake) || stake <= 0) {
+    if (msgEl) msgEl.textContent = 'Enter a stake amount greater than $0.';
+    return;
+  }
+
+  btn.disabled = true;
+  btn.classList.add('loading');
+  try {
+    const r = await fetch(`/api/copy-trading/wallets/${encodeURIComponent(address)}/follow`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ stake }),
+    });
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok || !body.success) {
+      if (msgEl) msgEl.textContent = body.message || `Follow failed (HTTP ${r.status}).`;
+      btn.disabled = false;
+      btn.classList.remove('loading');
+      return;
+    }
+    console.info(`Followed ${address}: ${body.message}`);
+    // Refresh the candidates list so this row now shows "Followed" — the
+    // open detail panel is preserved via _copyReopenExpandedRows().
+    await fetchCopyTradingCandidates();
+  } catch (e) {
+    if (msgEl) msgEl.textContent = `Follow request failed: ${e.message}`;
+    btn.disabled = false;
+    btn.classList.remove('loading');
+    console.error(`Follow request failed for ${address}:`, e);
+  }
+}
+
+async function fetchCopyTradingCandidates() {
+  const banner = document.getElementById('copy-trading-error-banner');
+  try {
+    const r = await fetch('/api/copy-trading/candidates');
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json();
+    if (banner) banner.classList.remove('visible');
+    renderCopyCandidates(data);
+  } catch (e) {
+    console.error('Copy-trading candidates fetch failed:', e);
+    if (_copyCandidatesData) {
+      // Last-known-good data stays on screen — only the banner changes
+      // (design spec: never drop to a blank screen on a fetch failure).
+      if (banner) banner.classList.add('visible');
+      const textEl = document.getElementById('copy-trading-error-text');
+      if (textEl) {
+        textEl.textContent = `Fetch failed (${e.message}) — showing last-known data, retrying in 5 min`;
+      }
+    } else {
+      const wrap = document.getElementById('copy-candidates-list');
+      wrap.innerHTML = `<div class="empty"><i data-lucide="alert-circle"></i><h3>Could not load candidates</h3><p>${e.message} — retrying automatically.</p></div>`;
+      lucide.createIcons();
     }
   }
 }

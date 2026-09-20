@@ -33,12 +33,14 @@ Usage (embedded in run.py via bridge stub):
 """
 from __future__ import annotations
 
+import io
 import json
 import logging
 import os
 import time
 import threading
 from collections import defaultdict
+from contextlib import redirect_stdout
 from dataclasses import dataclass, field as dc_field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -459,6 +461,78 @@ class PromotionBarOut(BaseModel):
     status: str
     reason: str
     excluded_certainty_shortcut_count: int = 0
+
+
+class CopyCandidateOut(BaseModel):
+    """One screened wallet's latest run, for the Candidates view table
+    (epic F, issue #1146). Isolated from the weather strategy's own
+    PositionOut/PromotionBarOut models — copy-trading is a separate
+    dashboard tab (docs/design/copy-trading-architecture.md isolation
+    requirement).
+    """
+    address: str
+    window: str
+    screened_at: str
+    n_buy_trades: int
+    n_resolved: int
+    win_rate: float | None = None
+    mean_roi: float | None = None
+    median_roi: float | None = None
+    mirrored_dollar_pnl: float | None = None
+    flat_dollar_pnl: float | None = None
+    flat_stake: float | None = None
+    # Latest run's own stability check (stored at screening time — see
+    # copy_wallet_screening.py::check_stability). Gates the Follow control.
+    eligible_to_follow: bool
+    # Independently recomputed instability flag (design spec — must be
+    # visible in the table row, not just the detail panel): True whenever
+    # check_stability() disagrees across the wallet's last two runs, which
+    # by construction matches `not eligible_to_follow` for the latest run —
+    # kept as its own field since the two are conceptually distinct (one
+    # gates the Follow button, the other drives the warning badge) even
+    # though they're computed from the same two rows.
+    unstable: bool
+    # Whether this wallet has a screening run before its latest one
+    # (Designer review, PR #1152): a first-ever run has nothing to have
+    # "swung" against yet, so `unstable` is conservatively True but the
+    # table badge must not say "Unstable" for it -- that implies proven
+    # instability, not "not yet tested twice". False only for a wallet on
+    # its very first screening run.
+    has_prior_run: bool
+    followed: bool
+    follow_status: str | None = None
+
+
+class CopyCandidatesOut(BaseModel):
+    """Single response for the Candidates view — one round-trip, not
+    several (issue #1146 acceptance criteria)."""
+    candidates: list[CopyCandidateOut]
+    slots_remaining: int
+    max_followed: int
+    active_follow_count: int
+
+
+class CopyWalletScreeningRunOut(BaseModel):
+    """One historical screening run, for the detail-panel sparkline."""
+    window: str
+    screened_at: str
+    n_resolved: int
+    median_roi: float | None = None
+    eligible_to_follow: bool
+
+
+class CopyWalletHistoryOut(BaseModel):
+    address: str
+    runs: list[CopyWalletScreeningRunOut]  # newest first
+
+
+class CopyFollowRequest(BaseModel):
+    stake: float | None = None  # defaults to COPY_DEFAULT_FLAT_STAKE_USD
+
+
+class CopyFollowResultOut(BaseModel):
+    success: bool
+    message: str
 
 
 class EmosCoefficients(BaseModel):
@@ -2200,6 +2274,151 @@ def promotion_bar() -> list[PromotionBarOut]:
 
     rows = compute_promotion_bar(_db)
     return [PromotionBarOut(**row) for row in rows]
+
+
+# ---------------------------------------------------------------------------
+# Copy-trading API — Candidates view (epic F #1143, story F1 #1146)
+# ---------------------------------------------------------------------------
+
+@app.get("/api/copy-trading/candidates", response_model=CopyCandidatesOut)
+def copy_trading_candidates() -> CopyCandidatesOut:
+    """Every screened wallet's latest run, plus follow/instability/slots
+    context — one response model so the frontend needs a single round-trip
+    (issue #1146 acceptance criteria), not several.
+
+    Default sort is `median_roi` descending, matching the backtest report's
+    own methodology — never `mirrored_dollar_pnl`/`flat_dollar_pnl` (the
+    exact mistake the spike already made once, see the design spec).
+    """
+    if _db is None:
+        raise HTTPException(status_code=503, detail="Database not initialised")
+
+    from src.scripts.copy_wallet_promotion import active_follow_count
+    from src.scripts.copy_wallet_screening import check_stability
+
+    live_cfg = get_live_config(_db)
+    max_followed = live_cfg["COPY_MAX_WALLETS_FOLLOWED"]
+    active_count = active_follow_count(_db)
+    slots_remaining = max(max_followed - active_count, 0)
+
+    followed_status = {w["address"]: w["status"] for w in _db.get_followed_wallets()}
+    # One batched query for every address's previous run, instead of an
+    # N+1 get_recent_wallet_screenings() call per candidate row — this
+    # endpoint is polled every 5 minutes by every open dashboard tab.
+    previous_runs = _db.get_previous_wallet_screenings()
+
+    candidates = []
+    for row in _db.get_latest_wallet_screenings():
+        # Reuse check_stability() against this wallet's own last two runs
+        # rather than re-deriving the sign/tolerance logic (acceptance
+        # criteria).
+        previous = previous_runs.get(row["address"])
+        unstable = not check_stability(row, previous)
+
+        candidates.append(CopyCandidateOut(
+            address=row["address"],
+            window=row["window"],
+            screened_at=row["screened_at"],
+            n_buy_trades=row["n_buy_trades"],
+            n_resolved=row["n_resolved"],
+            win_rate=row["win_rate"],
+            mean_roi=row["mean_roi"],
+            median_roi=row["median_roi"],
+            mirrored_dollar_pnl=row["mirrored_dollar_pnl"],
+            flat_dollar_pnl=row["flat_dollar_pnl"],
+            flat_stake=row["flat_stake"],
+            eligible_to_follow=bool(row["eligible_to_follow"]),
+            unstable=unstable,
+            has_prior_run=previous is not None,
+            followed=row["address"] in followed_status,
+            follow_status=followed_status.get(row["address"]),
+        ))
+
+    candidates.sort(
+        key=lambda c: c.median_roi if c.median_roi is not None else float("-inf"),
+        reverse=True,
+    )
+
+    return CopyCandidatesOut(
+        candidates=candidates,
+        slots_remaining=slots_remaining,
+        max_followed=max_followed,
+        active_follow_count=active_count,
+    )
+
+
+@app.get(
+    "/api/copy-trading/wallets/{address}/history",
+    response_model=CopyWalletHistoryOut,
+)
+def copy_trading_wallet_history(address: str, limit: int = 10) -> CopyWalletHistoryOut:
+    """A single wallet's recent screening runs, newest first — feeds the
+    Candidates detail panel's median-ROI sparkline (issue #1146)."""
+    if _db is None:
+        raise HTTPException(status_code=503, detail="Database not initialised")
+
+    rows = _db.get_recent_wallet_screenings(address, limit=limit)
+    return CopyWalletHistoryOut(
+        address=address,
+        runs=[
+            CopyWalletScreeningRunOut(
+                window=r["window"],
+                screened_at=r["screened_at"],
+                n_resolved=r["n_resolved"],
+                median_roi=r["median_roi"],
+                eligible_to_follow=bool(r["eligible_to_follow"]),
+            )
+            for r in rows
+        ],
+    )
+
+
+@app.post(
+    "/api/copy-trading/wallets/{address}/follow",
+    response_model=CopyFollowResultOut,
+)
+def copy_trading_follow_wallet(address: str, req: CopyFollowRequest) -> CopyFollowResultOut:
+    """Follow a screened wallet — wraps copy_wallet_promotion.py::follow()
+    directly rather than re-deriving its roster-full / ineligible /
+    already-followed refusal checks (issue #1146 acceptance criteria).
+
+    follow() only communicates success/refusal via a print() + return code
+    (it's a CLI function first) — captured here via redirect_stdout instead
+    of changing its signature, since that signature is covered by
+    src/tests/test_copy_wallet_promotion.py's own return-code assertions.
+    """
+    if _db is None:
+        raise HTTPException(status_code=503, detail="Database not initialised")
+
+    from src.scripts.copy_wallet_promotion import follow
+
+    live_cfg = get_live_config(_db)
+    max_followed = live_cfg["COPY_MAX_WALLETS_FOLLOWED"]
+    max_stake = live_cfg["COPY_MAX_EXPOSURE_PER_WALLET_USD"]
+    stake = req.stake if req.stake is not None else live_cfg["COPY_DEFAULT_FLAT_STAKE_USD"]
+
+    # Trading-safety guardrail: an operator-submitted stake is otherwise
+    # unbounded above (follow() itself only rejects <=0 / non-finite).
+    # Reuse the existing per-wallet exposure cap rather than inventing a
+    # new config key for this.
+    if stake > max_stake:
+        return CopyFollowResultOut(
+            success=False,
+            message=(
+                f"Refusing to follow {address}: stake ${stake:.2f} exceeds "
+                f"COPY_MAX_EXPOSURE_PER_WALLET_USD (${max_stake:.2f})."
+            ),
+        )
+
+    buf = io.StringIO()
+    try:
+        with redirect_stdout(buf):
+            code = follow(_db, address, stake, max_followed)
+    except Exception as e:  # noqa: BLE001 — surface as a structured refusal, never a bare 500
+        logger.exception("copy_trading_follow_wallet: follow() raised for %s", address)
+        return CopyFollowResultOut(success=False, message=f"Follow failed: {e}")
+
+    return CopyFollowResultOut(success=(code == 0), message=buf.getvalue().strip())
 
 
 # ---------------------------------------------------------------------------
