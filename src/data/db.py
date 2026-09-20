@@ -1614,6 +1614,31 @@ class Database:
         )
         return [dict(row) for row in cur.fetchall()]
 
+    def get_previous_wallet_screenings(self) -> dict[str, dict]:
+        """Return every screened address's second-most-recent run (the run
+        immediately before its current latest one), keyed by address.
+
+        One query for every address at once, instead of a per-address
+        ``get_recent_wallet_screenings(address, limit=2)`` call -- added for
+        the Candidates dashboard endpoint (issue #1146), which would
+        otherwise issue an N+1 query per request (this endpoint is polled
+        every 5 minutes by every open dashboard tab). An address with only
+        one screening run ever has no entry in the returned dict -- nothing
+        to look up, matching ``get_recent_wallet_screenings(..., limit=2)``
+        returning a single-row list in that case.
+        """
+        cur = self._conn.execute(
+            "SELECT c.* FROM copy_wallet_candidates c "
+            "INNER JOIN ("
+            "  SELECT c1.address, MAX(c1.id) AS prev_id FROM copy_wallet_candidates c1 "
+            "  WHERE c1.id < ("
+            "    SELECT MAX(c2.id) FROM copy_wallet_candidates c2 WHERE c2.address = c1.address"
+            "  ) "
+            "  GROUP BY c1.address"
+            ") prev ON c.address = prev.address AND c.id = prev.prev_id"
+        )
+        return {row["address"]: dict(row) for row in cur.fetchall()}
+
     # ------------------------------------------------------------------
     # copy_wallets_followed / copy_signals / copy_positions (issue #1121,
     # epic #1101 story B1 -- copy-trading signal detection & flat-stake

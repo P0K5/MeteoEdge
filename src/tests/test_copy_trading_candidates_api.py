@@ -296,3 +296,42 @@ class TestFollowEndpoint:
         body = resp.json()
         assert body["success"] is False
         assert "no screening run found" in body["message"]
+
+    def test_refuses_when_stake_exceeds_max_exposure(self, api_client):
+        """Trading-safety guardrail (AI review, PR #1152): an
+        operator-submitted stake is otherwise unbounded above."""
+        client, db = api_client
+        db.set_config("COPY_MAX_EXPOSURE_PER_WALLET_USD", "50.0")
+        _screen(db, "0xGood", screened_at="2026-09-01T00:00:00Z",
+                median_roi=0.10, eligible_to_follow=1)
+
+        resp = client.post(
+            "/api/copy-trading/wallets/0xGood/follow", json={"stake": 500.0},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["success"] is False
+        assert "COPY_MAX_EXPOSURE_PER_WALLET_USD" in body["message"]
+        assert db.get_followed_wallets() == []
+
+    def test_follow_exception_returns_structured_refusal_not_500(self, api_client, monkeypatch):
+        """If follow() ever raises, the endpoint must not leak a bare 500 —
+        surface it as a structured, non-success result (AI review, PR #1152)."""
+        client, db = api_client
+        _screen(db, "0xGood", screened_at="2026-09-01T00:00:00Z",
+                median_roi=0.10, eligible_to_follow=1)
+
+        import src.scripts.copy_wallet_promotion as promotion_module
+
+        def _boom(*args, **kwargs):
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(promotion_module, "follow", _boom)
+        # The endpoint does `from ... import follow` inside the function body,
+        # so patching the module attribute is picked up on the next call.
+
+        resp = client.post("/api/copy-trading/wallets/0xGood/follow", json={})
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["success"] is False
+        assert "boom" in body["message"]

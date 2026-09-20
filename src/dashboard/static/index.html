@@ -3612,6 +3612,12 @@ function switchTab(tab) {
    Data: GET /api/copy-trading/candidates (one response for the whole
    table — no per-row round-trips), GET /api/copy-trading/wallets/{addr}/
    history (sparkline), POST /api/copy-trading/wallets/{addr}/follow.
+
+   All interactive elements use data-address + event delegation rather than
+   interpolating the address into inline onclick="fn('...')" strings — an
+   address is API-sourced data, and building an inline event-handler
+   attribute out of unescaped data is a stored-XSS pattern the moment any
+   upstream path stops guaranteeing plain hex (AI review, PR #1152).
    ───────────────────────────────────────── */
 
 const COPY_CANDIDATE_COLUMNS = [
@@ -3634,7 +3640,7 @@ let _copySort = { key: 'median_roi', dir: 'desc' };
 let _copyCandidatesData = null;   // last-fetched payload, cached for re-sort without a re-fetch
 let _copyCandidates = [];         // current sorted row list
 let _copyExpanded = new Set();    // addresses with an open detail panel
-let _copyDetailLoaded = new Set(); // addresses whose history has been fetched at least once
+let _copyListenersBound = false;  // delegated listeners are bound once
 
 function _copyFmtPct(x) {
   return x == null ? '—' : (x * 100).toFixed(1) + '%';
@@ -3649,6 +3655,20 @@ function _copyFmtUsd(x) {
 }
 function _copyTruncateAddress(addr) {
   return addr && addr.length > 12 ? addr.slice(0, 6) + '…' + addr.slice(-4) : addr;
+}
+function _copyEscapeHtml(str) {
+  return String(str).replace(/[&<>"']/g, ch => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[ch]));
+}
+// DOM ids/lookups derive from this instead of the raw address string --
+// strips anything that could break out of an HTML attribute if an
+// upstream address were ever non-hex (the design spec's single-operator
+// trust model assumes canonical hex addresses; this is cheap
+// defense-in-depth per AI review flag on PR #1152). Actual business data
+// (fetch URLs, clipboard text, API payloads) always uses the raw address.
+function _copySafeId(address) {
+  return String(address).replace(/[^a-zA-Z0-9]/g, '_');
 }
 
 async function copyAddressToClipboard(address, btn) {
@@ -3690,9 +3710,64 @@ function sortCandidates(key) {
     _copySort.dir = _copySort.dir === 'asc' ? 'desc' : 'asc';
   } else {
     _copySort.key = key;
-    _copySort.dir = key === 'screened_at' ? 'desc' : 'desc';
+    _copySort.dir = 'desc';
   }
   if (_copyCandidatesData) renderCopyCandidates(_copyCandidatesData);
+}
+
+// Single delegated click/keydown handler for the whole candidates panel --
+// bound once to the (never-replaced) #copy-candidates-list container, so
+// it keeps working across every innerHTML re-render without rebinding.
+function _copyOnListClick(event) {
+  const copyBtn = event.target.closest('.copy-copy-btn');
+  if (copyBtn) {
+    event.stopPropagation();
+    const address = copyBtn.closest('[data-address]')?.dataset.address;
+    if (address) copyAddressToClipboard(address, copyBtn);
+    return;
+  }
+  const sortBtn = event.target.closest('.copy-th-btn');
+  if (sortBtn) {
+    sortCandidates(sortBtn.dataset.sortKey);
+    return;
+  }
+  const armBtn = event.target.closest('.copy-follow-arm-btn');
+  if (armBtn) {
+    const address = armBtn.closest('[data-address]')?.dataset.address;
+    if (address) _armFollow(address);
+    return;
+  }
+  const cancelBtn = event.target.closest('.btn-follow-cancel');
+  if (cancelBtn) {
+    const address = cancelBtn.closest('[data-address]')?.dataset.address;
+    if (address) _cancelFollow(address);
+    return;
+  }
+  const confirmBtn = event.target.closest('.btn-follow-confirm');
+  if (confirmBtn) {
+    const address = confirmBtn.closest('[data-address]')?.dataset.address;
+    if (address) submitFollow(address, confirmBtn);
+    return;
+  }
+  const row = event.target.closest('.copy-row-expandable');
+  if (row) toggleCandidateDetail(row.dataset.address);
+}
+
+function _copyOnListKeydown(event) {
+  if (event.key !== 'Enter' && event.key !== ' ') return;
+  const row = event.target.closest('.copy-row-expandable');
+  if (!row) return;
+  event.preventDefault();
+  toggleCandidateDetail(row.dataset.address);
+}
+
+function _copyBindListEvents() {
+  if (_copyListenersBound) return;
+  const wrap = document.getElementById('copy-candidates-list');
+  if (!wrap) return;
+  wrap.addEventListener('click', _copyOnListClick);
+  wrap.addEventListener('keydown', _copyOnListKeydown);
+  _copyListenersBound = true;
 }
 
 function _copyColumnHeaderHtml(col) {
@@ -3707,7 +3782,7 @@ function _copyColumnHeaderHtml(col) {
   const ariaSort = active ? (dir === 'asc' ? 'ascending' : 'descending') : 'none';
   const icon = active ? (dir === 'asc' ? 'chevron-up' : 'chevron-down') : 'chevrons-up-down';
   return `<th class="copy-th" scope="col" aria-sort="${ariaSort}">
-    <button type="button" class="copy-th-btn" onclick="sortCandidates('${col.key}')"
+    <button type="button" class="copy-th-btn" data-sort-key="${col.key}"
             aria-label="Sort by ${col.label}${active ? ', currently ' + ariaSort : ''}">
       <span>${col.label}</span><i data-lucide="${icon}" class="copy-sort-icon"></i>
     </button>
@@ -3723,15 +3798,16 @@ function _copyStabilityBadgeHtml(candidate) {
 function _copyRowHtml(c) {
   const lastScreened = c.screened_at ? new Date(c.screened_at).toLocaleString() : '—';
   const followedTag = c.followed ? `<span class="copy-followed-tag">Followed</span>` : '';
+  const safeId = _copySafeId(c.address);
+  const addrEsc = _copyEscapeHtml(c.address);
   return `
     <tr class="copy-row copy-row-expandable" tabindex="0" role="button"
+        data-address="${addrEsc}"
         aria-expanded="${_copyExpanded.has(c.address) ? 'true' : 'false'}"
-        aria-label="Wallet ${c.address}, click to view screening history and follow options"
-        onclick="toggleCandidateDetail('${c.address}')"
-        onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleCandidateDetail('${c.address}');}">
+        aria-label="Wallet ${addrEsc}, click to view screening history and follow options">
       <td class="copy-td copy-address-cell">
-        <span class="copy-address-mono" title="${c.address}">${_copyTruncateAddress(c.address)}</span>
-        <button type="button" class="copy-copy-btn" onclick="event.stopPropagation();copyAddressToClipboard('${c.address}', this)"
+        <span class="copy-address-mono" title="${addrEsc}">${_copyEscapeHtml(_copyTruncateAddress(c.address))}</span>
+        <button type="button" class="copy-copy-btn"
                 aria-label="Copy full wallet address to clipboard" title="Copy address">
           <i data-lucide="copy"></i>
         </button>
@@ -3745,11 +3821,11 @@ function _copyRowHtml(c) {
       <td class="copy-td">${_copyFmtUsd(c.flat_dollar_pnl)}</td>
       <td class="copy-td">${lastScreened}</td>
       <td class="copy-td">${_copyStabilityBadgeHtml(c)}</td>
-      <td class="copy-td"><i data-lucide="chevron-down" class="copy-chevron" id="copy-chev-${c.address}"></i></td>
+      <td class="copy-td"><i data-lucide="chevron-down" class="copy-chevron" id="copy-chev-${safeId}"></i></td>
     </tr>
-    <tr class="copy-detail-row" id="copy-detail-row-${c.address}" style="display:none">
+    <tr class="copy-detail-row" id="copy-detail-row-${safeId}" style="display:none">
       <td class="copy-detail-td" colspan="10">
-        <div class="copy-detail-panel" id="copy-detail-${c.address}">
+        <div class="copy-detail-panel" id="copy-detail-${safeId}">
           <div class="chart-empty">Loading…</div>
         </div>
       </td>
@@ -3758,6 +3834,7 @@ function _copyRowHtml(c) {
 
 function renderCopyCandidates(data) {
   _copyCandidatesData = data;
+  _copyBindListEvents();
   const wrap = document.getElementById('copy-candidates-list');
   const pill = document.getElementById('copy-slots-pill');
   if (pill) {
@@ -3784,8 +3861,9 @@ function renderCopyCandidates(data) {
 }
 
 function toggleCandidateDetail(address) {
-  const row = document.getElementById('copy-detail-row-' + address);
-  const chev = document.getElementById('copy-chev-' + address);
+  const safeId = _copySafeId(address);
+  const row = document.getElementById('copy-detail-row-' + safeId);
+  const chev = document.getElementById('copy-chev-' + safeId);
   const rowEl = row && row.previousElementSibling;
   if (!row) return;
   const opening = row.style.display === 'none' || !row.style.display;
@@ -3802,8 +3880,9 @@ function toggleCandidateDetail(address) {
 
 function _copyReopenExpandedRows() {
   _copyExpanded.forEach(address => {
-    const row = document.getElementById('copy-detail-row-' + address);
-    const chev = document.getElementById('copy-chev-' + address);
+    const safeId = _copySafeId(address);
+    const row = document.getElementById('copy-detail-row-' + safeId);
+    const chev = document.getElementById('copy-chev-' + safeId);
     if (!row) { _copyExpanded.delete(address); return; }
     row.style.display = 'table-row';
     if (chev) chev.style.transform = 'rotate(180deg)';
@@ -3811,43 +3890,44 @@ function _copyReopenExpandedRows() {
   });
 }
 
-function _copyFollowIdleHtml(address) {
-  return `<button type="button" class="btn-follow" id="copy-follow-btn-${address}" onclick="_armFollow('${address}')" aria-label="Follow this wallet">
+function _copyFollowIdleHtml() {
+  return `<button type="button" class="btn-follow copy-follow-arm-btn" aria-label="Follow this wallet">
     <i data-lucide="user-plus"></i>Follow
   </button>`;
 }
 
 function _copyFollowArmedHtml(address) {
+  const safeId = _copySafeId(address);
   return `
-    <label class="copy-stake-label" for="copy-stake-${address}">Stake per trade ($)</label>
-    <input type="number" min="0.01" step="0.01" value="5" id="copy-stake-${address}" class="copy-stake-input" aria-label="Stake per trade in USD">
-    <button type="button" class="btn-follow btn-follow-confirm" onclick="submitFollow('${address}', this)" aria-label="Confirm follow at the entered stake">
+    <label class="copy-stake-label" for="copy-stake-${safeId}">Stake per trade ($)</label>
+    <input type="number" min="0.01" step="0.01" value="5" id="copy-stake-${safeId}" class="copy-stake-input" aria-label="Stake per trade in USD">
+    <button type="button" class="btn-follow btn-follow-confirm" aria-label="Confirm follow at the entered stake">
       <span class="spinner"></span><i data-lucide="check"></i>Confirm follow
     </button>
-    <button type="button" class="btn-follow-cancel" onclick="_cancelFollow('${address}')" aria-label="Cancel follow">Cancel</button>
-    <p class="copy-follow-msg" id="copy-follow-msg-${address}" role="status" aria-live="polite"></p>`;
+    <button type="button" class="btn-follow-cancel" aria-label="Cancel follow">Cancel</button>
+    <p class="copy-follow-msg" id="copy-follow-msg-${safeId}" role="status" aria-live="polite"></p>`;
 }
 
 function _armFollow(address) {
-  const section = document.getElementById('copy-follow-section-' + address);
+  const section = document.getElementById('copy-follow-section-' + _copySafeId(address));
   if (!section) return;
   section.innerHTML = _copyFollowArmedHtml(address);
   lucide.createIcons();
-  const input = document.getElementById('copy-stake-' + address);
+  const input = document.getElementById('copy-stake-' + _copySafeId(address));
   if (input) input.focus();
 }
 
 function _cancelFollow(address) {
-  const section = document.getElementById('copy-follow-section-' + address);
+  const section = document.getElementById('copy-follow-section-' + _copySafeId(address));
   if (!section) return;
-  section.innerHTML = _copyFollowIdleHtml(address);
+  section.innerHTML = _copyFollowIdleHtml();
   lucide.createIcons();
 }
 
 function _copyFollowSectionHtml(address, candidate, runCount) {
   if (!candidate) return '';
   if (candidate.followed) {
-    const statusNote = candidate.follow_status ? ` (status: ${candidate.follow_status})` : '';
+    const statusNote = candidate.follow_status ? ` (status: ${_copyEscapeHtml(candidate.follow_status)})` : '';
     return `<p class="copy-followed-note"><i data-lucide="check-circle"></i>Already followed${statusNote}.</p>`;
   }
   if (!candidate.eligible_to_follow) {
@@ -3863,11 +3943,11 @@ function _copyFollowSectionHtml(address, candidate, runCount) {
       </button>
       <p class="copy-follow-reason"><i data-lucide="alert-triangle"></i><span>${reason}</span></p>`;
   }
-  return `<div class="copy-follow-section" id="copy-follow-section-${address}">${_copyFollowIdleHtml(address)}</div>`;
+  return `<div class="copy-follow-section" data-address="${_copyEscapeHtml(address)}" id="copy-follow-section-${_copySafeId(address)}">${_copyFollowIdleHtml()}</div>`;
 }
 
 function _renderCopySparkline(address, runs) {
-  const canvas = document.getElementById('copy-canvas-' + address);
+  const canvas = document.getElementById('copy-canvas-' + _copySafeId(address));
   if (!canvas) return;
   const cs = getComputedStyle(document.documentElement);
   const clr = k => cs.getPropertyValue(k).trim();
@@ -3910,7 +3990,7 @@ function _renderCopySparkline(address, runs) {
 }
 
 async function _renderCandidateDetail(address) {
-  const panel = document.getElementById('copy-detail-' + address);
+  const panel = document.getElementById('copy-detail-' + _copySafeId(address));
   if (!panel) return;
   const candidate = _copyCandidates.find(c => c.address === address);
 
@@ -3924,7 +4004,6 @@ async function _renderCandidateDetail(address) {
     console.error(`Wallet history fetch failed for ${address}:`, e);
     return;
   }
-  _copyDetailLoaded.add(address);
 
   // API returns newest-first; the chart reads left-to-right as oldest-to-newest.
   const runs = (history.runs || []).slice().reverse();
@@ -3934,7 +4013,7 @@ async function _renderCandidateDetail(address) {
       <div class="copy-detail-chart">
         <div class="copy-detail-subhdr">Median ROI — last ${runs.length} run${runs.length !== 1 ? 's' : ''}</div>
         ${runs.length
-          ? `<div class="chart-wrap copy-sparkline-wrap"><canvas id="copy-canvas-${address}"></canvas></div>`
+          ? `<div class="chart-wrap copy-sparkline-wrap"><canvas id="copy-canvas-${_copySafeId(address)}"></canvas></div>`
           : `<div class="chart-empty">No screening history recorded for this wallet.</div>`}
       </div>
       <div class="copy-detail-follow">
@@ -3948,8 +4027,9 @@ async function _renderCandidateDetail(address) {
 }
 
 async function submitFollow(address, btn) {
-  const input = document.getElementById('copy-stake-' + address);
-  const msgEl = document.getElementById('copy-follow-msg-' + address);
+  const safeId = _copySafeId(address);
+  const input = document.getElementById('copy-stake-' + safeId);
+  const msgEl = document.getElementById('copy-follow-msg-' + safeId);
   const stake = input ? parseFloat(input.value) : NaN;
   if (!Number.isFinite(stake) || stake <= 0) {
     if (msgEl) msgEl.textContent = 'Enter a stake amount greater than $0.';
@@ -3989,16 +4069,18 @@ async function fetchCopyTradingCandidates() {
     const r = await fetch('/api/copy-trading/candidates');
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const data = await r.json();
-    banner.classList.remove('visible');
+    if (banner) banner.classList.remove('visible');
     renderCopyCandidates(data);
   } catch (e) {
     console.error('Copy-trading candidates fetch failed:', e);
     if (_copyCandidatesData) {
       // Last-known-good data stays on screen — only the banner changes
       // (design spec: never drop to a blank screen on a fetch failure).
-      banner.classList.add('visible');
-      document.getElementById('copy-trading-error-text').textContent =
-        `Fetch failed (${e.message}) — showing last-known data, retrying in 5 min`;
+      if (banner) banner.classList.add('visible');
+      const textEl = document.getElementById('copy-trading-error-text');
+      if (textEl) {
+        textEl.textContent = `Fetch failed (${e.message}) — showing last-known data, retrying in 5 min`;
+      }
     } else {
       const wrap = document.getElementById('copy-candidates-list');
       wrap.innerHTML = `<div class="empty"><i data-lucide="alert-circle"></i><h3>Could not load candidates</h3><p>${e.message} — retrying automatically.</p></div>`;

@@ -2295,15 +2295,17 @@ def copy_trading_candidates() -> CopyCandidatesOut:
     slots_remaining = max(max_followed - active_count, 0)
 
     followed_status = {w["address"]: w["status"] for w in _db.get_followed_wallets()}
+    # One batched query for every address's previous run, instead of an
+    # N+1 get_recent_wallet_screenings() call per candidate row — this
+    # endpoint is polled every 5 minutes by every open dashboard tab.
+    previous_runs = _db.get_previous_wallet_screenings()
 
     candidates = []
     for row in _db.get_latest_wallet_screenings():
         # Reuse check_stability() against this wallet's own last two runs
         # rather than re-deriving the sign/tolerance logic (acceptance
-        # criteria) — get_recent_wallet_screenings()[0] is the same row as
-        # `row` above, so only the previous run needs a fresh fetch.
-        recent = _db.get_recent_wallet_screenings(row["address"], limit=2)
-        previous = recent[1] if len(recent) > 1 else None
+        # criteria).
+        previous = previous_runs.get(row["address"])
         unstable = not check_stability(row, previous)
 
         candidates.append(CopyCandidateOut(
@@ -2384,11 +2386,29 @@ def copy_trading_follow_wallet(address: str, req: CopyFollowRequest) -> CopyFoll
 
     live_cfg = get_live_config(_db)
     max_followed = live_cfg["COPY_MAX_WALLETS_FOLLOWED"]
+    max_stake = live_cfg["COPY_MAX_EXPOSURE_PER_WALLET_USD"]
     stake = req.stake if req.stake is not None else live_cfg["COPY_DEFAULT_FLAT_STAKE_USD"]
 
+    # Trading-safety guardrail: an operator-submitted stake is otherwise
+    # unbounded above (follow() itself only rejects <=0 / non-finite).
+    # Reuse the existing per-wallet exposure cap rather than inventing a
+    # new config key for this.
+    if stake > max_stake:
+        return CopyFollowResultOut(
+            success=False,
+            message=(
+                f"Refusing to follow {address}: stake ${stake:.2f} exceeds "
+                f"COPY_MAX_EXPOSURE_PER_WALLET_USD (${max_stake:.2f})."
+            ),
+        )
+
     buf = io.StringIO()
-    with redirect_stdout(buf):
-        code = follow(_db, address, stake, max_followed)
+    try:
+        with redirect_stdout(buf):
+            code = follow(_db, address, stake, max_followed)
+    except Exception as e:  # noqa: BLE001 — surface as a structured refusal, never a bare 500
+        logger.exception("copy_trading_follow_wallet: follow() raised for %s", address)
+        return CopyFollowResultOut(success=False, message=f"Follow failed: {e}")
 
     return CopyFollowResultOut(success=(code == 0), message=buf.getvalue().strip())
 

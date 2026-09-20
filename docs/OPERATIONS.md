@@ -753,6 +753,29 @@ naming what changed, since this tool's stdout is the only audit trail for a
 promotion/pause/resume decision until the followed-wallet-management
 dashboard UI ships (#1104).
 
+#### Dashboard API — Copy-Trading Candidates view (issue #1146)
+
+The Copy-Trading tab's Candidates view (`src/dashboard/static/index.html`)
+is served by three read/write endpoints in `src/dashboard/api.py`:
+
+- `GET /api/copy-trading/candidates` — every screened wallet's latest run
+  (`Database.get_latest_wallet_screenings()`), each annotated with a
+  recomputed instability flag (`copy_wallet_screening.py::check_stability`
+  against `Database.get_previous_wallet_screenings()`), whether it's
+  already followed, and the roster's `slots_remaining`/`max_followed`/
+  `active_follow_count` (same computation as the advisory report above,
+  via `copy_wallet_promotion.py::active_follow_count`) — one response, not
+  a round-trip per row.
+- `GET /api/copy-trading/wallets/{address}/history` — a single wallet's
+  recent screening runs, for the detail panel's median-ROI sparkline.
+- `POST /api/copy-trading/wallets/{address}/follow` — the dashboard's
+  equivalent of `--follow` above: wraps `copy_wallet_promotion.py::follow()`
+  directly (same refusal checks: roster full, ineligible, already
+  followed), plus a `COPY_MAX_EXPOSURE_PER_WALLET_USD` stake cap the CLI
+  itself doesn't enforce (the CLI is a human-run, single-invocation tool;
+  the dashboard form needs its own guardrail against a fat-fingered or
+  scripted stake value).
+
 #### src/scripts/copy_signal_loop.py (manual run for now — no systemd unit yet)
 
 Persistent process (like `run.py`, not a oneshot) that detects new BUY

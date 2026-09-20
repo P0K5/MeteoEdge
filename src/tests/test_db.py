@@ -1385,6 +1385,67 @@ class TestCopyWalletCandidates:
         assert rows[0]["eligible_to_follow"] == 0
 
 
+class TestGetPreviousWalletScreenings:
+    """One-query batch lookup of each address's second-most-recent run --
+    added for the Candidates dashboard endpoint (issue #1146) to avoid an
+    N+1 query pattern (get_recent_wallet_screenings(addr, limit=2) called
+    once per candidate row).
+    """
+
+    def _kwargs(self, **overrides):
+        kwargs = dict(
+            address="0xd3b034d7", window="30d", screened_at="2026-07-30T13:00:00+00:00",
+            n_buy_trades=100, n_resolved=7498, slippage_bps=25.0, win_rate=0.62,
+            mean_roi=0.10, median_roi=0.334, mirrored_dollar_pnl=1000.0,
+            flat_dollar_pnl=500.0, flat_stake=100.0, eligible_to_follow=1,
+        )
+        kwargs.update(overrides)
+        return kwargs
+
+    def test_empty_when_never_screened(self):
+        db = _db()
+        assert db.get_previous_wallet_screenings() == {}
+
+    def test_no_entry_for_address_with_only_one_run(self):
+        db = _db()
+        db.insert_wallet_screening(**self._kwargs())
+        assert db.get_previous_wallet_screenings() == {}
+
+    def test_returns_the_run_before_the_latest_one(self):
+        db = _db()
+        db.insert_wallet_screening(
+            **self._kwargs(screened_at="2026-07-30T13:00:00+00:00", n_resolved=7498, median_roi=0.334)
+        )
+        db.insert_wallet_screening(
+            **self._kwargs(screened_at="2026-07-31T04:00:00+00:00", n_resolved=2271, median_roi=-1.0)
+        )
+        previous = db.get_previous_wallet_screenings()
+        assert previous.keys() == {"0xd3b034d7"}
+        assert previous["0xd3b034d7"]["n_resolved"] == 7498
+        assert previous["0xd3b034d7"]["median_roi"] == 0.334
+
+    def test_three_runs_returns_the_middle_one_not_the_oldest(self):
+        db = _db()
+        db.insert_wallet_screening(**self._kwargs(screened_at="2026-07-29T00:00:00Z", n_resolved=1))
+        db.insert_wallet_screening(**self._kwargs(screened_at="2026-07-30T00:00:00Z", n_resolved=2))
+        db.insert_wallet_screening(**self._kwargs(screened_at="2026-07-31T00:00:00Z", n_resolved=3))
+        previous = db.get_previous_wallet_screenings()
+        assert previous["0xd3b034d7"]["n_resolved"] == 2
+
+    def test_covers_multiple_addresses_in_one_call(self):
+        db = _db()
+        for addr in ("0xaaa", "0xbbb"):
+            db.insert_wallet_screening(**self._kwargs(address=addr, screened_at="2026-07-30T00:00:00Z", n_resolved=1))
+            db.insert_wallet_screening(**self._kwargs(address=addr, screened_at="2026-07-31T00:00:00Z", n_resolved=2))
+        # 0xccc only has one run -- should not appear in the result at all.
+        db.insert_wallet_screening(**self._kwargs(address="0xccc", screened_at="2026-07-30T00:00:00Z", n_resolved=1))
+
+        previous = db.get_previous_wallet_screenings()
+        assert previous.keys() == {"0xaaa", "0xbbb"}
+        assert previous["0xaaa"]["n_resolved"] == 1
+        assert previous["0xbbb"]["n_resolved"] == 1
+
+
 # ---------------------------------------------------------------------------
 # copy_wallets_followed / copy_signals / copy_positions
 # (issue #1121, epic #1101)
