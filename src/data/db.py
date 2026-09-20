@@ -616,6 +616,12 @@ class Database:
             # and every downstream gate/trading consumer are unchanged.
             ("scan_decisions", "yes_price_raw", "REAL"),
             ("scan_decisions", "no_price_raw", "REAL"),
+            # Issue #1145: paused_at timestamp for copy_wallets_followed
+            # When a wallet is paused, record the UTC timestamp of the pause event
+            # (used by story F4's Activity Feed to show real pause timestamps).
+            # NULL for rows written before this migration or paused wallets
+            # without a known pause time.
+            ("copy_wallets_followed", "paused_at", "TEXT"),
         ]:
             try:
                 self._conn.execute(
@@ -1658,11 +1664,18 @@ class Database:
         ``paused_reason`` is written as given, including ``None`` -- e.g.
         un-pausing back to ``'active'`` with the default clears any prior
         reason rather than leaving it stale.
+
+        ``paused_at`` is set to the current UTC ISO-8601 timestamp when
+        pausing, and cleared to ``None`` when resuming to ``'active'``.
         """
+        paused_at = None
+        if status == "paused":
+            paused_at = datetime.now(timezone.utc).isoformat()
+
         with self._lock:
             self._conn.execute(
-                "UPDATE copy_wallets_followed SET status=?, paused_reason=? WHERE address=?",
-                (status, paused_reason, address),
+                "UPDATE copy_wallets_followed SET status=?, paused_reason=?, paused_at=? WHERE address=?",
+                (status, paused_reason, paused_at, address),
             )
             self._conn.commit()
 
