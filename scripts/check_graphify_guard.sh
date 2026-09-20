@@ -3,136 +3,88 @@
 # check_graphify_guard.sh (issue #1153)
 #
 # CI guard that prevents feature PRs from accidentally bundling regenerated
-# graphify-out/ diffs. The graphify-out/ directory should only be modified by
-# the automated graphify-update workflow.
+# graphify-out/ diffs. graphify-out/ is regenerated exclusively by the
+# scheduled/dispatch graphify-update workflow (.github/workflows/graphify-update.yml),
+# which pushes its own commits directly to master -- it never opens a pull
+# request. There is therefore no legitimate case where a pull request should
+# touch graphify-out/, and this guard fails unconditionally when one does.
+# (An earlier draft of this guard let a PR bypass it by putting "graphify" in
+# its branch name or title -- removed: that never matches how the real
+# automation works, and just gives every other PR a trivial way around the
+# guard it exists to be.)
+#
+# The GitHub-API-calling logic (`main`) is kept separate from the pure
+# decision logic (`files_touch_graphify_out`) so scripts/test_graphify_guard.sh
+# can exercise the latter directly, with no network access and no mocking.
 #
 # Workflow env vars required (provided by GitHub Actions):
-#   GITHUB_TOKEN          — GitHub token for API calls
-#   PR_NUMBER             — PR number being reviewed
-#   REPO_OWNER            — repo owner
-#   REPO_NAME             — repo name
-#
-# Behavior:
-#   - Detects any changes to graphify-out/ in the PR
-#   - If graphify-out/ is modified:
-#     - Checks if the PR is a graphify-update PR (branch/title contains "graphify")
-#     - If NOT a graphify-update PR, fails with a clear error message
-#   - Otherwise, succeeds silently
+#   GITHUB_TOKEN  — token for the PR-files API call
+#   PR_NUMBER     — PR number being checked
+#   REPO_OWNER    — repo owner
+#   REPO_NAME     — repo name
 #
 # Usage:
 #   bash scripts/check_graphify_guard.sh
-#   (CI calls this; intended to run on pull_request events only)
+#   (CI calls this on pull_request events only)
 # =============================================================================
 
 set -euo pipefail
 
-# =============================================================================
-# Configuration
-# =============================================================================
+GITHUB_API="${GITHUB_API:-https://api.github.com}"
 
-REQUIRED_ENV=(
-  "GITHUB_TOKEN"
-  "PR_NUMBER"
-  "REPO_OWNER"
-  "REPO_NAME"
-)
+# Pure decision function: does the newline-separated file list on stdin
+# contain any path under graphify-out/? Exit 0 (touches it) / 1 (doesn't) --
+# testable with a plain heredoc, no curl, no GitHub API.
+files_touch_graphify_out() {
+  grep -q '^graphify-out/' || return 1
+}
 
-GITHUB_API="https://api.github.com"
+main() {
+  local required_env=(GITHUB_TOKEN PR_NUMBER REPO_OWNER REPO_NAME)
+  for var in "${required_env[@]}"; do
+    if [ -z "${!var:-}" ]; then
+      echo "ERROR: Required environment variable $var is not set" >&2
+      exit 1
+    fi
+  done
 
-# =============================================================================
-# Verify environment
-# =============================================================================
+  local files_url="${GITHUB_API}/repos/${REPO_OWNER}/${REPO_NAME}/pulls/${PR_NUMBER}/files?per_page=100"
+  local response
+  response=$(curl -sS -H "Authorization: token ${GITHUB_TOKEN}" \
+    -H "Accept: application/vnd.github.v3+json" \
+    "${files_url}")
 
-for var in "${REQUIRED_ENV[@]}"; do
-  if [ -z "${!var:-}" ]; then
-    echo "ERROR: Required environment variable $var is not set"
+  if ! echo "$response" | jq -e 'type == "array"' >/dev/null 2>&1; then
+    echo "ERROR: Failed to fetch PR #${PR_NUMBER}'s changed files:" >&2
+    echo "$response" | head -c 2000 >&2
     exit 1
   fi
-done
 
-# =============================================================================
-# Fetch PR metadata and changed files
-# =============================================================================
+  local changed_files
+  changed_files=$(echo "$response" | jq -r '.[].filename')
 
-PR_URL="${GITHUB_API}/repos/${REPO_OWNER}/${REPO_NAME}/pulls/${PR_NUMBER}"
+  if ! echo "$changed_files" | files_touch_graphify_out; then
+    echo "✓ No changes to graphify-out/ — guard passes"
+    exit 0
+  fi
 
-# Fetch PR metadata (title, head branch)
-pr_meta=$(curl -s -H "Authorization: token ${GITHUB_TOKEN}" \
-  -H "Accept: application/vnd.github.v3+json" \
-  "${PR_URL}")
-
-if echo "$pr_meta" | grep -q '"message"'; then
-  echo "ERROR: Failed to fetch PR metadata"
-  echo "$pr_meta" | head -10
+  echo "⚠ PR #${PR_NUMBER} modifies graphify-out/:" >&2
+  echo "$changed_files" | grep '^graphify-out/' | sed 's/^/  /' >&2
+  echo "" >&2
+  echo "ERROR: graphify-out/ is regenerated exclusively by the scheduled" >&2
+  echo "graphify-update workflow (.github/workflows/graphify-update.yml)," >&2
+  echo "which pushes its own commits directly to master -- it never opens a" >&2
+  echo "pull request. No PR should ever touch graphify-out/." >&2
+  echo "" >&2
+  echo "Fix: revert these files to match master and push again, e.g.:" >&2
+  echo "  git checkout origin/master -- graphify-out/" >&2
+  echo "  git commit -m 'Revert accidental graphify-out/ changes'" >&2
+  echo "  git push" >&2
   exit 1
+}
+
+# Allow scripts/test_graphify_guard.sh to source this file and call
+# files_touch_graphify_out() directly without running main()'s API calls.
+if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
+  main
 fi
-
-pr_title=$(echo "$pr_meta" | grep -o '"title":"[^"]*"' | head -1 | cut -d'"' -f4)
-head_branch=$(echo "$pr_meta" | grep -o '"ref":"[^"]*"' | head -1 | cut -d'"' -f4)
-
-echo "PR #${PR_NUMBER}: ${pr_title}"
-echo "Branch: ${head_branch}"
-
-# Fetch list of changed files in the PR
-files_url="${PR_URL}/files?per_page=100"
-changed_files=$(curl -s -H "Authorization: token ${GITHUB_TOKEN}" \
-  -H "Accept: application/vnd.github.v3+json" \
-  "${files_url}" | grep -o '"filename":"[^"]*"' | cut -d'"' -f4)
-
-# Check if any changed files are in graphify-out/
-graphify_changes=$(echo "$changed_files" | grep '^graphify-out/' || true)
-
-if [ -z "$graphify_changes" ]; then
-  echo "✓ No changes to graphify-out/ — guard passes"
-  exit 0
-fi
-
-# =============================================================================
-# graphify-out/ was modified — verify this is a graphify-update PR
-# =============================================================================
-
-echo ""
-echo "⚠ Changes detected in graphify-out/:"
-echo "$graphify_changes" | sed 's/^/  /'
-
-# Check if this is a graphify-update PR (branch or title contains "graphify")
-is_graphify_update=0
-
-if echo "$head_branch" | grep -qi "graphify"; then
-  is_graphify_update=1
-  echo ""
-  echo "✓ Branch name contains 'graphify' — this is a graphify-update PR"
-fi
-
-if echo "$pr_title" | grep -qi "graphify"; then
-  is_graphify_update=1
-  echo ""
-  echo "✓ PR title contains 'graphify' — this is a graphify-update PR"
-fi
-
-if [ "$is_graphify_update" -eq 1 ]; then
-  echo "✓ Guard passes — graphify-update PR is allowed to modify graphify-out/"
-  exit 0
-fi
-
-# =============================================================================
-# graphify-out/ modified but NOT a graphify-update PR — FAIL
-# =============================================================================
-
-echo ""
-echo "ERROR: This PR modifies graphify-out/ but does not appear to be a"
-echo "graphify-update PR (branch name and title should contain 'graphify')."
-echo ""
-echo "The graphify-out/ directory is managed by the automated graphify-update"
-echo "workflow (.github/workflows/graphify-update.yml) and should never be"
-echo "modified in feature or bugfix PRs."
-echo ""
-echo "If this is intended to be a graphify-update PR, please:"
-echo "  1. Rename the branch to include 'graphify', OR"
-echo "  2. Update the PR title to include 'graphify'"
-echo ""
-echo "If this is a feature PR that accidentally bundled graphify-out/ changes,"
-echo "please undo those changes (e.g., git checkout origin/master -- graphify-out/)"
-echo "and force-push to your branch."
-echo ""
-exit 1
