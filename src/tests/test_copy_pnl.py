@@ -54,6 +54,23 @@ class TestComputeRealizedPnlUsd:
         )
         assert pnl == pytest.approx(-20.0)
 
+    def test_winning_position_at_entry_price_zero_raises(self):
+        """A winning position can't happen at entry_price == 0 (no real
+        fill occurs at price 0) -- computing its P&L would divide by zero,
+        so this must raise a clear ValueError instead of ZeroDivisionError."""
+        with pytest.raises(ValueError):
+            compute_realized_pnl_usd(
+                entry_price=0.0, stake_usd=10.0, outcome_index=0, yes_won=True,
+            )
+
+    def test_losing_position_at_entry_price_zero_is_fine(self):
+        """The loss branch never divides by entry_price, so it stays valid
+        at the same boundary that raises on a win."""
+        pnl = compute_realized_pnl_usd(
+            entry_price=0.0, stake_usd=10.0, outcome_index=0, yes_won=False,
+        )
+        assert pnl == pytest.approx(-10.0)
+
     def test_losing_position_pnl_never_exceeds_stake(self):
         """A loss always costs exactly the stake -- never more, never less,
         regardless of entry_price."""

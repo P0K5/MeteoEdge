@@ -54,7 +54,20 @@ def compute_realized_pnl_usd(
 
     Returns:
         Realized P&L in USD — positive on a win, ``-stake_usd`` on a loss.
+
+    Raises:
+        ValueError: On a *winning* position with ``entry_price <= 0``. A
+            real fill can never happen at price 0 (there is no such thing
+            as a free winning share), so this is a data-integrity error,
+            not a value this function can silently divide by — unlike the
+            loss branch above, which needs no division and stays valid at
+            that boundary.
     """
     if copy_position_won(outcome_index, yes_won):
+        if entry_price <= 0:
+            raise ValueError(
+                f"cannot compute P&L for a winning position with entry_price={entry_price!r} "
+                "(division by zero/negative price) -- a real fill can't happen at price <= 0"
+            )
         return stake_usd * (1 - entry_price) / entry_price
     return -stake_usd
