@@ -492,6 +492,13 @@ class CopyCandidateOut(BaseModel):
     # gates the Follow button, the other drives the warning badge) even
     # though they're computed from the same two rows.
     unstable: bool
+    # Whether this wallet has a screening run before its latest one
+    # (Designer review, PR #1152): a first-ever run has nothing to have
+    # "swung" against yet, so `unstable` is conservatively True but the
+    # table badge must not say "Unstable" for it -- that implies proven
+    # instability, not "not yet tested twice". False only for a wallet on
+    # its very first screening run.
+    has_prior_run: bool
     followed: bool
     follow_status: str | None = None
 
@@ -2322,6 +2329,7 @@ def copy_trading_candidates() -> CopyCandidatesOut:
             flat_stake=row["flat_stake"],
             eligible_to_follow=bool(row["eligible_to_follow"]),
             unstable=unstable,
+            has_prior_run=previous is not None,
             followed=row["address"] in followed_status,
             follow_status=followed_status.get(row["address"]),
         ))

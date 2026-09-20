@@ -123,6 +123,7 @@ class TestCandidatesEndpoint:
         row = resp.json()["candidates"][0]
         assert row["address"] == "0xUnstable"
         assert row["unstable"] is True
+        assert row["has_prior_run"] is True
         assert row["eligible_to_follow"] is False
 
     def test_instability_flag_false_when_two_runs_agree(self, api_client):
@@ -136,6 +137,23 @@ class TestCandidatesEndpoint:
         row = resp.json()["candidates"][0]
         assert row["unstable"] is False
         assert row["eligible_to_follow"] is True
+        assert row["has_prior_run"] is True
+
+    def test_has_prior_run_false_on_first_ever_screening_run(self, api_client):
+        """A wallet's very first screening run has nothing to compare
+        against -- unstable=True (conservative default), but has_prior_run
+        must be False so the frontend renders a neutral 'New' badge
+        instead of the misleading 'Unstable' one (Designer review, PR
+        #1152: a first-ever run is 'not yet tested twice', not 'proven
+        unstable')."""
+        client, db = api_client
+        _screen(db, "0xBrandNew", screened_at="2026-09-01T00:00:00Z",
+                n_resolved=50, median_roi=0.15, eligible_to_follow=0)
+
+        resp = client.get("/api/copy-trading/candidates")
+        row = resp.json()["candidates"][0]
+        assert row["unstable"] is True
+        assert row["has_prior_run"] is False
 
     def test_followed_flag_and_status(self, api_client):
         client, db = api_client

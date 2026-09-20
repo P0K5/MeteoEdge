@@ -3790,6 +3790,16 @@ function _copyColumnHeaderHtml(col) {
 }
 
 function _copyStabilityBadgeHtml(candidate) {
+  // A wallet's first-ever screening run has nothing to have "swung"
+  // against yet -- has_prior_run=false means "not yet tested twice", not
+  // "proven unstable". Labeling it identically to a wallet whose re-screen
+  // actually disagreed would mislead operators into unfairly skipping good
+  // new candidates (Designer review, PR #1152). Reuses .badge-stable's
+  // neutral (non-warning) coloring with a distinct icon/label, reserving
+  // .badge-unstable for the proven-disagreement case.
+  if (!candidate.has_prior_run) {
+    return `<span class="badge-stable"><i data-lucide="hourglass"></i>New</span>`;
+  }
   return candidate.unstable
     ? `<span class="badge-unstable"><i data-lucide="alert-triangle"></i>Unstable</span>`
     : `<span class="badge-stable"><i data-lucide="check-circle"></i>Stable</span>`;
