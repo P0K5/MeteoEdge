@@ -1877,6 +1877,43 @@ class Database:
             "total_pnl_usd": row["total_pnl_usd"] if row["total_pnl_usd"] is not None else 0.0,
         }
 
+    def get_copy_realized_pnl_total_for_date(self, date_str: str) -> dict:
+        """Return realized P&L aggregated over ``status='settled'``
+        copy-trading positions whose ``settled_at`` falls on *date_str*
+        (a UTC calendar day, ``'YYYY-MM-DD'``): ``{'n_settled': int,
+        'total_pnl_usd': float}`` (issue #1139's daily-loss circuit
+        breaker).
+
+        ``settled_at`` is always an ISO-8601 string written as
+        ``datetime.now(timezone.utc).isoformat()`` (see
+        ``copy_settle.py``), so its first 10 characters are always
+        ``YYYY-MM-DD`` in UTC -- ``substr(settled_at,1,10)=?`` compares
+        directly against *date_str*, following this file's existing
+        ``substr(...,1,10)`` date-truncation idiom (e.g.
+        ``insert_shadow_trade``'s same-day dedup key) rather than
+        SQLite's ``DATE()``, which would tie correctness to assumptions
+        about SQLite's own default-timezone handling. Callers pass
+        *date_str* explicitly (rather than this method computing "today"
+        itself) so a settlement from a prior UTC day never counts toward
+        today's limit, and so tests can exercise a specific day
+        deterministically without mocking the clock -- mirrors
+        ``get_daily_pnl(date_str)``'s own explicit-date-argument shape.
+
+        Like ``get_copy_realized_pnl_total()``, ``total_pnl_usd`` is
+        ``0.0`` (not ``None``) when there are no settled positions on
+        that day.
+        """
+        cur = self._conn.execute(
+            "SELECT COUNT(*) AS n_settled, SUM(settled_pnl_usd) AS total_pnl_usd "
+            "FROM copy_positions WHERE status='settled' AND substr(settled_at,1,10)=?",
+            (date_str,),
+        )
+        row = cur.fetchone()
+        return {
+            "n_settled": row["n_settled"],
+            "total_pnl_usd": row["total_pnl_usd"] if row["total_pnl_usd"] is not None else 0.0,
+        }
+
     # ------------------------------------------------------------------
     # trades
     # ------------------------------------------------------------------

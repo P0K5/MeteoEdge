@@ -1849,3 +1849,70 @@ class TestGetCopyRealizedPnl:
     def test_total_is_zero_when_no_settled_positions(self):
         db = _db()
         assert db.get_copy_realized_pnl_total() == {"n_settled": 0, "total_pnl_usd": 0.0}
+
+
+class TestGetCopyRealizedPnlTotalForDate:
+    """Database.get_copy_realized_pnl_total_for_date (issue #1139)."""
+
+    def _settled_position(self, db, address, pnl, settled_at, **overrides):
+        signal_id = db.insert_copy_signal(
+            address=address,
+            market=overrides.pop("market", "0xmarket1"),
+            source_price=0.45,
+            detected_at="2026-09-19T00:00:00+00:00",
+        )
+        kwargs = dict(
+            signal_id=signal_id,
+            address=address,
+            market="0xmarket1",
+            outcome_index=0,
+            entry_price=0.45,
+            stake_usd=25.0,
+            entry_ts="2026-09-19T00:00:00+00:00",
+        )
+        kwargs.update(overrides)
+        position_id = db.insert_copy_position(**kwargs)
+        db.settle_copy_position(position_id, pnl, settled_at)
+        return position_id
+
+    def test_only_counts_todays_settlements(self):
+        """A settlement from yesterday must not count toward today's limit."""
+        db = _db()
+        self._settled_position(db, "0xaaa", 10.0, "2026-09-20T08:00:00+00:00")
+        self._settled_position(db, "0xaaa", -100.0, "2026-09-19T23:59:59+00:00")
+
+        today = db.get_copy_realized_pnl_total_for_date("2026-09-20")
+        assert today == {"n_settled": 1, "total_pnl_usd": pytest.approx(10.0)}
+
+        yesterday = db.get_copy_realized_pnl_total_for_date("2026-09-19")
+        assert yesterday == {"n_settled": 1, "total_pnl_usd": pytest.approx(-100.0)}
+
+    def test_aggregates_across_wallets_for_one_day(self):
+        db = _db()
+        self._settled_position(db, "0xaaa", 10.0, "2026-09-20T01:00:00+00:00")
+        self._settled_position(db, "0xbbb", -3.0, "2026-09-20T02:00:00+00:00")
+
+        result = db.get_copy_realized_pnl_total_for_date("2026-09-20")
+        assert result == {"n_settled": 2, "total_pnl_usd": pytest.approx(7.0)}
+
+    def test_zero_when_no_settlements_on_that_date(self):
+        db = _db()
+        self._settled_position(db, "0xaaa", 10.0, "2026-09-20T01:00:00+00:00")
+
+        result = db.get_copy_realized_pnl_total_for_date("2099-01-01")
+        assert result == {"n_settled": 0, "total_pnl_usd": 0.0}
+
+    def test_open_positions_excluded(self):
+        db = _db()
+        signal_id = db.insert_copy_signal(
+            address="0xaaa", market="0xmarket1", source_price=0.45,
+            detected_at="2026-09-19T00:00:00+00:00",
+        )
+        db.insert_copy_position(
+            signal_id=signal_id, address="0xaaa", market="0xmarket1",
+            outcome_index=0, entry_price=0.45, stake_usd=25.0,
+            entry_ts="2026-09-19T00:00:00+00:00",
+        )
+
+        result = db.get_copy_realized_pnl_total_for_date("2026-09-19")
+        assert result == {"n_settled": 0, "total_pnl_usd": 0.0}
