@@ -1734,6 +1734,57 @@ class Database:
             self._conn.commit()
             return cur.lastrowid
 
+    def link_copy_signal_to_position(self, signal_id: int, position_id: int) -> None:
+        """Back-fill an executed signal's ``position_id`` after its
+        ``copy_positions`` row exists.
+
+        Order is forced by the FK: ``copy_positions.signal_id`` requires
+        the signal row to exist first, so ``position_id`` can only be
+        written back afterwards -- never both in one INSERT.
+        """
+        with self._lock:
+            self._conn.execute(
+                "UPDATE copy_signals SET position_id=? WHERE id=?",
+                (position_id, signal_id),
+            )
+            self._conn.commit()
+
+    def copy_signal_exists_for_trade(
+        self,
+        *,
+        address: str,
+        market: str,
+        source_price: float,
+        source_trade_id: "str | None",
+    ) -> bool:
+        """Crash-recovery guard (issue #1123): True if a ``copy_signals``
+        row already exists for this exact fill.
+
+        If the poll loop crashes after inserting a signal/position for a
+        trade but before advancing ``last_seen_trade_ts``, the next cycle
+        re-fetches and would otherwise re-signal (and re-open a position
+        for) the same trade. Identity is ``source_trade_id`` (the on-chain
+        tx hash) *combined with* ``address``/``market``/``source_price`` --
+        not ``source_trade_id`` alone -- because a single transaction can
+        legitimately span multiple maker fills at different price levels
+        (see the ``copy_signals`` table comment's "No UNIQUE constraint"
+        note): two distinct fills sharing a tx hash but differing in price
+        must NOT be treated as duplicates of each other.
+
+        Always returns ``False`` when ``source_trade_id`` is ``None`` (the
+        Data API omitted ``transactionHash`` on that record) -- there is
+        no reliable identity to dedupe against, so such trades are always
+        processed rather than silently dropped.
+        """
+        if source_trade_id is None:
+            return False
+        cur = self._conn.execute(
+            "SELECT 1 FROM copy_signals WHERE source_trade_id=? AND address=? "
+            "AND market=? AND source_price=? LIMIT 1",
+            (source_trade_id, address, market, source_price),
+        )
+        return cur.fetchone() is not None
+
     def get_open_copy_positions(self, address: "str | None" = None) -> list[dict]:
         """Return ``status='open'`` copy-trading positions, optionally
         filtered to one wallet.

@@ -275,6 +275,14 @@ RISK_MIN_LIQUIDITY = int(os.getenv("RISK_MIN_LIQUIDITY", "50"))
 # reason STARTING_CAPITAL_EUR itself isn't (see CONFIG_DEFAULTS comment below).
 COPY_TRADING_CAPITAL_USD = float(os.getenv("COPY_TRADING_CAPITAL_USD", "100.0"))
 
+# Copy-signal poll loop cadence (issue #1123). Unlike Epic A's screening
+# cadence (a systemd oneshot, not live-editable), src/scripts/copy_signal_loop.py
+# is a genuine persistent process like run.py -- POLL_INTERVAL_SECONDS is its
+# module-constant fallback (read once at import time); the live-editable
+# CONFIG_DEFAULTS entry below is what the loop actually re-reads every cycle
+# via get_live_config(db), so an operator can retune cadence mid-run.
+COPY_SIGNAL_POLL_INTERVAL_SECONDS = int(os.getenv("COPY_SIGNAL_POLL_INTERVAL_SECONDS", "300"))
+
 # Issue #611: intentional bracket re-entry must be an explicit config decision.
 # false (default): once ANY live order exists today for (station, ticker, side, day)
 #   -- filled, sold, or timeout attempt -- the entry gate in run.py blocks every
@@ -747,6 +755,7 @@ CONFIG_DEFAULTS: "dict[str, str | int | float | bool]" = {
     "COPY_MAX_WALLETS_FOLLOWED": 10,
     "COPY_MAX_EXPOSURE_PER_WALLET_USD": 50.0,
     "COPY_MAX_TOTAL_EXPOSURE_USD": 250.0,
+    "COPY_SIGNAL_POLL_INTERVAL_SECONDS": 300,
 }
 
 # Maps each FORECAST_STACK value to the set of model tags whose rows should be

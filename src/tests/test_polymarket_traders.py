@@ -10,6 +10,7 @@ import pytest
 from src.data.polymarket_traders import (
     get_leaderboard,
     get_wallet_trades,
+    get_wallet_trades_since,
     normalize_trade,
     wallet_address,
 )
@@ -120,6 +121,77 @@ class TestGetWalletTrades:
         assert mock_fetch.call_count == 3
 
 
+class TestGetWalletTradesSince:
+    """get_wallet_trades_since() -- exploits the confirmed newest-first
+    default (see get_wallet_trades()'s docstring) to stop paginating as
+    soon as a trade at or before since_ts is seen."""
+
+    def test_stops_at_first_page_when_all_trades_are_new(self):
+        page = [{"timestamp": 300}, {"timestamp": 200}, {"timestamp": 100}]
+        with patch(
+            "src.data.polymarket_traders.fetch", return_value=_mock_response(page)
+        ) as mock_fetch:
+            result = get_wallet_trades_since(ADDRESS, since_ts=0, page_size=500)
+        assert result == page
+        assert mock_fetch.call_count == 1
+
+    def test_stops_early_at_boundary_within_a_page(self):
+        # Newest-first page; since_ts=150 should keep only the two trades
+        # strictly newer than 150 and never fetch a second page.
+        page = [{"timestamp": 300}, {"timestamp": 200}, {"timestamp": 100}]
+        with patch(
+            "src.data.polymarket_traders.fetch", return_value=_mock_response(page)
+        ) as mock_fetch:
+            result = get_wallet_trades_since(ADDRESS, since_ts=150, page_size=500)
+        assert result == [{"timestamp": 300}, {"timestamp": 200}]
+        assert mock_fetch.call_count == 1
+
+    def test_walks_multiple_pages_when_boundary_not_yet_reached(self):
+        # Newest-first pages: offset=0 is the most recent 500 trades
+        # (1000..501), offset=500 the next 500 (500..1). since_ts=400 sits
+        # in the second page, so page0 (all > 400) must be fully consumed
+        # and a second fetch issued before the boundary is found.
+        page0 = [{"timestamp": t} for t in range(1000, 500, -1)]  # 1000..501
+        page1 = [{"timestamp": t} for t in range(500, 0, -1)]  # 500..1
+        with patch(
+            "src.data.polymarket_traders.fetch",
+            side_effect=[_mock_response(page0), _mock_response(page1)],
+        ) as mock_fetch:
+            result = get_wallet_trades_since(ADDRESS, since_ts=400, page_size=500)
+        assert mock_fetch.call_count == 2
+        assert all(t["timestamp"] > 400 for t in result)
+        assert len(result) == 600  # 1000..401
+
+    def test_since_ts_zero_returns_everything_on_the_page(self):
+        page = [{"timestamp": 5}, {"timestamp": 4}, {"timestamp": 3}]
+        with patch("src.data.polymarket_traders.fetch", return_value=_mock_response(page)):
+            result = get_wallet_trades_since(ADDRESS, since_ts=0, page_size=500)
+        assert result == page
+
+    def test_unparseable_timestamp_kept_but_not_used_as_boundary(self):
+        page = [{"timestamp": "not-a-number"}, {"timestamp": 100}]
+        with patch("src.data.polymarket_traders.fetch", return_value=_mock_response(page)):
+            result = get_wallet_trades_since(ADDRESS, since_ts=50, page_size=500)
+        assert result == page
+
+    def test_network_error_degrades_to_partial_result(self):
+        page0 = [{"timestamp": 500}] * 500
+        with patch(
+            "src.data.polymarket_traders.fetch",
+            side_effect=[_mock_response(page0), ConnectionError("boom")],
+        ):
+            result = get_wallet_trades_since(ADDRESS, since_ts=0, page_size=500)
+        assert result == page0
+
+    def test_respects_max_pages_hard_cap(self):
+        full_page = [{"timestamp": 999999 - i} for i in range(10)]
+        with patch(
+            "src.data.polymarket_traders.fetch", return_value=_mock_response(full_page)
+        ) as mock_fetch:
+            get_wallet_trades_since(ADDRESS, since_ts=0, page_size=10, max_pages=3)
+        assert mock_fetch.call_count == 3
+
+
 class TestNormalizeTrade:
     def test_valid_buy_trade(self):
         raw = {
@@ -130,6 +202,7 @@ class TestNormalizeTrade:
             "timestamp": "1700000000",
             "outcome": "Yes",
             "outcomeIndex": 0,
+            "transactionHash": "0xdeadbeef",
         }
         result = normalize_trade(raw)
         assert result == {
@@ -141,7 +214,15 @@ class TestNormalizeTrade:
             "outcome": "Yes",
             "outcome_index": 0,
             "asset": None,
+            "source_trade_id": "0xdeadbeef",
         }
+
+    def test_missing_transaction_hash_defaults_to_none(self):
+        raw = {
+            "conditionId": "0xabc", "side": "BUY", "price": "0.65",
+            "size": "10.5", "timestamp": "1700000000", "outcome": "Yes",
+        }
+        assert normalize_trade(raw)["source_trade_id"] is None
 
     def test_non_yes_no_outcome_label_kept_verbatim_with_index(self):
         # Live data-api.polymarket.com trades label outcomes like "Up"/"Down"

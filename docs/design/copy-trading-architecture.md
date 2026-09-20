@@ -72,7 +72,7 @@ Reuses existing infrastructure rather than parallel-building it:
 | Market resolution truth | `src/data/polymarket.py::fetch_market_resolution` | — |
 | Backtest / screening scoring | `src/scripts/copy_trade_backtest.py` (median ROI, flat-stake) | Scheduled runner, persistence |
 | DB schema/migrations | `src/data/db.py` pattern (`CREATE TABLE IF NOT EXISTS` + versioned `_migrate`) | New tables (see below) |
-| Order execution | `src/execution/live_trader.py`, `src/paper_trader.py` | Copy-trading signal → order adapter |
+| Order execution | — (deliberately NOT reused, see #1100/#1123) | `src/scripts/copy_signal_loop.py` records its own `copy_positions` rows directly, never through `src/execution/live_trader.py` or `src/paper_trader.py` |
 | Config | `CONFIG_DEFAULTS` + `_CONFIG_META` pattern (per project convention: new strategy params must reach the dashboard config tab) | Copy-trading param block |
 | Dashboard | `src/dashboard/api.py` (FastAPI) + `src/dashboard/static/index.html` (vanilla JS/Chart.js, no framework) | New tab + endpoints |
 
@@ -106,10 +106,14 @@ candidate list only.
 
 **Epic B — Signal detection & flat-stake execution (paper mode only).**
 Poll followed wallets for new BUY trades, generate `copy_signals`, size
-each at the configured flat stake, submit through `paper_trader.py`.
-Depends on Epic A (need followed wallets) and the config epic (need
-stake/risk parameters wired in before anything executes, even in paper
-mode).
+each at the configured flat stake, and record the resulting open
+position directly in `copy_positions` (`src/scripts/copy_signal_loop.py`,
+issue #1123) — **not** through `paper_trader.py`: that module writes to
+the shared `trades` table (forbidden by the #1100 isolation decision)
+and settles win/loss synchronously from a known outcome, which a
+freshly detected copy-trading signal doesn't have yet. Depends on Epic A
+(need followed wallets) and the config epic (need stake/risk parameters
+wired in before anything executes, even in paper mode).
 
 **Epic C — Settlement & P&L tracking.**
 Extend the settlement flow (`settle.py` pattern) to resolve copy-trading

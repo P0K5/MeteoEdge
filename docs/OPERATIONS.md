@@ -553,6 +553,35 @@ naming what changed, since this tool's stdout is the only audit trail for a
 promotion/pause/resume decision until the followed-wallet-management
 dashboard UI ships (#1104).
 
+#### src/scripts/copy_signal_loop.py (manual run for now — no systemd unit yet)
+
+Persistent process (like `run.py`, not a oneshot) that detects new BUY
+trades from `active` followed wallets and paper-executes them at the
+wallet's flat `stake_per_trade` (issue #1123). Systemd packaging is
+tracked separately (epic #1101 story B4) — until that lands, an operator
+runs it manually, the same way `run.py` itself is run outside systemd
+during development:
+
+```bash
+# Single cycle then exit (useful for manual verification)
+python -m src.scripts.copy_signal_loop --once
+
+# Persistent loop (Ctrl-C to stop)
+python -m src.scripts.copy_signal_loop
+```
+
+Requires `COPY_TRADING_ENABLED=true` (live-read every cycle — the kill
+switch takes effect on the next cycle, no restart needed) and at least
+one `active`-status row in `copy_wallets_followed` to do anything.
+Refuses to start at all if `COPY_MAX_TOTAL_EXPOSURE_USD` exceeds
+`COPY_TRADING_CAPITAL_USD` (see "Configuration" below).
+
+**`COPY_SIGNAL_POLL_INTERVAL_SECONDS`** (default `300`, i.e. 5 minutes,
+matching `POLL_INTERVAL_SECONDS`'s own default) — seconds between poll
+cycles. Live-editable via the dashboard config tab (`copy_trading` group)
+or the env var of the same name; re-read every cycle, so an operator can
+retune cadence without restarting the process.
+
 ---
 
 ## Configuration

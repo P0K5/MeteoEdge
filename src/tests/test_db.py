@@ -1634,3 +1634,45 @@ class TestCopySignalsAndPositions:
         signal_id = db.insert_copy_signal(**self._signal_kwargs())
         with pytest.raises(sqlite3.IntegrityError):
             db.insert_copy_position(**self._position_kwargs(signal_id, outcome_index=2))
+
+    def test_link_copy_signal_to_position_round_trip(self):
+        db = _db()
+        signal_id = db.insert_copy_signal(**self._signal_kwargs())
+        position_id = db.insert_copy_position(**self._position_kwargs(signal_id))
+        db.link_copy_signal_to_position(signal_id, position_id)
+
+        cur = db._conn.execute("SELECT position_id FROM copy_signals WHERE id=?", (signal_id,))
+        assert cur.fetchone()["position_id"] == position_id
+
+    def test_copy_signal_exists_for_trade_none_source_trade_id_always_false(self):
+        db = _db()
+        db.insert_copy_signal(**self._signal_kwargs(source_trade_id=None))
+        assert db.copy_signal_exists_for_trade(
+            address="0xabc", market="0xmarket1", source_price=0.45, source_trade_id=None,
+        ) is False
+
+    def test_copy_signal_exists_for_trade_matches_full_identity(self):
+        db = _db()
+        db.insert_copy_signal(**self._signal_kwargs(source_trade_id="0xtxhash1"))
+        assert db.copy_signal_exists_for_trade(
+            address="0xabc", market="0xmarket1", source_price=0.45,
+            source_trade_id="0xtxhash1",
+        ) is True
+
+    def test_copy_signal_exists_for_trade_false_when_price_differs(self):
+        """A single tx can span multiple maker fills at different price
+        levels (copy_signals' own schema comment) -- those are distinct
+        fills, not duplicates, so a price mismatch must not match."""
+        db = _db()
+        db.insert_copy_signal(**self._signal_kwargs(source_trade_id="0xtxhash1", source_price=0.45))
+        assert db.copy_signal_exists_for_trade(
+            address="0xabc", market="0xmarket1", source_price=0.50,
+            source_trade_id="0xtxhash1",
+        ) is False
+
+    def test_copy_signal_exists_for_trade_false_when_unseen(self):
+        db = _db()
+        assert db.copy_signal_exists_for_trade(
+            address="0xabc", market="0xmarket1", source_price=0.45,
+            source_trade_id="0xnever-seen",
+        ) is False

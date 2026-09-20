@@ -2512,6 +2512,13 @@ _CONFIG_META: dict[str, dict] = {
         "min": 1.0,
         "max": 5000.0,
     },
+    "COPY_SIGNAL_POLL_INTERVAL_SECONDS": {
+        "description": "Seconds between copy-signal poll cycles (src/scripts/copy_signal_loop.py, issue #1123) -- live-read every cycle, unlike Epic A's screening cadence",
+        "type": "int",
+        "group": "copy_trading",
+        "min": 30,
+        "max": 3600,
+    },
 }
 
 _EMOS_VALID_MODES = frozenset({"legacy", "emos_shadow", "emos_primary"})
