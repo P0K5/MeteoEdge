@@ -247,7 +247,33 @@ class TestLastSeenTradeTsAdvancement:
         ):
             run_cycle(db)
 
-        db.update_followed_wallet_last_seen.assert_called_once_with(ADDRESS, 2000)
+        # Watermark advances incrementally, trade by trade (fail-safe
+        # design, AI review #1128 BLOCK item 2) -- the LAST call reflects
+        # the batch's max timestamp.
+        db.update_followed_wallet_last_seen.assert_called_with(ADDRESS, 2000)
+        assert db.update_followed_wallet_last_seen.call_count == 2
+
+    def test_mid_batch_failure_persists_watermark_up_to_last_success(self):
+        """If a trade raises partway through a batch, the watermark must
+        already reflect everything processed before it -- never silently
+        stuck at the pre-cycle value, and never advanced past the
+        failing trade."""
+        db = _mock_db()
+        db.insert_copy_signal.side_effect = [1, RuntimeError("db write failed")]
+        trades = [_buy_raw(timestamp="1000"), _buy_raw(timestamp="2000", transactionHash="0xtx2")]
+        with patch(
+            "src.scripts.copy_signal_loop.get_live_config", return_value=_live_config(),
+        ), patch(
+            "src.scripts.copy_signal_loop.get_wallet_trades_since", return_value=trades,
+        ), patch(
+            "src.scripts.copy_signal_loop.fetch_market_resolution", return_value=None,
+        ):
+            run_cycle(db)  # per-wallet isolation swallows the RuntimeError
+
+        # First trade (ts=1000) succeeded and its watermark was persisted;
+        # the second (ts=2000) raised, so the watermark was never advanced
+        # past it.
+        db.update_followed_wallet_last_seen.assert_called_once_with(ADDRESS, 1000)
 
     def test_no_new_trades_does_not_update_last_seen(self):
         db = _mock_db()

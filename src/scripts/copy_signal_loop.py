@@ -106,66 +106,102 @@ def _handle_buy_trade(
 ) -> None:
     """Decide execute-or-skip for one normalized BUY trade and persist the
     outcome (always a copy_signals row; a copy_positions row too if
-    executed)."""
+    executed).
+
+    **Atomicity (AI review #1128, BLOCK item 1):** the exposure reads
+    (``get_open_copy_positions``) and the resulting insert(s) are wrapped
+    in ``db._lock`` -- the same ``threading.RLock`` every ``Database``
+    mutator already acquires (see ``src/data/db.py``). Without this, two
+    signals evaluated close together (a future concurrent refactor of
+    this loop, or two processes sharing one ``Database`` instance) could
+    both read the exposure total *before* either insert commits and both
+    pass the same limit, jointly exceeding
+    ``COPY_MAX_EXPOSURE_PER_WALLET_USD`` / ``COPY_MAX_TOTAL_EXPOSURE_USD``
+    -- a trading-safety guardrail, not just a data-quality one. The
+    current loop is single-threaded and processes trades strictly
+    sequentially, so this isn't reachable today, but the fix is cheap and
+    closes the gap for any future caller. ``db._lock`` is reentrant, so
+    the nested acquisitions inside ``insert_copy_signal`` /
+    ``insert_copy_position`` / ``link_copy_signal_to_position`` (each of
+    which takes the same lock internally) are safe.
+    """
     address = wallet["address"]
     market = trade["market"]
     outcome_index = trade.get("outcome_index")
     source_price = trade["price"]
     source_trade_id = trade.get("source_trade_id")
 
-    # Crash-recovery guard: if a prior cycle inserted a signal for this
-    # exact fill but crashed before advancing last_seen_trade_ts, the next
-    # cycle would otherwise re-fetch and re-signal (and re-open a
-    # position for) the same trade.
-    if db.copy_signal_exists_for_trade(
-        address=address, market=market, source_price=source_price,
-        source_trade_id=source_trade_id,
-    ):
-        return
+    with db._lock:
+        # Crash-recovery guard: if a prior cycle inserted a signal for
+        # this exact fill but crashed before advancing
+        # last_seen_trade_ts, the next cycle would otherwise re-fetch and
+        # re-signal (and re-open a position for) the same trade.
+        if db.copy_signal_exists_for_trade(
+            address=address, market=market, source_price=source_price,
+            source_trade_id=source_trade_id,
+        ):
+            return
 
-    skip_reason = None
-    if fetch_market_resolution(market) is not None:
-        skip_reason = "market_resolved"
-    elif outcome_index is None:
-        # Data-integrity guard, not part of the acceptance criteria's
-        # 3-way skip ladder: copy_positions.outcome_index is NOT NULL, so
-        # a trade normalize_trade() couldn't confidently assign a
-        # positional side to can never be executed -- only signal-logged.
-        skip_reason = "missing_outcome_index"
-    else:
-        wallet_exposure = sum(p["stake_usd"] for p in db.get_open_copy_positions(address))
-        if wallet_exposure + stake > live_config["COPY_MAX_EXPOSURE_PER_WALLET_USD"]:
-            skip_reason = "wallet_exposure_limit"
+        skip_reason = None
+        if fetch_market_resolution(market) is not None:
+            skip_reason = "market_resolved"
+        elif outcome_index is None:
+            # Data-integrity guard, not part of the acceptance criteria's
+            # 3-way skip ladder: copy_positions.outcome_index is NOT
+            # NULL, so a trade normalize_trade() couldn't confidently
+            # assign a positional side to can never be executed -- only
+            # signal-logged.
+            skip_reason = "missing_outcome_index"
         else:
-            total_exposure = sum(p["stake_usd"] for p in db.get_open_copy_positions())
-            if total_exposure + stake > live_config["COPY_MAX_TOTAL_EXPOSURE_USD"]:
-                skip_reason = "total_exposure_limit"
+            wallet_exposure = sum(p["stake_usd"] for p in db.get_open_copy_positions(address))
+            if wallet_exposure + stake > live_config["COPY_MAX_EXPOSURE_PER_WALLET_USD"]:
+                skip_reason = "wallet_exposure_limit"
+            else:
+                total_exposure = sum(p["stake_usd"] for p in db.get_open_copy_positions())
+                if total_exposure + stake > live_config["COPY_MAX_TOTAL_EXPOSURE_USD"]:
+                    skip_reason = "total_exposure_limit"
 
-    if skip_reason is not None:
-        db.insert_copy_signal(
+        if skip_reason is not None:
+            db.insert_copy_signal(
+                address=address, market=market, outcome_index=outcome_index,
+                source_price=source_price, source_trade_id=source_trade_id,
+                detected_at=now_iso, order_placed=0, skip_reason=skip_reason,
+            )
+            return
+
+        fill_price = apply_slippage(source_price, "BUY", DEFAULT_SLIPPAGE_BPS)
+        signal_id = db.insert_copy_signal(
             address=address, market=market, outcome_index=outcome_index,
             source_price=source_price, source_trade_id=source_trade_id,
-            detected_at=now_iso, order_placed=0, skip_reason=skip_reason,
+            detected_at=now_iso, order_placed=1, fill_price=fill_price, size_usd=stake,
         )
-        return
-
-    fill_price = apply_slippage(source_price, "BUY", DEFAULT_SLIPPAGE_BPS)
-    signal_id = db.insert_copy_signal(
-        address=address, market=market, outcome_index=outcome_index,
-        source_price=source_price, source_trade_id=source_trade_id,
-        detected_at=now_iso, order_placed=1, fill_price=fill_price, size_usd=stake,
-    )
-    position_id = db.insert_copy_position(
-        signal_id=signal_id, address=address, market=market,
-        outcome_index=outcome_index, entry_price=fill_price,
-        stake_usd=stake, entry_ts=now_iso,
-    )
-    db.link_copy_signal_to_position(signal_id, position_id)
+        position_id = db.insert_copy_position(
+            signal_id=signal_id, address=address, market=market,
+            outcome_index=outcome_index, entry_price=fill_price,
+            stake_usd=stake, entry_ts=now_iso,
+        )
+        db.link_copy_signal_to_position(signal_id, position_id)
 
 
 def _process_wallet(db, wallet: dict, live_config: dict, now_iso: str) -> None:
     """Fetch, detect, and act on one followed wallet's new trades, then
-    advance its high-water mark past whatever was actually processed."""
+    advance its high-water mark past whatever was actually processed.
+
+    **Fail-safe watermark advancement (AI review #1128, BLOCK item 2):**
+    ``last_seen_trade_ts`` is advanced incrementally, trade by trade, as
+    each one finishes processing -- never in one shot after the whole
+    batch. If ``_handle_buy_trade`` raises partway through a batch (a
+    transient DB/network error, not the fail-soft cases that are already
+    handled internally), the exception propagates out of this function
+    (caught by ``run_cycle``'s per-wallet handler, matching the
+    acceptance criteria's per-wallet isolation), but the watermark has
+    already been persisted up to the last trade that *did* finish --
+    never past the one that failed. The next cycle retries from exactly
+    that point: the already-processed trades are skipped by
+    ``since_ts``, and any trade that got far enough to have a
+    ``copy_signals`` row before failing is additionally caught by
+    ``copy_signal_exists_for_trade``'s crash-recovery guard.
+    """
     address = wallet["address"]
     since_ts = wallet.get("last_seen_trade_ts") or 0
     stake = wallet["stake_per_trade"]
@@ -185,15 +221,15 @@ def _process_wallet(db, wallet: dict, live_config: dict, now_iso: str) -> None:
 
     max_ts_seen = since_ts
     for raw, ts in dated:
-        max_ts_seen = max(max_ts_seen, ts)
-
         trade = normalize_trade(raw)
-        if trade is None or trade["side"] != "BUY":
-            continue
+        if trade is not None and trade["side"] == "BUY":
+            _handle_buy_trade(db, wallet, trade, stake, live_config, now_iso)
 
-        _handle_buy_trade(db, wallet, trade, stake, live_config, now_iso)
-
-    db.update_followed_wallet_last_seen(address, int(max_ts_seen))
+        # Only reached once this trade (BUY, SELL, or unnormalizable) has
+        # fully finished processing without raising -- see the fail-safe
+        # note above.
+        max_ts_seen = ts
+        db.update_followed_wallet_last_seen(address, int(max_ts_seen))
 
 
 def run_cycle(db) -> None:
