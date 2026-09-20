@@ -87,8 +87,29 @@ def get_wallet_trades(
     max_pages: int = MAX_TRADE_PAGES,
     page_size: int = DEFAULT_TRADE_PAGE_SIZE,
 ) -> list[dict]:
-    """Fetch *address*'s trade tape (maker + taker fills), oldest-first
-    pagination via limit/offset, up to *max_pages*.
+    """Fetch *address*'s full trade tape (maker + taker fills), paginated
+    via limit/offset, up to *max_pages*.
+
+    **Pagination order -- corrected 2026-09-20 (issue #1123 research).**
+    This docstring previously claimed oldest-first pagination; that was
+    never actually verified against live traffic (only field names were,
+    per the module docstring's 2026-09-18 note). Direct verification
+    against ``data-api.polymarket.com/trades`` on 2026-09-20 (two
+    independent wallets, 100+ trades each, offset pages checked for
+    contiguity) shows the endpoint returns **newest-first** by default
+    (strictly descending ``timestamp``, no ordering param requested or
+    needed) and does **not** honor an explicit since/after/min-timestamp
+    query filter (an unrecognized ``after=<ts>`` parameter is silently
+    ignored -- confirmed byte-identical results with and without it).
+    This function's own behavior (collect every page in whatever order
+    the server returns them, up to *max_pages*) is unaffected by this
+    correction -- full-history callers (``copy_trade_backtest.py``,
+    ``copy_wallet_screening.py``) aggregate the whole result set
+    regardless of order. Callers that only want trades newer than a
+    known point (e.g. a poll loop) should use
+    ``get_wallet_trades_since()`` instead, which exploits the confirmed
+    newest-first default to stop paginating early rather than walking
+    the full history every cycle.
 
     A failed page stops pagination and logs a warning -- whatever was
     collected on earlier pages is still returned rather than discarded, so
@@ -116,6 +137,77 @@ def get_wallet_trades(
     return trades
 
 
+def get_wallet_trades_since(
+    address: str,
+    since_ts: int,
+    max_pages: int = MAX_TRADE_PAGES,
+    page_size: int = DEFAULT_TRADE_PAGE_SIZE,
+) -> list[dict]:
+    """Fetch *address*'s trades strictly newer than *since_ts* (unix
+    seconds), for a poll loop that only wants "what's new since last
+    check" (issue #1123).
+
+    Exploits ``get_wallet_trades()``'s confirmed newest-first default
+    (see its docstring for the live-traffic verification): walks pages
+    front-to-back and stops as soon as a trade at or before *since_ts* is
+    seen, rather than walking the full history every cycle. For a
+    normal-cadence follow set this typically costs a single page --
+    ``COPY_MAX_WALLETS_FOLLOWED`` defaults to 10 and Epic A's stability
+    screening already filters out the highest-volume/unstable wallets, so
+    the followed set is expected to be small and moderate-volume, though
+    that isn't enforced here. **Known limitation:** a wallet that trades
+    more than *page_size* times between two poll cycles still needs
+    multiple pages, bounded by *max_pages* exactly like
+    ``get_wallet_trades()`` -- a pathologically high-volume followed
+    wallet would still see a slow poll on the cycle it catches up.
+
+    ``since_ts=0`` (a wallet's first-ever poll, before
+    ``last_seen_trade_ts`` is set) has no early-stop point and walks up
+    to the same ``max_pages`` cap as ``get_wallet_trades()`` -- there is
+    no cheaper way to bootstrap a new follow given the endpoint's lack of
+    a server-side tail filter.
+
+    Never raises -- a failed page stops pagination and logs a warning,
+    exactly like ``get_wallet_trades()``, degrading to a partial result
+    rather than none.
+    """
+    since_ts = int(since_ts)
+    trades: list[dict] = []
+    for page in range(max_pages):
+        offset = page * page_size
+        url = f"{POLYMARKET_DATA_API}/trades?user={address}&limit={page_size}&offset={offset}"
+        try:
+            r = fetch(url, timeout=HTTP_TIMEOUT_SECONDS)
+            batch = r.json()
+        except Exception as exc:
+            log.warning(
+                "[polymarket-traders] get_wallet_trades_since(%s...): page %s failed: %s",
+                address[:10], page, exc,
+            )
+            break
+        if not batch:
+            break
+
+        reached_boundary = False
+        for raw in batch:
+            try:
+                ts = int(raw.get("timestamp"))
+            except (TypeError, ValueError):
+                # Unparseable timestamp -- keep it (normalize_trade() will
+                # drop it later); we just can't use it to decide the
+                # early-stop boundary.
+                trades.append(raw)
+                continue
+            if ts <= since_ts:
+                reached_boundary = True
+                break
+            trades.append(raw)
+
+        if reached_boundary or len(batch) < page_size:
+            break
+    return trades
+
+
 def normalize_trade(raw: dict) -> "dict | None":
     """Normalize one raw trade record to the fields the backtest needs:
     ``market`` (condition ID), ``side`` ("BUY"/"SELL"), ``price`` (0-1
@@ -125,7 +217,12 @@ def normalize_trade(raw: dict) -> "dict | None":
     a binary win/lose), ``outcome_index`` (0 or 1 -- the positional slot
     that lines up with the Gamma API's ``outcomePrices``/``outcomes``
     arrays, i.e. the reliable way to know which side of a binary market
-    this trade is on).
+    this trade is on), ``source_trade_id`` (the on-chain ``transactionHash``,
+    verified present on live trade records 2026-09-19 -- see
+    ``copy_signals.source_trade_id`` in ``src/data/db.py`` for why the
+    copy-trading signal loop needs it: crash-recovery dedup against
+    re-signaling an already-processed fill. ``None`` if the field is
+    absent from the raw record).
 
     Returns ``None`` if a required field is missing or unparseable -- an
     unnormalizable record is dropped, never guessed into a value.
@@ -158,4 +255,5 @@ def normalize_trade(raw: dict) -> "dict | None":
         "outcome": outcome,
         "outcome_index": outcome_index,
         "asset": raw.get("asset") or raw.get("token_id"),
+        "source_trade_id": raw.get("transactionHash") or raw.get("transaction_hash"),
     }
