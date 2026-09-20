@@ -647,6 +647,70 @@ sudo journalctl -u meteoedge-copy-settle.service -f
 tail -f logs/copy_settle.log
 ```
 
+#### meteoedge-copy-health.service / meteoedge-copy-health.timer
+
+One-shot service, run daily at **03:15 UTC** by `meteoedge-copy-health.timer`.
+Runs `src/scripts/copy_wallet_health`, the automated wallet-health monitor +
+auto-pause job (epic #1138 story D2, issue #1140). For every `status='active'`
+followed wallet: (1) pulls its two most recent `copy_wallet_candidates` rows
+and reuses `copy_wallet_screening.py::check_stability` on them — auto-pauses
+(`paused_reason="stability_check_failed"`) on a failed pairwise check *or* if
+the latest row's own `eligible_to_follow` is `0`; (2) for wallets with at
+least `MIN_SETTLED_TRADES_FOR_ROI_CHECK` (5) settled `copy_positions` rows,
+computes the median per-trade ROI (`settled_pnl_usd / stake_usd`) and
+auto-pauses (`paused_reason="realized_roi_negative"`) if it's negative. An
+already-`paused` wallet is left alone by both checks (idempotent, matching
+`copy_wallet_promotion.py`'s own guard). Logs a summary line (checked /
+paused-for-stability / paused-for-roi counts) at the end of the run.
+
+```ini
+[Unit]
+Description=MeteoEdge copy-trading wallet health monitor (auto-pause)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=p0k5
+WorkingDirectory=/home/p0k5/MeteoEdge
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=/home/p0k5/MeteoEdge/.env
+ExecStart=/home/p0k5/MeteoEdge/.venv/bin/python -u -m src.scripts.copy_wallet_health
+StandardOutput=append:/home/p0k5/MeteoEdge/logs/copy_health.log
+StandardError=append:/home/p0k5/MeteoEdge/logs/copy_health.log
+```
+
+```ini
+[Unit]
+Description=Run MeteoEdge copy-trading wallet health monitor daily at 03:15 UTC
+
+[Timer]
+OnCalendar=*-*-* 03:15:00 UTC
+AccuracySec=1m
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+```
+
+**Why 03:15 UTC:** Shortly after `meteoedge-copy-screening.timer`'s 03:00 UTC
+run, so a fresh screening row already exists for the stability check to
+compare against on the same day, rather than diffing against a stale
+previous-day pair. No other timer occupies the 03:15 slot.
+
+**Operational commands:**
+```bash
+# Check next scheduled run
+sudo systemctl list-timers meteoedge-copy-health.timer
+
+# Manually trigger a run
+sudo systemctl start meteoedge-copy-health.service
+
+# View logs
+sudo journalctl -u meteoedge-copy-health.service -f
+tail -f logs/copy_health.log
+```
+
 #### copy_wallet_promotion.py — wallet follow/pause/resume CLI (issue #1122)
 
 Not a systemd service — a human-run CLI, mirroring how `src/model/promotion_gate.py`

@@ -1849,3 +1849,67 @@ class TestGetCopyRealizedPnl:
     def test_total_is_zero_when_no_settled_positions(self):
         db = _db()
         assert db.get_copy_realized_pnl_total() == {"n_settled": 0, "total_pnl_usd": 0.0}
+
+
+class TestGetSettledCopyPositions:
+    """Database.get_settled_copy_positions (issue #1140) -- individual
+    settled copy_positions rows for one wallet, needed by the wallet-health
+    job's per-trade median-ROI computation."""
+
+    def _settled_position(self, db, address, pnl, stake_usd=10.0, market="0xmarket1"):
+        signal_id = db.insert_copy_signal(
+            address=address, market=market, source_price=0.45,
+            detected_at="2026-09-19T00:00:00+00:00",
+        )
+        position_id = db.insert_copy_position(
+            signal_id=signal_id, address=address, market=market, outcome_index=0,
+            entry_price=0.45, stake_usd=stake_usd, entry_ts="2026-09-19T00:00:00+00:00",
+        )
+        db.settle_copy_position(position_id, pnl, "2026-09-20T00:00:00+00:00")
+        return position_id
+
+    def test_returns_settled_rows_for_the_given_wallet(self):
+        db = _db()
+        self._settled_position(db, "0xaaa", 10.0, stake_usd=20.0)
+        self._settled_position(db, "0xaaa", -5.0, stake_usd=10.0)
+
+        rows = db.get_settled_copy_positions("0xaaa")
+
+        assert len(rows) == 2
+        pnls = {row["settled_pnl_usd"] for row in rows}
+        assert pnls == {10.0, -5.0}
+        for row in rows:
+            assert row["entry_price"] == 0.45
+            assert row["stake_usd"] in (20.0, 10.0)
+
+    def test_excludes_other_wallets(self):
+        db = _db()
+        self._settled_position(db, "0xaaa", 10.0)
+        self._settled_position(db, "0xbbb", 5.0)
+
+        rows = db.get_settled_copy_positions("0xaaa")
+
+        assert len(rows) == 1
+        assert rows[0]["address"] == "0xaaa"
+
+    def test_excludes_open_unsettled_positions(self):
+        db = _db()
+        self._settled_position(db, "0xaaa", 10.0)
+        signal_id = db.insert_copy_signal(
+            address="0xaaa", market="0xopenmarket", source_price=0.45,
+            detected_at="2026-09-19T00:00:00+00:00",
+        )
+        db.insert_copy_position(
+            signal_id=signal_id, address="0xaaa", market="0xopenmarket",
+            outcome_index=0, entry_price=0.45, stake_usd=10.0,
+            entry_ts="2026-09-19T00:00:00+00:00",
+        )
+
+        rows = db.get_settled_copy_positions("0xaaa")
+
+        assert len(rows) == 1
+        assert all(row["status"] == "settled" for row in rows)
+
+    def test_unknown_address_returns_empty_list(self):
+        db = _db()
+        assert db.get_settled_copy_positions("0xunknown") == []

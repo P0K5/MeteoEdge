@@ -1877,6 +1877,27 @@ class Database:
             "total_pnl_usd": row["total_pnl_usd"] if row["total_pnl_usd"] is not None else 0.0,
         }
 
+    def get_settled_copy_positions(self, address: str) -> list[dict]:
+        """Return *address*'s individual ``status='settled'`` copy-trading
+        positions (one row per position -- ``entry_price``, ``stake_usd``,
+        ``settled_pnl_usd``, etc.), newest-settled first.
+
+        Unlike ``get_copy_realized_pnl_by_wallet`` (which only returns an
+        aggregate ``{n_settled, total_pnl_usd}`` per wallet), this exposes
+        the individual rows -- needed for the wallet-health job's (issue
+        #1140) per-trade median-ROI computation (``settled_pnl_usd /
+        stake_usd`` per row), which cannot be derived from an aggregate.
+        Open (unsettled) positions are excluded. Ordered by ``id DESC``,
+        matching this section's ``get_recent_wallet_screenings`` tiebreak
+        convention. Returns ``[]`` for a wallet with no settled positions.
+        """
+        cur = self._conn.execute(
+            "SELECT * FROM copy_positions WHERE status='settled' AND address=? "
+            "ORDER BY id DESC",
+            (address,),
+        )
+        return [dict(row) for row in cur.fetchall()]
+
     # ------------------------------------------------------------------
     # trades
     # ------------------------------------------------------------------

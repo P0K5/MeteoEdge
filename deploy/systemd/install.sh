@@ -54,6 +54,8 @@ install -m 0644 "$SRC_DIR/meteoedge-health-report.timer"          "$UNIT_DIR/met
 install -m 0644 "$SRC_DIR/meteoedge-copy-signals.service"          "$UNIT_DIR/meteoedge-copy-signals.service"
 install -m 0644 "$SRC_DIR/meteoedge-copy-settle.service"          "$UNIT_DIR/meteoedge-copy-settle.service"
 install -m 0644 "$SRC_DIR/meteoedge-copy-settle.timer"            "$UNIT_DIR/meteoedge-copy-settle.timer"
+install -m 0644 "$SRC_DIR/meteoedge-copy-health.service"          "$UNIT_DIR/meteoedge-copy-health.service"
+install -m 0644 "$SRC_DIR/meteoedge-copy-health.timer"            "$UNIT_DIR/meteoedge-copy-health.timer"
 
 echo "Reloading systemd..."
 systemctl daemon-reload
@@ -68,12 +70,13 @@ systemctl enable --now meteoedge-prob-cap-report.timer
 systemctl enable --now meteoedge-purge-retention.timer
 systemctl enable --now meteoedge-copy-screening.timer
 systemctl enable --now meteoedge-copy-settle.timer
+systemctl enable --now meteoedge-copy-health.timer
 systemctl enable --now meteoedge-resolve-outcomes.timer
 systemctl enable --now meteoedge-health-report.timer
 
 echo
 echo "Done. Current status:"
-systemctl --no-pager status meteoedge.service meteoedge-copy-signals.service meteoedge-settle.timer meteoedge-archive.timer meteoedge-capture-forecasts.timer meteoedge-prob-cap-report.timer meteoedge-purge-retention.timer meteoedge-copy-screening.timer meteoedge-copy-settle.timer meteoedge-resolve-outcomes.timer meteoedge-health-report.timer || true
+systemctl --no-pager status meteoedge.service meteoedge-copy-signals.service meteoedge-settle.timer meteoedge-archive.timer meteoedge-capture-forecasts.timer meteoedge-prob-cap-report.timer meteoedge-purge-retention.timer meteoedge-copy-screening.timer meteoedge-copy-settle.timer meteoedge-copy-health.timer meteoedge-resolve-outcomes.timer meteoedge-health-report.timer || true
 echo
 echo "Tail the bot log with:  journalctl -u meteoedge.service -f"
 echo "Tail the copy-signal log with:  journalctl -u meteoedge-copy-signals.service -f"
@@ -84,4 +87,5 @@ echo "Next prob-cap report run:  systemctl list-timers meteoedge-prob-cap-report
 echo "Next purge-retention run:  systemctl list-timers meteoedge-purge-retention.timer"
 echo "Next copy-screening run:  systemctl list-timers meteoedge-copy-screening.timer"
 echo "Next copy-settle run:  systemctl list-timers meteoedge-copy-settle.timer"
+echo "Next copy-health run:  systemctl list-timers meteoedge-copy-health.timer"
 echo "Next health report run:  systemctl list-timers meteoedge-health-report.timer"
