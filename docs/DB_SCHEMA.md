@@ -664,8 +664,8 @@ pattern as the `trades.mode` migration above).
 
 **Purpose:** Open, unsettled paper positions opened from `copy_signals`. Mirrors `open_positions`' shape conceptually, but rows are **not** deleted on settlement — epic C (settlement & P&L tracking, not yet built) needs to read settled rows for P&L history, so `status` flips `'open'` → `'settled'` in place instead.
 
-**Writer:** Story B3's polling loop (open) / epic C's settlement flow (settled, not yet built)
-**Reader:** `Database.get_open_copy_positions` (story B3's per-wallet and total exposure checks — summed over this query's result rather than an in-memory counter, so exposure state survives process restarts), dashboard copy-trading tab (not yet built)
+**Writer:** Story B3's polling loop (open) / `Database.settle_copy_position` (settled — story C1, issue #1131; called by story C2's settlement script, not yet built)
+**Reader:** `Database.get_open_copy_positions` (story B3's per-wallet and total exposure checks — summed over this query's result rather than an in-memory counter, so exposure state survives process restarts) / `Database.get_copy_realized_pnl_by_wallet` and `Database.get_copy_realized_pnl_total` (story C1's realized-P&L reads over settled rows), dashboard copy-trading tab (not yet built)
 
 | Column | Type | Units | Nullable | Description |
 |--------|------|-------|----------|-------------|

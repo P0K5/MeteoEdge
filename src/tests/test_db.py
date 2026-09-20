@@ -1676,3 +1676,176 @@ class TestCopySignalsAndPositions:
             address="0xabc", market="0xmarket1", source_price=0.45,
             source_trade_id="0xnever-seen",
         ) is False
+
+
+class TestSettleCopyPosition:
+    """Database.settle_copy_position (issue #1131) -- idempotent status flip."""
+
+    def _open_position(self, db, **overrides):
+        signal_id = db.insert_copy_signal(
+            address=overrides.pop("address", "0xabc"),
+            market="0xmarket1",
+            source_price=0.45,
+            detected_at="2026-09-19T00:00:00+00:00",
+        )
+        kwargs = dict(
+            signal_id=signal_id,
+            address="0xabc",
+            market="0xmarket1",
+            outcome_index=0,
+            entry_price=0.45,
+            stake_usd=25.0,
+            entry_ts="2026-09-19T00:00:00+00:00",
+        )
+        kwargs.update(overrides)
+        return db.insert_copy_position(**kwargs)
+
+    def test_settle_open_position_updates_row(self):
+        db = _db()
+        position_id = self._open_position(db)
+
+        db.settle_copy_position(position_id, 12.5, "2026-09-20T00:00:00+00:00")
+
+        cur = db._conn.execute("SELECT * FROM copy_positions WHERE id=?", (position_id,))
+        row = dict(cur.fetchone())
+        assert row["status"] == "settled"
+        assert row["settled_pnl_usd"] == 12.5
+        assert row["settled_at"] == "2026-09-20T00:00:00+00:00"
+
+    def test_settle_already_settled_position_is_noop(self):
+        """A double-settle attempt (e.g. a retried cycle) must not overwrite
+        the original settlement values, and must not raise."""
+        db = _db()
+        position_id = self._open_position(db)
+        db.settle_copy_position(position_id, 12.5, "2026-09-20T00:00:00+00:00")
+
+        db.settle_copy_position(position_id, -999.0, "2026-09-21T00:00:00+00:00")
+
+        cur = db._conn.execute("SELECT * FROM copy_positions WHERE id=?", (position_id,))
+        row = dict(cur.fetchone())
+        assert row["status"] == "settled"
+        assert row["settled_pnl_usd"] == 12.5
+        assert row["settled_at"] == "2026-09-20T00:00:00+00:00"
+
+    def test_settle_nonexistent_position_is_noop(self):
+        """Settling an id that doesn't exist matches zero rows -- no
+        exception, nothing to assert on except that it doesn't blow up."""
+        db = _db()
+        db.settle_copy_position(999999, 1.0, "2026-09-20T00:00:00+00:00")
+
+
+class TestGetCopyRealizedPnl:
+    """Database.get_copy_realized_pnl_by_wallet / get_copy_realized_pnl_total
+    (issue #1131)."""
+
+    def _settled_position(self, db, address, pnl, **overrides):
+        signal_id = db.insert_copy_signal(
+            address=address,
+            market=overrides.pop("market", "0xmarket1"),
+            source_price=0.45,
+            detected_at="2026-09-19T00:00:00+00:00",
+        )
+        kwargs = dict(
+            signal_id=signal_id,
+            address=address,
+            market="0xmarket1",
+            outcome_index=0,
+            entry_price=0.45,
+            stake_usd=25.0,
+            entry_ts="2026-09-19T00:00:00+00:00",
+        )
+        kwargs.update(overrides)
+        position_id = db.insert_copy_position(**kwargs)
+        db.settle_copy_position(position_id, pnl, "2026-09-20T00:00:00+00:00")
+        return position_id
+
+    def test_aggregates_multiple_settled_positions_for_one_wallet(self):
+        db = _db()
+        self._settled_position(db, "0xaaa", 10.0)
+        self._settled_position(db, "0xaaa", -4.0)
+
+        rows = db.get_copy_realized_pnl_by_wallet()
+        assert len(rows) == 1
+        assert rows[0]["address"] == "0xaaa"
+        assert rows[0]["n_settled"] == 2
+        assert rows[0]["total_pnl_usd"] == pytest.approx(6.0)
+
+    def test_per_wallet_breakdown_across_multiple_wallets(self):
+        db = _db()
+        self._settled_position(db, "0xaaa", 10.0)
+        self._settled_position(db, "0xbbb", 5.0)
+        self._settled_position(db, "0xbbb", 5.0)
+
+        rows = {r["address"]: r for r in db.get_copy_realized_pnl_by_wallet()}
+        assert rows["0xaaa"]["n_settled"] == 1
+        assert rows["0xaaa"]["total_pnl_usd"] == pytest.approx(10.0)
+        assert rows["0xbbb"]["n_settled"] == 2
+        assert rows["0xbbb"]["total_pnl_usd"] == pytest.approx(10.0)
+
+    def test_filters_by_address(self):
+        db = _db()
+        self._settled_position(db, "0xaaa", 10.0)
+        self._settled_position(db, "0xbbb", 5.0)
+
+        rows = db.get_copy_realized_pnl_by_wallet("0xaaa")
+        assert len(rows) == 1
+        assert rows[0]["address"] == "0xaaa"
+        assert rows[0]["total_pnl_usd"] == pytest.approx(10.0)
+
+    def test_open_positions_excluded(self):
+        db = _db()
+        signal_id = db.insert_copy_signal(
+            address="0xaaa", market="0xmarket1", source_price=0.45,
+            detected_at="2026-09-19T00:00:00+00:00",
+        )
+        db.insert_copy_position(
+            signal_id=signal_id, address="0xaaa", market="0xmarket1",
+            outcome_index=0, entry_price=0.45, stake_usd=25.0,
+            entry_ts="2026-09-19T00:00:00+00:00",
+        )
+
+        assert db.get_copy_realized_pnl_by_wallet() == []
+
+    def test_wallet_with_no_settled_rows_absent_from_unfiltered_result(self):
+        db = _db()
+        self._settled_position(db, "0xaaa", 10.0)
+        # 0xbbb has only an open (unsettled) position -- never settled.
+        signal_id = db.insert_copy_signal(
+            address="0xbbb", market="0xmarket1", source_price=0.45,
+            detected_at="2026-09-19T00:00:00+00:00",
+        )
+        db.insert_copy_position(
+            signal_id=signal_id, address="0xbbb", market="0xmarket1",
+            outcome_index=0, entry_price=0.45, stake_usd=25.0,
+            entry_ts="2026-09-19T00:00:00+00:00",
+        )
+
+        rows = db.get_copy_realized_pnl_by_wallet()
+        assert [r["address"] for r in rows] == ["0xaaa"]
+
+    def test_filtered_wallet_with_no_settled_rows_returns_empty_list(self):
+        db = _db()
+        signal_id = db.insert_copy_signal(
+            address="0xbbb", market="0xmarket1", source_price=0.45,
+            detected_at="2026-09-19T00:00:00+00:00",
+        )
+        db.insert_copy_position(
+            signal_id=signal_id, address="0xbbb", market="0xmarket1",
+            outcome_index=0, entry_price=0.45, stake_usd=25.0,
+            entry_ts="2026-09-19T00:00:00+00:00",
+        )
+
+        assert db.get_copy_realized_pnl_by_wallet("0xbbb") == []
+
+    def test_total_aggregates_across_all_wallets(self):
+        db = _db()
+        self._settled_position(db, "0xaaa", 10.0)
+        self._settled_position(db, "0xbbb", -3.0)
+        self._settled_position(db, "0xbbb", 5.0)
+
+        total = db.get_copy_realized_pnl_total()
+        assert total == {"n_settled": 3, "total_pnl_usd": pytest.approx(12.0)}
+
+    def test_total_is_zero_when_no_settled_positions(self):
+        db = _db()
+        assert db.get_copy_realized_pnl_total() == {"n_settled": 0, "total_pnl_usd": 0.0}
