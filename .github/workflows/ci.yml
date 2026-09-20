@@ -15,6 +15,22 @@ on:
       - 'graphify-out/**'
 
 jobs:
+  graphify-guard:
+    name: Guard against graphify-out/ changes
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-22.04
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Check for unwanted graphify-out/ changes
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        REPO_OWNER: ${{ github.repository_owner }}
+        REPO_NAME: ${{ github.event.repository.name }}
+      run: bash scripts/check_graphify_guard.sh
+
   lint:
     name: Lint (flake8)
     runs-on: ubuntu-22.04
