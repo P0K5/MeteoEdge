@@ -1472,6 +1472,60 @@ class TestCopyWalletsFollowed:
         row = db.get_followed_wallets()[0]
         assert row["status"] == "active"
         assert row["paused_reason"] is None
+        assert row["paused_at"] is None
+
+    def test_pause_sets_paused_at_timestamp(self):
+        db = _db()
+        db.insert_followed_wallet(**self._followed_kwargs())
+
+        # Initially paused_at should be NULL
+        row = db.get_followed_wallets()[0]
+        assert row["paused_at"] is None
+
+        # Pause the wallet
+        db.update_followed_wallet_status("0xabc", "paused", paused_reason="rug pull risk")
+
+        # paused_at should now be set to an ISO-8601 timestamp
+        row = db.get_followed_wallets()[0]
+        assert row["status"] == "paused"
+        assert row["paused_at"] is not None
+        # Verify it's a valid ISO-8601 UTC timestamp format (contains + or Z)
+        assert "+" in row["paused_at"] or "Z" in row["paused_at"]
+
+    def test_resume_clears_paused_at(self):
+        db = _db()
+        db.insert_followed_wallet(**self._followed_kwargs())
+        db.update_followed_wallet_status("0xabc", "paused", paused_reason="rug pull risk")
+
+        # Verify paused_at is set
+        row = db.get_followed_wallets()[0]
+        assert row["paused_at"] is not None
+
+        # Resume the wallet
+        db.update_followed_wallet_status("0xabc", "active")
+
+        # paused_at should be cleared back to NULL
+        row = db.get_followed_wallets()[0]
+        assert row["status"] == "active"
+        assert row["paused_at"] is None
+
+    def test_update_last_seen_does_not_affect_paused_at(self):
+        db = _db()
+        db.insert_followed_wallet(**self._followed_kwargs())
+        db.update_followed_wallet_status("0xabc", "paused", paused_reason="stale")
+
+        # Remember the paused_at value
+        row = db.get_followed_wallets()[0]
+        original_paused_at = row["paused_at"]
+        assert original_paused_at is not None
+
+        # Update last_seen_trade_ts
+        db.update_followed_wallet_last_seen("0xabc", 1758000000)
+
+        # paused_at should remain unchanged
+        row = db.get_followed_wallets()[0]
+        assert row["paused_at"] == original_paused_at
+        assert row["last_seen_trade_ts"] == 1758000000
 
     def test_update_last_seen_trade_ts(self):
         db = _db()
@@ -1480,6 +1534,81 @@ class TestCopyWalletsFollowed:
 
         row = db.get_followed_wallets()[0]
         assert row["last_seen_trade_ts"] == 1758000000
+
+    def test_migration_paused_at_column_exists(self):
+        """Verify paused_at column exists on fresh DB and migrated DB."""
+        import sqlite3
+        import tempfile
+        import os
+
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tf:
+            path = tf.name
+
+        try:
+            # Test 1: Fresh DB should have paused_at column
+            conn = sqlite3.connect(path)
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.close()
+
+            db = Database(path)
+            try:
+                # Check paused_at column exists in fresh DB
+                cur = db._conn.execute("PRAGMA table_info(copy_wallets_followed)")
+                col_names = {row[1] for row in cur.fetchall()}
+                assert "paused_at" in col_names
+            finally:
+                db.close()
+
+            # Clean up and test 2: Old schema DB (without paused_at)
+            for fname in [path] + [path + ext for ext in ("-wal", "-shm")]:
+                try:
+                    os.unlink(fname)
+                except (FileNotFoundError, PermissionError):
+                    pass
+
+            # Create old-schema DB (before paused_at migration)
+            conn = sqlite3.connect(path)
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("""
+                CREATE TABLE copy_wallets_followed (
+                    address              TEXT PRIMARY KEY,
+                    stake_per_trade      REAL NOT NULL CHECK(stake_per_trade > 0),
+                    status               TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','paused')),
+                    paused_reason        TEXT,
+                    added_at             TEXT NOT NULL,
+                    last_seen_trade_ts   INTEGER
+                )
+            """)
+            conn.execute("""
+                INSERT INTO copy_wallets_followed
+                    (address, stake_per_trade, status, paused_reason, added_at)
+                VALUES ('0xlegacy', 25.0, 'paused', 'old data', '2026-09-19T00:00:00+00:00')
+            """)
+            conn.commit()
+            conn.close()
+
+            # Now open with Database() which should run the migration
+            db = Database(path)
+            try:
+                # Check paused_at column was added by migration
+                cur = db._conn.execute("PRAGMA table_info(copy_wallets_followed)")
+                col_names = {row[1] for row in cur.fetchall()}
+                assert "paused_at" in col_names
+
+                # Check old data was preserved and paused_at is NULL for pre-migration rows
+                rows = db.get_followed_wallets()
+                assert len(rows) == 1
+                assert rows[0]["address"] == "0xlegacy"
+                assert rows[0]["paused_reason"] == "old data"
+                assert rows[0]["paused_at"] is None  # NULL for rows written before migration
+            finally:
+                db.close()
+        finally:
+            for fname in [path] + [path + ext for ext in ("-wal", "-shm")]:
+                try:
+                    os.unlink(fname)
+                except (FileNotFoundError, PermissionError):
+                    pass
 
 
 class TestCopySignalsAndPositions:

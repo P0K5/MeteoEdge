@@ -623,6 +623,7 @@ pattern as the `trades.mode` migration above).
 | `stake_per_trade` | REAL NOT NULL CHECK(stake_per_trade > 0) | USD | No | Flat stake used to size every copied trade for this wallet |
 | `status` | TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','paused')) | categorical | No | Whether polling/copying is currently active for this wallet |
 | `paused_reason` | TEXT | free text | Yes | Why the wallet was paused; cleared (`NULL`) when returned to `'active'` |
+| `paused_at` | TEXT | ISO 8601 timestamp (UTC) | Yes | When the wallet was paused; set when `status` becomes `'paused'`, cleared when resumed to `'active'` |
 | `added_at` | TEXT NOT NULL | ISO 8601 timestamp (UTC) | No | When the wallet was first followed |
 | `last_seen_trade_ts` | INTEGER | unix seconds | Yes | High-water-mark of the last trade this wallet's poll has processed; `NULL` until the first poll runs (story B3, not yet built) |
 
