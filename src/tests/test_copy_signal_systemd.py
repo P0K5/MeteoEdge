@@ -5,14 +5,14 @@ from pathlib import Path
 
 
 def test_copy_signal_service_file_exists():
-    """Verify meteoedge-copy-signal.service file exists."""
-    service_path = Path(__file__).resolve().parents[2] / "deploy" / "systemd" / "meteoedge-copy-signal.service"
+    """Verify meteoedge-copy-signals.service file exists."""
+    service_path = Path(__file__).resolve().parents[2] / "deploy" / "systemd" / "meteoedge-copy-signals.service"
     assert service_path.exists(), f"Service file not found at {service_path}"
 
 
 def test_copy_signal_service_valid_ini():
-    """Verify meteoedge-copy-signal.service is valid systemd INI format."""
-    service_path = Path(__file__).resolve().parents[2] / "deploy" / "systemd" / "meteoedge-copy-signal.service"
+    """Verify meteoedge-copy-signals.service is valid systemd INI format."""
+    service_path = Path(__file__).resolve().parents[2] / "deploy" / "systemd" / "meteoedge-copy-signals.service"
 
     # systemd units are INI-like; parse as configparser
     config = configparser.ConfigParser()
@@ -26,7 +26,7 @@ def test_copy_signal_service_valid_ini():
 
 def test_copy_signal_service_unit_section():
     """Verify [Unit] section has correct configuration."""
-    service_path = Path(__file__).resolve().parents[2] / "deploy" / "systemd" / "meteoedge-copy-signal.service"
+    service_path = Path(__file__).resolve().parents[2] / "deploy" / "systemd" / "meteoedge-copy-signals.service"
     config = configparser.ConfigParser()
     config.read(service_path)
 
@@ -37,7 +37,7 @@ def test_copy_signal_service_unit_section():
 
 def test_copy_signal_service_service_section():
     """Verify [Service] section has correct configuration."""
-    service_path = Path(__file__).resolve().parents[2] / "deploy" / "systemd" / "meteoedge-copy-signal.service"
+    service_path = Path(__file__).resolve().parents[2] / "deploy" / "systemd" / "meteoedge-copy-signals.service"
     config = configparser.ConfigParser()
     config.read(service_path)
 
@@ -67,13 +67,13 @@ def test_copy_signal_service_service_section():
     assert config.get("Service", "RestartSec") == "10s"
 
     # Logging to a dedicated file
-    assert config.get("Service", "StandardOutput") == "append:/home/p0k5/MeteoEdge/logs/copy_signal.log"
-    assert config.get("Service", "StandardError") == "append:/home/p0k5/MeteoEdge/logs/copy_signal.log"
+    assert config.get("Service", "StandardOutput") == "append:/home/p0k5/MeteoEdge/logs/copy_signals.log"
+    assert config.get("Service", "StandardError") == "append:/home/p0k5/MeteoEdge/logs/copy_signals.log"
 
 
 def test_copy_signal_service_install_section():
     """Verify [Install] section has correct configuration."""
-    service_path = Path(__file__).resolve().parents[2] / "deploy" / "systemd" / "meteoedge-copy-signal.service"
+    service_path = Path(__file__).resolve().parents[2] / "deploy" / "systemd" / "meteoedge-copy-signals.service"
     config = configparser.ConfigParser()
     config.read(service_path)
 
@@ -86,11 +86,11 @@ def test_install_sh_includes_copy_signal_service():
     content = install_sh_path.read_text()
 
     # Verify copy-signal service is installed
-    assert 'install -m 0644 "$SRC_DIR/meteoedge-copy-signal.service"' in content, \
-        "install.sh should install meteoedge-copy-signal.service"
+    assert 'install -m 0644 "$SRC_DIR/meteoedge-copy-signals.service"' in content, \
+        "install.sh should install meteoedge-copy-signals.service"
 
     # Verify it's being installed to the right place
-    assert '"$UNIT_DIR/meteoedge-copy-signal.service"' in content, \
+    assert '"$UNIT_DIR/meteoedge-copy-signals.service"' in content, \
         "install.sh should install service to $UNIT_DIR"
 
 
@@ -100,8 +100,8 @@ def test_install_sh_enables_copy_signal_service():
     content = install_sh_path.read_text()
 
     # Verify copy-signal service is enabled
-    assert "systemctl enable --now meteoedge-copy-signal.service" in content, \
-        "install.sh should enable and start meteoedge-copy-signal.service"
+    assert "systemctl enable --now meteoedge-copy-signals.service" in content, \
+        "install.sh should enable and start meteoedge-copy-signals.service"
 
 
 def test_install_sh_includes_copy_signal_in_status_check():
@@ -110,8 +110,8 @@ def test_install_sh_includes_copy_signal_in_status_check():
     content = install_sh_path.read_text()
 
     # Verify copy-signal is in the status command
-    assert "meteoedge-copy-signal.service" in content, \
-        "install.sh should include meteoedge-copy-signal.service in status output"
+    assert "meteoedge-copy-signals.service" in content, \
+        "install.sh should include meteoedge-copy-signals.service in status output"
 
 
 def test_install_sh_includes_copy_signal_in_help():
@@ -120,7 +120,7 @@ def test_install_sh_includes_copy_signal_in_help():
     content = install_sh_path.read_text()
 
     # Verify copy-signal is mentioned in the help output
-    assert 'journalctl -u meteoedge-copy-signal.service' in content, \
+    assert 'journalctl -u meteoedge-copy-signals.service' in content, \
         "install.sh should include copy-signal in the help text"
 
 

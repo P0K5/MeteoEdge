@@ -12,8 +12,8 @@ EnvironmentFile=/home/p0k5/MeteoEdge/.env
 ExecStart=/home/p0k5/MeteoEdge/.venv/bin/python -u -m src.scripts.copy_signal_loop
 Restart=always
 RestartSec=10s
-StandardOutput=append:/home/p0k5/MeteoEdge/logs/copy_signal.log
-StandardError=append:/home/p0k5/MeteoEdge/logs/copy_signal.log
+StandardOutput=append:/home/p0k5/MeteoEdge/logs/copy_signals.log
+StandardError=append:/home/p0k5/MeteoEdge/logs/copy_signals.log
 
 [Install]
 WantedBy=multi-user.target
