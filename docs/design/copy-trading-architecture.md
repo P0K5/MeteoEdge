@@ -107,8 +107,12 @@ candidate list only.
 **Epic B — Signal detection & flat-stake execution (paper mode only).**
 Poll followed wallets for new BUY trades, generate `copy_signals`, size
 each at the configured flat stake, and record the resulting open
-position directly in `copy_positions` (`src/scripts/copy_signal_loop.py`,
-issue #1123) — **not** through `paper_trader.py`: that module writes to
+position directly in `copy_positions`. Includes the signal-detection loop
+(`src/scripts/copy_signal_loop.py`, story #B3, issue #1123) and its
+persistent systemd service (`meteoedge-copy-signals.service`, story #B4,
+issue #1124). Runs continuously (not scheduled) via systemd, polling at
+the cadence set by `COPY_SIGNAL_POLL_INTERVAL_SECONDS` live config.
+Order execution is **not** through `paper_trader.py`: that module writes to
 the shared `trades` table (forbidden by the #1100 isolation decision)
 and settles win/loss synchronously from a known outcome, which a
 freshly detected copy-trading signal doesn't have yet. Depends on Epic A

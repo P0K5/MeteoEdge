@@ -51,12 +51,14 @@ install -m 0644 "$SRC_DIR/meteoedge-resolve-outcomes.service"     "$UNIT_DIR/met
 install -m 0644 "$SRC_DIR/meteoedge-resolve-outcomes.timer"       "$UNIT_DIR/meteoedge-resolve-outcomes.timer"
 install -m 0644 "$SRC_DIR/meteoedge-health-report.service"        "$UNIT_DIR/meteoedge-health-report.service"
 install -m 0644 "$SRC_DIR/meteoedge-health-report.timer"          "$UNIT_DIR/meteoedge-health-report.timer"
+install -m 0644 "$SRC_DIR/meteoedge-copy-signals.service"          "$UNIT_DIR/meteoedge-copy-signals.service"
 
 echo "Reloading systemd..."
 systemctl daemon-reload
 
 echo "Enabling and starting services..."
 systemctl enable --now meteoedge.service
+systemctl enable --now meteoedge-copy-signals.service
 systemctl enable --now meteoedge-settle.timer
 systemctl enable --now meteoedge-archive.timer
 systemctl enable --now meteoedge-capture-forecasts.timer
@@ -68,9 +70,10 @@ systemctl enable --now meteoedge-health-report.timer
 
 echo
 echo "Done. Current status:"
-systemctl --no-pager status meteoedge.service meteoedge-settle.timer meteoedge-archive.timer meteoedge-capture-forecasts.timer meteoedge-prob-cap-report.timer meteoedge-purge-retention.timer meteoedge-copy-screening.timer meteoedge-resolve-outcomes.timer meteoedge-health-report.timer || true
+systemctl --no-pager status meteoedge.service meteoedge-copy-signals.service meteoedge-settle.timer meteoedge-archive.timer meteoedge-capture-forecasts.timer meteoedge-prob-cap-report.timer meteoedge-purge-retention.timer meteoedge-copy-screening.timer meteoedge-resolve-outcomes.timer meteoedge-health-report.timer || true
 echo
 echo "Tail the bot log with:  journalctl -u meteoedge.service -f"
+echo "Tail the copy-signal log with:  journalctl -u meteoedge-copy-signals.service -f"
 echo "Next settle run:  systemctl list-timers meteoedge-settle.timer"
 echo "Next archive run:  systemctl list-timers meteoedge-archive.timer"
 echo "Next capture run:  systemctl list-timers meteoedge-capture-forecasts.timer"

@@ -100,6 +100,63 @@ never serving a request, and invisible because the bot was serving :8000 anyway.
 - Its lifecycle is the bot's: `systemctl restart meteoedge.service` restarts both,
   and `journalctl -u meteoedge.service -f` carries its log
 
+#### meteoedge-copy-signals.service
+Runs the copy-trading signal detection loop as a **persistent process** (continuous, not scheduled). Detects new trades from followed wallets, decides execute-or-skip per the exposure and market-state rules (epic #1101, story B3), and maintains the copy-trading signal log.
+
+```ini
+[Unit]
+Description=MeteoEdge copy-signal detection loop
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=p0k5
+WorkingDirectory=/home/p0k5/MeteoEdge
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=/home/p0k5/MeteoEdge/.env
+ExecStart=/home/p0k5/MeteoEdge/.venv/bin/python -u -m src.scripts.copy_signal_loop
+Restart=always
+RestartSec=10s
+StandardOutput=append:/home/p0k5/MeteoEdge/logs/copy_signals.log
+StandardError=append:/home/p0k5/MeteoEdge/logs/copy_signals.log
+
+[Install]
+WantedBy=multi-user.target
+```
+
+**Key settings:**
+- **Type**: `simple` — continuous process, not scheduled. Runs continuously once started, unlike the timer-based oneshot services.
+- **Restart**: Always restarts on failure (10-second delay) — mirrors `meteoedge.service` for safety.
+- **Polling interval**: Reads `COPY_SIGNAL_POLL_INTERVAL_SECONDS` from live config (default 300s / 5 minutes) each cycle. Configurable via dashboard config tab.
+- **Kill switch**: `COPY_TRADING_ENABLED` (live-read each cycle, not just at startup) — operator can disable without stopping the service. When `False` (default), cycles run silently with no signals executed; when `True`, actively detects and executes trades within exposure limits.
+- **Logging**: Appends to `/home/p0k5/MeteoEdge/logs/copy_signals.log`. Signal detection, execution, skips, and errors all logged here.
+
+**Operational commands:**
+```bash
+# Check status
+sudo systemctl status meteoedge-copy-signals.service
+
+# View logs in real time
+sudo journalctl -u meteoedge-copy-signals.service -f
+
+# Or view the appended log file
+tail -f /home/p0k5/MeteoEdge/logs/copy_signals.log
+
+# Disable copy-trading (soft stop — service keeps running)
+# Via the dashboard: Settings → Config → COPY_TRADING_ENABLED = false
+
+# Hard stop the service (no new signals detected)
+sudo systemctl stop meteoedge-copy-signals.service
+
+# Restart the service
+sudo systemctl restart meteoedge-copy-signals.service
+```
+
+**Safe defaults:**
+- `COPY_TRADING_ENABLED` defaults to `False` — **the service is safe to leave running indefinitely** before an operator deliberately opts in via the dashboard. Cycles run and log normally; no trades execute.
+- `COPY_SIGNAL_POLL_INTERVAL_SECONDS` defaults to 300s (5 minutes). No polling storms; a single detect-decide-execute cycle is expected to complete in seconds.
+
 #### meteoedge-settle.service
 One-shot service that runs daily settlement (updates DB with market outcomes, calculates final P&L). Triggered by meteoedge-settle.timer.
 
