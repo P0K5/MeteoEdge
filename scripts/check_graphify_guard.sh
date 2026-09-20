@@ -4,10 +4,16 @@
 #
 # CI guard that prevents feature PRs from accidentally bundling regenerated
 # graphify-out/ diffs. graphify-out/ is regenerated exclusively by the
-# scheduled/dispatch graphify-update workflow (.github/workflows/graphify-update.yml),
-# which pushes its own commits directly to master -- it never opens a pull
-# request. There is therefore no legitimate case where a pull request should
-# touch graphify-out/, and this guard fails unconditionally when one does.
+# graphify-update workflow (.github/workflows/graphify-update.yml) -- and
+# that workflow's own `on:` block (as of this writing) is
+# `push: {branches: [master]}` + `schedule` + `workflow_dispatch` only.
+# There is no `pull_request` trigger and no step in that file that opens a
+# PR; every one of its jobs ends with `git push` straight to master. This
+# is a direct read of that file, not an assumption -- if it ever changes
+# to open a PR of its own, whoever makes that change needs to revisit this
+# guard too (an AI review on this PR asked for that link to be explicit,
+# hence this paragraph). Until then, no PR should ever touch graphify-out/,
+# and this guard fails unconditionally when one does.
 # (An earlier draft of this guard let a PR bypass it by putting "graphify" in
 # its branch name or title -- removed: that never matches how the real
 # automation works, and just gives every other PR a trivial way around the
@@ -48,20 +54,44 @@ main() {
     fi
   done
 
-  local files_url="${GITHUB_API}/repos/${REPO_OWNER}/${REPO_NAME}/pulls/${PR_NUMBER}/files?per_page=100"
-  local response
-  response=$(curl -sS -H "Authorization: token ${GITHUB_TOKEN}" \
-    -H "Accept: application/vnd.github.v3+json" \
-    "${files_url}")
+  # GitHub caps per_page at 100 -- a PR with more changed files than that
+  # needs every page walked, or a graphify-out/ path on page 2+ would
+  # silently pass the guard (the exact large-file-count scenario this
+  # guard exists to catch). Loop until a page returns fewer than 100
+  # entries. MAX_PAGES is a defensive cap (5000 files, far beyond any real
+  # PR) so a pagination/API bug can never hang this job indefinitely --
+  # it fails loudly instead.
+  local -r MAX_PAGES=50
+  local page=1 changed_files="" page_files page_count
+  while :; do
+    if [ "$page" -gt "$MAX_PAGES" ]; then
+      echo "ERROR: PR #${PR_NUMBER} has more than ${MAX_PAGES} pages of" \
+        "changed files (>$((MAX_PAGES * 100)))-- refusing to keep paginating." >&2
+      exit 1
+    fi
 
-  if ! echo "$response" | jq -e 'type == "array"' >/dev/null 2>&1; then
-    echo "ERROR: Failed to fetch PR #${PR_NUMBER}'s changed files:" >&2
-    echo "$response" | head -c 2000 >&2
-    exit 1
-  fi
+    local response
+    response=$(curl -sS -H "Authorization: token ${GITHUB_TOKEN}" \
+      -H "Accept: application/vnd.github.v3+json" \
+      "${GITHUB_API}/repos/${REPO_OWNER}/${REPO_NAME}/pulls/${PR_NUMBER}/files?per_page=100&page=${page}")
 
-  local changed_files
-  changed_files=$(echo "$response" | jq -r '.[].filename')
+    if ! echo "$response" | jq -e 'type == "array"' >/dev/null 2>&1; then
+      echo "ERROR: Failed to fetch PR #${PR_NUMBER}'s changed files (page ${page}):" >&2
+      echo "$response" | head -c 2000 >&2
+      exit 1
+    fi
+
+    page_files=$(echo "$response" | jq -r '.[].filename')
+    page_count=$(echo "$response" | jq -e 'length')
+    if [ -n "$page_files" ]; then
+      changed_files="${changed_files}${changed_files:+$'\n'}${page_files}"
+    fi
+
+    if [ "$page_count" -lt 100 ]; then
+      break
+    fi
+    page=$((page + 1))
+  done
 
   if ! echo "$changed_files" | files_touch_graphify_out; then
     echo "✓ No changes to graphify-out/ — guard passes"
