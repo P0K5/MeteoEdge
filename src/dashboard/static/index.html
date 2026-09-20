@@ -912,6 +912,31 @@ a,button,input,select{transition:color var(--transition),background var(--transi
 .copy-empty-link{background:none;border:none;padding:0;margin:0;color:var(--primary);text-decoration:underline;cursor:pointer;font:inherit;}
 .copy-empty-link:focus-visible{outline:2px solid var(--primary);outline-offset:2px;}
 
+/* ── COPY-TRADING POSITIONS & P&L VIEW (epic F #1143, story F3 #1148) ── */
+.copy-positions-hdr{margin-top:var(--space-6);flex-wrap:wrap;row-gap:var(--space-2);}
+.copy-backtest-toggle-label{display:inline-flex;align-items:center;gap:var(--space-2);font-size:var(--text-xs);color:var(--muted);font-weight:600;}
+.copy-positions-chart-wrap{height:220px;margin-bottom:var(--space-5);}
+.copy-positions-chart-empty{
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:var(--space-2);
+  height:220px;margin-bottom:var(--space-5);
+  border:1px dashed var(--border);border-radius:var(--radius-lg);
+  color:var(--muted);font-size:var(--text-xs);text-align:center;padding:var(--space-4);
+}
+.copy-positions-chart-empty i{width:24px;height:24px;color:var(--faint);}
+.copy-positions-tables-grid{display:grid;grid-template-columns:1.2fr 1fr;gap:var(--space-5);align-items:start;}
+@media(max-width:900px){.copy-positions-tables-grid{grid-template-columns:1fr;}}
+.copy-positions-table-title{font-size:var(--text-xs);font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin-bottom:var(--space-2);}
+.copy-pnl-pos{color:var(--yes);}
+.copy-pnl-neg{color:var(--no);}
+.copy-position-row{cursor:pointer;}
+.copy-position-row:hover{background:var(--surface-off);}
+.copy-position-row:focus-visible{outline:2px solid var(--primary);outline-offset:-2px;}
+.copy-signal-detail-td{background:var(--surface-2);padding:0 !important;}
+.copy-signal-detail-panel{padding:var(--space-3) var(--space-5);font-size:var(--text-xs);color:var(--text);}
+.copy-signal-detail-panel dl{display:grid;grid-template-columns:auto 1fr;gap:var(--space-1) var(--space-3);margin:0;}
+.copy-signal-detail-panel dt{color:var(--muted);font-weight:600;}
+.copy-signal-detail-panel dd{margin:0;font-family:var(--font-mono);}
+
 /* ── VISUALLY-HIDDEN UTILITY (accessible column label with no visible text) ── */
 .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;}
 </style>
@@ -1269,6 +1294,31 @@ a,button,input,select{transition:color var(--transition),background var(--transi
             <tr class="copy-table-skeleton"><td colspan="6"><span class="skeleton" style="height:1.4em;display:block;"></span></td></tr>
           </tbody>
         </table>
+        </div>
+      </div>
+
+      <!-- ── POSITIONS & P&L VIEW (story F3, issue #1148) ── -->
+      <div class="section-hdr copy-positions-hdr">
+        <div class="section-title"><i data-lucide="line-chart"></i>Positions &amp; P&amp;L</div>
+        <div class="copy-summary-strip">
+          <span class="copy-slots-pill" id="copy-positions-total-pill">— realized P&amp;L</span>
+          <select id="copy-positions-range-select" class="config-edit-select" aria-label="Realized P&amp;L chart date range">
+            <option value="7">Last 7 days</option>
+            <option value="30" selected>Last 30 days</option>
+            <option value="90">Last 90 days</option>
+            <option value="all">All time</option>
+          </select>
+          <label class="copy-backtest-toggle-label">
+            <span>Compare to backtest</span>
+            <div class="bool-toggle" id="copy-backtest-toggle" role="switch" aria-checked="false" tabindex="0" aria-label="Compare per-wallet P&amp;L to backtest projection"></div>
+          </label>
+        </div>
+      </div>
+      <div id="copy-positions-content">
+        <div class="empty">
+          <i data-lucide="loader"></i>
+          <h3>Loading positions…</h3>
+          <p>Fetching copy-trading positions and P&amp;L.</p>
         </div>
       </div>
     </div>
@@ -3668,11 +3718,13 @@ function switchTab(tab) {
       copyTradingLoaded = true;
       fetchCopyTradingCandidates();
       fetchFollowedWallets();
+      fetchCopyTradingPositions();
     }
     if (!copyTradingIntervalId) {
       copyTradingIntervalId = setInterval(() => {
         fetchCopyTradingCandidates();
         fetchFollowedWallets();
+        fetchCopyTradingPositions();
       }, 300_000);
     }
   }
@@ -4541,6 +4593,422 @@ async function fetchFollowedWallets() {
 }
 
 /* ─────────────────────────────────────────
+   COPY-TRADING — POSITIONS & P&L VIEW
+   (epic F #1143, story F3 #1148)
+   Data: GET /api/copy-trading/positions (one response for the chart +
+   both tables — no per-row round-trips), GET /api/copy-trading/signals/{id}
+   (on-demand, click-through only, cached by id).
+
+   Isolation (issue #1100): this view's totals are entirely separate from
+   the weather strategy's own Portfolio tab numbers (renderWallet() et al.
+   above) -- never merged or summed together.
+
+   Chart choice (issue #1148 acceptance criteria's open question): the
+   realized-P&L line chart plots a *cumulative* running total of settled
+   P&L, bucketed by UTC calendar day from the raw settled-position rows
+   the API returns (no server-side date-bucketed aggregate exists -- see
+   copy_trading_positions()'s docstring in api.py) -- a running-total
+   equity-curve reads more naturally for "how is copy-trading doing" than
+   a per-day bar/line would, and mirrors how the weather tab's own
+   position charts are read.
+
+   Two distinct empty states (design spec, acceptance criteria):
+   - Nothing at all (no open positions AND no per-wallet rows) -> the
+     whole view collapses to one empty-state card, matching
+     Candidates/Followed Wallets' own pattern.
+   - Positions/wallets exist but nothing has settled yet -> the tables
+     still render normally; only the chart area is replaced with an
+     explicit explanation (never a blank chart with no context).
+   ───────────────────────────────────────── */
+
+let _copyPositionsData = null;       // last-fetched payload
+let _copyPositionsChart = null;      // Chart.js instance (destroyed/recreated on re-render)
+let _copyBacktestOn = false;         // per-wallet table's backtest-comparison toggle state
+let _copyPositionsRangeDays = 30;    // chart date-range filter: 7 | 30 | 90 | 'all'
+let _copyExpandedPositionIds = new Set(); // open-position ids with an expanded signal-detail row
+let _copySignalCache = new Map();    // signal_id -> CopySignalOut, avoids re-fetching on toggle/expand
+let _copyPositionsListenersBound = false;
+
+function _copyTruncateMarket(m) {
+  return m && m.length > 24 ? m.slice(0, 10) + '…' + m.slice(-8) : m;
+}
+
+function _copyFilteredPnlHistory(history, rangeDays) {
+  if (rangeDays === 'all') return history;
+  const cutoff = Date.now() - rangeDays * 86_400_000;
+  return history.filter(p => new Date(p.settled_at).getTime() >= cutoff);
+}
+
+// Buckets settled rows by UTC calendar day and returns a running cumulative
+// total per day -- see the section header comment for why cumulative.
+function _copyBucketDailyPnl(history) {
+  const byDay = new Map();
+  for (const p of history) {
+    const day = p.settled_at.slice(0, 10); // settled_at is always ISO-8601 (api.py)
+    byDay.set(day, (byDay.get(day) || 0) + p.settled_pnl_usd);
+  }
+  const days = [...byDay.keys()].sort();
+  let running = 0;
+  return days.map(day => {
+    running += byDay.get(day);
+    return { day, cumulative: running };
+  });
+}
+
+function _renderCopyPositionsChart(points) {
+  const canvas = document.getElementById('copy-positions-canvas');
+  if (!canvas) return;
+  const cs = getComputedStyle(document.documentElement);
+  const clr = k => cs.getPropertyValue(k).trim();
+  const labels = points.map(p => new Date(p.day).toLocaleDateString());
+  const finalValue = points.length ? points[points.length - 1].cumulative : 0;
+  const lineColor = finalValue >= 0 ? clr('--yes') : clr('--no');
+
+  if (_copyPositionsChart) {
+    _copyPositionsChart.destroy();
+    _copyPositionsChart = null;
+  }
+
+  _copyPositionsChart = new Chart(canvas, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [{
+        label: 'Cumulative realized P&L',
+        data: points.map(p => p.cumulative),
+        borderColor: lineColor,
+        backgroundColor: 'transparent',
+        borderWidth: 2,
+        pointRadius: 2,
+        tension: 0.2,
+        fill: false,
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: ctx => 'Cumulative P&L: ' + _copyFmtUsd(ctx.parsed.y),
+          },
+        },
+      },
+      scales: {
+        x: { ticks: { color: clr('--muted'), font: { size: 10 } }, grid: { color: clr('--border') + '55' } },
+        y: {
+          ticks: { color: clr('--muted'), font: { size: 10 }, callback: v => (v >= 0 ? '+' : '') + '$' + v },
+          grid: { color: clr('--border') + '55' },
+        },
+      },
+    },
+  });
+}
+
+function _copyOpenPositionsTableHtml(positions) {
+  if (!positions.length) {
+    return `<div class="empty"><i data-lucide="inbox"></i><h3>No open positions</h3><p>Nothing currently in flight.</p></div>`;
+  }
+  return `
+    <div class="copy-table-wrap">
+    <table class="copy-table" aria-label="Open copy-trading positions">
+      <thead>
+        <tr>
+          <th class="copy-th" scope="col">Wallet</th>
+          <th class="copy-th" scope="col">Market</th>
+          <th class="copy-th" scope="col">Side</th>
+          <th class="copy-th" scope="col">Entry price</th>
+          <th class="copy-th" scope="col">Stake</th>
+          <th class="copy-th" scope="col">Entered</th>
+        </tr>
+      </thead>
+      <tbody>${positions.map(_copyOpenPositionRowHtml).join('')}</tbody>
+    </table>
+    </div>`;
+}
+
+function _copyOpenPositionRowHtml(p) {
+  const safeId = 'pos-' + p.id;
+  const entered = p.entry_ts ? new Date(p.entry_ts).toLocaleString() : '—';
+  return `
+    <tr class="copy-row copy-position-row" tabindex="0" role="button"
+        data-position-id="${p.id}" data-signal-id="${p.signal_id}"
+        aria-expanded="${_copyExpandedPositionIds.has(p.id) ? 'true' : 'false'}"
+        aria-label="Position in ${_copyEscapeHtml(p.market)}, click to view its source signal">
+      <td class="copy-td copy-address-cell">
+        <span class="copy-address-mono" title="${_copyEscapeHtml(p.address)}">${_copyEscapeHtml(_copyTruncateAddress(p.address))}</span>
+      </td>
+      <td class="copy-td" title="${_copyEscapeHtml(p.market)}">${_copyEscapeHtml(_copyTruncateMarket(p.market))}</td>
+      <td class="copy-td">${p.outcome_index === 0 ? 'YES' : 'NO'}</td>
+      <td class="copy-td">${(p.entry_price * 100).toFixed(1)}¢</td>
+      <td class="copy-td">$${p.stake_usd.toFixed(2)}</td>
+      <td class="copy-td">${entered}</td>
+    </tr>
+    <tr class="copy-signal-detail-row" id="copy-signal-row-${safeId}" style="display:none">
+      <td class="copy-signal-detail-td" colspan="6">
+        <div class="copy-signal-detail-panel" id="copy-signal-panel-${safeId}">Loading…</div>
+      </td>
+    </tr>`;
+}
+
+function _copyPerWalletTableHtml(rows) {
+  if (!rows.length) {
+    return `<div class="empty"><i data-lucide="inbox"></i><h3>No wallet P&amp;L yet</h3><p>Follow a wallet to see its running P&amp;L here.</p></div>`;
+  }
+  const backtestHeaderCells = _copyBacktestOn
+    ? `<th class="copy-th" scope="col">Projected (backtest)</th><th class="copy-th" scope="col">Divergence</th>`
+    : '';
+  return `
+    <div class="copy-table-wrap">
+    <table class="copy-table" aria-label="Per-wallet P&amp;L breakdown">
+      <thead>
+        <tr>
+          <th class="copy-th" scope="col">Wallet</th>
+          <th class="copy-th" scope="col">Settled</th>
+          <th class="copy-th" scope="col">Realized P&amp;L</th>
+          ${backtestHeaderCells}
+        </tr>
+      </thead>
+      <tbody>${rows.map(_copyPerWalletRowHtml).join('')}</tbody>
+    </table>
+    </div>`;
+}
+
+function _copyPerWalletRowHtml(w) {
+  const pnlCls = w.realized_pnl_usd >= 0 ? 'copy-pnl-pos' : 'copy-pnl-neg';
+  let backtestCells = '';
+  if (_copyBacktestOn) {
+    const projected = w.projected_flat_dollar_pnl != null ? _copyFmtUsd(w.projected_flat_dollar_pnl) : '—';
+    let divergence = '—';
+    if (w.divergence_usd != null) {
+      const divCls = w.divergence_usd >= 0 ? 'copy-pnl-pos' : 'copy-pnl-neg';
+      const pctTxt = w.divergence_pct != null
+        ? ` (${w.divergence_pct >= 0 ? '+' : ''}${w.divergence_pct.toFixed(1)}%)`
+        : '';
+      divergence = `<span class="${divCls}">${_copyFmtUsd(w.divergence_usd)}${pctTxt}</span>`;
+    }
+    backtestCells = `<td class="copy-td">${projected}</td><td class="copy-td">${divergence}</td>`;
+  }
+  return `
+    <tr class="copy-row">
+      <td class="copy-td copy-address-cell">
+        <span class="copy-address-mono" title="${_copyEscapeHtml(w.address)}">${_copyEscapeHtml(_copyTruncateAddress(w.address))}</span>
+      </td>
+      <td class="copy-td">${w.n_settled}</td>
+      <td class="copy-td ${pnlCls}">${_copyFmtUsd(w.realized_pnl_usd)}</td>
+      ${backtestCells}
+    </tr>`;
+}
+
+async function _renderSignalDetail(positionId, signalId) {
+  const safeId = 'pos-' + positionId;
+  const panel = document.getElementById('copy-signal-panel-' + safeId);
+  if (!panel) return;
+
+  let signal = _copySignalCache.get(signalId);
+  if (!signal) {
+    try {
+      const r = await fetch('/api/copy-trading/signals/' + encodeURIComponent(signalId));
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      signal = await r.json();
+      _copySignalCache.set(signalId, signal);
+    } catch (e) {
+      panel.innerHTML = `<div class="chart-empty">Could not load source signal: ${e.message}</div>`;
+      console.error(`Signal fetch failed for id=${signalId}:`, e);
+      return;
+    }
+  }
+
+  const orderPlacedTxt = signal.order_placed
+    ? 'Yes'
+    : `No${signal.skip_reason ? ' — ' + _copyEscapeHtml(signal.skip_reason) : ''}`;
+
+  panel.innerHTML = `
+    <dl>
+      <dt>Wallet</dt><dd>${_copyEscapeHtml(signal.address)}</dd>
+      <dt>Market</dt><dd>${_copyEscapeHtml(signal.market)}</dd>
+      <dt>Source price</dt><dd>${(signal.source_price * 100).toFixed(1)}¢</dd>
+      <dt>Detected</dt><dd>${signal.detected_at ? new Date(signal.detected_at).toLocaleString() : '—'}</dd>
+      <dt>Order placed</dt><dd>${orderPlacedTxt}</dd>
+      ${signal.fill_price != null ? `<dt>Fill price</dt><dd>${(signal.fill_price * 100).toFixed(1)}¢</dd>` : ''}
+      ${signal.source_trade_id ? `<dt>Source trade</dt><dd>${_copyEscapeHtml(signal.source_trade_id)}</dd>` : ''}
+    </dl>`;
+}
+
+async function _copyToggleSignalDetail(positionId, signalId) {
+  const safeId = 'pos-' + positionId;
+  const row = document.getElementById('copy-signal-row-' + safeId);
+  if (!row) return;
+  const opening = row.style.display === 'none' || !row.style.display;
+  row.style.display = opening ? 'table-row' : 'none';
+  if (opening) {
+    _copyExpandedPositionIds.add(positionId);
+    await _renderSignalDetail(positionId, signalId);
+  } else {
+    _copyExpandedPositionIds.delete(positionId);
+  }
+}
+
+function _copyReopenExpandedPositionDetails() {
+  _copyExpandedPositionIds.forEach(async (positionId) => {
+    const safeId = 'pos-' + positionId;
+    const row = document.getElementById('copy-signal-row-' + safeId);
+    if (!row) { _copyExpandedPositionIds.delete(positionId); return; }
+    const posRow = row.previousElementSibling;
+    const signalId = posRow ? posRow.dataset.signalId : null;
+    row.style.display = 'table-row';
+    if (signalId) await _renderSignalDetail(positionId, signalId);
+  });
+}
+
+function _copyPositionsOnListClick(event) {
+  const row = event.target.closest('.copy-position-row');
+  if (row) {
+    _copyToggleSignalDetail(parseInt(row.dataset.positionId, 10), row.dataset.signalId);
+  }
+}
+
+function _copyPositionsOnListKeydown(event) {
+  if (event.key !== 'Enter' && event.key !== ' ') return;
+  const row = event.target.closest('.copy-position-row');
+  if (!row) return;
+  event.preventDefault();
+  _copyToggleSignalDetail(parseInt(row.dataset.positionId, 10), row.dataset.signalId);
+}
+
+// Single delegated click/keydown handler for the whole Positions & P&L
+// panel, bound once to the (never-replaced) #copy-positions-content
+// container -- same approach as the Candidates/Followed Wallets views.
+function _copyPositionsBindListEvents() {
+  if (_copyPositionsListenersBound) return;
+  const wrap = document.getElementById('copy-positions-content');
+  if (!wrap) return;
+  wrap.addEventListener('click', _copyPositionsOnListClick);
+  wrap.addEventListener('keydown', _copyPositionsOnListKeydown);
+  _copyPositionsListenersBound = true;
+}
+
+function renderCopyPositions(data) {
+  _copyPositionsData = data;
+  _copyPositionsBindListEvents();
+
+  const pill = document.getElementById('copy-positions-total-pill');
+  if (pill) {
+    pill.textContent = `${_copyFmtUsd(data.total.realized_pnl_usd)} realized P&L (${data.total.n_settled} settled)`;
+  }
+
+  const wrap = document.getElementById('copy-positions-content');
+
+  // True empty state: nothing at all -- distinct from "exists but nothing
+  // settled yet" below (issue #1148 acceptance criteria).
+  if (!data.open_positions.length && !data.per_wallet.length) {
+    wrap.innerHTML = `<div class="empty"><i data-lucide="inbox"></i><h3>No copy-trading positions yet</h3><p>Follow a wallet in Candidates above to start copy-trading it.</p></div>`;
+    lucide.createIcons();
+    return;
+  }
+
+  const chartHtml = data.realized_pnl_history.length
+    ? `<div class="chart-wrap copy-positions-chart-wrap"><canvas id="copy-positions-canvas"></canvas></div>`
+    : `<div class="copy-positions-chart-empty">
+        <i data-lucide="hourglass"></i>
+        <div><strong>No settled positions yet</strong></div>
+        <p>${data.open_positions.length} open position${data.open_positions.length !== 1 ? 's' : ''} in flight — the realized P&amp;L chart will populate once positions settle.</p>
+      </div>`;
+
+  wrap.innerHTML = `
+    ${chartHtml}
+    <div class="copy-positions-tables-grid">
+      <div>
+        <div class="copy-positions-table-title">Open positions</div>
+        ${_copyOpenPositionsTableHtml(data.open_positions)}
+      </div>
+      <div>
+        <div class="copy-positions-table-title">Per-wallet breakdown</div>
+        ${_copyPerWalletTableHtml(data.per_wallet)}
+      </div>
+    </div>`;
+  lucide.createIcons();
+
+  if (data.realized_pnl_history.length) {
+    const filtered = _copyFilteredPnlHistory(data.realized_pnl_history, _copyPositionsRangeDays);
+    _renderCopyPositionsChart(_copyBucketDailyPnl(filtered));
+  }
+
+  _copyReopenExpandedPositionDetails();
+}
+
+function _copyPositionsOnRangeChange(event) {
+  const val = event.target.value;
+  _copyPositionsRangeDays = val === 'all' ? 'all' : parseInt(val, 10);
+  if (_copyPositionsData && _copyPositionsData.realized_pnl_history.length) {
+    const filtered = _copyFilteredPnlHistory(_copyPositionsData.realized_pnl_history, _copyPositionsRangeDays);
+    _renderCopyPositionsChart(_copyBucketDailyPnl(filtered));
+  }
+}
+
+// Re-renders the whole view (cheap -- cached data, no re-fetch) so the
+// per-wallet table's backtest columns and the expanded signal-detail rows
+// stay consistent, mirroring how sortCandidates() re-renders from cache.
+function _copyToggleBacktestComparison() {
+  _copyBacktestOn = !_copyBacktestOn;
+  const toggle = document.getElementById('copy-backtest-toggle');
+  if (toggle) {
+    toggle.classList.toggle('on', _copyBacktestOn);
+    toggle.setAttribute('aria-checked', _copyBacktestOn ? 'true' : 'false');
+  }
+  if (_copyPositionsData) renderCopyPositions(_copyPositionsData);
+}
+
+// Range-select + backtest-toggle controls live in the tab's static header
+// (never replaced by innerHTML), so they're bound once here rather than
+// through the delegated-listener pattern used for re-rendered table rows.
+function _copyPositionsInitStaticControls() {
+  const rangeSelect = document.getElementById('copy-positions-range-select');
+  if (rangeSelect) {
+    _copyPositionsRangeDays = rangeSelect.value === 'all' ? 'all' : parseInt(rangeSelect.value, 10);
+    rangeSelect.addEventListener('change', _copyPositionsOnRangeChange);
+  }
+  const toggle = document.getElementById('copy-backtest-toggle');
+  if (toggle) {
+    toggle.addEventListener('click', _copyToggleBacktestComparison);
+    toggle.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault();
+      _copyToggleBacktestComparison();
+    });
+  }
+}
+
+async function fetchCopyTradingPositions() {
+  const banner = document.getElementById('copy-trading-error-banner');
+  try {
+    const r = await fetch('/api/copy-trading/positions');
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json();
+    if (banner) banner.classList.remove('visible');
+    renderCopyPositions(data);
+  } catch (e) {
+    console.error('Copy-trading positions fetch failed:', e);
+    if (_copyPositionsData) {
+      // Last-known-good data stays on screen — only the banner changes
+      // (mirrors fetchCopyTradingCandidates()'s design-spec-driven choice).
+      if (banner) banner.classList.add('visible');
+      const textEl = document.getElementById('copy-trading-error-text');
+      if (textEl) {
+        textEl.textContent = `Fetch failed (${e.message}) — showing last-known data, retrying in 5 min`;
+      }
+    } else {
+      const wrap = document.getElementById('copy-positions-content');
+      if (wrap) {
+        wrap.innerHTML = `<div class="empty"><i data-lucide="alert-circle"></i><h3>Could not load positions</h3><p>${e.message} — retrying automatically.</p></div>`;
+        lucide.createIcons();
+      }
+    }
+  }
+}
+
+/* ─────────────────────────────────────────
    BOOT
    ───────────────────────────────────────── */
 window.addEventListener('DOMContentLoaded', () => {
@@ -4548,6 +5016,7 @@ window.addEventListener('DOMContentLoaded', () => {
   fetchPortfolio();
   fetchBotLog();
   fetchWeatherHealth();
+  _copyPositionsInitStaticControls();
   portfolioIntervalId = setInterval(fetchPortfolio, 30_000);
   botLogIntervalId = setInterval(fetchBotLog, 30_000);
   setInterval(fetchWeatherHealth, 30_000);

@@ -2030,6 +2030,20 @@ class Database:
             "total_pnl_usd": row["total_pnl_usd"] if row["total_pnl_usd"] is not None else 0.0,
         }
 
+    def get_copy_signal(self, signal_id: int) -> "dict | None":
+        """Return one ``copy_signals`` row by primary key, or ``None`` if no
+        such row exists (issue #1148: the Positions & P&L view's
+        position -> source-signal click-through, joining through
+        ``copy_positions.signal_id``).
+
+        A plain PK lookup -- unlike the aggregation methods elsewhere in
+        this section, there's no existing read this could reuse, so it's
+        added directly rather than assembled from other calls.
+        """
+        cur = self._conn.execute("SELECT * FROM copy_signals WHERE id=?", (signal_id,))
+        row = cur.fetchone()
+        return dict(row) if row is not None else None
+
     # ------------------------------------------------------------------
     # trades
     # ------------------------------------------------------------------
