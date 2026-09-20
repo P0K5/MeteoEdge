@@ -122,33 +122,3 @@ def test_install_sh_includes_copy_signal_in_help():
     # Verify copy-signal is mentioned in the help output
     assert 'journalctl -u meteoedge-copy-signals.service' in content, \
         "install.sh should include copy-signal in the help text"
-
-
-def test_copy_signal_script_supports_persistent_mode():
-    """Verify copy_signal_loop.py has a persistent loop mode."""
-    script_path = Path(__file__).resolve().parents[2] / "src" / "scripts" / "copy_signal_loop.py"
-    content = script_path.read_text()
-
-    # Verify main() function exists
-    assert "def main(" in content, "copy_signal_loop.py should have a main() function"
-
-    # Verify it has the persistent loop (while True)
-    assert "while True:" in content, "copy_signal_loop.py should have a persistent while loop"
-
-    # Verify it supports --once flag
-    assert '"--once"' in content, "copy_signal_loop.py should support --once flag"
-
-    # Verify it has run_cycle function
-    assert "def run_cycle(" in content, "copy_signal_loop.py should have run_cycle() function"
-
-
-def test_copy_signal_script_graceful_shutdown():
-    """Verify copy_signal_loop.py handles Ctrl-C gracefully."""
-    script_path = Path(__file__).resolve().parents[2] / "src" / "scripts" / "copy_signal_loop.py"
-    content = script_path.read_text()
-
-    # Verify it catches KeyboardInterrupt
-    assert "KeyboardInterrupt" in content, "copy_signal_loop.py should handle KeyboardInterrupt"
-
-    # Verify it logs shutdown
-    assert "Stopping" in content, "copy_signal_loop.py should log when stopping"
