@@ -1360,6 +1360,30 @@ class TestCopyWalletCandidates:
         assert len(rows) == 2
         assert {r["n_resolved"] for r in rows} == {7498, 2271}
 
+    def test_get_latest_returns_empty_list_when_never_screened(self):
+        db = _db()
+        assert db.get_latest_wallet_screenings() == []
+
+    def test_get_latest_returns_one_row_per_address(self):
+        db = _db()
+        db.insert_wallet_screening(**self._screening_kwargs(address="0xaaa"))
+        db.insert_wallet_screening(**self._screening_kwargs(address="0xbbb"))
+        rows = db.get_latest_wallet_screenings()
+        assert {r["address"] for r in rows} == {"0xaaa", "0xbbb"}
+
+    def test_get_latest_picks_most_recent_run_by_id(self):
+        db = _db()
+        db.insert_wallet_screening(
+            **self._screening_kwargs(n_resolved=7498, median_roi=0.334, eligible_to_follow=1)
+        )
+        db.insert_wallet_screening(
+            **self._screening_kwargs(n_resolved=2271, median_roi=-1.0, eligible_to_follow=0)
+        )
+        rows = db.get_latest_wallet_screenings()
+        assert len(rows) == 1
+        assert rows[0]["n_resolved"] == 2271
+        assert rows[0]["eligible_to_follow"] == 0
+
 
 # ---------------------------------------------------------------------------
 # copy_wallets_followed / copy_signals / copy_positions

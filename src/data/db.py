@@ -1590,6 +1590,24 @@ class Database:
         )
         return [dict(row) for row in cur.fetchall()]
 
+    def get_latest_wallet_screenings(self) -> list[dict]:
+        """Return every screened address's single most-recent screening row.
+
+        One row per distinct ``address`` -- the "latest run" that
+        ``copy_wallet_promotion.py``'s advisory report (issue #1122) and
+        ``--follow`` eligibility check are both defined against. Tiebreak is
+        ``id DESC`` per address, matching ``get_recent_wallet_screenings``.
+        Returns ``[]`` if no wallet has ever been screened.
+        """
+        cur = self._conn.execute(
+            "SELECT c.* FROM copy_wallet_candidates c "
+            "INNER JOIN ("
+            "  SELECT address, MAX(id) AS max_id FROM copy_wallet_candidates "
+            "  GROUP BY address"
+            ") latest ON c.address = latest.address AND c.id = latest.max_id"
+        )
+        return [dict(row) for row in cur.fetchall()]
+
     # ------------------------------------------------------------------
     # copy_wallets_followed / copy_signals / copy_positions (issue #1121,
     # epic #1101 story B1 -- copy-trading signal detection & flat-stake
