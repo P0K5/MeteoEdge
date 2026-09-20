@@ -822,6 +822,7 @@ a,button,input,select{transition:color var(--transition),background var(--transi
   <button class="tab-btn" onclick="switchTab('emos')">EMOS</button>
   <button class="tab-btn" onclick="switchTab('promotion')">Promotion</button>
   <button class="tab-btn" onclick="switchTab('config')">Config</button>
+  <button class="tab-btn" onclick="switchTab('copy-trading')">Copy-Trading</button>
 </nav>
 
 <!-- ── PORTFOLIO TAB ── -->
@@ -1071,6 +1072,22 @@ a,button,input,select{transition:color var(--transition),background var(--transi
         <i data-lucide="loader"></i>
         <h3>Loading configuration…</h3>
         <p>Fetching bot parameters from the API.</p>
+      </div>
+    </div>
+  </main>
+</section>
+
+<!-- ── COPY-TRADING TAB ── -->
+<section id="tab-copy-trading" class="tab-panel">
+  <main class="main">
+    <div class="section-hdr">
+      <div class="section-title"><i data-lucide="copy"></i>Copy-Trading</div>
+    </div>
+    <div id="copy-trading-content">
+      <div class="empty">
+        <i data-lucide="loader"></i>
+        <h3>Loading copy-trading dashboard…</h3>
+        <p>Initializing copy-trading views and data.</p>
       </div>
     </div>
   </main>
