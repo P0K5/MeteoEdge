@@ -145,6 +145,52 @@ class TestMinimumSampleSizeGuard:
         assert row["status"] == "active"
 
 
+class TestMalformedRowGuard:
+    """AI review #1141, BLOCK item: a settled row with a NULL
+    settled_pnl_usd must be excluded from the ROI sample rather than
+    crashing the run with a TypeError. The copy_positions schema's own
+    writers (settle_copy_position) never produce such a row -- this
+    simulates one via a direct UPDATE, bypassing settle_copy_position, to
+    prove the defensive filter actually works rather than assuming it."""
+
+    def test_settled_row_with_null_pnl_is_excluded_not_crashed_on(self):
+        db = _db()
+        _follow(db)
+        _screening_row(db, ADDRESS, "2026-09-18T00:00:00+00:00", median_roi=0.10, n_resolved=100, eligible_to_follow=1)
+        _screening_row(db, ADDRESS, "2026-09-19T00:00:00+00:00", median_roi=0.10, n_resolved=100, eligible_to_follow=1)
+
+        # MIN_SETTLED_TRADES_FOR_ROI_CHECK usable rows, all positive ROI.
+        for _ in range(MIN_SETTLED_TRADES_FOR_ROI_CHECK):
+            _settled_position(db, ADDRESS, 1.0, stake_usd=10.0)
+
+        # One extra row hand-crafted to carry status='settled' with a NULL
+        # settled_pnl_usd -- settle_copy_position never produces this; it's
+        # a stand-in for "a malformed row exists somehow."
+        signal_id = db.insert_copy_signal(
+            address=ADDRESS, market="0xbadrow", source_price=0.4,
+            detected_at="2026-09-19T00:00:00+00:00",
+        )
+        position_id = db.insert_copy_position(
+            signal_id=signal_id, address=ADDRESS, market="0xbadrow",
+            outcome_index=0, entry_price=0.4, stake_usd=10.0,
+            entry_ts="2026-09-19T00:00:00+00:00",
+        )
+        db._conn.execute(
+            "UPDATE copy_positions SET status='settled', settled_at=? WHERE id=?",
+            ("2026-09-20T00:00:00+00:00", position_id),
+        )
+        db._conn.commit()
+
+        # Must not raise; the malformed row is excluded from the sample,
+        # leaving exactly MIN_SETTLED_TRADES_FOR_ROI_CHECK usable positive-ROI
+        # rows, so the wallet stays active.
+        summary = run_once(db=db)
+
+        assert summary == {"checked": 1, "paused_stability": 0, "paused_roi": 0}
+        row = db.get_followed_wallets()[0]
+        assert row["status"] == "active"
+
+
 class TestWalletPassingBothChecks:
     def test_stays_active_untouched(self):
         db = _db()

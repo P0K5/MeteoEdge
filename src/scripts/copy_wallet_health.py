@@ -104,15 +104,29 @@ def _median_roi_pause_reason(db, address: str) -> "str | None":
     """Return ``"realized_roi_negative"`` if *address* should be paused on
     the realized-ROI signal, else ``None``.
 
-    Wallets with fewer than ``MIN_SETTLED_TRADES_FOR_ROI_CHECK`` settled
-    trades are never paused by this function (insufficient sample size).
+    Wallets with fewer than ``MIN_SETTLED_TRADES_FOR_ROI_CHECK`` *usable*
+    settled trades are never paused by this function (insufficient sample
+    size). A row is usable when it has a non-null ``settled_pnl_usd`` and a
+    positive ``stake_usd`` -- both are guaranteed by the ``copy_positions``
+    schema's own constraints (``settled_pnl_usd`` is always set by
+    ``settle_copy_position`` before ``status`` flips to ``'settled'``;
+    ``stake_usd`` has a ``CHECK(stake_usd > 0)``) for every row this
+    codebase's own writers produce, so this filter is not expected to drop
+    anything in practice -- it exists so one malformed row (e.g. hand-edited
+    test data, a future writer bug) can never divide by zero or crash the
+    whole run; it is silently excluded from the sample instead (AI review
+    #1141, BLOCK item).
     """
     settled = db.get_settled_copy_positions(address)
-    if len(settled) < MIN_SETTLED_TRADES_FOR_ROI_CHECK:
+    usable = [
+        row for row in settled
+        if row.get("settled_pnl_usd") is not None and (row.get("stake_usd") or 0) > 0
+    ]
+    if len(usable) < MIN_SETTLED_TRADES_FOR_ROI_CHECK:
         return None
 
     per_trade_roi = [
-        float(row["settled_pnl_usd"]) / float(row["stake_usd"]) for row in settled
+        float(row["settled_pnl_usd"]) / float(row["stake_usd"]) for row in usable
     ]
     median_roi = statistics.median(per_trade_roi)
     if median_roi < 0:
