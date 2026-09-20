@@ -2519,6 +2519,20 @@ _CONFIG_META: dict[str, dict] = {
         "min": 30,
         "max": 3600,
     },
+    "COPY_DAILY_LOSS_LIMIT_USD": {
+        "description": "Block new copy-signal execution for the rest of the UTC day once today's realized copy-trading P&L is <= -this value (issue #1139 circuit breaker)",
+        "type": "float",
+        "group": "copy_trading",
+        "min": 1.0,
+        "max": 1000.0,
+    },
+    "COPY_DRAWDOWN_STOP_PCT": {
+        "description": "Block new copy-signal execution until manually cleared once cumulative realized P&L is a drawdown of at least this fraction of COPY_TRADING_CAPITAL_USD (issue #1139 circuit breaker)",
+        "type": "float",
+        "group": "copy_trading",
+        "min": 0.01,
+        "max": 1.0,
+    },
 }
 
 _EMOS_VALID_MODES = frozenset({"legacy", "emos_shadow", "emos_primary"})

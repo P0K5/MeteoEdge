@@ -87,6 +87,15 @@ def _mock_db(**overrides) -> MagicMock:
     db.get_open_copy_positions.return_value = []
     db.insert_copy_signal.return_value = 1
     db.insert_copy_position.return_value = 1
+    # Circuit breaker (issue #1139) reads these -- zero realized P&L by
+    # default so the breaker never trips unless a test deliberately
+    # overrides one of these two to exercise it.
+    db.get_copy_realized_pnl_total_for_date.return_value = {
+        "n_settled": 0, "total_pnl_usd": 0.0,
+    }
+    db.get_copy_realized_pnl_total.return_value = {
+        "n_settled": 0, "total_pnl_usd": 0.0,
+    }
     for key, value in overrides.items():
         setattr(getattr(db, key), "return_value", value)
     return db
@@ -132,6 +141,152 @@ class TestKillSwitch:
         db.get_followed_wallets.assert_not_called()
         db.insert_copy_signal.assert_not_called()
         db.insert_copy_position.assert_not_called()
+
+
+class TestCircuitBreaker:
+    """Realized-P&L circuit breaker wiring (issue #1139). Never mocks
+    src.risk.copy_risk_manager.allow_copy_signal itself -- exercises the
+    real function against the mocked db's get_copy_realized_pnl_total /
+    get_copy_realized_pnl_total_for_date, matching test_copy_signal_loop.py's
+    existing style of mocking only the DB and network boundary, not
+    in-process collaborators.
+    """
+
+    def _run(self, db, raw_trades, live_config=None, resolution=None):
+        with patch(
+            "src.scripts.copy_signal_loop.get_live_config",
+            return_value=live_config or _live_config(),
+        ), patch(
+            "src.scripts.copy_signal_loop.get_wallet_trades_since",
+            return_value=raw_trades,
+        ), patch(
+            "src.scripts.copy_signal_loop.fetch_market_resolution",
+            return_value=resolution,
+        ):
+            run_cycle(db)
+
+    def test_tripped_daily_loss_still_logs_signal_but_never_executes(self):
+        db = _mock_db()
+        db.get_copy_realized_pnl_total_for_date.return_value = {
+            "n_settled": 3, "total_pnl_usd": -30.0,
+        }
+        live_config = _live_config(COPY_DAILY_LOSS_LIMIT_USD=25.0)
+        self._run(db, [_buy_raw()], live_config=live_config, resolution=None)
+
+        db.insert_copy_signal.assert_called_once()
+        signal_kwargs = db.insert_copy_signal.call_args.kwargs
+        assert signal_kwargs["order_placed"] == 0
+        assert signal_kwargs["skip_reason"] == "circuit_breaker_daily_loss"
+        db.insert_copy_position.assert_not_called()
+
+    def test_tripped_drawdown_still_logs_signal_but_never_executes(self):
+        db = _mock_db()
+        db.get_copy_realized_pnl_total.return_value = {
+            "n_settled": 5, "total_pnl_usd": -50.0,
+        }
+        live_config = _live_config(
+            COPY_DAILY_LOSS_LIMIT_USD=999.0, COPY_DRAWDOWN_STOP_PCT=0.20,
+        )
+        with patch("src.risk.copy_risk_manager.COPY_TRADING_CAPITAL_USD", 100.0):
+            self._run(db, [_buy_raw()], live_config=live_config, resolution=None)
+
+        db.insert_copy_signal.assert_called_once()
+        signal_kwargs = db.insert_copy_signal.call_args.kwargs
+        assert signal_kwargs["order_placed"] == 0
+        assert signal_kwargs["skip_reason"] == "circuit_breaker_drawdown"
+        db.insert_copy_position.assert_not_called()
+
+    def test_tripped_breaker_never_calls_fetch_market_resolution(self):
+        """Same optimization as the first-poll bootstrap guard: a trade
+        that will be skipped unconditionally never spends a network call."""
+        db = _mock_db()
+        db.get_copy_realized_pnl_total_for_date.return_value = {
+            "n_settled": 1, "total_pnl_usd": -30.0,
+        }
+        live_config = _live_config(COPY_DAILY_LOSS_LIMIT_USD=25.0)
+        with patch(
+            "src.scripts.copy_signal_loop.get_live_config", return_value=live_config,
+        ), patch(
+            "src.scripts.copy_signal_loop.get_wallet_trades_since",
+            return_value=[_buy_raw()],
+        ), patch(
+            "src.scripts.copy_signal_loop.fetch_market_resolution",
+        ) as mock_resolve:
+            run_cycle(db)
+        mock_resolve.assert_not_called()
+
+    def test_not_tripped_does_not_change_normal_execution(self):
+        db = _mock_db()
+        # Explicitly zero, well under both thresholds.
+        db.get_copy_realized_pnl_total_for_date.return_value = {
+            "n_settled": 0, "total_pnl_usd": 0.0,
+        }
+        db.get_copy_realized_pnl_total.return_value = {
+            "n_settled": 0, "total_pnl_usd": 0.0,
+        }
+        self._run(db, [_buy_raw()], resolution=None)
+
+        signal_kwargs = db.insert_copy_signal.call_args.kwargs
+        assert signal_kwargs["order_placed"] == 1
+        assert signal_kwargs.get("skip_reason") is None
+        db.insert_copy_position.assert_called_once()
+
+    def test_breaker_checked_once_per_cycle_not_per_wallet(self):
+        """Two active wallets, breaker tripped -- get_copy_realized_pnl_total_for_date
+        is called exactly once (the breaker decision), not once per wallet."""
+        wallet_a = _wallet(address="0xwalletA")
+        wallet_b = _wallet(address="0xwalletB")
+        db = _mock_db()
+        db.get_followed_wallets.return_value = [wallet_a, wallet_b]
+        db.get_copy_realized_pnl_total_for_date.return_value = {
+            "n_settled": 1, "total_pnl_usd": -30.0,
+        }
+        live_config = _live_config(COPY_DAILY_LOSS_LIMIT_USD=25.0)
+        with patch(
+            "src.scripts.copy_signal_loop.get_live_config", return_value=live_config,
+        ), patch(
+            "src.scripts.copy_signal_loop.get_wallet_trades_since",
+            return_value=[_buy_raw()],
+        ), patch(
+            "src.scripts.copy_signal_loop.fetch_market_resolution", return_value=None,
+        ):
+            run_cycle(db)
+        db.get_copy_realized_pnl_total_for_date.assert_called_once()
+        assert db.insert_copy_signal.call_count == 2
+        for call in db.insert_copy_signal.call_args_list:
+            assert call.kwargs["skip_reason"] == "circuit_breaker_daily_loss"
+
+    def test_never_touches_settlement_code_path(self):
+        """Code-inspection-level assertion (per the issue's test
+        requirements): neither the circuit breaker module nor
+        copy_signal_loop.py's breaker wiring imports copy_settle.py or
+        calls Database.settle_copy_position -- a tripped breaker can only
+        ever affect the execute-or-skip decision for a brand new signal,
+        never an already-open position's settlement.
+        """
+        import ast
+        import inspect
+
+        import src.risk.copy_risk_manager as crm
+        import src.scripts.copy_signal_loop as loop_module
+
+        for module in (crm, loop_module):
+            source = inspect.getsource(module)
+            assert "settle_copy_position" not in source
+            tree = ast.parse(source)
+            imported_names = set()
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    imported_names.update(alias.name for alias in node.names)
+                elif isinstance(node, ast.ImportFrom) and node.module:
+                    imported_names.add(node.module)
+                    imported_names.update(
+                        f"{node.module}.{alias.name}" for alias in node.names
+                    )
+            assert not any("copy_settle" in name for name in imported_names), (
+                f"{module.__name__} must never import copy_settle.py "
+                "(a tripped circuit breaker must never touch settlement)"
+            )
 
 
 class TestSignalDetectionAndExecution:

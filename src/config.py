@@ -756,6 +756,19 @@ CONFIG_DEFAULTS: "dict[str, str | int | float | bool]" = {
     "COPY_MAX_EXPOSURE_PER_WALLET_USD": 50.0,
     "COPY_MAX_TOTAL_EXPOSURE_USD": 250.0,
     "COPY_SIGNAL_POLL_INTERVAL_SECONDS": 300,
+    # Realized-P&L circuit breaker (issue #1139, epic D #1138). Distinct from
+    # the open-EXPOSURE caps above -- those bound how much capital can be at
+    # risk at once, these stop new signal execution once copy-trading is
+    # actually LOSING money. Mirrors src/risk/manager.py's RiskManager
+    # daily-loss/drawdown pattern (see src/risk/copy_risk_manager.py), but
+    # DB-backed via Database.get_copy_realized_pnl_total[_for_date] rather
+    # than in-memory, so it survives copy_signal_loop.py restarts. Both are
+    # scoped to COPY_TRADING_CAPITAL_USD, never STARTING_CAPITAL_EUR -- same
+    # capital-pool isolation as everything else in this section. Gates new
+    # signal execution ONLY; never blocks copy_settle.py from settling an
+    # already-open position.
+    "COPY_DAILY_LOSS_LIMIT_USD": 25.0,
+    "COPY_DRAWDOWN_STOP_PCT": 0.20,
 }
 
 # Maps each FORECAST_STACK value to the set of model tags whose rows should be
