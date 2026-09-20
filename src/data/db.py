@@ -1717,6 +1717,63 @@ class Database:
             )
             self._conn.commit()
 
+    def update_followed_wallet_stake(self, address: str, stake_per_trade: float) -> None:
+        """Set *address*'s per-trade stake in place -- does not touch
+        status/paused_reason/added_at/last_seen_trade_ts.
+
+        Powers the Followed Wallets view's edit-stake control (issue
+        #1147). ``copy_wallet_promotion.py`` has no equivalent CLI flag
+        (only ``--follow``'s one-time initial ``--stake``), so unlike
+        pause/resume this is a new mutation path, not a wrapped CLI
+        function -- the API layer applies the same
+        ``COPY_MAX_EXPOSURE_PER_WALLET_USD`` guard ``follow()`` uses before
+        calling this.
+        """
+        with self._lock:
+            self._conn.execute(
+                "UPDATE copy_wallets_followed SET stake_per_trade=? WHERE address=?",
+                (stake_per_trade, address),
+            )
+            self._conn.commit()
+
+    def delete_followed_wallet(self, address: str) -> None:
+        """Permanently remove *address* from ``copy_wallets_followed`` --
+        the "unfollow" action (issue #1147).
+
+        Design decision (unfollow's DB semantics were left unspecified by
+        the architecture doc -- issue #1147's acceptance criteria required
+        picking one clear answer here, not leaving it ambiguous): this
+        DELETEs the row rather than adding a third terminal status value.
+        Reasons:
+
+        1. The table's own ``CHECK(status IN ('active','paused'))``
+           constraint has no "unfollowed"/"removed" state -- adding one
+           would be a schema change, which this issue does not call for.
+        2. ``copy_positions``/``copy_signals`` are NOT foreign-keyed to
+           this table by ``address`` (see their own ``CREATE TABLE``
+           comments) -- deleting this row never touches settled/open
+           position history. ``get_copy_realized_pnl_by_wallet()``/
+           ``get_copy_realized_pnl_total()`` read ``copy_positions``
+           directly, independent of ``copy_wallets_followed``, so a
+           wallet's P&L history survives its unfollow.
+        3. Unfollow stops *new* signal detection for the address -- it
+           does **not** close any existing open ``copy_positions`` rows
+           (the dashboard's confirm-dialog copy makes this explicit to the
+           operator; nothing in this method touches ``copy_positions``).
+        4. A previously-unfollowed address can be re-followed later via a
+           plain ``insert_followed_wallet()`` (no duplicate-PK conflict),
+           matching ``follow()``'s existing "not already followed" guard.
+
+        Matches ``update_followed_wallet_status``'s in-place-mutation
+        style except for the delete itself: a DELETE on an address not
+        currently in the table matches zero rows (silent no-op) rather
+        than raising -- callers wanting a clear refusal message should
+        check ``get_followed_wallets()`` first, as the API layer does.
+        """
+        with self._lock:
+            self._conn.execute("DELETE FROM copy_wallets_followed WHERE address=?", (address,))
+            self._conn.commit()
+
     def insert_copy_signal(
         self,
         *,

@@ -1596,6 +1596,76 @@ class TestCopyWalletsFollowed:
         row = db.get_followed_wallets()[0]
         assert row["last_seen_trade_ts"] == 1758000000
 
+    def test_update_stake_does_not_touch_other_columns(self):
+        """issue #1147 -- Followed Wallets view's edit-stake control."""
+        db = _db()
+        db.insert_followed_wallet(**self._followed_kwargs())
+        db.update_followed_wallet_status("0xabc", "paused", paused_reason="rug pull risk")
+
+        db.update_followed_wallet_stake("0xabc", 40.0)
+
+        row = db.get_followed_wallets()[0]
+        assert row["stake_per_trade"] == 40.0
+        assert row["status"] == "paused"
+        assert row["paused_reason"] == "rug pull risk"
+        assert row["added_at"] == "2026-09-19T00:00:00+00:00"
+
+    def test_delete_followed_wallet_removes_row(self):
+        """issue #1147 -- "unfollow" action. DELETE, not a terminal status
+        (see Database.delete_followed_wallet's docstring for the decision
+        rationale)."""
+        db = _db()
+        db.insert_followed_wallet(address="0xabc", stake_per_trade=25.0, added_at="2026-09-19T00:00:00+00:00")
+        db.insert_followed_wallet(address="0xother", stake_per_trade=10.0, added_at="2026-09-19T00:00:00+00:00")
+
+        db.delete_followed_wallet("0xabc")
+
+        remaining = [r["address"] for r in db.get_followed_wallets()]
+        assert remaining == ["0xother"]
+
+    def test_delete_followed_wallet_unknown_address_is_a_noop(self):
+        db = _db()
+        db.insert_followed_wallet(**self._followed_kwargs())
+
+        db.delete_followed_wallet("0xghost")  # must not raise
+
+        assert [r["address"] for r in db.get_followed_wallets()] == ["0xabc"]
+
+    def test_delete_followed_wallet_allows_refollow(self):
+        """A wallet can be re-followed after being unfollowed -- delete
+        frees up the primary key rather than leaving a stale row that
+        would trip insert_followed_wallet's duplicate-PK guard."""
+        db = _db()
+        db.insert_followed_wallet(**self._followed_kwargs(stake_per_trade=25.0))
+        db.delete_followed_wallet("0xabc")
+
+        db.insert_followed_wallet(**self._followed_kwargs(stake_per_trade=40.0))
+
+        row = db.get_followed_wallets()[0]
+        assert row["address"] == "0xabc"
+        assert row["stake_per_trade"] == 40.0
+        assert row["status"] == "active"
+
+    def test_delete_followed_wallet_does_not_touch_copy_positions(self):
+        """Acceptance criteria: unfollow must not close/affect existing
+        open positions -- delete_followed_wallet only touches
+        copy_wallets_followed, never copy_positions/copy_signals."""
+        db = _db()
+        db.insert_followed_wallet(**self._followed_kwargs())
+        signal_id = db.insert_copy_signal(
+            address="0xabc", market="M", source_price=0.5, detected_at="2026-09-19T00:00:00Z",
+        )
+        db.insert_copy_position(
+            signal_id=signal_id, address="0xabc", market="M", outcome_index=0,
+            entry_price=0.5, stake_usd=25.0, entry_ts="2026-09-19T00:00:00Z",
+        )
+
+        db.delete_followed_wallet("0xabc")
+
+        open_positions = db.get_open_copy_positions("0xabc")
+        assert len(open_positions) == 1
+        assert open_positions[0]["status"] == "open"
+
     def test_migration_paused_at_column_exists(self):
         """Verify paused_at column exists on fresh DB and migrated DB."""
         import sqlite3

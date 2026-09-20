@@ -36,6 +36,7 @@ from __future__ import annotations
 import io
 import json
 import logging
+import math
 import os
 import time
 import threading
@@ -533,6 +534,36 @@ class CopyFollowRequest(BaseModel):
 class CopyFollowResultOut(BaseModel):
     success: bool
     message: str
+
+
+class CopyFollowedWalletOut(BaseModel):
+    """One row of the Followed Wallets view's table (epic F, issue #1147)."""
+    address: str
+    stake_per_trade: float
+    status: Literal["active", "paused"]
+    paused_reason: str | None = None
+    added_at: str
+    n_settled: int
+    realized_pnl_usd: float
+
+
+class CopyFollowedWalletsOut(BaseModel):
+    """Single response for the Followed Wallets view — table rows plus the
+    summary-strip aggregates, one round-trip (mirrors CopyCandidatesOut's
+    issue #1146 design)."""
+    wallets: list[CopyFollowedWalletOut]
+    active_count: int
+    paused_count: int
+    aggregate_pnl_usd: float
+    n_settled_total: int
+
+
+class CopyPauseRequest(BaseModel):
+    reason: str
+
+
+class CopyStakeUpdateRequest(BaseModel):
+    stake: float
 
 
 class EmosCoefficients(BaseModel):
@@ -2419,6 +2450,204 @@ def copy_trading_follow_wallet(address: str, req: CopyFollowRequest) -> CopyFoll
         return CopyFollowResultOut(success=False, message=f"Follow failed: {e}")
 
     return CopyFollowResultOut(success=(code == 0), message=buf.getvalue().strip())
+
+
+# ---------------------------------------------------------------------------
+# Copy-trading API — Followed Wallets view (epic F #1143, story F2 #1147)
+# ---------------------------------------------------------------------------
+
+@app.get("/api/copy-trading/followed-wallets", response_model=CopyFollowedWalletsOut)
+def copy_trading_followed_wallets() -> CopyFollowedWalletsOut:
+    """Every followed wallet plus its running realized P&L, plus aggregate
+    figures for the summary strip (issue #1147 acceptance criteria) — one
+    response model, mirroring the Candidates view's single-round-trip
+    design (CopyCandidatesOut, issue #1146).
+    """
+    if _db is None:
+        raise HTTPException(status_code=503, detail="Database not initialised")
+
+    pnl_by_wallet = {row["address"]: row for row in _db.get_copy_realized_pnl_by_wallet()}
+    total = _db.get_copy_realized_pnl_total()
+
+    wallets = []
+    active_count = 0
+    paused_count = 0
+    for w in _db.get_followed_wallets():
+        if w["status"] == "active":
+            active_count += 1
+        elif w["status"] == "paused":
+            paused_count += 1
+
+        pnl_row = pnl_by_wallet.get(w["address"])
+        wallets.append(CopyFollowedWalletOut(
+            address=w["address"],
+            stake_per_trade=w["stake_per_trade"],
+            status=w["status"],
+            paused_reason=w.get("paused_reason"),
+            added_at=w["added_at"],
+            n_settled=pnl_row["n_settled"] if pnl_row else 0,
+            realized_pnl_usd=pnl_row["total_pnl_usd"] if pnl_row else 0.0,
+        ))
+
+    # Most-recently-followed first — an operator managing the roster cares
+    # most about wallets they just added, unlike the Candidates view (which
+    # sorts by performance, per its own design spec).
+    wallets.sort(key=lambda w: w.added_at, reverse=True)
+
+    return CopyFollowedWalletsOut(
+        wallets=wallets,
+        active_count=active_count,
+        paused_count=paused_count,
+        aggregate_pnl_usd=total["total_pnl_usd"],
+        n_settled_total=total["n_settled"],
+    )
+
+
+@app.post(
+    "/api/copy-trading/wallets/{address}/pause",
+    response_model=CopyFollowResultOut,
+)
+def copy_trading_pause_wallet(address: str, req: CopyPauseRequest) -> CopyFollowResultOut:
+    """Pause a followed wallet — wraps copy_wallet_promotion.py::pause()
+    directly rather than re-deriving its "must already be followed" guard
+    (issue #1147 acceptance criteria, mirroring the follow endpoint's
+    approach to reusing the CLI's own refusal logic).
+    """
+    if _db is None:
+        raise HTTPException(status_code=503, detail="Database not initialised")
+
+    from src.scripts.copy_wallet_promotion import pause
+
+    reason = (req.reason or "").strip()
+    if not reason:
+        return CopyFollowResultOut(success=False, message="Pause requires a non-empty reason.")
+
+    buf = io.StringIO()
+    try:
+        with redirect_stdout(buf):
+            code = pause(_db, address, reason)
+    except Exception as e:  # noqa: BLE001 — surface as a structured refusal, never a bare 500
+        logger.exception("copy_trading_pause_wallet: pause() raised for %s", address)
+        return CopyFollowResultOut(success=False, message=f"Pause failed: {e}")
+
+    return CopyFollowResultOut(success=(code == 0), message=buf.getvalue().strip())
+
+
+@app.post(
+    "/api/copy-trading/wallets/{address}/resume",
+    response_model=CopyFollowResultOut,
+)
+def copy_trading_resume_wallet(address: str) -> CopyFollowResultOut:
+    """Resume a paused wallet — wraps copy_wallet_promotion.py::resume()
+    directly, including its "must be paused" and roster-full refusal
+    checks (issue #1147 acceptance criteria).
+    """
+    if _db is None:
+        raise HTTPException(status_code=503, detail="Database not initialised")
+
+    from src.scripts.copy_wallet_promotion import resume
+
+    live_cfg = get_live_config(_db)
+    max_followed = live_cfg["COPY_MAX_WALLETS_FOLLOWED"]
+
+    buf = io.StringIO()
+    try:
+        with redirect_stdout(buf):
+            code = resume(_db, address, max_followed)
+    except Exception as e:  # noqa: BLE001 — surface as a structured refusal, never a bare 500
+        logger.exception("copy_trading_resume_wallet: resume() raised for %s", address)
+        return CopyFollowResultOut(success=False, message=f"Resume failed: {e}")
+
+    return CopyFollowResultOut(success=(code == 0), message=buf.getvalue().strip())
+
+
+@app.post(
+    "/api/copy-trading/wallets/{address}/unfollow",
+    response_model=CopyFollowResultOut,
+)
+def copy_trading_unfollow_wallet(address: str) -> CopyFollowResultOut:
+    """Unfollow a wallet — permanently DELETEs its copy_wallets_followed row
+    (see Database.delete_followed_wallet's docstring for why DELETE rather
+    than a terminal status was chosen, issue #1147 acceptance criteria).
+
+    copy_wallet_promotion.py has no CLI equivalent to wrap (only
+    follow/pause/resume exist there), so this endpoint owns its own
+    "must already be followed" refusal check directly, following this
+    section's existing style rather than duplicating it into the CLI
+    module for a single caller.
+
+    Never touches copy_positions — any open positions for this wallet are
+    left exactly as they are (surfaced to the operator via the frontend's
+    confirm-dialog copy, not silently implied here).
+    """
+    if _db is None:
+        raise HTTPException(status_code=503, detail="Database not initialised")
+
+    known = {w["address"] for w in _db.get_followed_wallets()}
+    if address not in known:
+        return CopyFollowResultOut(
+            success=False,
+            message=f"Refusing to unfollow {address}: not a followed wallet.",
+        )
+
+    try:
+        _db.delete_followed_wallet(address)
+    except Exception as e:  # noqa: BLE001 — surface as a structured refusal, never a bare 500
+        logger.exception("copy_trading_unfollow_wallet: delete failed for %s", address)
+        return CopyFollowResultOut(success=False, message=f"Unfollow failed: {e}")
+
+    return CopyFollowResultOut(
+        success=True,
+        message=f"Unfollowed {address}. Existing open positions are not affected.",
+    )
+
+
+@app.patch(
+    "/api/copy-trading/wallets/{address}/stake",
+    response_model=CopyFollowResultOut,
+)
+def copy_trading_update_wallet_stake(
+    address: str, req: CopyStakeUpdateRequest
+) -> CopyFollowResultOut:
+    """Edit a followed wallet's per-trade stake (issue #1147 acceptance
+    criteria's "edit-stake control"). No CLI equivalent exists to wrap
+    (copy_wallet_promotion.py's --stake only sets the *initial* stake at
+    --follow time), so this reuses --follow's own
+    COPY_MAX_EXPOSURE_PER_WALLET_USD guard directly rather than leaving the
+    new stake unbounded above.
+    """
+    if _db is None:
+        raise HTTPException(status_code=503, detail="Database not initialised")
+
+    known = {w["address"] for w in _db.get_followed_wallets()}
+    if address not in known:
+        return CopyFollowResultOut(
+            success=False,
+            message=f"Refusing to update stake for {address}: not a followed wallet.",
+        )
+
+    if not math.isfinite(req.stake) or req.stake <= 0:
+        return CopyFollowResultOut(
+            success=False,
+            message=f"Stake must be a finite positive number in USD, got {req.stake!r}.",
+        )
+
+    live_cfg = get_live_config(_db)
+    max_stake = live_cfg["COPY_MAX_EXPOSURE_PER_WALLET_USD"]
+    if req.stake > max_stake:
+        return CopyFollowResultOut(
+            success=False,
+            message=(
+                f"Refusing to set stake ${req.stake:.2f} for {address}: exceeds "
+                f"COPY_MAX_EXPOSURE_PER_WALLET_USD (${max_stake:.2f})."
+            ),
+        )
+
+    _db.update_followed_wallet_stake(address, req.stake)
+    return CopyFollowResultOut(
+        success=True,
+        message=f"Updated {address} stake to ${req.stake:.2f}/trade.",
+    )
 
 
 # ---------------------------------------------------------------------------
