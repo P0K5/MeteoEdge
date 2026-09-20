@@ -569,6 +569,84 @@ sudo journalctl -u meteoedge-copy-screening.service -f
 tail -f logs/copy_screening.log
 ```
 
+#### meteoedge-copy-settle.service / meteoedge-copy-settle.timer
+
+One-shot service, run **hourly** by `meteoedge-copy-settle.timer`. Runs
+`src/scripts/copy_settle`, which settles open `copy_positions` rows (epic
+#1102 story C2, issue #1132): for every `status='open'` row, resolves its
+market via `fetch_market_resolution` (the only truth source for a
+copy-trading position — never METAR or any other weather-derived truth),
+computes realized P&L via `src.data.copy_pnl.compute_realized_pnl_usd`
+(story C1, issue #1131), and persists it via `Database.settle_copy_position`.
+Open positions are grouped by distinct `market` first, so a market with
+several open positions spends one `fetch_market_resolution` call, not one
+per position. Unresolved markets leave their rows `open`, retried on the
+next hourly run. A single row that fails to settle (exception) is logged
+and skipped — it never aborts the run or blocks the remaining rows.
+
+```ini
+[Unit]
+Description=MeteoEdge copy-trading position settlement
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=p0k5
+WorkingDirectory=/home/p0k5/MeteoEdge
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=/home/p0k5/MeteoEdge/.env
+ExecStart=/home/p0k5/MeteoEdge/.venv/bin/python -u -m src.scripts.copy_settle
+StandardOutput=append:/home/p0k5/MeteoEdge/logs/copy_settle.log
+StandardError=append:/home/p0k5/MeteoEdge/logs/copy_settle.log
+```
+
+```ini
+[Unit]
+Description=Run MeteoEdge copy-trading position settlement hourly
+
+[Timer]
+OnCalendar=hourly
+AccuracySec=1m
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+```
+
+**Why hourly:** Epic C's realized P&L directly feeds the architecture doc's
+phase-7 go/no-go gate (comparing realized paper P&L to backtest projections),
+so settlement latency matters more here than for the once-daily weather
+strategy: a market that resolves mid-day should not sit unsettled for up to
+24h before that comparison can see it. Hourly is affordable because each run
+is cheap — one `fetch_market_resolution` call per distinct open `market`,
+typically a handful of markets at this stage, not one per position.
+
+**Rate-limit decision — shared with copy-screening and the live weather
+bot:** `fetch_market_resolution` calls `gamma-api.polymarket.com`, throttled
+by the same process-local `DomainRateLimiter` (`src/http_client.py:42-63`)
+the weather strategy's own settlement and copy-screening use. Running
+copy-settle as its own hourly systemd process means its calls are **not**
+jointly throttled with those other processes' traffic on that host (same
+isolation caveat as `meteoedge-copy-screening.service`'s "Rate-limit
+decision" above). v1 mitigation: distinct-market grouping already caps
+each run to one call per open market rather than one per position, plus the
+hourly (not continuous) cadence. A cross-process shared rate limiter remains
+explicitly deferred — revisit if 429s / throttling are observed.
+
+**Operational commands:**
+```bash
+# Check next scheduled run
+sudo systemctl list-timers meteoedge-copy-settle.timer
+
+# Manually trigger a run
+sudo systemctl start meteoedge-copy-settle.service
+
+# View logs
+sudo journalctl -u meteoedge-copy-settle.service -f
+tail -f logs/copy_settle.log
+```
+
 #### copy_wallet_promotion.py — wallet follow/pause/resume CLI (issue #1122)
 
 Not a systemd service — a human-run CLI, mirroring how `src/model/promotion_gate.py`
