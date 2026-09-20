@@ -20,13 +20,18 @@ NOW_ISO = "2026-09-20T00:00:00+00:00"
 
 
 def _wallet(**overrides) -> dict:
+    # last_seen_trade_ts defaults to a real (non-None) prior value -- most
+    # tests exercise the steady-state decision ladder (market_resolved /
+    # exposure limits / execute), NOT the first-poll bootstrap guard.
+    # Tests that specifically want the bootstrap path pass
+    # last_seen_trade_ts=None explicitly.
     kwargs = dict(
         address=ADDRESS,
         stake_per_trade=10.0,
         status="active",
         paused_reason=None,
         added_at="2026-09-19T00:00:00+00:00",
-        last_seen_trade_ts=None,
+        last_seen_trade_ts=500,
     )
     kwargs.update(overrides)
     return kwargs
@@ -232,6 +237,103 @@ class TestSignalDetectionAndExecution:
 
         db.insert_copy_signal.assert_not_called()
         db.insert_copy_position.assert_not_called()
+
+
+class TestFirstPollBootstrapGuard:
+    """PM decision on PR #1128 review (2026-09-20): a newly-followed
+    wallet's first-ever poll (last_seen_trade_ts NULL entering the cycle)
+    must never execute its backlog -- every BUY still gets a
+    copy_signals row, but always skip_reason="wallet_newly_followed",
+    regardless of what market-resolution/exposure checks would have
+    said. The watermark still advances normally so the second poll
+    onward sees only genuinely new trades."""
+
+    def _run(self, db, raw_trades, live_config=None, resolution=None):
+        with patch(
+            "src.scripts.copy_signal_loop.get_live_config",
+            return_value=live_config or _live_config(),
+        ), patch(
+            "src.scripts.copy_signal_loop.get_wallet_trades_since",
+            return_value=raw_trades,
+        ), patch(
+            "src.scripts.copy_signal_loop.fetch_market_resolution",
+            return_value=resolution,
+        ) as mock_resolution:
+            run_cycle(db)
+        return mock_resolution
+
+    def test_backlog_buy_is_skipped_never_executed(self):
+        db = _mock_db()
+        db.get_followed_wallets.return_value = [_wallet(last_seen_trade_ts=None)]
+        # Even a trade that would otherwise clearly clear every check
+        # (market open, both exposure caps empty) must still be skipped.
+        db.get_open_copy_positions.return_value = []
+        self._run(db, [_buy_raw()], resolution=None)
+
+        db.insert_copy_signal.assert_called_once()
+        signal_kwargs = db.insert_copy_signal.call_args.kwargs
+        assert signal_kwargs["skip_reason"] == "wallet_newly_followed"
+        assert signal_kwargs["order_placed"] == 0
+        db.insert_copy_position.assert_not_called()
+
+    def test_backlog_buy_skipped_even_if_market_would_be_resolved_or_over_limits(self):
+        """The bootstrap skip pre-empts the normal ladder entirely -- it
+        doesn't matter whether the market is resolved or exposure is
+        maxed out, the reason is always wallet_newly_followed."""
+        db = _mock_db()
+        db.get_followed_wallets.return_value = [_wallet(last_seen_trade_ts=None)]
+        db.get_open_copy_positions.return_value = [{"stake_usd": 999.0}]  # way over any cap
+        self._run(db, [_buy_raw()], resolution=True)  # market resolved YES
+
+        signal_kwargs = db.insert_copy_signal.call_args.kwargs
+        assert signal_kwargs["skip_reason"] == "wallet_newly_followed"
+
+    def test_fetch_market_resolution_never_called_for_backlog(self):
+        """No point spending the network call on a trade that's skipped
+        unconditionally -- also avoids hammering the resolution endpoint
+        across a large first-poll backlog."""
+        db = _mock_db()
+        db.get_followed_wallets.return_value = [_wallet(last_seen_trade_ts=None)]
+        mock_resolution = self._run(db, [_buy_raw()], resolution=None)
+
+        mock_resolution.assert_not_called()
+
+    def test_exposure_checks_never_called_for_backlog(self):
+        db = _mock_db()
+        db.get_followed_wallets.return_value = [_wallet(last_seen_trade_ts=None)]
+        self._run(db, [_buy_raw()], resolution=None)
+
+        db.get_open_copy_positions.assert_not_called()
+
+    def test_watermark_still_advances_normally_after_bootstrap_cycle(self):
+        db = _mock_db()
+        db.get_followed_wallets.return_value = [_wallet(last_seen_trade_ts=None)]
+        self._run(db, [_buy_raw(timestamp="1500")], resolution=None)
+
+        db.update_followed_wallet_last_seen.assert_called_once_with(ADDRESS, 1500)
+
+    def test_sell_trade_in_backlog_still_just_advances_watermark(self):
+        """SELLs were already never signaled -- the bootstrap guard only
+        changes BUY handling, so this should be unaffected."""
+        db = _mock_db()
+        db.get_followed_wallets.return_value = [_wallet(last_seen_trade_ts=None)]
+        self._run(db, [_sell_raw()], resolution=None)
+
+        db.insert_copy_signal.assert_not_called()
+        db.update_followed_wallet_last_seen.assert_called_once_with(ADDRESS, 1000)
+
+    def test_second_poll_no_longer_bootstraps(self):
+        """Once last_seen_trade_ts is set (from the first poll), a
+        subsequent poll goes through the normal decision ladder again."""
+        db = _mock_db()
+        db.get_followed_wallets.return_value = [_wallet(last_seen_trade_ts=1500)]
+        db.get_open_copy_positions.return_value = []
+        self._run(db, [_buy_raw(timestamp="2000")], resolution=None)
+
+        signal_kwargs = db.insert_copy_signal.call_args.kwargs
+        assert signal_kwargs.get("skip_reason") is None
+        assert signal_kwargs["order_placed"] == 1
+        db.insert_copy_position.assert_called_once()
 
 
 class TestLastSeenTradeTsAdvancement:

@@ -25,9 +25,10 @@ Per cycle, for each ``active``-status followed wallet
    research finding this relies on -- the live API returns newest-first
    by default, not oldest-first as previously (incorrectly) documented).
 2. For each new **BUY** trade (SELLs are never copied), decide
-   execute-or-skip: market already resolved, wallet exposure limit, total
-   exposure limit, else execute at a slippage-adjusted fill price sized
-   at the wallet's flat ``stake_per_trade``.
+   execute-or-skip: wallet newly followed (first-ever poll -- see below),
+   market already resolved, wallet exposure limit, total exposure limit,
+   else execute at a slippage-adjusted fill price sized at the wallet's
+   flat ``stake_per_trade``.
 3. Insert a ``copy_signals`` row for every detected BUY, executed or
    skipped, always with a specific ``skip_reason`` when not executed.
 4. Advance the wallet's ``last_seen_trade_ts`` past whatever was
@@ -37,6 +38,20 @@ Per cycle, for each ``active``-status followed wallet
 ``COPY_TRADING_ENABLED`` is live-read via ``get_live_config(db)`` at the
 top of every cycle -- an operator can flip it off mid-run and have it
 take effect on the very next cycle, not just at process start.
+
+**Bootstrap guard for a newly-followed wallet's first-ever poll.** A
+wallet's ``last_seen_trade_ts`` is ``NULL`` until its first poll
+completes -- with no reference point, "new since last check" would
+otherwise mean its *entire* fetched trade history, including BUYs on
+markets that are still open today, priced at whatever the trade cost
+months or years ago rather than a currently-tradable price. Every BUY in
+that first-poll backlog still gets a ``copy_signals`` row (never silently
+dropped), but is always skipped with ``skip_reason="wallet_newly_followed"``
+-- regardless of what the market-resolution or exposure checks would
+otherwise have said -- and never even spends a ``fetch_market_resolution()``
+call on it. The watermark still advances normally, so the *second* poll
+onward only ever sees genuinely new activity (decided in PR #1128 review,
+2026-09-20).
 
 **Startup sanity check, fail loud.** If
 ``COPY_MAX_TOTAL_EXPOSURE_USD > COPY_TRADING_CAPITAL_USD`` (both from
@@ -103,10 +118,20 @@ def _raw_trade_timestamp(raw: dict) -> "int | None":
 
 def _handle_buy_trade(
     db, wallet: dict, trade: dict, stake: float, live_config: dict, now_iso: str,
+    first_poll: bool = False,
 ) -> None:
     """Decide execute-or-skip for one normalized BUY trade and persist the
     outcome (always a copy_signals row; a copy_positions row too if
     executed).
+
+    **Bootstrap guard (PR #1128 review, 2026-09-20):** when *first_poll*
+    is ``True`` (the wallet's ``last_seen_trade_ts`` was ``NULL`` entering
+    this cycle), the trade is unconditionally skipped with
+    ``skip_reason="wallet_newly_followed"`` -- market-resolution and
+    exposure checks are never even evaluated, and
+    ``fetch_market_resolution()`` is not called at all (saving the
+    network call on a potentially large backlog). See the module
+    docstring's "Bootstrap guard" section for the full rationale.
 
     **Atomicity (AI review #1128, BLOCK item 1):** the exposure reads
     (``get_open_copy_positions``) and the resulting insert(s) are wrapped
@@ -142,7 +167,10 @@ def _handle_buy_trade(
     source_price = trade["price"]
     source_trade_id = trade.get("source_trade_id")
 
-    market_resolved = fetch_market_resolution(market) is not None
+    # Bootstrap guard short-circuits before the network call -- no point
+    # spending a fetch_market_resolution() request on a trade that will
+    # be skipped unconditionally regardless of its answer.
+    market_resolved = None if first_poll else fetch_market_resolution(market) is not None
 
     with db._lock:
         # Crash-recovery guard: if a prior cycle inserted a signal for
@@ -156,7 +184,9 @@ def _handle_buy_trade(
             return
 
         skip_reason = None
-        if market_resolved:
+        if first_poll:
+            skip_reason = "wallet_newly_followed"
+        elif market_resolved:
             skip_reason = "market_resolved"
         elif outcome_index is None:
             # Data-integrity guard, not part of the acceptance criteria's
@@ -231,6 +261,7 @@ def _process_wallet(db, wallet: dict, live_config: dict, now_iso: str) -> None:
     volume.
     """
     address = wallet["address"]
+    first_poll = wallet.get("last_seen_trade_ts") is None
     since_ts = wallet.get("last_seen_trade_ts") or 0
     stake = wallet["stake_per_trade"]
 
@@ -260,7 +291,9 @@ def _process_wallet(db, wallet: dict, live_config: dict, now_iso: str) -> None:
                 str(address)[:10], ts,
             )
         elif trade["side"] == "BUY":
-            _handle_buy_trade(db, wallet, trade, stake, live_config, now_iso)
+            _handle_buy_trade(
+                db, wallet, trade, stake, live_config, now_iso, first_poll=first_poll,
+            )
 
         # Only reached once this trade (BUY, SELL, or unnormalizable) has
         # fully finished processing without raising -- see the fail-safe
