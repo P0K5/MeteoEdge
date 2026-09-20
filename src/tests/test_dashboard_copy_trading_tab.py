@@ -105,12 +105,17 @@ def test_copy_trading_tab_matches_existing_tab_structure(html_content):
 
 
 def test_copy_trading_tab_order(html_content):
-    """Verify that copy-trading tab appears after config tab (last position)."""
+    """Verify that copy-trading tab appears after Promotion and before
+    Config, per issue #1144's explicit acceptance criteria (AI review
+    #1150, BLOCK item: the original diff placed it after Config, and this
+    test wrongly codified that instead of catching it)."""
+    promotion_idx = html_content.find('onclick="switchTab(\'promotion\')"')
     config_idx = html_content.find('onclick="switchTab(\'config\')"')
     copy_trading_idx = html_content.find('onclick="switchTab(\'copy-trading\')"')
 
+    assert promotion_idx != -1, "Promotion tab button not found"
     assert config_idx != -1, "Config tab button not found"
     assert copy_trading_idx != -1, "Copy-Trading tab button not found"
-    assert copy_trading_idx > config_idx, (
-        "Copy-Trading tab should appear after Config tab"
+    assert promotion_idx < copy_trading_idx < config_idx, (
+        "Copy-Trading tab should appear after Promotion and before Config"
     )
