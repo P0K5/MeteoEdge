@@ -1,0 +1,10 @@
+[Unit]
+Description=Run MeteoEdge copy-trading position settlement hourly
+
+[Timer]
+OnCalendar=hourly
+AccuracySec=1m
+Persistent=true
+
+[Install]
+WantedBy=timers.target
