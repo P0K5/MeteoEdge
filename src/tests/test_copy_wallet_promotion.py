@@ -104,6 +104,20 @@ class TestFollow:
 
         db.get_recent_wallet_screenings.assert_called_once_with("0xabc", limit=1)
 
+    @pytest.mark.parametrize("bad_stake", [0.0, -5.0, float("nan"), float("inf"), float("-inf")])
+    def test_refuses_non_positive_or_non_finite_stake(self, bad_stake):
+        db = MagicMock()
+        db.get_followed_wallets.return_value = []
+        db.get_recent_wallet_screenings.return_value = [_screening_row(eligible=1)]
+
+        rc = follow(db, "0xabc", stake=bad_stake, max_followed=10)
+
+        assert rc == 1
+        db.insert_followed_wallet.assert_not_called()
+        # Rejected before any DB read -- --stake validation happens up front.
+        db.get_followed_wallets.assert_not_called()
+        db.get_recent_wallet_screenings.assert_not_called()
+
 
 class TestPause:
     def test_calls_update_status_with_expected_args(self):
@@ -134,6 +148,15 @@ class TestResume:
 
         assert rc == 0
         db.update_followed_wallet_status.assert_called_once_with("0xabc", "active", None)
+
+    def test_refuses_when_already_active(self):
+        db = MagicMock()
+        db.get_followed_wallets.return_value = [_followed_row(address="0xabc", status="active")]
+
+        rc = resume(db, "0xabc", max_followed=10)
+
+        assert rc == 1
+        db.update_followed_wallet_status.assert_not_called()
 
     def test_refuses_when_would_exceed_max_wallets_followed(self):
         db = MagicMock()

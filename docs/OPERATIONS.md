@@ -512,6 +512,47 @@ sudo journalctl -u meteoedge-copy-screening.service -f
 tail -f logs/copy_screening.log
 ```
 
+#### copy_wallet_promotion.py — wallet follow/pause/resume CLI (issue #1122)
+
+Not a systemd service — a human-run CLI, mirroring how `src/model/promotion_gate.py`
+is documented under "Station Shadow→Live Promotion" in the root `OPERATIONS.md`.
+
+### Advisory only — this tool never auto-follows a wallet
+
+`copy_wallet_promotion.py` never runs unattended. The default (no-flag)
+invocation is a **read-only** advisory report: it lists wallets whose latest
+`copy_wallet_candidates` screening run has `eligible_to_follow=1` and that
+aren't already in `copy_wallets_followed`, sorted by `median_roi` descending,
+plus how many follow slots remain (`COPY_MAX_WALLETS_FOLLOWED` minus the
+current active count). It writes nothing to the database. Promoting a wallet
+into `copy_wallets_followed` only happens when a human explicitly runs
+`--follow <address>`.
+
+### Commands
+
+```bash
+# Advisory report — read-only, changes nothing
+python -m src.scripts.copy_wallet_promotion
+
+# Follow a wallet (refuses unless its latest screening run has
+# eligible_to_follow=1 and COPY_MAX_WALLETS_FOLLOWED isn't already hit).
+# --stake defaults to COPY_DEFAULT_FLAT_STAKE_USD if omitted.
+python -m src.scripts.copy_wallet_promotion --follow 0xabc... --stake 10
+
+# Pause a followed wallet (requires a reason -- the audit trail for this
+# human-run tool)
+python -m src.scripts.copy_wallet_promotion --pause 0xabc... --reason "unstable win rate"
+
+# Resume a paused wallet (refuses if it isn't currently paused, or if
+# resuming would exceed COPY_MAX_WALLETS_FOLLOWED active wallets)
+python -m src.scripts.copy_wallet_promotion --resume 0xabc...
+```
+
+Every `--follow`/`--pause`/`--resume` invocation prints a confirmation line
+naming what changed, since this tool's stdout is the only audit trail for a
+promotion/pause/resume decision until the followed-wallet-management
+dashboard UI ships (#1104).
+
 ---
 
 ## Configuration

@@ -590,8 +590,8 @@
     "semantic_hash": ""
   },
   "docs/OPERATIONS.md": {
-    "mtime": 1789857925.5031605,
-    "ast_hash": "e477b50e0b9474f68db5660e1dcd12bb",
+    "mtime": 1789892788.3050306,
+    "ast_hash": "53ccdf5a79db24df21514f5b4206634e",
     "semantic_hash": ""
   },
   "docs/README.md": {
@@ -2055,13 +2055,13 @@
     "semantic_hash": ""
   },
   "src/scripts/copy_wallet_promotion.py": {
-    "mtime": 1789892413.221687,
-    "ast_hash": "ce00567cffc9fc8a8522821ec7aebdf7",
+    "mtime": 1789892751.779457,
+    "ast_hash": "b4a22b437c8f1f4a3d7a23b6b25029ae",
     "semantic_hash": ""
   },
   "src/tests/test_copy_wallet_promotion.py": {
-    "mtime": 1789892413.2226868,
-    "ast_hash": "43fc6a8b4ce095da78032f43661d056a",
+    "mtime": 1789892776.9532504,
+    "ast_hash": "fbe33049a80bd16583176c3d26963d1a",
     "semantic_hash": ""
   }
 }

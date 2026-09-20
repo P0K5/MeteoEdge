@@ -23,6 +23,7 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import math
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -76,6 +77,13 @@ def report(db, max_followed: int) -> int:
 def follow(db, address: str, stake: float, max_followed: int) -> int:
     """Promote *address* into ``copy_wallets_followed``. Refuses (clear
     error, no DB write) unless all safety rails pass."""
+    if not math.isfinite(stake) or stake <= 0:
+        print(
+            f"Refusing to follow {address}: --stake must be a finite positive "
+            f"number in USD, got {stake!r}."
+        )
+        return 1
+
     already = {w["address"]: w["status"] for w in db.get_followed_wallets()}
     if address in already:
         print(
@@ -124,9 +132,15 @@ def pause(db, address: str, reason: str) -> int:
 
 
 def resume(db, address: str, max_followed: int) -> int:
-    known = {w["address"] for w in db.get_followed_wallets()}
+    known = {w["address"]: w["status"] for w in db.get_followed_wallets()}
     if address not in known:
         print(f"Refusing to resume {address}: not a followed wallet.")
+        return 1
+    if known[address] != "paused":
+        print(
+            f"Refusing to resume {address}: current status is "
+            f"{known[address]!r}, not 'paused' -- nothing to resume."
+        )
         return 1
 
     active_count = active_follow_count(db)
