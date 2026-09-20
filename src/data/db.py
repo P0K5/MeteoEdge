@@ -1803,6 +1803,80 @@ class Database:
             cur = self._conn.execute("SELECT * FROM copy_positions WHERE status='open'")
         return [dict(row) for row in cur.fetchall()]
 
+    def settle_copy_position(
+        self, position_id: int, settled_pnl_usd: float, settled_at: str
+    ) -> None:
+        """Flip one copy-trading position from ``'open'`` to ``'settled'``
+        in place, writing its realized P&L (issue #1131).
+
+        Idempotent by construction: the ``UPDATE`` is scoped
+        ``WHERE id=? AND status='open'``, so settling an already-settled
+        row (e.g. a retried cycle) matches zero rows -- a silent no-op,
+        never a double-write or an exception. Mirrors the
+        ``copy_wallets_followed``/``copy_positions`` in-place-mutation
+        pattern used elsewhere in this section (e.g.
+        ``update_followed_wallet_status``).
+        """
+        with self._lock:
+            self._conn.execute(
+                "UPDATE copy_positions SET status='settled', settled_pnl_usd=?, "
+                "settled_at=? WHERE id=? AND status='open'",
+                (settled_pnl_usd, settled_at, position_id),
+            )
+            self._conn.commit()
+
+    def get_copy_realized_pnl_by_wallet(self, address: "str | None" = None) -> list[dict]:
+        """Return realized P&L aggregated over ``status='settled'``
+        positions, one row per wallet: ``{'address', 'n_settled',
+        'total_pnl_usd'}``.
+
+        Optionally filtered to one wallet via *address*, following this
+        section's existing ``get_open_copy_positions(address=None)``
+        pattern -- filtered or not, this is a read-only ``SELECT`` (no
+        mutation). A wallet with zero settled positions has no matching
+        rows to ``GROUP BY``, so it is simply absent from the result
+        (whether that's because it truly has none, in the unfiltered case,
+        or because *address* names such a wallet) -- never a zero-valued
+        row.
+
+        Aggregate (all-wallets) realized P&L is *not* a thin wrapper over
+        this method -- see the dedicated ``get_copy_realized_pnl_total()``
+        below, which sums directly rather than summing this method's
+        per-wallet rows in Python.
+        """
+        if address is not None:
+            cur = self._conn.execute(
+                "SELECT address, COUNT(*) AS n_settled, SUM(settled_pnl_usd) AS total_pnl_usd "
+                "FROM copy_positions WHERE status='settled' AND address=? GROUP BY address",
+                (address,),
+            )
+        else:
+            cur = self._conn.execute(
+                "SELECT address, COUNT(*) AS n_settled, SUM(settled_pnl_usd) AS total_pnl_usd "
+                "FROM copy_positions WHERE status='settled' GROUP BY address"
+            )
+        return [dict(row) for row in cur.fetchall()]
+
+    def get_copy_realized_pnl_total(self) -> dict:
+        """Return realized P&L aggregated over ALL wallets' ``'settled'``
+        copy-trading positions: ``{'n_settled': int, 'total_pnl_usd': float}``.
+
+        A dedicated query (not a Python-side sum over
+        ``get_copy_realized_pnl_by_wallet()``'s rows) so this is one
+        read-only ``SELECT`` regardless of how many wallets are followed.
+        ``total_pnl_usd`` is ``0.0`` (not ``None``) when there are no
+        settled positions yet.
+        """
+        cur = self._conn.execute(
+            "SELECT COUNT(*) AS n_settled, SUM(settled_pnl_usd) AS total_pnl_usd "
+            "FROM copy_positions WHERE status='settled'"
+        )
+        row = cur.fetchone()
+        return {
+            "n_settled": row["n_settled"],
+            "total_pnl_usd": row["total_pnl_usd"] if row["total_pnl_usd"] is not None else 0.0,
+        }
+
     # ------------------------------------------------------------------
     # trades
     # ------------------------------------------------------------------
