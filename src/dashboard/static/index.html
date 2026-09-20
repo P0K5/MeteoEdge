@@ -1077,17 +1077,20 @@ a,button,input,select{transition:color var(--transition),background var(--transi
   </main>
 </section>
 
-<!-- ── COPY-TRADING TAB ── -->
+<!-- ── COPY-TRADING TAB (epic #1143) ── -->
 <section id="tab-copy-trading" class="tab-panel">
   <main class="main">
+    <div class="error-banner" id="copy-trading-error-banner">
+      <i data-lucide="alert-circle"></i>
+      <span id="copy-trading-error-text">Could not reach the copy-trading API — retrying…</span>
+    </div>
     <div class="section-hdr">
       <div class="section-title"><i data-lucide="copy"></i>Copy-Trading</div>
     </div>
     <div id="copy-trading-content">
       <div class="empty">
-        <i data-lucide="loader"></i>
-        <h3>Loading copy-trading dashboard…</h3>
-        <p>Initializing copy-trading views and data.</p>
+        <h3>Copy-trading views coming soon</h3>
+        <p>Candidates, Followed Wallets, Positions &amp; P&amp;L, and the Activity Feed will appear here as each is built.</p>
       </div>
     </div>
   </main>

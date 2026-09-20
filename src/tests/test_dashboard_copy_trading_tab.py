@@ -36,7 +36,7 @@ class TabButtonParser(HTMLParser):
 @pytest.fixture
 def html_content():
     """Load the dashboard HTML file."""
-    html_path = Path(__file__).parent.parent / "src" / "dashboard" / "static" / "index.html"
+    html_path = Path(__file__).resolve().parents[2] / "src" / "dashboard" / "static" / "index.html"
     with open(html_path, "r", encoding="utf-8") as f:
         return f.read()
 
@@ -58,6 +58,19 @@ def test_copy_trading_tab_panel_exists(html_content):
 
     assert "copy-trading" in parser.tab_panels, (
         "Copy-Trading tab panel not found in HTML sections"
+    )
+
+
+def test_copy_trading_tab_has_error_banner(html_content):
+    """Verify the tab has its own error-banner div, matching every other
+    tab's pattern (e.g. #promotion-error-banner) -- required so a future
+    story's fetch-failure handling has somewhere to render into without
+    adding new markup."""
+    assert 'id="copy-trading-error-banner"' in html_content, (
+        "Copy-Trading error-banner div not found"
+    )
+    assert 'class="error-banner" id="copy-trading-error-banner"' in html_content, (
+        "Copy-Trading error-banner div missing the error-banner class"
     )
 
 
