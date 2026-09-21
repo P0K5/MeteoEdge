@@ -2044,6 +2044,31 @@ class Database:
         row = cur.fetchone()
         return dict(row) if row is not None else None
 
+    def get_copy_signals(self, address: "str | None" = None) -> list[dict]:
+        """Return every ``copy_signals`` row, optionally filtered to one
+        wallet, newest-detected first.
+
+        Added for the Activity Feed view (issue #1149) -- unlike
+        ``get_copy_signal`` (singular, by primary key), the feed needs
+        every detected signal to merge against the auto-pause events.
+        Ordered by ``detected_at DESC, id DESC`` (``detected_at`` alone
+        only has second-level granularity, so ``id`` breaks ties
+        deterministically) -- following this section's existing
+        ``get_settled_copy_positions``/``get_recent_wallet_screenings``
+        ``id DESC`` tiebreak convention.
+        """
+        if address is not None:
+            cur = self._conn.execute(
+                "SELECT * FROM copy_signals WHERE address=? "
+                "ORDER BY detected_at DESC, id DESC",
+                (address,),
+            )
+        else:
+            cur = self._conn.execute(
+                "SELECT * FROM copy_signals ORDER BY detected_at DESC, id DESC"
+            )
+        return [dict(row) for row in cur.fetchall()]
+
     # ------------------------------------------------------------------
     # trades
     # ------------------------------------------------------------------
