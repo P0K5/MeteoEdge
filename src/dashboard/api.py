@@ -649,6 +649,42 @@ class CopySignalOut(BaseModel):
     skip_reason: str | None = None
 
 
+class CopyActivityEventOut(BaseModel):
+    """One normalized Activity Feed event (epic F, story F4, issue #1149)
+    -- shaped server-side so the frontend never has to reconcile two
+    different row shapes (``copy_signals`` vs ``copy_wallets_followed``)
+    itself, matching this file's established shaping-happens-in-the-
+    endpoint pattern (see ``copy_trading_positions()``'s docstring).
+
+    ``event_type`` is one of ``"order_placed"``, ``"order_skipped"``, or
+    ``"wallet_paused"`` -- a ``copy_signals`` row is always a terminal
+    outcome (``order_placed`` is set once, at insert time; there is no
+    separate "signal detected then later placed/skipped" transition to
+    represent, see ``copy_signal_loop.py``), so it maps to exactly one of
+    the first two. ``market``/``outcome_index``/``source_price``/
+    ``fill_price``/``size_usd``/``skip_reason``/``signal_id`` are only
+    populated for signal-derived events; ``paused_reason`` only for
+    ``wallet_paused`` events.
+    """
+    event_type: str
+    ts: str
+    address: str
+    market: str | None = None
+    outcome_index: int | None = None
+    source_price: float | None = None
+    fill_price: float | None = None
+    size_usd: float | None = None
+    skip_reason: str | None = None
+    paused_reason: str | None = None
+    signal_id: int | None = None
+
+
+class CopyActivityFeedOut(BaseModel):
+    """Single response for the Activity Feed view — reverse-chronological
+    (issue #1149 acceptance criteria)."""
+    events: list[CopyActivityEventOut]
+
+
 class EmosCoefficients(BaseModel):
     a: float
     b: float
@@ -2857,6 +2893,92 @@ def copy_trading_signal(signal_id: int) -> CopySignalOut:
         size_usd=row["size_usd"],
         skip_reason=row["skip_reason"],
     )
+
+
+# ---------------------------------------------------------------------------
+# Copy-trading API — Activity Feed view (epic F #1143, story F4 #1149)
+# ---------------------------------------------------------------------------
+
+_ACTIVITY_EVENT_TYPES = {"order_placed", "order_skipped", "wallet_paused"}
+
+
+@app.get("/api/copy-trading/activity-feed", response_model=CopyActivityFeedOut)
+def copy_trading_activity_feed(
+    address: "str | None" = None, event_type: "str | None" = None
+) -> CopyActivityFeedOut:
+    """Reverse-chronological feed of signal-detection and wallet-pause
+    events (issue #1149 acceptance criteria), merged server-side from two
+    different-shaped sources into one normalized ``CopyActivityEventOut``
+    shape -- matching this file's established shape-it-in-the-endpoint
+    pattern (see ``copy_trading_positions()``'s docstring), not a
+    frontend-side reconciliation.
+
+    Sources:
+    - ``copy_signals`` (via ``get_copy_signals``): every detected signal,
+      each a terminal ``order_placed`` or ``order_skipped`` outcome (see
+      ``CopyActivityEventOut``'s docstring for why there is no separate
+      "signal detected" event).
+    - ``copy_wallets_followed`` rows with ``status='paused'``: surfaced as
+      a synthetic ``wallet_paused`` event at ``paused_at``. A row with
+      ``paused_at IS NULL`` (a pre-#1145 legacy pause, before the
+      timestamp column existed) has no real timestamp to place it at, so
+      it is silently skipped rather than crashing or guessing a time --
+      exactly the acceptance criteria's required behavior.
+
+    *address* and *event_type* both filter the merged result (query
+    params); an *event_type* outside ``_ACTIVITY_EVENT_TYPES`` simply
+    yields no matches rather than a 400, matching this dashboard's
+    generally lenient filter-param handling elsewhere.
+    """
+    if _db is None:
+        raise HTTPException(status_code=503, detail="Database not initialised")
+
+    events: list[CopyActivityEventOut] = []
+
+    for row in _db.get_copy_signals(address=address):
+        if row["order_placed"]:
+            events.append(CopyActivityEventOut(
+                event_type="order_placed",
+                ts=row["detected_at"],
+                address=row["address"],
+                market=row["market"],
+                outcome_index=row["outcome_index"],
+                source_price=row["source_price"],
+                fill_price=row["fill_price"],
+                size_usd=row["size_usd"],
+                signal_id=row["id"],
+            ))
+        else:
+            events.append(CopyActivityEventOut(
+                event_type="order_skipped",
+                ts=row["detected_at"],
+                address=row["address"],
+                market=row["market"],
+                outcome_index=row["outcome_index"],
+                source_price=row["source_price"],
+                skip_reason=row["skip_reason"],
+                signal_id=row["id"],
+            ))
+
+    paused_wallets = _db.get_followed_wallets(status="paused")
+    if address is not None:
+        paused_wallets = [w for w in paused_wallets if w["address"] == address]
+    for w in paused_wallets:
+        if w.get("paused_at") is None:
+            continue  # pre-#1145 legacy row -- no real timestamped source, skip it
+        events.append(CopyActivityEventOut(
+            event_type="wallet_paused",
+            ts=w["paused_at"],
+            address=w["address"],
+            paused_reason=w.get("paused_reason"),
+        ))
+
+    if event_type is not None:
+        events = [e for e in events if e.event_type == event_type]
+
+    events.sort(key=lambda e: e.ts, reverse=True)
+
+    return CopyActivityFeedOut(events=events)
 
 
 # ---------------------------------------------------------------------------

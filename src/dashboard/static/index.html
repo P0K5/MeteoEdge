@@ -937,6 +937,25 @@ a,button,input,select{transition:color var(--transition),background var(--transi
 .copy-signal-detail-panel dt{color:var(--muted);font-weight:600;}
 .copy-signal-detail-panel dd{margin:0;font-family:var(--font-mono);}
 
+/* ── COPY-TRADING ACTIVITY FEED VIEW (epic F #1143, story F4 #1149) ── */
+.copy-activity-hdr{margin-top:var(--space-6);}
+.copy-activity-filters{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-2) var(--space-4);margin-bottom:var(--space-4);}
+.copy-activity-filter-label{font-size:var(--text-xs);color:var(--muted);font-weight:600;}
+#copy-activity-list{max-height:480px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--radius-lg);}
+.copy-activity-item{display:flex;flex-direction:column;gap:4px;padding:var(--space-3) var(--space-4);border-bottom:1px solid var(--divider);cursor:pointer;}
+.copy-activity-item:last-child{border-bottom:none;}
+.copy-activity-item:hover{background:var(--surface-off);}
+.copy-activity-item:focus-visible{outline:2px solid var(--primary);outline-offset:-2px;}
+.copy-activity-row1{display:flex;align-items:center;justify-content:space-between;gap:var(--space-3);}
+.copy-activity-row2{display:flex;align-items:center;gap:var(--space-2);font-size:var(--text-xs);color:var(--text);flex-wrap:wrap;}
+.copy-activity-ts{font-size:var(--text-xs);color:var(--muted);white-space:nowrap;}
+.copy-activity-desc{color:var(--muted);}
+.copy-activity-badge{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:var(--radius-full);font-size:var(--text-xs);font-weight:600;}
+.copy-activity-badge i{width:12px;height:12px;}
+.copy-activity-badge-placed{background:var(--yes-bg);color:var(--yes);}
+.copy-activity-badge-skipped{background:var(--warn-bg);color:var(--warn);}
+.copy-activity-badge-paused{background:var(--no-bg);color:var(--no);}
+
 /* ── VISUALLY-HIDDEN UTILITY (accessible column label with no visible text) ── */
 .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;}
 </style>
@@ -967,7 +986,7 @@ a,button,input,select{transition:color var(--transition),background var(--transi
   <button class="tab-btn" onclick="switchTab('edge')">Edge</button>
   <button class="tab-btn" onclick="switchTab('emos')">EMOS</button>
   <button class="tab-btn" onclick="switchTab('promotion')">Promotion</button>
-  <button class="tab-btn" onclick="switchTab('copy-trading')">Copy-Trading</button>
+  <button class="tab-btn" id="tab-btn-copy-trading" onclick="switchTab('copy-trading')">Copy-Trading</button>
   <button class="tab-btn" onclick="switchTab('config')">Config</button>
 </nav>
 
@@ -1319,6 +1338,35 @@ a,button,input,select{transition:color var(--transition),background var(--transi
           <i data-lucide="loader"></i>
           <h3>Loading positions…</h3>
           <p>Fetching copy-trading positions and P&amp;L.</p>
+        </div>
+      </div>
+
+      <!-- ── ACTIVITY FEED VIEW (story F4, issue #1149) ── -->
+      <div class="section-hdr copy-activity-hdr">
+        <div class="section-title"><i data-lucide="activity"></i>Activity Feed</div>
+      </div>
+      <div class="error-banner" id="copy-activity-stale-banner">
+        <i data-lucide="alert-circle"></i>
+        <span id="copy-activity-stale-text">Could not reach the activity feed — retrying…</span>
+      </div>
+      <div class="copy-activity-filters">
+        <label class="copy-activity-filter-label" for="copy-activity-wallet-select">Wallet</label>
+        <select id="copy-activity-wallet-select" class="config-edit-select" aria-label="Filter activity feed by wallet">
+          <option value="">All wallets</option>
+        </select>
+        <label class="copy-activity-filter-label" for="copy-activity-type-select">Event type</label>
+        <select id="copy-activity-type-select" class="config-edit-select" aria-label="Filter activity feed by event type">
+          <option value="">All events</option>
+          <option value="order_placed">Order placed</option>
+          <option value="order_skipped">Order skipped</option>
+          <option value="wallet_paused">Wallet paused</option>
+        </select>
+      </div>
+      <div id="copy-activity-list">
+        <div class="empty">
+          <i data-lucide="loader"></i>
+          <h3>Loading activity…</h3>
+          <p>Fetching the copy-trading activity feed.</p>
         </div>
       </div>
     </div>
@@ -3710,21 +3758,23 @@ function switchTab(tab) {
     }
   }
 
-  // Lazy-load Copy-Trading candidates + followed wallets on first
-  // activation; poll both every 5 minutes, matching the other
-  // advisory/report-style tabs (Promotion, EMOS).
+  // Lazy-load Copy-Trading candidates + followed wallets + positions +
+  // activity feed on first activation; poll all four every 5 minutes,
+  // matching the other advisory/report-style tabs (Promotion, EMOS).
   if (tab === 'copy-trading') {
     if (!copyTradingLoaded) {
       copyTradingLoaded = true;
       fetchCopyTradingCandidates();
       fetchFollowedWallets();
       fetchCopyTradingPositions();
+      fetchCopyTradingActivityFeed();
     }
     if (!copyTradingIntervalId) {
       copyTradingIntervalId = setInterval(() => {
         fetchCopyTradingCandidates();
         fetchFollowedWallets();
         fetchCopyTradingPositions();
+        fetchCopyTradingActivityFeed();
       }, 300_000);
     }
   }
@@ -3934,7 +3984,7 @@ function _copyRowHtml(c) {
   const safeId = _copySafeId(c.address);
   const addrEsc = _copyEscapeHtml(c.address);
   return `
-    <tr class="copy-row copy-row-expandable" tabindex="0" role="button"
+    <tr class="copy-row copy-row-expandable" id="copy-row-${safeId}" tabindex="0" role="button"
         data-address="${addrEsc}"
         aria-expanded="${_copyExpanded.has(c.address) ? 'true' : 'false'}"
         aria-label="Wallet ${addrEsc}, click to view screening history and follow options">
@@ -5032,6 +5082,226 @@ async function fetchCopyTradingPositions() {
 }
 
 /* ─────────────────────────────────────────
+   COPY-TRADING — ACTIVITY FEED VIEW (epic F #1143, story F4 #1149)
+   Data: GET /api/copy-trading/activity-feed (one response, already merged
+   + reverse-chronological server-side -- see api.py's
+   copy_trading_activity_feed() docstring). Wallet/event-type filters are
+   applied client-side against the cached full payload (never a re-fetch
+   per filter change), mirroring the Positions & P&L view's date-range
+   filter (_copyFilteredPnlHistory) -- the backend's own query-param
+   filters (issue #1149 acceptance criteria) exist for direct API callers,
+   not because the frontend needs a round-trip per filter change.
+
+   Uses its own #copy-activity-stale-banner (not the shared
+   #copy-trading-error-banner) so a failed activity-feed poll can't be
+   silently hidden by an unrelated Candidates/Followed/Positions fetch
+   that happens to resolve later in the same 5-minute tick -- still the
+   same .error-banner/.visible inline pattern as everywhere else in this
+   file (Designer decision: no toast/modal component), just scoped so the
+   acceptance criteria's stale-feed indicator is independently correct
+   and testable.
+   ───────────────────────────────────────── */
+
+let _copyActivityData = null;            // last-fetched full payload ({events: [...]})
+let _copyActivityFilters = { address: '', eventType: '' };
+let _copyActivityListenersBound = false;
+
+const COPY_ACTIVITY_EVENT_TYPE_LABELS = {
+  order_placed: 'Order placed',
+  order_skipped: 'Order skipped',
+  wallet_paused: 'Wallet paused',
+};
+
+function _copyActivityBadgeHtml(e) {
+  if (e.event_type === 'order_placed') {
+    return `<span class="copy-activity-badge copy-activity-badge-placed"><i data-lucide="check-circle"></i>Order placed</span>`;
+  }
+  if (e.event_type === 'order_skipped') {
+    return `<span class="copy-activity-badge copy-activity-badge-skipped"><i data-lucide="skip-forward"></i>Order skipped</span>`;
+  }
+  return `<span class="copy-activity-badge copy-activity-badge-paused"><i data-lucide="pause-circle"></i>Wallet paused</span>`;
+}
+
+function _copyActivityDescriptionHtml(e) {
+  if (e.event_type === 'order_placed') {
+    const px = e.fill_price != null ? (e.fill_price * 100).toFixed(1) + '¢' : '—';
+    const size = e.size_usd != null ? ` · $${e.size_usd.toFixed(2)}` : '';
+    return `<span class="copy-activity-desc">${_copyEscapeHtml(e.market || '—')} @ ${px}${size}</span>`;
+  }
+  if (e.event_type === 'order_skipped') {
+    const reason = e.skip_reason ? ` — ${_copyEscapeHtml(e.skip_reason)}` : '';
+    return `<span class="copy-activity-desc">${_copyEscapeHtml(e.market || '—')}${reason}</span>`;
+  }
+  return `<span class="copy-activity-desc">${e.paused_reason ? _copyEscapeHtml(e.paused_reason) : 'No reason given'}</span>`;
+}
+
+function _copyActivityItemHtml(e) {
+  const addrEsc = _copyEscapeHtml(e.address);
+  const ts = e.ts ? new Date(e.ts).toLocaleString() : '—';
+  const kind = e.event_type === 'wallet_paused' ? 'pause' : 'signal';
+  const label = COPY_ACTIVITY_EVENT_TYPE_LABELS[e.event_type] || e.event_type;
+  return `
+    <div class="copy-activity-item" role="button" tabindex="0"
+         data-kind="${kind}" data-address="${addrEsc}"
+         aria-label="${label} for ${addrEsc}, click to view wallet detail">
+      <div class="copy-activity-row1">
+        ${_copyActivityBadgeHtml(e)}
+        <span class="copy-activity-ts">${ts}</span>
+      </div>
+      <div class="copy-activity-row2">
+        <span class="copy-address-mono">${_copyEscapeHtml(_copyTruncateAddress(e.address))}</span>
+        ${_copyActivityDescriptionHtml(e)}
+      </div>
+    </div>`;
+}
+
+function _copyActivityFilteredEvents() {
+  if (!_copyActivityData) return [];
+  return _copyActivityData.events.filter(e => {
+    if (_copyActivityFilters.address && e.address !== _copyActivityFilters.address) return false;
+    if (_copyActivityFilters.eventType && e.event_type !== _copyActivityFilters.eventType) return false;
+    return true;
+  });
+}
+
+function _copyActivityWalletOptionsHtml(events, selected) {
+  const addresses = [...new Set(events.map(e => e.address))].sort();
+  const opts = addresses.map(a => `<option value="${_copyEscapeHtml(a)}"${a === selected ? ' selected' : ''}>${_copyEscapeHtml(_copyTruncateAddress(a))}</option>`).join('');
+  return `<option value="">All wallets</option>${opts}`;
+}
+
+// jumps from an activity event to the relevant wallet's detail --
+// Candidates' expandable detail panel for a signal event, or the
+// Followed Wallets row for a pause event (issue #1149 acceptance
+// criteria). Activity Feed lives inside the same 'copy-trading' tab as
+// those two views (not a separate top-level tab), so this is normally a
+// scroll-only no-op on the tab switch itself -- but it still routes
+// through the tab button's existing switchTab() handler (rather than a
+// bespoke jump function) per the acceptance criteria's explicit "switch
+// tabs via the existing switchTab() function", and stays correct if
+// these views are ever split into separate tabs later.
+function _copyActivityJumpToWallet(kind, address) {
+  if (currentTab !== 'copy-trading') {
+    const tabBtn = document.getElementById('tab-btn-copy-trading');
+    if (tabBtn) tabBtn.click();
+  }
+  if (kind === 'pause') {
+    const row = document.getElementById('followed-row-' + _copySafeId(address));
+    if (row) row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    return;
+  }
+  const row = document.getElementById('copy-row-' + _copySafeId(address));
+  if (row) {
+    row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    if (!_copyExpanded.has(address)) toggleCandidateDetail(address);
+  }
+}
+
+function _copyActivityOnListClick(event) {
+  const item = event.target.closest('.copy-activity-item');
+  if (!item) return;
+  _copyActivityJumpToWallet(item.dataset.kind, item.dataset.address);
+}
+
+function _copyActivityOnListKeydown(event) {
+  if (event.key !== 'Enter' && event.key !== ' ') return;
+  const item = event.target.closest('.copy-activity-item');
+  if (!item) return;
+  event.preventDefault();
+  _copyActivityJumpToWallet(item.dataset.kind, item.dataset.address);
+}
+
+// Single delegated click/keydown handler bound once to the (never-
+// replaced) #copy-activity-list container, same approach as the other
+// three Copy-Trading views' own _copy*BindListEvents().
+function _copyActivityBindListEvents() {
+  if (_copyActivityListenersBound) return;
+  const wrap = document.getElementById('copy-activity-list');
+  if (!wrap) return;
+  wrap.addEventListener('click', _copyActivityOnListClick);
+  wrap.addEventListener('keydown', _copyActivityOnListKeydown);
+  _copyActivityListenersBound = true;
+}
+
+function _copyActivityOnWalletFilterChange(event) {
+  _copyActivityFilters.address = event.target.value;
+  if (_copyActivityData) renderCopyActivityFeed(_copyActivityData);
+}
+
+function _copyActivityOnEventTypeFilterChange(event) {
+  _copyActivityFilters.eventType = event.target.value;
+  if (_copyActivityData) renderCopyActivityFeed(_copyActivityData);
+}
+
+function _copyActivityInitStaticControls() {
+  const walletSelect = document.getElementById('copy-activity-wallet-select');
+  if (walletSelect) walletSelect.addEventListener('change', _copyActivityOnWalletFilterChange);
+  const typeSelect = document.getElementById('copy-activity-type-select');
+  if (typeSelect) typeSelect.addEventListener('change', _copyActivityOnEventTypeFilterChange);
+}
+
+function renderCopyActivityFeed(data) {
+  _copyActivityData = data;
+  _copyActivityBindListEvents();
+
+  const walletSelect = document.getElementById('copy-activity-wallet-select');
+  if (walletSelect) {
+    walletSelect.innerHTML = _copyActivityWalletOptionsHtml(data.events, _copyActivityFilters.address);
+  }
+
+  const wrap = document.getElementById('copy-activity-list');
+  if (!wrap) return;
+
+  if (!data.events.length) {
+    wrap.innerHTML = `<div class="empty"><i data-lucide="inbox"></i><h3>No activity yet</h3><p>Signal detections and wallet pauses will appear here.</p></div>`;
+    lucide.createIcons();
+    return;
+  }
+
+  const filtered = _copyActivityFilteredEvents();
+  if (!filtered.length) {
+    wrap.innerHTML = `<div class="empty"><i data-lucide="filter-x"></i><h3>No matching activity</h3><p>Try a different wallet or event type filter.</p></div>`;
+    lucide.createIcons();
+    return;
+  }
+
+  // Already reverse-chronological from the backend (copy_trading_activity_feed()) --
+  // no client-side sort needed.
+  wrap.innerHTML = filtered.map(_copyActivityItemHtml).join('');
+  lucide.createIcons();
+}
+
+async function fetchCopyTradingActivityFeed() {
+  const banner = document.getElementById('copy-activity-stale-banner');
+  try {
+    const r = await fetch('/api/copy-trading/activity-feed');
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json();
+    if (banner) banner.classList.remove('visible');
+    renderCopyActivityFeed(data);
+  } catch (e) {
+    console.error('Copy-trading activity feed fetch failed:', e);
+    if (_copyActivityData) {
+      // Last-known-good data stays on screen — only the (dedicated) stale
+      // banner changes, this view's required stale-feed indicator (issue
+      // #1149 acceptance criteria: "don't let the feed silently go stale
+      // with no indication").
+      if (banner) banner.classList.add('visible');
+      const textEl = document.getElementById('copy-activity-stale-text');
+      if (textEl) {
+        textEl.textContent = `Feed fetch failed (${e.message}) — showing last-known data, retrying in 5 min`;
+      }
+    } else {
+      const wrap = document.getElementById('copy-activity-list');
+      if (wrap) {
+        wrap.innerHTML = `<div class="empty"><i data-lucide="alert-circle"></i><h3>Could not load activity feed</h3><p>${e.message} — retrying automatically.</p></div>`;
+        lucide.createIcons();
+      }
+    }
+  }
+}
+
+/* ─────────────────────────────────────────
    BOOT
    ───────────────────────────────────────── */
 window.addEventListener('DOMContentLoaded', () => {
@@ -5040,6 +5310,7 @@ window.addEventListener('DOMContentLoaded', () => {
   fetchBotLog();
   fetchWeatherHealth();
   _copyPositionsInitStaticControls();
+  _copyActivityInitStaticControls();
   portfolioIntervalId = setInterval(fetchPortfolio, 30_000);
   botLogIntervalId = setInterval(fetchBotLog, 30_000);
   setInterval(fetchWeatherHealth, 30_000);
