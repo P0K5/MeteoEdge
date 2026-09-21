@@ -566,6 +566,89 @@ class CopyStakeUpdateRequest(BaseModel):
     stake: float
 
 
+class CopyOpenPositionOut(BaseModel):
+    """One open copy-trading position, for the Positions & P&L view's open
+    positions table (epic F, issue #1148). Isolated from the weather
+    strategy's own PositionOut (issue #1100 isolation requirement) --
+    deliberately a different, copy-trading-specific shape, not a shared
+    model."""
+    id: int
+    address: str
+    market: str
+    outcome_index: int
+    entry_price: float
+    stake_usd: float
+    entry_ts: str
+    signal_id: int
+
+
+class CopySettledPnlPointOut(BaseModel):
+    """One settled copy-trading position, for the realized-P&L-over-time
+    chart. Raw rows, not a server-side date-bucketed aggregate -- see
+    ``copy_trading_positions()``'s docstring for why."""
+    address: str
+    market: str
+    settled_at: str
+    settled_pnl_usd: float
+    stake_usd: float
+
+
+class CopyWalletPnlBreakdownOut(BaseModel):
+    """One wallet's row in the per-wallet P&L breakdown table. Carries both
+    the realized figures (always present) and the backtest-comparison
+    figures (``None`` when the wallet has no screening row to compare
+    against) in a single row, so the frontend's backtest-comparison toggle
+    (issue #1148 acceptance criteria) just shows/hides columns rather than
+    re-fetching."""
+    address: str
+    n_settled: int
+    realized_pnl_usd: float
+    projected_flat_dollar_pnl: float | None = None
+    divergence_usd: float | None = None
+    divergence_pct: float | None = None
+
+
+class CopyPnlTotalOut(BaseModel):
+    n_settled: int
+    realized_pnl_usd: float
+
+
+class CopyBacktestComparisonTotalOut(BaseModel):
+    n_wallets: int
+    n_settled: int
+    realized_pnl_usd: float
+    projected_flat_dollar_pnl: float
+    divergence_usd: float
+    divergence_pct: float | None = None
+
+
+class CopyPositionsOut(BaseModel):
+    """Single response for the Positions & P&L view — one round-trip,
+    mirroring CopyCandidatesOut/CopyFollowedWalletsOut's design (issue
+    #1148 acceptance criteria)."""
+    open_positions: list[CopyOpenPositionOut]
+    realized_pnl_history: list[CopySettledPnlPointOut]  # settled rows, oldest first
+    per_wallet: list[CopyWalletPnlBreakdownOut]
+    total: CopyPnlTotalOut
+    backtest_total: CopyBacktestComparisonTotalOut
+
+
+class CopySignalOut(BaseModel):
+    """One copy_signals row, for a position's source-signal click-through
+    (issue #1148 acceptance criteria)."""
+    id: int
+    address: str
+    market: str
+    outcome_index: int | None = None
+    source_price: float
+    source_trade_id: str | None = None
+    detected_at: str
+    order_placed: bool
+    fill_price: float | None = None
+    size_usd: float | None = None
+    skip_reason: str | None = None
+
+
 class EmosCoefficients(BaseModel):
     a: float
     b: float
@@ -2647,6 +2730,132 @@ def copy_trading_update_wallet_stake(
     return CopyFollowResultOut(
         success=True,
         message=f"Updated {address} stake to ${req.stake:.2f}/trade.",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Copy-trading API — Positions & P&L view (epic F #1143, story F3 #1148)
+# ---------------------------------------------------------------------------
+
+@app.get("/api/copy-trading/positions", response_model=CopyPositionsOut)
+def copy_trading_positions() -> CopyPositionsOut:
+    """Open positions, realized-P&L history, per-wallet breakdown (with
+    backtest-comparison figures), and both totals for the Positions & P&L
+    view (issue #1148 acceptance criteria) — one response, mirroring
+    CopyCandidatesOut/CopyFollowedWalletsOut's single-round-trip design.
+
+    Every figure here is read through the existing, already-tested
+    ``get_open_copy_positions`` / ``get_copy_realized_pnl_by_wallet`` /
+    ``get_copy_realized_pnl_total`` / ``get_settled_copy_positions`` /
+    ``copy_backtest_comparison.get_wallet_backtest_comparison`` /
+    ``get_backtest_comparison_total`` methods — no new aggregation SQL.
+
+    Date-bucketed chart data (acceptance criteria's open question): no
+    server-side "realized P&L across ALL wallets, bucketed by date" method
+    exists — ``get_copy_realized_pnl_total_for_date`` only covers a single
+    UTC day (built for the daily-loss circuit breaker) and adding a ranged
+    version would be new aggregation SQL duplicating
+    ``get_settled_copy_positions``'s existing per-row read. So this returns
+    raw settled-position rows (oldest first) via that method, and the
+    frontend buckets them by day for the chart (see
+    ``_renderCopyPositionsChart`` in index.html).
+
+    Per-wallet breakdown covers every wallet with an active follow OR any
+    settled history — not just currently-followed wallets — because
+    unfollowing a wallet does not delete its ``copy_positions`` rows (see
+    ``copy_trading_unfollow_wallet``'s docstring), and those positions'
+    realized P&L should stay visible here.
+    """
+    if _db is None:
+        raise HTTPException(status_code=503, detail="Database not initialised")
+
+    from src.data.copy_backtest_comparison import (
+        get_backtest_comparison_total,
+        get_wallet_backtest_comparison,
+    )
+
+    open_positions = [
+        CopyOpenPositionOut(
+            id=row["id"],
+            address=row["address"],
+            market=row["market"],
+            outcome_index=row["outcome_index"],
+            entry_price=row["entry_price"],
+            stake_usd=row["stake_usd"],
+            entry_ts=row["entry_ts"],
+            signal_id=row["signal_id"],
+        )
+        for row in _db.get_open_copy_positions()
+    ]
+
+    # Union of currently-followed addresses and any address with settled
+    # history, so a wallet unfollowed after settling positions still shows
+    # up in the breakdown (see docstring above).
+    addresses = {row["address"] for row in _db.get_copy_realized_pnl_by_wallet()}
+    addresses |= {w["address"] for w in _db.get_followed_wallets()}
+
+    realized_pnl_history: list[CopySettledPnlPointOut] = []
+    per_wallet: list[CopyWalletPnlBreakdownOut] = []
+    for address in addresses:
+        for row in _db.get_settled_copy_positions(address):
+            realized_pnl_history.append(CopySettledPnlPointOut(
+                address=row["address"],
+                market=row["market"],
+                settled_at=row["settled_at"],
+                settled_pnl_usd=row["settled_pnl_usd"],
+                stake_usd=row["stake_usd"],
+            ))
+
+        comparison = get_wallet_backtest_comparison(_db, address)
+        per_wallet.append(CopyWalletPnlBreakdownOut(**comparison))
+
+    realized_pnl_history.sort(key=lambda p: p.settled_at)
+    # Best-performing wallet first, matching the Candidates view's
+    # performance-first default sort (never a $ PnL-only sort there, but
+    # this table *is* the P&L table, so realized_pnl_usd is the natural key).
+    per_wallet.sort(key=lambda w: w.realized_pnl_usd, reverse=True)
+
+    total = _db.get_copy_realized_pnl_total()
+    backtest_total = get_backtest_comparison_total(_db)
+
+    return CopyPositionsOut(
+        open_positions=open_positions,
+        realized_pnl_history=realized_pnl_history,
+        per_wallet=per_wallet,
+        total=CopyPnlTotalOut(
+            n_settled=total["n_settled"],
+            realized_pnl_usd=total["total_pnl_usd"],
+        ),
+        backtest_total=CopyBacktestComparisonTotalOut(**backtest_total),
+    )
+
+
+@app.get("/api/copy-trading/signals/{signal_id}", response_model=CopySignalOut)
+def copy_trading_signal(signal_id: int) -> CopySignalOut:
+    """One ``copy_signals`` row, for the Positions & P&L view's
+    position → source-signal click-through (issue #1148 acceptance
+    criteria: "shows its source signal (which wallet, which trade it
+    copied)", joined via ``copy_positions.signal_id``).
+    """
+    if _db is None:
+        raise HTTPException(status_code=503, detail="Database not initialised")
+
+    row = _db.get_copy_signal(signal_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"No signal with id={signal_id}")
+
+    return CopySignalOut(
+        id=row["id"],
+        address=row["address"],
+        market=row["market"],
+        outcome_index=row["outcome_index"],
+        source_price=row["source_price"],
+        source_trade_id=row["source_trade_id"],
+        detected_at=row["detected_at"],
+        order_placed=bool(row["order_placed"]),
+        fill_price=row["fill_price"],
+        size_usd=row["size_usd"],
+        skip_reason=row["skip_reason"],
     )
 
 

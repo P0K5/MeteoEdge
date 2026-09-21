@@ -2240,3 +2240,35 @@ class TestGetCopyRealizedPnlTotalForDate:
 
         result = db.get_copy_realized_pnl_total_for_date("2026-09-19")
         assert result == {"n_settled": 0, "total_pnl_usd": 0.0}
+
+
+class TestGetCopySignal:
+    """Database.get_copy_signal (issue #1148) -- single copy_signals row by
+    id, for the Positions & P&L view's position -> source-signal
+    click-through."""
+
+    def test_returns_the_matching_row(self):
+        db = _db()
+        signal_id = db.insert_copy_signal(
+            address="0xaaa", market="0xmarket1", source_price=0.42,
+            detected_at="2026-09-19T00:00:00+00:00", outcome_index=1,
+            source_trade_id="tx123", order_placed=1, fill_price=0.43,
+            size_usd=5.0,
+        )
+
+        row = db.get_copy_signal(signal_id)
+
+        assert row is not None
+        assert row["id"] == signal_id
+        assert row["address"] == "0xaaa"
+        assert row["market"] == "0xmarket1"
+        assert row["source_price"] == pytest.approx(0.42)
+        assert row["outcome_index"] == 1
+        assert row["source_trade_id"] == "tx123"
+        assert row["order_placed"] == 1
+        assert row["fill_price"] == pytest.approx(0.43)
+        assert row["size_usd"] == pytest.approx(5.0)
+
+    def test_unknown_id_returns_none(self):
+        db = _db()
+        assert db.get_copy_signal(999) is None
