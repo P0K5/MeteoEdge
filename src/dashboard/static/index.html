@@ -4721,6 +4721,7 @@ function _copyOpenPositionsTableHtml(positions) {
           <th class="copy-th" scope="col">Entry price</th>
           <th class="copy-th" scope="col">Stake</th>
           <th class="copy-th" scope="col">Entered</th>
+          <th class="copy-th" scope="col"><span class="sr-only">Row details</span></th>
         </tr>
       </thead>
       <tbody>${positions.map(_copyOpenPositionRowHtml).join('')}</tbody>
@@ -4730,23 +4731,29 @@ function _copyOpenPositionsTableHtml(positions) {
 
 function _copyOpenPositionRowHtml(p) {
   const safeId = 'pos-' + p.id;
+  const addrEsc = _copyEscapeHtml(p.address);
   const entered = p.entry_ts ? new Date(p.entry_ts).toLocaleString() : '—';
   return `
     <tr class="copy-row copy-position-row" tabindex="0" role="button"
-        data-position-id="${p.id}" data-signal-id="${p.signal_id}"
+        data-position-id="${p.id}" data-signal-id="${p.signal_id}" data-address="${addrEsc}"
         aria-expanded="${_copyExpandedPositionIds.has(p.id) ? 'true' : 'false'}"
         aria-label="Position in ${_copyEscapeHtml(p.market)}, click to view its source signal">
       <td class="copy-td copy-address-cell">
-        <span class="copy-address-mono" title="${_copyEscapeHtml(p.address)}">${_copyEscapeHtml(_copyTruncateAddress(p.address))}</span>
+        <span class="copy-address-mono" title="${addrEsc}">${_copyEscapeHtml(_copyTruncateAddress(p.address))}</span>
+        <button type="button" class="copy-copy-btn"
+                aria-label="Copy full wallet address to clipboard" title="Copy address">
+          <i data-lucide="copy"></i>
+        </button>
       </td>
       <td class="copy-td" title="${_copyEscapeHtml(p.market)}">${_copyEscapeHtml(_copyTruncateMarket(p.market))}</td>
       <td class="copy-td">${p.outcome_index === 0 ? 'YES' : 'NO'}</td>
       <td class="copy-td">${(p.entry_price * 100).toFixed(1)}¢</td>
       <td class="copy-td">$${p.stake_usd.toFixed(2)}</td>
       <td class="copy-td">${entered}</td>
+      <td class="copy-td"><i data-lucide="chevron-down" class="copy-chevron" id="copy-pos-chev-${safeId}"></i></td>
     </tr>
     <tr class="copy-signal-detail-row" id="copy-signal-row-${safeId}" style="display:none">
-      <td class="copy-signal-detail-td" colspan="6">
+      <td class="copy-signal-detail-td" colspan="7">
         <div class="copy-signal-detail-panel" id="copy-signal-panel-${safeId}">Loading…</div>
       </td>
     </tr>`;
@@ -4776,6 +4783,7 @@ function _copyPerWalletTableHtml(rows) {
 }
 
 function _copyPerWalletRowHtml(w) {
+  const addrEsc = _copyEscapeHtml(w.address);
   const pnlCls = w.realized_pnl_usd >= 0 ? 'copy-pnl-pos' : 'copy-pnl-neg';
   let backtestCells = '';
   if (_copyBacktestOn) {
@@ -4791,9 +4799,13 @@ function _copyPerWalletRowHtml(w) {
     backtestCells = `<td class="copy-td">${projected}</td><td class="copy-td">${divergence}</td>`;
   }
   return `
-    <tr class="copy-row">
+    <tr class="copy-row" data-address="${addrEsc}">
       <td class="copy-td copy-address-cell">
-        <span class="copy-address-mono" title="${_copyEscapeHtml(w.address)}">${_copyEscapeHtml(_copyTruncateAddress(w.address))}</span>
+        <span class="copy-address-mono" title="${addrEsc}">${_copyEscapeHtml(_copyTruncateAddress(w.address))}</span>
+        <button type="button" class="copy-copy-btn"
+                aria-label="Copy full wallet address to clipboard" title="Copy address">
+          <i data-lucide="copy"></i>
+        </button>
       </td>
       <td class="copy-td">${w.n_settled}</td>
       <td class="copy-td ${pnlCls}">${_copyFmtUsd(w.realized_pnl_usd)}</td>
@@ -4839,9 +4851,11 @@ async function _renderSignalDetail(positionId, signalId) {
 async function _copyToggleSignalDetail(positionId, signalId) {
   const safeId = 'pos-' + positionId;
   const row = document.getElementById('copy-signal-row-' + safeId);
+  const chev = document.getElementById('copy-pos-chev-' + safeId);
   if (!row) return;
   const opening = row.style.display === 'none' || !row.style.display;
   row.style.display = opening ? 'table-row' : 'none';
+  if (chev) chev.style.transform = opening ? 'rotate(180deg)' : 'rotate(0deg)';
   if (opening) {
     _copyExpandedPositionIds.add(positionId);
     await _renderSignalDetail(positionId, signalId);
@@ -4854,15 +4868,24 @@ function _copyReopenExpandedPositionDetails() {
   _copyExpandedPositionIds.forEach(async (positionId) => {
     const safeId = 'pos-' + positionId;
     const row = document.getElementById('copy-signal-row-' + safeId);
+    const chev = document.getElementById('copy-pos-chev-' + safeId);
     if (!row) { _copyExpandedPositionIds.delete(positionId); return; }
     const posRow = row.previousElementSibling;
     const signalId = posRow ? posRow.dataset.signalId : null;
     row.style.display = 'table-row';
+    if (chev) chev.style.transform = 'rotate(180deg)';
     if (signalId) await _renderSignalDetail(positionId, signalId);
   });
 }
 
 function _copyPositionsOnListClick(event) {
+  const copyBtn = event.target.closest('.copy-copy-btn');
+  if (copyBtn) {
+    event.stopPropagation();
+    const address = copyBtn.closest('[data-address]')?.dataset.address;
+    if (address) copyAddressToClipboard(address, copyBtn);
+    return;
+  }
   const row = event.target.closest('.copy-position-row');
   if (row) {
     _copyToggleSignalDetail(parseInt(row.dataset.positionId, 10), row.dataset.signalId);
