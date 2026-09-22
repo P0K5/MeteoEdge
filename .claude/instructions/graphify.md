@@ -23,8 +23,10 @@ At the start of any session:
   of raw source browsing.
 - Read `graphify-out/GRAPH_REPORT.md` only for broad architecture review or
   when query/path/explain do not surface enough context.
-- After modifying code locally, run `graphify update .` to keep the graph
-  current (AST-only, no API cost).
+- You may run `graphify update .` locally (AST-only, no API cost) to keep
+  your understanding current after code changes. **Do not commit these changes
+  to your PR branch** — the graphify-update CI workflow updates the committed
+  graph automatically on master (issue #1153, #1165 CI guard).
 - Do not run `graphify extract` unless explicitly requested, the committed
   graph is missing, or a major architecture/doc change requires a fresh
   semantic rebuild.
