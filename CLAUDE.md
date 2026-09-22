@@ -120,9 +120,8 @@ AI reviewer model: DeepSeek. Prompt: `agents/reviewer_prompt_deepseek.md`.
 ## graphify
 
 Follow `.claude/instructions/graphify.md`. Short version: query the committed
-graph (`graphify query/path/explain`) before grep/glob exploration; run
-`graphify update .` after local code changes; never `graphify extract` unless
-explicitly requested.
+graph (`graphify query/path/explain`) before grep/glob exploration; never
+`graphify extract` unless explicitly requested.
 
 ## Continuous improvement
 
