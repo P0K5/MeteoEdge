@@ -620,6 +620,20 @@ a,button,input,select{transition:color var(--transition),background var(--transi
 .side-mode-shadow{background:var(--warn-bg);color:var(--warn);}
 .station-side-badges{display:flex;gap:var(--space-2);flex-wrap:wrap;}
 
+/* ── COPY-TRADING LIVE/PAPER MODE BADGES (epic J #1161, issue #1185) ──
+   Structurally identical to .side-mode-badge above, but a deliberately
+   distinct class name: this varies on the live/paper *execution regime*
+   axis, not the weather strategy's per-side (YES/NO) live/shadow axis.
+   Never alias the two -- see docs/design/copy-trading-live-views.md. */
+.mode-badge{
+  display:inline-flex;align-items:center;gap:4px;
+  padding:3px 8px;border-radius:var(--radius-full);
+  font-size:var(--text-xs);font-weight:700;letter-spacing:.05em;
+  flex-shrink:0;
+}
+.mode-badge-live{background:var(--yes-bg);color:var(--yes);}
+.mode-badge-paper{background:var(--warn-bg);color:var(--warn);}
+
 /* Per-side accent: live/live=green, mixed=blue, shadow/shadow=amber */
 .station-card.accent-live-live{border-left-color:var(--yes);}
 .station-card.accent-live-shadow{border-left-color:var(--primary);}
@@ -1251,6 +1265,15 @@ a,button,input,select{transition:color var(--transition),background var(--transi
     </div>
     <div class="section-hdr">
       <div class="section-title"><i data-lucide="copy"></i>Copy-Trading</div>
+      <!-- Tab-wide live/paper posture banner (epic J #1161, issue #1185).
+           Distinct element from .live-pill (data-connection freshness,
+           not trading mode) -- visible across all four Copy-Trading views
+           since it lives in this shared header. Defaults to the OFF/paper
+           state until fetchCopyTradingModePosture() resolves, same
+           conservative-default rule as the execution_mode fallback. -->
+      <span id="copy-trading-mode-banner" class="mode-badge mode-badge-paper"
+            role="status" aria-live="polite"
+            aria-label="Live trading is off — paper only">LIVE TRADING OFF — paper only</span>
     </div>
     <div id="copy-trading-content">
       <!-- ── CANDIDATES VIEW (story F1, issue #1146) ── -->
@@ -3759,11 +3782,13 @@ function switchTab(tab) {
   }
 
   // Lazy-load Copy-Trading candidates + followed wallets + positions +
-  // activity feed on first activation; poll all four every 5 minutes,
-  // matching the other advisory/report-style tabs (Promotion, EMOS).
+  // activity feed + the tab-wide live/paper posture banner on first
+  // activation; poll all five every 5 minutes, matching the other
+  // advisory/report-style tabs (Promotion, EMOS).
   if (tab === 'copy-trading') {
     if (!copyTradingLoaded) {
       copyTradingLoaded = true;
+      fetchCopyTradingModePosture();
       fetchCopyTradingCandidates();
       fetchFollowedWallets();
       fetchCopyTradingPositions();
@@ -3771,6 +3796,7 @@ function switchTab(tab) {
     }
     if (!copyTradingIntervalId) {
       copyTradingIntervalId = setInterval(() => {
+        fetchCopyTradingModePosture();
         fetchCopyTradingCandidates();
         fetchFollowedWallets();
         fetchCopyTradingPositions();
@@ -4243,6 +4269,44 @@ async function submitFollow(address, btn) {
     btn.disabled = false;
     btn.classList.remove('loading');
     console.error(`Follow request failed for ${address}:`, e);
+  }
+}
+
+/* ─────────────────────────────────────────
+   COPY-TRADING — GLOBAL LIVE/PAPER POSTURE BANNER (epic J #1161, #1185)
+   Data: GET /api/config, group "copy_trading", key
+   COPY_LIVE_TRADING_ENABLED (Epic G's single global kill switch). Shared
+   across all four Copy-Trading views since the banner lives in the tab's
+   common header, not any one view -- see docs/design/copy-trading-live-
+   views.md ("Global: a tab-wide live/paper posture banner").
+   ───────────────────────────────────────── */
+function renderCopyTradingModePosture(liveEnabled) {
+  const el = document.getElementById('copy-trading-mode-banner');
+  if (!el) return;
+  if (liveEnabled) {
+    el.className = 'mode-badge mode-badge-live';
+    el.textContent = 'LIVE TRADING ON';
+    el.setAttribute('aria-label', 'Live trading is on');
+  } else {
+    el.className = 'mode-badge mode-badge-paper';
+    el.textContent = 'LIVE TRADING OFF — paper only';
+    el.setAttribute('aria-label', 'Live trading is off — paper only');
+  }
+}
+
+async function fetchCopyTradingModePosture() {
+  try {
+    const r = await fetch('/api/config');
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json();
+    const param = data && data.copy_trading && data.copy_trading.COPY_LIVE_TRADING_ENABLED;
+    renderCopyTradingModePosture(!!(param && param.value));
+  } catch (e) {
+    // Conservative default: never claim LIVE when the source of truth is
+    // unavailable -- same "assume paper" fallback rule as execution_mode
+    // elsewhere in this epic (docs/design/copy-trading-live-views.md).
+    renderCopyTradingModePosture(false);
+    console.error('Copy-trading mode posture fetch failed:', e);
   }
 }
 
