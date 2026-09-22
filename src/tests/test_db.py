@@ -2266,6 +2266,242 @@ class TestCopyLivePositions:
         assert "REFERENCES copy_signals" in ddl
 
 
+class TestCopyLivePositionsFilledStakeUsd:
+    """Issue #1171 item 3 / #1174: filled_stake_usd, distinct from the
+    row's own (originally-intended) stake_usd."""
+
+    def _signal_id(self, db, **overrides):
+        kwargs = dict(
+            address="0xabc", market="0xmarket1", source_price=0.45,
+            detected_at="2026-09-19T00:00:00+00:00",
+        )
+        kwargs.update(overrides)
+        return db.insert_copy_signal(**kwargs)
+
+    def _live_position_kwargs(self, signal_id, **overrides):
+        kwargs = dict(
+            signal_id=signal_id, address="0xabc", market="0xmarket1",
+            outcome_index=0, stake_usd=25.0, entry_ts="2026-09-19T00:00:00+00:00",
+        )
+        kwargs.update(overrides)
+        return kwargs
+
+    def test_column_defaults_to_null(self):
+        db = _db()
+        signal_id = self._signal_id(db)
+        position_id = db.insert_copy_live_position(**self._live_position_kwargs(signal_id))
+        row = dict(db._conn.execute(
+            "SELECT * FROM copy_live_positions WHERE id=?", (position_id,)
+        ).fetchone())
+        assert row["filled_stake_usd"] is None
+
+    def test_update_status_to_partial_records_filled_stake_usd(self):
+        db = _db()
+        signal_id = self._signal_id(db)
+        position_id = db.insert_copy_live_position(**self._live_position_kwargs(signal_id))
+
+        db.update_copy_live_position_status(
+            position_id, "partial", order_id="0xorder1", fill_price=0.46,
+            filled_stake_usd=3.5,
+        )
+
+        row = dict(db._conn.execute(
+            "SELECT * FROM copy_live_positions WHERE id=?", (position_id,)
+        ).fetchone())
+        assert row["status"] == "partial"
+        assert row["filled_stake_usd"] == 3.5
+
+    def test_update_status_does_not_clobber_previously_set_filled_stake_usd(self):
+        """Same COALESCE contract as order_id/fill_price/rejected_reason --
+        a later call that omits filled_stake_usd must not null it out."""
+        db = _db()
+        signal_id = self._signal_id(db)
+        position_id = db.insert_copy_live_position(**self._live_position_kwargs(signal_id))
+        db.update_copy_live_position_status(
+            position_id, "partial", order_id="0xorder1", fill_price=0.46,
+            filled_stake_usd=3.5,
+        )
+
+        db.update_copy_live_position_status(position_id, "partial", fill_price=0.46)
+
+        row = dict(db._conn.execute(
+            "SELECT * FROM copy_live_positions WHERE id=?", (position_id,)
+        ).fetchone())
+        assert row["filled_stake_usd"] == 3.5
+
+
+class TestGetUnsettledCopyLivePositions:
+    """Issue #1174: distinct from get_open_copy_live_positions -- excludes
+    'pending' rows (no fill yet, nothing to settle)."""
+
+    def _signal_id(self, db, **overrides):
+        kwargs = dict(
+            address="0xabc", market="0xmarket1", source_price=0.45,
+            detected_at="2026-09-19T00:00:00+00:00",
+        )
+        kwargs.update(overrides)
+        return db.insert_copy_signal(**kwargs)
+
+    def _live_position_kwargs(self, signal_id, **overrides):
+        kwargs = dict(
+            signal_id=signal_id, address="0xabc", market="0xmarket1",
+            outcome_index=0, stake_usd=25.0, entry_ts="2026-09-19T00:00:00+00:00",
+        )
+        kwargs.update(overrides)
+        return kwargs
+
+    def test_includes_filled_and_partial_excludes_pending_rejected_settled(self):
+        db = _db()
+        signal_id = self._signal_id(db)
+        pending_id = db.insert_copy_live_position(**self._live_position_kwargs(signal_id))
+
+        filled_id = db.insert_copy_live_position(**self._live_position_kwargs(signal_id))
+        db.update_copy_live_position_status(filled_id, "filled", order_id="o1", fill_price=0.46)
+
+        partial_id = db.insert_copy_live_position(**self._live_position_kwargs(signal_id))
+        db.update_copy_live_position_status(partial_id, "partial", order_id="o2", fill_price=0.46)
+
+        rejected_id = db.insert_copy_live_position(**self._live_position_kwargs(signal_id))
+        db.update_copy_live_position_status(rejected_id, "rejected", rejected_reason="x")
+
+        settled_id = db.insert_copy_live_position(**self._live_position_kwargs(signal_id))
+        db.update_copy_live_position_status(settled_id, "filled", order_id="o3", fill_price=0.46)
+        db.settle_copy_live_position(settled_id, 1.0, "2026-09-20T00:00:00+00:00")
+
+        ids = {r["id"] for r in db.get_unsettled_copy_live_positions()}
+        assert ids == {filled_id, partial_id}
+        assert pending_id not in ids
+        assert rejected_id not in ids
+        assert settled_id not in ids
+
+    def test_filters_by_address(self):
+        db = _db()
+        signal_a = self._signal_id(db, address="0xaaa")
+        signal_b = self._signal_id(db, address="0xbbb")
+        pos_a = db.insert_copy_live_position(
+            **self._live_position_kwargs(signal_a, address="0xaaa")
+        )
+        db.update_copy_live_position_status(pos_a, "filled", order_id="o1", fill_price=0.46)
+        pos_b = db.insert_copy_live_position(
+            **self._live_position_kwargs(signal_b, address="0xbbb")
+        )
+        db.update_copy_live_position_status(pos_b, "filled", order_id="o2", fill_price=0.46)
+
+        rows = db.get_unsettled_copy_live_positions("0xaaa")
+        assert [r["id"] for r in rows] == [pos_a]
+
+
+class TestGetGhostOrderPositions:
+    """Issue #1171 item 1 / #1174: only the specific
+    rejected_reason='cancel_failed_ghost' marker counts as a ghost -- a
+    confirmed, unambiguous rejection never does."""
+
+    def _signal_id(self, db, **overrides):
+        kwargs = dict(
+            address="0xabc", market="0xmarket1", source_price=0.45,
+            detected_at="2026-09-19T00:00:00+00:00",
+        )
+        kwargs.update(overrides)
+        return db.insert_copy_signal(**kwargs)
+
+    def _live_position_kwargs(self, signal_id, **overrides):
+        kwargs = dict(
+            signal_id=signal_id, address="0xabc", market="0xmarket1",
+            outcome_index=0, stake_usd=25.0, entry_ts="2026-09-19T00:00:00+00:00",
+        )
+        kwargs.update(overrides)
+        return kwargs
+
+    def test_returns_only_cancel_failed_ghost_rows(self):
+        db = _db()
+        signal_id = self._signal_id(db)
+
+        ghost_id = db.insert_copy_live_position(**self._live_position_kwargs(signal_id))
+        db.update_copy_live_position_status(
+            ghost_id, "rejected", order_id="oid-ghost",
+            rejected_reason="cancel_failed_ghost", fill_price=0.40,
+        )
+
+        plain_rejected_id = db.insert_copy_live_position(**self._live_position_kwargs(signal_id))
+        db.update_copy_live_position_status(
+            plain_rejected_id, "rejected", order_id="oid-plain", rejected_reason="timeout",
+        )
+
+        filled_id = db.insert_copy_live_position(**self._live_position_kwargs(signal_id))
+        db.update_copy_live_position_status(filled_id, "filled", order_id="oid-f", fill_price=0.40)
+
+        rows = db.get_ghost_order_positions()
+        assert [r["id"] for r in rows] == [ghost_id]
+
+    def test_excludes_ghost_row_with_no_order_id(self):
+        """Should not happen in practice (a ghost always reaches the cancel
+        step, which requires an already-placed order) -- but never crash on
+        a data-integrity surprise."""
+        db = _db()
+        signal_id = self._signal_id(db)
+        position_id = db.insert_copy_live_position(**self._live_position_kwargs(signal_id))
+        db.update_copy_live_position_status(
+            position_id, "rejected", rejected_reason="cancel_failed_ghost",
+        )
+        assert db.get_ghost_order_positions() == []
+
+    def test_no_ghost_rows_returns_empty_list(self):
+        db = _db()
+        assert db.get_ghost_order_positions() == []
+
+
+class TestGetCopyLiveRealizedPnlTotal:
+    """Issue #1174: mirrors get_copy_realized_pnl_total, one layer up."""
+
+    def _signal_id(self, db, **overrides):
+        kwargs = dict(
+            address="0xabc", market="0xmarket1", source_price=0.45,
+            detected_at="2026-09-19T00:00:00+00:00",
+        )
+        kwargs.update(overrides)
+        return db.insert_copy_signal(**kwargs)
+
+    def _live_position_kwargs(self, signal_id, **overrides):
+        kwargs = dict(
+            signal_id=signal_id, address="0xabc", market="0xmarket1",
+            outcome_index=0, stake_usd=25.0, entry_ts="2026-09-19T00:00:00+00:00",
+        )
+        kwargs.update(overrides)
+        return kwargs
+
+    def test_zero_when_no_settled_positions(self):
+        db = _db()
+        assert db.get_copy_live_realized_pnl_total() == {"n_settled": 0, "total_pnl_usd": 0.0}
+
+    def test_sums_across_wallets(self):
+        db = _db()
+        signal_id = self._signal_id(db)
+
+        won_id = db.insert_copy_live_position(**self._live_position_kwargs(signal_id))
+        db.update_copy_live_position_status(won_id, "filled", order_id="o1", fill_price=0.40)
+        db.settle_copy_live_position(won_id, 15.0, "2026-09-20T00:00:00+00:00")
+
+        lost_id = db.insert_copy_live_position(**self._live_position_kwargs(signal_id))
+        db.update_copy_live_position_status(lost_id, "filled", order_id="o2", fill_price=0.40)
+        db.settle_copy_live_position(lost_id, -25.0, "2026-09-20T00:00:00+00:00")
+
+        assert db.get_copy_live_realized_pnl_total() == {"n_settled": 2, "total_pnl_usd": -10.0}
+
+    def test_isolated_from_paper_copy_positions(self):
+        """A settled PAPER copy_positions row must never leak into this
+        REAL-positions aggregate."""
+        db = _db()
+        signal_id = self._signal_id(db)
+        paper_id = db.insert_copy_position(
+            signal_id=signal_id, address="0xabc", market="0xmarket1",
+            outcome_index=0, entry_price=0.40, stake_usd=10.0,
+            entry_ts="2026-09-19T00:00:00+00:00",
+        )
+        db.settle_copy_position(paper_id, 99.0, "2026-09-20T00:00:00+00:00")
+
+        assert db.get_copy_live_realized_pnl_total() == {"n_settled": 0, "total_pnl_usd": 0.0}
+
+
 class TestSettleCopyPosition:
     """Database.settle_copy_position (issue #1131) -- idempotent status flip."""
 

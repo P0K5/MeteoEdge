@@ -648,6 +648,90 @@ sudo journalctl -u meteoedge-copy-settle.service -f
 tail -f logs/copy_settle.log
 ```
 
+#### meteoedge-copy-live-settle.service / meteoedge-copy-live-settle.timer
+
+One-shot service, run **hourly** by `meteoedge-copy-live-settle.timer` --
+same cadence as `meteoedge-copy-settle.timer`, but a fully separate process
+and unit (issue #1100 isolation: never touches `copy_positions`/
+`open_positions`/`trades`). Runs `src/scripts/copy_live_settle`
+(epic I #1160, issue #1174), which does three independent things for REAL
+(live) copy-trading positions each run:
+
+1. **Settlement:** for every `copy_live_positions` row with `status IN
+   ('filled','partial')`, resolves its market via `fetch_market_resolution`
+   (grouped by distinct market, same rate-limit pattern as `copy_settle.py`),
+   computes realized P&L via `src.data.copy_pnl.compute_realized_pnl_usd`,
+   and persists via `Database.settle_copy_live_position`. A `'partial'`
+   row's P&L uses its actual `filled_stake_usd` (issue #1171 item 3), never
+   the full originally-intended `stake_usd`.
+2. **Ghost-order recovery** (issue #1171 item 1): re-checks any
+   `rejected_reason='cancel_failed_ghost'` row (left ambiguous by a failed
+   GTC cancel in `copy_live_executor.py`) via `LiveTrader.check_fill`/
+   `get_order_fill_size`, and trues it up to `'filled'`/`'partial'` (a real
+   fill, escalated via `log.critical`) or a confirmed
+   `'cancel_confirmed_zero_fill'` rejection. Still-ambiguous rows (order
+   still resting) are left for the next run.
+3. **Wallet-balance reconciliation:** compares the real CLOB USDC balance
+   (`LiveTrader.get_usdc_balance()`) against an expected balance derived
+   from local bookkeeping (`COPY_LIVE_CAPITAL_USD` minus currently-committed
+   fills, plus realized settled P&L), and `log.critical`s when the drift
+   exceeds `COPY_LIVE_BALANCE_DRIFT_TOLERANCE_USD` (live-editable via the
+   dashboard config tab, default $2.00). Skipped entirely (no CLOB call)
+   when `COPY_LIVE_CAPITAL_USD<=0` -- the same "no real capital allocated
+   yet" safety default `COPY_LIVE_TRADING_ENABLED` and
+   `live_startup_sanity_check` already use elsewhere in this epic set.
+
+A single row/check that fails is logged and skipped — it never aborts the
+run or blocks the other two things this script does.
+
+```ini
+[Unit]
+Description=MeteoEdge live copy-trading settlement, wallet reconciliation, and ghost-order recovery
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=p0k5
+WorkingDirectory=/home/p0k5/MeteoEdge
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=/home/p0k5/MeteoEdge/.env
+ExecStart=/home/p0k5/MeteoEdge/.venv/bin/python -u -m src.scripts.copy_live_settle
+StandardOutput=append:/home/p0k5/MeteoEdge/logs/copy_live_settle.log
+StandardError=append:/home/p0k5/MeteoEdge/logs/copy_live_settle.log
+```
+
+```ini
+[Unit]
+Description=Run MeteoEdge live copy-trading settlement/reconciliation hourly
+
+[Timer]
+OnCalendar=hourly
+AccuracySec=1m
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+```
+
+**Why hourly:** Same rationale as `meteoedge-copy-settle.timer` -- a
+resolved real position (or a wallet-balance drift) sitting undetected for
+up to 24h before this job runs is a much worse outcome for real-money
+reconciliation than for the once-daily weather strategy.
+
+**Operational commands:**
+```bash
+# Check next scheduled run
+sudo systemctl list-timers meteoedge-copy-live-settle.timer
+
+# Manually trigger a run
+sudo systemctl start meteoedge-copy-live-settle.service
+
+# View logs
+sudo journalctl -u meteoedge-copy-live-settle.service -f
+tail -f logs/copy_live_settle.log
+```
+
 #### meteoedge-copy-health.service / meteoedge-copy-health.timer
 
 One-shot service, run daily at **03:15 UTC** by `meteoedge-copy-health.timer`.

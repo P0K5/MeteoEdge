@@ -793,6 +793,7 @@ class TestLiveExecution:
 
         db.update_copy_live_position_status.assert_called_once_with(
             101, status="filled", order_id="oid-1", fill_price=0.41, rejected_reason=None,
+            filled_stake_usd=None,
         )
 
     def test_enabled_but_no_token_id_on_trade_is_rejected_without_submitting(self):
@@ -918,7 +919,29 @@ class TestLiveExecution:
 
         db.update_copy_live_position_status.assert_called_once_with(
             101, status="rejected", order_id="oid-timeout", rejected_reason="timeout",
-            fill_price=None,
+            fill_price=None, filled_stake_usd=None,
+        )
+
+    def test_ghost_order_rejection_preserves_fill_price_for_later_recovery(self):
+        """A ghost order (rejected_reason='cancel_failed_ghost', #1174)
+        carries its placed fill_price through to the DB write even though
+        status='rejected' -- recover_ghost_orders() needs it later to value
+        a fill discovered on recheck. This is the one 'rejected' case where
+        fill_price is NOT None."""
+        db = _mock_db()
+        live_config = _live_enabled_config()
+        with patch(
+            "src.scripts.copy_signal_loop.execute_live_copy_order",
+            return_value={
+                "status": "rejected", "order_id": "oid-ghost",
+                "rejected_reason": "cancel_failed_ghost", "fill_price": 0.40,
+            },
+        ):
+            self._run(db, [_buy_raw()], live_config=live_config, resolution=None)
+
+        db.update_copy_live_position_status.assert_called_once_with(
+            101, status="rejected", order_id="oid-ghost",
+            rejected_reason="cancel_failed_ghost", fill_price=0.40, filled_stake_usd=None,
         )
 
     def test_partial_fill_is_recorded_with_partial_status(self):
@@ -932,6 +955,28 @@ class TestLiveExecution:
 
         db.update_copy_live_position_status.assert_called_once_with(
             101, status="partial", order_id="oid-2", fill_price=0.40, rejected_reason=None,
+            filled_stake_usd=None,
+        )
+
+    def test_partial_fill_with_filled_stake_usd_is_passed_through(self):
+        """Issue #1171 item 3 / #1174: when execute_live_copy_order reports
+        the actual USD spent on a confirmed partial fill, it must reach the
+        DB write -- not be silently dropped -- so settlement can later
+        compute P&L from what actually filled, not the full intended stake."""
+        db = _mock_db()
+        live_config = _live_enabled_config()
+        with patch(
+            "src.scripts.copy_signal_loop.execute_live_copy_order",
+            return_value={
+                "status": "partial", "order_id": "oid-2", "fill_price": 0.40,
+                "filled_stake_usd": 3.5,
+            },
+        ):
+            self._run(db, [_buy_raw()], live_config=live_config, resolution=None)
+
+        db.update_copy_live_position_status.assert_called_once_with(
+            101, status="partial", order_id="oid-2", fill_price=0.40, rejected_reason=None,
+            filled_stake_usd=3.5,
         )
 
     def test_db_write_failure_after_real_fill_logs_critical_and_does_not_raise(self, caplog):

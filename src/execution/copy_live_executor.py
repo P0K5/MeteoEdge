@@ -130,9 +130,13 @@ def execute_live_copy_order(
     Returns:
         One of:
           ``{"status": "filled", "order_id": str, "fill_price": float}``
-          ``{"status": "partial", "order_id": str, "fill_price": float}``
+          ``{"status": "partial", "order_id": str, "fill_price": float,
+              "filled_stake_usd": float}``
           ``{"status": "rejected", "order_id": str | None,
               "rejected_reason": str}``
+          ``{"status": "rejected", "order_id": str, "fill_price": float,
+              "rejected_reason": "cancel_failed_ghost"}`` -- see "Ghost
+          orders" below.
 
         ``fill_price`` on a fill/partial is the *placed* limit price
         (converted back from cents), not a re-queried exchange-matched
@@ -140,6 +144,32 @@ def execute_live_copy_order(
         ``_append_live_trade`` already make for the weather strategy (a
         GTC BUY limit order fills at its limit price or better; price
         improvement, if any, is not captured here or there).
+
+        ``filled_stake_usd`` on a ``"partial"`` result is the actual USD
+        spent (``filled_shares * fill_price``), distinct from the caller's
+        originally-requested *stake_usd* -- issue #1171 item 3 / #1174:
+        a partial fill's P&L must be computed from what actually filled,
+        not the full intended stake.
+
+    **Ghost orders (issue #1171 item 1 / #1174).** When the exchange
+    ``cancel_order`` call itself raises after a fill-wait timeout, the
+    order's true fate is unknown: it may still be resting, may have
+    already filled, or the exchange may have cancelled it despite the
+    client-side error (mirrors ``LiveTrader.sell_position_immediate``'s
+    own "cancel_order() returned False -- ambiguous" precedent on the SELL
+    side). This is fundamentally different from a *confirmed* zero-fill
+    timeout/cancellation (``cancel_ok=True``), which is a genuine,
+    unambiguous rejection. A ghost is therefore reported with a distinct
+    ``rejected_reason="cancel_failed_ghost"`` -- never the generic
+    ``"timeout"``/``"cancelled"`` strings -- and its ``fill_price`` (the
+    placed price, needed to later value any fill discovered on recheck) IS
+    included even though ``status="rejected"``, so the periodic
+    reconciliation job (``src/scripts/copy_live_settle.py``,
+    ``Database.get_ghost_order_positions`` /
+    ``recover_ghost_orders``) can find and re-verify these rows via
+    ``LiveTrader.check_fill``/``get_order_fill_size`` and true them up to a
+    correct terminal status, instead of a ghost order silently masquerading
+    as a normal, confirmed rejection forever.
 
     Never raises -- every failure mode (placement rejected, cancel
     failure, unexpected exception) is caught and returned as
@@ -187,7 +217,13 @@ def execute_live_copy_order(
                 trader.cancel_order(order_id)
             except Exception as e:
                 cancel_ok = False
-                log.error(
+                # Issue #1171 item 2: this is CRITICAL severity (an order
+                # may now be live on the exchange with nothing tracking
+                # it), not just an error-level log with "CRITICAL" embedded
+                # in the message text -- if any alerting/paging is keyed
+                # off log level, the previous log.error(...) call here
+                # under-reported it.
+                log.critical(
                     "  [copy-live] CRITICAL: failed to cancel GTC order %s after timeout: %s. "
                     "Order is still live on the exchange and may fill as a ghost trade.",
                     order_id[:12], e, exc_info=True,
@@ -195,6 +231,18 @@ def execute_live_copy_order(
 
         log.info("  [copy-live] %s %s...", outcome, order_id[:12])
         return order_id, outcome, cancel_ok
+
+    def _partial_result(oid: str, cents: int, filled_shares: float) -> dict:
+        """Build a "partial" result dict, including the actual USD spent
+        (issue #1171 item 3 / #1174) -- distinct from the caller's
+        originally-requested stake_usd, needed for correct partial-fill P&L."""
+        fp = round(cents / 100, 4)
+        return {
+            "status": "partial",
+            "order_id": oid,
+            "fill_price": fp,
+            "filled_stake_usd": round(filled_shares * fp, 6),
+        }
 
     price_cents = _price_to_cents(price)
     order_id, outcome, cancel_ok = _attempt(price_cents)
@@ -211,11 +259,7 @@ def execute_live_copy_order(
     if outcome in ("timeout", "cancelled") and cancel_ok:
         filled_shares = trader.get_order_fill_size(order_id)
         if filled_shares and filled_shares > 0:
-            return {
-                "status": "partial",
-                "order_id": order_id,
-                "fill_price": round(price_cents / 100, 4),
-            }
+            return _partial_result(order_id, price_cents, filled_shares)
 
     # Issue #743-style one-shot reprice-retry: only after a CLEANLY
     # cancelled timeout (no confirmed fill) with retry enabled. Never
@@ -232,20 +276,41 @@ def execute_live_copy_order(
             )
             order_id2, outcome2, cancel_ok2 = _attempt(new_cents)
             if outcome2 != "place_failed":
-                order_id, outcome, price_cents = order_id2, outcome2, new_cents
-                if outcome in ("timeout", "cancelled") and cancel_ok2:
+                # Reassign cancel_ok (not just order_id/outcome/price_cents)
+                # to the RETRY attempt's own value -- a bug fixed by #1174:
+                # previously the outer `cancel_ok` (from the FIRST attempt)
+                # was never updated here, so a cancel failure on the RETRY
+                # fell through to the final "rejected" return below with a
+                # plain outcome-string reason, indistinguishable from a
+                # genuine confirmed-zero-fill rejection -- the exact same
+                # ghost-order gap this fix closes for the first attempt.
+                order_id, outcome, price_cents, cancel_ok = (
+                    order_id2, outcome2, new_cents, cancel_ok2,
+                )
+                if outcome in ("timeout", "cancelled") and cancel_ok:
                     filled_shares = trader.get_order_fill_size(order_id)
                     if filled_shares and filled_shares > 0:
-                        return {
-                            "status": "partial",
-                            "order_id": order_id,
-                            "fill_price": round(price_cents / 100, 4),
-                        }
+                        return _partial_result(order_id, price_cents, filled_shares)
 
     if outcome == "filled":
         return {
             "status": "filled",
             "order_id": order_id,
+            "fill_price": round(price_cents / 100, 4),
+        }
+
+    if not cancel_ok:
+        # Ghost order (see module docstring): the cancel call itself failed,
+        # so this is NOT a confirmed zero-fill rejection -- the order's true
+        # fate on the exchange is unknown. Flag with a distinct
+        # rejected_reason (never the generic outcome string) so
+        # copy_live_settle.py's periodic recover_ghost_orders() can find and
+        # re-verify it via check_fill()/get_order_fill_size(), and include
+        # the placed price so a later-discovered fill can be valued.
+        return {
+            "status": "rejected",
+            "order_id": order_id,
+            "rejected_reason": "cancel_failed_ghost",
             "fill_price": round(price_cents / 100, 4),
         }
 

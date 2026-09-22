@@ -1,0 +1,14 @@
+[Unit]
+Description=MeteoEdge live copy-trading settlement, wallet reconciliation, and ghost-order recovery
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=p0k5
+WorkingDirectory=/home/p0k5/MeteoEdge
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=/home/p0k5/MeteoEdge/.env
+ExecStart=/home/p0k5/MeteoEdge/.venv/bin/python -u -m src.scripts.copy_live_settle
+StandardOutput=append:/home/p0k5/MeteoEdge/logs/copy_live_settle.log
+StandardError=append:/home/p0k5/MeteoEdge/logs/copy_live_settle.log

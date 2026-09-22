@@ -660,6 +660,19 @@ class Database:
             # NULL for rows written before this migration or paused wallets
             # without a known pause time.
             ("copy_wallets_followed", "paused_at", "TEXT"),
+            # Issue #1171 item 3 / #1174: actual filled stake in USD, distinct
+            # from copy_live_positions.stake_usd (the originally-INTENDED
+            # stake). Before this column existed, a 'partial' row's P&L had
+            # no way to be computed from what actually filled -- only the
+            # full intended stake was available, silently overstating both
+            # exposure and (once settlement existed) P&L on every partial
+            # fill. NULL for 'pending'/'rejected' rows (never filled) and for
+            # 'filled' rows where the fill is assumed equal to the full
+            # stake_usd (no partial-fill precision needed there); populated
+            # only when execute_live_copy_order confirms a partial fill.
+            # Readers should use COALESCE(filled_stake_usd, stake_usd) to
+            # stay correct for rows written before this migration.
+            ("copy_live_positions", "filled_stake_usd", "REAL"),
         ]:
             try:
                 self._conn.execute(
@@ -2156,6 +2169,7 @@ class Database:
         order_id: "str | None" = None,
         fill_price: "float | None" = None,
         rejected_reason: "str | None" = None,
+        filled_stake_usd: "float | None" = None,
     ) -> None:
         """Move one ``copy_live_positions`` row through its pre-settlement
         lifecycle: ``'pending'`` -> ``'filled'``/``'partial'``/``'rejected'``.
@@ -2168,18 +2182,27 @@ class Database:
         an order (still ``'pending'``) passes only ``order_id``; a fill
         passes ``status='filled'``/``'partial'`` with ``fill_price``; a
         rejection passes ``status='rejected'`` with ``rejected_reason``.
+        A confirmed partial fill (issue #1171 item 3 / #1174) also passes
+        ``filled_stake_usd`` -- the actual USD spent on the fill, distinct
+        from the row's own ``stake_usd`` (the originally-intended amount).
 
-        ``order_id``/``fill_price``/``rejected_reason`` each default to
-        ``None`` and use ``COALESCE`` against the existing row -- a call
-        that omits one of them (e.g. a fill call that doesn't repeat the
-        ``order_id`` an earlier submission-recording call already wrote)
-        preserves the previously-written value instead of silently
+        ``order_id``/``fill_price``/``rejected_reason``/``filled_stake_usd``
+        each default to ``None`` and use ``COALESCE`` against the existing
+        row -- a call that omits one of them (e.g. a fill call that doesn't
+        repeat the ``order_id`` an earlier submission-recording call already
+        wrote) preserves the previously-written value instead of silently
         nulling it out. This matters because these columns are real order
         IDs and fill prices used for P&L/exposure checks -- a data-loss
         bug here would be a trading-safety issue, not just a cosmetic
         one. There is currently no supported way to explicitly clear one
         of these columns back to ``NULL`` once set; none of this table's
-        real lifecycles need that.
+        real lifecycles need that. One known consequence: a ghost order
+        (issue #1174's ``recover_ghost_orders``) that transitions from
+        ``'rejected'`` to ``'filled'``/``'partial'`` keeps its stale
+        ``rejected_reason`` text even though ``status`` is no longer
+        ``'rejected'`` -- ``status`` remains the authoritative field;
+        callers must never read ``rejected_reason`` without first checking
+        ``status=='rejected'``.
 
         Settlement is **not** handled here -- see
         ``settle_copy_live_position`` below, which mirrors
@@ -2190,8 +2213,9 @@ class Database:
                 "UPDATE copy_live_positions SET status=?, "
                 "order_id=COALESCE(?, order_id), "
                 "fill_price=COALESCE(?, fill_price), "
-                "rejected_reason=COALESCE(?, rejected_reason) WHERE id=?",
-                (status, order_id, fill_price, rejected_reason, position_id),
+                "rejected_reason=COALESCE(?, rejected_reason), "
+                "filled_stake_usd=COALESCE(?, filled_stake_usd) WHERE id=?",
+                (status, order_id, fill_price, rejected_reason, filled_stake_usd, position_id),
             )
             self._conn.commit()
 
@@ -2245,7 +2269,8 @@ class Database:
     def get_copy_live_realized_pnl_total(self) -> dict:
         """Return realized P&L aggregated over ALL wallets' ``'settled'``
         REAL copy-trading positions: ``{'n_settled': int, 'total_pnl_usd':
-        float}`` (issue #1175 live circuit breaker).
+        float}`` (issue #1175 live circuit breaker; also consumed by issue
+        #1174's wallet-balance reconciliation).
 
         Mirrors ``get_copy_realized_pnl_total`` exactly, one layer up --
         queries ``copy_live_positions`` instead of ``copy_positions``, so
@@ -2264,6 +2289,51 @@ class Database:
             "n_settled": row["n_settled"],
             "total_pnl_usd": row["total_pnl_usd"] if row["total_pnl_usd"] is not None else 0.0,
         }
+
+    def get_unsettled_copy_live_positions(self, address: "str | None" = None) -> list[dict]:
+        """Return ``copy_live_positions`` rows ready to settle -- ``status``
+        IN ``('filled','partial')`` -- optionally filtered to one wallet
+        (issue #1174).
+
+        Distinct from ``get_open_copy_live_positions`` (which also includes
+        ``'pending'`` rows that have no fill yet -- nothing for
+        ``copy_live_settle.py`` to settle there). Mirrors
+        ``get_open_copy_positions``' shape for ``copy_settle.py`` to consume,
+        one layer up.
+        """
+        if address is not None:
+            cur = self._conn.execute(
+                "SELECT * FROM copy_live_positions WHERE status IN ('filled','partial') "
+                "AND address=?",
+                (address,),
+            )
+        else:
+            cur = self._conn.execute(
+                "SELECT * FROM copy_live_positions WHERE status IN ('filled','partial')"
+            )
+        return [dict(row) for row in cur.fetchall()]
+
+    def get_ghost_order_positions(self) -> list[dict]:
+        """Return ``copy_live_positions`` rows left in an ambiguous state by
+        a failed GTC cancel (issue #1171 item 1 / #1174).
+
+        ``rejected_reason='cancel_failed_ghost'`` is the specific marker
+        ``copy_live_executor.execute_live_copy_order`` writes when the
+        exchange cancel call itself raised after a fill-wait timeout -- the
+        order's true fate (still resting, already filled, or actually
+        cancelled despite the client-side error) is unknown at that point.
+        This is deliberately narrower than ``status='rejected'`` as a whole:
+        a *confirmed* zero-fill timeout/cancellation is a genuine, correct
+        rejection, not a ghost, and must never be re-queried here. Only
+        rows with a non-NULL ``order_id`` are returned -- a ghost, by
+        construction, always has one (it reached the cancel step, which
+        requires an already-placed order).
+        """
+        cur = self._conn.execute(
+            "SELECT * FROM copy_live_positions WHERE status='rejected' "
+            "AND rejected_reason='cancel_failed_ghost' AND order_id IS NOT NULL"
+        )
+        return [dict(row) for row in cur.fetchall()]
 
     def get_copy_live_realized_pnl_total_for_date(self, date_str: str) -> dict:
         """Return realized P&L aggregated over ``status='settled'`` REAL
