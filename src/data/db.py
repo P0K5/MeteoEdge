@@ -447,6 +447,44 @@ CREATE TABLE IF NOT EXISTS copy_positions (
 );
 CREATE INDEX IF NOT EXISTS idx_copy_positions_address_status
     ON copy_positions(address, status);
+
+-- Copy-trading REAL positions (issue #1166, epic H #1159). One layer up
+-- from copy_positions (paper): same shape, but for actual order fills.
+-- Fully separate table from copy_positions/open_positions per the #1100
+-- isolation decision -- FKs only into copy_signals(id), never into
+-- copy_positions or open_positions, and nothing shares writes across
+-- them. This issue is schema/data-access only -- no order placement
+-- logic writes to this table yet -- that's the follow-up issue (#1167,
+-- blocked on this one).
+--
+-- Unlike copy_positions' open/settled-only lifecycle, a REAL order can be
+-- pending or rejected before any fill exists, so status has three
+-- pre-settlement states: 'pending' (submitted, no fill yet), 'filled'
+-- (fully filled), 'partial' (partially filled), plus 'rejected' (never
+-- filled) and 'settled' (terminal, mirrors copy_positions -- rows are
+-- retained in place, never deleted, so epic C-equivalent P&L history can
+-- read them later). order_id is nullable until submitted -- a row
+-- rejected before submission may never get one. fill_price is nullable
+-- until filled. rejected_reason is only populated when status='rejected',
+-- never silently dropped.
+CREATE TABLE IF NOT EXISTS copy_live_positions (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    signal_id        INTEGER NOT NULL REFERENCES copy_signals(id),
+    address          TEXT NOT NULL,
+    market           TEXT NOT NULL,
+    outcome_index    INTEGER NOT NULL CHECK(outcome_index IN (0,1)),
+    order_id         TEXT,
+    fill_price       REAL CHECK(fill_price IS NULL OR (fill_price >= 0 AND fill_price <= 1)),
+    stake_usd        REAL NOT NULL CHECK(stake_usd > 0),
+    status           TEXT NOT NULL DEFAULT 'pending'
+                     CHECK(status IN ('pending','filled','partial','rejected','settled')),
+    rejected_reason  TEXT,
+    entry_ts         TEXT NOT NULL,
+    settled_pnl_usd  REAL,
+    settled_at       TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_copy_live_positions_address_status
+    ON copy_live_positions(address, status);
 """
 
 
@@ -2066,6 +2104,141 @@ class Database:
         else:
             cur = self._conn.execute(
                 "SELECT * FROM copy_signals ORDER BY detected_at DESC, id DESC"
+            )
+        return [dict(row) for row in cur.fetchall()]
+
+    # ------------------------------------------------------------------
+    # copy_live_positions (issue #1166, epic H #1159) -- one layer up from
+    # copy_positions for REAL fills. Schema/data-access only: no order
+    # placement logic writes here yet (that's the follow-up issue #1167,
+    # blocked on this one). Fully separate table from copy_positions/
+    # open_positions per the #1100 isolation decision -- FKs only into
+    # copy_signals(id), never into copy_positions or open_positions.
+    # ------------------------------------------------------------------
+
+    def insert_copy_live_position(
+        self,
+        *,
+        signal_id: int,
+        address: str,
+        market: str,
+        outcome_index: int,
+        stake_usd: float,
+        entry_ts: str,
+        status: str = "pending",
+        order_id: "str | None" = None,
+        fill_price: "float | None" = None,
+    ) -> int:
+        """Insert one real copy-trading position row; returns the new row id.
+
+        Unlike ``insert_copy_position`` (paper), a real order may not have
+        an ``order_id``/``fill_price`` yet at creation time -- both default
+        to ``None`` and are backfilled later via
+        ``update_copy_live_position_status`` as the order is submitted and
+        fills.
+        """
+        with self._lock:
+            cur = self._conn.execute(
+                "INSERT INTO copy_live_positions"
+                "(signal_id,address,market,outcome_index,order_id,fill_price,"
+                "stake_usd,status,entry_ts) VALUES(?,?,?,?,?,?,?,?,?)",
+                (signal_id, address, market, outcome_index, order_id, fill_price,
+                 stake_usd, status, entry_ts),
+            )
+            self._conn.commit()
+            return cur.lastrowid
+
+    def update_copy_live_position_status(
+        self,
+        position_id: int,
+        status: str,
+        *,
+        order_id: "str | None" = None,
+        fill_price: "float | None" = None,
+        rejected_reason: "str | None" = None,
+    ) -> None:
+        """Move one ``copy_live_positions`` row through its pre-settlement
+        lifecycle: ``'pending'`` -> ``'filled'``/``'partial'``/``'rejected'``.
+
+        Unlike ``copy_positions``' simple open/settled flip
+        (``settle_copy_position``), a real order has multiple
+        pre-settlement states, so this is one general-purpose transition
+        method rather than a dedicated one per target status. Only the
+        columns relevant to *status* need to be passed -- e.g. submitting
+        an order (still ``'pending'``) passes only ``order_id``; a fill
+        passes ``status='filled'``/``'partial'`` with ``fill_price``; a
+        rejection passes ``status='rejected'`` with ``rejected_reason``.
+
+        ``order_id``/``fill_price``/``rejected_reason`` each default to
+        ``None`` and use ``COALESCE`` against the existing row -- a call
+        that omits one of them (e.g. a fill call that doesn't repeat the
+        ``order_id`` an earlier submission-recording call already wrote)
+        preserves the previously-written value instead of silently
+        nulling it out. This matters because these columns are real order
+        IDs and fill prices used for P&L/exposure checks -- a data-loss
+        bug here would be a trading-safety issue, not just a cosmetic
+        one. There is currently no supported way to explicitly clear one
+        of these columns back to ``NULL`` once set; none of this table's
+        real lifecycles need that.
+
+        Settlement is **not** handled here -- see
+        ``settle_copy_live_position`` below, which mirrors
+        ``settle_copy_position``'s idempotent, status-scoped ``UPDATE``.
+        """
+        with self._lock:
+            self._conn.execute(
+                "UPDATE copy_live_positions SET status=?, "
+                "order_id=COALESCE(?, order_id), "
+                "fill_price=COALESCE(?, fill_price), "
+                "rejected_reason=COALESCE(?, rejected_reason) WHERE id=?",
+                (status, order_id, fill_price, rejected_reason, position_id),
+            )
+            self._conn.commit()
+
+    def settle_copy_live_position(
+        self, position_id: int, settled_pnl_usd: float, settled_at: str
+    ) -> None:
+        """Flip one real copy-trading position to ``'settled'`` in place,
+        writing its realized P&L.
+
+        Mirrors ``settle_copy_position`` exactly, except the ``WHERE``
+        clause is scoped to ``status IN ('filled','partial')`` rather than
+        a single ``'open'`` status -- both a fully- and a partially-filled
+        real order can settle, but a still-``'pending'`` or ``'rejected'``
+        row (never filled) cannot. Idempotent by construction: settling an
+        already-settled row (e.g. a retried cycle) matches zero rows -- a
+        silent no-op, never a double-write or an exception.
+        """
+        with self._lock:
+            self._conn.execute(
+                "UPDATE copy_live_positions SET status='settled', settled_pnl_usd=?, "
+                "settled_at=? WHERE id=? AND status IN ('filled','partial')",
+                (settled_pnl_usd, settled_at, position_id),
+            )
+            self._conn.commit()
+
+    def get_open_copy_live_positions(self, address: "str | None" = None) -> list[dict]:
+        """Return real copy-trading positions not yet in a terminal state
+        (``status`` NOT IN ``('rejected','settled')``), optionally filtered
+        to one wallet.
+
+        "Open" here spans ``'pending'``/``'filled'``/``'partial'`` --
+        unlike ``copy_positions``' single ``'open'`` status, a real
+        position that has a fill still carries live exposure until it
+        settles, so all three pre-settlement states count. Mirrors
+        ``get_open_copy_positions``' shape (list of dicts, optional
+        ``address`` filter) for the same per-wallet/total exposure-check
+        use case the follow-up issue (#1167) will need.
+        """
+        if address is not None:
+            cur = self._conn.execute(
+                "SELECT * FROM copy_live_positions WHERE status NOT IN ('rejected','settled') "
+                "AND address=?",
+                (address,),
+            )
+        else:
+            cur = self._conn.execute(
+                "SELECT * FROM copy_live_positions WHERE status NOT IN ('rejected','settled')"
             )
         return [dict(row) for row in cur.fetchall()]
 

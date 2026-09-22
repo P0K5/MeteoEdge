@@ -688,6 +688,37 @@ pattern as the `trades.mode` migration above).
 
 ---
 
+### copy_live_positions
+
+**Purpose:** One layer up from `copy_positions` — REAL (non-paper) copy-trading positions opened from `copy_signals`. Epic H (#1159), issue #1166. Schema/data-access only: no order placement logic writes to this table yet, that's the follow-up issue ("Wire live order placement into the copy-signal gate ladder", #1167, blocked on this one).
+
+**Writer:** None yet — issue #1167 is the only thing that will write real `order_id`/`fill_price` values here.
+**Reader:** None yet — `Database.get_open_copy_live_positions` exists for the same per-wallet/total exposure-check use case `get_open_copy_positions` serves for paper positions, ready for #1167 to consume.
+
+| Column | Type | Units | Nullable | Description |
+|--------|------|-------|----------|-------------|
+| `id` | INTEGER PRIMARY KEY AUTOINCREMENT | | No | Auto-increment row ID |
+| `signal_id` | INTEGER NOT NULL REFERENCES copy_signals(id) | foreign key | No | The signal that opened this position |
+| `address` | TEXT NOT NULL | wallet address | No | Followed wallet being copied |
+| `market` | TEXT NOT NULL | Polymarket condition ID | No | Market this position is on |
+| `outcome_index` | INTEGER NOT NULL CHECK(outcome_index IN (0,1)) | 0 or 1 | No | Outcome side this position is on |
+| `order_id` | TEXT | Polymarket CLOB order ID | Yes | Nullable until the order is submitted; a row rejected before submission may never get one |
+| `fill_price` | REAL CHECK(fill_price IS NULL OR (fill_price >= 0 AND fill_price <= 1)) | 0–1 probability | Yes | Nullable until filled |
+| `stake_usd` | REAL NOT NULL CHECK(stake_usd > 0) | USD | No | Amount staked on this position |
+| `status` | TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','filled','partial','rejected','settled')) | categorical | No | Real-order lifecycle — unlike `copy_positions`' `open`/`settled`-only states, a real order can be `pending` or `rejected` before any fill exists |
+| `rejected_reason` | TEXT | free text | Yes | Only populated when `status='rejected'`, never silently dropped |
+| `entry_ts` | TEXT NOT NULL | ISO 8601 timestamp (UTC) | No | Entry/fill timestamp |
+| `settled_pnl_usd` | REAL | USD | Yes | Only populated once `status='settled'` |
+| `settled_at` | TEXT | ISO 8601 timestamp (UTC) | Yes | Only populated once `status='settled'` |
+
+**Notes:**
+- Mirrors `copy_positions`' shape one layer up for real fills (per this issue's acceptance criteria) — same retain-not-delete settlement pattern (`status` flips in place, rows never deleted).
+- Fully separate from `copy_positions`/`open_positions`/`trades` per the architecture doc's isolation decision (issue #1100) — FKs only into `copy_signals(id)`, no FK into `copy_positions` or `open_positions`, no shared writes.
+- `Database.insert_copy_live_position` (create), `Database.update_copy_live_position_status` (pre-settlement transitions: `pending` → `filled`/`partial`/`rejected`), `Database.settle_copy_live_position` (terminal `filled`/`partial` → `settled` transition, mirrors `settle_copy_position`), and `Database.get_open_copy_live_positions` (query, `status` NOT IN `('rejected','settled')`) are the CRUD methods this issue adds.
+- `update_copy_live_position_status` uses `COALESCE` against the existing row for `order_id`/`fill_price`/`rejected_reason` — a call that omits one of them preserves the previously-written value rather than nulling it out (e.g. a later fill call doesn't need to repeat an `order_id` an earlier submission-recording call already wrote).
+
+---
+
 ### bot_config
 
 **Purpose:** Persistent key-value store for operator-adjustable bot parameters. Values survive restarts and are authoritative over environment variables once seeded.
