@@ -174,17 +174,17 @@ view can ship as soon as Epic A has data, before execution exists.
 
 ## Live execution epics (phase 2 — gated on the phase-7 go/no-go)
 
-A-F are paper-mode only, by design (see "Non-goals" above). These four
-extend the same isolation discipline to real order placement — tracked
-now, **not to be started** before the phase-7 observation window has run
-its course.
+A-F are paper-mode only, by design (see "Non-goals" above). Epics G and H
+have been built (PR #1164 for Epic G; PRs #1169–#1170 for Epic H). The
+remaining two (Epics I and J) extend the same isolation discipline to real
+order placement and pending delivery.
 
 **Epic G (#1158) — Live-trading config, kill switch, and capital
 allocation.** Mirrors Epic E's role: a live-specific kill switch
 (`COPY_LIVE_TRADING_ENABLED`, independent of the paper switch so paper
 observation is unaffected), live-specific exposure limits, and a new
 `COPY_LIVE_CAPITAL_USD` constant, isolated from both the paper capital
-pool and the weather strategy's. Small, foundational, blocking.
+pool and the weather strategy's. Small, foundational, blocking. **Status: Built (PR #1164).**
 
 **Epic H (#1159) — Live order execution and reconciliation.** The core
 piece: extends the existing signal-detection gate ladder to place real
@@ -192,7 +192,7 @@ CLOB orders when live mode is on and every gate (paper's plus Epic G's
 live-specific ones) passes. Reuses the weather strategy's order-submission
 primitives, never its position/table state. New `copy_live_positions`
 table. Handles real fills, partial fills, timeouts, and reprice-retry,
-mirroring `live_trader.py`'s own hard-won patterns. Depends on Epic G.
+mirroring `live_trader.py`'s own hard-won patterns. Depends on Epic G. **Status: Built (PRs #1169–#1170).**
 
 **Epic I (#1160) — Live settlement, reconciliation, and risk controls.**
 Extends Epic C's settlement pattern to reconcile real positions against
