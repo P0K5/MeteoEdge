@@ -656,6 +656,23 @@ def run_cycle(db, clob_client_factory=None) -> None:
     posture ahead of the phase-7 go/no-go gate) never import or touch the
     CLOB auth module at all. Callers (tests) may pass an explicit factory
     to bypass the lazy import entirely.
+
+    **Wallet auto-pause (issue #1177, verified, no new gate needed).**
+    ``for wallet in db.get_followed_wallets(status="active")`` below is the
+    ONE snapshot both the paper path (``_process_wallet`` /
+    ``_handle_buy_trade``) and the live path (``_handle_live_order``) are
+    nested inside -- a wallet ``copy_wallet_health.py`` (a separate daily
+    03:15 UTC job, see that module's docstring) auto-pauses is absent from
+    this list entirely, halting live execution for it exactly as it already
+    halts paper, with no separate live-specific check. A wallet paused by
+    that job *after* this cycle already took its snapshot but *before* the
+    loop reaches it would still be processed once more this cycle --
+    audited and judged not worth guarding against given the two jobs'
+    actual cadence (this loop's cycles complete in low single-digit seconds
+    against a 300s poll interval; the health job runs once a day and does
+    no network I/O), which bounds the exposure to at most one already
+    in-flight cycle, self-corrected by the very next one. See
+    ``copy_wallet_health.py``'s docstring for the full audit writeup.
     """
     live_config = get_live_config(db)
     if not live_config["COPY_TRADING_ENABLED"]:

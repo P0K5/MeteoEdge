@@ -1119,6 +1119,143 @@ class TestLiveCircuitBreaker:
         assert db.insert_copy_position.call_count == 1
 
 
+class TestWalletAutoPauseHaltsLiveExecution:
+    """Issue #1177 regression coverage. ``copy_wallet_health.py``'s
+    auto-pause calls ``db.update_followed_wallet_status(address, "paused",
+    reason)``, which removes the wallet from
+    ``db.get_followed_wallets(status="active")`` entirely -- and
+    ``run_cycle``'s ``for wallet in db.get_followed_wallets(status="active")``
+    is the ONE loop that both the paper path (``_process_wallet`` /
+    ``_handle_buy_trade``) and the live path (``_handle_live_order``, added
+    by #1167) are nested inside. A wallet absent from that list is therefore
+    already skipped for both paper and live -- there is no separate live-only
+    active-status gate to build; the existing one already covers it.
+
+    These tests prove that end to end via a full ``run_cycle()``, with
+    ``COPY_LIVE_TRADING_ENABLED=True`` and every live-specific gate
+    (exposure, sanity check) wide open -- mirroring ``TestLiveExecution``'s
+    own style of patching the real CLOB entry point
+    (``LiveTrader.place_order``) and/or ``execute_live_copy_order`` and
+    asserting zero calls, so a hypothetical future bug that re-introduced a
+    live-only wallet fetch (bypassing the shared active-status list) would
+    be caught here.
+    """
+
+    def _run(
+        self, db, raw_trades, live_config=None, resolution=None,
+        clob_client_factory=None, live_capital_usd=250.0,
+    ):
+        with patch(
+            "src.scripts.copy_signal_loop.get_live_config",
+            return_value=live_config if live_config is not None else _live_enabled_config(),
+        ), patch(
+            "src.scripts.copy_signal_loop.get_wallet_trades_since",
+            return_value=raw_trades,
+        ), patch(
+            "src.scripts.copy_signal_loop.fetch_market_resolution",
+            return_value=resolution,
+        ), patch(
+            "src.scripts.copy_signal_loop.COPY_LIVE_CAPITAL_USD", live_capital_usd,
+        ):
+            run_cycle(db, clob_client_factory=clob_client_factory)
+
+    def test_paused_wallet_never_reaches_live_order_placement(self):
+        """A wallet excluded from get_followed_wallets(status="active")
+        (the auto-pause outcome) must never have its trades fetched at all,
+        let alone reach _handle_live_order / execute_live_copy_order --
+        even with live trading enabled and every live gate wide open."""
+        db = _mock_db(get_followed_wallets=[])  # no active wallets: the only
+        # followed wallet was just auto-paused by copy_wallet_health.py.
+        fake_factory = MagicMock()
+
+        with patch(
+            "src.execution.live_trader.LiveTrader.place_order",
+        ) as mock_place_order, patch(
+            "src.scripts.copy_signal_loop.execute_live_copy_order",
+        ) as mock_exec, patch(
+            "src.scripts.copy_signal_loop.get_wallet_trades_since",
+        ) as mock_fetch_trades:
+            self._run(
+                db, raw_trades=[_buy_raw()], live_config=_live_enabled_config(),
+                clob_client_factory=fake_factory,
+            )
+
+        # The wallet's trades are never even fetched -- it is filtered out
+        # before the per-wallet loop body ever runs.
+        mock_fetch_trades.assert_not_called()
+        fake_factory.assert_not_called()
+        mock_place_order.assert_not_called()
+        mock_exec.assert_not_called()
+
+        # Neither paper nor live ever wrote anything for this cycle.
+        db.insert_copy_signal.assert_not_called()
+        db.insert_copy_position.assert_not_called()
+        db.insert_copy_live_position.assert_not_called()
+
+        # Confirms the loop queried the SAME active-only filter that
+        # copy_wallet_health.py's auto-pause relies on to exclude a paused
+        # wallet -- not some other, live-specific query.
+        db.get_followed_wallets.assert_called_once_with(status="active")
+
+    def test_active_wallet_alongside_a_paused_one_still_executes_live(self):
+        """Sanity check for the test above: with an ACTIVE wallet returned
+        by get_followed_wallets(status="active") (i.e. the paused wallet
+        already filtered out server-side, exactly like the real
+        Database.get_followed_wallets SQL WHERE clause), live execution
+        proceeds normally -- proving the zero-calls result above is because
+        the wallet was excluded from the list, not because live execution
+        is broken outright."""
+        db = _mock_db()  # default: one active wallet (see _wallet()'s
+        # status="active" default), simulating a paused sibling wallet
+        # already excluded by the same query.
+
+        with patch(
+            "src.scripts.copy_signal_loop.execute_live_copy_order",
+            return_value={"status": "filled", "order_id": "oid-active", "fill_price": 0.41},
+        ) as mock_exec:
+            self._run(db, raw_trades=[_buy_raw()], live_config=_live_enabled_config())
+
+        mock_exec.assert_called_once()
+        db.insert_copy_live_position.assert_called_once()
+
+    def test_paused_wallet_excluded_from_get_followed_wallets_result(self):
+        """Direct regression test for the underlying DB contract this whole
+        guarantee rests on: Database.get_followed_wallets(status="active")
+        performs a hard SQL filter (WHERE status=?), so a wallet
+        update_followed_wallet_status() just flipped to "paused" is not
+        merely flagged -- it is entirely absent from the very list
+        run_cycle() iterates over for both paper and live."""
+        import sqlite3
+
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        conn.execute(
+            "CREATE TABLE copy_wallets_followed ("
+            "address TEXT PRIMARY KEY, status TEXT, paused_reason TEXT, "
+            "paused_at TEXT, stake_per_trade REAL, added_at TEXT, "
+            "last_seen_trade_ts INTEGER)"
+        )
+        conn.execute(
+            "INSERT INTO copy_wallets_followed "
+            "(address, status, stake_per_trade, added_at) "
+            "VALUES (?, 'active', 10.0, ?)",
+            (ADDRESS, NOW_ISO),
+        )
+        conn.commit()
+
+        from src.data.db import Database
+        db = Database.__new__(Database)  # bypass __init__ (no real file/schema setup)
+        db._conn = conn
+        db._lock = __import__("threading").RLock()
+
+        assert [w["address"] for w in db.get_followed_wallets(status="active")] == [ADDRESS]
+
+        db.update_followed_wallet_status(ADDRESS, "paused", "stability_check_failed")
+
+        assert db.get_followed_wallets(status="active") == []
+        conn.close()
+
+
 class TestPaperIndependentOfLive:
     """Issue #1167 acceptance criterion, the OPPOSITE direction from the
     kill-switch test above: paper execution must be completely
