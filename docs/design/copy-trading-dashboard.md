@@ -5,6 +5,12 @@ the existing dashboard (`src/dashboard/api.py` + `src/dashboard/static/index.htm
 with a new tab — same stack, no new framework: vanilla JS/HTML/CSS,
 Chart.js for charts, FastAPI JSON endpoints.
 
+> **Extended by** `docs/design/copy-trading-live-views.md` (Epic J, #1161),
+> which adds live-vs-paper visual separation to the Positions & P&L,
+> Followed Wallets, and Activity Feed views below once live execution
+> (Epic H) and live settlement (Epic I) exist. Read that addendum alongside
+> this doc for anything live-trading-related in those three views.
+
 ## User goal
 
 Let the operator (currently just the account owner — no multi-user auth
