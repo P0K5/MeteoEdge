@@ -307,3 +307,79 @@ class TestCopyTradingCapitalIsolation:
 
         assert "COPY_TRADING_CAPITAL_USD" not in CONFIG_DEFAULTS
         assert "STARTING_CAPITAL_EUR" not in CONFIG_DEFAULTS
+
+
+class TestCopyLiveCapitalIsolation:
+    """Issue #1163: COPY_LIVE_CAPITAL_USD must be an independent module-level
+    constant, isolated from COPY_TRADING_CAPITAL_USD (paper) and
+    STARTING_CAPITAL_EUR (weather) — each reads its own env var with its own
+    default, and setting one must not affect the others. Mirrors
+    TestCopyTradingCapitalIsolation exactly, one layer up.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _no_dotenv_reload(self, monkeypatch):
+        """Prevent config.py's module-level load_dotenv() from repopulating
+        env vars out of a local .env file when the module is reloaded."""
+        import dotenv
+
+        monkeypatch.setattr(dotenv, "load_dotenv", lambda *a, **k: False)
+
+    def test_defaults_when_no_env_vars_set(self, monkeypatch):
+        import src.config as config_module
+
+        monkeypatch.delenv("STARTING_CAPITAL_EUR", raising=False)
+        monkeypatch.delenv("COPY_TRADING_CAPITAL_USD", raising=False)
+        monkeypatch.delenv("COPY_LIVE_CAPITAL_USD", raising=False)
+        importlib.reload(config_module)
+        try:
+            assert config_module.STARTING_CAPITAL_EUR == 500.0
+            assert config_module.COPY_TRADING_CAPITAL_USD == 100.0
+            assert config_module.COPY_LIVE_CAPITAL_USD == 0.0
+        finally:
+            importlib.reload(config_module)
+
+    def test_setting_copy_live_capital_does_not_affect_others(self, monkeypatch):
+        import src.config as config_module
+
+        monkeypatch.setenv("COPY_LIVE_CAPITAL_USD", "1234.0")
+        monkeypatch.delenv("COPY_TRADING_CAPITAL_USD", raising=False)
+        monkeypatch.delenv("STARTING_CAPITAL_EUR", raising=False)
+        importlib.reload(config_module)
+        try:
+            assert config_module.COPY_LIVE_CAPITAL_USD == 1234.0
+            assert config_module.COPY_TRADING_CAPITAL_USD == 100.0
+            assert config_module.STARTING_CAPITAL_EUR == 500.0
+        finally:
+            importlib.reload(config_module)
+
+    def test_setting_copy_trading_capital_does_not_affect_copy_live_capital(self, monkeypatch):
+        import src.config as config_module
+
+        monkeypatch.setenv("COPY_TRADING_CAPITAL_USD", "42.0")
+        monkeypatch.delenv("COPY_LIVE_CAPITAL_USD", raising=False)
+        importlib.reload(config_module)
+        try:
+            assert config_module.COPY_TRADING_CAPITAL_USD == 42.0
+            assert config_module.COPY_LIVE_CAPITAL_USD == 0.0
+        finally:
+            importlib.reload(config_module)
+
+    def test_setting_starting_capital_eur_does_not_affect_copy_live_capital(self, monkeypatch):
+        import src.config as config_module
+
+        monkeypatch.setenv("STARTING_CAPITAL_EUR", "999.0")
+        monkeypatch.delenv("COPY_LIVE_CAPITAL_USD", raising=False)
+        importlib.reload(config_module)
+        try:
+            assert config_module.STARTING_CAPITAL_EUR == 999.0
+            assert config_module.COPY_LIVE_CAPITAL_USD == 0.0
+        finally:
+            importlib.reload(config_module)
+
+    def test_copy_live_capital_not_in_config_defaults(self):
+        """COPY_LIVE_CAPITAL_USD must NOT be live-editable via the dashboard
+        (same convention as COPY_TRADING_CAPITAL_USD / STARTING_CAPITAL_EUR)."""
+        from src.config import CONFIG_DEFAULTS
+
+        assert "COPY_LIVE_CAPITAL_USD" not in CONFIG_DEFAULTS
