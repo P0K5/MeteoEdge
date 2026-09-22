@@ -44,6 +44,38 @@ at the end of the run.
 **No live/paper trading of any kind.** This script only ever calls
 ``Database.update_followed_wallet_status`` -- it never places an order.
 
+**Auto-pause already halts LIVE execution too, not just paper (issue
+#1177, verified against #1167's live-execution loop).** This module never
+touches ``copy_signal_loop.py`` directly, but ``update_followed_wallet_status``
+above removes the wallet from ``db.get_followed_wallets(status="active")``
+entirely, and that exact query is the ONE list ``copy_signal_loop.run_cycle``
+iterates over for BOTH its paper path (``_process_wallet`` /
+``_handle_buy_trade``) and its live path (``_handle_live_order``, added by
+#1167) -- they are nested inside the same per-wallet loop over the same
+active-wallets snapshot, not two separate gates. A wallet this job pauses is
+therefore already excluded from live order placement the very next
+``copy_signal_loop`` cycle, with zero code change needed here or there; see
+``src/tests/test_copy_signal_loop.py::TestWalletAutoPauseHaltsLiveExecution``
+for the regression coverage.
+
+**Cross-process pause-vs-in-flight-cycle race, audited and found not
+exploitable given the real schedules.** ``copy_signal_loop.run_cycle``
+snapshots ``get_followed_wallets(status="active")`` once at the top of each
+cycle, then processes that list; a wallet this job pauses *after* some other
+process already took that snapshot but *before* the snapshot's loop reaches
+it would still be processed once more, live included. In practice this
+window cannot compound into an ongoing problem: ``copy_signal_loop`` cycles
+are documented to complete in seconds (docs/OPERATIONS.md) against a 300s
+default poll interval, so at most a single already-in-flight cycle could be
+affected -- the very next cycle (<=5 minutes later) re-snapshots the list and
+correctly excludes the now-paused wallet. This job itself runs once a day
+(03:15 UTC) and does no network I/O (DB reads only), so it does not
+compound the odds either. Given the bounded, self-correcting blast radius
+and the two jobs' actual cadence, no additional synchronization was added --
+re-derive this reasoning before adding any if the schedules above ever
+change materially (e.g. a much longer poll interval or many more followed
+wallets making a single cycle take minutes instead of seconds).
+
 Usage::
 
     python -m src.scripts.copy_wallet_health
