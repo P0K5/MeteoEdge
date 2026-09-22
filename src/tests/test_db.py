@@ -1938,6 +1938,293 @@ class TestCopySignalsAndPositions:
         ) is False
 
 
+class TestCopyLivePositions:
+    """copy_live_positions (issue #1166, epic H #1159) -- one layer up from
+    copy_positions for REAL fills. Schema/data-access only: no order
+    placement logic exercises these methods yet (that's #1167).
+    """
+
+    def _signal_id(self, db, **overrides):
+        kwargs = dict(
+            address="0xabc",
+            market="0xmarket1",
+            source_price=0.45,
+            detected_at="2026-09-19T00:00:00+00:00",
+        )
+        kwargs.update(overrides)
+        return db.insert_copy_signal(**kwargs)
+
+    def _live_position_kwargs(self, signal_id, **overrides):
+        kwargs = dict(
+            signal_id=signal_id,
+            address="0xabc",
+            market="0xmarket1",
+            outcome_index=0,
+            stake_usd=25.0,
+            entry_ts="2026-09-19T00:00:00+00:00",
+        )
+        kwargs.update(overrides)
+        return kwargs
+
+    def test_table_exists(self):
+        db = _db()
+        cur = db._conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='copy_live_positions'"
+        )
+        assert cur.fetchone() is not None
+
+    def test_insert_defaults_to_pending_with_no_order_id_or_fill_price(self):
+        db = _db()
+        signal_id = self._signal_id(db)
+        position_id = db.insert_copy_live_position(**self._live_position_kwargs(signal_id))
+        assert isinstance(position_id, int)
+
+        cur = db._conn.execute(
+            "SELECT * FROM copy_live_positions WHERE id=?", (position_id,)
+        )
+        row = dict(cur.fetchone())
+        assert row["signal_id"] == signal_id
+        assert row["address"] == "0xabc"
+        assert row["status"] == "pending"
+        assert row["order_id"] is None
+        assert row["fill_price"] is None
+        assert row["rejected_reason"] is None
+        assert row["settled_pnl_usd"] is None
+        assert row["settled_at"] is None
+
+    def test_insert_with_non_positive_stake_usd_raises(self):
+        """stake_usd CHECK(stake_usd > 0)."""
+        db = _db()
+        signal_id = self._signal_id(db)
+        with pytest.raises(sqlite3.IntegrityError):
+            db.insert_copy_live_position(**self._live_position_kwargs(signal_id, stake_usd=0.0))
+
+    def test_insert_with_invalid_outcome_index_raises(self):
+        """outcome_index CHECK(outcome_index IN (0,1))."""
+        db = _db()
+        signal_id = self._signal_id(db)
+        with pytest.raises(sqlite3.IntegrityError):
+            db.insert_copy_live_position(**self._live_position_kwargs(signal_id, outcome_index=2))
+
+    def test_insert_with_out_of_range_fill_price_raises(self):
+        """fill_price CHECK(fill_price IS NULL OR (fill_price >= 0 AND fill_price <= 1))."""
+        db = _db()
+        signal_id = self._signal_id(db)
+        with pytest.raises(sqlite3.IntegrityError):
+            db.insert_copy_live_position(
+                **self._live_position_kwargs(signal_id, fill_price=1.5)
+            )
+
+    def test_insert_with_invalid_status_raises(self):
+        """status CHECK(status IN ('pending','filled','partial','rejected','settled'))."""
+        db = _db()
+        signal_id = self._signal_id(db)
+        with pytest.raises(sqlite3.IntegrityError):
+            db.insert_copy_live_position(
+                **self._live_position_kwargs(signal_id, status="open")
+            )
+
+    def test_update_status_to_filled_sets_order_id_and_fill_price(self):
+        db = _db()
+        signal_id = self._signal_id(db)
+        position_id = db.insert_copy_live_position(**self._live_position_kwargs(signal_id))
+
+        db.update_copy_live_position_status(
+            position_id, "filled", order_id="0xorder1", fill_price=0.46,
+        )
+
+        cur = db._conn.execute(
+            "SELECT * FROM copy_live_positions WHERE id=?", (position_id,)
+        )
+        row = dict(cur.fetchone())
+        assert row["status"] == "filled"
+        assert row["order_id"] == "0xorder1"
+        assert row["fill_price"] == 0.46
+        assert row["rejected_reason"] is None
+
+    def test_update_status_to_partial(self):
+        db = _db()
+        signal_id = self._signal_id(db)
+        position_id = db.insert_copy_live_position(**self._live_position_kwargs(signal_id))
+
+        db.update_copy_live_position_status(
+            position_id, "partial", order_id="0xorder1", fill_price=0.46,
+        )
+
+        cur = db._conn.execute(
+            "SELECT status FROM copy_live_positions WHERE id=?", (position_id,)
+        )
+        assert cur.fetchone()["status"] == "partial"
+
+    def test_update_status_to_rejected_sets_reason(self):
+        db = _db()
+        signal_id = self._signal_id(db)
+        position_id = db.insert_copy_live_position(**self._live_position_kwargs(signal_id))
+
+        db.update_copy_live_position_status(
+            position_id, "rejected", rejected_reason="insufficient balance",
+        )
+
+        cur = db._conn.execute(
+            "SELECT * FROM copy_live_positions WHERE id=?", (position_id,)
+        )
+        row = dict(cur.fetchone())
+        assert row["status"] == "rejected"
+        assert row["rejected_reason"] == "insufficient balance"
+        assert row["fill_price"] is None
+
+    def test_settle_filled_position_updates_row(self):
+        db = _db()
+        signal_id = self._signal_id(db)
+        position_id = db.insert_copy_live_position(**self._live_position_kwargs(signal_id))
+        db.update_copy_live_position_status(
+            position_id, "filled", order_id="0xorder1", fill_price=0.46,
+        )
+
+        db.settle_copy_live_position(position_id, 8.5, "2026-09-20T00:00:00+00:00")
+
+        cur = db._conn.execute(
+            "SELECT * FROM copy_live_positions WHERE id=?", (position_id,)
+        )
+        row = dict(cur.fetchone())
+        assert row["status"] == "settled"
+        assert row["settled_pnl_usd"] == 8.5
+        assert row["settled_at"] == "2026-09-20T00:00:00+00:00"
+
+    def test_settle_partial_position_updates_row(self):
+        db = _db()
+        signal_id = self._signal_id(db)
+        position_id = db.insert_copy_live_position(**self._live_position_kwargs(signal_id))
+        db.update_copy_live_position_status(
+            position_id, "partial", order_id="0xorder1", fill_price=0.46,
+        )
+
+        db.settle_copy_live_position(position_id, -2.0, "2026-09-20T00:00:00+00:00")
+
+        cur = db._conn.execute(
+            "SELECT status FROM copy_live_positions WHERE id=?", (position_id,)
+        )
+        assert cur.fetchone()["status"] == "settled"
+
+    def test_settle_pending_position_is_noop(self):
+        """A still-pending (never filled) position cannot settle -- the
+        WHERE clause only matches 'filled'/'partial'."""
+        db = _db()
+        signal_id = self._signal_id(db)
+        position_id = db.insert_copy_live_position(**self._live_position_kwargs(signal_id))
+
+        db.settle_copy_live_position(position_id, 8.5, "2026-09-20T00:00:00+00:00")
+
+        cur = db._conn.execute(
+            "SELECT status, settled_pnl_usd FROM copy_live_positions WHERE id=?", (position_id,)
+        )
+        row = dict(cur.fetchone())
+        assert row["status"] == "pending"
+        assert row["settled_pnl_usd"] is None
+
+    def test_settle_rejected_position_is_noop(self):
+        db = _db()
+        signal_id = self._signal_id(db)
+        position_id = db.insert_copy_live_position(**self._live_position_kwargs(signal_id))
+        db.update_copy_live_position_status(
+            position_id, "rejected", rejected_reason="insufficient balance",
+        )
+
+        db.settle_copy_live_position(position_id, 8.5, "2026-09-20T00:00:00+00:00")
+
+        cur = db._conn.execute(
+            "SELECT status FROM copy_live_positions WHERE id=?", (position_id,)
+        )
+        assert cur.fetchone()["status"] == "rejected"
+
+    def test_settle_already_settled_position_is_noop(self):
+        db = _db()
+        signal_id = self._signal_id(db)
+        position_id = db.insert_copy_live_position(**self._live_position_kwargs(signal_id))
+        db.update_copy_live_position_status(
+            position_id, "filled", order_id="0xorder1", fill_price=0.46,
+        )
+        db.settle_copy_live_position(position_id, 8.5, "2026-09-20T00:00:00+00:00")
+
+        db.settle_copy_live_position(position_id, -999.0, "2026-09-21T00:00:00+00:00")
+
+        cur = db._conn.execute(
+            "SELECT * FROM copy_live_positions WHERE id=?", (position_id,)
+        )
+        row = dict(cur.fetchone())
+        assert row["settled_pnl_usd"] == 8.5
+        assert row["settled_at"] == "2026-09-20T00:00:00+00:00"
+
+    def test_get_open_copy_live_positions_includes_pending_filled_partial(self):
+        db = _db()
+        signal_id = self._signal_id(db)
+        pending_id = db.insert_copy_live_position(**self._live_position_kwargs(signal_id))
+        filled_id = db.insert_copy_live_position(**self._live_position_kwargs(signal_id))
+        db.update_copy_live_position_status(
+            filled_id, "filled", order_id="0xorder1", fill_price=0.46,
+        )
+        partial_id = db.insert_copy_live_position(**self._live_position_kwargs(signal_id))
+        db.update_copy_live_position_status(
+            partial_id, "partial", order_id="0xorder2", fill_price=0.46,
+        )
+
+        open_ids = {r["id"] for r in db.get_open_copy_live_positions()}
+        assert open_ids == {pending_id, filled_id, partial_id}
+
+    def test_get_open_copy_live_positions_excludes_rejected_and_settled(self):
+        db = _db()
+        signal_id = self._signal_id(db)
+        rejected_id = db.insert_copy_live_position(**self._live_position_kwargs(signal_id))
+        db.update_copy_live_position_status(
+            rejected_id, "rejected", rejected_reason="insufficient balance",
+        )
+        settled_id = db.insert_copy_live_position(**self._live_position_kwargs(signal_id))
+        db.update_copy_live_position_status(
+            settled_id, "filled", order_id="0xorder1", fill_price=0.46,
+        )
+        db.settle_copy_live_position(settled_id, 8.5, "2026-09-20T00:00:00+00:00")
+
+        assert db.get_open_copy_live_positions() == []
+
+    def test_get_open_copy_live_positions_filters_by_address(self):
+        db = _db()
+        signal_a = self._signal_id(db, address="0xaaa")
+        signal_b = self._signal_id(db, address="0xbbb")
+        pos_a = db.insert_copy_live_position(
+            **self._live_position_kwargs(signal_a, address="0xaaa")
+        )
+        db.insert_copy_live_position(**self._live_position_kwargs(signal_b, address="0xbbb"))
+
+        rows = db.get_open_copy_live_positions("0xaaa")
+        assert [r["id"] for r in rows] == [pos_a]
+
+    def test_isolated_from_copy_positions_and_open_positions(self):
+        """copy_live_positions is fully separate: writing a live position
+        must not touch copy_positions or open_positions, and must not
+        require any row to exist in either (issue #1100 isolation
+        decision, re-verified per #1166's acceptance criteria)."""
+        db = _db()
+        signal_id = self._signal_id(db)
+        db.insert_copy_live_position(**self._live_position_kwargs(signal_id))
+
+        assert db.get_open_copy_positions() == []
+        cur = db._conn.execute("SELECT COUNT(*) AS n FROM open_positions")
+        assert cur.fetchone()["n"] == 0
+
+    def test_no_foreign_key_into_copy_positions_or_open_positions(self):
+        """The table's own CREATE TABLE source text must not reference
+        copy_positions or open_positions as a foreign key -- signal_id is
+        the only FK, into copy_signals."""
+        db = _db()
+        cur = db._conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='copy_live_positions'"
+        )
+        ddl = cur.fetchone()["sql"]
+        assert "REFERENCES copy_positions" not in ddl
+        assert "REFERENCES open_positions" not in ddl
+        assert "REFERENCES copy_signals" in ddl
+
+
 class TestSettleCopyPosition:
     """Database.settle_copy_position (issue #1131) -- idempotent status flip."""
 
