@@ -1,20 +1,38 @@
-"""Copy-trading signal-detection and flat-stake paper-execution loop
-(epic #1101 story B3, issue #1123).
+"""Copy-trading signal-detection, flat-stake paper-execution, and (issue
+#1167, epic H #1159) live-execution loop.
 
 Persistent process, structured like ``src/scripts/run.py``'s own poll
 loop (sleep-between-cycles, graceful Ctrl-C shutdown, per-cycle exception
 isolation so one bad cycle never kills the process) -- **not** a systemd
 oneshot (that's story #B4's job, see ``deploy/systemd``).
 
-**Paper mode only.** No path to ``src/execution/live_trader.py`` anywhere
-in this module. Does **not** call
-``src.paper_trader.PaperTrader.execute_trade()`` -- that writes to the
-shared ``trades`` table (forbidden by the #1100 isolation decision --
-copy-trading never touches the weather-strategy tables) and settles
-win/loss *synchronously* from a known outcome, which a freshly detected
-copy-trading signal doesn't have (the market resolves later). This module
-only ever creates an **open, unsettled** ``copy_positions`` row; settling
-it (computing ``settled_pnl_usd``) is epic C's job (#1102), not this one.
+**Paper execution is unconditional and independent of live mode.** Does
+**not** call ``src.paper_trader.PaperTrader.execute_trade()`` -- that
+writes to the shared ``trades`` table (forbidden by the #1100 isolation
+decision -- copy-trading never touches the weather-strategy tables) and
+settles win/loss *synchronously* from a known outcome, which a freshly
+detected copy-trading signal doesn't have (the market resolves later).
+This module only ever creates an **open, unsettled** ``copy_positions``
+row for paper; settling it (computing ``settled_pnl_usd``) is epic C's
+job (#1102), not this one.
+
+**Live execution (issue #1167), layered strictly on top of paper, never
+instead of it.** When a signal passes every paper gate (market-resolution,
+exposure, circuit breaker -- see below) AND ``COPY_LIVE_TRADING_ENABLED``
+is ``True`` AND Epic G's live-specific exposure/capital gates also pass
+(``COPY_LIVE_MAX_EXPOSURE_PER_WALLET_USD`` / ``COPY_LIVE_MAX_TOTAL_EXPOSURE_USD``
+/ ``live_startup_sanity_check()``), a real order is submitted via
+``src.execution.copy_live_executor.execute_live_copy_order`` -- which
+reuses ``src.execution.live_trader.LiveTrader``'s CLOB submission/fill/
+cancel primitives (constructed with ``db=None`` there, so its own
+weather-specific ``trades``/``open_positions`` writes never fire; see
+that module's docstring for the full isolation rationale) -- and the
+result is written into ``copy_live_positions`` (#1166), never into
+``copy_positions``/``open_positions``/``trades``. A signal can be
+paper-executed and live-executed together, or paper-only when live is
+off, but **never live-only** -- live only ever runs downstream of an
+already-committed paper execution in ``_handle_buy_trade``, so live can
+never fire on a signal paper itself skipped.
 
 Per cycle, for each ``active``-status followed wallet
 (``db.get_followed_wallets(status="active")``):
@@ -76,13 +94,20 @@ operator turns it on without noticing: it would let the total-exposure
 cap approve more open paper positions than the configured capital pool
 can actually cover.
 
-**Live variant of the same sanity check (issue #1163 / epic G #1158).**
-:func:`live_startup_sanity_check` mirrors :func:`startup_sanity_check`
-exactly, one layer up, for ``COPY_LIVE_MAX_TOTAL_EXPOSURE_USD`` vs.
-``COPY_LIVE_CAPITAL_USD``. It lives here purely as config validation --
-this module remains **paper mode only** (see above); no live loop exists
-yet to call it (that is epic H's, #1159, job). It is not wired into
-``main()``.
+**Live variant of the same sanity check (issue #1163 / epic G #1158,
+wired into the live path by #1167).** :func:`live_startup_sanity_check`
+mirrors :func:`startup_sanity_check` exactly, one layer up, for
+``COPY_LIVE_MAX_TOTAL_EXPOSURE_USD`` vs. ``COPY_LIVE_CAPITAL_USD``. It is
+still not wired into ``main()`` (this process is allowed to *start* even
+if live config is inconsistent, exactly like paper's own ``main()``-only
+``startup_sanity_check``) -- instead it is re-evaluated once per
+``run_cycle()``, same cadence as the kill switch and the circuit breaker,
+so a live-editable config change that violates the invariant mid-run
+blocks new live orders on the very next cycle rather than only at process
+start. A non-``None`` result is threaded through exactly like
+``breaker_reason`` -- every live attempt this cycle is skipped with that
+message as ``copy_live_positions.rejected_reason``, but paper execution
+and polling are both completely unaffected.
 
 Usage::
 
@@ -107,6 +132,7 @@ from src.config import (  # noqa: E402
 from src.data.db import Database  # noqa: E402
 from src.data.polymarket import fetch_market_resolution  # noqa: E402
 from src.data.polymarket_traders import get_wallet_trades_since, normalize_trade  # noqa: E402
+from src.execution.copy_live_executor import execute_live_copy_order  # noqa: E402
 from src.risk.copy_risk_manager import allow_copy_signal  # noqa: E402
 from src.scripts.copy_trade_backtest import DEFAULT_SLIPPAGE_BPS, apply_slippage  # noqa: E402
 
@@ -166,9 +192,176 @@ def _raw_trade_timestamp(raw: dict) -> "int | None":
         return None
 
 
+def _handle_live_order(
+    db, *, address: str, market: str, outcome_index: int, signal_id: int,
+    stake: float, fill_price: float, token_id: "str | None", side_label: str,
+    live_config: dict, live_gate_reason: "str | None", clob_client_factory,
+    now_iso: str,
+) -> None:
+    """Independent live-execution layer on top of an already paper-executed
+    signal (issue #1167). Only ever called from the branch of
+    ``_handle_buy_trade`` where paper execution just happened -- paper's
+    own gate ladder (market resolution, exposure, circuit breaker,
+    first-poll bootstrap guard) has therefore already passed
+    unconditionally for this signal, satisfying the acceptance criteria's
+    "the full gate ladder applies to live orders exactly as it already
+    does to paper" requirement without re-implementing any of it here.
+
+    **The kill switch -- checked FIRST, before anything else, including
+    before ``db._lock`` is ever acquired.** When
+    ``COPY_LIVE_TRADING_ENABLED`` is falsy, this function returns
+    immediately: no DB read, no DB write, no CLOB call of any kind. This
+    is the single most load-bearing line in this module for issue #1167 --
+    it is what the "zero live orders when disabled" test asserts against.
+
+    **Live-specific gates, atomic with the insert (mirrors the paper
+    exposure-check pattern in ``_handle_buy_trade``).** ``live_gate_reason``
+    (the once-per-cycle ``live_startup_sanity_check()`` result, threaded
+    through exactly like ``breaker_reason``) is checked first; then the
+    live wallet/total exposure caps against ``get_open_copy_live_positions``,
+    reading and inserting under the same ``db._lock`` for the same
+    TOCTOU-safety reason AI review #1128 already established for paper.
+
+    **A ``copy_live_positions`` row is written for every live attempt,
+    executed or gate-rejected** -- mirrors ``copy_signals``' own
+    "always log something, never silently drop" contract, one layer up,
+    scoped to the live sub-decision. The two-step insert
+    (``status='pending'``) then transition (``update_copy_live_position_status``)
+    mirrors the table's documented lifecycle exactly (see
+    ``Database.insert_copy_live_position``'s docstring: a row "rejected
+    before submission may never get an order_id").
+
+    **Order placement happens OUTSIDE ``db._lock``.** Exactly like
+    ``fetch_market_resolution()`` above in ``_handle_buy_trade``, a live
+    order's fill-wait can block for minutes (``copy_live_executor.
+    FILL_MAX_WAIT_S``, plus a possible reprice-retry) -- holding the
+    shared ``Database`` lock across that would stall every other DB
+    consumer (the dashboard's request-handling threads) for the duration.
+
+    Never raises -- a live-side failure must never affect the
+    already-committed paper signal/position rows, and must never abort
+    the wallet's whole processing batch (mirrors this module's fail-soft
+    philosophy for network/DB blips elsewhere, e.g. the per-wallet
+    isolation in ``run_cycle``).
+    """
+    if not live_config["COPY_LIVE_TRADING_ENABLED"]:
+        return
+
+    with db._lock:
+        if live_gate_reason is not None:
+            skip_reason = live_gate_reason
+        elif not token_id:
+            # Data-integrity guard, mirrors _handle_buy_trade's own
+            # missing_outcome_index guard: a copied trade whose raw record
+            # never carried an asset/token_id can be paper-signal-logged
+            # and paper-executed (paper needs no token_id), but can never
+            # be placed on the CLOB.
+            skip_reason = "live_missing_token_id"
+        else:
+            wallet_live_exposure = sum(
+                p["stake_usd"] for p in db.get_open_copy_live_positions(address)
+            )
+            if wallet_live_exposure + stake > live_config["COPY_LIVE_MAX_EXPOSURE_PER_WALLET_USD"]:
+                skip_reason = "live_wallet_exposure_limit"
+            else:
+                total_live_exposure = sum(
+                    p["stake_usd"] for p in db.get_open_copy_live_positions()
+                )
+                skip_reason = (
+                    "live_total_exposure_limit"
+                    if total_live_exposure + stake > live_config["COPY_LIVE_MAX_TOTAL_EXPOSURE_USD"]
+                    else None
+                )
+
+        position_id = db.insert_copy_live_position(
+            signal_id=signal_id, address=address, market=market,
+            outcome_index=outcome_index, stake_usd=stake, entry_ts=now_iso,
+        )
+
+        if skip_reason is not None:
+            db.update_copy_live_position_status(
+                position_id, status="rejected", rejected_reason=skip_reason,
+            )
+            return
+
+    try:
+        result = execute_live_copy_order(
+            clob_client_factory,
+            token_id=token_id,
+            market=market,
+            side_label=side_label,
+            price=fill_price,
+            stake_usd=stake,
+        )
+    except Exception as exc:
+        # execute_live_copy_order() is documented to never raise (every
+        # failure mode it knows about comes back as status="rejected") --
+        # this is a genuinely unexpected exception, but no CLOB order can
+        # have been left live on the exchange from HERE (the function
+        # itself already handles/logs its own place/cancel failures before
+        # ever returning or raising), so a plain "rejected" write is safe.
+        log.error(
+            "[copy-signal] %s...: live order execution raised unexpectedly: %s",
+            str(address)[:10], exc, exc_info=True,
+        )
+        _record_live_outcome(
+            db, position_id, status="rejected",
+            rejected_reason=f"unexpected_error:{exc}"[:200], address=address,
+        )
+        return
+
+    if result["status"] == "rejected":
+        _record_live_outcome(
+            db, position_id, status="rejected", order_id=result.get("order_id"),
+            rejected_reason=result.get("rejected_reason"), address=address,
+        )
+    else:
+        _record_live_outcome(
+            db, position_id, status=result["status"], order_id=result.get("order_id"),
+            fill_price=result.get("fill_price"), address=address,
+        )
+
+
+def _record_live_outcome(
+    db, position_id: int, *, status: str, address: str,
+    order_id: "str | None" = None, fill_price: "float | None" = None,
+    rejected_reason: "str | None" = None,
+) -> None:
+    """Persist a ``copy_live_positions`` status transition, escalating to a
+    CRITICAL log (never raising further) if the write itself fails.
+
+    This mirrors ``LiveTrader.place_order``'s own precedent exactly (see
+    that function's ``except Exception as db_err: logging.critical(...)``
+    block): by the time this is called, a REAL order may already have been
+    submitted (or a CLOB call already made and settled to a terminal
+    outcome) -- a DB write failure at this point must never look like an
+    ordinary, quietly-retried DB blip. It has to be loud, because our local
+    bookkeeping and the exchange's actual state can now silently diverge
+    (e.g. an order genuinely filled on the exchange but ``copy_live_positions``
+    never learned about it), which is exactly the "never silently dropped"
+    guarantee the acceptance criteria calls out for fills/rejections.
+    """
+    try:
+        with db._lock:
+            db.update_copy_live_position_status(
+                position_id, status=status, order_id=order_id,
+                fill_price=fill_price, rejected_reason=rejected_reason,
+            )
+    except Exception as exc:
+        log.critical(
+            "[copy-signal] %s...: CRITICAL: live order outcome (status=%s, "
+            "order_id=%s) could not be recorded into copy_live_positions "
+            "(row id=%s): %s. The exchange's actual state and this DB's "
+            "view of it may now be out of sync -- manual reconciliation "
+            "may be required.",
+            str(address)[:10], status, order_id, position_id, exc, exc_info=True,
+        )
+
+
 def _handle_buy_trade(
     db, wallet: dict, trade: dict, stake: float, live_config: dict, now_iso: str,
     first_poll: bool = False, breaker_reason: "str | None" = None,
+    live_gate_reason: "str | None" = None, clob_client_factory=None,
 ) -> None:
     """Decide execute-or-skip for one normalized BUY trade and persist the
     outcome (always a copy_signals row; a copy_positions row too if
@@ -230,6 +423,12 @@ def _handle_buy_trade(
     outcome_index = trade.get("outcome_index")
     source_price = trade["price"]
     source_trade_id = trade.get("source_trade_id")
+    # The copied wallet's own trade record already carries the CLOB token id
+    # it traded (see normalize_trade()'s docstring) -- issue #1167's live
+    # path reuses it directly rather than re-deriving a token_id from
+    # market+outcome_index. May be None for older/partial records; guarded
+    # in _handle_live_order (live_missing_token_id), never blocks paper.
+    token_id = trade.get("asset")
 
     # Breaker and bootstrap guards short-circuit before the network call --
     # no point spending a fetch_market_resolution() request on a trade
@@ -294,10 +493,27 @@ def _handle_buy_trade(
         )
         db.link_copy_signal_to_position(signal_id, position_id)
 
+    # Paper is now fully committed and this function returns unconditionally
+    # after this point -- live execution (issue #1167) is a pure addition on
+    # top, never a precondition paper waits on. Deliberately OUTSIDE the
+    # db._lock block above: _handle_live_order's own order-placement path
+    # can block for minutes (CLOB fill-wait + a possible reprice-retry), and
+    # must never hold the shared Database lock while doing so (same "no
+    # network I/O under the lock" rule as fetch_market_resolution() above).
+    side_label = "YES" if outcome_index == 0 else "NO"
+    _handle_live_order(
+        db, address=address, market=market, outcome_index=outcome_index,
+        signal_id=signal_id, stake=stake, fill_price=fill_price,
+        token_id=token_id, side_label=side_label, live_config=live_config,
+        live_gate_reason=live_gate_reason, clob_client_factory=clob_client_factory,
+        now_iso=now_iso,
+    )
+
 
 def _process_wallet(
     db, wallet: dict, live_config: dict, now_iso: str,
     breaker_reason: "str | None" = None,
+    live_gate_reason: "str | None" = None, clob_client_factory=None,
 ) -> None:
     """Fetch, detect, and act on one followed wallet's new trades, then
     advance its high-water mark past whatever was actually processed.
@@ -370,7 +586,8 @@ def _process_wallet(
         elif trade["side"] == "BUY":
             _handle_buy_trade(
                 db, wallet, trade, stake, live_config, now_iso, first_poll=first_poll,
-                breaker_reason=breaker_reason,
+                breaker_reason=breaker_reason, live_gate_reason=live_gate_reason,
+                clob_client_factory=clob_client_factory,
             )
 
         # Only reached once this trade (BUY, SELL, or unnormalizable) has
@@ -380,7 +597,7 @@ def _process_wallet(
         db.update_followed_wallet_last_seen(address, int(max_ts_seen))
 
 
-def run_cycle(db) -> None:
+def run_cycle(db, clob_client_factory=None) -> None:
     """One poll cycle: kill switch, then the realized-P&L circuit breaker,
     then per-wallet fetch/detect/execute, with per-wallet failure isolation.
 
@@ -394,6 +611,24 @@ def run_cycle(db) -> None:
     threaded through ``_process_wallet``/``_handle_buy_trade``) so the
     activity feed shows *why* nothing executed, rather than nothing
     appearing at all.
+
+    **Live gate (issue #1167), also checked once per cycle, same cadence
+    as the circuit breaker.** ``COPY_LIVE_TRADING_ENABLED`` itself is
+    checked later, per-signal, in ``_handle_live_order`` (it is the one
+    gate that must be re-read as close to the actual CLOB call as
+    possible -- see that function's docstring); what IS decided once here
+    is ``live_startup_sanity_check(live_config)`` (Epic G's
+    ``COPY_LIVE_MAX_TOTAL_EXPOSURE_USD`` vs. ``COPY_LIVE_CAPITAL_USD``
+    invariant), threaded through as ``live_gate_reason`` exactly like
+    ``breaker_reason``.
+
+    *clob_client_factory* defaults to ``None``; a zero-arg factory
+    (``src.execution.auth.get_clob_client`` in production) is lazily
+    imported and resolved here **only when live trading is actually
+    enabled this cycle** -- paper-only runs (the default, kill-switch-off
+    posture ahead of the phase-7 go/no-go gate) never import or touch the
+    CLOB auth module at all. Callers (tests) may pass an explicit factory
+    to bypass the lazy import entirely.
     """
     live_config = get_live_config(db)
     if not live_config["COPY_TRADING_ENABLED"]:
@@ -402,10 +637,20 @@ def run_cycle(db) -> None:
     breaker_ok, breaker_skip_reason = allow_copy_signal(db, live_config)
     breaker_reason = None if breaker_ok else breaker_skip_reason
 
+    live_gate_reason = None
+    if live_config["COPY_LIVE_TRADING_ENABLED"]:
+        live_gate_reason = live_startup_sanity_check(live_config)
+        if clob_client_factory is None:
+            from src.execution.auth import get_clob_client  # noqa: PLC0415
+            clob_client_factory = get_clob_client
+
     now_iso = datetime.now(timezone.utc).isoformat()
     for wallet in db.get_followed_wallets(status="active"):
         try:
-            _process_wallet(db, wallet, live_config, now_iso, breaker_reason=breaker_reason)
+            _process_wallet(
+                db, wallet, live_config, now_iso, breaker_reason=breaker_reason,
+                live_gate_reason=live_gate_reason, clob_client_factory=clob_client_factory,
+            )
         except Exception as exc:
             log.warning(
                 "[copy-signal] %s...: cycle processing failed, skipping to "
