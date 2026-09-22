@@ -582,6 +582,28 @@ class CopyOpenPositionOut(BaseModel):
     signal_id: int
 
 
+class CopyLiveOpenPositionOut(BaseModel):
+    """One open REAL (live) copy-trading position, for the Positions & P&L
+    view's Live column open-positions table (issue #1186, Epic J).
+
+    Distinct shape from ``CopyOpenPositionOut`` (paper): a REAL order can
+    sit in ``'pending'``/``'filled'``/``'partial'`` before it settles and
+    may have no ``fill_price`` yet, whereas a paper position is always
+    instantly filled at ``entry_price`` -- see ``copy_live_positions``'s
+    own schema comment in ``src/data/db.py``."""
+    id: int
+    address: str
+    market: str
+    outcome_index: int
+    status: str
+    order_id: "str | None" = None
+    fill_price: "float | None" = None
+    stake_usd: float
+    filled_stake_usd: "float | None" = None
+    entry_ts: str
+    signal_id: int
+
+
 class CopySettledPnlPointOut(BaseModel):
     """One settled copy-trading position, for the realized-P&L-over-time
     chart. Raw rows, not a server-side date-bucketed aggregate -- see
@@ -625,12 +647,35 @@ class CopyBacktestComparisonTotalOut(BaseModel):
 class CopyPositionsOut(BaseModel):
     """Single response for the Positions & P&L view — one round-trip,
     mirroring CopyCandidatesOut/CopyFollowedWalletsOut's design (issue
-    #1148 acceptance criteria)."""
+    #1148 acceptance criteria).
+
+    The unqualified fields below (``open_positions``, ``realized_pnl_history``,
+    ``per_wallet``, ``total``, ``backtest_total``) are PAPER-only, unchanged
+    since epic F. Issue #1186 (Epic J, live/paper twin-panel split) adds the
+    ``live_*`` fields as a fully independent, parallel set for the Live
+    column — never merged into a combined total, matching the design
+    spec's "never blended" requirement: two independent response keys,
+    always. ``live_error`` is set instead of raising when the live-side
+    queries fail, so a live-data problem degrades only the Live column
+    (the frontend keeps its last-known-good live data on screen and never
+    blanks the paper fields above) — see ``copy_trading_positions()``'s
+    docstring.
+    """
     open_positions: list[CopyOpenPositionOut]
     realized_pnl_history: list[CopySettledPnlPointOut]  # settled rows, oldest first
     per_wallet: list[CopyWalletPnlBreakdownOut]
     total: CopyPnlTotalOut
     backtest_total: CopyBacktestComparisonTotalOut
+
+    live_open_positions: list[CopyLiveOpenPositionOut] = []
+    live_realized_pnl_history: list[CopySettledPnlPointOut] = []  # settled rows, oldest first
+    # No backtest fields on live rows -- the backtest-comparison toggle
+    # stays Paper-only (issue #1186 acceptance criteria); reusing
+    # CopyWalletPnlBreakdownOut with its Optional backtest fields always
+    # left None for live avoids a near-duplicate model.
+    live_per_wallet: list[CopyWalletPnlBreakdownOut] = []
+    live_total: CopyPnlTotalOut = CopyPnlTotalOut(n_settled=0, realized_pnl_usd=0.0)
+    live_error: "str | None" = None
 
 
 class CopySignalOut(BaseModel):
@@ -2801,6 +2846,17 @@ def copy_trading_positions() -> CopyPositionsOut:
     unfollowing a wallet does not delete its ``copy_positions`` rows (see
     ``copy_trading_unfollow_wallet``'s docstring), and those positions'
     realized P&L should stay visible here.
+
+    Issue #1186 (Epic J, live/paper twin-panel split): the fields above
+    are unchanged and PAPER-only. A fully independent ``live_*`` block is
+    computed the same way, one layer up onto ``copy_live_positions`` /
+    ``get_open_copy_live_positions`` / ``get_copy_live_realized_pnl_by_wallet``
+    / ``get_settled_copy_live_positions`` / ``get_copy_live_realized_pnl_total``
+    — never merged into the paper totals above (design spec's "never
+    blended" requirement: two independent response keys, always). The
+    live block has no backtest-comparison figures (that stays Paper-only)
+    and is wrapped in its own try/except so a live-side failure can't
+    blank the paper fields — see ``live_error`` on ``CopyPositionsOut``.
     """
     if _db is None:
         raise HTTPException(status_code=503, detail="Database not initialised")
@@ -2854,6 +2910,87 @@ def copy_trading_positions() -> CopyPositionsOut:
     total = _db.get_copy_realized_pnl_total()
     backtest_total = get_backtest_comparison_total(_db)
 
+    # ------------------------------------------------------------------
+    # Live column (issue #1186, Epic J) -- one layer up from the paper
+    # block above, reading copy_live_positions instead of copy_positions.
+    # Deliberately isolated in its own try/except: a failure here (e.g. a
+    # transient DB error scoped to the live table) must never take down
+    # the whole endpoint and blank the paper fields already computed
+    # above -- it degrades to empty live_* defaults plus a populated
+    # `live_error`, which the frontend reads as "show last-known-good
+    # live data, with a stale-data banner" (design spec's per-column
+    # error-isolation requirement).
+    live_open_positions: list[CopyLiveOpenPositionOut] = []
+    live_realized_pnl_history: list[CopySettledPnlPointOut] = []
+    live_per_wallet: list[CopyWalletPnlBreakdownOut] = []
+    live_total = CopyPnlTotalOut(n_settled=0, realized_pnl_usd=0.0)
+    live_error: "str | None" = None
+    try:
+        live_open_positions = [
+            CopyLiveOpenPositionOut(
+                id=row["id"],
+                address=row["address"],
+                market=row["market"],
+                outcome_index=row["outcome_index"],
+                status=row["status"],
+                order_id=row["order_id"],
+                fill_price=row["fill_price"],
+                stake_usd=row["stake_usd"],
+                filled_stake_usd=row["filled_stake_usd"],
+                entry_ts=row["entry_ts"],
+                signal_id=row["signal_id"],
+            )
+            for row in _db.get_open_copy_live_positions()
+        ]
+
+        # Same union-of-addresses approach as the paper block above (a
+        # wallet unfollowed after settling LIVE positions still keeps its
+        # realized P&L visible here) -- followed wallets are shared
+        # between paper/live (a follow is a paper-follow; per-wallet live
+        # *eligibility* is a separate, not-yet-wired concept tracked by
+        # the Followed Wallets issue, out of scope here).
+        live_addresses = {row["address"] for row in _db.get_copy_live_realized_pnl_by_wallet()}
+        live_addresses |= {w["address"] for w in _db.get_followed_wallets()}
+
+        for address in live_addresses:
+            for row in _db.get_settled_copy_live_positions(address):
+                live_realized_pnl_history.append(CopySettledPnlPointOut(
+                    address=row["address"],
+                    market=row["market"],
+                    settled_at=row["settled_at"],
+                    settled_pnl_usd=row["settled_pnl_usd"],
+                    stake_usd=row["stake_usd"],
+                ))
+
+            live_pnl_by_wallet = {
+                row["address"]: row
+                for row in _db.get_copy_live_realized_pnl_by_wallet(address)
+            }
+            wallet_row = live_pnl_by_wallet.get(address)
+            live_per_wallet.append(CopyWalletPnlBreakdownOut(
+                address=address,
+                n_settled=wallet_row["n_settled"] if wallet_row else 0,
+                realized_pnl_usd=wallet_row["total_pnl_usd"] if wallet_row else 0.0,
+                # No backtest fields for live -- stays Paper-only (issue
+                # #1186 acceptance criteria); left at their None default.
+            ))
+
+        live_realized_pnl_history.sort(key=lambda p: p.settled_at)
+        live_per_wallet.sort(key=lambda w: w.realized_pnl_usd, reverse=True)
+
+        live_total_row = _db.get_copy_live_realized_pnl_total()
+        live_total = CopyPnlTotalOut(
+            n_settled=live_total_row["n_settled"],
+            realized_pnl_usd=live_total_row["total_pnl_usd"],
+        )
+    except Exception as e:  # noqa: BLE001 -- isolate a live-side failure, never blank paper data
+        logger.exception("copy_trading_positions: live-side query failed")
+        live_open_positions = []
+        live_realized_pnl_history = []
+        live_per_wallet = []
+        live_total = CopyPnlTotalOut(n_settled=0, realized_pnl_usd=0.0)
+        live_error = f"Live data temporarily unavailable: {e}"
+
     return CopyPositionsOut(
         open_positions=open_positions,
         realized_pnl_history=realized_pnl_history,
@@ -2863,6 +3000,11 @@ def copy_trading_positions() -> CopyPositionsOut:
             realized_pnl_usd=total["total_pnl_usd"],
         ),
         backtest_total=CopyBacktestComparisonTotalOut(**backtest_total),
+        live_open_positions=live_open_positions,
+        live_realized_pnl_history=live_realized_pnl_history,
+        live_per_wallet=live_per_wallet,
+        live_total=live_total,
+        live_error=live_error,
     )
 
 

@@ -2502,6 +2502,176 @@ class TestGetCopyLiveRealizedPnlTotal:
         assert db.get_copy_live_realized_pnl_total() == {"n_settled": 0, "total_pnl_usd": 0.0}
 
 
+class TestGetCopyLiveRealizedPnlByWallet:
+    """Database.get_copy_live_realized_pnl_by_wallet (issue #1186,
+    Positions & P&L live/paper twin-panel split) -- mirrors
+    TestGetCopyRealizedPnl's get_copy_realized_pnl_by_wallet coverage, one
+    layer up onto copy_live_positions."""
+
+    def _signal_id(self, db, address="0xabc", market="0xmarket1"):
+        return db.insert_copy_signal(
+            address=address, market=market, source_price=0.45,
+            detected_at="2026-09-19T00:00:00+00:00",
+        )
+
+    def _settled_live_position(self, db, address, pnl, market="0xmarket1", stake_usd=25.0):
+        signal_id = self._signal_id(db, address=address, market=market)
+        position_id = db.insert_copy_live_position(
+            signal_id=signal_id, address=address, market=market,
+            outcome_index=0, stake_usd=stake_usd, entry_ts="2026-09-19T00:00:00+00:00",
+        )
+        db.update_copy_live_position_status(position_id, "filled", order_id="o1", fill_price=0.4)
+        db.settle_copy_live_position(position_id, pnl, "2026-09-20T00:00:00+00:00")
+        return position_id
+
+    def test_aggregates_multiple_settled_positions_for_one_wallet(self):
+        db = _db()
+        self._settled_live_position(db, "0xaaa", 10.0, market="M1")
+        self._settled_live_position(db, "0xaaa", -4.0, market="M2")
+
+        rows = db.get_copy_live_realized_pnl_by_wallet()
+        assert len(rows) == 1
+        assert rows[0]["address"] == "0xaaa"
+        assert rows[0]["n_settled"] == 2
+        assert rows[0]["total_pnl_usd"] == pytest.approx(6.0)
+
+    def test_per_wallet_breakdown_across_multiple_wallets(self):
+        db = _db()
+        self._settled_live_position(db, "0xaaa", 10.0, market="M1")
+        self._settled_live_position(db, "0xbbb", 5.0, market="M2")
+        self._settled_live_position(db, "0xbbb", 5.0, market="M3")
+
+        rows = {r["address"]: r for r in db.get_copy_live_realized_pnl_by_wallet()}
+        assert rows["0xaaa"]["n_settled"] == 1
+        assert rows["0xaaa"]["total_pnl_usd"] == pytest.approx(10.0)
+        assert rows["0xbbb"]["n_settled"] == 2
+        assert rows["0xbbb"]["total_pnl_usd"] == pytest.approx(10.0)
+
+    def test_filters_by_address(self):
+        db = _db()
+        self._settled_live_position(db, "0xaaa", 10.0, market="M1")
+        self._settled_live_position(db, "0xbbb", 5.0, market="M2")
+
+        rows = db.get_copy_live_realized_pnl_by_wallet("0xaaa")
+        assert len(rows) == 1
+        assert rows[0]["address"] == "0xaaa"
+        assert rows[0]["total_pnl_usd"] == pytest.approx(10.0)
+
+    def test_open_positions_excluded(self):
+        db = _db()
+        signal_id = self._signal_id(db)
+        db.insert_copy_live_position(
+            signal_id=signal_id, address="0xaaa", market="0xmarket1",
+            outcome_index=0, stake_usd=25.0, entry_ts="2026-09-19T00:00:00+00:00",
+        )
+        assert db.get_copy_live_realized_pnl_by_wallet() == []
+
+    def test_isolated_from_paper_copy_positions(self):
+        """A settled PAPER copy_positions row must never leak into this
+        REAL-positions per-wallet aggregate."""
+        db = _db()
+        signal_id = self._signal_id(db)
+        paper_id = db.insert_copy_position(
+            signal_id=signal_id, address="0xaaa", market="0xmarket1",
+            outcome_index=0, entry_price=0.45, stake_usd=25.0,
+            entry_ts="2026-09-19T00:00:00+00:00",
+        )
+        db.settle_copy_position(paper_id, 99.0, "2026-09-20T00:00:00+00:00")
+
+        assert db.get_copy_live_realized_pnl_by_wallet() == []
+
+
+class TestGetSettledCopyLivePositions:
+    """Database.get_settled_copy_live_positions (issue #1186, Positions &
+    P&L live/paper twin-panel split) -- mirrors
+    TestGetSettledCopyPositions, one layer up onto copy_live_positions."""
+
+    def _settled_live_position(self, db, address, pnl, stake_usd=10.0, market="0xmarket1"):
+        signal_id = db.insert_copy_signal(
+            address=address, market=market, source_price=0.45,
+            detected_at="2026-09-19T00:00:00+00:00",
+        )
+        position_id = db.insert_copy_live_position(
+            signal_id=signal_id, address=address, market=market, outcome_index=0,
+            stake_usd=stake_usd, entry_ts="2026-09-19T00:00:00+00:00",
+        )
+        db.update_copy_live_position_status(position_id, "filled", order_id="o1", fill_price=0.45)
+        db.settle_copy_live_position(position_id, pnl, "2026-09-20T00:00:00+00:00")
+        return position_id
+
+    def test_returns_settled_rows_for_the_given_wallet(self):
+        db = _db()
+        self._settled_live_position(db, "0xaaa", 10.0, stake_usd=20.0, market="M1")
+        self._settled_live_position(db, "0xaaa", -5.0, stake_usd=10.0, market="M2")
+
+        rows = db.get_settled_copy_live_positions("0xaaa")
+
+        assert len(rows) == 2
+        pnls = {row["settled_pnl_usd"] for row in rows}
+        assert pnls == {10.0, -5.0}
+        for row in rows:
+            assert row["stake_usd"] in (20.0, 10.0)
+
+    def test_excludes_other_wallets(self):
+        db = _db()
+        self._settled_live_position(db, "0xaaa", 10.0, market="M1")
+        self._settled_live_position(db, "0xbbb", 5.0, market="M2")
+
+        rows = db.get_settled_copy_live_positions("0xaaa")
+
+        assert len(rows) == 1
+        assert rows[0]["address"] == "0xaaa"
+
+    def test_excludes_open_pending_and_rejected_positions(self):
+        db = _db()
+        self._settled_live_position(db, "0xaaa", 10.0, market="M-settled")
+
+        signal_id = db.insert_copy_signal(
+            address="0xaaa", market="M-pending", source_price=0.45,
+            detected_at="2026-09-19T00:00:00+00:00",
+        )
+        db.insert_copy_live_position(
+            signal_id=signal_id, address="0xaaa", market="M-pending",
+            outcome_index=0, stake_usd=10.0, entry_ts="2026-09-19T00:00:00+00:00",
+        )
+
+        signal_id2 = db.insert_copy_signal(
+            address="0xaaa", market="M-rejected", source_price=0.45,
+            detected_at="2026-09-19T00:00:00+00:00",
+        )
+        rejected_id = db.insert_copy_live_position(
+            signal_id=signal_id2, address="0xaaa", market="M-rejected",
+            outcome_index=0, stake_usd=10.0, entry_ts="2026-09-19T00:00:00+00:00",
+        )
+        db.update_copy_live_position_status(rejected_id, "rejected", rejected_reason="no_fill")
+
+        rows = db.get_settled_copy_live_positions("0xaaa")
+
+        assert len(rows) == 1
+        assert all(row["status"] == "settled" for row in rows)
+
+    def test_unknown_address_returns_empty_list(self):
+        db = _db()
+        assert db.get_settled_copy_live_positions("0xunknown") == []
+
+    def test_isolated_from_paper_copy_positions(self):
+        """A settled PAPER copy_positions row must never leak into this
+        REAL-positions per-row query."""
+        db = _db()
+        signal_id = db.insert_copy_signal(
+            address="0xaaa", market="0xmarket1", source_price=0.45,
+            detected_at="2026-09-19T00:00:00+00:00",
+        )
+        paper_id = db.insert_copy_position(
+            signal_id=signal_id, address="0xaaa", market="0xmarket1",
+            outcome_index=0, entry_price=0.45, stake_usd=25.0,
+            entry_ts="2026-09-19T00:00:00+00:00",
+        )
+        db.settle_copy_position(paper_id, 99.0, "2026-09-20T00:00:00+00:00")
+
+        assert db.get_settled_copy_live_positions("0xaaa") == []
+
+
 class TestSettleCopyPosition:
     """Database.settle_copy_position (issue #1131) -- idempotent status flip."""
 

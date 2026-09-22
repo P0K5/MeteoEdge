@@ -2361,6 +2361,50 @@ class Database:
             "total_pnl_usd": row["total_pnl_usd"] if row["total_pnl_usd"] is not None else 0.0,
         }
 
+    def get_copy_live_realized_pnl_by_wallet(self, address: "str | None" = None) -> list[dict]:
+        """Return realized P&L aggregated over ``status='settled'`` REAL
+        copy-trading positions, one row per wallet: ``{'address',
+        'n_settled', 'total_pnl_usd'}`` (issue #1186, Positions & P&L
+        live/paper twin-panel split).
+
+        Mirrors ``get_copy_realized_pnl_by_wallet`` exactly, one layer up --
+        queries ``copy_live_positions`` instead of ``copy_positions``, same
+        #1100 isolation discipline as ``get_copy_live_realized_pnl_total``
+        above (no shared reads/writes across the two tables). A wallet with
+        zero settled REAL positions has no matching row, same as the paper
+        method -- never a zero-valued row.
+        """
+        if address is not None:
+            cur = self._conn.execute(
+                "SELECT address, COUNT(*) AS n_settled, SUM(settled_pnl_usd) AS total_pnl_usd "
+                "FROM copy_live_positions WHERE status='settled' AND address=? GROUP BY address",
+                (address,),
+            )
+        else:
+            cur = self._conn.execute(
+                "SELECT address, COUNT(*) AS n_settled, SUM(settled_pnl_usd) AS total_pnl_usd "
+                "FROM copy_live_positions WHERE status='settled' GROUP BY address"
+            )
+        return [dict(row) for row in cur.fetchall()]
+
+    def get_settled_copy_live_positions(self, address: str) -> list[dict]:
+        """Return *address*'s individual ``status='settled'`` REAL
+        copy-trading positions (one row per position), newest-settled
+        first (issue #1186, Positions & P&L live/paper twin-panel split).
+
+        Mirrors ``get_settled_copy_positions`` exactly, one layer up --
+        queries ``copy_live_positions`` instead of ``copy_positions``.
+        Feeds the Live column's realized-P&L-over-time chart the same way
+        the paper method feeds the Paper column's chart. Returns ``[]``
+        for a wallet with no settled REAL positions.
+        """
+        cur = self._conn.execute(
+            "SELECT * FROM copy_live_positions WHERE status='settled' AND address=? "
+            "ORDER BY id DESC",
+            (address,),
+        )
+        return [dict(row) for row in cur.fetchall()]
+
     # ------------------------------------------------------------------
     # trades
     # ------------------------------------------------------------------
