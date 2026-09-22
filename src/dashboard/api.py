@@ -3312,6 +3312,25 @@ _CONFIG_META: dict[str, dict] = {
         "min": 0.01,
         "max": 1.0,
     },
+    "COPY_LIVE_TRADING_ENABLED": {
+        "description": "Master switch — enable LIVE copy-trading order placement (issue #1163). Independent of COPY_TRADING_ENABLED (paper); built ahead of the phase-7 go/no-go gate, defaults off",
+        "type": "bool",
+        "group": "copy_trading",
+    },
+    "COPY_LIVE_MAX_EXPOSURE_PER_WALLET_USD": {
+        "description": "Maximum total LIVE exposure ($) to a single followed wallet — separate from COPY_MAX_EXPOSURE_PER_WALLET_USD (paper)",
+        "type": "float",
+        "group": "copy_trading",
+        "min": 1.0,
+        "max": 1000.0,
+    },
+    "COPY_LIVE_MAX_TOTAL_EXPOSURE_USD": {
+        "description": "Maximum total LIVE exposure ($) across all followed wallets combined — separate from COPY_MAX_TOTAL_EXPOSURE_USD (paper)",
+        "type": "float",
+        "group": "copy_trading",
+        "min": 1.0,
+        "max": 5000.0,
+    },
 }
 
 _EMOS_VALID_MODES = frozenset({"legacy", "emos_shadow", "emos_primary"})

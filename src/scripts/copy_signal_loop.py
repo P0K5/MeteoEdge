@@ -76,6 +76,14 @@ operator turns it on without noticing: it would let the total-exposure
 cap approve more open paper positions than the configured capital pool
 can actually cover.
 
+**Live variant of the same sanity check (issue #1163 / epic G #1158).**
+:func:`live_startup_sanity_check` mirrors :func:`startup_sanity_check`
+exactly, one layer up, for ``COPY_LIVE_MAX_TOTAL_EXPOSURE_USD`` vs.
+``COPY_LIVE_CAPITAL_USD``. It lives here purely as config validation --
+this module remains **paper mode only** (see above); no live loop exists
+yet to call it (that is epic H's, #1159, job). It is not wired into
+``main()``.
+
 Usage::
 
     python -m src.scripts.copy_signal_loop            # persistent loop
@@ -93,7 +101,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from src.config import (  # noqa: E402
-    CONFIG_DEFAULTS, COPY_TRADING_CAPITAL_USD, get_live_config, seed_config,
+    CONFIG_DEFAULTS, COPY_LIVE_CAPITAL_USD, COPY_TRADING_CAPITAL_USD,
+    get_live_config, seed_config,
 )
 from src.data.db import Database  # noqa: E402
 from src.data.polymarket import fetch_market_resolution  # noqa: E402
@@ -118,6 +127,32 @@ def startup_sanity_check(live_config: dict) -> "str | None":
         return (
             f"COPY_MAX_TOTAL_EXPOSURE_USD (${max_total:.2f}) exceeds "
             f"COPY_TRADING_CAPITAL_USD (${COPY_TRADING_CAPITAL_USD:.2f}) -- "
+            "refusing to start. Fix the config values (dashboard config "
+            "tab or env vars) before restarting."
+        )
+    return None
+
+
+def live_startup_sanity_check(live_config: dict) -> "str | None":
+    """Return an error message if it is unsafe to start LIVE, else ``None``.
+
+    Mirrors :func:`startup_sanity_check` exactly, one layer up (issue
+    #1163): ``COPY_LIVE_MAX_TOTAL_EXPOSURE_USD`` (live-editable) must never
+    exceed ``COPY_LIVE_CAPITAL_USD`` (a fixed module constant, not
+    live-editable -- see its own comment in src/config.py), for the same
+    reason -- otherwise the live total-exposure gate would keep approving
+    new live positions past the point the configured live capital pool
+    could actually fund.
+
+    Not called anywhere yet -- no live loop exists to call it (epic H's
+    job, #1159). Provided now so the isolation/config layer is ready ahead
+    of that loop being built.
+    """
+    max_total = live_config["COPY_LIVE_MAX_TOTAL_EXPOSURE_USD"]
+    if max_total > COPY_LIVE_CAPITAL_USD:
+        return (
+            f"COPY_LIVE_MAX_TOTAL_EXPOSURE_USD (${max_total:.2f}) exceeds "
+            f"COPY_LIVE_CAPITAL_USD (${COPY_LIVE_CAPITAL_USD:.2f}) -- "
             "refusing to start. Fix the config values (dashboard config "
             "tab or env vars) before restarting."
         )

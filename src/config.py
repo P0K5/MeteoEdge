@@ -275,6 +275,20 @@ RISK_MIN_LIQUIDITY = int(os.getenv("RISK_MIN_LIQUIDITY", "50"))
 # reason STARTING_CAPITAL_EUR itself isn't (see CONFIG_DEFAULTS comment below).
 COPY_TRADING_CAPITAL_USD = float(os.getenv("COPY_TRADING_CAPITAL_USD", "100.0"))
 
+# Live copy-trading's own capital pool (issue #1163 / epic G #1158). Mirrors
+# COPY_TRADING_CAPITAL_USD's isolation exactly one layer up: never derived
+# from or read from COPY_TRADING_CAPITAL_USD (or STARTING_CAPITAL_EUR) --
+# live and paper copy-trading are separate capital pools by design, same as
+# paper is from the weather strategy. Not live-editable via the dashboard,
+# for the same reason. Defaults to 0.0, NOT 100.0 like the paper constant --
+# an operator who hasn't explicitly set real capital via the env var gets an
+# inert value, not an accidental live allocation. This is a safety default,
+# not a recommendation for the real value (an operator decision made at
+# deploy time). Built ahead of the phase-7 go/no-go gate (see
+# docs/design/copy-trading-architecture.md); nothing reads this at decision
+# time yet -- that's epic H's (#1159) job.
+COPY_LIVE_CAPITAL_USD = float(os.getenv("COPY_LIVE_CAPITAL_USD", "0.0"))
+
 # Copy-signal poll loop cadence (issue #1123). Unlike Epic A's screening
 # cadence (a systemd oneshot, not live-editable), src/scripts/copy_signal_loop.py
 # is a genuine persistent process like run.py -- POLL_INTERVAL_SECONDS is its
@@ -769,6 +783,20 @@ CONFIG_DEFAULTS: "dict[str, str | int | float | bool]" = {
     # already-open position.
     "COPY_DAILY_LOSS_LIMIT_USD": 25.0,
     "COPY_DRAWDOWN_STOP_PCT": 0.20,
+    # Live copy-trading config (issue #1163 / epic G #1158). Mirrors the
+    # paper COPY_* block immediately above exactly one layer up: isolated
+    # from PAPER copy-trading, not just from the weather strategy --
+    # dedicated live kill switch, dedicated live exposure limits. Capital
+    # allocation (COPY_LIVE_CAPITAL_USD) deliberately lives OUTSIDE this
+    # dict as a plain module constant, same as COPY_TRADING_CAPITAL_USD --
+    # see the comment above it. Built ahead of the phase-7 go/no-go gate
+    # (docs/design/copy-trading-architecture.md); COPY_LIVE_TRADING_ENABLED
+    # defaults False and nothing reads it at decision time yet -- that's
+    # epic H's (#1159) job. Flipping COPY_LIVE_TRADING_ENABLED or
+    # COPY_TRADING_ENABLED must never affect the other.
+    "COPY_LIVE_TRADING_ENABLED": False,
+    "COPY_LIVE_MAX_EXPOSURE_PER_WALLET_USD": 50.0,
+    "COPY_LIVE_MAX_TOTAL_EXPOSURE_USD": 250.0,
 }
 
 # Maps each FORECAST_STACK value to the set of model tags whose rows should be

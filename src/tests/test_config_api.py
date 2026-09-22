@@ -469,6 +469,120 @@ class TestCopyTradingKillSwitchIsolation:
 
 
 # ---------------------------------------------------------------------------
+# Live copy-trading config keys (issue #1163 / epic G #1158) -- mirrors the
+# paper _COPY_KEYS block above exactly one layer up.
+# ---------------------------------------------------------------------------
+
+_COPY_LIVE_KEYS = (
+    "COPY_LIVE_TRADING_ENABLED",
+    "COPY_LIVE_MAX_EXPOSURE_PER_WALLET_USD",
+    "COPY_LIVE_MAX_TOTAL_EXPOSURE_USD",
+)
+
+
+class TestCopyLiveTradingConfigDefaults:
+    """The live copy-trading keys must load with correctly-typed defaults."""
+
+    def test_all_copy_live_keys_in_config_defaults(self):
+        for key in _COPY_LIVE_KEYS:
+            assert key in CONFIG_DEFAULTS, f"{key} missing from CONFIG_DEFAULTS"
+
+    def test_get_live_config_returns_documented_defaults(self):
+        db = _db()
+        seed_config(db)
+        cfg = get_live_config(db)
+        assert cfg["COPY_LIVE_TRADING_ENABLED"] is False
+        assert isinstance(cfg["COPY_LIVE_TRADING_ENABLED"], bool)
+        assert cfg["COPY_LIVE_MAX_EXPOSURE_PER_WALLET_USD"] == pytest.approx(50.0)
+        assert isinstance(cfg["COPY_LIVE_MAX_EXPOSURE_PER_WALLET_USD"], float)
+        assert cfg["COPY_LIVE_MAX_TOTAL_EXPOSURE_USD"] == pytest.approx(250.0)
+        assert isinstance(cfg["COPY_LIVE_MAX_TOTAL_EXPOSURE_USD"], float)
+
+    def test_all_copy_live_keys_have_config_meta(self):
+        for key in _COPY_LIVE_KEYS:
+            assert key in _CONFIG_META, f"{key} missing from _CONFIG_META"
+            assert _CONFIG_META[key]["group"] == "copy_trading"
+
+    def test_copy_trading_group_contains_live_keys_in_get_config_response(self, api_client):
+        client, _ = api_client
+        data = client.get("/api/config").json()
+        assert "copy_trading" in data
+        for key in _COPY_LIVE_KEYS:
+            assert key in data["copy_trading"], f"{key} missing from copy_trading group"
+
+
+class TestCopyLiveTradingConfigBounds:
+    """_validate_config_value must accept in-bounds and reject out-of-bounds
+    values for the live numeric keys."""
+
+    @pytest.mark.parametrize(
+        "key,in_bounds,out_of_bounds",
+        [
+            ("COPY_LIVE_MAX_EXPOSURE_PER_WALLET_USD", 100.0, 9999.0),
+            ("COPY_LIVE_MAX_TOTAL_EXPOSURE_USD", 500.0, 99999.0),
+        ],
+    )
+    def test_patch_bounds(self, api_client, key, in_bounds, out_of_bounds):
+        client, db = api_client
+        resp = client.patch("/api/config", json={"key": key, "value": in_bounds})
+        assert resp.status_code == 200, f"{key} rejected an in-bounds value: {resp.json()}"
+        assert db.get_config(key) == str(in_bounds)
+
+        resp = client.patch("/api/config", json={"key": key, "value": out_of_bounds})
+        assert resp.status_code == 400, f"{key} accepted an out-of-bounds value"
+
+    def test_patch_live_kill_switch_happy_path(self, api_client):
+        client, db = api_client
+        resp = client.patch(
+            "/api/config", json={"key": "COPY_LIVE_TRADING_ENABLED", "value": True}
+        )
+        assert resp.status_code == 200
+        assert resp.json()["value"] is True
+        assert db.get_config("COPY_LIVE_TRADING_ENABLED") == "true"
+
+
+class TestCopyLiveTradingKillSwitchIsolation:
+    """Toggling COPY_LIVE_TRADING_ENABLED must not affect COPY_TRADING_ENABLED
+    (paper) or weather-strategy keys, and vice versa (issue #1163 acceptance
+    criteria: live/paper kill-switch independence)."""
+
+    def test_toggling_live_switch_does_not_change_paper_switch(self):
+        db = _db()
+        seed_config(db)
+        paper_before = get_live_config(db)["COPY_TRADING_ENABLED"]
+
+        db.set_config("COPY_LIVE_TRADING_ENABLED", "True")
+
+        cfg = get_live_config(db)
+        assert cfg["COPY_LIVE_TRADING_ENABLED"] is True
+        assert cfg["COPY_TRADING_ENABLED"] == paper_before
+
+    def test_toggling_paper_switch_does_not_change_live_switch(self):
+        db = _db()
+        seed_config(db)
+        live_before = get_live_config(db)["COPY_LIVE_TRADING_ENABLED"]
+
+        db.set_config("COPY_TRADING_ENABLED", "True")
+
+        cfg = get_live_config(db)
+        assert cfg["COPY_TRADING_ENABLED"] is True
+        assert cfg["COPY_LIVE_TRADING_ENABLED"] == live_before
+
+    def test_toggling_live_switch_does_not_change_weather_keys(self):
+        db = _db()
+        seed_config(db)
+        deb_before = get_live_config(db)["DEB_ENABLED"]
+        residual_before = get_live_config(db)["RESIDUAL_CORRECTION_ENABLED"]
+
+        db.set_config("COPY_LIVE_TRADING_ENABLED", "True")
+
+        cfg = get_live_config(db)
+        assert cfg["COPY_LIVE_TRADING_ENABLED"] is True
+        assert cfg["DEB_ENABLED"] == deb_before
+        assert cfg["RESIDUAL_CORRECTION_ENABLED"] == residual_before
+
+
+# ---------------------------------------------------------------------------
 # Issue #451: USE_ENSEMBLE_SIGMA promotion gate
 # ---------------------------------------------------------------------------
 

@@ -9,6 +9,7 @@ import pytest
 
 from src.config import CONFIG_DEFAULTS
 from src.scripts.copy_signal_loop import (
+    live_startup_sanity_check,
     main,
     run_cycle,
     startup_sanity_check,
@@ -128,6 +129,42 @@ class TestStartupSanityCheck:
             rc = main(["--once"])
         assert rc == 1
         db.get_followed_wallets.assert_not_called()
+
+
+class TestLiveStartupSanityCheck:
+    """Issue #1163: mirrors TestStartupSanityCheck exactly, one layer up, for
+    live_startup_sanity_check / COPY_LIVE_MAX_TOTAL_EXPOSURE_USD vs.
+    COPY_LIVE_CAPITAL_USD. Not wired into main() -- no live loop exists yet
+    to call it (epic H's job, #1159), so there is no main()-refuses-to-start
+    equivalent here."""
+
+    def test_refuses_when_live_total_exposure_exceeds_live_capital(self):
+        with patch("src.scripts.copy_signal_loop.COPY_LIVE_CAPITAL_USD", 100.0):
+            error = live_startup_sanity_check(
+                _live_config(COPY_LIVE_MAX_TOTAL_EXPOSURE_USD=250.0)
+            )
+        assert error is not None
+        assert "COPY_LIVE_MAX_TOTAL_EXPOSURE_USD" in error
+
+    def test_allows_when_live_total_exposure_at_or_below_live_capital(self):
+        with patch("src.scripts.copy_signal_loop.COPY_LIVE_CAPITAL_USD", 250.0):
+            error = live_startup_sanity_check(
+                _live_config(COPY_LIVE_MAX_TOTAL_EXPOSURE_USD=250.0)
+            )
+        assert error is None
+
+    def test_live_check_is_independent_of_paper_sanity_check(self):
+        """A live config that fails the live check but passes the paper
+        check (and vice versa) confirms the two checks are fully isolated,
+        mirroring the kill-switch/capital isolation established in #1115."""
+        cfg = _live_config(
+            COPY_MAX_TOTAL_EXPOSURE_USD=250.0,
+            COPY_LIVE_MAX_TOTAL_EXPOSURE_USD=250.0,
+        )
+        with patch("src.scripts.copy_signal_loop.COPY_TRADING_CAPITAL_USD", 250.0), \
+             patch("src.scripts.copy_signal_loop.COPY_LIVE_CAPITAL_USD", 100.0):
+            assert startup_sanity_check(cfg) is None
+            assert live_startup_sanity_check(cfg) is not None
 
 
 class TestKillSwitch:
