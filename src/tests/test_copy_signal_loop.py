@@ -1090,6 +1090,7 @@ class TestLiveCircuitBreaker:
         mock_exec.assert_called_once()
         db.update_copy_live_position_status.assert_called_once_with(
             101, status="filled", order_id="oid-1", fill_price=0.41, rejected_reason=None,
+            filled_stake_usd=None,
         )
 
     def test_live_breaker_checked_once_per_cycle_not_per_wallet(self):
