@@ -692,8 +692,8 @@ pattern as the `trades.mode` migration above).
 
 **Purpose:** One layer up from `copy_positions` — REAL (non-paper) copy-trading positions opened from `copy_signals`. Epic H (#1159), issue #1166. Schema/data-access only: no order placement logic writes to this table yet, that's the follow-up issue ("Wire live order placement into the copy-signal gate ladder", #1167, blocked on this one).
 
-**Writer:** None yet — issue #1167 is the only thing that will write real `order_id`/`fill_price` values here.
-**Reader:** None yet — `Database.get_open_copy_live_positions` exists for the same per-wallet/total exposure-check use case `get_open_copy_positions` serves for paper positions, ready for #1167 to consume.
+**Writer:** Issue #1167's live order-placement wiring (`src/scripts/copy_signal_loop.py::_handle_live_order`).
+**Reader:** `Database.get_open_copy_live_positions` (per-wallet/total exposure checks, issue #1167) / `Database.get_copy_live_realized_pnl_total` and `Database.get_copy_live_realized_pnl_total_for_date` (issue #1175's live-specific realized-P&L circuit breaker, `src/risk/copy_risk_manager.py::allow_live_copy_signal` — mirrors `get_copy_realized_pnl_total[_for_date]`'s paper reads exactly, one layer up, over `status='settled'` rows here instead of `copy_positions`)
 
 | Column | Type | Units | Nullable | Description |
 |--------|------|-------|----------|-------------|
@@ -714,7 +714,7 @@ pattern as the `trades.mode` migration above).
 **Notes:**
 - Mirrors `copy_positions`' shape one layer up for real fills (per this issue's acceptance criteria) — same retain-not-delete settlement pattern (`status` flips in place, rows never deleted).
 - Fully separate from `copy_positions`/`open_positions`/`trades` per the architecture doc's isolation decision (issue #1100) — FKs only into `copy_signals(id)`, no FK into `copy_positions` or `open_positions`, no shared writes.
-- `Database.insert_copy_live_position` (create), `Database.update_copy_live_position_status` (pre-settlement transitions: `pending` → `filled`/`partial`/`rejected`), `Database.settle_copy_live_position` (terminal `filled`/`partial` → `settled` transition, mirrors `settle_copy_position`), and `Database.get_open_copy_live_positions` (query, `status` NOT IN `('rejected','settled')`) are the CRUD methods this issue adds.
+- `Database.insert_copy_live_position` (create), `Database.update_copy_live_position_status` (pre-settlement transitions: `pending` → `filled`/`partial`/`rejected`), `Database.settle_copy_live_position` (terminal `filled`/`partial` → `settled` transition, mirrors `settle_copy_position`), and `Database.get_open_copy_live_positions` (query, `status` NOT IN `('rejected','settled')`) are the CRUD methods issue #1166 adds. `Database.get_copy_live_realized_pnl_total` / `get_copy_live_realized_pnl_total_for_date` (issue #1175) add read-only realized-P&L aggregation over `status='settled'` rows, mirroring `get_copy_realized_pnl_total[_for_date]` exactly.
 - `update_copy_live_position_status` uses `COALESCE` against the existing row for `order_id`/`fill_price`/`rejected_reason` — a call that omits one of them preserves the previously-written value rather than nulling it out (e.g. a later fill call doesn't need to repeat an `order_id` an earlier submission-recording call already wrote).
 
 ---

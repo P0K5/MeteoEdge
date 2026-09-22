@@ -109,6 +109,19 @@ start. A non-``None`` result is threaded through exactly like
 message as ``copy_live_positions.rejected_reason``, but paper execution
 and polling are both completely unaffected.
 
+**Live-specific realized-P&L circuit breaker (issue #1175, epic I
+#1160), same cadence, same ``live_gate_reason`` mechanism.**
+:func:`src.risk.copy_risk_manager.allow_live_copy_signal` mirrors the
+paper breaker above one layer up -- once :func:`live_startup_sanity_check`
+passes, this is consulted next, and a tripped result (``daily-loss`` or
+``drawdown`` from ``copy_live_positions``, scoped to
+``COPY_LIVE_CAPITAL_USD``) is threaded through ``live_gate_reason``
+exactly like the sanity check's own result. Even when paper's own
+breaker hasn't tripped, live's own realized P&L (real fills, real
+slippage) can independently blow through its own limit -- the two
+breakers read different tables and different config keys, so tripping
+one never trips or masks the other, in either direction.
+
 Usage::
 
     python -m src.scripts.copy_signal_loop            # persistent loop
@@ -133,7 +146,9 @@ from src.data.db import Database  # noqa: E402
 from src.data.polymarket import fetch_market_resolution  # noqa: E402
 from src.data.polymarket_traders import get_wallet_trades_since, normalize_trade  # noqa: E402
 from src.execution.copy_live_executor import execute_live_copy_order  # noqa: E402
-from src.risk.copy_risk_manager import allow_copy_signal  # noqa: E402
+from src.risk.copy_risk_manager import (  # noqa: E402
+    allow_copy_signal, allow_live_copy_signal,
+)
 from src.scripts.copy_trade_backtest import DEFAULT_SLIPPAGE_BPS, apply_slippage  # noqa: E402
 
 log = logging.getLogger(__name__)
@@ -619,8 +634,20 @@ def run_cycle(db, clob_client_factory=None) -> None:
     possible -- see that function's docstring); what IS decided once here
     is ``live_startup_sanity_check(live_config)`` (Epic G's
     ``COPY_LIVE_MAX_TOTAL_EXPOSURE_USD`` vs. ``COPY_LIVE_CAPITAL_USD``
-    invariant), threaded through as ``live_gate_reason`` exactly like
-    ``breaker_reason``.
+    invariant) and, one layer up (issue #1175, epic I #1160),
+    ``allow_live_copy_signal(db, live_config)`` -- live's own
+    realized-P&L circuit breaker, scoped to ``copy_live_positions`` /
+    ``COPY_LIVE_CAPITAL_USD`` and fully independent of paper's
+    ``allow_copy_signal`` (different table, different config keys, so
+    tripping one can never trip or mask the other). Both feed the SAME
+    ``live_gate_reason`` mechanism established by #1167, never a parallel
+    one -- the sanity check runs first (a static config-consistency
+    invariant); the live breaker is only consulted when the sanity check
+    already passed. Whichever one fires, every live attempt this cycle is
+    skipped with that message as ``copy_live_positions.rejected_reason``,
+    but paper execution and polling are both completely unaffected --
+    same independence guarantee ``breaker_reason`` already gives paper's
+    own circuit breaker relative to live.
 
     *clob_client_factory* defaults to ``None``; a zero-arg factory
     (``src.execution.auth.get_clob_client`` in production) is lazily
@@ -640,6 +667,10 @@ def run_cycle(db, clob_client_factory=None) -> None:
     live_gate_reason = None
     if live_config["COPY_LIVE_TRADING_ENABLED"]:
         live_gate_reason = live_startup_sanity_check(live_config)
+        if live_gate_reason is None:
+            live_breaker_ok, live_breaker_skip_reason = allow_live_copy_signal(db, live_config)
+            if not live_breaker_ok:
+                live_gate_reason = live_breaker_skip_reason
         if clob_client_factory is None:
             from src.execution.auth import get_clob_client  # noqa: PLC0415
             clob_client_factory = get_clob_client

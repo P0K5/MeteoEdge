@@ -2242,6 +2242,55 @@ class Database:
             )
         return [dict(row) for row in cur.fetchall()]
 
+    def get_copy_live_realized_pnl_total(self) -> dict:
+        """Return realized P&L aggregated over ALL wallets' ``'settled'``
+        REAL copy-trading positions: ``{'n_settled': int, 'total_pnl_usd':
+        float}`` (issue #1175 live circuit breaker).
+
+        Mirrors ``get_copy_realized_pnl_total`` exactly, one layer up --
+        queries ``copy_live_positions`` instead of ``copy_positions``, so
+        this is fully isolated from paper's own realized P&L (same #1100
+        isolation discipline as everywhere else in this section: no shared
+        reads or writes across the two tables). ``total_pnl_usd`` is
+        ``0.0`` (not ``None``) when there are no settled real positions
+        yet.
+        """
+        cur = self._conn.execute(
+            "SELECT COUNT(*) AS n_settled, SUM(settled_pnl_usd) AS total_pnl_usd "
+            "FROM copy_live_positions WHERE status='settled'"
+        )
+        row = cur.fetchone()
+        return {
+            "n_settled": row["n_settled"],
+            "total_pnl_usd": row["total_pnl_usd"] if row["total_pnl_usd"] is not None else 0.0,
+        }
+
+    def get_copy_live_realized_pnl_total_for_date(self, date_str: str) -> dict:
+        """Return realized P&L aggregated over ``status='settled'`` REAL
+        copy-trading positions whose ``settled_at`` falls on *date_str* (a
+        UTC calendar day, ``'YYYY-MM-DD'``): ``{'n_settled': int,
+        'total_pnl_usd': float}`` (issue #1175 live circuit breaker).
+
+        Mirrors ``get_copy_realized_pnl_total_for_date`` exactly, one layer
+        up -- queries ``copy_live_positions`` instead of ``copy_positions``,
+        same ``substr(settled_at,1,10)=?`` date-truncation idiom, same
+        explicit-*date_str*-argument shape (callers pass "today" rather
+        than this method computing it, so a settlement from a prior UTC day
+        never counts toward today's live limit, and tests can exercise a
+        specific day deterministically). ``total_pnl_usd`` is ``0.0`` (not
+        ``None``) when there are no settled real positions on that day.
+        """
+        cur = self._conn.execute(
+            "SELECT COUNT(*) AS n_settled, SUM(settled_pnl_usd) AS total_pnl_usd "
+            "FROM copy_live_positions WHERE status='settled' AND substr(settled_at,1,10)=?",
+            (date_str,),
+        )
+        row = cur.fetchone()
+        return {
+            "n_settled": row["n_settled"],
+            "total_pnl_usd": row["total_pnl_usd"] if row["total_pnl_usd"] is not None else 0.0,
+        }
+
     # ------------------------------------------------------------------
     # trades
     # ------------------------------------------------------------------
