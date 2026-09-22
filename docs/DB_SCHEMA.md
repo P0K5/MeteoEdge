@@ -715,6 +715,7 @@ pattern as the `trades.mode` migration above).
 - Mirrors `copy_positions`' shape one layer up for real fills (per this issue's acceptance criteria) — same retain-not-delete settlement pattern (`status` flips in place, rows never deleted).
 - Fully separate from `copy_positions`/`open_positions`/`trades` per the architecture doc's isolation decision (issue #1100) — FKs only into `copy_signals(id)`, no FK into `copy_positions` or `open_positions`, no shared writes.
 - `Database.insert_copy_live_position` (create), `Database.update_copy_live_position_status` (pre-settlement transitions: `pending` → `filled`/`partial`/`rejected`), `Database.settle_copy_live_position` (terminal `filled`/`partial` → `settled` transition, mirrors `settle_copy_position`), and `Database.get_open_copy_live_positions` (query, `status` NOT IN `('rejected','settled')`) are the CRUD methods this issue adds.
+- `update_copy_live_position_status` uses `COALESCE` against the existing row for `order_id`/`fill_price`/`rejected_reason` — a call that omits one of them preserves the previously-written value rather than nulling it out (e.g. a later fill call doesn't need to repeat an `order_id` an earlier submission-recording call already wrote).
 
 ---
 

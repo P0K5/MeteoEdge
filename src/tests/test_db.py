@@ -2073,6 +2073,47 @@ class TestCopyLivePositions:
         assert row["rejected_reason"] == "insufficient balance"
         assert row["fill_price"] is None
 
+    def test_update_status_does_not_clobber_previously_set_order_id(self):
+        """A submission-recording call sets order_id while status stays
+        'pending'; a later fill call that only passes fill_price must not
+        null out that order_id (AI review blocking finding on PR #1169 --
+        trading-safety risk: real order IDs/fill prices feed P&L and
+        exposure checks, so silently losing one is not just cosmetic)."""
+        db = _db()
+        signal_id = self._signal_id(db)
+        position_id = db.insert_copy_live_position(**self._live_position_kwargs(signal_id))
+
+        db.update_copy_live_position_status(position_id, "pending", order_id="0xorder1")
+        db.update_copy_live_position_status(position_id, "filled", fill_price=0.46)
+
+        cur = db._conn.execute(
+            "SELECT * FROM copy_live_positions WHERE id=?", (position_id,)
+        )
+        row = dict(cur.fetchone())
+        assert row["status"] == "filled"
+        assert row["order_id"] == "0xorder1"
+        assert row["fill_price"] == 0.46
+
+    def test_update_status_to_rejected_does_not_clobber_order_id(self):
+        """A rejection after submission (order_id already known) must not
+        wipe that order_id -- only rejected_reason/status change."""
+        db = _db()
+        signal_id = self._signal_id(db)
+        position_id = db.insert_copy_live_position(**self._live_position_kwargs(signal_id))
+        db.update_copy_live_position_status(position_id, "pending", order_id="0xorder1")
+
+        db.update_copy_live_position_status(
+            position_id, "rejected", rejected_reason="order expired",
+        )
+
+        cur = db._conn.execute(
+            "SELECT * FROM copy_live_positions WHERE id=?", (position_id,)
+        )
+        row = dict(cur.fetchone())
+        assert row["status"] == "rejected"
+        assert row["order_id"] == "0xorder1"
+        assert row["rejected_reason"] == "order expired"
+
     def test_settle_filled_position_updates_row(self):
         db = _db()
         signal_id = self._signal_id(db)

@@ -2168,10 +2168,18 @@ class Database:
         an order (still ``'pending'``) passes only ``order_id``; a fill
         passes ``status='filled'``/``'partial'`` with ``fill_price``; a
         rejection passes ``status='rejected'`` with ``rejected_reason``.
-        Any column left at its default (``None``) overwrites the existing
-        value with ``None`` -- callers must pass through the current
-        ``order_id`` explicitly if a later transition (e.g. a fill) must
-        not clobber it.
+
+        ``order_id``/``fill_price``/``rejected_reason`` each default to
+        ``None`` and use ``COALESCE`` against the existing row -- a call
+        that omits one of them (e.g. a fill call that doesn't repeat the
+        ``order_id`` an earlier submission-recording call already wrote)
+        preserves the previously-written value instead of silently
+        nulling it out. This matters because these columns are real order
+        IDs and fill prices used for P&L/exposure checks -- a data-loss
+        bug here would be a trading-safety issue, not just a cosmetic
+        one. There is currently no supported way to explicitly clear one
+        of these columns back to ``NULL`` once set; none of this table's
+        real lifecycles need that.
 
         Settlement is **not** handled here -- see
         ``settle_copy_live_position`` below, which mirrors
@@ -2179,8 +2187,10 @@ class Database:
         """
         with self._lock:
             self._conn.execute(
-                "UPDATE copy_live_positions SET status=?, order_id=?, fill_price=?, "
-                "rejected_reason=? WHERE id=?",
+                "UPDATE copy_live_positions SET status=?, "
+                "order_id=COALESCE(?, order_id), "
+                "fill_price=COALESCE(?, fill_price), "
+                "rejected_reason=COALESCE(?, rejected_reason) WHERE id=?",
                 (status, order_id, fill_price, rejected_reason, position_id),
             )
             self._conn.commit()
