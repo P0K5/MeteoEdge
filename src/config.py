@@ -808,6 +808,17 @@ CONFIG_DEFAULTS: "dict[str, str | int | float | bool]" = {
     # src/risk/copy_risk_manager.py::allow_live_copy_signal.
     "COPY_LIVE_DAILY_LOSS_LIMIT_USD": 25.0,
     "COPY_LIVE_DRAWDOWN_STOP_PCT": 0.20,
+    # Wallet-balance reconciliation tolerance (issue #1174). copy_live_settle.py
+    # compares LiveTrader.get_usdc_balance() (the real exchange balance)
+    # against an expected balance derived from copy_live_positions
+    # bookkeeping (COPY_LIVE_CAPITAL_USD - currently-committed fills +
+    # realized settled P&L). Small, expected drift (CLOB fees, sub-cent
+    # rounding on size = round(size_usdc/price, 2)) should never page an
+    # operator -- only a drift LARGER than this tolerance does, via
+    # log.critical. $2 default is a starting guess for the small stakes
+    # this epic runs at ahead of the phase-7 go/no-go gate; not derived
+    # from any measured fee schedule -- revisit once real fills exist.
+    "COPY_LIVE_BALANCE_DRIFT_TOLERANCE_USD": 2.0,
 }
 
 # Maps each FORECAST_STACK value to the set of model tags whose rows should be

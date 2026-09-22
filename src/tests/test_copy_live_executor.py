@@ -188,6 +188,119 @@ class TestCancelFailureNeverRetries:
         assert result["order_id"] == "oid-1"
 
 
+class TestGhostOrderReporting:
+    """Issue #1171 item 1 / #1174: a cancel-call failure must never be
+    reported as an ordinary confirmed-zero-fill rejection -- it needs a
+    distinct rejected_reason (and its placed fill_price) so
+    copy_live_settle.py's periodic recover_ghost_orders() can find and
+    re-verify it later."""
+
+    def test_cancel_raising_reports_distinct_ghost_reason_and_fill_price(self):
+        trader = MagicMock()
+        trader.place_order.return_value = "oid-1"
+        trader.check_fill.return_value = "open"  # never resolves -> always 'timeout'
+        trader.cancel_order.side_effect = RuntimeError("cancel API down")
+        factory = MagicMock(return_value=MagicMock())
+        with patch.object(cle, "LiveTrader", return_value=trader), \
+             patch.object(cle, "get_orderbook", MagicMock(return_value={"asks": [], "bids": []})), \
+             patch.object(cle, "fetch_market_resolution", return_value=None), \
+             patch.object(cle.time, "sleep", lambda s: None), \
+             patch.object(cle, "FILL_MAX_WAIT_S", 0):
+            result = cle.execute_live_copy_order(
+                factory, token_id="tok", market="0xm", side_label="YES",
+                price=0.40, stake_usd=10.0,
+            )
+
+        assert result["status"] == "rejected"
+        assert result["rejected_reason"] == "cancel_failed_ghost"
+        assert result["order_id"] == "oid-1"
+        assert result["fill_price"] == 0.40  # placed price, for later reconciliation
+
+    def test_confirmed_zero_fill_rejection_never_uses_ghost_reason(self):
+        """The non-ambiguous counterpart: a cleanly cancelled/timed-out
+        order with a confirmed zero fill (cancel_ok=True) must keep the
+        plain outcome-string rejected_reason -- never conflated with a
+        ghost."""
+        result, trader, gob, _, _ = _run(
+            timeout=True, book_asks=[{"price": "0.45", "size": "10"}], resolution=True,
+        )
+        assert result["status"] == "rejected"
+        assert result["rejected_reason"] != "cancel_failed_ghost"
+
+    def test_cancel_raising_on_retry_attempt_also_reports_ghost(self):
+        """#1174 bug fix: previously the outer `cancel_ok` (from the FIRST
+        attempt) was never updated after a reprice-retry, so a cancel
+        failure on the RETRY's own attempt fell through to a plain
+        outcome-string rejection instead of being flagged as a ghost."""
+        trader = MagicMock()
+        trader.place_order.side_effect = ["oid-1", "oid-2"]
+        trader.check_fill.return_value = "open"  # both attempts always 'timeout'
+        # First cancel (of oid-1) succeeds; second cancel (of oid-2, the
+        # reprice-retry) raises.
+        trader.cancel_order.side_effect = [None, RuntimeError("cancel API down")]
+        trader.get_order_fill_size.return_value = 0.0
+        factory = MagicMock(return_value=MagicMock())
+        gob = MagicMock(return_value={"asks": [{"price": "0.45", "size": "10"}], "bids": []})
+
+        with patch.object(cle, "LiveTrader", return_value=trader), \
+             patch.object(cle, "get_orderbook", gob), \
+             patch.object(cle, "fetch_market_resolution", return_value=None), \
+             patch.object(cle.time, "sleep", lambda s: None), \
+             patch.object(cle, "FILL_MAX_WAIT_S", 0):
+            result = cle.execute_live_copy_order(
+                factory, token_id="tok", market="0xm", side_label="YES",
+                price=0.40, stake_usd=10.0,
+            )
+
+        assert trader.place_order.call_count == 2
+        assert result["status"] == "rejected"
+        assert result["rejected_reason"] == "cancel_failed_ghost"
+        assert result["order_id"] == "oid-2"
+        assert result["fill_price"] == 0.45  # the retry's own repriced value
+
+
+class TestPartialFillIncludesFilledStakeUsd:
+    """Issue #1171 item 3 / #1174: a confirmed partial fill must report the
+    actual USD spent, distinct from the caller's originally-requested
+    stake_usd, so settlement can compute correct P&L from what actually
+    filled."""
+
+    def test_partial_fill_after_timeout_includes_filled_stake_usd(self):
+        result, trader, gob, _, _ = _run(
+            timeout=True, book_asks=[{"price": "0.45", "size": "10"}],
+            resolution=None, fill_size=3.5,
+        )
+        assert result["status"] == "partial"
+        # price=0.40 -> price_cents=40 -> fill_price=0.40; 3.5 shares * 0.40 = 1.4
+        assert result["fill_price"] == 0.40
+        assert result["filled_stake_usd"] == 1.4
+
+    def test_partial_fill_on_retry_attempt_includes_filled_stake_usd(self):
+        trader = MagicMock()
+        trader.place_order.side_effect = ["oid-1", "oid-2"]
+        trader.check_fill.return_value = "open"
+        trader.cancel_order.return_value = None  # cancel succeeds both times
+        trader.get_order_fill_size.side_effect = [0.0, 2.0]
+        factory = MagicMock(return_value=MagicMock())
+        gob = MagicMock(return_value={"asks": [{"price": "0.45", "size": "10"}], "bids": []})
+
+        with patch.object(cle, "LiveTrader", return_value=trader), \
+             patch.object(cle, "get_orderbook", gob), \
+             patch.object(cle, "fetch_market_resolution", return_value=None), \
+             patch.object(cle.time, "sleep", lambda s: None), \
+             patch.object(cle, "FILL_MAX_WAIT_S", 0):
+            result = cle.execute_live_copy_order(
+                factory, token_id="tok", market="0xm", side_label="YES",
+                price=0.40, stake_usd=10.0,
+            )
+
+        assert result["status"] == "partial"
+        assert result["order_id"] == "oid-2"
+        # retry repriced to 0.45 -> 2.0 shares * 0.45 = 0.9
+        assert result["fill_price"] == 0.45
+        assert result["filled_stake_usd"] == 0.9
+
+
 class TestNeverRaises:
     def test_unexpected_get_order_fill_size_exception_does_not_propagate(self):
         """get_order_fill_size is documented to never raise in LiveTrader

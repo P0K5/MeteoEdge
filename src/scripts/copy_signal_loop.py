@@ -329,18 +329,29 @@ def _handle_live_order(
         _record_live_outcome(
             db, position_id, status="rejected", order_id=result.get("order_id"),
             rejected_reason=result.get("rejected_reason"), address=address,
+            # A ghost order (rejected_reason="cancel_failed_ghost", #1174)
+            # carries its placed fill_price even though status="rejected" --
+            # see execute_live_copy_order's docstring -- so
+            # recover_ghost_orders() can later value a discovered fill.
+            # Every other rejected reason has no "fill_price" key at all,
+            # so .get() -> None here, same as before this change.
+            fill_price=result.get("fill_price"),
         )
     else:
         _record_live_outcome(
             db, position_id, status=result["status"], order_id=result.get("order_id"),
             fill_price=result.get("fill_price"), address=address,
+            # Only a confirmed "partial" result carries this (issue #1171
+            # item 3 / #1174); None for "filled" (assumed == the row's own
+            # stake_usd) -- see Database.update_copy_live_position_status.
+            filled_stake_usd=result.get("filled_stake_usd"),
         )
 
 
 def _record_live_outcome(
     db, position_id: int, *, status: str, address: str,
     order_id: "str | None" = None, fill_price: "float | None" = None,
-    rejected_reason: "str | None" = None,
+    rejected_reason: "str | None" = None, filled_stake_usd: "float | None" = None,
 ) -> None:
     """Persist a ``copy_live_positions`` status transition, escalating to a
     CRITICAL log (never raising further) if the write itself fails.
@@ -361,6 +372,7 @@ def _record_live_outcome(
             db.update_copy_live_position_status(
                 position_id, status=status, order_id=order_id,
                 fill_price=fill_price, rejected_reason=rejected_reason,
+                filled_stake_usd=filled_stake_usd,
             )
     except Exception as exc:
         log.critical(
