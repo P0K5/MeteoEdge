@@ -132,3 +132,62 @@ def test_posture_banner_lives_in_copy_trading_shared_header(html_content):
         "Posture banner must sit in the Copy-Trading tab's shared header, "
         "before any individual view's content"
     )
+
+
+# ---------------------------------------------------------------------------
+# Posture banner refresh cadence (PR #1192 review finding)
+#
+# The banner must refetch on every tab re-entry, on its own interval
+# decoupled from the four-view 5-minute poll group -- not just once on the
+# tab's very first activation, which could leave a stale live/paper read on
+# screen for up to 5 minutes on every later revisit. Runtime behavior is
+# covered by test_copy_trading_mode_banner_js_logic.py; these are static
+# source-shape checks (regex over the inline <script>) that fail fast and
+# cheaply on an obvious wiring regression.
+# ---------------------------------------------------------------------------
+
+def _copy_trading_switch_tab_block(html: str) -> str:
+    match = re.search(
+        r"if \(tab === 'copy-trading'\) \{.*?\n  \}\n\}", html, re.S
+    )
+    assert match, "Could not locate the Copy-Trading switchTab() entry block"
+    return match.group(0)
+
+
+def test_posture_banner_has_its_own_dedicated_interval(html_content):
+    block = _copy_trading_switch_tab_block(html_content)
+    assert "copyTradingModeIntervalId" in block, (
+        "Posture banner must use its own interval variable, decoupled from "
+        "copyTradingIntervalId (the four-view 5-minute group)"
+    )
+    assert re.search(
+        r"copyTradingModeIntervalId\s*=\s*setInterval\(\s*fetchCopyTradingModePosture\s*,\s*30_000\s*\)",
+        block,
+    ), "Posture banner interval must be 30s (30_000), not the 5-minute (300_000) view-data cadence"
+
+
+def test_posture_banner_refetches_unconditionally_on_every_tab_entry(html_content):
+    """fetchCopyTradingModePosture() must be called outside/after the
+    `if (!copyTradingLoaded)` first-activation guard too, so a tab
+    re-entry (copyTradingLoaded already true) still fetches immediately
+    rather than waiting for the next interval tick."""
+    block = _copy_trading_switch_tab_block(html_content)
+    loaded_guard = re.search(r"if \(!copyTradingLoaded\) \{(.*?)\n    \}", block, re.S)
+    assert loaded_guard, "Could not locate the copyTradingLoaded first-activation guard"
+    after_guard = block[loaded_guard.end():]
+    assert "fetchCopyTradingModePosture()" in after_guard, (
+        "fetchCopyTradingModePosture() must also be called unconditionally "
+        "on every tab entry, not only inside the copyTradingLoaded guard"
+    )
+
+
+def test_posture_banner_interval_cleared_when_leaving_tab(html_content):
+    teardown_match = re.search(
+        r"Stop Copy-Trading polling when leaving the Copy-Trading tab.*?\n  \}",
+        html_content,
+        re.S,
+    )
+    assert teardown_match, "Could not locate the Copy-Trading tab teardown block"
+    teardown = teardown_match.group(0)
+    assert "clearInterval(copyTradingModeIntervalId)" in teardown
+    assert "copyTradingModeIntervalId = null" in teardown

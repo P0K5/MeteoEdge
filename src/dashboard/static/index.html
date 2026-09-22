@@ -3670,6 +3670,7 @@ let portfolioIntervalId = null;
 let botLogIntervalId = null;
 let copyTradingLoaded = false;
 let copyTradingIntervalId = null;
+let copyTradingModeIntervalId = null;
 
 function switchTab(tab) {
   // Hide all panels
@@ -3719,7 +3720,9 @@ function switchTab(tab) {
   // Stop Copy-Trading polling when leaving the Copy-Trading tab
   if (currentTab === 'copy-trading' && tab !== 'copy-trading') {
     clearInterval(copyTradingIntervalId);
+    clearInterval(copyTradingModeIntervalId);
     copyTradingIntervalId = null;
+    copyTradingModeIntervalId = null;
   }
 
   currentTab = tab;
@@ -3782,9 +3785,8 @@ function switchTab(tab) {
   }
 
   // Lazy-load Copy-Trading candidates + followed wallets + positions +
-  // activity feed + the tab-wide live/paper posture banner on first
-  // activation; poll all five every 5 minutes, matching the other
-  // advisory/report-style tabs (Promotion, EMOS).
+  // activity feed on first activation; poll all four every 5 minutes,
+  // matching the other advisory/report-style tabs (Promotion, EMOS).
   if (tab === 'copy-trading') {
     if (!copyTradingLoaded) {
       copyTradingLoaded = true;
@@ -3796,12 +3798,23 @@ function switchTab(tab) {
     }
     if (!copyTradingIntervalId) {
       copyTradingIntervalId = setInterval(() => {
-        fetchCopyTradingModePosture();
         fetchCopyTradingCandidates();
         fetchFollowedWallets();
         fetchCopyTradingPositions();
         fetchCopyTradingActivityFeed();
       }, 300_000);
+    }
+    // The global live/paper posture banner gets its own dedicated 30s
+    // interval, decoupled from the 5-minute view-data group above, and
+    // is fetched unconditionally on every tab entry (not gated behind
+    // copyTradingLoaded, mirroring fetchPortfolio()/fetchBotLog()'s
+    // pattern at ~line 3728) -- a stale live/paper read must never
+    // persist for up to 5 minutes on a tab revisit (e.g. right after
+    // halt_live_copy_trading.py runs mid-incident and the operator tabs
+    // away and back). See PR #1192 review.
+    fetchCopyTradingModePosture();
+    if (!copyTradingModeIntervalId) {
+      copyTradingModeIntervalId = setInterval(fetchCopyTradingModePosture, 30_000);
     }
   }
 }

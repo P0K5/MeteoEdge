@@ -9,10 +9,25 @@ minimal DOM/fetch/window stubs.
 
 Covers the issue's explicit test requirements:
 - Banner reflects ON/OFF state correctly on load.
-- Banner updates on config change (the 5-min poll re-fetches /api/config,
-  mirroring how the other three Copy-Trading views already refresh).
+- Banner updates on config change (via its own dedicated 30s poll --
+  see PR #1192 review below).
 - Both badge CSS variants render correctly and both carry an aria-label.
 - Conservative default: a failed config fetch must never claim LIVE.
+
+Also covers a PR #1192 review finding (Designer change request): the
+banner must refetch on every tab re-entry, not just the tab's very first
+activation. The original wiring only called
+fetchCopyTradingModePosture() inside switchTab()'s `if (!copyTradingLoaded)`
+first-activation guard, sharing the four-view group's 5-minute interval --
+so a revisit to the Copy-Trading tab after the first one relied on that
+interval's next tick, meaning a stale live/paper read could sit on screen
+for up to 5 minutes on every single tab revisit (e.g. right after
+halt_live_copy_trading.py runs mid-incident and the operator tabs away
+and back), not just during one long viewing session. Fixed by giving the
+banner its own dedicated `copyTradingModeIntervalId` (30s, decoupled from
+the 300s view-data group) and fetching it unconditionally on every
+`tab === 'copy-trading'` entry, mirroring the existing
+fetchPortfolio()/fetchBotLog() pattern.
 """
 from __future__ import annotations
 
@@ -161,6 +176,64 @@ _ASSERTIONS = textwrap.dedent("""
       assert.ok(banner.getAttribute('aria-label').length > 5);
       renderCopyTradingModePosture(false);
       assert.ok(banner.getAttribute('aria-label').length > 5);
+
+      // ------------------------------------------------------------------
+      // 7. The posture banner must refetch on EVERY tab re-entry (not
+      //    just the very first activation), on its own dedicated 30s
+      //    interval decoupled from the four-view 5-minute poll group.
+      //    PR #1192 review finding: the original wiring only called
+      //    fetchCopyTradingModePosture() inside the `if (!copyTradingLoaded)`
+      //    first-activation guard, so a revisit to the tab relied on the
+      //    5-minute interval's first tick -- meaning a stale live/paper
+      //    read (e.g. right after halt_live_copy_trading.py runs
+      //    mid-incident) could persist on screen for up to 5 minutes
+      //    every time an operator tabs away and back, not just once.
+      // ------------------------------------------------------------------
+      let postureFetchCount = 0;
+      fetchCopyTradingModePosture = async () => { postureFetchCount++; };
+      fetchCopyTradingCandidates = async () => {};
+      fetchFollowedWallets = async () => {};
+      fetchCopyTradingPositions = async () => {};
+      fetchCopyTradingActivityFeed = async () => {};
+
+      const setIntervalCalls = [];
+      const clearIntervalCalls = [];
+      let fakeIntervalId = 0;
+      global.setInterval = (fn, delay) => { setIntervalCalls.push({ fn, delay }); return ++fakeIntervalId; };
+      global.clearInterval = (id) => { clearIntervalCalls.push(id); };
+
+      currentTab = 'portfolio';
+      copyTradingLoaded = false;
+      copyTradingIntervalId = null;
+      copyTradingModeIntervalId = null;
+
+      // First entry: immediate fetch (called once from inside the
+      // first-activation guard, and once more from the unconditional
+      // call right after -- both are intentional, see index.html), plus
+      // both a 30s posture interval and the separate shared 5-minute
+      // view-data interval.
+      switchTab('copy-trading');
+      assert.ok(postureFetchCount >= 1, 'first tab entry must fetch the posture banner immediately');
+      assert.ok(setIntervalCalls.some(c => c.delay === 30_000), 'posture banner must get its own 30s interval');
+      const fiveMinCalls = setIntervalCalls.filter(c => c.delay === 300_000);
+      assert.strictEqual(fiveMinCalls.length, 1, 'the four-view group must stay a single shared 5-minute interval, not per-fetch');
+
+      // Leave the tab (an unrelated tab, to avoid exercising unrelated
+      // lazy-load branches) -- both Copy-Trading intervals must be torn
+      // down, same as every other tab's teardown block.
+      const clearedBeforeLeaving = clearIntervalCalls.length;
+      switchTab('other-unrelated-tab');
+      assert.ok(clearIntervalCalls.length >= clearedBeforeLeaving + 2, 'leaving the tab must clear both the posture and the view-data intervals');
+
+      // Re-enter: THE bug this fixes. copyTradingLoaded is already true
+      // at this point, so the old code silently skipped
+      // fetchCopyTradingModePosture() on this second entry entirely,
+      // leaving the banner stale until the next 5-minute poll tick.
+      postureFetchCount = 0;
+      setIntervalCalls.length = 0;
+      switchTab('copy-trading');
+      assert.strictEqual(postureFetchCount, 1, 'the posture banner must refetch immediately on every tab re-entry, not just the first');
+      assert.ok(setIntervalCalls.some(c => c.delay === 30_000), 'a fresh 30s posture interval must be created on re-entry too');
 
       console.log('ALL_MODE_BANNER_JS_ASSERTIONS_PASSED');
     })().catch((err) => {
