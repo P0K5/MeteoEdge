@@ -177,7 +177,7 @@ view can ship as soon as Epic A has data, before execution exists.
 A-F are paper-mode only, by design (see "Non-goals" above). Epics G and H
 have been built (PR #1164 for Epic G; PRs #1169–#1170 for Epic H). The
 remaining two (Epics I and J) extend the same isolation discipline to real
-order placement and pending delivery.
+order placement and are still pending delivery.
 
 **Epic G (#1158) — Live-trading config, kill switch, and capital
 allocation.** Mirrors Epic E's role: a live-specific kill switch
