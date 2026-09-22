@@ -174,10 +174,10 @@ view can ship as soon as Epic A has data, before execution exists.
 
 ## Live execution epics (phase 2 — gated on the phase-7 go/no-go)
 
-A-F are paper-mode only, by design (see "Non-goals" above). Epics G and H
-have been built (PR #1164 for Epic G; PRs #1169–#1170 for Epic H). The
-remaining two (Epics I and J) extend the same isolation discipline to real
-order placement and are still pending delivery.
+A-F are paper-mode only, by design (see "Non-goals" above). Epics G, H, and I
+have been built (PR #1164 for Epic G; PRs #1169–#1170 for Epic H; PRs #1178–#1181
+for Epic I). The remaining one (Epic J) extends the same isolation discipline to
+real order placement and is still pending delivery.
 
 **Epic G (#1158) — Live-trading config, kill switch, and capital
 allocation.** Mirrors Epic E's role: a live-specific kill switch
@@ -198,7 +198,7 @@ mirroring `live_trader.py`'s own hard-won patterns. Depends on Epic G. **Status:
 Extends Epic C's settlement pattern to reconcile real positions against
 actual wallet balance (not simulated P&L), extends Epic D's circuit
 breaker to halt real order placement, and adds a live-specific emergency
-halt script mirroring `halt_live_trading.py`. Depends on Epic H and G.
+halt script mirroring `halt_live_trading.py`. Depends on Epic H and G. **Status: Built (PRs #1178–#1181).**
 
 **Epic J (#1161) — Live-trading dashboard views.** Extends Epic F to
 visually and numerically separate live activity from paper — never
