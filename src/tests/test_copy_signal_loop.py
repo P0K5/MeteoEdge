@@ -109,6 +109,15 @@ def _mock_db(**overrides) -> MagicMock:
     # overrides one of these two to exercise it.
     db.get_open_copy_live_positions.return_value = []
     db.insert_copy_live_position.return_value = 101
+    # Live circuit breaker (issue #1175) -- zero realized LIVE P&L by
+    # default, mirroring the paper defaults above, so it never trips
+    # unless a test deliberately overrides one of these two to exercise it.
+    db.get_copy_live_realized_pnl_total_for_date.return_value = {
+        "n_settled": 0, "total_pnl_usd": 0.0,
+    }
+    db.get_copy_live_realized_pnl_total.return_value = {
+        "n_settled": 0, "total_pnl_usd": 0.0,
+    }
     for key, value in overrides.items():
         setattr(getattr(db, key), "return_value", value)
     return db
@@ -948,6 +957,168 @@ class TestLiveExecution:
         db.insert_copy_position.assert_called_once()
 
 
+class TestLiveCircuitBreaker:
+    """Live-specific realized-P&L circuit breaker wiring (issue #1175, epic
+    I #1160). Mirrors TestCircuitBreaker's structure exactly, one layer up:
+    never mocks src.risk.copy_risk_manager.allow_live_copy_signal itself --
+    exercises the real function against the mocked db's
+    get_copy_live_realized_pnl_total[_for_date], same "mock only the DB and
+    network boundary" style as everywhere else in this file.
+
+    Per issue #1175's own explicit requirement, the tests below prove the
+    breaker actually HALTS live order placement (asserting
+    execute_live_copy_order / LiveTrader.place_order are never called and
+    the copy_live_positions row is written with status='rejected') -- not
+    merely that a log line is emitted.
+    """
+
+    def _run(
+        self, db, raw_trades, live_config=None, resolution=None, live_capital_usd=250.0,
+    ):
+        with patch(
+            "src.scripts.copy_signal_loop.get_live_config",
+            return_value=live_config if live_config is not None else _live_enabled_config(),
+        ), patch(
+            "src.scripts.copy_signal_loop.get_wallet_trades_since",
+            return_value=raw_trades,
+        ), patch(
+            "src.scripts.copy_signal_loop.fetch_market_resolution",
+            return_value=resolution,
+        ), patch(
+            "src.scripts.copy_signal_loop.COPY_LIVE_CAPITAL_USD", live_capital_usd,
+        ):
+            run_cycle(db)
+
+    def test_tripped_live_daily_loss_halts_placement_and_records_rejection(self):
+        db = _mock_db()
+        db.get_copy_live_realized_pnl_total_for_date.return_value = {
+            "n_settled": 3, "total_pnl_usd": -30.0,
+        }
+        live_config = _live_enabled_config(COPY_LIVE_DAILY_LOSS_LIMIT_USD=25.0)
+        with patch(
+            "src.scripts.copy_signal_loop.execute_live_copy_order",
+        ) as mock_exec, patch(
+            "src.execution.live_trader.LiveTrader.place_order",
+        ) as mock_place_order:
+            self._run(db, [_buy_raw()], live_config=live_config, resolution=None)
+
+        # The breaker halts placement -- it is never even attempted, not
+        # just logged as a rejection after the fact.
+        mock_exec.assert_not_called()
+        mock_place_order.assert_not_called()
+
+        db.insert_copy_live_position.assert_called_once()
+        db.update_copy_live_position_status.assert_called_once_with(
+            101, status="rejected", rejected_reason="live_circuit_breaker_daily_loss",
+        )
+        # Paper is completely unaffected by the live breaker tripping.
+        db.insert_copy_position.assert_called_once()
+
+    def test_tripped_live_drawdown_halts_placement_and_records_rejection(self):
+        db = _mock_db()
+        db.get_copy_live_realized_pnl_total.return_value = {
+            "n_settled": 5, "total_pnl_usd": -50.0,
+        }
+        live_config = _live_enabled_config(
+            COPY_LIVE_DAILY_LOSS_LIMIT_USD=999.0, COPY_LIVE_DRAWDOWN_STOP_PCT=0.20,
+        )
+        with patch("src.risk.copy_risk_manager.COPY_LIVE_CAPITAL_USD", 100.0), patch(
+            "src.scripts.copy_signal_loop.execute_live_copy_order",
+        ) as mock_exec:
+            self._run(db, [_buy_raw()], live_config=live_config, resolution=None)
+
+        mock_exec.assert_not_called()
+        db.update_copy_live_position_status.assert_called_once_with(
+            101, status="rejected", rejected_reason="live_circuit_breaker_drawdown",
+        )
+        db.insert_copy_position.assert_called_once()
+
+    def test_not_tripped_does_not_change_normal_live_execution(self):
+        db = _mock_db()
+        live_config = _live_enabled_config()
+        with patch(
+            "src.scripts.copy_signal_loop.execute_live_copy_order",
+            return_value={"status": "filled", "order_id": "oid-1", "fill_price": 0.41},
+        ) as mock_exec:
+            self._run(db, [_buy_raw()], live_config=live_config, resolution=None)
+
+        mock_exec.assert_called_once()
+        db.update_copy_live_position_status.assert_called_once_with(
+            101, status="filled", order_id="oid-1", fill_price=0.41, rejected_reason=None,
+        )
+
+    def test_live_breaker_checked_once_per_cycle_not_per_wallet(self):
+        wallet_a = _wallet(address="0xwalletA")
+        wallet_b = _wallet(address="0xwalletB")
+        db = _mock_db()
+        db.get_followed_wallets.return_value = [wallet_a, wallet_b]
+        db.get_copy_live_realized_pnl_total_for_date.return_value = {
+            "n_settled": 1, "total_pnl_usd": -30.0,
+        }
+        live_config = _live_enabled_config(COPY_LIVE_DAILY_LOSS_LIMIT_USD=25.0)
+        with patch(
+            "src.scripts.copy_signal_loop.execute_live_copy_order",
+        ) as mock_exec:
+            self._run(db, [_buy_raw()], live_config=live_config, resolution=None)
+
+        mock_exec.assert_not_called()
+        db.get_copy_live_realized_pnl_total_for_date.assert_called_once()
+        assert db.update_copy_live_position_status.call_count == 2
+        for call in db.update_copy_live_position_status.call_args_list:
+            assert call.kwargs["rejected_reason"] == "live_circuit_breaker_daily_loss"
+
+    def test_live_sanity_check_takes_precedence_over_live_breaker(self):
+        """When BOTH the live sanity check and the live breaker would trip,
+        the (pre-existing, #1163) sanity check runs first and wins -- the
+        breaker is a strictly-additional gate layered on top of it, never a
+        replacement, and both still funnel through the same
+        live_gate_reason mechanism."""
+        db = _mock_db()
+        db.get_copy_live_realized_pnl_total_for_date.return_value = {
+            "n_settled": 1, "total_pnl_usd": -30.0,
+        }
+        live_config = _live_enabled_config(
+            COPY_LIVE_DAILY_LOSS_LIMIT_USD=25.0,
+            COPY_LIVE_MAX_TOTAL_EXPOSURE_USD=999999.0,
+        )
+        with patch(
+            "src.scripts.copy_signal_loop.execute_live_copy_order",
+        ) as mock_exec:
+            # live_capital_usd=250 (the _run default) << 999999 -> sanity check fails
+            self._run(db, [_buy_raw()], live_config=live_config, resolution=None)
+
+        mock_exec.assert_not_called()
+        rejected_call = db.update_copy_live_position_status.call_args
+        assert rejected_call.kwargs["status"] == "rejected"
+        assert "COPY_LIVE_MAX_TOTAL_EXPOSURE_USD" in rejected_call.kwargs["rejected_reason"]
+
+    def test_disabled_live_never_queries_live_breaker(self):
+        """The kill switch is still checked first (issue #1167) -- when live
+        is off, the live breaker's own DB reads never happen at all."""
+        db = _mock_db()
+        live_config = _live_enabled_config(COPY_LIVE_TRADING_ENABLED=False)
+        self._run(db, [_buy_raw()], live_config=live_config, resolution=None)
+        db.get_copy_live_realized_pnl_total_for_date.assert_not_called()
+        db.get_copy_live_realized_pnl_total.assert_not_called()
+
+    def test_never_touches_paper_breaker_queries(self):
+        """The live breaker must never read paper's own realized-P&L
+        methods -- same table isolation #1175 requires, exercised end to
+        end through run_cycle rather than just the risk-manager unit test."""
+        db = _mock_db()
+        db.get_copy_live_realized_pnl_total_for_date.return_value = {
+            "n_settled": 1, "total_pnl_usd": -30.0,
+        }
+        live_config = _live_enabled_config(COPY_LIVE_DAILY_LOSS_LIMIT_USD=25.0)
+        with patch("src.scripts.copy_signal_loop.execute_live_copy_order"):
+            self._run(db, [_buy_raw()], live_config=live_config, resolution=None)
+        # Paper's own breaker query is still called once (it's part of the
+        # separate paper breaker check), but it must reflect paper's own
+        # (zero) P&L, never be short-circuited or replaced by the live one.
+        db.get_copy_realized_pnl_total_for_date.assert_called_once()
+        assert db.insert_copy_position.call_count == 1
+
+
 class TestWalletAutoPauseHaltsLiveExecution:
     """Issue #1177 regression coverage. ``copy_wallet_health.py``'s
     auto-pause calls ``db.update_followed_wallet_status(address, "paused",
@@ -1155,3 +1326,77 @@ class TestPaperIndependentOfLive:
         assert db.insert_copy_signal.call_args.kwargs["order_placed"] == 1
         db.insert_copy_position.assert_called_once()
         db.link_copy_signal_to_position.assert_called_once()
+
+    def test_paper_breaker_trips_without_tripping_live_breaker(self):
+        """Issue #1175 acceptance criterion, direction 1: paper's realized
+        P&L (copy_positions) breaching its own daily-loss limit must NOT
+        halt live order placement -- the two breakers read different
+        tables and never share config keys."""
+        db = _mock_db()
+        db.get_copy_realized_pnl_total_for_date.return_value = {
+            "n_settled": 1, "total_pnl_usd": -30.0,
+        }
+        live_config = _live_enabled_config(COPY_DAILY_LOSS_LIMIT_USD=25.0)
+        with patch(
+            "src.scripts.copy_signal_loop.get_live_config", return_value=live_config,
+        ), patch(
+            "src.scripts.copy_signal_loop.get_wallet_trades_since", return_value=[_buy_raw()],
+        ), patch(
+            "src.scripts.copy_signal_loop.fetch_market_resolution", return_value=None,
+        ), patch(
+            "src.scripts.copy_signal_loop.COPY_LIVE_CAPITAL_USD", 250.0,
+        ), patch(
+            "src.scripts.copy_signal_loop.execute_live_copy_order",
+            return_value={"status": "filled", "order_id": "oid-live", "fill_price": 0.41},
+        ) as mock_exec:
+            run_cycle(db)
+
+        # Paper itself was skipped by its own tripped breaker...
+        signal_kwargs = db.insert_copy_signal.call_args.kwargs
+        assert signal_kwargs["skip_reason"] == "circuit_breaker_daily_loss"
+        db.insert_copy_position.assert_not_called()
+        # ...but live is a pure downstream-of-paper addition (see
+        # _handle_buy_trade), so when paper itself never executes, live is
+        # never even attempted either -- this is the pre-existing #1167
+        # "never live-only" guarantee, not a new #1175 behavior. What #1175
+        # adds is proven by the sibling test below: a genuinely independent
+        # live-side trip that paper's own breaker knows nothing about.
+        mock_exec.assert_not_called()
+        db.insert_copy_live_position.assert_not_called()
+
+    def test_live_breaker_trips_without_tripping_paper_breaker(self):
+        """Issue #1175 acceptance criterion, direction 2: live's realized
+        P&L (copy_live_positions) breaching its own daily-loss limit must
+        NOT halt paper execution -- paper keeps running completely
+        independently, exactly like TestPaperIndependentOfLive's other
+        tests already establish for the kill switch and live-side
+        failures."""
+        db = _mock_db()
+        db.get_copy_live_realized_pnl_total_for_date.return_value = {
+            "n_settled": 1, "total_pnl_usd": -30.0,
+        }
+        live_config = _live_enabled_config(COPY_LIVE_DAILY_LOSS_LIMIT_USD=25.0)
+        with patch(
+            "src.scripts.copy_signal_loop.get_live_config", return_value=live_config,
+        ), patch(
+            "src.scripts.copy_signal_loop.get_wallet_trades_since", return_value=[_buy_raw()],
+        ), patch(
+            "src.scripts.copy_signal_loop.fetch_market_resolution", return_value=None,
+        ), patch(
+            "src.scripts.copy_signal_loop.COPY_LIVE_CAPITAL_USD", 250.0,
+        ), patch(
+            "src.scripts.copy_signal_loop.execute_live_copy_order",
+        ) as mock_exec:
+            run_cycle(db)
+
+        # Live was halted by its own tripped breaker...
+        mock_exec.assert_not_called()
+        db.update_copy_live_position_status.assert_called_once_with(
+            101, status="rejected", rejected_reason="live_circuit_breaker_daily_loss",
+        )
+        # ...but paper is completely unaffected: it executed normally, with
+        # no skip_reason at all.
+        signal_kwargs = db.insert_copy_signal.call_args.kwargs
+        assert signal_kwargs["order_placed"] == 1
+        assert signal_kwargs.get("skip_reason") is None
+        db.insert_copy_position.assert_called_once()

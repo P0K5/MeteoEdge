@@ -797,6 +797,17 @@ CONFIG_DEFAULTS: "dict[str, str | int | float | bool]" = {
     "COPY_LIVE_TRADING_ENABLED": False,
     "COPY_LIVE_MAX_EXPOSURE_PER_WALLET_USD": 50.0,
     "COPY_LIVE_MAX_TOTAL_EXPOSURE_USD": 250.0,
+    # Live-specific realized-P&L circuit breaker (issue #1175, epic I
+    # #1160). Mirrors COPY_DAILY_LOSS_LIMIT_USD/COPY_DRAWDOWN_STOP_PCT
+    # exactly one layer up, same isolation as the rest of this live block:
+    # even when paper's own breaker (issue #1139) hasn't tripped, live's
+    # own realized P&L (real fills, real slippage) could independently
+    # blow through a daily-loss or drawdown limit paper never sees, since
+    # it is derived from copy_live_positions, never copy_positions. Scoped
+    # to COPY_LIVE_CAPITAL_USD, never COPY_TRADING_CAPITAL_USD -- see
+    # src/risk/copy_risk_manager.py::allow_live_copy_signal.
+    "COPY_LIVE_DAILY_LOSS_LIMIT_USD": 25.0,
+    "COPY_LIVE_DRAWDOWN_STOP_PCT": 0.20,
 }
 
 # Maps each FORECAST_STACK value to the set of model tags whose rows should be
