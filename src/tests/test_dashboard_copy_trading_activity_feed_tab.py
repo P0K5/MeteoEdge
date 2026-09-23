@@ -60,6 +60,31 @@ def test_activity_feed_has_wallet_and_event_type_filter_dropdowns(html_content):
     assert 'value="wallet_paused"' in html_content
 
 
+def test_activity_feed_has_mode_filter_dropdown(html_content):
+    """issue #1188 acceptance criteria: new Mode (Live/Paper/All) filter
+    alongside the existing wallet and event-type filters."""
+    assert 'id="copy-activity-mode-select"' in html_content
+    content_start = html_content.index('id="copy-activity-mode-select"')
+    content_end = html_content.index('</select>', content_start)
+    section = html_content[content_start:content_end]
+    assert 'value="live"' in section
+    assert 'value="paper"' in section
+
+
+def test_activity_feed_event_type_dropdown_has_live_options(html_content):
+    """issue #1188: every new live event_type must be selectable, matching
+    the existing per-event_type filter pattern."""
+    content_start = html_content.index('id="copy-activity-type-select"')
+    content_end = html_content.index('</select>', content_start)
+    section = html_content[content_start:content_end]
+    for event_type in (
+        "live_order_pending", "live_order_filled", "live_order_partial",
+        "live_order_rejected", "live_order_skipped",
+        "live_circuit_breaker_tripped", "live_position_settled",
+    ):
+        assert f'value="{event_type}"' in section, f"missing event-type filter option: {event_type}"
+
+
 def test_activity_feed_fetch_wired_into_copy_trading_tab_activation(html_content):
     """fetchCopyTradingActivityFeed must be called both on first tab
     activation and on the shared 5-minute poll interval, matching the
@@ -97,6 +122,33 @@ def test_activity_feed_endpoint_url_used_by_frontend(html_content):
 
 def test_empty_state_text_present(html_content):
     assert "No activity yet" in html_content
+
+
+def test_mode_live_empty_states_present(html_content):
+    """issue #1188 States section: distinguish 'live has never been
+    switched on' from 'live is on, but nothing happened in this window'."""
+    assert "hasn't been turned on yet" in html_content
+    assert "No live activity in this range" in html_content
+
+
+def test_activity_feed_uses_shared_mode_badge_classes(html_content):
+    """Must reuse #1185's existing .mode-badge/.mode-badge-live/
+    .mode-badge-paper classes verbatim, not redefine a parallel set."""
+    render_fn_start = html_content.index("function _copyActivityModeBadgeHtml(e)")
+    render_fn_end = html_content.index("\nfunction ", render_fn_start + 10)
+    fn_body = html_content[render_fn_start:render_fn_end]
+    assert "mode-badge-live" in fn_body
+    assert "mode-badge-paper" in fn_body
+    assert "aria-label" in fn_body, "the mode badge must carry an explicit aria-label, never color-only"
+
+
+def test_activity_item_has_left_border_accent_classes(html_content):
+    """Design spec: colored left-border row accent (green/live, amber/paper)
+    in addition to badge + text -- three redundant mode signals."""
+    assert ".copy-activity-item-live{" in html_content
+    assert ".copy-activity-item-paper{" in html_content
+    assert "copy-activity-item-live" in html_content.split("function _copyActivityItemHtml")[1][:1000]
+    assert "copy-activity-item-paper" in html_content.split("function _copyActivityItemHtml")[1][:1000]
 
 
 def test_activity_feed_click_targets_are_keyboard_accessible(html_content):

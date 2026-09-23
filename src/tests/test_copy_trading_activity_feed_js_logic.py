@@ -1,5 +1,6 @@
 """Unit tests for the Copy-Trading dashboard Activity Feed view's
-client-side logic (epic F #1143, story F4 #1149).
+client-side logic (epic F #1143, story F4 #1149; live events + mode
+filter, epic J #1161, issue #1188).
 
 Same technique as test_copy_trading_followed_wallets_js_logic.py /
 test_edge_tab_js_logic.py (issue #758): this repo has no JS test framework,
@@ -9,8 +10,9 @@ minimal DOM/fetch/window stubs.
 
 Covers the acceptance criteria's explicitly-called-out, separately-tested
 requirement: "stale-feed indicator appears on a simulated poll failure" --
-plus the merged-feed rendering, wallet/event-type filters (client-side,
-against the cached payload), and click-through cross-navigation.
+plus the merged-feed rendering, wallet/event-type/mode filters (client-side,
+against the cached payload), click-through cross-navigation, the per-row
+LIVE/PAPER mode badge + left-border accent, and the Mode=Live empty states.
 """
 from __future__ import annotations
 
@@ -212,6 +214,115 @@ _ASSERTIONS = textwrap.dedent("""
       _copyActivityJumpToWallet('pause', '0xW2');
       assert.strictEqual(tabBtnClicked, false, 'already being on the copy-trading tab must not re-click the tab button');
       assert.strictEqual(followedScrolled, true, 'a pause event must scroll to its Followed Wallets row');
+
+      // ------------------------------------------------------------------
+      // 8. issue #1188: events with no 'mode' field (older/unmapped data)
+      //    default to the PAPER badge + border, never LIVE -- "default to
+      //    PAPER when a mode can't be determined" acceptance criterion.
+      //    The eventsFixture above has no 'mode' key on any event.
+      // ------------------------------------------------------------------
+      global.fetch = async () => jsonResp({ events: eventsFixture });
+      await fetchCopyTradingActivityFeed();
+      assert.ok(listWrap.innerHTML.includes('mode-badge-paper'), 'a missing mode must default to the paper badge');
+      assert.ok(listWrap.innerHTML.includes('copy-activity-item-paper'), 'a missing mode must default to the paper left-border accent');
+      assert.ok(!listWrap.innerHTML.includes('mode-badge-live'), 'a missing mode must never render as LIVE');
+      assert.ok(listWrap.innerHTML.includes('PAPER'), 'the PAPER badge text must be visible');
+      // Designer review (PR #1195): row1 keeps Epic F's own distinct,
+      // colored order_placed/order_skipped badges -- collapsing them into
+      // one neutral "Signal detected" badge was a scannability regression
+      // against the Activity Feed's "diagnose why didn't this get copied"
+      // purpose. Mode redundancy comes from the row2 "(paper)" text below
+      // (plus the new mode badge/border), never from touching row1.
+      assert.ok(listWrap.innerHTML.includes('copy-activity-badge-placed'), 'order_placed must keep its own distinct row1 badge');
+      assert.ok(listWrap.innerHTML.includes('copy-activity-badge-skipped'), 'order_skipped must keep its own distinct row1 badge');
+      assert.ok(!listWrap.innerHTML.includes('Signal detected'), 'the unified "Signal detected" badge must not be used');
+      assert.ok(listWrap.innerHTML.includes('Order placed (paper)'), 'the description text must independently state the mode, not just the badge');
+      assert.ok(listWrap.innerHTML.includes('Order skipped (paper)'));
+      assert.ok(listWrap.innerHTML.includes('Wallet auto-paused'));
+
+      // ------------------------------------------------------------------
+      // 9. Live events: mode badge, left-border accent, Mode filter, and
+      //    live-specific badge/description text (issue #1188).
+      // ------------------------------------------------------------------
+      const liveAndPaperFixture = [
+        { event_type: 'live_order_rejected', ts: '2026-09-06T00:00:00Z', address: '0xW1', mode: 'live',
+          market: 'M2', rejected_reason: 'no fill before the timeout window closed', signal_id: 9 },
+        { event_type: 'live_circuit_breaker_tripped', ts: '2026-09-05T12:00:00Z', address: '0xW1', mode: 'live',
+          market: 'M2', skip_reason: 'the live daily loss limit was reached', signal_id: 8 },
+        { event_type: 'live_position_settled', ts: '2026-09-05T00:00:00Z', address: '0xW1', mode: 'live',
+          market: 'M2', settled_pnl_usd: -1.5, signal_id: 7 },
+        { event_type: 'order_placed', ts: '2026-09-01T00:00:00Z', address: '0xW1', mode: 'paper',
+          market: 'M1', fill_price: 0.42, size_usd: 5.0, signal_id: 4 },
+      ];
+      global.fetch = async () => jsonResp({ events: liveAndPaperFixture });
+      await fetchCopyTradingActivityFeed();
+
+      assert.ok(listWrap.innerHTML.includes('mode-badge-live'), 'a live event must render the LIVE badge');
+      assert.ok(listWrap.innerHTML.includes('copy-activity-item-live'), 'a live event must render the live left-border accent');
+      assert.ok(listWrap.innerHTML.includes('Live order rejected'));
+      assert.ok(listWrap.innerHTML.includes('no fill before the timeout window closed'), 'plain-language rejected_reason must render, not a raw constant');
+      assert.ok(listWrap.innerHTML.includes('Live circuit breaker tripped'));
+      assert.ok(listWrap.innerHTML.includes('the live daily loss limit was reached'));
+      assert.ok(listWrap.innerHTML.includes('Live position settled'));
+      assert.ok(listWrap.innerHTML.includes('-$1.50') || listWrap.innerHTML.includes('copy-pnl-neg'), 'a negative settled P&L must render with the negative styling/sign');
+
+      // Mode filter: client-side, no re-fetch.
+      let liveRefetchCount = 0;
+      global.fetch = async () => { liveRefetchCount += 1; return jsonResp({ events: liveAndPaperFixture }); };
+      await fetchCopyTradingActivityFeed();
+      assert.strictEqual(liveRefetchCount, 1);
+
+      _copyActivityOnModeFilterChange({ target: { value: 'live' } });
+      assert.strictEqual(liveRefetchCount, 1, 'changing the mode filter must not trigger a network re-fetch');
+      assert.ok(!listWrap.innerHTML.includes('mode-badge-paper'), 'Mode=Live must exclude paper events');
+      assert.ok(listWrap.innerHTML.includes('mode-badge-live'));
+
+      _copyActivityOnModeFilterChange({ target: { value: 'paper' } });
+      assert.ok(!listWrap.innerHTML.includes('mode-badge-live'), 'Mode=Paper must exclude live events');
+      assert.ok(listWrap.innerHTML.includes('mode-badge-paper'));
+
+      _copyActivityOnModeFilterChange({ target: { value: '' } });
+      assert.ok(listWrap.innerHTML.includes('mode-badge-live') && listWrap.innerHTML.includes('mode-badge-paper'), 'Mode=All must include both');
+
+      // ------------------------------------------------------------------
+      // 10. Mode=Live empty states (issue #1188): distinguish "live has
+      //     never been turned on" from "live is on, nothing happened yet",
+      //     read from the shared #copy-trading-mode-banner (issue #1185).
+      // ------------------------------------------------------------------
+      _copyActivityOnModeFilterChange({ target: { value: 'live' } });
+      const modeBanner = document.getElementById('copy-trading-mode-banner');
+
+      // Live currently OFF (banner not carrying mode-badge-live).
+      modeBanner.classList.contains = (cls) => false;
+      global.fetch = async () => jsonResp({ events: [
+        { event_type: 'order_placed', ts: '2026-09-01T00:00:00Z', address: '0xW1', mode: 'paper', market: 'M1', signal_id: 1 },
+      ] });
+      await fetchCopyTradingActivityFeed();
+      assert.ok(listWrap.innerHTML.includes("hasn't been turned on yet"), 'live-off + Mode=Live-empty must say live was never turned on');
+      assert.ok(!listWrap.innerHTML.includes('No live activity in this range'));
+
+      // Live currently ON (banner carrying mode-badge-live) but still no
+      // live events matching the current filters.
+      modeBanner.classList.contains = (cls) => cls === 'mode-badge-live';
+      await fetchCopyTradingActivityFeed();
+      assert.ok(listWrap.innerHTML.includes('No live activity in this range'), 'live-on + Mode=Live-empty must say nothing has happened, not that live is off');
+      assert.ok(!listWrap.innerHTML.includes("hasn't been turned on yet"));
+
+      // Reset filters/state for cleanliness.
+      _copyActivityOnModeFilterChange({ target: { value: '' } });
+      _copyActivityOnWalletFilterChange({ target: { value: '' } });
+      _copyActivityOnEventTypeFilterChange({ target: { value: '' } });
+
+      // ------------------------------------------------------------------
+      // 11. A live event's click-through jumps to the Followed Wallets row
+      //     (no Candidates-equivalent row exists for a live position).
+      // ------------------------------------------------------------------
+      currentTab = 'copy-trading';
+      const liveFollowedRow = document.getElementById('followed-row-' + _copySafeId('0xW1'));
+      let liveFollowedScrolled = false;
+      liveFollowedRow.scrollIntoView = () => { liveFollowedScrolled = true; };
+      _copyActivityJumpToWallet('live', '0xW1');
+      assert.strictEqual(liveFollowedScrolled, true, 'a live event must scroll to its Followed Wallets row');
 
       console.log('ALL_ACTIVITY_FEED_JS_ASSERTIONS_PASSED');
     })().catch((err) => {

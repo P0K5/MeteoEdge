@@ -2266,6 +2266,32 @@ class Database:
             )
         return [dict(row) for row in cur.fetchall()]
 
+    def get_copy_live_positions(self, address: "str | None" = None) -> list[dict]:
+        """Return EVERY ``copy_live_positions`` row regardless of status,
+        newest first (``entry_ts DESC, id DESC`` -- same tie-break
+        rationale as ``get_copy_signals``: ``entry_ts`` only has
+        second-level granularity), optionally filtered to one wallet.
+
+        Added for the Activity Feed view (issue #1188). Unlike
+        ``get_open_copy_live_positions``/``get_unsettled_copy_live_positions``
+        (each scoped to a specific pre-settlement status subset for the
+        live exposure/settlement jobs), the feed needs every live attempt
+        ever made -- pending, filled, partial, rejected, and settled alike
+        -- to synthesize its live event rows. Mirrors ``get_copy_signals``'
+        "every row, no status filtering" shape exactly, one layer up.
+        """
+        if address is not None:
+            cur = self._conn.execute(
+                "SELECT * FROM copy_live_positions WHERE address=? "
+                "ORDER BY entry_ts DESC, id DESC",
+                (address,),
+            )
+        else:
+            cur = self._conn.execute(
+                "SELECT * FROM copy_live_positions ORDER BY entry_ts DESC, id DESC"
+            )
+        return [dict(row) for row in cur.fetchall()]
+
     def get_copy_live_realized_pnl_total(self) -> dict:
         """Return realized P&L aggregated over ALL wallets' ``'settled'``
         REAL copy-trading positions: ``{'n_settled': int, 'total_pnl_usd':

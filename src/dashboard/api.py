@@ -67,6 +67,7 @@ from src.model.residual_correction import (
     compute_residual_stats,
     compute_residual_stats_per_pair,
 )
+from src.risk.copy_risk_manager import REASON_LIVE_DAILY_LOSS, REASON_LIVE_DRAWDOWN
 from src.data.archive_db import ArchiveDatabase
 from src.data.db import Database, compute_win_rate
 from src.data.nws import fetch_nws_forecast_high
@@ -721,24 +722,52 @@ class CopySignalOut(BaseModel):
 
 
 class CopyActivityEventOut(BaseModel):
-    """One normalized Activity Feed event (epic F, story F4, issue #1149)
-    -- shaped server-side so the frontend never has to reconcile two
-    different row shapes (``copy_signals`` vs ``copy_wallets_followed``)
-    itself, matching this file's established shaping-happens-in-the-
-    endpoint pattern (see ``copy_trading_positions()``'s docstring).
+    """One normalized Activity Feed event (epic F, story F4, issue #1149;
+    extended with live events + mode in epic J, issue #1188) -- shaped
+    server-side so the frontend never has to reconcile different-shaped
+    rows (``copy_signals`` vs ``copy_wallets_followed`` vs
+    ``copy_live_positions``) itself, matching this file's established
+    shaping-happens-in-the-endpoint pattern (see
+    ``copy_trading_positions()``'s docstring).
 
-    ``event_type`` is one of ``"order_placed"``, ``"order_skipped"``, or
-    ``"wallet_paused"`` -- a ``copy_signals`` row is always a terminal
-    outcome (``order_placed`` is set once, at insert time; there is no
-    separate "signal detected then later placed/skipped" transition to
-    represent, see ``copy_signal_loop.py``), so it maps to exactly one of
-    the first two. ``market``/``outcome_index``/``source_price``/
-    ``fill_price``/``size_usd``/``skip_reason``/``signal_id`` are only
-    populated for signal-derived events; ``paused_reason`` only for
-    ``wallet_paused`` events.
+    ``mode`` is ``"live"`` or ``"paper"`` -- always populated, never
+    None. Paper-sourced events (``order_placed``/``order_skipped``/
+    ``wallet_paused``) are unconditionally ``"paper"`` (a wallet pause
+    isn't itself a live/paper concept, so it takes the conservative
+    default too); live-sourced events are unconditionally ``"live"``.
+    There is currently no case where this endpoint can't determine an
+    event's mode, but the "paper unless proven live" convention
+    (``execution_mode`` fallback, ``index.html`` ~line 3205) is followed
+    here too, on principle, for any future event source that might not
+    know its mode outright.
+
+    ``event_type`` is one of:
+    - ``"order_placed"`` / ``"order_skipped"`` / ``"wallet_paused"``
+      (epic F, unchanged) -- a ``copy_signals`` row is always a terminal
+      outcome (``order_placed`` is set once, at insert time; there is no
+      separate "signal detected then later placed/skipped" transition to
+      represent, see ``copy_signal_loop.py``), so it maps to exactly one
+      of the first two.
+    - ``"live_order_pending"`` / ``"live_order_filled"`` /
+      ``"live_order_partial"`` / ``"live_order_rejected"`` /
+      ``"live_order_skipped"`` / ``"live_circuit_breaker_tripped"`` /
+      ``"live_position_settled"`` (issue #1188) -- one event per
+      ``copy_live_positions`` row, derived from its CURRENT ``status``
+      (see ``copy_trading_activity_feed()``'s docstring for the
+      rejected-vs-skipped-vs-circuit-breaker classification and why only
+      one event is emitted per row, mirroring the paper
+      "terminal-outcome" precedent above one layer up).
+
+    ``market``/``outcome_index``/``source_price``/``fill_price``/
+    ``size_usd``/``skip_reason``/``signal_id`` are only populated for
+    signal- or live-position-derived events; ``paused_reason`` only for
+    ``wallet_paused`` events; ``rejected_reason``/``filled_stake_usd``/
+    ``settled_pnl_usd`` only for live events reaching those respective
+    states.
     """
     event_type: str
     ts: str
+    mode: str
     address: str
     market: str | None = None
     outcome_index: int | None = None
@@ -748,6 +777,9 @@ class CopyActivityEventOut(BaseModel):
     skip_reason: str | None = None
     paused_reason: str | None = None
     signal_id: int | None = None
+    rejected_reason: str | None = None
+    filled_stake_usd: float | None = None
+    settled_pnl_usd: float | None = None
 
 
 class CopyActivityFeedOut(BaseModel):
@@ -3140,18 +3172,107 @@ def copy_trading_signal(signal_id: int) -> CopySignalOut:
 
 
 # ---------------------------------------------------------------------------
-# Copy-trading API — Activity Feed view (epic F #1143, story F4 #1149)
+# Copy-trading API — Activity Feed view (epic F #1143, story F4 #1149;
+# live events + mode, epic J #1161, issue #1188)
 # ---------------------------------------------------------------------------
 
-_ACTIVITY_EVENT_TYPES = {"order_placed", "order_skipped", "wallet_paused"}
+_ACTIVITY_EVENT_TYPES = {
+    "order_placed", "order_skipped", "wallet_paused",
+    "live_order_pending", "live_order_filled", "live_order_partial",
+    "live_order_rejected", "live_order_skipped", "live_circuit_breaker_tripped",
+    "live_position_settled",
+}
+
+# ``copy_live_positions.rejected_reason`` classification (issue #1188).
+# A row's ``status='rejected'`` covers two semantically different cases
+# that the schema itself doesn't distinguish with its own column (see
+# ``Database.insert_copy_live_position``'s docstring: "a row rejected
+# before submission may never get an order_id"):
+#
+# 1. Gate-rejected BEFORE any order was ever submitted to the exchange
+#    (``_handle_live_order`` in ``copy_signal_loop.py``: the once-per-
+#    cycle ``live_gate_reason`` -- ``live_startup_sanity_check()``'s
+#    dynamic message, or one of the two circuit-breaker reason constants
+#    below -- plus the per-signal ``live_missing_token_id`` /
+#    ``live_wallet_exposure_limit`` / ``live_total_exposure_limit``
+#    checks). These render as "Live order skipped" (or, for the two
+#    circuit-breaker reasons specifically, the more urgent "Live circuit
+#    breaker tripped" -- same underlying row, worse-news wording, per the
+#    design spec's trust/safety emphasis).
+# 2. A REAL submission attempt that failed at or after the exchange call
+#    (``copy_live_executor.execute_live_copy_order``'s own outcome
+#    strings, plus the unexpected-exception path in ``_handle_live_order``
+#    itself). These render as "Live order rejected".
+#
+# The classification below is therefore keyed on the KNOWN post-
+# submission outcome strings (the smaller, more stable set) rather than
+# on ``order_id`` presence -- ``execute_live_copy_order``'s own
+# ``"place_failed"`` outcome is a genuine submission attempt that failed
+# with no ``order_id`` at all, so an order_id-presence heuristic would
+# misclassify it as a gate skip. Anything NOT in this known set (which
+# includes the two fixed gate-check strings above AND the dynamic sanity-
+# check message, which can never collide with these fixed, unrelated
+# strings) falls through to "skipped" -- the safer default, since a false
+# "skipped" only under-emphasizes severity while a false "rejected" would
+# incorrectly imply capital was actually put at risk.
+_LIVE_REJECTED_OUTCOME_REASONS = {"place_failed", "cancel_failed_ghost", "timeout", "cancelled"}
+
+
+def _is_live_post_submission_rejection(reason: "str | None") -> bool:
+    if reason is None:
+        return False
+    if reason in _LIVE_REJECTED_OUTCOME_REASONS:
+        return True
+    return reason.startswith("unexpected_error:")
+
+
+_LIVE_CIRCUIT_BREAKER_REASON_TEXT = {
+    REASON_LIVE_DAILY_LOSS: "the live daily loss limit was reached",
+    REASON_LIVE_DRAWDOWN: "the live drawdown stop was reached",
+}
+
+# Plain-language text for the remaining (non-circuit-breaker) gate-skip
+# reasons -- acceptance criteria: "surfaced as plain-language text, not
+# the raw constant". The dynamic ``live_startup_sanity_check()`` message
+# isn't in this map (it can't be, it's built from live config values at
+# call time, not a fixed string) -- it already reads as plain English
+# prose, so falling through to the raw value via ``.get(reason, reason)``
+# is the correct behavior for it, not a gap.
+_LIVE_SKIP_REASON_TEXT = {
+    "live_missing_token_id": "the copied trade had no tradeable token id",
+    "live_wallet_exposure_limit": "this wallet's live exposure cap was reached",
+    "live_total_exposure_limit": "the total live exposure cap was reached",
+}
+
+# Plain-language text for post-submission rejection outcomes.
+_LIVE_REJECTED_REASON_TEXT = {
+    "place_failed": "the exchange rejected the order at placement",
+    "cancel_failed_ghost": "fill status unknown after a failed cancel — needs reconciliation",
+    "timeout": "no fill before the timeout window closed",
+    "cancelled": "the order was cancelled with no confirmed fill",
+}
+
+
+def _live_reason_text(reason: "str | None", mapping: dict) -> "str | None":
+    """Map a raw live rejected/skip reason to plain language, falling
+    back to the raw value itself for anything unmapped (this dashboard's
+    established lenient-fallback convention -- see e.g. the *event_type*
+    filter param below -- never crashes or hides data on an unrecognized
+    value)."""
+    if reason is None:
+        return None
+    if reason.startswith("unexpected_error:"):
+        return f"an unexpected error occurred ({reason.split(':', 1)[1].strip()})"
+    return mapping.get(reason, reason)
 
 
 @app.get("/api/copy-trading/activity-feed", response_model=CopyActivityFeedOut)
 def copy_trading_activity_feed(
-    address: "str | None" = None, event_type: "str | None" = None
+    address: "str | None" = None, event_type: "str | None" = None,
+    mode: "str | None" = None,
 ) -> CopyActivityFeedOut:
-    """Reverse-chronological feed of signal-detection and wallet-pause
-    events (issue #1149 acceptance criteria), merged server-side from two
+    """Reverse-chronological feed of signal-detection, wallet-pause, AND
+    (issue #1188) live-order events, merged server-side from three
     different-shaped sources into one normalized ``CopyActivityEventOut``
     shape -- matching this file's established shape-it-in-the-endpoint
     pattern (see ``copy_trading_positions()``'s docstring), not a
@@ -3161,16 +3282,45 @@ def copy_trading_activity_feed(
     - ``copy_signals`` (via ``get_copy_signals``): every detected signal,
       each a terminal ``order_placed`` or ``order_skipped`` outcome (see
       ``CopyActivityEventOut``'s docstring for why there is no separate
-      "signal detected" event).
+      "signal detected" event). Always ``mode="paper"``.
     - ``copy_wallets_followed`` rows with ``status='paused'``: surfaced as
       a synthetic ``wallet_paused`` event at ``paused_at``. A row with
       ``paused_at IS NULL`` (a pre-#1145 legacy pause, before the
       timestamp column existed) has no real timestamp to place it at, so
       it is silently skipped rather than crashing or guessing a time --
-      exactly the acceptance criteria's required behavior.
+      exactly the acceptance criteria's required behavior. A wallet pause
+      isn't itself a live/paper concept -- always ``mode="paper"``, the
+      conservative default (see ``CopyActivityEventOut``'s docstring).
+    - ``copy_live_positions`` (via ``get_copy_live_positions``, issue
+      #1188): every real order attempt ever made, one event per row,
+      derived from the row's CURRENT ``status`` -- exactly like a
+      ``copy_signals`` row, a ``copy_live_positions`` row's *current*
+      state is all that's stored (no separate event-history table), so a
+      row that has since settled produces only its "settled" event, never
+      also a "filled" one for the same row; a row's ``entry_ts`` is used
+      for every non-terminal/rejected event, but a settled row uses its
+      ``settled_at`` instead, since that is genuinely when the settlement
+      event happened (settlement can trail entry by days) and using
+      ``entry_ts`` there would misplace it in the reverse-chronological
+      order. ``status='rejected'`` rows are further split into
+      ``live_order_skipped`` / ``live_circuit_breaker_tripped`` (gate-
+      rejected before submission) vs. ``live_order_rejected`` (a real
+      submission attempt that failed) -- see
+      ``_is_live_post_submission_rejection``'s own comment for the full
+      classification rationale. Always ``mode="live"``.
 
-    *address* and *event_type* both filter the merged result (query
-    params); an *event_type* outside ``_ACTIVITY_EVENT_TYPES`` simply
+    Deliberately NOT covered by this epic's acceptance criteria (see PR
+    description / issue #1188 for why, each requires infrastructure that
+    doesn't exist yet and is out of scope here rather than approximated):
+    "Live trading halted"/"Live trading resumed" (no audit trail exists
+    for ``COPY_LIVE_TRADING_ENABLED`` flips -- ``bot_config`` stores only
+    the current value + its own last ``updated_at``, not a history of
+    every flip) and "Live balance mismatch detected" (not in this issue's
+    acceptance criteria at all; the design spec itself flags it as an open
+    question pending confirmation that a queryable drift result exists).
+
+    *address*, *event_type*, and *mode* all filter the merged result
+    (query params); an *event_type*/*mode* outside the known sets simply
     yields no matches rather than a 400, matching this dashboard's
     generally lenient filter-param handling elsewhere.
     """
@@ -3184,6 +3334,7 @@ def copy_trading_activity_feed(
             events.append(CopyActivityEventOut(
                 event_type="order_placed",
                 ts=row["detected_at"],
+                mode="paper",
                 address=row["address"],
                 market=row["market"],
                 outcome_index=row["outcome_index"],
@@ -3196,6 +3347,7 @@ def copy_trading_activity_feed(
             events.append(CopyActivityEventOut(
                 event_type="order_skipped",
                 ts=row["detected_at"],
+                mode="paper",
                 address=row["address"],
                 market=row["market"],
                 outcome_index=row["outcome_index"],
@@ -3213,12 +3365,74 @@ def copy_trading_activity_feed(
         events.append(CopyActivityEventOut(
             event_type="wallet_paused",
             ts=w["paused_at"],
+            mode="paper",
             address=w["address"],
             paused_reason=w.get("paused_reason"),
         ))
 
+    for row in _db.get_copy_live_positions(address=address):
+        live_common = dict(
+            mode="live",
+            address=row["address"],
+            market=row["market"],
+            outcome_index=row["outcome_index"],
+            signal_id=row["signal_id"],
+        )
+        status = row["status"]
+        if status == "pending":
+            events.append(CopyActivityEventOut(
+                event_type="live_order_pending", ts=row["entry_ts"],
+                size_usd=row["stake_usd"], **live_common,
+            ))
+        elif status == "filled":
+            events.append(CopyActivityEventOut(
+                event_type="live_order_filled", ts=row["entry_ts"],
+                fill_price=row["fill_price"], size_usd=row["stake_usd"],
+                **live_common,
+            ))
+        elif status == "partial":
+            events.append(CopyActivityEventOut(
+                event_type="live_order_partial", ts=row["entry_ts"],
+                fill_price=row["fill_price"], size_usd=row["stake_usd"],
+                filled_stake_usd=row.get("filled_stake_usd"), **live_common,
+            ))
+        elif status == "settled":
+            events.append(CopyActivityEventOut(
+                event_type="live_position_settled", ts=row["settled_at"],
+                fill_price=row["fill_price"], size_usd=row["stake_usd"],
+                settled_pnl_usd=row["settled_pnl_usd"], **live_common,
+            ))
+        elif status == "rejected":
+            reason = row["rejected_reason"]
+            if _is_live_post_submission_rejection(reason):
+                events.append(CopyActivityEventOut(
+                    event_type="live_order_rejected", ts=row["entry_ts"],
+                    rejected_reason=_live_reason_text(reason, _LIVE_REJECTED_REASON_TEXT),
+                    fill_price=row.get("fill_price"),  # a ghost order carries one
+                    size_usd=row["stake_usd"], **live_common,
+                ))
+            elif reason in _LIVE_CIRCUIT_BREAKER_REASON_TEXT:
+                events.append(CopyActivityEventOut(
+                    event_type="live_circuit_breaker_tripped", ts=row["entry_ts"],
+                    skip_reason=_LIVE_CIRCUIT_BREAKER_REASON_TEXT[reason],
+                    size_usd=row["stake_usd"], **live_common,
+                ))
+            else:
+                events.append(CopyActivityEventOut(
+                    event_type="live_order_skipped", ts=row["entry_ts"],
+                    skip_reason=_live_reason_text(reason, _LIVE_SKIP_REASON_TEXT),
+                    size_usd=row["stake_usd"], **live_common,
+                ))
+        # An unrecognized future ``status`` value (outside this table's
+        # documented 'pending'/'filled'/'partial'/'rejected'/'settled'
+        # lifecycle) silently produces no event -- mirrors this endpoint's
+        # existing lenient-filter philosophy rather than a 500.
+
     if event_type is not None:
         events = [e for e in events if e.event_type == event_type]
+
+    if mode is not None:
+        events = [e for e in events if e.mode == mode]
 
     events.sort(key=lambda e: e.ts, reverse=True)
 
