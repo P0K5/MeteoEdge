@@ -5220,10 +5220,8 @@ let _copyActivityData = null;            // last-fetched full payload ({events: 
 let _copyActivityFilters = { address: '', eventType: '', mode: '' };
 let _copyActivityListenersBound = false;
 
-// Used for the row's aria-label (kept specific per event_type, e.g.
-// "Order placed" vs "Order skipped", even though the visible badge for
-// both is unified below -- see COPY_ACTIVITY_BADGE_STYLE's own comment)
-// and for the Event type filter's own <option> labels.
+// Used for the row's aria-label and for the Event type filter's own
+// <option> labels.
 const COPY_ACTIVITY_EVENT_TYPE_LABELS = {
   order_placed: 'Order placed',
   order_skipped: 'Order skipped',
@@ -5237,25 +5235,25 @@ const COPY_ACTIVITY_EVENT_TYPE_LABELS = {
   live_position_settled: 'Live position settled',
 };
 
-// Row1 event-type badge visual style, per the design spec's "Signal
-// detected" relabel (docs/design/copy-trading-live-views.md, Activity
-// Feed section): order_placed/order_skipped share one neutral "Signal
-// detected" badge -- both are just the two possible outcomes of one
-// already-terminal copy_signals row (see CopyActivityEventOut's
-// docstring) -- with the placed-vs-skipped distinction moved into the
-// row2 description text instead (_copyActivityDescriptionHtml). The
-// aria-label (COPY_ACTIVITY_EVENT_TYPE_LABELS above) keeps the more
-// specific text, unchanged, so screen-reader users still get the
-// placed/skipped distinction the visible badge no longer carries alone.
-// Live events get their own distinct badge per lifecycle stage instead,
+// Row1 event-type badge visual style. Epic F's own shipped behavior --
+// distinct, colored badges for order_placed (green "Order placed") and
+// order_skipped (amber "Order skipped") -- is kept as-is (PR #1195 /
+// Designer review: collapsing both into one neutral "Signal detected"
+// badge was a scannability regression against the Activity Feed's core
+// "diagnose why didn't this get copied" purpose -- an operator scanning
+// for skips needs to pattern-match on badge color while scrolling, not
+// just read row2 text). The "(paper)" qualifier still lives in the row2
+// description text (_copyActivityDescriptionHtml), independently of the
+// badge, satisfying the mode-redundancy requirement without touching
+// row1. Live events get their own distinct badge per lifecycle stage,
 // since (unlike paper) a copy_live_positions row has a real multi-stage
 // journey worth calling out individually. Rejections/skips/circuit-
 // breaker-trips use 'alert-triangle' -- the design spec's explicit "small
 // warning icon" requirement for live rejections/skips, folded into the
 // existing badge rather than a separate panel.
 const COPY_ACTIVITY_BADGE_STYLE = {
-  order_placed:  { cls: 'copy-activity-badge-signal', icon: 'zap', text: 'Signal detected' },
-  order_skipped: { cls: 'copy-activity-badge-signal', icon: 'zap', text: 'Signal detected' },
+  order_placed:  { cls: 'copy-activity-badge-placed',  icon: 'check-circle', text: 'Order placed' },
+  order_skipped: { cls: 'copy-activity-badge-skipped', icon: 'skip-forward', text: 'Order skipped' },
   wallet_paused: { cls: 'copy-activity-badge-paused', icon: 'pause-circle', text: 'Wallet paused' },
   live_order_pending:  { cls: 'copy-activity-badge-pending',  icon: 'clock',          text: 'Live order pending' },
   live_order_filled:   { cls: 'copy-activity-badge-filled',   icon: 'check-circle',   text: 'Live order filled' },

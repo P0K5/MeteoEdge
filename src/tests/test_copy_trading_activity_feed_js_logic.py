@@ -227,7 +227,15 @@ _ASSERTIONS = textwrap.dedent("""
       assert.ok(listWrap.innerHTML.includes('copy-activity-item-paper'), 'a missing mode must default to the paper left-border accent');
       assert.ok(!listWrap.innerHTML.includes('mode-badge-live'), 'a missing mode must never render as LIVE');
       assert.ok(listWrap.innerHTML.includes('PAPER'), 'the PAPER badge text must be visible');
-      assert.ok(listWrap.innerHTML.includes('Signal detected'), '"Signal detected" badge replaces the old per-outcome badge text');
+      // Designer review (PR #1195): row1 keeps Epic F's own distinct,
+      // colored order_placed/order_skipped badges -- collapsing them into
+      // one neutral "Signal detected" badge was a scannability regression
+      // against the Activity Feed's "diagnose why didn't this get copied"
+      // purpose. Mode redundancy comes from the row2 "(paper)" text below
+      // (plus the new mode badge/border), never from touching row1.
+      assert.ok(listWrap.innerHTML.includes('copy-activity-badge-placed'), 'order_placed must keep its own distinct row1 badge');
+      assert.ok(listWrap.innerHTML.includes('copy-activity-badge-skipped'), 'order_skipped must keep its own distinct row1 badge');
+      assert.ok(!listWrap.innerHTML.includes('Signal detected'), 'the unified "Signal detected" badge must not be used');
       assert.ok(listWrap.innerHTML.includes('Order placed (paper)'), 'the description text must independently state the mode, not just the badge');
       assert.ok(listWrap.innerHTML.includes('Order skipped (paper)'));
       assert.ok(listWrap.innerHTML.includes('Wallet auto-paused'));
