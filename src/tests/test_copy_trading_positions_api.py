@@ -1,11 +1,15 @@
 """Tests for the Copy-Trading dashboard Positions & P&L view backend
-(epic F #1143, story F3 #1148).
+(epic F #1143, story F3 #1148; live/paper twin-panel split issue #1186,
+Epic J).
 
 Covers:
 - GET /api/copy-trading/positions: response shape, open positions,
   realized-P&L history (raw settled rows, oldest first), per-wallet
   breakdown (including previously-followed wallets with settled history),
-  backtest-comparison figures, and totals.
+  backtest-comparison figures, and totals -- both the PAPER fields
+  (unchanged since epic F) and the independent `live_*` fields (issue
+  #1186), including the never-blended isolation between the two and the
+  live-side query-failure isolation (`live_error`).
 - GET /api/copy-trading/signals/{signal_id}: source-signal click-through,
   including the 404 path for an unknown id.
 """
@@ -64,6 +68,36 @@ def _settle(db, address, *, stake_usd, pnl, entry_ts="2026-09-01T00:00:00Z",
         db, address, market=market, entry_ts=entry_ts, stake_usd=stake_usd,
     )
     db.settle_copy_position(position_id, pnl, settled_at)
+
+
+def _open_live_position(db, address, *, market="TEST-MARKET", entry_ts="2026-09-01T00:00:00Z",
+                         stake_usd=5.0, status="pending", fill_price=None, order_id=None):
+    """Insert one REAL (live) copy_live_positions row (with its
+    originating signal), mirroring `_open_position` one layer up.
+    Returns (signal_id, position_id)."""
+    signal_id = db.insert_copy_signal(
+        address=address, market=market, source_price=0.49, detected_at=entry_ts,
+        outcome_index=0, order_placed=1, fill_price=fill_price, size_usd=stake_usd,
+    )
+    position_id = db.insert_copy_live_position(
+        signal_id=signal_id, address=address, market=market, outcome_index=0,
+        stake_usd=stake_usd, entry_ts=entry_ts,
+    )
+    if status != "pending":
+        db.update_copy_live_position_status(
+            position_id, status, order_id=order_id, fill_price=fill_price,
+        )
+    return signal_id, position_id
+
+
+def _settle_live(db, address, *, stake_usd, pnl, entry_ts="2026-09-01T00:00:00Z",
+                  settled_at="2026-09-02T00:00:00Z", market="TEST-MARKET"):
+    """Insert one settled copy_live_positions row for *address*."""
+    _signal_id, position_id = _open_live_position(
+        db, address, market=market, entry_ts=entry_ts, stake_usd=stake_usd,
+        status="filled", fill_price=0.4, order_id="o-" + market,
+    )
+    db.settle_copy_live_position(position_id, pnl, settled_at)
 
 
 # ---------------------------------------------------------------------------
@@ -203,6 +237,171 @@ class TestPositionsEndpoint:
         assert row["projected_flat_dollar_pnl"] is None
         assert row["divergence_usd"] is None
         assert row["divergence_pct"] is None
+
+
+# ---------------------------------------------------------------------------
+# GET /api/copy-trading/positions -- live column (issue #1186, Epic J)
+# ---------------------------------------------------------------------------
+
+class TestPositionsEndpointLiveColumn:
+    """The `live_*` fields on CopyPositionsOut, added by issue #1186's
+    Positions & P&L live/paper twin-panel split -- mirrors
+    TestPositionsEndpoint above, one layer up onto copy_live_positions."""
+
+    def test_empty_live_defaults_when_nothing_settled_or_open(self, api_client):
+        client, _ = api_client
+        resp = client.get("/api/copy-trading/positions")
+        data = resp.json()
+        assert data["live_open_positions"] == []
+        assert data["live_realized_pnl_history"] == []
+        assert data["live_per_wallet"] == []
+        assert data["live_total"] == {"n_settled": 0, "realized_pnl_usd": 0.0}
+        assert data["live_error"] is None
+
+    def test_live_open_positions_shape_includes_pending_with_no_fill_price(self, api_client):
+        client, db = api_client
+        signal_id, position_id = _open_live_position(db, "0xW1", stake_usd=7.5)
+
+        resp = client.get("/api/copy-trading/positions")
+        data = resp.json()
+        assert len(data["live_open_positions"]) == 1
+        pos = data["live_open_positions"][0]
+        assert pos["id"] == position_id
+        assert pos["address"] == "0xW1"
+        assert pos["status"] == "pending"
+        assert pos["fill_price"] is None
+        assert pos["order_id"] is None
+        assert pos["stake_usd"] == pytest.approx(7.5)
+        assert pos["signal_id"] == signal_id
+
+    def test_live_open_positions_includes_filled_and_partial(self, api_client):
+        client, db = api_client
+        _open_live_position(db, "0xW1", market="M1", status="filled", fill_price=0.4, order_id="o1")
+        _open_live_position(db, "0xW1", market="M2", status="partial", fill_price=0.5, order_id="o2")
+
+        resp = client.get("/api/copy-trading/positions")
+        statuses = {p["status"] for p in resp.json()["live_open_positions"]}
+        assert statuses == {"filled", "partial"}
+
+    def test_live_rejected_and_settled_excluded_from_live_open(self, api_client):
+        client, db = api_client
+        _settle_live(db, "0xW1", stake_usd=5.0, pnl=1.0)
+        _sig, rejected_id = _open_live_position(db, "0xW1", market="M-rejected")
+        db.update_copy_live_position_status(rejected_id, "rejected", rejected_reason="no_fill")
+
+        resp = client.get("/api/copy-trading/positions")
+        assert resp.json()["live_open_positions"] == []
+
+    def test_live_realized_pnl_history_raw_rows_oldest_first(self, api_client):
+        client, db = api_client
+        _settle_live(db, "0xW1", stake_usd=5.0, pnl=3.0, settled_at="2026-09-05T00:00:00Z")
+        _settle_live(db, "0xW1", stake_usd=5.0, pnl=-1.0, settled_at="2026-09-01T00:00:00Z")
+
+        resp = client.get("/api/copy-trading/positions")
+        history = resp.json()["live_realized_pnl_history"]
+        assert [p["settled_at"] for p in history] == [
+            "2026-09-01T00:00:00Z", "2026-09-05T00:00:00Z",
+        ]
+        assert [p["settled_pnl_usd"] for p in history] == [-1.0, 3.0]
+
+    def test_live_per_wallet_breakdown_and_totals(self, api_client):
+        client, db = api_client
+        db.insert_followed_wallet(address="0xW1", stake_per_trade=5.0, added_at="2026-09-01T00:00:00Z")
+        db.insert_followed_wallet(address="0xW2", stake_per_trade=5.0, added_at="2026-09-01T00:00:00Z")
+        _settle_live(db, "0xW1", stake_usd=5.0, pnl=3.0, market="M1")
+        _settle_live(db, "0xW1", stake_usd=5.0, pnl=-1.0, market="M2")
+        _settle_live(db, "0xW2", stake_usd=5.0, pnl=2.0, market="M3")
+
+        resp = client.get("/api/copy-trading/positions")
+        data = resp.json()
+        rows = {w["address"]: w for w in data["live_per_wallet"]}
+        assert rows["0xW1"]["realized_pnl_usd"] == pytest.approx(2.0)
+        assert rows["0xW1"]["n_settled"] == 2
+        assert rows["0xW2"]["realized_pnl_usd"] == pytest.approx(2.0)
+        assert data["live_total"] == {"n_settled": 3, "realized_pnl_usd": pytest.approx(4.0)}
+
+    def test_live_per_wallet_sorted_by_realized_pnl_desc(self, api_client):
+        client, db = api_client
+        _settle_live(db, "0xLow", stake_usd=5.0, pnl=-2.0, market="M1")
+        _settle_live(db, "0xHigh", stake_usd=5.0, pnl=9.0, market="M2")
+
+        resp = client.get("/api/copy-trading/positions")
+        addresses = [w["address"] for w in resp.json()["live_per_wallet"]]
+        assert addresses == ["0xHigh", "0xLow"]
+
+    def test_previously_followed_wallet_with_settled_live_history_still_shown(self, api_client):
+        client, db = api_client
+        db.insert_followed_wallet(address="0xGone", stake_per_trade=5.0, added_at="2026-09-01T00:00:00Z")
+        _settle_live(db, "0xGone", stake_usd=5.0, pnl=4.0)
+        db.delete_followed_wallet("0xGone")
+
+        resp = client.get("/api/copy-trading/positions")
+        addresses = [w["address"] for w in resp.json()["live_per_wallet"]]
+        assert "0xGone" in addresses
+
+    def test_followed_wallet_with_no_settled_live_positions_has_zero_pnl_row(self, api_client):
+        client, db = api_client
+        db.insert_followed_wallet(address="0xFresh", stake_per_trade=5.0, added_at="2026-09-01T00:00:00Z")
+
+        resp = client.get("/api/copy-trading/positions")
+        rows = {w["address"]: w for w in resp.json()["live_per_wallet"]}
+        assert rows["0xFresh"]["n_settled"] == 0
+        assert rows["0xFresh"]["realized_pnl_usd"] == 0.0
+
+    def test_live_per_wallet_never_carries_backtest_fields(self, api_client):
+        """Backtest-comparison stays Paper-only (issue #1186 acceptance
+        criteria) -- the live per-wallet rows must never populate these,
+        even for a wallet with a paper backtest screening row."""
+        client, db = api_client
+        db.insert_followed_wallet(address="0xW1", stake_per_trade=5.0, added_at="2026-09-01T00:00:00Z")
+        db.insert_wallet_screening(
+            address="0xW1", window="30d", screened_at="2026-09-01T00:00:00Z",
+            n_buy_trades=10, n_resolved=10, slippage_bps=50,
+            flat_dollar_pnl=10.0, eligible_to_follow=1,
+        )
+        _settle_live(db, "0xW1", stake_usd=5.0, pnl=12.0)
+
+        resp = client.get("/api/copy-trading/positions")
+        row = {w["address"]: w for w in resp.json()["live_per_wallet"]}["0xW1"]
+        assert row["projected_flat_dollar_pnl"] is None
+        assert row["divergence_usd"] is None
+        assert row["divergence_pct"] is None
+
+    def test_paper_and_live_data_never_blended(self, api_client):
+        """A settled PAPER position must never leak into the live_* block,
+        and vice versa -- the #1100 isolation requirement, enforced here
+        end-to-end through the API response."""
+        client, db = api_client
+        _settle(db, "0xW1", stake_usd=5.0, pnl=100.0)
+        _settle_live(db, "0xW1", stake_usd=5.0, pnl=-50.0)
+
+        resp = client.get("/api/copy-trading/positions")
+        data = resp.json()
+        assert data["total"] == {"n_settled": 1, "realized_pnl_usd": pytest.approx(100.0)}
+        assert data["live_total"] == {"n_settled": 1, "realized_pnl_usd": pytest.approx(-50.0)}
+
+    def test_live_query_failure_isolated_and_never_blanks_paper_data(self, api_client, monkeypatch):
+        """A live-side query failure must degrade only the live_* fields
+        (empty defaults + a populated live_error) and never take down the
+        whole endpoint or blank the already-computed paper fields."""
+        client, db = api_client
+        _settle(db, "0xW1", stake_usd=5.0, pnl=7.0)
+
+        def _boom(*args, **kwargs):
+            raise RuntimeError("simulated live-table failure")
+
+        monkeypatch.setattr(db, "get_open_copy_live_positions", _boom)
+
+        resp = client.get("/api/copy-trading/positions")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["total"] == {"n_settled": 1, "realized_pnl_usd": pytest.approx(7.0)}
+        assert data["live_open_positions"] == []
+        assert data["live_realized_pnl_history"] == []
+        assert data["live_per_wallet"] == []
+        assert data["live_total"] == {"n_settled": 0, "realized_pnl_usd": 0.0}
+        assert data["live_error"] is not None
+        assert "simulated live-table failure" in data["live_error"]
 
 
 # ---------------------------------------------------------------------------
