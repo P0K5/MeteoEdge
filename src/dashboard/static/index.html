@@ -890,7 +890,8 @@ a,button,input,select{transition:color var(--transition),background var(--transi
 .copy-followed-note{display:flex;align-items:center;gap:6px;font-size:var(--text-xs);color:var(--yes);margin:0;}
 .copy-followed-note i{width:14px;height:14px;flex-shrink:0;}
 
-/* ── COPY-TRADING FOLLOWED WALLETS VIEW (epic F #1143, story F2 #1147) ── */
+/* ── COPY-TRADING FOLLOWED WALLETS VIEW (epic F #1143, story F2 #1147;
+   per-wallet live/paper badge, epic J #1187) ── */
 .copy-followed-hdr{margin-top:var(--space-6);}
 .followed-status-badge{
   display:inline-flex;align-items:center;gap:4px;
@@ -901,6 +902,11 @@ a,button,input,select{transition:color var(--transition),background var(--transi
 .followed-status-paused{background:var(--warn-bg);color:var(--warn);}
 .followed-status-badge i{width:12px;height:12px;}
 .followed-paused-reason{display:block;font-size:10px;color:var(--muted);margin-top:2px;max-width:220px;white-space:normal;}
+/* Status cell now holds two independent badges (paper status + live
+   eligibility, issue #1187) -- wrap and gap so they don't collide, and the
+   paused-reason line (which is `display:block` above) still falls onto its
+   own row underneath both. */
+.followed-status-cell{display:flex;flex-wrap:wrap;align-items:center;gap:6px;}
 .followed-actions-cell{display:flex;flex-wrap:wrap;align-items:center;gap:6px;white-space:normal;}
 .btn-followed-action{
   padding:5px 10px;border-radius:var(--radius-md);
@@ -1309,14 +1315,27 @@ a,button,input,select{transition:color var(--transition),background var(--transi
         </div>
       </div>
 
-      <!-- ── FOLLOWED WALLETS VIEW (story F2, issue #1147) ── -->
+      <!-- ── FOLLOWED WALLETS VIEW (story F2, issue #1147; live/paper split
+           issue #1187, epic J) ── -->
       <div class="section-hdr copy-followed-hdr">
         <div class="section-title"><i data-lucide="users"></i>Followed Wallets</div>
         <div class="copy-summary-strip">
           <span class="copy-slots-pill" id="followed-active-pill">— active</span>
           <span class="copy-slots-pill" id="followed-paused-pill">— paused</span>
-          <span class="copy-slots-pill" id="followed-pnl-pill">— aggregate P&amp;L</span>
+          <span class="copy-slots-pill" id="followed-live-eligible-pill">— live-eligible</span>
+          <span class="copy-slots-pill" id="followed-paper-only-pill">— paper-only</span>
+          <span class="copy-slots-pill" id="followed-live-pnl-pill">— live aggregate P&amp;L</span>
+          <span class="copy-slots-pill" id="followed-pnl-pill">— paper aggregate P&amp;L</span>
         </div>
+      </div>
+      <!-- Table-level notice (issue #1187): avoids an identical PAPER badge
+           + identical tooltip on every single row when the global switch is
+           off. Per-row badges stay present regardless -- a screenshot of a
+           single row must still be unambiguous on its own (design spec's
+           own explicit requirement). -->
+      <div class="warn-banner" id="followed-live-off-banner" role="status" aria-live="polite">
+        <i data-lucide="zap-off"></i>
+        <span>Live trading is currently off — all wallets are paper-only.</span>
       </div>
       <div id="copy-followed-list">
         <div class="copy-table-wrap">
@@ -3671,6 +3690,7 @@ let botLogIntervalId = null;
 let copyTradingLoaded = false;
 let copyTradingIntervalId = null;
 let copyTradingModeIntervalId = null;
+let followedWalletsIntervalId = null;
 
 function switchTab(tab) {
   // Hide all panels
@@ -3721,8 +3741,10 @@ function switchTab(tab) {
   if (currentTab === 'copy-trading' && tab !== 'copy-trading') {
     clearInterval(copyTradingIntervalId);
     clearInterval(copyTradingModeIntervalId);
+    clearInterval(followedWalletsIntervalId);
     copyTradingIntervalId = null;
     copyTradingModeIntervalId = null;
+    followedWalletsIntervalId = null;
   }
 
   currentTab = tab;
@@ -3784,22 +3806,22 @@ function switchTab(tab) {
     }
   }
 
-  // Lazy-load Copy-Trading candidates + followed wallets + positions +
-  // activity feed on first activation; poll all four every 5 minutes,
-  // matching the other advisory/report-style tabs (Promotion, EMOS).
+  // Lazy-load Copy-Trading candidates + positions + activity feed on first
+  // activation; poll every 5 minutes, matching the other advisory/
+  // report-style tabs (Promotion, EMOS). Followed Wallets is polled
+  // separately below (issue #1187) since it now carries a live/paper
+  // status badge.
   if (tab === 'copy-trading') {
     if (!copyTradingLoaded) {
       copyTradingLoaded = true;
       fetchCopyTradingModePosture();
       fetchCopyTradingCandidates();
-      fetchFollowedWallets();
       fetchCopyTradingPositions();
       fetchCopyTradingActivityFeed();
     }
     if (!copyTradingIntervalId) {
       copyTradingIntervalId = setInterval(() => {
         fetchCopyTradingCandidates();
-        fetchFollowedWallets();
         fetchCopyTradingPositions();
         fetchCopyTradingActivityFeed();
       }, 300_000);
@@ -3815,6 +3837,16 @@ function switchTab(tab) {
     fetchCopyTradingModePosture();
     if (!copyTradingModeIntervalId) {
       copyTradingModeIntervalId = setInterval(fetchCopyTradingModePosture, 30_000);
+    }
+    // Followed Wallets now renders a config-driven live/paper badge per
+    // row (issue #1187) -- the same staleness risk PR #1192 fixed for the
+    // posture banner above applies here too, so this gets the identical
+    // treatment: its own 30s interval, decoupled from the 5-minute group,
+    // fetched unconditionally on every tab entry rather than gated behind
+    // copyTradingLoaded.
+    fetchFollowedWallets();
+    if (!followedWalletsIntervalId) {
+      followedWalletsIntervalId = setInterval(fetchFollowedWallets, 30_000);
     }
   }
 }
@@ -4351,10 +4383,11 @@ async function fetchCopyTradingCandidates() {
 
 /* ─────────────────────────────────────────
    COPY-TRADING — FOLLOWED WALLETS VIEW
-   (epic F #1143, story F2 #1147)
+   (epic F #1143, story F2 #1147; per-wallet live/paper badge epic J #1187)
    Data: GET /api/copy-trading/followed-wallets (one response for the whole
-   table + summary strip). Mutations: POST .../pause, POST .../resume,
-   POST .../unfollow, PATCH .../stake.
+   table + summary strip, including the derived per-wallet live-eligibility
+   badge and the live/paper split aggregates). Mutations: POST .../pause,
+   POST .../resume, POST .../unfollow, PATCH .../stake.
 
    Reuses the Candidates view's per-section error-banner
    (#copy-trading-error-banner) rather than a new toast/notification
@@ -4362,6 +4395,13 @@ async function fetchCopyTradingCandidates() {
    disable-control / snapshot-prior-state / roll-back-on-failure pattern
    (index.html's Stations tab) for every row-level action below, instead
    of a fire-and-forget optimistic update with no rollback path.
+
+   Polled on its own dedicated 30s interval (switchTab(), issue #1187),
+   decoupled from the rest of the Copy-Trading tab's 5-minute group --
+   the live badge is config-driven and trust-relevant (mistaking paper for
+   live is a real safety issue per the design spec), so it gets the same
+   fast-refresh treatment PR #1192 gave the tab-wide posture banner rather
+   than risking the same up-to-5-minute stale read on a tab revisit.
    ───────────────────────────────────────── */
 
 let _followedWalletsData = null;
@@ -4390,6 +4430,22 @@ function _followedStatusBadgeHtml(w) {
     return `<span class="followed-status-badge followed-status-paused"><i data-lucide="pause-circle"></i>Paused</span>${reason}`;
   }
   return `<span class="followed-status-badge followed-status-active"><i data-lucide="play-circle"></i>Active</span>`;
+}
+
+// Second, independent status badge (issue #1187, epic J): paper
+// follow-status (above) and live-eligibility are two separate axes -- a
+// wallet can be simultaneously "Active" (paper) + "PAPER" (live-badge) or
+// "Active" (paper) + "LIVE" (live-badge). Reuses #1185's .mode-badge-live/
+// .mode-badge-paper classes rather than a new component. The aria-label
+// always spells out the *reason* (never color-only), per the design spec's
+// accessibility rule -- `w.live_status_reason` comes straight from the
+// backend so the two never drift out of sync.
+function _followedLiveBadgeHtml(w) {
+  const cls = w.live_eligible ? 'mode-badge-live' : 'mode-badge-paper';
+  const word = w.live_eligible ? 'live' : 'paper only';
+  const label = `Live status: ${word} — ${_copyEscapeHtml(w.live_status_reason)}`;
+  const text = w.live_eligible ? 'LIVE' : 'PAPER';
+  return `<span class="mode-badge ${cls}" aria-label="${label}">${text}</span>`;
 }
 
 function _followedStakeDisplayHtml(w) {
@@ -4431,7 +4487,7 @@ function _followedRowHtml(w) {
         </button>
       </td>
       <td class="copy-td" id="followed-stake-cell-${safeId}">${_followedStakeDisplayHtml(w)}</td>
-      <td class="copy-td" id="followed-status-cell-${safeId}">${_followedStatusBadgeHtml(w)}</td>
+      <td class="copy-td followed-status-cell" id="followed-status-cell-${safeId}">${_followedStatusBadgeHtml(w)}${_followedLiveBadgeHtml(w)}</td>
       <td class="copy-td">${addedDate}</td>
       <td class="copy-td">${_followedFmtUsd(w.realized_pnl_usd)}</td>
       <td class="copy-td followed-actions-cell">
@@ -4453,11 +4509,24 @@ function renderFollowedWallets(data) {
   const activePill = document.getElementById('followed-active-pill');
   const pausedPill = document.getElementById('followed-paused-pill');
   const pnlPill = document.getElementById('followed-pnl-pill');
+  const liveEligiblePill = document.getElementById('followed-live-eligible-pill');
+  const paperOnlyPill = document.getElementById('followed-paper-only-pill');
+  const livePnlPill = document.getElementById('followed-live-pnl-pill');
+  const liveOffBanner = document.getElementById('followed-live-off-banner');
   if (activePill) activePill.textContent = `${data.active_count} active`;
   if (pausedPill) pausedPill.textContent = `${data.paused_count} paused`;
   if (pnlPill) {
-    pnlPill.textContent = `${_followedFmtUsd(data.aggregate_pnl_usd)} aggregate P&L (${data.n_settled_total} settled)`;
+    pnlPill.textContent = `${_followedFmtUsd(data.aggregate_pnl_usd)} paper aggregate P&L (${data.n_settled_total} settled)`;
   }
+  // Live-eligibility summary + split P&L (issue #1187, epic J) -- never a
+  // single combined "aggregate P&L" anywhere in this view, per the design
+  // spec's "never blended" rule.
+  if (liveEligiblePill) liveEligiblePill.textContent = `${data.live_eligible_count} live-eligible`;
+  if (paperOnlyPill) paperOnlyPill.textContent = `${data.paper_only_count} paper-only`;
+  if (livePnlPill) {
+    livePnlPill.textContent = `${_followedFmtUsd(data.live_aggregate_pnl_usd)} live aggregate P&L (${data.live_n_settled_total} settled)`;
+  }
+  if (liveOffBanner) liveOffBanner.classList.toggle('visible', !data.live_trading_enabled);
 
   if (!data.wallets.length) {
     wrap.innerHTML = `<div class="empty"><i data-lucide="inbox"></i><h3>Nothing followed yet — go to <button type="button" class="copy-empty-link" onclick="scrollToCopyCandidates()">Candidates</button></h3><p>Screen and follow a wallet above to start copy-trading it.</p></div>`;
@@ -4556,9 +4625,15 @@ async function followedPauseWallet(address, btn) {
     },
     // Optimistic: flip the status badge immediately rather than waiting for
     // the round-trip, per issue #1147's acceptance criteria -- rolled back
-    // below on failure.
+    // below on failure. The live badge is deterministic here too (issue
+    // #1187): a paused wallet is *always* PAPER regardless of the global
+    // switch, so swap it immediately rather than leaving a stale LIVE
+    // reading next to a newly-paused row.
     optimisticApply: () => {
-      if (cell) cell.innerHTML = _followedStatusBadgeHtml({ status: 'paused', paused_reason: trimmed });
+      if (cell) {
+        cell.innerHTML = _followedStatusBadgeHtml({ status: 'paused', paused_reason: trimmed })
+          + _followedLiveBadgeHtml({ live_eligible: false, live_status_reason: 'this wallet is paused' });
+      }
       lucide.createIcons();
     },
     rollback: () => { if (cell && prevHtml !== null) { cell.innerHTML = prevHtml; lucide.createIcons(); } },
@@ -4577,9 +4652,20 @@ async function followedResumeWallet(address, btn) {
     url: `/api/copy-trading/wallets/${encodeURIComponent(address)}/resume`,
     fetchOpts: { method: 'POST' },
     // Optimistic: flip the status badge immediately -- rolled back below on
-    // failure (issue #1147 acceptance criteria).
+    // failure (issue #1147 acceptance criteria). Unlike pause, resuming
+    // doesn't let us *derive* the correct live badge client-side (that
+    // depends on the global switch + this wallet's current live exposure,
+    // both server-side, issue #1187) -- so this preserves whatever live
+    // badge was already showing (guaranteed PAPER, since only a paused
+    // wallet can be resumed) rather than guessing LIVE, and the imminent
+    // onSuccess refetch corrects it either way.
     optimisticApply: () => {
-      if (cell) cell.innerHTML = _followedStatusBadgeHtml({ status: 'active', paused_reason: null });
+      if (cell) {
+        const prevLiveBadge = cell.querySelector('.mode-badge');
+        const liveBadgeHtml = prevLiveBadge ? prevLiveBadge.outerHTML
+          : _followedLiveBadgeHtml({ live_eligible: false, live_status_reason: 'this wallet is paused' });
+        cell.innerHTML = _followedStatusBadgeHtml({ status: 'active', paused_reason: null }) + liveBadgeHtml;
+      }
       lucide.createIcons();
     },
     rollback: () => { if (cell && prevHtml !== null) { cell.innerHTML = prevHtml; lucide.createIcons(); } },

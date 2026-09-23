@@ -15,6 +15,11 @@ Covers the two pieces the issue's acceptance criteria call out explicitly:
 - The unfollow action's window.confirm() dialog contains the required
   literal copy stating existing open positions will NOT be closed --
   checked as a literal substring, not just "some confirm dialog exists".
+
+Also covers the second, independent live/paper badge added alongside the
+paper status badge (epic J, issue #1187): the optimistic pause/resume
+appliers must never leave a stale or falsely-LIVE badge showing in the
+same status cell while a request is in flight.
 """
 from __future__ import annotations
 
@@ -94,7 +99,8 @@ _ASSERTIONS = textwrap.dedent("""
 
       const address = '0xResumeMe';
       const cell = document.getElementById('followed-status-cell-' + _copySafeId(address));
-      cell.innerHTML = '<span class="followed-status-badge followed-status-paused"><i data-lucide="pause-circle"></i>Paused</span><span class="followed-paused-reason">unstable</span>';
+      cell.innerHTML = '<span class="followed-status-badge followed-status-paused"><i data-lucide="pause-circle"></i>Paused</span><span class="followed-paused-reason">unstable</span>'
+        + '<span class="mode-badge mode-badge-paper" aria-label="Live status: paper only — this wallet is paused">PAPER</span>';
       const priorBadgeHtml = cell.innerHTML;
 
       const btn = makeBtn();
@@ -102,6 +108,12 @@ _ASSERTIONS = textwrap.dedent("""
       // Not awaited yet -- optimistic flip must already be visible.
       assert.ok(cell.innerHTML.includes('Active'), 'resume must optimistically flip the badge before the fetch resolves');
       assert.ok(!cell.innerHTML.includes('Paused'), 'optimistic badge must not still say Paused');
+      // Issue #1187: resuming can't derive the correct live badge
+      // client-side (depends on server-side global switch + exposure), so
+      // it must never optimistically guess LIVE -- it stays PAPER until
+      // the refetch corrects it.
+      assert.ok(cell.innerHTML.includes('PAPER'), 'resume must never optimistically show a LIVE badge');
+      assert.ok(!cell.innerHTML.includes('mode-badge-live'), 'resume must never optimistically apply the live badge class');
       assert.strictEqual(btn.disabled, true, 'button must be disabled while the request is in flight');
 
       // Now the backend refuses (simulated failure).
@@ -140,10 +152,15 @@ _ASSERTIONS = textwrap.dedent("""
           return jsonResp({ success: true, message: 'ok' });
         }
         listRefetchCallCount += 1;
-        return jsonResp({ wallets: [], active_count: 0, paused_count: 0, aggregate_pnl_usd: 0, n_settled_total: 0 });
+        return jsonResp({
+          wallets: [], active_count: 0, paused_count: 0, aggregate_pnl_usd: 0, n_settled_total: 0,
+          live_eligible_count: 0, paper_only_count: 0, live_aggregate_pnl_usd: 0, live_n_settled_total: 0,
+          live_trading_enabled: false,
+        });
       };
       const pauseCell = document.getElementById('followed-status-cell-' + _copySafeId('0xPauseMe'));
-      pauseCell.innerHTML = '<span class="followed-status-badge followed-status-active"><i data-lucide="play-circle"></i>Active</span>';
+      pauseCell.innerHTML = '<span class="followed-status-badge followed-status-active"><i data-lucide="play-circle"></i>Active</span>'
+        + '<span class="mode-badge mode-badge-live" aria-label="Live status: live — eligible for live execution">LIVE</span>';
       const pauseBtn = makeBtn();
       const pausePending = followedPauseWallet('0xPauseMe', pauseBtn);
       // followedPauseWallet reads window.prompt synchronously (a plain
@@ -151,6 +168,12 @@ _ASSERTIONS = textwrap.dedent("""
       // the time control returns to us post-call the badge should already
       // reflect the paused state optimistically, ahead of the fetch.
       assert.ok(pauseCell.innerHTML.includes('Paused'), 'pause must optimistically flip the badge before the fetch resolves');
+      // Issue #1187: pausing a wallet is a deterministic PAPER override
+      // (a paused wallet is always PAPER regardless of the global switch)
+      // -- unlike resume, pause CAN flip the live badge correctly and
+      // immediately, even though this row started out LIVE.
+      assert.ok(pauseCell.innerHTML.includes('PAPER'), 'pause must optimistically flip a previously-LIVE badge to PAPER too');
+      assert.ok(!pauseCell.innerHTML.includes('mode-badge-live'), 'pause must not leave a stale LIVE badge showing');
       await pausePending;
       assert.strictEqual(pauseCallCount, 1, 'a real, non-empty reason must call the pause API exactly once');
       assert.strictEqual(listRefetchCallCount, 1, 'a successful pause must trigger exactly one list refetch');
@@ -189,6 +212,119 @@ _ASSERTIONS = textwrap.dedent("""
       resolveUnfollow(jsonResp({ success: false, message: 'not a followed wallet' }));
       await ufPending;
       assert.strictEqual(row.style.display, 'table-row', 'unfollow must roll the row back to visible on failure');
+
+      // ------------------------------------------------------------------
+      // 4. Second, independent live/paper badge (issue #1187): correct
+      //    class/text for both states, and the aria-label spells out the
+      //    reason verbatim from the backend field -- never re-derived or
+      //    guessed client-side, so it can't drift out of sync with it.
+      // ------------------------------------------------------------------
+      const liveHtml = _followedLiveBadgeHtml({ live_eligible: true, live_status_reason: 'eligible for live execution' });
+      assert.ok(liveHtml.includes('mode-badge-live'), 'live-eligible wallet must use the mode-badge-live class');
+      assert.ok(liveHtml.includes('>LIVE<'), 'live-eligible wallet badge text must be LIVE');
+      assert.ok(
+        liveHtml.includes('Live status: live — eligible for live execution'),
+        'aria-label must spell out the reason, not just the state'
+      );
+
+      const paperHtml = _followedLiveBadgeHtml({ live_eligible: false, live_status_reason: 'live trading is currently off' });
+      assert.ok(paperHtml.includes('mode-badge-paper'), 'non-eligible wallet must use the mode-badge-paper class');
+      assert.ok(paperHtml.includes('>PAPER<'), 'non-eligible wallet badge text must be PAPER');
+      assert.ok(
+        paperHtml.includes('Live status: paper only — live trading is currently off'),
+        'aria-label must spell out the off reason'
+      );
+
+      // ------------------------------------------------------------------
+      // 5. renderFollowedWallets() populates the new live-eligible/
+      //    paper-only counts, the split paper/live aggregate P&L pills
+      //    (never a single combined "aggregate P&L"), and toggles the
+      //    table-level "all wallets are paper-only" notice strictly off
+      //    the response's own live_trading_enabled flag -- never inferred
+      //    from row data client-side.
+      // ------------------------------------------------------------------
+      const offBanner = document.getElementById('followed-live-off-banner');
+      const toggleCalls = [];
+      offBanner.classList.toggle = (cls, force) => { toggleCalls.push({ cls, force }); };
+
+      renderFollowedWallets({
+        wallets: [], active_count: 0, paused_count: 0, aggregate_pnl_usd: 5, n_settled_total: 2,
+        live_eligible_count: 3, paper_only_count: 1, live_aggregate_pnl_usd: -2, live_n_settled_total: 1,
+        live_trading_enabled: false,
+      });
+      assert.strictEqual(document.getElementById('followed-live-eligible-pill').textContent, '3 live-eligible');
+      assert.strictEqual(document.getElementById('followed-paper-only-pill').textContent, '1 paper-only');
+      assert.ok(
+        document.getElementById('followed-pnl-pill').textContent.includes('paper aggregate P&L'),
+        'the paper pill must say "paper aggregate P&L", never a bare "aggregate P&L"'
+      );
+      assert.ok(document.getElementById('followed-live-pnl-pill').textContent.includes('live aggregate P&L'));
+      assert.deepStrictEqual(
+        toggleCalls[toggleCalls.length - 1], { cls: 'visible', force: true },
+        'the off-banner must be shown when live_trading_enabled is false'
+      );
+
+      renderFollowedWallets({
+        wallets: [], active_count: 0, paused_count: 0, aggregate_pnl_usd: 0, n_settled_total: 0,
+        live_eligible_count: 0, paper_only_count: 0, live_aggregate_pnl_usd: 0, live_n_settled_total: 0,
+        live_trading_enabled: true,
+      });
+      assert.deepStrictEqual(
+        toggleCalls[toggleCalls.length - 1], { cls: 'visible', force: false },
+        'the off-banner must be hidden when live_trading_enabled is true'
+      );
+
+      // ------------------------------------------------------------------
+      // 6. Followed Wallets gets its own dedicated 30s poll, decoupled
+      //    from the four-view 5-minute group and fetched unconditionally
+      //    on every tab entry -- the same precedent PR #1192 established
+      //    for the global posture banner: this badge is just as
+      //    config-driven and trust-relevant, so it must not risk sitting
+      //    stale for up to 5 minutes on a tab revisit.
+      // ------------------------------------------------------------------
+      let followedFetchCount = 0;
+      fetchFollowedWallets = async () => { followedFetchCount++; };
+      fetchCopyTradingModePosture = async () => {};
+      fetchCopyTradingCandidates = async () => {};
+      fetchCopyTradingPositions = async () => {};
+      fetchCopyTradingActivityFeed = async () => {};
+
+      const setIntervalCalls = [];
+      const clearIntervalCalls = [];
+      let fakeIntervalId = 0;
+      global.setInterval = (fn, delay) => { setIntervalCalls.push({ fn, delay }); return ++fakeIntervalId; };
+      global.clearInterval = (id) => { clearIntervalCalls.push(id); };
+
+      currentTab = 'portfolio';
+      copyTradingLoaded = false;
+      copyTradingIntervalId = null;
+      copyTradingModeIntervalId = null;
+      followedWalletsIntervalId = null;
+
+      switchTab('copy-trading');
+      assert.ok(followedFetchCount >= 1, 'first tab entry must fetch followed wallets immediately');
+      const thirtySecCalls = setIntervalCalls.filter(c => c.delay === 30_000);
+      assert.strictEqual(
+        thirtySecCalls.length, 2,
+        'the posture banner and followed wallets must each get their own dedicated 30s interval, not share one'
+      );
+
+      const clearedBeforeLeaving = clearIntervalCalls.length;
+      switchTab('other-unrelated-tab');
+      assert.ok(
+        clearIntervalCalls.length >= clearedBeforeLeaving + 3,
+        'leaving the tab must clear all three Copy-Trading intervals (view-data, posture, followed wallets)'
+      );
+
+      // Re-entry: the exact bug PR #1192 fixed for the posture banner --
+      // copyTradingLoaded is already true here, so a naive first-activation
+      // gate would silently skip this fetch, leaving the badge stale until
+      // the next poll tick.
+      followedFetchCount = 0;
+      setIntervalCalls.length = 0;
+      switchTab('copy-trading');
+      assert.strictEqual(followedFetchCount, 1, 'followed wallets must refetch immediately on every tab re-entry, not just the first');
+      assert.ok(setIntervalCalls.some(c => c.delay === 30_000), 'a fresh 30s followed-wallets interval must be created on re-entry too');
 
       console.log('ALL_FOLLOWED_WALLETS_JS_ASSERTIONS_PASSED');
     })().catch((err) => {

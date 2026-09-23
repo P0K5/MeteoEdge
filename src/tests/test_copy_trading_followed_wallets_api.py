@@ -60,6 +60,29 @@ def _settle(db, address, *, stake_usd, pnl, entry_ts="2026-09-01T00:00:00Z",
     db.settle_copy_position(position_id, pnl, settled_at)
 
 
+def _open_live_position(db, address, *, stake_usd, entry_ts="2026-09-01T00:00:00Z",
+                         market="TEST-MARKET"):
+    """Insert one still-open (``'pending'``) ``copy_live_positions`` row for
+    *address* -- counts toward live exposure per
+    ``get_open_copy_live_positions`` (issue #1187 derivation)."""
+    signal_id = db.insert_copy_signal(
+        address=address, market=market, source_price=0.5, detected_at=entry_ts,
+    )
+    return db.insert_copy_live_position(
+        signal_id=signal_id, address=address, market=market, outcome_index=0,
+        stake_usd=stake_usd, entry_ts=entry_ts,
+    )
+
+
+def _settle_live(db, address, *, stake_usd, pnl, entry_ts="2026-09-01T00:00:00Z",
+                  settled_at="2026-09-02T00:00:00Z", market="TEST-MARKET"):
+    """Insert one settled ``copy_live_positions`` row for *address* --
+    contributes to the live aggregate P&L, never the paper one."""
+    position_id = _open_live_position(db, address, stake_usd=stake_usd, entry_ts=entry_ts, market=market)
+    db.update_copy_live_position_status(position_id, "filled", fill_price=0.5)
+    db.settle_copy_live_position(position_id, pnl, settled_at)
+
+
 # ---------------------------------------------------------------------------
 # GET /api/copy-trading/followed-wallets
 # ---------------------------------------------------------------------------
@@ -86,6 +109,11 @@ class TestFollowedWalletsEndpoint:
         assert data["paused_count"] == 0
         assert data["aggregate_pnl_usd"] == 0.0
         assert data["n_settled_total"] == 0
+        assert data["live_eligible_count"] == 0
+        assert data["paper_only_count"] == 0
+        assert data["live_aggregate_pnl_usd"] == 0.0
+        assert data["live_n_settled_total"] == 0
+        assert data["live_trading_enabled"] is False
 
     def test_active_and_paused_counts(self, api_client):
         client, db = api_client
@@ -138,6 +166,123 @@ class TestFollowedWalletsEndpoint:
         resp = client.get("/api/copy-trading/followed-wallets")
         addresses = [w["address"] for w in resp.json()["wallets"]]
         assert addresses == ["0xNew", "0xOld"]
+
+
+# ---------------------------------------------------------------------------
+# Per-wallet live-eligibility badge + live/paper split aggregates
+# (epic J, issue #1187)
+# ---------------------------------------------------------------------------
+
+class TestFollowedWalletsLiveEligibility:
+    def test_live_trading_off_by_default_all_wallets_paper(self, api_client):
+        """COPY_LIVE_TRADING_ENABLED defaults to False (seed_config) --
+        every active wallet must render as PAPER, never guess LIVE."""
+        client, db = api_client
+        db.insert_followed_wallet(address="0xW", stake_per_trade=5.0, added_at="2026-09-01T00:00:00Z")
+
+        resp = client.get("/api/copy-trading/followed-wallets")
+        data = resp.json()
+        assert data["live_trading_enabled"] is False
+        assert data["live_eligible_count"] == 0
+        assert data["paper_only_count"] == 1
+        row = data["wallets"][0]
+        assert row["live_eligible"] is False
+        assert row["live_status_reason"] == "live trading is currently off"
+
+    def test_paused_wallet_always_paper_even_with_live_trading_on(self, api_client):
+        """Acceptance criteria: a paused wallet is always PAPER regardless
+        of the global switch."""
+        client, db = api_client
+        db.set_config("COPY_LIVE_TRADING_ENABLED", "True")
+        db.insert_followed_wallet(address="0xW", stake_per_trade=5.0, added_at="2026-09-01T00:00:00Z")
+        db.update_followed_wallet_status("0xW", "paused", "unstable")
+
+        resp = client.get("/api/copy-trading/followed-wallets")
+        data = resp.json()
+        assert data["live_trading_enabled"] is True  # global switch itself is on
+        row = data["wallets"][0]
+        assert row["live_eligible"] is False
+        assert row["live_status_reason"] == "this wallet is paused"
+        assert data["live_eligible_count"] == 0
+        assert data["paper_only_count"] == 1
+
+    def test_active_wallet_below_live_exposure_cap_is_live_eligible(self, api_client):
+        client, db = api_client
+        db.set_config("COPY_LIVE_TRADING_ENABLED", "True")
+        db.set_config("COPY_LIVE_MAX_EXPOSURE_PER_WALLET_USD", "50.0")
+        db.insert_followed_wallet(address="0xW", stake_per_trade=5.0, added_at="2026-09-01T00:00:00Z")
+        _open_live_position(db, "0xW", stake_usd=10.0)
+
+        resp = client.get("/api/copy-trading/followed-wallets")
+        data = resp.json()
+        row = data["wallets"][0]
+        assert row["live_eligible"] is True
+        assert row["live_status_reason"] == "eligible for live execution"
+        assert data["live_eligible_count"] == 1
+        assert data["paper_only_count"] == 0
+
+    def test_active_wallet_at_live_exposure_cap_is_paper_only(self, api_client):
+        """Committed exposure >= cap must not be reported LIVE (the wallet
+        would be refused a new live order right now)."""
+        client, db = api_client
+        db.set_config("COPY_LIVE_TRADING_ENABLED", "True")
+        db.set_config("COPY_LIVE_MAX_EXPOSURE_PER_WALLET_USD", "10.0")
+        db.insert_followed_wallet(address="0xW", stake_per_trade=5.0, added_at="2026-09-01T00:00:00Z")
+        _open_live_position(db, "0xW", stake_usd=10.0)
+
+        resp = client.get("/api/copy-trading/followed-wallets")
+        row = resp.json()["wallets"][0]
+        assert row["live_eligible"] is False
+        assert row["live_status_reason"] == "this wallet's live exposure limit is currently reached"
+
+    def test_live_and_paper_aggregate_pnl_never_blended(self, api_client):
+        client, db = api_client
+        db.insert_followed_wallet(address="0xW", stake_per_trade=5.0, added_at="2026-09-01T00:00:00Z")
+        _settle(db, "0xW", stake_usd=5.0, pnl=3.0)
+        _settle_live(db, "0xW", stake_usd=5.0, pnl=-7.0)
+
+        resp = client.get("/api/copy-trading/followed-wallets")
+        data = resp.json()
+        assert data["aggregate_pnl_usd"] == pytest.approx(3.0)
+        assert data["n_settled_total"] == 1
+        assert data["live_aggregate_pnl_usd"] == pytest.approx(-7.0)
+        assert data["live_n_settled_total"] == 1
+
+    def test_multiple_wallets_live_eligible_and_paper_only_counts(self, api_client):
+        client, db = api_client
+        db.set_config("COPY_LIVE_TRADING_ENABLED", "True")
+        db.set_config("COPY_LIVE_MAX_EXPOSURE_PER_WALLET_USD", "50.0")
+        db.insert_followed_wallet(address="0xLive", stake_per_trade=5.0, added_at="2026-09-01T00:00:00Z")
+        db.insert_followed_wallet(address="0xPaperOnly", stake_per_trade=5.0, added_at="2026-09-01T00:00:00Z")
+        db.update_followed_wallet_status("0xPaperOnly", "paused", "unstable")
+
+        resp = client.get("/api/copy-trading/followed-wallets")
+        data = resp.json()
+        assert data["live_eligible_count"] == 1
+        assert data["paper_only_count"] == 1
+
+    def test_degrades_to_paper_when_live_config_read_fails(self, api_client, monkeypatch):
+        """Conservative-default rule: if the live-status derivation can't
+        be computed (e.g. a config read raises), degrade to PAPER/off --
+        never guess LIVE, and never 500 the whole view for it."""
+        client, db = api_client
+        db.set_config("COPY_LIVE_TRADING_ENABLED", "True")
+        db.insert_followed_wallet(address="0xW", stake_per_trade=5.0, added_at="2026-09-01T00:00:00Z")
+
+        from src.dashboard import api as api_module
+
+        def _boom(_db):
+            raise RuntimeError("config store unreachable")
+
+        monkeypatch.setattr(api_module, "get_live_config", _boom)
+
+        resp = client.get("/api/copy-trading/followed-wallets")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["live_trading_enabled"] is False
+        row = data["wallets"][0]
+        assert row["live_eligible"] is False
+        assert row["live_status_reason"] == "the live status could not be determined"
 
 
 # ---------------------------------------------------------------------------

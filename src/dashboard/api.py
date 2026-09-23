@@ -537,7 +537,16 @@ class CopyFollowResultOut(BaseModel):
 
 
 class CopyFollowedWalletOut(BaseModel):
-    """One row of the Followed Wallets view's table (epic F, issue #1147)."""
+    """One row of the Followed Wallets view's table (epic F, issue #1147).
+
+    ``live_eligible``/``live_status_reason`` (epic J, issue #1187) are a
+    second, independent status axis from ``status`` -- a wallet can be
+    paper-``active`` and ``live_eligible=False`` (e.g. the global switch is
+    off), or paper-``active`` and ``live_eligible=True``. A ``paused``
+    wallet is always ``live_eligible=False`` regardless of the global
+    switch, per docs/design/copy-trading-live-views.md's Followed Wallets
+    section.
+    """
     address: str
     stake_per_trade: float
     status: Literal["active", "paused"]
@@ -545,17 +554,34 @@ class CopyFollowedWalletOut(BaseModel):
     added_at: str
     n_settled: int
     realized_pnl_usd: float
+    live_eligible: bool
+    live_status_reason: str
 
 
 class CopyFollowedWalletsOut(BaseModel):
     """Single response for the Followed Wallets view — table rows plus the
     summary-strip aggregates, one round-trip (mirrors CopyCandidatesOut's
-    issue #1146 design)."""
+    issue #1146 design).
+
+    ``aggregate_pnl_usd``/``n_settled_total`` are paper-only (unchanged
+    from epic F -- ``copy_positions``). ``live_aggregate_pnl_usd``/
+    ``live_n_settled_total`` are the real-money equivalents
+    (``copy_live_positions``, issue #1187) -- these two are never summed
+    together anywhere, per the design spec's "never blended" rule.
+    ``live_trading_enabled`` mirrors the global posture banner's source of
+    truth (issue #1185) and drives this view's own table-level notice when
+    the switch is off.
+    """
     wallets: list[CopyFollowedWalletOut]
     active_count: int
     paused_count: int
     aggregate_pnl_usd: float
     n_settled_total: int
+    live_eligible_count: int
+    paper_only_count: int
+    live_aggregate_pnl_usd: float
+    live_n_settled_total: int
+    live_trading_enabled: bool
 
 
 class CopyPauseRequest(BaseModel):
@@ -2575,27 +2601,96 @@ def copy_trading_follow_wallet(address: str, req: CopyFollowRequest) -> CopyFoll
 # Copy-trading API — Followed Wallets view (epic F #1143, story F2 #1147)
 # ---------------------------------------------------------------------------
 
+def _derive_live_eligibility(
+    db, wallet: dict, *, live_trading_enabled: bool, live_cap_usd: float,
+    live_config_available: bool,
+) -> tuple[bool, str]:
+    """Confirmed derivation (issue #1187, no new schema): LIVE requires the
+    global switch on AND this wallet's current committed live exposure
+    below its per-wallet cap AND the wallet's paper status is ``active``.
+
+    Checked in this order, deterministic facts first: a ``paused`` wallet
+    is always PAPER regardless of the global switch (it executes nothing
+    in either mode) -- that must win even if the live config itself is
+    unavailable. Otherwise, degrade to the conservative PAPER/off default
+    whenever the derivation can't be computed (config read or exposure
+    query failure) -- never guess LIVE when the source of truth is
+    unavailable, mirroring the ``execution_mode`` fallback rule used
+    elsewhere in this file.
+    """
+    if wallet["status"] == "paused":
+        return False, "this wallet is paused"
+    if not live_config_available:
+        return False, "the live status could not be determined"
+    if not live_trading_enabled:
+        return False, "live trading is currently off"
+
+    try:
+        exposure = sum(
+            p["stake_usd"] for p in db.get_open_copy_live_positions(wallet["address"])
+        )
+    except Exception:  # noqa: BLE001 — same conservative-default rule as above
+        logger.exception(
+            "copy_trading_followed_wallets: get_open_copy_live_positions failed for %s",
+            wallet["address"],
+        )
+        return False, "the live status could not be determined"
+
+    if exposure >= live_cap_usd:
+        return False, "this wallet's live exposure limit is currently reached"
+    return True, "eligible for live execution"
+
+
 @app.get("/api/copy-trading/followed-wallets", response_model=CopyFollowedWalletsOut)
 def copy_trading_followed_wallets() -> CopyFollowedWalletsOut:
     """Every followed wallet plus its running realized P&L, plus aggregate
     figures for the summary strip (issue #1147 acceptance criteria) — one
     response model, mirroring the Candidates view's single-round-trip
     design (CopyCandidatesOut, issue #1146).
+
+    Also derives each wallet's per-row live-eligibility badge plus the
+    live/paper split aggregates (issue #1187, epic J) in the same
+    round-trip — no separate endpoint, same design as the rest of this
+    view.
     """
     if _db is None:
         raise HTTPException(status_code=503, detail="Database not initialised")
 
     pnl_by_wallet = {row["address"]: row for row in _db.get_copy_realized_pnl_by_wallet()}
     total = _db.get_copy_realized_pnl_total()
+    live_total = _db.get_copy_live_realized_pnl_total()
+
+    try:
+        live_cfg = get_live_config(_db)
+        live_trading_enabled = bool(live_cfg["COPY_LIVE_TRADING_ENABLED"])
+        live_cap_usd = live_cfg["COPY_LIVE_MAX_EXPOSURE_PER_WALLET_USD"]
+        live_config_available = True
+    except Exception:  # noqa: BLE001 — degrade the whole view to paper/off rather than 500 it
+        logger.exception(
+            "copy_trading_followed_wallets: get_live_config failed, degrading to paper/off"
+        )
+        live_trading_enabled = False
+        live_cap_usd = 0.0
+        live_config_available = False
 
     wallets = []
     active_count = 0
     paused_count = 0
+    live_eligible_count = 0
     for w in _db.get_followed_wallets():
         if w["status"] == "active":
             active_count += 1
         elif w["status"] == "paused":
             paused_count += 1
+
+        live_eligible, live_status_reason = _derive_live_eligibility(
+            _db, w,
+            live_trading_enabled=live_trading_enabled,
+            live_cap_usd=live_cap_usd,
+            live_config_available=live_config_available,
+        )
+        if live_eligible:
+            live_eligible_count += 1
 
         pnl_row = pnl_by_wallet.get(w["address"])
         wallets.append(CopyFollowedWalletOut(
@@ -2606,6 +2701,8 @@ def copy_trading_followed_wallets() -> CopyFollowedWalletsOut:
             added_at=w["added_at"],
             n_settled=pnl_row["n_settled"] if pnl_row else 0,
             realized_pnl_usd=pnl_row["total_pnl_usd"] if pnl_row else 0.0,
+            live_eligible=live_eligible,
+            live_status_reason=live_status_reason,
         ))
 
     # Most-recently-followed first — an operator managing the roster cares
@@ -2619,6 +2716,11 @@ def copy_trading_followed_wallets() -> CopyFollowedWalletsOut:
         paused_count=paused_count,
         aggregate_pnl_usd=total["total_pnl_usd"],
         n_settled_total=total["n_settled"],
+        live_eligible_count=live_eligible_count,
+        paper_only_count=len(wallets) - live_eligible_count,
+        live_aggregate_pnl_usd=live_total["total_pnl_usd"],
+        live_n_settled_total=live_total["n_settled"],
+        live_trading_enabled=live_trading_enabled,
     )
 
 
