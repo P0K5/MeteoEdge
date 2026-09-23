@@ -204,7 +204,7 @@ halt script mirroring `halt_live_trading.py`. Depends on Epic H and G. **Status:
 visually and numerically separate live activity from paper — never
 blended into one number, since mistaking a paper figure for a live one
 is a real trust/safety failure, not just a UX gap. Depends on Epic H
-and F.
+and F. **Status: Built (PRs #1190, #1192, #1194, #1195, #1196).**
 
 ## Open questions (need a decision before Epic 1 starts)
 
