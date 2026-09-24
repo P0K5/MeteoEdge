@@ -22,6 +22,10 @@ column, independent of the Paper column:
   flag, not this endpoint's own 5-minute poll -- flipping
   fetchCopyTradingModePosture()'s result alone (no new positions fetch)
   must update the Live column immediately.
+- renderCopyLiveBalanceDrift() (issue #1189): the reconciliation-required
+  banner stays hidden when never-checked or within-tolerance, appears with
+  the un-softened "manual reconciliation required" language on a flagged
+  drift, and hides again once a later clean check clears it.
 """
 from __future__ import annotations
 
@@ -221,6 +225,44 @@ _ASSERTIONS = textwrap.dedent("""
         'a live_error must preserve the last-known-good live column DOM, not blank it',
       );
       assert.strictEqual(paperWrap.innerHTML, 'UNTOUCHED_PAPER_CONTENT', 'a live_error must never touch the paper column');
+
+      // ------------------------------------------------------------------
+      // 9. Wallet-balance-drift reconciliation banner (issue #1189):
+      //    never checked yet (all-None) -> hidden; within tolerance ->
+      //    hidden (clears a prior warning); flagged drift -> visible with
+      //    the "manual reconciliation required" language, never softened.
+      // ------------------------------------------------------------------
+      renderCopyLiveBalanceDrift({
+        checked_at: null, within_tolerance: null, drift_usd: null,
+        expected_balance_usd: null, actual_balance_usd: null,
+      });
+      let driftBanner = document.getElementById('copy-positions-live-drift-banner');
+      assert.ok(!driftBanner.classList.contains('visible'), 'never-checked must not show the drift banner');
+
+      renderCopyLiveBalanceDrift({
+        checked_at: '2026-09-20T00:00:00Z', within_tolerance: true, drift_usd: 0.0,
+        expected_balance_usd: 100.0, actual_balance_usd: 100.0,
+      });
+      driftBanner = document.getElementById('copy-positions-live-drift-banner');
+      assert.ok(!driftBanner.classList.contains('visible'), 'within-tolerance must not show the drift banner');
+
+      renderCopyLiveBalanceDrift({
+        checked_at: '2026-09-20T01:00:00Z', within_tolerance: false, drift_usd: 12.34,
+        expected_balance_usd: 100.0, actual_balance_usd: 112.34,
+      });
+      driftBanner = document.getElementById('copy-positions-live-drift-banner');
+      assert.ok(driftBanner.classList.contains('visible'), 'a flagged drift must show the drift banner');
+      const driftText = document.getElementById('copy-positions-live-drift-text').textContent;
+      assert.ok(driftText.includes('manual reconciliation required'), `drift banner text must not soften the language, got: ${driftText}`);
+      assert.ok(driftText.includes('12.34'), `drift banner text must include the drift amount, got: ${driftText}`);
+
+      // A later clean check clears the previously-visible warning.
+      renderCopyLiveBalanceDrift({
+        checked_at: '2026-09-20T02:00:00Z', within_tolerance: true, drift_usd: 0.0,
+        expected_balance_usd: 100.0, actual_balance_usd: 100.0,
+      });
+      driftBanner = document.getElementById('copy-positions-live-drift-banner');
+      assert.ok(!driftBanner.classList.contains('visible'), 'a later clean check must clear a previously-shown drift banner');
 
       console.log('ALL_POSITIONS_LIVE_PAPER_JS_ASSERTIONS_PASSED');
     })().catch((err) => {

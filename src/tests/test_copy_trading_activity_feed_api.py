@@ -480,3 +480,100 @@ class TestActivityFeedLiveEvents:
         assert all(e["address"] == "0xW2" for e in events)
         live_events = [e for e in events if e["mode"] == "live"]
         assert len(live_events) == 1
+
+
+def _seed_drift_status(db, *, within_tolerance, drift_usd=0.0, expected=100.0,
+                        actual=100.0, checked_at="2026-09-10T00:00:00+00:00"):
+    """Seed the persisted check_wallet_balance_drift() verdict directly
+    (issue #1189), mirroring what copy_live_settle.py itself writes via
+    db.set_config -- avoids pulling in the CLOB-mocking machinery
+    test_copy_live_settle.py already covers for the write side."""
+    import json
+
+    from src.scripts.copy_live_settle import _BALANCE_DRIFT_STATUS_KEY
+    db.set_config(_BALANCE_DRIFT_STATUS_KEY, json.dumps({
+        "expected_balance_usd": expected,
+        "actual_balance_usd": actual,
+        "drift_usd": drift_usd,
+        "within_tolerance": within_tolerance,
+        "checked_at": checked_at,
+    }))
+
+
+class TestActivityFeedBalanceMismatchEvent:
+    """Issue #1189: the persisted wallet-balance-drift verdict surfaces as a
+    distinct, address-less 'live_balance_mismatch' Activity Feed event."""
+
+    def test_no_persisted_status_produces_no_event(self, api_client):
+        client, _ = api_client
+        events = client.get("/api/copy-trading/activity-feed").json()["events"]
+        assert events == []
+
+    def test_within_tolerance_status_produces_no_event(self, api_client):
+        client, db = api_client
+        _seed_drift_status(db, within_tolerance=True, drift_usd=0.0)
+        events = client.get("/api/copy-trading/activity-feed").json()["events"]
+        assert events == []
+
+    def test_flagged_drift_produces_mismatch_event(self, api_client):
+        client, db = api_client
+        _seed_drift_status(
+            db, within_tolerance=False, drift_usd=12.34, expected=100.0,
+            actual=112.34, checked_at="2026-09-10T00:00:00+00:00",
+        )
+        events = client.get("/api/copy-trading/activity-feed").json()["events"]
+        assert len(events) == 1
+        e = events[0]
+        assert e["event_type"] == "live_balance_mismatch"
+        assert e["mode"] == "live"
+        assert e["address"] == ""
+        assert e["ts"] == "2026-09-10T00:00:00+00:00"
+        assert e["drift_usd"] == pytest.approx(12.34)
+        assert e["expected_balance_usd"] == pytest.approx(100.0)
+        assert e["actual_balance_usd"] == pytest.approx(112.34)
+
+    def test_address_filter_excludes_the_mismatch_event(self, api_client):
+        """The drift check is a whole-wallet concept, not tied to any one
+        followed wallet -- an address-scoped query must never surface it."""
+        client, db = api_client
+        _seed_drift_status(db, within_tolerance=False, drift_usd=12.34)
+        _live_position(db, "0xW1", entry_ts="2026-09-05T00:00:00Z", status="pending")
+
+        resp = client.get("/api/copy-trading/activity-feed", params={"address": "0xW1"})
+        events = resp.json()["events"]
+        assert all(e["event_type"] != "live_balance_mismatch" for e in events)
+
+    def test_event_type_filter_matches_the_mismatch_event(self, api_client):
+        client, db = api_client
+        _seed_drift_status(db, within_tolerance=False, drift_usd=5.0)
+        resp = client.get(
+            "/api/copy-trading/activity-feed",
+            params={"event_type": "live_balance_mismatch"},
+        )
+        events = resp.json()["events"]
+        assert len(events) == 1
+        assert events[0]["event_type"] == "live_balance_mismatch"
+
+    def test_mode_filter_live_includes_the_mismatch_event(self, api_client):
+        client, db = api_client
+        _order_placed_signal(db, "0xW1", detected_at="2026-09-01T00:00:00Z")
+        _seed_drift_status(db, within_tolerance=False, drift_usd=5.0)
+
+        resp = client.get("/api/copy-trading/activity-feed", params={"mode": "live"})
+        events = resp.json()["events"]
+        assert len(events) == 1
+        assert events[0]["event_type"] == "live_balance_mismatch"
+
+    def test_a_later_clean_check_clears_the_mismatch_event(self, api_client):
+        """Overwriting the persisted verdict with a clean check (exactly
+        what a later hourly run does) must stop the event from appearing --
+        never a stale reconciliation warning after it's resolved."""
+        client, db = api_client
+        _seed_drift_status(db, within_tolerance=False, drift_usd=12.34,
+                            checked_at="2026-09-10T00:00:00+00:00")
+        assert len(client.get("/api/copy-trading/activity-feed").json()["events"]) == 1
+
+        _seed_drift_status(db, within_tolerance=True, drift_usd=0.0,
+                            checked_at="2026-09-10T01:00:00+00:00")
+        events = client.get("/api/copy-trading/activity-feed").json()["events"]
+        assert events == []

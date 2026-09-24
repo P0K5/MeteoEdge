@@ -7,6 +7,7 @@ calls.
 Per the issue's own instruction ("write the drift-detection test first"),
 TestWalletBalanceDriftDetection is the first test class in this file.
 """
+from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
 from src.data.db import Database
@@ -154,6 +155,131 @@ class TestWalletBalanceDriftDetection:
 
         assert result["expected_balance_usd"] == 97.0
         assert result["within_tolerance"] is True
+
+
+class TestWalletBalanceDriftPersistence:
+    """Issue #1189: check_wallet_balance_drift()'s result must be queryable
+    by the dashboard API after the hourly job exits, via
+    get_wallet_balance_drift_status()."""
+
+    def _factory(self, balance: float):
+        trader = MagicMock()
+        trader.get_usdc_balance.return_value = balance
+        factory = MagicMock(return_value=MagicMock())
+        return factory, trader
+
+    def test_never_checked_returns_all_none(self):
+        db = Database(":memory:")
+        status = cls.get_wallet_balance_drift_status(db)
+        assert status == {
+            "checked_at": None,
+            "within_tolerance": None,
+            "drift_usd": None,
+            "expected_balance_usd": None,
+            "actual_balance_usd": None,
+        }
+
+    def test_drift_beyond_tolerance_persists_and_is_readable(self):
+        db = Database(":memory:")
+        _seed_live_position(db, market="0xm1", status="filled", stake_usd=20.0)
+        factory, trader = self._factory(balance=100.0)  # expected=80, drift=20
+
+        with patch.object(cls, "COPY_LIVE_CAPITAL_USD", 100.0), \
+             patch.object(cls, "LiveTrader", return_value=trader):
+            result = cls.check_wallet_balance_drift(
+                db, factory, now=datetime(2026, 9, 20, 12, 0, tzinfo=timezone.utc),
+            )
+
+        status = cls.get_wallet_balance_drift_status(db)
+        assert status["checked_at"] == "2026-09-20T12:00:00+00:00"
+        assert status["within_tolerance"] is False
+        assert status["drift_usd"] == result["drift_usd"] == 20.0
+        assert status["expected_balance_usd"] == result["expected_balance_usd"]
+        assert status["actual_balance_usd"] == result["actual_balance_usd"]
+
+    def test_within_tolerance_result_clears_a_prior_warning(self):
+        """A dashboard must never keep showing a stale drift warning after
+        it's resolved -- a later clean run overwrites the persisted row."""
+        db = Database(":memory:")
+        _seed_live_position(db, market="0xm1", status="filled", stake_usd=20.0)
+
+        bad_factory, bad_trader = self._factory(balance=100.0)  # drift=20, flagged
+        with patch.object(cls, "COPY_LIVE_CAPITAL_USD", 100.0), \
+             patch.object(cls, "LiveTrader", return_value=bad_trader):
+            cls.check_wallet_balance_drift(
+                db, bad_factory, now=datetime(2026, 9, 20, 1, 0, tzinfo=timezone.utc),
+            )
+        assert cls.get_wallet_balance_drift_status(db)["within_tolerance"] is False
+
+        good_factory, good_trader = self._factory(balance=80.0)  # drift=0, clean
+        with patch.object(cls, "COPY_LIVE_CAPITAL_USD", 100.0), \
+             patch.object(cls, "LiveTrader", return_value=good_trader):
+            cls.check_wallet_balance_drift(
+                db, good_factory, now=datetime(2026, 9, 20, 2, 0, tzinfo=timezone.utc),
+            )
+
+        status = cls.get_wallet_balance_drift_status(db)
+        assert status["within_tolerance"] is True
+        assert status["drift_usd"] == 0.0
+        assert status["checked_at"] == "2026-09-20T02:00:00+00:00"
+
+    def test_skip_no_capital_never_persists_or_clears(self):
+        """A None-return (no capital allocated) must not overwrite a
+        previously-persisted verdict -- see the function's own docstring on
+        why a stale timestamp, not silence, is the intended signal."""
+        db = Database(":memory:")
+        _seed_live_position(db, market="0xm1", status="filled", stake_usd=20.0)
+        factory, trader = self._factory(balance=100.0)
+        with patch.object(cls, "COPY_LIVE_CAPITAL_USD", 100.0), \
+             patch.object(cls, "LiveTrader", return_value=trader):
+            cls.check_wallet_balance_drift(
+                db, factory, now=datetime(2026, 9, 20, 1, 0, tzinfo=timezone.utc),
+            )
+        before = cls.get_wallet_balance_drift_status(db)
+
+        with patch.object(cls, "COPY_LIVE_CAPITAL_USD", 0.0):
+            result = cls.check_wallet_balance_drift(db, MagicMock())
+
+        assert result is None
+        assert cls.get_wallet_balance_drift_status(db) == before
+
+    def test_clob_failure_never_persists_or_clears(self):
+        db = Database(":memory:")
+        _seed_live_position(db, market="0xm1", status="filled", stake_usd=20.0)
+        factory, trader = self._factory(balance=100.0)
+        with patch.object(cls, "COPY_LIVE_CAPITAL_USD", 100.0), \
+             patch.object(cls, "LiveTrader", return_value=trader):
+            cls.check_wallet_balance_drift(
+                db, factory, now=datetime(2026, 9, 20, 1, 0, tzinfo=timezone.utc),
+            )
+        before = cls.get_wallet_balance_drift_status(db)
+
+        with patch.object(cls, "COPY_LIVE_CAPITAL_USD", 100.0), \
+             patch.object(cls, "LiveTrader", side_effect=RuntimeError("CLOB unreachable")):
+            result = cls.check_wallet_balance_drift(db, factory)
+
+        assert result is None
+        assert cls.get_wallet_balance_drift_status(db) == before
+
+    def test_no_db_returns_all_none(self):
+        assert cls.get_wallet_balance_drift_status(None) == {
+            "checked_at": None,
+            "within_tolerance": None,
+            "drift_usd": None,
+            "expected_balance_usd": None,
+            "actual_balance_usd": None,
+        }
+
+    def test_corrupt_persisted_row_degrades_to_all_none(self):
+        db = Database(":memory:")
+        db.set_config(cls._BALANCE_DRIFT_STATUS_KEY, "not valid json")
+        assert cls.get_wallet_balance_drift_status(db) == {
+            "checked_at": None,
+            "within_tolerance": None,
+            "drift_usd": None,
+            "expected_balance_usd": None,
+            "actual_balance_usd": None,
+        }
 
 
 class TestSettleLivePositions:

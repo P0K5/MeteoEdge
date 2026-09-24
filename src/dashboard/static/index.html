@@ -1012,6 +1012,10 @@ a,button,input,select{transition:color var(--transition),background var(--transi
 .copy-activity-badge-rejected{background:var(--no-bg);color:var(--no);}
 .copy-activity-badge-breaker{background:var(--no-bg);color:var(--no);}
 .copy-activity-badge-settled{background:var(--yes-bg);color:var(--yes);}
+/* Wallet-balance-drift verdict badge (issue #1189) -- own class, same
+   "no" (red) tone as rejected/breaker (highest-severity events in this
+   feed), kept distinct per this block's own never-silently-couple rule. */
+.copy-activity-badge-mismatch{background:var(--no-bg);color:var(--no);}
 
 /* ── VISUALLY-HIDDEN UTILITY (accessible column label with no visible text) ── */
 .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;}
@@ -1429,6 +1433,19 @@ a,button,input,select{transition:color var(--transition),background var(--transi
             <i data-lucide="alert-circle"></i>
             <span id="copy-positions-live-error-text">Could not reach live positions data — retrying…</span>
           </div>
+          <!-- Reconciliation-required banner (issue #1189, epic J): a real
+               money discrepancy between local bookkeeping and the actual
+               CLOB balance, from the hourly check_wallet_balance_drift()
+               job (src/scripts/copy_live_settle.py). Reuses .error-banner's
+               red/critical styling, not .warn-banner's amber "off" styling
+               -- this is a safety issue, not an inert-switch state (design
+               spec: "do not soften this language"). Sits above the content
+               div, independent of whichever Live-column content state (off/
+               empty/populated) is currently rendered below it. -->
+          <div class="error-banner" id="copy-positions-live-drift-banner">
+            <i data-lucide="alert-triangle"></i>
+            <span id="copy-positions-live-drift-text">Live balance mismatch detected — manual reconciliation required</span>
+          </div>
           <div id="copy-positions-live-content">
             <div class="empty">
               <i data-lucide="loader"></i>
@@ -1487,6 +1504,7 @@ a,button,input,select{transition:color var(--transition),background var(--transi
           <option value="live_order_skipped">Live order skipped</option>
           <option value="live_circuit_breaker_tripped">Live circuit breaker tripped</option>
           <option value="live_position_settled">Live position settled</option>
+          <option value="live_balance_mismatch">Live balance mismatch</option>
         </select>
       </div>
       <div id="copy-activity-list">
@@ -3903,12 +3921,14 @@ function switchTab(tab) {
       fetchCopyTradingCandidates();
       fetchCopyTradingPositions();
       fetchCopyTradingActivityFeed();
+      fetchCopyTradingBalanceDrift();
     }
     if (!copyTradingIntervalId) {
       copyTradingIntervalId = setInterval(() => {
         fetchCopyTradingCandidates();
         fetchCopyTradingPositions();
         fetchCopyTradingActivityFeed();
+        fetchCopyTradingBalanceDrift();
       }, 300_000);
     }
     // The global live/paper posture banner gets its own dedicated 30s
@@ -5644,6 +5664,56 @@ function renderCopyLivePositions(data, liveTradingEnabled) {
   _copyReopenExpandedPositionDetails('live-pos-', _copyExpandedLivePositionIds);
 }
 
+/* ─────────────────────────────────────────
+   COPY-TRADING — LIVE WALLET-BALANCE-DRIFT RECONCILIATION BANNER
+   (issue #1189, epic J #1161)
+   Data: GET /api/copy-trading/balance-drift -- deliberately its own fetch,
+   independent of fetchCopyTradingPositions()'s /api/copy-trading/positions
+   round-trip (see that endpoint's own docstring for why), but polled on
+   the same 5-minute cadence/tab-activation trigger as the rest of the
+   Copy-Trading tab's "advisory/report-style" data (the underlying check
+   only runs hourly, so 5 minutes is already more than fresh enough).
+   Shows/hides #copy-positions-live-drift-banner, a sibling of the Live
+   column's #copy-positions-live-content -- so it's unaffected by whichever
+   content state (off/empty/populated) that div is currently rendering.
+   ───────────────────────────────────────── */
+let _copyLiveBalanceDriftData = null;
+
+function renderCopyLiveBalanceDrift(status) {
+  _copyLiveBalanceDriftData = status;
+  const banner = document.getElementById('copy-positions-live-drift-banner');
+  if (!banner) return;
+
+  if (status && status.within_tolerance === false) {
+    banner.classList.add('visible');
+    const textEl = document.getElementById('copy-positions-live-drift-text');
+    if (textEl) {
+      const drift = status.drift_usd != null ? `$${Math.abs(status.drift_usd).toFixed(2)}` : 'an unknown amount';
+      textEl.textContent = `Live balance mismatch detected — manual reconciliation required (drift ${drift})`;
+    }
+  } else {
+    // Covers both "within tolerance" (resolved) and "never checked yet"
+    // (all-None) -- never render a reconciliation warning when the source
+    // of truth says clean or is unavailable (same conservative-default
+    // rule as everywhere else in this epic).
+    banner.classList.remove('visible');
+  }
+}
+
+async function fetchCopyTradingBalanceDrift() {
+  try {
+    const r = await fetch('/api/copy-trading/balance-drift');
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json();
+    renderCopyLiveBalanceDrift(data);
+  } catch (e) {
+    // A transient fetch failure leaves the banner exactly as it was --
+    // never guess a mismatch on a network blip, but also never silently
+    // clear a real, previously-shown one just because this one poll failed.
+    console.error('Copy-trading balance-drift fetch failed:', e);
+  }
+}
+
 // Each column gets its own stale-data banner (design spec's per-column
 // error-isolation requirement) -- distinct from the shared
 // #copy-trading-error-banner used by Candidates/Followed Wallets, since a
@@ -5737,6 +5807,7 @@ const COPY_ACTIVITY_EVENT_TYPE_LABELS = {
   live_order_skipped: 'Live order skipped',
   live_circuit_breaker_tripped: 'Live circuit breaker tripped',
   live_position_settled: 'Live position settled',
+  live_balance_mismatch: 'Live balance mismatch',
 };
 
 // Row1 event-type badge visual style. Epic F's own shipped behavior --
@@ -5766,6 +5837,11 @@ const COPY_ACTIVITY_BADGE_STYLE = {
   live_order_skipped:  { cls: 'copy-activity-badge-skipped',  icon: 'alert-triangle', text: 'Live order skipped' },
   live_circuit_breaker_tripped: { cls: 'copy-activity-badge-breaker', icon: 'alert-triangle', text: 'Live circuit breaker tripped' },
   live_position_settled: { cls: 'copy-activity-badge-settled', icon: 'hand-coins', text: 'Live position settled' },
+  // Highest-severity badge in this feed -- reuses 'live_order_rejected'
+  // visual weight (alert-triangle) but its own distinct class so this
+  // real-money reconciliation event never blends visually with an
+  // ordinary order rejection (design spec: "do not soften this language").
+  live_balance_mismatch: { cls: 'copy-activity-badge-mismatch', icon: 'alert-triangle', text: 'Live balance mismatch' },
 };
 
 function _copyActivityBadgeHtml(e) {
@@ -5837,6 +5913,17 @@ function _copyActivityDescriptionHtml(e) {
     const pnl = e.settled_pnl_usd != null ? `<span class="${pnlCls}">${_copyFmtUsd(e.settled_pnl_usd)}</span>` : '—';
     return `<span class="copy-activity-desc">${_copyEscapeHtml(e.market || '—')} — ${pnl}</span>`;
   }
+  // Wallet-balance-drift verdict (issue #1189) -- not market/wallet-scoped,
+  // so its detail text is the drift amount vs. expected/actual balances
+  // instead of a market/fill-price line. Never soften the language (design
+  // spec) -- "manual reconciliation required" always appears verbatim.
+  if (e.event_type === 'live_balance_mismatch') {
+    const drift = e.drift_usd != null ? `$${Math.abs(e.drift_usd).toFixed(2)}` : 'an unknown amount';
+    const detail = (e.expected_balance_usd != null && e.actual_balance_usd != null)
+      ? ` (expected $${e.expected_balance_usd.toFixed(2)}, actual $${e.actual_balance_usd.toFixed(2)})`
+      : '';
+    return `<span class="copy-activity-desc">Live balance mismatch detected — manual reconciliation required — drift ${drift}${detail}</span>`;
+  }
   return `<span class="copy-activity-desc">—</span>`;
 }
 
@@ -5845,14 +5932,23 @@ function _copyActivityItemHtml(e) {
   const ts = e.ts ? new Date(e.ts).toLocaleString() : '—';
   // 'pause' and 'live' both jump to the Followed Wallets row (no
   // Candidates-equivalent row exists for a live position); paper signal
-  // events keep jumping to their Candidates detail row, unchanged.
-  const kind = e.event_type === 'wallet_paused' ? 'pause' : (e.mode === 'live' ? 'live' : 'signal');
+  // events keep jumping to their Candidates detail row, unchanged. 'none'
+  // (issue #1189's address-less live_balance_mismatch) is a deliberate
+  // no-op kind -- see _copyActivityJumpToWallet.
+  const kind = e.event_type === 'live_balance_mismatch' ? 'none'
+    : e.event_type === 'wallet_paused' ? 'pause' : (e.mode === 'live' ? 'live' : 'signal');
   const label = COPY_ACTIVITY_EVENT_TYPE_LABELS[e.event_type] || e.event_type;
   const modeCls = e.mode === 'live' ? 'copy-activity-item-live' : 'copy-activity-item-paper';
+  // issue #1189: live_balance_mismatch has no real wallet address (a
+  // whole-CLOB-wallet concept, not any one followed wallet's -- see
+  // CopyActivityEventOut's docstring), so row2 and the aria-label show a
+  // fixed label instead of an empty/truncated address.
+  const addrLabel = kind === 'none' ? 'Live CLOB wallet' : _copyTruncateAddress(e.address);
+  const ariaLabel = kind === 'none' ? label : `${label} for ${addrEsc}, click to view wallet detail`;
   return `
     <div class="copy-activity-item ${modeCls}" role="button" tabindex="0"
          data-kind="${kind}" data-address="${addrEsc}"
-         aria-label="${label} for ${addrEsc}, click to view wallet detail">
+         aria-label="${ariaLabel}">
       <div class="copy-activity-row1">
         <div class="copy-activity-badges">
           ${_copyActivityModeBadgeHtml(e)}
@@ -5861,7 +5957,7 @@ function _copyActivityItemHtml(e) {
         <span class="copy-activity-ts">${ts}</span>
       </div>
       <div class="copy-activity-row2">
-        <span class="copy-address-mono">${_copyEscapeHtml(_copyTruncateAddress(e.address))}</span>
+        <span class="copy-address-mono">${_copyEscapeHtml(addrLabel)}</span>
         ${_copyActivityDescriptionHtml(e)}
       </div>
     </div>`;
@@ -5878,7 +5974,11 @@ function _copyActivityFilteredEvents() {
 }
 
 function _copyActivityWalletOptionsHtml(events, selected) {
-  const addresses = [...new Set(events.map(e => e.address))].sort();
+  // Filter out the empty address the wallet-balance-drift verdict event
+  // uses (issue #1189, not tied to any one wallet -- see
+  // CopyActivityEventOut's docstring) -- it must never produce a second,
+  // indistinguishable blank entry alongside the real "All wallets" option.
+  const addresses = [...new Set(events.map(e => e.address).filter(Boolean))].sort();
   const opts = addresses.map(a => `<option value="${_copyEscapeHtml(a)}"${a === selected ? ' selected' : ''}>${_copyEscapeHtml(_copyTruncateAddress(a))}</option>`).join('');
   return `<option value="">All wallets</option>${opts}`;
 }
@@ -5895,6 +5995,9 @@ function _copyActivityWalletOptionsHtml(events, selected) {
 // function", and stays correct if these views are ever split into
 // separate tabs later.
 function _copyActivityJumpToWallet(kind, address) {
+  // 'none' (issue #1189's live_balance_mismatch event): not tied to any
+  // one wallet row -- nothing to jump to, and no tab switch either.
+  if (kind === 'none') return;
   if (currentTab !== 'copy-trading') {
     const tabBtn = document.getElementById('tab-btn-copy-trading');
     if (tabBtn) tabBtn.click();

@@ -705,6 +705,26 @@ class CopyPositionsOut(BaseModel):
     live_error: "str | None" = None
 
 
+class CopyLiveBalanceDriftOut(BaseModel):
+    """The latest persisted ``check_wallet_balance_drift()`` verdict (issue
+    #1189, epic J #1161) -- see
+    ``src.scripts.copy_live_settle.get_wallet_balance_drift_status()`` for
+    the persistence/read contract this mirrors field-for-field.
+
+    All fields are ``None`` when no check has ever successfully persisted a
+    result (real capital never allocated, or every hourly run so far hit a
+    CLOB failure) -- the frontend must treat this exactly like the "off"
+    states elsewhere in this epic: never render a reconciliation warning
+    when the source of truth is unavailable. ``checked_at`` lets the
+    dashboard distinguish a fresh clean check from a stale one (the
+    hourly job may itself be down)."""
+    checked_at: "str | None" = None
+    within_tolerance: "bool | None" = None
+    drift_usd: "float | None" = None
+    expected_balance_usd: "float | None" = None
+    actual_balance_usd: "float | None" = None
+
+
 class CopySignalOut(BaseModel):
     """One copy_signals row, for a position's source-signal click-through
     (issue #1148 acceptance criteria)."""
@@ -757,13 +777,25 @@ class CopyActivityEventOut(BaseModel):
       rejected-vs-skipped-vs-circuit-breaker classification and why only
       one event is emitted per row, mirroring the paper
       "terminal-outcome" precedent above one layer up).
+    - ``"live_balance_mismatch"`` (issue #1189) -- a single synthetic event
+      sourced from the persisted ``check_wallet_balance_drift()`` verdict
+      (``src.scripts.copy_live_settle.get_wallet_balance_drift_status``),
+      not a ``copy_live_positions`` row: the drift check is a whole-wallet
+      concept (one real CLOB balance), not tied to any one followed
+      wallet's address, so ``address`` is the empty string for this event
+      type only (every other event type always has a real address). Only
+      emitted while the LATEST persisted verdict is a flagged drift (see
+      ``copy_trading_activity_feed()``'s docstring) -- there is no
+      per-flip history, so this never appears more than once per feed
+      fetch, and disappears the moment a later clean check persists.
 
     ``market``/``outcome_index``/``source_price``/``fill_price``/
     ``size_usd``/``skip_reason``/``signal_id`` are only populated for
     signal- or live-position-derived events; ``paused_reason`` only for
     ``wallet_paused`` events; ``rejected_reason``/``filled_stake_usd``/
     ``settled_pnl_usd`` only for live events reaching those respective
-    states.
+    states; ``drift_usd``/``expected_balance_usd``/``actual_balance_usd``
+    only for ``live_balance_mismatch``.
     """
     event_type: str
     ts: str
@@ -779,6 +811,9 @@ class CopyActivityEventOut(BaseModel):
     signal_id: int | None = None
     rejected_reason: str | None = None
     filled_stake_usd: float | None = None
+    drift_usd: float | None = None
+    expected_balance_usd: float | None = None
+    actual_balance_usd: float | None = None
     settled_pnl_usd: float | None = None
 
 
@@ -3142,6 +3177,36 @@ def copy_trading_positions() -> CopyPositionsOut:
     )
 
 
+@app.get("/api/copy-trading/balance-drift", response_model=CopyLiveBalanceDriftOut)
+def copy_trading_balance_drift() -> CopyLiveBalanceDriftOut:
+    """Latest live wallet-balance drift-check result (issue #1189, epic J
+    #1161) -- a minimal, read-only surface over the hourly
+    ``copy_live_settle.check_wallet_balance_drift()`` job's persisted
+    verdict, so the Positions & P&L Live column's "Live balance mismatch
+    detected — manual reconciliation required" banner and the Activity
+    Feed's corresponding event (both previously `[Open question]` in
+    docs/design/copy-trading-live-views.md) have something queryable to
+    read from. This is deliberately its own tiny endpoint rather than a
+    field bolted onto ``/api/copy-trading/positions``: the drift-check job
+    runs hourly, independent of the poll cadence of that endpoint, and
+    other callers (ops tooling) may want the verdict without the cost of
+    the full positions payload.
+
+    No 503 when nothing has ever been checked yet -- unlike the
+    ``_db is None`` guard below, "never checked" is a normal, expected
+    state (e.g. no real capital allocated), not a backend-unavailable
+    error, so it returns 200 with every field ``None`` (see
+    ``CopyLiveBalanceDriftOut``'s docstring), matching this file's
+    established no-404-for-absent-data convention (e.g.
+    ``get_snapshot_series``).
+    """
+    if _db is None:
+        raise HTTPException(status_code=503, detail="Database not initialised")
+
+    from src.scripts.copy_live_settle import get_wallet_balance_drift_status
+    return CopyLiveBalanceDriftOut(**get_wallet_balance_drift_status(_db))
+
+
 @app.get("/api/copy-trading/signals/{signal_id}", response_model=CopySignalOut)
 def copy_trading_signal(signal_id: int) -> CopySignalOut:
     """One ``copy_signals`` row, for the Positions & P&L view's
@@ -3308,16 +3373,24 @@ def copy_trading_activity_feed(
       submission attempt that failed) -- see
       ``_is_live_post_submission_rejection``'s own comment for the full
       classification rationale. Always ``mode="live"``.
+    - The persisted wallet-balance-drift verdict (issue #1189, via
+      ``get_wallet_balance_drift_status`` -- see ``CopyActivityEventOut``'s
+      docstring for why this is NOT a ``copy_live_positions`` row): emits at
+      most one synthetic ``live_balance_mismatch`` event, timestamped at the
+      verdict's own ``checked_at``, only while the LATEST persisted check is
+      a flagged drift. Skipped entirely when *address* is given -- the
+      drift check is a whole-wallet concept, not any one followed wallet's,
+      so it never matches an address-scoped query. Always ``mode="live"``.
 
     Deliberately NOT covered by this epic's acceptance criteria (see PR
-    description / issue #1188 for why, each requires infrastructure that
+    description / issue #1188 for why -- this requires infrastructure that
     doesn't exist yet and is out of scope here rather than approximated):
     "Live trading halted"/"Live trading resumed" (no audit trail exists
     for ``COPY_LIVE_TRADING_ENABLED`` flips -- ``bot_config`` stores only
     the current value + its own last ``updated_at``, not a history of
-    every flip) and "Live balance mismatch detected" (not in this issue's
-    acceptance criteria at all; the design spec itself flags it as an open
-    question pending confirmation that a queryable drift result exists).
+    every flip). "Live balance mismatch detected" (also previously listed
+    here as an open question) is now covered -- see the drift-verdict
+    source above (issue #1189).
 
     *address*, *event_type*, and *mode* all filter the merged result
     (query params); an *event_type*/*mode* outside the known sets simply
@@ -3326,6 +3399,8 @@ def copy_trading_activity_feed(
     """
     if _db is None:
         raise HTTPException(status_code=503, detail="Database not initialised")
+
+    from src.scripts.copy_live_settle import get_wallet_balance_drift_status
 
     events: list[CopyActivityEventOut] = []
 
@@ -3427,6 +3502,27 @@ def copy_trading_activity_feed(
         # documented 'pending'/'filled'/'partial'/'rejected'/'settled'
         # lifecycle) silently produces no event -- mirrors this endpoint's
         # existing lenient-filter philosophy rather than a 500.
+
+    # Wallet-balance-drift verdict (issue #1189) -- see this function's own
+    # docstring and CopyActivityEventOut's for why this is a synthetic,
+    # address-less event sourced from the persisted check_wallet_balance_
+    # drift() result rather than a copy_live_positions row. Skipped when an
+    # address filter is active (never matches a specific wallet) and when
+    # nothing has ever been persisted / the latest verdict is clean --
+    # exactly the "clears any prior warning" contract get_wallet_balance_
+    # drift_status() itself guarantees.
+    if address is None:
+        drift_status = get_wallet_balance_drift_status(_db)
+        if drift_status["checked_at"] is not None and drift_status["within_tolerance"] is False:
+            events.append(CopyActivityEventOut(
+                event_type="live_balance_mismatch",
+                ts=drift_status["checked_at"],
+                mode="live",
+                address="",
+                drift_usd=drift_status["drift_usd"],
+                expected_balance_usd=drift_status["expected_balance_usd"],
+                actual_balance_usd=drift_status["actual_balance_usd"],
+            ))
 
     if event_type is not None:
         events = [e for e in events if e.event_type == event_type]

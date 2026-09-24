@@ -13,6 +13,12 @@ requirement: "stale-feed indicator appears on a simulated poll failure" --
 plus the merged-feed rendering, wallet/event-type/mode filters (client-side,
 against the cached payload), click-through cross-navigation, the per-row
 LIVE/PAPER mode badge + left-border accent, and the Mode=Live empty states.
+
+Also covers the wallet-balance-drift verdict's synthetic
+'live_balance_mismatch' event (issue #1189): address-less rendering (fixed
+label, not a blank address), the un-softened "manual reconciliation
+required" text, its no-op click-through, exclusion from the Wallet filter
+dropdown's option list, and event-type filtering.
 """
 from __future__ import annotations
 
@@ -323,6 +329,46 @@ _ASSERTIONS = textwrap.dedent("""
       liveFollowedRow.scrollIntoView = () => { liveFollowedScrolled = true; };
       _copyActivityJumpToWallet('live', '0xW1');
       assert.strictEqual(liveFollowedScrolled, true, 'a live event must scroll to its Followed Wallets row');
+
+      // ------------------------------------------------------------------
+      // 12. issue #1189: the wallet-balance-drift verdict's synthetic
+      //     'live_balance_mismatch' event -- address-less rendering, the
+      //     un-softened "manual reconciliation required" text, no-op
+      //     click-through, and exclusion from the Wallet filter dropdown
+      //     (its empty address must never produce a stray blank option).
+      // ------------------------------------------------------------------
+      const mismatchFixture = [
+        { event_type: 'live_balance_mismatch', ts: '2026-09-10T00:00:00Z', address: '', mode: 'live',
+          drift_usd: 12.34, expected_balance_usd: 100.0, actual_balance_usd: 112.34 },
+        { event_type: 'order_placed', ts: '2026-09-01T00:00:00Z', address: '0xW1', mode: 'paper',
+          market: 'M1', fill_price: 0.42, size_usd: 5.0, signal_id: 4 },
+      ];
+      global.fetch = async () => jsonResp({ events: mismatchFixture });
+      await fetchCopyTradingActivityFeed();
+
+      assert.ok(listWrap.innerHTML.includes('Live balance mismatch'), 'the mismatch event must render its badge/label');
+      assert.ok(listWrap.innerHTML.includes('manual reconciliation required'), 'the mismatch event text must never soften this language');
+      assert.ok(listWrap.innerHTML.includes('12.34'), 'the drift amount must render');
+      assert.ok(listWrap.innerHTML.includes('Live CLOB wallet'), 'the address-less event must show a fixed label, not a blank address');
+      assert.ok(listWrap.innerHTML.includes('mode-badge-live'), 'the mismatch event is always mode=live');
+
+      const walletSelect = document.getElementById('copy-activity-wallet-select');
+      assert.ok(!walletSelect.innerHTML.includes('<option value="">All wallets</option><option value="">'),
+        'the empty address must not produce a second, indistinguishable blank wallet-filter option');
+
+      // Clicking/activating the mismatch row is a documented no-op -- no
+      // tab switch, no scroll (it has no wallet row to jump to).
+      currentTab = 'portfolio';
+      let mismatchTabClicked = false;
+      tabBtn.click = () => { mismatchTabClicked = true; };
+      _copyActivityJumpToWallet('none', '');
+      assert.strictEqual(mismatchTabClicked, false, 'the mismatch event must never trigger a tab switch');
+
+      // event_type filter isolates it correctly.
+      _copyActivityOnEventTypeFilterChange({ target: { value: 'live_balance_mismatch' } });
+      assert.ok(listWrap.innerHTML.includes('Live balance mismatch'));
+      assert.ok(!listWrap.innerHTML.includes('Order placed'));
+      _copyActivityOnEventTypeFilterChange({ target: { value: '' } });
 
       console.log('ALL_ACTIVITY_FEED_JS_ASSERTIONS_PASSED');
     })().catch((err) => {
