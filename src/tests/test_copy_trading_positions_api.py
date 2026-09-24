@@ -12,6 +12,9 @@ Covers:
   live-side query-failure isolation (`live_error`).
 - GET /api/copy-trading/signals/{signal_id}: source-signal click-through,
   including the 404 path for an unknown id.
+- GET /api/copy-trading/balance-drift (issue #1189): the latest persisted
+  wallet-balance-drift verdict, including the all-None "never checked"
+  default.
 """
 from __future__ import annotations
 
@@ -446,3 +449,81 @@ class TestSignalEndpoint:
         assert body["source_price"] == pytest.approx(0.4)
         assert body["order_placed"] is True
         assert body["fill_price"] == pytest.approx(0.42)
+
+
+class TestBalanceDriftEndpoint:
+    """GET /api/copy-trading/balance-drift (issue #1189)."""
+
+    def test_503_when_db_not_initialised(self):
+        from src.dashboard import api as api_module
+        original_db = api_module._db
+        try:
+            api_module.set_db(None)
+            client = TestClient(api_module.app, raise_server_exceptions=False)
+            resp = client.get("/api/copy-trading/balance-drift")
+            assert resp.status_code == 503
+        finally:
+            api_module.set_db(original_db)
+
+    def test_never_checked_returns_200_with_all_none(self, api_client):
+        """No capital allocated / job never run yet is a normal state, not
+        a backend error -- 200, not 404 (this file's own established
+        no-404-for-absent-data convention)."""
+        client, _ = api_client
+        resp = client.get("/api/copy-trading/balance-drift")
+        assert resp.status_code == 200
+        assert resp.json() == {
+            "checked_at": None,
+            "within_tolerance": None,
+            "drift_usd": None,
+            "expected_balance_usd": None,
+            "actual_balance_usd": None,
+        }
+
+    def test_returns_the_persisted_verdict(self, api_client):
+        import json
+
+        client, db = api_client
+        from src.scripts.copy_live_settle import _BALANCE_DRIFT_STATUS_KEY
+        db.set_config(_BALANCE_DRIFT_STATUS_KEY, json.dumps({
+            "expected_balance_usd": 100.0,
+            "actual_balance_usd": 112.34,
+            "drift_usd": 12.34,
+            "within_tolerance": False,
+            "checked_at": "2026-09-10T00:00:00+00:00",
+        }))
+
+        resp = client.get("/api/copy-trading/balance-drift")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["checked_at"] == "2026-09-10T00:00:00+00:00"
+        assert body["within_tolerance"] is False
+        assert body["drift_usd"] == pytest.approx(12.34)
+        assert body["expected_balance_usd"] == pytest.approx(100.0)
+        assert body["actual_balance_usd"] == pytest.approx(112.34)
+
+    def test_a_later_clean_check_overwrites_the_prior_verdict(self, api_client):
+        client, db = api_client
+        from src.scripts.copy_live_settle import check_wallet_balance_drift
+        from datetime import datetime, timezone
+        from unittest.mock import MagicMock, patch
+        from src.scripts import copy_live_settle as cls
+
+        with patch.object(cls, "COPY_LIVE_CAPITAL_USD", 100.0), \
+             patch.object(cls, "LiveTrader") as mock_live_trader:
+            mock_live_trader.return_value.get_usdc_balance.return_value = 50.0  # drift
+            check_wallet_balance_drift(
+                db, MagicMock(), now=datetime(2026, 9, 10, 0, 0, tzinfo=timezone.utc),
+            )
+        assert client.get("/api/copy-trading/balance-drift").json()["within_tolerance"] is False
+
+        with patch.object(cls, "COPY_LIVE_CAPITAL_USD", 100.0), \
+             patch.object(cls, "LiveTrader") as mock_live_trader:
+            mock_live_trader.return_value.get_usdc_balance.return_value = 100.0  # clean
+            check_wallet_balance_drift(
+                db, MagicMock(), now=datetime(2026, 9, 10, 1, 0, tzinfo=timezone.utc),
+            )
+
+        body = client.get("/api/copy-trading/balance-drift").json()
+        assert body["within_tolerance"] is True
+        assert body["checked_at"] == "2026-09-10T01:00:00+00:00"

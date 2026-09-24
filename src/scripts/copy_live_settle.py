@@ -33,7 +33,10 @@ blocks the others:
    balance derived from local ``copy_live_positions`` bookkeeping, and logs
    a loud ``log.critical`` (never a silent log line) when drift exceeds a
    configurable tolerance -- mirrors ``_record_live_outcome``'s existing
-   "local bookkeeping and exchange state may have diverged" precedent.
+   "local bookkeeping and exchange state may have diverged" precedent. Every
+   computed verdict is also persisted to ``bot_config`` (issue #1189, epic J
+   #1161) so the dashboard can surface it outside of ``logs/bot.log`` --
+   see ``get_wallet_balance_drift_status()``'s docstring.
 
 **Isolation (#1100), unchanged from every other module in this epic set.**
 This script never reads or writes ``copy_positions``/``open_positions``/
@@ -46,6 +49,7 @@ Usage::
 """
 from __future__ import annotations
 
+import json
 import logging
 import sys
 from datetime import datetime, timezone
@@ -61,6 +65,20 @@ from src.execution.live_trader import LiveTrader  # noqa: E402
 log = logging.getLogger(__name__)
 
 _EMPTY_SETTLE_SUMMARY = {"settled": 0, "pending": 0, "errors": 0}
+
+# bot_config key the wallet-balance-drift verdict is persisted under (issue
+# #1189) -- reuses the existing key/value store (Database.get_config/
+# set_config) exactly like COPY_LIVE_TRADING_ENABLED / capture_staleness's
+# own threshold key, rather than a new table: this is a single computed
+# status blob, not a user-editable parameter, so it is deliberately NOT in
+# CONFIG_DEFAULTS (src/config.py) and never surfaced by GET /api/config --
+# both seed_config()/get_live_config() and the dashboard's config endpoints
+# only ever iterate CONFIG_DEFAULTS's own keys, so this extra row is inert
+# to them. Value is a JSON blob (not a plain scalar, unlike other
+# bot_config rows) because the verdict is a small structured record, not a
+# single value -- see get_wallet_balance_drift_status()'s docstring for the
+# shape.
+_BALANCE_DRIFT_STATUS_KEY = "COPY_LIVE_WALLET_BALANCE_DRIFT_CHECK"
 _EMPTY_GHOST_SUMMARY = {"recovered": 0, "confirmed_dead": 0, "still_ambiguous": 0}
 
 
@@ -249,11 +267,26 @@ def recover_ghost_orders(db, clob_client_factory) -> dict:
     }
 
 
-def check_wallet_balance_drift(db, clob_client_factory) -> "dict | None":
+def check_wallet_balance_drift(db, clob_client_factory, *, now: "datetime | None" = None) -> "dict | None":
     """Compare the real CLOB USDC balance against an expected balance
     derived from local ``copy_live_positions`` bookkeeping, and flag drift
     beyond ``COPY_LIVE_BALANCE_DRIFT_TOLERANCE_USD`` -- the actual
     "reconciliation" this epic (#1160) is named for.
+
+    **Persistence (issue #1189):** every time this function actually
+    computes a verdict (i.e. does not return ``None``), it persists that
+    exact ``result`` dict plus a ``checked_at`` timestamp to
+    ``_BALANCE_DRIFT_STATUS_KEY`` via ``db.set_config`` -- readable by the
+    dashboard through ``get_wallet_balance_drift_status()`` below, without
+    needing a live CLOB call of its own. A later within-tolerance run
+    overwrites the same key, which is what makes a resolved drift stop
+    showing as a warning (only the LATEST verdict is ever kept -- no
+    history). The ``None``-return paths (no capital allocated, CLOB
+    unreachable) deliberately do NOT touch the persisted row: a stale
+    timestamp on the dashboard is the intended signal that the last real
+    check is old, rather than silently erasing the last known verdict.
+    *now* overrides "current time" for the persisted timestamp (testing
+    only); defaults to UTC now.
 
     **Expected-balance derivation (a ledger walk from ``COPY_LIVE_CAPITAL_USD``,
     assumed to be the exact real CLOB balance at the moment live
@@ -336,7 +369,65 @@ def check_wallet_balance_drift(db, clob_client_factory) -> "dict | None":
             "drift $%.4f (tolerance $%.2f)",
             expected_balance, actual_balance, drift, tolerance,
         )
+
+    checked_at = (now or datetime.now(timezone.utc)).isoformat()
+    try:
+        db.set_config(_BALANCE_DRIFT_STATUS_KEY, json.dumps({**result, "checked_at": checked_at}))
+    except Exception as e:
+        # Persistence is a best-effort convenience for the dashboard -- a
+        # write failure here must never turn an otherwise-successful check
+        # (already logged above, loudly if in drift) into a crashed run.
+        log.warning("[copy-live-settle] failed to persist wallet-balance-drift status: %s", e)
+
     return result
+
+
+_EMPTY_BALANCE_DRIFT_STATUS = {
+    "checked_at": None,
+    "within_tolerance": None,
+    "drift_usd": None,
+    "expected_balance_usd": None,
+    "actual_balance_usd": None,
+}
+
+
+def get_wallet_balance_drift_status(db) -> dict:
+    """Read-only accessor for the LATEST persisted ``check_wallet_balance_drift()``
+    verdict (issue #1189) -- exposed to the dashboard via
+    ``GET /api/copy-trading/balance-drift`` (``src/dashboard/api.py``),
+    mirroring ``src.monitoring.capture_staleness.get_capture_health()``'s own
+    "module owns both the check-and-log function and a read-only getter"
+    split.
+
+    Returns a dict shaped exactly like ``_EMPTY_BALANCE_DRIFT_STATUS``:
+    ``checked_at`` (ISO timestamp string or None), ``within_tolerance``
+    (bool or None), ``drift_usd``/``expected_balance_usd``/
+    ``actual_balance_usd`` (float or None). All fields are ``None`` when no
+    check has ever successfully persisted a result yet (real capital never
+    allocated, or every run so far hit a CLOB failure) -- never guess a
+    verdict when the source of truth is unavailable, same conservative-
+    default rule this epic uses throughout (``execution_mode`` fallback,
+    ``COPY_LIVE_TRADING_ENABLED`` inert-by-default). Never raises: a
+    missing DB, missing config row, or corrupt JSON blob all degrade to the
+    same all-``None`` "unknown" shape rather than a 500.
+    """
+    if db is None:
+        return dict(_EMPTY_BALANCE_DRIFT_STATUS)
+    try:
+        raw = db.get_config(_BALANCE_DRIFT_STATUS_KEY)
+    except Exception as e:
+        log.warning("[copy-live-settle] wallet-balance-drift status read failed: %s", e)
+        return dict(_EMPTY_BALANCE_DRIFT_STATUS)
+    if raw is None:
+        return dict(_EMPTY_BALANCE_DRIFT_STATUS)
+    try:
+        payload = json.loads(raw)
+        if not isinstance(payload, dict):
+            raise TypeError(f"expected dict, got {type(payload).__name__}")
+    except (ValueError, TypeError) as e:
+        log.warning("[copy-live-settle] wallet-balance-drift status row unparseable: %r (%s)", raw, e)
+        return dict(_EMPTY_BALANCE_DRIFT_STATUS)
+    return {**_EMPTY_BALANCE_DRIFT_STATUS, **payload}
 
 
 def run_once(db=None, clob_client_factory=None) -> dict:
