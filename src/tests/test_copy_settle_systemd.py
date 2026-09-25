@@ -66,13 +66,17 @@ def test_copy_settle_timer_valid_ini():
     assert "Install" in config, "Missing [Install] section"
 
 
-def test_copy_settle_timer_runs_hourly():
+def test_copy_settle_timer_runs_every_15_minutes():
     config = configparser.ConfigParser()
     config.read(TIMER_PATH)
-    # Cadence decision (issue #1132): hourly, more frequent than the daily
-    # weather settlement, because Epic C's realized P&L feeds the
-    # architecture doc's phase-7 go/no-go gate.
-    assert config.get("Timer", "OnCalendar") == "hourly"
+    # Cadence decision (issue #1132, tightened from hourly 2026-09-25):
+    # every 15 minutes, more frequent than the daily weather settlement,
+    # because Epic C's realized P&L feeds the architecture doc's phase-7
+    # go/no-go gate, and settlement latency directly gates how fast a
+    # settled position's stake frees up for copy_signal_loop.py's
+    # exposure caps to reuse -- see docs/OPERATIONS.md's "Why every 15
+    # minutes" note for the production evidence motivating the change.
+    assert config.get("Timer", "OnCalendar") == "*:0/15"
     assert config.get("Timer", "Persistent") == "true"
 
 

@@ -1,8 +1,8 @@
 [Unit]
-Description=Run MeteoEdge copy-trading position settlement hourly
+Description=Run MeteoEdge copy-trading position settlement every 15 minutes
 
 [Timer]
-OnCalendar=hourly
+OnCalendar=*:0/15
 AccuracySec=1m
 Persistent=true
 

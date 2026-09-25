@@ -572,7 +572,9 @@ tail -f logs/copy_screening.log
 
 #### meteoedge-copy-settle.service / meteoedge-copy-settle.timer
 
-One-shot service, run **hourly** by `meteoedge-copy-settle.timer`. Runs
+One-shot service, run **every 15 minutes** by `meteoedge-copy-settle.timer`
+(hourly before 2026-09-25 — see "Why every 15 minutes" below for the
+change). Runs
 `src/scripts/copy_settle`, which settles open `copy_positions` rows (epic
 #1102 story C2, issue #1132): for every `status='open'` row, resolves its
 market via `fetch_market_resolution` (the only truth source for a
@@ -604,10 +606,10 @@ StandardError=append:/home/p0k5/MeteoEdge/logs/copy_settle.log
 
 ```ini
 [Unit]
-Description=Run MeteoEdge copy-trading position settlement hourly
+Description=Run MeteoEdge copy-trading position settlement every 15 minutes
 
 [Timer]
-OnCalendar=hourly
+OnCalendar=*:0/15
 AccuracySec=1m
 Persistent=true
 
@@ -615,25 +617,40 @@ Persistent=true
 WantedBy=timers.target
 ```
 
-**Why hourly:** Epic C's realized P&L directly feeds the architecture doc's
-phase-7 go/no-go gate (comparing realized paper P&L to backtest projections),
-so settlement latency matters more here than for the once-daily weather
-strategy: a market that resolves mid-day should not sit unsettled for up to
-24h before that comparison can see it. Hourly is affordable because each run
-is cheap — one `fetch_market_resolution` call per distinct open `market`,
-typically a handful of markets at this stage, not one per position.
+**Why every 15 minutes (changed from hourly 2026-09-25):** settlement
+latency doesn't just affect how fast the phase-7 go/no-go comparison sees
+resolved P&L — it directly gates capital reuse. `copy_signal_loop.py`'s
+exposure caps (`COPY_MAX_EXPOSURE_PER_WALLET_USD`/`COPY_MAX_TOTAL_EXPOSURE_USD`)
+only stop counting a position once its row flips from `open` to `settled`,
+so a position sitting unsettled for up to an hour was a full hour a
+followed wallet's exposure slot stayed tied up even after the underlying
+market had actually resolved. Observed in production: a high-frequency
+followed wallet had 140 of 141 signals in a single day skipped with
+`wallet_exposure_limit`, almost entirely because its already-resolved
+positions hadn't been settled yet, not because the wallet's picks were
+bad. Worst-case capital-reuse latency drops from ~65 minutes (60min
+settle wait + up to 5min for the next signal-loop cycle to re-check
+exposure) to ~20 minutes. Affordable because a run with nothing open is a
+near-free no-op (one DB query, zero API calls, confirmed via
+`logs/copy_settle.log`'s own "no open copy positions to settle" lines
+under the previous hourly cadence) — cost scales with distinct open
+markets on a run that actually has work, not with how often the timer
+fires.
 
 **Rate-limit decision — shared with copy-screening and the live weather
 bot:** `fetch_market_resolution` calls `gamma-api.polymarket.com`, throttled
 by the same process-local `DomainRateLimiter` (`src/http_client.py:42-63`)
 the weather strategy's own settlement and copy-screening use. Running
-copy-settle as its own hourly systemd process means its calls are **not**
+copy-settle as its own systemd process means its calls are **not**
 jointly throttled with those other processes' traffic on that host (same
 isolation caveat as `meteoedge-copy-screening.service`'s "Rate-limit
 decision" above). v1 mitigation: distinct-market grouping already caps
-each run to one call per open market rather than one per position, plus the
-hourly (not continuous) cadence. A cross-process shared rate limiter remains
-explicitly deferred — revisit if 429s / throttling are observed.
+each run to one call per open market rather than one per position, and a
+run with nothing open makes zero calls at all — quadrupling the timer
+frequency (hourly to every 15 minutes) does not quadruple real API load,
+since most of the added runs are no-ops. A cross-process shared rate
+limiter remains explicitly deferred — revisit if 429s / throttling are
+observed.
 
 **Operational commands:**
 ```bash
@@ -650,7 +667,8 @@ tail -f logs/copy_settle.log
 
 #### meteoedge-copy-live-settle.service / meteoedge-copy-live-settle.timer
 
-One-shot service, run **hourly** by `meteoedge-copy-live-settle.timer` --
+One-shot service, run **every 15 minutes** by
+`meteoedge-copy-live-settle.timer` (hourly before 2026-09-25) --
 same cadence as `meteoedge-copy-settle.timer`, but a fully separate process
 and unit (issue #1100 isolation: never touches `copy_positions`/
 `open_positions`/`trades`). Runs `src/scripts/copy_live_settle`
@@ -703,10 +721,10 @@ StandardError=append:/home/p0k5/MeteoEdge/logs/copy_live_settle.log
 
 ```ini
 [Unit]
-Description=Run MeteoEdge live copy-trading settlement/reconciliation hourly
+Description=Run MeteoEdge live copy-trading settlement/reconciliation every 15 minutes
 
 [Timer]
-OnCalendar=hourly
+OnCalendar=*:0/15
 AccuracySec=1m
 Persistent=true
 
@@ -714,10 +732,14 @@ Persistent=true
 WantedBy=timers.target
 ```
 
-**Why hourly:** Same rationale as `meteoedge-copy-settle.timer` -- a
-resolved real position (or a wallet-balance drift) sitting undetected for
-up to 24h before this job runs is a much worse outcome for real-money
-reconciliation than for the once-daily weather strategy.
+**Why every 15 minutes (changed from hourly 2026-09-25):** same
+capital-reuse rationale as `meteoedge-copy-settle.timer` above, plus this
+job's own reconciliation/ghost-order-recovery duties benefit from the
+same latency reduction -- a resolved real position, an unresolved
+ghost-order, or a wallet-balance drift sitting undetected for up to an
+hour is a worse outcome for real-money reconciliation than for the
+once-daily weather strategy, same as the original hourly-over-daily
+reasoning, just carried one step further.
 
 **Operational commands:**
 ```bash
