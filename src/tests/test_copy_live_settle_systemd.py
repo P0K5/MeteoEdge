@@ -68,12 +68,13 @@ def test_copy_live_settle_timer_valid_ini():
     assert "Install" in config, "Missing [Install] section"
 
 
-def test_copy_live_settle_timer_runs_hourly():
+def test_copy_live_settle_timer_runs_every_15_minutes():
     config = configparser.ConfigParser()
     config.read(TIMER_PATH)
-    # Same hourly cadence as meteoedge-copy-settle.timer (issue #1174):
-    # real-money reconciliation latency matters at least as much as paper's.
-    assert config.get("Timer", "OnCalendar") == "hourly"
+    # Same cadence as meteoedge-copy-settle.timer (issue #1174, tightened
+    # from hourly 2026-09-25): real-money reconciliation latency matters
+    # at least as much as paper's.
+    assert config.get("Timer", "OnCalendar") == "*:0/15"
     assert config.get("Timer", "Persistent") == "true"
 
 
