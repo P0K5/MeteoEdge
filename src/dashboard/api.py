@@ -3857,6 +3857,13 @@ _CONFIG_META: dict[str, dict] = {
         "type": "bool",
         "group": "copy_trading",
     },
+    "COPY_MIN_ENTRY_PRICE": {
+        "description": "Minimum price to execute a copy signal (issue #1208) — excludes sub-dime entries that historically have poor execution. Set to 0.0 to disable the gate entirely",
+        "type": "float",
+        "group": "copy_trading",
+        "min": 0.0,
+        "max": 1.0,
+    },
     "COPY_DAILY_LOSS_LIMIT_USD": {
         "description": "Block new copy-signal execution for the rest of the UTC day once today's realized copy-trading P&L is <= -this value (issue #1139 circuit breaker)",
         "type": "float",
