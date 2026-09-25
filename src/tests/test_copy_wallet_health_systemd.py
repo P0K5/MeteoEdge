@@ -66,13 +66,16 @@ def test_copy_health_timer_valid_ini():
     assert "Install" in config, "Missing [Install] section"
 
 
-def test_copy_health_timer_runs_daily_at_0315_utc():
+def test_copy_health_timer_runs_daily_at_0345_utc():
     config = configparser.ConfigParser()
     config.read(TIMER_PATH)
-    # Cadence decision (issue #1140): 03:15 UTC, shortly after
-    # meteoedge-copy-screening.timer's 03:00 UTC run, so a fresh screening
-    # row exists to stability-check against on the same day.
-    assert config.get("Timer", "OnCalendar") == "*-*-* 03:15:00 UTC"
+    # Cadence decision (issue #1140, updated issue #1213): 03:45 UTC, after
+    # meteoedge-copy-screening.timer's 03:00 UTC run. The 45-minute gap is
+    # sized for a 50-wallet screening pool (50 wallets × 40 pages/wallet =
+    # 2000 API calls at 1 req/sec ≈ 33 minutes worst-case), ensuring a fresh
+    # screening row exists to stability-check against on the same day before
+    # health-monitor fires. Future pool widening should re-check this timing.
+    assert config.get("Timer", "OnCalendar") == "*-*-* 03:45:00 UTC"
     assert config.get("Timer", "Persistent") == "true"
 
 
@@ -102,3 +105,58 @@ def test_install_sh_includes_copy_health_in_status_check():
     content = INSTALL_SH_PATH.read_text()
     assert "meteoedge-copy-health.timer" in content, \
         "install.sh should include meteoedge-copy-health.timer in status output"
+
+
+def test_copy_health_timer_starts_after_screening_timer_with_adequate_gap():
+    """Enforce the timing relationship: health timer must fire after screening
+    completes, not just as a literal string value.
+
+    The screening pool (50 wallets × 40 pages/wallet = 2000 API calls at 1
+    req/sec) takes ~33 minutes worst-case. Health timer must fire at least
+    40 minutes after screening starts to allow completion before
+    stability-checking against its output.
+
+    This test catches the same bug as issue #1213 if someone later widens the
+    pool without re-checking the gap — a prose comment alone didn't prevent
+    it the first time.
+    """
+    import re
+
+    screening_timer_path = DEPLOY_DIR / "meteoedge-copy-screening.timer"
+    assert screening_timer_path.exists(), \
+        f"Screening timer not found at {screening_timer_path}"
+
+    # Parse both timer files' OnCalendar values
+    screening_config = configparser.ConfigParser()
+    screening_config.read(screening_timer_path)
+    screening_oncal = screening_config.get("Timer", "OnCalendar")
+
+    health_config = configparser.ConfigParser()
+    health_config.read(TIMER_PATH)
+    health_oncal = health_config.get("Timer", "OnCalendar")
+
+    # Extract time-of-day from OnCalendar strings (format: *-*-* HH:MM:SS UTC)
+    screening_match = re.search(r"(\d{2}):(\d{2}):(\d{2})", screening_oncal)
+    health_match = re.search(r"(\d{2}):(\d{2}):(\d{2})", health_oncal)
+
+    assert screening_match, \
+        f"Could not parse screening timer time from OnCalendar: {screening_oncal}"
+    assert health_match, \
+        f"Could not parse health timer time from OnCalendar: {health_oncal}"
+
+    # Convert to minutes since midnight for comparison
+    screening_minutes = (int(screening_match.group(1)) * 60
+                         + int(screening_match.group(2)))
+    health_minutes = (int(health_match.group(1)) * 60
+                      + int(health_match.group(2)))
+
+    gap_minutes = health_minutes - screening_minutes
+    min_gap_required = 40
+
+    assert gap_minutes >= min_gap_required, \
+        f"Health timer fires only {gap_minutes} min after screening timer starts. " \
+        f"Screening (50-wallet pool) takes ~33 min worst-case, so must have at least " \
+        f"{min_gap_required} min gap to complete before health checks stability-check " \
+        f"against its output. Screening: {screening_oncal} ({screening_minutes} min), " \
+        f"Health: {health_oncal} ({health_minutes} min). " \
+        f"If widening the screening pool again, re-check this gap."
