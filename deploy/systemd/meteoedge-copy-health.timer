@@ -1,8 +1,8 @@
 [Unit]
-Description=Run MeteoEdge copy-trading wallet health monitor daily at 03:15 UTC
+Description=Run MeteoEdge copy-trading wallet health monitor daily at 03:45 UTC
 
 [Timer]
-OnCalendar=*-*-* 03:15:00 UTC
+OnCalendar=*-*-* 03:45:00 UTC
 AccuracySec=1m
 Persistent=true
 
