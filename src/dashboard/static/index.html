@@ -49,7 +49,7 @@ html{-webkit-font-smoothing:antialiased;scroll-behavior:smooth}
   --sh-sm:0 1px 3px #1820380a;--sh-md:0 4px 16px #1820380f;
 }
 
-body{background:var(--bg);color:var(--text);font-family:var(--font-body);font-size:var(--text-sm);min-height:100dvh;}
+body{background:var(--bg);color:var(--text);font-family:var(--font-body);font-size:var(--text-sm);min-height:100dvh;overflow-x:hidden;}
 button{cursor:pointer;background:none;border:none;color:inherit;font:inherit;}
 a,button,input,select{transition:color var(--transition),background var(--transition),border-color var(--transition),box-shadow var(--transition);}
 
@@ -82,7 +82,9 @@ a,button,input,select{transition:color var(--transition),background var(--transi
 .tab-bar{
   background:var(--surface);border-bottom:1px solid var(--border);
   padding:0 var(--space-6);height:52px;
-  display:flex;align-items:center;gap:var(--space-6);
+  display:flex;flex-wrap:nowrap;align-items:center;gap:var(--space-6);
+  overflow-x:auto;overflow-y:hidden;-webkit-overflow-scrolling:touch;
+  scroll-padding-inline:var(--space-6);
   position:sticky;top:58px;z-index:49;
 }
 .tab-btn{
@@ -212,6 +214,7 @@ a,button,input,select{transition:color var(--transition),background var(--transi
 
 /* ── MAIN CONTENT ── */
 .main{max-width:980px;margin:0 auto;padding:var(--space-6) var(--space-4) var(--space-10);}
+.main--wide{max-width:1280px;}
 
 /* ── WALLET ROW ── */
 .wallet-row{
@@ -1305,7 +1308,7 @@ a,button,input,select{transition:color var(--transition),background var(--transi
 
 <!-- ── COPY-TRADING TAB (epic #1143) ── -->
 <section id="tab-copy-trading" class="tab-panel">
-  <main class="main">
+  <main class="main main--wide">
     <div class="error-banner" id="copy-trading-error-banner">
       <i data-lucide="alert-circle"></i>
       <span id="copy-trading-error-text">Could not reach the copy-trading API — retrying…</span>
@@ -3809,6 +3812,7 @@ function switchTab(tab) {
   // Show selected panel and activate button
   document.getElementById('tab-' + tab).classList.add('active');
   event.target.classList.add('active');
+  if (event.target.scrollIntoView) event.target.scrollIntoView({behavior:'smooth', inline:'nearest', block:'nearest'});
 
   // Stop portfolio polling when leaving Portfolio tab
   if (currentTab === 'portfolio' && tab !== 'portfolio') {
