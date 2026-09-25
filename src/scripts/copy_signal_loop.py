@@ -490,6 +490,13 @@ def _handle_buy_trade(
             # assign a positional side to can never be executed -- only
             # signal-logged.
             skip_reason = "missing_outcome_index"
+        elif (
+            live_config["COPY_MIN_ENTRY_PRICE"] > 0.0
+            and source_price < live_config["COPY_MIN_ENTRY_PRICE"]
+        ):
+            # Minimum entry price gate (issue #1208): skip sub-dime entries
+            # that historically have poor execution under flat-stake sizing.
+            skip_reason = "below_min_entry_price"
         else:
             open_positions = db.get_open_copy_positions(address)
             # Duplicate check (issue #1207): cap to one open position per

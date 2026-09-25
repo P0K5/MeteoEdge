@@ -771,6 +771,7 @@ CONFIG_DEFAULTS: "dict[str, str | int | float | bool]" = {
     "COPY_MAX_TOTAL_EXPOSURE_USD": 250.0,
     "COPY_SIGNAL_POLL_INTERVAL_SECONDS": 300,
     "COPY_ONE_POSITION_PER_MARKET": True,
+    "COPY_MIN_ENTRY_PRICE": 0.10,
     # Realized-P&L circuit breaker (issue #1139, epic D #1138). Distinct from
     # the open-EXPOSURE caps above -- those bound how much capital can be at
     # risk at once, these stop new signal execution once copy-trading is

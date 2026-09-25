@@ -466,6 +466,66 @@ class TestSignalDetectionAndExecution:
         assert signal_kwargs["skip_reason"] == "missing_outcome_index"
         db.insert_copy_position.assert_not_called()
 
+    def test_below_min_entry_price_skips(self):
+        """Test that source_price strictly below COPY_MIN_ENTRY_PRICE is skipped."""
+        db = _mock_db()
+        live_config = _live_config(COPY_MIN_ENTRY_PRICE=0.10)
+        raw = _buy_raw(price="0.05")  # Below 0.10 threshold
+
+        # Patch apply_slippage to verify it's never called on the skip path
+        with patch("src.scripts.copy_signal_loop.apply_slippage") as mock_slip:
+            self._run(db, [raw], live_config=live_config, resolution=None)
+
+        # Verify apply_slippage was not called for this skipped signal
+        mock_slip.assert_not_called()
+
+        signal_kwargs = db.insert_copy_signal.call_args.kwargs
+        assert signal_kwargs["skip_reason"] == "below_min_entry_price"
+        assert signal_kwargs["order_placed"] == 0
+        db.insert_copy_position.assert_not_called()
+
+    def test_min_entry_price_boundary_inclusive(self):
+        """Test that source_price exactly equal to COPY_MIN_ENTRY_PRICE is allowed."""
+        db = _mock_db()
+        live_config = _live_config(COPY_MIN_ENTRY_PRICE=0.10)
+        raw = _buy_raw(price="0.10")  # Exactly at threshold
+        self._run(db, [raw], live_config=live_config, resolution=None)
+
+        signal_kwargs = db.insert_copy_signal.call_args.kwargs
+        # Should not be skipped for below_min_entry_price
+        assert signal_kwargs.get("skip_reason") != "below_min_entry_price"
+        assert signal_kwargs["order_placed"] == 1
+        assert "fill_price" in signal_kwargs  # Should have fill_price when executing
+        db.insert_copy_position.assert_called_once()
+
+    def test_min_entry_price_above_threshold(self):
+        """Test that source_price above COPY_MIN_ENTRY_PRICE executes normally."""
+        db = _mock_db()
+        live_config = _live_config(COPY_MIN_ENTRY_PRICE=0.10)
+        raw = _buy_raw(price="0.40")  # Above 0.10 threshold
+        self._run(db, [raw], live_config=live_config, resolution=None)
+
+        signal_kwargs = db.insert_copy_signal.call_args.kwargs
+        # When order_placed=1, skip_reason is not passed at all
+        assert "skip_reason" not in signal_kwargs
+        assert signal_kwargs["order_placed"] == 1
+        assert "fill_price" in signal_kwargs  # Should have fill_price when executing
+        db.insert_copy_position.assert_called_once()
+
+    def test_min_entry_price_zero_disables_gate(self):
+        """Test that COPY_MIN_ENTRY_PRICE = 0.0 disables the gate entirely."""
+        db = _mock_db()
+        live_config = _live_config(COPY_MIN_ENTRY_PRICE=0.0)
+        raw = _buy_raw(price="0.01")  # Very low price, but gate is disabled
+        self._run(db, [raw], live_config=live_config, resolution=None)
+
+        signal_kwargs = db.insert_copy_signal.call_args.kwargs
+        # When order_placed=1, skip_reason is not passed at all
+        assert "skip_reason" not in signal_kwargs
+        assert signal_kwargs["order_placed"] == 1
+        assert "fill_price" in signal_kwargs  # Should have fill_price when executing
+        db.insert_copy_position.assert_called_once()
+
     def test_sell_trade_never_becomes_a_signal(self):
         db = _mock_db()
         self._run(db, [_sell_raw()], resolution=None)
