@@ -84,7 +84,14 @@ QUALITY_MAX_MEAN_MEDIAN_ROI_RATIO = 3.0
 #: Reject wallets whose trade history was truncated by the fetch cap in
 #: get_wallet_trades() (src/data/polymarket_traders.py) -- their metrics are
 #: not run-to-run stable (see this module's docstring and issue #1209).
-QUALITY_MAX_N_BUY_TRADES = MAX_TRADE_PAGES * DEFAULT_TRADE_PAGE_SIZE
+#: IMPORTANT: the fetch cap (MAX_TRADE_PAGES * page_size) bounds the TOTAL
+#: number of trades fetched -- buys and sells interleaved -- not
+#: `n_buy_trades` alone (that's only the buy half after backtest_wallet()
+#: splits them, see copy_trade_backtest.py). Comparing `n_buy_trades` to
+#: this cap directly is a unit mismatch that makes the gate inert (a truly
+#: truncated wallet's n_buy_trades sits well under the cap, e.g. 10,500 of
+#: 20,000). Always compare against `n_buy_trades + n_sell_excluded`.
+QUALITY_MAX_TOTAL_TRADES = MAX_TRADE_PAGES * DEFAULT_TRADE_PAGE_SIZE
 
 
 def sign(x: float) -> int:
@@ -141,9 +148,12 @@ def check_quality(current: dict) -> "tuple[bool, str]":
         winners, a profile that does not survive flat-stake copying (see
         docs/design/copy-trading-architecture.md, "Background").
     (c) ``median_roi`` must be > ``QUALITY_MIN_MEDIAN_ROI``.
-    (d) ``current["n_buy_trades"]`` must be < ``QUALITY_MAX_N_BUY_TRADES``
-        -- rejects wallets whose history was truncated by the fetch cap,
-        whose metrics are therefore not run-to-run stable.
+    (d) ``current["n_buy_trades"] + current["n_sell_excluded"]`` -- the TOTAL
+        number of trades fetched, not just the buy half -- must be <
+        ``QUALITY_MAX_TOTAL_TRADES``. Rejects wallets whose history was
+        truncated by the fetch cap (which bounds total fetched trades, see
+        ``QUALITY_MAX_TOTAL_TRADES``'s comment), whose metrics are therefore
+        not run-to-run stable.
 
     Checks (b) and (c) interact: (b) only fires when ``median_roi > 0``, so
     a wallet with ``median_roi <= 0`` always falls through to fail on (c)
@@ -162,8 +172,9 @@ def check_quality(current: dict) -> "tuple[bool, str]":
     if not median_roi > QUALITY_MIN_MEDIAN_ROI:
         return False, "median_roi_not_positive"
 
-    if current["n_buy_trades"] >= QUALITY_MAX_N_BUY_TRADES:
-        return False, "history_truncated"
+    n_total_trades = current["n_buy_trades"] + current["n_sell_excluded"]
+    if n_total_trades >= QUALITY_MAX_TOTAL_TRADES:
+        return False, "trade_history_truncated"
 
     return True, "ok"
 
@@ -174,6 +185,14 @@ def run(
     screened_at: "str | None" = None,
 ) -> int:
     screened_at = screened_at or datetime.now(timezone.utc).isoformat()
+
+    if not flat_stake:
+        log.warning(
+            "[copy-wallet-screening] flat_stake is not set -- flat_dollar_pnl "
+            "cannot be computed, so every wallet screened this run will fail "
+            "the quality gate on flat_dollar_pnl_not_positive (see "
+            "check_quality()). This is one bad invocation, not many bad wallets."
+        )
 
     effective_top = top
     if top > MAX_WALLETS_PER_RUN:
@@ -219,6 +238,7 @@ def run(
 
         current = {
             "n_buy_trades": result["n_buy_trades"],
+            "n_sell_excluded": result["n_sell_excluded"],
             "n_resolved": result["n_resolved"],
             "win_rate": copier["win_rate"],
             "mean_roi": copier["mean_roi"],

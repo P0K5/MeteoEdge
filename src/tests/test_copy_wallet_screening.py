@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 from src.scripts.copy_wallet_screening import (
     MAX_WALLETS_PER_RUN,
     QUALITY_MAX_MEAN_MEDIAN_ROI_RATIO,
-    QUALITY_MAX_N_BUY_TRADES,
+    QUALITY_MAX_TOTAL_TRADES,
     check_quality,
     check_stability,
     run,
@@ -19,8 +19,8 @@ def _leaderboard(n: int) -> "list[dict]":
 
 
 def _backtest_result(
-    address, n_buy_trades=5, n_resolved=5, win_rate=0.6, mean_roi=0.1,
-    median_roi=0.1, dollar_pnl=10.0, flat_dollar_pnl=None,
+    address, n_buy_trades=5, n_sell_excluded=0, n_resolved=5, win_rate=0.6,
+    mean_roi=0.1, median_roi=0.1, dollar_pnl=10.0, flat_dollar_pnl=None,
 ) -> dict:
     stats = {
         "n": n_resolved, "win_rate": win_rate, "mean_roi": mean_roi,
@@ -29,6 +29,7 @@ def _backtest_result(
     result = {
         "address": address,
         "n_buy_trades": n_buy_trades,
+        "n_sell_excluded": n_sell_excluded,
         "n_resolved": n_resolved,
         "copier": dict(stats),
         "trader": dict(stats),
@@ -84,6 +85,7 @@ class TestCheckStability:
 
 def _quality_row(
     flat_dollar_pnl=10.0, median_roi=0.11, mean_roi=0.1, n_buy_trades=5,
+    n_sell_excluded=0,
 ) -> dict:
     """A `current` dict that passes every check_quality() condition by
     default -- override individual fields to exercise one failure at a time.
@@ -93,6 +95,7 @@ def _quality_row(
         "median_roi": median_roi,
         "mean_roi": mean_roi,
         "n_buy_trades": n_buy_trades,
+        "n_sell_excluded": n_sell_excluded,
     }
 
 
@@ -153,12 +156,26 @@ class TestCheckQuality:
         row = _quality_row(median_roi=-0.01, mean_roi=1.0)
         assert check_quality(row) == (False, "median_roi_not_positive")
 
-    def test_n_buy_trades_at_cap_fails_truncation(self):
-        row = _quality_row(n_buy_trades=QUALITY_MAX_N_BUY_TRADES)
-        assert check_quality(row) == (False, "history_truncated")
+    def test_total_trades_at_cap_fails_truncation(self):
+        # n_buy_trades + n_sell_excluded == the fetch cap exactly.
+        row = _quality_row(n_buy_trades=10500, n_sell_excluded=9500)
+        assert row["n_buy_trades"] + row["n_sell_excluded"] == QUALITY_MAX_TOTAL_TRADES
+        assert check_quality(row) == (False, "trade_history_truncated")
 
-    def test_n_buy_trades_just_under_cap_passes(self):
-        row = _quality_row(n_buy_trades=QUALITY_MAX_N_BUY_TRADES - 1)
+    def test_total_trades_just_under_cap_passes(self):
+        row = _quality_row(n_buy_trades=10500, n_sell_excluded=9499)
+        assert check_quality(row) == (True, "ok")
+
+    def test_high_n_buy_trades_alone_does_not_trigger_truncation(self):
+        # Regression test for the unit-mismatch bug (PR #1211 review): a
+        # wallet with n_buy_trades=10,500 (the observed ceiling for
+        # genuinely-truncated wallets under a ~50/50 buy/sell split) but a
+        # small n_sell_excluded was NOT actually truncated -- comparing
+        # n_buy_trades alone against the cap would incorrectly pass this
+        # wallet and reject nothing (the bug: the cap was always > 10,500).
+        # This proves the gate discriminates rather than just rejecting
+        # high-volume wallets.
+        row = _quality_row(n_buy_trades=10500, n_sell_excluded=100)
         assert check_quality(row) == (True, "ok")
 
     def test_quality_max_mean_median_ratio_constant_is_three(self):
@@ -374,15 +391,34 @@ class TestEligibilityQualityGate:
         db.insert_wallet_screening.assert_called_once()
 
     def test_stable_but_truncated_history_is_ineligible(self):
+        # Realistic ceiling fixture (PR #1211 review): a genuinely-truncated
+        # wallet observed in production sits at n_buy_trades=10,500 with a
+        # large n_sell_excluded -- truncation is on the TOTAL fetched
+        # trades, not n_buy_trades alone.
         db = MagicMock()
         previous = {"median_roi": 0.10, "n_resolved": 100}
         result = _backtest_result(
-            "0xwallet0", n_buy_trades=QUALITY_MAX_N_BUY_TRADES, n_resolved=105,
+            "0xwallet0", n_buy_trades=10500, n_sell_excluded=9500, n_resolved=105,
             median_roi=0.11, mean_roi=0.1, flat_dollar_pnl=10.0,
         )
         self._run_stable(db, result, previous)
         kwargs = db.insert_wallet_screening.call_args.kwargs
         assert kwargs["eligible_to_follow"] == 0
+        db.insert_wallet_screening.assert_called_once()
+
+    def test_stable_high_n_buy_trades_but_not_truncated_is_eligible(self):
+        # Discriminates the fix from the bug it replaces: a wallet with the
+        # same high n_buy_trades=10,500 but a genuinely small
+        # n_sell_excluded was NOT truncated and should pass.
+        db = MagicMock()
+        previous = {"median_roi": 0.10, "n_resolved": 100}
+        result = _backtest_result(
+            "0xwallet0", n_buy_trades=10500, n_sell_excluded=100, n_resolved=105,
+            median_roi=0.11, mean_roi=0.1, flat_dollar_pnl=10.0,
+        )
+        self._run_stable(db, result, previous)
+        kwargs = db.insert_wallet_screening.call_args.kwargs
+        assert kwargs["eligible_to_follow"] == 1
         db.insert_wallet_screening.assert_called_once()
 
     def test_quality_passes_but_stability_fails_is_ineligible(self):
@@ -403,6 +439,43 @@ class TestEligibilityQualityGate:
         kwargs = db.insert_wallet_screening.call_args.kwargs
         assert kwargs["eligible_to_follow"] == 0
         db.insert_wallet_screening.assert_called_once()
+
+
+class TestFlatStakeWarning:
+    """PR #1211 review: without --flat-stake, every wallet fails the quality
+    gate on flat_dollar_pnl -- that must read as one bad invocation, not N
+    bad wallets, so run() logs a single up-front WARNING.
+    """
+
+    def test_warns_once_when_flat_stake_not_set(self, caplog):
+        leaderboard = _leaderboard(2)
+        db = MagicMock()
+        db.get_recent_wallet_screenings.return_value = []
+        with caplog.at_level("WARNING", logger="src.scripts.copy_wallet_screening"), patch(
+            "src.scripts.copy_wallet_screening.get_leaderboard", return_value=leaderboard,
+        ), patch(
+            "src.scripts.copy_wallet_screening.backtest_wallet",
+            side_effect=lambda addr, *a, **kw: _backtest_result(addr),
+        ):
+            run(window="month", top=2, slippage_bps=150.0, flat_stake=None, db=db)
+        warnings = [
+            r for r in caplog.records
+            if r.levelname == "WARNING" and "flat_stake is not set" in r.message
+        ]
+        assert len(warnings) == 1
+
+    def test_no_warning_when_flat_stake_set(self, caplog):
+        leaderboard = _leaderboard(1)
+        db = MagicMock()
+        db.get_recent_wallet_screenings.return_value = []
+        with caplog.at_level("WARNING", logger="src.scripts.copy_wallet_screening"), patch(
+            "src.scripts.copy_wallet_screening.get_leaderboard", return_value=leaderboard,
+        ), patch(
+            "src.scripts.copy_wallet_screening.backtest_wallet",
+            return_value=_backtest_result("0xwallet0", flat_dollar_pnl=10.0),
+        ):
+            run(window="month", top=1, slippage_bps=150.0, flat_stake=5.0, db=db)
+        assert "flat_stake is not set" not in caplog.text
 
 
 class TestMinTrades:
