@@ -409,7 +409,9 @@ class TestSignalDetectionAndExecution:
     def test_wallet_exposure_limit_skips(self):
         db = _mock_db()
         db.get_open_copy_positions.side_effect = lambda address=None: (
-            [{"stake_usd": 45.0}] if address is not None else [{"stake_usd": 45.0}]
+            [{"stake_usd": 45.0, "market": "0xother_market", "outcome_index": 0}]
+            if address is not None
+            else [{"stake_usd": 45.0, "market": "0xother_market", "outcome_index": 0}]
         )
         live_config = _live_config(COPY_MAX_EXPOSURE_PER_WALLET_USD=50.0)
         # wallet stake_per_trade=10 -> 45 + 10 = 55 > 50 -> skip
@@ -424,8 +426,20 @@ class TestSignalDetectionAndExecution:
 
         def _open_positions(address=None):
             if address is not None:
-                return [{"stake_usd": 5.0}]  # well under per-wallet cap
-            return [{"stake_usd": 245.0}]  # near total cap
+                return [
+                    {
+                        "stake_usd": 5.0,
+                        "market": "0xother_market",
+                        "outcome_index": 0,
+                    }
+                ]  # well under per-wallet cap
+            return [
+                {
+                    "stake_usd": 245.0,
+                    "market": "0xother_market",
+                    "outcome_index": 0,
+                }
+            ]  # near total cap
 
         db.get_open_copy_positions.side_effect = _open_positions
         live_config = _live_config(
@@ -463,6 +477,153 @@ class TestSignalDetectionAndExecution:
         self._run(db, [_buy_raw()], resolution=None)
 
         db.insert_copy_signal.assert_not_called()
+        db.insert_copy_position.assert_not_called()
+
+    def test_duplicate_market_outcome_skips_when_enabled(self):
+        """Second signal on an open (address, market, outcome_index) is
+        skipped with skip_reason='duplicate_market_exposure'."""
+        db = _mock_db()
+        # Existing open position: same market, same outcome_index
+        db.get_open_copy_positions.return_value = [
+            {
+                "id": 101,
+                "address": ADDRESS,
+                "market": MARKET,
+                "outcome_index": 0,
+                "stake_usd": 5.0,
+                "status": "open",
+            }
+        ]
+        live_config = _live_config(COPY_ONE_POSITION_PER_MARKET=True)
+        self._run(db, [_buy_raw()], live_config=live_config, resolution=None)
+
+        signal_kwargs = db.insert_copy_signal.call_args.kwargs
+        assert signal_kwargs["skip_reason"] == "duplicate_market_exposure"
+        assert signal_kwargs["order_placed"] == 0
+        db.insert_copy_position.assert_not_called()
+
+    def test_different_outcome_index_allowed(self):
+        """Same market but different outcome_index → allowed through
+        (not a duplicate)."""
+        db = _mock_db()
+        # Existing open position: same market, DIFFERENT outcome_index
+        db.get_open_copy_positions.return_value = [
+            {
+                "id": 101,
+                "address": ADDRESS,
+                "market": MARKET,
+                "outcome_index": 1,  # Different outcome
+                "stake_usd": 5.0,
+                "status": "open",
+            }
+        ]
+        live_config = _live_config(COPY_ONE_POSITION_PER_MARKET=True)
+        self._run(
+            db,
+            [_buy_raw(outcomeIndex=0)],  # outcome_index 0
+            live_config=live_config,
+            resolution=None,
+        )
+
+        signal_kwargs = db.insert_copy_signal.call_args.kwargs
+        assert signal_kwargs["order_placed"] == 1
+        assert signal_kwargs.get("skip_reason") is None
+        db.insert_copy_position.assert_called_once()
+
+    def test_settled_position_does_not_block(self):
+        """Same market/outcome but the prior position is status='settled' →
+        allowed through."""
+        db = _mock_db()
+        # Existing settled position: same market, same outcome_index
+        db.get_open_copy_positions.return_value = []  # No OPEN positions
+        live_config = _live_config(COPY_ONE_POSITION_PER_MARKET=True)
+        self._run(db, [_buy_raw()], live_config=live_config, resolution=None)
+
+        signal_kwargs = db.insert_copy_signal.call_args.kwargs
+        assert signal_kwargs["order_placed"] == 1
+        assert signal_kwargs.get("skip_reason") is None
+        db.insert_copy_position.assert_called_once()
+
+    def test_different_wallet_same_market_allowed(self):
+        """Different wallet, same market/outcome → allowed through
+        (the constraint is per wallet)."""
+        db = _mock_db()
+        # When querying open positions for ADDRESS, return empty (no positions
+        # for this wallet). When querying for all wallets (address=None),
+        # return the other wallet's position (which is not relevant to this wallet).
+        def _open_positions(address=None):
+            if address is not None:
+                # Our wallet has no open positions
+                return []
+            # Other wallets' positions exist but don't affect our wallet
+            return [
+                {
+                    "id": 101,
+                    "address": "0xother_wallet",  # Different wallet
+                    "market": MARKET,
+                    "outcome_index": 0,
+                    "stake_usd": 5.0,
+                    "status": "open",
+                }
+            ]
+        db.get_open_copy_positions.side_effect = _open_positions
+        live_config = _live_config(COPY_ONE_POSITION_PER_MARKET=True)
+        self._run(db, [_buy_raw()], live_config=live_config, resolution=None)
+
+        signal_kwargs = db.insert_copy_signal.call_args.kwargs
+        assert signal_kwargs["order_placed"] == 1
+        assert signal_kwargs.get("skip_reason") is None
+        db.insert_copy_position.assert_called_once()
+
+    def test_duplicate_disabled_allows_both_fills(self):
+        """When COPY_ONE_POSITION_PER_MARKET=False, both fills open
+        positions (current behaviour preserved)."""
+        db = _mock_db()
+        db.get_open_copy_positions.return_value = [
+            {
+                "id": 101,
+                "address": ADDRESS,
+                "market": MARKET,
+                "outcome_index": 0,
+                "stake_usd": 5.0,
+                "status": "open",
+            }
+        ]
+        live_config = _live_config(COPY_ONE_POSITION_PER_MARKET=False)
+        self._run(db, [_buy_raw()], live_config=live_config, resolution=None)
+
+        signal_kwargs = db.insert_copy_signal.call_args.kwargs
+        assert signal_kwargs["order_placed"] == 1
+        assert signal_kwargs.get("skip_reason") is None
+        db.insert_copy_position.assert_called_once()
+
+    def test_duplicate_check_precedes_exposure_limits(self):
+        """Regression test: duplicate check precedes exposure checks.
+        A wallet already at its exposure cap AND holding an open position
+        in the market reports duplicate_market_exposure, not
+        wallet_exposure_limit."""
+        db = _mock_db()
+        # Wallet already at exposure limit (45 + 10 = 55 > 50)
+        # AND has an open position in the same market/outcome
+        db.get_open_copy_positions.return_value = [
+            {
+                "id": 101,
+                "address": ADDRESS,
+                "market": MARKET,
+                "outcome_index": 0,
+                "stake_usd": 45.0,
+                "status": "open",
+            }
+        ]
+        live_config = _live_config(
+            COPY_ONE_POSITION_PER_MARKET=True,
+            COPY_MAX_EXPOSURE_PER_WALLET_USD=50.0,
+        )
+        self._run(db, [_buy_raw()], live_config=live_config, resolution=None)
+
+        signal_kwargs = db.insert_copy_signal.call_args.kwargs
+        # Should be duplicate, not wallet_exposure_limit
+        assert signal_kwargs["skip_reason"] == "duplicate_market_exposure"
         db.insert_copy_position.assert_not_called()
 
 
