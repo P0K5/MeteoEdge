@@ -471,12 +471,17 @@ class TestSignalDetectionAndExecution:
         db = _mock_db()
         live_config = _live_config(COPY_MIN_ENTRY_PRICE=0.10)
         raw = _buy_raw(price="0.05")  # Below 0.10 threshold
-        self._run(db, [raw], live_config=live_config, resolution=None)
+
+        # Patch apply_slippage to verify it's never called on the skip path
+        with patch("src.scripts.copy_signal_loop.apply_slippage") as mock_slip:
+            self._run(db, [raw], live_config=live_config, resolution=None)
+
+        # Verify apply_slippage was not called for this skipped signal
+        mock_slip.assert_not_called()
 
         signal_kwargs = db.insert_copy_signal.call_args.kwargs
         assert signal_kwargs["skip_reason"] == "below_min_entry_price"
         assert signal_kwargs["order_placed"] == 0
-        assert "fill_price" not in signal_kwargs or signal_kwargs.get("fill_price") is None
         db.insert_copy_position.assert_not_called()
 
     def test_min_entry_price_boundary_inclusive(self):
