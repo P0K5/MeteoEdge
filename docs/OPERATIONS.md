@@ -524,7 +524,7 @@ User=p0k5
 WorkingDirectory=/home/p0k5/MeteoEdge
 Environment=PYTHONUNBUFFERED=1
 EnvironmentFile=/home/p0k5/MeteoEdge/.env
-ExecStart=/home/p0k5/MeteoEdge/.venv/bin/python -u -m src.scripts.copy_wallet_screening
+ExecStart=/home/p0k5/MeteoEdge/.venv/bin/python -u -m src.scripts.copy_wallet_screening --top 50
 StandardOutput=append:/home/p0k5/MeteoEdge/logs/copy_screening.log
 StandardError=append:/home/p0k5/MeteoEdge/logs/copy_screening.log
 ```
