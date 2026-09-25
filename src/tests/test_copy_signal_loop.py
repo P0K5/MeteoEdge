@@ -408,6 +408,8 @@ class TestSignalDetectionAndExecution:
 
     def test_wallet_exposure_limit_skips(self):
         db = _mock_db()
+        # Note: "0xother_market" sentinel is load-bearing — if changed to MARKET,
+        # the duplicate check would match and mask the exposure limit test.
         db.get_open_copy_positions.side_effect = lambda address=None: (
             [{"stake_usd": 45.0, "market": "0xother_market", "outcome_index": 0}]
             if address is not None
@@ -423,6 +425,8 @@ class TestSignalDetectionAndExecution:
 
     def test_total_exposure_limit_skips(self):
         db = _mock_db()
+        # Note: "0xother_market" sentinel is load-bearing — if changed to MARKET,
+        # the duplicate check would match and mask the total exposure limit test.
 
         def _open_positions(address=None):
             if address is not None:
