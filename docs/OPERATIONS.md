@@ -648,9 +648,16 @@ decision" above). v1 mitigation: distinct-market grouping already caps
 each run to one call per open market rather than one per position, and a
 run with nothing open makes zero calls at all — quadrupling the timer
 frequency (hourly to every 15 minutes) does not quadruple real API load,
-since most of the added runs are no-ops. A cross-process shared rate
-limiter remains explicitly deferred — revisit if 429s / throttling are
-observed.
+since most of the added runs are no-ops. **Observed evidence, not just
+assertion:** production `logs/copy_settle.log` on 2026-09-21 shows 6
+consecutive hourly runs (09:00, 10:00, 11:00, 12:00, 13:00, plus a manual
+13:33 trigger) each logging `no open copy positions to settle` — zero
+`fetch_market_resolution` calls across a 4.5-hour span with no followed-wallet
+activity. Quadrupling the check frequency during quiet periods like that
+one still costs zero API calls; the added load only materializes on runs
+that actually have open positions to resolve, which is exactly the case
+this change is meant to serve faster. A cross-process shared rate limiter
+remains explicitly deferred — revisit if 429s / throttling are observed.
 
 **Operational commands:**
 ```bash
