@@ -491,13 +491,26 @@ def _handle_buy_trade(
             # signal-logged.
             skip_reason = "missing_outcome_index"
         else:
-            wallet_exposure = sum(p["stake_usd"] for p in db.get_open_copy_positions(address))
-            if wallet_exposure + stake > live_config["COPY_MAX_EXPOSURE_PER_WALLET_USD"]:
-                skip_reason = "wallet_exposure_limit"
+            open_positions = db.get_open_copy_positions(address)
+            # Duplicate check (issue #1207): cap to one open position per
+            # (wallet, market, outcome). Only blocks if the prior position
+            # is status='open'; settled positions do not block re-entry.
+            if (
+                live_config["COPY_ONE_POSITION_PER_MARKET"]
+                and any(
+                    p["market"] == market and p["outcome_index"] == outcome_index
+                    for p in open_positions
+                )
+            ):
+                skip_reason = "duplicate_market_exposure"
             else:
-                total_exposure = sum(p["stake_usd"] for p in db.get_open_copy_positions())
-                if total_exposure + stake > live_config["COPY_MAX_TOTAL_EXPOSURE_USD"]:
-                    skip_reason = "total_exposure_limit"
+                wallet_exposure = sum(p["stake_usd"] for p in open_positions)
+                if wallet_exposure + stake > live_config["COPY_MAX_EXPOSURE_PER_WALLET_USD"]:
+                    skip_reason = "wallet_exposure_limit"
+                else:
+                    total_exposure = sum(p["stake_usd"] for p in db.get_open_copy_positions())
+                    if total_exposure + stake > live_config["COPY_MAX_TOTAL_EXPOSURE_USD"]:
+                        skip_reason = "total_exposure_limit"
 
         if skip_reason is not None:
             db.insert_copy_signal(

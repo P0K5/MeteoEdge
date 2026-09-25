@@ -3852,6 +3852,11 @@ _CONFIG_META: dict[str, dict] = {
         "min": 30,
         "max": 3600,
     },
+    "COPY_ONE_POSITION_PER_MARKET": {
+        "description": "Cap copy-trading to one open position per (wallet, market, outcome) — prevents unintended leverage on correlated risk when a source wallet splits one order across multiple fills (issue #1207)",
+        "type": "bool",
+        "group": "copy_trading",
+    },
     "COPY_DAILY_LOSS_LIMIT_USD": {
         "description": "Block new copy-signal execution for the rest of the UTC day once today's realized copy-trading P&L is <= -this value (issue #1139 circuit breaker)",
         "type": "float",
