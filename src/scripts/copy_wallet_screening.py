@@ -40,7 +40,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from src.data.db import Database  # noqa: E402
-from src.data.polymarket_traders import get_leaderboard, wallet_address  # noqa: E402
+from src.data.polymarket_traders import (  # noqa: E402
+    DEFAULT_TRADE_PAGE_SIZE,
+    MAX_TRADE_PAGES,
+    get_leaderboard,
+    wallet_address,
+)
 from src.scripts.copy_trade_backtest import (  # noqa: E402
     DEFAULT_SLIPPAGE_BPS,
     backtest_wallet,
@@ -55,6 +60,38 @@ log = logging.getLogger(__name__)
 #: Bounding worst-case call volume per run via a hard cap is the v1
 #: mitigation -- a cross-process shared limiter is explicitly out of scope.
 MAX_WALLETS_PER_RUN = 50
+
+#: Quality gate thresholds (issue #1209). `check_stability()` only proves a
+#: screening run was *reproducible* -- these thresholds separately gate on
+#: whether the wallet is actually worth following. Derived from the
+#: 2026-09-25 screening audit (see issue #1209 for the measured evidence).
+
+#: A wallet must be profitable under the flat-stake model we actually trade
+#: (not merely under its own, possibly much larger, position sizing).
+QUALITY_MIN_FLAT_DOLLAR_PNL = 0.0
+
+#: The median trade itself must be profitable -- a positive mean built on a
+#: negative/zero median means most trades lose money.
+QUALITY_MIN_MEDIAN_ROI = 0.0
+
+#: Reject tail-driven P&L: wallets whose mean ROI is propped up by a handful
+#: of outsized winners do not survive flat-stake copying (see
+#: docs/design/copy-trading-architecture.md, "Background"). Only applied
+#: when median_roi > 0 -- see check_quality()'s docstring for why ordering
+#: relative to the median_roi check below is not load-bearing.
+QUALITY_MAX_MEAN_MEDIAN_ROI_RATIO = 3.0
+
+#: Reject wallets whose trade history was truncated by the fetch cap in
+#: get_wallet_trades() (src/data/polymarket_traders.py) -- their metrics are
+#: not run-to-run stable (see this module's docstring and issue #1209).
+#: IMPORTANT: the fetch cap (MAX_TRADE_PAGES * page_size) bounds the TOTAL
+#: number of trades fetched -- buys and sells interleaved -- not
+#: `n_buy_trades` alone (that's only the buy half after backtest_wallet()
+#: splits them, see copy_trade_backtest.py). Comparing `n_buy_trades` to
+#: this cap directly is a unit mismatch that makes the gate inert (a truly
+#: truncated wallet's n_buy_trades sits well under the cap, e.g. 10,500 of
+#: 20,000). Always compare against `n_buy_trades + n_sell_excluded`.
+QUALITY_MAX_TOTAL_TRADES = MAX_TRADE_PAGES * DEFAULT_TRADE_PAGE_SIZE
 
 
 def sign(x: float) -> int:
@@ -91,12 +128,71 @@ def check_stability(current: dict, previous: "dict | None") -> bool:
     return True
 
 
+def check_quality(current: dict) -> "tuple[bool, str]":
+    """True (with reason ``"ok"``) only if *current* passes every
+    profitability/tail-risk/history-completeness quality gate (issue #1209).
+
+    Pure function, no I/O. Composable with -- not folded into --
+    ``check_stability()``: a wallet must pass BOTH to be
+    ``eligible_to_follow``. Checked in this order:
+
+    (a) ``current["flat_dollar_pnl"]`` must be > ``QUALITY_MIN_FLAT_DOLLAR_PNL``
+        -- profitable under the flat-stake model we actually trade, not just
+        under the wallet's own position sizing. A missing (``None``)
+        ``flat_dollar_pnl`` (e.g. the run was invoked without
+        ``--flat-stake``) fails this check too, since flat-stake
+        profitability cannot be confirmed without it.
+    (b) When ``median_roi > 0``, ``mean_roi`` must be <=
+        ``QUALITY_MAX_MEAN_MEDIAN_ROI_RATIO * median_roi`` -- rejects
+        tail-driven wallets whose P&L is concentrated in a few large
+        winners, a profile that does not survive flat-stake copying (see
+        docs/design/copy-trading-architecture.md, "Background").
+    (c) ``median_roi`` must be > ``QUALITY_MIN_MEDIAN_ROI``.
+    (d) ``current["n_buy_trades"] + current["n_sell_excluded"]`` -- the TOTAL
+        number of trades fetched, not just the buy half -- must be <
+        ``QUALITY_MAX_TOTAL_TRADES``. Rejects wallets whose history was
+        truncated by the fetch cap (which bounds total fetched trades, see
+        ``QUALITY_MAX_TOTAL_TRADES``'s comment), whose metrics are therefore
+        not run-to-run stable.
+
+    Checks (b) and (c) interact: (b) only fires when ``median_roi > 0``, so
+    a wallet with ``median_roi <= 0`` always falls through to fail on (c)
+    instead -- the relative order of (b) and (c) is not load-bearing for
+    correctness, only for which failure reason gets logged first.
+    """
+    flat_pnl = current.get("flat_dollar_pnl")
+    if flat_pnl is None or not flat_pnl > QUALITY_MIN_FLAT_DOLLAR_PNL:
+        return False, "flat_dollar_pnl_not_positive"
+
+    median_roi = current["median_roi"]
+    mean_roi = current["mean_roi"]
+    if median_roi > 0 and mean_roi > QUALITY_MAX_MEAN_MEDIAN_ROI_RATIO * median_roi:
+        return False, "tail_driven_pnl"
+
+    if not median_roi > QUALITY_MIN_MEDIAN_ROI:
+        return False, "median_roi_not_positive"
+
+    n_total_trades = current["n_buy_trades"] + current["n_sell_excluded"]
+    if n_total_trades >= QUALITY_MAX_TOTAL_TRADES:
+        return False, "trade_history_truncated"
+
+    return True, "ok"
+
+
 def run(
     window: str, top: int, slippage_bps: float, min_trades: int = 0,
     flat_stake: "float | None" = None, db: "Database | None" = None,
     screened_at: "str | None" = None,
 ) -> int:
     screened_at = screened_at or datetime.now(timezone.utc).isoformat()
+
+    if not flat_stake:
+        log.warning(
+            "[copy-wallet-screening] flat_stake is not set -- flat_dollar_pnl "
+            "cannot be computed, so every wallet screened this run will fail "
+            "the quality gate on flat_dollar_pnl_not_positive (see "
+            "check_quality()). This is one bad invocation, not many bad wallets."
+        )
 
     effective_top = top
     if top > MAX_WALLETS_PER_RUN:
@@ -135,21 +231,31 @@ def run(
             continue
 
         copier = result["copier"]
-        current = {
-            "n_buy_trades": result["n_buy_trades"],
-            "n_resolved": result["n_resolved"],
-            "win_rate": copier["win_rate"],
-            "mean_roi": copier["mean_roi"],
-            "median_roi": copier["median_roi"],
-        }
-
-        previous_rows = db.get_recent_wallet_screenings(address, limit=1)
-        previous = previous_rows[0] if previous_rows else None
-        eligible = check_stability(current, previous)
 
         flat_pnl = None
         if flat_stake is not None:
             flat_pnl = result.get("copier_flat", {}).get("dollar_pnl")
+
+        current = {
+            "n_buy_trades": result["n_buy_trades"],
+            "n_sell_excluded": result["n_sell_excluded"],
+            "n_resolved": result["n_resolved"],
+            "win_rate": copier["win_rate"],
+            "mean_roi": copier["mean_roi"],
+            "median_roi": copier["median_roi"],
+            "flat_dollar_pnl": flat_pnl,
+        }
+
+        previous_rows = db.get_recent_wallet_screenings(address, limit=1)
+        previous = previous_rows[0] if previous_rows else None
+        stable = check_stability(current, previous)
+        quality_ok, quality_reason = check_quality(current)
+        if not quality_ok:
+            log.info(
+                "[copy-wallet-screening] %s: failed quality check (%s), not eligible.",
+                address, quality_reason,
+            )
+        eligible = stable and quality_ok
 
         db.insert_wallet_screening(
             address=address,
