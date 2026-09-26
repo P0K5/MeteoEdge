@@ -62,6 +62,7 @@ from src.config import (
     STATION_ACTIVE_HOURS, DISABLED_STATIONS, SHADOW_STATIONS_YES, SHADOW_STATIONS_NO,
     EMOS_DEFAULT_MODE, CONFIG_DEFAULTS, get_live_config, station_city,
     MODEL_PROB_CAP, METAR_SKIP_STATIONS,
+    COPY_TRADING_CAPITAL_USD, COPY_LIVE_CAPITAL_USD,
 )
 from src.model.residual_correction import (
     compute_residual_stats,
@@ -3977,6 +3978,39 @@ def _validate_config_value(key: str, raw_value: Any) -> "tuple[str, str | None]"
     return "", f"Unsupported type {param_type!r} for {key}"
 
 
+def _validate_capital_ceiling(key: str, value: float) -> "str | None":
+    """Validate that exposure caps do not exceed their capital pools.
+
+    Returns None on success, or an error message describing the violation.
+    This is a cross-field validation that checks pairs of related config values:
+    - COPY_MAX_TOTAL_EXPOSURE_USD must not exceed COPY_TRADING_CAPITAL_USD
+    - COPY_LIVE_MAX_TOTAL_EXPOSURE_USD must not exceed COPY_LIVE_CAPITAL_USD
+
+    Capital constants are fixed module-level constants loaded from env at startup
+    and are not live-editable via the dashboard (see src/config.py for rationale).
+    """
+    # Mapping of exposure cap keys to their corresponding capital pool constants.
+    # Extensible for additional strategy pools.
+    _CAPITAL_CEILING_PAIRS = {
+        "COPY_MAX_TOTAL_EXPOSURE_USD": COPY_TRADING_CAPITAL_USD,
+        "COPY_LIVE_MAX_TOTAL_EXPOSURE_USD": COPY_LIVE_CAPITAL_USD,
+    }
+
+    if key not in _CAPITAL_CEILING_PAIRS:
+        # Not an exposure cap key, skip validation
+        return None
+
+    capital = _CAPITAL_CEILING_PAIRS[key]
+    if value > capital:
+        return (
+            f"{key} (${value:.2f}) exceeds the corresponding capital pool "
+            f"({capital:.2f} USD). The capital constant is set via environment "
+            f"variable at deploy time and is not editable from this tab. "
+            f"Either reduce {key} or increase the capital via the env var."
+        )
+    return None
+
+
 def _typed_value(key: str, raw: str) -> Any:
     """Cast raw DB string to the correct Python type for the API response."""
     meta = _CONFIG_META.get(key, {})
@@ -4054,6 +4088,19 @@ def patch_config(req: ConfigPatchRequest) -> dict:
     serialised, err = _validate_config_value(key, req.value)
     if err:
         raise HTTPException(status_code=400, detail=err)
+
+    # Cross-field validation: check exposure caps against capital pools (issue #1215).
+    # Type coercion has already happened in _validate_config_value, so req.value
+    # is now guaranteed to be a number if it passed validation.
+    try:
+        typed_value = float(req.value) if isinstance(req.value, (int, float)) else None
+        if typed_value is not None:
+            ceiling_err = _validate_capital_ceiling(key, typed_value)
+            if ceiling_err:
+                raise HTTPException(status_code=400, detail=ceiling_err)
+    except (ValueError, TypeError):
+        # Not a numeric value, skip cross-field validation
+        pass
 
     _db.set_config(key, serialised)
 
