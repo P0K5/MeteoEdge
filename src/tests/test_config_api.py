@@ -534,6 +534,25 @@ class TestCopyLiveTradingConfigBounds:
         resp = client.patch("/api/config", json={"key": key, "value": out_of_bounds})
         assert resp.status_code == 400, f"{key} accepted an out-of-bounds value"
 
+    def test_patch_bounds_live_with_capital(self, api_client, monkeypatch):
+        """COPY_LIVE_MAX_TOTAL_EXPOSURE_USD: test both min/max bounds and capital ceiling."""
+        from src.dashboard import api as api_module
+        monkeypatch.setattr(api_module, "COPY_LIVE_CAPITAL_USD", 250.0)
+
+        client, db = api_client
+        # In-bounds (< min/max AND < capital): should succeed
+        resp = client.patch("/api/config", json={"key": "COPY_LIVE_MAX_TOTAL_EXPOSURE_USD", "value": 100.0})
+        assert resp.status_code == 200, f"In-bounds rejected: {resp.json()}"
+        assert db.get_config("COPY_LIVE_MAX_TOTAL_EXPOSURE_USD") == "100.0"
+
+        # Out-of-bounds (> min/max, but < capital): should fail on bounds
+        resp = client.patch("/api/config", json={"key": "COPY_LIVE_MAX_TOTAL_EXPOSURE_USD", "value": 99999.0})
+        assert resp.status_code == 400, "Out-of-bounds bounds check failed"
+
+        # Exceeds capital (< min/max bounds but > capital): should fail on ceiling
+        resp = client.patch("/api/config", json={"key": "COPY_LIVE_MAX_TOTAL_EXPOSURE_USD", "value": 300.0})
+        assert resp.status_code == 400, "Capital ceiling check failed"
+
     def test_patch_live_kill_switch_happy_path(self, api_client):
         client, db = api_client
         resp = client.patch(
@@ -641,9 +660,9 @@ class TestCapitalCeilingValidation:
         assert resp.status_code == 400
         detail = resp.json()["detail"]
         assert "COPY_MAX_TOTAL_EXPOSURE_USD" in detail
+        assert "COPY_TRADING_CAPITAL_USD" in detail
         assert "100.00" in detail or "100.0" in detail
         assert "500.00" in detail or "500.0" in detail
-        assert "environment" in detail.lower() or "env" in detail.lower()
 
     def test_patch_copy_live_max_exposure_below_capital_returns_200(self, api_client, monkeypatch):
         """COPY_LIVE_MAX_TOTAL_EXPOSURE_USD < COPY_LIVE_CAPITAL_USD must be accepted."""
@@ -686,9 +705,9 @@ class TestCapitalCeilingValidation:
         assert resp.status_code == 400
         detail = resp.json()["detail"]
         assert "COPY_LIVE_MAX_TOTAL_EXPOSURE_USD" in detail
+        assert "COPY_LIVE_CAPITAL_USD" in detail
         assert "100.00" in detail or "100.0" in detail
         assert "200.00" in detail or "200.0" in detail
-        assert "environment" in detail.lower() or "env" in detail.lower()
 
     def test_patch_unrelated_key_still_works(self, api_client, monkeypatch):
         """Unrelated config keys (e.g., COPY_DEFAULT_FLAT_STAKE_USD) must not be affected."""
@@ -719,9 +738,38 @@ class TestCapitalCeilingValidation:
         detail = resp.json()["detail"]
         # Message must name the exposure cap key
         assert "COPY_MAX_TOTAL_EXPOSURE_USD" in detail
+        # Message must name the capital key
+        assert "COPY_TRADING_CAPITAL_USD" in detail
         # Message must name both values
         assert "234.56" in detail or "234.5" in detail
         assert "123.45" in detail or "123.4" in detail or "123.5" in detail
+
+    def test_patch_string_input_bypass_must_reject(self, api_client, monkeypatch):
+        """String input ("500" instead of 500) must NOT bypass capital ceiling check.
+
+        ConfigPatchRequest.value is typed Any and _validate_config_value accepts
+        loose input (coerces "500" to float), so prior implementations were
+        vulnerable to string bypass. This test pins that the gate holds even when
+        the caller sends a string instead of a number.
+        """
+        from src.dashboard import api as api_module
+        monkeypatch.setattr(api_module, "COPY_TRADING_CAPITAL_USD", 100.0)
+
+        client, _ = api_client
+        # Send as string "500" instead of numeric 500
+        resp = client.patch(
+            "/api/config",
+            json={"key": "COPY_MAX_TOTAL_EXPOSURE_USD", "value": "500"}
+        )
+        # Must be rejected, not written to DB (which would recreate the latent-fatal config)
+        assert resp.status_code == 400, (
+            "String bypass vulnerability: ceiling check was skipped when value "
+            "was sent as string instead of numeric type"
+        )
+        detail = resp.json()["detail"]
+        # Message should still name both parameters
+        assert "COPY_MAX_TOTAL_EXPOSURE_USD" in detail
+        assert "COPY_TRADING_CAPITAL_USD" in detail
 
     def test_regression_production_outage_500_vs_100(self, api_client, monkeypatch):
         """Regression test for production outage on 2026-09-26.
