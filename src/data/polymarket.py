@@ -99,7 +99,7 @@ def fetch_market_final_price(ticker: str) -> int | None:
         r.raise_for_status()
         result = r.json()
         if not result:
-            log.warning("[polymarket] fetch_market_final_price(%s...): empty response", ticker[:14])
+            log.debug("[polymarket] fetch_market_final_price(%s...): empty response (market not yet resolved)", ticker[:14])
             return None
         market = _select_matching_market(result, ticker)
         if market is None:

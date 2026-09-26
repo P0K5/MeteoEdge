@@ -4,7 +4,7 @@ Covers:
 - Old path-form (GET /markets/<ticker>) returns 422 → function returns None gracefully
 - New query-param form (GET /markets?condition_ids=<ticker>&closed=true) returns market list
 - Parses outcomePrices from response[0] correctly
-- Returns None for empty response
+- Returns None for empty response (logs DEBUG, not WARNING)
 - Returns None for network errors
 """
 from unittest.mock import MagicMock, patch
@@ -64,6 +64,21 @@ class TestFetchMarketFinalPrice:
         with patch("src.data.polymarket.fetch", return_value=mock_resp):
             result = fetch_market_final_price(TICKER)
         assert result is None
+
+    def test_empty_response_logs_debug(self, caplog):
+        """Empty response logs at DEBUG, not WARNING (market not yet resolved)."""
+        import logging
+        mock_resp = _mock_response(200, [])
+        with patch("src.data.polymarket.fetch", return_value=mock_resp):
+            with caplog.at_level(logging.DEBUG, logger="src.data.polymarket"):
+                result = fetch_market_final_price(TICKER)
+        assert result is None
+        # Verify DEBUG log was emitted
+        debug_records = [r for r in caplog.records if r.levelno == logging.DEBUG]
+        assert any("empty response" in r.message for r in debug_records)
+        # Verify no WARNING was emitted for this case
+        warning_records = [r for r in caplog.records if r.levelno == logging.WARNING and "empty response" in r.message]
+        assert len(warning_records) == 0
 
     def test_network_error_returns_none(self):
         """Network failure → return None without raising."""
@@ -164,6 +179,19 @@ class TestFetchMarketFinalPrice:
         with patch("src.data.polymarket.fetch", return_value=mock_resp):
             result = fetch_market_final_price(TICKER)
         assert result == 97
+
+    def test_condition_id_mismatch_still_logs_warning(self, caplog):
+        """Condition ID mismatch still logs at WARNING (issue #867 guard, unchanged)."""
+        import logging
+        market_data = [{"conditionId": "0xSOMEOTHERMARKET", "outcomePrices": '["0.97", "0.03"]'}]
+        mock_resp = _mock_response(200, market_data)
+        with patch("src.data.polymarket.fetch", return_value=mock_resp):
+            with caplog.at_level(logging.WARNING, logger="src.data.polymarket"):
+                result = fetch_market_final_price(TICKER)
+        assert result is None
+        # Verify WARNING log (condition ID mismatch is a real concern)
+        warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert any("condition_id" in r.message and "did not match" in r.message for r in warning_records)
 
 
 class TestFetchMarketResolution:
