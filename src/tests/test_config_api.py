@@ -410,7 +410,8 @@ class TestCopyTradingConfigBounds:
             ("COPY_DEFAULT_FLAT_STAKE_USD", 10.0, 9999.0),
             ("COPY_MAX_WALLETS_FOLLOWED", 5, 9999),
             ("COPY_MAX_EXPOSURE_PER_WALLET_USD", 100.0, 9999.0),
-            ("COPY_MAX_TOTAL_EXPOSURE_USD", 500.0, 99999.0),
+            # COPY_MAX_TOTAL_EXPOSURE_USD: in_bounds must not exceed COPY_TRADING_CAPITAL_USD (100.0)
+            ("COPY_MAX_TOTAL_EXPOSURE_USD", 50.0, 99999.0),
             ("COPY_DAILY_LOSS_LIMIT_USD", 40.0, 9999.0),
             ("COPY_DRAWDOWN_STOP_PCT", 0.30, 1.5),
         ],
@@ -519,7 +520,9 @@ class TestCopyLiveTradingConfigBounds:
         "key,in_bounds,out_of_bounds",
         [
             ("COPY_LIVE_MAX_EXPOSURE_PER_WALLET_USD", 100.0, 9999.0),
-            ("COPY_LIVE_MAX_TOTAL_EXPOSURE_USD", 500.0, 99999.0),
+            # Note: COPY_LIVE_MAX_TOTAL_EXPOSURE_USD capital ceiling validation is tested in
+            # TestCapitalCeilingValidation with monkeypatched capital values, since the default
+            # COPY_LIVE_CAPITAL_USD is 0.0 (live trading disabled by default).
         ],
     )
     def test_patch_bounds(self, api_client, key, in_bounds, out_of_bounds):
@@ -530,6 +533,25 @@ class TestCopyLiveTradingConfigBounds:
 
         resp = client.patch("/api/config", json={"key": key, "value": out_of_bounds})
         assert resp.status_code == 400, f"{key} accepted an out-of-bounds value"
+
+    def test_patch_bounds_live_with_capital(self, api_client, monkeypatch):
+        """COPY_LIVE_MAX_TOTAL_EXPOSURE_USD: test both min/max bounds and capital ceiling."""
+        from src.dashboard import api as api_module
+        monkeypatch.setattr(api_module, "COPY_LIVE_CAPITAL_USD", 250.0)
+
+        client, db = api_client
+        # In-bounds (< min/max AND < capital): should succeed
+        resp = client.patch("/api/config", json={"key": "COPY_LIVE_MAX_TOTAL_EXPOSURE_USD", "value": 100.0})
+        assert resp.status_code == 200, f"In-bounds rejected: {resp.json()}"
+        assert db.get_config("COPY_LIVE_MAX_TOTAL_EXPOSURE_USD") == "100.0"
+
+        # Out-of-bounds (> min/max, but < capital): should fail on bounds
+        resp = client.patch("/api/config", json={"key": "COPY_LIVE_MAX_TOTAL_EXPOSURE_USD", "value": 99999.0})
+        assert resp.status_code == 400, "Out-of-bounds bounds check failed"
+
+        # Exceeds capital (< min/max bounds but > capital): should fail on ceiling
+        resp = client.patch("/api/config", json={"key": "COPY_LIVE_MAX_TOTAL_EXPOSURE_USD", "value": 300.0})
+        assert resp.status_code == 400, "Capital ceiling check failed"
 
     def test_patch_live_kill_switch_happy_path(self, api_client):
         client, db = api_client
@@ -580,6 +602,195 @@ class TestCopyLiveTradingKillSwitchIsolation:
         assert cfg["COPY_LIVE_TRADING_ENABLED"] is True
         assert cfg["DEB_ENABLED"] == deb_before
         assert cfg["RESIDUAL_CORRECTION_ENABLED"] == residual_before
+
+
+# ---------------------------------------------------------------------------
+# Issue #1215: Reject exposure caps above their capital pool at config write time
+# ---------------------------------------------------------------------------
+
+class TestCapitalCeilingValidation:
+    """Cross-field validation: exposure caps must not exceed their capital pools."""
+
+    def test_patch_copy_max_exposure_below_capital_returns_200(self, api_client, monkeypatch):
+        """COPY_MAX_TOTAL_EXPOSURE_USD < COPY_TRADING_CAPITAL_USD must be accepted."""
+        # Patch the constant to make the test deterministic
+        from src.dashboard import api as api_module
+        monkeypatch.setattr(api_module, "COPY_TRADING_CAPITAL_USD", 500.0)
+
+        client, db = api_client
+        resp = client.patch(
+            "/api/config",
+            json={"key": "COPY_MAX_TOTAL_EXPOSURE_USD", "value": 100.0}
+        )
+        assert resp.status_code == 200, f"Unexpected error: {resp.json()}"
+        assert resp.json()["value"] == pytest.approx(100.0)
+        assert db.get_config("COPY_MAX_TOTAL_EXPOSURE_USD") == "100.0"
+
+    def test_patch_copy_max_exposure_equals_capital_returns_200(self, api_client, monkeypatch):
+        """COPY_MAX_TOTAL_EXPOSURE_USD == COPY_TRADING_CAPITAL_USD must be accepted.
+
+        This is the boundary case and must be allowed per acceptance criteria.
+        Production's current config has this configuration (500 = 500).
+        """
+        from src.dashboard import api as api_module
+        monkeypatch.setattr(api_module, "COPY_TRADING_CAPITAL_USD", 500.0)
+
+        client, db = api_client
+        resp = client.patch(
+            "/api/config",
+            json={"key": "COPY_MAX_TOTAL_EXPOSURE_USD", "value": 500.0}
+        )
+        assert resp.status_code == 200, f"Boundary case failed: {resp.json()}"
+        assert resp.json()["value"] == pytest.approx(500.0)
+        assert db.get_config("COPY_MAX_TOTAL_EXPOSURE_USD") == "500.0"
+
+    def test_patch_copy_max_exposure_exceeds_capital_returns_400(self, api_client, monkeypatch):
+        """COPY_MAX_TOTAL_EXPOSURE_USD > COPY_TRADING_CAPITAL_USD must be rejected.
+
+        This reproduces the production outage: 500 cap against 100 pool.
+        """
+        from src.dashboard import api as api_module
+        monkeypatch.setattr(api_module, "COPY_TRADING_CAPITAL_USD", 100.0)
+
+        client, _ = api_client
+        resp = client.patch(
+            "/api/config",
+            json={"key": "COPY_MAX_TOTAL_EXPOSURE_USD", "value": 500.0}
+        )
+        assert resp.status_code == 400
+        detail = resp.json()["detail"]
+        assert "COPY_MAX_TOTAL_EXPOSURE_USD" in detail
+        assert "COPY_TRADING_CAPITAL_USD" in detail
+        assert "100.00" in detail or "100.0" in detail
+        assert "500.00" in detail or "500.0" in detail
+
+    def test_patch_copy_live_max_exposure_below_capital_returns_200(self, api_client, monkeypatch):
+        """COPY_LIVE_MAX_TOTAL_EXPOSURE_USD < COPY_LIVE_CAPITAL_USD must be accepted."""
+        from src.dashboard import api as api_module
+        monkeypatch.setattr(api_module, "COPY_LIVE_CAPITAL_USD", 250.0)
+
+        client, db = api_client
+        resp = client.patch(
+            "/api/config",
+            json={"key": "COPY_LIVE_MAX_TOTAL_EXPOSURE_USD", "value": 100.0}
+        )
+        assert resp.status_code == 200, f"Unexpected error: {resp.json()}"
+        assert resp.json()["value"] == pytest.approx(100.0)
+        assert db.get_config("COPY_LIVE_MAX_TOTAL_EXPOSURE_USD") == "100.0"
+
+    def test_patch_copy_live_max_exposure_equals_capital_returns_200(self, api_client, monkeypatch):
+        """COPY_LIVE_MAX_TOTAL_EXPOSURE_USD == COPY_LIVE_CAPITAL_USD must be accepted."""
+        from src.dashboard import api as api_module
+        monkeypatch.setattr(api_module, "COPY_LIVE_CAPITAL_USD", 250.0)
+
+        client, db = api_client
+        resp = client.patch(
+            "/api/config",
+            json={"key": "COPY_LIVE_MAX_TOTAL_EXPOSURE_USD", "value": 250.0}
+        )
+        assert resp.status_code == 200, f"Boundary case failed: {resp.json()}"
+        assert resp.json()["value"] == pytest.approx(250.0)
+        assert db.get_config("COPY_LIVE_MAX_TOTAL_EXPOSURE_USD") == "250.0"
+
+    def test_patch_copy_live_max_exposure_exceeds_capital_returns_400(self, api_client, monkeypatch):
+        """COPY_LIVE_MAX_TOTAL_EXPOSURE_USD > COPY_LIVE_CAPITAL_USD must be rejected."""
+        from src.dashboard import api as api_module
+        monkeypatch.setattr(api_module, "COPY_LIVE_CAPITAL_USD", 100.0)
+
+        client, _ = api_client
+        resp = client.patch(
+            "/api/config",
+            json={"key": "COPY_LIVE_MAX_TOTAL_EXPOSURE_USD", "value": 200.0}
+        )
+        assert resp.status_code == 400
+        detail = resp.json()["detail"]
+        assert "COPY_LIVE_MAX_TOTAL_EXPOSURE_USD" in detail
+        assert "COPY_LIVE_CAPITAL_USD" in detail
+        assert "100.00" in detail or "100.0" in detail
+        assert "200.00" in detail or "200.0" in detail
+
+    def test_patch_unrelated_key_still_works(self, api_client, monkeypatch):
+        """Unrelated config keys (e.g., COPY_DEFAULT_FLAT_STAKE_USD) must not be affected."""
+        from src.dashboard import api as api_module
+        monkeypatch.setattr(api_module, "COPY_TRADING_CAPITAL_USD", 100.0)
+
+        client, db = api_client
+        # This should succeed because COPY_DEFAULT_FLAT_STAKE_USD is not an exposure cap
+        resp = client.patch(
+            "/api/config",
+            json={"key": "COPY_DEFAULT_FLAT_STAKE_USD", "value": 10.0}
+        )
+        assert resp.status_code == 200, f"Unrelated key rejected: {resp.json()}"
+        assert resp.json()["value"] == pytest.approx(10.0)
+        assert db.get_config("COPY_DEFAULT_FLAT_STAKE_USD") == "10.0"
+
+    def test_patch_capital_ceiling_message_names_both_params_and_values(self, api_client, monkeypatch):
+        """Error message must name both keys and both values per acceptance criteria."""
+        from src.dashboard import api as api_module
+        monkeypatch.setattr(api_module, "COPY_TRADING_CAPITAL_USD", 123.45)
+
+        client, _ = api_client
+        resp = client.patch(
+            "/api/config",
+            json={"key": "COPY_MAX_TOTAL_EXPOSURE_USD", "value": 234.56}
+        )
+        assert resp.status_code == 400
+        detail = resp.json()["detail"]
+        # Message must name the exposure cap key
+        assert "COPY_MAX_TOTAL_EXPOSURE_USD" in detail
+        # Message must name the capital key
+        assert "COPY_TRADING_CAPITAL_USD" in detail
+        # Message must name both values
+        assert "234.56" in detail or "234.5" in detail
+        assert "123.45" in detail or "123.4" in detail or "123.5" in detail
+
+    def test_patch_string_input_bypass_must_reject(self, api_client, monkeypatch):
+        """String input ("500" instead of 500) must NOT bypass capital ceiling check.
+
+        ConfigPatchRequest.value is typed Any and _validate_config_value accepts
+        loose input (coerces "500" to float), so prior implementations were
+        vulnerable to string bypass. This test pins that the gate holds even when
+        the caller sends a string instead of a number.
+        """
+        from src.dashboard import api as api_module
+        monkeypatch.setattr(api_module, "COPY_TRADING_CAPITAL_USD", 100.0)
+
+        client, _ = api_client
+        # Send as string "500" instead of numeric 500
+        resp = client.patch(
+            "/api/config",
+            json={"key": "COPY_MAX_TOTAL_EXPOSURE_USD", "value": "500"}
+        )
+        # Must be rejected, not written to DB (which would recreate the latent-fatal config)
+        assert resp.status_code == 400, (
+            "String bypass vulnerability: ceiling check was skipped when value "
+            "was sent as string instead of numeric type"
+        )
+        detail = resp.json()["detail"]
+        # Message should still name both parameters
+        assert "COPY_MAX_TOTAL_EXPOSURE_USD" in detail
+        assert "COPY_TRADING_CAPITAL_USD" in detail
+
+    def test_regression_production_outage_500_vs_100(self, api_client, monkeypatch):
+        """Regression test for production outage on 2026-09-26.
+
+        The exact values that triggered the crash loop (500 cap against 100 pool)
+        must be rejected at write time (issue #1215).
+        """
+        from src.dashboard import api as api_module
+        monkeypatch.setattr(api_module, "COPY_TRADING_CAPITAL_USD", 100.0)
+
+        client, _ = api_client
+        resp = client.patch(
+            "/api/config",
+            json={"key": "COPY_MAX_TOTAL_EXPOSURE_USD", "value": 500.0}
+        )
+        assert resp.status_code == 400, (
+            "Regression test failed: the values that caused the production "
+            "outage (500 cap vs 100 pool) must be rejected at config write time"
+        )
+        detail = resp.json()["detail"]
+        assert "500" in detail and "100" in detail
 
 
 # ---------------------------------------------------------------------------
