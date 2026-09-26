@@ -81,9 +81,13 @@ QUALITY_MIN_MEDIAN_ROI = 0.0
 #: relative to the median_roi check below is not load-bearing.
 QUALITY_MAX_MEAN_MEDIAN_ROI_RATIO = 3.0
 
-#: Reject wallets whose trade history was truncated by the fetch cap in
+#: Gate wallets whose trade history was truncated by the fetch cap in
 #: get_wallet_trades() (src/data/polymarket_traders.py) -- their metrics are
-#: not run-to-run stable (see this module's docstring and issue #1209).
+#: not run-to-run stable on their own (see this module's docstring and issue
+#: #1209). Rather than an unconditional reject, check_quality()'s condition
+#: (d) admits a truncated wallet when its flat-stake edge reproduced in the
+#: immediately-previous screening run too (issue #1217) -- see that
+#: function's docstring.
 #: IMPORTANT: the fetch cap (MAX_TRADE_PAGES * page_size) bounds the TOTAL
 #: number of trades fetched -- buys and sells interleaved -- not
 #: `n_buy_trades` alone (that's only the buy half after backtest_wallet()
@@ -128,13 +132,16 @@ def check_stability(current: dict, previous: "dict | None") -> bool:
     return True
 
 
-def check_quality(current: dict) -> "tuple[bool, str]":
+def check_quality(current: dict, previous: "dict | None") -> "tuple[bool, str]":
     """True (with reason ``"ok"``) only if *current* passes every
-    profitability/tail-risk/history-completeness quality gate (issue #1209).
+    profitability/tail-risk/history-completeness quality gate (issue #1209,
+    relaxed for truncated wallets by issue #1217).
 
-    Pure function, no I/O. Composable with -- not folded into --
-    ``check_stability()``: a wallet must pass BOTH to be
-    ``eligible_to_follow``. Checked in this order:
+    Pure function, no I/O -- *previous* is the same immediately-previous
+    screening row the caller already fetched for ``check_stability()``, not
+    a new query. Composable with -- not folded into -- ``check_stability()``:
+    a wallet must pass BOTH to be ``eligible_to_follow``. Checked in this
+    order:
 
     (a) ``current["flat_dollar_pnl"]`` must be > ``QUALITY_MIN_FLAT_DOLLAR_PNL``
         -- profitable under the flat-stake model we actually trade, not just
@@ -150,10 +157,25 @@ def check_quality(current: dict) -> "tuple[bool, str]":
     (c) ``median_roi`` must be > ``QUALITY_MIN_MEDIAN_ROI``.
     (d) ``current["n_buy_trades"] + current["n_sell_excluded"]`` -- the TOTAL
         number of trades fetched, not just the buy half -- must be <
-        ``QUALITY_MAX_TOTAL_TRADES``. Rejects wallets whose history was
-        truncated by the fetch cap (which bounds total fetched trades, see
-        ``QUALITY_MAX_TOTAL_TRADES``'s comment), whose metrics are therefore
-        not run-to-run stable.
+        ``QUALITY_MAX_TOTAL_TRADES`` (see that constant's comment). When it
+        isn't -- the wallet's history was truncated by the fetch cap, so its
+        metrics aren't run-to-run stable on their own -- it is admitted only
+        if the flat-stake edge *reproduced*: ``previous["flat_dollar_pnl"]``
+        must also be ``> 0``. (a) above already requires the CURRENT run to
+        be positive; this is a second, independent confirmation from the
+        PREVIOUS run, not a restatement of (a). Two distinct rejection
+        reasons, so the logs tell apart "can't tell yet" from "checked, and
+        it didn't reproduce":
+
+        - ``previous`` is ``None`` (no prior run for this wallet) or its
+          ``flat_dollar_pnl`` is itself ``None`` (that prior run was invoked
+          without ``--flat-stake``) -- reproducibility cannot be established
+          from a single data point either way, so this fails as
+          ``"trade_history_truncated_no_previous_run"``.
+        - ``previous`` exists and its ``flat_dollar_pnl`` is <= 0 -- the
+          edge did NOT reproduce (see issue #1217's ``0x5268527977`` case:
+          current +1129, previous -671), so this fails as
+          ``"trade_history_truncated_unreproducible"``.
 
     Checks (b) and (c) interact: (b) only fires when ``median_roi > 0``, so
     a wallet with ``median_roi <= 0`` always falls through to fail on (c)
@@ -174,7 +196,11 @@ def check_quality(current: dict) -> "tuple[bool, str]":
 
     n_total_trades = current["n_buy_trades"] + current["n_sell_excluded"]
     if n_total_trades >= QUALITY_MAX_TOTAL_TRADES:
-        return False, "trade_history_truncated"
+        previous_flat_pnl = previous.get("flat_dollar_pnl") if previous else None
+        if previous_flat_pnl is None:
+            return False, "trade_history_truncated_no_previous_run"
+        if not previous_flat_pnl > 0:
+            return False, "trade_history_truncated_unreproducible"
 
     return True, "ok"
 
@@ -249,7 +275,7 @@ def run(
         previous_rows = db.get_recent_wallet_screenings(address, limit=1)
         previous = previous_rows[0] if previous_rows else None
         stable = check_stability(current, previous)
-        quality_ok, quality_reason = check_quality(current)
+        quality_ok, quality_reason = check_quality(current, previous)
         if not quality_ok:
             log.info(
                 "[copy-wallet-screening] %s: failed quality check (%s), not eligible.",

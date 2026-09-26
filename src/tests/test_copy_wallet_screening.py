@@ -100,53 +100,58 @@ def _quality_row(
 
 
 class TestCheckQuality:
-    """check_quality() (issue #1209) -- a composable, separate predicate
-    from check_stability(): reproducibility (stability) is necessary but not
-    sufficient for eligibility, quality is the other half.
+    """check_quality() (issue #1209, truncation reproducibility relaxed by
+    issue #1217) -- a composable, separate predicate from check_stability():
+    reproducibility (stability) is necessary but not sufficient for
+    eligibility, quality is the other half.
+
+    None of conditions (a)-(c) below look at `previous` at all -- only
+    condition (d)'s truncation branch does -- so every non-truncation test
+    passes `previous=None` to prove that.
     """
 
     def test_all_conditions_pass(self):
-        assert check_quality(_quality_row()) == (True, "ok")
+        assert check_quality(_quality_row(), None) == (True, "ok")
 
     def test_flat_dollar_pnl_negative_fails(self):
         row = _quality_row(flat_dollar_pnl=-5612.90)
-        assert check_quality(row) == (False, "flat_dollar_pnl_not_positive")
+        assert check_quality(row, None) == (False, "flat_dollar_pnl_not_positive")
 
     def test_flat_dollar_pnl_zero_fails(self):
         row = _quality_row(flat_dollar_pnl=0.0)
-        assert check_quality(row) == (False, "flat_dollar_pnl_not_positive")
+        assert check_quality(row, None) == (False, "flat_dollar_pnl_not_positive")
 
     def test_flat_dollar_pnl_missing_fails(self):
         # e.g. the run was invoked without --flat-stake -- profitability
         # under flat-stake copying can't be confirmed, so it can't pass.
         row = _quality_row(flat_dollar_pnl=None)
-        assert check_quality(row) == (False, "flat_dollar_pnl_not_positive")
+        assert check_quality(row, None) == (False, "flat_dollar_pnl_not_positive")
 
     def test_median_roi_negative_one_fails_quality(self):
         # Regression fixture for the 2026-09-25 audit finding: 6 of 12
         # `eligible_to_follow=1` wallets had median_roi=-1.0 (catastrophic
         # but *consistently* catastrophic, so they passed stability alone).
         row = _quality_row(median_roi=-1.0, mean_roi=-1.0)
-        assert check_quality(row) == (False, "median_roi_not_positive")
+        assert check_quality(row, None) == (False, "median_roi_not_positive")
 
     def test_median_roi_zero_fails(self):
         row = _quality_row(median_roi=0.0, mean_roi=0.0)
-        assert check_quality(row) == (False, "median_roi_not_positive")
+        assert check_quality(row, None) == (False, "median_roi_not_positive")
 
     def test_tail_driven_pnl_0xa38a455b_numbers(self):
         # Regression fixture: 0xa38a455b was promoted on median_roi=+0.0157
         # but mean_roi=+0.0871 (a 5.5x mean/median ratio) and went on to
         # lose 84% of staked capital in paper.
         row = _quality_row(median_roi=0.0157, mean_roi=0.0871)
-        assert check_quality(row) == (False, "tail_driven_pnl")
+        assert check_quality(row, None) == (False, "tail_driven_pnl")
 
     def test_mean_median_ratio_exactly_at_boundary_passes(self):
         row = _quality_row(median_roi=0.10, mean_roi=0.30)  # exactly 3.0x
-        assert check_quality(row) == (True, "ok")
+        assert check_quality(row, None) == (True, "ok")
 
     def test_mean_median_ratio_just_above_boundary_fails(self):
         row = _quality_row(median_roi=0.10, mean_roi=0.30001)
-        assert check_quality(row) == (False, "tail_driven_pnl")
+        assert check_quality(row, None) == (False, "tail_driven_pnl")
 
     def test_tail_ratio_not_applied_when_median_roi_not_positive(self):
         # median_roi <= 0 must fail on median_roi_not_positive, not
@@ -154,17 +159,11 @@ class TestCheckQuality:
         # threshold if it were computed naively (interaction documented in
         # check_quality()'s docstring).
         row = _quality_row(median_roi=-0.01, mean_roi=1.0)
-        assert check_quality(row) == (False, "median_roi_not_positive")
-
-    def test_total_trades_at_cap_fails_truncation(self):
-        # n_buy_trades + n_sell_excluded == the fetch cap exactly.
-        row = _quality_row(n_buy_trades=10500, n_sell_excluded=9500)
-        assert row["n_buy_trades"] + row["n_sell_excluded"] == QUALITY_MAX_TOTAL_TRADES
-        assert check_quality(row) == (False, "trade_history_truncated")
+        assert check_quality(row, None) == (False, "median_roi_not_positive")
 
     def test_total_trades_just_under_cap_passes(self):
         row = _quality_row(n_buy_trades=10500, n_sell_excluded=9499)
-        assert check_quality(row) == (True, "ok")
+        assert check_quality(row, None) == (True, "ok")
 
     def test_high_n_buy_trades_alone_does_not_trigger_truncation(self):
         # Regression test for the unit-mismatch bug (PR #1211 review): a
@@ -176,11 +175,76 @@ class TestCheckQuality:
         # This proves the gate discriminates rather than just rejecting
         # high-volume wallets.
         row = _quality_row(n_buy_trades=10500, n_sell_excluded=100)
-        assert check_quality(row) == (True, "ok")
+        assert check_quality(row, None) == (True, "ok")
 
     def test_quality_max_mean_median_ratio_constant_is_three(self):
         # Guards against silently re-deriving the acceptance-criteria value.
         assert QUALITY_MAX_MEAN_MEDIAN_ROI_RATIO == 3.0
+
+
+class TestCheckQualityTruncationReproducibility:
+    """issue #1217: a truncated wallet (condition (d)) is no longer an
+    unconditional reject -- it is admitted only when its flat-stake edge
+    also reproduced in the immediately-previous screening run.
+    """
+
+    def _truncated_row(self, flat_dollar_pnl=10.0):
+        # n_buy_trades + n_sell_excluded == the fetch cap exactly.
+        row = _quality_row(
+            flat_dollar_pnl=flat_dollar_pnl, n_buy_trades=10500, n_sell_excluded=9500,
+        )
+        assert row["n_buy_trades"] + row["n_sell_excluded"] == QUALITY_MAX_TOTAL_TRADES
+        return row
+
+    def test_truncated_current_and_previous_both_positive_is_eligible(self):
+        row = self._truncated_row(flat_dollar_pnl=10.0)
+        previous = {"flat_dollar_pnl": 5.0}
+        assert check_quality(row, previous) == (True, "ok")
+
+    def test_truncated_0x5268527977_previous_negative_is_ineligible(self):
+        # Regression fixture from issue #1217: 0x5268527977 passed
+        # check_stability() (n_resolved steady at ~10,300) but its
+        # flat_dollar_pnl swung -1455 -> -1258 -> -671 -> +1129 across runs
+        # -- the exact case the unconditional truncation reject failed to
+        # catch (check_stability() only looks at median_roi/n_resolved) and
+        # the reproducibility rule must still reject.
+        row = self._truncated_row(flat_dollar_pnl=1129.0)
+        previous = {"flat_dollar_pnl": -671.0}
+        assert check_quality(row, previous) == (False, "trade_history_truncated_unreproducible")
+
+    def test_truncated_no_previous_run_is_ineligible_with_distinct_reason(self):
+        row = self._truncated_row(flat_dollar_pnl=10.0)
+        assert check_quality(row, None) == (False, "trade_history_truncated_no_previous_run")
+
+    def test_truncated_previous_flat_dollar_pnl_none_is_ineligible_no_exception(self):
+        # The previous run was invoked without --flat-stake -- flat_dollar_pnl
+        # is null on that row. Must not raise, and must fail the same way as
+        # having no previous run at all (nothing to compare against).
+        row = self._truncated_row(flat_dollar_pnl=10.0)
+        previous = {"flat_dollar_pnl": None}
+        assert check_quality(row, previous) == (False, "trade_history_truncated_no_previous_run")
+
+    def test_truncated_previous_flat_dollar_pnl_zero_is_ineligible(self):
+        row = self._truncated_row(flat_dollar_pnl=10.0)
+        previous = {"flat_dollar_pnl": 0.0}
+        assert check_quality(row, previous) == (False, "trade_history_truncated_unreproducible")
+
+    def test_truncated_but_failing_condition_a_fails_on_a_not_truncation(self):
+        # Truncated AND current flat_dollar_pnl not positive -- must fail on
+        # (a), which is checked first, not fall through to the truncation
+        # branch at all.
+        row = self._truncated_row(flat_dollar_pnl=-5.0)
+        previous = {"flat_dollar_pnl": 5.0}
+        assert check_quality(row, previous) == (False, "flat_dollar_pnl_not_positive")
+
+    def test_truncated_but_failing_condition_c_fails_on_c_not_truncation(self):
+        # Truncated AND median_roi not positive -- must fail on (c), before
+        # ever reaching the truncation branch.
+        row = self._truncated_row(flat_dollar_pnl=10.0)
+        row["median_roi"] = 0.0
+        row["mean_roi"] = 0.0
+        previous = {"flat_dollar_pnl": 5.0}
+        assert check_quality(row, previous) == (False, "median_roi_not_positive")
 
 
 class TestRunPersistence:
@@ -419,6 +483,38 @@ class TestEligibilityQualityGate:
         self._run_stable(db, result, previous)
         kwargs = db.insert_wallet_screening.call_args.kwargs
         assert kwargs["eligible_to_follow"] == 1
+        db.insert_wallet_screening.assert_called_once()
+
+    def test_truncated_history_eligible_when_previous_flat_pnl_also_positive(self):
+        # issue #1217: a truncated wallet is no longer an unconditional
+        # reject -- two consecutive positive flat-stake runs admit it.
+        db = MagicMock()
+        previous = {"median_roi": 0.10, "n_resolved": 100, "flat_dollar_pnl": 5.0}
+        result = _backtest_result(
+            "0xwallet0", n_buy_trades=10500, n_sell_excluded=9500, n_resolved=105,
+            median_roi=0.11, mean_roi=0.1, flat_dollar_pnl=10.0,
+        )
+        self._run_stable(db, result, previous)
+        kwargs = db.insert_wallet_screening.call_args.kwargs
+        assert kwargs["eligible_to_follow"] == 1
+        db.insert_wallet_screening.assert_called_once()
+
+    def test_truncated_history_ineligible_0x5268527977_previous_negative(self):
+        # Regression fixture from issue #1217: 0x5268527977 passed
+        # check_stability() (n_resolved steady at ~10,300) but its
+        # flat_dollar_pnl swung -1455 -> -1258 -> -671 -> +1129 across runs.
+        # The unconditional truncation reject would have caught this by
+        # accident; the reproducibility rule must still reject it, and for
+        # the right reason (unreproducible, not "no previous run").
+        db = MagicMock()
+        previous = {"median_roi": 0.10, "n_resolved": 10300, "flat_dollar_pnl": -671.0}
+        result = _backtest_result(
+            "0xwallet0", n_buy_trades=10500, n_sell_excluded=9500, n_resolved=10350,
+            median_roi=0.11, mean_roi=0.1, flat_dollar_pnl=1129.0,
+        )
+        self._run_stable(db, result, previous)
+        kwargs = db.insert_wallet_screening.call_args.kwargs
+        assert kwargs["eligible_to_follow"] == 0
         db.insert_wallet_screening.assert_called_once()
 
     def test_quality_passes_but_stability_fails_is_ineligible(self):
