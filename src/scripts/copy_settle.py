@@ -92,13 +92,13 @@ def run_once(db=None) -> dict:
     n_settled = 0
     n_pending = 0
     n_errors = 0
-    n_stale = 0  # Positions open > 24 hours
+    n_stale = 0  # Positions open > 48 hours
     for r in rows:
         market = r["market"]
         yes_won = resolutions.get(market)
         if yes_won is None:
             n_pending += 1
-            # Track positions open > 24 hours (settlement latency is ~6h avg, tail > 24h)
+            # Track positions open > 48 hours (settlement latency is ~6h avg, tail > 24h)
             # Stale threshold: 48 hours, well above observed settle latency
             try:
                 entry_time = datetime.fromisoformat(r["entry_ts"])
@@ -107,8 +107,8 @@ def run_once(db=None) -> dict:
                 age = now - entry_time
                 if age > timedelta(hours=48):
                     n_stale += 1
-            except (ValueError, KeyError):
-                pass  # If entry_ts is malformed, skip stale tracking for this row
+            except (ValueError, KeyError) as e:
+                log.debug("[copy_settle] position %s has malformed entry_ts, skipping stale tracking: %s", r.get("id"), e)
             log.debug(
                 "[copy_settle] market %s... not resolved yet -- position %s stays open",
                 str(market)[:14], r["id"],
