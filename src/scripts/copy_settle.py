@@ -37,7 +37,7 @@ from __future__ import annotations
 
 import logging
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -87,15 +87,28 @@ def run_once(db=None) -> dict:
     for market in markets:
         resolutions[market] = fetch_market_resolution(market)
 
-    now_iso = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(timezone.utc)
+    now_iso = now.isoformat()
     n_settled = 0
     n_pending = 0
     n_errors = 0
+    n_stale = 0  # Positions open > 48 hours
     for r in rows:
         market = r["market"]
         yes_won = resolutions.get(market)
         if yes_won is None:
             n_pending += 1
+            # Track positions open > 48 hours (settlement latency is ~6h avg, tail > 24h)
+            # Stale threshold: 48 hours, well above observed settle latency
+            try:
+                entry_time = datetime.fromisoformat(r["entry_ts"])
+                if entry_time.tzinfo is None:
+                    entry_time = entry_time.replace(tzinfo=timezone.utc)
+                age = now - entry_time
+                if age > timedelta(hours=48):
+                    n_stale += 1
+            except (ValueError, KeyError) as e:
+                log.debug("[copy_settle] position %s has malformed entry_ts, skipping stale tracking: %s", r.get("id"), e)
             log.debug(
                 "[copy_settle] market %s... not resolved yet -- position %s stays open",
                 str(market)[:14], r["id"],
@@ -125,6 +138,16 @@ def run_once(db=None) -> dict:
         "[copy_settle] run complete: settled=%s pending=%s errors=%s (of %s open position(s))",
         n_settled, n_pending, n_errors, len(rows),
     )
+
+    # Emit one aggregate WARNING if any positions have been open > 48 hours
+    # (well above observed settlement latency of ~6h average, tail past 24h)
+    if n_stale > 0:
+        log.warning(
+            "[copy_settle] %s open position(s) unresolved for > 48 hours -- "
+            "market may be stuck or settlement delayed",
+            n_stale,
+        )
+
     return {"settled": n_settled, "pending": n_pending, "errors": n_errors}
 
 

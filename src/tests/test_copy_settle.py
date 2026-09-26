@@ -146,3 +146,170 @@ class TestRunOnceNoDb:
         with patch("src.scripts.copy_settle._open_db", return_value=None):
             summary = run_once()
         assert summary == {"settled": 0, "pending": 0, "errors": 0}
+
+
+class TestRunOnceStaleTracking:
+    """Test the fallback stale-position warning (issue #1218).
+
+    When positions remain unresolved for >48 hours, emit ONE aggregate warning
+    per run reporting the count. This prevents per-market log floods while
+    surfacing genuine settlement delays.
+    """
+
+    def test_two_stale_positions_emit_exactly_one_warning(self, caplog):
+        """Two positions >48h old and unresolved -> EXACTLY ONE warning line
+        reporting the count of 2. The 'exactly one' assertion is critical:
+        per-market logging (the bug being fixed) would emit two lines."""
+        import logging
+        from datetime import datetime, timedelta, timezone
+
+        db = Database(":memory:")
+        old_now = datetime.now(timezone.utc)
+        stale_time = (old_now - timedelta(hours=56)).isoformat()
+
+        # Two positions, both >48h old, both unresolved
+        _seed_position(db, market="0xmarket1", outcome_index=0, entry_price=0.40, stake_usd=10.0)
+        db._conn.execute(
+            "UPDATE copy_positions SET entry_ts=? WHERE market=?",
+            (stale_time, "0xmarket1")
+        )
+        db._conn.commit()
+
+        _seed_position(db, market="0xmarket2", outcome_index=0, entry_price=0.40, stake_usd=10.0)
+        db._conn.execute(
+            "UPDATE copy_positions SET entry_ts=? WHERE market=?",
+            (stale_time, "0xmarket2")
+        )
+        db._conn.commit()
+
+        with patch("src.scripts.copy_settle.fetch_market_resolution", return_value=None):
+            with caplog.at_level(logging.WARNING, logger="src.scripts.copy_settle"):
+                # Mock datetime.now to match the stale_time scenario
+                with patch("src.scripts.copy_settle.datetime") as mock_dt:
+                    mock_dt.now.return_value = old_now
+                    mock_dt.fromisoformat = datetime.fromisoformat
+                    mock_dt.side_effect = lambda *args, **kw: datetime(*args, **kw)
+                    summary = run_once(db=db)
+
+        # Find all WARNING logs about stale positions
+        stale_warnings = [r for r in caplog.records
+                            if r.levelno == logging.WARNING and "unresolved for > 48 hours" in r.message]
+
+        # EXACTLY one aggregate warning, not two
+        assert len(stale_warnings) == 1, f"Expected exactly 1 stale warning, got {len(stale_warnings)}"
+        assert "2 open position(s)" in stale_warnings[0].message
+
+        # Settlement counts unaffected
+        assert summary["pending"] == 2
+        assert summary["settled"] == 0
+
+    def test_no_warning_when_all_positions_under_48h(self, caplog):
+        """Positions unresolved but <48h old -> no stale warning."""
+        import logging
+        from datetime import datetime, timedelta, timezone
+
+        db = Database(":memory:")
+        old_now = datetime.now(timezone.utc)
+        fresh_time = (old_now - timedelta(hours=24)).isoformat()
+
+        _seed_position(db, market="0xfreshmarket", outcome_index=0)
+        db._conn.execute(
+            "UPDATE copy_positions SET entry_ts=? WHERE market=?",
+            (fresh_time, "0xfreshmarket")
+        )
+        db._conn.commit()
+
+        with patch("src.scripts.copy_settle.fetch_market_resolution", return_value=None):
+            with caplog.at_level(logging.WARNING, logger="src.scripts.copy_settle"):
+                with patch("src.scripts.copy_settle.datetime") as mock_dt:
+                    mock_dt.now.return_value = old_now
+                    mock_dt.fromisoformat = datetime.fromisoformat
+                    mock_dt.side_effect = lambda *args, **kw: datetime(*args, **kw)
+                    summary = run_once(db=db)
+
+        stale_warnings = [r for r in caplog.records
+                            if r.levelno == logging.WARNING and "unresolved for > 48 hours" in r.message]
+        assert len(stale_warnings) == 0
+
+    def test_no_warning_when_no_open_positions(self, caplog):
+        """No open positions -> no stale warning, no crash."""
+        import logging
+
+        db = Database(":memory:")
+
+        with caplog.at_level(logging.WARNING, logger="src.scripts.copy_settle"):
+            summary = run_once(db=db)
+
+        assert summary["pending"] == 0
+        stale_warnings = [r for r in caplog.records
+                            if r.levelno == logging.WARNING and "unresolved for > 48 hours" in r.message]
+        assert len(stale_warnings) == 0
+
+    def test_malformed_entry_ts_skipped_with_debug_log(self, caplog):
+        """Row with malformed entry_ts -> skip stale tracking, log DEBUG,
+        run completes, other rows still counted."""
+        import logging
+
+        db = Database(":memory:")
+
+        # Good position
+        good_id = _seed_position(db, market="0xgoodmarket", outcome_index=0)
+
+        # Bad position with malformed entry_ts
+        bad_signal_id = db.insert_copy_signal(
+            address=ADDRESS, market="0xbadmarket", source_price=0.40,
+            detected_at=NOW_ISO, outcome_index=0,
+        )
+        bad_position_id = db.insert_copy_position(
+            signal_id=bad_signal_id, address=ADDRESS, market="0xbadmarket",
+            outcome_index=0, entry_price=0.40, stake_usd=10.0,
+            entry_ts="not-a-valid-iso-timestamp",  # Malformed
+        )
+        db.link_copy_signal_to_position(bad_signal_id, bad_position_id)
+
+        with patch("src.scripts.copy_settle.fetch_market_resolution", return_value=None):
+            with caplog.at_level(logging.DEBUG, logger="src.scripts.copy_settle"):
+                summary = run_once(db=db)
+
+        # Both positions stay pending
+        assert summary["pending"] == 2
+        assert summary["errors"] == 0
+
+        # Debug log recorded for malformed entry_ts
+        debug_logs = [r for r in caplog.records
+                        if r.levelno == logging.DEBUG and "malformed entry_ts" in r.message]
+        assert len(debug_logs) == 1
+        assert str(bad_position_id) in debug_logs[0].message
+
+    def test_settlement_counts_unchanged_with_stale_rows(self):
+        """Settled/pending counts identical with and without stale rows present."""
+        from datetime import datetime, timedelta, timezone
+
+        db = Database(":memory:")
+        old_now = datetime.now(timezone.utc)
+        stale_time = (old_now - timedelta(hours=56)).isoformat()
+
+        # Mix of stale unresolved and fresh resolved
+        stale_unresolved_id = _seed_position(db, market="0xstale", outcome_index=0)
+        db._conn.execute(
+            "UPDATE copy_positions SET entry_ts=? WHERE id=?",
+            (stale_time, stale_unresolved_id)
+        )
+        db._conn.commit()
+
+        fresh_resolved_id = _seed_position(db, market="0xfresh", outcome_index=0)
+
+        def fake_resolve(market):
+            return {
+                "0xstale": None,   # Unresolved (stale)
+                "0xfresh": True,   # Resolved
+            }.get(market)
+
+        with patch("src.scripts.copy_settle.fetch_market_resolution", side_effect=fake_resolve):
+            summary = run_once(db=db)
+
+        # Counts should match the actual state (1 settled, 1 pending)
+        # stale warning does NOT affect settled/pending counts
+        assert summary["settled"] == 1
+        assert summary["pending"] == 1
+        assert summary["errors"] == 0
