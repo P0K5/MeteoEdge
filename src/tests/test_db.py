@@ -1447,6 +1447,63 @@ class TestGetPreviousWalletScreenings:
 
 
 # ---------------------------------------------------------------------------
+# market_resolutions / get_cached_market_resolution / cache_market_resolution
+# (issue #1221 -- persistent cross-run cache of resolved market outcomes)
+# ---------------------------------------------------------------------------
+
+class TestMarketResolutionsCache:
+    def test_table_exists(self):
+        db = _db()
+        cur = db._conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' "
+            "AND name='market_resolutions'"
+        )
+        assert cur.fetchone() is not None
+
+    def test_uncached_market_returns_none(self):
+        db = _db()
+        assert db.get_cached_market_resolution("0xnevercached") is None
+
+    def test_cache_then_get_round_trip_resolved_yes(self):
+        db = _db()
+        db.cache_market_resolution("0xabc", True, cached_at="2026-09-27T00:00:00+00:00")
+        assert db.get_cached_market_resolution("0xabc") is True
+
+    def test_cache_then_get_round_trip_resolved_no(self):
+        db = _db()
+        db.cache_market_resolution("0xabc", False, cached_at="2026-09-27T00:00:00+00:00")
+        assert db.get_cached_market_resolution("0xabc") is False
+
+    def test_cached_at_defaults_to_now_when_not_given(self):
+        db = _db()
+        db.cache_market_resolution("0xabc", True)
+        cur = db._conn.execute(
+            "SELECT cached_at FROM market_resolutions WHERE market='0xabc'"
+        )
+        row = cur.fetchone()
+        assert row["cached_at"]  # non-empty -- exact value not asserted (real clock)
+
+    def test_second_write_for_same_market_replaces_not_duplicates(self):
+        # A resolved market's outcome never changes -- INSERT OR REPLACE is
+        # meant to be harmless here (e.g. a rare race between two concurrent
+        # runs), not to accumulate duplicate rows.
+        db = _db()
+        db.cache_market_resolution("0xabc", True, cached_at="2026-09-27T00:00:00+00:00")
+        db.cache_market_resolution("0xabc", True, cached_at="2026-09-27T01:00:00+00:00")
+        cur = db._conn.execute(
+            "SELECT COUNT(*) AS n FROM market_resolutions WHERE market='0xabc'"
+        )
+        assert cur.fetchone()["n"] == 1
+
+    def test_distinct_markets_cached_independently(self):
+        db = _db()
+        db.cache_market_resolution("0xabc", True)
+        db.cache_market_resolution("0xdef", False)
+        assert db.get_cached_market_resolution("0xabc") is True
+        assert db.get_cached_market_resolution("0xdef") is False
+
+
+# ---------------------------------------------------------------------------
 # copy_wallets_followed / copy_signals / copy_positions
 # (issue #1121, epic #1101)
 # ---------------------------------------------------------------------------

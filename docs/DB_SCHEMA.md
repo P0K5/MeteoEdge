@@ -722,6 +722,27 @@ pattern as the `trades.mode` migration above).
 
 ---
 
+### market_resolutions
+
+**Purpose:** Persistent, cross-run cache of resolved Polymarket market outcomes (issue #1221). A resolved market's outcome is immutable, so once a market is written here, `copy_wallet_screening.py` never re-fetches it from `gamma-api.polymarket.com` on a later run — the prior per-wallet, per-run in-memory-only cache (`copy_trade_backtest.resolve_payout`) discarded this on every call, at a measured ~710 resolution requests per wallet screened.
+
+**Writer:** `Database.cache_market_resolution`, called only by `src.scripts.copy_wallet_screening.PersistentResolutionCache` (the sole writer) after a genuinely resolved (`True`/`False`) answer from `src.data.polymarket.fetch_market_resolution` — never for an unresolved (`None`) market.
+**Reader:** `Database.get_cached_market_resolution`, consulted by the same `PersistentResolutionCache` before any network call.
+
+| Column | Type | Units | Nullable | Description |
+|--------|------|-------|----------|-------------|
+| `market` | TEXT PRIMARY KEY | Polymarket condition ID | No | The resolved market |
+| `resolved_yes` | INTEGER NOT NULL CHECK(resolved_yes IN (0,1)) | boolean (0/1) | No | `1` if the YES side won, `0` if NO won — mirrors `fetch_market_resolution`'s `True`/`False` return, never `None` |
+| `cached_at` | TEXT NOT NULL | ISO 8601 timestamp (UTC) | No | When this row was written (or last refreshed by a harmless duplicate write) |
+
+**Notes:**
+- **Poisoning invariant (the single most important correctness property here):** an unresolved market must never get a row in this table — it would permanently misclassify a market that goes on to resolve later. Enforced entirely in `PersistentResolutionCache.__setitem__`, which only calls `cache_market_resolution` when the value being cached is not `None`; `cache_market_resolution` itself trusts that invariant rather than re-deriving it.
+- `INSERT OR REPLACE` on write: a resolved market's outcome never changes, so a second write for the same market (e.g. a rare race between two concurrent runs) is harmless and just refreshes `cached_at`.
+- Two-tier cache: tier 1 is a plain in-memory dict shared across every wallet within one screening run (cross-wallet redundancy — leaderboard traders cluster in the same popular markets); tier 2 is this table (cross-run redundancy). `PersistentResolutionCache` (a `dict` subclass) implements both by overriding `__contains__`/`__setitem__`, so `copy_trade_backtest.resolve_payout()`/`backtest_wallet()` need no changes and stay usable with no `Database` at all (the standalone CLI path).
+- Hit/miss counts are logged once per run: `[copy-wallet-screening] resolution cache: N hits, M misses.`
+
+---
+
 ### bot_config
 
 **Purpose:** Persistent key-value store for operator-adjustable bot parameters. Values survive restarts and are authoritative over environment variables once seeded.

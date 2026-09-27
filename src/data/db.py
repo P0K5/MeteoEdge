@@ -485,6 +485,23 @@ CREATE TABLE IF NOT EXISTS copy_live_positions (
 );
 CREATE INDEX IF NOT EXISTS idx_copy_live_positions_address_status
     ON copy_live_positions(address, status);
+
+-- Persistent cross-run cache of resolved Polymarket market outcomes (issue
+-- #1221). A resolved market's outcome is immutable, so once written here
+-- callers never need to re-fetch it from gamma-api.polymarket.com on a
+-- later screening run -- the resolution_cache dict in
+-- copy_trade_backtest.backtest_wallet() used to be recreated (and thrown
+-- away) per wallet AND per run, at a measured ~710 resolution requests per
+-- wallet (see issue #1221's root-cause analysis). ONLY resolved markets
+-- are ever inserted here -- see
+-- src.scripts.copy_wallet_screening.PersistentResolutionCache, the sole
+-- writer, for why an unresolved market must never get a row (it would
+-- permanently misclassify a market that later resolves).
+CREATE TABLE IF NOT EXISTS market_resolutions (
+    market        TEXT PRIMARY KEY,
+    resolved_yes  INTEGER NOT NULL CHECK(resolved_yes IN (0,1)),
+    cached_at     TEXT NOT NULL
+);
 """
 
 
@@ -1689,6 +1706,54 @@ class Database:
             ") prev ON c.address = prev.address AND c.id = prev.prev_id"
         )
         return {row["address"]: dict(row) for row in cur.fetchall()}
+
+    # ------------------------------------------------------------------
+    # market_resolutions (issue #1221 -- persistent cross-run cache of
+    # resolved Polymarket market outcomes for copy-trading screening).
+    # ------------------------------------------------------------------
+
+    def get_cached_market_resolution(self, market: str) -> "bool | None":
+        """Return *market*'s cached resolution, or None if not cached.
+
+        None means "not yet cached" here, never "resolved False" -- False
+        is stored explicitly as 0. cache_market_resolution() is the only
+        writer and only ever persists a genuinely resolved market (see its
+        docstring), so a cache hit here is always a real answer, never a
+        placeholder for "still unresolved".
+        """
+        cur = self._conn.execute(
+            "SELECT resolved_yes FROM market_resolutions WHERE market=?",
+            (market,),
+        )
+        row = cur.fetchone()
+        return bool(row["resolved_yes"]) if row is not None else None
+
+    def cache_market_resolution(
+        self, market: str, resolved_yes: bool, cached_at: "str | None" = None,
+    ) -> None:
+        """Persist *market*'s resolved outcome.
+
+        Caller must only invoke this for a genuinely resolved market
+        (*resolved_yes* is a real bool, never None) -- this method has no
+        way to tell "unresolved" from "unknown", so it trusts its caller
+        (``PersistentResolutionCache`` in
+        ``src/scripts/copy_wallet_screening.py``, the sole writer) to
+        enforce that invariant. Writing an unresolved market here would
+        permanently misclassify a market that later goes on to resolve --
+        the single most important correctness property of issue #1221.
+
+        INSERT OR REPLACE: a resolved market's outcome never changes, so a
+        second write for the same market (e.g. a rare race between two
+        concurrent runs) is harmless and just refreshes cached_at.
+        """
+        cached_at = cached_at or datetime.now(timezone.utc).isoformat()
+        with self._lock:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO market_resolutions(market, resolved_yes, cached_at) "
+                "VALUES(?,?,?)",
+                (market, int(bool(resolved_yes)), cached_at),
+            )
+            self._conn.commit()
 
     # ------------------------------------------------------------------
     # copy_wallets_followed / copy_signals / copy_positions (issue #1121,

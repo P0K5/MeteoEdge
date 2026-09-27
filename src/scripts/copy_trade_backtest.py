@@ -133,6 +133,7 @@ def _stats(rois: "list[float]") -> dict:
 
 def backtest_wallet(
     address: str, slippage_bps: float, flat_stake: "float | None" = None,
+    cache: "dict | None" = None,
 ) -> dict:
     """Run the copy-trade simulation for one wallet's BUY trades.
 
@@ -145,12 +146,20 @@ def backtest_wallet(
     per-contract, not sizing-dependent -- so only a second dollar-PnL
     figure is added (``copier_flat``), not a second full stats block.
 
+    *cache*, when given, is used as ``resolve_payout()``'s resolution
+    cache directly instead of a fresh per-call dict -- lets a caller share
+    one cache across many wallets in a single screening run (issue #1221)
+    instead of paying for the same market's resolution once per wallet.
+    Defaults to a private ``{}`` when omitted, so existing single-wallet
+    callers (the standalone CLI in this module, and every test that
+    doesn't pass one) are unaffected.
+
     Per-trade fields are only held in memory long enough to aggregate, not
     returned -- keeps the report a fixed size regardless of how many fills
     a wallet has.
     """
     raw_trades = get_wallet_trades(address)
-    resolution_cache: dict = {}
+    resolution_cache: dict = cache if cache is not None else {}
 
     trader_rois: "list[float]" = []
     copier_rois: "list[float]" = []

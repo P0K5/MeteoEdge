@@ -98,6 +98,63 @@ QUALITY_MAX_MEAN_MEDIAN_ROI_RATIO = 3.0
 QUALITY_MAX_TOTAL_TRADES = MAX_TRADE_PAGES * DEFAULT_TRADE_PAGE_SIZE
 
 
+class PersistentResolutionCache(dict):
+    """A run-scoped resolution cache shared across every wallet in one
+    screening run (tier 1, issue #1221), optionally backed by the
+    persistent ``market_resolutions`` DB table (tier 2) so a market
+    resolved on a PRIOR run costs zero network calls today.
+
+    Deliberately a plain ``dict`` subclass, not a new interface: it is
+    passed straight through as ``backtest_wallet()``'s/``resolve_payout()``'s
+    (``src/scripts/copy_trade_backtest.py``) ``cache`` argument unmodified
+    -- that module stays entirely ignorant of the DB (it must keep working
+    with no ``Database`` at all -- see its module docstring), and this
+    class only overrides ``__contains__`` (consult the DB on an in-memory
+    miss) and ``__setitem__`` (persist a genuinely resolved market on a
+    network miss).
+
+    **Poisoning invariant -- the single most important correctness
+    property here.** Only a resolved market (``True``/``False``) is ever
+    persisted to the DB. ``fetch_market_resolution`` returning ``None``
+    (unresolved) is still cached in the in-memory dict for the rest of
+    THIS run (matching the old per-wallet cache's own behaviour -- avoids
+    a second network call for the same still-unresolved market a few
+    seconds later in the same run), but is never written to the DB -- a
+    negative DB entry would permanently misclassify a market that goes on
+    to resolve later. See ``Database.cache_market_resolution``'s docstring
+    for the writer-side half of this contract.
+
+    ``hits``/``misses`` count every ``market in cache`` check a run makes
+    (i.e. once per ``resolve_payout()`` lookup): a hit is answered without
+    a network call (already known this run, or found in the persistent
+    table); a miss requires ``fetch_market_resolution`` be called.
+    """
+
+    def __init__(self, db: "Database | None" = None):
+        super().__init__()
+        self._db = db
+        self.hits = 0
+        self.misses = 0
+
+    def __contains__(self, market) -> bool:
+        if super().__contains__(market):
+            self.hits += 1
+            return True
+        if self._db is not None:
+            cached = self._db.get_cached_market_resolution(market)
+            if cached is not None:
+                super().__setitem__(market, cached)
+                self.hits += 1
+                return True
+        self.misses += 1
+        return False
+
+    def __setitem__(self, market, value) -> None:
+        super().__setitem__(market, value)
+        if value is not None and self._db is not None:
+            self._db.cache_market_resolution(market, value)
+
+
 def sign(x: float) -> int:
     return 1 if x > 0 else (-1 if x < 0 else 0)
 
@@ -246,9 +303,15 @@ def run(
 
     db = db or Database()
 
+    # Issue #1221: one resolution cache shared by every wallet in this run
+    # (tier 1), backed by `db`'s persistent market_resolutions table (tier
+    # 2) -- a resolved market costs at most one network call across the
+    # whole run, and never again on a later run.
+    resolution_cache = PersistentResolutionCache(db)
+
     n_screened = 0
     for address in addresses:
-        result = backtest_wallet(address, slippage_bps, flat_stake)
+        result = backtest_wallet(address, slippage_bps, flat_stake, cache=resolution_cache)
         if result["n_resolved"] < min_trades:
             log.info(
                 "[copy-wallet-screening] %s: n_resolved=%s below --min-trades=%s, skipping.",
@@ -303,6 +366,10 @@ def run(
     log.info(
         "[copy-wallet-screening] screened %s/%s wallets (window=%s, top=%s).",
         n_screened, len(addresses), window, effective_top,
+    )
+    log.info(
+        "[copy-wallet-screening] resolution cache: %s hits, %s misses.",
+        resolution_cache.hits, resolution_cache.misses,
     )
     return 0
 

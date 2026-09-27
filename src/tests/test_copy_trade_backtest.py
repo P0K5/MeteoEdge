@@ -217,6 +217,97 @@ class TestBacktestWallet:
         )
 
 
+class TestBacktestWalletCache:
+    """issue #1221: backtest_wallet() accepts an optional shared cache so a
+    caller (copy_wallet_screening.run()) can reuse one resolution cache
+    across every wallet in a run, instead of each wallet paying for its own.
+    """
+
+    def test_no_cache_argument_still_works(self):
+        # Standalone-CLI path (copy_trade_backtest.py's own run()) never
+        # passes a cache -- must keep working exactly as before.
+        trades = [_raw_trade("0xabc", "BUY", 0.50, 10, "Yes")]
+        with patch(
+            "src.scripts.copy_trade_backtest.get_wallet_trades", return_value=trades
+        ), patch(
+            "src.scripts.copy_trade_backtest.fetch_market_resolution", return_value=True
+        ) as mock_fn:
+            result = backtest_wallet("0xwallet", slippage_bps=150)
+        assert result["n_resolved"] == 1
+        mock_fn.assert_called_once_with("0xabc")
+
+    def test_shared_cache_across_two_wallets_fetches_market_once(self):
+        # Two different wallets' trade tapes hitting the same market, via a
+        # cache shared across both backtest_wallet() calls -- the run-scoped
+        # cache tier 1 is meant to serve (issue #1221).
+        trades = [_raw_trade("0xshared", "BUY", 0.50, 10, "Yes")]
+        cache: dict = {}
+        with patch(
+            "src.scripts.copy_trade_backtest.get_wallet_trades", return_value=trades
+        ), patch(
+            "src.scripts.copy_trade_backtest.fetch_market_resolution", return_value=True
+        ) as mock_fn:
+            backtest_wallet("0xwallet1", slippage_bps=150, cache=cache)
+            backtest_wallet("0xwallet2", slippage_bps=150, cache=cache)
+        mock_fn.assert_called_once_with("0xshared")
+
+    def test_prepopulated_cache_produces_identical_stats_as_cold_cache(self):
+        # Same fixture trades, once with a cold (empty) cache and once with
+        # a cache already warmed with the correct resolution -- median_roi
+        # and dollar_pnl must be identical either way (issue #1221's "no
+        # behavioural change" acceptance criterion).
+        trades = [
+            _raw_trade("0xabc", "BUY", 0.50, 10, "Yes"),
+            _raw_trade("0xdef", "BUY", 0.20, 5, "No"),
+        ]
+        with patch(
+            "src.scripts.copy_trade_backtest.get_wallet_trades", return_value=trades
+        ), patch(
+            "src.scripts.copy_trade_backtest.fetch_market_resolution", return_value=True
+        ):
+            cold_result = backtest_wallet("0xwallet", slippage_bps=150, cache={})
+
+        warm_cache = {"0xabc": True, "0xdef": True}
+        with patch(
+            "src.scripts.copy_trade_backtest.get_wallet_trades", return_value=trades
+        ), patch(
+            "src.scripts.copy_trade_backtest.fetch_market_resolution",
+        ) as mock_fn:
+            warm_result = backtest_wallet("0xwallet", slippage_bps=150, cache=warm_cache)
+        mock_fn.assert_not_called()  # every market was already in the warm cache
+
+        assert warm_result["copier"]["median_roi"] == pytest.approx(
+            cold_result["copier"]["median_roi"]
+        )
+        assert warm_result["copier"]["dollar_pnl"] == pytest.approx(
+            cold_result["copier"]["dollar_pnl"]
+        )
+        assert warm_result["trader"]["dollar_pnl"] == pytest.approx(
+            cold_result["trader"]["dollar_pnl"]
+        )
+
+
+class TestNoDatabaseDependency:
+    """issue #1221: copy_trade_backtest.py must stay runnable as a
+    standalone CLI with no Database available -- the persistent cache is
+    entirely owned/optional at the copy_wallet_screening.py caller layer.
+    """
+
+    def test_module_does_not_import_database(self):
+        import src.scripts.copy_trade_backtest as mod
+        assert not hasattr(mod, "Database")
+
+    def test_backtest_wallet_runs_with_no_cache_and_no_db(self):
+        trades = [_raw_trade("0xabc", "BUY", 0.50, 10, "Yes")]
+        with patch(
+            "src.scripts.copy_trade_backtest.get_wallet_trades", return_value=trades
+        ), patch(
+            "src.scripts.copy_trade_backtest.fetch_market_resolution", return_value=True
+        ):
+            result = backtest_wallet("0xwallet", slippage_bps=150)
+        assert result["n_resolved"] == 1
+
+
 class TestBuildReport:
     def test_report_contains_key_sections(self):
         results = [{
