@@ -71,6 +71,8 @@ def report(db, max_followed: int) -> int:
     # Count how many were excluded for being stale
     stale_count = len(latest) - len(latest_run)
 
+    # Per-candidate line includes screened_at (issue #1226 AC #2): staleness
+    # stays visible even if the latest-run scoping above is later loosened.
     # Filter to eligible, unfollowed wallets from the latest run
     candidates = [
         row for row in latest_run
