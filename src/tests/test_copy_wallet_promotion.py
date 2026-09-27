@@ -248,6 +248,128 @@ class TestReport:
         out = capsys.readouterr().out
         assert "3/5" in out
 
+    def test_empty_table_reports_zero_candidates(self, capsys):
+        """All candidates stale / empty table -> no crash, reports zero."""
+        db = MagicMock()
+        db.get_followed_wallets.return_value = []
+        db.get_latest_wallet_screenings.return_value = []
+
+        rc = report(db, max_followed=10)
+
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "0 eligible, unfollowed wallet(s)" in out
+
+    def test_scopes_to_latest_run_only(self, capsys):
+        """Scope the advisory to wallets from the latest screening run."""
+        db = MagicMock()
+        db.get_followed_wallets.return_value = []
+        db.get_latest_wallet_screenings.return_value = [
+            # Recent run: 2026-09-27
+            _screening_row(
+                address="0xrecent1", eligible=1, median_roi=0.15,
+                screened_at="2026-09-27T00:00:00+00:00"),
+            _screening_row(
+                address="0xrecent2", eligible=1, median_roi=0.10,
+                screened_at="2026-09-27T00:00:00+00:00"),
+            # Older run: 2026-09-25
+            _screening_row(
+                address="0xold", eligible=1, median_roi=0.20,
+                screened_at="2026-09-25T00:00:00+00:00"),
+        ]
+
+        rc = report(db, max_followed=10)
+
+        assert rc == 0
+        out = capsys.readouterr().out
+        # Should list recent wallets, not the old one
+        assert "0xrecent1" in out
+        assert "0xrecent2" in out
+        assert "0xold" not in out
+        # Should report 1 excluded
+        assert "1 wallet(s) with screening data from runs before" in out
+
+    def test_excludes_stale_ineligible_wallet(self, capsys):
+        """Stale eligible_to_follow=1 from older run -> not listed, counted excluded.
+
+        This is the shape described in issue #1226: 0x32b484581f with
+        median_roi=-1.0 from an older screened_at, which would pass the
+        advisory filter under the old code (eligible_to_follow=1) but is
+        now excluded because it's from an older run.
+        """
+        db = MagicMock()
+        db.get_followed_wallets.return_value = []
+        db.get_latest_wallet_screenings.return_value = [
+            # Latest run: eligible and good ROI
+            _screening_row(
+                address="0xgood", eligible=1, median_roi=0.18,
+                screened_at="2026-09-27T00:00:00+00:00"),
+            # Stale run: eligible=1 but catastrophic ROI (the old #1209 issue)
+            _screening_row(
+                address="0xstale_bad", eligible=1, median_roi=-1.0,
+                n_resolved=10398,
+                screened_at="2026-09-25T00:00:00+00:00"),
+        ]
+
+        rc = report(db, max_followed=10)
+
+        assert rc == 0
+        out = capsys.readouterr().out
+        # Only the current-run wallet should be listed
+        assert "0xgood" in out
+        assert "0xstale_bad" not in out
+        # Should report 1 excluded (the stale wallet)
+        assert "1 wallet(s) with screening data from runs before" in out
+
+    def test_excludes_stale_even_if_eligible(self, capsys):
+        """Wallets from older runs are excluded regardless of eligibility."""
+        db = MagicMock()
+        db.get_followed_wallets.return_value = []
+        db.get_latest_wallet_screenings.return_value = [
+            # Latest run
+            _screening_row(
+                address="0xcurrent", eligible=1,
+                screened_at="2026-09-27T00:00:00+00:00"),
+            # Older run, not eligible
+            _screening_row(
+                address="0xstale_ineligible", eligible=0,
+                screened_at="2026-09-25T00:00:00+00:00"),
+        ]
+
+        rc = report(db, max_followed=10)
+
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "0xcurrent" in out
+        assert "0xstale_ineligible" not in out
+        assert "1 wallet(s) with screening data from runs before" in out
+
+    def test_eligible_in_latest_run_but_already_followed_excluded(self, capsys):
+        """Wallet eligible in latest run but already followed -> not listed."""
+        db = MagicMock()
+        db.get_followed_wallets.return_value = [
+            _followed_row(address="0xalready_followed")
+        ]
+        db.get_latest_wallet_screenings.return_value = [
+            _screening_row(
+                address="0xalready_followed", eligible=1,
+                screened_at="2026-09-27T00:00:00+00:00"),
+            _screening_row(
+                address="0xcandidateA", eligible=1,
+                screened_at="2026-09-27T00:00:00+00:00"),
+        ]
+
+        rc = report(db, max_followed=10)
+
+        assert rc == 0
+        out = capsys.readouterr().out
+        # Followed wallet should not appear in recommendations
+        assert "0xalready_followed" not in out
+        # Unfollowed candidate should appear
+        assert "0xcandidateA" in out
+        # No wallets excluded due to staleness in this case
+        assert "wallet(s) with screening data from runs before" not in out
+
 
 class TestMainArgparse:
     def test_mutually_exclusive_actions_rejected(self):
