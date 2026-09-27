@@ -76,42 +76,15 @@ def _select_matching_market(result: "list[dict]", ticker: str) -> "dict | None":
     return result[0]
 
 
-def fetch_market_final_price(ticker: str) -> int | None:
-    """Fetch the final resolved YES price (in cents) for a closed market.
+def _parse_outcome_yes_price(market: dict) -> "int | None":
+    """Extract the YES ``outcomePrices`` value (in cents, rounded) from one
+    Gamma API market record, or ``None`` if the field is absent/unparseable.
 
-    Queries the Polymarket Gamma API for the market identified by *ticker*
-    (the 0x condition ID). Returns the YES ``outcomePrices`` value rounded to
-    the nearest integer cent, or ``None`` if the market is not found, not yet
-    resolved, the API call fails, or the response does not verifiably match
-    *ticker* (see ``_select_matching_market`` -- issue #867: a market whose
-    ``conditionId`` disagrees with the requested ticker is never trusted).
-
-    The ``outcomePrices`` field is a JSON-encoded list of decimal strings where
-    index 0 is the YES price and index 1 is the NO price, e.g.
-    ``'["0.97", "0.03"]'``.  A resolved-YES market shows YES ~= 1.00 (100c)
-    and a resolved-NO market shows YES ~= 0.00 (0c).
+    Shared by ``fetch_market_final_price`` (single-market path) and
+    ``fetch_market_resolutions_batch`` (batched path, issue #1227) so the
+    parsing logic -- and its failure modes -- has exactly one implementation.
     """
     import json as _json
-
-    url = f"{POLYMARKET_GAMMA_API}/markets?condition_ids={ticker}&closed=true"
-    try:
-        r = fetch(url, timeout=HTTP_TIMEOUT_SECONDS)
-        r.raise_for_status()
-        result = r.json()
-        if not result:
-            log.debug("[polymarket] fetch_market_final_price(%s...): empty response (market not yet resolved)", ticker[:14])
-            return None
-        market = _select_matching_market(result, ticker)
-        if market is None:
-            log.warning(
-                "[polymarket] fetch_market_final_price(%s...): response condition_id(s) "
-                "did not match the requested ticker -- refusing to read a foreign market",
-                ticker[:14],
-            )
-            return None
-    except Exception as e:
-        log.warning("[polymarket] fetch_market_final_price(%s...): %s", ticker[:14], e)
-        return None
 
     raw = market.get("outcomePrices")
     if raw is None:
@@ -137,12 +110,71 @@ def fetch_market_final_price(ticker: str) -> int | None:
     return round(yes_price * 100)
 
 
+def fetch_market_final_price(ticker: str) -> int | None:
+    """Fetch the final resolved YES price (in cents) for a closed market.
+
+    Queries the Polymarket Gamma API for the market identified by *ticker*
+    (the 0x condition ID). Returns the YES ``outcomePrices`` value rounded to
+    the nearest integer cent, or ``None`` if the market is not found, not yet
+    resolved, the API call fails, or the response does not verifiably match
+    *ticker* (see ``_select_matching_market`` -- issue #867: a market whose
+    ``conditionId`` disagrees with the requested ticker is never trusted).
+
+    The ``outcomePrices`` field is a JSON-encoded list of decimal strings where
+    index 0 is the YES price and index 1 is the NO price, e.g.
+    ``'["0.97", "0.03"]'``.  A resolved-YES market shows YES ~= 1.00 (100c)
+    and a resolved-NO market shows YES ~= 0.00 (0c).
+    """
+    url = f"{POLYMARKET_GAMMA_API}/markets?condition_ids={ticker}&closed=true"
+    try:
+        r = fetch(url, timeout=HTTP_TIMEOUT_SECONDS)
+        r.raise_for_status()
+        result = r.json()
+        if not result:
+            log.debug("[polymarket] fetch_market_final_price(%s...): empty response (market not yet resolved)", ticker[:14])
+            return None
+        market = _select_matching_market(result, ticker)
+        if market is None:
+            log.warning(
+                "[polymarket] fetch_market_final_price(%s...): response condition_id(s) "
+                "did not match the requested ticker -- refusing to read a foreign market",
+                ticker[:14],
+            )
+            return None
+    except Exception as e:
+        log.warning("[polymarket] fetch_market_final_price(%s...): %s", ticker[:14], e)
+        return None
+
+    return _parse_outcome_yes_price(market)
+
+
 # A market only counts as definitively resolved when its final YES price is
 # pinned at an extreme. A market that is closed (trading ended) but not yet
 # resolved by UMA can report intermediate last-trade prices; settling from
 # those (or from METAR truth) booked wrong outcomes ~22% of the time (#644).
 RESOLVED_YES_MIN_CENTS = 95
 RESOLVED_NO_MAX_CENTS = 5
+
+
+def _classify_resolution(price: "int | None", ticker: str) -> "bool | None":
+    """Map a final YES price (cents) to True/False/None per the
+    RESOLVED_YES_MIN_CENTS/RESOLVED_NO_MAX_CENTS thresholds. Shared by
+    ``fetch_market_resolution`` and ``fetch_market_resolutions_batch``
+    (issue #1227) so both paths apply the exact same definition of
+    "resolved" -- see ``fetch_market_resolution``'s docstring for why an
+    intermediate price is treated as unresolved, not guessed.
+    """
+    if price is None:
+        return None
+    if price >= RESOLVED_YES_MIN_CENTS:
+        return True
+    if price <= RESOLVED_NO_MAX_CENTS:
+        return False
+    log.warning(
+        "[polymarket] market %s... closed with ambiguous final YES price %sc "
+        "-- treating as unresolved", str(ticker)[:14], price,
+    )
+    return None
 
 
 def fetch_market_resolution(ticker: str) -> "bool | None":
@@ -156,17 +188,126 @@ def fetch_market_resolution(ticker: str) -> "bool | None":
             for a 0x market that will eventually resolve on-chain.
     """
     price = fetch_market_final_price(ticker)
-    if price is None:
+    return _classify_resolution(price, ticker)
+
+
+#: Batch size for ``fetch_market_resolutions_batch``'s repeated
+#: ``condition_ids`` query keys (issue #1227). The Gamma API's actual
+#: per-request limit was not probed -- this starts conservative (the low
+#: end of the 25-50 range the issue suggested) precisely because going too
+#: high and getting silently truncated would look identical to "some of
+#: these markets aren't resolved yet", the same failure mode this issue
+#: exists to avoid. Raise it later only once a higher value has been
+#: verified against live traffic, the same way the comma-vs-repeated-keys
+#: behaviour was verified before this issue was scoped.
+DEFAULT_RESOLUTION_BATCH_SIZE = 25
+
+
+def _index_by_condition_id(result: "list[dict]") -> "dict[str, dict]":
+    """Map lowercased ``conditionId`` -> market, for every entry in *result*
+    that carries an identifiable condition ID.
+
+    This is the batched-response counterpart of ``_select_matching_market``'s
+    mismatch guard (issue #867): a market with no identifiable condition ID
+    is dropped rather than guessed at, and -- because callers only ever look
+    a specific requested id up in the returned map -- a market whose
+    ``conditionId`` doesn't match anything that was asked for is simply
+    never read, regardless of what position it came back in.
+    """
+    index: "dict[str, dict]" = {}
+    for market in result:
+        cid = market.get("conditionId") or market.get("condition_id")
+        if cid is None:
+            continue
+        index[str(cid).lower()] = market
+    return index
+
+
+def _fetch_resolution_batch_once(tickers: "list[str]") -> "dict[str, bool | None] | None":
+    """Resolve one batch (already <= DEFAULT_RESOLUTION_BATCH_SIZE) in a
+    single Gamma API request. Returns ``None`` (not a dict) if the request
+    itself failed/timed out, signalling the caller should fall back to the
+    per-market path -- never a partial/best-effort dict for a failed
+    request, so a network failure can't be confused with "no markets
+    resolved".
+    """
+    # Repeated query keys, e.g. "condition_ids=A&condition_ids=B" -- NOT a
+    # comma-joined list. Verified against the live API (issue #1221's
+    # investigation, restated in #1227): condition_ids=A,B silently returns
+    # an empty list, indistinguishable from "none of these markets exist".
+    # Anyone re-deriving this from scratch should assume the comma form is
+    # untested-safe; it is not.
+    query = "&".join(f"condition_ids={cid}" for cid in tickers)
+    url = f"{POLYMARKET_GAMMA_API}/markets?{query}&closed=true"
+    try:
+        r = fetch(url, timeout=HTTP_TIMEOUT_SECONDS)
+        r.raise_for_status()
+        result = r.json()
+    except Exception as e:
+        log.warning(
+            "[polymarket] fetch_market_resolutions_batch: batch of %s failed (%s) "
+            "-- falling back to per-market resolution for this batch", len(tickers), e,
+        )
         return None
-    if price >= RESOLVED_YES_MIN_CENTS:
-        return True
-    if price <= RESOLVED_NO_MAX_CENTS:
-        return False
-    log.warning(
-        "[polymarket] market %s... closed with ambiguous final YES price %sc "
-        "-- treating as unresolved", str(ticker)[:14], price,
-    )
-    return None
+
+    if not isinstance(result, list):
+        result = []
+
+    by_condition_id = _index_by_condition_id(result)
+    resolved: "dict[str, bool | None]" = {}
+    for ticker in tickers:
+        market = by_condition_id.get(str(ticker).lower())
+        if market is None:
+            # Requested id absent from the response -- unresolved, exactly
+            # like the single-market path's empty response (issue #1221's
+            # poisoning invariant: the caller must never cache this as a
+            # resolved market).
+            resolved[ticker] = None
+            continue
+        price = _parse_outcome_yes_price(market)
+        resolved[ticker] = _classify_resolution(price, ticker)
+    return resolved
+
+
+def fetch_market_resolutions_batch(
+    tickers: "list[str]", batch_size: int = DEFAULT_RESOLUTION_BATCH_SIZE,
+) -> "dict[str, bool | None]":
+    """Resolve many markets in as few Gamma API requests as possible.
+
+    Splits *tickers* into chunks of at most *batch_size* and fetches each
+    chunk with repeated ``condition_ids`` query keys (never a comma-joined
+    list -- see ``_fetch_resolution_batch_once``). Duplicate tickers are
+    de-duplicated (first occurrence order preserved) so a wallet that
+    traded the same market many times only pays for it once.
+
+    A ticker absent from its batch's response is mapped to ``None``
+    (unresolved) -- callers (see ``PersistentResolutionCache.__setitem__``
+    in ``copy_wallet_screening.py``) must not persist that ``None`` as a
+    resolved market, same as the single-market path.
+
+    A market present in the response but returned by
+    ``_select_matching_market``'s batched counterpart as belonging to an
+    id nobody asked for is never trusted (issue #867's guard, preserved
+    via ``_index_by_condition_id``).
+
+    If a chunk's request itself fails or times out, that chunk alone falls
+    back to sequential single-market ``fetch_market_resolution`` calls --
+    the run degrades to the pre-#1227 cost for that chunk instead of
+    losing every market in it.
+    """
+    unique_tickers = list(dict.fromkeys(tickers))
+    resolved: "dict[str, bool | None]" = {}
+
+    for i in range(0, len(unique_tickers), batch_size):
+        chunk = unique_tickers[i:i + batch_size]
+        chunk_result = _fetch_resolution_batch_once(chunk)
+        if chunk_result is None:
+            for ticker in chunk:
+                resolved[ticker] = fetch_market_resolution(ticker)
+        else:
+            resolved.update(chunk_result)
+
+    return resolved
 
 
 def get_orderbook(token_id: str) -> dict:

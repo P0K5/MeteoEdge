@@ -61,7 +61,10 @@ from statistics import mean, median
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from src.data.polymarket import fetch_market_resolution  # noqa: E402
+from src.data.polymarket import (  # noqa: E402
+    fetch_market_resolution,
+    fetch_market_resolutions_batch,
+)
 from src.data.polymarket_traders import (  # noqa: E402
     get_leaderboard,
     get_wallet_trades,
@@ -131,9 +134,32 @@ def _stats(rois: "list[float]") -> dict:
     }
 
 
+def collect_distinct_buy_markets(raw_trades: "list[dict]") -> "list[str]":
+    """Return the distinct markets referenced by *raw_trades*'s BUY-side
+    fills, in first-seen order.
+
+    Used by ``backtest_wallet``'s ``batch_resolve=True`` path (issue #1227)
+    to know, before the per-trade loop runs, which markets this wallet's
+    trade tape actually needs resolved. Mirrors ``normalize_trade``'s own
+    drop-on-unparseable behaviour -- an unnormalizable or non-BUY record
+    contributes nothing.
+    """
+    seen: "set[str]" = set()
+    markets: "list[str]" = []
+    for raw in raw_trades:
+        trade = normalize_trade(raw)
+        if trade is None or trade["side"] != "BUY":
+            continue
+        market = trade["market"]
+        if market not in seen:
+            seen.add(market)
+            markets.append(market)
+    return markets
+
+
 def backtest_wallet(
     address: str, slippage_bps: float, flat_stake: "float | None" = None,
-    cache: "dict | None" = None,
+    cache: "dict | None" = None, batch_resolve: bool = False,
 ) -> dict:
     """Run the copy-trade simulation for one wallet's BUY trades.
 
@@ -154,12 +180,37 @@ def backtest_wallet(
     callers (the standalone CLI in this module, and every test that
     doesn't pass one) are unaffected.
 
+    *batch_resolve* (issue #1227), when ``True``, resolves this wallet's
+    distinct new BUY markets (those not already in *cache*) with a handful
+    of batched ``fetch_market_resolutions_batch`` requests -- repeated
+    ``condition_ids`` query keys, never comma-joined -- BEFORE the
+    per-trade loop below runs, instead of paying for one sequential
+    ``fetch_market_resolution`` request per new market inline as
+    ``resolve_payout`` encounters each trade. The per-trade loop and
+    ``resolve_payout`` are otherwise completely unchanged -- they simply
+    find those markets already primed in *cache*. Defaults to ``False`` so
+    every existing caller (the standalone CLI in this module, and every
+    test that doesn't pass it) keeps today's exact one-request-per-market
+    behavior; only ``copy_wallet_screening.run()`` passes ``True``.
+
     Per-trade fields are only held in memory long enough to aggregate, not
     returned -- keeps the report a fixed size regardless of how many fills
     a wallet has.
     """
     raw_trades = get_wallet_trades(address)
     resolution_cache: dict = cache if cache is not None else {}
+
+    if batch_resolve:
+        distinct_markets = collect_distinct_buy_markets(raw_trades)
+        # Each `market not in resolution_cache` check below is the same
+        # PersistentResolutionCache.__contains__ a per-trade resolve_payout()
+        # lookup would make -- see that class's docstring (copy_wallet_
+        # screening.py) for how priming here shifts, without distorting,
+        # the run's hits/misses accounting.
+        to_fetch = [m for m in distinct_markets if m not in resolution_cache]
+        if to_fetch:
+            for market, value in fetch_market_resolutions_batch(to_fetch).items():
+                resolution_cache[market] = value
 
     trader_rois: "list[float]" = []
     copier_rois: "list[float]" = []

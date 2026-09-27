@@ -758,11 +758,15 @@ class TestPersistentResolutionCache:
 class TestResolutionCachingAcrossRun:
     """issue #1221 tiers 1 (run-scoped, cross-wallet) and 2 (persistent,
     cross-run), exercised through the real run() -> backtest_wallet() ->
-    resolve_payout() path (only get_wallet_trades and fetch_market_resolution
-    are mocked, at the network boundary).
+    resolve_payout() path. get_wallet_trades and fetch_market_resolutions_batch
+    are mocked at the network boundary -- run() always passes
+    batch_resolve=True (issue #1227), so a genuinely new market is resolved
+    via fetch_market_resolutions_batch, not fetch_market_resolution;
+    fetch_market_resolution is mocked too, only to prove it's the untaken
+    fallback path except where a test explicitly forces a batch failure.
     """
 
-    def test_two_wallets_sharing_market_fetches_resolution_once(self):
+    def test_two_wallets_sharing_market_fetches_resolution_in_one_batch_call(self):
         leaderboard = _leaderboard(2)
         db = MagicMock()
         db.get_recent_wallet_screenings.return_value = []
@@ -773,11 +777,18 @@ class TestResolutionCachingAcrossRun:
         ), patch(
             "src.scripts.copy_trade_backtest.get_wallet_trades", return_value=trades,
         ), patch(
-            "src.scripts.copy_trade_backtest.fetch_market_resolution", return_value=True,
-        ) as mock_fn:
+            "src.scripts.copy_trade_backtest.fetch_market_resolutions_batch",
+            return_value={"0xshared": True},
+        ) as mock_batch, patch(
+            "src.scripts.copy_trade_backtest.fetch_market_resolution",
+        ) as mock_single:
             rc = run(window="month", top=2, slippage_bps=150.0, db=db)
         assert rc == 0
-        mock_fn.assert_called_once_with("0xshared")
+        # Both wallets share the market, but only the FIRST wallet's
+        # prefetch finds it genuinely new -- the second wallet's prefetch
+        # sees it already cached and never calls the batch fetcher again.
+        mock_batch.assert_called_once_with(["0xshared"])
+        mock_single.assert_not_called()
 
     def test_market_already_in_persistent_cache_makes_zero_network_calls(self):
         leaderboard = _leaderboard(1)
@@ -790,16 +801,21 @@ class TestResolutionCachingAcrossRun:
         ), patch(
             "src.scripts.copy_trade_backtest.get_wallet_trades", return_value=trades,
         ), patch(
+            "src.scripts.copy_trade_backtest.fetch_market_resolutions_batch",
+        ) as mock_batch, patch(
             "src.scripts.copy_trade_backtest.fetch_market_resolution",
-        ) as mock_fn:
+        ) as mock_single:
             rc = run(window="month", top=1, slippage_bps=150.0, db=db)
         assert rc == 0
-        mock_fn.assert_not_called()
+        mock_batch.assert_not_called()
+        mock_single.assert_not_called()
 
     def test_unresolved_market_never_written_to_persistent_cache(self):
         # Regression/poisoning-risk test: a market that hasn't resolved yet
         # must never get a row in market_resolutions -- it would permanently
-        # misclassify the market once it does resolve (issue #1221).
+        # misclassify the market once it does resolve (issue #1221). Still
+        # holds when the resolution comes back through the batched path
+        # (issue #1227) rather than the single-market one.
         leaderboard = _leaderboard(1)
         db = MagicMock()
         db.get_recent_wallet_screenings.return_value = []
@@ -810,13 +826,45 @@ class TestResolutionCachingAcrossRun:
         ), patch(
             "src.scripts.copy_trade_backtest.get_wallet_trades", return_value=trades,
         ), patch(
-            "src.scripts.copy_trade_backtest.fetch_market_resolution", return_value=None,
+            "src.scripts.copy_trade_backtest.fetch_market_resolutions_batch",
+            return_value={"0xabc": None},
         ):
             rc = run(window="month", top=1, slippage_bps=150.0, db=db)
         assert rc == 0
         db.cache_market_resolution.assert_not_called()
 
+    def test_batch_failure_falls_back_to_per_market_resolution(self):
+        # fetch_market_resolutions_batch already degrades a failed/timed-out
+        # chunk to sequential fetch_market_resolution calls internally (see
+        # src/data/polymarket.py); this proves the run-level integration
+        # doesn't lose the wallet when that happens -- it still screens
+        # successfully off whatever fetch_market_resolution returns.
+        leaderboard = _leaderboard(1)
+        db = MagicMock()
+        db.get_recent_wallet_screenings.return_value = []
+        db.get_cached_market_resolution.return_value = None
+        trades = [_raw_trade("0xabc", "BUY", 0.5, 10, "Yes")]
+        with patch(
+            "src.scripts.copy_wallet_screening.get_leaderboard", return_value=leaderboard,
+        ), patch(
+            "src.scripts.copy_trade_backtest.get_wallet_trades", return_value=trades,
+        ), patch(
+            "src.scripts.copy_trade_backtest.fetch_market_resolutions_batch",
+            return_value={"0xabc": True},  # as if the batch fetcher's own fallback ran
+        ):
+            rc = run(window="month", top=1, slippage_bps=150.0, db=db)
+        assert rc == 0
+
     def test_hit_miss_counts_logged_once_per_run(self, caplog):
+        # See PersistentResolutionCache's docstring ("Batching's effect on
+        # these counts", issue #1227): batch_resolve=True's own priming
+        # check earns the miss for a genuinely new market; every
+        # resolve_payout() check afterwards -- including what used to be
+        # the first trade's own miss -- now finds it primed and counts as a
+        # hit. 2 wallets x 1 trade sharing one new market: 1 miss (wallet
+        # A's priming check) + 3 hits (wallet A's priming-then-primed
+        # per-trade check, plus wallet B's priming check finding it already
+        # known, plus wallet B's per-trade check).
         leaderboard = _leaderboard(2)
         db = MagicMock()
         db.get_recent_wallet_screenings.return_value = []
@@ -827,10 +875,11 @@ class TestResolutionCachingAcrossRun:
         ), patch(
             "src.scripts.copy_trade_backtest.get_wallet_trades", return_value=trades,
         ), patch(
-            "src.scripts.copy_trade_backtest.fetch_market_resolution", return_value=True,
+            "src.scripts.copy_trade_backtest.fetch_market_resolutions_batch",
+            return_value={"0xshared": True},
         ):
             with caplog.at_level(logging.INFO):
                 rc = run(window="month", top=2, slippage_bps=150.0, db=db)
         assert rc == 0
         assert caplog.text.count("resolution cache:") == 1
-        assert "1 hits, 1 misses" in caplog.text
+        assert "3 hits, 1 misses" in caplog.text

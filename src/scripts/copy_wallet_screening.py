@@ -127,7 +127,27 @@ class PersistentResolutionCache(dict):
     ``hits``/``misses`` count every ``market in cache`` check a run makes
     (i.e. once per ``resolve_payout()`` lookup): a hit is answered without
     a network call (already known this run, or found in the persistent
-    table); a miss requires ``fetch_market_resolution`` be called.
+    table); a miss requires a resolution be fetched (batched or, on
+    fallback, single-market).
+
+    **Batching's effect on these counts (issue #1227).** ``run()`` passes
+    ``batch_resolve=True`` to ``backtest_wallet()``, which -- before its own
+    per-trade loop -- batch-resolves a wallet's distinct BUY markets that
+    aren't already in this cache and primes it with the results (see
+    ``backtest_wallet``'s docstring). That priming step's own
+    ``market not in cache`` check is what earns the "miss" for a genuinely
+    new market (exactly once, matching the pre-#1227 first-encounter miss);
+    every later ``resolve_payout()`` check for that market -- including
+    what used to be that very first trade -- now finds it already primed,
+    so it counts as a hit. Net effect: for a wallet with N buy trades
+    against a newly-seen market, the pre-#1227 count was 1 miss + (N-1)
+    hits; with batching it's 1 miss + N hits -- one hit higher, because the
+    network work that used to happen inline on the first trade now happens
+    in the priming step instead. ``misses`` still means exactly what it
+    always meant ("this many distinct markets needed a network round trip
+    this run"); only ``hits`` is nominally larger as a mechanical side
+    effect of moving that work earlier, not a change in what "resolved
+    from cache" means.
     """
 
     def __init__(self, db: "Database | None" = None):
@@ -311,7 +331,13 @@ def run(
 
     n_screened = 0
     for address in addresses:
-        result = backtest_wallet(address, slippage_bps, flat_stake, cache=resolution_cache)
+        # Issue #1227: batch_resolve=True makes backtest_wallet resolve
+        # this wallet's distinct new markets with a handful of batched
+        # Gamma API requests (repeated condition_ids keys) before its own
+        # per-trade loop, instead of one sequential request per new market.
+        result = backtest_wallet(
+            address, slippage_bps, flat_stake, cache=resolution_cache, batch_resolve=True,
+        )
         if result["n_resolved"] < min_trades:
             log.info(
                 "[copy-wallet-screening] %s: n_resolved=%s below --min-trades=%s, skipping.",
