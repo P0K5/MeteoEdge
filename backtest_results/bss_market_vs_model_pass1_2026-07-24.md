@@ -48,10 +48,12 @@ It implements, exactly per the issue and the decision-gate spec in
 This development/agent environment has **no `logs/` directory at all** (it
 is correctly gitignored; the 37 days of `candidates.*.csv.gz` referenced in
 the issue live on the production bot host) and **no `data/meteoedge.db`**
-(only `data/.gitkeep` is checked in). `scripts/fetch_remote_data.sh` /
-`Fetch-RemoteData.ps1` (added 2026-07-24) can pull both from the host over
-SSH, but require `REMOTE_HOST` / `REMOTE_USER` / `REMOTE_KEY_PATH`
-credentials in `.env` that are not present in this session.
+(only `data/.gitkeep` is checked in). `scripts/Fetch-RemoteData.ps1` /
+`scripts/remote_sync.py` can pull both from the host over SSH with consistent
+SQLite snapshots, but require `REMOTE_HOST` / `REMOTE_USER` / `REMOTE_KEY_PATH`
+credentials in `.env` that are not present in this session. (The older
+`scripts/fetch_remote_data.sh` is deprecated as of #1239 due to copying live
+databases byte-for-byte.)
 
 Running the tool here today confirms the self-gate does exactly what it is
 supposed to -- no fabricated result, just an honest log line:
@@ -78,7 +80,7 @@ One of:
 
 1. Grant this session (or a follow-up session) access to the production
    host's `logs/candidates.*.csv.gz` and `data/meteoedge.db`, e.g. via
-   `scripts/fetch_remote_data.sh` with real `REMOTE_*` credentials, then
+   `scripts/Fetch-RemoteData.ps1` with real `REMOTE_*` credentials, then
    re-run:
    ```
    python -m src.scripts.bss_market_vs_model_report \
