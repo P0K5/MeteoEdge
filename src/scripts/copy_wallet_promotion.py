@@ -42,17 +42,38 @@ def report(db, max_followed: int) -> int:
     """Print the advisory report; performs no DB writes.
 
     Lists wallets whose *latest* ``copy_wallet_candidates`` screening run
-    has ``eligible_to_follow=1`` and are not already in
-    ``copy_wallets_followed`` (in any status), sorted by ``median_roi``
-    descending, plus a note of how many follow slots remain.
+    (i.e., rows with screened_at equal to the newest run timestamp) has
+    ``eligible_to_follow=1`` and are not already in ``copy_wallets_followed``
+    (in any status), sorted by ``median_roi`` descending, plus a note of how
+    many follow slots remain. Reports how many wallets were excluded due to
+    having stale (pre-latest-run) screening data.
     """
     followed_addresses = {w["address"] for w in db.get_followed_wallets()}
     active_count = active_follow_count(db)
     slots_remaining = max(max_followed - active_count, 0)
 
     latest = db.get_latest_wallet_screenings()
+    if not latest:
+        # Empty table; report zero candidates and zero excluded
+        print(
+            f"Advisory report: 0 eligible, unfollowed wallet(s). "
+            f"{slots_remaining}/{max_followed} follow slot(s) remain "
+            f"({active_count} active)."
+        )
+        return 0
+
+    # Find the newest run timestamp (MAX(screened_at))
+    max_screened_at = max(row["screened_at"] for row in latest)
+
+    # Scope to wallets from the newest run only
+    latest_run = [row for row in latest if row["screened_at"] == max_screened_at]
+
+    # Count how many were excluded for being stale
+    stale_count = len(latest) - len(latest_run)
+
+    # Filter to eligible, unfollowed wallets from the latest run
     candidates = [
-        row for row in latest
+        row for row in latest_run
         if row.get("eligible_to_follow") and row["address"] not in followed_addresses
     ]
     candidates.sort(
@@ -65,6 +86,11 @@ def report(db, max_followed: int) -> int:
         f"{slots_remaining}/{max_followed} follow slot(s) remain "
         f"({active_count} active)."
     )
+    if stale_count > 0:
+        print(
+            f"  ({stale_count} wallet(s) with screening data from runs "
+            f"before {max_screened_at} excluded from recommendation.)"
+        )
     for row in candidates:
         print(
             f"  {row['address']}  median_roi={row['median_roi']!r}  "
