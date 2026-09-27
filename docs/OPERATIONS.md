@@ -2047,8 +2047,10 @@ Requires Python on the desktop (the repo venv is found automatically) and the
 OpenSSH `ssh`/`scp` that ship with Windows. No `rsync` — it does not exist
 there, which is why the delta is computed by the script itself.
 
-The older `scripts/fetch_remote_data.sh` (rsync) still copies live databases
-byte-for-byte and should not be used to fetch `data/`.
+**Note:** The deprecated `scripts/fetch_remote_data.sh` (rsync) copied live
+databases byte-for-byte while the bot was writing them, producing torn/unreadable
+copies. This fundamental flaw cannot be fixed in the rsync approach. Use
+`scripts/Fetch-RemoteData.ps1` or `scripts/remote_sync.py` instead (issue #1239).
 
 ---
 
