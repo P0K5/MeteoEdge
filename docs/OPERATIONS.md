@@ -386,10 +386,10 @@ python -c "import json; print(len(json.load(open('logs/gamma_resolution_cache.js
 One-shot service, run daily at **14:00 UTC** (after settlement at 12:00,
 resolve-outcomes at 13:00, and prob-cap-report at 12:30) by
 `meteoedge-health-report.timer`. Runs `src/scripts/daily_health_report.py`,
-which queries the database for bot health, trading activity, data pipeline
-status, guardrail events, M3 station-day accrual, EMOS shadow progress, and
-open blocker status, then emails a plain-text summary via the existing SMTP
-infrastructure (`src/monitoring/alerts.py`).
+which queries the database for bot health, per-table write liveness, trading
+activity, data pipeline status, guardrail events, M3 station-day accrual,
+EMOS shadow progress, and open blocker status, then emails a plain-text
+summary via the existing SMTP infrastructure (`src/monitoring/alerts.py`).
 
 ```ini
 [Unit]
@@ -429,9 +429,19 @@ WantedBy=timers.target
 - Sends a plain-text email to `andre.freixo.santos@gmail.com` via Gmail SMTP
   (configured in `.env` as `SMTP_USER` / `SMTP_PASS`). If SMTP is not
   configured, logs a warning and exits 0.
-- Emails a structured report with sections for Bot Pulse, Trading, Data
-  Pipeline, Guardrails, M3 Progress, EMOS Status, Open Blockers, and a
-  one-line Verdict.
+- Emails a structured report with sections for Bot Pulse, Table Liveness,
+  Trading, Data Pipeline, Guardrails, M3 Progress, EMOS Status, Open
+  Blockers, and a one-line Verdict.
+- **Table Liveness (issue #1237):** asserts `poll_runs`, `candidates`,
+  `scan_decisions`, `observations`, and `model_forecast_log` have each
+  received a write within their expected cadence (`TABLE_LIVENESS_SPECS` in
+  the script), and WARNs naming the table and the age of its newest row if
+  not. This is a generic fix for the class of bug where `scan_decisions`
+  stopped receiving writes for a month and every other section — which reads
+  a *value* from a table, never asks whether the table is still *live* —
+  kept reporting as if nothing were wrong. `copy_live_positions` and
+  `risk_state` are deliberately excluded (`TABLE_LIVENESS_QUIET_OK`): both
+  legitimately sit empty for long stretches and are not swept.
 
 **Operational commands:**
 ```bash
@@ -1727,6 +1737,12 @@ AlertManager sends email notifications on these conditions:
 - No poll has run in the past 30 minutes (poll-missed alert)
 
 Configure email via env vars (see `.env.example`).
+
+Separately, the daily health report (below) WARNs if any of `poll_runs`,
+`candidates`, `scan_decisions`, `observations`, or `model_forecast_log` stops
+receiving writes — a table can silently stop being written to while the poll
+loop itself keeps running and the poll-missed alert above stays quiet (issue
+#1237: `scan_decisions` went a month with no writes and no alert).
 
 ### Manual Monitoring
 

@@ -26,11 +26,15 @@ if str(_HERE.parents[1]) not in sys.path:
 from src.scripts.daily_health_report import (
     HIGH_RAIL_WARN_RATIO,  # noqa: E402
     M3_CLEAN_DATA_CLOCK_START,  # noqa: E402
+    TABLE_LIVENESS_QUIET_OK,  # noqa: E402
+    TABLE_LIVENESS_SPECS,  # noqa: E402
     _build_bot_health,
     _build_header,
     _build_m3_progress,
+    _build_table_liveness,
     _build_trading,
     _build_verdict,
+    _fmt_age,
     _fmt_pnl,
     _fmt_pct,
     _send_email,
@@ -235,6 +239,155 @@ class TestBuildBotHealth:
         assert flags["status"] == "OK"
         assert "[OK] Healthy" in text
         conn.close()
+
+
+# ---------------------------------------------------------------------------
+# _build_table_liveness (issue #1237)
+#
+# scan_decisions stopped receiving writes on 2026-08-28 and nothing WARNed
+# for a month: every existing check reads a VALUE from a table without
+# asserting the table is still LIVE. These tests pin the generic fix.
+# ---------------------------------------------------------------------------
+
+def _liveness_db(newest_by_table: "dict[str, str | None]") -> MagicMock:
+    """Mock DB whose `SELECT MAX(col) FROM <table>` answers come from
+    `newest_by_table` (keyed by table name). A table not present in the dict
+    behaves as if it were empty (MAX returns None)."""
+    db = MagicMock()
+
+    def _execute(sql, params=None):
+        mock = MagicMock()
+        newest = None
+        for table in newest_by_table:
+            if f"FROM {table}" in sql:
+                newest = newest_by_table[table]
+                break
+        mock.fetchone.return_value = (newest,)
+        return mock
+
+    db._conn.execute = _execute
+    return db
+
+
+class TestFmtAge:
+    def test_minutes(self):
+        assert _fmt_age(45) == "45 min"
+
+    def test_hours(self):
+        assert _fmt_age(180) == "3.0h"
+
+    def test_days(self):
+        assert _fmt_age(60 * 24 * 3) == "3.0d"
+
+
+class TestTableLivenessQuietOkDisjoint:
+    def test_quiet_ok_tables_never_in_monitored_specs(self):
+        """A table meant to be allowed to go quiet must never end up in the
+        monitored spec list -- that would WARN on it every single day it is
+        legitimately empty (e.g. copy_live_positions before copy-trading
+        goes live, risk_state on a non-trading day) and train everyone to
+        ignore the report, which is the exact failure #1237 is about."""
+        monitored = {table for table, _col, _warn in TABLE_LIVENESS_SPECS}
+        assert monitored.isdisjoint(TABLE_LIVENESS_QUIET_OK)
+
+
+class TestBuildTableLiveness:
+    def test_all_tables_fresh_yields_ok(self):
+        today = datetime(2026, 9, 27, 14, 0, 0, tzinfo=timezone.utc)
+        fresh = (today - timedelta(minutes=1)).isoformat()
+        db = _liveness_db({table: fresh for table, _col, _warn in TABLE_LIVENESS_SPECS})
+        lines, flags = _build_table_liveness(db, today)
+        text = "\n".join(lines)
+        assert flags["status"] == "OK"
+        assert flags["stale_tables"] == []
+        assert "[WARN]" not in text
+
+    def test_stalled_table_warns_naming_table_and_age(self):
+        """Regression test for #1237: scan_decisions frozen a month before
+        `today` must WARN, naming the table and its age -- this is the check
+        that was entirely missing before this issue."""
+        today = datetime(2026, 9, 27, 14, 0, 0, tzinfo=timezone.utc)
+        newest_by_table = {table: (today - timedelta(minutes=1)).isoformat()
+                            for table, _col, _warn in TABLE_LIVENESS_SPECS}
+        newest_by_table["scan_decisions"] = "2026-08-28T10:21:38.342847+00:00"
+        db = _liveness_db(newest_by_table)
+
+        lines, flags = _build_table_liveness(db, today)
+        text = "\n".join(lines)
+
+        assert flags["status"] == "WARN"
+        assert "scan_decisions" in flags["stale_tables"]
+        assert any("scan_decisions" in d for d in flags["details"])
+        assert "scan_decisions" in text
+        assert "[WARN]" in text
+        # Only the stalled table WARNs -- everything else stayed fresh.
+        other_tables = [t for t, _c, _w in TABLE_LIVENESS_SPECS if t != "scan_decisions"]
+        for table in other_tables:
+            assert f"  {table:<20} newest row" in text
+        assert text.count("[WARN]") == 1
+
+    def test_boundary_just_inside_window_is_quiet(self):
+        """One minute inside the threshold: no WARN (threshold provably
+        fireable in both directions, per issue #1237 test requirements)."""
+        today = datetime(2026, 9, 27, 14, 0, 0, tzinfo=timezone.utc)
+        fresh = (today - timedelta(minutes=1)).isoformat()
+        table, _col, warn_after = next(t for t in TABLE_LIVENESS_SPECS if t[0] == "scan_decisions")
+        newest_by_table = {t: fresh for t, _c, _w in TABLE_LIVENESS_SPECS}
+        newest_by_table[table] = (today - timedelta(minutes=warn_after - 1)).isoformat()
+        db = _liveness_db(newest_by_table)
+        _lines, flags = _build_table_liveness(db, today)
+        assert table not in flags["stale_tables"]
+        assert flags["status"] == "OK"
+
+    def test_boundary_just_outside_window_warns(self):
+        today = datetime(2026, 9, 27, 14, 0, 0, tzinfo=timezone.utc)
+        fresh = (today - timedelta(minutes=1)).isoformat()
+        table, _col, warn_after = next(t for t in TABLE_LIVENESS_SPECS if t[0] == "scan_decisions")
+        newest_by_table = {t: fresh for t, _c, _w in TABLE_LIVENESS_SPECS}
+        newest_by_table[table] = (today - timedelta(minutes=warn_after + 1)).isoformat()
+        db = _liveness_db(newest_by_table)
+        _lines, flags = _build_table_liveness(db, today)
+        assert table in flags["stale_tables"]
+        assert flags["status"] == "WARN"
+
+    def test_empty_table_reported_without_crashing(self):
+        """Zero rows ever (MAX returns NULL) must not crash on
+        datetime.fromisoformat(None) -- and must WARN, not read as healthy."""
+        today = datetime(2026, 9, 27, 14, 0, 0, tzinfo=timezone.utc)
+        db = _liveness_db({})  # every table answers MAX(...) = NULL
+        lines, flags = _build_table_liveness(db, today)
+        text = "\n".join(lines)
+        assert flags["status"] == "WARN"
+        assert len(flags["stale_tables"]) == len(TABLE_LIVENESS_SPECS)
+        assert "no rows ever" in text
+
+    def test_query_error_reported_not_raised(self):
+        today = datetime(2026, 9, 27, 14, 0, 0, tzinfo=timezone.utc)
+        db = MagicMock()
+        db._conn.execute = MagicMock(side_effect=Exception("boom"))
+        lines, _flags = _build_table_liveness(db, today)
+        assert "(unavailable -- query error)" in "\n".join(lines)
+
+
+class TestBuildVerdictTableLiveness:
+    def test_stalled_table_warns_verdict_naming_the_table(self):
+        sections = [("table_liveness",
+                     ["Table Liveness", "  scan_decisions        newest row 29.0d old   [WARN]"],
+                     {"status": "WARN", "stale_tables": ["scan_decisions"],
+                      "details": ["scan_decisions stalled -- newest row 29.0d old "
+                                  "(warn threshold 6.0h)"]})]
+        result = _build_verdict(sections)
+        text = "\n".join(result)
+        assert "[WARN]" in text
+        assert "scan_decisions stalled" in text
+
+    def test_all_live_yields_no_table_liveness_label(self):
+        sections = [("table_liveness", ["Table Liveness", "  poll_runs newest row 1 min old [OK]"],
+                     {"status": "OK", "stale_tables": [], "details": []})]
+        result = _build_verdict(sections)
+        text = "\n".join(result)
+        assert "[OK] Healthy" in text
+        assert "stalled" not in text
 
 
 # ---------------------------------------------------------------------------
@@ -510,6 +663,7 @@ class TestBuildReport:
         result = build_report(db)
         for header in [
             "Bot Pulse",
+            "Table Liveness",
             "Trading (last 24h UTC)",
             "Data Pipeline (today UTC)",
             "Guardrails (last 24h)",

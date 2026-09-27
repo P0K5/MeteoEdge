@@ -79,6 +79,52 @@ POLL_COUNT_WARN_RATIO = 0.7
 WIN_RATE_N = 20
 EMOS_MIN_SAMPLES_PROMOTION = 60
 
+# issue #1237: `scan_decisions` stopped receiving writes on 2026-08-28 and
+# nothing here noticed for a month, because every existing check reads a
+# VALUE from a table (a count, a mean, a max) without first asking whether
+# the table is still LIVE -- the same blind spot as #910-#914's unfireable
+# rail metric, one layer up. `_build_table_liveness` below is the generic
+# fix: assert liveness for every table this report actually depends on,
+# rather than adding a fifth bespoke "is X stale" check.
+#
+# Each entry is (table, timestamp_column, warn_after_minutes).
+# `warn_after_minutes` is "a few times" the table's normal write cadence --
+# see the per-table comment -- never the cadence itself, so a single missed
+# cycle does not WARN. Cadences are the ones observed in production and
+# documented on issue #1237:
+TABLE_LIVENESS_SPECS: "list[tuple[str, str, int]]" = [
+    # ~200-255 rows/day (~6 min/row) via the unconditional per-poll
+    # heartbeat -- already covered by `_build_bot_health`'s own gap/count
+    # logic, but included here too so the generic mechanism is provably
+    # able to catch it independently (issue #1237 test requirement).
+    ("poll_runs", "poll_ts", 30),
+    # ~200-255 rows/day, same order as poll_runs, but conditional on a
+    # bracket actually clearing the candidate bar -- looser multiplier than
+    # poll_runs to tolerate quiet stretches without a real fault.
+    ("candidates", "ts", 60),
+    # The table that actually died. ~319 distinct brackets/day when healthy;
+    # it upserts on (station, ticker, date), but MAX(poll_ts) still advances
+    # on every write regardless, so a stopped write path reads as its
+    # newest row aging in real time. 6h catches the incident on day one
+    # (age ~24h by day two), not a month later.
+    ("scan_decisions", "poll_ts", 360),
+    # Hourly per station.
+    ("observations", "ts", 180),
+    # Written once/day per station/model; 48h tolerates one missed day.
+    ("model_forecast_log", "logged_at", 2880),
+]
+
+#: Tables that legitimately go quiet -- `copy_live_positions` is empty until
+#: copy-trading goes live, `risk_state` is written only on days the bot
+#: actually trades -- and must therefore never appear in
+#: ``TABLE_LIVENESS_SPECS``. This is an explicit allow-list, not a sweep of
+#: every table (issue #1237 explicitly rules out the sweep: an unconditional
+#: check would WARN on these two every single day and train everyone to
+#: ignore the report). Kept as a real constant, and asserted disjoint from
+#: ``TABLE_LIVENESS_SPECS`` by a test, rather than left as an implicit
+#: "just don't add them" convention nobody notices breaking.
+TABLE_LIVENESS_QUIET_OK: "set[str]" = {"copy_live_positions", "risk_state"}
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -104,6 +150,16 @@ def _fmt_pct(value: "float | None", digits: int = 1) -> str:
     if value is None:
         return "N/A"
     return f"{value * 100:.{digits}f}%"
+
+
+def _fmt_age(minutes: float) -> str:
+    """Render an age in minutes as the most readable unit for its size."""
+    if minutes < 120:
+        return f"{minutes:.0f} min"
+    hours = minutes / 60
+    if hours < 48:
+        return f"{hours:.1f}h"
+    return f"{hours / 24:.1f}d"
 
 
 # ---------------------------------------------------------------------------
@@ -257,6 +313,75 @@ def _build_bot_health(db, today: datetime) -> "tuple[list[str], dict]":
         log.exception("Bot health query failed")
         lines.append("  (unavailable -- query error)")
         flags = {"status": "UNKNOWN", "detail": "query error"}
+    lines.append("")
+    return lines, flags
+
+
+def _build_table_liveness(db, today: datetime) -> "tuple[list[str], dict]":
+    """WARN when a table this report depends on has stopped receiving writes.
+
+    **The fix for issue #1237.** ``scan_decisions`` stopped receiving writes
+    on 2026-08-28 and every section that reads it (bot pulse's "Brackets
+    live" line, M3's leading indicators via ``bracket_evals`` -- a different
+    table, but the same class of gap) kept reporting a VALUE computed from
+    whatever was already there, with nothing asserting the table was still
+    LIVE. This section is the generic version of that assertion, run against
+    ``TABLE_LIVENESS_SPECS`` -- an explicit, hand-picked list of tables that
+    must always be live, not a sweep of every table (``TABLE_LIVENESS_QUIET_OK``
+    exists precisely because a sweep would false-WARN on tables that
+    legitimately go quiet).
+
+    Each table's ``MAX(timestamp_column)`` is compared against ``today``
+    (mirroring ``_build_bot_health``'s own gap arithmetic). A table with zero
+    rows reports as "no rows ever" rather than crashing on
+    ``datetime.fromisoformat(None)`` -- absent data must WARN, not be
+    silently skipped (same principle as ``_ladder_mass`` returning ``None``
+    rather than reading as a healthy ladder).
+
+    Returns ``(lines, flags)``. ``flags["status"]`` is ``OK`` / ``WARN`` and
+    ``flags["details"]`` carries one human-readable string per stale table
+    for ``_build_verdict`` to surface -- there can be more than one stale
+    table at once, unlike the single-status sections.
+    """
+    lines = ["Table Liveness", "-" * 14]
+    flags: dict = {"status": "OK", "stale_tables": [], "details": []}
+    for table, ts_col, warn_after_min in TABLE_LIVENESS_SPECS:
+        try:
+            row = db._conn.execute(f"SELECT MAX({ts_col}) FROM {table}").fetchone()
+            newest_str = row[0] if row else None
+        except Exception:
+            log.exception("Table liveness query failed for %s", table)
+            lines.append(f"  {table:<20} (unavailable -- query error)")
+            continue
+
+        if not newest_str:
+            lines.append(f"  {table:<20} no rows ever                [WARN]")
+            flags["stale_tables"].append(table)
+            flags["details"].append(f"{table} has never been written to")
+            continue
+
+        newest = datetime.fromisoformat(newest_str)
+        if newest.tzinfo is None:
+            newest = newest.replace(tzinfo=timezone.utc)
+        # Uses `today` (the moment `build_report` started), not a fresh
+        # `_utc_now()` call, so this section's ages are deterministic given
+        # its inputs and reproducible in tests -- unlike `_build_bot_health`,
+        # which intentionally re-samples the wall clock for its single most
+        # recent poll gap.
+        age_min = (today - newest).total_seconds() / 60
+        stale = age_min > warn_after_min
+        age_str = _fmt_age(age_min)
+        tag = "[WARN]" if stale else "[OK]"
+        lines.append(f"  {table:<20} newest row {age_str:<10} old   {tag}")
+        if stale:
+            flags["stale_tables"].append(table)
+            flags["details"].append(
+                f"{table} stalled -- newest row {age_str} old "
+                f"(warn threshold {_fmt_age(warn_after_min)})"
+            )
+
+    if flags["stale_tables"]:
+        flags["status"] = "WARN"
     lines.append("")
     return lines, flags
 
@@ -997,6 +1122,14 @@ def _build_verdict(sections: "list[tuple[str, list[str], dict]]") -> list[str]:
     elif bot_status == "WARN":
         warn_issues.append(bot_flags.get("detail") or "bot pulse degraded")
 
+    # issue #1237: a stale table is reported as its own WARN(s), one per
+    # affected table, rather than folded into an unrelated section's label --
+    # the same "name the thing that actually tripped" discipline as the M3
+    # sub-indicators below.
+    table_liveness_flags = flags_by_section.get("table_liveness", {})
+    if table_liveness_flags.get("status") == "WARN":
+        warn_issues.extend(table_liveness_flags.get("details", []))
+
     m3_flags = flags_by_section.get("m3", {})
     if m3_flags.get("mass_status") == "WARN":
         warn_issues.append("M3 ladder mass leaking")
@@ -1053,6 +1186,7 @@ def build_report(db) -> str:
     sections: list[tuple[str, list[str], dict]] = []
     for name, builder in [
         ("bot", _build_bot_health),
+        ("table_liveness", _build_table_liveness),
         ("trading", _build_trading),
         ("pipeline", _build_pipeline),
         ("guardrails", _build_guardrails),
