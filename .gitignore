@@ -114,3 +114,14 @@ graphify-out/.graphify_semantic_marker
 data/cryptoedge.db
 data/cryptoedge.db-*
 logs/cryptoedge*.log
+
+# Incremental remote-data sync bookkeeping (scripts/Fetch-RemoteData.ps1)
+.remote-sync-state.json
+.sync-tmp-*/
+*.part
+
+# SQLite sidecars: the sync never fetches these, so any that appear next to a
+# synced snapshot are local artefacts of opening it (and are safe to delete).
+data/*.db-wal
+data/*.db-shm
+data/*.db-journal
