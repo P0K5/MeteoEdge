@@ -3879,6 +3879,13 @@ _CONFIG_META: dict[str, dict] = {
         "min": 0.01,
         "max": 1.0,
     },
+    "COPY_HEALTH_MIN_DECISIONS_FOR_ROI_CHECK": {
+        "description": "Minimum deduped decisions — distinct (market, outcome_index) per wallet, not raw settled rows — required before copy_wallet_health.py's realized-P&L check can auto-pause a wallet (issue #1225). Paper-only (copy_positions); live needs its own tighter threshold",
+        "type": "int",
+        "group": "copy_trading",
+        "min": 5,
+        "max": 200,
+    },
     "COPY_LIVE_TRADING_ENABLED": {
         "description": "Master switch — enable LIVE copy-trading order placement (issue #1163). Independent of COPY_TRADING_ENABLED (paper); built ahead of the phase-7 go/no-go gate, defaults off",
         "type": "bool",

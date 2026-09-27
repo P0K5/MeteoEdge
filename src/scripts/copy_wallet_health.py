@@ -26,14 +26,36 @@ For every ``status='active'`` followed wallet
    row's own flag is always checked too, not just pairwise agreement. A
    wallet with no screening history yet has nothing to check and is left
    alone.
-2. **Realized-ROI check.** Skipped entirely if the wallet was just paused
+2. **Realized-P&L check.** Skipped entirely if the wallet was just paused
    above (one pause reason per run -- the first one that fires wins).
-   Wallets with at least ``MIN_SETTLED_TRADES_FOR_ROI_CHECK`` settled
-   ``copy_positions`` rows (``db.get_settled_copy_positions``) have their
-   median per-trade ROI (``settled_pnl_usd / stake_usd``) computed. Auto-pause
-   (``paused_reason="realized_roi_negative"``) if that median is ``< 0``.
-   Wallets below the minimum sample size are left alone -- one early loss
-   should never trip this.
+   ``db.get_settled_copy_positions`` rows are deduped in Python into
+   *decisions* -- one entry per distinct ``(market, outcome_index)``, fills
+   summed together -- since a single signal split across several fills must
+   count once, not once per fill (issue #1207's dedupe fix, applied here
+   too; issue #1225). Wallets with at least
+   ``COPY_HEALTH_MIN_DECISIONS_FOR_ROI_CHECK`` deduped decisions have their
+   **total realized P&L** summed across those decisions. Auto-pause
+   (``paused_reason="realized_roi_negative"``, kept as-is even though the
+   signal is no longer a median-ROI figure -- it is persisted in
+   ``copy_wallets_followed.paused_reason`` and surfaced on the dashboard)
+   if that total is ``< 0``. This is deliberately a P&L check, not a
+   win-rate/median-ROI check: a wallet with a sub-50% hit rate can still be
+   solidly profitable (e.g. buying at 0.25 with a 40% hit rate), and a
+   median-per-trade signal would auto-pause it on win rate alone. Wallets
+   below the minimum sample size are left alone (logged at DEBUG with the
+   current decision count) -- one early loss should never trip this, and
+   neither should a handful of decisions that happen to net negative before
+   the sample is large enough to mean anything.
+
+   **Paper-only today.** ``get_settled_copy_positions`` reads
+   ``copy_positions``, never ``copy_live_positions`` -- this check has no
+   opinion on live positions and no live loop calls it (that's epic H,
+   #1159). When epic H builds a live path, it must use its own, deliberately
+   TIGHTER threshold -- live's purpose is capital preservation, not sample
+   accumulation for measurement, so waiting for 30 deduped live decisions
+   before ever pausing a losing live wallet would be unacceptable. Do not
+   repurpose ``COPY_HEALTH_MIN_DECISIONS_FOR_ROI_CHECK`` for that; add a
+   separate live-specific key.
 3. A wallet already ``status='paused'`` is skipped entirely by both checks
    (it's simply absent from ``get_followed_wallets(status="active")``) --
    never re-paused, never has its existing ``paused_reason`` overwritten.
@@ -83,22 +105,24 @@ Usage::
 from __future__ import annotations
 
 import logging
-import statistics
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from src.config import CONFIG_DEFAULTS, get_live_config  # noqa: E402
 from src.scripts.copy_wallet_screening import check_stability  # noqa: E402
 
 log = logging.getLogger(__name__)
 
-#: Minimum number of settled trades required before the realized-ROI check
-#: can auto-pause a wallet -- don't pause on one early loss. Module constant,
-#: mirroring copy_wallet_screening.py's own MAX_WALLETS_PER_RUN convention
-#: rather than a new config key: this is an internal safety-net tuning knob,
-#: not an operator-facing strategy parameter.
-MIN_SETTLED_TRADES_FOR_ROI_CHECK = 5
+#: Fallback minimum number of deduped decisions required before the
+#: realized-P&L check can auto-pause a wallet, used only if the live
+#: config lookup itself cannot be completed (see
+#: ``_realized_pnl_pause_reason``). Mirrors
+#: ``CONFIG_DEFAULTS["COPY_HEALTH_MIN_DECISIONS_FOR_ROI_CHECK"]`` -- keep
+#: these two in sync; the live-editable config value (issue #1225) is what
+#: actually governs behaviour in the normal, DB-available path.
+MIN_DECISIONS_FOR_ROI_CHECK = CONFIG_DEFAULTS["COPY_HEALTH_MIN_DECISIONS_FOR_ROI_CHECK"]
 
 
 def _open_db():
@@ -132,36 +156,84 @@ def _stability_pause_reason(db, address: str) -> "str | None":
     return None
 
 
-def _median_roi_pause_reason(db, address: str) -> "str | None":
-    """Return ``"realized_roi_negative"`` if *address* should be paused on
-    the realized-ROI signal, else ``None``.
+def _min_decisions_threshold(db) -> int:
+    """Return the live ``COPY_HEALTH_MIN_DECISIONS_FOR_ROI_CHECK`` value as
+    an ``int``, falling back to ``MIN_DECISIONS_FOR_ROI_CHECK`` -- logged at
+    WARNING, not silently -- if the live-config lookup itself fails (e.g.
+    DB corruption) or somehow returns a non-numeric value (``get_live_config``
+    already guarantees an ``int`` for every key whose ``CONFIG_DEFAULTS``
+    default is an ``int``, per its own type-coercion loop, but this is a
+    trading-safety-relevant threshold: never let a broken read silently
+    change *when* a wallet gets auto-paused -- AI review #1225 BLOCK items).
+    """
+    try:
+        raw = get_live_config(db).get(
+            "COPY_HEALTH_MIN_DECISIONS_FOR_ROI_CHECK", MIN_DECISIONS_FOR_ROI_CHECK,
+        )
+        return int(raw)
+    except Exception as e:
+        log.warning(
+            "[copy_wallet_health] failed to read COPY_HEALTH_MIN_DECISIONS_FOR_ROI_CHECK "
+            "from live config (%s) -- falling back to module default %d",
+            e, MIN_DECISIONS_FOR_ROI_CHECK,
+        )
+        return MIN_DECISIONS_FOR_ROI_CHECK
 
-    Wallets with fewer than ``MIN_SETTLED_TRADES_FOR_ROI_CHECK`` *usable*
-    settled trades are never paused by this function (insufficient sample
-    size). A row is usable when it has a non-null ``settled_pnl_usd`` and a
-    positive ``stake_usd`` -- both are guaranteed by the ``copy_positions``
-    schema's own constraints (``settled_pnl_usd`` is always set by
-    ``settle_copy_position`` before ``status`` flips to ``'settled'``;
-    ``stake_usd`` has a ``CHECK(stake_usd > 0)``) for every row this
-    codebase's own writers produce, so this filter is not expected to drop
-    anything in practice -- it exists so one malformed row (e.g. hand-edited
-    test data, a future writer bug) can never divide by zero or crash the
-    whole run; it is silently excluded from the sample instead (AI review
-    #1141, BLOCK item).
+
+def _realized_pnl_pause_reason(db, address: str) -> "str | None":
+    """Return ``"realized_roi_negative"`` if *address* should be paused on
+    the realized-P&L signal, else ``None``.
+
+    Settled ``copy_positions`` rows are first filtered to *usable* rows (a
+    row is usable when it has a non-null ``settled_pnl_usd`` and a positive
+    ``stake_usd`` -- both are guaranteed by the ``copy_positions`` schema's
+    own constraints for every row this codebase's own writers produce, so
+    this filter is not expected to drop anything in practice; it exists so
+    one malformed row (e.g. hand-edited test data, a future writer bug) can
+    never crash the whole run -- it is silently excluded from the sample
+    instead, AI review #1141, BLOCK item), then deduped into *decisions*:
+    one entry per distinct ``(market, outcome_index)``, with each decision's
+    fills summed together. A wallet whose 5 settled rows are all fills of
+    one market/outcome is 1 decision, not 5 (issue #1207's dedupe fix,
+    applied here too -- see issue #1225's ``0x684baa57c3`` real-world case).
+
+    Wallets with fewer than ``COPY_HEALTH_MIN_DECISIONS_FOR_ROI_CHECK``
+    deduped decisions are never paused by this function (insufficient
+    sample size) -- logged at DEBUG with the current decision count so
+    "why was nothing paused" is answerable from the log.
+
+    The pause signal is the **total realized P&L** summed across the
+    deduped decisions -- not median per-trade ROI. Under flat staking a
+    loss is exactly -100% ROI, so "median ROI < 0" is precisely "more than
+    half the trades lost": a win-rate check wearing an ROI label, unable to
+    distinguish a profitable low-win-rate wallet (e.g. buying at 0.25 with
+    a 40% hit rate: mostly losing trades, but solidly net positive) from an
+    unprofitable one. Total P&L cannot make that mistake.
     """
     settled = db.get_settled_copy_positions(address)
     usable = [
         row for row in settled
         if row.get("settled_pnl_usd") is not None and (row.get("stake_usd") or 0) > 0
     ]
-    if len(usable) < MIN_SETTLED_TRADES_FOR_ROI_CHECK:
+
+    decisions: "dict[tuple, float]" = {}
+    for row in usable:
+        key = (row["market"], row["outcome_index"])
+        decisions[key] = decisions.get(key, 0.0) + float(row["settled_pnl_usd"])
+    n_decisions = len(decisions)
+
+    threshold = _min_decisions_threshold(db)
+
+    if n_decisions < threshold:
+        log.debug(
+            "[copy_wallet_health] %s: %d deduped decision(s) < threshold %d -- "
+            "realized-P&L check skipped (insufficient sample)",
+            address, n_decisions, threshold,
+        )
         return None
 
-    per_trade_roi = [
-        float(row["settled_pnl_usd"]) / float(row["stake_usd"]) for row in usable
-    ]
-    median_roi = statistics.median(per_trade_roi)
-    if median_roi < 0:
+    total_pnl = sum(decisions.values())
+    if total_pnl < 0:
         return "realized_roi_negative"
     return None
 
@@ -199,7 +271,7 @@ def run_once(db=None) -> dict:
             )
             continue
 
-        reason = _median_roi_pause_reason(db, address)
+        reason = _realized_pnl_pause_reason(db, address)
         if reason is not None:
             db.update_followed_wallet_status(address, "paused", reason)
             n_paused_roi += 1
