@@ -1840,6 +1840,40 @@ of scope (next-day and low-direction rows) and why.
 
 ---
 
+## Concurrent Writers & Busy Timeout (issue #1232)
+
+`data/meteoedge.db` is a single SQLite file with **seven concurrent writer
+processes**: `meteoedge` (weather loop + dashboard, continuous),
+`meteoedge-copy-signals` (every 60s), `meteoedge-copy-settle` (every 15
+min), `meteoedge-copy-live-settle` (timer), `meteoedge-copy-health` (daily
+04:45), `meteoedge-copy-screening` (daily 04:00, can run for hours), and
+`cryptoedge` (continuous). Every one of them constructs its own `Database`
+(`src/data/db.py`), and WAL mode (`PRAGMA journal_mode=WAL`, never
+changed) keeps readers from blocking writers — but **writer-vs-writer
+access still serialises**: only one process can hold the write lock at a
+time.
+
+`Database.__init__` sets an explicit busy timeout of 30 seconds
+(`_BUSY_TIMEOUT_SECONDS` in `src/data/db.py`, applied via both
+`sqlite3.connect(timeout=...)` and `PRAGMA busy_timeout`) instead of
+relying on the Python `sqlite3` module's 5-second default. This makes a
+writer that finds the lock already held **wait** up to 30s rather than
+immediately raise `sqlite3.OperationalError: database is locked`. The
+2026-09-27 `meteoedge-copy-screening` run hit exactly this at the old 5s
+default and died after 8h11m having completed only 30 of 50 wallets.
+
+30 seconds is a large margin over an ordinary WAL checkpoint, not a fix
+for genuine contention: if a writer holds the lock for longer than that
+(e.g. a code path that keeps a write transaction open across a slow
+network call), the failure returns. If you see `database is locked` after
+this change, first check whether any recently-changed code path executes
+a network call (HTTP fetch, `fetch_market_resolution`, CLOB order
+placement, etc.) while still inside a `db._lock` block or an open SQLite
+transaction — see `copy_signal_loop.py`'s `_handle_buy_trade` for the
+established "no network I/O under the lock" convention to follow.
+
+---
+
 ## Troubleshooting
 
 ### Bot Exits or Restarts Repeatedly
@@ -1850,7 +1884,9 @@ sudo journalctl -u meteoedge.service -n 50
 
 # Common causes:
 # 1. API key invalid: POLYMARKET_API_KEY or L2 credentials missing/wrong
-# 2. Database locked: Another process has data/meteoedge.db open
+# 2. Database locked: another process held data/meteoedge.db's write lock
+#    for longer than the 30s busy timeout -- see "Concurrent Writers &
+#    Busy Timeout (issue #1232)" above
 # 3. Network: Cannot reach Polymarket or weather APIs
 
 # Restart the bot

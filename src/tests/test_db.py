@@ -1,15 +1,19 @@
 """Unit tests for src/data/db.py.
 
 All tests use an in-memory SQLite database (':memory:') to avoid file I/O,
-except test_wal_mode which requires a real file (WAL is a no-op for :memory:).
+except test_wal_mode and the busy-timeout tests below, which require a real
+file (WAL and cross-connection lock contention are both no-ops for
+':memory:' -- each ':memory:' connection is its own private database).
 """
 import os
 import sqlite3
 import tempfile
+import threading
+import time
 
 import pytest
 
-from src.data.db import Database
+from src.data.db import Database, _BUSY_TIMEOUT_SECONDS
 
 
 # ---------------------------------------------------------------------------
@@ -72,6 +76,147 @@ class TestWalMode:
                     os.unlink(path + ext)
                 except FileNotFoundError:
                     pass
+
+
+# ---------------------------------------------------------------------------
+# Busy timeout (issue #1232 -- requires a real file, same reason as WAL above:
+# cross-connection lock contention is meaningless against ':memory:', where
+# every connection is its own private database)
+# ---------------------------------------------------------------------------
+
+class TestBusyTimeout:
+    """Database() sets an explicit busy timeout above sqlite3's 5s default
+    (issue #1232) so a writer that finds the write lock already held waits
+    instead of immediately raising ``database is locked``.
+    """
+
+    def test_busy_timeout_pragma_readback(self):
+        """PRAGMA busy_timeout must read back the configured value (in ms)."""
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tf:
+            path = tf.name
+        db = None
+        try:
+            db = Database(path)
+            cur = db._conn.execute("PRAGMA busy_timeout")
+            timeout_ms = cur.fetchone()[0]
+            assert timeout_ms == _BUSY_TIMEOUT_SECONDS * 1000, (
+                f"Expected {_BUSY_TIMEOUT_SECONDS * 1000}ms, got {timeout_ms}ms"
+            )
+        finally:
+            if db is not None:
+                db.close()
+            os.unlink(path)
+            for ext in ("-wal", "-shm"):
+                try:
+                    os.unlink(path + ext)
+                except FileNotFoundError:
+                    pass
+
+    def test_database_locked_regression(self):
+        """Regression test for the 2026-09-27 copy-screening failure
+        (``sqlite3.OperationalError: database is locked``, issue #1232).
+
+        A second, independent connection to the same file holds an
+        IMMEDIATE write transaction for HOLD_SECONDS -- longer than
+        sqlite3's old 5s default busy timeout. Meanwhile, a write through a
+        ``Database()`` instance against the same file must NOT raise: it
+        must wait for the lock to free and then succeed. This is the exact
+        failure mode from the 2026-09-27 run (screening died mid-run
+        because a write raised instead of waiting).
+        """
+        # Comfortably longer than the old 5s default and comfortably
+        # shorter than the new 30s timeout -- long enough to prove real
+        # waiting happened, short enough to keep the suite fast.
+        HOLD_SECONDS = 6.0
+        assert 5.0 < HOLD_SECONDS < _BUSY_TIMEOUT_SECONDS
+
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tf:
+            path = tf.name
+        db = None
+        blocker_conn = None
+        lock_acquired = threading.Event()
+        release_lock = threading.Event()
+
+        def _hold_write_lock():
+            nonlocal blocker_conn
+            blocker_conn = sqlite3.connect(path, timeout=30)
+            # A real write (not just BEGIN IMMEDIATE) against an existing
+            # table, so this is genuinely the same kind of write-lock
+            # contention a second Database() writer would hit in production.
+            blocker_conn.execute("BEGIN IMMEDIATE")
+            blocker_conn.execute(
+                "INSERT INTO risk_state(trade_date, daily_pnl, open_positions, updated_at) "
+                "VALUES ('1999-01-01', 0, 0, '')"
+            )
+            lock_acquired.set()
+            release_lock.wait(timeout=HOLD_SECONDS + 10)
+            blocker_conn.rollback()
+
+        try:
+            db = Database(path)  # creates schema; blocker writes into it below
+
+            blocker = threading.Thread(target=_hold_write_lock)
+            blocker.start()
+            assert lock_acquired.wait(timeout=5), "Blocker thread never acquired the write lock"
+
+            def _release_after_hold():
+                time.sleep(HOLD_SECONDS)
+                release_lock.set()
+
+            releaser = threading.Thread(target=_release_after_hold)
+            releaser.start()
+
+            started = time.monotonic()
+            # Contends with the blocker's held write lock. With the old 5s
+            # default this raises `database is locked` well before
+            # HOLD_SECONDS elapses; with the new 30s busy timeout it must
+            # wait for the blocker to release and then succeed.
+            db.insert_observation(
+                ts="2024-01-15T12:00:00+00:00",
+                station="KORD",
+                temp_f=32.0,
+                temp_native=0.0,
+                unit="C",
+                source="metar",
+            )
+            elapsed = time.monotonic() - started
+
+            releaser.join(timeout=5)
+            blocker.join(timeout=5)
+
+            assert elapsed >= HOLD_SECONDS - 0.5, (
+                f"Write returned after {elapsed:.2f}s -- expected it to wait "
+                f"out the {HOLD_SECONDS}s held write lock, not succeed "
+                "immediately (no real contention was exercised)"
+            )
+
+            cur = db._conn.execute(
+                "SELECT COUNT(*) FROM observations WHERE station='KORD'"
+            )
+            assert cur.fetchone()[0] == 1
+        finally:
+            release_lock.set()
+            if blocker_conn is not None:
+                try:
+                    blocker_conn.close()
+                except Exception:
+                    pass
+            if db is not None:
+                db.close()
+            # Windows can briefly hold the file/WAL side-cars open after
+            # close() returns (this test uses two real connections against
+            # the same file, unlike the single-connection tests elsewhere
+            # in this module) -- retry teardown rather than fail the test
+            # on an unrelated cleanup race.
+            for fname in (path, path + "-wal", path + "-shm"):
+                for _ in range(20):
+                    try:
+                        os.unlink(fname)
+                        break
+                    except FileNotFoundError:
+                        break
+                    except PermissionError:
+                        time.sleep(0.1)
 
 
 # ---------------------------------------------------------------------------

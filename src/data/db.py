@@ -28,6 +28,18 @@ _DEFAULT_PATH = os.getenv("DB_PATH", "data/meteoedge.db")
 # non-US cities. Purged on every startup (idempotent — no-op once purged).
 _DEB_WEIGHT_LOG_PURGE_CUTOFF = "2026-06-30"
 
+# Issue #1232: sqlite3's default busy timeout is 5s, which is thin for a
+# ~440MB WAL-mode database with seven concurrent writer processes
+# (meteoedge, meteoedge-copy-signals, meteoedge-copy-settle,
+# meteoedge-copy-live-settle, meteoedge-copy-health, meteoedge-copy-screening,
+# cryptoedge). WAL keeps readers from blocking writers, but writer-vs-writer
+# access still serialises -- any writer holding the lock past 5s causes every
+# other writer to raise "database is locked" instead of waiting. The
+# 2026-09-27 copy-screening run hit exactly this and died after 8h11m having
+# completed only 30/50 wallets. 30s gives a large margin over an ordinary WAL
+# checkpoint without masking a genuinely stuck writer for too long.
+_BUSY_TIMEOUT_SECONDS = 30
+
 # ICAO -> Polymarket city name, built once from STATIONS (tuple index 0 = ICAO,
 # index 3 = city). Same mapping pattern as config.get_canonical_station_feeds();
 # duplicated here (rather than imported) to keep this a plain module-level dict
@@ -524,9 +536,19 @@ class Database:
     def __init__(self, path: "str | Path" = _DEFAULT_PATH) -> None:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
-        self._conn = sqlite3.connect(str(path), check_same_thread=False)
+        # Issue #1232: pass timeout= to sqlite3.connect() *and* set
+        # PRAGMA busy_timeout explicitly. connect(timeout=...) only
+        # configures the busy handler used by the connection's own
+        # sqlite3_busy_timeout() call at open time; PRAGMA busy_timeout
+        # is the portable, explicit way to confirm/set the same value and
+        # is what the regression test reads back. Belt-and-braces rather
+        # than relying on one code path across Python versions.
+        self._conn = sqlite3.connect(
+            str(path), timeout=_BUSY_TIMEOUT_SECONDS, check_same_thread=False
+        )
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
+        self._conn.execute(f"PRAGMA busy_timeout={_BUSY_TIMEOUT_SECONDS * 1000}")
         self._conn.execute("PRAGMA foreign_keys=ON")
         for stmt in _DDL.strip().split(";"):
             stmt = stmt.strip()
