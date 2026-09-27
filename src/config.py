@@ -785,6 +785,19 @@ CONFIG_DEFAULTS: "dict[str, str | int | float | bool]" = {
     # already-open position.
     "COPY_DAILY_LOSS_LIMIT_USD": 25.0,
     "COPY_DRAWDOWN_STOP_PCT": 0.20,
+    # Wallet-health auto-pause sample-size floor (issue #1225,
+    # src/scripts/copy_wallet_health.py::_realized_pnl_pause_reason). Counts
+    # DEDUPED decisions -- distinct (market, outcome_index) per wallet, not
+    # raw settled copy_positions rows, since one signal split across several
+    # fills must count once (issue #1207's dedupe fix, applied here too).
+    # 30 matches the live-trading go/no-go gate's own minimum-decisions
+    # threshold (docs/design/copy-trading-architecture.md) -- a rule that
+    # fires below that sample size would auto-pause wallets before they can
+    # ever reach the gate. Paper-only today (reads copy_positions, not
+    # copy_live_positions); live will need its own, deliberately tighter
+    # threshold when epic H (#1159) builds a live path -- do not reuse this
+    # key for that.
+    "COPY_HEALTH_MIN_DECISIONS_FOR_ROI_CHECK": 30,
     # Live copy-trading config (issue #1163 / epic G #1158). Mirrors the
     # paper COPY_* block immediately above exactly one layer up: isolated
     # from PAPER copy-trading, not just from the weather strategy --

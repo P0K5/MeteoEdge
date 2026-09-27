@@ -1,11 +1,12 @@
 """Unit tests for src/scripts/copy_wallet_health.py (epic #1138 story D2,
-issue #1140). Uses a real in-memory Database (seeded rows), mirroring
-test_copy_settle.py's `Database(":memory:")` pattern -- no mocking of the DB
-itself, no network calls (this script makes none).
+issue #1140; realized-P&L rework issue #1225). Uses a real in-memory
+Database (seeded rows), mirroring test_copy_settle.py's `Database(":memory:")`
+pattern -- no mocking of the DB itself, no network calls (this script makes
+none).
 """
 from src.data.db import Database
 from src.scripts.copy_wallet_health import (
-    MIN_SETTLED_TRADES_FOR_ROI_CHECK,
+    MIN_DECISIONS_FOR_ROI_CHECK,
     run_once,
 )
 
@@ -39,17 +40,56 @@ def _screening_row(
     )
 
 
-def _settled_position(db: Database, address: str, pnl: float, stake_usd: float = 10.0, market: str = "0xmarket") -> int:
+def _settled_position(
+    db: Database, address: str, pnl: float, stake_usd: float = 10.0,
+    market: str = "0xmarket", outcome_index: int = 0, entry_price: float = 0.4,
+) -> int:
+    """Insert one settled ``copy_positions`` row (one fill). Fills sharing
+    the same ``(market, outcome_index)`` collapse into a single deduped
+    decision -- see ``_settled_decisions`` for the common "N distinct
+    decisions" case this module's threshold actually counts.
+    """
     signal_id = db.insert_copy_signal(
-        address=address, market=market, source_price=0.4,
+        address=address, market=market, source_price=entry_price,
         detected_at="2026-09-19T00:00:00+00:00",
     )
     position_id = db.insert_copy_position(
-        signal_id=signal_id, address=address, market=market, outcome_index=0,
-        entry_price=0.4, stake_usd=stake_usd, entry_ts="2026-09-19T00:00:00+00:00",
+        signal_id=signal_id, address=address, market=market, outcome_index=outcome_index,
+        entry_price=entry_price, stake_usd=stake_usd, entry_ts="2026-09-19T00:00:00+00:00",
     )
     db.settle_copy_position(position_id, pnl, "2026-09-20T00:00:00+00:00")
     return position_id
+
+
+def _settled_decisions(
+    db: Database, address: str, pnls: "list[float]", stake_usd: float = 10.0,
+    entry_price: float = 0.4, market_prefix: str = "0xdecision",
+) -> None:
+    """Insert one settled position per entry in *pnls*, each on its own
+    distinct ``(market, outcome_index)`` -- i.e. each pnl is exactly one
+    deduped decision, matching what ``COPY_HEALTH_MIN_DECISIONS_FOR_ROI_CHECK``
+    actually counts (issue #1225)."""
+    for i, pnl in enumerate(pnls):
+        _settled_position(
+            db, address, pnl, stake_usd=stake_usd, entry_price=entry_price,
+            market=f"{market_prefix}{i}",
+        )
+
+
+class _RaisingConfigDb:
+    """Wraps a real ``Database`` but makes ``get_all_config`` raise, to
+    exercise ``_realized_pnl_pause_reason``'s module-constant fallback path
+    when the live-config lookup itself cannot be completed (issue #1225's
+    "module fallback used when no DB" requirement)."""
+
+    def __init__(self, db: Database):
+        self._db = db
+
+    def get_all_config(self):
+        raise RuntimeError("simulated live-config failure")
+
+    def __getattr__(self, name):
+        return getattr(self._db, name)
 
 
 class TestRunOnceNoWallets:
@@ -105,18 +145,21 @@ class TestLatestRowIneligiblePause:
         assert row["paused_reason"] == "stability_check_failed"
 
 
-class TestRealizedRoiPause:
-    def test_negative_median_roi_with_enough_settled_trades_pauses(self):
+class TestRealizedPnlPause:
+    """The pause signal is total realized P&L over deduped decisions, gated
+    on ``MIN_DECISIONS_FOR_ROI_CHECK`` (default 30) deduped decisions --
+    issue #1225."""
+
+    def test_negative_total_pnl_at_threshold_pauses(self):
         db = _db()
         _follow(db)
         # Stable screening history so the stability check never fires first.
         _screening_row(db, ADDRESS, "2026-09-18T00:00:00+00:00", median_roi=0.10, n_resolved=100, eligible_to_follow=1)
         _screening_row(db, ADDRESS, "2026-09-19T00:00:00+00:00", median_roi=0.10, n_resolved=100, eligible_to_follow=1)
 
-        # 5 settled trades (>= MIN_SETTLED_TRADES_FOR_ROI_CHECK), median
-        # per-trade ROI = -0.2 (negative).
-        for pnl in (-2.0, -2.0, -2.0, 1.0, 1.0):
-            _settled_position(db, ADDRESS, pnl, stake_usd=10.0)
+        # Exactly MIN_DECISIONS_FOR_ROI_CHECK deduped decisions, total P&L
+        # negative.
+        _settled_decisions(db, ADDRESS, [-1.0] * MIN_DECISIONS_FOR_ROI_CHECK)
 
         summary = run_once(db=db)
 
@@ -125,18 +168,13 @@ class TestRealizedRoiPause:
         assert row["status"] == "paused"
         assert row["paused_reason"] == "realized_roi_negative"
 
-
-class TestMinimumSampleSizeGuard:
-    def test_negative_median_roi_below_minimum_sample_is_not_paused(self):
+    def test_positive_total_pnl_at_threshold_is_not_paused(self):
         db = _db()
         _follow(db)
         _screening_row(db, ADDRESS, "2026-09-18T00:00:00+00:00", median_roi=0.10, n_resolved=100, eligible_to_follow=1)
         _screening_row(db, ADDRESS, "2026-09-19T00:00:00+00:00", median_roi=0.10, n_resolved=100, eligible_to_follow=1)
 
-        n_below_minimum = MIN_SETTLED_TRADES_FOR_ROI_CHECK - 1
-        assert n_below_minimum > 0
-        for _ in range(n_below_minimum):
-            _settled_position(db, ADDRESS, -5.0, stake_usd=10.0)
+        _settled_decisions(db, ADDRESS, [1.0] * MIN_DECISIONS_FOR_ROI_CHECK)
 
         summary = run_once(db=db)
 
@@ -145,13 +183,150 @@ class TestMinimumSampleSizeGuard:
         assert row["status"] == "active"
 
 
+class TestProfitableLowWinRateWalletIsNotPaused:
+    """Pins defect #3 from issue #1225: median per-trade ROI is a win-rate
+    check wearing an ROI label. A wallet buying at 0.25 with a 40% hit rate
+    (12 winners of 30) is net solidly profitable (+$90) even though its
+    median trade -- and therefore the OLD median-ROI signal -- is a loss.
+    Must NOT be paused."""
+
+    def test_profitable_low_win_rate_wallet_not_paused_on_total_pnl(self):
+        db = _db()
+        _follow(db)
+        _screening_row(db, ADDRESS, "2026-09-18T00:00:00+00:00", median_roi=0.10, n_resolved=100, eligible_to_follow=1)
+        _screening_row(db, ADDRESS, "2026-09-19T00:00:00+00:00", median_roi=0.10, n_resolved=100, eligible_to_follow=1)
+
+        winners = [15.0] * 12
+        losers = [-5.0] * 18
+        pnls = winners + losers
+        assert len(pnls) == 30 == MIN_DECISIONS_FOR_ROI_CHECK
+        assert sum(pnls) == 90.0  # net profitable ...
+        # ... yet more than half the decisions are losses, so the median
+        # per-trade pnl (the OLD signal) is negative:
+        sorted_pnls = sorted(pnls)
+        median_pnl = sorted_pnls[len(sorted_pnls) // 2]
+        assert median_pnl < 0
+
+        _settled_decisions(db, ADDRESS, pnls, stake_usd=5.0, entry_price=0.25)
+
+        summary = run_once(db=db)
+
+        assert summary == {"checked": 1, "paused_stability": 0, "paused_roi": 0}
+        row = db.get_followed_wallets()[0]
+        assert row["status"] == "active"
+        assert row["paused_reason"] is None
+
+
+class TestMultiFillClusterCountsAsOneDecision:
+    """Pins defect #2 from issue #1225 (``0x684baa57c3``'s real shape): a
+    single signal split across several fills must count as ONE decision,
+    not one per fill. 5 fills of the same (market, outcome_index) must
+    collapse to 1 deduped decision -- nowhere near
+    MIN_DECISIONS_FOR_ROI_CHECK (30) -- even though the pre-#1225 raw-row
+    count (5) used to be enough to trip the old
+    MIN_SETTLED_TRADES_FOR_ROI_CHECK=5 rule on arrival."""
+
+    def test_five_fills_of_one_market_outcome_is_one_decision_not_paused(self):
+        db = _db()
+        _follow(db)
+        _screening_row(db, ADDRESS, "2026-09-18T00:00:00+00:00", median_roi=0.10, n_resolved=100, eligible_to_follow=1)
+        _screening_row(db, ADDRESS, "2026-09-19T00:00:00+00:00", median_roi=0.10, n_resolved=100, eligible_to_follow=1)
+
+        # 5 fills, same market and outcome_index -> 1 deduped decision.
+        for _ in range(5):
+            _settled_position(db, ADDRESS, -5.0, stake_usd=10.0, market="0xmarket", outcome_index=0)
+
+        summary = run_once(db=db)
+
+        assert summary == {"checked": 1, "paused_stability": 0, "paused_roi": 0}
+        row = db.get_followed_wallets()[0]
+        assert row["status"] == "active"
+
+
+class TestMinimumSampleSizeGuard:
+    def test_below_minimum_decisions_with_negative_total_pnl_is_not_paused(self):
+        db = _db()
+        _follow(db)
+        _screening_row(db, ADDRESS, "2026-09-18T00:00:00+00:00", median_roi=0.10, n_resolved=100, eligible_to_follow=1)
+        _screening_row(db, ADDRESS, "2026-09-19T00:00:00+00:00", median_roi=0.10, n_resolved=100, eligible_to_follow=1)
+
+        n_below_minimum = MIN_DECISIONS_FOR_ROI_CHECK - 1
+        assert n_below_minimum > 0
+        _settled_decisions(db, ADDRESS, [-5.0] * n_below_minimum)
+
+        summary = run_once(db=db)
+
+        assert summary == {"checked": 1, "paused_stability": 0, "paused_roi": 0}
+        row = db.get_followed_wallets()[0]
+        assert row["status"] == "active"
+
+
+class TestThresholdHonouredFromLiveConfig:
+    """Threshold is live-editable via bot_config
+    (``COPY_HEALTH_MIN_DECISIONS_FOR_ROI_CHECK``), read through
+    ``get_live_config`` -- not the module-constant fallback -- whenever the
+    DB is available."""
+
+    def test_lowered_threshold_from_config_pauses_below_default(self):
+        db = _db()
+        db.set_config("COPY_HEALTH_MIN_DECISIONS_FOR_ROI_CHECK", "3")
+        _follow(db)
+        _screening_row(db, ADDRESS, "2026-09-18T00:00:00+00:00", median_roi=0.10, n_resolved=100, eligible_to_follow=1)
+        _screening_row(db, ADDRESS, "2026-09-19T00:00:00+00:00", median_roi=0.10, n_resolved=100, eligible_to_follow=1)
+
+        # Only 3 decisions -- far below the default (30) but at the
+        # overridden threshold -- negative total pnl.
+        _settled_decisions(db, ADDRESS, [-1.0, -1.0, -1.0])
+
+        summary = run_once(db=db)
+
+        assert summary == {"checked": 1, "paused_stability": 0, "paused_roi": 1}
+        row = db.get_followed_wallets()[0]
+        assert row["status"] == "paused"
+        assert row["paused_reason"] == "realized_roi_negative"
+
+    def test_below_overridden_threshold_is_not_paused(self):
+        db = _db()
+        db.set_config("COPY_HEALTH_MIN_DECISIONS_FOR_ROI_CHECK", "3")
+        _follow(db)
+        _screening_row(db, ADDRESS, "2026-09-18T00:00:00+00:00", median_roi=0.10, n_resolved=100, eligible_to_follow=1)
+        _screening_row(db, ADDRESS, "2026-09-19T00:00:00+00:00", median_roi=0.10, n_resolved=100, eligible_to_follow=1)
+
+        _settled_decisions(db, ADDRESS, [-1.0, -1.0])
+
+        summary = run_once(db=db)
+
+        assert summary == {"checked": 1, "paused_stability": 0, "paused_roi": 0}
+        row = db.get_followed_wallets()[0]
+        assert row["status"] == "active"
+
+
+class TestModuleFallbackThresholdWhenLiveConfigUnavailable:
+    """If ``get_live_config`` itself cannot be completed, fall back to the
+    module constant (issue #1225's "module fallback for the no-DB path")."""
+
+    def test_fallback_threshold_used_when_live_config_lookup_fails(self):
+        real_db = _db()
+        _follow(real_db)
+        _screening_row(real_db, ADDRESS, "2026-09-18T00:00:00+00:00", median_roi=0.10, n_resolved=100, eligible_to_follow=1)
+        _screening_row(real_db, ADDRESS, "2026-09-19T00:00:00+00:00", median_roi=0.10, n_resolved=100, eligible_to_follow=1)
+        _settled_decisions(real_db, ADDRESS, [-1.0] * MIN_DECISIONS_FOR_ROI_CHECK)
+
+        summary = run_once(db=_RaisingConfigDb(real_db))
+
+        assert summary == {"checked": 1, "paused_stability": 0, "paused_roi": 1}
+        row = real_db.get_followed_wallets()[0]
+        assert row["status"] == "paused"
+        assert row["paused_reason"] == "realized_roi_negative"
+
+
 class TestMalformedRowGuard:
     """AI review #1141, BLOCK item: a settled row with a NULL
-    settled_pnl_usd must be excluded from the ROI sample rather than
-    crashing the run with a TypeError. The copy_positions schema's own
-    writers (settle_copy_position) never produce such a row -- this
-    simulates one via a direct UPDATE, bypassing settle_copy_position, to
-    prove the defensive filter actually works rather than assuming it."""
+    settled_pnl_usd must be excluded from the sample rather than crashing
+    the run. The copy_positions schema's own writers (settle_copy_position)
+    never produce such a row -- this simulates one via a direct UPDATE,
+    bypassing settle_copy_position, to prove the defensive filter actually
+    works rather than assuming it."""
 
     def test_settled_row_with_null_pnl_is_excluded_not_crashed_on(self):
         db = _db()
@@ -159,13 +334,13 @@ class TestMalformedRowGuard:
         _screening_row(db, ADDRESS, "2026-09-18T00:00:00+00:00", median_roi=0.10, n_resolved=100, eligible_to_follow=1)
         _screening_row(db, ADDRESS, "2026-09-19T00:00:00+00:00", median_roi=0.10, n_resolved=100, eligible_to_follow=1)
 
-        # MIN_SETTLED_TRADES_FOR_ROI_CHECK usable rows, all positive ROI.
-        for _ in range(MIN_SETTLED_TRADES_FOR_ROI_CHECK):
-            _settled_position(db, ADDRESS, 1.0, stake_usd=10.0)
+        # MIN_DECISIONS_FOR_ROI_CHECK usable decisions, all positive pnl.
+        _settled_decisions(db, ADDRESS, [1.0] * MIN_DECISIONS_FOR_ROI_CHECK)
 
         # One extra row hand-crafted to carry status='settled' with a NULL
         # settled_pnl_usd -- settle_copy_position never produces this; it's
-        # a stand-in for "a malformed row exists somehow."
+        # a stand-in for "a malformed row exists somehow." Its own distinct
+        # market keeps it from silently merging into a good decision.
         signal_id = db.insert_copy_signal(
             address=ADDRESS, market="0xbadrow", source_price=0.4,
             detected_at="2026-09-19T00:00:00+00:00",
@@ -182,8 +357,8 @@ class TestMalformedRowGuard:
         db._conn.commit()
 
         # Must not raise; the malformed row is excluded from the sample,
-        # leaving exactly MIN_SETTLED_TRADES_FOR_ROI_CHECK usable positive-ROI
-        # rows, so the wallet stays active.
+        # leaving exactly MIN_DECISIONS_FOR_ROI_CHECK usable positive-pnl
+        # decisions, so the wallet stays active.
         summary = run_once(db=db)
 
         assert summary == {"checked": 1, "paused_stability": 0, "paused_roi": 0}
@@ -197,8 +372,7 @@ class TestWalletPassingBothChecks:
         _follow(db)
         _screening_row(db, ADDRESS, "2026-09-18T00:00:00+00:00", median_roi=0.10, n_resolved=100, eligible_to_follow=1)
         _screening_row(db, ADDRESS, "2026-09-19T00:00:00+00:00", median_roi=0.10, n_resolved=100, eligible_to_follow=1)
-        for pnl in (1.0, 1.0, 1.0, 1.0, 1.0):
-            _settled_position(db, ADDRESS, pnl, stake_usd=10.0)
+        _settled_decisions(db, ADDRESS, [1.0] * MIN_DECISIONS_FOR_ROI_CHECK)
 
         summary = run_once(db=db)
 
@@ -215,9 +389,8 @@ class TestAlreadyPausedWalletIsSkipped:
         # Would otherwise trip the stability check if it were evaluated.
         _screening_row(db, ADDRESS, "2026-09-18T00:00:00+00:00", median_roi=0.3, n_resolved=100, eligible_to_follow=1)
         _screening_row(db, ADDRESS, "2026-09-19T00:00:00+00:00", median_roi=-0.1, n_resolved=100, eligible_to_follow=0)
-        # Would otherwise trip the ROI check if it were evaluated.
-        for _ in range(MIN_SETTLED_TRADES_FOR_ROI_CHECK):
-            _settled_position(db, ADDRESS, -5.0, stake_usd=10.0)
+        # Would otherwise trip the realized-P&L check if it were evaluated.
+        _settled_decisions(db, ADDRESS, [-5.0] * MIN_DECISIONS_FOR_ROI_CHECK)
 
         summary = run_once(db=db)
 
@@ -241,8 +414,9 @@ class TestMultipleWalletsSummary:
         _follow(db, address="0xlosing")
         _screening_row(db, "0xlosing", "2026-09-18T00:00:00+00:00", median_roi=0.10, n_resolved=100, eligible_to_follow=1)
         _screening_row(db, "0xlosing", "2026-09-19T00:00:00+00:00", median_roi=0.10, n_resolved=100, eligible_to_follow=1)
-        for _ in range(MIN_SETTLED_TRADES_FOR_ROI_CHECK):
-            _settled_position(db, "0xlosing", -1.0, stake_usd=10.0, market="0xlosingmarket")
+        _settled_decisions(
+            db, "0xlosing", [-1.0] * MIN_DECISIONS_FOR_ROI_CHECK, market_prefix="0xlosingmarket",
+        )
 
         summary = run_once(db=db)
 
