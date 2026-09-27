@@ -3,6 +3,13 @@
 # Fetch and sync remote server data (logs/ and data/) via delta sync with rsync.
 # Uses SSH key authentication from .env file (REMOTE_HOST, REMOTE_USER, REMOTE_KEY_PATH, REMOTE_PROJECT_ROOT).
 # Only transfers new/modified files; exits with code 1 on failure (agent run fails).
+#
+# CAUTION: this copies data/*.db byte-for-byte while the bot is writing them,
+# which produces torn, unreadable local databases (and pairs them with a -wal
+# captured at a different instant). Prefer scripts/Fetch-RemoteData.ps1, which
+# transfers a consistent SQLite snapshot instead; it is also incremental and
+# needs no rsync (Windows has none). Kept for hosts that have rsync and only
+# want logs/ — pass --exclude 'data/***' if the databases matter to you.
 
 set -euo pipefail
 

@@ -32,10 +32,25 @@ not a fault to fix. Note it and carry on with the snapshot you have. (Its
 docstring says it "blocks agent runs without data"; treat a non-zero exit as
 *proceed with stale data, clearly labelled*, not as *abort*.)
 
-It is a full `scp`, not a delta sync, and the files are large (~250 MB each),
-so a successful run takes **~4 minutes** (measured 249 s on 2026-07-31). Run it
+It is an incremental sync (since 2026-09-27): files already held identically are
+not re-transferred, append-only logs resume from where the local copy ends, and
+databases arrive as digest-verified SQLite snapshots with only their changed
+4 MiB blocks on the wire. A steady-state run takes **~15-60 s** (measured 13.7 s
+for `meteoedge.db` + logs on 2026-09-27; it was ~4 minutes before). Still run it
 **once**, at the very start of a triage session, before you begin analysis —
 never per query, and never again later in the same session.
+
+Two consequences for triage:
+
+- **`data/*.db` are now trustworthy.** They are `sqlite3` snapshots taken inside
+  a read transaction, `integrity_check`-clean by construction and verified by
+  digest on arrival, so a SQLite error reading one is a real finding, not the
+  torn copy it used to be. `-wal`/`-shm` sidecars are never fetched, and stale
+  local ones are deleted — do not go looking for them.
+- **Narrow the sync when you only need part of it**, e.g.
+  `powershell -File scripts\Fetch-RemoteData.ps1 -Only 'data/meteoedge.db,logs/bot.log'`
+  or `-SkipDatabases` for a logs-only refresh. `-DryRun` reports what would move
+  without transferring anything.
 
 Then, **whether or not the sync ran**, measure staleness from the data itself:
 
