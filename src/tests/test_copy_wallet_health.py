@@ -319,6 +319,58 @@ class TestModuleFallbackThresholdWhenLiveConfigUnavailable:
         assert row["status"] == "paused"
         assert row["paused_reason"] == "realized_roi_negative"
 
+    def test_fallback_logged_at_warning_not_silent(self, caplog):
+        """AI review #1225 BLOCK item: a broken live-config read must not
+        silently change the auto-pause threshold -- it must be logged at
+        WARNING."""
+        import logging
+
+        real_db = _db()
+        _follow(real_db)
+        _screening_row(real_db, ADDRESS, "2026-09-18T00:00:00+00:00", median_roi=0.10, n_resolved=100, eligible_to_follow=1)
+        _screening_row(real_db, ADDRESS, "2026-09-19T00:00:00+00:00", median_roi=0.10, n_resolved=100, eligible_to_follow=1)
+        _settled_decisions(real_db, ADDRESS, [1.0] * MIN_DECISIONS_FOR_ROI_CHECK)
+
+        with caplog.at_level(logging.WARNING, logger="src.scripts.copy_wallet_health"):
+            run_once(db=_RaisingConfigDb(real_db))
+
+        assert any(
+            "COPY_HEALTH_MIN_DECISIONS_FOR_ROI_CHECK" in r.message and r.levelno == logging.WARNING
+            for r in caplog.records
+        )
+
+    def test_non_numeric_config_value_falls_back_and_does_not_crash(self):
+        """AI review #1225 BLOCK item: a non-numeric value that somehow
+        reaches the threshold read (bypassing get_live_config's own
+        coercion, e.g. via a hand-edited bot_config row) must fall back to
+        the module constant, not raise a TypeError on the `<` comparison."""
+        real_db = _db()
+        _follow(real_db)
+        _screening_row(real_db, ADDRESS, "2026-09-18T00:00:00+00:00", median_roi=0.10, n_resolved=100, eligible_to_follow=1)
+        _screening_row(real_db, ADDRESS, "2026-09-19T00:00:00+00:00", median_roi=0.10, n_resolved=100, eligible_to_follow=1)
+        _settled_decisions(real_db, ADDRESS, [-1.0] * MIN_DECISIONS_FOR_ROI_CHECK)
+
+        class _NonNumericThresholdDb:
+            def __init__(self, db):
+                self._db = db
+
+            def get_all_config(self):
+                return {"COPY_HEALTH_MIN_DECISIONS_FOR_ROI_CHECK": "not-a-number"}
+
+            def __getattr__(self, name):
+                return getattr(self._db, name)
+
+        # get_live_config's own int() coercion of "not-a-number" already
+        # falls back to CONFIG_DEFAULTS (30) internally; this asserts the
+        # whole path is crash-proof end-to-end regardless of where the
+        # coercion happens.
+        summary = run_once(db=_NonNumericThresholdDb(real_db))
+
+        assert summary == {"checked": 1, "paused_stability": 0, "paused_roi": 1}
+        row = real_db.get_followed_wallets()[0]
+        assert row["status"] == "paused"
+        assert row["paused_reason"] == "realized_roi_negative"
+
 
 class TestMalformedRowGuard:
     """AI review #1141, BLOCK item: a settled row with a NULL

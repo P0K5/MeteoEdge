@@ -156,6 +156,30 @@ def _stability_pause_reason(db, address: str) -> "str | None":
     return None
 
 
+def _min_decisions_threshold(db) -> int:
+    """Return the live ``COPY_HEALTH_MIN_DECISIONS_FOR_ROI_CHECK`` value as
+    an ``int``, falling back to ``MIN_DECISIONS_FOR_ROI_CHECK`` -- logged at
+    WARNING, not silently -- if the live-config lookup itself fails (e.g.
+    DB corruption) or somehow returns a non-numeric value (``get_live_config``
+    already guarantees an ``int`` for every key whose ``CONFIG_DEFAULTS``
+    default is an ``int``, per its own type-coercion loop, but this is a
+    trading-safety-relevant threshold: never let a broken read silently
+    change *when* a wallet gets auto-paused -- AI review #1225 BLOCK items).
+    """
+    try:
+        raw = get_live_config(db).get(
+            "COPY_HEALTH_MIN_DECISIONS_FOR_ROI_CHECK", MIN_DECISIONS_FOR_ROI_CHECK,
+        )
+        return int(raw)
+    except Exception as e:
+        log.warning(
+            "[copy_wallet_health] failed to read COPY_HEALTH_MIN_DECISIONS_FOR_ROI_CHECK "
+            "from live config (%s) -- falling back to module default %d",
+            e, MIN_DECISIONS_FOR_ROI_CHECK,
+        )
+        return MIN_DECISIONS_FOR_ROI_CHECK
+
+
 def _realized_pnl_pause_reason(db, address: str) -> "str | None":
     """Return ``"realized_roi_negative"`` if *address* should be paused on
     the realized-P&L signal, else ``None``.
@@ -198,12 +222,7 @@ def _realized_pnl_pause_reason(db, address: str) -> "str | None":
         decisions[key] = decisions.get(key, 0.0) + float(row["settled_pnl_usd"])
     n_decisions = len(decisions)
 
-    try:
-        threshold = get_live_config(db).get(
-            "COPY_HEALTH_MIN_DECISIONS_FOR_ROI_CHECK", MIN_DECISIONS_FOR_ROI_CHECK,
-        )
-    except Exception:
-        threshold = MIN_DECISIONS_FOR_ROI_CHECK
+    threshold = _min_decisions_threshold(db)
 
     if n_decisions < threshold:
         log.debug(
