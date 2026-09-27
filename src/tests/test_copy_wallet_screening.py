@@ -2,12 +2,14 @@
 Database and Polymarket I/O are mocked -- no real network/DB calls, mirroring
 test_copy_trade_backtest.py's mocking style.
 """
+import logging
 from unittest.mock import MagicMock, patch
 
 from src.scripts.copy_wallet_screening import (
     MAX_WALLETS_PER_RUN,
     QUALITY_MAX_MEAN_MEDIAN_ROI_RATIO,
     QUALITY_MAX_TOTAL_TRADES,
+    PersistentResolutionCache,
     check_quality,
     check_stability,
     run,
@@ -16,6 +18,22 @@ from src.scripts.copy_wallet_screening import (
 
 def _leaderboard(n: int) -> "list[dict]":
     return [{"proxyWallet": f"0xwallet{i}"} for i in range(n)]
+
+
+def _raw_trade(market, side, price, size, outcome, ts=1700000000, outcome_index=None):
+    """Mirrors test_copy_trade_backtest.py's own helper -- a raw trade
+    record shaped as normalize_trade() (src/data/polymarket_traders.py)
+    expects it, for the resolution-caching tests below that exercise the
+    real backtest_wallet()/resolve_payout() path instead of mocking
+    backtest_wallet wholesale.
+    """
+    raw = {
+        "conditionId": market, "side": side, "price": str(price),
+        "size": str(size), "timestamp": str(ts), "outcome": outcome,
+    }
+    if outcome_index is not None:
+        raw["outcomeIndex"] = outcome_index
+    return raw
 
 
 def _backtest_result(
@@ -654,3 +672,165 @@ class TestMaxWalletsPerRun:
             rc = run(window="month", top=10, slippage_bps=150.0, db=db)
         assert rc == 0
         mock_lb.assert_called_once_with(window="month", limit=10)
+
+
+class TestPersistentResolutionCache:
+    """issue #1221: dict-compatible cache passed straight through as
+    backtest_wallet()'s/resolve_payout()'s `cache` argument -- these tests
+    exercise the class directly, in isolation from the full run() pipeline.
+    """
+
+    def test_starts_with_zero_hits_and_misses(self):
+        cache = PersistentResolutionCache()
+        assert cache.hits == 0
+        assert cache.misses == 0
+
+    def test_no_db_behaves_like_plain_dict_tier1_only(self):
+        cache = PersistentResolutionCache()
+        assert "0xabc" not in cache
+        cache["0xabc"] = True
+        assert "0xabc" in cache
+        assert cache["0xabc"] is True
+        assert cache.misses == 1
+        assert cache.hits == 1
+
+    def test_unresolved_market_not_persisted_to_db(self):
+        # Single most important correctness property (issue #1221): an
+        # unresolved market (None) must NEVER reach the persistent table --
+        # a negative entry would permanently poison it once it does resolve.
+        db = MagicMock()
+        db.get_cached_market_resolution.return_value = None
+        cache = PersistentResolutionCache(db)
+        assert "0xunresolved" not in cache
+        cache["0xunresolved"] = None
+        db.cache_market_resolution.assert_not_called()
+
+    def test_unresolved_market_still_cached_in_memory_for_this_run(self):
+        # Ephemeral, run-scoped only -- avoids a second network call for the
+        # same still-unresolved market later in the same run, but (per the
+        # test above) is never written to the DB.
+        db = MagicMock()
+        db.get_cached_market_resolution.return_value = None
+        cache = PersistentResolutionCache(db)
+        cache["0xunresolved"] = None
+        assert "0xunresolved" in cache
+        assert cache["0xunresolved"] is None
+
+    def test_resolved_market_is_persisted_to_db(self):
+        db = MagicMock()
+        cache = PersistentResolutionCache(db)
+        cache["0xabc"] = True
+        db.cache_market_resolution.assert_called_once_with("0xabc", True)
+
+    def test_resolved_false_is_also_persisted_to_db(self):
+        # False is a real resolved answer, not "missing" -- must be
+        # persisted just like True.
+        db = MagicMock()
+        cache = PersistentResolutionCache(db)
+        cache["0xabc"] = False
+        db.cache_market_resolution.assert_called_once_with("0xabc", False)
+
+    def test_db_hit_avoids_second_db_query_within_same_run(self):
+        db = MagicMock()
+        db.get_cached_market_resolution.return_value = True
+        cache = PersistentResolutionCache(db)
+        assert "0xabc" in cache  # first check -- consults db
+        assert "0xabc" in cache  # second check -- served from the promoted in-memory entry
+        db.get_cached_market_resolution.assert_called_once_with("0xabc")
+
+    def test_db_hit_counts_as_a_hit_not_a_miss(self):
+        db = MagicMock()
+        db.get_cached_market_resolution.return_value = False
+        cache = PersistentResolutionCache(db)
+        assert "0xabc" in cache
+        assert cache.hits == 1
+        assert cache.misses == 0
+
+    def test_db_miss_falls_through_and_counts_as_a_miss(self):
+        db = MagicMock()
+        db.get_cached_market_resolution.return_value = None
+        cache = PersistentResolutionCache(db)
+        assert "0xabc" not in cache
+        assert cache.misses == 1
+        assert cache.hits == 0
+
+
+class TestResolutionCachingAcrossRun:
+    """issue #1221 tiers 1 (run-scoped, cross-wallet) and 2 (persistent,
+    cross-run), exercised through the real run() -> backtest_wallet() ->
+    resolve_payout() path (only get_wallet_trades and fetch_market_resolution
+    are mocked, at the network boundary).
+    """
+
+    def test_two_wallets_sharing_market_fetches_resolution_once(self):
+        leaderboard = _leaderboard(2)
+        db = MagicMock()
+        db.get_recent_wallet_screenings.return_value = []
+        db.get_cached_market_resolution.return_value = None
+        trades = [_raw_trade("0xshared", "BUY", 0.5, 10, "Yes")]
+        with patch(
+            "src.scripts.copy_wallet_screening.get_leaderboard", return_value=leaderboard,
+        ), patch(
+            "src.scripts.copy_trade_backtest.get_wallet_trades", return_value=trades,
+        ), patch(
+            "src.scripts.copy_trade_backtest.fetch_market_resolution", return_value=True,
+        ) as mock_fn:
+            rc = run(window="month", top=2, slippage_bps=150.0, db=db)
+        assert rc == 0
+        mock_fn.assert_called_once_with("0xshared")
+
+    def test_market_already_in_persistent_cache_makes_zero_network_calls(self):
+        leaderboard = _leaderboard(1)
+        db = MagicMock()
+        db.get_recent_wallet_screenings.return_value = []
+        db.get_cached_market_resolution.return_value = True  # already resolved, tier 2
+        trades = [_raw_trade("0xabc", "BUY", 0.5, 10, "Yes")]
+        with patch(
+            "src.scripts.copy_wallet_screening.get_leaderboard", return_value=leaderboard,
+        ), patch(
+            "src.scripts.copy_trade_backtest.get_wallet_trades", return_value=trades,
+        ), patch(
+            "src.scripts.copy_trade_backtest.fetch_market_resolution",
+        ) as mock_fn:
+            rc = run(window="month", top=1, slippage_bps=150.0, db=db)
+        assert rc == 0
+        mock_fn.assert_not_called()
+
+    def test_unresolved_market_never_written_to_persistent_cache(self):
+        # Regression/poisoning-risk test: a market that hasn't resolved yet
+        # must never get a row in market_resolutions -- it would permanently
+        # misclassify the market once it does resolve (issue #1221).
+        leaderboard = _leaderboard(1)
+        db = MagicMock()
+        db.get_recent_wallet_screenings.return_value = []
+        db.get_cached_market_resolution.return_value = None
+        trades = [_raw_trade("0xabc", "BUY", 0.5, 10, "Yes")]
+        with patch(
+            "src.scripts.copy_wallet_screening.get_leaderboard", return_value=leaderboard,
+        ), patch(
+            "src.scripts.copy_trade_backtest.get_wallet_trades", return_value=trades,
+        ), patch(
+            "src.scripts.copy_trade_backtest.fetch_market_resolution", return_value=None,
+        ):
+            rc = run(window="month", top=1, slippage_bps=150.0, db=db)
+        assert rc == 0
+        db.cache_market_resolution.assert_not_called()
+
+    def test_hit_miss_counts_logged_once_per_run(self, caplog):
+        leaderboard = _leaderboard(2)
+        db = MagicMock()
+        db.get_recent_wallet_screenings.return_value = []
+        db.get_cached_market_resolution.return_value = None
+        trades = [_raw_trade("0xshared", "BUY", 0.5, 10, "Yes")]
+        with patch(
+            "src.scripts.copy_wallet_screening.get_leaderboard", return_value=leaderboard,
+        ), patch(
+            "src.scripts.copy_trade_backtest.get_wallet_trades", return_value=trades,
+        ), patch(
+            "src.scripts.copy_trade_backtest.fetch_market_resolution", return_value=True,
+        ):
+            with caplog.at_level(logging.INFO):
+                rc = run(window="month", top=2, slippage_bps=150.0, db=db)
+        assert rc == 0
+        assert caplog.text.count("resolution cache:") == 1
+        assert "1 hits, 1 misses" in caplog.text
