@@ -474,8 +474,35 @@ def _local_size(path):
         return -1
 
 
+def _discard(path):
+    """Remove a temporary file if it is there; never raise for it."""
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+
+
 def clear_sidecars(db_path):
-    """Drop stale ``-wal``/``-shm``: replaying one onto a fresh snapshot corrupts it."""
+    """Delete the sidecars beside a database we have just replaced wholesale.
+
+    Called only after a fresh, fully checkpointed snapshot has been installed at
+    ``db_path``. Every sidecar still sitting there belongs to the *previous*
+    file, so all three kinds are stale by construction and none of them may be
+    replayed:
+
+    * ``-wal`` / ``-shm`` -- WAL frames for pages of a file that no longer
+      exists here. Replaying them against the new snapshot is precisely the
+      corruption this sync was rewritten to stop.
+    * ``-journal`` -- a rollback journal is normally sacred, because SQLite
+      replays a *hot* one to undo an interrupted transaction. But a journal is
+      only hot for the database it was written from: SQLite validates it against
+      that file's change counter and page count, so against a different file it
+      is at best ignored and at worst a rollback of unrelated pages. Deleting it
+      is deterministic where leaving it is not. (These snapshots are WAL-mode
+      anyway, so in practice there is none.)
+
+    Returns the basenames removed, for the caller to report.
+    """
     removed = []
     for suffix in ("-wal", "-shm", "-journal"):
         path = db_path + suffix
@@ -518,26 +545,28 @@ def apply_database(remote, entry, project_root, tmp_dir, block_size, log):
     if action == "delta":
         blob = os.path.join(tmp_dir, rel.replace("/", "__") + ".blob")
         remote.pull(entry["payload"], blob, compress=True)
-        shutil.copyfile(target, part)
         try:
+            # Patch a copy: the file we already trust stays untouched until a
+            # digest-verified replacement exists.
+            shutil.copyfile(target, part)
             agent.apply_blocks(part, blob, entry["blocks"], snap_size, block_size)
-        finally:
-            try:
-                os.remove(blob)
-            except OSError:
-                pass
-        try:
             _finalize(part, target, entry["snapshot_digest"], None,
                       expected_size=snap_size)
-        except SyncError:
-            # The delta did not reconstruct the snapshot: fall back to the whole
-            # file, which is still staged on the remote.
-            log("  WARN     %s: delta verification failed, refetching in full" % rel)
+        except (SyncError, ValueError, OSError) as exc:
+            # Anything wrong with the delta -- a short blob (ValueError), a
+            # digest mismatch (SyncError), a local IO failure -- falls back to
+            # the whole snapshot, which is still staged on the remote. Catching
+            # only SyncError here used to let a short blob abort the entire sync.
+            log("  WARN     %s: delta did not verify (%s); refetching in full"
+                % (rel, exc))
+            _discard(part)
             remote.pull(entry["payload_hint_full"], part, compress=True)
             _finalize(part, target, entry["snapshot_digest"], None,
                       expected_size=snap_size)
             moved += snap_size
             action = "full"
+        finally:
+            _discard(blob)
     else:
         remote.pull(entry["payload"], part, compress=True)
         _finalize(part, target, entry["snapshot_digest"], None, expected_size=snap_size)

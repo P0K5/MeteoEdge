@@ -223,13 +223,18 @@ def snapshot_database(src, out, method="backup", timeout=60.0):
     is 2-4x faster on the server, at the cost of that much worse delta rate.
 
     Returns the method actually used.
+
+    The source is only ever opened **read-only**, and there is deliberately no
+    read-write fallback: while neither method writes to the source itself, a
+    read-write connection to a WAL database can run recovery on open and
+    checkpoints on close (deleting the ``-wal`` and touching the main file). That
+    would make a tool whose whole job is to read production data mutate it, and
+    would invalidate the change fingerprint taken right after. If the read-only
+    open fails -- an unwritable ``-shm``, or the file owned by another user --
+    that is reported as an error for this database and the rest of the sync
+    continues.
     """
-    try:
-        con = sqlite3.connect(_read_only_uri(src), uri=True, timeout=timeout)
-    except sqlite3.Error:
-        # A read-only open needs a readable -shm; fall back to a normal open
-        # (neither VACUUM INTO nor the backup API writes to the source).
-        con = sqlite3.connect(src, timeout=timeout)
+    con = sqlite3.connect(_read_only_uri(src), uri=True, timeout=timeout)
     try:
         if method != "vacuum":
             _remove_db_files(out)

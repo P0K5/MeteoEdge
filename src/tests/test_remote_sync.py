@@ -14,6 +14,7 @@ No network: everything here runs against tmp_path.
 from __future__ import annotations
 
 import os
+import shutil
 import sqlite3
 
 import pytest
@@ -376,6 +377,126 @@ def test_snapshot_overwrites_a_previous_snapshot_and_its_sidecars(tmp_path):
 def test_non_sqlite_files_are_detected_rather_than_snapshotted(tmp_path):
     plain = _write(tmp_path / "not.db", b"just bytes")
     assert agent.looks_like_sqlite(str(plain)) is False
+
+
+class _FakeRemote(object):
+    """Stands in for the SSH transport: ``pull`` copies from a staging dir.
+
+    ``corrupt_first`` makes the first pull deliver damaged bytes, which is how
+    the delta-verification failure and its whole-snapshot fallback get covered
+    without a server.
+    """
+
+    def __init__(self, corrupt_first=False):
+        self.corrupt_first = corrupt_first
+        self.pulls = []
+
+    def pull(self, remote_path, local_path, compress=False):
+        self.pulls.append(remote_path)
+        if self.corrupt_first and len(self.pulls) == 1:
+            with open(local_path, "wb") as fh:
+                fh.write(b"\xff" * 64)
+            return
+        shutil.copyfile(remote_path, local_path)
+
+
+def _staged_db(tmp_path, old_payload, new_payload, block_size=BS):
+    """Build the local copy, the remote snapshot, its delta blob, and the entry."""
+    target = _write(tmp_path / "data" / "live.db", old_payload)
+    snapshot = _write(tmp_path / "stage" / "snap.db", new_payload)
+    indices = agent.changed_block_indices(
+        agent.block_digests(str(target), block_size),
+        agent.block_digests(str(snapshot), block_size))
+    blob = tmp_path / "stage" / "snap.db.blob"
+    agent.extract_blocks(str(snapshot), indices, str(blob), block_size)
+    entry = {"p": "data/live.db", "action": "delta", "blocks": indices,
+             "snapshot_size": len(new_payload),
+             "snapshot_digest": agent.file_digest(str(snapshot)),
+             "payload": str(blob), "payload_size": os.path.getsize(str(blob)),
+             "payload_hint_full": str(snapshot)}
+    return target, entry
+
+
+def test_apply_database_installs_a_delta_and_verifies_it(tmp_path):
+    old = bytearray(os.urandom(BS * 4))
+    new = bytearray(old)
+    new[BS * 2:BS * 2 + 8] = b"changed!"
+    target, entry = _staged_db(tmp_path, bytes(old), bytes(new))
+    remote = _FakeRemote()
+
+    moved, taken = rs.apply_database(remote, entry, str(tmp_path), str(tmp_path),
+                                     BS, lambda *a: None)
+    assert taken == "delta"
+    assert moved == BS                        # one block, not the whole file
+    assert target.read_bytes() == bytes(new)
+    assert not os.path.exists(str(target) + ".part")
+
+
+def test_apply_database_falls_back_to_the_whole_snapshot_when_a_delta_fails(tmp_path):
+    old = bytearray(os.urandom(BS * 4))
+    new = bytearray(old)
+    new[BS:BS + 8] = b"changed!"
+    target, entry = _staged_db(tmp_path, bytes(old), bytes(new))
+    remote = _FakeRemote(corrupt_first=True)
+    lines = []
+
+    moved, taken = rs.apply_database(remote, entry, str(tmp_path), str(tmp_path),
+                                     BS, lines.append)
+
+    # The bad delta is detected, the staged snapshot is re-pulled whole, and the
+    # file that lands is still the verified snapshot rather than a patched mess.
+    assert taken == "full"
+    assert target.read_bytes() == bytes(new)
+    assert moved == entry["payload_size"] + len(new)
+    assert len(remote.pulls) == 2
+    assert any("delta did not verify" in line for line in lines)
+    assert not os.path.exists(str(target) + ".part")
+
+
+def test_apply_database_keeps_the_old_file_when_even_the_full_copy_is_bad(tmp_path):
+    old = os.urandom(BS * 2)
+    target, entry = _staged_db(tmp_path, old, os.urandom(BS * 2))
+    entry["snapshot_digest"] = "0" * 32       # nothing will ever verify
+
+    with pytest.raises(rs.SyncError):
+        rs.apply_database(_FakeRemote(), entry, str(tmp_path), str(tmp_path),
+                          BS, lambda *a: None)
+    assert target.read_bytes() == old         # untouched
+    assert not os.path.exists(str(target) + ".part")
+
+
+def test_apply_database_reports_an_identical_local_copy_without_transferring(tmp_path):
+    payload = os.urandom(BS * 3)
+    _target, entry = _staged_db(tmp_path, payload, payload)
+    remote = _FakeRemote()
+
+    moved, taken = rs.apply_database(remote, entry, str(tmp_path), str(tmp_path),
+                                     BS, lambda *a: None)
+    assert (moved, taken, remote.pulls) == (0, "same", [])
+
+
+def test_apply_database_fetches_in_full_when_the_local_copy_vanished(tmp_path):
+    new = os.urandom(BS * 2 + 3)
+    target, entry = _staged_db(tmp_path, os.urandom(BS * 2), new)
+    os.remove(str(target))                    # deleted between planning and applying
+    remote = _FakeRemote()
+
+    moved, taken = rs.apply_database(remote, entry, str(tmp_path), str(tmp_path),
+                                     BS, lambda *a: None)
+    assert (taken, moved) == ("full", len(new))
+    assert target.read_bytes() == new
+
+
+def test_apply_database_clears_sidecars_left_beside_the_replaced_file(tmp_path):
+    old = os.urandom(BS)
+    target, entry = _staged_db(tmp_path, old, os.urandom(BS))
+    _write(tmp_path / "data" / "live.db-wal", b"stale frames")
+    _write(tmp_path / "data" / "live.db-shm", b"stale index")
+
+    rs.apply_database(_FakeRemote(), entry, str(tmp_path), str(tmp_path),
+                      BS, lambda *a: None)
+    assert not (tmp_path / "data" / "live.db-wal").exists()
+    assert not (tmp_path / "data" / "live.db-shm").exists()
 
 
 def test_clear_sidecars_removes_a_stale_wal_next_to_a_fresh_snapshot(tmp_path):
