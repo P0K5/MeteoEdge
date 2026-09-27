@@ -1965,6 +1965,55 @@ sqlite3 data/meteoedge.db ".mode csv" ".output archive_trades_$(date +%Y%m%d).cs
 sqlite3 data/meteoedge.db "DELETE FROM trades WHERE DATE(ts) < DATE('now', '-30 days');"
 ```
 
+### Syncing Production Data to a Desktop (issue #1230)
+
+`logs/` and `data/` on a developer desktop are **copies** of the host's files.
+`scripts/Fetch-RemoteData.ps1` refreshes them over SSH, incrementally. Nothing
+runs on the host except a short-lived Python worker the script uploads to
+`/tmp` and deletes afterwards; it **never writes to the host's databases**.
+
+```powershell
+powershell -File scripts\Fetch-RemoteData.ps1            # normal refresh
+powershell -File scripts\Fetch-RemoteData.ps1 -DryRun    # report, transfer nothing
+powershell -File scripts\Fetch-RemoteData.ps1 -SkipDatabases      # logs/ only
+powershell -File scripts\Fetch-RemoteData.ps1 -Only 'data/meteoedge.db,logs/bot.log'
+powershell -File scripts\Fetch-RemoteData.ps1 -Full      # ignore state, refetch all
+```
+
+Use `powershell`, not `pwsh` — the desktop has Windows PowerShell 5.1 only.
+Exit 0 on success, 1 on failure; it fails within seconds when the host is
+unreachable or `REMOTE_*` is absent, rather than hanging.
+
+**Why databases are safe to trust.** A live SQLite file in WAL mode cannot be
+copied byte-for-byte while the bot writes it — that yields torn pages, and
+pairing them with a `-wal` captured at another instant is worse. The script
+instead has the host produce a consistent snapshot through SQLite (read-only
+connection, single read transaction: it neither blocks nor is blocked by the
+bot's writers), transfers only the 4 MiB blocks that differ from the local
+copy, and digest-verifies the result before it replaces anything. `-wal` /
+`-shm` are never transferred, and stale local ones are deleted. A local
+`PRAGMA integrity_check` failure after a sync is therefore a real finding.
+
+State lives in `.remote-sync-state.json` at the repo root (gitignored). Delete
+it, or pass `-Full`, to force a complete verified refresh.
+
+| `.env` variable | Default | Purpose |
+|---|---|---|
+| `REMOTE_HOST` | — | Host running the bot (required) |
+| `REMOTE_USER` | — | SSH user (required) |
+| `REMOTE_KEY_PATH` | — | SSH private key; `~` allowed (required) |
+| `REMOTE_PROJECT_ROOT` | — | Repo path on the host (required) |
+| `REMOTE_SYNC_DIRS` | `logs,data` | Which directories to sync |
+| `REMOTE_SYNC_EXCLUDE` | _(none)_ | Globs never to transfer, e.g. `cryptoedge.db,*.bak*` — matched on the repo-relative path or the bare filename |
+| `REMOTE_SYNC_DB_METHOD` | `backup` | `backup` = SQLite online backup API, preserves page layout so deltas stay small; `vacuum` = `VACUUM INTO`, compacts and is faster on the host but makes nearly every block read as changed |
+
+Requires Python on the desktop (the repo venv is found automatically) and the
+OpenSSH `ssh`/`scp` that ship with Windows. No `rsync` — it does not exist
+there, which is why the delta is computed by the script itself.
+
+The older `scripts/fetch_remote_data.sh` (rsync) still copies live databases
+byte-for-byte and should not be used to fetch `data/`.
+
 ---
 
 ## Deployment Checklist
