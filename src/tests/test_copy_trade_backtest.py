@@ -9,6 +9,7 @@ from src.scripts.copy_trade_backtest import (
     apply_slippage,
     backtest_wallet,
     build_report,
+    collect_distinct_buy_markets,
     resolve_payout,
     run,
 )
@@ -285,6 +286,130 @@ class TestBacktestWalletCache:
         assert warm_result["trader"]["dollar_pnl"] == pytest.approx(
             cold_result["trader"]["dollar_pnl"]
         )
+
+
+class TestCollectDistinctBuyMarkets:
+    """collect_distinct_buy_markets() (issue #1227) -- the pre-scan
+    backtest_wallet's batch_resolve=True path uses to know which markets to
+    batch-resolve before the per-trade loop runs."""
+
+    def test_distinct_markets_in_first_seen_order(self):
+        trades = [
+            _raw_trade("0xabc", "BUY", 0.5, 10, "Yes"),
+            _raw_trade("0xdef", "BUY", 0.2, 5, "No"),
+            _raw_trade("0xabc", "BUY", 0.6, 3, "Yes"),
+        ]
+        assert collect_distinct_buy_markets(trades) == ["0xabc", "0xdef"]
+
+    def test_sell_trades_excluded(self):
+        trades = [_raw_trade("0xabc", "SELL", 0.5, 10, "Yes")]
+        assert collect_distinct_buy_markets(trades) == []
+
+    def test_unnormalizable_trade_dropped(self):
+        trades = [{"side": "BUY"}]  # missing conditionId/price/etc.
+        assert collect_distinct_buy_markets(trades) == []
+
+
+class TestBacktestWalletBatchResolve:
+    """backtest_wallet(..., batch_resolve=True) (issue #1227) -- screening's
+    cold-cache path. Default (batch_resolve=False, every existing caller)
+    is covered by TestBacktestWallet/TestBacktestWalletCache above and is
+    intentionally untouched by any of these tests.
+    """
+
+    def test_default_batch_resolve_false_never_calls_batch_fetcher(self):
+        trades = [_raw_trade("0xabc", "BUY", 0.50, 10, "Yes")]
+        with patch(
+            "src.scripts.copy_trade_backtest.get_wallet_trades", return_value=trades
+        ), patch(
+            "src.scripts.copy_trade_backtest.fetch_market_resolution", return_value=True
+        ), patch(
+            "src.scripts.copy_trade_backtest.fetch_market_resolutions_batch",
+        ) as mock_batch:
+            result = backtest_wallet("0xwallet", slippage_bps=150)
+        mock_batch.assert_not_called()
+        assert result["n_resolved"] == 1
+
+    def test_batch_resolve_true_resolves_distinct_markets_in_one_call(self):
+        trades = [
+            _raw_trade("0xabc", "BUY", 0.50, 10, "Yes"),
+            _raw_trade("0xdef", "BUY", 0.20, 5, "No"),
+            _raw_trade("0xabc", "BUY", 0.60, 3, "Yes"),  # same market again
+        ]
+        with patch(
+            "src.scripts.copy_trade_backtest.get_wallet_trades", return_value=trades
+        ), patch(
+            "src.scripts.copy_trade_backtest.fetch_market_resolution",
+        ) as mock_single, patch(
+            "src.scripts.copy_trade_backtest.fetch_market_resolutions_batch",
+            return_value={"0xabc": True, "0xdef": False},
+        ) as mock_batch:
+            result = backtest_wallet("0xwallet", slippage_bps=150, batch_resolve=True)
+        mock_batch.assert_called_once_with(["0xabc", "0xdef"])
+        mock_single.assert_not_called()
+        assert result["n_resolved"] == 3
+
+    def test_batch_resolve_true_skips_markets_already_in_cache(self):
+        trades = [_raw_trade("0xabc", "BUY", 0.50, 10, "Yes")]
+        cache = {"0xabc": True}
+        with patch(
+            "src.scripts.copy_trade_backtest.get_wallet_trades", return_value=trades
+        ), patch(
+            "src.scripts.copy_trade_backtest.fetch_market_resolutions_batch",
+        ) as mock_batch:
+            result = backtest_wallet(
+                "0xwallet", slippage_bps=150, cache=cache, batch_resolve=True,
+            )
+        mock_batch.assert_not_called()
+        assert result["n_resolved"] == 1
+
+    def test_batch_resolve_unresolved_market_not_cached_as_resolved(self):
+        # Poisoning-invariant regression at the backtest_wallet layer
+        # (issue #1221 invariant, exercised through the #1227 batched path):
+        # a market the batch fetcher reports as None (unresolved) must be
+        # dropped from this run's results, not silently treated as a loss.
+        trades = [_raw_trade("0xabc", "BUY", 0.50, 10, "Yes")]
+        cache: dict = {}
+        with patch(
+            "src.scripts.copy_trade_backtest.get_wallet_trades", return_value=trades
+        ), patch(
+            "src.scripts.copy_trade_backtest.fetch_market_resolutions_batch",
+            return_value={"0xabc": None},
+        ):
+            result = backtest_wallet(
+                "0xwallet", slippage_bps=150, cache=cache, batch_resolve=True,
+            )
+        assert result["n_resolved"] == 0
+        assert result["n_unresolved_dropped"] == 1
+        assert cache["0xabc"] is None
+
+    def test_batch_resolve_produces_identical_stats_to_unbatched_path(self):
+        # Same fixture trades and resolutions, once through the unbatched
+        # per-market path and once through batch_resolve=True -- results
+        # must be identical (issue #1227's "batching is additive, not a
+        # rewrite" acceptance criterion).
+        trades = [
+            _raw_trade("0xabc", "BUY", 0.50, 10, "Yes"),
+            _raw_trade("0xdef", "BUY", 0.20, 5, "No"),
+        ]
+        with patch(
+            "src.scripts.copy_trade_backtest.get_wallet_trades", return_value=trades
+        ), patch(
+            "src.scripts.copy_trade_backtest.fetch_market_resolution", return_value=True
+        ):
+            unbatched = backtest_wallet("0xwallet", slippage_bps=150, cache={})
+
+        with patch(
+            "src.scripts.copy_trade_backtest.get_wallet_trades", return_value=trades
+        ), patch(
+            "src.scripts.copy_trade_backtest.fetch_market_resolutions_batch",
+            return_value={"0xabc": True, "0xdef": True},
+        ):
+            batched = backtest_wallet(
+                "0xwallet", slippage_bps=150, cache={}, batch_resolve=True,
+            )
+
+        assert batched == unbatched
 
 
 class TestNoDatabaseDependency:
