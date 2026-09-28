@@ -8,7 +8,6 @@ from unittest.mock import MagicMock, patch
 from src.scripts.copy_wallet_screening import (
     MAX_WALLETS_PER_RUN,
     QUALITY_MAX_MEAN_MEDIAN_ROI_RATIO,
-    QUALITY_MAX_TOTAL_TRADES,
     PersistentResolutionCache,
     check_quality,
     check_stability,
@@ -39,6 +38,7 @@ def _raw_trade(market, side, price, size, outcome, ts=1700000000, outcome_index=
 def _backtest_result(
     address, n_buy_trades=5, n_sell_excluded=0, n_resolved=5, win_rate=0.6,
     mean_roi=0.1, median_roi=0.1, dollar_pnl=10.0, flat_dollar_pnl=None,
+    truncated=False,
 ) -> dict:
     stats = {
         "n": n_resolved, "win_rate": win_rate, "mean_roi": mean_roi,
@@ -49,6 +49,11 @@ def _backtest_result(
         "n_buy_trades": n_buy_trades,
         "n_sell_excluded": n_sell_excluded,
         "n_resolved": n_resolved,
+        # Issue #1233: backtest_wallet()'s own truncated passthrough (see
+        # test_copy_trade_backtest.py for that threading's own coverage) --
+        # defaults to False so every existing caller of this helper that
+        # doesn't care about truncation is unaffected.
+        "truncated": truncated,
         "copier": dict(stats),
         "trader": dict(stats),
     }
@@ -102,18 +107,21 @@ class TestCheckStability:
 
 
 def _quality_row(
-    flat_dollar_pnl=10.0, median_roi=0.11, mean_roi=0.1, n_buy_trades=5,
-    n_sell_excluded=0,
+    flat_dollar_pnl=10.0, median_roi=0.11, mean_roi=0.1, truncated=False,
 ) -> dict:
     """A `current` dict that passes every check_quality() condition by
     default -- override individual fields to exercise one failure at a time.
+
+    ``truncated`` (issue #1233) replaces the old ``n_buy_trades``/
+    ``n_sell_excluded`` count fields entirely -- condition (d) now consumes
+    the fetcher's own reported flag directly, not an arithmetic comparison
+    against a constant.
     """
     return {
         "flat_dollar_pnl": flat_dollar_pnl,
         "median_roi": median_roi,
         "mean_roi": mean_roi,
-        "n_buy_trades": n_buy_trades,
-        "n_sell_excluded": n_sell_excluded,
+        "truncated": truncated,
     }
 
 
@@ -179,20 +187,15 @@ class TestCheckQuality:
         row = _quality_row(median_roi=-0.01, mean_roi=1.0)
         assert check_quality(row, None) == (False, "median_roi_not_positive")
 
-    def test_total_trades_just_under_cap_passes(self):
-        row = _quality_row(n_buy_trades=10500, n_sell_excluded=9499)
-        assert check_quality(row, None) == (True, "ok")
-
-    def test_high_n_buy_trades_alone_does_not_trigger_truncation(self):
-        # Regression test for the unit-mismatch bug (PR #1211 review): a
-        # wallet with n_buy_trades=10,500 (the observed ceiling for
-        # genuinely-truncated wallets under a ~50/50 buy/sell split) but a
-        # small n_sell_excluded was NOT actually truncated -- comparing
-        # n_buy_trades alone against the cap would incorrectly pass this
-        # wallet and reject nothing (the bug: the cap was always > 10,500).
-        # This proves the gate discriminates rather than just rejecting
-        # high-volume wallets.
-        row = _quality_row(n_buy_trades=10500, n_sell_excluded=100)
+    def test_untruncated_high_volume_wallet_passes_unconditionally(self):
+        # Issue #1233's own discriminating test, at the check_quality()
+        # level: a high trade count alone means nothing now -- only the
+        # fetcher's own truncated=False observation matters. This is the
+        # regression both previous fixes (#1209/#1211's wrong-units
+        # constant, and this issue's own inert page-cap constant) missed:
+        # a wallet fetched to genuine exhaustion (a short/empty final page)
+        # must pass regardless of how many trades that turned out to be.
+        row = _quality_row(truncated=False)
         assert check_quality(row, None) == (True, "ok")
 
     def test_quality_max_mean_median_ratio_constant_is_three(self):
@@ -204,15 +207,15 @@ class TestCheckQualityTruncationReproducibility:
     """issue #1217: a truncated wallet (condition (d)) is no longer an
     unconditional reject -- it is admitted only when its flat-stake edge
     also reproduced in the immediately-previous screening run.
+
+    Issue #1233: condition (d) now keys off `current["truncated"]` --
+    reported by get_wallet_trades()/backtest_wallet() -- rather than a
+    trade count compared against a constant. These tests exercise the same
+    reproducibility behaviour as before, just via the new input shape.
     """
 
     def _truncated_row(self, flat_dollar_pnl=10.0):
-        # n_buy_trades + n_sell_excluded == the fetch cap exactly.
-        row = _quality_row(
-            flat_dollar_pnl=flat_dollar_pnl, n_buy_trades=10500, n_sell_excluded=9500,
-        )
-        assert row["n_buy_trades"] + row["n_sell_excluded"] == QUALITY_MAX_TOTAL_TRADES
-        return row
+        return _quality_row(flat_dollar_pnl=flat_dollar_pnl, truncated=True)
 
     def test_truncated_current_and_previous_both_positive_is_eligible(self):
         row = self._truncated_row(flat_dollar_pnl=10.0)
@@ -305,7 +308,7 @@ class TestRunPersistence:
             address="0xwallet0", window="week", screened_at="2026-09-19T00:00:00+00:00",
             n_buy_trades=8, n_resolved=6, win_rate=0.5, mean_roi=0.2, median_roi=0.15,
             mirrored_dollar_pnl=12.34, flat_dollar_pnl=None, flat_stake=None,
-            slippage_bps=200.0, eligible_to_follow=0,
+            slippage_bps=200.0, eligible_to_follow=0, truncated=0,
         )
 
     def test_flat_dollar_pnl_extracted_from_copier_flat_when_flat_stake_set(self):
@@ -337,6 +340,37 @@ class TestRunPersistence:
         kwargs = db.insert_wallet_screening.call_args.kwargs
         assert kwargs["flat_dollar_pnl"] is None
         assert kwargs["flat_stake"] is None
+
+    def test_truncated_flag_persisted_from_backtest_result(self):
+        # Issue #1233 acceptance criteria: the persisted row must carry
+        # the flag through, visible retrospectively -- not just consumed
+        # in-process by check_quality().
+        leaderboard = _leaderboard(1)
+        db = MagicMock()
+        db.get_recent_wallet_screenings.return_value = []
+        with patch(
+            "src.scripts.copy_wallet_screening.get_leaderboard", return_value=leaderboard,
+        ), patch(
+            "src.scripts.copy_wallet_screening.backtest_wallet",
+            return_value=_backtest_result("0xwallet0", truncated=True),
+        ):
+            run(window="month", top=1, slippage_bps=150.0, db=db)
+        kwargs = db.insert_wallet_screening.call_args.kwargs
+        assert kwargs["truncated"] == 1
+
+    def test_untruncated_flag_persisted_as_zero(self):
+        leaderboard = _leaderboard(1)
+        db = MagicMock()
+        db.get_recent_wallet_screenings.return_value = []
+        with patch(
+            "src.scripts.copy_wallet_screening.get_leaderboard", return_value=leaderboard,
+        ), patch(
+            "src.scripts.copy_wallet_screening.backtest_wallet",
+            return_value=_backtest_result("0xwallet0", truncated=False),
+        ):
+            run(window="month", top=1, slippage_bps=150.0, db=db)
+        kwargs = db.insert_wallet_screening.call_args.kwargs
+        assert kwargs["truncated"] == 0
 
     def test_stability_check_uses_immediately_prior_row(self):
         leaderboard = _leaderboard(1)
@@ -473,30 +507,34 @@ class TestEligibilityQualityGate:
         db.insert_wallet_screening.assert_called_once()
 
     def test_stable_but_truncated_history_is_ineligible(self):
-        # Realistic ceiling fixture (PR #1211 review): a genuinely-truncated
-        # wallet observed in production sits at n_buy_trades=10,500 with a
-        # large n_sell_excluded -- truncation is on the TOTAL fetched
-        # trades, not n_buy_trades alone.
+        # issue #1233: truncation is now the fetcher's own reported flag,
+        # not a trade count -- a genuinely-truncated wallet (10,500 trades,
+        # cut short by the server's own 400) with no reproducibility
+        # evidence yet is ineligible.
         db = MagicMock()
         previous = {"median_roi": 0.10, "n_resolved": 100}
         result = _backtest_result(
             "0xwallet0", n_buy_trades=10500, n_sell_excluded=9500, n_resolved=105,
-            median_roi=0.11, mean_roi=0.1, flat_dollar_pnl=10.0,
+            median_roi=0.11, mean_roi=0.1, flat_dollar_pnl=10.0, truncated=True,
         )
         self._run_stable(db, result, previous)
         kwargs = db.insert_wallet_screening.call_args.kwargs
         assert kwargs["eligible_to_follow"] == 0
         db.insert_wallet_screening.assert_called_once()
 
-    def test_stable_high_n_buy_trades_but_not_truncated_is_eligible(self):
-        # Discriminates the fix from the bug it replaces: a wallet with the
-        # same high n_buy_trades=10,500 but a genuinely small
-        # n_sell_excluded was NOT truncated and should pass.
+    def test_stable_high_trade_count_but_not_truncated_is_eligible(self):
+        # Issue #1233's own discriminating test at the run()/persistence
+        # level: a wallet with the same high trade count (10,500) but whose
+        # fetch reached genuine exhaustion (get_wallet_trades() reported
+        # truncated=False, e.g. a short final page) must be eligible.
+        # Getting this backwards -- flagging exhaustion as truncation --
+        # would be exactly as useless as the old always-inert gate, just
+        # failing in the opposite direction.
         db = MagicMock()
         previous = {"median_roi": 0.10, "n_resolved": 100}
         result = _backtest_result(
             "0xwallet0", n_buy_trades=10500, n_sell_excluded=100, n_resolved=105,
-            median_roi=0.11, mean_roi=0.1, flat_dollar_pnl=10.0,
+            median_roi=0.11, mean_roi=0.1, flat_dollar_pnl=10.0, truncated=False,
         )
         self._run_stable(db, result, previous)
         kwargs = db.insert_wallet_screening.call_args.kwargs
@@ -510,7 +548,7 @@ class TestEligibilityQualityGate:
         previous = {"median_roi": 0.10, "n_resolved": 100, "flat_dollar_pnl": 5.0}
         result = _backtest_result(
             "0xwallet0", n_buy_trades=10500, n_sell_excluded=9500, n_resolved=105,
-            median_roi=0.11, mean_roi=0.1, flat_dollar_pnl=10.0,
+            median_roi=0.11, mean_roi=0.1, flat_dollar_pnl=10.0, truncated=True,
         )
         self._run_stable(db, result, previous)
         kwargs = db.insert_wallet_screening.call_args.kwargs
@@ -518,17 +556,19 @@ class TestEligibilityQualityGate:
         db.insert_wallet_screening.assert_called_once()
 
     def test_truncated_history_ineligible_0x5268527977_previous_negative(self):
-        # Regression fixture from issue #1217: 0x5268527977 passed
-        # check_stability() (n_resolved steady at ~10,300) but its
-        # flat_dollar_pnl swung -1455 -> -1258 -> -671 -> +1129 across runs.
-        # The unconditional truncation reject would have caught this by
-        # accident; the reproducibility rule must still reject it, and for
-        # the right reason (unreproducible, not "no previous run").
+        # Regression fixture from issue #1217 (and issue #1233's live
+        # recurrence): 0x5268527977 passed check_stability() (n_resolved
+        # steady at ~10,300) but its flat_dollar_pnl swung
+        # -1455 -> -1258 -> -671 -> +1129 across runs, while
+        # get_wallet_trades() reports this wallet's fetch as genuinely
+        # truncated (10,500 trades then a 400). The reproducibility rule
+        # must still reject it, and for the right reason (unreproducible,
+        # not "no previous run").
         db = MagicMock()
         previous = {"median_roi": 0.10, "n_resolved": 10300, "flat_dollar_pnl": -671.0}
         result = _backtest_result(
             "0xwallet0", n_buy_trades=10500, n_sell_excluded=9500, n_resolved=10350,
-            median_roi=0.11, mean_roi=0.1, flat_dollar_pnl=1129.0,
+            median_roi=0.11, mean_roi=0.1, flat_dollar_pnl=1129.0, truncated=True,
         )
         self._run_stable(db, result, previous)
         kwargs = db.insert_wallet_screening.call_args.kwargs

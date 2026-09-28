@@ -45,6 +45,16 @@ LEADERBOARD_WINDOWS = {"day", "week", "month", "all"}
 #: hammer the host -- mirrors get_weather_markets()'s bounded range in
 #: polymarket.py.
 DEFAULT_TRADE_PAGE_SIZE = 500
+#: Defensive ceiling only -- in practice the server's own undocumented
+#: offset limit (see get_wallet_trades()'s docstring, "observed ceiling"
+#: below) is reached first. Do NOT lower this to match that observed
+#: ceiling: it is the server's ceiling, not a fact about this constant, and
+#: could change/vary per wallet without notice. Leave this as the loop's
+#: own runaway guard (mirrors get_weather_markets()'s bounded range in
+#: polymarket.py) and let get_wallet_trades()'s `truncated` flag -- not a
+#: count compared against this constant -- be how callers learn pagination
+#: didn't reach genuine exhaustion (issue #1233; this is the second time a
+#: count-vs-constant comparison silently went inert, see that issue).
 MAX_TRADE_PAGES = 40
 
 
@@ -82,11 +92,33 @@ def wallet_address(entry: dict) -> "str | None":
     return None
 
 
+class TradeList(list):
+    """A plain ``list[dict]`` of trades, annotated with whether the fetch
+    that produced it was truncated (issue #1233).
+
+    Deliberately a ``list`` subclass rather than a new return-type shape:
+    every existing caller (``copy_exit_analysis.index_wallet_sells``,
+    every test that mocks ``get_wallet_trades``/``get_wallet_trades_since``
+    with a plain list) keeps iterating/comparing/indexing it exactly as
+    before -- ``==`` against a plain list, ``for raw in trades``, ``len()``
+    are all unaffected, since none of those consult ``.truncated``. Only a
+    caller that actually needs to know *why* pagination stopped (currently
+    just ``backtest_wallet()``) reads the attribute, via
+    ``getattr(result, "truncated", False)`` so a caller/test that still
+    hands back a bare ``list`` (no ``.truncated`` attribute at all) degrades
+    safely to "not truncated" rather than raising.
+    """
+
+    def __init__(self, iterable=(), *, truncated: bool = False):
+        super().__init__(iterable)
+        self.truncated = truncated
+
+
 def get_wallet_trades(
     address: str,
     max_pages: int = MAX_TRADE_PAGES,
     page_size: int = DEFAULT_TRADE_PAGE_SIZE,
-) -> list[dict]:
+) -> TradeList:
     """Fetch *address*'s full trade tape (maker + taker fills), paginated
     via limit/offset, up to *max_pages*.
 
@@ -115,8 +147,40 @@ def get_wallet_trades(
     collected on earlier pages is still returned rather than discarded, so
     a transient mid-run failure degrades to "partial history" instead of
     "no history".
+
+    **Return value carries a ``truncated`` flag (issue #1233).** The
+    returned ``TradeList`` is a plain list of trade dicts -- iterate/index/
+    compare it exactly as before -- with one extra attribute,
+    ``.truncated``, ``True`` iff pagination stopped for a reason that does
+    NOT mean "this is genuinely all of this wallet's history":
+
+    - a page request raised (network error, or a non-2xx status such as
+      the 400 documented below), or
+    - every single page up to *max_pages* came back full (``len(batch) ==
+        page_size``) -- i.e. the loop hit its own depth cap without ever
+      seeing a short/empty page.
+
+    ``.truncated`` is ``False`` when pagination stopped because a page came
+    back empty or shorter than *page_size* -- the server's own signal that
+    there is nothing more to fetch. This is the discrimination that
+    matters: a short final page is genuine exhaustion, not truncation, and
+    must never be flagged as such (that flip -- flagging exhaustion as
+    truncation -- would be exactly as useless as a flag that never fires,
+    just in the opposite direction).
+
+    **Observed server-side ceiling -- confirmed live 2026-09-27.**
+    ``data-api.polymarket.com/trades`` 400s once ``offset`` exceeds 10,500
+    (wallet ``0x5268527977...``, 21 full pages of 500 = 10,500 trades, then
+    a 400 on page 22 at ``offset=10500``) -- an undocumented ceiling lower
+    than this function's own ``MAX_TRADE_PAGES * DEFAULT_TRADE_PAGE_SIZE``
+    = 20,000, so in practice the server's limit is hit before this
+    function's own defensive cap ever would be (issue #1233). Do not
+    re-derive a "the cap is actually N" constant from this observation --
+    it may not be stable -- rely on ``.truncated`` instead, which reports
+    the fetch's actual outcome regardless of where the ceiling sits.
     """
     trades: list[dict] = []
+    truncated = False
     for page in range(max_pages):
         offset = page * page_size
         url = f"{POLYMARKET_DATA_API}/trades?user={address}&limit={page_size}&offset={offset}"
@@ -128,13 +192,20 @@ def get_wallet_trades(
                 "[polymarket-traders] get_wallet_trades(%s...): page %s failed: %s",
                 address[:10], page, exc,
             )
+            truncated = True
             break
         if not batch:
             break
         trades.extend(batch)
         if len(batch) < page_size:
             break
-    return trades
+    else:
+        # The loop ran through every page up to max_pages without ever
+        # breaking on an empty/short page (or an error, handled above) --
+        # every page was full, so pagination stopped only because the
+        # depth cap was reached, not because the server ran out of trades.
+        truncated = True
+    return TradeList(trades, truncated=truncated)
 
 
 def get_wallet_trades_since(

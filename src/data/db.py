@@ -376,7 +376,16 @@ CREATE TABLE IF NOT EXISTS copy_wallet_candidates (
     flat_dollar_pnl      REAL,
     flat_stake           REAL,
     slippage_bps         REAL NOT NULL,
-    eligible_to_follow   INTEGER NOT NULL DEFAULT 0
+    eligible_to_follow   INTEGER NOT NULL DEFAULT 0,
+    -- Issue #1233: whether get_wallet_trades() reported this run's fetch as
+    -- truncated (error/max_pages, not a short final page -- see that
+    -- function's docstring). Default 0 for a fresh table -- existing rows
+    -- (written before this column existed) are backfilled to 0 via the
+    -- ALTER TABLE migration below, which is the conservative default: we
+    -- have no way to retroactively know whether an old run's fetch was
+    -- truncated, and treating unknown as "not truncated" matches what
+    -- those rows already implied under the old (inert) gate.
+    truncated            INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_copy_wallet_candidates_address_screened
     ON copy_wallet_candidates(address, screened_at);
@@ -712,6 +721,14 @@ class Database:
             # Readers should use COALESCE(filled_stake_usd, stake_usd) to
             # stay correct for rows written before this migration.
             ("copy_live_positions", "filled_stake_usd", "REAL"),
+            # Issue #1233: whether the screening run's get_wallet_trades()
+            # fetch was truncated (see copy_wallet_candidates' CREATE TABLE
+            # comment above for the full rationale). Default 0 backfills
+            # every pre-#1233 row -- the old gate's inert count comparison
+            # never actually flagged any row as truncated either, so 0
+            # (not-truncated) is the accurate carry-forward, not merely a
+            # placeholder default.
+            ("copy_wallet_candidates", "truncated", "INTEGER NOT NULL DEFAULT 0"),
         ]:
             try:
                 self._conn.execute(
@@ -1649,24 +1666,33 @@ class Database:
         flat_dollar_pnl: "float | None" = None,
         flat_stake: "float | None" = None,
         eligible_to_follow: int = 0,
+        truncated: int = 0,
     ) -> int:
         """Insert one wallet-screening-run row; returns the new row id.
 
         Always a plain INSERT (never INSERT OR REPLACE / upsert) -- this
         table is append-only so the stability check (epic #1099 story 2) can
         diff a wallet's last two runs. Never overwrites a prior run.
+
+        *truncated* (issue #1233): whether this run's ``get_wallet_trades()``
+        fetch was truncated (error/max_pages -- not a short final page,
+        which is genuine exhaustion). Recorded on the row so it is visible
+        retrospectively (the run that produced these numbers may not have
+        seen this wallet's complete history) and in the dashboard
+        Candidates view, not just consumed in-process by
+        ``check_quality()``.
         """
         with self._lock:
             cur = self._conn.execute(
                 "INSERT INTO copy_wallet_candidates"
                 "(address,window,screened_at,n_buy_trades,n_resolved,win_rate,"
                 "mean_roi,median_roi,mirrored_dollar_pnl,flat_dollar_pnl,"
-                "flat_stake,slippage_bps,eligible_to_follow) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "flat_stake,slippage_bps,eligible_to_follow,truncated) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     address, window, screened_at, n_buy_trades, n_resolved, win_rate,
                     mean_roi, median_roi, mirrored_dollar_pnl, flat_dollar_pnl,
-                    flat_stake, slippage_bps, int(eligible_to_follow),
+                    flat_stake, slippage_bps, int(eligible_to_follow), int(truncated),
                 ),
             )
             self._conn.commit()

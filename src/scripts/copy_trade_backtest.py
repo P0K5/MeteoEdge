@@ -256,6 +256,14 @@ def backtest_wallet(
         "n_sell_excluded": n_sell_excluded,
         "n_resolved": len(trader_rois),
         "n_unresolved_dropped": n_buy - len(trader_rois),
+        # issue #1233: get_wallet_trades() reports *why* its pagination
+        # stopped via a `.truncated` attribute on the list it returns (see
+        # that function's docstring) -- carried through here so callers
+        # (check_quality()) consume the fetcher's own observation instead
+        # of re-deriving truncation from a trade count. getattr(..., False)
+        # degrades safely for any caller/test that mocks get_wallet_trades
+        # with a plain list (no `.truncated` attribute at all).
+        "truncated": getattr(raw_trades, "truncated", False),
         "trader": {**_stats(trader_rois), "dollar_pnl": round(trader_dollar_pnl, 2)},
         "copier": {**_stats(copier_rois), "dollar_pnl": round(copier_dollar_pnl, 2)},
     }

@@ -10,9 +10,11 @@ This is what would have caught the spike's own instability finding before
 it reached a followed-wallet decision: wallet `0xd3b034d7...` looked like
 the best candidate in one run (`n_resolved=7498`, `median_roi=+33.4%`) and
 reversed completely 15 hours later (`n_resolved=2271`, `median_roi=-100%`),
-because `get_wallet_trades()` (`src/data/polymarket_traders.py`) is capped
-at `MAX_TRADE_PAGES * page_size` = 20,000 trades and returns a
-recency-biased window for wallets whose true history exceeds that (see
+because `get_wallet_trades()` (`src/data/polymarket_traders.py`) can be cut
+short of a wallet's true history -- by the server's own undocumented
+offset ceiling (observed at 10,500, issue #1233) well before this
+function's own defensive `MAX_TRADE_PAGES * page_size` = 20,000 depth cap
+is ever reached -- and returns a recency-biased window in that case (see
 `docs/design/copy-trading-architecture.md`, "Known limitation").
 
 **No live/paper trading of any kind.** Output is rows in
@@ -40,12 +42,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from src.data.db import Database  # noqa: E402
-from src.data.polymarket_traders import (  # noqa: E402
-    DEFAULT_TRADE_PAGE_SIZE,
-    MAX_TRADE_PAGES,
-    get_leaderboard,
-    wallet_address,
-)
+from src.data.polymarket_traders import get_leaderboard, wallet_address  # noqa: E402
 from src.scripts.copy_trade_backtest import (  # noqa: E402
     DEFAULT_SLIPPAGE_BPS,
     backtest_wallet,
@@ -81,21 +78,25 @@ QUALITY_MIN_MEDIAN_ROI = 0.0
 #: relative to the median_roi check below is not load-bearing.
 QUALITY_MAX_MEAN_MEDIAN_ROI_RATIO = 3.0
 
-#: Gate wallets whose trade history was truncated by the fetch cap in
-#: get_wallet_trades() (src/data/polymarket_traders.py) -- their metrics are
-#: not run-to-run stable on their own (see this module's docstring and issue
+#: Gate wallets whose trade history was truncated -- their metrics are not
+#: run-to-run stable on their own (see this module's docstring and issue
 #: #1209). Rather than an unconditional reject, check_quality()'s condition
 #: (d) admits a truncated wallet when its flat-stake edge reproduced in the
 #: immediately-previous screening run too (issue #1217) -- see that
 #: function's docstring.
-#: IMPORTANT: the fetch cap (MAX_TRADE_PAGES * page_size) bounds the TOTAL
-#: number of trades fetched -- buys and sells interleaved -- not
-#: `n_buy_trades` alone (that's only the buy half after backtest_wallet()
-#: splits them, see copy_trade_backtest.py). Comparing `n_buy_trades` to
-#: this cap directly is a unit mismatch that makes the gate inert (a truly
-#: truncated wallet's n_buy_trades sits well under the cap, e.g. 10,500 of
-#: 20,000). Always compare against `n_buy_trades + n_sell_excluded`.
-QUALITY_MAX_TOTAL_TRADES = MAX_TRADE_PAGES * DEFAULT_TRADE_PAGE_SIZE
+#:
+#: **Issue #1233: no `QUALITY_MAX_TOTAL_TRADES`-style constant here
+#: anymore, deliberately.** This gate used to infer truncation downstream
+#: by comparing `n_buy_trades + n_sell_excluded` against a constant meant
+#: to describe the fetcher's own cap -- and went silently inert TWICE for
+#: the same structural reason: the constant described something other
+#: than reality (first the wrong units -- buys vs. buys+sells, issue
+#: #1209/#1211; then our own page cap rather than the server's actual,
+#: lower, undocumented ceiling, issue #1233). `get_wallet_trades()`
+#: (`src/data/polymarket_traders.py`) is the only code that observes *why*
+#: pagination stopped, so condition (d) below consumes its `truncated`
+#: flag (threaded through by `backtest_wallet()`) directly, instead of
+#: re-deriving truncation from a count a third time.
 
 
 class PersistentResolutionCache(dict):
@@ -232,12 +233,14 @@ def check_quality(current: dict, previous: "dict | None") -> "tuple[bool, str]":
         winners, a profile that does not survive flat-stake copying (see
         docs/design/copy-trading-architecture.md, "Background").
     (c) ``median_roi`` must be > ``QUALITY_MIN_MEDIAN_ROI``.
-    (d) ``current["n_buy_trades"] + current["n_sell_excluded"]`` -- the TOTAL
-        number of trades fetched, not just the buy half -- must be <
-        ``QUALITY_MAX_TOTAL_TRADES`` (see that constant's comment). When it
-        isn't -- the wallet's history was truncated by the fetch cap, so its
-        metrics aren't run-to-run stable on their own -- it is admitted only
-        if the flat-stake edge *reproduced*: ``previous["flat_dollar_pnl"]``
+    (d) ``current["truncated"]`` (issue #1233 -- reported by
+        ``get_wallet_trades()``/``backtest_wallet()``, not re-derived here
+        from a trade count against a constant; see the module-level comment
+        above condition (d)'s old constant for why that approach is
+        deliberately not being repeated a third time). When it's ``True``
+        -- the wallet's fetched history is genuinely incomplete, so its
+        metrics aren't run-to-run stable on their own -- it is admitted
+        only if the flat-stake edge *reproduced*: ``previous["flat_dollar_pnl"]``
         must also be ``> 0``. (a) above already requires the CURRENT run to
         be positive; this is a second, independent confirmation from the
         PREVIOUS run, not a restatement of (a). Two distinct rejection
@@ -271,8 +274,7 @@ def check_quality(current: dict, previous: "dict | None") -> "tuple[bool, str]":
     if not median_roi > QUALITY_MIN_MEDIAN_ROI:
         return False, "median_roi_not_positive"
 
-    n_total_trades = current["n_buy_trades"] + current["n_sell_excluded"]
-    if n_total_trades >= QUALITY_MAX_TOTAL_TRADES:
+    if current.get("truncated"):
         previous_flat_pnl = previous.get("flat_dollar_pnl") if previous else None
         if previous_flat_pnl is None:
             return False, "trade_history_truncated_no_previous_run"
@@ -359,6 +361,10 @@ def run(
             "mean_roi": copier["mean_roi"],
             "median_roi": copier["median_roi"],
             "flat_dollar_pnl": flat_pnl,
+            # issue #1233: reported by get_wallet_trades() and threaded
+            # through by backtest_wallet() -- see check_quality()'s
+            # condition (d).
+            "truncated": result.get("truncated", False),
         }
 
         previous_rows = db.get_recent_wallet_screenings(address, limit=1)
@@ -386,6 +392,7 @@ def run(
             flat_stake=flat_stake,
             slippage_bps=slippage_bps,
             eligible_to_follow=int(eligible),
+            truncated=int(current["truncated"]),
         )
         n_screened += 1
 
