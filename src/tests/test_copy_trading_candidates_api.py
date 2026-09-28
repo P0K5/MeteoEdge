@@ -47,7 +47,7 @@ def api_client():
 def _screen(
     db, address, *, screened_at, median_roi, n_resolved=100, window="month",
     win_rate=0.6, mean_roi=None, mirrored_dollar_pnl=10.0, flat_dollar_pnl=8.0,
-    flat_stake=5.0, eligible_to_follow=0, n_buy_trades=None,
+    flat_stake=5.0, eligible_to_follow=0, n_buy_trades=None, truncated=0,
 ):
     """Convenience wrapper around Database.insert_wallet_screening()."""
     db.insert_wallet_screening(
@@ -64,6 +64,7 @@ def _screen(
         flat_stake=flat_stake,
         slippage_bps=50.0,
         eligible_to_follow=eligible_to_follow,
+        truncated=truncated,
     )
 
 
@@ -154,6 +155,22 @@ class TestCandidatesEndpoint:
         row = resp.json()["candidates"][0]
         assert row["unstable"] is True
         assert row["has_prior_run"] is False
+
+    def test_truncated_flag_surfaced_from_persisted_row(self, api_client):
+        # Issue #1233 acceptance criteria: truncation must be visible in
+        # the dashboard Candidates view, not just consumed in-process by
+        # check_quality() -- reads back exactly what was persisted on the
+        # row, not re-derived.
+        client, db = api_client
+        _screen(db, "0xTruncated", screened_at="2026-09-27T00:00:00Z",
+                n_resolved=10500, median_roi=0.10, eligible_to_follow=0, truncated=1)
+        _screen(db, "0xComplete", screened_at="2026-09-27T00:00:00Z",
+                n_resolved=50, median_roi=0.10, eligible_to_follow=1, truncated=0)
+
+        resp = client.get("/api/copy-trading/candidates")
+        rows = {row["address"]: row for row in resp.json()["candidates"]}
+        assert rows["0xTruncated"]["truncated"] is True
+        assert rows["0xComplete"]["truncated"] is False
 
     def test_followed_flag_and_status(self, api_client):
         client, db = api_client

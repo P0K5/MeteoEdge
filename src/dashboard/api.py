@@ -502,6 +502,12 @@ class CopyCandidateOut(BaseModel):
     # instability, not "not yet tested twice". False only for a wallet on
     # its very first screening run.
     has_prior_run: bool
+    # Issue #1233: whether this wallet's latest run's get_wallet_trades()
+    # fetch was truncated (error/max_pages, not a short final page) --
+    # persisted on the row (copy_wallet_screening.py::run()) rather than
+    # re-derived here, mirroring eligible_to_follow's own already-computed
+    # pattern above.
+    truncated: bool
     followed: bool
     follow_status: str | None = None
 
@@ -2619,6 +2625,7 @@ def copy_trading_candidates() -> CopyCandidatesOut:
             eligible_to_follow=bool(row["eligible_to_follow"]),
             unstable=unstable,
             has_prior_run=previous is not None,
+            truncated=bool(row["truncated"]),
             followed=row["address"] in followed_status,
             follow_status=followed_status.get(row["address"]),
         ))

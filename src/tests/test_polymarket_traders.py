@@ -85,7 +85,11 @@ class TestGetWalletTrades:
         assert result == page
         assert mock_fetch.call_count == 1
 
-    def test_paginates_until_short_page(self):
+    def test_short_final_page_is_not_truncated(self):
+        # Issue #1233's discriminating test: a short final page is genuine
+        # exhaustion (the server confirming "that's everything"), and must
+        # NOT be flagged truncated -- the exact opposite mistake from the
+        # inert always-True/always-False gate this replaces.
         full_page = [{"i": i} for i in range(500)]
         short_page = [{"i": i} for i in range(500, 600)]
         with patch(
@@ -97,28 +101,56 @@ class TestGetWalletTrades:
         assert mock_fetch.call_count == 2
         second_url = mock_fetch.call_args_list[1][0][0]
         assert "offset=500" in second_url
+        assert result.truncated is False
 
-    def test_empty_page_stops_immediately(self):
+    def test_empty_page_stops_immediately_and_is_not_truncated(self):
+        # An empty page is also genuine exhaustion (a wallet with zero
+        # trades, or an offset already past the end) -- same discriminator
+        # as a short page, not truncation.
         with patch("src.data.polymarket_traders.fetch", return_value=_mock_response([])):
             result = get_wallet_trades(ADDRESS)
         assert result == []
+        assert result.truncated is False
 
-    def test_partial_results_kept_on_page_failure(self):
+    def test_page_failure_is_flagged_truncated_and_keeps_partial_results(self):
+        # Issue #1233 test requirement: paging stopped by a 400 (or any
+        # other failed request) -> flagged truncated, but the trades
+        # collected on earlier pages are still returned, not discarded.
         full_page = [{"i": i} for i in range(500)]
         with patch(
             "src.data.polymarket_traders.fetch",
-            side_effect=[_mock_response(full_page), ConnectionError("boom")],
+            side_effect=[_mock_response(full_page), ConnectionError("400 Bad Request")],
         ):
             result = get_wallet_trades(ADDRESS, page_size=500)
         assert len(result) == 500
+        assert result.truncated is True
 
-    def test_respects_max_pages_hard_cap(self):
+    def test_respects_max_pages_hard_cap_and_is_flagged_truncated(self):
+        # Issue #1233 test requirement: paging stopped by reaching
+        # max_pages (every page came back full, so the loop never saw its
+        # own natural-exhaustion signal) -> flagged truncated.
         full_page = [{"i": i} for i in range(10)]
         with patch(
             "src.data.polymarket_traders.fetch", return_value=_mock_response(full_page)
         ) as mock_fetch:
-            get_wallet_trades(ADDRESS, page_size=10, max_pages=3)
+            result = get_wallet_trades(ADDRESS, page_size=10, max_pages=3)
         assert mock_fetch.call_count == 3
+        assert result.truncated is True
+
+    def test_regression_10500_trades_then_400_is_truncated(self):
+        # Regression fixture for the live 0x5268527977 case (issue #1233):
+        # 21 full pages of 500 (=10,500 trades), then the data-api's own
+        # undocumented offset ceiling 400s on page 22 (offset=10,500).
+        # Both previous fixes (#1209/#1211's wrong-units constant, and the
+        # original inert QUALITY_MAX_TOTAL_TRADES=20,000 comparison) missed
+        # exactly this case -- 10,500 sits comfortably under both those
+        # constants, so neither ever flagged it.
+        full_page = [{"i": i} for i in range(500)]
+        responses = [_mock_response(full_page)] * 21 + [ConnectionError("400 Bad Request")]
+        with patch("src.data.polymarket_traders.fetch", side_effect=responses):
+            result = get_wallet_trades(ADDRESS, page_size=500)
+        assert len(result) == 10500
+        assert result.truncated is True
 
 
 class TestGetWalletTradesSince:

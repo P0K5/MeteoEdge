@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
+from src.data.polymarket_traders import TradeList
 from src.scripts.copy_trade_backtest import (
     apply_slippage,
     backtest_wallet,
@@ -110,6 +111,45 @@ class TestBacktestWallet:
         # Copier pays more (worse fill) so profits less than the trader.
         assert result["copier"]["dollar_pnl"] < result["trader"]["dollar_pnl"]
         assert result["copier"]["dollar_pnl"] > 0
+
+    def test_truncated_flag_carried_through_from_get_wallet_trades(self):
+        # Issue #1233: backtest_wallet() must thread get_wallet_trades()'s
+        # own truncated observation through to its result, not re-derive
+        # it from a trade count.
+        trades = TradeList([_raw_trade("0xabc", "BUY", 0.50, 10, "Yes")], truncated=True)
+        with patch(
+            "src.scripts.copy_trade_backtest.get_wallet_trades", return_value=trades
+        ), patch(
+            "src.scripts.copy_trade_backtest.fetch_market_resolution", return_value=True
+        ):
+            result = backtest_wallet("0xwallet", slippage_bps=150)
+
+        assert result["truncated"] is True
+
+    def test_truncated_flag_false_when_fetch_not_truncated(self):
+        trades = TradeList([_raw_trade("0xabc", "BUY", 0.50, 10, "Yes")], truncated=False)
+        with patch(
+            "src.scripts.copy_trade_backtest.get_wallet_trades", return_value=trades
+        ), patch(
+            "src.scripts.copy_trade_backtest.fetch_market_resolution", return_value=True
+        ):
+            result = backtest_wallet("0xwallet", slippage_bps=150)
+
+        assert result["truncated"] is False
+
+    def test_truncated_flag_defaults_false_when_mock_returns_plain_list(self):
+        # A caller/test that hands back a bare list (no `.truncated`
+        # attribute at all) must degrade safely to "not truncated" rather
+        # than raising -- see get_wallet_trades()'s TradeList docstring.
+        trades = [_raw_trade("0xabc", "BUY", 0.50, 10, "Yes")]
+        with patch(
+            "src.scripts.copy_trade_backtest.get_wallet_trades", return_value=trades
+        ), patch(
+            "src.scripts.copy_trade_backtest.fetch_market_resolution", return_value=True
+        ):
+            result = backtest_wallet("0xwallet", slippage_bps=150)
+
+        assert result["truncated"] is False
 
     def test_sell_trades_excluded_from_scoring(self):
         trades = [_raw_trade("0xabc", "SELL", 0.50, 10, "Yes")]

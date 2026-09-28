@@ -851,7 +851,7 @@ a,button,input,select{transition:color var(--transition),background var(--transi
   font-size:10px;font-weight:700;color:var(--yes);background:var(--yes-bg);
   padding:2px 8px;border-radius:var(--radius-full);
 }
-.badge-unstable,.badge-stable{
+.badge-unstable,.badge-stable,.badge-truncated{
   display:inline-flex;align-items:center;gap:4px;
   padding:2px 8px;border-radius:var(--radius-full);
   font-size:var(--text-xs);font-weight:600;
@@ -860,6 +860,12 @@ a,button,input,select{transition:color var(--transition),background var(--transi
 .badge-unstable i{width:12px;height:12px;}
 .badge-stable{background:var(--surface-off);color:var(--muted);}
 .badge-stable i{width:12px;height:12px;}
+/* Issue #1233: distinct from badge-unstable -- truncated is about
+   incomplete fetched history, not a proven cross-run disagreement -- but
+   reuses the same warning color since both mean "treat this wallet's
+   numbers with caution". */
+.badge-truncated{background:var(--warn-bg);color:var(--warn);}
+.badge-truncated i{width:12px;height:12px;}
 .copy-follow-section{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-2);}
 .btn-follow{
   padding:6px 14px;border-radius:var(--radius-md);
@@ -1347,13 +1353,14 @@ a,button,input,select{transition:color var(--transition),background var(--transi
               <th class="copy-th" scope="col">Flat-stake $ PnL</th>
               <th class="copy-th" scope="col">Last screened</th>
               <th class="copy-th" scope="col">Stability</th>
+              <th class="copy-th" scope="col">History</th>
               <th class="copy-th" scope="col"><span class="sr-only">Row details</span></th>
             </tr>
           </thead>
           <tbody>
-            <tr class="copy-table-skeleton"><td colspan="10"><span class="skeleton" style="height:1.4em;display:block;"></span></td></tr>
-            <tr class="copy-table-skeleton"><td colspan="10"><span class="skeleton" style="height:1.4em;display:block;"></span></td></tr>
-            <tr class="copy-table-skeleton"><td colspan="10"><span class="skeleton" style="height:1.4em;display:block;"></span></td></tr>
+            <tr class="copy-table-skeleton"><td colspan="11"><span class="skeleton" style="height:1.4em;display:block;"></span></td></tr>
+            <tr class="copy-table-skeleton"><td colspan="11"><span class="skeleton" style="height:1.4em;display:block;"></span></td></tr>
+            <tr class="copy-table-skeleton"><td colspan="11"><span class="skeleton" style="height:1.4em;display:block;"></span></td></tr>
           </tbody>
         </table>
         </div>
@@ -3983,6 +3990,7 @@ const COPY_CANDIDATE_COLUMNS = [
   { key: 'flat_dollar_pnl', label: 'Flat-stake $ PnL', sortable: true },
   { key: 'screened_at', label: 'Last screened', sortable: true },
   { key: null, label: 'Stability', sortable: false },
+  { key: null, label: 'History', sortable: false },
   { key: null, label: '', sortable: false, srOnly: 'Row details' },
 ];
 
@@ -4158,6 +4166,17 @@ function _copyStabilityBadgeHtml(candidate) {
     : `<span class="badge-stable"><i data-lucide="check-circle"></i>Stable</span>`;
 }
 
+function _copyTruncatedBadgeHtml(candidate) {
+  // Issue #1233: reads the flag get_wallet_trades() reported and
+  // copy_wallet_screening.py persisted on the row -- not re-derived here.
+  // A wallet whose fetch was NOT truncated (the common case) gets a plain
+  // dash, mirroring _copyStabilityBadgeHtml's minimal-noise pattern for
+  // the non-warning case.
+  if (!candidate.truncated) return '—';
+  return `<span class="badge-truncated" title="This run's trade history fetch stopped early (server limit or page cap) -- these numbers may not reflect the wallet's full history.">
+    <i data-lucide="alert-triangle"></i>Partial history</span>`;
+}
+
 function _copyRowHtml(c) {
   const lastScreened = c.screened_at ? new Date(c.screened_at).toLocaleString() : '—';
   const followedTag = c.followed ? `<span class="copy-followed-tag">Followed</span>` : '';
@@ -4184,10 +4203,11 @@ function _copyRowHtml(c) {
       <td class="copy-td">${_copyFmtUsd(c.flat_dollar_pnl)}</td>
       <td class="copy-td">${lastScreened}</td>
       <td class="copy-td">${_copyStabilityBadgeHtml(c)}</td>
+      <td class="copy-td">${_copyTruncatedBadgeHtml(c)}</td>
       <td class="copy-td"><i data-lucide="chevron-down" class="copy-chevron" id="copy-chev-${safeId}"></i></td>
     </tr>
     <tr class="copy-detail-row" id="copy-detail-row-${safeId}" style="display:none">
-      <td class="copy-detail-td" colspan="10">
+      <td class="copy-detail-td" colspan="11">
         <div class="copy-detail-panel" id="copy-detail-${safeId}">
           <div class="chart-empty">Loading…</div>
         </div>

@@ -51,15 +51,22 @@ discovering it as a production incident.
 
 ## Known limitation carried over from the spike
 
-`get_wallet_trades()` (`src/data/polymarket_traders.py`) is capped at
-`MAX_TRADE_PAGES * page_size` = 20,000 trades. For wallets whose true
-history exceeds that, results are not stable run-to-run (confirmed on
-`0xd3b034d7...` in the spike — resolved-trade count and median ROI both
-changed dramatically between two runs 15 hours apart). Any wallet the
-screening pipeline is about to start following needs either (a) a trade
-count comfortably under the cap, or (b) a stability check — re-screen and
-require the numbers to hold before following. This is Epic 1's problem to
-solve, not something to patch around downstream.
+`get_wallet_trades()` (`src/data/polymarket_traders.py`) can be cut short
+of a wallet's true history: the server itself enforces an undocumented
+offset ceiling (confirmed live 2026-09-27 at `offset=10500` -- issue
+#1233), which in practice is reached well before this function's own
+defensive `MAX_TRADE_PAGES * page_size` = 20,000 depth cap. For wallets
+whose true history exceeds whichever ceiling is hit first, results are not
+stable run-to-run (confirmed on `0xd3b034d7...` in the spike —
+resolved-trade count and median ROI both changed dramatically between two
+runs 15 hours apart). Any wallet the screening pipeline is about to start
+following needs either (a) a trade count comfortably under the ceiling, or
+(b) a stability check — re-screen and require the numbers to hold before
+following. `get_wallet_trades()` reports whether a given fetch was cut
+short via a `truncated` flag (issue #1233) rather than callers inferring it
+from a trade count against a constant — see that function's docstring and
+`copy_wallet_screening.py::check_quality()`'s condition (d). This is Epic
+1's problem to solve, not something to patch around downstream.
 
 ## Backend architecture
 
