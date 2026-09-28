@@ -193,12 +193,24 @@ def check_stability(current: dict, previous: "dict | None") -> bool:
     (b) ``n_resolved`` hasn't swung by more than 25% relative to the
         previous run's ``n_resolved`` (floor of 1 in the denominator so a
         previous ``n_resolved=0`` can't divide by zero).
+
+    ``median_roi`` on EITHER side being ``None`` (a wallet with zero
+    resolved trades -- see ``copy_trade_backtest.py``'s ``_stats()``) is
+    treated as unstable rather than raising, so this stays safe for any
+    caller, not just one that happens to pre-filter zero-resolved wallets
+    (issue #1245). ``sign()`` itself is never called with ``None`` -- this
+    guard runs first, so ``sign()`` stays a plain numeric helper.
     """
     if previous is None:
         return False
 
-    current_sign = sign(current["median_roi"])
-    previous_sign = sign(previous["median_roi"])
+    current_median = current["median_roi"]
+    previous_median = previous["median_roi"]
+    if current_median is None or previous_median is None:
+        return False
+
+    current_sign = sign(current_median)
+    previous_sign = sign(previous_median)
     if current_sign == 0 or previous_sign == 0 or current_sign != previous_sign:
         return False
 
@@ -332,73 +344,102 @@ def run(
     resolution_cache = PersistentResolutionCache(db)
 
     n_screened = 0
+    n_errors = 0
     for address in addresses:
-        # Issue #1227: batch_resolve=True makes backtest_wallet resolve
-        # this wallet's distinct new markets with a handful of batched
-        # Gamma API requests (repeated condition_ids keys) before its own
-        # per-trade loop, instead of one sequential request per new market.
-        result = backtest_wallet(
-            address, slippage_bps, flat_stake, cache=resolution_cache, batch_resolve=True,
-        )
-        if result["n_resolved"] < min_trades:
-            log.info(
-                "[copy-wallet-screening] %s: n_resolved=%s below --min-trades=%s, skipping.",
-                address, result["n_resolved"], min_trades,
+        # Issue #1245: one wallet raising must never abort the rest of the
+        # run -- mirrors copy_settle.py's per-row try/except (see that
+        # module's docstring). KeyboardInterrupt/SystemExit are NOT
+        # subclasses of Exception, so they still propagate and stop the run.
+        try:
+            # Issue #1227: batch_resolve=True makes backtest_wallet resolve
+            # this wallet's distinct new markets with a handful of batched
+            # Gamma API requests (repeated condition_ids keys) before its
+            # own per-trade loop, instead of one sequential request per new
+            # market.
+            result = backtest_wallet(
+                address, slippage_bps, flat_stake, cache=resolution_cache, batch_resolve=True,
             )
-            continue
+            if result["n_resolved"] < min_trades:
+                log.info(
+                    "[copy-wallet-screening] %s: n_resolved=%s below --min-trades=%s, skipping.",
+                    address, result["n_resolved"], min_trades,
+                )
+                continue
 
-        copier = result["copier"]
+            copier = result["copier"]
 
-        flat_pnl = None
-        if flat_stake is not None:
-            flat_pnl = result.get("copier_flat", {}).get("dollar_pnl")
+            # Issue #1245: a wallet with zero resolved trades has
+            # win_rate/mean_roi/median_roi all None (_stats(), see
+            # copy_trade_backtest.py) -- it carries no usable signal, so
+            # screening it further (stability/quality) is meaningless.
+            # min_trades defaults to 0, so `n_resolved < min_trades` above
+            # does NOT catch this case -- must be checked separately.
+            if copier["median_roi"] is None:
+                log.info(
+                    "[copy-wallet-screening] %s: n_resolved=%s but median_roi is "
+                    "None (no usable signal), skipping.",
+                    address, result["n_resolved"],
+                )
+                continue
 
-        current = {
-            "n_buy_trades": result["n_buy_trades"],
-            "n_sell_excluded": result["n_sell_excluded"],
-            "n_resolved": result["n_resolved"],
-            "win_rate": copier["win_rate"],
-            "mean_roi": copier["mean_roi"],
-            "median_roi": copier["median_roi"],
-            "flat_dollar_pnl": flat_pnl,
-            # issue #1233: reported by get_wallet_trades() and threaded
-            # through by backtest_wallet() -- see check_quality()'s
-            # condition (d).
-            "truncated": result.get("truncated", False),
-        }
+            flat_pnl = None
+            if flat_stake is not None:
+                flat_pnl = result.get("copier_flat", {}).get("dollar_pnl")
 
-        previous_rows = db.get_recent_wallet_screenings(address, limit=1)
-        previous = previous_rows[0] if previous_rows else None
-        stable = check_stability(current, previous)
-        quality_ok, quality_reason = check_quality(current, previous)
-        if not quality_ok:
-            log.info(
-                "[copy-wallet-screening] %s: failed quality check (%s), not eligible.",
-                address, quality_reason,
+            current = {
+                "n_buy_trades": result["n_buy_trades"],
+                "n_sell_excluded": result["n_sell_excluded"],
+                "n_resolved": result["n_resolved"],
+                "win_rate": copier["win_rate"],
+                "mean_roi": copier["mean_roi"],
+                "median_roi": copier["median_roi"],
+                "flat_dollar_pnl": flat_pnl,
+                # issue #1233: reported by get_wallet_trades() and threaded
+                # through by backtest_wallet() -- see check_quality()'s
+                # condition (d).
+                "truncated": result.get("truncated", False),
+            }
+
+            previous_rows = db.get_recent_wallet_screenings(address, limit=1)
+            previous = previous_rows[0] if previous_rows else None
+            stable = check_stability(current, previous)
+            quality_ok, quality_reason = check_quality(current, previous)
+            if not quality_ok:
+                log.info(
+                    "[copy-wallet-screening] %s: failed quality check (%s), not eligible.",
+                    address, quality_reason,
+                )
+            eligible = stable and quality_ok
+
+            db.insert_wallet_screening(
+                address=address,
+                window=window,
+                screened_at=screened_at,
+                n_buy_trades=current["n_buy_trades"],
+                n_resolved=current["n_resolved"],
+                win_rate=current["win_rate"],
+                mean_roi=current["mean_roi"],
+                median_roi=current["median_roi"],
+                mirrored_dollar_pnl=copier["dollar_pnl"],
+                flat_dollar_pnl=flat_pnl,
+                flat_stake=flat_stake,
+                slippage_bps=slippage_bps,
+                eligible_to_follow=int(eligible),
+                truncated=int(current["truncated"]),
             )
-        eligible = stable and quality_ok
-
-        db.insert_wallet_screening(
-            address=address,
-            window=window,
-            screened_at=screened_at,
-            n_buy_trades=current["n_buy_trades"],
-            n_resolved=current["n_resolved"],
-            win_rate=current["win_rate"],
-            mean_roi=current["mean_roi"],
-            median_roi=current["median_roi"],
-            mirrored_dollar_pnl=copier["dollar_pnl"],
-            flat_dollar_pnl=flat_pnl,
-            flat_stake=flat_stake,
-            slippage_bps=slippage_bps,
-            eligible_to_follow=int(eligible),
-            truncated=int(current["truncated"]),
-        )
-        n_screened += 1
+            n_screened += 1
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except Exception as e:
+            n_errors += 1
+            log.warning(
+                "[copy-wallet-screening] %s: screening failed, skipping: %s",
+                address, e,
+            )
 
     log.info(
-        "[copy-wallet-screening] screened %s/%s wallets (window=%s, top=%s).",
-        n_screened, len(addresses), window, effective_top,
+        "[copy-wallet-screening] screened %s/%s wallets (window=%s, top=%s, errors=%s).",
+        n_screened, len(addresses), window, effective_top, n_errors,
     )
     log.info(
         "[copy-wallet-screening] resolution cache: %s hits, %s misses.",
