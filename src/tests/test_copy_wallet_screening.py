@@ -105,6 +105,19 @@ class TestCheckStability:
         # max(previous_n, 1) floors the denominator -- must not raise.
         assert check_stability(current, previous) is False  # 1/1 = 100% > 25%
 
+    def test_none_current_median_roi_is_unstable_not_raising(self):
+        # Issue #1245: a wallet with zero resolved trades has
+        # median_roi=None (_stats(), copy_trade_backtest.py) -- must be
+        # treated as unstable, not raise inside sign().
+        previous = {"median_roi": 0.10, "n_resolved": 100}
+        current = {"median_roi": None, "n_resolved": 0}
+        assert check_stability(current, previous) is False
+
+    def test_none_previous_median_roi_is_unstable_not_raising(self):
+        previous = {"median_roi": None, "n_resolved": 0}
+        current = {"median_roi": 0.10, "n_resolved": 100}
+        assert check_stability(current, previous) is False
+
 
 def _quality_row(
     flat_dollar_pnl=10.0, median_roi=0.11, mean_roi=0.1, truncated=False,
@@ -431,6 +444,156 @@ class TestRunPersistence:
             rc = run(window="month", top=20, slippage_bps=150.0, db=db)
         assert rc == 1
         db.insert_wallet_screening.assert_not_called()
+
+
+class TestRunPerWalletErrorIsolation:
+    """Issue #1245: one bad wallet must never abort the whole screening
+    run. Two distinct defects: (1) a zero-resolved wallet's None stats
+    crashing check_stability(), (2) no per-wallet try/except at all -- an
+    ARBITRARY exception on any wallet used to destroy every wallet after
+    it in the same run. The second is the fix that closes the class, not
+    just this one instance -- see the live 0x2eaa693ca8 crash this issue
+    is named for.
+    """
+
+    def test_zero_resolved_wallet_0x2eaa693ca8_skipped_without_raising(self, caplog):
+        # Regression fixture for the live 2026-09-28 07:30 crash: a wallet
+        # with n_resolved=0 has win_rate/mean_roi/median_roi all None
+        # (_stats(), copy_trade_backtest.py). --min-trades defaults to 0,
+        # so `n_resolved < min_trades` does NOT filter it out -- it must be
+        # skipped on its own, before check_stability() ever sees it.
+        leaderboard = [{"proxyWallet": "0x2eaa693ca8"}]
+        db = MagicMock()
+        db.get_recent_wallet_screenings.return_value = []
+        with patch(
+            "src.scripts.copy_wallet_screening.get_leaderboard", return_value=leaderboard,
+        ), patch(
+            "src.scripts.copy_wallet_screening.backtest_wallet",
+            return_value=_backtest_result(
+                "0x2eaa693ca8", n_resolved=0, win_rate=None, mean_roi=None,
+                median_roi=None,
+            ),
+        ):
+            with caplog.at_level("INFO", logger="src.scripts.copy_wallet_screening"):
+                rc = run(window="month", top=1, slippage_bps=150.0, db=db)
+        assert rc == 0
+        db.insert_wallet_screening.assert_not_called()
+        assert "0x2eaa693ca8" in caplog.text
+
+    def test_min_trades_explicit_zero_does_not_crash_on_zero_resolved(self):
+        # Do not paper over the None case by changing --min-trades' default
+        # -- a caller explicitly passing min_trades=0 must still not crash.
+        leaderboard = [{"proxyWallet": "0xzero"}]
+        db = MagicMock()
+        db.get_recent_wallet_screenings.return_value = []
+        with patch(
+            "src.scripts.copy_wallet_screening.get_leaderboard", return_value=leaderboard,
+        ), patch(
+            "src.scripts.copy_wallet_screening.backtest_wallet",
+            return_value=_backtest_result(
+                "0xzero", n_resolved=0, win_rate=None, mean_roi=None, median_roi=None,
+            ),
+        ):
+            rc = run(window="month", top=1, slippage_bps=150.0, min_trades=0, db=db)
+        assert rc == 0
+        db.insert_wallet_screening.assert_not_called()
+
+    def test_arbitrary_exception_on_one_wallet_does_not_abort_remaining_wallets(self):
+        # This is the criterion that fixes the CLASS rather than the
+        # instance: a wallet raising ANY exception (not just the None
+        # case) must not prevent subsequent wallets from being screened
+        # and persisted.
+        leaderboard = _leaderboard(3)
+        db = MagicMock()
+        db.get_recent_wallet_screenings.return_value = []
+
+        def flaky_backtest(addr, *a, **kw):
+            if addr == "0xwallet1":
+                raise RuntimeError("simulated network/parsing failure")
+            return _backtest_result(addr)
+
+        with patch(
+            "src.scripts.copy_wallet_screening.get_leaderboard", return_value=leaderboard,
+        ), patch(
+            "src.scripts.copy_wallet_screening.backtest_wallet", side_effect=flaky_backtest,
+        ):
+            rc = run(window="month", top=3, slippage_bps=150.0, db=db)
+        assert rc == 0
+        # wallet0 and wallet2 still screened and persisted despite wallet1
+        # raising.
+        assert db.insert_wallet_screening.call_count == 2
+        persisted_addresses = {
+            call.kwargs["address"] for call in db.insert_wallet_screening.call_args_list
+        }
+        assert persisted_addresses == {"0xwallet0", "0xwallet2"}
+
+    def test_error_logged_at_warning_with_address_and_exception(self, caplog):
+        leaderboard = [{"proxyWallet": "0xbroken"}]
+        db = MagicMock()
+        db.get_recent_wallet_screenings.return_value = []
+        with patch(
+            "src.scripts.copy_wallet_screening.get_leaderboard", return_value=leaderboard,
+        ), patch(
+            "src.scripts.copy_wallet_screening.backtest_wallet",
+            side_effect=ValueError("malformed trade payload"),
+        ):
+            with caplog.at_level("WARNING", logger="src.scripts.copy_wallet_screening"):
+                rc = run(window="month", top=1, slippage_bps=150.0, db=db)
+        assert rc == 0
+        assert "0xbroken" in caplog.text
+        assert "malformed trade payload" in caplog.text
+
+    def test_run_summary_reports_error_count(self, caplog):
+        leaderboard = _leaderboard(2)
+        db = MagicMock()
+        db.get_recent_wallet_screenings.return_value = []
+
+        def flaky_backtest(addr, *a, **kw):
+            if addr == "0xwallet0":
+                raise RuntimeError("boom")
+            return _backtest_result(addr)
+
+        with patch(
+            "src.scripts.copy_wallet_screening.get_leaderboard", return_value=leaderboard,
+        ), patch(
+            "src.scripts.copy_wallet_screening.backtest_wallet", side_effect=flaky_backtest,
+        ):
+            with caplog.at_level("INFO", logger="src.scripts.copy_wallet_screening"):
+                rc = run(window="month", top=2, slippage_bps=150.0, db=db)
+        assert rc == 0
+        assert "errors=1" in caplog.text
+
+    def test_keyboard_interrupt_still_propagates(self):
+        leaderboard = _leaderboard(2)
+        db = MagicMock()
+        db.get_recent_wallet_screenings.return_value = []
+        with patch(
+            "src.scripts.copy_wallet_screening.get_leaderboard", return_value=leaderboard,
+        ), patch(
+            "src.scripts.copy_wallet_screening.backtest_wallet",
+            side_effect=KeyboardInterrupt,
+        ):
+            try:
+                run(window="month", top=2, slippage_bps=150.0, db=db)
+                assert False, "KeyboardInterrupt should have propagated"
+            except KeyboardInterrupt:
+                pass
+
+    def test_clean_run_with_no_errors_is_unaffected(self):
+        # Regression: the try/except wrapper must not change behaviour for
+        # the common case of a run with zero errors.
+        leaderboard = _leaderboard(3)
+        db = MagicMock()
+        db.get_recent_wallet_screenings.return_value = []
+        with patch(
+            "src.scripts.copy_wallet_screening.get_leaderboard", return_value=leaderboard,
+        ), patch(
+            "src.scripts.copy_wallet_screening.backtest_wallet",
+            side_effect=lambda addr, *a, **kw: _backtest_result(addr),
+        ):
+            rc = run(window="month", top=3, slippage_bps=150.0, db=db)
+        assert rc == 0
+        assert db.insert_wallet_screening.call_count == 3
 
 
 class TestEligibilityQualityGate:
