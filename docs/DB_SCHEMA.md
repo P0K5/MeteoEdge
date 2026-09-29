@@ -503,6 +503,7 @@ CREATE INDEX IF NOT EXISTS idx_poll_runs_poll_ts ON poll_runs(poll_ts);
 | `side` | TEXT | `'YES'` / `'NO'` / NULL | Yes | The traded/candidate side, from `Candidate.side` — NULL when this bracket never produced a `Candidate` at all (i.e. every rejection verdict except `mae_gate`, `shadow_only`, `next_day_shadow`, `entry_guard`, `timeout_today`, `traded_live`) |
 | `yes_ask` / `no_ask` | INTEGER | cents | Yes | Market ask price on each side at scan time, clamped to `max(1, min(99, round(price * 100)))` (`_safe_price`/`parse_bracket_from_market`, `src/strategy/scanner.py`) — destroys sub-penny prices, which matters because Polymarket's own tick size tightens to $0.001 for price > 0.96 or < 0.04 (issue #1076). Retained unchanged because gates/sizing/fee estimation are all integer-cent-native; prefer `yes_price_raw`/`no_price_raw` below for true-price analysis |
 | `yes_price_raw` / `no_price_raw` | REAL | probability [0,1] | Yes | Unclamped venue price on each side at scan time, alongside `yes_ask`/`no_ask` (issue #1076) — the field that answers the rail question `yes_ask`/`no_ask` cannot. NULL only for rows written before this migration; from this migration forward it mirrors `_safe_price`'s own 0.5 fallback when the venue price is missing/unparseable (see `Bracket` in `src/model/envelope.py`) |
+| `yes_bid_raw` / `no_bid_raw` | REAL | probability [0,1] | Yes | Real order-book top-of-book bid on each side at scan time, alongside `yes_price_raw`/`no_price_raw` (the top-of-book ask) — computed by issue #1077, but a signature mismatch with `Database.upsert_scan_decision` meant this whole table received zero writes from 2026-08-28 until issue #1236 added these columns and fixed the caller. NULL when order-book enrichment (`ENABLE_CLOB_ENRICHMENT`) is off, a side has no `token_id`, or the book fetch failed — never a fabricated price (issue #1028). NULL for every row written before #1236, since the bug meant no row was written at all during the outage window |
 | `current_high` / `latest_temp` / `forecast_high` | REAL | °F | Yes | Same-day observation/forecast context; NULL for a next-day row (no today-anchored observation exists yet — `forecast_high` instead holds the next-day mean fed into `p_yes`, see `scan_markets`) |
 | `p_yes` / `raw_p_yes` / `capped_p_yes` | REAL | probability [0,1] | Yes | Model probability: capped (served/traded-on), raw (pre-`MODEL_PROB_CAP` clamp, issue #551), and capped again under its own name for `snapshots.jsonl` field parity |
 | `ev_yes` / `ev_no` | REAL | cents | Yes | Expected value of buying YES / NO at the capped probability — the numbers the scanner actually gated on |
@@ -534,6 +535,8 @@ CREATE TABLE IF NOT EXISTS scan_decisions (
     no_ask                INTEGER,
     yes_price_raw         REAL,
     no_price_raw          REAL,
+    yes_bid_raw           REAL,
+    no_bid_raw            REAL,
     current_high          REAL,
     latest_temp           REAL,
     forecast_high         REAL,

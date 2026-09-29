@@ -7,6 +7,7 @@ Usage:
 """
 import argparse
 import csv
+import inspect
 import json
 import logging
 import os
@@ -260,6 +261,31 @@ def _write_bracket_evaluations(
                 f.write(json.dumps(row, default=str) + "\n")
 
 
+# Issue #1236: the checked field set _persist_scan_decisions is allowed to
+# pass through to Database.upsert_scan_decision. Derived from the real
+# method signature (not hand-copied) so it can never silently drift out of
+# sync with the DB layer the way the writer/reader mismatch that caused this
+# issue did. See _persist_scan_decisions' docstring for the fields this
+# deliberately excludes.
+_SCAN_DECISION_ACCEPTED_FIELDS = frozenset(
+    inspect.signature(Database.upsert_scan_decision).parameters
+) - {"self"}
+
+# Scanner-snapshot fields that are intentionally NOT persisted to
+# scan_decisions -- per-side order-book depth/status diagnostics (issue
+# #1077) that live in bracket_evals only, plus the bracket_evals-only
+# settlement_date (issue #826, already stripped explicitly below). Kept as
+# an explicit, reviewed allow-list of *drops* (rather than just relying on
+# the accepted-fields filter) so test_persist_scan_decisions_field_filtering
+# in src/tests/test_scan_decisions.py fails loudly if a future scanner field
+# joins this set without anyone deciding whether it belongs here or in
+# Database.upsert_scan_decision -- the exact silent-drift shape of this bug.
+_SCAN_DECISION_KNOWN_DROPPED_FIELDS = frozenset({
+    "yes_bid_levels", "yes_ask_levels", "no_bid_levels", "no_ask_levels",
+    "yes_book_status", "no_book_status", "settlement_date",
+})
+
+
 def _persist_scan_decisions(
     decisions: "dict[str, dict]",
     confirmed: "dict[str, tuple[str, str | None]]",
@@ -290,10 +316,32 @@ def _persist_scan_decisions(
     ``traded_live`` + ``execution_mode='live'`` row as a confirmed exchange
     fill, vs. ``traded_live`` + ``execution_mode='paper'``, which is only the
     scanner's unconfirmed "would trade live" placeholder.
+
+    Issue #1236: this used to call ``db.upsert_scan_decision(**decision)``
+    with the *entire* scanner snapshot dict. #1077 added
+    ``yes_bid_raw``/``no_bid_raw`` (now persisted, see
+    ``_SCAN_DECISION_ACCEPTED_FIELDS``) and several order-book depth/status
+    diagnostics (``yes_bid_levels``/``yes_ask_levels``/``no_bid_levels``/
+    ``no_ask_levels``/``yes_book_status``/``no_book_status``) to every
+    snapshot without ever teaching ``upsert_scan_decision`` about them, so
+    the blind splat raised ``TypeError: unexpected keyword argument`` on
+    *every* evaluated bracket of *every* poll for a month -- silently
+    swallowed by the broad ``except Exception`` below into a per-bracket
+    warning. Filtering to ``_SCAN_DECISION_ACCEPTED_FIELDS`` (introspected
+    from the real signature) makes that whole class of failure structurally
+    impossible: an unrecognised field is now deliberately dropped rather
+    than crashing the write, at the cost of needing a human to notice a new
+    field showed up in the drop set (enforced by a pinned test, see
+    ``_SCAN_DECISION_KNOWN_DROPPED_FIELDS``). Any exception that still
+    reaches ``upsert_scan_decision`` (e.g. a genuinely invalid
+    ``gate_verdict``/``execution_mode``) is now aggregated into a single
+    warning per poll instead of one per bracket, so a real failure can never
+    again produce tens of thousands of log lines a day.
     """
     if db is None:
         return
     execution_mode = "live" if live_trader else "paper"
+    failures: "list[str]" = []
     for ticker, decision in decisions.items():
         if ticker in confirmed:
             verdict, detail = confirmed[ticker]
@@ -303,13 +351,19 @@ def _persist_scan_decisions(
             decision["gate_verdict"] = "entry_guard"
             decision["gate_detail"] = "did not reach execution this poll"
         decision["execution_mode"] = execution_mode
-        # settlement_date is a bracket-eval field (#826) — strip before
-        # upsert since scan_decisions has no column for it.
-        decision.pop("settlement_date", None)
+        kwargs = {
+            k: v for k, v in decision.items()
+            if k in _SCAN_DECISION_ACCEPTED_FIELDS
+        }
         try:
-            db.upsert_scan_decision(**decision)
+            db.upsert_scan_decision(**kwargs)
         except Exception as e:
-            log.warning("[scan_decisions] upsert failed for %s...: %s", ticker[:20], e)
+            failures.append(f"{ticker[:20]}: {e}")
+    if failures:
+        log.warning(
+            "[scan_decisions] upsert failed for %d/%d evaluated brackets this "
+            "poll (first: %s)", len(failures), len(decisions), failures[0],
+        )
 
 
 def _append_candidate(row: dict) -> None:
