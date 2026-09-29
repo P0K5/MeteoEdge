@@ -35,9 +35,17 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+
+# Try to import fcntl for POSIX file locking (Mac/Linux deployment).
+# On Windows dev machines, fall back to a no-op (issue #1247).
+try:
+    import fcntl
+except ImportError:
+    fcntl = None  # type: ignore
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
@@ -49,6 +57,10 @@ from src.scripts.copy_trade_backtest import (  # noqa: E402
 )
 
 log = logging.getLogger(__name__)
+
+#: Module-level lock object held for the process lifetime (issue #1247).
+#: Assigned by main() after acquisition to prevent garbage collection.
+_LOCK = None
 
 #: Rate-limit-budget decision (epic #1099 story 2/3): running this screening
 #: job as its own process means its calls to gamma-api.polymarket.com are
@@ -97,6 +109,40 @@ QUALITY_MAX_MEAN_MEDIAN_ROI_RATIO = 3.0
 #: pagination stopped, so condition (d) below consumes its `truncated`
 #: flag (threaded through by `backtest_wallet()`) directly, instead of
 #: re-deriving truncation from a count a third time.
+
+
+def lock_acquired(lock_file: Path):
+    """Acquire an exclusive single-instance lock, crash-safe.
+
+    Returns:
+        - On POSIX (fcntl available): open file object if the lock was acquired,
+          None if another instance already holds it. Caller MUST retain the
+          file object at module scope for the process lifetime; on process exit
+          or crash, fcntl.flock releases it automatically.
+        - On Windows (fcntl unavailable): returns True (no-op fallback, allows
+          the script to run). This is deliberate: the script is only deployed
+          on the Mac mini (see .claude/instructions/governance.md).
+
+    Args:
+        lock_file: path to the lockfile (e.g. data/.copy_wallet_screening.lock)
+
+    Raises:
+        OSError if the lockfile cannot be opened (e.g. data/ doesn't exist)
+    """
+    lock_file.parent.mkdir(parents=True, exist_ok=True)
+    f = open(lock_file, "w")
+    if fcntl is None:
+        # Windows dev machine: no-op fallback, allow it to run.
+        return True
+    try:
+        fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        f.write(f"{os.getpid()}\n")
+        f.flush()
+        return f
+    except OSError:
+        # Another instance holds the lock.
+        f.close()
+        return None
 
 
 class PersistentResolutionCache(dict):
@@ -463,6 +509,20 @@ def main(argv: "list[str] | None" = None) -> int:
     )
     ap.add_argument("--min-trades", type=int, default=0)
     args = ap.parse_args(argv)
+
+    # Issue #1247: acquire single-instance lock before any API calls.
+    # A second concurrent invocation exits immediately.
+    global _LOCK
+    lock_file = Path(__file__).resolve().parents[2] / "data" / ".copy_wallet_screening.lock"
+    _LOCK = lock_acquired(lock_file)
+    if _LOCK is None:
+        log.error(
+            "[copy-wallet-screening] already running (lock file %s held by another process), "
+            "exiting.",
+            lock_file,
+        )
+        return 1
+
     return run(
         args.window, args.top, args.slippage_bps, args.min_trades, args.flat_stake,
     )
