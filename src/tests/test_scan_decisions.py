@@ -707,3 +707,185 @@ class TestScanDecisionsRowCount:
         rows = db.get_scan_decisions("KATL", snap["date"])
         assert len(rows) == 1
         assert rows[0]["gate_verdict"] == "above_max_edge"
+
+
+# ---------------------------------------------------------------------------
+# Issue #1236: scan_decisions was dead for a month because a blind
+# db.upsert_scan_decision(**decision) splat raised TypeError on every
+# evaluated bracket of every poll once #1077 added yes_bid_raw/no_bid_raw
+# (plus several order-book depth/status fields) to the scanner snapshot dict
+# without teaching upsert_scan_decision about them. Covers: the new columns
+# round-trip, the real scanner producer is now accepted end to end, the
+# reader/writer column set can't silently diverge again, the migration is
+# idempotent, and a genuine failure logs once per poll, not once per bracket.
+# ---------------------------------------------------------------------------
+
+
+class TestScanDecisionsBidRaw:
+    """Issue #1236 / #1077: yes_bid_raw / no_bid_raw round-trip alongside the
+    existing yes_price_raw / no_price_raw, following the same precedent."""
+
+    @pytest.fixture()
+    def db(self, tmp_path):
+        return Database(tmp_path / "scan-decisions-bid-raw-test.db")
+
+    def test_bid_raw_defaults_to_none(self, db):
+        """A caller that never passes yes_bid_raw/no_bid_raw (e.g. every
+        pre-#1236 row, or a poll with order-book enrichment off) round-trips
+        NULL."""
+        db.upsert_scan_decision(
+            ts="2026-09-27T10:00:00Z", station="KMIA", ticker="0xabc",
+            date="2026-09-27", bracket_low=80.0, bracket_high=85.0,
+            gate_verdict="below_min_edge",
+        )
+        rows = db.get_scan_decisions("KMIA", "2026-09-27")
+        assert rows[0]["yes_bid_raw"] is None
+        assert rows[0]["no_bid_raw"] is None
+
+    def test_bid_raw_round_trips_with_full_float_precision(self, db):
+        """Sub-penny bid prices survive a full DB round-trip, same as
+        yes_price_raw/no_price_raw (issue #1076)."""
+        db.upsert_scan_decision(
+            ts="2026-09-27T10:00:00Z", station="KMIA", ticker="0xabc",
+            date="2026-09-27", bracket_low=80.0, bracket_high=85.0,
+            gate_verdict="below_min_price", yes_ask=1, no_ask=99,
+            yes_bid_raw=0.002, no_bid_raw=0.994,
+        )
+        rows = db.get_scan_decisions("KMIA", "2026-09-27")
+        assert rows[0]["yes_bid_raw"] == pytest.approx(0.002)
+        assert rows[0]["no_bid_raw"] == pytest.approx(0.994)
+
+    def test_second_poll_replaces_bid_raw(self, db):
+        """Upsert semantics apply to the new columns too -- a second poll's
+        write replaces, not appends to, the prior row."""
+        db.upsert_scan_decision(
+            ts="2026-09-27T10:00:00Z", station="KMIA", ticker="0xabc",
+            date="2026-09-27", bracket_low=80.0, bracket_high=85.0,
+            gate_verdict="below_min_edge", yes_bid_raw=0.10, no_bid_raw=0.88,
+        )
+        db.upsert_scan_decision(
+            ts="2026-09-27T10:05:00Z", station="KMIA", ticker="0xabc",
+            date="2026-09-27", bracket_low=80.0, bracket_high=85.0,
+            gate_verdict="below_min_edge", yes_bid_raw=0.12, no_bid_raw=0.86,
+        )
+        rows = db.get_scan_decisions("KMIA", "2026-09-27")
+        assert len(rows) == 1
+        assert rows[0]["yes_bid_raw"] == pytest.approx(0.12)
+        assert rows[0]["no_bid_raw"] == pytest.approx(0.86)
+
+
+class TestScanDecisionsReaderWriterColumnAgreement:
+    """Issue #1236's technical notes: get_scan_decisions()'s hardcoded SELECT
+    column list already caused one incident (#900-era KeyError storm, 2026-
+    08-29 to 2026-09-02) when it disagreed with the live schema. Guard
+    against that recurring."""
+
+    @pytest.fixture()
+    def db(self, tmp_path):
+        return Database(tmp_path / "scan-decisions-column-agreement-test.db")
+
+    def test_get_scan_decisions_selects_every_table_column(self, db):
+        db.upsert_scan_decision(
+            ts="2026-09-27T10:00:00Z", station="KMIA", ticker="0xabc",
+            date="2026-09-27", bracket_low=80.0, bracket_high=85.0,
+            gate_verdict="below_min_edge",
+        )
+        table_cols = {
+            row[1] for row in db._conn.execute("PRAGMA table_info(scan_decisions)").fetchall()
+        }
+        rows = db.get_scan_decisions("KMIA", "2026-09-27")
+        assert set(rows[0].keys()) == table_cols
+
+
+class TestScanDecisionsMigrationIdempotent:
+    """Issue #1236: the yes_bid_raw/no_bid_raw ALTER TABLE ADD COLUMN
+    migration must be safe to run twice (e.g. two Database() instantiations
+    against the same file) and must not disturb pre-existing rows."""
+
+    def test_migration_runs_twice_without_error_or_duplicate_columns(self, tmp_path):
+        path = tmp_path / "scan-decisions-migration-test.db"
+        db = Database(path)
+        db.upsert_scan_decision(
+            ts="2026-09-27T10:00:00Z", station="KMIA", ticker="0xabc",
+            date="2026-09-27", bracket_low=80.0, bracket_high=85.0,
+            gate_verdict="below_min_edge",
+        )
+
+        # Re-opening the same file re-runs _migrate() against an already-
+        # migrated schema -- must be a no-op, not an error or a duplicate column.
+        db2 = Database(path)
+        cols = [row[1] for row in db2._conn.execute("PRAGMA table_info(scan_decisions)").fetchall()]
+        assert cols.count("yes_bid_raw") == 1
+        assert cols.count("no_bid_raw") == 1
+
+        # Pre-existing row (written before db2 ever ran the migration) is
+        # untouched, with NULL in the new columns.
+        rows = db2.get_scan_decisions("KMIA", "2026-09-27")
+        assert len(rows) == 1
+        assert rows[0]["yes_bid_raw"] is None
+        assert rows[0]["no_bid_raw"] is None
+
+
+class TestPersistScanDecisionsFieldFiltering:
+    """Issue #1236: _persist_scan_decisions must pass Database.upsert_scan_
+    decision an explicit, checked field set instead of blindly splatting the
+    full scanner snapshot dict -- the shape of the original bug."""
+
+    @pytest.fixture()
+    def db(self, tmp_path):
+        return Database(tmp_path / "scan-decisions-field-filtering-test.db")
+
+    def test_real_scanner_snapshot_is_accepted_end_to_end(self, db):
+        """Uses the real scan_markets() producer, not a hand-written dict
+        (per the issue's test requirement), so this fails again if a future
+        scanner field silently joins the dropped set without anyone
+        deciding whether it belongs there or in upsert_scan_decision -- the
+        exact drift that caused this outage."""
+        weather = {"KMIA": _kmia_state()}
+        market = _market("65-95°F", "0xreal-1236", _today_end(), '["0.80","0.20"]')
+        with patch("src.strategy.scanner.MIN_MINUTES_TO_SETTLEMENT", 0), \
+                patch("src.strategy.scanner.MODEL_PROB_CAP", 1.0):
+            _, snapshots = scan_markets(weather, [market])
+        snap = snapshots[0]
+
+        dropped = set(snap) - run_module._SCAN_DECISION_ACCEPTED_FIELDS
+        assert dropped == run_module._SCAN_DECISION_KNOWN_DROPPED_FIELDS
+
+        run_module._persist_scan_decisions(
+            {snap["ticker"]: dict(snap)}, {}, live_trader=None, db=db,
+        )
+        rows = db.get_scan_decisions("KMIA", snap["date"])
+        assert len(rows) == 1
+        assert rows[0]["gate_verdict"] == snap["gate_verdict"]
+
+    def test_unrecognised_field_does_not_raise_or_drop_the_row(self, db):
+        """A hypothetical future scanner field this DB layer has not
+        learned yet is dropped, not fatal -- the row still gets written."""
+        snap = _snap("0xfuture-field")
+        snap["some_future_diagnostic_field"] = "anything"
+
+        run_module._persist_scan_decisions({snap["ticker"]: snap}, {}, live_trader=None, db=db)
+
+        rows = db.get_scan_decisions("KATL", snap["date"])
+        assert len(rows) == 1
+
+    def test_genuine_failures_log_once_per_poll_not_once_per_bracket(self, db, caplog):
+        """A real failure (e.g. an invalid gate_verdict slipping through)
+        must not be able to write one log line per affected bracket --
+        exactly the 19,926-occurrences-in-one-log-file shape of this
+        outage."""
+        snaps = {
+            f"0xbad{i}": _snap(f"0xbad{i}", gate_verdict="not_a_real_verdict")
+            for i in range(5)
+        }
+        with caplog.at_level(logging.WARNING, logger="src.scripts.run"):
+            run_module._persist_scan_decisions(snaps, {}, live_trader=None, db=db)
+
+        scan_decision_warnings = [
+            r for r in caplog.records if "[scan_decisions] upsert failed" in r.message
+        ]
+        assert len(scan_decision_warnings) == 1
+        assert "5/5" in scan_decision_warnings[0].message
+
+        rows = db.get_scan_decisions("KATL", list(snaps.values())[0]["date"])
+        assert rows == []

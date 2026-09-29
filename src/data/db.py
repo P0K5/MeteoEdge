@@ -320,6 +320,16 @@ CREATE TABLE IF NOT EXISTS scan_decisions (
     -- are additive and read by nothing that gates/trades.
     yes_price_raw         REAL,
     no_price_raw          REAL,
+    -- Real order-book top-of-book bid, alongside yes_price_raw/no_price_raw
+    -- (the top-of-book ask) -- issue #1077 computed these, issue #1236 is
+    -- what actually persists them (a signature mismatch between this
+    -- table's writer and Database.upsert_scan_decision silently dropped
+    -- every scan_decisions write for a month -- see the migration note in
+    -- _migrate and _persist_scan_decisions in src/scripts/run.py). NULL
+    -- when ENABLE_CLOB_ENRICHMENT is off, a side had no token_id, or the
+    -- book fetch failed -- never a fabricated price (#1028).
+    yes_bid_raw           REAL,
+    no_bid_raw            REAL,
     current_high          REAL,
     latest_temp           REAL,
     forecast_high         REAL,
@@ -702,6 +712,23 @@ class Database:
             # and every downstream gate/trading consumer are unchanged.
             ("scan_decisions", "yes_price_raw", "REAL"),
             ("scan_decisions", "no_price_raw", "REAL"),
+            # Issue #1236: scan_decisions had received zero writes since
+            # 2026-08-28 -- #1077 added yes_bid_raw/no_bid_raw to every
+            # scanner snapshot dict, but never extended
+            # Database.upsert_scan_decision() to accept them, so
+            # db.upsert_scan_decision(**decision) raised TypeError on every
+            # bracket of every poll and the broad `except Exception` in
+            # _persist_scan_decisions (src/scripts/run.py) downgraded that
+            # into a swallowed per-bracket warning. Adding the columns here
+            # (mirroring the #1076 yes_price_raw/no_price_raw precedent
+            # immediately above) alongside the new upsert_scan_decision
+            # parameters is half the fix; the other half is
+            # _persist_scan_decisions no longer blindly splatting the full
+            # snapshot dict (see its docstring). NULL for every row written
+            # before this migration -- the bug meant no row was written at
+            # all during the outage window, so there is nothing to backfill.
+            ("scan_decisions", "yes_bid_raw", "REAL"),
+            ("scan_decisions", "no_bid_raw", "REAL"),
             # Issue #1145: paused_at timestamp for copy_wallets_followed
             # When a wallet is paused, record the UTC timestamp of the pause event
             # (used by story F4's Activity Feed to show real pause timestamps).
@@ -1012,6 +1039,8 @@ class Database:
                         no_ask                INTEGER,
                         yes_price_raw         REAL,
                         no_price_raw          REAL,
+                        yes_bid_raw           REAL,
+                        no_bid_raw            REAL,
                         current_high          REAL,
                         latest_temp           REAL,
                         forecast_high         REAL,
@@ -1053,7 +1082,8 @@ class Database:
                 common_cols = [c for c in (
                     "station", "ticker", "date", "ts", "poll_ts", "bracket_low",
                     "bracket_high", "side", "yes_ask", "no_ask",
-                    "yes_price_raw", "no_price_raw", "current_high",
+                    "yes_price_raw", "no_price_raw", "yes_bid_raw", "no_bid_raw",
+                    "current_high",
                     "latest_temp", "forecast_high", "p_yes", "raw_p_yes",
                     "capped_p_yes", "ev_yes", "ev_no", "ev_yes_raw", "ev_no_raw",
                     "minutes_to_settlement", "emos_mode", "is_next_day",
@@ -1524,6 +1554,8 @@ class Database:
         no_ask: "int | None" = None,
         yes_price_raw: "float | None" = None,
         no_price_raw: "float | None" = None,
+        yes_bid_raw: "float | None" = None,
+        no_bid_raw: "float | None" = None,
         current_high: "float | None" = None,
         latest_temp: "float | None" = None,
         forecast_high: "float | None" = None,
@@ -1570,6 +1602,12 @@ class Database:
                 rail question); every gate/trading path still reads ``yes_ask``
                 unchanged.
             no_price_raw: Same as ``yes_price_raw``, for the NO side.
+            yes_bid_raw: Real order-book top-of-book bid price on the YES
+                side ([0,1], not cents), alongside ``yes_price_raw`` (the
+                top-of-book ask) -- issue #1077/#1236. ``None`` unless
+                order-book enrichment is on and this side has a token_id and
+                a successful book fetch -- never a fabricated price.
+            no_bid_raw: Same as ``yes_bid_raw``, for the NO side.
             gate_verdict: one of the 11 canonical verdicts (see
                 ``_SCAN_DECISION_GATE_VERDICTS``); raises ``ValueError`` on
                 any other value so a typo never silently reaches the DB.
@@ -1588,17 +1626,19 @@ class Database:
             self._conn.execute(
                 "INSERT INTO scan_decisions("
                 "station,ticker,date,ts,poll_ts,bracket_low,bracket_high,side,"
-                "yes_ask,no_ask,yes_price_raw,no_price_raw,current_high,latest_temp,forecast_high,"
+                "yes_ask,no_ask,yes_price_raw,no_price_raw,yes_bid_raw,no_bid_raw,"
+                "current_high,latest_temp,forecast_high,"
                 "p_yes,raw_p_yes,capped_p_yes,ev_yes,ev_no,ev_yes_raw,ev_no_raw,"
                 "minutes_to_settlement,emos_mode,is_next_day,gate_verdict,"
                 "gate_actual,gate_threshold,gate_unit,gate_detail,execution_mode,"
                 "ensemble_mean,ensemble_members,ensemble_range_low,ensemble_range_high,direction) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
                 "ON CONFLICT(station, ticker, date) DO UPDATE SET "
                 "ts=excluded.ts, poll_ts=excluded.poll_ts, "
                 "bracket_low=excluded.bracket_low, bracket_high=excluded.bracket_high, "
                 "side=excluded.side, yes_ask=excluded.yes_ask, no_ask=excluded.no_ask, "
                 "yes_price_raw=excluded.yes_price_raw, no_price_raw=excluded.no_price_raw, "
+                "yes_bid_raw=excluded.yes_bid_raw, no_bid_raw=excluded.no_bid_raw, "
                 "current_high=excluded.current_high, latest_temp=excluded.latest_temp, "
                 "forecast_high=excluded.forecast_high, p_yes=excluded.p_yes, "
                 "raw_p_yes=excluded.raw_p_yes, capped_p_yes=excluded.capped_p_yes, "
@@ -1615,7 +1655,8 @@ class Database:
                 "ensemble_range_high=excluded.ensemble_range_high, direction=excluded.direction",
                 (
                     station, ticker, date, ts, poll_ts or ts, bracket_low, bracket_high, side,
-                    yes_ask, no_ask, yes_price_raw, no_price_raw, current_high, latest_temp, forecast_high,
+                    yes_ask, no_ask, yes_price_raw, no_price_raw, yes_bid_raw, no_bid_raw,
+                    current_high, latest_temp, forecast_high,
                     p_yes, raw_p_yes, capped_p_yes, ev_yes, ev_no, ev_yes_raw, ev_no_raw,
                     minutes_to_settlement, emos_mode, int(is_next_day), gate_verdict,
                     gate_actual, gate_threshold, gate_unit, gate_detail, execution_mode,
@@ -1632,7 +1673,8 @@ class Database:
         """
         cur = self._conn.execute(
             "SELECT station,ticker,date,ts,poll_ts,bracket_low,bracket_high,side,"
-            "yes_ask,no_ask,yes_price_raw,no_price_raw,current_high,latest_temp,forecast_high,"
+            "yes_ask,no_ask,yes_price_raw,no_price_raw,yes_bid_raw,no_bid_raw,"
+            "current_high,latest_temp,forecast_high,"
             "p_yes,raw_p_yes,capped_p_yes,ev_yes,ev_no,ev_yes_raw,ev_no_raw,"
             "minutes_to_settlement,emos_mode,is_next_day,gate_verdict,"
             "gate_actual,gate_threshold,gate_unit,gate_detail,execution_mode,"
