@@ -3,6 +3,8 @@ Database and Polymarket I/O are mocked -- no real network/DB calls, mirroring
 test_copy_trade_backtest.py's mocking style.
 """
 import logging
+import tempfile
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from src.scripts.copy_wallet_screening import (
@@ -11,6 +13,8 @@ from src.scripts.copy_wallet_screening import (
     PersistentResolutionCache,
     check_quality,
     check_stability,
+    lock_acquired,
+    main,
     run,
 )
 
@@ -1086,3 +1090,130 @@ class TestResolutionCachingAcrossRun:
         assert rc == 0
         assert caplog.text.count("resolution cache:") == 1
         assert "3 hits, 1 misses" in caplog.text
+
+
+class TestLockAcquired:
+    """issue #1247: single-instance lock prevents concurrent runs.
+    lock_acquired() is crash-safe (file-level lock released on process exit)
+    and returns None when another instance already holds the lock.
+
+    On Windows (where fcntl is unavailable), lock_acquired() returns True
+    as a no-op fallback, so the subprocess-based concurrency tests are
+    skipped. The unit tests here exercise the non-blocking code path.
+    """
+
+    def test_first_acquisition_succeeds(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            lock_file = Path(tmpdir) / "test.lock"
+            lock = lock_acquired(lock_file)
+            assert lock is not None
+            # Clean up
+            if hasattr(lock, "close"):
+                lock.close()
+
+    def test_reacquire_succeeds_after_release(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            lock_file = Path(tmpdir) / "test.lock"
+            lock1 = lock_acquired(lock_file)
+            assert lock1 is not None
+            if hasattr(lock1, "close"):
+                lock1.close()
+            # After release, re-acquisition succeeds
+            lock2 = lock_acquired(lock_file)
+            assert lock2 is not None
+            # Clean up
+            if hasattr(lock2, "close"):
+                lock2.close()
+
+    def test_lock_file_contains_pid_when_real_lock(self):
+        import os
+        with tempfile.TemporaryDirectory() as tmpdir:
+            lock_file = Path(tmpdir) / "test.lock"
+            lock = lock_acquired(lock_file)
+            assert lock is not None
+            if hasattr(lock, "close"):
+                # Real lock (not Windows no-op): verify PID was written
+                content = lock_file.read_text()
+                assert str(os.getpid()) in content
+                lock.close()
+
+    def test_creates_parent_directory(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            lock_file = Path(tmpdir) / "subdir" / "test.lock"
+            lock = lock_acquired(lock_file)
+            assert lock is not None
+            assert lock_file.parent.exists()
+            # Clean up
+            if hasattr(lock, "close"):
+                lock.close()
+
+    def test_second_acquisition_fails_with_subprocess(self):
+        """Subprocess-based concurrency test: verify that a subprocess holding
+        the lock prevents the parent from acquiring it (POSIX only; skipped on
+        Windows where fcntl is unavailable).
+        """
+        import subprocess
+        import sys
+        with tempfile.TemporaryDirectory() as tmpdir:
+            lock_file = Path(tmpdir) / "test.lock"
+            # Subprocess script that acquires and holds the lock
+            subprocess_code = f"""
+import sys
+from pathlib import Path
+sys.path.insert(0, {str(Path(__file__).resolve().parents[2])!r})
+from src.scripts.copy_wallet_screening import lock_acquired
+lock = lock_acquired(Path({str(lock_file)!r}))
+if lock is None:
+    sys.exit(1)  # Failed to acquire (should not happen)
+if lock is True:
+    # Windows no-op fallback: skip this test
+    sys.exit(2)
+# Hold the lock and wait for signal
+import time
+time.sleep(2)
+sys.exit(0)
+"""
+            proc = subprocess.Popen(
+                [sys.executable, "-c", subprocess_code],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            )
+            import time
+            time.sleep(0.5)  # Let subprocess acquire the lock
+            # Try to acquire the same lock in parent
+            lock = lock_acquired(lock_file)
+            proc.terminate()
+            proc.wait()
+            # On Windows (fcntl unavailable), lock=True, which is not None
+            # On POSIX with fcntl, lock should be None (held by subprocess)
+            if lock is not True:  # Not Windows no-op
+                assert lock is None, "Second acquisition should fail when subprocess holds it"
+
+
+class TestMainLockHandling:
+    """issue #1247: main() acquires the lock before calling run(),
+    and exits with code 1 if another instance already holds it.
+    """
+
+    def test_main_exits_with_1_when_already_running(self, caplog):
+        # Simulate another instance holding the lock by mocking lock_acquired
+        # to return None (lock held).
+        with patch(
+            "src.scripts.copy_wallet_screening.lock_acquired", return_value=None,
+        ):
+            with caplog.at_level(logging.ERROR):
+                rc = main([])
+        assert rc == 1
+        assert "already running" in caplog.text
+        assert "[copy-wallet-screening]" in caplog.text
+
+    def test_main_proceeds_when_lock_acquired(self):
+        # Simulate successful lock acquisition (returns a file-like object or True).
+        # The actual run() call will be mocked to avoid real API calls.
+        with patch(
+            "src.scripts.copy_wallet_screening.lock_acquired", return_value=True,
+        ), patch(
+            "src.scripts.copy_wallet_screening.run", return_value=0,
+        ) as mock_run:
+            rc = main(["--top", "1"])
+        assert rc == 0
+        mock_run.assert_called_once()
