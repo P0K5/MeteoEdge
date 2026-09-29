@@ -27,6 +27,18 @@ post-slippage numbers are persisted, since eligibility is about whether
 *following* this wallet stays profitable, not whether the original trader
 was profitable.
 
+**`--min-trades` vs. the `check_quality()` sample-size condition (issue
+#1248).** Two different things named similarly -- don't conflate them.
+`--min-trades` (CLI arg, default 0, unset in production) is a `run()`-level
+skip: a wallet below it is dropped from `addresses` iteration BEFORE
+anything is persisted, so there is no `copy_wallet_candidates` row and no
+audit trail for why it was skipped. `check_quality()`'s
+`insufficient_resolved_trades` condition, by contrast, is a *judgement*:
+the row is still written with `eligible_to_follow=0` and the reason is
+logged, exactly like every other quality-gate rejection. `--min-trades`
+keeps its current meaning and default here -- it is not replaced by the
+quality gate.
+
 Usage::
 
     python -m src.scripts.copy_wallet_screening --window month --top 20
@@ -49,6 +61,7 @@ except ImportError:
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from src.config import CONFIG_DEFAULTS, get_live_config  # noqa: E402
 from src.data.db import Database  # noqa: E402
 from src.data.polymarket_traders import get_leaderboard, wallet_address  # noqa: E402
 from src.scripts.copy_trade_backtest import (  # noqa: E402
@@ -74,6 +87,18 @@ MAX_WALLETS_PER_RUN = 50
 #: screening run was *reproducible* -- these thresholds separately gate on
 #: whether the wallet is actually worth following. Derived from the
 #: 2026-09-25 screening audit (see issue #1209 for the measured evidence).
+
+#: Fallback minimum resolved trades required before check_quality() will
+#: trust a wallet's profitability/tail/truncation metrics at all (issue
+#: #1248), used only when no DB is available to read the live config value
+#: (see `_min_resolved_trades_threshold()`). Mirrors
+#: `CONFIG_DEFAULTS["COPY_SCREEN_MIN_RESOLVED_TRADES"]` -- keep these two in
+#: sync; the live-editable config value is what actually governs behaviour
+#: in the normal, DB-available path. Without this gate, a wallet with e.g.
+#: two resolved trades can pass every other condition below by chance --
+#: see 0x365f951dc2 (n_resolved=2, median_roi=+2.79), the sole
+#: recommendation in the 2026-09-29 advisory report.
+QUALITY_MIN_RESOLVED_TRADES = CONFIG_DEFAULTS["COPY_SCREEN_MIN_RESOLVED_TRADES"]
 
 #: A wallet must be profitable under the flat-stake model we actually trade
 #: (not merely under its own, possibly much larger, position sizing).
@@ -268,40 +293,54 @@ def check_stability(current: dict, previous: "dict | None") -> bool:
     return True
 
 
-def check_quality(current: dict, previous: "dict | None") -> "tuple[bool, str]":
+def check_quality(
+    current: dict, previous: "dict | None", min_resolved_trades: "int | None" = None,
+) -> "tuple[bool, str]":
     """True (with reason ``"ok"``) only if *current* passes every
-    profitability/tail-risk/history-completeness quality gate (issue #1209,
-    relaxed for truncated wallets by issue #1217).
+    sample-size/profitability/tail-risk/history-completeness quality gate
+    (issue #1209, relaxed for truncated wallets by issue #1217, sample size
+    added by issue #1248).
 
     Pure function, no I/O -- *previous* is the same immediately-previous
     screening row the caller already fetched for ``check_stability()``, not
-    a new query. Composable with -- not folded into -- ``check_stability()``:
-    a wallet must pass BOTH to be ``eligible_to_follow``. Checked in this
-    order:
+    a new query, and *min_resolved_trades* is the already-resolved
+    threshold value (live-config lookup, if any, happens in the caller --
+    see ``_min_resolved_trades_threshold()`` -- not in here). Composable
+    with -- not folded into -- ``check_stability()``: a wallet must pass
+    BOTH to be ``eligible_to_follow``. Checked in this order:
 
-    (a) ``current["flat_dollar_pnl"]`` must be > ``QUALITY_MIN_FLAT_DOLLAR_PNL``
+    (a) ``current["n_resolved"]`` must be >= *min_resolved_trades*
+        (``QUALITY_MIN_RESOLVED_TRADES`` if not given) -- checked FIRST, so
+        that a wallet failing both this and a downstream condition logs the
+        real disqualifier (too few observations to draw any conclusion at
+        all) rather than a symptom of it (e.g. an unstable-looking
+        ``median_roi``). Boundary is inclusive: exactly
+        *min_resolved_trades* passes. See 0x365f951dc2
+        (``n_resolved=2``, ``median_roi=+2.79``) -- the coin-flip case this
+        condition exists to catch.
+    (b) ``current["flat_dollar_pnl"]`` must be > ``QUALITY_MIN_FLAT_DOLLAR_PNL``
         -- profitable under the flat-stake model we actually trade, not just
         under the wallet's own position sizing. A missing (``None``)
         ``flat_dollar_pnl`` (e.g. the run was invoked without
         ``--flat-stake``) fails this check too, since flat-stake
         profitability cannot be confirmed without it.
-    (b) When ``median_roi > 0``, ``mean_roi`` must be <=
+    (c) When ``median_roi > 0``, ``mean_roi`` must be <=
         ``QUALITY_MAX_MEAN_MEDIAN_ROI_RATIO * median_roi`` -- rejects
         tail-driven wallets whose P&L is concentrated in a few large
         winners, a profile that does not survive flat-stake copying (see
         docs/design/copy-trading-architecture.md, "Background").
-    (c) ``median_roi`` must be > ``QUALITY_MIN_MEDIAN_ROI``.
-    (d) ``current["truncated"]`` (issue #1233 -- reported by
+    (d) ``median_roi`` must be > ``QUALITY_MIN_MEDIAN_ROI``.
+    (e) ``current["truncated"]`` (issue #1233 -- reported by
         ``get_wallet_trades()``/``backtest_wallet()``, not re-derived here
         from a trade count against a constant; see the module-level comment
-        above condition (d)'s old constant for why that approach is
+        above condition (e)'s old constant for why that approach is
         deliberately not being repeated a third time). When it's ``True``
         -- the wallet's fetched history is genuinely incomplete, so its
         metrics aren't run-to-run stable on their own -- it is admitted
         only if the flat-stake edge *reproduced*: ``previous["flat_dollar_pnl"]``
-        must also be ``> 0``. (a) above already requires the CURRENT run to
+        must also be ``> 0``. (b) above already requires the CURRENT run to
         be positive; this is a second, independent confirmation from the
-        PREVIOUS run, not a restatement of (a). Two distinct rejection
+        PREVIOUS run, not a restatement of (b). Two distinct rejection
         reasons, so the logs tell apart "can't tell yet" from "checked, and
         it didn't reproduce":
 
@@ -315,11 +354,16 @@ def check_quality(current: dict, previous: "dict | None") -> "tuple[bool, str]":
           current +1129, previous -671), so this fails as
           ``"trade_history_truncated_unreproducible"``.
 
-    Checks (b) and (c) interact: (b) only fires when ``median_roi > 0``, so
-    a wallet with ``median_roi <= 0`` always falls through to fail on (c)
-    instead -- the relative order of (b) and (c) is not load-bearing for
+    Checks (c) and (d) interact: (c) only fires when ``median_roi > 0``, so
+    a wallet with ``median_roi <= 0`` always falls through to fail on (d)
+    instead -- the relative order of (c) and (d) is not load-bearing for
     correctness, only for which failure reason gets logged first.
     """
+    if min_resolved_trades is None:
+        min_resolved_trades = QUALITY_MIN_RESOLVED_TRADES
+    if current["n_resolved"] < min_resolved_trades:
+        return False, "insufficient_resolved_trades"
+
     flat_pnl = current.get("flat_dollar_pnl")
     if flat_pnl is None or not flat_pnl > QUALITY_MIN_FLAT_DOLLAR_PNL:
         return False, "flat_dollar_pnl_not_positive"
@@ -340,6 +384,30 @@ def check_quality(current: dict, previous: "dict | None") -> "tuple[bool, str]":
             return False, "trade_history_truncated_unreproducible"
 
     return True, "ok"
+
+
+def _min_resolved_trades_threshold(db: "Database | None") -> int:
+    """Return the live ``COPY_SCREEN_MIN_RESOLVED_TRADES`` value as an
+    ``int``, falling back to ``QUALITY_MIN_RESOLVED_TRADES`` -- logged at
+    WARNING, not silently -- if *db* is ``None`` or the live-config lookup
+    itself fails (e.g. DB corruption) or somehow returns a non-numeric
+    value. Mirrors ``copy_wallet_health.py``'s ``_min_decisions_threshold()``
+    (issue #1225) -- follow that pattern rather than inventing a second one.
+    """
+    if db is None:
+        return QUALITY_MIN_RESOLVED_TRADES
+    try:
+        raw = get_live_config(db).get(
+            "COPY_SCREEN_MIN_RESOLVED_TRADES", QUALITY_MIN_RESOLVED_TRADES,
+        )
+        return int(raw)
+    except Exception as e:
+        log.warning(
+            "[copy-wallet-screening] failed to read COPY_SCREEN_MIN_RESOLVED_TRADES "
+            "from live config (%s) -- falling back to module default %d",
+            e, QUALITY_MIN_RESOLVED_TRADES,
+        )
+        return QUALITY_MIN_RESOLVED_TRADES
 
 
 def run(
@@ -382,6 +450,10 @@ def run(
         return 1
 
     db = db or Database()
+
+    # Issue #1248: resolved once per run, not once per wallet -- mirrors
+    # resolution_cache below and copy_wallet_health.py's own threshold read.
+    min_resolved_trades = _min_resolved_trades_threshold(db)
 
     # Issue #1221: one resolution cache shared by every wallet in this run
     # (tier 1), backed by `db`'s persistent market_resolutions table (tier
@@ -449,7 +521,9 @@ def run(
             previous_rows = db.get_recent_wallet_screenings(address, limit=1)
             previous = previous_rows[0] if previous_rows else None
             stable = check_stability(current, previous)
-            quality_ok, quality_reason = check_quality(current, previous)
+            quality_ok, quality_reason = check_quality(
+                current, previous, min_resolved_trades=min_resolved_trades,
+            )
             if not quality_ok:
                 log.info(
                     "[copy-wallet-screening] %s: failed quality check (%s), not eligible.",
@@ -507,7 +581,15 @@ def main(argv: "list[str] | None" = None) -> int:
             "defaults to $5.00/trade, matching the spike's winning sizing."
         ),
     )
-    ap.add_argument("--min-trades", type=int, default=0)
+    ap.add_argument(
+        "--min-trades", type=int, default=0,
+        help=(
+            "Skip a wallet below this n_resolved BEFORE persisting anything -- no "
+            "auditable copy_wallet_candidates row. Not the same as check_quality()'s "
+            "COPY_SCREEN_MIN_RESOLVED_TRADES condition, which records a judgement "
+            "(eligible_to_follow=0) instead of skipping; see the module docstring."
+        ),
+    )
     args = ap.parse_args(argv)
 
     # Issue #1247: acquire single-instance lock before any API calls.
