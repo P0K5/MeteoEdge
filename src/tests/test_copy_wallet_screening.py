@@ -1111,6 +1111,21 @@ class TestLockAcquired:
             if hasattr(lock, "close"):
                 lock.close()
 
+    def test_second_acquisition_fails_in_same_process(self):
+        """Core guarantee: a second call to lock_acquired on the same path
+        returns None while the first is held (same process).
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            lock_file = Path(tmpdir) / "test.lock"
+            lock1 = lock_acquired(lock_file)
+            assert lock1 is not None
+            # Second acquisition should fail (on POSIX; returns True on Windows)
+            lock2 = lock_acquired(lock_file)
+            if lock2 is not True:  # Not Windows no-op
+                assert lock2 is None, "Second acquisition should fail while first is held"
+            if hasattr(lock1, "close"):
+                lock1.close()
+
     def test_reacquire_succeeds_after_release(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             lock_file = Path(tmpdir) / "test.lock"
@@ -1156,7 +1171,7 @@ class TestLockAcquired:
         import sys
         with tempfile.TemporaryDirectory() as tmpdir:
             lock_file = Path(tmpdir) / "test.lock"
-            # Subprocess script that acquires and holds the lock
+            # Subprocess script that acquires and holds the lock, then signals readiness
             subprocess_code = f"""
 import sys
 from pathlib import Path
@@ -1164,29 +1179,39 @@ sys.path.insert(0, {str(Path(__file__).resolve().parents[2])!r})
 from src.scripts.copy_wallet_screening import lock_acquired
 lock = lock_acquired(Path({str(lock_file)!r}))
 if lock is None:
-    sys.exit(1)  # Failed to acquire (should not happen)
+    sys.stdout.write("FAILED\\n")
+    sys.stdout.flush()
+    sys.exit(1)
 if lock is True:
-    # Windows no-op fallback: skip this test
-    sys.exit(2)
-# Hold the lock and wait for signal
+    # Windows no-op fallback: signal it
+    sys.stdout.write("WINDOWS\\n")
+    sys.stdout.flush()
+    sys.exit(0)
+# POSIX: acquired the lock, signal readiness
+sys.stdout.write("ACQUIRED\\n")
+sys.stdout.flush()
+# Hold the lock and wait for termination signal
 import time
-time.sleep(2)
+time.sleep(5)
 sys.exit(0)
 """
             proc = subprocess.Popen(
                 [sys.executable, "-c", subprocess_code],
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
             )
-            import time
-            time.sleep(0.5)  # Let subprocess acquire the lock
+            # Wait for subprocess readiness signal
+            readiness = proc.stdout.readline().strip()
+            if readiness == "WINDOWS":
+                # Windows no-op fallback: skip concurrency test
+                proc.wait()
+                return
+            assert readiness == "ACQUIRED", f"Subprocess failed to acquire lock: {readiness}"
             # Try to acquire the same lock in parent
             lock = lock_acquired(lock_file)
             proc.terminate()
             proc.wait()
-            # On Windows (fcntl unavailable), lock=True, which is not None
             # On POSIX with fcntl, lock should be None (held by subprocess)
-            if lock is not True:  # Not Windows no-op
-                assert lock is None, "Second acquisition should fail when subprocess holds it"
+            assert lock is None, "Second acquisition should fail when subprocess holds it"
 
 
 class TestMainLockHandling:

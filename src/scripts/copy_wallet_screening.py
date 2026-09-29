@@ -58,6 +58,10 @@ from src.scripts.copy_trade_backtest import (  # noqa: E402
 
 log = logging.getLogger(__name__)
 
+#: Module-level lock object held for the process lifetime (issue #1247).
+#: Assigned by main() after acquisition to prevent garbage collection.
+_LOCK = None
+
 #: Rate-limit-budget decision (epic #1099 story 2/3): running this screening
 #: job as its own process means its calls to gamma-api.polymarket.com are
 #: NOT jointly throttled with the live weather bot's own traffic on that
@@ -107,18 +111,17 @@ QUALITY_MAX_MEAN_MEDIAN_ROI_RATIO = 3.0
 #: re-deriving truncation from a count a third time.
 
 
-def lock_acquired(lock_file: Path) -> "bool | None":
+def lock_acquired(lock_file: Path):
     """Acquire an exclusive single-instance lock, crash-safe.
 
-    Returns an open file object if the lock was acquired, None if another
-    instance already holds it. The file object must remain open for the
-    process lifetime (usually via a module-global assignment at the call site)
-    to maintain the lock; on process exit or crash, fcntl.flock releases it
-    automatically.
-
-    On Windows (where fcntl is unavailable), returns True, allowing the
-    script to run. This is deliberate: the script is only deployed on the
-    Mac mini (see .claude/instructions/governance.md, deployment notes).
+    Returns:
+        - On POSIX (fcntl available): open file object if the lock was acquired,
+          None if another instance already holds it. Caller MUST retain the
+          file object at module scope for the process lifetime; on process exit
+          or crash, fcntl.flock releases it automatically.
+        - On Windows (fcntl unavailable): returns True (no-op fallback, allows
+          the script to run). This is deliberate: the script is only deployed
+          on the Mac mini (see .claude/instructions/governance.md).
 
     Args:
         lock_file: path to the lockfile (e.g. data/.copy_wallet_screening.lock)
@@ -509,9 +512,10 @@ def main(argv: "list[str] | None" = None) -> int:
 
     # Issue #1247: acquire single-instance lock before any API calls.
     # A second concurrent invocation exits immediately.
+    global _LOCK
     lock_file = Path(__file__).resolve().parents[2] / "data" / ".copy_wallet_screening.lock"
-    lock = lock_acquired(lock_file)
-    if lock is None:
+    _LOCK = lock_acquired(lock_file)
+    if _LOCK is None:
         log.error(
             "[copy-wallet-screening] already running (lock file %s held by another process), "
             "exiting.",
