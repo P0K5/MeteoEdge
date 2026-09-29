@@ -33,10 +33,11 @@ def _git(cwd, *args, check=True):
     )
 
 
-def _run_ensure(shared_checkout, *args):
-    """Run ensure_worktree.sh from inside the shared checkout."""
+def _run_ensure(shared_checkout, *args, script=ENSURE_WT):
+    """Run ensure_worktree.sh (or an instrumented copy of it) from inside the
+    shared checkout."""
     return subprocess.run(
-        ["bash", str(ENSURE_WT), *args],
+        ["bash", str(script), *args],
         cwd=str(shared_checkout),
         capture_output=True, text=True,
     )
@@ -115,11 +116,61 @@ def test_branches_off_explicit_base_not_shared_head(shared_checkout):
 
 
 def test_idempotent_reuse(shared_checkout):
+    """Issue #1235: the reuse check compares the worktree's own reported
+    toplevel (from `git -C <dir> rev-parse --show-toplevel`, native
+    drive-letter form on Windows, e.g. `C:/...`) against the directory path
+    the script itself built (MSYS form on Windows, e.g. `/c/...`). Before the
+    fix those two spellings of the identical directory never compared equal,
+    so re-running against a genuinely intact worktree always reported
+    BLOCKED. This is the exact failure that blocked issue #1236."""
     r1 = _run_ensure(shared_checkout, "feat/reuse")
     r2 = _run_ensure(shared_checkout, "feat/reuse")
     assert r1.returncode == 0 and r2.returncode == 0, (r1.stderr, r2.stderr)
     assert _last_line(r1.stdout) == _last_line(r2.stdout)
     assert "reusing existing isolated worktree" in r2.stderr
+
+
+def test_isolation_check_detects_worktree_root_equal_to_shared_checkout(shared_checkout, tmp_path):
+    """Issue #1235: the reuse check (`=`) and the final isolation check
+    (`!=`, "the whole point of #800") suffer the identical Windows path-
+    spelling mismatch with opposite operators, and opposite consequences.
+    The reuse check fails LOUDLY on a valid worktree (covered by
+    test_idempotent_reuse above). The isolation check fails SILENTLY: on
+    Windows it never fires at all, because the two spellings it compares
+    also never compare equal -- so it would rubber-stamp a worktree whose
+    root is genuinely the shared checkout itself as "isolated".
+
+    The script's own directory construction (WT_DIR is always
+    "$MAIN_ROOT/.claude/worktrees/agent-<sanitized>", and sanitization
+    strips '/' so no path-traversal payload in <branch> can collapse that
+    back to MAIN_ROOT) makes WT_DIR == MAIN_ROOT structurally unreachable
+    through the CLI -- which is correct, desired behaviour, not a gap. To
+    exercise the guard clause that exists specifically to catch that
+    condition, this test runs the REAL, unmodified script with exactly one
+    line of test scaffolding overridden (the WT_DIR assignment, forced to
+    MAIN_ROOT) -- fault injection of the precondition, not a rewrite of the
+    logic under test. norm_path() and the isolation check's `!=` comparison
+    that consumes it are exercised byte-for-byte as shipped.
+    """
+    script_text = ENSURE_WT.read_text()
+    marker = 'WT_DIR="$MAIN_ROOT/.claude/worktrees/agent-$SANITIZED"'
+    assert marker in script_text, "ensure_worktree.sh's WT_DIR assignment changed shape; update this test"
+    faulty_script = tmp_path / "ensure_worktree_force_wt_dir_eq_main_root.sh"
+    faulty_script.write_text(script_text.replace(marker, 'WT_DIR="$MAIN_ROOT"'))
+
+    # Branch name matches the shared checkout's current branch ("master") so
+    # the reuse check's branch comparison doesn't short-circuit us before we
+    # reach the isolation check -- we need to land on the isolation BLOCK
+    # specifically, not any other one.
+    res = _run_ensure(shared_checkout, "master", script=faulty_script)
+    assert res.returncode != 0, (
+        "isolation check failed to fire for a worktree root genuinely equal "
+        f"to the shared checkout root: stdout={res.stdout!r} stderr={res.stderr!r}"
+    )
+    assert "BLOCKED" in res.stderr
+    assert "isolation failed" in res.stderr, (
+        "expected the isolation-check BLOCK message specifically, got: " + res.stderr
+    )
 
 
 def test_two_close_spawns_get_distinct_worktrees(shared_checkout):

@@ -32,6 +32,39 @@ set -euo pipefail
 BLOCK() { echo "BLOCKED: $*" >&2; exit 1; }
 log()   { echo "[ensure_worktree] $*" >&2; }
 
+# Normalize a path for STRING COMPARISON ONLY (never for display/output).
+# Issue #1235: on Windows this script compares repo roots obtained from two
+# tools that spell the same directory differently -- bash `pwd` (and anything
+# derived from it) emits MSYS form, e.g. `/c/Coding/MeteoEdge`, while native
+# `git.exe rev-parse --show-toplevel` emits drive-letter form, e.g.
+# `C:/Coding/MeteoEdge`. Those two strings never compare equal even when they
+# name the same directory. This bug existed TWICE with opposite operators:
+# the reuse check (`=`) never matched a genuinely-reusable worktree (always
+# BLOCKED, false positive), while the isolation check (`!=`) never matched a
+# genuinely-unisolated one either (silently never fired, false negative).
+#
+# Round-tripping any path through bash's own `cd`+`pwd` collapses both
+# spellings to the same MSYS form, removing the mismatch instead of trying to
+# translate between the two formats. Belt-and-braces: also lowercase a
+# leading single-letter drive segment (`/C/...` -> `/c/...`), because `cd`+
+# `pwd` alone only lowercases the drive letter when converting FROM
+# `C:/...` colon form -- a path that already arrives in MSYS form with an
+# upper-case drive letter (e.g. `/C/...`) round-trips unchanged. Windows
+# drive letters are case-insensitive, so this is safe; no other path segment
+# is touched, so case-sensitive filenames on Linux/macOS are unaffected
+# (and those platforms already agree on path spelling, so norm_path is a
+# no-op there).
+norm_path() {
+  local p drive rest
+  p="$(cd "$1" 2>/dev/null && pwd)" || { printf '%s' "$1"; return; }
+  if [[ "$p" =~ ^/([A-Za-z])(/.*)?$ ]]; then
+    drive="${BASH_REMATCH[1],,}"
+    rest="${BASH_REMATCH[2]:-}"
+    p="/$drive$rest"
+  fi
+  printf '%s' "$p"
+}
+
 BRANCH="${1:-}"
 BASE_REF="${2:-origin/master}"
 
@@ -63,7 +96,7 @@ fi
 # Reuse path: a worktree already exists at WT_DIR.
 if [ -e "$WT_DIR" ]; then
   if EXISTING_TOP="$(git -C "$WT_DIR" rev-parse --show-toplevel 2>/dev/null)" \
-      && [ "$EXISTING_TOP" = "$WT_DIR" ]; then
+      && [ "$(norm_path "$EXISTING_TOP")" = "$(norm_path "$WT_DIR")" ]; then
     EXISTING_BRANCH="$(git -C "$WT_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || echo '?')"
     [ "$EXISTING_BRANCH" = "$BRANCH" ] \
       || BLOCK "worktree '$WT_DIR' already exists but is on branch '$EXISTING_BRANCH', not '$BRANCH'"
@@ -91,7 +124,7 @@ fi
 
 # ---- Verify isolation (the whole point of #800) ---------------------------
 WT_TOP="$(git -C "$WT_DIR" rev-parse --show-toplevel)"
-[ "$WT_TOP" != "$MAIN_ROOT" ] \
+[ "$(norm_path "$WT_TOP")" != "$(norm_path "$MAIN_ROOT")" ] \
   || BLOCK "worktree toplevel equals shared checkout ($MAIN_ROOT) -- isolation failed"
 WT_BRANCH="$(git -C "$WT_DIR" rev-parse --abbrev-ref HEAD)"
 [ "$WT_BRANCH" = "$BRANCH" ] \
