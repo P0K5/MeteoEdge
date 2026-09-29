@@ -52,34 +52,61 @@ Two consequences for triage:
   or `-SkipDatabases` for a logs-only refresh. `-DryRun` reports what would move
   without transferring anything.
 
-Then, **whether or not the sync ran**, measure staleness from the data itself:
+Then, **whether or not the sync ran**, measure staleness from the data itself —
+across every table the bot must keep writing to, not just one. A single-table
+probe is how #1237 happened: `scan_decisions` stopped receiving writes for a
+month while `candidates` and `poll_runs` stayed current, and the old version of
+this snippet checked only `scan_decisions`, so it read as a dead bot when the
+bot was polling fine. This list mirrors `TABLE_LIVENESS_SPECS` in
+`src/scripts/daily_health_report.py` — if that list changes, update this one
+too:
 
 ```python
 import sqlite3, os, datetime
 c = sqlite3.connect('file:data/meteoedge.db?mode=ro', uri=True)
-print('max poll_ts :', c.execute('SELECT max(poll_ts) FROM scan_decisions').fetchone()[0])
+now = datetime.datetime.now(datetime.UTC)
+for table, col in [
+    ('poll_runs', 'poll_ts'),            # unconditional per-poll heartbeat
+    ('candidates', 'ts'),
+    ('scan_decisions', 'poll_ts'),       # the table that died in #1237
+    ('observations', 'ts'),
+    ('model_forecast_log', 'logged_at'),
+]:
+    newest = c.execute(f'SELECT max({col}) FROM {table}').fetchone()[0]
+    print(f'{table:<20} max {col}: {newest}')
 print('bot.log mtime:', datetime.datetime.fromtimestamp(
     os.path.getmtime('logs/bot.log'), datetime.UTC).strftime('%Y-%m-%d %H:%M'))
-print('now (UTC)   :', datetime.datetime.now(datetime.UTC).strftime('%Y-%m-%d %H:%M'))
+print('now (UTC)   :', now.strftime('%Y-%m-%d %H:%M'))
 ```
 
-Healthy cadence is ~256 polls/day, so a gap beyond ~15 minutes is real.
+Healthy cadence is ~256 polls/day for `poll_runs`/`candidates`, hourly for
+`observations`, daily for `model_forecast_log`, and `scan_decisions` should
+track within a few hours of `now` whenever the bot is evaluating anything — a
+gap beyond ~15 minutes on `poll_runs` is real; see `TABLE_LIVENESS_SPECS` for
+the other tables' per-table thresholds. The daily health report now runs this
+same check unattended (issue #1237's "Table Liveness" section), so a WARN
+there is the same finding surfaced automatically — corroborate against it
+before filing.
 
 ### A stale copy and a dead bot look identical — do not confuse them
 
-A gap between `now` and `max(poll_ts)` has two completely different causes, and
-guessing wrong is expensive in both directions:
+A gap between `now` and one table's newest row has causes that must not be
+guessed at, because each points somewhere different:
 
-| Sync succeeded this session? | Data still old means | Action |
-|---|---|---|
-| Yes | The **bot genuinely stopped polling** — a real, probably P0 finding | Investigate and file |
-| No / not attempted | **Unknown.** Could be a stale local copy, could be an outage | Do **not** file an outage issue |
+| Sync succeeded this session? | Which tables are stale | Data still old means | Action |
+|---|---|---|---|
+| Yes | **All** of them, together | The **bot genuinely stopped polling** — a real, probably P0 finding | Investigate and file |
+| Yes | **One** table, others current (e.g. `scan_decisions` alone) | A **write-path bug in that one table** — not an outage, the bot is running fine (this is exactly #1237) | File against that table's write path, not as a bot-down incident |
+| No / not attempted | Any | **Unknown.** Could be a stale local copy, could be an outage | Do **not** file an outage issue |
 
 Never open a "bot is down" or "data collection stopped" issue from a snapshot
 you did not just sync — a false P0 costs the user a cleanup. Say instead:
 "the local copy ends at *T*; I could not sync, so I cannot distinguish a stale
 copy from an outage — please run `Fetch-RemoteData.ps1` if you want that
-confirmed."
+confirmed." Likewise, never file "bot is down" when only one table in the list
+above is stale and the rest are current with a fresh sync — that is a targeted
+write-path defect in one table, the same shape as #1237, and scoping it as an
+outage sends the fix to the wrong place.
 
 ### Stamp every conclusion with the as-of time
 
