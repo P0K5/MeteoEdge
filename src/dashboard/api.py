@@ -3893,6 +3893,13 @@ _CONFIG_META: dict[str, dict] = {
         "min": 5,
         "max": 200,
     },
+    "COPY_SCREEN_MIN_RESOLVED_TRADES": {
+        "description": "Minimum n_resolved required before copy_wallet_screening.py's check_quality() will consider a wallet's profitability/tail/truncation metrics meaningful (issue #1248) — rejected wallets are still persisted to copy_wallet_candidates with eligible_to_follow=0. Distinct from --min-trades, which skips a wallet before persisting anything",
+        "type": "int",
+        "group": "copy_trading",
+        "min": 1,
+        "max": 1000,
+    },
     "COPY_LIVE_TRADING_ENABLED": {
         "description": "Master switch — enable LIVE copy-trading order placement (issue #1163). Independent of COPY_TRADING_ENABLED (paper); built ahead of the phase-7 go/no-go gate, defaults off",
         "type": "bool",

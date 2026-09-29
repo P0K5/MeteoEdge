@@ -7,10 +7,13 @@ import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from src.data.db import Database
 from src.scripts.copy_wallet_screening import (
     MAX_WALLETS_PER_RUN,
     QUALITY_MAX_MEAN_MEDIAN_ROI_RATIO,
+    QUALITY_MIN_RESOLVED_TRADES,
     PersistentResolutionCache,
+    _min_resolved_trades_threshold,
     check_quality,
     check_stability,
     lock_acquired,
@@ -124,32 +127,38 @@ class TestCheckStability:
 
 
 def _quality_row(
-    flat_dollar_pnl=10.0, median_roi=0.11, mean_roi=0.1, truncated=False,
+    flat_dollar_pnl=10.0, median_roi=0.11, mean_roi=0.1, truncated=False, n_resolved=150,
 ) -> dict:
     """A `current` dict that passes every check_quality() condition by
     default -- override individual fields to exercise one failure at a time.
 
     ``truncated`` (issue #1233) replaces the old ``n_buy_trades``/
-    ``n_sell_excluded`` count fields entirely -- condition (d) now consumes
+    ``n_sell_excluded`` count fields entirely -- condition (e) now consumes
     the fetcher's own reported flag directly, not an arithmetic comparison
     against a constant.
+
+    ``n_resolved`` (issue #1248) defaults to 150 -- comfortably above
+    ``QUALITY_MIN_RESOLVED_TRADES`` (100) -- so every existing test that
+    doesn't care about sample size keeps passing unmodified.
     """
     return {
         "flat_dollar_pnl": flat_dollar_pnl,
         "median_roi": median_roi,
         "mean_roi": mean_roi,
         "truncated": truncated,
+        "n_resolved": n_resolved,
     }
 
 
 class TestCheckQuality:
     """check_quality() (issue #1209, truncation reproducibility relaxed by
-    issue #1217) -- a composable, separate predicate from check_stability():
-    reproducibility (stability) is necessary but not sufficient for
-    eligibility, quality is the other half.
+    issue #1217, sample-size condition added by issue #1248) -- a
+    composable, separate predicate from check_stability(): reproducibility
+    (stability) is necessary but not sufficient for eligibility, quality is
+    the other half.
 
-    None of conditions (a)-(c) below look at `previous` at all -- only
-    condition (d)'s truncation branch does -- so every non-truncation test
+    None of conditions (b)-(d) below look at `previous` at all -- only
+    condition (e)'s truncation branch does -- so every non-truncation test
     passes `previous=None` to prove that.
     """
 
@@ -220,12 +229,158 @@ class TestCheckQuality:
         assert QUALITY_MAX_MEAN_MEDIAN_ROI_RATIO == 3.0
 
 
+class TestCheckQualityMinResolvedTrades:
+    """Issue #1248: check_quality() rejects a wallet whose n_resolved is
+    below the sample-size floor, checked FIRST -- before profitability/
+    tail/truncation -- with its own distinct reason
+    (`insufficient_resolved_trades`), so the logged reason names the real
+    disqualifier rather than a downstream symptom.
+    """
+
+    def test_0x365f951dc2_two_resolved_trades_is_ineligible(self):
+        # Live regression fixture (issue #1248): the 2026-09-29 advisory
+        # report's ONLY recommendation, 0x365f951dc281322d83f6fcda884c7f66a938706a,
+        # had n_resolved=2 and median_roi=+2.789314134141721 -- a coin flip
+        # that landed heads twice -- and passed every other quality
+        # condition (flat_dollar_pnl=+28 > 0, mean_roi == median_roi so the
+        # tail ratio is trivially satisfied, untruncated).
+        row = _quality_row(
+            flat_dollar_pnl=28.0, median_roi=2.789314134141721,
+            mean_roi=2.789314134141721, n_resolved=2,
+        )
+        assert check_quality(row, None) == (False, "insufficient_resolved_trades")
+
+    def test_n_resolved_exactly_at_threshold_is_eligible(self):
+        row = _quality_row(n_resolved=100)
+        assert check_quality(row, None, min_resolved_trades=100) == (True, "ok")
+
+    def test_n_resolved_one_below_threshold_is_ineligible(self):
+        row = _quality_row(n_resolved=99)
+        assert check_quality(row, None, min_resolved_trades=100) == (
+            False, "insufficient_resolved_trades",
+        )
+
+    def test_default_threshold_is_module_constant_when_not_given(self):
+        # min_resolved_trades omitted entirely -- falls back to
+        # QUALITY_MIN_RESOLVED_TRADES (100), not some other implicit value.
+        row = _quality_row(n_resolved=99)
+        assert check_quality(row, None) == (False, "insufficient_resolved_trades")
+        row = _quality_row(n_resolved=100)
+        assert check_quality(row, None) == (True, "ok")
+
+    def test_failing_sample_size_and_profitability_reports_sample_size_reason(self):
+        # Ordering test: a wallet failing BOTH the sample-size floor and a
+        # downstream condition (here, negative flat_dollar_pnl) must report
+        # the real disqualifier, not the downstream symptom.
+        row = _quality_row(flat_dollar_pnl=-100.0, n_resolved=2)
+        assert check_quality(row, None) == (False, "insufficient_resolved_trades")
+
+    def test_large_n_resolved_previously_eligible_wallets_unaffected(self):
+        # Regression: previously-eligible wallets with large n_resolved
+        # (e.g. the project's real followed wallets: 307, 411, 1357, 477)
+        # must remain eligible.
+        for n in (307, 411, 1357, 477):
+            row = _quality_row(n_resolved=n)
+            assert check_quality(row, None) == (True, "ok")
+
+
+class _RaisingConfigDb:
+    """Wraps a real ``Database`` but makes ``get_all_config`` raise, to
+    exercise ``_min_resolved_trades_threshold``'s module-constant fallback
+    path when the live-config lookup itself cannot be completed -- mirrors
+    test_copy_wallet_health.py's own ``_RaisingConfigDb`` (issue #1225
+    pattern)."""
+
+    def __init__(self, db: Database):
+        self._db = db
+
+    def get_all_config(self):
+        raise RuntimeError("simulated DB failure")
+
+    def __getattr__(self, name):
+        return getattr(self._db, name)
+
+
+class TestMinResolvedTradesThreshold:
+    """Issue #1248: COPY_SCREEN_MIN_RESOLVED_TRADES is live-editable via
+    bot_config, read through get_live_config -- not the module-constant
+    fallback -- whenever the DB is available. Mirrors
+    test_copy_wallet_health.py's TestThresholdHonouredFromLiveConfig /
+    TestModuleFallbackThresholdWhenLiveConfigUnavailable (issue #1225
+    pattern) -- follow that, not a new one.
+    """
+
+    def test_module_constant_defaults_to_100(self):
+        assert QUALITY_MIN_RESOLVED_TRADES == 100
+
+    def test_no_db_uses_module_constant(self):
+        assert _min_resolved_trades_threshold(None) == QUALITY_MIN_RESOLVED_TRADES
+
+    def test_threshold_honoured_from_live_config(self):
+        db = Database(":memory:")
+        db.set_config("COPY_SCREEN_MIN_RESOLVED_TRADES", "5")
+        assert _min_resolved_trades_threshold(db) == 5
+
+    def test_fallback_threshold_used_when_live_config_lookup_fails(self, caplog):
+        real_db = Database(":memory:")
+        with caplog.at_level(logging.WARNING, logger="src.scripts.copy_wallet_screening"):
+            threshold = _min_resolved_trades_threshold(_RaisingConfigDb(real_db))
+        assert threshold == QUALITY_MIN_RESOLVED_TRADES
+        assert any(
+            "COPY_SCREEN_MIN_RESOLVED_TRADES" in r.message and r.levelno == logging.WARNING
+            for r in caplog.records
+        )
+
+    def test_end_to_end_through_run_honours_live_config(self, caplog):
+        # 0x365f951dc2-style wallet (n_resolved=2): at the live-lowered
+        # threshold, check_quality() no longer rejects on
+        # insufficient_resolved_trades (the real-numbers regression case
+        # from TestCheckQualityMinResolvedTrades, exercised here through
+        # run()'s live-config read instead of a direct call).
+        db = Database(":memory:")
+        db.set_config("COPY_SCREEN_MIN_RESOLVED_TRADES", "1")
+        leaderboard = _leaderboard(1)
+        result = _backtest_result(
+            "0xwallet0", n_resolved=2, median_roi=2.789314134141721,
+            mean_roi=2.789314134141721, flat_dollar_pnl=28.0,
+        )
+        with caplog.at_level("INFO", logger="src.scripts.copy_wallet_screening"), patch(
+            "src.scripts.copy_wallet_screening.get_leaderboard", return_value=leaderboard,
+        ), patch(
+            "src.scripts.copy_wallet_screening.backtest_wallet", return_value=result,
+        ):
+            run(window="month", top=1, slippage_bps=150.0, flat_stake=5.0, db=db)
+        rows = db.get_recent_wallet_screenings("0xwallet0", limit=1)
+        assert rows[0]["n_resolved"] == 2
+        assert "insufficient_resolved_trades" not in caplog.text
+
+    def test_end_to_end_through_run_uses_default_threshold_when_unset(self, caplog):
+        # Same wallet, no live-config override -- falls back to the
+        # CONFIG_DEFAULTS/module default of 100, so n_resolved=2 is
+        # rejected on the new condition specifically.
+        db = Database(":memory:")
+        leaderboard = _leaderboard(1)
+        result = _backtest_result(
+            "0xwallet0", n_resolved=2, median_roi=2.789314134141721,
+            mean_roi=2.789314134141721, flat_dollar_pnl=28.0,
+        )
+        with caplog.at_level("INFO", logger="src.scripts.copy_wallet_screening"), patch(
+            "src.scripts.copy_wallet_screening.get_leaderboard", return_value=leaderboard,
+        ), patch(
+            "src.scripts.copy_wallet_screening.backtest_wallet", return_value=result,
+        ):
+            run(window="month", top=1, slippage_bps=150.0, flat_stake=5.0, db=db)
+        rows = db.get_recent_wallet_screenings("0xwallet0", limit=1)
+        assert rows[0]["eligible_to_follow"] == 0
+        assert "insufficient_resolved_trades" in caplog.text
+
+
 class TestCheckQualityTruncationReproducibility:
-    """issue #1217: a truncated wallet (condition (d)) is no longer an
+    """issue #1217: a truncated wallet (condition (e)) is no longer an
     unconditional reject -- it is admitted only when its flat-stake edge
     also reproduced in the immediately-previous screening run.
 
-    Issue #1233: condition (d) now keys off `current["truncated"]` --
+    Issue #1233: condition (e) now keys off `current["truncated"]` --
     reported by get_wallet_trades()/backtest_wallet() -- rather than a
     trade count compared against a constant. These tests exercise the same
     reproducibility behaviour as before, just via the new input shape.

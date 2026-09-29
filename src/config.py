@@ -798,6 +798,19 @@ CONFIG_DEFAULTS: "dict[str, str | int | float | bool]" = {
     # threshold when epic H (#1159) builds a live path -- do not reuse this
     # key for that.
     "COPY_HEALTH_MIN_DECISIONS_FOR_ROI_CHECK": 30,
+    # Screening-side sample-size floor (issue #1248,
+    # src/scripts/copy_wallet_screening.py::check_quality). Distinct from
+    # --min-trades (run()'s CLI arg, default 0, unset in production): that
+    # skips a wallet BEFORE persisting anything, so a rejection there leaves
+    # no auditable record; this is a quality-gate condition, so the row is
+    # still written to copy_wallet_candidates with eligible_to_follow=0 and
+    # a logged insufficient_resolved_trades reason, like every other quality
+    # condition. Chosen so it excludes noise (0x365f951dc2's n_resolved=2,
+    # median_roi=+2.79 -- a coin flip landing heads twice, the sole
+    # recommendation in the 2026-09-29 advisory report) without excluding
+    # any wallet this project has actually followed (observed n_resolved:
+    # 307, 411, 1357, 477) -- see issue #1248 for the measured evidence.
+    "COPY_SCREEN_MIN_RESOLVED_TRADES": 100,
     # Live copy-trading config (issue #1163 / epic G #1158). Mirrors the
     # paper COPY_* block immediately above exactly one layer up: isolated
     # from PAPER copy-trading, not just from the weather strategy --
