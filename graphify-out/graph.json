@@ -68021,7 +68021,7 @@
       "file_type": "code",
       "norm_label": "_extract_inline_script()",
       "source_file": "src/tests/test_copy_trading_followed_wallets_js_logic.py",
-      "source_location": "L337"
+      "source_location": "L620"
     },
     {
       "id": "src_tests_test_copy_trading_followed_wallets_js_logic_test_followed_wallets_optimistic_toggle_and_confirm_copy",
@@ -68033,7 +68033,7 @@
       "file_type": "code",
       "norm_label": "test_followed_wallets_optimistic_toggle_and_confirm_copy()",
       "source_file": "src/tests/test_copy_trading_followed_wallets_js_logic.py",
-      "source_location": "L345"
+      "source_location": "L628"
     },
     {
       "id": "src_tests_test_copy_trading_mode_banner_js_logic_extract_inline_script",
@@ -133127,7 +133127,7 @@
       "source_location": "L1"
     },
     {
-      "id": "src_tests_test_copy_trading_followed_wallets_js_logic_rationale_346",
+      "id": "src_tests_test_copy_trading_followed_wallets_js_logic_rationale_629",
       "label": "Executes the real shipped dashboard script under Node and exercises the\u2026",
       "_origin": "ast",
       "community": 483,
@@ -133135,7 +133135,7 @@
       "file_type": "rationale",
       "norm_label": "executes the real shipped dashboard script under node and exercises the...",
       "source_file": "src/tests/test_copy_trading_followed_wallets_js_logic.py",
-      "source_location": "L346"
+      "source_location": "L629"
     },
     {
       "id": "src_tests_test_copy_trading_mode_banner_js_logic_rationale_1",
@@ -189292,7 +189292,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "src/tests/test_copy_trading_followed_wallets_js_logic.py",
-      "source_location": "L350",
+      "source_location": "L633",
       "weight": 1.0
     },
     {
@@ -256888,7 +256888,7 @@
       "confidence_score": 1.0,
       "context": "decorator",
       "source_file": "src/tests/test_copy_trading_followed_wallets_js_logic.py",
-      "source_location": "L344",
+      "source_location": "L627",
       "weight": 1.0
     },
     {
@@ -269044,7 +269044,7 @@
       "confidence_score": 1.0,
       "context": "import",
       "source_file": "src/tests/test_copy_trading_followed_wallets_js_logic.py",
-      "source_location": "L26",
+      "source_location": "L38",
       "weight": 1.0
     },
     {
@@ -269056,7 +269056,7 @@
       "confidence_score": 1.0,
       "context": "import",
       "source_file": "src/tests/test_copy_trading_followed_wallets_js_logic.py",
-      "source_location": "L27",
+      "source_location": "L39",
       "weight": 1.0
     },
     {
@@ -269068,7 +269068,7 @@
       "confidence_score": 1.0,
       "context": "import",
       "source_file": "src/tests/test_copy_trading_followed_wallets_js_logic.py",
-      "source_location": "L28",
+      "source_location": "L40",
       "weight": 1.0
     },
     {
@@ -269080,7 +269080,7 @@
       "confidence_score": 1.0,
       "context": "import",
       "source_file": "src/tests/test_copy_trading_followed_wallets_js_logic.py",
-      "source_location": "L29",
+      "source_location": "L41",
       "weight": 1.0
     },
     {
@@ -269092,7 +269092,7 @@
       "confidence_score": 1.0,
       "context": "import",
       "source_file": "src/tests/test_copy_trading_followed_wallets_js_logic.py",
-      "source_location": "L32",
+      "source_location": "L44",
       "weight": 1.0
     },
     {
@@ -285364,7 +285364,7 @@
       "confidence_score": 1.0,
       "context": "import",
       "source_file": "src/tests/test_copy_trading_followed_wallets_js_logic.py",
-      "source_location": "L30",
+      "source_location": "L42",
       "weight": 1.0
     },
     {
@@ -320623,7 +320623,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "src/tests/test_copy_trading_followed_wallets_js_logic.py",
-      "source_location": "L337",
+      "source_location": "L620",
       "weight": 1.0
     },
     {
@@ -320634,7 +320634,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "src/tests/test_copy_trading_followed_wallets_js_logic.py",
-      "source_location": "L345",
+      "source_location": "L628",
       "weight": 1.0
     },
     {
@@ -402434,14 +402434,14 @@
       "weight": 1.0
     },
     {
-      "source": "src_tests_test_copy_trading_followed_wallets_js_logic_rationale_346",
+      "source": "src_tests_test_copy_trading_followed_wallets_js_logic_rationale_629",
       "target": "src_tests_test_copy_trading_followed_wallets_js_logic_test_followed_wallets_optimistic_toggle_and_confirm_copy",
       "relation": "rationale_for",
       "_origin": "ast",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "src/tests/test_copy_trading_followed_wallets_js_logic.py",
-      "source_location": "L346",
+      "source_location": "L629",
       "weight": 1.0
     },
     {
@@ -434436,5 +434436,5 @@
     }
   ],
   "hyperedges": [],
-  "built_at_commit": "4817a67f5cac421df24edf257b33d270267fb1ee"
+  "built_at_commit": "d710e8702223bbe875d6c1f0cbbd646292493ac7"
 }
