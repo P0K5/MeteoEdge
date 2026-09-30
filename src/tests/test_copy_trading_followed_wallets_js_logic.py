@@ -420,6 +420,20 @@ _ASSERTIONS = textwrap.dedent("""
       function setWallet(w) { _followedWalletsData = { wallets: [w], live_cap_usd: 10 }; }
       const errBanner = document.getElementById('copy-trading-error-text');
 
+      // 0) Defensive guard (AI review, PR #1268): a missing/non-finite
+      //    live_cap_usd must degrade to a clean banner error instead of an
+      //    uncaught TypeError from `.toFixed()` on undefined, and must
+      //    never even open the stake prompt.
+      _followedWalletsData = { wallets: [{ address: '0xNoCap', stake_per_trade: 5, live_stake_per_trade: 5, live_stake_is_override: false, live_enabled: false, status: 'active' }], live_cap_usd: undefined };
+      let promptOpenedForNoCap = false;
+      window.prompt = () => { promptOpenedForNoCap = true; return null; };
+      let noCapFetchCount = 0;
+      global.fetch = async () => { noCapFetchCount++; return jsonResp({ success: true }); };
+      await followedGoLive('0xNoCap', makeBtn());
+      assert.strictEqual(promptOpenedForNoCap, false, 'a missing live_cap_usd must abort before the stake prompt ever opens');
+      assert.strictEqual(noCapFetchCount, 0, 'a missing live_cap_usd must not call any API');
+      assert.ok(errBanner.textContent.includes('live exposure cap is unavailable'), 'a missing live_cap_usd must show a clean banner error, not throw');
+
       // a) Cancelling the stake prompt makes no API call at all.
       setWallet({ address: '0xGoLive1', stake_per_trade: 5, live_stake_per_trade: 5, live_stake_is_override: false, live_enabled: false, status: 'active' });
       window.prompt = () => null;

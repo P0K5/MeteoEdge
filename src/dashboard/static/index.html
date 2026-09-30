@@ -4941,6 +4941,15 @@ async function followedGoLive(address, btn) {
   const wallet = ((_followedWalletsData && _followedWalletsData.wallets) || []).find(w => w.address === address);
   if (!wallet) return;
   const liveCapUsd = _followedWalletsData.live_cap_usd;
+  // Defensive guard (AI review, PR #1268): CopyFollowedWalletsOut always
+  // includes a finite live_cap_usd today, but this function does real-money
+  // math with it before any dialog appears -- degrade to a clean banner
+  // error rather than an uncaught TypeError from `.toFixed()` on
+  // undefined/NaN if a future response shape ever omits or malforms it.
+  if (!Number.isFinite(liveCapUsd)) {
+    _followedShowBannerError(`Could not start the go-live flow for ${_copyTruncateAddress(address)} — the live exposure cap is unavailable right now. Try again shortly.`);
+    return;
+  }
 
   const rawStake = window.prompt(
     `Set a live stake per trade for ${address}.\n\n` +
