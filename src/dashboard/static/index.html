@@ -636,6 +636,10 @@ a,button,input,select{transition:color var(--transition),background var(--transi
 }
 .mode-badge-live{background:var(--yes-bg);color:var(--yes);}
 .mode-badge-paper{background:var(--warn-bg);color:var(--warn);}
+/* Issue #1258/#1254: muted-green "opted in but not currently live" variant
+   -- one visual treatment shared by the LIVE (switch off) and LIVE (cap
+   reached) label states, per docs/design/copy-trading-live-views.md. */
+.mode-badge-live-pending{background:var(--yes-dim);color:var(--yes);}
 
 /* Per-side accent: live/live=green, mixed=blue, shadow/shadow=amber */
 .station-card.accent-live-live{border-left-color:var(--yes);}
@@ -931,6 +935,17 @@ a,button,input,select{transition:color var(--transition),background var(--transi
 .btn-followed-action.loading .spinner{display:inline-block;}
 .btn-followed-unfollow{border-color:var(--no-dim);background:var(--no-bg);color:var(--no);}
 .btn-followed-unfollow:hover:not(:disabled){background:var(--no-dim);}
+/* Issue #1254: "Go live" is the row's risk-*increasing* direction, so it
+   gets a green color modifier -- same structural pattern as
+   .btn-followed-unfollow above, opposite polarity. "Revert to paper" (the
+   risk-reducing direction) stays plain .btn-followed-action, no modifier,
+   same as Resume. */
+.btn-followed-golive{border-color:var(--yes-dim);background:var(--yes-bg);color:var(--yes);}
+.btn-followed-golive:hover:not(:disabled){background:var(--yes-dim);}
+.followed-live-msg{font-size:var(--text-xs);color:var(--muted);width:100%;margin:0;}
+/* Issue #1259: two-line paper/live stake display, only shown once a wallet
+   is opted into live -- never blended into one figure. */
+.followed-stake-live{color:var(--yes);}
 .followed-stake-edit{display:flex;align-items:center;gap:4px;}
 .followed-stake-edit input{
   width:70px;padding:4px 6px;border-radius:var(--radius-md);
@@ -1373,6 +1388,7 @@ a,button,input,select{transition:color var(--transition),background var(--transi
         <div class="copy-summary-strip">
           <span class="copy-slots-pill" id="followed-active-pill">— active</span>
           <span class="copy-slots-pill" id="followed-paused-pill">— paused</span>
+          <span class="copy-slots-pill" id="followed-opted-in-pill">— opted into live</span>
           <span class="copy-slots-pill" id="followed-live-eligible-pill">— live-eligible</span>
           <span class="copy-slots-pill" id="followed-paper-only-pill">— paper-only</span>
           <span class="copy-slots-pill" id="followed-live-pnl-pill">— live aggregate P&amp;L</span>
@@ -4585,16 +4601,54 @@ function _followedStatusBadgeHtml(w) {
 // always spells out the *reason* (never color-only), per the design spec's
 // accessibility rule -- `w.live_status_reason` comes straight from the
 // backend so the two never drift out of sync.
+//
+// Issue #1254/#1258: four label states, two visual treatments. An opted-in
+// wallet (`live_enabled`) that is not *currently* eligible for one of these
+// two known, backend-returned reasons gets its own muted-green "pending"
+// badge -- distinct from a wallet that was never opted in at all, which
+// stays plain PAPER. Any other/new reason with live_enabled=true safely
+// falls through to plain PAPER below (never invent further reason-specific
+// labels), per docs/design/copy-trading-live-views.md's conservative
+// fallback rule.
+const _FOLLOWED_LIVE_PENDING_BADGES = {
+  'live trading is currently off': {
+    text: 'LIVE (switch off)',
+    aria: 'Live status: live, opted in but the global switch is off',
+  },
+  "this wallet's live exposure limit is currently reached": {
+    text: 'LIVE (cap reached)',
+    aria: "Live status: live, opted in but this wallet's live exposure limit is currently reached",
+  },
+};
+
 function _followedLiveBadgeHtml(w) {
-  const cls = w.live_eligible ? 'mode-badge-live' : 'mode-badge-paper';
-  const word = w.live_eligible ? 'live' : 'paper only';
-  const label = `Live status: ${word} — ${_copyEscapeHtml(w.live_status_reason)}`;
-  const text = w.live_eligible ? 'LIVE' : 'PAPER';
-  return `<span class="mode-badge ${cls}" aria-label="${label}">${text}</span>`;
+  if (w.live_eligible) {
+    const label = `Live status: live — ${_copyEscapeHtml(w.live_status_reason)}`;
+    return `<span class="mode-badge mode-badge-live" aria-label="${label}">LIVE</span>`;
+  }
+  const pending = w.live_enabled ? _FOLLOWED_LIVE_PENDING_BADGES[w.live_status_reason] : undefined;
+  if (pending) {
+    return `<span class="mode-badge mode-badge-live-pending" aria-label="${pending.aria}">${pending.text}</span>`;
+  }
+  const label = `Live status: paper only — ${_copyEscapeHtml(w.live_status_reason)}`;
+  return `<span class="mode-badge mode-badge-paper" aria-label="${label}">PAPER</span>`;
 }
 
+// Issue #1259: once a wallet is opted into live, its per-trade stake is no
+// longer a single figure -- show paper and (resolved) live stakes on their
+// own labeled lines, never blended, per the design spec's standing "live
+// and paper figures are never blended" rule. A wallet never opted into live
+// keeps today's single-value display unchanged (no "Paper:" qualifier --
+// the common case shouldn't carry noise with nothing to disambiguate).
 function _followedStakeDisplayHtml(w) {
-  return `<span class="followed-stake-value">$${w.stake_per_trade.toFixed(2)}</span>`;
+  if (!w.live_enabled) {
+    return `<span class="followed-stake-value">$${w.stake_per_trade.toFixed(2)}</span>`;
+  }
+  const inheritedNote = w.live_stake_is_override
+    ? ''
+    : ` <span class="followed-paused-reason" style="display:inline">(inherits paper)</span>`;
+  return `<div class="followed-stake-value">Paper: $${w.stake_per_trade.toFixed(2)}</div>
+    <div class="followed-stake-value followed-stake-live">Live: $${w.live_stake_per_trade.toFixed(2)}${inheritedNote}</div>`;
 }
 
 function _followedStakeEditHtml(address, currentStake) {
@@ -4614,6 +4668,38 @@ function _followedStakeEditHtml(address, currentStake) {
         <i data-lucide="x"></i>
       </button>
     </div>`;
+}
+
+// Issue #1254: "Go live" / "Revert to paper" action button. Placed last in
+// the action group (after Edit stake, before Unfollow) -- see
+// docs/design/copy-trading-live-views.md's "Placement" rationale: the row's
+// two consequential actions (this one and Unfollow) are grouped last so an
+// operator reaching for the frequent controls (Pause/Resume, Edit stake)
+// doesn't land next to either by accident.
+//
+// A paused wallet disables the control (regardless of live_enabled) rather
+// than hiding it -- same button as whichever state live_enabled implies,
+// with the reason duplicated into both `title` and `aria-label` (tooltips
+// alone aren't reliably exposed to screen readers).
+function _followedGoLiveButtonHtml(w) {
+  const addrEsc = _copyEscapeHtml(w.address);
+  const wantsDemote = !!w.live_enabled;
+  const icon = wantsDemote ? 'zap-off' : 'zap';
+  const label = wantsDemote ? 'Revert to paper' : 'Go live';
+  // Only "Go live" (the risk-increasing direction) carries a color
+  // modifier -- "Revert to paper" stays visually neutral, like Resume.
+  const actionClass = wantsDemote ? 'btn-followed-revert-live' : 'btn-followed-golive';
+  if (w.status === 'paused') {
+    const reason = 'Live opt-in is unavailable while this wallet is paused — resume it first.';
+    const reasonEsc = _copyEscapeHtml(reason);
+    return `<button type="button" class="btn-followed-action ${actionClass}" data-address="${addrEsc}" aria-label="${reasonEsc}" title="${reasonEsc}" disabled>
+      <span class="spinner"></span><i data-lucide="${icon}"></i>${label}
+    </button>`;
+  }
+  const aria = wantsDemote ? `Revert ${addrEsc} to paper-only` : `Go live for ${addrEsc}`;
+  return `<button type="button" class="btn-followed-action ${actionClass}" data-address="${addrEsc}" aria-label="${aria}">
+    <span class="spinner"></span><i data-lucide="${icon}"></i>${label}
+  </button>`;
 }
 
 function _followedRowHtml(w) {
@@ -4637,12 +4723,14 @@ function _followedRowHtml(w) {
       <td class="copy-td">${_followedFmtUsd(w.realized_pnl_usd)}</td>
       <td class="copy-td followed-actions-cell">
         ${pauseResumeBtn}
-        <button type="button" class="btn-followed-action btn-followed-edit-stake" data-address="${addrEsc}" aria-label="Edit stake per trade for ${addrEsc}">
+        <button type="button" class="btn-followed-action btn-followed-edit-stake" data-address="${addrEsc}" aria-label="Edit paper stake per trade for ${addrEsc}">
           <i data-lucide="pencil"></i>Edit stake
         </button>
+        ${_followedGoLiveButtonHtml(w)}
         <button type="button" class="btn-followed-action btn-followed-unfollow" data-address="${addrEsc}" aria-label="Unfollow ${addrEsc}">
           <i data-lucide="user-x"></i>Unfollow
         </button>
+        <p class="followed-live-msg" id="followed-live-msg-${safeId}" role="status" aria-live="polite"></p>
       </td>
     </tr>`;
 }
@@ -4654,6 +4742,7 @@ function renderFollowedWallets(data) {
   const activePill = document.getElementById('followed-active-pill');
   const pausedPill = document.getElementById('followed-paused-pill');
   const pnlPill = document.getElementById('followed-pnl-pill');
+  const optedInPill = document.getElementById('followed-opted-in-pill');
   const liveEligiblePill = document.getElementById('followed-live-eligible-pill');
   const paperOnlyPill = document.getElementById('followed-paper-only-pill');
   const livePnlPill = document.getElementById('followed-live-pnl-pill');
@@ -4665,7 +4754,11 @@ function renderFollowedWallets(data) {
   }
   // Live-eligibility summary + split P&L (issue #1187, epic J) -- never a
   // single combined "aggregate P&L" anywhere in this view, per the design
-  // spec's "never blended" rule.
+  // spec's "never blended" rule. # opted into live (issue #1259) is the
+  // coarser, operator-set count -- server-computed like the other two, and
+  // positioned before # live-eligible (its narrower, currently-executing
+  // subset), per the design spec.
+  if (optedInPill) optedInPill.textContent = `${data.live_opted_in_count} opted into live`;
   if (liveEligiblePill) liveEligiblePill.textContent = `${data.live_eligible_count} live-eligible`;
   if (paperOnlyPill) paperOnlyPill.textContent = `${data.paper_only_count} paper-only`;
   if (livePnlPill) {
@@ -4711,12 +4804,20 @@ function _followedHideBanner() {
 }
 
 // Shared runner for every Followed Wallets row action (pause/resume/
-// unfollow/stake-edit) -- mirrors toggleSide()'s pattern: disable the
-// control, optionally apply an *optimistic* UI change up front, await the
-// request, and on any failure roll that change back plus surface the
-// section's error banner with a specific message (design decision, issue
-// #1147). `onSuccess` re-fetches the full list so counts/P&L/summary-strip
-// stay in sync rather than hand-patching every dependent element.
+// unfollow/stake-edit/live-enable/live-disable) -- mirrors toggleSide()'s
+// pattern: disable the control, optionally apply an *optimistic* UI change
+// up front, await the request, and on any failure roll that change back
+// plus surface the section's error banner with a specific message (design
+// decision, issue #1147). `onSuccess` re-fetches the full list so counts/
+// P&L/summary-strip stay in sync rather than hand-patching every dependent
+// element.
+//
+// `body.detail` (issue #1254): the live-enable endpoint (POST .../live)
+// uses actual HTTP status codes (404/409) rather than this file's usual
+// `{success, message}` structured-refusal convention, so a refusal body is
+// shaped `{detail: "..."}` (FastAPI's default HTTPException body) instead
+// -- fall back to it so that message still reaches the operator rather than
+// a generic "HTTP 409".
 async function _followedSubmitAction({ address, btn, url, fetchOpts, optimisticApply, rollback, failureMessage, onSuccess }) {
   if (btn.disabled) return;
   btn.disabled = true;
@@ -4728,7 +4829,7 @@ async function _followedSubmitAction({ address, btn, url, fetchOpts, optimisticA
     const r = await fetch(url, fetchOpts);
     const body = await r.json().catch(() => ({}));
     if (!r.ok || !body.success) {
-      const detail = body.message || `HTTP ${r.status}`;
+      const detail = body.message || body.detail || `HTTP ${r.status}`;
       console.warn(`Followed-wallet action failed for ${address}: ${detail}`);
       _followedShowBannerError(`${failureMessage} — ${detail}`);
       if (rollback) rollback();
@@ -4819,6 +4920,181 @@ async function followedResumeWallet(address, btn) {
   });
 }
 
+// Enabling live opt-in (issues #1258, #1259): a real-money action, so it
+// folds two operator-facing steps into one flow, per
+// docs/design/copy-trading-live-views.md -- "Enabling live: stake +
+// confirmation":
+//   1. window.prompt for the live stake (pre-filled with the wallet's
+//      current *resolved* live stake, `w.live_stake_per_trade` -- NEVER
+//      `w.stake_per_trade` directly. Pre-filling from the paper stake would
+//      make a disable/re-enable cycle silently discard an existing
+//      override and raise real-money size -- the spec's own corrected
+//      acceptance criteria explicitly calls this out).
+//   2. window.confirm naming the wallet, the resolved live stake, and the
+//      live per-wallet cap.
+//   3. API call sequencing is stake-first, enable-last: PATCH .../live-stake
+//      (skipped if nothing changed), then POST .../live -- never the
+//      reverse, so every partial-failure mode leaves the wallet paper-only.
+// The badge never shows LIVE optimistically (acceptance criteria) -- no
+// optimisticApply is passed to the final _followedSubmitAction call below.
+async function followedGoLive(address, btn) {
+  const wallet = ((_followedWalletsData && _followedWalletsData.wallets) || []).find(w => w.address === address);
+  if (!wallet) return;
+  const liveCapUsd = _followedWalletsData.live_cap_usd;
+  // Defensive guard (AI review, PR #1268): CopyFollowedWalletsOut always
+  // includes a finite live_cap_usd today, but this function does real-money
+  // math with it before any dialog appears -- degrade to a clean banner
+  // error rather than an uncaught TypeError from `.toFixed()` on
+  // undefined/NaN if a future response shape ever omits or malforms it.
+  if (!Number.isFinite(liveCapUsd)) {
+    _followedShowBannerError(`Could not start the go-live flow for ${_copyTruncateAddress(address)} — the live exposure cap is unavailable right now. Try again shortly.`);
+    return;
+  }
+
+  const rawStake = window.prompt(
+    `Set a live stake per trade for ${address}.\n\n` +
+    `Leave this blank and press OK to keep the live stake linked to this ` +
+    `wallet's paper stake (currently $${wallet.stake_per_trade.toFixed(2)} per ` +
+    `trade) — it will automatically track future paper-stake edits.\n\n` +
+    `Enter a dollar amount to set a live stake that stays fixed at that ` +
+    `amount even if the paper stake later changes.\n\n` +
+    `Live per-wallet exposure cap: $${liveCapUsd.toFixed(2)}.`,
+    wallet.live_stake_per_trade.toFixed(2)
+  );
+  if (rawStake === null) return; // operator cancelled the whole action, identical to Unfollow's short-circuit
+
+  const trimmed = rawStake.trim();
+  let liveStake = null;            // null -> inherit paper stake
+  let liveStakeOverride = false;
+  if (trimmed !== '') {
+    const parsed = parseFloat(trimmed);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      _followedShowBannerError(`Could not set a live stake for ${_copyTruncateAddress(address)} — enter a live stake greater than $0, or clear the field entirely to inherit the paper stake.`);
+      return;
+    }
+    if (parsed > liveCapUsd) {
+      _followedShowBannerError(`Could not set a live stake for ${_copyTruncateAddress(address)} — $${parsed.toFixed(2)} exceeds this wallet's live exposure cap of $${liveCapUsd.toFixed(2)}. Enter an amount at or under the cap, or clear the field entirely to inherit the paper stake.`);
+      return;
+    }
+    liveStake = parsed;
+    liveStakeOverride = true;
+  }
+
+  const resolvedStakeText = liveStakeOverride
+    ? `$${liveStake.toFixed(2)} per trade`
+    : `$${wallet.stake_per_trade.toFixed(2)} per trade (this inherits this wallet's paper stake and will change automatically if the paper stake is edited later)`;
+  const confirmed = window.confirm(
+    `Go live for ${address}?\n\n` +
+    `Every future signal from this wallet will place REAL trades of ${resolvedStakeText}, ` +
+    `up to a live exposure cap of $${liveCapUsd.toFixed(2)} for this wallet.\n\n` +
+    `Paper trading for this wallet continues unaffected, at its own stake of ` +
+    `$${wallet.stake_per_trade.toFixed(2)} per trade.`
+  );
+  if (!confirmed) return;
+
+  const safeId = _copySafeId(address);
+  const msgEl = document.getElementById('followed-live-msg-' + safeId);
+
+  // Stake-first: skip the write entirely when nothing changed (e.g.
+  // re-enabling a wallet whose stake override was already set correctly
+  // from a prior enable/disable cycle) -- avoids a redundant write.
+  const needsStakeCall = liveStakeOverride !== wallet.live_stake_is_override
+    || (liveStakeOverride && liveStake !== wallet.live_stake_per_trade);
+
+  if (needsStakeCall) {
+    if (btn.disabled) return;
+    btn.disabled = true;
+    btn.classList.add('loading');
+    btn.setAttribute('aria-busy', 'true');
+    let stakeOk = true;
+    try {
+      const r = await fetch(`/api/copy-trading/wallets/${encodeURIComponent(address)}/live-stake`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ stake: liveStakeOverride ? liveStake : null }),
+      });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok || !body.success) {
+        const detail = body.message || body.detail || `HTTP ${r.status}`;
+        _followedShowBannerError(`Could not set a live stake for ${_copyTruncateAddress(address)} — ${detail}`);
+        stakeOk = false;
+      }
+    } catch (e) {
+      _followedShowBannerError(`Could not set a live stake for ${_copyTruncateAddress(address)} — ${e.message}`);
+      stakeOk = false;
+    }
+    // Step 1 failing stops the whole flow -- the enable endpoint is never
+    // called, leaving the wallet exactly as it was before (a safe partial
+    // state, since live_enabled was never touched).
+    if (!stakeOk) {
+      btn.disabled = false;
+      btn.classList.remove('loading');
+      btn.removeAttribute('aria-busy');
+      return;
+    }
+    _followedHideBanner();
+    // Only clear `disabled` here (to satisfy _followedSubmitAction's own
+    // re-entrancy guard below) -- deliberately leave `loading`/`aria-busy`
+    // set across the step 1 -> step 2 boundary (Designer nitpick, PR #1268)
+    // rather than removing then immediately re-adding them, so the button
+    // never has a moment where it looks idle between the two requests.
+    btn.disabled = false;
+  }
+
+  // Step 2, only if step 1 succeeded (or was skipped): enable live. No
+  // optimisticApply -- the badge must never show LIVE before this resolves.
+  await _followedSubmitAction({
+    address, btn,
+    url: `/api/copy-trading/wallets/${encodeURIComponent(address)}/live`,
+    fetchOpts: {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: true }),
+    },
+    failureMessage: `Could not enable live trading for ${_copyTruncateAddress(address)}`,
+    onSuccess: async () => {
+      if (msgEl) msgEl.textContent = `Live trading enabled for ${_copyTruncateAddress(address)}.`;
+      await fetchFollowedWallets();
+    },
+  });
+}
+
+// Disabling live opt-in requires no confirmation (risk-reducing direction,
+// mirrors why Resume never prompts) -- fires immediately. Unlike enabling,
+// this IS optimistic: flips the badge to PAPER right away, rolled back on
+// failure -- the safe-direction error here is understating status for a
+// moment, not overstating it.
+async function followedRevertToPaper(address, btn) {
+  const safeId = _copySafeId(address);
+  const cell = document.getElementById('followed-status-cell-' + safeId);
+  const msgEl = document.getElementById('followed-live-msg-' + safeId);
+  const prevHtml = cell ? cell.innerHTML : null;
+  const wallet = ((_followedWalletsData && _followedWalletsData.wallets) || []).find(w => w.address === address);
+
+  await _followedSubmitAction({
+    address, btn,
+    url: `/api/copy-trading/wallets/${encodeURIComponent(address)}/live`,
+    fetchOpts: {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: false }),
+    },
+    optimisticApply: () => {
+      if (cell && wallet) {
+        cell.innerHTML = _followedStatusBadgeHtml(wallet)
+          + _followedLiveBadgeHtml({ live_enabled: false, live_eligible: false, live_status_reason: 'live is not enabled for this wallet' });
+        lucide.createIcons();
+      }
+    },
+    rollback: () => { if (cell && prevHtml !== null) { cell.innerHTML = prevHtml; lucide.createIcons(); } },
+    failureMessage: `Could not disable live trading for ${_copyTruncateAddress(address)}`,
+    onSuccess: async () => {
+      if (msgEl) msgEl.textContent = `Live trading reverted to paper for ${_copyTruncateAddress(address)}.`;
+      await fetchFollowedWallets();
+    },
+  });
+}
+
 async function followedUnfollowWallet(address, btn) {
   // Required literal copy (issue #1147 acceptance criteria): must state
   // open positions will NOT be closed, not just imply it.
@@ -4906,6 +5182,10 @@ function _followedOnListClick(event) {
   if (resumeBtn) { followedResumeWallet(resumeBtn.dataset.address, resumeBtn); return; }
   const unfollowBtn = event.target.closest('.btn-followed-unfollow');
   if (unfollowBtn) { followedUnfollowWallet(unfollowBtn.dataset.address, unfollowBtn); return; }
+  const goLiveBtn = event.target.closest('.btn-followed-golive');
+  if (goLiveBtn) { followedGoLive(goLiveBtn.dataset.address, goLiveBtn); return; }
+  const revertLiveBtn = event.target.closest('.btn-followed-revert-live');
+  if (revertLiveBtn) { followedRevertToPaper(revertLiveBtn.dataset.address, revertLiveBtn); return; }
   const editStakeBtn = event.target.closest('.btn-followed-edit-stake');
   if (editStakeBtn) { _followedArmStakeEdit(editStakeBtn.dataset.address); return; }
   const stakeCancelBtn = event.target.closest('.btn-followed-stake-cancel');
