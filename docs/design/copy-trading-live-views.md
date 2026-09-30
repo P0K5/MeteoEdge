@@ -344,6 +344,10 @@ approach is confirmed feasible.]`
 **Step 1 — live stake, via `window.prompt` (verbatim):**
 
 ```js
+// w.live_stake_per_trade is the API's *resolved* value (#1259): the
+// existing override if this wallet has one, otherwise its paper stake.
+// Pre-filling from this, not from w.stake_per_trade directly, is what
+// makes a disable/re-enable cycle preserve the operator's prior sizing.
 const rawStake = window.prompt(
   `Set a live stake per trade for ${address}.\n\n` +
   `Leave this blank and press OK to keep the live stake linked to this ` +
@@ -352,20 +356,33 @@ const rawStake = window.prompt(
   `Enter a dollar amount to set a live stake that stays fixed at that ` +
   `amount even if the paper stake later changes.\n\n` +
   `Live per-wallet exposure cap: $${liveCapUsd.toFixed(2)}.`,
-  w.stake_per_trade.toFixed(2)
+  w.live_stake_per_trade.toFixed(2)
 );
 if (rawStake === null) return; // operator cancelled the whole action, identical to Unfollow's short-circuit
 ```
 
-Pre-filled with the wallet's current paper stake, per the acceptance
-criteria. Accepting the pre-filled value as-is is treated as an **explicit
-override** equal to the paper stake (`live_stake_is_override = true`) — the
-prompt's instructional text is explicit that *clearing the field* (not
-accepting the default) is how an operator chooses "inherit." This is the
-one unambiguous way to express two distinct states (explicit-value-equal-to
-paper vs. inherit-from-paper) through a single native text field that has no
-separate "reset to default" affordance. Cancelling (`null`) aborts the
-entire enable-live action with no API call — same convention as every other
+**Pre-filled with the wallet's current *resolved* live stake — its existing
+override if it has one, otherwise its paper stake (corrected 2026-09-30,
+per #1258's corrected acceptance criteria; the original wording said
+"pre-filled with the paper stake," which was wrong).** For a wallet that has
+never had an override, the two values are identical, so first-time
+promotion is unaffected — this only changes behavior on a *second* enable.
+The correction exists because pre-filling from the paper stake makes a
+disable/re-enable cycle hazardous: set live = $2 → Revert to paper → Go live
+again → the prompt would have offered $5 (the paper stake) → accepting the
+default, the natural action, silently discards the $2 override and raises
+real-money size 2.5×. The confirm dialog in Step 2 does name the resolved
+figure, so the old behavior was disclosed rather than silent — but the
+pre-fill itself was steering toward the larger number, which is the wrong
+default for the one control in this row that spends real money. Accepting
+the pre-filled value as-is is treated as an **explicit override** equal to
+whatever value was shown (`live_stake_is_override = true`) — the prompt's
+instructional text is explicit that *clearing the field* (not accepting the
+default) is how an operator chooses "inherit." This is the one unambiguous
+way to express two distinct states (explicit-value-equal-to-paper vs.
+inherit-from-paper) through a single native text field that has no separate
+"reset to default" affordance. Cancelling (`null`) aborts the entire
+enable-live action with no API call — same convention as every other
 cancellable action in this row.
 
 **Client-side validation (before any dialog or API call proceeds):**
@@ -458,11 +475,14 @@ fires the `POST .../live` request with `{"enabled": false}` immediately, no
 `window.prompt` or `window.confirm()` — mirroring why `Resume` (also
 risk-reducing) never prompts today, only `Pause` and `Unfollow`
 (risk/consequence-bearing in their own ways) do. Reverting to paper never
-touches the wallet's live-stake override — disabling and re-enabling later
-does not require re-entering the stake (the prompt above still pre-fills
-from the paper stake by default, but the operator can simply re-accept
-whatever override was previously set if they recall it; see the Open
-Questions entry on a possible standalone edit control for this rough edge).
+touches the wallet's live-stake override — combined with Step 1's pre-fill
+now sourcing from the resolved live stake (corrected above), a disable/
+re-enable cycle genuinely preserves the operator's prior sizing: the prompt
+on re-enable shows exactly the override that was in effect before, not the
+(potentially larger) paper stake. Adjusting the size of an already-live
+wallet without a full disable/re-enable round-trip is still not possible
+from this row alone — see #1262 (Open Questions, below) for the dedicated
+in-place control that covers that case.
 
 **Optimistic UI — deliberately asymmetric, unlike every other action in this
 row.** Pause, Resume, and Unfollow all apply an optimistic DOM change before
@@ -716,21 +736,18 @@ Unchanged from Epic F (default/loading/empty/auto-refresh-paused) plus:
    `CopyFollowedWalletsOut` alongside the existing `live_eligible_count`/
    `paper_only_count` (Tech Lead PM decision, 2026-09-30) — server-computed,
    no client-side counting.
-7. **No standalone control to edit an already-opted-in wallet's live stake**
-   (new, issue #1258/#1259) — today the only way to change a live wallet's
-   stake is Revert to paper, then Go live again through the full prompt +
-   confirm flow, re-entering the desired override from scratch (the prompt
-   always pre-fills from the *paper* stake, per the acceptance criteria, not
-   from whatever override was previously set). This is a real rough edge:
-   an operator adjusting sizing on a wallet they've already approved for
-   live has to re-click through the same real-money confirmation language
-   as a first-time promotion, for what is actually just a sizing tweak. A
-   low-cost fix exists using the same primitives (a new "Edit live stake"
-   button, visible only when `live_enabled=true` and not paused, opening a
-   `window.prompt` pre-filled with the *current resolved live stake* and
-   PATCHing `.../live-stake` directly, no `window.confirm` needed since the
-   wallet is already live — same risk-direction logic as Pause vs. Resume)
-   but this is **not** in #1258's acceptance criteria as written, so it is
-   not speced as a requirement here — flagging as a proposed fast-follow for
-   Tech Lead PM to scope into #1254 or a new issue, per this role's
-   obligation to propose an alternative rather than just note the gap.
+7. ~~**No standalone control to edit an already-opted-in wallet's live
+   stake**~~ — **RESOLVED by #1262** (Tech Lead PM, 2026-09-30). Now that
+   Step 1's pre-fill sources from the resolved live stake rather than the
+   paper stake (corrected above), the disable/re-enable round-trip no longer
+   silently discards an existing override — but adjusting size in place,
+   without leaving the live state at all, is still not possible from this
+   row. #1262 (Backlog, depends on #1254) adds a dedicated "Edit live stake"
+   control — same shape as the proposal originally flagged here (visible
+   only when `live_enabled=true` and not paused, `window.prompt` pre-filled
+   with the current resolved live stake, `PATCH .../live-stake` directly,
+   no `window.confirm` for a *decrease* since the wallet is already live and
+   consented) — plus one decision this entry left implicit: #1262 requires a
+   confirmation specifically when *raising* an already-live wallet's stake,
+   since a size increase is the one direction on an already-live wallet that
+   adds real-money exposure, unlike a decrease or an unchanged value.
