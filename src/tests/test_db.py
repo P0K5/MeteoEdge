@@ -1846,6 +1846,43 @@ class TestCopyWalletsFollowed:
         db.set_followed_wallet_live_enabled("0xabc", False)
         assert db.get_followed_wallets()[0]["live_enabled"] == 0
 
+    def test_new_followed_wallet_defaults_live_stake_to_null(self):
+        """issue #1259 -- no wallet gets a live-stake override as a side
+        effect of being followed; readers fall back to stake_per_trade."""
+        db = _db()
+        db.insert_followed_wallet(**self._followed_kwargs())
+
+        row = db.get_followed_wallets()[0]
+        assert row["live_stake_per_trade"] is None
+
+    def test_set_live_stake_does_not_touch_other_columns(self):
+        """issue #1259 -- Database.set_followed_wallet_live_stake()."""
+        db = _db()
+        db.insert_followed_wallet(**self._followed_kwargs())
+        db.update_followed_wallet_status("0xabc", "paused", paused_reason="rug pull risk")
+        db.set_followed_wallet_live_enabled("0xabc", True)
+
+        db.set_followed_wallet_live_stake("0xabc", 2.0)
+
+        row = db.get_followed_wallets()[0]
+        assert row["live_stake_per_trade"] == 2.0
+        assert row["status"] == "paused"
+        assert row["paused_reason"] == "rug pull risk"
+        assert row["stake_per_trade"] == 25.0
+        assert row["live_enabled"] == 1
+        assert row["added_at"] == "2026-09-19T00:00:00+00:00"
+
+    def test_set_live_stake_round_trips_value_and_clear(self):
+        db = _db()
+        db.insert_followed_wallet(**self._followed_kwargs())
+
+        db.set_followed_wallet_live_stake("0xabc", 2.0)
+        assert db.get_followed_wallets()[0]["live_stake_per_trade"] == 2.0
+
+        # None is an explicit reset back to "same as the paper stake".
+        db.set_followed_wallet_live_stake("0xabc", None)
+        assert db.get_followed_wallets()[0]["live_stake_per_trade"] is None
+
     def test_delete_followed_wallet_removes_row(self):
         """issue #1147 -- "unfollow" action. DELETE, not a terminal status
         (see Database.delete_followed_wallet's docstring for the decision
@@ -2044,6 +2081,72 @@ class TestCopyWalletsFollowed:
                 assert rows[0]["address"] == "0xlegacy"
                 # No wallet becomes live as a side effect of this migration.
                 assert rows[0]["live_enabled"] == 0
+            finally:
+                db.close()
+        finally:
+            for fname in [path] + [path + ext for ext in ("-wal", "-shm")]:
+                try:
+                    os.unlink(fname)
+                except (FileNotFoundError, PermissionError):
+                    pass
+
+    def test_migration_live_stake_column_backfills_null(self):
+        """Issue #1259: a pre-existing DB (schema predates the live-only
+        stake override column, but already has live_enabled from #1253)
+        gets live_stake_per_trade added via the additive migration, and
+        every existing row backfills to NULL -- no wallet's effective live
+        sizing changes as a side effect of the migration running (readers
+        resolve via COALESCE(live_stake_per_trade, stake_per_trade), so
+        NULL means "unchanged, still sizes off stake_per_trade"). Mirrors
+        test_migration_live_enabled_column_backfills_zero's structure
+        exactly, one column over."""
+        import sqlite3
+        import tempfile
+        import os
+
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tf:
+            path = tf.name
+
+        try:
+            # Old-schema DB: has live_enabled (post-#1253) but predates
+            # live_stake_per_trade (pre-#1259).
+            conn = sqlite3.connect(path)
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("""
+                CREATE TABLE copy_wallets_followed (
+                    address              TEXT PRIMARY KEY,
+                    stake_per_trade      REAL NOT NULL CHECK(stake_per_trade > 0),
+                    status               TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','paused')),
+                    paused_reason        TEXT,
+                    paused_at            TEXT,
+                    added_at             TEXT NOT NULL,
+                    last_seen_trade_ts   INTEGER,
+                    live_enabled         INTEGER NOT NULL DEFAULT 0 CHECK(live_enabled IN (0,1))
+                )
+            """)
+            conn.execute("""
+                INSERT INTO copy_wallets_followed
+                    (address, stake_per_trade, status, added_at, live_enabled)
+                VALUES ('0xlegacy', 25.0, 'active', '2026-09-19T00:00:00+00:00', 1)
+            """)
+            conn.commit()
+            conn.close()
+
+            db = Database(path)
+            try:
+                cur = db._conn.execute("PRAGMA table_info(copy_wallets_followed)")
+                col_names = {row[1] for row in cur.fetchall()}
+                assert "live_stake_per_trade" in col_names
+
+                rows = db.get_followed_wallets()
+                assert len(rows) == 1
+                assert rows[0]["address"] == "0xlegacy"
+                # No wallet's effective live sizing changes as a side effect
+                # of this migration -- NULL means "still inherits stake_per_trade".
+                assert rows[0]["live_stake_per_trade"] is None
+                assert rows[0]["stake_per_trade"] == 25.0
+                # live_enabled (from the earlier #1253 migration) is untouched.
+                assert rows[0]["live_enabled"] == 1
             finally:
                 db.close()
         finally:

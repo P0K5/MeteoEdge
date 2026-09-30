@@ -116,6 +116,8 @@ class TestFollowedWalletsEndpoint:
         assert data["live_aggregate_pnl_usd"] == 0.0
         assert data["live_n_settled_total"] == 0
         assert data["live_trading_enabled"] is False
+        assert data["live_cap_usd"] == 50.0  # COPY_LIVE_MAX_EXPOSURE_PER_WALLET_USD default
+        assert data["live_opted_in_count"] == 0
 
     def test_active_and_paused_counts(self, api_client):
         client, db = api_client
@@ -324,6 +326,98 @@ class TestFollowedWalletsLiveEligibility:
         assert row["live_eligible"] is False
         assert row["live_status_reason"] == "the live status could not be determined"
 
+    def test_live_cap_usd_degrades_to_zero_when_live_config_read_fails(self, api_client, monkeypatch):
+        """Issue #1259: live_cap_usd must degrade to 0.0 on the same
+        config-read-failure path as the rest of this view's live-status
+        derivation -- consistent with the local variable's own except-branch
+        default, never a stale/guessed cap."""
+        client, db = api_client
+        db.insert_followed_wallet(address="0xW", stake_per_trade=5.0, added_at="2026-09-01T00:00:00Z")
+
+        from src.dashboard import api as api_module
+
+        def _boom(_db):
+            raise RuntimeError("config store unreachable")
+
+        monkeypatch.setattr(api_module, "get_live_config", _boom)
+
+        resp = client.get("/api/copy-trading/followed-wallets")
+        assert resp.status_code == 200
+        assert resp.json()["live_cap_usd"] == 0.0
+
+    def test_opted_in_paused_wallet_counts_as_opted_in_not_live_eligible(self, api_client):
+        """Issue #1259: live_opted_in_count counts live_enabled=1 regardless
+        of current eligibility -- a paused wallet stays counted as opted in
+        even though it can never be live_eligible."""
+        client, db = api_client
+        db.set_config("COPY_LIVE_TRADING_ENABLED", "True")
+        db.insert_followed_wallet(address="0xW", stake_per_trade=5.0, added_at="2026-09-01T00:00:00Z")
+        db.set_followed_wallet_live_enabled("0xW", True)
+        db.update_followed_wallet_status("0xW", "paused", "unstable")
+
+        resp = client.get("/api/copy-trading/followed-wallets")
+        data = resp.json()
+        row = data["wallets"][0]
+        assert row["live_enabled"] is True
+        assert row["live_eligible"] is False
+        assert data["live_opted_in_count"] == 1
+        assert data["live_eligible_count"] == 0
+
+    def test_opted_in_at_cap_wallet_counts_as_opted_in_not_live_eligible(self, api_client):
+        """Issue #1259: same guarantee, this time for the exposure-cap
+        reason -- an opted-in wallet at its live exposure cap still counts
+        toward live_opted_in_count but not live_eligible_count."""
+        client, db = api_client
+        db.set_config("COPY_LIVE_TRADING_ENABLED", "True")
+        db.set_config("COPY_LIVE_MAX_EXPOSURE_PER_WALLET_USD", "10.0")
+        db.insert_followed_wallet(address="0xW", stake_per_trade=5.0, added_at="2026-09-01T00:00:00Z")
+        db.set_followed_wallet_live_enabled("0xW", True)
+        _open_live_position(db, "0xW", stake_usd=10.0)
+
+        resp = client.get("/api/copy-trading/followed-wallets")
+        data = resp.json()
+        row = data["wallets"][0]
+        assert row["live_enabled"] is True
+        assert row["live_eligible"] is False
+        assert data["live_opted_in_count"] == 1
+        assert data["live_eligible_count"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Resolved live stake + override flag (issue #1259)
+# ---------------------------------------------------------------------------
+
+class TestFollowedWalletsLiveStakeResolution:
+    def test_no_override_resolves_to_paper_stake_and_is_not_flagged(self, api_client):
+        client, db = api_client
+        db.insert_followed_wallet(address="0xW", stake_per_trade=7.5, added_at="2026-09-01T00:00:00Z")
+
+        resp = client.get("/api/copy-trading/followed-wallets")
+        row = resp.json()["wallets"][0]
+        assert row["live_stake_per_trade"] == 7.5
+        assert row["live_stake_is_override"] is False
+
+    def test_override_resolves_to_override_value_and_is_flagged(self, api_client):
+        client, db = api_client
+        db.insert_followed_wallet(address="0xW", stake_per_trade=7.5, added_at="2026-09-01T00:00:00Z")
+        db.set_followed_wallet_live_stake("0xW", 2.0)
+
+        resp = client.get("/api/copy-trading/followed-wallets")
+        row = resp.json()["wallets"][0]
+        assert row["live_stake_per_trade"] == 2.0
+        assert row["live_stake_is_override"] is True
+
+    def test_clearing_override_falls_back_to_paper_stake(self, api_client):
+        client, db = api_client
+        db.insert_followed_wallet(address="0xW", stake_per_trade=7.5, added_at="2026-09-01T00:00:00Z")
+        db.set_followed_wallet_live_stake("0xW", 2.0)
+        db.set_followed_wallet_live_stake("0xW", None)
+
+        resp = client.get("/api/copy-trading/followed-wallets")
+        row = resp.json()["wallets"][0]
+        assert row["live_stake_per_trade"] == 7.5
+        assert row["live_stake_is_override"] is False
+
 
 # ---------------------------------------------------------------------------
 # POST /api/copy-trading/wallets/{address}/pause
@@ -515,6 +609,52 @@ class TestUpdateStakeEndpoint:
         assert "COPY_MAX_EXPOSURE_PER_WALLET_USD" in body["message"]
         wallets = {w["address"]: w for w in db.get_followed_wallets()}
         assert wallets["0xW"]["stake_per_trade"] == 5.0  # unchanged
+
+
+# ---------------------------------------------------------------------------
+# PATCH /api/copy-trading/wallets/{address}/live-stake (issue #1259)
+# ---------------------------------------------------------------------------
+
+class TestUpdateLiveStakeEndpoint:
+    def test_success_path(self, api_client):
+        client, db = api_client
+        db.insert_followed_wallet(address="0xW", stake_per_trade=5.0, added_at="2026-09-01T00:00:00Z")
+
+        resp = client.patch("/api/copy-trading/wallets/0xW/live-stake", json={"stake": 2.0})
+        assert resp.status_code == 200
+        assert resp.json()["success"] is True
+        wallets = {w["address"]: w for w in db.get_followed_wallets()}
+        assert wallets["0xW"]["live_stake_per_trade"] == 2.0
+        # Paper stake is completely untouched by this endpoint.
+        assert wallets["0xW"]["stake_per_trade"] == 5.0
+
+    def test_null_stake_clears_the_override(self, api_client):
+        client, db = api_client
+        db.insert_followed_wallet(address="0xW", stake_per_trade=5.0, added_at="2026-09-01T00:00:00Z")
+        db.set_followed_wallet_live_stake("0xW", 2.0)
+
+        resp = client.patch("/api/copy-trading/wallets/0xW/live-stake", json={"stake": None})
+        assert resp.status_code == 200
+        assert resp.json()["success"] is True
+        wallets = {w["address"]: w for w in db.get_followed_wallets()}
+        assert wallets["0xW"]["live_stake_per_trade"] is None
+
+    def test_refuses_when_not_followed(self, api_client):
+        client, _ = api_client
+        resp = client.patch("/api/copy-trading/wallets/0xGhost/live-stake", json={"stake": 2.0})
+        body = resp.json()
+        assert body["success"] is False
+        assert "not a followed wallet" in body["message"]
+
+    def test_refuses_non_positive_stake(self, api_client):
+        client, db = api_client
+        db.insert_followed_wallet(address="0xW", stake_per_trade=5.0, added_at="2026-09-01T00:00:00Z")
+
+        resp = client.patch("/api/copy-trading/wallets/0xW/live-stake", json={"stake": 0})
+        body = resp.json()
+        assert body["success"] is False
+        wallets = {w["address"]: w for w in db.get_followed_wallets()}
+        assert wallets["0xW"]["live_stake_per_trade"] is None  # unchanged
 
 
 # ---------------------------------------------------------------------------

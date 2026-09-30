@@ -561,6 +561,14 @@ class CopyFollowedWalletOut(BaseModel):
     ``live_enabled=True`` and still ``live_eligible=False`` (e.g. the
     global switch is off); the dashboard toggle (a separate issue) reads
     and writes this field directly.
+
+    ``live_stake_per_trade`` (issue #1259) is always the RESOLVED value --
+    ``COALESCE(live_stake_per_trade, stake_per_trade)`` -- never ``null``,
+    so the frontend never needs its own fallback logic. ``live_stake_is_override``
+    tells it whether that number came from an explicit override or is just
+    inheriting the paper stake, which the enable-live confirmation dialog
+    (#1254) needs to word correctly ("live-executes at $X" vs. "live-executes
+    at the same $X as paper").
     """
     address: str
     stake_per_trade: float
@@ -572,6 +580,8 @@ class CopyFollowedWalletOut(BaseModel):
     live_enabled: bool
     live_eligible: bool
     live_status_reason: str
+    live_stake_per_trade: float
+    live_stake_is_override: bool
 
 
 class CopyFollowedWalletsOut(BaseModel):
@@ -587,6 +597,21 @@ class CopyFollowedWalletsOut(BaseModel):
     ``live_trading_enabled`` mirrors the global posture banner's source of
     truth (issue #1185) and drives this view's own table-level notice when
     the switch is off.
+
+    ``live_cap_usd`` (issue #1259) is the configured live per-wallet
+    exposure cap -- this endpoint already reads it into a local variable to
+    feed ``_derive_live_eligibility``, so exposing it here is surfacing an
+    existing value, not a new lookup. Required by #1254's enable-live
+    confirmation dialog, which needs to name the cap. ``0.0`` when the live
+    config read fails, consistent with how the local variable is already
+    defaulted in that except branch.
+
+    ``live_opted_in_count`` (issue #1259) is the number of wallets with
+    ``live_enabled=1``, server-computed in the same loop as
+    ``live_eligible_count``/``paper_only_count`` so every summary-strip pill
+    stays consistently server-sourced. Deliberately distinct from
+    ``live_eligible_count``: a wallet can be opted in yet not currently
+    eligible (global switch off, paused, or its own exposure cap reached).
     """
     wallets: list[CopyFollowedWalletOut]
     active_count: int
@@ -598,6 +623,8 @@ class CopyFollowedWalletsOut(BaseModel):
     live_aggregate_pnl_usd: float
     live_n_settled_total: int
     live_trading_enabled: bool
+    live_cap_usd: float
+    live_opted_in_count: int
 
 
 class CopyPauseRequest(BaseModel):
@@ -610,6 +637,14 @@ class CopyStakeUpdateRequest(BaseModel):
 
 class CopyLiveEnabledRequest(BaseModel):
     enabled: bool
+
+
+class CopyLiveStakeUpdateRequest(BaseModel):
+    """Body for PATCH .../live-stake (issue #1259). ``stake=None`` is an
+    explicit reset to "same as the paper stake", distinct from omitting the
+    field -- mirrors ``Database.set_followed_wallet_live_stake``'s own
+    ``None``-clears-the-override contract."""
+    stake: "float | None"
 
 
 class CopyOpenPositionOut(BaseModel):
@@ -2787,6 +2822,11 @@ def copy_trading_followed_wallets() -> CopyFollowedWalletsOut:
     response model, mirroring the Candidates view's single-round-trip
     design (CopyCandidatesOut, issue #1146).
 
+    Also resolves each wallet's live stake (``COALESCE(live_stake_per_trade,
+    stake_per_trade)``) and whether it's an explicit override, plus
+    ``live_cap_usd``/``live_opted_in_count`` for the summary strip (issue
+    #1259) — same single round-trip.
+
     Also derives each wallet's per-row live-eligibility badge plus the
     live/paper split aggregates (issue #1187, epic J) in the same
     round-trip — no separate endpoint, same design as the rest of this
@@ -2816,11 +2856,19 @@ def copy_trading_followed_wallets() -> CopyFollowedWalletsOut:
     active_count = 0
     paused_count = 0
     live_eligible_count = 0
+    live_opted_in_count = 0
     for w in _db.get_followed_wallets():
         if w["status"] == "active":
             active_count += 1
         elif w["status"] == "paused":
             paused_count += 1
+
+        if w.get("live_enabled"):
+            # Issue #1259: counts opted-in wallets regardless of current
+            # eligibility -- a paused or at-cap wallet is still opted in,
+            # just not live-eligible right now. Deliberately independent of
+            # the live_eligible_count branch below.
+            live_opted_in_count += 1
 
         live_eligible, live_status_reason = _derive_live_eligibility(
             _db, w,
@@ -2830,6 +2878,13 @@ def copy_trading_followed_wallets() -> CopyFollowedWalletsOut:
         )
         if live_eligible:
             live_eligible_count += 1
+
+        # Issue #1259: resolved live stake -- COALESCE(live_stake_per_trade,
+        # stake_per_trade) -- and whether that resolution came from an
+        # explicit override. Never null in the response.
+        raw_live_stake = w.get("live_stake_per_trade")
+        live_stake_is_override = raw_live_stake is not None
+        resolved_live_stake = raw_live_stake if live_stake_is_override else w["stake_per_trade"]
 
         pnl_row = pnl_by_wallet.get(w["address"])
         wallets.append(CopyFollowedWalletOut(
@@ -2843,6 +2898,8 @@ def copy_trading_followed_wallets() -> CopyFollowedWalletsOut:
             live_enabled=bool(w.get("live_enabled")),
             live_eligible=live_eligible,
             live_status_reason=live_status_reason,
+            live_stake_per_trade=resolved_live_stake,
+            live_stake_is_override=live_stake_is_override,
         ))
 
     # Most-recently-followed first — an operator managing the roster cares
@@ -2861,6 +2918,8 @@ def copy_trading_followed_wallets() -> CopyFollowedWalletsOut:
         live_aggregate_pnl_usd=live_total["total_pnl_usd"],
         live_n_settled_total=live_total["n_settled"],
         live_trading_enabled=live_trading_enabled,
+        live_cap_usd=live_cap_usd,
+        live_opted_in_count=live_opted_in_count,
     )
 
 
@@ -3008,6 +3067,61 @@ def copy_trading_update_wallet_stake(
     return CopyFollowResultOut(
         success=True,
         message=f"Updated {address} stake to ${req.stake:.2f}/trade.",
+    )
+
+
+@app.patch(
+    "/api/copy-trading/wallets/{address}/live-stake",
+    response_model=CopyFollowResultOut,
+)
+def copy_trading_update_wallet_live_stake(
+    address: str, req: CopyLiveStakeUpdateRequest
+) -> CopyFollowResultOut:
+    """Edit a followed wallet's live-only per-trade stake override (issue
+    #1259) -- independent of the paper stake endpoint above, following the
+    same conventions (``CopyFollowResultOut`` response, 404-as-a-structured-
+    refusal rather than an HTTP 404, mirroring ``copy_trading_update_wallet_stake``,
+    not the 404/409 style ``copy_trading_set_wallet_live_enabled`` uses).
+
+    ``req.stake is None`` explicitly resets to "same as the paper stake"
+    (``Database.set_followed_wallet_live_stake``'s ``None``-clears contract)
+    -- a deliberate action, not just "no value supplied" (the field is
+    required in the request body). Any non-``None`` value is validated
+    exactly like the paper stake endpoint: finite and ``> 0``. Unlike the
+    paper endpoint, this does not re-check the value against
+    COPY_LIVE_MAX_EXPOSURE_PER_WALLET_USD -- that cap already bounds the
+    wallet's *open committed exposure* at order time (``_handle_live_order``),
+    not the configured per-trade stake value itself, and the issue's own
+    validation requirement is just "finite and > 0", mirroring here would
+    add an untested, unspecified refusal path.
+    """
+    if _db is None:
+        raise HTTPException(status_code=503, detail="Database not initialised")
+
+    known = {w["address"] for w in _db.get_followed_wallets()}
+    if address not in known:
+        return CopyFollowResultOut(
+            success=False,
+            message=f"Refusing to update live stake for {address}: not a followed wallet.",
+        )
+
+    if req.stake is None:
+        _db.set_followed_wallet_live_stake(address, None)
+        return CopyFollowResultOut(
+            success=True,
+            message=f"Cleared live stake override for {address} (inherits paper stake).",
+        )
+
+    if not math.isfinite(req.stake) or req.stake <= 0:
+        return CopyFollowResultOut(
+            success=False,
+            message=f"Live stake must be a finite positive number in USD, got {req.stake!r}.",
+        )
+
+    _db.set_followed_wallet_live_stake(address, req.stake)
+    return CopyFollowResultOut(
+        success=True,
+        message=f"Updated {address} live stake to ${req.stake:.2f}/trade.",
     )
 
 

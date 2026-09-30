@@ -423,7 +423,18 @@ CREATE TABLE IF NOT EXISTS copy_wallets_followed (
     -- wallet, not all-or-nothing. Default 0: no wallet becomes live as a
     -- side effect of this column existing (enforced by the ALTER TABLE
     -- migration below for pre-existing rows too).
-    live_enabled         INTEGER NOT NULL DEFAULT 0 CHECK(live_enabled IN (0,1))
+    live_enabled         INTEGER NOT NULL DEFAULT 0 CHECK(live_enabled IN (0,1)),
+    -- Issue #1259: an optional live-only stake, independent of the paper
+    -- stake_per_trade above. NULL means "same as the paper stake" --
+    -- readers resolve the effective live stake as
+    -- COALESCE(live_stake_per_trade, stake_per_trade). Without this, a
+    -- promoted wallet's real-money order size would be forced equal to its
+    -- paper size (the only column sizing either path), with no way to size
+    -- live down without also reshaping the ongoing paper study. No CHECK
+    -- constraint here (unlike stake_per_trade) because NULL must remain a
+    -- valid, common value -- the API/CLI layer enforces "finite and > 0" for
+    -- non-NULL values, mirroring the paper stake endpoint's own validation.
+    live_stake_per_trade REAL
 );
 
 -- Copy-trading detected signals (issue #1121). One row per detected BUY
@@ -772,6 +783,12 @@ class Database:
                 "copy_wallets_followed", "live_enabled",
                 "INTEGER NOT NULL DEFAULT 0 CHECK(live_enabled IN (0,1))",
             ),
+            # Issue #1259: optional live-only stake override (see the
+            # CREATE TABLE comment above for the full rationale). NULL
+            # backfills every pre-#1259 row -- no wallet's effective live
+            # sizing changes as a result of this migration running (readers
+            # resolve via COALESCE(live_stake_per_trade, stake_per_trade)).
+            ("copy_wallets_followed", "live_stake_per_trade", "REAL"),
         ]:
             try:
                 self._conn.execute(
@@ -1893,7 +1910,14 @@ class Database:
             self._conn.commit()
 
     def get_followed_wallets(self, status: "str | None" = None) -> list[dict]:
-        """Return all followed wallets, or only those matching *status* if given."""
+        """Return all followed wallets, or only those matching *status* if given.
+
+        Each row's ``live_stake_per_trade`` is the RAW column value (``None``
+        when unset) -- callers that need the resolved effective live stake
+        apply ``COALESCE(live_stake_per_trade, stake_per_trade)`` themselves
+        (issue #1259; see ``src.scripts.copy_signal_loop._process_wallet``
+        and ``src.dashboard.api.copy_trading_followed_wallets`` for the two
+        current call sites)."""
         if status is not None:
             cur = self._conn.execute(
                 "SELECT * FROM copy_wallets_followed WHERE status=?", (status,)
@@ -1973,6 +1997,26 @@ class Database:
             self._conn.execute(
                 "UPDATE copy_wallets_followed SET live_enabled=? WHERE address=?",
                 (1 if enabled else 0, address),
+            )
+            self._conn.commit()
+
+    def set_followed_wallet_live_stake(self, address: str, stake: "float | None") -> None:
+        """Set *address*'s live-only per-trade stake override in place
+        (issue #1259) -- does not touch status/paused_reason/
+        stake_per_trade/live_enabled/added_at/last_seen_trade_ts.
+
+        ``stake=None`` clears the override: readers then resolve the
+        effective live stake as ``COALESCE(live_stake_per_trade,
+        stake_per_trade)`` (see ``get_followed_wallets``' row shape) --
+        "same as the paper stake" is the explicit reset, not just an
+        absence of a value. Validation (finite, ``> 0`` for a non-``None``
+        value) is the caller's responsibility (API/CLI), mirroring
+        ``update_followed_wallet_stake``.
+        """
+        with self._lock:
+            self._conn.execute(
+                "UPDATE copy_wallets_followed SET live_stake_per_trade=? WHERE address=?",
+                (stake, address),
             )
             self._conn.commit()
 
