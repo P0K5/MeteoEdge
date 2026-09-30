@@ -179,6 +179,37 @@ view can ship as soon as Epic A has data, before execution exists.
    development can proceed deliberately once the observation window has
    actually produced something to decide on, not started ahead of it.
 
+### Go/no-go gate (phase 7) — pre-registered, reproducible
+
+Step 7 above is not a judgment call made fresh each time someone looks at
+the numbers — the 2026-09-29 by-hand analysis of `0x9243` showed why:
+per-trade it looked significant (95% CI [+0.73, +4.91], n=36), but fills on
+the same market are correlated, and deduped into decisions the same wallet's
+CI widens to [−0.49, +7.04], with its PnL dominated by one day and one
+market. A bar picked *after* seeing a number like that isn't a bar.
+
+`src/scripts/copy_live_readiness.py` (issue #1255, read-only, no writes)
+computes this per followed wallet from settled `copy_positions`, deduped
+into decisions via `copy_wallet_health.dedupe_decisions` (the same function
+the auto-pause job uses, so the two can never disagree about what counts as
+one decision). A wallet PASSES only if **all four** of the following hold —
+these four constants are fixed by issue #1255 and live as module constants
+in that file; changing any of them requires a new issue, not an edit:
+
+1. at least 150 deduped decisions, all-time;
+2. the all-time per-decision 95% CI lower bound (normal approximation,
+   mean ± 1.96·sd/√n) is > 0;
+3. the mean PnL per decision over the last 7 days is > 0;
+4. the single best (highest-PnL) decision is ≤ 25% of the wallet's
+   all-time total PnL (the concentration check `0x9243` would have failed).
+
+Paused wallets are reported but always FAIL (`failing_condition="paused"`).
+Run `python -m src.scripts.copy_live_readiness` (add `--json` for
+machine-readable output). On today's data every wallet is expected to FAIL —
+none has 150 deduped decisions yet — which is the correct output of a
+pre-registered gate looked at before the sample is large enough, not a
+defect in the script.
+
 ## Live execution epics (phase 2 — gated on the phase-7 go/no-go)
 
 A-F are paper-mode only, by design (see "Non-goals" above). Epics G, H, and I

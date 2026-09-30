@@ -106,6 +106,7 @@ from __future__ import annotations
 
 import logging
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -180,22 +181,102 @@ def _min_decisions_threshold(db) -> int:
         return MIN_DECISIONS_FOR_ROI_CHECK
 
 
+def _parse_settled_at(ts: "str | None") -> "datetime | None":
+    """Best-effort ISO-8601 parse of a ``settled_at`` value, tolerant of a
+    trailing ``Z`` and of a naive (offset-less) timestamp (treated as
+    UTC). Returns ``None`` on anything missing/unparseable -- used only to
+    ORDER candidate ``settled_at`` strings correctly in
+    ``dedupe_decisions`` below (comparing raw strings breaks the moment a
+    ``Z``-suffixed row and a ``+00:00``-suffixed row are compared, since
+    ``'Z' > '+'`` lexicographically even though ``Z`` means the earlier
+    offset notation for the same instant); the *string* value is still
+    what gets stored and returned, never this parsed form.
+    """
+    if not ts:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def dedupe_decisions(settled_rows: "list[dict]") -> "list[dict]":
+    """Collapse individual settled ``copy_positions`` rows into *decisions*:
+    one entry per distinct ``(market, outcome_index)``, with each decision's
+    fills summed together -- shared by ``_realized_pnl_pause_reason`` below
+    and ``copy_live_readiness.py`` (issue #1255) so the two never disagree
+    about what counts as one decision.
+
+    *settled_rows* is first filtered to *usable* rows (a row is usable when
+    it has a non-null ``settled_pnl_usd`` and a positive ``stake_usd`` --
+    both are guaranteed by the ``copy_positions`` schema's own constraints
+    for every row this codebase's own writers produce, so this filter is
+    not expected to drop anything in practice; it exists so one malformed
+    row (e.g. hand-edited test data, a future writer bug) can never crash a
+    caller -- it is silently excluded from the sample instead, AI review
+    #1141, BLOCK item). A wallet whose 5 settled rows are all fills of one
+    market/outcome collapses to 1 decision, not 5 (issue #1207's dedupe
+    fix -- see issue #1225's ``0x684baa57c3`` real-world case).
+
+    Returns one dict per decision: ``{'market', 'outcome_index', 'pnl'
+    (fills summed), 'n_fills', 'settled_at'}``, in no guaranteed order.
+    ``settled_at`` is the LATEST of the contributing fills' own
+    ``settled_at`` (compared as PARSED timestamps via
+    ``_parse_settled_at``, not as raw strings -- a raw-string compare
+    would order a ``Z``-suffixed row incorrectly against a
+    ``+00:00``-suffixed one) -- used by callers (e.g. a "last N days"
+    window) that need to place a multi-fill decision in time; a decision
+    is never attributed to a moment before all of its own fills existed.
+    A fill whose own ``settled_at`` fails to parse is never allowed to win
+    that comparison (fail-safe: an unparseable timestamp can't be "the
+    latest" of anything).
+    """
+    usable = [
+        row for row in settled_rows
+        if row.get("settled_pnl_usd") is not None and (row.get("stake_usd") or 0) > 0
+    ]
+
+    grouped: "dict[tuple, dict]" = {}
+    for row in usable:
+        key = (row["market"], row["outcome_index"])
+        settled_at = row.get("settled_at")
+        settled_at_dt = _parse_settled_at(settled_at)
+        entry = grouped.get(key)
+        if entry is None:
+            grouped[key] = {
+                "market": row["market"],
+                "outcome_index": row["outcome_index"],
+                "pnl": float(row["settled_pnl_usd"]),
+                "n_fills": 1,
+                "settled_at": settled_at,
+                "_settled_at_dt": settled_at_dt,
+            }
+        else:
+            entry["pnl"] += float(row["settled_pnl_usd"])
+            entry["n_fills"] += 1
+            if settled_at_dt is not None and (
+                entry["_settled_at_dt"] is None or settled_at_dt > entry["_settled_at_dt"]
+            ):
+                entry["settled_at"] = settled_at
+                entry["_settled_at_dt"] = settled_at_dt
+
+    for entry in grouped.values():
+        del entry["_settled_at_dt"]
+
+    return list(grouped.values())
+
+
 def _realized_pnl_pause_reason(db, address: str) -> "str | None":
     """Return ``"realized_roi_negative"`` if *address* should be paused on
     the realized-P&L signal, else ``None``.
 
-    Settled ``copy_positions`` rows are first filtered to *usable* rows (a
-    row is usable when it has a non-null ``settled_pnl_usd`` and a positive
-    ``stake_usd`` -- both are guaranteed by the ``copy_positions`` schema's
-    own constraints for every row this codebase's own writers produce, so
-    this filter is not expected to drop anything in practice; it exists so
-    one malformed row (e.g. hand-edited test data, a future writer bug) can
-    never crash the whole run -- it is silently excluded from the sample
-    instead, AI review #1141, BLOCK item), then deduped into *decisions*:
-    one entry per distinct ``(market, outcome_index)``, with each decision's
-    fills summed together. A wallet whose 5 settled rows are all fills of
-    one market/outcome is 1 decision, not 5 (issue #1207's dedupe fix,
-    applied here too -- see issue #1225's ``0x684baa57c3`` real-world case).
+    Settled ``copy_positions`` rows are deduped into *decisions* via
+    ``dedupe_decisions`` (one entry per distinct ``(market,
+    outcome_index)``, fills summed together -- see that function's
+    docstring).
 
     Wallets with fewer than ``COPY_HEALTH_MIN_DECISIONS_FOR_ROI_CHECK``
     deduped decisions are never paused by this function (insufficient
@@ -211,15 +292,7 @@ def _realized_pnl_pause_reason(db, address: str) -> "str | None":
     unprofitable one. Total P&L cannot make that mistake.
     """
     settled = db.get_settled_copy_positions(address)
-    usable = [
-        row for row in settled
-        if row.get("settled_pnl_usd") is not None and (row.get("stake_usd") or 0) > 0
-    ]
-
-    decisions: "dict[tuple, float]" = {}
-    for row in usable:
-        key = (row["market"], row["outcome_index"])
-        decisions[key] = decisions.get(key, 0.0) + float(row["settled_pnl_usd"])
+    decisions = dedupe_decisions(settled)
     n_decisions = len(decisions)
 
     threshold = _min_decisions_threshold(db)
@@ -232,7 +305,7 @@ def _realized_pnl_pause_reason(db, address: str) -> "str | None":
         )
         return None
 
-    total_pnl = sum(decisions.values())
+    total_pnl = sum(d["pnl"] for d in decisions)
     if total_pnl < 0:
         return "realized_roi_negative"
     return None

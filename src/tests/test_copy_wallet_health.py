@@ -7,6 +7,7 @@ none).
 from src.data.db import Database
 from src.scripts.copy_wallet_health import (
     MIN_DECISIONS_FOR_ROI_CHECK,
+    dedupe_decisions,
     run_once,
 )
 
@@ -241,6 +242,46 @@ class TestMultiFillClusterCountsAsOneDecision:
         assert summary == {"checked": 1, "paused_stability": 0, "paused_roi": 0}
         row = db.get_followed_wallets()[0]
         assert row["status"] == "active"
+
+
+class TestDedupeDecisionsSettledAtOrdering:
+    """``dedupe_decisions``'s ``settled_at`` pick must compare PARSED
+    timestamps, not raw strings -- a raw-string compare orders a
+    ``Z``-suffixed row incorrectly against a ``+00:00``-suffixed one for
+    the same instant (``'Z' > '+'`` lexicographically), and treats a naive
+    (offset-less) timestamp as just another string rather than UTC."""
+
+    def _settle(self, db, pnl, settled_at):
+        signal_id = db.insert_copy_signal(
+            address=ADDRESS, market="0xmarket", source_price=0.4, detected_at=settled_at,
+        )
+        position_id = db.insert_copy_position(
+            signal_id=signal_id, address=ADDRESS, market="0xmarket", outcome_index=0,
+            entry_price=0.4, stake_usd=10.0, entry_ts=settled_at,
+        )
+        db.settle_copy_position(position_id, pnl, settled_at)
+
+    def test_z_suffixed_row_is_not_lexicographically_misordered_against_offset_form(self):
+        db = _db()
+        # A raw-string compare would say "2026-09-29T00:00:00+00:00" > any
+        # "...Z" string, even though the Z-suffixed row below is actually
+        # LATER in real time.
+        self._settle(db, 1.0, "2026-09-29T00:00:00+00:00")
+        self._settle(db, 1.0, "2026-09-30T00:00:00Z")
+
+        [decision] = dedupe_decisions(db.get_settled_copy_positions(ADDRESS))
+
+        assert decision["pnl"] == 2.0
+        assert decision["settled_at"] == "2026-09-30T00:00:00Z"
+
+    def test_naive_settled_at_can_still_win_as_latest(self):
+        db = _db()
+        self._settle(db, 1.0, "2026-09-29T00:00:00+00:00")
+        self._settle(db, 1.0, "2026-09-30T00:00:00")  # naive, but later
+
+        [decision] = dedupe_decisions(db.get_settled_copy_positions(ADDRESS))
+
+        assert decision["settled_at"] == "2026-09-30T00:00:00"
 
 
 class TestMinimumSampleSizeGuard:
