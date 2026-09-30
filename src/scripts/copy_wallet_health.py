@@ -106,6 +106,7 @@ from __future__ import annotations
 
 import logging
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -180,6 +181,28 @@ def _min_decisions_threshold(db) -> int:
         return MIN_DECISIONS_FOR_ROI_CHECK
 
 
+def _parse_settled_at(ts: "str | None") -> "datetime | None":
+    """Best-effort ISO-8601 parse of a ``settled_at`` value, tolerant of a
+    trailing ``Z`` and of a naive (offset-less) timestamp (treated as
+    UTC). Returns ``None`` on anything missing/unparseable -- used only to
+    ORDER candidate ``settled_at`` strings correctly in
+    ``dedupe_decisions`` below (comparing raw strings breaks the moment a
+    ``Z``-suffixed row and a ``+00:00``-suffixed row are compared, since
+    ``'Z' > '+'`` lexicographically even though ``Z`` means the earlier
+    offset notation for the same instant); the *string* value is still
+    what gets stored and returned, never this parsed form.
+    """
+    if not ts:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
 def dedupe_decisions(settled_rows: "list[dict]") -> "list[dict]":
     """Collapse individual settled ``copy_positions`` rows into *decisions*:
     one entry per distinct ``(market, outcome_index)``, with each decision's
@@ -201,9 +224,15 @@ def dedupe_decisions(settled_rows: "list[dict]") -> "list[dict]":
     Returns one dict per decision: ``{'market', 'outcome_index', 'pnl'
     (fills summed), 'n_fills', 'settled_at'}``, in no guaranteed order.
     ``settled_at`` is the LATEST of the contributing fills' own
-    ``settled_at`` -- used by callers (e.g. a "last N days" window) that
-    need to place a multi-fill decision in time; a decision is never
-    attributed to a moment before all of its own fills existed.
+    ``settled_at`` (compared as PARSED timestamps via
+    ``_parse_settled_at``, not as raw strings -- a raw-string compare
+    would order a ``Z``-suffixed row incorrectly against a
+    ``+00:00``-suffixed one) -- used by callers (e.g. a "last N days"
+    window) that need to place a multi-fill decision in time; a decision
+    is never attributed to a moment before all of its own fills existed.
+    A fill whose own ``settled_at`` fails to parse is never allowed to win
+    that comparison (fail-safe: an unparseable timestamp can't be "the
+    latest" of anything).
     """
     usable = [
         row for row in settled_rows
@@ -213,6 +242,8 @@ def dedupe_decisions(settled_rows: "list[dict]") -> "list[dict]":
     grouped: "dict[tuple, dict]" = {}
     for row in usable:
         key = (row["market"], row["outcome_index"])
+        settled_at = row.get("settled_at")
+        settled_at_dt = _parse_settled_at(settled_at)
         entry = grouped.get(key)
         if entry is None:
             grouped[key] = {
@@ -220,14 +251,20 @@ def dedupe_decisions(settled_rows: "list[dict]") -> "list[dict]":
                 "outcome_index": row["outcome_index"],
                 "pnl": float(row["settled_pnl_usd"]),
                 "n_fills": 1,
-                "settled_at": row.get("settled_at"),
+                "settled_at": settled_at,
+                "_settled_at_dt": settled_at_dt,
             }
         else:
             entry["pnl"] += float(row["settled_pnl_usd"])
             entry["n_fills"] += 1
-            settled_at = row.get("settled_at")
-            if settled_at and (entry["settled_at"] is None or settled_at > entry["settled_at"]):
+            if settled_at_dt is not None and (
+                entry["_settled_at_dt"] is None or settled_at_dt > entry["_settled_at_dt"]
+            ):
                 entry["settled_at"] = settled_at
+                entry["_settled_at_dt"] = settled_at_dt
+
+    for entry in grouped.values():
+        del entry["_settled_at_dt"]
 
     return list(grouped.values())
 

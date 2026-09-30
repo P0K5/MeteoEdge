@@ -12,6 +12,7 @@ from src.scripts.copy_live_readiness import (
     GATE_MIN_DECISIONS,
     LAST_N_DAYS,
     _decisions_needed_for_positive_ci,
+    _parse_ts,
     _stats,
     build_report,
     evaluate_wallet,
@@ -65,6 +66,48 @@ def _settled_decisions(
             db, address, pnl, market=f"{market_prefix}{i}", stake_usd=stake_usd,
             settled_at=settled_at,
         )
+
+
+class TestParseTsNaiveTimestamps:
+    """Regression: a naive (offset-less) ``settled_at`` must not crash the
+    report -- ``_parse_ts`` is compared against an aware ``cutoff``
+    elsewhere, and comparing naive vs aware datetimes raises TypeError if
+    the naive value isn't first made aware."""
+
+    def test_naive_timestamp_is_treated_as_utc_not_returned_naive(self):
+        dt = _parse_ts("2026-09-29T00:00:00")  # no offset
+        assert dt is not None
+        assert dt.tzinfo is not None
+        assert dt == datetime(2026, 9, 29, tzinfo=timezone.utc)
+
+    def test_aware_timestamp_is_left_as_is(self):
+        dt = _parse_ts("2026-09-29T00:00:00+00:00")
+        assert dt == datetime(2026, 9, 29, tzinfo=timezone.utc)
+
+    def test_unparseable_timestamp_returns_none(self):
+        assert _parse_ts("not-a-timestamp") is None
+
+    def test_none_and_empty_return_none(self):
+        assert _parse_ts(None) is None
+        assert _parse_ts("") is None
+
+    def test_report_completes_rather_than_raising_on_a_naive_settled_at(self):
+        """Was: TypeError: can't compare offset-naive and offset-aware
+        datetimes, raised out of build_report -> evaluate_wallet's last-7d
+        filter the moment one settled row had a naive timestamp."""
+        db = _db()
+        _follow(db)
+        _settled_position(
+            db, ADDRESS, 2.0, market="0xmarket", outcome_index=0,
+            settled_at="2026-09-29T00:00:00",  # naive -- no UTC offset
+        )
+
+        report = build_report(db, now=NOW)  # must not raise
+
+        assert len(report) == 1
+        # The naive-but-recent decision is still correctly bucketed into
+        # the last-7-day window, not silently dropped.
+        assert report[0]["last_7d"]["n"] == 1
 
 
 class TestStatsHelper:

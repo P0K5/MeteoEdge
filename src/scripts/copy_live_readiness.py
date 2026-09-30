@@ -101,13 +101,26 @@ def _parse_ts(ts: "str | None") -> "datetime | None":
     codebase's writers use ``+00:00``, but this stays defensive against
     any future/foreign row). Returns ``None`` on anything unparseable
     rather than raising -- a report is never worth crashing over one bad
-    timestamp."""
+    timestamp.
+
+    A naive (offset-less) parse is treated as UTC rather than returned
+    as-is: every caller compares the result against an aware ``cutoff``
+    (``datetime.now(timezone.utc) - timedelta(...)``), and comparing a
+    naive and an aware ``datetime`` raises ``TypeError`` -- exactly the
+    crash this function's own docstring promises never happens. This
+    codebase's writers always emit an explicit offset, so this only
+    matters for a malformed/foreign row, but that is precisely the case
+    this function exists to survive.
+    """
     if not ts:
         return None
     try:
-        return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
     except (TypeError, ValueError):
         return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
 
 
 def _stats(values: "list[float]") -> dict:
