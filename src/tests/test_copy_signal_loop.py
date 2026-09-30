@@ -1063,6 +1063,57 @@ class TestLiveExecution:
         )
         db.insert_copy_position.assert_called_once()  # paper unaffected
 
+    def test_live_override_avoids_wallet_exposure_limit_that_paper_stake_would_breach(self):
+        """Issue #1259: the live exposure gates evaluate the RESOLVED live
+        stake (COALESCE(live_stake_per_trade, stake_per_trade)), never the
+        paper stake. A wallet whose paper stake_per_trade alone would blow
+        the per-wallet cap (0 + 60 > 50) must still execute live at its
+        smaller live_stake_per_trade override (0 + 5 <= 50)."""
+        db = _mock_db(get_followed_wallets=[
+            _wallet(stake_per_trade=60.0, live_stake_per_trade=5.0)
+        ])
+        live_config = _live_enabled_config(
+            # Raised so the paper leg itself clears ITS OWN (separate)
+            # exposure gate at stake=60 -- this test is only about the LIVE
+            # gate resolving live_stake_per_trade, not about the paper gate.
+            COPY_MAX_EXPOSURE_PER_WALLET_USD=100.0,
+            COPY_LIVE_MAX_EXPOSURE_PER_WALLET_USD=50.0,
+        )
+        with patch(
+            "src.scripts.copy_signal_loop.execute_live_copy_order",
+            return_value={"status": "filled", "order_id": "oid-1", "fill_price": 0.41},
+        ) as mock_exec:
+            self._run(db, [_buy_raw()], live_config=live_config, resolution=None)
+
+        mock_exec.assert_called_once()
+        assert mock_exec.call_args.kwargs["stake_usd"] == 5.0
+        insert_kwargs = db.insert_copy_live_position.call_args.kwargs
+        assert insert_kwargs["stake_usd"] == 5.0
+        # Paper still sizes off the untouched paper stake.
+        position_kwargs = db.insert_copy_position.call_args.kwargs
+        assert position_kwargs["stake_usd"] == 60.0
+
+    def test_live_override_itself_can_still_breach_wallet_exposure_limit(self):
+        """Mirror case: a live_stake_per_trade override that is LARGER than
+        the paper stake must be what trips the gate -- proving the paper
+        stake is never substituted in either direction."""
+        db = _mock_db(get_followed_wallets=[
+            _wallet(stake_per_trade=5.0, live_stake_per_trade=60.0)
+        ])
+        live_config = _live_enabled_config(COPY_LIVE_MAX_EXPOSURE_PER_WALLET_USD=50.0)
+        with patch(
+            "src.scripts.copy_signal_loop.execute_live_copy_order",
+        ) as mock_exec:
+            self._run(db, [_buy_raw()], live_config=live_config, resolution=None)
+
+        mock_exec.assert_not_called()
+        db.update_copy_live_position_status.assert_called_once_with(
+            101, status="rejected", rejected_reason="live_wallet_exposure_limit",
+        )
+        # Paper is unaffected and still executes at its own (smaller) stake.
+        position_kwargs = db.insert_copy_position.call_args.kwargs
+        assert position_kwargs["stake_usd"] == 5.0
+
     def test_live_total_exposure_limit_rejects_without_submitting(self):
         db = _mock_db()
 

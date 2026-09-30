@@ -34,6 +34,19 @@ off, but **never live-only** -- live only ever runs downstream of an
 already-committed paper execution in ``_handle_buy_trade``, so live can
 never fire on a signal paper itself skipped.
 
+**Live sizing is independent of paper sizing (issue #1259).** The paper
+path always sizes off the wallet's flat ``stake_per_trade``; the live path
+sizes off ``COALESCE(live_stake_per_trade, stake_per_trade)``, resolved
+once per wallet per cycle in ``_process_wallet`` and threaded through as
+``_handle_buy_trade``'s/``_handle_live_order``'s own ``live_stake``
+argument -- never the same variable as the paper ``stake``, so the two
+sizings cannot be confused at a call site. A wallet with no override
+(``live_stake_per_trade IS NULL``) live-executes at exactly its paper
+stake, unchanged from before this column existed. The live per-wallet/
+total exposure gates (``COPY_LIVE_MAX_EXPOSURE_PER_WALLET_USD`` /
+``COPY_LIVE_MAX_TOTAL_EXPOSURE_USD``) are evaluated against this resolved
+live stake, not the paper stake.
+
 Per cycle, for each ``active``-status followed wallet
 (``db.get_followed_wallets(status="active")``):
 
@@ -209,7 +222,7 @@ def _raw_trade_timestamp(raw: dict) -> "int | None":
 
 def _handle_live_order(
     db, *, address: str, market: str, outcome_index: int, signal_id: int,
-    stake: float, fill_price: float, token_id: "str | None", side_label: str,
+    live_stake: float, fill_price: float, token_id: "str | None", side_label: str,
     live_config: dict, live_gate_reason: "str | None", clob_client_factory,
     now_iso: str, wallet_live_enabled: bool,
 ) -> None:
@@ -269,6 +282,17 @@ def _handle_live_order(
     the wallet's whole processing batch (mirrors this module's fail-soft
     philosophy for network/DB blips elsewhere, e.g. the per-wallet
     isolation in ``run_cycle``).
+
+    **``live_stake`` is a dedicated argument, deliberately never the same
+    variable ``_handle_buy_trade`` used to size the paper position (issue
+    #1259).** It is the caller's already-resolved
+    ``COALESCE(live_stake_per_trade, stake_per_trade)`` value -- paper
+    sizing and live sizing are independent once a wallet's promotion
+    includes a live-stake override, and giving this function its own
+    explicit parameter (instead of overloading a shared ``stake``) makes it
+    impossible for a call site to accidentally pass the paper amount into a
+    real order. Every exposure check and DB write in this function sizes
+    off ``live_stake``, never the paper stake.
     """
     if not live_config["COPY_LIVE_TRADING_ENABLED"]:
         return
@@ -289,7 +313,7 @@ def _handle_live_order(
             wallet_live_exposure = sum(
                 p["stake_usd"] for p in db.get_open_copy_live_positions(address)
             )
-            if wallet_live_exposure + stake > live_config["COPY_LIVE_MAX_EXPOSURE_PER_WALLET_USD"]:
+            if wallet_live_exposure + live_stake > live_config["COPY_LIVE_MAX_EXPOSURE_PER_WALLET_USD"]:
                 skip_reason = "live_wallet_exposure_limit"
             else:
                 total_live_exposure = sum(
@@ -297,13 +321,13 @@ def _handle_live_order(
                 )
                 skip_reason = (
                     "live_total_exposure_limit"
-                    if total_live_exposure + stake > live_config["COPY_LIVE_MAX_TOTAL_EXPOSURE_USD"]
+                    if total_live_exposure + live_stake > live_config["COPY_LIVE_MAX_TOTAL_EXPOSURE_USD"]
                     else None
                 )
 
         position_id = db.insert_copy_live_position(
             signal_id=signal_id, address=address, market=market,
-            outcome_index=outcome_index, stake_usd=stake, entry_ts=now_iso,
+            outcome_index=outcome_index, stake_usd=live_stake, entry_ts=now_iso,
         )
 
         if skip_reason is not None:
@@ -319,7 +343,7 @@ def _handle_live_order(
             market=market,
             side_label=side_label,
             price=fill_price,
-            stake_usd=stake,
+            stake_usd=live_stake,
         )
     except Exception as exc:
         # execute_live_copy_order() is documented to never raise (every
@@ -399,13 +423,22 @@ def _record_live_outcome(
 
 
 def _handle_buy_trade(
-    db, wallet: dict, trade: dict, stake: float, live_config: dict, now_iso: str,
+    db, wallet: dict, trade: dict, stake: float, live_stake: float,
+    live_config: dict, now_iso: str,
     first_poll: bool = False, breaker_reason: "str | None" = None,
     live_gate_reason: "str | None" = None, clob_client_factory=None,
 ) -> None:
     """Decide execute-or-skip for one normalized BUY trade and persist the
     outcome (always a copy_signals row; a copy_positions row too if
     executed).
+
+    **Two independent stakes (issue #1259).** *stake* sizes ONLY the paper
+    position/signal below -- it is always the wallet's plain
+    ``stake_per_trade``. *live_stake* is the caller's already-resolved
+    ``COALESCE(live_stake_per_trade, stake_per_trade)`` and is handed to
+    ``_handle_live_order`` as its own dedicated argument, never reused from
+    *stake* -- a wallet with a live-stake override paper-executes at
+    *stake* and live-executes at *live_stake* off the very same signal.
 
     **Circuit breaker short-circuit (issue #1139).** When *breaker_reason*
     is not ``None`` (the realized-P&L circuit breaker -- daily-loss or
@@ -563,7 +596,7 @@ def _handle_buy_trade(
     side_label = "YES" if outcome_index == 0 else "NO"
     _handle_live_order(
         db, address=address, market=market, outcome_index=outcome_index,
-        signal_id=signal_id, stake=stake, fill_price=fill_price,
+        signal_id=signal_id, live_stake=live_stake, fill_price=fill_price,
         token_id=token_id, side_label=side_label, live_config=live_config,
         live_gate_reason=live_gate_reason, clob_client_factory=clob_client_factory,
         now_iso=now_iso,
@@ -621,6 +654,13 @@ def _process_wallet(
     first_poll = wallet.get("last_seen_trade_ts") is None
     since_ts = wallet.get("last_seen_trade_ts") or 0
     stake = wallet["stake_per_trade"]
+    # Issue #1259: resolve the live-only stake override here, once per
+    # wallet per cycle -- COALESCE(live_stake_per_trade, stake_per_trade).
+    # `wallet` may come straight from Database.get_followed_wallets() (raw
+    # column, None when unset) -- .get() also covers wallet dicts built by
+    # older callers/tests that predate this column entirely.
+    raw_live_stake = wallet.get("live_stake_per_trade")
+    live_stake = raw_live_stake if raw_live_stake is not None else stake
 
     raw_trades = get_wallet_trades_since(address, since_ts)
     if not raw_trades:
@@ -649,7 +689,8 @@ def _process_wallet(
             )
         elif trade["side"] == "BUY":
             _handle_buy_trade(
-                db, wallet, trade, stake, live_config, now_iso, first_poll=first_poll,
+                db, wallet, trade, stake, live_stake, live_config, now_iso,
+                first_poll=first_poll,
                 breaker_reason=breaker_reason, live_gate_reason=live_gate_reason,
                 clob_client_factory=clob_client_factory,
             )

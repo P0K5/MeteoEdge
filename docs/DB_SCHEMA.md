@@ -617,25 +617,27 @@ pattern as the `trades.mode` migration above).
 
 **Purpose:** The subset of screened wallets (`copy_wallet_candidates`) actually being copied. Epic B (issue #1121, epic #1101) — signal detection and flat-stake paper execution reads this table to know which wallets to poll and at what stake.
 
-**Writer:** `Database.insert_followed_wallet` / `Database.update_followed_wallet_status` / `Database.update_followed_wallet_last_seen` / `Database.set_followed_wallet_live_enabled`
+**Writer:** `Database.insert_followed_wallet` / `Database.update_followed_wallet_status` / `Database.update_followed_wallet_last_seen` / `Database.set_followed_wallet_live_enabled` / `Database.set_followed_wallet_live_stake`
 **Reader:** Story B3's polling loop (not yet built), dashboard copy-trading tab (not yet built)
 
 | Column | Type | Units | Nullable | Description |
 |--------|------|-------|----------|-------------|
 | `address` | TEXT PRIMARY KEY | wallet address | No | Followed wallet's proxy address — acts as the row key |
-| `stake_per_trade` | REAL NOT NULL CHECK(stake_per_trade > 0) | USD | No | Flat stake used to size every copied trade for this wallet |
+| `stake_per_trade` | REAL NOT NULL CHECK(stake_per_trade > 0) | USD | No | Flat stake used to size every copied **paper** trade for this wallet |
 | `status` | TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','paused')) | categorical | No | Whether polling/copying is currently active for this wallet |
 | `paused_reason` | TEXT | free text | Yes | Why the wallet was paused; cleared (`NULL`) when returned to `'active'` |
 | `paused_at` | TEXT | ISO 8601 timestamp (UTC) | Yes | When the wallet was paused; set when `status` becomes `'paused'`, cleared when resumed to `'active'` |
 | `added_at` | TEXT NOT NULL | ISO 8601 timestamp (UTC) | No | When the wallet was first followed |
 | `last_seen_trade_ts` | INTEGER | unix seconds | Yes | High-water-mark of the last trade this wallet's poll has processed; `NULL` until the first poll runs (story B3, not yet built) |
 | `live_enabled` | INTEGER NOT NULL DEFAULT 0 CHECK(live_enabled IN (0,1)) | boolean (0/1) | No | Per-wallet live-trading opt-in (issue #1253) — a second, independent gate alongside the global `COPY_LIVE_TRADING_ENABLED` switch. Default 0: no wallet becomes live as a side effect of being followed or of this column's migration |
+| `live_stake_per_trade` | REAL | USD | Yes | Optional live-only stake override (issue #1259), independent of `stake_per_trade`. `NULL` means "same as the paper stake" — readers resolve the effective live stake as `COALESCE(live_stake_per_trade, stake_per_trade)`. No wallet's effective live sizing changes as a result of this column's migration (every pre-existing row backfills `NULL`) |
 
 **Notes:**
-- One row per wallet, **not** append-only (unlike `copy_wallet_candidates`) — `status`/`paused_reason`/`last_seen_trade_ts`/`live_enabled` are mutated in place via `UPDATE`.
+- One row per wallet, **not** append-only (unlike `copy_wallet_candidates`) — `status`/`paused_reason`/`last_seen_trade_ts`/`live_enabled`/`live_stake_per_trade` are mutated in place via `UPDATE`.
 - A wallet can't be followed twice: `insert_followed_wallet` is a plain `INSERT` and raises `sqlite3.IntegrityError` on a duplicate `address`; callers un-pause an existing row instead of re-inserting.
 - Fully separate from `open_positions`/`trades` per the architecture doc's isolation decision (issue #1100) — no `strategy` discriminator column on the weather strategy's tables.
 - `live_enabled` is independent of `status`: a wallet can be `paused` with `live_enabled=1` on the row (nothing executes either way while paused) — `_derive_live_eligibility()`/`_handle_live_order()` (`src/dashboard/api.py` / `src/scripts/copy_signal_loop.py`) are what actually enforce the combination, not a table constraint. Flipping this flag never touches `copy_live_positions` — `copy_live_settle.py` settles from that table alone and has no coupling to this one, so an already-open live position for a wallet keeps settling normally even after the wallet is opted back out of live.
+- `stake_per_trade` and the resolved `live_stake_per_trade` are now **independent** sizes: paper P&L is no longer a size-for-size predictor of live P&L for a wallet with an override. `copy_positions.stake_usd` always derives from `stake_per_trade`; `copy_live_positions.stake_usd` always derives from the resolved live stake (`_handle_live_order`'s dedicated `live_stake` argument, never the paper `stake`). The live per-wallet/total exposure gates (`COPY_LIVE_MAX_EXPOSURE_PER_WALLET_USD` / `COPY_LIVE_MAX_TOTAL_EXPOSURE_USD`) are evaluated against the resolved live stake, not `stake_per_trade`.
 
 ---
 

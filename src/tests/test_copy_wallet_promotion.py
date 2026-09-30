@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from src.scripts.copy_wallet_promotion import (
-    follow, live_off, live_on, main, pause, report, resume,
+    follow, live_off, live_on, live_stake, main, pause, report, resume,
 )
 
 
@@ -244,6 +244,66 @@ class TestLiveOff:
         db.set_followed_wallet_live_enabled.assert_called_once_with("0xabc", False)
 
 
+class TestLiveStake:
+    def test_sets_positive_value(self):
+        db = MagicMock()
+        db.get_followed_wallets.return_value = [_followed_row(address="0xabc", status="active")]
+
+        rc = live_stake(db, "0xabc", "2.0")
+
+        assert rc == 0
+        db.set_followed_wallet_live_stake.assert_called_once_with("0xabc", 2.0)
+
+    @pytest.mark.parametrize("value", ["none", "None", "inherit", "INHERIT"])
+    def test_clears_override_case_insensitively(self, value):
+        db = MagicMock()
+        db.get_followed_wallets.return_value = [_followed_row(address="0xabc", status="active")]
+
+        rc = live_stake(db, "0xabc", value)
+
+        assert rc == 0
+        db.set_followed_wallet_live_stake.assert_called_once_with("0xabc", None)
+
+    def test_refuses_when_address_not_followed(self):
+        db = MagicMock()
+        db.get_followed_wallets.return_value = []
+
+        rc = live_stake(db, "0xabc", "2.0")
+
+        assert rc == 1
+        db.set_followed_wallet_live_stake.assert_not_called()
+
+    def test_allowed_even_when_wallet_is_paused(self):
+        """Setting a live-only stake, like disabling live, never itself
+        causes anything to execute -- always allowed regardless of status."""
+        db = MagicMock()
+        db.get_followed_wallets.return_value = [_followed_row(address="0xabc", status="paused")]
+
+        rc = live_stake(db, "0xabc", "2.0")
+
+        assert rc == 0
+        db.set_followed_wallet_live_stake.assert_called_once_with("0xabc", 2.0)
+
+    @pytest.mark.parametrize("value", ["0", "-1", "nan", "inf"])
+    def test_refuses_non_positive_or_non_finite_value(self, value):
+        db = MagicMock()
+        db.get_followed_wallets.return_value = [_followed_row(address="0xabc", status="active")]
+
+        rc = live_stake(db, "0xabc", value)
+
+        assert rc == 1
+        db.set_followed_wallet_live_stake.assert_not_called()
+
+    def test_refuses_unparseable_value(self):
+        db = MagicMock()
+        db.get_followed_wallets.return_value = [_followed_row(address="0xabc", status="active")]
+
+        rc = live_stake(db, "0xabc", "not-a-number")
+
+        assert rc == 1
+        db.set_followed_wallet_live_stake.assert_not_called()
+
+
 class TestReport:
     def test_read_only_calls_no_db_write_methods(self):
         db = MagicMock()
@@ -454,3 +514,7 @@ class TestMainArgparse:
     def test_live_off_and_pause_mutually_exclusive(self):
         with pytest.raises(SystemExit):
             main(["--live-off", "0xabc", "--pause", "0xdef", "--reason", "x"])
+
+    def test_live_stake_and_live_on_mutually_exclusive(self):
+        with pytest.raises(SystemExit):
+            main(["--live-stake", "0xabc", "2.0", "--live-on", "0xdef"])

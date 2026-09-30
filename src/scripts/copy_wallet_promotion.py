@@ -1,6 +1,6 @@
 """Advisory-only wallet-promotion CLI: follow / pause / resume / live-on /
-live-off (issue #1122, epic #1101 story B2; live opt-in added by issue
-#1253).
+live-off / live-stake (issue #1122, epic #1101 story B2; live opt-in added
+by issue #1253; live-only stake override added by issue #1259).
 
 Epic A's screening pipeline (``copy_wallet_screening.py``) produces
 ``copy_wallet_candidates`` rows with ``eligible_to_follow`` computed per run,
@@ -19,6 +19,13 @@ per-wallet live opt-in flag -- the CLI counterpart to the dashboard's live
 toggle endpoint, mirroring ``--pause``/``--resume``'s "must already be
 followed" refusal style.
 
+``--live-stake ADDRESS VALUE`` (issue #1259) sets a followed wallet's
+live-only per-trade stake override -- the CLI counterpart to the
+dashboard's ``PATCH .../live-stake`` endpoint. ``VALUE`` of ``none`` or
+``inherit`` clears the override back to "same as the paper stake"
+(``--stake``'s value); any other ``VALUE`` must parse as a finite positive
+USD amount.
+
 Usage::
 
     python -m src.scripts.copy_wallet_promotion
@@ -27,6 +34,8 @@ Usage::
     python -m src.scripts.copy_wallet_promotion --resume 0xabc...
     python -m src.scripts.copy_wallet_promotion --live-on 0xabc...
     python -m src.scripts.copy_wallet_promotion --live-off 0xabc...
+    python -m src.scripts.copy_wallet_promotion --live-stake 0xabc... 2.0
+    python -m src.scripts.copy_wallet_promotion --live-stake 0xabc... none
 """
 from __future__ import annotations
 
@@ -228,6 +237,51 @@ def live_off(db, address: str) -> int:
     return 0
 
 
+def live_stake(db, address: str, value: str) -> int:
+    """Set or clear *address*'s live-only per-trade stake override (issue
+    #1259) -- the CLI counterpart to ``PATCH .../live-stake``.
+
+    ``value`` of ``'none'``/``'inherit'`` (case-insensitive) clears the
+    override back to "same as the paper stake"
+    (``Database.set_followed_wallet_live_stake(address, None)``); any other
+    value must parse as a finite positive USD amount, mirroring
+    ``--stake``/``follow()``'s own validation. Refuses (mirrors
+    ``live_on``/``live_off``'s style) if the wallet isn't followed --
+    unlike ``live_on``, always allowed regardless of ``status`` (setting a
+    live-only stake, like disabling live, never itself causes anything to
+    execute).
+    """
+    known = {w["address"] for w in db.get_followed_wallets()}
+    if address not in known:
+        print(f"Refusing to set live stake for {address}: not a followed wallet.")
+        return 1
+
+    if value.strip().lower() in ("none", "inherit"):
+        db.set_followed_wallet_live_stake(address, None)
+        print(f"Cleared live stake override for {address} (inherits paper stake).")
+        return 0
+
+    try:
+        stake = float(value)
+    except ValueError:
+        print(
+            f"Refusing to set live stake for {address}: VALUE must be a number, "
+            f"'none', or 'inherit', got {value!r}."
+        )
+        return 1
+
+    if not math.isfinite(stake) or stake <= 0:
+        print(
+            f"Refusing to set live stake for {address}: must be a finite positive "
+            f"number in USD, got {stake!r}."
+        )
+        return 1
+
+    db.set_followed_wallet_live_stake(address, stake)
+    print(f"Set live stake for {address} to ${stake:.2f}/trade.")
+    return 0
+
+
 def main(argv: "list[str] | None" = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--follow", metavar="ADDRESS", help="Promote ADDRESS into copy_wallets_followed.")
@@ -246,16 +300,27 @@ def main(argv: "list[str] | None" = None) -> int:
         "--live-off", metavar="ADDRESS",
         help="Disable per-wallet live trading opt-in for a followed wallet.",
     )
+    ap.add_argument(
+        "--live-stake", nargs=2, metavar=("ADDRESS", "VALUE"),
+        help=(
+            "Set a followed wallet's live-only per-trade stake override in "
+            "USD. VALUE of 'none' or 'inherit' clears the override (falls "
+            "back to the wallet's --stake)."
+        ),
+    )
     args = ap.parse_args(argv)
 
     actions = [
-        a for a in (args.follow, args.pause, args.resume, args.live_on, args.live_off)
+        a for a in (
+            args.follow, args.pause, args.resume, args.live_on, args.live_off,
+            args.live_stake,
+        )
         if a is not None
     ]
     if len(actions) > 1:
         ap.error(
             "only one of --follow / --pause / --resume / --live-on / "
-            "--live-off may be given at a time"
+            "--live-off / --live-stake may be given at a time"
         )
     if args.pause is not None and not args.reason:
         ap.error("--pause requires --reason")
@@ -275,6 +340,8 @@ def main(argv: "list[str] | None" = None) -> int:
         return live_on(db, args.live_on)
     if args.live_off is not None:
         return live_off(db, args.live_off)
+    if args.live_stake is not None:
+        return live_stake(db, args.live_stake[0], args.live_stake[1])
 
     return report(db, max_followed)
 

@@ -263,6 +263,30 @@ costs zero DB work on the live path. `_derive_live_eligibility`
 itself (frontend) is a separate, dependent issue. **Status: Built
 (this issue, backend only).**
 
+**Independent live stake (#1259) — backend half.** `stake_per_trade` sized
+both the paper and live paths, so once a wallet could be opted into live
+(#1253), promoting it forced its real-money order size to equal its paper
+size — the only way to go live smaller was to lower `stake_per_trade`
+itself, which would also reshape the ongoing paper study and destroy
+comparability with the paper record that justified the promotion.
+`copy_wallets_followed` gains a nullable `live_stake_per_trade` column
+(additive migration): `NULL` means "same as the paper stake", resolved by
+readers as `COALESCE(live_stake_per_trade, stake_per_trade)`. **Paper and
+live sizing are now fully independent** — `stake_per_trade` continues to
+size every paper `copy_positions` row unchanged, while the resolved live
+stake sizes `copy_live_positions` rows and is what the live per-wallet/
+total exposure gates (`COPY_LIVE_MAX_EXPOSURE_PER_WALLET_USD` /
+`COPY_LIVE_MAX_TOTAL_EXPOSURE_USD`) are evaluated against — **not** the
+paper stake. Consequently, paper P&L is no longer a size-for-size predictor
+of live P&L for a wallet with an override: the same signal can be a $5
+paper fill and a $2 live fill. `_handle_live_order`
+(`src/scripts/copy_signal_loop.py`) takes this resolved value as its own
+dedicated `live_stake` argument, never the paper `stake` parameter, so the
+two sizings cannot be confused at a call site. `CopyFollowedWalletsOut`
+also gains `live_cap_usd` and `live_opted_in_count`, both needed by the
+per-wallet live opt-in control's enable-live confirmation dialog (#1254,
+spec'd by #1258). **Status: Built (this issue, backend only).**
+
 ## Open questions (need a decision before Epic 1 starts)
 
 1. ~~Reuse `open_positions`/`settlements`/`risk_state` with a `strategy`
