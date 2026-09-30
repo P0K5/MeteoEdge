@@ -415,7 +415,15 @@ CREATE TABLE IF NOT EXISTS copy_wallets_followed (
     status               TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','paused')),
     paused_reason        TEXT,
     added_at             TEXT NOT NULL,
-    last_seen_trade_ts   INTEGER
+    last_seen_trade_ts   INTEGER,
+    -- Issue #1253: per-wallet live opt-in, a second gate alongside the
+    -- global COPY_LIVE_TRADING_ENABLED kill switch. The paper study
+    -- (2026-09-29) showed edge varies sharply by wallet -- at most one is
+    -- close to the go-live bar -- so live placement must be selectable per
+    -- wallet, not all-or-nothing. Default 0: no wallet becomes live as a
+    -- side effect of this column existing (enforced by the ALTER TABLE
+    -- migration below for pre-existing rows too).
+    live_enabled         INTEGER NOT NULL DEFAULT 0 CHECK(live_enabled IN (0,1))
 );
 
 -- Copy-trading detected signals (issue #1121). One row per detected BUY
@@ -756,6 +764,14 @@ class Database:
             # (not-truncated) is the accurate carry-forward, not merely a
             # placeholder default.
             ("copy_wallet_candidates", "truncated", "INTEGER NOT NULL DEFAULT 0"),
+            # Issue #1253: per-wallet live opt-in (see the CREATE TABLE
+            # comment above for the full rationale). Default 0 backfills
+            # every pre-#1253 row -- no wallet becomes live as a side
+            # effect of this migration running.
+            (
+                "copy_wallets_followed", "live_enabled",
+                "INTEGER NOT NULL DEFAULT 0 CHECK(live_enabled IN (0,1))",
+            ),
         ]:
             try:
                 self._conn.execute(
@@ -1939,6 +1955,24 @@ class Database:
             self._conn.execute(
                 "UPDATE copy_wallets_followed SET stake_per_trade=? WHERE address=?",
                 (stake_per_trade, address),
+            )
+            self._conn.commit()
+
+    def set_followed_wallet_live_enabled(self, address: str, enabled: bool) -> None:
+        """Set *address*'s per-wallet live opt-in flag in place (issue
+        #1253) -- does not touch status/paused_reason/stake_per_trade/
+        added_at/last_seen_trade_ts.
+
+        Independent of ``status``: a wallet can be ``paused`` with
+        ``live_enabled=1`` (nothing executes either way while paused) --
+        the live path's own gate ladder (``_derive_live_eligibility``,
+        ``_handle_live_order``) is what actually enforces the combination,
+        not this setter.
+        """
+        with self._lock:
+            self._conn.execute(
+                "UPDATE copy_wallets_followed SET live_enabled=? WHERE address=?",
+                (1 if enabled else 0, address),
             )
             self._conn.commit()
 

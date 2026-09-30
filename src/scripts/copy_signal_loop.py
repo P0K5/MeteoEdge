@@ -211,7 +211,7 @@ def _handle_live_order(
     db, *, address: str, market: str, outcome_index: int, signal_id: int,
     stake: float, fill_price: float, token_id: "str | None", side_label: str,
     live_config: dict, live_gate_reason: "str | None", clob_client_factory,
-    now_iso: str,
+    now_iso: str, wallet_live_enabled: bool,
 ) -> None:
     """Independent live-execution layer on top of an already paper-executed
     signal (issue #1167). Only ever called from the branch of
@@ -228,6 +228,17 @@ def _handle_live_order(
     immediately: no DB read, no DB write, no CLOB call of any kind. This
     is the single most load-bearing line in this module for issue #1167 --
     it is what the "zero live orders when disabled" test asserts against.
+
+    **The per-wallet opt-in -- checked immediately after the global switch,
+    for the same reason (issue #1253).** ``wallet_live_enabled`` is the
+    caller's already-fetched ``copy_wallets_followed.live_enabled`` value
+    (no re-query here -- the wallet row is already in hand in
+    ``_handle_buy_trade``). When it is falsy, this function returns
+    immediately, exactly like the global-switch branch above: no
+    ``copy_live_positions`` row is written for a paper-only wallet, and the
+    live path costs that wallet zero DB work. The global switch stays the
+    master kill switch -- a wallet with ``live_enabled=1`` still places
+    nothing while ``COPY_LIVE_TRADING_ENABLED`` is off.
 
     **Live-specific gates, atomic with the insert (mirrors the paper
     exposure-check pattern in ``_handle_buy_trade``).** ``live_gate_reason``
@@ -260,6 +271,8 @@ def _handle_live_order(
     isolation in ``run_cycle``).
     """
     if not live_config["COPY_LIVE_TRADING_ENABLED"]:
+        return
+    if not wallet_live_enabled:
         return
 
     with db._lock:
@@ -554,6 +567,10 @@ def _handle_buy_trade(
         token_id=token_id, side_label=side_label, live_config=live_config,
         live_gate_reason=live_gate_reason, clob_client_factory=clob_client_factory,
         now_iso=now_iso,
+        # Issue #1253: the wallet row is already in hand here -- passed
+        # straight through rather than re-querying it inside
+        # _handle_live_order.
+        wallet_live_enabled=bool(wallet.get("live_enabled")),
     )
 
 

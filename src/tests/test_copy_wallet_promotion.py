@@ -6,7 +6,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.scripts.copy_wallet_promotion import follow, main, pause, report, resume
+from src.scripts.copy_wallet_promotion import (
+    follow, live_off, live_on, main, pause, report, resume,
+)
 
 
 def _screening_row(address="0xabc", eligible=1, median_roi=0.1, **overrides):
@@ -179,6 +181,67 @@ class TestResume:
 
         assert rc == 1
         db.update_followed_wallet_status.assert_not_called()
+
+
+class TestLiveOn:
+    def test_calls_set_live_enabled_with_expected_args(self):
+        db = MagicMock()
+        db.get_followed_wallets.return_value = [_followed_row(address="0xabc", status="active")]
+
+        rc = live_on(db, "0xabc")
+
+        assert rc == 0
+        db.set_followed_wallet_live_enabled.assert_called_once_with("0xabc", True)
+
+    def test_refuses_when_address_not_followed(self):
+        db = MagicMock()
+        db.get_followed_wallets.return_value = []
+
+        rc = live_on(db, "0xabc")
+
+        assert rc == 1
+        db.set_followed_wallet_live_enabled.assert_not_called()
+
+    def test_refuses_when_wallet_is_paused(self):
+        db = MagicMock()
+        db.get_followed_wallets.return_value = [_followed_row(address="0xabc", status="paused")]
+
+        rc = live_on(db, "0xabc")
+
+        assert rc == 1
+        db.set_followed_wallet_live_enabled.assert_not_called()
+
+
+class TestLiveOff:
+    def test_calls_set_live_enabled_with_expected_args(self):
+        db = MagicMock()
+        db.get_followed_wallets.return_value = [_followed_row(address="0xabc", status="active")]
+
+        rc = live_off(db, "0xabc")
+
+        assert rc == 0
+        db.set_followed_wallet_live_enabled.assert_called_once_with("0xabc", False)
+
+    def test_refuses_when_address_not_followed(self):
+        db = MagicMock()
+        db.get_followed_wallets.return_value = []
+
+        rc = live_off(db, "0xabc")
+
+        assert rc == 1
+        db.set_followed_wallet_live_enabled.assert_not_called()
+
+    def test_allowed_even_when_wallet_is_paused(self):
+        """Unlike live_on, disabling is always allowed regardless of
+        status -- it can only ever reduce what a wallet is eligible to
+        do."""
+        db = MagicMock()
+        db.get_followed_wallets.return_value = [_followed_row(address="0xabc", status="paused")]
+
+        rc = live_off(db, "0xabc")
+
+        assert rc == 0
+        db.set_followed_wallet_live_enabled.assert_called_once_with("0xabc", False)
 
 
 class TestReport:
@@ -379,3 +442,15 @@ class TestMainArgparse:
     def test_pause_without_reason_rejected(self):
         with pytest.raises(SystemExit):
             main(["--pause", "0xabc"])
+
+    def test_live_on_and_live_off_mutually_exclusive(self):
+        with pytest.raises(SystemExit):
+            main(["--live-on", "0xabc", "--live-off", "0xabc"])
+
+    def test_live_on_and_follow_mutually_exclusive(self):
+        with pytest.raises(SystemExit):
+            main(["--live-on", "0xabc", "--follow", "0xdef"])
+
+    def test_live_off_and_pause_mutually_exclusive(self):
+        with pytest.raises(SystemExit):
+            main(["--live-off", "0xabc", "--pause", "0xdef", "--reason", "x"])

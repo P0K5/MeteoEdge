@@ -554,6 +554,13 @@ class CopyFollowedWalletOut(BaseModel):
     wallet is always ``live_eligible=False`` regardless of the global
     switch, per docs/design/copy-trading-live-views.md's Followed Wallets
     section.
+
+    ``live_enabled`` (issue #1253) is the raw per-wallet opt-in flag itself
+    -- distinct from the derived ``live_eligible``, which also factors in
+    the global switch, exposure caps, and paused status. A wallet can be
+    ``live_enabled=True`` and still ``live_eligible=False`` (e.g. the
+    global switch is off); the dashboard toggle (a separate issue) reads
+    and writes this field directly.
     """
     address: str
     stake_per_trade: float
@@ -562,6 +569,7 @@ class CopyFollowedWalletOut(BaseModel):
     added_at: str
     n_settled: int
     realized_pnl_usd: float
+    live_enabled: bool
     live_eligible: bool
     live_status_reason: str
 
@@ -598,6 +606,10 @@ class CopyPauseRequest(BaseModel):
 
 class CopyStakeUpdateRequest(BaseModel):
     stake: float
+
+
+class CopyLiveEnabledRequest(BaseModel):
+    enabled: bool
 
 
 class CopyOpenPositionOut(BaseModel):
@@ -2726,13 +2738,18 @@ def _derive_live_eligibility(
     live_config_available: bool,
 ) -> tuple[bool, str]:
     """Confirmed derivation (issue #1187, no new schema): LIVE requires the
-    global switch on AND this wallet's current committed live exposure
-    below its per-wallet cap AND the wallet's paper status is ``active``.
+    global switch on AND this wallet's own live opt-in flag on (issue
+    #1253) AND this wallet's current committed live exposure below its
+    per-wallet cap AND the wallet's paper status is ``active``.
 
     Checked in this order, deterministic facts first: a ``paused`` wallet
     is always PAPER regardless of the global switch (it executes nothing
     in either mode) -- that must win even if the live config itself is
-    unavailable. Otherwise, degrade to the conservative PAPER/off default
+    unavailable. The per-wallet flag is checked next, before the global
+    switch (issue #1253 acceptance criteria's explicit ordering) -- a
+    wallet that has never opted in is uninterestingly PAPER regardless of
+    the global switch's state, so there is no reason to read live config
+    for it first. Otherwise, degrade to the conservative PAPER/off default
     whenever the derivation can't be computed (config read or exposure
     query failure) -- never guess LIVE when the source of truth is
     unavailable, mirroring the ``execution_mode`` fallback rule used
@@ -2740,6 +2757,8 @@ def _derive_live_eligibility(
     """
     if wallet["status"] == "paused":
         return False, "this wallet is paused"
+    if not wallet.get("live_enabled"):
+        return False, "live is not enabled for this wallet"
     if not live_config_available:
         return False, "the live status could not be determined"
     if not live_trading_enabled:
@@ -2821,6 +2840,7 @@ def copy_trading_followed_wallets() -> CopyFollowedWalletsOut:
             added_at=w["added_at"],
             n_settled=pnl_row["n_settled"] if pnl_row else 0,
             realized_pnl_usd=pnl_row["total_pnl_usd"] if pnl_row else 0.0,
+            live_enabled=bool(w.get("live_enabled")),
             live_eligible=live_eligible,
             live_status_reason=live_status_reason,
         ))
@@ -2989,6 +3009,48 @@ def copy_trading_update_wallet_stake(
         success=True,
         message=f"Updated {address} stake to ${req.stake:.2f}/trade.",
     )
+
+
+@app.post(
+    "/api/copy-trading/wallets/{address}/live",
+    response_model=CopyFollowResultOut,
+)
+def copy_trading_set_wallet_live_enabled(
+    address: str, req: CopyLiveEnabledRequest
+) -> CopyFollowResultOut:
+    """Toggle a followed wallet's per-wallet live opt-in (issue #1253) --
+    the backend half of putting only the wallets that pass the paper study
+    live, while the rest keep paper-trading. The dashboard toggle itself is
+    a separate (frontend) issue that depends on this endpoint.
+
+    Unlike pause/resume/stake (which wrap copy_wallet_promotion.py
+    directly), this uses actual HTTP status codes for its refusals rather
+    than a structured CopyFollowResultOut(success=False, ...) — matching
+    the 404/409 convention already used elsewhere in this file (e.g.
+    sell_position's 404/409 refusals) for unknown-resource /
+    conflicting-state refusals, per this issue's own acceptance criteria.
+
+    Only *enabling* live while ``status='paused'`` is refused (409) --
+    disabling is always allowed regardless of status, since it can only
+    ever reduce what a wallet is eligible to do.
+    """
+    if _db is None:
+        raise HTTPException(status_code=503, detail="Database not initialised")
+
+    known = {w["address"]: w for w in _db.get_followed_wallets()}
+    wallet = known.get(address)
+    if wallet is None:
+        raise HTTPException(status_code=404, detail=f"Unknown followed wallet: {address!r}")
+
+    if req.enabled and wallet["status"] == "paused":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Cannot enable live trading for {address}: wallet is paused.",
+        )
+
+    _db.set_followed_wallet_live_enabled(address, req.enabled)
+    verb = "Enabled" if req.enabled else "Disabled"
+    return CopyFollowResultOut(success=True, message=f"{verb} live trading for {address}.")
 
 
 # ---------------------------------------------------------------------------

@@ -13,6 +13,8 @@ Covers:
   path (unknown address); DELETEs the row without touching copy_positions.
 - PATCH /api/copy-trading/wallets/{address}/stake: success + refusal paths
   (unknown address, non-positive stake, exceeds max exposure).
+- POST /api/copy-trading/wallets/{address}/live (issue #1253): toggle
+  round-trip, 404 unknown address, 409 enabling a paused wallet.
 """
 from __future__ import annotations
 
@@ -174,11 +176,44 @@ class TestFollowedWalletsEndpoint:
 # ---------------------------------------------------------------------------
 
 class TestFollowedWalletsLiveEligibility:
+    def test_wallet_not_opted_into_live_is_paper_only_even_with_global_switch_on(self, api_client):
+        """Issue #1253: a followed wallet defaults to live_enabled=0 --
+        never live-eligible even with the global switch on, until it
+        explicitly opts in."""
+        client, db = api_client
+        db.set_config("COPY_LIVE_TRADING_ENABLED", "True")
+        db.insert_followed_wallet(address="0xW", stake_per_trade=5.0, added_at="2026-09-01T00:00:00Z")
+
+        resp = client.get("/api/copy-trading/followed-wallets")
+        data = resp.json()
+        row = data["wallets"][0]
+        assert row["live_enabled"] is False
+        assert row["live_eligible"] is False
+        assert row["live_status_reason"] == "live is not enabled for this wallet"
+        assert data["live_eligible_count"] == 0
+        assert data["paper_only_count"] == 1
+
+    def test_paused_reason_wins_over_live_enabled_check(self, api_client):
+        """Ordering (issue #1253 acceptance criteria): the paused check
+        still wins even for a wallet that HAS opted into live."""
+        client, db = api_client
+        db.set_config("COPY_LIVE_TRADING_ENABLED", "True")
+        db.insert_followed_wallet(address="0xW", stake_per_trade=5.0, added_at="2026-09-01T00:00:00Z")
+        db.set_followed_wallet_live_enabled("0xW", True)
+        db.update_followed_wallet_status("0xW", "paused", "unstable")
+
+        resp = client.get("/api/copy-trading/followed-wallets")
+        row = resp.json()["wallets"][0]
+        assert row["live_enabled"] is True
+        assert row["live_eligible"] is False
+        assert row["live_status_reason"] == "this wallet is paused"
+
     def test_live_trading_off_by_default_all_wallets_paper(self, api_client):
         """COPY_LIVE_TRADING_ENABLED defaults to False (seed_config) --
         every active wallet must render as PAPER, never guess LIVE."""
         client, db = api_client
         db.insert_followed_wallet(address="0xW", stake_per_trade=5.0, added_at="2026-09-01T00:00:00Z")
+        db.set_followed_wallet_live_enabled("0xW", True)
 
         resp = client.get("/api/copy-trading/followed-wallets")
         data = resp.json()
@@ -211,11 +246,13 @@ class TestFollowedWalletsLiveEligibility:
         db.set_config("COPY_LIVE_TRADING_ENABLED", "True")
         db.set_config("COPY_LIVE_MAX_EXPOSURE_PER_WALLET_USD", "50.0")
         db.insert_followed_wallet(address="0xW", stake_per_trade=5.0, added_at="2026-09-01T00:00:00Z")
+        db.set_followed_wallet_live_enabled("0xW", True)
         _open_live_position(db, "0xW", stake_usd=10.0)
 
         resp = client.get("/api/copy-trading/followed-wallets")
         data = resp.json()
         row = data["wallets"][0]
+        assert row["live_enabled"] is True
         assert row["live_eligible"] is True
         assert row["live_status_reason"] == "eligible for live execution"
         assert data["live_eligible_count"] == 1
@@ -228,6 +265,7 @@ class TestFollowedWalletsLiveEligibility:
         db.set_config("COPY_LIVE_TRADING_ENABLED", "True")
         db.set_config("COPY_LIVE_MAX_EXPOSURE_PER_WALLET_USD", "10.0")
         db.insert_followed_wallet(address="0xW", stake_per_trade=5.0, added_at="2026-09-01T00:00:00Z")
+        db.set_followed_wallet_live_enabled("0xW", True)
         _open_live_position(db, "0xW", stake_usd=10.0)
 
         resp = client.get("/api/copy-trading/followed-wallets")
@@ -253,6 +291,7 @@ class TestFollowedWalletsLiveEligibility:
         db.set_config("COPY_LIVE_TRADING_ENABLED", "True")
         db.set_config("COPY_LIVE_MAX_EXPOSURE_PER_WALLET_USD", "50.0")
         db.insert_followed_wallet(address="0xLive", stake_per_trade=5.0, added_at="2026-09-01T00:00:00Z")
+        db.set_followed_wallet_live_enabled("0xLive", True)
         db.insert_followed_wallet(address="0xPaperOnly", stake_per_trade=5.0, added_at="2026-09-01T00:00:00Z")
         db.update_followed_wallet_status("0xPaperOnly", "paused", "unstable")
 
@@ -268,6 +307,7 @@ class TestFollowedWalletsLiveEligibility:
         client, db = api_client
         db.set_config("COPY_LIVE_TRADING_ENABLED", "True")
         db.insert_followed_wallet(address="0xW", stake_per_trade=5.0, added_at="2026-09-01T00:00:00Z")
+        db.set_followed_wallet_live_enabled("0xW", True)
 
         from src.dashboard import api as api_module
 
@@ -475,3 +515,88 @@ class TestUpdateStakeEndpoint:
         assert "COPY_MAX_EXPOSURE_PER_WALLET_USD" in body["message"]
         wallets = {w["address"]: w for w in db.get_followed_wallets()}
         assert wallets["0xW"]["stake_per_trade"] == 5.0  # unchanged
+
+
+# ---------------------------------------------------------------------------
+# POST /api/copy-trading/wallets/{address}/live (issue #1253)
+# ---------------------------------------------------------------------------
+
+class TestSetLiveEnabledEndpoint:
+    def test_503_when_db_not_initialised(self):
+        from src.dashboard import api as api_module
+        original_db = api_module._db
+        try:
+            api_module.set_db(None)
+            client = TestClient(api_module.app, raise_server_exceptions=False)
+            resp = client.post("/api/copy-trading/wallets/0xabc/live", json={"enabled": True})
+            assert resp.status_code == 503
+        finally:
+            api_module.set_db(original_db)
+
+    def test_enable_round_trip(self, api_client):
+        client, db = api_client
+        db.insert_followed_wallet(address="0xW", stake_per_trade=5.0, added_at="2026-09-01T00:00:00Z")
+
+        resp = client.post("/api/copy-trading/wallets/0xW/live", json={"enabled": True})
+        assert resp.status_code == 200
+        assert resp.json()["success"] is True
+        wallets = {w["address"]: w for w in db.get_followed_wallets()}
+        assert wallets["0xW"]["live_enabled"] == 1
+
+    def test_disable_round_trip(self, api_client):
+        client, db = api_client
+        db.insert_followed_wallet(address="0xW", stake_per_trade=5.0, added_at="2026-09-01T00:00:00Z")
+        db.set_followed_wallet_live_enabled("0xW", True)
+
+        resp = client.post("/api/copy-trading/wallets/0xW/live", json={"enabled": False})
+        assert resp.status_code == 200
+        assert resp.json()["success"] is True
+        wallets = {w["address"]: w for w in db.get_followed_wallets()}
+        assert wallets["0xW"]["live_enabled"] == 0
+
+    def test_404_unknown_address(self, api_client):
+        client, _ = api_client
+        resp = client.post("/api/copy-trading/wallets/0xGhost/live", json={"enabled": True})
+        assert resp.status_code == 404
+
+    def test_409_enabling_a_paused_wallet(self, api_client):
+        client, db = api_client
+        db.insert_followed_wallet(address="0xW", stake_per_trade=5.0, added_at="2026-09-01T00:00:00Z")
+        db.update_followed_wallet_status("0xW", "paused", "unstable")
+
+        resp = client.post("/api/copy-trading/wallets/0xW/live", json={"enabled": True})
+        assert resp.status_code == 409
+        wallets = {w["address"]: w for w in db.get_followed_wallets()}
+        assert wallets["0xW"]["live_enabled"] == 0  # unchanged
+
+    def test_disabling_a_paused_wallet_is_allowed(self, api_client):
+        """Disabling can only ever reduce what a wallet is eligible to do,
+        so it is never refused for a paused wallet."""
+        client, db = api_client
+        db.insert_followed_wallet(address="0xW", stake_per_trade=5.0, added_at="2026-09-01T00:00:00Z")
+        db.set_followed_wallet_live_enabled("0xW", True)
+        db.update_followed_wallet_status("0xW", "paused", "unstable")
+
+        resp = client.post("/api/copy-trading/wallets/0xW/live", json={"enabled": False})
+        assert resp.status_code == 200
+        assert resp.json()["success"] is True
+        wallets = {w["address"]: w for w in db.get_followed_wallets()}
+        assert wallets["0xW"]["live_enabled"] == 0
+
+    def test_live_eligibility_view_reflects_the_flag(self, api_client):
+        """End-to-end: toggling this endpoint changes what the followed-wallets
+        view's live_enabled/live_eligible fields report."""
+        client, db = api_client
+        db.set_config("COPY_LIVE_TRADING_ENABLED", "True")
+        db.insert_followed_wallet(address="0xW", stake_per_trade=5.0, added_at="2026-09-01T00:00:00Z")
+
+        row_before = client.get("/api/copy-trading/followed-wallets").json()["wallets"][0]
+        assert row_before["live_enabled"] is False
+        assert row_before["live_eligible"] is False
+
+        client.post("/api/copy-trading/wallets/0xW/live", json={"enabled": True})
+
+        row_after = client.get("/api/copy-trading/followed-wallets").json()["wallets"][0]
+        assert row_after["live_enabled"] is True
+        assert row_after["live_eligible"] is True
+        assert row_after["live_status_reason"] == "eligible for live execution"

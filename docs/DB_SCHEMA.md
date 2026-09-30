@@ -617,7 +617,7 @@ pattern as the `trades.mode` migration above).
 
 **Purpose:** The subset of screened wallets (`copy_wallet_candidates`) actually being copied. Epic B (issue #1121, epic #1101) — signal detection and flat-stake paper execution reads this table to know which wallets to poll and at what stake.
 
-**Writer:** `Database.insert_followed_wallet` / `Database.update_followed_wallet_status` / `Database.update_followed_wallet_last_seen`
+**Writer:** `Database.insert_followed_wallet` / `Database.update_followed_wallet_status` / `Database.update_followed_wallet_last_seen` / `Database.set_followed_wallet_live_enabled`
 **Reader:** Story B3's polling loop (not yet built), dashboard copy-trading tab (not yet built)
 
 | Column | Type | Units | Nullable | Description |
@@ -629,11 +629,13 @@ pattern as the `trades.mode` migration above).
 | `paused_at` | TEXT | ISO 8601 timestamp (UTC) | Yes | When the wallet was paused; set when `status` becomes `'paused'`, cleared when resumed to `'active'` |
 | `added_at` | TEXT NOT NULL | ISO 8601 timestamp (UTC) | No | When the wallet was first followed |
 | `last_seen_trade_ts` | INTEGER | unix seconds | Yes | High-water-mark of the last trade this wallet's poll has processed; `NULL` until the first poll runs (story B3, not yet built) |
+| `live_enabled` | INTEGER NOT NULL DEFAULT 0 CHECK(live_enabled IN (0,1)) | boolean (0/1) | No | Per-wallet live-trading opt-in (issue #1253) — a second, independent gate alongside the global `COPY_LIVE_TRADING_ENABLED` switch. Default 0: no wallet becomes live as a side effect of being followed or of this column's migration |
 
 **Notes:**
-- One row per wallet, **not** append-only (unlike `copy_wallet_candidates`) — `status`/`paused_reason`/`last_seen_trade_ts` are mutated in place via `UPDATE`.
+- One row per wallet, **not** append-only (unlike `copy_wallet_candidates`) — `status`/`paused_reason`/`last_seen_trade_ts`/`live_enabled` are mutated in place via `UPDATE`.
 - A wallet can't be followed twice: `insert_followed_wallet` is a plain `INSERT` and raises `sqlite3.IntegrityError` on a duplicate `address`; callers un-pause an existing row instead of re-inserting.
 - Fully separate from `open_positions`/`trades` per the architecture doc's isolation decision (issue #1100) — no `strategy` discriminator column on the weather strategy's tables.
+- `live_enabled` is independent of `status`: a wallet can be `paused` with `live_enabled=1` on the row (nothing executes either way while paused) — `_derive_live_eligibility()`/`_handle_live_order()` (`src/dashboard/api.py` / `src/scripts/copy_signal_loop.py`) are what actually enforce the combination, not a table constraint. Flipping this flag never touches `copy_live_positions` — `copy_live_settle.py` settles from that table alone and has no coupling to this one, so an already-open live position for a wallet keeps settling normally even after the wallet is opted back out of live.
 
 ---
 

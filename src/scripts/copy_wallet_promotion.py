@@ -1,5 +1,6 @@
-"""Advisory-only wallet-promotion CLI: follow / pause / resume (issue #1122,
-epic #1101 story B2).
+"""Advisory-only wallet-promotion CLI: follow / pause / resume / live-on /
+live-off (issue #1122, epic #1101 story B2; live opt-in added by issue
+#1253).
 
 Epic A's screening pipeline (``copy_wallet_screening.py``) produces
 ``copy_wallet_candidates`` rows with ``eligible_to_follow`` computed per run,
@@ -13,12 +14,19 @@ never auto-follows a wallet.** Promotion into ``copy_wallets_followed`` only
 happens when a human explicitly runs ``--follow <address>``. The default
 (no-flag) invocation is a read-only advisory report -- it changes nothing.
 
+``--live-on``/``--live-off`` (issue #1253) set a followed wallet's
+per-wallet live opt-in flag -- the CLI counterpart to the dashboard's live
+toggle endpoint, mirroring ``--pause``/``--resume``'s "must already be
+followed" refusal style.
+
 Usage::
 
     python -m src.scripts.copy_wallet_promotion
     python -m src.scripts.copy_wallet_promotion --follow 0xabc... [--stake 10]
     python -m src.scripts.copy_wallet_promotion --pause 0xabc... --reason "unstable"
     python -m src.scripts.copy_wallet_promotion --resume 0xabc...
+    python -m src.scripts.copy_wallet_promotion --live-on 0xabc...
+    python -m src.scripts.copy_wallet_promotion --live-off 0xabc...
 """
 from __future__ import annotations
 
@@ -184,6 +192,42 @@ def resume(db, address: str, max_followed: int) -> int:
     return 0
 
 
+def live_on(db, address: str) -> int:
+    """Set the per-wallet live opt-in flag for *address* (issue #1253).
+
+    Refuses (mirrors ``pause``/``resume``'s style) if the wallet isn't
+    followed, or is currently paused -- matching the dashboard endpoint's
+    409 rule (a paused wallet placing nothing in either mode makes opting
+    it into live meaningless, and risks it going live unattended the
+    moment it's resumed with a stale, no-longer-reviewed opt-in).
+    """
+    known = {w["address"]: w["status"] for w in db.get_followed_wallets()}
+    if address not in known:
+        print(f"Refusing to enable live trading for {address}: not a followed wallet.")
+        return 1
+    if known[address] == "paused":
+        print(f"Refusing to enable live trading for {address}: wallet is paused.")
+        return 1
+    db.set_followed_wallet_live_enabled(address, True)
+    print(f"Enabled live trading for {address}.")
+    return 0
+
+
+def live_off(db, address: str) -> int:
+    """Clear the per-wallet live opt-in flag for *address* (issue #1253).
+
+    Unlike ``live_on``, always allowed regardless of ``status`` -- turning
+    live off can only ever reduce what a wallet is eligible to do.
+    """
+    known = {w["address"] for w in db.get_followed_wallets()}
+    if address not in known:
+        print(f"Refusing to disable live trading for {address}: not a followed wallet.")
+        return 1
+    db.set_followed_wallet_live_enabled(address, False)
+    print(f"Disabled live trading for {address}.")
+    return 0
+
+
 def main(argv: "list[str] | None" = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--follow", metavar="ADDRESS", help="Promote ADDRESS into copy_wallets_followed.")
@@ -194,11 +238,25 @@ def main(argv: "list[str] | None" = None) -> int:
     ap.add_argument("--pause", metavar="ADDRESS", help="Pause a followed wallet.")
     ap.add_argument("--reason", default=None, help="Required with --pause.")
     ap.add_argument("--resume", metavar="ADDRESS", help="Resume a paused wallet.")
+    ap.add_argument(
+        "--live-on", metavar="ADDRESS",
+        help="Enable per-wallet live trading opt-in for a followed wallet.",
+    )
+    ap.add_argument(
+        "--live-off", metavar="ADDRESS",
+        help="Disable per-wallet live trading opt-in for a followed wallet.",
+    )
     args = ap.parse_args(argv)
 
-    actions = [a for a in (args.follow, args.pause, args.resume) if a is not None]
+    actions = [
+        a for a in (args.follow, args.pause, args.resume, args.live_on, args.live_off)
+        if a is not None
+    ]
     if len(actions) > 1:
-        ap.error("only one of --follow / --pause / --resume may be given at a time")
+        ap.error(
+            "only one of --follow / --pause / --resume / --live-on / "
+            "--live-off may be given at a time"
+        )
     if args.pause is not None and not args.reason:
         ap.error("--pause requires --reason")
 
@@ -213,6 +271,10 @@ def main(argv: "list[str] | None" = None) -> int:
         return pause(db, args.pause, args.reason)
     if args.resume is not None:
         return resume(db, args.resume, max_followed)
+    if args.live_on is not None:
+        return live_on(db, args.live_on)
+    if args.live_off is not None:
+        return live_off(db, args.live_off)
 
     return report(db, max_followed)
 

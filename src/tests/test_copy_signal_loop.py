@@ -26,6 +26,10 @@ def _wallet(**overrides) -> dict:
     # exposure limits / execute), NOT the first-poll bootstrap guard.
     # Tests that specifically want the bootstrap path pass
     # last_seen_trade_ts=None explicitly.
+    # live_enabled defaults to True (issue #1253): every pre-existing live
+    # test here is exercising the global switch / other live gates, not the
+    # new per-wallet opt-in -- tests for the opt-in itself pass
+    # live_enabled=False explicitly.
     kwargs = dict(
         address=ADDRESS,
         stake_per_trade=10.0,
@@ -33,6 +37,7 @@ def _wallet(**overrides) -> dict:
         paused_reason=None,
         added_at="2026-09-19T00:00:00+00:00",
         last_seen_trade_ts=500,
+        live_enabled=True,
     )
     kwargs.update(overrides)
     return kwargs
@@ -1224,6 +1229,91 @@ class TestLiveExecution:
             for rec in caplog.records
         )
         # Paper is unaffected and the cycle did not crash.
+        db.insert_copy_position.assert_called_once()
+
+
+class TestPerWalletLiveOptIn:
+    """Issue #1253 -- per-wallet live opt-in, a second gate alongside the
+    global ``COPY_LIVE_TRADING_ENABLED`` kill switch. Mirrors
+    ``TestLiveExecution``'s structure exactly, one axis over: the global
+    switch stays the master kill switch, and a wallet's own
+    ``live_enabled`` flag is an independent AND condition on top of it.
+    """
+
+    def _run(
+        self, db, raw_trades, live_config=None, resolution=None,
+        clob_client_factory=None, live_capital_usd=250.0,
+    ):
+        with patch(
+            "src.scripts.copy_signal_loop.get_live_config",
+            return_value=live_config if live_config is not None else _live_config(),
+        ), patch(
+            "src.scripts.copy_signal_loop.get_wallet_trades_since",
+            return_value=raw_trades,
+        ), patch(
+            "src.scripts.copy_signal_loop.fetch_market_resolution",
+            return_value=resolution,
+        ), patch(
+            "src.scripts.copy_signal_loop.COPY_LIVE_CAPITAL_USD", live_capital_usd,
+        ):
+            run_cycle(db, clob_client_factory=clob_client_factory)
+
+    def test_global_on_flag_off_writes_paper_only_zero_live_rows(self):
+        """Global on + wallet live_enabled=0: paper executes normally, but
+        zero copy_live_positions rows and zero execute_live_copy_order
+        calls -- the per-wallet flag blocks the live attempt before
+        anything live-specific happens, mirroring the disabled-global-switch
+        contract exactly."""
+        db = _mock_db(get_followed_wallets=[_wallet(live_enabled=False)])
+        live_config = _live_enabled_config()
+        with patch(
+            "src.scripts.copy_signal_loop.execute_live_copy_order",
+        ) as mock_exec:
+            self._run(db, [_buy_raw()], live_config=live_config, resolution=None)
+
+        mock_exec.assert_not_called()
+        db.insert_copy_live_position.assert_not_called()
+        db.update_copy_live_position_status.assert_not_called()
+        db.insert_copy_position.assert_called_once()
+
+    def test_global_on_flag_off_skips_before_any_live_db_read(self):
+        """Belt-and-braces version at the DB layer, mirroring
+        test_disabled_skips_before_any_live_db_read: get_open_copy_live_positions
+        (the live exposure gate's own read) is never called when the
+        per-wallet flag is off, even with the global switch on."""
+        db = _mock_db(get_followed_wallets=[_wallet(live_enabled=False)])
+        live_config = _live_enabled_config()
+        self._run(db, [_buy_raw()], live_config=live_config, resolution=None)
+        db.get_open_copy_live_positions.assert_not_called()
+
+    def test_global_on_flag_on_attempts_live(self):
+        """Global on + wallet live_enabled=1: live is attempted exactly as
+        it already is for every existing TestLiveExecution case (this is
+        the "no behaviour change to already-eligible wallets" half of the
+        acceptance criteria)."""
+        db = _mock_db(get_followed_wallets=[_wallet(live_enabled=True)])
+        live_config = _live_enabled_config()
+        with patch(
+            "src.scripts.copy_signal_loop.execute_live_copy_order",
+            return_value={"status": "filled", "order_id": "oid-live-on", "fill_price": 0.41},
+        ) as mock_exec:
+            self._run(db, [_buy_raw()], live_config=live_config, resolution=None)
+
+        mock_exec.assert_called_once()
+        db.insert_copy_live_position.assert_called_once()
+
+    def test_global_off_flag_on_never_attempts_live(self):
+        """Global off + wallet live_enabled=1: the global switch remains the
+        master kill switch -- a wallet's own opt-in can never override it."""
+        db = _mock_db(get_followed_wallets=[_wallet(live_enabled=True)])
+        live_config = _live_enabled_config(COPY_LIVE_TRADING_ENABLED=False)
+        with patch(
+            "src.scripts.copy_signal_loop.execute_live_copy_order",
+        ) as mock_exec:
+            self._run(db, [_buy_raw()], live_config=live_config, resolution=None)
+
+        mock_exec.assert_not_called()
+        db.insert_copy_live_position.assert_not_called()
         db.insert_copy_position.assert_called_once()
 
 
