@@ -498,6 +498,15 @@ _ASSERTIONS = textwrap.dedent("""
         + _followedLiveBadgeHtml({ live_enabled: false, live_eligible: false, live_status_reason: 'live is not enabled for this wallet' });
       const glMsgEl = document.getElementById('followed-live-msg-' + safeIdGL1);
       const glBtn = makeBtn();
+      // Track loading-class churn across the step1 -> step2 boundary
+      // (Designer nitpick, PR #1268): 'loading' must be added once per
+      // step (harmless no-op re-add for step 2) but only ever REMOVED once,
+      // at the very end -- never removed-then-re-added between the two
+      // requests, which would be a visible idle flicker.
+      const glLoadingAdds = [];
+      const glLoadingRemoves = [];
+      glBtn.classList.add = (cls) => { if (cls === 'loading') glLoadingAdds.push(cls); };
+      glBtn.classList.remove = (cls) => { if (cls === 'loading') glLoadingRemoves.push(cls); };
       await followedGoLive('0xGoLive1', glBtn);
       assert.deepStrictEqual(callOrder, ['live-stake', 'live'], 'the live-stake PATCH must fire before the live-enable POST');
       assert.strictEqual(patchBody.stake, 3, 'the resolved override stake must be sent to the live-stake endpoint');
@@ -506,6 +515,7 @@ _ASSERTIONS = textwrap.dedent("""
       assert.ok(!glCell.innerHTML.includes('mode-badge-live"'), 'the badge must not flip to the plain LIVE class before the refetch corrects it');
       assert.strictEqual(refetchCount, 1, 'a successful go-live must trigger exactly one list refetch');
       assert.ok(glMsgEl.textContent.includes('Live trading enabled'), 'the per-row status region must announce success for screen readers');
+      assert.strictEqual(glLoadingRemoves.length, 1, 'the loading state must be held across the stake-then-enable boundary, only cleared once at the very end (Designer nitpick)');
 
       // g) Accepting the pre-filled resolved value as-is is an explicit
       //    override -- the stake PATCH still fires even though the number

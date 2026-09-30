@@ -5033,9 +5033,12 @@ async function followedGoLive(address, btn) {
       return;
     }
     _followedHideBanner();
+    // Only clear `disabled` here (to satisfy _followedSubmitAction's own
+    // re-entrancy guard below) -- deliberately leave `loading`/`aria-busy`
+    // set across the step 1 -> step 2 boundary (Designer nitpick, PR #1268)
+    // rather than removing then immediately re-adding them, so the button
+    // never has a moment where it looks idle between the two requests.
     btn.disabled = false;
-    btn.classList.remove('loading');
-    btn.removeAttribute('aria-busy');
   }
 
   // Step 2, only if step 1 succeeded (or was skipped): enable live. No
