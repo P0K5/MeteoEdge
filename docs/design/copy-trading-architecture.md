@@ -213,6 +213,25 @@ blended into one number, since mistaking a paper figure for a live one
 is a real trust/safety failure, not just a UX gap. Depends on Epic H
 and F. **Status: Built (PRs #1190, #1192, #1194, #1195, #1196).**
 
+**Per-wallet live opt-in (#1253) — backend half.** The paper study
+(2026-09-29) showed edge varies sharply by wallet — at most one wallet was
+close to the go-live bar while others were flat or negative — so a single
+global `COPY_LIVE_TRADING_ENABLED` switch is too coarse: it is
+all-or-nothing across every followed wallet. `copy_wallets_followed`
+gains a `live_enabled` column (default 0, additive migration) as a second,
+independent gate: a live order is now attempted only when the global
+switch is on **AND** the wallet's own `live_enabled` flag is on **AND**
+every existing live gate passes. The global switch remains the master
+kill switch — a wallet's opt-in can never override it. Pausing a wallet
+still stops paper execution too (unchanged), so it is deliberately not
+reused as the live on/off control. `_handle_live_order`
+(`src/scripts/copy_signal_loop.py`) checks the flag immediately after the
+global switch, before `db._lock` is ever acquired, so a paper-only wallet
+costs zero DB work on the live path. `_derive_live_eligibility`
+(`src/dashboard/api.py`) gained a matching branch; the dashboard toggle
+itself (frontend) is a separate, dependent issue. **Status: Built
+(this issue, backend only).**
+
 ## Open questions (need a decision before Epic 1 starts)
 
 1. ~~Reuse `open_positions`/`settlements`/`risk_state` with a `strategy`

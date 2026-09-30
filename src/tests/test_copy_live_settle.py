@@ -571,6 +571,34 @@ class TestIsolationFromCopyPositionsAndCopySettle:
         ).fetchone()
         assert paper_row["status"] == "open"
 
+    def test_flipping_live_enabled_off_does_not_block_settlement(self):
+        """Issue #1253: this script settles from copy_live_positions rows
+        and has no coupling to copy_wallets_followed at all -- turning a
+        wallet's per-wallet live_enabled flag off (e.g. an operator pulling
+        it from the live roster mid-flight) must never interfere with an
+        already-open live position for that wallet settling normally."""
+        db = Database(":memory:")
+        db.insert_followed_wallet(address=ADDRESS, stake_per_trade=10.0, added_at=NOW_ISO)
+        db.set_followed_wallet_live_enabled(ADDRESS, True)
+        position_id = _seed_live_position(
+            db, market="0xstillsettles", status="filled", stake_usd=10.0, fill_price=0.40,
+        )
+
+        # Opt the wallet back out of live -- the open position above was
+        # already placed before this flip.
+        db.set_followed_wallet_live_enabled(ADDRESS, False)
+
+        with patch.object(cls, "fetch_market_resolution", return_value=True):
+            summary = cls._settle_live_positions(db)
+
+        assert summary == {"settled": 1, "pending": 0, "errors": 0}
+        row = db._conn.execute(
+            "SELECT status, settled_pnl_usd FROM copy_live_positions WHERE id=?",
+            (position_id,),
+        ).fetchone()
+        assert row["status"] == "settled"
+        assert row["settled_pnl_usd"] == 15.0  # 10*(1-0.4)/0.4
+
     def test_run_once_never_imports_copy_settle_module(self):
         """A cheap static guarantee: copy_live_settle.py's own source never
         imports src.scripts.copy_settle (docstring/comment prose mentioning

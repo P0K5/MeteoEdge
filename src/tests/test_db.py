@@ -1812,6 +1812,40 @@ class TestCopyWalletsFollowed:
         assert row["paused_reason"] == "rug pull risk"
         assert row["added_at"] == "2026-09-19T00:00:00+00:00"
 
+    def test_new_followed_wallet_defaults_live_enabled_to_zero(self):
+        """issue #1253 -- no wallet becomes live as a side effect of being
+        followed; the per-wallet opt-in is a deliberate, separate action."""
+        db = _db()
+        db.insert_followed_wallet(**self._followed_kwargs())
+
+        row = db.get_followed_wallets()[0]
+        assert row["live_enabled"] == 0
+
+    def test_set_live_enabled_does_not_touch_other_columns(self):
+        """issue #1253 -- Database.set_followed_wallet_live_enabled()."""
+        db = _db()
+        db.insert_followed_wallet(**self._followed_kwargs())
+        db.update_followed_wallet_status("0xabc", "paused", paused_reason="rug pull risk")
+
+        db.set_followed_wallet_live_enabled("0xabc", True)
+
+        row = db.get_followed_wallets()[0]
+        assert row["live_enabled"] == 1
+        assert row["status"] == "paused"
+        assert row["paused_reason"] == "rug pull risk"
+        assert row["stake_per_trade"] == 25.0
+        assert row["added_at"] == "2026-09-19T00:00:00+00:00"
+
+    def test_set_live_enabled_round_trips_on_and_off(self):
+        db = _db()
+        db.insert_followed_wallet(**self._followed_kwargs())
+
+        db.set_followed_wallet_live_enabled("0xabc", True)
+        assert db.get_followed_wallets()[0]["live_enabled"] == 1
+
+        db.set_followed_wallet_live_enabled("0xabc", False)
+        assert db.get_followed_wallets()[0]["live_enabled"] == 0
+
     def test_delete_followed_wallet_removes_row(self):
         """issue #1147 -- "unfollow" action. DELETE, not a terminal status
         (see Database.delete_followed_wallet's docstring for the decision
@@ -1934,6 +1968,82 @@ class TestCopyWalletsFollowed:
                 assert rows[0]["address"] == "0xlegacy"
                 assert rows[0]["paused_reason"] == "old data"
                 assert rows[0]["paused_at"] is None  # NULL for rows written before migration
+            finally:
+                db.close()
+        finally:
+            for fname in [path] + [path + ext for ext in ("-wal", "-shm")]:
+                try:
+                    os.unlink(fname)
+                except (FileNotFoundError, PermissionError):
+                    pass
+
+    def test_migration_live_enabled_column_backfills_zero(self):
+        """Issue #1253: a pre-existing DB (schema predates the per-wallet
+        live opt-in column) gets live_enabled added via the additive
+        migration, and every existing row backfills to 0 -- no wallet
+        becomes live as a side effect of the migration running. Mirrors
+        test_migration_paused_at_column_exists's structure exactly, one
+        column over."""
+        import sqlite3
+        import tempfile
+        import os
+
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tf:
+            path = tf.name
+
+        try:
+            # Fresh DB should have live_enabled too.
+            conn = sqlite3.connect(path)
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.close()
+
+            db = Database(path)
+            try:
+                cur = db._conn.execute("PRAGMA table_info(copy_wallets_followed)")
+                col_names = {row[1] for row in cur.fetchall()}
+                assert "live_enabled" in col_names
+            finally:
+                db.close()
+
+            for fname in [path] + [path + ext for ext in ("-wal", "-shm")]:
+                try:
+                    os.unlink(fname)
+                except (FileNotFoundError, PermissionError):
+                    pass
+
+            # Old-schema DB (before live_enabled existed, but after paused_at).
+            conn = sqlite3.connect(path)
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("""
+                CREATE TABLE copy_wallets_followed (
+                    address              TEXT PRIMARY KEY,
+                    stake_per_trade      REAL NOT NULL CHECK(stake_per_trade > 0),
+                    status               TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','paused')),
+                    paused_reason        TEXT,
+                    paused_at            TEXT,
+                    added_at             TEXT NOT NULL,
+                    last_seen_trade_ts   INTEGER
+                )
+            """)
+            conn.execute("""
+                INSERT INTO copy_wallets_followed
+                    (address, stake_per_trade, status, added_at)
+                VALUES ('0xlegacy', 25.0, 'active', '2026-09-19T00:00:00+00:00')
+            """)
+            conn.commit()
+            conn.close()
+
+            db = Database(path)
+            try:
+                cur = db._conn.execute("PRAGMA table_info(copy_wallets_followed)")
+                col_names = {row[1] for row in cur.fetchall()}
+                assert "live_enabled" in col_names
+
+                rows = db.get_followed_wallets()
+                assert len(rows) == 1
+                assert rows[0]["address"] == "0xlegacy"
+                # No wallet becomes live as a side effect of this migration.
+                assert rows[0]["live_enabled"] == 0
             finally:
                 db.close()
         finally:
