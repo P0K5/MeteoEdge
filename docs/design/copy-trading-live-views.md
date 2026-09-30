@@ -178,9 +178,9 @@ A `paused` wallet is always PAPER regardless of every other flag, including
 `live_enabled` — pausing does **not** clear the opt-in (see "Pausing an
 opted-in wallet" below).
 
-- **Badge — four label states, two visual treatments** (issue #1258 extends
-  this from the original LIVE/PAPER pair now that opt-in is a real,
-  operator-set flag rather than a pure derivation):
+- **Badge — four label states, two visual treatments** (Tech Lead PM
+  approved, 2026-09-30 — issue #1258's acceptance criteria now names all
+  four states explicitly, superseding its original three):
   - **`LIVE`** — `.mode-badge-live` (green) — `live_enabled` **and**
     `live_eligible` are both true (every gate passes right now).
   - **`LIVE (switch off)`** — a new variant, same badge shape, muted green
@@ -188,9 +188,9 @@ opted-in wallet" below).
     `live_status_reason === "live trading is currently off"`. Reads as "this
     wallet is opted in and will go live the moment the global switch flips
     on," distinct from a wallet that was never opted in at all.
-  - **`LIVE (cap reached)`** — same muted-green variant as above, additive
-    state beyond the issue's three named states, needed because
-    `_derive_live_eligibility` already returns a fourth real reason
+  - **`LIVE (cap reached)`** — same muted-green variant as above, required
+    by the acceptance criteria specifically because `_derive_live_eligibility`
+    already returns this as its own distinct reason
     (`"this wallet's live exposure limit is currently reached"`) once
     `live_enabled` exists as a true operator toggle — an opted-in wallet
     temporarily throttled by its own cap must not collapse to plain `PAPER`,
@@ -232,13 +232,11 @@ opted-in wallet" below).
   **# paper-only**, in that order (opted-in is the coarser, operator-set
   count; live-eligible is the narrower, currently-executing subset of it),
   and split "aggregate P&L" the same way as Positions & P&L (paper aggregate
-  / live aggregate, never combined). The **# opted into live** pill needs no
-  new API field — it's a client-side count of `data.wallets.filter(w =>
-  w.live_enabled).length`, since every wallet row already carries the flag;
-  flagging only because every other pill on this strip is server-computed,
-  so confirm with Tech Lead PM this asymmetry (one client-computed count
-  among server-computed ones) is acceptable rather than adding
-  `live_enabled_count` to `CopyFollowedWalletsOut` for consistency.
+  / live aggregate, never combined). The **# opted into live** pill is
+  server-computed (Tech Lead PM decision, 2026-09-30): #1259 adds
+  `live_opted_in_count` to `CopyFollowedWalletsOut` alongside the existing
+  `live_eligible_count`/`paper_only_count`, so every pill on this strip stays
+  consistently server-sourced — no client-computed count.
 
 ### States
 
@@ -249,7 +247,7 @@ API error fetching live config) — never guess LIVE when the source of truth
 is unavailable, same conservative-default rule as the `execution_mode`
 precedent.
 
-### Per-wallet live opt-in control (issue #1258)
+### Per-wallet live opt-in control (issues #1258, #1259)
 
 This turns the badge above from a pure derived indicator into the visible
 result of an operator action: opt a paper-proven wallet into real-money
@@ -258,7 +256,13 @@ per #1253's independent `live_enabled` flag (AND-ed with the global
 `COPY_LIVE_TRADING_ENABLED` switch and every existing live gate — see the
 deterministic order above). This is a real-money action living one click
 away from Pause / Edit stake / Unfollow, so placement, states, and copy all
-carry the safety burden the issue calls out.
+carry the safety burden the issue calls out. #1259 adds a second dimension
+to the same action — a live stake independent of the wallet's paper stake —
+because `stake_per_trade` currently sizes both paths, and without a separate
+live stake, promoting a wallet forces its real-money size to equal its paper
+size, with no way to size down live without also reshaping the ongoing
+paper study's comparability. The enable-live flow below folds both concerns
+into one operator-facing sequence.
 
 **Placement.** A new control joins the row's action group, in this order:
 **Pause/Resume → Edit stake → Go live / Revert to paper → Unfollow.**
@@ -298,46 +302,167 @@ consequential action should look different from the row's routine controls.
 risk-*reducing* direction never needs a visual warning, only the
 risk-increasing one does.
 
-**Confirmation dialog — enabling live (verbatim).** Reuses the existing
-`window.confirm()` precedent from Unfollow (`followedUnfollowWallet`) rather
-than introducing a new modal component — same interaction pattern, same
-literal browser dialog:
+**Disambiguating "Edit stake" now that two stakes exist.** The existing
+`.btn-followed-edit-stake` button's visible label ("Edit stake") and icon
+stay unchanged — it sits directly above the row's now-two-line stake display
+(below), so it reads unambiguously as "edit the paper stake" from
+proximity/context alone, per Epic F's own layout. Its `aria-label` changes
+from `"Edit stake per trade for {address}"` to `"Edit paper stake per trade
+for {address}"`, since a screen-reader user tabbing directly to the button
+loses that visual proximity cue and two same-named "stake" controls would
+otherwise be genuinely ambiguous. This is the only change to the existing
+paper-stake edit flow — editing paper stake never writes to, reads from, or
+resets a wallet's live stake override, and vice versa; the two edit paths
+are fully independent, consistent with the live/paper axis-independence
+rule this whole document is built on.
+
+### Enabling live: stake + confirmation (issues #1258, #1259)
+
+Enabling live now does two things in one operator-facing flow: choosing the
+live stake, then confirming the real-money action. `[Tech constraint: this
+dashboard has no modal framework — `src/dashboard/static/index.html` is a
+single file whose only dialog primitives are `window.confirm` (2 uses,
+including Unfollow) and `window.prompt` (the pause-reason flow, ~L4751).
+This spec deliberately does **not** introduce a modal for this. It composes
+the two existing primitives — one `window.prompt` to capture the live stake,
+followed by one `window.confirm` to commit — because (a) capturing a
+free-text number requires a text input, which only `prompt` offers among the
+two primitives `confirm` and `prompt`; (b) two sequential native dialogs for
+a rare, high-stakes action is not excessive friction — it is the same shape
+of friction `Pause` already imposes today (prompt for a mandatory reason,
+before the action completes) for a lower-stakes action; and (c) reusing
+existing primitives means #1254 ships with zero new UI infrastructure. If
+this reads as too many dialogs in practice once built, the fallback is
+collapsing to a single `prompt` whose message asks for the stake with the
+cap/wallet/reason context folded into the prompt text itself, and treating
+that single OK as both the stake choice and the commit — but that removes
+the deliberate two-step reconsideration point before a real-money action,
+so this spec's default is the two-dialog sequence above. Flagging for
+Tech Lead PM sign-off on this trade-off, not feasibility — the two-primitive
+approach is confirmed feasible.]`
+
+**Step 1 — live stake, via `window.prompt` (verbatim):**
 
 ```js
-window.confirm(
-  `Go live for ${address}?\n\n` +
-  `Every future signal from this wallet will place REAL trades of ` +
-  `$${w.stake_per_trade.toFixed(2)} per trade, up to a live exposure cap ` +
-  `of $${liveCapUsd.toFixed(2)} for this wallet.\n\n` +
-  `Paper trading for this wallet is unaffected either way.`
+const rawStake = window.prompt(
+  `Set a live stake per trade for ${address}.\n\n` +
+  `Leave this blank and press OK to keep the live stake linked to this ` +
+  `wallet's paper stake (currently $${w.stake_per_trade.toFixed(2)} per ` +
+  `trade) — it will automatically track future paper-stake edits.\n\n` +
+  `Enter a dollar amount to set a live stake that stays fixed at that ` +
+  `amount even if the paper stake later changes.\n\n` +
+  `Live per-wallet exposure cap: $${liveCapUsd.toFixed(2)}.`,
+  w.stake_per_trade.toFixed(2)
 );
+if (rawStake === null) return; // operator cancelled the whole action, identical to Unfollow's short-circuit
+```
+
+Pre-filled with the wallet's current paper stake, per the acceptance
+criteria. Accepting the pre-filled value as-is is treated as an **explicit
+override** equal to the paper stake (`live_stake_is_override = true`) — the
+prompt's instructional text is explicit that *clearing the field* (not
+accepting the default) is how an operator chooses "inherit." This is the
+one unambiguous way to express two distinct states (explicit-value-equal-to
+paper vs. inherit-from-paper) through a single native text field that has no
+separate "reset to default" affordance. Cancelling (`null`) aborts the
+entire enable-live action with no API call — same convention as every other
+cancellable action in this row.
+
+**Client-side validation (before any dialog or API call proceeds):**
+
+```js
+const trimmed = rawStake.trim();
+let liveStake = null;            // null → inherit paper stake
+let liveStakeOverride = false;
+if (trimmed !== '') {
+  const parsed = parseFloat(trimmed);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    _followedShowBannerError(`Could not set a live stake for ${_copyTruncateAddress(address)} — enter a live stake greater than $0, or clear the field entirely to inherit the paper stake.`);
+    return;
+  }
+  if (parsed > liveCapUsd) {
+    _followedShowBannerError(`Could not set a live stake for ${_copyTruncateAddress(address)} — $${parsed.toFixed(2)} exceeds this wallet's live exposure cap of $${liveCapUsd.toFixed(2)}. Enter an amount at or under the cap, or clear the field entirely to inherit the paper stake.`);
+    return;
+  }
+  liveStake = parsed;
+  liveStakeOverride = true;
+}
+```
+
+Covers all three required validation states — non-finite, non-positive, and
+above-cap — each aborting the whole flow with no confirmation dialog and no
+API call, via the same shared error banner and `"Could not {verb} {address}
+— {detail}"` format used everywhere else in this view. There is no inline
+retry for a native `prompt` — the operator re-clicks "Go live" to try again,
+same recovery pattern as every other validation failure in this row (e.g.
+Edit stake's `<= 0` check).
+
+**Step 2 — final confirmation, via `window.confirm` (verbatim):**
+
+```js
+const resolvedStakeText = liveStakeOverride
+  ? `$${liveStake.toFixed(2)} per trade`
+  : `$${w.stake_per_trade.toFixed(2)} per trade (this inherits this wallet's paper stake and will change automatically if the paper stake is edited later)`;
+const confirmed = window.confirm(
+  `Go live for ${address}?\n\n` +
+  `Every future signal from this wallet will place REAL trades of ${resolvedStakeText}, ` +
+  `up to a live exposure cap of $${liveCapUsd.toFixed(2)} for this wallet.\n\n` +
+  `Paper trading for this wallet continues unaffected, at its own stake of ` +
+  `$${w.stake_per_trade.toFixed(2)} per trade.`
+);
+if (!confirmed) return;
 ```
 
 Names the wallet (full address, matching Unfollow's own precedent of using
-the untruncated address in this one dialog), its stake per trade, and the
-live per-wallet exposure cap, per the acceptance criteria — and explicitly
-states paper trading continues regardless, so the operator cannot read this
-dialog and believe they are pausing or altering the paper study by
-promoting the wallet. Cancelling makes no API call, identical to Unfollow's
+the untruncated address in this one dialog), the **resolved live stake**
+(never the paper stake, even when they happen to be numerically equal — the
+wording always distinguishes "$X per trade" from "$X per trade (inherits
+...)"), and the live per-wallet exposure cap, per the acceptance criteria.
+The closing sentence restates the paper stake by its own label and value so
+the two numbers are never presented as one — this is the same
+"paper-vs-live must be unmistakable" requirement the rest of this document
+applies to every dollar figure, now applied to a dialog instead of a table
+cell. Cancelling makes no API call, identical to Unfollow's
 `if (!confirmed) return;` short-circuit.
 
-`[Tech constraint: `liveCapUsd` (`COPY_LIVE_MAX_EXPOSURE_PER_WALLET_USD`) is
-computed server-side today (`_derive_live_eligibility`'s `live_cap_usd`
-parameter, `src/dashboard/api.py`) but is not currently a field on
-`CopyFollowedWalletsOut` or `CopyFollowedWalletOut` — the confirmation copy
-above cannot be built client-side without it. Needs a Tech Lead PM call on
-where it's exposed (a single top-level `live_cap_usd` field on
-`CopyFollowedWalletsOut` is the natural fit, since it is one global config
-value applied uniformly, not a per-row value) — agreed approach: add it to
-#1253's response model rather than a second round-trip to `/api/config` from
-this view, to avoid a second source of truth for the same number the badge's
-`live_status_reason` already implicitly depends on.]`
+`live_cap_usd` is confirmed shipping on `CopyFollowedWalletsOut` via #1259
+(Tech Lead PM decision, 2026-09-30) — `copy_trading_followed_wallets`
+already reads it from `get_live_config` into a local variable, so this spec
+treats it as a settled dependency, not provisional copy.
+
+**API call sequencing.** Two separate endpoints exist (#1253's
+`POST .../live`, #1259's `PATCH .../live-stake`) — there is no single
+atomic call. Sequence:
+1. If the resolved stake differs from the wallet's current stored state
+   (`liveStakeOverride !== w.live_stake_is_override`, or the override value
+   itself changed), call `PATCH .../live-stake` first with
+   `{"stake": liveStakeOverride ? liveStake : null}`. Skip this call
+   entirely when nothing changed (e.g. re-enabling a wallet whose stake
+   override was already set correctly from a prior enable/disable cycle) —
+   avoids a redundant write.
+2. Only if step 1 succeeds (or was skipped), call `POST .../live` with
+   `{"enabled": true}`.
+3. If step 1 fails, stop — show its error (below) and **do not** call the
+   enable endpoint. The wallet is left exactly as it was before (paper-only,
+   whatever its previous stake override was) — a safe partial state, since
+   `live_enabled` was never touched.
+4. If step 1 succeeds but step 2 fails, the wallet now has a live-stake
+   override saved but `live_enabled` is still `false` — also safe (no real
+   trading is possible while `live_enabled=false`), but show the error
+   specifically as an enable failure, not a stake failure (below), since
+   from the operator's perspective they asked to "go live" and that part is
+   what failed; the stake is simply already correctly set for next time.
 
 **Disabling live requires no confirmation.** Clicking "Revert to paper"
 fires the `POST .../live` request with `{"enabled": false}` immediately, no
-`window.confirm()` — mirroring why `Resume` (also risk-reducing) never
-prompts today, only `Pause` and `Unfollow` (risk/consequence-bearing in
-their own ways) do.
+`window.prompt` or `window.confirm()` — mirroring why `Resume` (also
+risk-reducing) never prompts today, only `Pause` and `Unfollow`
+(risk/consequence-bearing in their own ways) do. Reverting to paper never
+touches the wallet's live-stake override — disabling and re-enabling later
+does not require re-entering the stake (the prompt above still pre-fills
+from the paper stake by default, but the operator can simply re-accept
+whatever override was previously set if they recall it; see the Open
+Questions entry on a possible standalone edit control for this rough edge).
 
 **Optimistic UI — deliberately asymmetric, unlike every other action in this
 row.** Pause, Resume, and Unfollow all apply an optimistic DOM change before
@@ -361,12 +486,19 @@ control does **not** follow that pattern symmetrically:
 banner (`#copy-trading-error-banner`), matching the exact
 `"Could not {verb} {truncated address} — {detail}"` format already used by
 Pause/Resume/Unfollow/Edit stake:
-- `Could not enable live trading for {truncated address} — {detail}`
+- `Could not set a live stake for {truncated address} — {detail}` (step 1
+  of API sequencing above failing; also covers the three client-side
+  validation failures shown before any request is made, same wording
+  pattern)
+- `Could not enable live trading for {truncated address} — {detail}` (step 2
+  failing, whether or not step 1 ran)
 - `Could not disable live trading for {truncated address} — {detail}`
 
 On failure the control's `rollback` restores its prior label/icon/color and
 `disabled` state exactly as `_followedSubmitAction` already does for the
-other three actions — no new rollback mechanism.
+other three actions — no new rollback mechanism. The badge and stake display
+(below) both re-derive from the row's last-known-good data on any failure —
+never from anything typed into the now-dismissed `prompt`/`confirm` dialogs.
 
 **Success announcement.** A new per-row status region,
 `<p class="followed-live-msg" id="followed-live-msg-${safeId}"
@@ -393,9 +525,48 @@ On Resume, the wallet's live participation returns to exactly whatever
 already required an explicit confirmed opt-in once, and Resume does not
 change that flag, only the paper `status`.
 
+### Stake display — two numbers per wallet, never blended (issue #1259)
+
+Once a wallet can have a live stake independent of its paper stake, the
+existing single-value stake cell (`_followedStakeDisplayHtml`) is no longer
+sufficient — this document's own standing rule ("live and paper figures are
+never blended") now applies to per-trade stake sizing, not just P&L.
+
+- **Wallet never opted into live (`live_enabled=false`):** the stake cell is
+  **unchanged** from today — one value, no "Paper:" qualifier, no new
+  markup. Adding a second line here for the common case (most wallets stay
+  paper-only) would be noise with nothing to disambiguate.
+- **Wallet opted into live (`live_enabled=true`), any badge state:** the
+  cell shows two explicitly labeled lines, using the same "the word LIVE or
+  PAPER is always adjacent to any dollar figure" rule this document already
+  applies everywhere else:
+  ```html
+  <div class="followed-stake-value">Paper: $5.00</div>
+  <div class="followed-stake-value followed-stake-live">Live: $2.00</div>
+  ```
+  When the live stake is inherited rather than overridden
+  (`live_stake_is_override === false`), append a muted inline note reusing
+  the existing `.followed-paused-reason` text treatment (small, `--muted`
+  color) rather than inventing new typography:
+  ```html
+  <div class="followed-stake-value followed-stake-live">Live: $5.00 <span class="followed-paused-reason" style="display:inline">(inherits paper)</span></div>
+  ```
+  This stays visible **regardless of current badge state** — including when
+  the badge shows plain `PAPER` because the wallet is paused — because the
+  live-stake override is an independent, standing fact about the wallet
+  (#1259's own axis-independence framing) that shouldn't disappear just
+  because execution is temporarily inactive; hiding it on pause would force
+  the operator to remember it or resume the wallet just to check it.
+- `.followed-stake-live` (new): `color:var(--yes);` — same green used
+  everywhere else for the live figure, no new token.
+- The "Edit stake" button only ever edits the paper line (see
+  disambiguation above); there is currently no standalone control to edit an
+  already-opted-in wallet's live stake without a full disable/re-enable
+  cycle — see the new Open Questions entry on this below.
+
 **Header pill.** Covered above (Summary strip bullet in the Followed Wallets
 badge section) — **# opted into live**, positioned before **# live-eligible**
-in the strip, client-computed, no new API field required for that count.
+in the strip, server-computed via `live_opted_in_count` (#1259).
 
 ## Activity Feed
 
@@ -535,19 +706,31 @@ Unchanged from Epic F (default/loading/empty/auto-refresh-paused) plus:
    aggregate even while currently off, with the off-banner layered on top
    to make clear no *new* live activity is occurring — needs confirmation
    this reads unambiguously in practice, not just on paper.
-5. **`live_cap_usd` exposure on the followed-wallets response** (new, issue
-   #1258) — the enable-live confirmation dialog's verbatim copy requires the
-   per-wallet live exposure cap client-side, and it's computed server-side
-   today (`_derive_live_eligibility`'s `live_cap_usd` parameter) but not
-   returned on `CopyFollowedWalletsOut`/`CopyFollowedWalletOut`. Needs a Tech
-   Lead PM call on adding it as a single top-level field on the followed-
-   wallets response (this spec's assumption) before #1254 can implement the
-   dialog. See the `[Tech constraint ...]` block under "Per-wallet live
-   opt-in control" above.
-6. **`# opted into live` pill as the one client-computed count on the
-   summary strip** (new, issue #1258) — every other pill in this strip
-   (`active`, `paused`, `live-eligible`, `paper-only`, both P&L figures) is
-   server-computed; this spec defaults to computing this one client-side
-   from the existing per-row `live_enabled` field to avoid an API change,
-   but flags the inconsistency for a Tech Lead PM call — the fallback is a
-   `live_enabled_count` field on `CopyFollowedWalletsOut` for uniformity.
+5. ~~**`live_cap_usd` exposure on the followed-wallets response**~~ —
+   **RESOLVED.** #1259 adds `live_cap_usd: float` to `CopyFollowedWalletsOut`
+   (Tech Lead PM decision, 2026-09-30). The enable-live confirmation copy in
+   "Enabling live: stake + confirmation" above is written against it as a
+   settled dependency.
+6. ~~**`# opted into live` pill as the one client-computed count**~~ —
+   **RESOLVED.** #1259 adds `live_opted_in_count` to
+   `CopyFollowedWalletsOut` alongside the existing `live_eligible_count`/
+   `paper_only_count` (Tech Lead PM decision, 2026-09-30) — server-computed,
+   no client-side counting.
+7. **No standalone control to edit an already-opted-in wallet's live stake**
+   (new, issue #1258/#1259) — today the only way to change a live wallet's
+   stake is Revert to paper, then Go live again through the full prompt +
+   confirm flow, re-entering the desired override from scratch (the prompt
+   always pre-fills from the *paper* stake, per the acceptance criteria, not
+   from whatever override was previously set). This is a real rough edge:
+   an operator adjusting sizing on a wallet they've already approved for
+   live has to re-click through the same real-money confirmation language
+   as a first-time promotion, for what is actually just a sizing tweak. A
+   low-cost fix exists using the same primitives (a new "Edit live stake"
+   button, visible only when `live_enabled=true` and not paused, opening a
+   `window.prompt` pre-filled with the *current resolved live stake* and
+   PATCHing `.../live-stake` directly, no `window.confirm` needed since the
+   wallet is already live — same risk-direction logic as Pause vs. Resume)
+   but this is **not** in #1258's acceptance criteria as written, so it is
+   not speced as a requirement here — flagging as a proposed fast-follow for
+   Tech Lead PM to scope into #1254 or a new issue, per this role's
+   obligation to propose an alternative rather than just note the gap.
