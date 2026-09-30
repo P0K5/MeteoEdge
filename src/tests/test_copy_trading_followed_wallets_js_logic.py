@@ -20,6 +20,18 @@ Also covers the second, independent live/paper badge added alongside the
 paper status badge (epic J, issue #1187): the optimistic pause/resume
 appliers must never leave a stale or falsely-LIVE badge showing in the
 same status cell while a request is in flight.
+
+Also covers the per-wallet live opt-in control (issues #1254, #1258,
+#1259): the four-state live badge (LIVE / LIVE (switch off) /
+LIVE (cap reached) / PAPER) and its conservative fallback for unrecognized
+reasons; the two-line paper/live stake display; the "Go live"/"Revert to
+paper" button's control states (available, opted-in, disabled-while-paused);
+the enable-live two-dialog flow (window.prompt for the stake, then
+window.confirm) with its three client-side validation states and its
+stake-first/enable-last API call sequencing (including the redundant-write
+skip and both partial-failure attributions); the deliberately asymmetric
+optimistic UI (enabling never shows LIVE optimistically, disabling does);
+and the server-computed "# opted into live" summary pill.
 """
 from __future__ import annotations
 
@@ -325,6 +337,253 @@ _ASSERTIONS = textwrap.dedent("""
       switchTab('copy-trading');
       assert.strictEqual(followedFetchCount, 1, 'followed wallets must refetch immediately on every tab re-entry, not just the first');
       assert.ok(setIntervalCalls.some(c => c.delay === 30_000), 'a fresh 30s followed-wallets interval must be created on re-entry too');
+
+      // ------------------------------------------------------------------
+      // 7. Four-state live badge (issues #1254/#1258): LIVE,
+      //    LIVE (switch off), LIVE (cap reached), PAPER -- driven off
+      //    live_enabled + the backend's own live_status_reason string,
+      //    never a client-side guess.
+      // ------------------------------------------------------------------
+      const liveEligibleHtml = _followedLiveBadgeHtml({ live_enabled: true, live_eligible: true, live_status_reason: 'eligible for live execution' });
+      assert.ok(liveEligibleHtml.includes('mode-badge-live"'), 'eligible wallet must use the plain mode-badge-live class');
+      assert.ok(liveEligibleHtml.includes('>LIVE<'));
+
+      const switchOffHtml = _followedLiveBadgeHtml({ live_enabled: true, live_eligible: false, live_status_reason: 'live trading is currently off' });
+      assert.ok(switchOffHtml.includes('mode-badge-live-pending'), 'opted-in wallet with the global switch off must use the muted-green pending class');
+      assert.ok(switchOffHtml.includes('>LIVE (switch off)<'));
+      assert.ok(switchOffHtml.includes('Live status: live, opted in but the global switch is off'));
+
+      const capReachedHtml = _followedLiveBadgeHtml({ live_enabled: true, live_eligible: false, live_status_reason: "this wallet's live exposure limit is currently reached" });
+      assert.ok(capReachedHtml.includes('mode-badge-live-pending'), 'opted-in wallet at its cap must use the muted-green pending class too');
+      assert.ok(capReachedHtml.includes('>LIVE (cap reached)<'));
+      assert.ok(capReachedHtml.includes("Live status: live, opted in but this wallet's live exposure limit is currently reached"));
+
+      const neverOptedInHtml = _followedLiveBadgeHtml({ live_enabled: false, live_eligible: false, live_status_reason: 'live is not enabled for this wallet' });
+      assert.ok(neverOptedInHtml.includes('mode-badge-paper'));
+      assert.ok(neverOptedInHtml.includes('>PAPER<'));
+
+      // A future/unrecognized reason with live_enabled=true must safely
+      // fall through to plain PAPER -- never invent a third muted-green
+      // label (design spec's conservative-fallback rule).
+      const unknownReasonHtml = _followedLiveBadgeHtml({ live_enabled: true, live_eligible: false, live_status_reason: 'some future reason not yet known to the frontend' });
+      assert.ok(unknownReasonHtml.includes('mode-badge-paper'), 'an unrecognized reason must fall through to plain PAPER, never a guessed label');
+      assert.ok(unknownReasonHtml.includes('>PAPER<'));
+
+      // ------------------------------------------------------------------
+      // 8. Two-line paper/live stake display (issue #1259) -- only once a
+      //    wallet is opted into live; never blended into one figure.
+      // ------------------------------------------------------------------
+      const singleStakeHtml = _followedStakeDisplayHtml({ live_enabled: false, stake_per_trade: 5 });
+      assert.ok(singleStakeHtml.includes('$5.00'));
+      assert.ok(!singleStakeHtml.includes('Paper:'), 'a wallet never opted into live keeps the single-value display, no "Paper:" qualifier');
+
+      const overrideStakeHtml = _followedStakeDisplayHtml({ live_enabled: true, stake_per_trade: 5, live_stake_per_trade: 2, live_stake_is_override: true });
+      assert.ok(overrideStakeHtml.includes('Paper: $5.00'));
+      assert.ok(overrideStakeHtml.includes('Live: $2.00'));
+      assert.ok(!overrideStakeHtml.includes('inherits paper'), 'an explicit override must not show the "(inherits paper)" note');
+
+      const inheritedStakeHtml = _followedStakeDisplayHtml({ live_enabled: true, stake_per_trade: 5, live_stake_per_trade: 5, live_stake_is_override: false });
+      assert.ok(inheritedStakeHtml.includes('Paper: $5.00'));
+      assert.ok(inheritedStakeHtml.includes('Live: $5.00'));
+      assert.ok(inheritedStakeHtml.includes('(inherits paper)'), 'an inherited (non-override) live stake must be annotated as such');
+
+      // ------------------------------------------------------------------
+      // 9. "Go live" / "Revert to paper" control states (issue #1254).
+      // ------------------------------------------------------------------
+      const goLiveAvailable = _followedGoLiveButtonHtml({ address: '0xGL', status: 'active', live_enabled: false });
+      assert.ok(goLiveAvailable.includes('btn-followed-golive'));
+      assert.ok(goLiveAvailable.includes('Go live'));
+      assert.ok(goLiveAvailable.includes('aria-label="Go live for 0xGL"'));
+      assert.ok(!goLiveAvailable.includes('disabled'));
+
+      const revertAvailable = _followedGoLiveButtonHtml({ address: '0xRV', status: 'active', live_enabled: true });
+      assert.ok(revertAvailable.includes('btn-followed-revert-live'));
+      assert.ok(revertAvailable.includes('Revert to paper'));
+      assert.ok(revertAvailable.includes('aria-label="Revert 0xRV to paper-only"'));
+      assert.ok(!revertAvailable.includes('disabled'));
+
+      const goLivePaused = _followedGoLiveButtonHtml({ address: '0xP1', status: 'paused', live_enabled: false });
+      assert.ok(goLivePaused.includes('btn-followed-golive'), 'a paused wallet not yet opted in still renders the Go-live button shape, just disabled');
+      assert.ok(goLivePaused.includes('disabled'));
+      assert.ok(goLivePaused.includes('Live opt-in is unavailable while this wallet is paused'));
+
+      const revertPaused = _followedGoLiveButtonHtml({ address: '0xP2', status: 'paused', live_enabled: true });
+      assert.ok(revertPaused.includes('btn-followed-revert-live'), 'a paused, already-opted-in wallet renders the Revert button shape, just disabled');
+      assert.ok(revertPaused.includes('disabled'));
+      assert.ok(revertPaused.includes('Live opt-in is unavailable while this wallet is paused'));
+
+      // ------------------------------------------------------------------
+      // 10. followedGoLive: two-dialog flow, validation, API call
+      //     sequencing (stake-first, enable-last), and the badge must never
+      //     show LIVE optimistically (issues #1254, #1259).
+      // ------------------------------------------------------------------
+      function setWallet(w) { _followedWalletsData = { wallets: [w], live_cap_usd: 10 }; }
+      const errBanner = document.getElementById('copy-trading-error-text');
+
+      // a) Cancelling the stake prompt makes no API call at all.
+      setWallet({ address: '0xGoLive1', stake_per_trade: 5, live_stake_per_trade: 5, live_stake_is_override: false, live_enabled: false, status: 'active' });
+      window.prompt = () => null;
+      let flowFetchCount = 0;
+      global.fetch = async () => { flowFetchCount++; return jsonResp({ success: true }); };
+      await followedGoLive('0xGoLive1', makeBtn());
+      assert.strictEqual(flowFetchCount, 0, 'cancelling the stake prompt must not call any API');
+
+      // b) Non-finite stake -> banner error, no API call.
+      window.prompt = () => 'abc';
+      await followedGoLive('0xGoLive1', makeBtn());
+      assert.strictEqual(flowFetchCount, 0, 'a non-finite stake must not call any API');
+      assert.ok(errBanner.textContent.includes('enter a live stake greater than $0'), 'non-finite stake must show the finite/positive validation copy');
+
+      // c) Non-positive stake -> banner error, no API call.
+      window.prompt = () => '0';
+      await followedGoLive('0xGoLive1', makeBtn());
+      assert.strictEqual(flowFetchCount, 0, 'a non-positive stake must not call any API');
+
+      // d) Above-cap stake -> banner error, no API call.
+      window.prompt = () => '999';
+      await followedGoLive('0xGoLive1', makeBtn());
+      assert.strictEqual(flowFetchCount, 0, 'a stake above the live cap must not call any API');
+      assert.ok(errBanner.textContent.includes("exceeds this wallet's live exposure cap"), 'an above-cap stake must show the cap-specific validation copy');
+
+      // e) Cancelling the final confirm() makes no API call either.
+      window.prompt = () => '3';
+      window.confirm = () => false;
+      await followedGoLive('0xGoLive1', makeBtn());
+      assert.strictEqual(flowFetchCount, 0, 'cancelling the final confirmation must not call any API');
+
+      // f) Success path: stake differs from the current override -> PATCH
+      //    .../live-stake fires BEFORE POST .../live (stake-first,
+      //    enable-last), and the badge never shows LIVE optimistically.
+      window.prompt = () => '3';
+      window.confirm = () => true;
+      const callOrder = [];
+      let patchBody = null, postBody = null;
+      global.fetch = async (url, opts) => {
+        const u = String(url);
+        if (u.endsWith('/live-stake')) {
+          callOrder.push('live-stake');
+          patchBody = JSON.parse(opts.body);
+          return jsonResp({ success: true, message: 'ok' });
+        }
+        if (u.endsWith('/live')) {
+          callOrder.push('live');
+          postBody = JSON.parse(opts.body);
+          return jsonResp({ success: true, message: 'ok' });
+        }
+        return jsonResp({
+          wallets: [], active_count: 0, paused_count: 0, aggregate_pnl_usd: 0, n_settled_total: 0,
+          live_eligible_count: 0, paper_only_count: 0, live_aggregate_pnl_usd: 0, live_n_settled_total: 0,
+          live_trading_enabled: true, live_cap_usd: 10, live_opted_in_count: 1,
+        });
+      };
+      let refetchCount = 0;
+      fetchFollowedWallets = async () => { refetchCount++; };
+      const safeIdGL1 = _copySafeId('0xGoLive1');
+      const glCell = document.getElementById('followed-status-cell-' + safeIdGL1);
+      glCell.innerHTML = _followedStatusBadgeHtml({ status: 'active' })
+        + _followedLiveBadgeHtml({ live_enabled: false, live_eligible: false, live_status_reason: 'live is not enabled for this wallet' });
+      const glMsgEl = document.getElementById('followed-live-msg-' + safeIdGL1);
+      const glBtn = makeBtn();
+      await followedGoLive('0xGoLive1', glBtn);
+      assert.deepStrictEqual(callOrder, ['live-stake', 'live'], 'the live-stake PATCH must fire before the live-enable POST');
+      assert.strictEqual(patchBody.stake, 3, 'the resolved override stake must be sent to the live-stake endpoint');
+      assert.strictEqual(postBody.enabled, true);
+      assert.ok(glCell.innerHTML.includes('PAPER'), 'the badge must never optimistically show LIVE while the enable request is in flight');
+      assert.ok(!glCell.innerHTML.includes('mode-badge-live"'), 'the badge must not flip to the plain LIVE class before the refetch corrects it');
+      assert.strictEqual(refetchCount, 1, 'a successful go-live must trigger exactly one list refetch');
+      assert.ok(glMsgEl.textContent.includes('Live trading enabled'), 'the per-row status region must announce success for screen readers');
+
+      // g) Accepting the pre-filled resolved value as-is is an explicit
+      //    override -- the stake PATCH still fires even though the number
+      //    is numerically unchanged, per the design spec's "accepting the
+      //    default is an explicit override" rule.
+      setWallet({ address: '0xGoLive2', stake_per_trade: 5, live_stake_per_trade: 5, live_stake_is_override: false, live_enabled: false, status: 'active' });
+      window.prompt = () => '5';
+      window.confirm = () => true;
+      callOrder.length = 0;
+      await followedGoLive('0xGoLive2', makeBtn());
+      assert.deepStrictEqual(callOrder, ['live-stake', 'live']);
+
+      // Truly-unchanged case: an existing override, re-entered as itself --
+      // the stake PATCH must be skipped entirely, avoiding a redundant
+      // write.
+      setWallet({ address: '0xGoLive3', stake_per_trade: 5, live_stake_per_trade: 2, live_stake_is_override: true, live_enabled: false, status: 'active' });
+      window.prompt = () => '2';
+      callOrder.length = 0;
+      await followedGoLive('0xGoLive3', makeBtn());
+      assert.deepStrictEqual(callOrder, ['live'], 'the stake PATCH must be skipped when nothing actually changed');
+
+      // h) A failing stake PATCH stops the whole flow -- the enable POST is
+      //    never called, and the error is attributed to the stake step.
+      setWallet({ address: '0xGoLive4', stake_per_trade: 5, live_stake_per_trade: 5, live_stake_is_override: false, live_enabled: false, status: 'active' });
+      window.prompt = () => '3';
+      callOrder.length = 0;
+      global.fetch = async (url) => {
+        if (String(url).endsWith('/live-stake')) { callOrder.push('live-stake'); return jsonResp({ success: false, message: 'stake rejected' }); }
+        callOrder.push('live'); return jsonResp({ success: true, message: 'ok' });
+      };
+      await followedGoLive('0xGoLive4', makeBtn());
+      assert.deepStrictEqual(callOrder, ['live-stake'], 'a failing stake PATCH must stop the flow before the enable POST is called');
+      assert.ok(errBanner.textContent.includes('Could not set a live stake'), 'the error must be attributed to the stake step, not the enable step');
+
+      // i) Stake PATCH succeeds but the enable POST fails -- attributed to
+      //    the enable step instead, per the spec's per-step error copy.
+      setWallet({ address: '0xGoLive5', stake_per_trade: 5, live_stake_per_trade: 5, live_stake_is_override: false, live_enabled: false, status: 'active' });
+      window.prompt = () => '3';
+      callOrder.length = 0;
+      global.fetch = async (url) => {
+        if (String(url).endsWith('/live-stake')) { callOrder.push('live-stake'); return jsonResp({ success: true, message: 'ok' }); }
+        callOrder.push('live'); return jsonResp({ success: false, message: 'wallet is paused' });
+      };
+      await followedGoLive('0xGoLive5', makeBtn());
+      assert.deepStrictEqual(callOrder, ['live-stake', 'live']);
+      assert.ok(errBanner.textContent.includes('Could not enable live trading'), 'a failing enable POST must be attributed to the enable step, not the stake step');
+
+      // ------------------------------------------------------------------
+      // 11. followedRevertToPaper: no confirmation dialog, optimistic flip
+      //     to PAPER, rollback to the exact prior badge HTML on failure --
+      //     disabling is the risk-reducing direction, so (unlike
+      //     followedGoLive above) it follows the same optimistic
+      //     convention as Pause/Resume (issue #1254).
+      // ------------------------------------------------------------------
+      let promptCalled = false, confirmCalled = false;
+      window.prompt = () => { promptCalled = true; return null; };
+      window.confirm = () => { confirmCalled = true; return true; };
+
+      setWallet({ address: '0xRevert1', stake_per_trade: 5, live_stake_per_trade: 5, live_stake_is_override: false, live_enabled: true, status: 'active' });
+      const safeIdRV = _copySafeId('0xRevert1');
+      const rvCell = document.getElementById('followed-status-cell-' + safeIdRV);
+      rvCell.innerHTML = _followedStatusBadgeHtml({ status: 'active' })
+        + _followedLiveBadgeHtml({ live_enabled: true, live_eligible: true, live_status_reason: 'eligible for live execution' });
+      const rvPrior = rvCell.innerHTML;
+      const rvMsgEl = document.getElementById('followed-live-msg-' + safeIdRV);
+
+      let resolveRevert;
+      global.fetch = () => new Promise((resolve) => { resolveRevert = resolve; });
+      const rvPending = followedRevertToPaper('0xRevert1', makeBtn());
+      assert.ok(rvCell.innerHTML.includes('PAPER'), 'revert-to-paper must optimistically flip the badge before the fetch resolves');
+      assert.ok(!rvCell.innerHTML.includes('mode-badge-live"'), 'the optimistic flip must not leave the plain LIVE class showing');
+      resolveRevert(jsonResp({ success: false, message: 'not opted in' }));
+      await rvPending;
+      assert.strictEqual(rvCell.innerHTML, rvPrior, 'revert-to-paper must roll back to the exact prior badge on failure');
+      assert.strictEqual(promptCalled, false, 'disabling live must never call window.prompt');
+      assert.strictEqual(confirmCalled, false, 'disabling live must never call window.confirm');
+
+      global.fetch = async () => jsonResp({ success: true, message: 'ok' });
+      fetchFollowedWallets = async () => {};
+      await followedRevertToPaper('0xRevert1', makeBtn());
+      assert.ok(rvMsgEl.textContent.includes('reverted to paper'), 'the per-row status region must announce the revert for screen readers');
+
+      // ------------------------------------------------------------------
+      // 12. Header pill: # opted into live is server-computed, never a
+      //     client-side count (issue #1259).
+      // ------------------------------------------------------------------
+      renderFollowedWallets({
+        wallets: [], active_count: 0, paused_count: 0, aggregate_pnl_usd: 0, n_settled_total: 0,
+        live_eligible_count: 0, paper_only_count: 0, live_aggregate_pnl_usd: 0, live_n_settled_total: 0,
+        live_trading_enabled: true, live_cap_usd: 10, live_opted_in_count: 4,
+      });
+      assert.strictEqual(document.getElementById('followed-opted-in-pill').textContent, '4 opted into live');
 
       console.log('ALL_FOLLOWED_WALLETS_JS_ASSERTIONS_PASSED');
     })().catch((err) => {
