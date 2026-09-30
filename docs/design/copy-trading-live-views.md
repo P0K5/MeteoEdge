@@ -162,48 +162,83 @@ follow-status (existing: active/paused) and live-eligibility status (new)
 are two separate axes, exactly as the issue specifies: a wallet can be
 paper-followed without being live-enabled.
 
-`[Tech constraint: there is no per-wallet `live_enabled` column in
-`copy_wallets_followed` today. `COPY_LIVE_TRADING_ENABLED` (Epic G) is a
-single global switch, and per-wallet live exposure
-(`COPY_LIVE_MAX_EXPOSURE_PER_WALLET_USD`, Epic G) is enforced at
-signal-execution time in `copy_signal_loop.py`, not stored as a queryable
-per-row flag — agreed approach, pending Tech Lead PM feasibility
-confirmation: derive the badge rather than add new schema. Two acceptable
-derivations, in order of preference — Tech Lead PM to confirm which is
-cheaply queryable for a table view:
-(a) **preferred** — LIVE when the global switch is on AND this wallet's
-current committed live exposure is below its per-wallet cap (i.e., it would
-actually be eligible to execute a live order right now);
-(b) **fallback** — LIVE when the global switch is on AND the wallet's
-paper status is `active` (coarser: doesn't reflect a temporarily
-exhausted per-wallet cap, but is honest about the global gate and requires
-no new query). This spec is written against (a) but ships as (b) if (a)
-isn't feasible without a schema/query change — either way, the badge must
-never claim LIVE for a wallet that is `paused`.]`
+`[Tech constraint — RESOLVED by #1253: the previous version of this block
+flagged that no per-wallet `live_enabled` column existed and specified two
+fallback derivations. #1253 adds `copy_wallets_followed.live_enabled`
+(default 0, no wallet becomes live as a side effect) and wires it into
+`_derive_live_eligibility` — already shipped in `src/dashboard/api.py` per
+derivation (a) below, now gated on the new flag as well. Kept here for
+history; do not re-derive from (b) — the real column exists now.]`
 
-- **Badge:** `.mode-badge-live`/`.mode-badge-paper`, text **LIVE** / **PAPER**,
-  placed next to the existing paper active/paused status in the row (not
-  replacing it — a wallet can be simultaneously "Active" (paper) and
-  "PAPER" (live-badge), or "Active" (paper) and "LIVE" (live-badge); a
-  paused wallet is always "PAPER" regardless of the global switch, since a
-  paused wallet executes nothing in either mode).
+`_derive_live_eligibility` (`src/dashboard/api.py`) returns
+`(is_live, reason)` checked in this deterministic order — the same order
+this spec's copy below assumes: `paused` → not `live_enabled` → live config
+unreadable → global switch off → per-wallet exposure cap reached → eligible.
+A `paused` wallet is always PAPER regardless of every other flag, including
+`live_enabled` — pausing does **not** clear the opt-in (see "Pausing an
+opted-in wallet" below).
+
+- **Badge — four label states, two visual treatments** (issue #1258 extends
+  this from the original LIVE/PAPER pair now that opt-in is a real,
+  operator-set flag rather than a pure derivation):
+  - **`LIVE`** — `.mode-badge-live` (green) — `live_enabled` **and**
+    `live_eligible` are both true (every gate passes right now).
+  - **`LIVE (switch off)`** — a new variant, same badge shape, muted green
+    (see Design tokens below) — `live_enabled` is true but
+    `live_status_reason === "live trading is currently off"`. Reads as "this
+    wallet is opted in and will go live the moment the global switch flips
+    on," distinct from a wallet that was never opted in at all.
+  - **`LIVE (cap reached)`** — same muted-green variant as above, additive
+    state beyond the issue's three named states, needed because
+    `_derive_live_eligibility` already returns a fourth real reason
+    (`"this wallet's live exposure limit is currently reached"`) once
+    `live_enabled` exists as a true operator toggle — an opted-in wallet
+    temporarily throttled by its own cap must not collapse to plain `PAPER`,
+    which would look identical to a wallet the operator never opted in. Do
+    not invent further reason-specific labels beyond these two muted-green
+    variants — see the fallback rule immediately below.
+  - **`PAPER`** — `.mode-badge-paper` (amber) — every other case:
+    `live_enabled` is false, **or** the wallet is `paused` (paused always
+    wins and shows plain `PAPER`, never a `LIVE (...)` variant, even if
+    `live_enabled` is true underneath — same rule as before), **or** the
+    live-status derivation itself couldn't be computed (conservative
+    fallback, unchanged from the existing rule below).
+  - Label text is driven directly off `live_status_reason` on the muted-green
+    branch — never a hand-maintained copy of the backend's reason strings —
+    so a future new reason string safely falls through to `PAPER` (the
+    conservative direction) instead of silently mis-rendering.
+  - Placed next to the existing paper active/paused status in the row (not
+    replacing it — e.g. "Active" (paper) + "LIVE" (live-badge), or "Active"
+    (paper) + "PAPER" (live-badge)).
 - **aria-label** spells out the reason, not just the state, e.g. `"Live
-  status: paper only — live trading is currently off"` or `"Live status:
-  paper only — this wallet's live exposure limit is currently reached"` or
-  `"Live status: live — eligible for live execution"`. Never rely on the
-  badge color alone (same accessibility rule as the Epic F instability
-  badge).
+  status: paper only — live trading is currently off"`, `"Live status: live,
+  opted in but the global switch is off"`, `"Live status: live, opted in but
+  this wallet's live exposure limit is currently reached"`, or `"Live
+  status: live — eligible for live execution"`. Never rely on the badge
+  color alone (same accessibility rule as the Epic F instability badge).
 - **Table-level banner vs. per-row noise:** when the global switch is off,
   every row would otherwise show an identical PAPER badge with an identical
   tooltip — noisy. Add one banner above the table: **"Live trading is
   currently off — all wallets are paper-only."** The per-row badges stay
   present regardless (a screenshot of a single row must still be
   unambiguous on its own — never rely on surrounding page context for a
-  safety-relevant signal).
+  safety-relevant signal). This banner text is unaffected by the new
+  `LIVE (switch off)` badge state below it — the banner describes current
+  execution ("nothing is trading live right now"), the badge describes
+  standing opt-in intent; the two are complementary, not contradictory, and
+  both are always literally true at once when the switch is off.
 - **Summary strip:** extend the existing "# active / # paused / aggregate
-  P&L" strip with **# live-eligible** / **# paper-only**, and split
-  "aggregate P&L" the same way as Positions & P&L (paper aggregate / live
-  aggregate, never combined).
+  P&L" strip with **# opted into live** / **# live-eligible** /
+  **# paper-only**, in that order (opted-in is the coarser, operator-set
+  count; live-eligible is the narrower, currently-executing subset of it),
+  and split "aggregate P&L" the same way as Positions & P&L (paper aggregate
+  / live aggregate, never combined). The **# opted into live** pill needs no
+  new API field — it's a client-side count of `data.wallets.filter(w =>
+  w.live_enabled).length`, since every wallet row already carries the flag;
+  flagging only because every other pill on this strip is server-computed,
+  so confirm with Tech Lead PM this asymmetry (one client-computed count
+  among server-computed ones) is acceptable rather than adding
+  `live_enabled_count` to `CopyFollowedWalletsOut` for consistency.
 
 ### States
 
@@ -213,6 +248,154 @@ one addition: the live badge and table-level banner degrade to "PAPER" /
 API error fetching live config) — never guess LIVE when the source of truth
 is unavailable, same conservative-default rule as the `execution_mode`
 precedent.
+
+### Per-wallet live opt-in control (issue #1258)
+
+This turns the badge above from a pure derived indicator into the visible
+result of an operator action: opt a paper-proven wallet into real-money
+execution while every other followed wallet keeps paper-trading the study,
+per #1253's independent `live_enabled` flag (AND-ed with the global
+`COPY_LIVE_TRADING_ENABLED` switch and every existing live gate — see the
+deterministic order above). This is a real-money action living one click
+away from Pause / Edit stake / Unfollow, so placement, states, and copy all
+carry the safety burden the issue calls out.
+
+**Placement.** A new control joins the row's action group, in this order:
+**Pause/Resume → Edit stake → Go live / Revert to paper → Unfollow.**
+Rationale: Pause/Resume and Edit stake are frequent, low-consequence,
+reversible-in-place actions and stay first, together, as today. Go live and
+Unfollow are the row's two consequential actions — one adds real-money risk,
+the other removes the wallet — and are grouped last, in that order, so an
+operator reaching for the frequent controls doesn't land next to either by
+accident. No new divider or layout primitive is introduced between them;
+color alone already separates them (see Design tokens) and a divider would
+be a new primitive this spec doesn't need.
+
+- **Mobile width:** `.followed-actions-cell` already wraps via
+  `flex-wrap:wrap;gap:6px` with no dedicated breakpoint for 3 buttons today;
+  the same rule extends to 4 with no new CSS — the control simply wraps to
+  its own line at narrow widths like any other action button. DOM order (and
+  therefore wrap order and screen-reader order) is unchanged from the
+  placement above at every width; no icon-only collapse is introduced (every
+  other action button in this row keeps its icon **and** text label at all
+  widths, and this control does too).
+
+**Control states.**
+
+| State | Trigger | Rendering |
+|---|---|---|
+| Opt-in available | `live_enabled=false`, `status='active'` | `.btn-followed-action.btn-followed-golive`, icon `zap`, label **"Go live"**, `aria-label="Go live for {address}"` |
+| Opted-in (offer to demote) | `live_enabled=true`, `status='active'` | `.btn-followed-action` (neutral, no color modifier — see rationale below), icon `zap-off`, label **"Revert to paper"**, `aria-label="Revert {address} to paper-only"` |
+| Disabled — paused | `status='paused'` (regardless of `live_enabled`) | Same button as whichever state above `live_enabled` implies, native `disabled` attribute (existing `.btn-followed-action:disabled{opacity:.5}` styling, no new CSS), `title="Live opt-in is unavailable while this wallet is paused — resume it first."`, and the same sentence duplicated into `aria-label` (tooltips are not reliably exposed to screen readers, so the reason must live in the accessible name too, not just `title`) |
+| In-flight / pending | Request in progress | Existing `.loading` + spinner + `aria-busy="true"` convention (`_followedSubmitAction`), identical to Pause/Resume/Unfollow — no new pending-state pattern needed |
+
+Button color rationale: **"Go live"** gets a green modifier
+(`.btn-followed-golive`, new — see Design tokens) because it is the
+risk-*increasing* direction, mirroring why `.btn-followed-unfollow` alone
+among the original three action buttons carries a color (red) — a
+consequential action should look different from the row's routine controls.
+**"Revert to paper"** stays visually neutral, like `Resume`, because the
+risk-*reducing* direction never needs a visual warning, only the
+risk-increasing one does.
+
+**Confirmation dialog — enabling live (verbatim).** Reuses the existing
+`window.confirm()` precedent from Unfollow (`followedUnfollowWallet`) rather
+than introducing a new modal component — same interaction pattern, same
+literal browser dialog:
+
+```js
+window.confirm(
+  `Go live for ${address}?\n\n` +
+  `Every future signal from this wallet will place REAL trades of ` +
+  `$${w.stake_per_trade.toFixed(2)} per trade, up to a live exposure cap ` +
+  `of $${liveCapUsd.toFixed(2)} for this wallet.\n\n` +
+  `Paper trading for this wallet is unaffected either way.`
+);
+```
+
+Names the wallet (full address, matching Unfollow's own precedent of using
+the untruncated address in this one dialog), its stake per trade, and the
+live per-wallet exposure cap, per the acceptance criteria — and explicitly
+states paper trading continues regardless, so the operator cannot read this
+dialog and believe they are pausing or altering the paper study by
+promoting the wallet. Cancelling makes no API call, identical to Unfollow's
+`if (!confirmed) return;` short-circuit.
+
+`[Tech constraint: `liveCapUsd` (`COPY_LIVE_MAX_EXPOSURE_PER_WALLET_USD`) is
+computed server-side today (`_derive_live_eligibility`'s `live_cap_usd`
+parameter, `src/dashboard/api.py`) but is not currently a field on
+`CopyFollowedWalletsOut` or `CopyFollowedWalletOut` — the confirmation copy
+above cannot be built client-side without it. Needs a Tech Lead PM call on
+where it's exposed (a single top-level `live_cap_usd` field on
+`CopyFollowedWalletsOut` is the natural fit, since it is one global config
+value applied uniformly, not a per-row value) — agreed approach: add it to
+#1253's response model rather than a second round-trip to `/api/config` from
+this view, to avoid a second source of truth for the same number the badge's
+`live_status_reason` already implicitly depends on.]`
+
+**Disabling live requires no confirmation.** Clicking "Revert to paper"
+fires the `POST .../live` request with `{"enabled": false}` immediately, no
+`window.confirm()` — mirroring why `Resume` (also risk-reducing) never
+prompts today, only `Pause` and `Unfollow` (risk/consequence-bearing in
+their own ways) do.
+
+**Optimistic UI — deliberately asymmetric, unlike every other action in this
+row.** Pause, Resume, and Unfollow all apply an optimistic DOM change before
+the request resolves (see `_followedSubmitAction`'s `optimisticApply`). This
+control does **not** follow that pattern symmetrically:
+
+- **Enabling:** no optimistic badge change. The button shows its normal
+  `.loading` spinner state; the badge stays exactly as it was (`PAPER`) until
+  the request succeeds and the row re-fetches. This is the one deliberate
+  exception to the shared runner's optimistic-apply convention, required by
+  the acceptance criteria's explicit rule: **the badge must never show LIVE
+  optimistically.** Showing `PAPER` a moment too long is the safe-direction
+  error (understates status); showing `LIVE` a moment too early, for a
+  request that might still fail, is the unsafe-direction error this control
+  exists specifically to prevent.
+- **Disabling:** optimistic apply *is* used, flipping the badge to `PAPER`
+  immediately, rolled back to its prior state on failure — safe direction,
+  consistent with Pause's existing optimistic badge flip.
+
+**Error-state copy.** Uses the existing shared `_followedShowBannerError`
+banner (`#copy-trading-error-banner`), matching the exact
+`"Could not {verb} {truncated address} — {detail}"` format already used by
+Pause/Resume/Unfollow/Edit stake:
+- `Could not enable live trading for {truncated address} — {detail}`
+- `Could not disable live trading for {truncated address} — {detail}`
+
+On failure the control's `rollback` restores its prior label/icon/color and
+`disabled` state exactly as `_followedSubmitAction` already does for the
+other three actions — no new rollback mechanism.
+
+**Success announcement.** A new per-row status region,
+`<p class="followed-live-msg" id="followed-live-msg-${safeId}"
+role="status" aria-live="polite"></p>`, structurally identical to the
+existing `copy-follow-msg` element used by the Follow flow (the issue's own
+cited precedent). Unlike Follow's element (which today carries error text
+only), this one also carries a success confirmation on enable/disable — a
+deliberate, small excess over the letter of "existing conventions," because
+this is the one action in the row with real-money consequences and warrants
+an explicit spoken confirmation, not just a silent badge repaint a
+screen-reader user would otherwise never hear:
+- `Live trading enabled for {truncated address}.`
+- `Live trading reverted to paper for {truncated address}.`
+
+**Pausing an opted-in wallet.** `live_enabled` is **not** cleared when a
+wallet is paused — the opt-in is an independent, operator-set axis (#1253),
+and silently clearing it on pause would quietly discard a deliberate
+decision without telling the operator, then silently re-arm live execution
+on a later Resume with no fresh confirmation. Instead: the control disables
+(see table above) and the badge falls back to plain `PAPER` (paused always
+wins, per the existing rule above) for as long as the wallet stays paused.
+On Resume, the wallet's live participation returns to exactly whatever
+`live_enabled` already was — no new confirmation on Resume, since #1253
+already required an explicit confirmed opt-in once, and Resume does not
+change that flag, only the paper `status`.
+
+**Header pill.** Covered above (Summary strip bullet in the Followed Wallets
+badge section) — **# opted into live**, positioned before **# live-eligible**
+in the strip, client-computed, no new API field required for that count.
 
 ## Activity Feed
 
@@ -286,6 +469,29 @@ Unchanged from Epic F (default/loading/empty/auto-refresh-paused) plus:
   badges or vice versa.
 - No new typography, spacing, or layout primitives beyond what Epic F
   already established.
+- **Issue #1258 addition — muted-green "opted-in but not currently live"
+  badge variant:** reuses `var(--yes-dim)` (already defined alongside
+  `--yes`/`--yes-bg` in the existing palette, used today for `.btn-toggle
+  .enable:hover` and `.btn-emos.btn-promote`) as the background, paired with
+  `var(--yes)` text — no new color token. New class, structurally identical
+  to `.mode-badge-live`/`.mode-badge-paper`:
+  ```css
+  .mode-badge-live-pending{background:var(--yes-dim);color:var(--yes);}
+  ```
+  Used for both the `LIVE (switch off)` and `LIVE (cap reached)` label
+  states — one visual treatment, two possible texts, per the "two visual
+  treatments" rule above.
+- **Issue #1258 addition — Go-live button color:** reuses `var(--yes-bg)` /
+  `var(--yes)` / `var(--yes-dim)` exactly as `.btn-followed-unfollow`
+  already reuses `var(--no-bg)`/`var(--no)`/`var(--no-dim)` for the row's
+  other consequential action — no new color token, same structural pattern,
+  opposite polarity:
+  ```css
+  .btn-followed-golive{border-color:var(--yes-dim);background:var(--yes-bg);color:var(--yes);}
+  .btn-followed-golive:hover:not(:disabled){background:var(--yes-dim);}
+  ```
+  "Revert to paper" uses the existing plain `.btn-followed-action` with no
+  color modifier (same as `Resume`) — no new class needed for it.
 
 ## Accessibility notes
 
@@ -306,12 +512,11 @@ Unchanged from Epic F (default/loading/empty/auto-refresh-paused) plus:
 
 ## Open questions
 
-1. **Per-wallet live-eligibility derivation** (Followed Wallets) — needs
-   Tech Lead PM feasibility confirmation on whether the "currently within
-   its per-wallet live exposure cap" check (preferred) is cheaply queryable
-   per row for a table view, or whether the coarser "global switch +
-   active" fallback ships instead. See the `[Tech constraint ...]` block
-   above.
+1. ~~**Per-wallet live-eligibility derivation** (Followed Wallets)~~ —
+   **RESOLVED.** #1253 ships the real `live_enabled` column and the
+   preferred (a) derivation is already live in `_derive_live_eligibility`,
+   now additionally gated on the new flag. See the `[Tech constraint —
+   RESOLVED by #1253 ...]` block above.
 2. **Reconciliation/balance-drift surface** (Positions & P&L, Activity
    Feed) — Epic I's `check_wallet_balance_drift` exists in
    `copy_live_settle.py`, but is its result exposed anywhere the dashboard
@@ -330,3 +535,19 @@ Unchanged from Epic F (default/loading/empty/auto-refresh-paused) plus:
    aggregate even while currently off, with the off-banner layered on top
    to make clear no *new* live activity is occurring — needs confirmation
    this reads unambiguously in practice, not just on paper.
+5. **`live_cap_usd` exposure on the followed-wallets response** (new, issue
+   #1258) — the enable-live confirmation dialog's verbatim copy requires the
+   per-wallet live exposure cap client-side, and it's computed server-side
+   today (`_derive_live_eligibility`'s `live_cap_usd` parameter) but not
+   returned on `CopyFollowedWalletsOut`/`CopyFollowedWalletOut`. Needs a Tech
+   Lead PM call on adding it as a single top-level field on the followed-
+   wallets response (this spec's assumption) before #1254 can implement the
+   dialog. See the `[Tech constraint ...]` block under "Per-wallet live
+   opt-in control" above.
+6. **`# opted into live` pill as the one client-computed count on the
+   summary strip** (new, issue #1258) — every other pill in this strip
+   (`active`, `paused`, `live-eligible`, `paper-only`, both P&L figures) is
+   server-computed; this spec defaults to computing this one client-side
+   from the existing per-row `live_enabled` field to avoid an API change,
+   but flags the inconsistency for a Tech Lead PM call — the fallback is a
+   `live_enabled_count` field on `CopyFollowedWalletsOut` for uniformity.
