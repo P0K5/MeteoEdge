@@ -1,12 +1,8 @@
 """Tests for src/execution/auth.py::get_clob_client (issue #1292).
 
-Regression coverage for the CLOB signature_type bug: live order
-placement failed 100% of the time (13/13) because signature_type was
-hardcoded to SignatureTypeV2.POLY_1271 instead of POLY_GNOSIS_SAFE --
-the correct type for a MetaMask-connected (Gnosis Safe proxy) account,
-verified live on the production server by confirming the deposit
-wallet and the signer EOA independently matched the account. This
-test exists so that value can never silently regress again.
+Pins signature_type to POLY_1271 (3). Verified live on 2026-10-04: under this
+type, with this key and deposit wallet, an order was accepted and cancelled, and
+the funded balance ($20.78) was readable. Changing it breaks both.
 """
 from unittest.mock import MagicMock, patch
 
@@ -23,7 +19,7 @@ _ENV = {
 }
 
 
-def test_get_clob_client_uses_gnosis_safe_signature_type(monkeypatch):
+def test_get_clob_client_uses_poly_1271_signature_type(monkeypatch):
     for key, value in _ENV.items():
         monkeypatch.setenv(key, value)
 
@@ -33,5 +29,5 @@ def test_get_clob_client_uses_gnosis_safe_signature_type(monkeypatch):
 
     assert mock_clob_client.call_count == 1
     _, kwargs = mock_clob_client.call_args
-    assert kwargs["signature_type"] == int(SignatureTypeV2.POLY_GNOSIS_SAFE)
+    assert kwargs["signature_type"] == int(SignatureTypeV2.POLY_1271)
     assert kwargs["funder"] == _ENV["POLYMARKET_DEPOSIT_WALLET"]
