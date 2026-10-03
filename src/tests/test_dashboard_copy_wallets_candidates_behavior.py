@@ -856,3 +856,71 @@ def test_jump_to_an_unknown_wallet_does_not_loop(tmp_path):
         assert.strictEqual(candReqs().length, 2, 'one search, no retry loop');
         assert.ok(list.innerHTML.includes('No wallets match'));
     """, tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# Designer blockers (PR #1285): no-match outside the scroller; inert while loading
+# ---------------------------------------------------------------------------
+
+def test_no_match_message_is_a_block_outside_the_scrolling_table_wrapper(tmp_path):
+    """A centred cell inside .copy-table-wrap lands off-screen at 375 px: the
+    message + Clear search must be rendered with NO table / scroll wrapper."""
+    run_js("""
+        await openWallets();
+        await type('zzzz'); await advance(250);
+        const html = list.innerHTML;
+        assert.ok(html.includes('No wallets match'), 'message rendered');
+        assert.ok(html.includes('data-clear-search'), 'Clear search rendered');
+        assert.ok(!html.includes('<table'), 'table hidden when there are zero rows');
+        assert.ok(!html.includes('copy-table-wrap'), 'not inside the horizontal scroller');
+        assert.ok(!html.includes('colspan'), 'no centred colspan cell');
+        assert.ok(html.includes('role="status"'));
+        // Clearing the search brings the table back.
+        listClick(target({ '[data-clear-search]': {} })); await settle();
+        assert.ok(list.innerHTML.includes('<table'));
+        assert.strictEqual(rowsOnScreen(), 25);
+    """, tmp_path)
+
+
+def test_stale_rows_are_inert_and_not_actionable_while_a_request_is_in_flight(tmp_path):
+    run_js("""
+        await openWallets();
+        const addr = addrsOnScreen()[0];
+        srv.hold = true;
+        await goNext();
+        assert.strictEqual(list._attrs.inert, '', 'list is inert while loading');
+        const n = candReqs().length;
+        await expand(addr);                              // click on a stale row
+        assert.strictEqual(_copyExpanded.size, 0, 'a stale row cannot be expanded mid-load');
+        list.fire('keydown', { key: 'Enter', target: rowTarget(addr), preventDefault() {} });
+        assert.strictEqual(_copyExpanded.size, 0, 'nor via the keyboard');
+        await sortBy('win_rate');
+        assert.strictEqual(candReqs().length, n, 'nor re-sorted through a stale header');
+        srv.hold = false; await releaseAll();
+        assert.ok(!('inert' in list._attrs), 'interactive again once the page landed');
+        const fresh = addrsOnScreen()[0];
+        await expand(fresh);
+        assert.ok(_copyExpanded.has(fresh));
+    """, tmp_path)
+
+
+def test_focus_never_drops_to_body_when_the_list_goes_inert_or_a_pager_button_disables(tmp_path):
+    run_js("""
+        await openWallets();
+        // Focus inside the list is parked on the list during the load, then
+        // returned to the same sort button.
+        el('copy-sort-win_rate').focus();
+        srv.hold = true;
+        await goNext();
+        assert.strictEqual(document.activeElement, list, 'focus parked on the list, not <body>');
+        srv.hold = false; await releaseAll();
+        assert.strictEqual(document.activeElement.id, 'copy-sort-win_rate', 'restored to the same header button');
+
+        // Pager: pressing Next onto the last page disables Next -> focus moves to Prev.
+        for (let i = 0; i < 2; i++) await goNext();      // now on page 4 of 5
+        el('copy-pg-next').focus();
+        await goNext();
+        assert.strictEqual(pgInfo(), 'Page 5 of 5');
+        assert.strictEqual(el('copy-pg-next').disabled, true);
+        assert.strictEqual(document.activeElement, el('copy-pg-prev'));
+    """, tmp_path)

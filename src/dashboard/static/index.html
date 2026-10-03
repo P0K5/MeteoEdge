@@ -848,7 +848,6 @@ a,button,input,select{transition:color var(--transition),background var(--transi
 /* A page/sort/search change keeps the prior rows on screen, dimmed, until the
    new page lands -- same box, so nothing jumps. */
 #copy-candidates-list.copy-list-loading .copy-table-wrap{opacity:.5;pointer-events:none;transition:opacity .15s;}
-.copy-empty-row{text-align:center;padding:var(--space-6) var(--space-3);color:var(--muted);font-size:var(--text-sm);white-space:normal;}
 @media(max-width:800px){
   .copy-search-wrap{width:100%;}
   .copy-search-input{width:100%;}
@@ -4718,6 +4717,7 @@ function _copyBindToolbarEvents() {
 // bound once to the (never-replaced) #copy-candidates-list container, so
 // it keeps working across every innerHTML re-render without rebinding.
 function _copyOnListClick(event) {
+  if (_copyIsListLoading()) return;   // stale rows are not actionable mid-load
   const copyBtn = event.target.closest('.copy-copy-btn');
   if (copyBtn) {
     event.stopPropagation();
@@ -4757,6 +4757,7 @@ function _copyOnListClick(event) {
 }
 
 function _copyOnListKeydown(event) {
+  if (_copyIsListLoading()) return;
   if (event.key !== 'Enter' && event.key !== ' ') return;
   const row = event.target.closest('.copy-row-expandable');
   if (!row) return;
@@ -4906,11 +4907,20 @@ function _copyRenderPaging(pg) {
       showing.textContent = `Showing ${_copyFmtInt(from)}–${_copyFmtInt(to)} of ${_copyFmtInt(pg.total)}${filtered}`;
     }
   }
+  const ae = document.activeElement;
   if (footer) footer.hidden = !(pg.totalPages > 1);
   if (pg.totalPages > 1) {
     if (info) info.textContent = `Page ${pg.page} of ${pg.totalPages}`;
     if (prev) prev.disabled = pg.page <= 1;
     if (next) next.disabled = pg.page >= pg.totalPages;
+  }
+  // A focused pager button that just became disabled (or hidden) must not
+  // drop keyboard focus to <body>: hand it to the other button, else the list.
+  if (ae && (ae === prev || ae === next)) {
+    const other = ae === prev ? next : prev;
+    if (ae.disabled || (footer && footer.hidden)) {
+      if (other && !other.disabled && !(footer && footer.hidden)) other.focus(); else _copyFocusList();
+    }
   }
 }
 
@@ -4922,7 +4932,7 @@ function _copySnapshotUiState() {
     const input = document.getElementById('copy-stake-' + _copySafeId(address));
     if (!input) return;
     st.value = input.value;
-    st.focused = input === ae;
+    if (input === ae) st.focused = true;   // cleared once restored
   });
   return ae && ae.id && /^copy-(sort|row)-/.test(ae.id) ? ae.id : null;
 }
@@ -4946,13 +4956,20 @@ function renderCopyCandidates(data) {
     return;
   }
 
-  const refocusId = _copySnapshotUiState();
+  const refocusId = _copySnapshotUiState() || _copyLoadFocusId;
+  _copyLoadFocusId = null;
   const range = pg.rows.length
     ? `, rows ${_copyFmtInt((pg.page - 1) * pg.pageSize + 1)} to ${_copyFmtInt((pg.page - 1) * pg.pageSize + pg.rows.length)} of ${_copyFmtInt(pg.total)}`
     : '';
-  const body = pg.rows.length
-    ? pg.rows.map(_copyRowHtml).join('')
-    : `<tr><td class="copy-td copy-empty-row" colspan="11">No wallets match “${_copyEscapeHtml(_copyQuery)}” <button type="button" class="copy-empty-link" data-clear-search="1">Clear search</button></td></tr>`;
+  if (!pg.rows.length) {
+    // No match: a block BELOW the toolbar, outside the horizontally scrolling
+    // table wrapper (a centred cell inside it lands off-screen on mobile).
+    wrap.innerHTML = `<div class="empty copy-no-match" role="status"><i data-lucide="search-x"></i><h3>No wallets match “${_copyEscapeHtml(_copyQuery)}”</h3><p><button type="button" class="copy-empty-link" data-clear-search="1">Clear search</button></p></div>`;
+    lucide.createIcons();
+    if (refocusId) _copyFocusList();
+    return;
+  }
+  const body = pg.rows.map(_copyRowHtml).join('');
   wrap.innerHTML = `
     <div class="copy-table-wrap">
     <table class="copy-table" aria-label="Screened wallet candidates${range}">
@@ -5302,11 +5319,35 @@ function _copyCandidatesUrl(st) {
   return '/api/copy-trading/candidates?' + p.toString();
 }
 
+let _copyLoadFocusId = null;   // sort button / row that had focus when loading began
+
+function _copyFocusList() {
+  const list = document.getElementById('copy-candidates-list');
+  if (!list) return;
+  list.setAttribute('tabindex', '-1');
+  list.focus();
+}
+
+function _copyIsListLoading() {
+  const list = document.getElementById('copy-candidates-list');
+  return !!(list && list.classList.contains('copy-list-loading'));
+}
+
+// While a page/sort/search request is out the dimmed prior rows are inert:
+// no click, Enter/Space, Tab stop or Follow on a stale row. Focus that was
+// inside the list moves to the list container (never to <body>) and is
+// restored to the same sort button / row once the new page renders.
 function _copySetListLoading(on) {
   const list = document.getElementById('copy-candidates-list');
   if (list) {
+    if (on && !_copyIsListLoading()) {
+      _copyLoadFocusId = _copySnapshotUiState();
+      const ae = document.activeElement;
+      if (_copyLoadFocusId || (ae && ae.id && /^copy-stake-/.test(ae.id))) _copyFocusList();
+    }
     list.classList.toggle('copy-list-loading', !!on);
     list.setAttribute('aria-busy', on ? 'true' : 'false');
+    if (on) list.setAttribute('inert', ''); else list.removeAttribute('inert');
   }
   const btn = document.getElementById('copy-refresh-btn');
   if (btn) btn.disabled = !!on;
