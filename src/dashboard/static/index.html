@@ -6952,7 +6952,7 @@ function _copyPaperChartPoints(history) {
 // tab leave (an unchanged payload is skipped by the fetch gate).
 function _copyPaperRenderChartFromData() {
   const data = _copyPositionsData;
-  if (!data || !data.realized_pnl_history.length) return;
+  if (!data || !(data.realized_pnl_history || []).length) return;
   _renderCopyPositionsChart(_copyPaperChartPoints(data.realized_pnl_history));
 }
 
