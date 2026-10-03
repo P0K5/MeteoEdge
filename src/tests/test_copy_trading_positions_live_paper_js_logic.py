@@ -158,7 +158,9 @@ _ASSERTIONS = textwrap.dedent("""
       renderCopyLivePositions(data, false);
       wrap = document.getElementById('copy-positions-live-content');
       assert.ok(wrap.innerHTML.includes('warn-banner'), 'off-with-history must layer a warning banner on top');
-      assert.ok(wrap.innerHTML.includes('0xabc') || wrap.innerHTML.includes('abc'), 'off-with-history must still show the real per-wallet data');
+      const pnlWrap = document.getElementById('copy-live-pnl-content');
+      assert.ok(pnlWrap.innerHTML.includes('0xabc'), 'off-with-history must still show the real per-wallet data (Live P&L section)');
+      assert.ok(document.getElementById('copy-live-closed-list').innerHTML.includes('M1'), 'off-with-history must still show the real closed trades');
       assert.ok(!wrap.innerHTML.includes('No live positions yet.'), 'off-with-history must not read as the on-but-empty state');
       assert.ok(!wrap.innerHTML.includes('<h3>Live trading is off</h3>'), 'off-with-history must not use the numberless off-state');
 
@@ -185,15 +187,16 @@ _ASSERTIONS = textwrap.dedent("""
       assert.ok(!wrap.innerHTML.includes('nullcent'), 'must not stringify a null fill_price');
 
       // ------------------------------------------------------------------
-      // 7. The Live aggregate P&L pill is independently labeled -- never
-      //    an unqualified "aggregate P&L".
+      // 7. The live P&L is a KPI card labelled "Live P&L" -- never an
+      //    unqualified "aggregate P&L" (issue #1278 replaced the old pill).
       // ------------------------------------------------------------------
+      renderCopyTradingModePosture(true);   // the KPI row waits for the first posture result
       data = emptyPositionsPayload();
       data.live_total = { n_settled: 3, realized_pnl_usd: 42.5 };
       renderCopyLivePositions(data, true);
-      const pill = document.getElementById('copy-positions-live-total-pill');
-      assert.ok(pill.textContent.includes('Live aggregate P&L'), `expected explicit Live label, got: ${pill.textContent}`);
-      assert.ok(pill.textContent.includes('42.5') || pill.textContent.includes('42.50'));
+      const kpis = document.getElementById('copy-live-kpis').innerHTML;
+      assert.ok(kpis.includes('Live P&amp;L') && kpis.includes('+$42.50'), `expected the Live P&L card, got: ${kpis}`);
+      assert.ok(!/aggregate/i.test(kpis));
 
       // ------------------------------------------------------------------
       // 8. A live-side query failure (live_error) shows the live column's
