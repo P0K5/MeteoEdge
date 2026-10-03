@@ -386,7 +386,7 @@ def test_failed_live_fetch_never_falls_back_to_paper_or_zero(tmp_path):
         await fetchCopyTradingModePosture();
         // A paper render exists on the Paper tab (sentinels in its containers).
         renderCopyPositions(POS());
-        assert.ok(el('copy-positions-content').innerHTML.includes('PAPER-OPEN-MKT'));
+        assert.ok(el('copy-positions-open-slot').innerHTML.includes('PAPER-OPEN-MKT'));
 
         // First live load fails outright.
         routes['/api/copy-trading/positions'] = () => new Error('network down');

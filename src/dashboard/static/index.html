@@ -1016,6 +1016,39 @@ a,button,input,select{transition:color var(--transition),background var(--transi
 .copy-pnl-pos{color:var(--yes);}
 .copy-pnl-neg{color:var(--no);}
 
+/* ── COPY · PAPER TAB (issue #1277) ── */
+.copy-paper-live-note{font-size:var(--text-xs);color:var(--muted);margin:0 0 var(--space-3);}
+/* Paper KPI cards: amber top rule (the paper colour, --warn) so a card is
+   never mistaken for a live/Portfolio figure. */
+.wallet-card--paper{border-top:3px solid var(--warn);}
+/* Skeleton sized to the value line so the card does not change height when
+   the number arrives. */
+.wc-skeleton{display:block;width:6em;height:1.1em;}
+.copy-closed-hdr{margin-top:var(--space-6);}
+/* Roster row stays highlighted briefly after "Go live →" jumps to it. */
+@keyframes copy-row-flash{0%,60%{background:var(--warn-bg);box-shadow:inset 3px 0 0 var(--warn);}100%{background:transparent;box-shadow:none;}}
+.copy-row-highlight{animation:copy-row-flash 2.4s ease-out 1;}
+/* Narrow screens: the paper roster stacks each wallet into a wrapping block so
+   the Actions (Pause / Edit stake / Unfollow) are reachable without
+   horizontal scrolling. */
+/* Grid items default to min-width:auto, so a wide nowrap table would stretch
+   the page instead of scrolling inside its .copy-table-wrap. */
+#copy-positions-content .copy-positions-tables-grid > div{min-width:0;}
+/* Title row (heading + PAPER badge + posture banner) wraps instead of pushing
+   the page wider than the viewport. */
+#tab-copy-paper .main > .section-hdr{flex-wrap:wrap;row-gap:var(--space-2);}
+@media(max-width:600px){
+  /* Two-line sub text on the cards wraps at 2-up widths: reserve both lines so
+     the skeleton -> value swap does not change the card height. */
+  .wallet-card--paper .wc-sub{min-height:3em;}
+  .copy-table--roster,.copy-table--roster tbody{display:block;width:100%;}
+  .copy-table--roster thead{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);}
+  .copy-table--roster tr{display:flex;flex-wrap:wrap;gap:var(--space-2) var(--space-4);padding:var(--space-3) 0;border-bottom:1px solid var(--divider);}
+  .copy-table--roster td{border-bottom:none;padding:0 var(--space-3);white-space:normal;}
+  .copy-table--roster td[data-label]::before{content:attr(data-label);display:block;flex:0 0 100%;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;}
+  .copy-table--roster .copy-address-cell,.copy-table--roster .followed-actions-cell{flex:1 0 100%;}
+}
+
 /* ── COPY-TRADING POSITIONS & P&L -- LIVE/PAPER (issue #1186, Epic J;
    twin-panel layout retired by the tab split, issue #1275). Live and Paper
    now each own a whole tab (Copy · Live / Copy · Paper), so the tab itself is
@@ -1498,7 +1531,32 @@ a,button,input,select{transition:color var(--transition),background var(--transi
             role="status" aria-live="polite"
             aria-label="Live trading is off — paper only">LIVE TRADING OFF — paper only</span>
     </div>
+    <!-- Muted cross-link, shown only while live trading is ON (design spec:
+         "Live positions are on the Live tab"). No number; space is always
+         reserved (visibility, not display) so toggling never shifts layout. -->
+    <p class="copy-paper-live-note" id="copy-paper-live-note" style="visibility:hidden">Live positions are on the Live tab.</p>
     <div id="copy-paper-content">
+      <!-- ── PAPER KPI CARDS (issue #1277): computed from the shared
+           /followed-wallets + /positions payloads, paper keys only. Every
+           label carries the word "paper"; there is no live or combined card. -->
+      <div class="wallet-row copy-paper-kpis" id="copy-paper-kpis" role="group" aria-label="Paper trading summary">
+        <div class="wallet-card wallet-card--paper">
+          <div class="wc-label">Paper aggregate P&amp;L</div>
+          <div class="wc-value" id="paper-kpi-pnl" aria-busy="true"><span class="skeleton wc-skeleton"></span></div>
+          <div class="wc-sub" id="paper-kpi-pnl-sub">Paper · realized</div>
+        </div>
+        <div class="wallet-card wallet-card--paper">
+          <div class="wc-label">Open paper positions</div>
+          <div class="wc-value" id="paper-kpi-open" aria-busy="true"><span class="skeleton wc-skeleton"></span></div>
+          <div class="wc-sub" id="paper-kpi-open-sub">Paper cost basis</div>
+        </div>
+        <div class="wallet-card wallet-card--paper">
+          <div class="wc-label">Paper wallets followed</div>
+          <div class="wc-value" id="paper-kpi-followed" aria-busy="true"><span class="skeleton wc-skeleton"></span></div>
+          <div class="wc-sub" id="paper-kpi-followed-sub">Active · paused</div>
+        </div>
+      </div>
+
       <!-- ── FOLLOWED WALLETS: PAPER ROSTER (story F2, issue #1147) ── -->
       <div class="section-hdr copy-followed-hdr">
         <div class="section-title"><i data-lucide="users"></i>Followed Wallets
@@ -1564,6 +1622,34 @@ a,button,input,select{transition:color var(--transition),background var(--transi
         </div>
       </div>
 
+      <!-- ── RECENT CLOSED: PAPER (issue #1277) ── Modelled on the Portfolio
+           tab's Recent Closed list: newest first, 15 per page, Prev/Next.
+           Rows come from /positions realized_pnl_history (oldest-first in the
+           payload), paged client-side. -->
+      <div class="section-hdr copy-closed-hdr">
+        <div class="section-title"><i data-lucide="history"></i>Recent Closed
+          <span class="mode-badge mode-badge-paper" aria-label="Paper closed trades">PAPER</span>
+        </div>
+        <div class="copy-summary-strip">
+          <span class="copy-slots-pill" id="copy-paper-closed-count">— closed</span>
+        </div>
+      </div>
+      <div id="copy-paper-closed-list" aria-busy="true">
+        <div class="copy-table-wrap">
+        <table class="copy-table" aria-label="Recent closed paper trades (loading)">
+          <tbody>
+            <tr class="copy-table-skeleton"><td colspan="5"><span class="skeleton" style="height:1.4em;display:block;"></span></td></tr>
+            <tr class="copy-table-skeleton"><td colspan="5"><span class="skeleton" style="height:1.4em;display:block;"></span></td></tr>
+          </tbody>
+        </table>
+        </div>
+      </div>
+      <div class="pagination" id="copy-paper-closed-pagination" style="display:none">
+        <button type="button" class="pg-btn" id="copy-paper-closed-prev" onclick="copyPaperClosedChangePage(-1)">&#8592; Prev</button>
+        <span class="pg-info" id="copy-paper-closed-info" aria-live="polite"></span>
+        <button type="button" class="pg-btn" id="copy-paper-closed-next" onclick="copyPaperClosedChangePage(1)">Next &#8594;</button>
+      </div>
+
       <!-- ── ACTIVITY FEED: PAPER (story F4, issue #1149) ── -->
       <div class="section-hdr copy-activity-hdr">
         <div class="section-title"><i data-lucide="activity"></i>Activity Feed
@@ -1593,6 +1679,13 @@ a,button,input,select{transition:color var(--transition),background var(--transi
           <h3>Loading activity…</h3>
           <p>Fetching the paper copy-trading activity feed.</p>
         </div>
+      </div>
+      <!-- 25 events per page (issue #1277); the server returns the whole merged
+           list newest-first and the page is sliced client-side. -->
+      <div class="pagination" id="copy-activity-pagination" style="display:none">
+        <button type="button" class="pg-btn" id="copy-activity-prev" onclick="copyPaperActivityChangePage(-1)">&#8592; Prev</button>
+        <span class="pg-info" id="copy-activity-info" aria-live="polite"></span>
+        <button type="button" class="pg-btn" id="copy-activity-next" onclick="copyPaperActivityChangePage(1)">Next &#8594;</button>
       </div>
     </div>
   </main>
@@ -4102,6 +4195,9 @@ function switchTab(tab) {
   // issue #1275). The incoming tab starts its own below.
   if (_isCopyTab(currentTab)) {
     _copyTabStop(currentTab);
+    // Leaving Copy · Paper (to anywhere): its Chart.js instance is destroyed
+    // so a hidden tab holds no chart (issue #1277).
+    if (currentTab === 'copy-paper' && tab !== 'copy-paper') _copyPaperOnLeave();
   }
 
   currentTab = tab;
@@ -4167,6 +4263,9 @@ function switchTab(tab) {
   // activation and owns its own intervals (see COPY-TRADING TAB CONTROLLER
   // below).
   if (_isCopyTab(tab)) {
+    // Re-entering Paper: redraw the chart destroyed on leave from the cached
+    // payload (the poll below skips an unchanged payload).
+    if (tab === 'copy-paper') _copyPaperOnEnter();
     _copyTabStart(tab);
   }
 }
@@ -5379,6 +5478,9 @@ function renderCopyTradingModePosture(liveEnabled) {
       el.setAttribute('aria-label', 'Live trading is off — paper only');
     }
   });
+  // Paper tab cross-link: only while live trading is on (no number).
+  const paperLiveNote = document.getElementById('copy-paper-live-note');
+  if (paperLiveNote) paperLiveNote.style.visibility = liveEnabled ? 'visible' : 'hidden';
   // Re-render the already-fetched Live positions column (only if the Live
   // tab has loaded it) so a posture flip is reflected within this banner's
   // own 30s poll, not the Positions endpoint's cadence. Likewise the Live
@@ -5732,15 +5834,15 @@ function _followedRowHtml(w) {
   const safeId = _copySafeId(w.address);
   const addedDate = w.added_at ? new Date(w.added_at).toLocaleDateString() : '—';
   const goLiveLink = (!w.live_enabled && w.status !== 'paused')
-    ? `<button type="button" class="btn-followed-action btn-followed-goto-live" aria-label="Go to the Live tab to take ${addrEsc} live"><i data-lucide="zap"></i>Go live →</button>`
+    ? `<button type="button" class="btn-followed-action btn-followed-goto-live" data-address="${addrEsc}" aria-label="Go to the Live tab to take ${addrEsc} live"><i data-lucide="zap"></i>Go live →</button>`
     : '';
   return `
     <tr class="copy-row" data-address="${addrEsc}" id="followed-row-${safeId}">
       ${_followedAddressCellHtml(w, addrEsc)}
-      <td class="copy-td followed-stake-cell" id="followed-stake-cell-${safeId}">${_followedPaperStakeHtml(w)}</td>
-      <td class="copy-td followed-status-cell" id="followed-status-cell-${safeId}">${_followedStatusBadgeHtml(w)}${_followedLiveBadgeHtml(w)}</td>
-      <td class="copy-td">${addedDate}</td>
-      <td class="copy-td">${_followedFmtUsd(w.realized_pnl_usd)}</td>
+      <td class="copy-td followed-stake-cell" data-label="Paper stake/trade" id="followed-stake-cell-${safeId}">${_followedPaperStakeHtml(w)}</td>
+      <td class="copy-td followed-status-cell" data-label="Status" id="followed-status-cell-${safeId}">${_followedStatusBadgeHtml(w)}${_followedLiveBadgeHtml(w)}</td>
+      <td class="copy-td" data-label="Date added">${addedDate}</td>
+      <td class="copy-td" data-label="Paper running P&amp;L">${_followedFmtUsd(w.realized_pnl_usd)}</td>
       <td class="copy-td followed-actions-cell">
         ${_followedPauseResumeBtnHtml(w, addrEsc)}
         <button type="button" class="btn-followed-action btn-followed-edit-stake" data-address="${addrEsc}" aria-label="Edit paper stake per trade for ${addrEsc}">
@@ -5807,10 +5909,10 @@ function _followedReadyRowHtml(w) {
     </tr>`;
 }
 
-function _followedTableHtml(label, headers, rowsHtml) {
+function _followedTableHtml(label, headers, rowsHtml, tableCls = '') {
   return `
     <div class="copy-table-wrap">
-    <table class="copy-table" aria-label="${label}">
+    <table class="copy-table${tableCls ? ' ' + tableCls : ''}" aria-label="${label}">
       <thead>
         <tr>${headers.map(h => h.sr
           ? `<th class="copy-th" scope="col"><span class="sr-only">${h.sr}</span></th>`
@@ -5822,6 +5924,7 @@ function _followedTableHtml(label, headers, rowsHtml) {
 }
 
 function _followedRenderPaper(data) {
+  _paperKpiFromFollowed(data);
   const wrap = document.getElementById('copy-followed-list');
   const activePill = document.getElementById('followed-active-pill');
   const pausedPill = document.getElementById('followed-paused-pill');
@@ -5848,7 +5951,7 @@ function _followedRenderPaper(data) {
   wrap.innerHTML = _followedTableHtml('Followed wallets (paper)', [
     { text: 'Wallet' }, { text: 'Paper stake/trade' }, { text: 'Status' },
     { text: 'Date added' }, { text: 'Paper running P&amp;L' }, { sr: 'Actions' },
-  ], data.wallets.map(_followedRowHtml).join(''));
+  ], data.wallets.map(_followedRowHtml).join(''), 'copy-table--roster');
   lucide.createIcons();
 }
 
@@ -5901,6 +6004,7 @@ function _followedRenderLive(data) {
   }
   lucide.createIcons();
   _copyLiveRenderKpis();
+  _copyConsumePendingLiveHighlight(true);   // "Go live →" from Paper (#1277)
 }
 
 // scope: 'paper' | 'live' -- which tab's roster to render from `data`.
@@ -6411,7 +6515,7 @@ function _followedOnListClick(event) {
   // Paper roster: "Go live" is only a link to the Live tab, where every
   // real-money action lives (design spec).
   const gotoLiveBtn = event.target.closest('.btn-followed-goto-live');
-  if (gotoLiveBtn) { _copyGoToTab('copy-live'); return; }
+  if (gotoLiveBtn) { _copyGoLiveForWallet(gotoLiveBtn.dataset.address); return; }
 }
 
 // Containers whose rows carry roster actions: the Paper roster, the Live
@@ -6458,8 +6562,198 @@ async function fetchFollowedWallets(scope = _copyCurrentScope() === 'live' ? 'li
         wrap.innerHTML = `<div class="empty"><i data-lucide="alert-circle"></i><h3>Could not load followed wallets</h3><p>${e.message} — retrying automatically.</p></div>`;
         lucide.createIcons();
       }
+      if (scope !== 'live') _paperKpiUnavailable('followed');
     }
   }
+}
+
+/* ─────────────────────────────────────────
+   COPY · PAPER TAB EXTRAS (issue #1277, epic #1272)
+   KPI cards, Recent Closed (paged), shared pager helper, and the
+   "Go live →" jump to the wallet's row on the Live tab.
+
+   HARD RULE (Epic J): everything below reads PAPER keys only --
+   `total`, `open_positions`, `realized_pnl_history` of /positions and
+   `active_count` / `paused_count` of /followed-wallets. The `live_*` fields
+   of those same shared payloads are never read here, so a live number cannot
+   reach the Paper tab even though it travels in the same response.
+   ───────────────────────────────────────── */
+
+// ── KPI cards ──────────────────────────────────────────────────────────────
+function _paperKpiSet(id, text, cls, sub) {
+  const val = document.getElementById('paper-kpi-' + id);
+  if (val) {
+    val.textContent = text;
+    val.classList.toggle('pos', cls === 'pos');
+    val.classList.toggle('neg', cls === 'neg');
+    val.removeAttribute('aria-busy');
+  }
+  const subEl = document.getElementById('paper-kpi-' + id + '-sub');
+  if (subEl && sub != null) subEl.textContent = sub;
+}
+
+// Cards fed by the /positions payload: aggregate realized P&L + open count.
+function _paperKpiFromPositions(data) {
+  const pnl = data.total.realized_pnl_usd;
+  _paperKpiSet('pnl', _copyFmtUsd(pnl), pnl > 0 ? 'pos' : pnl < 0 ? 'neg' : '',
+    `Paper · realized · ${data.total.n_settled} settled`);
+  const basis = data.open_positions.reduce((sum, p) => sum + p.stake_usd, 0);
+  _paperKpiSet('open', String(data.open_positions.length), '', `Paper cost basis $${basis.toFixed(2)}`);
+}
+
+// Card fed by the /followed-wallets payload.
+function _paperKpiFromFollowed(data) {
+  _paperKpiSet('followed', String(data.active_count + data.paused_count), '',
+    `${data.active_count} active · ${data.paused_count} paused (paper)`);
+}
+
+// First-load failure of one source: its cards show an explicit dash + reason
+// instead of an endless skeleton. (Once a payload has rendered, a failure
+// keeps last-known-good numbers and only the section banner changes.)
+function _paperKpiUnavailable(source) {
+  const ids = source === 'positions' ? ['pnl', 'open'] : ['followed'];
+  for (const id of ids) _paperKpiSet(id, '—', '', 'Could not load — retrying');
+}
+
+// ── Pager helper (Recent Closed + paper activity) ──────────────────────────
+// Clamps `page` into range (so a shrinking list after a background refresh
+// never strands the operator on an empty page) and slices.
+function _copyPageSlice(items, page, size) {
+  const pages = Math.max(1, Math.ceil(items.length / size));
+  const clamped = Math.max(0, Math.min(page, pages - 1));
+  return { page: clamped, pages, items: items.slice(clamped * size, (clamped + 1) * size) };
+}
+
+// ids: { bar, prev, next, info } -- the static `.pagination` markup.
+function _copyUpdatePager(ids, pg) {
+  const bar = document.getElementById(ids.bar);
+  if (bar) bar.style.display = pg.pages > 1 ? 'flex' : 'none';
+  const info = document.getElementById(ids.info);
+  if (info) info.textContent = `Page ${pg.page + 1} of ${pg.pages}`;
+  const prev = document.getElementById(ids.prev);
+  if (prev) prev.disabled = pg.page === 0;
+  const next = document.getElementById(ids.next);
+  if (next) next.disabled = pg.page >= pg.pages - 1;
+}
+
+// ── Recent Closed (paper) ──────────────────────────────────────────────────
+const COPY_PAPER_CLOSED_PAGE_SIZE = 15;   // same as the Portfolio tab's CLOSED_PAGE_SIZE
+const _COPY_PAPER_CLOSED_PAGER = {
+  bar: 'copy-paper-closed-pagination', prev: 'copy-paper-closed-prev',
+  next: 'copy-paper-closed-next', info: 'copy-paper-closed-info',
+};
+let _copyPaperClosedRows = [];     // newest first
+let _copyPaperClosedPage = 0;
+
+function _copyPaperClosedRowHtml(p) {
+  const addrEsc = _copyEscapeHtml(p.address);
+  const when = p.settled_at ? new Date(p.settled_at).toLocaleString() : '—';
+  const cls = p.settled_pnl_usd >= 0 ? 'copy-pnl-pos' : 'copy-pnl-neg';
+  return `
+    <tr class="copy-row">
+      <td class="copy-td" title="${_copyEscapeHtml(p.market)}">${_copyEscapeHtml(_copyTruncateMarket(p.market))}</td>
+      <td class="copy-td"><span class="copy-address-mono" title="${addrEsc}">${_copyEscapeHtml(_copyTruncateAddress(p.address))}</span></td>
+      <td class="copy-td">${when}</td>
+      <td class="copy-td">$${p.stake_usd.toFixed(2)}</td>
+      <td class="copy-td ${cls}">${_copyFmtUsd(p.settled_pnl_usd)}</td>
+    </tr>`;
+}
+
+function _renderCopyPaperClosedPage() {
+  const wrap = document.getElementById('copy-paper-closed-list');
+  if (!wrap) return;
+  wrap.removeAttribute('aria-busy');
+  const countPill = document.getElementById('copy-paper-closed-count');
+  if (countPill) countPill.textContent = `${_copyPaperClosedRows.length} closed (paper)`;
+
+  if (!_copyPaperClosedRows.length) {
+    if (_copySetHtmlIfChanged(wrap, `<div class="empty"><i data-lucide="clock"></i><h3>No closed paper trades yet</h3><p>Settled paper positions will appear here.</p></div>`)) {
+      lucide.createIcons();
+    }
+    _copyUpdatePager(_COPY_PAPER_CLOSED_PAGER, { page: 0, pages: 1 });
+    return;
+  }
+  const pg = _copyPageSlice(_copyPaperClosedRows, _copyPaperClosedPage, COPY_PAPER_CLOSED_PAGE_SIZE);
+  _copyPaperClosedPage = pg.page;
+  const html = `
+    <div class="copy-table-wrap">
+    <table class="copy-table" aria-label="Recent closed paper trades, page ${pg.page + 1} of ${pg.pages}">
+      <thead>
+        <tr>
+          <th class="copy-th" scope="col">Market</th>
+          <th class="copy-th" scope="col">Wallet</th>
+          <th class="copy-th" scope="col">Settled</th>
+          <th class="copy-th" scope="col">Paper stake</th>
+          <th class="copy-th" scope="col">Paper settled P&amp;L</th>
+        </tr>
+      </thead>
+      <tbody>${pg.items.map(_copyPaperClosedRowHtml).join('')}</tbody>
+    </table>
+    </div>`;
+  if (_copySetHtmlIfChanged(wrap, html)) lucide.createIcons();
+  _copyUpdatePager(_COPY_PAPER_CLOSED_PAGER, pg);
+}
+
+// `history` is the payload's realized_pnl_history: oldest first (api.py), so
+// the newest-first list is its reverse. A background refresh keeps the current
+// page (clamped); it never jumps back to page 1.
+function renderCopyPaperClosed(history) {
+  _copyPaperClosedRows = [...history].reverse();
+  _renderCopyPaperClosedPage();
+}
+
+function renderCopyPaperClosedError(message) {
+  const wrap = document.getElementById('copy-paper-closed-list');
+  if (!wrap) return;
+  wrap.removeAttribute('aria-busy');
+  _copySetHtmlIfChanged(wrap, `<div class="empty"><i data-lucide="alert-circle"></i><h3>Could not load closed trades</h3><p>${_copyEscapeHtml(message)} — retrying automatically.</p></div>`);
+  _copyUpdatePager(_COPY_PAPER_CLOSED_PAGER, { page: 0, pages: 1 });
+}
+
+function copyPaperClosedChangePage(delta) {
+  _copyPaperClosedPage += delta;   // clamped by the page slice
+  _renderCopyPaperClosedPage();
+}
+
+// ── "Go live →" on a paper roster row ──────────────────────────────────────
+// Switches to the Live tab and scrolls to + briefly highlights that wallet's
+// row in "Ready to go live". It never opens the live prompt and never acts:
+// every real-money action stays on the Live tab. The row may not exist yet
+// (Live not rendered), so the request is parked and consumed by the Live
+// roster's own render; it expires after 10 s so it can never fire as a
+// surprise later.
+let _copyPendingLiveHighlight = null;   // { address, ts }
+
+function _copyHighlightLiveRow(address) {
+  const safeId = _copySafeId(address);
+  for (const id of ['live-ready-row-' + safeId, 'live-followed-row-' + safeId]) {
+    const row = document.getElementById(id);
+    if (!row) continue;
+    const details = row.closest ? row.closest('details') : null;
+    if (details) details.open = true;          // the ready list may be collapsed
+    row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    row.classList.remove('copy-row-highlight');
+    void row.offsetWidth;                      // restart the CSS animation
+    row.classList.add('copy-row-highlight');
+    return true;
+  }
+  return false;
+}
+
+// final=true: called by the Live roster render -- the last chance, so the
+// request is dropped whether or not the row was found.
+function _copyConsumePendingLiveHighlight(final) {
+  const pending = _copyPendingLiveHighlight;
+  if (!pending) return;
+  if (Date.now() - pending.ts > 10_000) { _copyPendingLiveHighlight = null; return; }
+  const found = _copyHighlightLiveRow(pending.address);
+  if (found || final) _copyPendingLiveHighlight = null;
+}
+
+function _copyGoLiveForWallet(address) {
+  _copyPendingLiveHighlight = address ? { address, ts: Date.now() } : null;
+  _copyGoToTab('copy-live');
+  _copyConsumePendingLiveHighlight(false);
 }
 
 /* ─────────────────────────────────────────
@@ -6536,20 +6830,46 @@ function _copyBucketDailyPnl(history) {
   });
 }
 
+// Paper realized-P&L chart. ONE Chart.js instance per canvas: a re-render
+// with new points updates the datasets in place (no destroy/recreate flicker);
+// it is rebuilt only when its canvas element was replaced, and destroyed when
+// the operator leaves the Paper tab (_copyPaperOnLeave) so a hidden tab holds
+// no chart. `_copyPositionsChartSig` skips even the in-place update when the
+// plotted points are identical.
+let _copyPositionsChartSig = null;
+
+function _copyDestroyPositionsChart() {
+  if (_copyPositionsChart) {
+    _copyPositionsChart.destroy();
+    _copyPositionsChart = null;
+  }
+  _copyPositionsChartSig = null;
+}
+
 function _renderCopyPositionsChart(points) {
   const canvas = document.getElementById('copy-positions-canvas');
   if (!canvas) return;
+  const sig = JSON.stringify(points);
+  if (_copyPositionsChart && _copyPositionsChart.canvas === canvas && _copyPositionsChartSig === sig) return;
+
   const cs = getComputedStyle(document.documentElement);
   const clr = k => cs.getPropertyValue(k).trim();
   const labels = points.map(p => new Date(p.day).toLocaleDateString());
   const finalValue = points.length ? points[points.length - 1].cumulative : 0;
   const lineColor = finalValue >= 0 ? clr('--yes') : clr('--no');
 
-  if (_copyPositionsChart) {
-    _copyPositionsChart.destroy();
-    _copyPositionsChart = null;
+  if (_copyPositionsChart && _copyPositionsChart.canvas === canvas) {
+    const ds = _copyPositionsChart.data.datasets[0];
+    _copyPositionsChart.data.labels = labels;
+    ds.data = points.map(p => p.cumulative);
+    ds.borderColor = lineColor;
+    _copyPositionsChart.update('none');
+    _copyPositionsChartSig = sig;
+    return;
   }
 
+  _copyDestroyPositionsChart();
+  _copyPositionsChartSig = sig;
   _copyPositionsChart = new Chart(canvas, {
     type: 'line',
     data: {
@@ -6802,6 +7122,67 @@ function _copyPositionsBindListEvents() {
   _copyPositionsListenersBound = true;
 }
 
+// ── Copy · Paper rendering helpers (issue #1277) ────────────────────────────
+// Last HTML written into each Paper container, keyed by element id. A section
+// whose HTML is byte-identical to what is already on screen is NOT touched, so
+// expanded signal rows, copy-feedback labels, scroll position and the chart
+// canvas survive a poll in which only some part of the payload changed.
+// EVERY write to these containers goes through _copySetHtmlIfChanged so the
+// cache can never disagree with the DOM.
+const _copyPaperHtmlCache = new Map();
+
+function _copySetHtmlIfChanged(el, html) {
+  if (!el) return false;
+  if (_copyPaperHtmlCache.get(el.id) === html) return false;
+  _copyPaperHtmlCache.set(el.id, html);
+  el.innerHTML = html;
+  return true;
+}
+
+const _COPY_POSITIONS_SLOT_IDS = ['copy-positions-chart-slot', 'copy-positions-open-slot', 'copy-positions-wallet-slot'];
+const _COPY_POSITIONS_SCAFFOLD_HTML = `
+    <div id="copy-positions-chart-slot"></div>
+    <div class="copy-positions-tables-grid">
+      <div>
+        <div class="copy-positions-table-title">Open positions</div>
+        <div id="copy-positions-open-slot"></div>
+      </div>
+      <div>
+        <div class="copy-positions-table-title">Per-wallet breakdown</div>
+        <div id="copy-positions-wallet-slot"></div>
+      </div>
+    </div>`;
+
+// Writes the scaffold once; when it was (re)written the slots are brand new
+// elements, so their cached HTML and the chart bound to the old canvas go.
+function _copyPositionsEnsureScaffold(wrap) {
+  if (_copySetHtmlIfChanged(wrap, _COPY_POSITIONS_SCAFFOLD_HTML)) {
+    for (const id of _COPY_POSITIONS_SLOT_IDS) _copyPaperHtmlCache.delete(id);
+    _copyDestroyPositionsChart();
+  }
+}
+
+function _copyPaperChartPoints(history) {
+  return _copyBucketDailyPnl(_copyFilteredPnlHistory(history, _copyPositionsRangeDays));
+}
+
+// Plots (or updates) the chart from the cached payload. Used by the render
+// path, and by _copyPaperOnEnter to redraw after the chart was destroyed on
+// tab leave (an unchanged payload is skipped by the fetch gate).
+function _copyPaperRenderChartFromData() {
+  const data = _copyPositionsData;
+  if (!data || !(data.realized_pnl_history || []).length) return;
+  _renderCopyPositionsChart(_copyPaperChartPoints(data.realized_pnl_history));
+}
+
+function _copyPaperOnLeave() {
+  _copyDestroyPositionsChart();
+}
+
+function _copyPaperOnEnter() {
+  _copyPaperRenderChartFromData();
+}
+
 function renderCopyPositions(data) {
   _copyPositionsData = data;
   _copyPositionsBindListEvents();
@@ -6814,54 +7195,55 @@ function renderCopyPositions(data) {
   if (pill) {
     pill.textContent = `Paper aggregate P&L: ${_copyFmtUsd(data.total.realized_pnl_usd)} (${data.total.n_settled} settled)`;
   }
+  _paperKpiFromPositions(data);
+  renderCopyPaperClosed(data.realized_pnl_history);
 
   const wrap = document.getElementById('copy-positions-content');
 
   // True empty state: nothing at all -- distinct from "exists but nothing
   // settled yet" below (issue #1148 acceptance criteria).
   if (!data.open_positions.length && !data.per_wallet.length) {
-    wrap.innerHTML = `<div class="empty"><i data-lucide="inbox"></i><h3>No copy-trading positions yet</h3><p>Follow a wallet on the Wallets tab to start copy-trading it (paper).</p></div>`;
-    lucide.createIcons();
+    _copyDestroyPositionsChart();
+    if (_copySetHtmlIfChanged(wrap, `<div class="empty"><i data-lucide="inbox"></i><h3>No copy-trading positions yet</h3><p>Follow a wallet on the Wallets tab to start copy-trading it (paper).</p></div>`)) {
+      lucide.createIcons();
+    }
     return;
   }
 
-  const chartHtml = data.realized_pnl_history.length
-    ? `<div class="chart-wrap copy-positions-chart-wrap"><canvas id="copy-positions-canvas"></canvas></div>`
-    : `<div class="copy-positions-chart-empty">
+  _copyPositionsEnsureScaffold(wrap);
+  let iconsDirty = false;
+
+  // Chart slot: the canvas markup is static, so while settled history exists
+  // the slot is written once and the chart is only updated in place.
+  const chartSlot = document.getElementById('copy-positions-chart-slot');
+  if (data.realized_pnl_history.length) {
+    if (_copySetHtmlIfChanged(chartSlot, `<div class="chart-wrap copy-positions-chart-wrap"><canvas id="copy-positions-canvas"></canvas></div>`)) {
+      _copyDestroyPositionsChart();   // the canvas it was bound to is gone
+    }
+    _copyPaperRenderChartFromData();
+  } else {
+    _copyDestroyPositionsChart();
+    iconsDirty = _copySetHtmlIfChanged(chartSlot, `<div class="copy-positions-chart-empty">
         <i data-lucide="hourglass"></i>
         <div><strong>No settled positions yet</strong></div>
         <p>${data.open_positions.length} open position${data.open_positions.length !== 1 ? 's' : ''} in flight — the realized P&amp;L chart will populate once positions settle.</p>
-      </div>`;
-
-  wrap.innerHTML = `
-    ${chartHtml}
-    <div class="copy-positions-tables-grid">
-      <div>
-        <div class="copy-positions-table-title">Open positions</div>
-        ${_copyOpenPositionsTableHtml(data.open_positions)}
-      </div>
-      <div>
-        <div class="copy-positions-table-title">Per-wallet breakdown</div>
-        ${_copyPerWalletTableHtml(data.per_wallet)}
-      </div>
-    </div>`;
-  lucide.createIcons();
-
-  if (data.realized_pnl_history.length) {
-    const filtered = _copyFilteredPnlHistory(data.realized_pnl_history, _copyPositionsRangeDays);
-    _renderCopyPositionsChart(_copyBucketDailyPnl(filtered));
+      </div>`) || iconsDirty;
   }
 
-  _copyReopenExpandedPositionDetails();
+  // Open positions / per-wallet breakdown: each rebuilt only if ITS html
+  // changed (a new settle changes the breakdown but not the open table).
+  const openChanged = _copySetHtmlIfChanged(document.getElementById('copy-positions-open-slot'),
+    _copyOpenPositionsTableHtml(data.open_positions));
+  const walletChanged = _copySetHtmlIfChanged(document.getElementById('copy-positions-wallet-slot'),
+    _copyPerWalletTableHtml(data.per_wallet));
+  if (iconsDirty || openChanged || walletChanged) lucide.createIcons();
+  if (openChanged) _copyReopenExpandedPositionDetails();
 }
 
 function _copyPositionsOnRangeChange(event) {
   const val = event.target.value;
   _copyPositionsRangeDays = val === 'all' ? 'all' : parseInt(val, 10);
-  if (_copyPositionsData && _copyPositionsData.realized_pnl_history.length) {
-    const filtered = _copyFilteredPnlHistory(_copyPositionsData.realized_pnl_history, _copyPositionsRangeDays);
-    _renderCopyPositionsChart(_copyBucketDailyPnl(filtered));
-  }
+  _copyPaperRenderChartFromData();
 }
 
 function _copyLivePositionsOnRangeChange(event) {
@@ -6876,9 +7258,9 @@ function _copyLivePositionsOnRangeChange(event) {
   }
 }
 
-// Re-renders the whole view (cheap -- cached data, no re-fetch) so the
-// per-wallet table's backtest columns and the expanded signal-detail rows
-// stay consistent, mirroring how sortCandidates() re-renders from cache.
+// Re-renders from cache (no re-fetch). Only the per-wallet slot's HTML
+// differs (extra backtest columns), so the chart instance, the open-positions
+// table and its expanded signal-detail rows are left untouched.
 function _copyToggleBacktestComparison() {
   _copyBacktestOn = !_copyBacktestOn;
   const toggle = document.getElementById('copy-backtest-toggle');
@@ -7589,7 +7971,14 @@ async function fetchCopyTradingPositions(scope = 'paper') {
     } else {
       const wrap = document.getElementById(wrapId);
       if (wrap) {
-        wrap.innerHTML = `<div class="empty"><i data-lucide="alert-circle"></i><h3>Could not load positions</h3><p>${e.message} — retrying automatically.</p></div>`;
+        const errHtml = `<div class="empty"><i data-lucide="alert-circle"></i><h3>Could not load positions</h3><p>${e.message} — retrying automatically.</p></div>`;
+        // Paper: the KPI cards and Recent Closed are fed by the same payload,
+        // so they get their own per-section error state too. Written via the
+        // cache-aware helper so a later identical render is not skipped.
+        _copyDestroyPositionsChart();
+        _copySetHtmlIfChanged(wrap, errHtml);
+        _paperKpiUnavailable('positions');
+        renderCopyPaperClosedError(e.message);
         lucide.createIcons();
       }
     }
@@ -7629,6 +8018,11 @@ const _copyActivityScopes = {
     data: null,                              // last-fetched payload ({events: [...]})
     filters: { address: '', eventType: '' },
     listenersBound: false,
+    // Client-side paging (issue #1277): the server returns the whole merged,
+    // newest-first list; 25 per page with Prev/Next.
+    page: 0,
+    pager: { pageSize: 25, id: 'copy-activity-pagination', infoId: 'copy-activity-info',
+             prevId: 'copy-activity-prev', nextId: 'copy-activity-next' },
   },
   live: {
     mode: 'live',
@@ -8023,6 +8417,15 @@ function renderCopyActivityFeed(data, scope = 'paper') {
     _copyActivityUpdatePager(sc, pages);
   }
   if (_copySetHtml(wrap, items.map(_copyActivityItemHtml).join(''))) lucide.createIcons();
+}
+
+// Prev/Next for the paper activity feed (static buttons in the Paper panel).
+function copyPaperActivityChangePage(delta) {
+  const sc = _copyActivityScopes.paper;
+  sc.page += delta;                      // clamped inside renderCopyActivityFeed
+  if (sc.data) renderCopyActivityFeed(sc.data, 'paper');
+  const wrap = document.getElementById(sc.listId);
+  if (wrap) wrap.scrollTop = 0;          // new page starts at its first event
 }
 
 // scope: 'paper' | 'live' -- the server-side mode filter for this tab's feed.

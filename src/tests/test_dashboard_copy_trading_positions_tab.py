@@ -107,12 +107,17 @@ def test_chart_never_renders_blank_on_no_settled_positions(html_content):
     render_fn_end = html_content.index("\nfunction ", render_fn_start + 10)
     fn_body = html_content[render_fn_start:render_fn_end]
 
-    chart_html_match = re.search(
-        r"const chartHtml = (data\.realized_pnl_history\.length)\s*\n\s*\?\s*(`[^`]*`)\s*\n\s*:\s*(`[^`]*`)",
+    # Issue #1277: the chart slot is written through stable slots; the canvas
+    # markup is only emitted when settled history exists, the explanatory
+    # block otherwise (behaviour is covered in
+    # test_dashboard_copy_paper_tab_behavior.py).
+    branch = re.search(
+        r"if \(data\.realized_pnl_history\.length\) \{(.*?)\n  \} else \{(.*?)\n  \}\n",
         fn_body,
+        re.S,
     )
-    assert chart_html_match, "chartHtml ternary not found in renderCopyPositions()"
-    truthy_branch, falsy_branch = chart_html_match.group(2), chart_html_match.group(3)
+    assert branch, "chart slot if/else on realized_pnl_history.length not found in renderCopyPositions()"
+    truthy_branch, falsy_branch = branch.group(1), branch.group(2)
 
     assert "<canvas" in truthy_branch
     assert "<canvas" not in falsy_branch
