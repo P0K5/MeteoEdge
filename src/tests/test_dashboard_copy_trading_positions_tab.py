@@ -1,6 +1,6 @@
 """Tests for the Copy-Trading dashboard Positions & P&L view's static
 markup (epic F #1143, story F3 #1148; live/paper twin-panel split issue
-#1186, Epic J).
+#1186, Epic J; each mode now owns its own tab, issue #1275).
 
 The two distinct empty states called out in the acceptance criteria ("no
 positions at all" vs "positions exist but none settled yet") are rendered
@@ -11,9 +11,8 @@ served HTML/JS text for this vanilla-JS, no-build-step dashboard).
 
 The Live column's own state-transition logic (off/on-empty/populated/
 error) is covered by test_copy_trading_positions_live_paper_js_logic.py
-(same Node-execution technique) -- this file only checks the static twin-
-panel scaffolding (headings, banners, DOM ordering) those states render
-into.
+(same Node-execution technique) -- this file only checks the static
+scaffolding (headings, banners, tab placement) those states render into.
 """
 from __future__ import annotations
 
@@ -30,42 +29,50 @@ def html_content():
         return f.read()
 
 
-def test_positions_section_exists_inside_copy_trading_content(html_content):
-    """The new section must live inside #copy-trading-content, alongside
-    (not replacing) the existing Candidates/Followed Wallets views."""
-    content_start = html_content.index('id="copy-trading-content"')
-    content_end = html_content.index("</section>", content_start)
-    section = html_content[content_start:content_end]
+def _tab_section(html: str, tab: str) -> str:
+    start = html.index(f'<section id="tab-{tab}"')
+    end = html.index("</section>", start)
+    return html[start:end]
 
-    assert 'id="copy-candidates-list"' in section, "Candidates view missing from copy-trading-content"
-    assert 'id="copy-followed-list"' in section, "Followed Wallets view missing from copy-trading-content"
-    assert 'id="copy-positions-content"' in section, "Positions & P&L view not found inside copy-trading-content"
 
-    # Order: Positions & P&L must come after the other two, not replace them.
-    assert section.index('id="copy-candidates-list"') < section.index('id="copy-positions-content"')
-    assert section.index('id="copy-followed-list"') < section.index('id="copy-positions-content"')
+def test_positions_sections_live_in_the_paper_and_live_tabs(html_content):
+    """Paper positions live ONLY in the Paper tab, live positions ONLY in
+    the Live tab (issue #1275: the tab is the hard separator)."""
+    paper = _tab_section(html_content, "copy-paper")
+    live = _tab_section(html_content, "copy-live")
+    wallets = _tab_section(html_content, "copy-wallets")
+
+    assert 'id="copy-positions-content"' in paper
+    assert 'id="copy-positions-live-content"' not in paper
+    assert 'id="copy-positions-live-content"' in live
+    assert 'id="copy-positions-content"' not in live
+    assert 'id="copy-positions-content"' not in wallets
+    assert 'id="copy-positions-live-content"' not in wallets
+    assert 'id="copy-candidates-list"' in wallets
+    # Paper tab: roster comes before the positions view.
+    assert paper.index('id="copy-followed-list"') < paper.index('id="copy-positions-content"')
+
+
+def test_positions_fetch_wired_per_tab(html_content):
+    """Each tab polls only its own mode's positions through its job table
+    (the shared cache makes the single /positions request cheap)."""
+    jobs = re.search(r"const COPY_TAB_JOBS = \{(.*?)\n\};", html_content, re.S).group(1)
+    wallets_jobs, rest = jobs.split("'copy-paper': [")
+    paper_jobs, live_jobs = rest.split("'copy-live': [")
+    assert "fetchCopyTradingCandidates()" in wallets_jobs
+    assert "fetchCopyTradingPositions" not in wallets_jobs
+    assert "fetchFollowedWallets('paper')" in paper_jobs
+    assert "fetchCopyTradingPositions('paper')" in paper_jobs
+    assert "fetchCopyTradingPositions('live')" not in paper_jobs
+    assert "fetchFollowedWallets('live')" in live_jobs
+    assert "fetchCopyTradingPositions('live')" in live_jobs
+    assert "fetchCopyTradingPositions('paper')" not in live_jobs
 
 
 def test_positions_view_has_date_range_and_backtest_toggle_controls(html_content):
     assert 'id="copy-positions-range-select"' in html_content
     assert 'id="copy-backtest-toggle"' in html_content
     assert 'role="switch"' in html_content
-
-
-def test_positions_fetch_wired_into_copy_trading_tab_activation(html_content):
-    """fetchCopyTradingPositions must be called both on first tab
-    activation and on the shared 5-minute poll interval, matching
-    fetchCopyTradingCandidates/fetchFollowedWallets's existing wiring."""
-    tab_block_match = re.search(
-        r"if \(tab === 'copy-trading'\) \{(.*?)\n  \}\n\}",
-        html_content,
-        re.S,
-    )
-    assert tab_block_match, "copy-trading tab activation block not found"
-    block = tab_block_match.group(1)
-    assert "fetchCopyTradingCandidates();" in block
-    assert "fetchFollowedWallets();" in block
-    assert "fetchCopyTradingPositions();" in block
 
 
 def test_renders_true_empty_state_distinct_from_unsettled_state(html_content):
@@ -122,89 +129,67 @@ def test_isolation_from_weather_portfolio_tab(html_content):
 # Live/paper twin-panel split (issue #1186, Epic J)
 # ---------------------------------------------------------------------------
 
-def test_twin_panel_structure_live_left_paper_right(html_content):
-    """Live must be first in DOM/reading order, Paper second -- the fixed
-    order repeated across this whole epic for a stable mental model
-    (design spec's accessibility notes)."""
-    twin_start = html_content.index('class="copy-positions-twin"')
-    twin_end = html_content.index("<!-- ── ACTIVITY FEED VIEW")
-    twin_section = html_content[twin_start:twin_end]
+def test_each_mode_tab_has_its_mode_badge_heading(html_content):
+    """Each tab's Positions & P&L heading carries a mode badge using
+    #1185's .mode-badge styling, with a full-sentence aria-label (never
+    color/text-only)."""
+    paper = _tab_section(html_content, "copy-paper")
+    live = _tab_section(html_content, "copy-live")
 
-    assert 'id="copy-positions-live-content"' in twin_section
-    assert 'id="copy-positions-content"' in twin_section
-    assert twin_section.index('id="copy-positions-live-content"') < twin_section.index('id="copy-positions-content"'), (
-        "Live column must come before Paper column in DOM order"
-    )
-
-
-def test_column_headings_use_mode_badge_styling(html_content):
-    """Each column has its own <h3>LIVE</h3> / <h3>PAPER</h3> heading using
-    #1185's .mode-badge styling (acceptance criteria), with a full-sentence
-    aria-label (never color/text-only)."""
-    twin_start = html_content.index('class="copy-positions-twin"')
-    twin_end = html_content.index("<!-- ── ACTIVITY FEED VIEW")
-    twin_section = html_content[twin_start:twin_end]
-
-    assert re.search(r'<span class="mode-badge mode-badge-live"[^>]*>LIVE</span>', twin_section)
-    assert re.search(r'<span class="mode-badge mode-badge-paper"[^>]*>PAPER</span>', twin_section)
-    assert 'aria-label="Live positions and P&amp;L"' in twin_section
-    assert 'aria-label="Paper positions and P&amp;L"' in twin_section
+    assert re.search(r'<span class="mode-badge mode-badge-paper"[^>]*>PAPER</span>', paper)
+    assert 'aria-label="Paper positions and P&amp;L"' in paper
+    assert re.search(r'<span class="mode-badge mode-badge-live"[^>]*>LIVE</span>', live)
+    assert 'aria-label="Live positions and P&amp;L"' in live
+    # Never the other mode's badge as a heading on this tab.
+    assert 'aria-label="Live positions and P&amp;L"' not in paper
+    assert 'aria-label="Paper positions and P&amp;L"' not in live
 
 
-def test_twin_panel_responsive_stacking_keeps_live_first(html_content):
-    """Narrow viewports stack the columns vertically (single grid column)
-    -- DOM order alone (Live first) then determines the stacking order,
-    with no viewport-specific reordering that would put Paper first."""
-    assert ".copy-positions-twin{display:grid;grid-template-columns:1fr 1fr" in html_content
-    assert "@media(max-width:900px){.copy-positions-twin{grid-template-columns:1fr;}}" in html_content, (
-        "twin panel must collapse to a single stacked column on narrow viewports"
-    )
+def test_twin_panel_layout_is_retired(html_content):
+    """The tab itself is the separator now: no side-by-side twin markup/CSS."""
+    assert "copy-positions-twin" not in html_content
+    assert "copy-positions-col" not in html_content
 
 
-def test_each_column_has_its_own_stale_data_banner(html_content):
-    """Design spec: 'each column gets its own stale-data banner' -- never
-    the single shared #copy-trading-error-banner used by Candidates/
-    Followed Wallets for this view."""
-    assert 'id="copy-positions-live-error-banner"' in html_content
-    assert 'id="copy-positions-error-banner"' in html_content
-    assert 'id="copy-positions-live-error-banner"' != 'id="copy-trading-error-banner"'
+def test_each_mode_has_its_own_stale_data_banner(html_content):
+    """Each mode gets its own stale-data banner, inside its own tab --
+    never a banner shared across modes."""
+    assert 'id="copy-positions-live-error-banner"' in _tab_section(html_content, "copy-live")
+    assert 'id="copy-positions-error-banner"' in _tab_section(html_content, "copy-paper")
+    assert 'id="copy-positions-live-error-banner"' not in _tab_section(html_content, "copy-paper")
+    assert 'id="copy-positions-error-banner"' not in _tab_section(html_content, "copy-live")
 
 
-def test_summary_strip_has_two_independently_labeled_pills(html_content):
-    """Never a single unqualified 'aggregate P&L' anywhere -- two
-    independent, explicitly-labeled pills (acceptance criteria)."""
-    assert 'id="copy-positions-live-total-pill"' in html_content
-    assert 'id="copy-positions-total-pill"' in html_content
-    assert "Live aggregate P&amp;L" in html_content
-    assert "Paper aggregate P&amp;L" in html_content
+def test_each_tab_has_only_its_own_labeled_aggregate_pill(html_content):
+    """Never a single unqualified 'aggregate P&L', and (issue #1275) never
+    the other mode's aggregate on a tab."""
+    paper = _tab_section(html_content, "copy-paper")
+    live = _tab_section(html_content, "copy-live")
+    assert 'id="copy-positions-total-pill"' in paper
+    assert "Paper aggregate P&amp;L" in paper
+    assert "Live aggregate P&amp;L" not in paper
+    assert 'id="copy-positions-live-total-pill"' in live
+    assert "Live aggregate P&amp;L" in live
+    assert "Paper aggregate P&amp;L" not in live
 
 
 def test_backtest_toggle_stays_paper_only(html_content):
     """The backtest-comparison toggle (Epic F phase-7 go/no-go feature)
-    stays in the Paper column only -- it has no live counterpart yet."""
-    paper_col_start = html_content.index('class="copy-positions-col copy-positions-col-paper"')
-    live_col_start = html_content.index('class="copy-positions-col copy-positions-col-live"')
-    paper_col_end = html_content.index("<!-- ── ACTIVITY FEED VIEW")
-    live_col_section = html_content[live_col_start:paper_col_start]
-    paper_col_section = html_content[paper_col_start:paper_col_end]
-
-    assert 'id="copy-backtest-toggle"' not in live_col_section
-    # The toggle control itself lives in the shared header (not inside
-    # either column's content div), so also assert it never appears
-    # inside the Live column's own render function.
+    stays on the Paper tab only -- it has no live counterpart yet."""
+    assert 'id="copy-backtest-toggle"' in _tab_section(html_content, "copy-paper")
+    assert 'id="copy-backtest-toggle"' not in _tab_section(html_content, "copy-live")
     live_fn_start = html_content.index("function renderCopyLivePositions(data, liveTradingEnabled)")
-    live_fn_end = html_content.index("\n// Each column gets its own stale-data banner")
+    live_fn_end = html_content.index("\n// scope: 'paper' | 'live'. Both tabs read the SAME")
     live_fn_body = html_content[live_fn_start:live_fn_end]
     assert "copy-backtest-toggle" not in live_fn_body
     assert "_copyBacktestOn" not in live_fn_body
-    assert paper_col_section  # sanity: paper column section is non-empty
 
 
 def test_live_off_state_has_no_numeric_figures(html_content):
     """Acceptance criteria: the off-state (live off, no historical data)
     must never show a numeric figure, not even $0.00."""
     live_fn_start = html_content.index("function renderCopyLivePositions(data, liveTradingEnabled)")
-    live_fn_end = html_content.index("\n// Each column gets its own stale-data banner")
+    live_fn_end = html_content.index("\n// scope: 'paper' | 'live'. Both tabs read the SAME")
     fn_body = html_content[live_fn_start:live_fn_end]
 
     off_state_match = re.search(
@@ -225,7 +210,7 @@ def test_on_but_empty_state_distinct_from_off_state(html_content):
     assert "Live trading is off" in html_content
 
     live_fn_start = html_content.index("function renderCopyLivePositions(data, liveTradingEnabled)")
-    live_fn_end = html_content.index("\n// Each column gets its own stale-data banner")
+    live_fn_end = html_content.index("\n// scope: 'paper' | 'live'. Both tabs read the SAME")
     fn_body = html_content[live_fn_start:live_fn_end]
     assert "!liveTradingEnabled && !hasAnyLiveData" in fn_body
     assert "liveTradingEnabled && !hasAnyLiveData" in fn_body
@@ -236,7 +221,7 @@ def test_historical_live_data_shown_even_when_currently_off(html_content):
     show the real historical live aggregate even while currently off, with
     an off-state banner layered on top rather than hiding the data."""
     live_fn_start = html_content.index("function renderCopyLivePositions(data, liveTradingEnabled)")
-    live_fn_end = html_content.index("\n// Each column gets its own stale-data banner")
+    live_fn_end = html_content.index("\n// scope: 'paper' | 'live'. Both tabs read the SAME")
     fn_body = html_content[live_fn_start:live_fn_end]
 
     assert "hasAnyLiveData" in fn_body
@@ -297,14 +282,14 @@ def test_live_error_isolated_from_paper_error_banner(html_content):
     banners for the shared HTTP-failure path, and the Live column's own
     renderCopyLivePositions must react to live_error without touching the
     paper banner/content at all."""
-    fetch_fn_start = html_content.index("async function fetchCopyTradingPositions()")
+    fetch_fn_start = html_content.index("async function fetchCopyTradingPositions(scope = 'paper')")
     fetch_fn_end = html_content.index("\n/* ─────────────────────────────────────────\n   COPY-TRADING — ACTIVITY FEED VIEW")
     fn_body = html_content[fetch_fn_start:fetch_fn_end]
     assert "copy-positions-live-error-banner" in fn_body
     assert "copy-positions-error-banner" in fn_body
 
     live_fn_start = html_content.index("function renderCopyLivePositions(data, liveTradingEnabled)")
-    live_fn_end = html_content.index("\n// Each column gets its own stale-data banner")
+    live_fn_end = html_content.index("\n// scope: 'paper' | 'live'. Both tabs read the SAME")
     live_fn_body = html_content[live_fn_start:live_fn_end]
     # "copy-positions-content" (paper's exact id) is not a substring of
     # "copy-positions-live-content" (live's id), so this correctly detects

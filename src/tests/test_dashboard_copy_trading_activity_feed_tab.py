@@ -1,5 +1,6 @@
 """Tests for the Copy-Trading dashboard Activity Feed view's static
-markup (epic F #1143, story F4 #1149).
+markup (epic F #1143, story F4 #1149; split per mode into the Paper and
+Live tabs, issue #1275).
 
 Mirrors test_dashboard_copy_trading_positions_tab.py's approach of
 asserting on the served HTML/JS text for this vanilla-JS, no-build-step
@@ -23,86 +24,84 @@ def html_content():
         return f.read()
 
 
-def test_activity_feed_section_exists_inside_copy_trading_content(html_content):
-    """The new section must live inside #copy-trading-content, alongside
-    (not replacing) the existing Candidates/Followed Wallets/Positions
-    views, and must come last (story F4 is the last story in epic F)."""
-    content_start = html_content.index('id="copy-trading-content"')
-    content_end = html_content.index("</section>", content_start)
-    section = html_content[content_start:content_end]
-
-    assert 'id="copy-candidates-list"' in section
-    assert 'id="copy-followed-list"' in section
-    assert 'id="copy-positions-content"' in section
-    assert 'id="copy-activity-list"' in section, "Activity Feed view not found inside copy-trading-content"
-
-    assert section.index('id="copy-positions-content"') < section.index('id="copy-activity-list"'), (
-        "Activity Feed must come after Positions & P&L, not replace or precede it"
-    )
+def _tab_section(html: str, tab: str) -> str:
+    start = html.index(f'<section id="tab-{tab}"')
+    end = html.index("</section>", start)
+    return html[start:end]
 
 
-def test_activity_feed_has_its_own_stale_banner(html_content):
-    """Design decision (no toast/modal component): the stale-feed
-    indicator reuses the existing .error-banner/.visible inline pattern,
-    but with its own dedicated element -- not the shared
-    #copy-trading-error-banner used by the other three views (which would
-    let an unrelated Candidates/Followed/Positions fetch race-clear it)."""
-    assert 'id="copy-activity-stale-banner"' in html_content
-    assert 'class="error-banner" id="copy-activity-stale-banner"' in html_content
-    assert 'id="copy-activity-stale-text"' in html_content
+def _select_options(section: str, select_id: str) -> str:
+    start = section.index(f'id="{select_id}"')
+    return section[start:section.index("</select>", start)]
 
 
-def test_activity_feed_has_wallet_and_event_type_filter_dropdowns(html_content):
-    assert 'id="copy-activity-wallet-select"' in html_content
-    assert 'id="copy-activity-type-select"' in html_content
-    assert 'value="order_placed"' in html_content
-    assert 'value="order_skipped"' in html_content
-    assert 'value="wallet_paused"' in html_content
+def test_activity_feed_sections_live_in_the_paper_and_live_tabs(html_content):
+    """One feed per mode, each inside its own tab, after Positions & P&L."""
+    paper = _tab_section(html_content, "copy-paper")
+    live = _tab_section(html_content, "copy-live")
+    wallets = _tab_section(html_content, "copy-wallets")
+
+    assert 'id="copy-activity-list"' in paper
+    assert paper.index('id="copy-positions-content"') < paper.index('id="copy-activity-list"')
+    assert 'id="copy-live-activity-list"' in live
+    assert live.index('id="copy-positions-live-content"') < live.index('id="copy-live-activity-list"')
+    assert "activity-list" not in wallets
+    assert 'id="copy-live-activity-list"' not in paper
+    assert 'id="copy-activity-list"' not in live
 
 
-def test_activity_feed_has_mode_filter_dropdown(html_content):
-    """issue #1188 acceptance criteria: new Mode (Live/Paper/All) filter
-    alongside the existing wallet and event-type filters."""
-    assert 'id="copy-activity-mode-select"' in html_content
-    content_start = html_content.index('id="copy-activity-mode-select"')
-    content_end = html_content.index('</select>', content_start)
-    section = html_content[content_start:content_end]
-    assert 'value="live"' in section
-    assert 'value="paper"' in section
+def test_activity_feeds_have_their_own_stale_banners(html_content):
+    """Design decision (no toast/modal component): the stale-feed indicator
+    reuses the existing .error-banner/.visible inline pattern, with a
+    dedicated element per feed -- never a banner shared with an unrelated
+    fetch (which could race-clear it)."""
+    paper = _tab_section(html_content, "copy-paper")
+    live = _tab_section(html_content, "copy-live")
+    assert 'class="error-banner" id="copy-activity-stale-banner"' in paper
+    assert 'id="copy-activity-stale-text"' in paper
+    assert 'class="error-banner" id="copy-live-activity-stale-banner"' in live
+    assert 'id="copy-live-activity-stale-text"' in live
 
 
-def test_activity_feed_event_type_dropdown_has_live_options(html_content):
-    """issue #1188: every new live event_type must be selectable, matching
-    the existing per-event_type filter pattern."""
-    content_start = html_content.index('id="copy-activity-type-select"')
-    content_end = html_content.index('</select>', content_start)
-    section = html_content[content_start:content_end]
+def test_activity_feeds_have_wallet_and_event_type_filters_but_no_mode_select(html_content):
+    """The Mode select is removed: the tab is the mode (issue #1275)."""
+    assert "copy-activity-mode-select" not in html_content
+    paper = _tab_section(html_content, "copy-paper")
+    live = _tab_section(html_content, "copy-live")
+    assert 'id="copy-activity-wallet-select"' in paper
+    assert 'id="copy-live-activity-wallet-select"' in live
+
+    paper_types = _select_options(paper, "copy-activity-type-select")
+    for event_type in ("order_placed", "order_skipped", "wallet_paused"):
+        assert f'value="{event_type}"' in paper_types
+    assert "live_" not in paper_types, "Paper tab must not offer live event types"
+
+    live_types = _select_options(live, "copy-live-activity-type-select")
     for event_type in (
         "live_order_pending", "live_order_filled", "live_order_partial",
         "live_order_rejected", "live_order_skipped",
         "live_circuit_breaker_tripped", "live_position_settled",
+        "live_balance_mismatch",
     ):
-        assert f'value="{event_type}"' in section, f"missing event-type filter option: {event_type}"
+        assert f'value="{event_type}"' in live_types, f"missing event-type filter option: {event_type}"
+    for event_type in ("order_placed", "order_skipped", "wallet_paused"):
+        assert f'value="{event_type}"' not in live_types, "Live tab must not offer paper event types"
 
 
-def test_activity_feed_fetch_wired_into_copy_trading_tab_activation(html_content):
-    """fetchCopyTradingActivityFeed must be called both on first tab
-    activation and on the shared 5-minute poll interval, matching the
-    other three views' existing wiring -- and that interval must be
-    300_000ms (300s / 5min), matching the Promotion tab's own cadence
-    exactly (issue #1149's explicit design decision, not a new value)."""
-    tab_block_match = re.search(
-        r"if \(tab === 'copy-trading'\) \{(.*?)\n  \}\n\}",
-        html_content,
-        re.S,
-    )
-    assert tab_block_match, "copy-trading tab activation block not found"
-    block = tab_block_match.group(1)
-    assert "fetchCopyTradingCandidates();" in block
-    assert "fetchFollowedWallets();" in block
-    assert "fetchCopyTradingPositions();" in block
-    assert "fetchCopyTradingActivityFeed();" in block
-    assert "}, 300_000);" in block, "Copy-Trading poll interval must stay 300s (5 min)"
+def test_activity_feed_fetch_wired_per_tab_with_mode_cadences(html_content):
+    """Paper polls its feed every 5 min (matching the Promotion tab's own
+    cadence, issue #1149's explicit decision), Live every 30 s (real money)."""
+    jobs = re.search(r"const COPY_TAB_JOBS = \{(.*?)\n\};", html_content, re.S).group(1)
+    _, rest = jobs.split("'copy-paper': [")
+    paper_jobs, live_jobs = rest.split("'copy-live': [")
+    assert re.search(r"fetchCopyTradingActivityFeed\('paper'\), everyMs: 300_000", paper_jobs)
+    assert re.search(r"fetchCopyTradingActivityFeed\('live'\), everyMs: 30_000", live_jobs)
+    assert "fetchCopyTradingActivityFeed('live')" not in paper_jobs
+    assert "fetchCopyTradingActivityFeed('paper')" not in live_jobs
+
+
+def test_activity_feed_requests_are_mode_scoped(html_content):
+    assert "/api/copy-trading/activity-feed?mode=${sc.mode}" in html_content
 
 
 def test_promotion_tab_uses_the_same_300s_cadence(html_content):
@@ -178,7 +177,7 @@ def test_candidate_row_has_a_stable_id_for_click_through_lookup(html_content):
 def test_isolation_from_weather_portfolio_tab(html_content):
     """Issue #1100 isolation requirement: the Activity Feed view must
     never write into the weather Portfolio tab's own elements/functions."""
-    render_fn_start = html_content.index("function renderCopyActivityFeed(data)")
+    render_fn_start = html_content.index("function renderCopyActivityFeed(data, scope = 'paper')")
     render_fn_end = html_content.index("\nasync function fetchCopyTradingActivityFeed")
     fn_body = html_content[render_fn_start:render_fn_end]
 

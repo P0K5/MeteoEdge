@@ -1,5 +1,6 @@
 """Unit tests for the Copy-Trading dashboard's global live/paper posture
-banner client-side logic (epic J #1161, issue #1185).
+banner client-side logic (epic J #1161, issue #1185; shared across the three
+copy tabs, issue #1275).
 
 Same technique as test_copy_trading_activity_feed_js_logic.py /
 test_edge_tab_js_logic.py (issue #758): this repo has no JS test framework,
@@ -9,25 +10,14 @@ minimal DOM/fetch/window stubs.
 
 Covers the issue's explicit test requirements:
 - Banner reflects ON/OFF state correctly on load.
-- Banner updates on config change (via its own dedicated 30s poll --
-  see PR #1192 review below).
+- Banner updates on config change (via its own dedicated 30s poll).
 - Both badge CSS variants render correctly and both carry an aria-label.
 - Conservative default: a failed config fetch must never claim LIVE.
+- (#1275) ONE fetch updates EVERY banner instance (one per copy tab).
 
-Also covers a PR #1192 review finding (Designer change request): the
-banner must refetch on every tab re-entry, not just the tab's very first
-activation. The original wiring only called
-fetchCopyTradingModePosture() inside switchTab()'s `if (!copyTradingLoaded)`
-first-activation guard, sharing the four-view group's 5-minute interval --
-so a revisit to the Copy-Trading tab after the first one relied on that
-interval's next tick, meaning a stale live/paper read could sit on screen
-for up to 5 minutes on every single tab revisit (e.g. right after
-halt_live_copy_trading.py runs mid-incident and the operator tabs away
-and back), not just during one long viewing session. Fixed by giving the
-banner its own dedicated `copyTradingModeIntervalId` (30s, decoupled from
-the 300s view-data group) and fetching it unconditionally on every
-`tab === 'copy-trading'` entry, mirroring the existing
-fetchPortfolio()/fetchBotLog() pattern.
+The per-tab refetch-on-entry / 30 s interval wiring (PR #1192 review
+finding) is covered against a faithful DOM in
+test_dashboard_copy_tab_controller_behavior.py.
 """
 from __future__ import annotations
 
@@ -69,12 +59,19 @@ _PRELUDE = textwrap.dedent("""
       return el;
     }
     const _elementsById = {};
+    // One shared posture banner per copy tab (class-based component).
+    const _banners = ['copy-wallets', 'copy-paper', 'copy-live'].map(t => {
+      const el = makeStubElement();
+      el.className = 'mode-badge mode-badge-paper copy-trading-mode-banner';
+      _elementsById[t + '-mode-banner'] = el;
+      return el;
+    });
     global.document = {
       getElementById(id) {
         if (!_elementsById[id]) _elementsById[id] = makeStubElement();
         return _elementsById[id];
       },
-      querySelectorAll() { return []; },
+      querySelectorAll(sel) { return sel === '.copy-trading-mode-banner' ? _banners : []; },
       querySelector() { return null; },
       createElement() { return makeStubElement(); },
       documentElement: { getAttribute(){ return 'dark'; }, setAttribute(){} },
@@ -104,136 +101,110 @@ _ASSERTIONS = textwrap.dedent("""
       };
     }
 
-    (async () => {
-      const banner = document.getElementById('copy-trading-mode-banner');
+    // Every instance must always read the same state.
+    function assertAllBanners(cls, text, aria, msg = '') {
+      const banners = ['copy-wallets', 'copy-paper', 'copy-live']
+        .map(t => document.getElementById(t + '-mode-banner'));
+      assert.strictEqual(banners.length, 3);
+      for (const b of banners) {
+        assert.strictEqual(b.className, cls + ' copy-trading-mode-banner', msg);
+        assert.strictEqual(b.textContent, text, msg);
+        assert.strictEqual(b.getAttribute('aria-label'), aria, msg);
+      }
+    }
+    const LIVE = ['mode-badge mode-badge-live', 'LIVE TRADING ON', 'Live trading is on'];
+    const OFF = ['mode-badge mode-badge-paper', 'LIVE TRADING OFF — paper only', 'Live trading is off — paper only'];
 
+    (async () => {
       // ------------------------------------------------------------------
-      // 1. Banner reflects the ON state correctly on load.
+      // 1. Banner reflects the ON state correctly on load -- on all three
+      //    instances, from ONE fetch.
       // ------------------------------------------------------------------
+      let configFetches = 0;
       global.fetch = async (url) => {
         assert.strictEqual(url, '/api/config');
+        configFetches++;
         return configResp(true);
       };
       await fetchCopyTradingModePosture();
-      assert.strictEqual(banner.className, 'mode-badge mode-badge-live');
-      assert.strictEqual(banner.textContent, 'LIVE TRADING ON');
-      assert.strictEqual(banner.getAttribute('aria-label'), 'Live trading is on');
+      assert.strictEqual(configFetches, 1, 'one fetch must feed every banner instance');
+      assertAllBanners(...LIVE);
 
       // ------------------------------------------------------------------
       // 2. Banner reflects the OFF state correctly on load, including the
       //    literal "paper only" words (a statement about current
       //    behavior, not just an inert switch position).
       // ------------------------------------------------------------------
+      _copyInvalidateShared();  // a later poll, past the short cache TTL
       global.fetch = async () => configResp(false);
       await fetchCopyTradingModePosture();
-      assert.strictEqual(banner.className, 'mode-badge mode-badge-paper');
-      assert.strictEqual(banner.textContent, 'LIVE TRADING OFF — paper only');
-      assert.strictEqual(banner.getAttribute('aria-label'), 'Live trading is off — paper only');
+      assertAllBanners(...OFF);
 
       // ------------------------------------------------------------------
       // 3. Banner updates on config change: a later poll picking up a
-      //    flipped switch must re-render, matching how the rest of the
-      //    Copy-Trading tab refreshes every 5 minutes.
+      //    flipped switch must re-render every instance.
       // ------------------------------------------------------------------
+      _copyInvalidateShared();
       global.fetch = async () => configResp(true);
       await fetchCopyTradingModePosture();
-      assert.strictEqual(banner.className, 'mode-badge mode-badge-live');
-      assert.strictEqual(banner.textContent, 'LIVE TRADING ON');
+      assertAllBanners(...LIVE);
 
+      _copyInvalidateShared();
       global.fetch = async () => configResp(false);
       await fetchCopyTradingModePosture();
-      assert.strictEqual(banner.className, 'mode-badge mode-badge-paper');
-      assert.strictEqual(banner.textContent, 'LIVE TRADING OFF — paper only');
+      assertAllBanners(...OFF);
 
       // ------------------------------------------------------------------
       // 4. Conservative default: a failed fetch must never claim LIVE,
-      //    even if the banner was previously showing ON (mirrors the
+      //    even if the banners were previously showing ON (mirrors the
       //    execution_mode "assume paper" fallback rule verbatim).
       // ------------------------------------------------------------------
+      _copyInvalidateShared();
       global.fetch = async () => configResp(true);
       await fetchCopyTradingModePosture();
-      assert.strictEqual(banner.className, 'mode-badge mode-badge-live');
+      assertAllBanners(...LIVE);
 
+      _copyInvalidateShared();
       global.fetch = async () => { throw new Error('network down'); };
       await fetchCopyTradingModePosture();
-      assert.strictEqual(banner.className, 'mode-badge mode-badge-paper', 'a failed fetch must never leave/claim the LIVE state');
-      assert.strictEqual(banner.textContent, 'LIVE TRADING OFF — paper only');
-      assert.strictEqual(banner.getAttribute('aria-label'), 'Live trading is off — paper only');
+      assertAllBanners(...OFF, 'a failed fetch must never leave/claim the LIVE state');
 
       // ------------------------------------------------------------------
       // 5. A missing/malformed config payload (e.g. key absent) also
       //    degrades to the conservative paper/off default, never throws.
       // ------------------------------------------------------------------
+      _copyInvalidateShared();
       global.fetch = async () => ({ ok: true, json: async () => ({}) });
       await fetchCopyTradingModePosture();
-      assert.strictEqual(banner.className, 'mode-badge mode-badge-paper');
+      assertAllBanners(...OFF);
 
       // ------------------------------------------------------------------
       // 6. Both variants, exercised directly via the render helper, always
       //    carry a full-sentence aria-label (never color/class only).
       // ------------------------------------------------------------------
       renderCopyTradingModePosture(true);
-      assert.ok(banner.getAttribute('aria-label').length > 5);
+      assertAllBanners(...LIVE);
       renderCopyTradingModePosture(false);
-      assert.ok(banner.getAttribute('aria-label').length > 5);
+      assertAllBanners(...OFF);
 
       // ------------------------------------------------------------------
-      // 7. The posture banner must refetch on EVERY tab re-entry (not
-      //    just the very first activation), on its own dedicated 30s
-      //    interval decoupled from the four-view 5-minute poll group.
-      //    PR #1192 review finding: the original wiring only called
-      //    fetchCopyTradingModePosture() inside the `if (!copyTradingLoaded)`
-      //    first-activation guard, so a revisit to the tab relied on the
-      //    5-minute interval's first tick -- meaning a stale live/paper
-      //    read (e.g. right after halt_live_copy_trading.py runs
-      //    mid-incident) could persist on screen for up to 5 minutes
-      //    every time an operator tabs away and back, not just once.
+      // 7. A config change made in the Config tab invalidates the cached
+      //    posture read: the next fetch is fresh, not served from the TTL.
       // ------------------------------------------------------------------
-      let postureFetchCount = 0;
-      fetchCopyTradingModePosture = async () => { postureFetchCount++; };
-      fetchCopyTradingCandidates = async () => {};
-      fetchFollowedWallets = async () => {};
-      fetchCopyTradingPositions = async () => {};
-      fetchCopyTradingActivityFeed = async () => {};
-
-      const setIntervalCalls = [];
-      const clearIntervalCalls = [];
-      let fakeIntervalId = 0;
-      global.setInterval = (fn, delay) => { setIntervalCalls.push({ fn, delay }); return ++fakeIntervalId; };
-      global.clearInterval = (id) => { clearIntervalCalls.push(id); };
-
-      currentTab = 'portfolio';
-      copyTradingLoaded = false;
-      copyTradingIntervalId = null;
-      copyTradingModeIntervalId = null;
-
-      // First entry: immediate fetch (called once from inside the
-      // first-activation guard, and once more from the unconditional
-      // call right after -- both are intentional, see index.html), plus
-      // both a 30s posture interval and the separate shared 5-minute
-      // view-data interval.
-      switchTab('copy-trading');
-      assert.ok(postureFetchCount >= 1, 'first tab entry must fetch the posture banner immediately');
-      assert.ok(setIntervalCalls.some(c => c.delay === 30_000), 'posture banner must get its own 30s interval');
-      const fiveMinCalls = setIntervalCalls.filter(c => c.delay === 300_000);
-      assert.strictEqual(fiveMinCalls.length, 1, 'the four-view group must stay a single shared 5-minute interval, not per-fetch');
-
-      // Leave the tab (an unrelated tab, to avoid exercising unrelated
-      // lazy-load branches) -- both Copy-Trading intervals must be torn
-      // down, same as every other tab's teardown block.
-      const clearedBeforeLeaving = clearIntervalCalls.length;
-      switchTab('other-unrelated-tab');
-      assert.ok(clearIntervalCalls.length >= clearedBeforeLeaving + 2, 'leaving the tab must clear both the posture and the view-data intervals');
-
-      // Re-enter: THE bug this fixes. copyTradingLoaded is already true
-      // at this point, so the old code silently skipped
-      // fetchCopyTradingModePosture() on this second entry entirely,
-      // leaving the banner stale until the next 5-minute poll tick.
-      postureFetchCount = 0;
-      setIntervalCalls.length = 0;
-      switchTab('copy-trading');
-      assert.strictEqual(postureFetchCount, 1, 'the posture banner must refetch immediately on every tab re-entry, not just the first');
-      assert.ok(setIntervalCalls.some(c => c.delay === 30_000), 'a fresh 30s posture interval must be created on re-entry too');
+      configFetches = 0;
+      _copyInvalidateShared();
+      global.fetch = async () => { configFetches++; return configResp(true); };
+      await fetchCopyTradingModePosture();
+      await fetchCopyTradingModePosture();   // within TTL -> cached
+      assert.strictEqual(configFetches, 1);
+      const realFetch = global.fetch;
+      global.fetch = async (url, opts) => {
+        if (opts && opts.method === 'PATCH') return { ok: true, json: async () => ({ value: false }) };
+        return realFetch(url, opts);
+      };
+      await _patchConfig('COPY_LIVE_TRADING_ENABLED', false);   // the Config tab saves
+      await fetchCopyTradingModePosture();   // -> fresh, not the cached read
+      assert.strictEqual(configFetches, 2);
 
       console.log('ALL_MODE_BANNER_JS_ASSERTIONS_PASSED');
     })().catch((err) => {

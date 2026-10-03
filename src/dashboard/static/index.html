@@ -984,16 +984,11 @@ a,button,input,select{transition:color var(--transition),background var(--transi
 .copy-pnl-pos{color:var(--yes);}
 .copy-pnl-neg{color:var(--no);}
 
-/* ── COPY-TRADING POSITIONS & P&L -- LIVE/PAPER TWIN PANELS (issue #1186,
-   Epic J). Two independent columns, Live always first in DOM/reading
-   order everywhere in this epic -- see
-   docs/design/copy-trading-live-views.md ("Positions & P&L"). Never a
-   toggle: both columns are always visible so blending is structurally
-   impossible, not just discouraged. */
-.copy-positions-twin{display:grid;grid-template-columns:1fr 1fr;gap:var(--space-5);align-items:start;}
-@media(max-width:900px){.copy-positions-twin{grid-template-columns:1fr;}}
-.copy-positions-col{min-width:0;}
-.copy-positions-col-heading{margin:0 0 var(--space-3) 0;}
+/* ── COPY-TRADING POSITIONS & P&L -- LIVE/PAPER (issue #1186, Epic J;
+   twin-panel layout retired by the tab split, issue #1275). Live and Paper
+   now each own a whole tab (Copy · Live / Copy · Paper), so the tab itself is
+   the hard separator -- see docs/design/copy-trading-tab-split.md. Never a
+   toggle, never blended. */
 /* "No live positions yet" keeps the live accent (green) -- deliberately
    distinct from the dimmed/neutral "Live trading is off" state, which
    uses .empty's own default (--faint) icon color, unchanged. */
@@ -1082,7 +1077,9 @@ a,button,input,select{transition:color var(--transition),background var(--transi
   <button class="tab-btn" onclick="switchTab('edge')">Edge</button>
   <button class="tab-btn" onclick="switchTab('emos')">EMOS</button>
   <button class="tab-btn" onclick="switchTab('promotion')">Promotion</button>
-  <button class="tab-btn" id="tab-btn-copy-trading" onclick="switchTab('copy-trading')">Copy-Trading</button>
+  <button class="tab-btn" id="tab-btn-copy-wallets" onclick="switchTab('copy-wallets')" aria-label="Copy-trading wallets">Copy · Wallets</button>
+  <button class="tab-btn" id="tab-btn-copy-paper" onclick="switchTab('copy-paper')" aria-label="Copy-trading paper">Copy · Paper</button>
+  <button class="tab-btn" id="tab-btn-copy-live" onclick="switchTab('copy-live')" aria-label="Copy-trading live">Copy · Live</button>
   <button class="tab-btn" id="tab-btn-config" onclick="switchTab('config')">Config</button>
 </nav>
 
@@ -1338,26 +1335,35 @@ a,button,input,select{transition:color var(--transition),background var(--transi
   </main>
 </section>
 
-<!-- ── COPY-TRADING TAB (epic #1143) ── -->
-<section id="tab-copy-trading" class="tab-panel">
+<!-- ── COPY-TRADING TABS (epic #1143; split into Wallets / Paper / Live,
+     epic #1272, issue #1275) ──
+     Three independent panels. The tab itself is now the hard separator
+     between paper and live figures (docs/design/copy-trading-tab-split.md):
+     the Live panel never renders a paper number and the Paper panel never
+     renders a live number. Each panel carries the same shared posture
+     banner (class .copy-trading-mode-banner, per-tab-suffixed ids so ids
+     stay unique) -- ONE fetch (fetchCopyTradingModePosture) updates every
+     instance. -->
+
+<!-- ── COPY · WALLETS TAB (screened candidates; mode-agnostic) ── -->
+<section id="tab-copy-wallets" class="tab-panel">
   <main class="main main--wide">
-    <div class="error-banner" id="copy-trading-error-banner">
+    <div class="error-banner" id="copy-wallets-error-banner">
       <i data-lucide="alert-circle"></i>
-      <span id="copy-trading-error-text">Could not reach the copy-trading API — retrying…</span>
+      <span id="copy-wallets-error-text">Could not reach the copy-trading API — retrying…</span>
     </div>
     <div class="section-hdr">
-      <div class="section-title"><i data-lucide="copy"></i>Copy-Trading</div>
+      <div class="section-title"><i data-lucide="copy"></i>Copy-Trading — Wallets</div>
       <!-- Tab-wide live/paper posture banner (epic J #1161, issue #1185).
            Distinct element from .live-pill (data-connection freshness,
-           not trading mode) -- visible across all four Copy-Trading views
-           since it lives in this shared header. Defaults to the OFF/paper
-           state until fetchCopyTradingModePosture() resolves, same
-           conservative-default rule as the execution_mode fallback. -->
-      <span id="copy-trading-mode-banner" class="mode-badge mode-badge-paper"
+           not trading mode). Defaults to the OFF/paper state until
+           fetchCopyTradingModePosture() resolves, same conservative-default
+           rule as the execution_mode fallback. -->
+      <span id="copy-wallets-mode-banner" class="mode-badge mode-badge-paper copy-trading-mode-banner"
             role="status" aria-live="polite"
             aria-label="Live trading is off — paper only">LIVE TRADING OFF — paper only</span>
     </div>
-    <div id="copy-trading-content">
+    <div id="copy-wallets-content">
       <!-- ── CANDIDATES VIEW (story F1, issue #1146) ── -->
       <div class="section-hdr">
         <div class="section-title"><i data-lucide="list-checks"></i>Candidates</div>
@@ -1391,40 +1397,49 @@ a,button,input,select{transition:color var(--transition),background var(--transi
         </table>
         </div>
       </div>
+    </div>
+  </main>
+</section>
 
-      <!-- ── FOLLOWED WALLETS VIEW (story F2, issue #1147; live/paper split
-           issue #1187, epic J) ── -->
+<!-- ── COPY · PAPER TAB (everything here is PAPER) ── -->
+<section id="tab-copy-paper" class="tab-panel">
+  <main class="main main--wide">
+    <div class="error-banner" id="copy-paper-error-banner">
+      <i data-lucide="alert-circle"></i>
+      <span id="copy-paper-error-text">Could not reach the copy-trading API — retrying…</span>
+    </div>
+    <div class="section-hdr">
+      <div class="section-title"><i data-lucide="copy"></i>Copy-Trading
+        <span class="mode-badge mode-badge-paper" aria-label="Paper mode: everything on this tab is paper trading">PAPER</span>
+      </div>
+      <span id="copy-paper-mode-banner" class="mode-badge mode-badge-paper copy-trading-mode-banner"
+            role="status" aria-live="polite"
+            aria-label="Live trading is off — paper only">LIVE TRADING OFF — paper only</span>
+    </div>
+    <div id="copy-paper-content">
+      <!-- ── FOLLOWED WALLETS: PAPER ROSTER (story F2, issue #1147) ── -->
       <div class="section-hdr copy-followed-hdr">
-        <div class="section-title"><i data-lucide="users"></i>Followed Wallets</div>
+        <div class="section-title"><i data-lucide="users"></i>Followed Wallets
+          <span class="mode-badge mode-badge-paper" aria-label="Paper followed wallets">PAPER</span>
+        </div>
         <div class="copy-summary-strip">
           <span class="copy-slots-pill" id="followed-active-pill">— active</span>
           <span class="copy-slots-pill" id="followed-paused-pill">— paused</span>
-          <span class="copy-slots-pill" id="followed-opted-in-pill">— opted into live</span>
-          <span class="copy-slots-pill" id="followed-live-eligible-pill">— live-eligible</span>
           <span class="copy-slots-pill" id="followed-paper-only-pill">— paper-only</span>
-          <span class="copy-slots-pill" id="followed-live-pnl-pill">— live aggregate P&amp;L</span>
+          <span class="copy-slots-pill" id="followed-opted-in-pill">— opted into live → Live tab</span>
           <span class="copy-slots-pill" id="followed-pnl-pill">— paper aggregate P&amp;L</span>
         </div>
       </div>
-      <!-- Table-level notice (issue #1187): avoids an identical PAPER badge
-           + identical tooltip on every single row when the global switch is
-           off. Per-row badges stay present regardless -- a screenshot of a
-           single row must still be unambiguous on its own (design spec's
-           own explicit requirement). -->
-      <div class="warn-banner" id="followed-live-off-banner" role="status" aria-live="polite">
-        <i data-lucide="zap-off"></i>
-        <span>Live trading is currently off — all wallets are paper-only.</span>
-      </div>
       <div id="copy-followed-list">
         <div class="copy-table-wrap">
-        <table class="copy-table" aria-label="Followed wallets">
+        <table class="copy-table" aria-label="Followed wallets (paper)">
           <thead>
             <tr>
               <th class="copy-th" scope="col">Wallet</th>
-              <th class="copy-th" scope="col">Stake/trade</th>
+              <th class="copy-th" scope="col">Paper stake/trade</th>
               <th class="copy-th" scope="col">Status</th>
               <th class="copy-th" scope="col">Date added</th>
-              <th class="copy-th" scope="col">Running P&amp;L</th>
+              <th class="copy-th" scope="col">Paper running P&amp;L</th>
               <th class="copy-th" scope="col"><span class="sr-only">Actions</span></th>
             </tr>
           </thead>
@@ -1436,14 +1451,14 @@ a,button,input,select{transition:color var(--transition),background var(--transi
         </div>
       </div>
 
-      <!-- ── POSITIONS & P&L VIEW (story F3, issue #1148; live/paper
-           twin-panel split issue #1186, Epic J) ── -->
+      <!-- ── POSITIONS & P&L: PAPER (story F3, issue #1148) ── -->
       <div class="section-hdr copy-positions-hdr">
-        <div class="section-title"><i data-lucide="line-chart"></i>Positions &amp; P&amp;L</div>
+        <div class="section-title"><i data-lucide="line-chart"></i>Positions &amp; P&amp;L
+          <span class="mode-badge mode-badge-paper" aria-label="Paper positions and P&amp;L">PAPER</span>
+        </div>
         <div class="copy-summary-strip">
-          <span class="copy-slots-pill" id="copy-positions-live-total-pill">— Live aggregate P&amp;L</span>
           <span class="copy-slots-pill" id="copy-positions-total-pill">— Paper aggregate P&amp;L</span>
-          <select id="copy-positions-range-select" class="config-edit-select" aria-label="Realized P&amp;L chart date range">
+          <select id="copy-positions-range-select" class="config-edit-select" aria-label="Realized paper P&amp;L chart date range">
             <option value="7">Last 7 days</option>
             <option value="30" selected>Last 30 days</option>
             <option value="90">Last 90 days</option>
@@ -1455,63 +1470,23 @@ a,button,input,select{transition:color var(--transition),background var(--transi
           </label>
         </div>
       </div>
-      <!-- Twin panels, never a toggle (design spec's "never blended"
-           requirement) -- Live always first in DOM/reading order, Paper
-           always second, consistently across this whole epic. Each
-           column is independently loaded/rendered/erred: a slow or
-           failed live fetch must never block or blank the paper column,
-           and vice versa. -->
-      <div class="copy-positions-twin">
-        <div class="copy-positions-col copy-positions-col-live">
-          <h3 class="copy-positions-col-heading">
-            <span class="mode-badge mode-badge-live" aria-label="Live positions and P&amp;L">LIVE</span>
-          </h3>
-          <div class="error-banner" id="copy-positions-live-error-banner">
-            <i data-lucide="alert-circle"></i>
-            <span id="copy-positions-live-error-text">Could not reach live positions data — retrying…</span>
-          </div>
-          <!-- Reconciliation-required banner (issue #1189, epic J): a real
-               money discrepancy between local bookkeeping and the actual
-               CLOB balance, from the hourly check_wallet_balance_drift()
-               job (src/scripts/copy_live_settle.py). Reuses .error-banner's
-               red/critical styling, not .warn-banner's amber "off" styling
-               -- this is a safety issue, not an inert-switch state (design
-               spec: "do not soften this language"). Sits above the content
-               div, independent of whichever Live-column content state (off/
-               empty/populated) is currently rendered below it. -->
-          <div class="error-banner" id="copy-positions-live-drift-banner">
-            <i data-lucide="alert-triangle"></i>
-            <span id="copy-positions-live-drift-text">Live balance mismatch detected — manual reconciliation required</span>
-          </div>
-          <div id="copy-positions-live-content">
-            <div class="empty">
-              <i data-lucide="loader"></i>
-              <h3>Loading live positions…</h3>
-              <p>Fetching live copy-trading positions and P&amp;L.</p>
-            </div>
-          </div>
-        </div>
-        <div class="copy-positions-col copy-positions-col-paper">
-          <h3 class="copy-positions-col-heading">
-            <span class="mode-badge mode-badge-paper" aria-label="Paper positions and P&amp;L">PAPER</span>
-          </h3>
-          <div class="error-banner" id="copy-positions-error-banner">
-            <i data-lucide="alert-circle"></i>
-            <span id="copy-positions-error-text">Could not reach paper positions data — retrying…</span>
-          </div>
-          <div id="copy-positions-content">
-            <div class="empty">
-              <i data-lucide="loader"></i>
-              <h3>Loading positions…</h3>
-              <p>Fetching copy-trading positions and P&amp;L.</p>
-            </div>
-          </div>
+      <div class="error-banner" id="copy-positions-error-banner">
+        <i data-lucide="alert-circle"></i>
+        <span id="copy-positions-error-text">Could not reach paper positions data — retrying…</span>
+      </div>
+      <div id="copy-positions-content">
+        <div class="empty">
+          <i data-lucide="loader"></i>
+          <h3>Loading positions…</h3>
+          <p>Fetching copy-trading positions and P&amp;L.</p>
         </div>
       </div>
 
-      <!-- ── ACTIVITY FEED VIEW (story F4, issue #1149) ── -->
+      <!-- ── ACTIVITY FEED: PAPER (story F4, issue #1149) ── -->
       <div class="section-hdr copy-activity-hdr">
-        <div class="section-title"><i data-lucide="activity"></i>Activity Feed</div>
+        <div class="section-title"><i data-lucide="activity"></i>Activity Feed
+          <span class="mode-badge mode-badge-paper" aria-label="Paper activity">PAPER</span>
+        </div>
       </div>
       <div class="error-banner" id="copy-activity-stale-banner">
         <i data-lucide="alert-circle"></i>
@@ -1519,21 +1494,128 @@ a,button,input,select{transition:color var(--transition),background var(--transi
       </div>
       <div class="copy-activity-filters">
         <label class="copy-activity-filter-label" for="copy-activity-wallet-select">Wallet</label>
-        <select id="copy-activity-wallet-select" class="config-edit-select" aria-label="Filter activity feed by wallet">
+        <select id="copy-activity-wallet-select" class="config-edit-select" aria-label="Filter paper activity feed by wallet">
           <option value="">All wallets</option>
         </select>
-        <label class="copy-activity-filter-label" for="copy-activity-mode-select">Mode</label>
-        <select id="copy-activity-mode-select" class="config-edit-select" aria-label="Filter activity feed by mode">
-          <option value="">All modes</option>
-          <option value="live">Live</option>
-          <option value="paper">Paper</option>
-        </select>
         <label class="copy-activity-filter-label" for="copy-activity-type-select">Event type</label>
-        <select id="copy-activity-type-select" class="config-edit-select" aria-label="Filter activity feed by event type">
+        <select id="copy-activity-type-select" class="config-edit-select" aria-label="Filter paper activity feed by event type">
           <option value="">All events</option>
           <option value="order_placed">Order placed</option>
           <option value="order_skipped">Order skipped</option>
           <option value="wallet_paused">Wallet paused</option>
+        </select>
+      </div>
+      <div id="copy-activity-list">
+        <div class="empty">
+          <i data-lucide="loader"></i>
+          <h3>Loading activity…</h3>
+          <p>Fetching the paper copy-trading activity feed.</p>
+        </div>
+      </div>
+    </div>
+  </main>
+</section>
+
+<!-- ── COPY · LIVE TAB (everything here is LIVE, real money) ── -->
+<section id="tab-copy-live" class="tab-panel">
+  <main class="main main--wide">
+    <div class="error-banner" id="copy-live-error-banner">
+      <i data-lucide="alert-circle"></i>
+      <span id="copy-live-error-text">Could not reach the copy-trading API — retrying…</span>
+    </div>
+    <div class="section-hdr">
+      <div class="section-title"><i data-lucide="copy"></i>Copy-Trading
+        <span class="mode-badge mode-badge-live" aria-label="Live mode: everything on this tab is real-money trading">LIVE</span>
+      </div>
+      <span id="copy-live-mode-banner" class="mode-badge mode-badge-paper copy-trading-mode-banner"
+            role="status" aria-live="polite"
+            aria-label="Live trading is off — paper only">LIVE TRADING OFF — paper only</span>
+    </div>
+    <!-- Reconciliation-required banner (issue #1189, epic J): a real
+         money discrepancy between local bookkeeping and the actual
+         CLOB balance, from the hourly check_wallet_balance_drift() job
+         (src/scripts/copy_live_settle.py). Reuses .error-banner's
+         red/critical styling -- this is a safety issue, not an inert-switch
+         state (design spec: "do not soften this language"). Sits above
+         every Live section, independent of their content states. -->
+    <div class="error-banner" id="copy-positions-live-drift-banner">
+      <i data-lucide="alert-triangle"></i>
+      <span id="copy-positions-live-drift-text">Live balance mismatch detected — manual reconciliation required</span>
+    </div>
+    <div id="copy-live-content">
+      <!-- ── LIVE WALLETS (opted in) + READY TO GO LIVE ── -->
+      <div class="section-hdr copy-followed-hdr">
+        <div class="section-title"><i data-lucide="users"></i>Live Wallets
+          <span class="mode-badge mode-badge-live" aria-label="Live followed wallets">LIVE</span>
+        </div>
+        <div class="copy-summary-strip">
+          <span class="copy-slots-pill" id="live-followed-opted-in-pill">— opted into live</span>
+          <span class="copy-slots-pill" id="live-followed-live-eligible-pill">— live-eligible</span>
+          <span class="copy-slots-pill" id="live-followed-live-pnl-pill">— live aggregate P&amp;L</span>
+        </div>
+      </div>
+      <!-- Table-level notice (issue #1187): avoids an identical badge +
+           tooltip on every row when the global switch is off. Per-row badges
+           stay present regardless. -->
+      <div class="warn-banner" id="followed-live-off-banner" role="status" aria-live="polite">
+        <i data-lucide="zap-off"></i>
+        <span>Live trading is currently off — no wallet is executing live trades.</span>
+      </div>
+      <div id="copy-live-followed-list">
+        <div class="empty">
+          <i data-lucide="loader"></i>
+          <h3>Loading live wallets…</h3>
+          <p>Fetching followed wallets.</p>
+        </div>
+      </div>
+      <div class="copy-positions-table-title">Ready to go live</div>
+      <div id="copy-live-ready-list"></div>
+
+      <!-- ── POSITIONS & P&L: LIVE (issue #1186, Epic J) ── -->
+      <div class="section-hdr copy-positions-hdr">
+        <div class="section-title"><i data-lucide="line-chart"></i>Positions &amp; P&amp;L
+          <span class="mode-badge mode-badge-live" aria-label="Live positions and P&amp;L">LIVE</span>
+        </div>
+        <div class="copy-summary-strip">
+          <span class="copy-slots-pill" id="copy-positions-live-total-pill">— Live aggregate P&amp;L</span>
+          <select id="copy-live-range-select" class="config-edit-select" aria-label="Realized live P&amp;L chart date range">
+            <option value="7">Last 7 days</option>
+            <option value="30" selected>Last 30 days</option>
+            <option value="90">Last 90 days</option>
+            <option value="all">All time</option>
+          </select>
+        </div>
+      </div>
+      <div class="error-banner" id="copy-positions-live-error-banner">
+        <i data-lucide="alert-circle"></i>
+        <span id="copy-positions-live-error-text">Could not reach live positions data — retrying…</span>
+      </div>
+      <div id="copy-positions-live-content">
+        <div class="empty">
+          <i data-lucide="loader"></i>
+          <h3>Loading live positions…</h3>
+          <p>Fetching live copy-trading positions and P&amp;L.</p>
+        </div>
+      </div>
+
+      <!-- ── ACTIVITY FEED: LIVE (issue #1188) ── -->
+      <div class="section-hdr copy-activity-hdr">
+        <div class="section-title"><i data-lucide="activity"></i>Activity Feed
+          <span class="mode-badge mode-badge-live" aria-label="Live activity">LIVE</span>
+        </div>
+      </div>
+      <div class="error-banner" id="copy-live-activity-stale-banner">
+        <i data-lucide="alert-circle"></i>
+        <span id="copy-live-activity-stale-text">Could not reach the activity feed — retrying…</span>
+      </div>
+      <div class="copy-activity-filters">
+        <label class="copy-activity-filter-label" for="copy-live-activity-wallet-select">Wallet</label>
+        <select id="copy-live-activity-wallet-select" class="config-edit-select" aria-label="Filter live activity feed by wallet">
+          <option value="">All wallets</option>
+        </select>
+        <label class="copy-activity-filter-label" for="copy-live-activity-type-select">Event type</label>
+        <select id="copy-live-activity-type-select" class="config-edit-select" aria-label="Filter live activity feed by event type">
+          <option value="">All events</option>
           <option value="live_order_pending">Live order pending</option>
           <option value="live_order_filled">Live order filled</option>
           <option value="live_order_partial">Live order partially filled</option>
@@ -1544,11 +1626,11 @@ a,button,input,select{transition:color var(--transition),background var(--transi
           <option value="live_balance_mismatch">Live balance mismatch</option>
         </select>
       </div>
-      <div id="copy-activity-list">
+      <div id="copy-live-activity-list">
         <div class="empty">
           <i data-lucide="loader"></i>
           <h3>Loading activity…</h3>
-          <p>Fetching the copy-trading activity feed.</p>
+          <p>Fetching the live copy-trading activity feed.</p>
         </div>
       </div>
     </div>
@@ -3736,6 +3818,10 @@ async function _patchConfig(key, value) {
       if (errEl) errEl.textContent = body.detail || `Error ${r.status}`;
       return null;
     }
+    // A config change (e.g. the live-trading kill switch) must show up on
+    // the copy tabs' posture banner on the very next read, not after the
+    // shared cache's TTL.
+    _copyInvalidateShared();
     return await r.json();
   } catch (e) {
     if (errEl) errEl.textContent = 'Network error';
@@ -3829,10 +3915,6 @@ function _configRestoreCtrl(key, param) {
 let currentTab = 'portfolio';
 let portfolioIntervalId = null;
 let botLogIntervalId = null;
-let copyTradingLoaded = false;
-let copyTradingIntervalId = null;
-let copyTradingModeIntervalId = null;
-let followedWalletsIntervalId = null;
 
 function switchTab(tab) {
   // Hide all panels
@@ -3880,14 +3962,11 @@ function switchTab(tab) {
     promotionIntervalId = null;
   }
 
-  // Stop Copy-Trading polling when leaving the Copy-Trading tab
-  if (currentTab === 'copy-trading' && tab !== 'copy-trading') {
-    clearInterval(copyTradingIntervalId);
-    clearInterval(copyTradingModeIntervalId);
-    clearInterval(followedWalletsIntervalId);
-    copyTradingIntervalId = null;
-    copyTradingModeIntervalId = null;
-    followedWalletsIntervalId = null;
+  // Stop ALL Copy-Trading polling of the tab being left -- including when
+  // moving to another copy tab (Wallets/Paper/Live each own their intervals;
+  // issue #1275). The incoming tab starts its own below.
+  if (_isCopyTab(currentTab)) {
+    _copyTabStop(currentTab);
   }
 
   currentTab = tab;
@@ -3949,51 +4028,190 @@ function switchTab(tab) {
     }
   }
 
-  // Lazy-load Copy-Trading candidates + positions + activity feed on first
-  // activation; poll every 5 minutes, matching the other advisory/
-  // report-style tabs (Promotion, EMOS). Followed Wallets is polled
-  // separately below (issue #1187) since it now carries a live/paper
-  // status badge.
-  if (tab === 'copy-trading') {
-    if (!copyTradingLoaded) {
-      copyTradingLoaded = true;
-      fetchCopyTradingModePosture();
-      fetchCopyTradingCandidates();
-      fetchCopyTradingPositions();
-      fetchCopyTradingActivityFeed();
-      fetchCopyTradingBalanceDrift();
-    }
-    if (!copyTradingIntervalId) {
-      copyTradingIntervalId = setInterval(() => {
-        fetchCopyTradingCandidates();
-        fetchCopyTradingPositions();
-        fetchCopyTradingActivityFeed();
-        fetchCopyTradingBalanceDrift();
-      }, 300_000);
-    }
-    // The global live/paper posture banner gets its own dedicated 30s
-    // interval, decoupled from the 5-minute view-data group above, and
-    // is fetched unconditionally on every tab entry (not gated behind
-    // copyTradingLoaded, mirroring fetchPortfolio()/fetchBotLog()'s
-    // pattern at ~line 3728) -- a stale live/paper read must never
-    // persist for up to 5 minutes on a tab revisit (e.g. right after
-    // halt_live_copy_trading.py runs mid-incident and the operator tabs
-    // away and back). See PR #1192 review.
-    fetchCopyTradingModePosture();
-    if (!copyTradingModeIntervalId) {
-      copyTradingModeIntervalId = setInterval(fetchCopyTradingModePosture, 30_000);
-    }
-    // Followed Wallets now renders a config-driven live/paper badge per
-    // row (issue #1187) -- the same staleness risk PR #1192 fixed for the
-    // posture banner above applies here too, so this gets the identical
-    // treatment: its own 30s interval, decoupled from the 5-minute group,
-    // fetched unconditionally on every tab entry rather than gated behind
-    // copyTradingLoaded.
-    fetchFollowedWallets();
-    if (!followedWalletsIntervalId) {
-      followedWalletsIntervalId = setInterval(fetchFollowedWallets, 30_000);
-    }
+  // Copy-Trading tabs (issue #1275): each lazy-loads its own data on
+  // activation and owns its own intervals (see COPY-TRADING TAB CONTROLLER
+  // below).
+  if (_isCopyTab(tab)) {
+    _copyTabStart(tab);
   }
+}
+
+/* ─────────────────────────────────────────
+   COPY-TRADING TAB CONTROLLER (epic #1272, issue #1275)
+   The old single Copy-Trading tab is now three tabs -- Copy · Wallets,
+   Copy · Paper, Copy · Live -- each lazy-loading its own data and owning
+   its own polling intervals. Rules (docs/design/copy-trading-tab-split.md,
+   "Performance and loading"):
+   - first activation fetches only that tab's data; re-entry refreshes only
+     what is stale (or `always`, i.e. cheap shared-cache reads);
+   - switchTab() stops EVERY interval of the tab being left, and starts the
+     incoming tab's;
+   - nothing polls while document.hidden: visibilitychange stops the active
+     copy tab's intervals and, on return, restarts them with an immediate
+     refresh;
+   - /followed-wallets and /positions are fetched through ONE shared cache
+     (short TTL + in-flight de-duplication) so Paper <-> Live never
+     double-requests.
+   ───────────────────────────────────────── */
+const COPY_TAB_IDS = ['copy-wallets', 'copy-paper', 'copy-live'];
+const COPY_SHARED_TTL_MS = 10_000;
+const COPY_POSTURE_TTL_MS = 5_000;
+
+function _isCopyTab(tab) {
+  return COPY_TAB_IDS.indexOf(tab) !== -1;
+}
+
+// 'wallets' | 'paper' | 'live' for the tab currently shown; anything else
+// (tests, programmatic calls) falls back to 'paper', the conservative mode.
+function _copyCurrentScope() {
+  if (currentTab === 'copy-live') return 'live';
+  if (currentTab === 'copy-wallets') return 'wallets';
+  return 'paper';
+}
+
+// Per-tab polling jobs. `everyMs` is the cadence while the tab is active;
+// `always` jobs also run on every (re)entry -- they are cheap because they go
+// through the shared cache / are tiny (the posture banner, PR #1192: a stale
+// live/paper read must never persist on tab revisit).
+const COPY_TAB_JOBS = {
+  'copy-wallets': [
+    { key: 'posture', run: () => fetchCopyTradingModePosture(), everyMs: 30_000, always: true },
+    // Candidates are screened periodically -- no fast poll.
+    { key: 'candidates', run: () => fetchCopyTradingCandidates(), everyMs: 300_000 },
+  ],
+  'copy-paper': [
+    { key: 'posture', run: () => fetchCopyTradingModePosture(), everyMs: 30_000, always: true },
+    { key: 'followed', run: () => fetchFollowedWallets('paper'), everyMs: 30_000, always: true },
+    { key: 'positions', run: () => fetchCopyTradingPositions('paper'), everyMs: 300_000, always: true },
+    { key: 'activity', run: () => fetchCopyTradingActivityFeed('paper'), everyMs: 300_000 },
+  ],
+  'copy-live': [
+    { key: 'posture', run: () => fetchCopyTradingModePosture(), everyMs: 30_000, always: true },
+    { key: 'followed', run: () => fetchFollowedWallets('live'), everyMs: 30_000, always: true },
+    // Real money: positions + activity poll fast.
+    { key: 'positions', run: () => fetchCopyTradingPositions('live'), everyMs: 30_000, always: true },
+    { key: 'activity', run: () => fetchCopyTradingActivityFeed('live'), everyMs: 30_000 },
+    // The underlying check only runs hourly.
+    { key: 'drift', run: () => fetchCopyTradingBalanceDrift(), everyMs: 300_000 },
+  ],
+};
+
+const _copyTabIntervals = {};   // tab -> [intervalId, ...]
+const _copyJobLastRun = {};     // `${tab}:${key}` -> epoch ms
+
+function _copyRunJob(tab, job) {
+  if (document.hidden) return;  // never poll a hidden document
+  _copyJobLastRun[tab + ':' + job.key] = Date.now();
+  try {
+    const result = job.run();
+    if (result && typeof result.catch === 'function') {
+      result.catch(e => console.error(`Copy-trading ${tab}/${job.key} job failed:`, e));
+    }
+  } catch (e) {
+    console.error(`Copy-trading ${tab}/${job.key} job failed:`, e);
+  }
+}
+
+// Idempotent: stops this tab's intervals, runs whichever jobs are due
+// (never run yet, stale, or `always`), and (re)starts one interval per job.
+function _copyTabStart(tab) {
+  _copyTabStop(tab);
+  if (document.hidden) return;  // visibilitychange resumes when visible again
+  const ids = [];
+  for (const job of COPY_TAB_JOBS[tab]) {
+    const last = _copyJobLastRun[tab + ':' + job.key];
+    if (job.always || last === undefined || Date.now() - last >= job.everyMs) {
+      _copyRunJob(tab, job);
+    }
+    ids.push(setInterval(() => _copyRunJob(tab, job), job.everyMs));
+  }
+  _copyTabIntervals[tab] = ids;
+}
+
+function _copyTabStop(tab) {
+  (_copyTabIntervals[tab] || []).forEach(id => clearInterval(id));
+  _copyTabIntervals[tab] = [];
+}
+
+function _copyOnVisibilityChange() {
+  if (!_isCopyTab(currentTab)) return;
+  if (document.hidden) {
+    _copyTabStop(currentTab);
+  } else {
+    _copyTabStart(currentTab);  // immediate refresh + restart intervals
+  }
+}
+document.addEventListener('visibilitychange', _copyOnVisibilityChange);
+
+// Programmatic navigation between copy tabs goes through the tab button's
+// own onclick -> switchTab(), so there is exactly one routing path.
+function _copyGoToTab(tab) {
+  const btn = document.getElementById('tab-btn-' + tab);
+  if (btn) btn.click();
+}
+
+// ── Shared fetch cache: ONE request feeds Paper and Live ─────────────────
+// Short TTL + in-flight de-duplication. A mutation (follow, pause, go live,
+// config change ...) calls _copyInvalidateShared() so the very next read is
+// fresh; a generation counter stops a pre-mutation request that is still in
+// flight from re-populating the cache with stale data.
+const _copySharedCache = new Map(); // url -> { data, ts, inflight, gen }
+
+function _copySharedFetch(url, ttlMs = COPY_SHARED_TTL_MS) {
+  let entry = _copySharedCache.get(url);
+  if (!entry) {
+    entry = { data: null, ts: 0, inflight: null, gen: 0 };
+    _copySharedCache.set(url, entry);
+  }
+  if (entry.inflight) return entry.inflight;
+  if (entry.data !== null && Date.now() - entry.ts < ttlMs) {
+    return Promise.resolve(entry.data);
+  }
+  const gen = entry.gen;
+  const promise = (async () => {
+    try {
+      const r = await fetch(url);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const data = await r.json();
+      if (entry.gen === gen) {
+        entry.data = data;
+        entry.ts = Date.now();
+      }
+      return data;
+    } finally {
+      if (entry.inflight === promise) entry.inflight = null;
+    }
+  })();
+  entry.inflight = promise;
+  return promise;
+}
+
+function _copyInvalidateShared() {
+  for (const entry of _copySharedCache.values()) {
+    entry.gen += 1;
+    entry.data = null;
+    entry.ts = 0;
+    entry.inflight = null;
+  }
+}
+
+// Each copy tab owns one tab-level error banner (ids copy-<scope>-error-banner
+// / -text; scope = wallets | paper | live).
+function _copyErrorEls(scope) {
+  return {
+    banner: document.getElementById(`copy-${scope}-error-banner`),
+    text: document.getElementById(`copy-${scope}-error-text`),
+  };
+}
+
+// Cheap "did the payload change" check so a poll that returns identical data
+// never rebuilds the list DOM (keeps expanded rows, armed inputs, scroll and
+// focus intact, and avoids layout work on every 30 s tick).
+const _copyLastPayloadSig = {};
+function _copyPayloadUnchanged(key, sig) {
+  if (_copyLastPayloadSig[key] === sig) return true;
+  _copyLastPayloadSig[key] = sig;
+  return false;
 }
 
 /* ─────────────────────────────────────────
@@ -4476,6 +4694,7 @@ function renderCopyCandidates(data) {
     </div>`;
   lucide.createIcons();
   _copyReopenExpandedRows();
+  _copyConsumePendingCandidateJump();
 }
 
 function toggleCandidateDetail(address) {
@@ -4670,6 +4889,9 @@ async function submitFollow(address, btn) {
       return;
     }
     console.info(`Followed ${address}: ${body.message}`);
+    // The roster changed -- drop the shared followed-wallets/positions cache
+    // so Paper/Live never serve a pre-follow payload (issue #1275).
+    _copyInvalidateShared();
     // Refresh the candidates list so this row now shows "Followed" — the
     // open detail panel is preserved via _copyReopenExpandedRows().
     await fetchCopyTradingCandidates();
@@ -4685,7 +4907,7 @@ async function submitFollow(address, btn) {
    COPY-TRADING — GLOBAL LIVE/PAPER POSTURE BANNER (epic J #1161, #1185)
    Data: GET /api/config, group "copy_trading", key
    COPY_LIVE_TRADING_ENABLED (Epic G's single global kill switch). Shared
-   across all four Copy-Trading views since the banner lives in the tab's
+   across all three Copy-Trading tabs since the banner lives in each tab's
    common header, not any one view -- see docs/design/copy-trading-live-
    views.md ("Global: a tab-wide live/paper posture banner").
    ───────────────────────────────────────── */
@@ -4700,30 +4922,39 @@ async function submitFollow(address, btn) {
 let _copyLiveTradingEnabled = false;
 
 function renderCopyTradingModePosture(liveEnabled) {
+  const postureChanged = _copyLiveTradingEnabled !== !!liveEnabled;
   _copyLiveTradingEnabled = !!liveEnabled;
-  const el = document.getElementById('copy-trading-mode-banner');
-  if (el) {
+  // The same shared component is rendered on all three copy tabs (class
+  // .copy-trading-mode-banner, per-tab ids); one fetch updates every
+  // instance (issue #1275).
+  const banners = document.querySelectorAll('.copy-trading-mode-banner');
+  banners.forEach(el => {
     if (liveEnabled) {
-      el.className = 'mode-badge mode-badge-live';
+      el.className = 'mode-badge mode-badge-live copy-trading-mode-banner';
       el.textContent = 'LIVE TRADING ON';
       el.setAttribute('aria-label', 'Live trading is on');
     } else {
-      el.className = 'mode-badge mode-badge-paper';
+      el.className = 'mode-badge mode-badge-paper copy-trading-mode-banner';
       el.textContent = 'LIVE TRADING OFF — paper only';
       el.setAttribute('aria-label', 'Live trading is off — paper only');
     }
+  });
+  // Re-render the already-fetched Live positions column (only if the Live
+  // tab has loaded it) so a posture flip is reflected within this banner's
+  // own 30s poll, not the Positions endpoint's cadence. Likewise the Live
+  // activity feed's empty-state wording depends on the posture.
+  // Only when the posture actually flipped -- an unchanged 30 s poll must not
+  // rebuild those views.
+  if (postureChanged) {
+    if (_copyLivePositionsData) renderCopyLivePositions(_copyLivePositionsData, _copyLiveTradingEnabled);
+    const liveFeed = _copyActivityScopes.live;
+    if (liveFeed.data) renderCopyActivityFeed(liveFeed.data, 'live');
   }
-  // Re-render the already-fetched Positions & P&L Live column (if any) so
-  // a posture flip is reflected there within this banner's own 30s poll,
-  // not the Positions endpoint's 5-minute one.
-  if (_copyPositionsData) renderCopyLivePositions(_copyPositionsData, _copyLiveTradingEnabled);
 }
 
 async function fetchCopyTradingModePosture() {
   try {
-    const r = await fetch('/api/config');
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    const data = await r.json();
+    const data = await _copySharedFetch('/api/config', COPY_POSTURE_TTL_MS);
     const param = data && data.copy_trading && data.copy_trading.COPY_LIVE_TRADING_ENABLED;
     renderCopyTradingModePosture(!!(param && param.value));
   } catch (e) {
@@ -4736,12 +4967,15 @@ async function fetchCopyTradingModePosture() {
 }
 
 async function fetchCopyTradingCandidates() {
-  const banner = document.getElementById('copy-trading-error-banner');
+  const banner = document.getElementById('copy-wallets-error-banner');
   try {
     const r = await fetch('/api/copy-trading/candidates');
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const data = await r.json();
     if (banner) banner.classList.remove('visible');
+    // Identical payload: leave the table DOM alone (expanded rows, armed
+    // Follow input, scroll position all survive a no-change poll).
+    if (_copyPayloadUnchanged('candidates', JSON.stringify(data))) return;
     renderCopyCandidates(data);
   } catch (e) {
     console.error('Copy-trading candidates fetch failed:', e);
@@ -4749,7 +4983,7 @@ async function fetchCopyTradingCandidates() {
       // Last-known-good data stays on screen — only the banner changes
       // (design spec: never drop to a blank screen on a fetch failure).
       if (banner) banner.classList.add('visible');
-      const textEl = document.getElementById('copy-trading-error-text');
+      const textEl = document.getElementById('copy-wallets-error-text');
       if (textEl) {
         textEl.textContent = `Fetch failed (${e.message}) — showing last-known data, retrying in 5 min`;
       }
@@ -4769,32 +5003,45 @@ async function fetchCopyTradingCandidates() {
    badge and the live/paper split aggregates). Mutations: POST .../pause,
    POST .../resume, POST .../unfollow, PATCH .../stake.
 
-   Reuses the Candidates view's per-section error-banner
-   (#copy-trading-error-banner) rather than a new toast/notification
+   Reuses each copy tab's own tab-level error-banner
+   (#copy-paper-error-banner / #copy-live-error-banner) rather than a new toast/notification
    component (Designer sign-off, issue #1147) -- and toggleSide()'s
    disable-control / snapshot-prior-state / roll-back-on-failure pattern
    (index.html's Stations tab) for every row-level action below, instead
    of a fire-and-forget optimistic update with no rollback path.
 
-   Polled on its own dedicated 30s interval (switchTab(), issue #1187),
-   decoupled from the rest of the Copy-Trading tab's 5-minute group --
-   the live badge is config-driven and trust-relevant (mistaking paper for
-   live is a real safety issue per the design spec), so it gets the same
-   fast-refresh treatment PR #1192 gave the tab-wide posture banner rather
-   than risking the same up-to-5-minute stale read on a tab revisit.
+   Polled on its own dedicated 30s interval by the Paper and Live tabs
+   (COPY_TAB_JOBS, issues #1187/#1275) -- the live badge is config-driven
+   and trust-relevant (mistaking paper for live is a real safety issue per
+   the design spec), so it keeps the fast-refresh treatment PR #1192 gave
+   the posture banner.
+
+   Tab split (issue #1275): the SAME payload feeds two renders -- the Paper
+   roster (paper stake / paper status / paper P&L / paper controls) on
+   Copy · Paper and the Live roster (live stake / live badge / Pause +
+   Revert to paper, plus "Ready to go live") on Copy · Live. Each render
+   only reads its own mode's fields; the payload comes from the shared
+   10 s cache (_copySharedFetch) so Paper <-> Live never re-requests.
    ───────────────────────────────────────── */
 
 let _followedWalletsData = null;
 let _followedListenersBound = false;
+
+// Live-tab rows get a distinct DOM-id prefix so a wallet that appears on
+// both the Paper and Live tabs never produces duplicate ids. Row actions
+// only ever fire from the tab currently shown, so currentTab picks it.
+function _followedIdPrefix() {
+  return currentTab === 'copy-live' ? 'live-' : '';
+}
 
 function _followedFmtUsd(x) {
   if (x == null) return '—';
   return (x >= 0 ? '+' : '-') + '$' + Math.abs(x).toFixed(2);
 }
 
+// Candidates now live on the Copy · Wallets tab (issue #1275).
 function scrollToCopyCandidates() {
-  const el = document.getElementById('copy-candidates-list');
-  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  _copyGoToTab('copy-wallets');
 }
 
 // Distinguishes a wallet paused by an automated job (e.g. wallet-health,
@@ -4853,21 +5100,20 @@ function _followedLiveBadgeHtml(w) {
   return `<span class="mode-badge mode-badge-paper" aria-label="${label}">PAPER</span>`;
 }
 
-// Issue #1259: once a wallet is opted into live, its per-trade stake is no
-// longer a single figure -- show paper and (resolved) live stakes on their
-// own labeled lines, never blended, per the design spec's standing "live
-// and paper figures are never blended" rule. A wallet never opted into live
-// keeps today's single-value display unchanged (no "Paper:" qualifier --
-// the common case shouldn't carry noise with nothing to disambiguate).
-function _followedStakeDisplayHtml(w) {
-  if (!w.live_enabled) {
-    return `<span class="followed-stake-value">$${w.stake_per_trade.toFixed(2)}</span>`;
-  }
+// Issue #1259 / #1275: paper and live stakes are never blended. The Paper
+// roster only ever renders the paper stake; the Live roster only ever
+// renders the (resolved) live stake, with a plain-language note when it is
+// just inheriting the paper stake -- the paper figure itself is NOT shown on
+// the Live tab.
+function _followedPaperStakeHtml(w) {
+  return `<span class="followed-stake-value">Paper: $${w.stake_per_trade.toFixed(2)}</span>`;
+}
+
+function _followedLiveStakeHtml(w) {
   const inheritedNote = w.live_stake_is_override
     ? ''
     : ` <span class="followed-paused-reason" style="display:inline">(inherits paper)</span>`;
-  return `<div class="followed-stake-value">Paper: $${w.stake_per_trade.toFixed(2)}</div>
-    <div class="followed-stake-value followed-stake-live">Live: $${w.live_stake_per_trade.toFixed(2)}${inheritedNote}</div>`;
+  return `<span class="followed-stake-value followed-stake-live">Live: $${w.live_stake_per_trade.toFixed(2)}${inheritedNote}</span>`;
 }
 
 function _followedStakeEditHtml(address, currentStake) {
@@ -4921,105 +5167,191 @@ function _followedGoLiveButtonHtml(w) {
   </button>`;
 }
 
-function _followedRowHtml(w) {
-  const addrEsc = _copyEscapeHtml(w.address);
-  const safeId = _copySafeId(w.address);
-  const addedDate = w.added_at ? new Date(w.added_at).toLocaleDateString() : '—';
-  const pauseResumeBtn = w.status === 'paused'
+function _followedPauseResumeBtnHtml(w, addrEsc) {
+  return w.status === 'paused'
     ? `<button type="button" class="btn-followed-action btn-followed-resume" data-address="${addrEsc}" aria-label="Resume copying ${addrEsc}"><span class="spinner"></span><i data-lucide="play"></i>Resume</button>`
     : `<button type="button" class="btn-followed-action btn-followed-pause" data-address="${addrEsc}" aria-label="Pause copying ${addrEsc}"><span class="spinner"></span><i data-lucide="pause"></i>Pause</button>`;
-  return `
-    <tr class="copy-row" data-address="${addrEsc}" id="followed-row-${safeId}">
-      <td class="copy-td copy-address-cell">
+}
+
+function _followedAddressCellHtml(w, addrEsc) {
+  return `<td class="copy-td copy-address-cell">
         <span class="copy-address-mono" title="${addrEsc}" data-address="${addrEsc}">${_copyEscapeHtml(_copyTruncateAddress(w.address))}</span>
         <button type="button" class="copy-copy-btn" aria-label="Copy full wallet address to clipboard" title="Copy address">
           <i data-lucide="copy"></i>
         </button>
         <span class="copy-feedback-label" data-address="${addrEsc}"></span>
-      </td>
-      <td class="copy-td" id="followed-stake-cell-${safeId}">${_followedStakeDisplayHtml(w)}</td>
+      </td>`;
+}
+
+// PAPER roster row (Copy · Paper). Paper stake, paper status, paper P&L,
+// paper controls (Pause/Resume, Edit stake, Unfollow). The live-opt-in
+// state is a read-only badge only -- every money action that touches live
+// lives on the Live tab ("Go live" here is just a link, design spec).
+function _followedRowHtml(w) {
+  const addrEsc = _copyEscapeHtml(w.address);
+  const safeId = _copySafeId(w.address);
+  const addedDate = w.added_at ? new Date(w.added_at).toLocaleDateString() : '—';
+  const goLiveLink = (!w.live_enabled && w.status !== 'paused')
+    ? `<button type="button" class="btn-followed-action btn-followed-goto-live" aria-label="Go to the Live tab to take ${addrEsc} live"><i data-lucide="zap"></i>Go live →</button>`
+    : '';
+  return `
+    <tr class="copy-row" data-address="${addrEsc}" id="followed-row-${safeId}">
+      ${_followedAddressCellHtml(w, addrEsc)}
+      <td class="copy-td followed-stake-cell" id="followed-stake-cell-${safeId}">${_followedPaperStakeHtml(w)}</td>
       <td class="copy-td followed-status-cell" id="followed-status-cell-${safeId}">${_followedStatusBadgeHtml(w)}${_followedLiveBadgeHtml(w)}</td>
       <td class="copy-td">${addedDate}</td>
       <td class="copy-td">${_followedFmtUsd(w.realized_pnl_usd)}</td>
       <td class="copy-td followed-actions-cell">
-        ${pauseResumeBtn}
+        ${_followedPauseResumeBtnHtml(w, addrEsc)}
         <button type="button" class="btn-followed-action btn-followed-edit-stake" data-address="${addrEsc}" aria-label="Edit paper stake per trade for ${addrEsc}">
           <i data-lucide="pencil"></i>Edit stake
         </button>
-        ${_followedGoLiveButtonHtml(w)}
+        ${goLiveLink}
         <button type="button" class="btn-followed-action btn-followed-unfollow" data-address="${addrEsc}" aria-label="Unfollow ${addrEsc}">
           <i data-lucide="user-x"></i>Unfollow
         </button>
-        <p class="followed-live-msg" id="followed-live-msg-${safeId}" role="status" aria-live="polite"></p>
       </td>
     </tr>`;
 }
 
-function renderFollowedWallets(data) {
-  _followedWalletsData = data;
-  _followedBindListEvents();
+// LIVE roster row (Copy · Live): opted-in wallets only. Live stake, live
+// badge, and the two live-tab controls -- Pause/Resume (duplicated here on
+// purpose: stopping real-money trades must never need a tab switch) and
+// Revert to paper. No paper figure is rendered. Edit-live-stake is #1278.
+function _followedLiveRowHtml(w) {
+  const addrEsc = _copyEscapeHtml(w.address);
+  const safeId = _copySafeId(w.address);
+  const revertBtn = _followedGoLiveButtonHtml(w);
+  return `
+    <tr class="copy-row" data-address="${addrEsc}" id="live-followed-row-${safeId}">
+      ${_followedAddressCellHtml(w, addrEsc)}
+      <td class="copy-td followed-stake-cell" id="live-followed-stake-cell-${safeId}">${_followedLiveStakeHtml(w)}</td>
+      <td class="copy-td followed-status-cell" id="live-followed-status-cell-${safeId}">${_followedStatusBadgeHtml(w)}${_followedLiveBadgeHtml(w)}</td>
+      <td class="copy-td followed-actions-cell">
+        ${_followedPauseResumeBtnHtml(w, addrEsc)}
+        ${revertBtn}
+        <p class="followed-live-msg" id="live-followed-live-msg-${safeId}" role="status" aria-live="polite"></p>
+      </td>
+    </tr>`;
+}
+
+// "Ready to go live": paper-active wallets not yet opted in. Wallet + the
+// Go live action only -- the optional labelled paper-P&L reference column is
+// follow-up work for #1278.
+function _followedReadyRowHtml(w) {
+  const addrEsc = _copyEscapeHtml(w.address);
+  const safeId = _copySafeId(w.address);
+  return `
+    <tr class="copy-row" data-address="${addrEsc}" id="live-ready-row-${safeId}">
+      ${_followedAddressCellHtml(w, addrEsc)}
+      <td class="copy-td followed-actions-cell">
+        ${_followedGoLiveButtonHtml(w)}
+        <p class="followed-live-msg" id="live-followed-live-msg-${safeId}" role="status" aria-live="polite"></p>
+      </td>
+    </tr>`;
+}
+
+function _followedTableHtml(label, headers, rowsHtml) {
+  return `
+    <div class="copy-table-wrap">
+    <table class="copy-table" aria-label="${label}">
+      <thead>
+        <tr>${headers.map(h => h.sr
+          ? `<th class="copy-th" scope="col"><span class="sr-only">${h.sr}</span></th>`
+          : `<th class="copy-th" scope="col">${h.text}</th>`).join('')}</tr>
+      </thead>
+      <tbody>${rowsHtml}</tbody>
+    </table>
+    </div>`;
+}
+
+function _followedRenderPaper(data) {
   const wrap = document.getElementById('copy-followed-list');
   const activePill = document.getElementById('followed-active-pill');
   const pausedPill = document.getElementById('followed-paused-pill');
   const pnlPill = document.getElementById('followed-pnl-pill');
   const optedInPill = document.getElementById('followed-opted-in-pill');
-  const liveEligiblePill = document.getElementById('followed-live-eligible-pill');
   const paperOnlyPill = document.getElementById('followed-paper-only-pill');
-  const livePnlPill = document.getElementById('followed-live-pnl-pill');
-  const liveOffBanner = document.getElementById('followed-live-off-banner');
   if (activePill) activePill.textContent = `${data.active_count} active`;
   if (pausedPill) pausedPill.textContent = `${data.paused_count} paused`;
   if (pnlPill) {
     pnlPill.textContent = `${_followedFmtUsd(data.aggregate_pnl_usd)} paper aggregate P&L (${data.n_settled_total} settled)`;
   }
-  // Live-eligibility summary + split P&L (issue #1187, epic J) -- never a
-  // single combined "aggregate P&L" anywhere in this view, per the design
-  // spec's "never blended" rule. # opted into live (issue #1259) is the
-  // coarser, operator-set count -- server-computed like the other two, and
-  // positioned before # live-eligible (its narrower, currently-executing
-  // subset), per the design spec.
+  if (paperOnlyPill) paperOnlyPill.textContent = `${data.paper_only_count} paper-only`;
+  // Cross-link by COUNT only, never a live figure (design spec): the live
+  // roster, stakes and P&L are on the Live tab.
+  if (optedInPill) optedInPill.textContent = `${data.live_opted_in_count} opted into live → Live tab`;
+  if (!wrap) return;
+
+  if (!data.wallets.length) {
+    wrap.innerHTML = `<div class="empty"><i data-lucide="inbox"></i><h3>Nothing followed yet — go to <button type="button" class="copy-empty-link" onclick="scrollToCopyCandidates()">Wallets</button></h3><p>Screen and follow a wallet on the Wallets tab to start copy-trading it (paper).</p></div>`;
+    lucide.createIcons();
+    return;
+  }
+
+  wrap.innerHTML = _followedTableHtml('Followed wallets (paper)', [
+    { text: 'Wallet' }, { text: 'Paper stake/trade' }, { text: 'Status' },
+    { text: 'Date added' }, { text: 'Paper running P&amp;L' }, { sr: 'Actions' },
+  ], data.wallets.map(_followedRowHtml).join(''));
+  lucide.createIcons();
+}
+
+function _followedRenderLive(data) {
+  const wrap = document.getElementById('copy-live-followed-list');
+  const readyWrap = document.getElementById('copy-live-ready-list');
+  const optedInPill = document.getElementById('live-followed-opted-in-pill');
+  const liveEligiblePill = document.getElementById('live-followed-live-eligible-pill');
+  const livePnlPill = document.getElementById('live-followed-live-pnl-pill');
+  const liveOffBanner = document.getElementById('followed-live-off-banner');
+  // Live-eligibility summary + live P&L only -- never a combined
+  // "aggregate P&L", and no paper aggregate on this tab.
   if (optedInPill) optedInPill.textContent = `${data.live_opted_in_count} opted into live`;
   if (liveEligiblePill) liveEligiblePill.textContent = `${data.live_eligible_count} live-eligible`;
-  if (paperOnlyPill) paperOnlyPill.textContent = `${data.paper_only_count} paper-only`;
   if (livePnlPill) {
     livePnlPill.textContent = `${_followedFmtUsd(data.live_aggregate_pnl_usd)} live aggregate P&L (${data.live_n_settled_total} settled)`;
   }
   if (liveOffBanner) liveOffBanner.classList.toggle('visible', !data.live_trading_enabled);
 
-  if (!data.wallets.length) {
-    wrap.innerHTML = `<div class="empty"><i data-lucide="inbox"></i><h3>Nothing followed yet — go to <button type="button" class="copy-empty-link" onclick="scrollToCopyCandidates()">Candidates</button></h3><p>Screen and follow a wallet above to start copy-trading it.</p></div>`;
-    lucide.createIcons();
-    return;
-  }
+  const liveWallets = data.wallets.filter(w => w.live_enabled);
+  const readyWallets = data.wallets.filter(w => !w.live_enabled && w.status === 'active');
 
-  wrap.innerHTML = `
-    <div class="copy-table-wrap">
-    <table class="copy-table" aria-label="Followed wallets">
-      <thead>
-        <tr>
-          <th class="copy-th" scope="col">Wallet</th>
-          <th class="copy-th" scope="col">Stake/trade</th>
-          <th class="copy-th" scope="col">Status</th>
-          <th class="copy-th" scope="col">Date added</th>
-          <th class="copy-th" scope="col">Running P&amp;L</th>
-          <th class="copy-th" scope="col"><span class="sr-only">Actions</span></th>
-        </tr>
-      </thead>
-      <tbody>${data.wallets.map(_followedRowHtml).join('')}</tbody>
-    </table>
-    </div>`;
+  if (wrap) {
+    if (!liveWallets.length) {
+      wrap.innerHTML = `<div class="empty"><i data-lucide="zap-off"></i><h3>No wallets are live</h3><p>Take a paper-active wallet live below, after studying it on the Paper tab.</p></div>`;
+    } else {
+      wrap.innerHTML = _followedTableHtml('Live wallets', [
+        { text: 'Wallet' }, { text: 'Live stake/trade' }, { text: 'Status' }, { sr: 'Actions' },
+      ], liveWallets.map(_followedLiveRowHtml).join(''));
+    }
+  }
+  if (readyWrap) {
+    if (!readyWallets.length) {
+      readyWrap.innerHTML = `<div class="empty"><i data-lucide="inbox"></i><h3>No wallets ready to go live</h3><p>Follow a wallet on the Wallets tab; it appears here while paper-active.</p></div>`;
+    } else {
+      readyWrap.innerHTML = _followedTableHtml('Wallets ready to go live', [
+        { text: 'Wallet' }, { sr: 'Actions' },
+      ], readyWallets.map(_followedReadyRowHtml).join(''));
+    }
+  }
   lucide.createIcons();
 }
 
+// scope: 'paper' | 'live' -- which tab's roster to render from `data`.
+function renderFollowedWallets(data, scope = 'paper') {
+  _followedWalletsData = data;
+  _followedBindListEvents();
+  if (scope === 'live') _followedRenderLive(data);
+  else _followedRenderPaper(data);
+}
+
 function _followedShowBannerError(text) {
-  const banner = document.getElementById('copy-trading-error-banner');
-  const bannerText = document.getElementById('copy-trading-error-text');
+  const { banner, text: bannerText } = _copyErrorEls(_copyCurrentScope());
   if (bannerText) bannerText.textContent = text;
   if (banner) banner.classList.add('visible');
 }
 
 function _followedHideBanner() {
-  const banner = document.getElementById('copy-trading-error-banner');
+  const { banner } = _copyErrorEls(_copyCurrentScope());
   if (banner) banner.classList.remove('visible');
 }
 
@@ -5056,6 +5388,10 @@ async function _followedSubmitAction({ address, btn, url, fetchOpts, optimisticA
       return;
     }
     _followedHideBanner();
+    // The roster changed server-side: drop the shared followed-wallets/
+    // positions cache so the onSuccess refetch (and the other copy tab)
+    // never serves a pre-mutation payload.
+    _copyInvalidateShared();
     if (onSuccess) await onSuccess(body);
   } catch (e) {
     console.error(`Followed-wallet action failed for ${address}:`, e);
@@ -5078,7 +5414,7 @@ async function followedPauseWallet(address, btn) {
   }
 
   const safeId = _copySafeId(address);
-  const cell = document.getElementById('followed-status-cell-' + safeId);
+  const cell = document.getElementById(_followedIdPrefix() + 'followed-status-cell-' + safeId);
   const prevHtml = cell ? cell.innerHTML : null;
 
   await _followedSubmitAction({
@@ -5110,7 +5446,7 @@ async function followedPauseWallet(address, btn) {
 
 async function followedResumeWallet(address, btn) {
   const safeId = _copySafeId(address);
-  const cell = document.getElementById('followed-status-cell-' + safeId);
+  const cell = document.getElementById(_followedIdPrefix() + 'followed-status-cell-' + safeId);
   const prevHtml = cell ? cell.innerHTML : null;
 
   await _followedSubmitAction({
@@ -5213,7 +5549,7 @@ async function followedGoLive(address, btn) {
   if (!confirmed) return;
 
   const safeId = _copySafeId(address);
-  const msgEl = document.getElementById('followed-live-msg-' + safeId);
+  const msgEl = document.getElementById(_followedIdPrefix() + 'followed-live-msg-' + safeId);
 
   // Stake-first: skip the write entirely when nothing changed (e.g.
   // re-enabling a wallet whose stake override was already set correctly
@@ -5286,8 +5622,8 @@ async function followedGoLive(address, btn) {
 // moment, not overstating it.
 async function followedRevertToPaper(address, btn) {
   const safeId = _copySafeId(address);
-  const cell = document.getElementById('followed-status-cell-' + safeId);
-  const msgEl = document.getElementById('followed-live-msg-' + safeId);
+  const cell = document.getElementById(_followedIdPrefix() + 'followed-status-cell-' + safeId);
+  const msgEl = document.getElementById(_followedIdPrefix() + 'followed-live-msg-' + safeId);
   const prevHtml = cell ? cell.innerHTML : null;
   const wallet = ((_followedWalletsData && _followedWalletsData.wallets) || []).find(w => w.address === address);
 
@@ -5355,7 +5691,7 @@ function _followedCancelStakeEdit(address) {
   const cell = document.getElementById('followed-stake-cell-' + safeId);
   if (!cell) return;
   const wallet = ((_followedWalletsData && _followedWalletsData.wallets) || []).find(w => w.address === address);
-  cell.innerHTML = wallet ? _followedStakeDisplayHtml(wallet) : '';
+  cell.innerHTML = wallet ? _followedPaperStakeHtml(wallet) : '';
   lucide.createIcons();
 }
 
@@ -5412,36 +5748,52 @@ function _followedOnListClick(event) {
   if (stakeCancelBtn) { _followedCancelStakeEdit(stakeCancelBtn.dataset.address); return; }
   const stakeConfirmBtn = event.target.closest('.btn-followed-stake-confirm');
   if (stakeConfirmBtn) { _followedSubmitStakeEdit(stakeConfirmBtn.dataset.address, stakeConfirmBtn); return; }
+  // Paper roster: "Go live" is only a link to the Live tab, where every
+  // real-money action lives (design spec).
+  const gotoLiveBtn = event.target.closest('.btn-followed-goto-live');
+  if (gotoLiveBtn) { _copyGoToTab('copy-live'); return; }
 }
+
+// Containers whose rows carry roster actions: the Paper roster, the Live
+// roster and the "Ready to go live" list. Bound once each, never replaced.
+const _FOLLOWED_LIST_IDS = ['copy-followed-list', 'copy-live-followed-list', 'copy-live-ready-list'];
 
 function _followedBindListEvents() {
   if (_followedListenersBound) return;
-  const wrap = document.getElementById('copy-followed-list');
-  if (!wrap) return;
-  wrap.addEventListener('click', _followedOnListClick);
-  _followedListenersBound = true;
+  let bound = false;
+  for (const id of _FOLLOWED_LIST_IDS) {
+    const wrap = document.getElementById(id);
+    if (!wrap) continue;
+    wrap.addEventListener('click', _followedOnListClick);
+    bound = true;
+  }
+  if (bound) _followedListenersBound = true;
 }
 
-async function fetchFollowedWallets() {
-  const banner = document.getElementById('copy-trading-error-banner');
+// scope: 'paper' | 'live'. Defaults to the tab currently shown (so a row
+// action's post-mutation refetch refreshes the roster the operator is on).
+// The payload comes through the shared 10 s cache -- Paper <-> Live never
+// re-requests -- and an unchanged payload does not rebuild the roster DOM.
+async function fetchFollowedWallets(scope = _copyCurrentScope() === 'live' ? 'live' : 'paper') {
+  const { banner, text: textEl } = _copyErrorEls(scope);
   try {
-    const r = await fetch('/api/copy-trading/followed-wallets');
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    const data = await r.json();
+    const data = await _copySharedFetch('/api/copy-trading/followed-wallets');
     if (banner) banner.classList.remove('visible');
-    renderFollowedWallets(data);
+    _followedWalletsData = data;
+    if (_copyPayloadUnchanged('followed:' + scope, JSON.stringify(data))) return;
+    renderFollowedWallets(data, scope);
   } catch (e) {
     console.error('Followed wallets fetch failed:', e);
-    if (_followedWalletsData) {
-      // Last-known-good data stays on screen — only the banner changes
-      // (mirrors fetchCopyTradingCandidates()'s design-spec-driven choice).
+    if (_copyLastPayloadSig['followed:' + scope] !== undefined) {
+      // This tab already rendered a roster: last-known-good data stays on
+      // screen — only the banner changes (mirrors
+      // fetchCopyTradingCandidates()'s design-spec-driven choice).
       if (banner) banner.classList.add('visible');
-      const textEl = document.getElementById('copy-trading-error-text');
       if (textEl) {
-        textEl.textContent = `Fetch failed (${e.message}) — showing last-known data, retrying in 5 min`;
+        textEl.textContent = `Fetch failed (${e.message}) — showing last-known data, retrying in 30 s`;
       }
     } else {
-      const wrap = document.getElementById('copy-followed-list');
+      const wrap = document.getElementById(scope === 'live' ? 'copy-live-followed-list' : 'copy-followed-list');
       if (wrap) {
         wrap.innerHTML = `<div class="empty"><i data-lucide="alert-circle"></i><h3>Could not load followed wallets</h3><p>${e.message} — retrying automatically.</p></div>`;
         lucide.createIcons();
@@ -5479,7 +5831,7 @@ async function fetchFollowedWallets() {
      explicit explanation (never a blank chart with no context).
    ───────────────────────────────────────── */
 
-let _copyPositionsData = null;       // last-fetched payload (both paper + live fields)
+let _copyPositionsData = null;       // last-fetched payload as rendered on Copy · Paper (paper keys only)
 let _copyPositionsChart = null;      // Chart.js instance (destroyed/recreated on re-render)
 let _copyBacktestOn = false;         // per-wallet table's backtest-comparison toggle state
 let _copyPositionsRangeDays = 30;    // chart date-range filter: 7 | 30 | 90 | 'all'
@@ -5487,10 +5839,12 @@ let _copyExpandedPositionIds = new Set(); // open-position ids with an expanded 
 let _copySignalCache = new Map();    // signal_id -> CopySignalOut, avoids re-fetching on toggle/expand
 let _copyPositionsListenersBound = false;
 
-// Live column (issue #1186) -- own chart instance, own expanded-row set,
-// own bound-listeners flag, isolated from the paper vars above so a
-// re-render of one column never touches the other's state. The signal
-// cache above is shared (see _renderSignalDetail's comment).
+// Live view (issue #1186; own tab since #1275) -- own chart instance, own
+// range filter, own expanded-row set, own bound-listeners flag, isolated from
+// the paper vars above so a re-render of one never touches the other's state.
+// The signal cache above is shared (see _renderSignalDetail's comment).
+let _copyLivePositionsData = null;   // last-fetched payload as rendered on Copy · Live (live keys only)
+let _copyLiveRangeDays = 30;         // live chart date-range filter: 7 | 30 | 90 | 'all'
 let _copyLivePositionsChart = null;
 let _copyExpandedLivePositionIds = new Set();
 let _copyLivePositionsListenersBound = false;
@@ -5806,7 +6160,7 @@ function renderCopyPositions(data) {
   // True empty state: nothing at all -- distinct from "exists but nothing
   // settled yet" below (issue #1148 acceptance criteria).
   if (!data.open_positions.length && !data.per_wallet.length) {
-    wrap.innerHTML = `<div class="empty"><i data-lucide="inbox"></i><h3>No copy-trading positions yet</h3><p>Follow a wallet in Candidates above to start copy-trading it.</p></div>`;
+    wrap.innerHTML = `<div class="empty"><i data-lucide="inbox"></i><h3>No copy-trading positions yet</h3><p>Follow a wallet on the Wallets tab to start copy-trading it (paper).</p></div>`;
     lucide.createIcons();
     return;
   }
@@ -5850,6 +6204,15 @@ function _copyPositionsOnRangeChange(event) {
   }
 }
 
+function _copyLivePositionsOnRangeChange(event) {
+  const val = event.target.value;
+  _copyLiveRangeDays = val === 'all' ? 'all' : parseInt(val, 10);
+  if (_copyLivePositionsData && _copyLivePositionsData.live_realized_pnl_history.length) {
+    const filtered = _copyFilteredPnlHistory(_copyLivePositionsData.live_realized_pnl_history, _copyLiveRangeDays);
+    _renderCopyLivePositionsChart(_copyBucketDailyPnl(filtered));
+  }
+}
+
 // Re-renders the whole view (cheap -- cached data, no re-fetch) so the
 // per-wallet table's backtest columns and the expanded signal-detail rows
 // stay consistent, mirroring how sortCandidates() re-renders from cache.
@@ -5871,6 +6234,11 @@ function _copyPositionsInitStaticControls() {
   if (rangeSelect) {
     _copyPositionsRangeDays = rangeSelect.value === 'all' ? 'all' : parseInt(rangeSelect.value, 10);
     rangeSelect.addEventListener('change', _copyPositionsOnRangeChange);
+  }
+  const liveRangeSelect = document.getElementById('copy-live-range-select');
+  if (liveRangeSelect) {
+    _copyLiveRangeDays = liveRangeSelect.value === 'all' ? 'all' : parseInt(liveRangeSelect.value, 10);
+    liveRangeSelect.addEventListener('change', _copyLivePositionsOnRangeChange);
   }
   const toggle = document.getElementById('copy-backtest-toggle');
   if (toggle) {
@@ -6089,10 +6457,11 @@ function _copyLivePositionsBindListEvents() {
 
 // liveTradingEnabled is the shared, fast-polled (30s) posture flag from
 // fetchCopyTradingModePosture() (#1185) -- NOT derived from this
-// endpoint's own 5-minute poll, so a switch flip is reflected here within
-// 30s rather than up to 5 minutes (see _copyLiveTradingEnabled's comment
-// above renderCopyTradingModePosture()).
+// endpoint's own payload, so a switch flip is reflected here within 30s
+// (see _copyLiveTradingEnabled's comment above
+// renderCopyTradingModePosture()).
 function renderCopyLivePositions(data, liveTradingEnabled) {
+  _copyLivePositionsData = data;
   _copyLivePositionsBindListEvents();
 
   const pill = document.getElementById('copy-positions-live-total-pill');
@@ -6113,7 +6482,7 @@ function renderCopyLivePositions(data, liveTradingEnabled) {
     if (banner) {
       banner.classList.add('visible');
       const textEl = document.getElementById('copy-positions-live-error-text');
-      if (textEl) textEl.textContent = `${data.live_error} — showing last-known data, retrying in 5 min`;
+      if (textEl) textEl.textContent = `${data.live_error} — showing last-known data, retrying shortly`;
     }
     if (!_copyLivePositionsData_hasRenderedOnce) {
       wrap.innerHTML = `<div class="empty"><i data-lucide="alert-circle"></i><h3>Could not load live positions</h3><p>${_copyEscapeHtml(data.live_error)} — retrying automatically.</p></div>`;
@@ -6185,7 +6554,7 @@ function renderCopyLivePositions(data, liveTradingEnabled) {
   lucide.createIcons();
 
   if (data.live_realized_pnl_history.length) {
-    const filtered = _copyFilteredPnlHistory(data.live_realized_pnl_history, _copyPositionsRangeDays);
+    const filtered = _copyFilteredPnlHistory(data.live_realized_pnl_history, _copyLiveRangeDays);
     _renderCopyLivePositionsChart(_copyBucketDailyPnl(filtered));
   }
 
@@ -6197,10 +6566,10 @@ function renderCopyLivePositions(data, liveTradingEnabled) {
    (issue #1189, epic J #1161)
    Data: GET /api/copy-trading/balance-drift -- deliberately its own fetch,
    independent of fetchCopyTradingPositions()'s /api/copy-trading/positions
-   round-trip (see that endpoint's own docstring for why), but polled on
-   the same 5-minute cadence/tab-activation trigger as the rest of the
-   Copy-Trading tab's "advisory/report-style" data (the underlying check
-   only runs hourly, so 5 minutes is already more than fresh enough).
+   round-trip (see that endpoint's own docstring for why), but polled only
+   by the Copy · Live tab (5-minute cadence while that tab is active; the
+   underlying check only runs hourly, so 5 minutes is already more than
+   fresh enough).
    Shows/hides #copy-positions-live-drift-banner, a sibling of the Live
    column's #copy-positions-live-content -- so it's unaffected by whichever
    content state (off/empty/populated) that div is currently rendering.
@@ -6242,53 +6611,41 @@ async function fetchCopyTradingBalanceDrift() {
   }
 }
 
-// Each column gets its own stale-data banner (design spec's per-column
-// error-isolation requirement) -- distinct from the shared
-// #copy-trading-error-banner used by Candidates/Followed Wallets, since a
-// single HTTP round-trip covers both columns here and a genuine fetch
-// failure (network down, HTTP error) means neither column's data could
-// be reached, whereas a live_error on an otherwise-200 response (backend
-// isolation, see copy_trading_positions()'s docstring) means only the
-// Live column degrades.
-async function fetchCopyTradingPositions() {
-  const paperBanner = document.getElementById('copy-positions-error-banner');
-  const liveBanner = document.getElementById('copy-positions-live-error-banner');
+// scope: 'paper' | 'live'. Both tabs read the SAME /positions payload
+// through the shared 10 s cache (one request feeds Paper and Live; switching
+// between them never re-requests, concurrent callers share one in-flight
+// request). Each tab renders only its own mode's keys and has its own
+// stale-data banner (design spec's per-mode error-isolation requirement): a
+// genuine fetch failure (network down, HTTP error) degrades the tab being
+// polled, whereas a live_error on an otherwise-200 response (backend
+// isolation, see copy_trading_positions()'s docstring) degrades only Live.
+// An unchanged payload does not rebuild the DOM.
+async function fetchCopyTradingPositions(scope = 'paper') {
+  const live = scope === 'live';
+  const banner = document.getElementById(live ? 'copy-positions-live-error-banner' : 'copy-positions-error-banner');
+  const textEl = document.getElementById(live ? 'copy-positions-live-error-text' : 'copy-positions-error-text');
+  const wrapId = live ? 'copy-positions-live-content' : 'copy-positions-content';
   try {
-    const r = await fetch('/api/copy-trading/positions');
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    const data = await r.json();
-    if (paperBanner) paperBanner.classList.remove('visible');
-    renderCopyPositions(data);
-    renderCopyLivePositions(data, _copyLiveTradingEnabled);
+    const data = await _copySharedFetch('/api/copy-trading/positions');
+    if (banner) banner.classList.remove('visible');
+    // The Live render also depends on the posture flag (off/empty/on states).
+    const sig = JSON.stringify(data) + (live ? '|' + _copyLiveTradingEnabled : '');
+    if (_copyPayloadUnchanged('positions:' + scope, sig)) return;
+    if (live) renderCopyLivePositions(data, _copyLiveTradingEnabled);
+    else renderCopyPositions(data);
   } catch (e) {
     console.error('Copy-trading positions fetch failed:', e);
-    if (_copyPositionsData) {
-      // Last-known-good data stays on screen for BOTH columns — only the
-      // banners change (mirrors fetchCopyTradingCandidates()'s
-      // design-spec-driven choice, applied to each column independently).
-      if (paperBanner) {
-        paperBanner.classList.add('visible');
-        const textEl = document.getElementById('copy-positions-error-text');
-        if (textEl) {
-          textEl.textContent = `Fetch failed (${e.message}) — showing last-known data, retrying in 5 min`;
-        }
-      }
-      if (liveBanner) {
-        liveBanner.classList.add('visible');
-        const textEl = document.getElementById('copy-positions-live-error-text');
-        if (textEl) {
-          textEl.textContent = `Fetch failed (${e.message}) — showing last-known live data, retrying in 5 min`;
-        }
+    if (live ? _copyLivePositionsData : _copyPositionsData) {
+      // Last-known-good data stays on screen — only the banner changes
+      // (mirrors fetchCopyTradingCandidates()'s design-spec-driven choice).
+      if (banner) banner.classList.add('visible');
+      if (textEl) {
+        textEl.textContent = `Fetch failed (${e.message}) — showing last-known ${live ? 'live ' : ''}data, retrying shortly`;
       }
     } else {
-      const wrap = document.getElementById('copy-positions-content');
+      const wrap = document.getElementById(wrapId);
       if (wrap) {
-        wrap.innerHTML = `<div class="empty"><i data-lucide="alert-circle"></i><h3>Could not load positions</h3><p>${e.message} — retrying automatically.</p></div>`;
-        lucide.createIcons();
-      }
-      const liveWrap = document.getElementById('copy-positions-live-content');
-      if (liveWrap) {
-        liveWrap.innerHTML = `<div class="empty"><i data-lucide="alert-circle"></i><h3>Could not load live positions</h3><p>${e.message} — retrying automatically.</p></div>`;
+        wrap.innerHTML = `<div class="empty"><i data-lucide="alert-circle"></i><h3>Could not load ${live ? 'live ' : ''}positions</h3><p>${e.message} — retrying automatically.</p></div>`;
         lucide.createIcons();
       }
     }
@@ -6298,29 +6655,49 @@ async function fetchCopyTradingPositions() {
 /* ─────────────────────────────────────────
    COPY-TRADING — ACTIVITY FEED VIEW (epic F #1143, story F4 #1149;
    live events + mode filter, epic J #1161, issue #1188)
-   Data: GET /api/copy-trading/activity-feed (one response, already merged
-   + reverse-chronological server-side -- see api.py's
-   copy_trading_activity_feed() docstring). Wallet/event-type/mode filters
-   are applied client-side against the cached full payload (never a
-   re-fetch per filter change), mirroring the Positions & P&L view's
-   date-range filter (_copyFilteredPnlHistory) -- the backend's own
-   query-param filters (issue #1149/#1188 acceptance criteria) exist for
-   direct API callers, not because the frontend needs a round-trip per
-   filter change.
+   Data: GET /api/copy-trading/activity-feed?mode=paper|live (one response
+   per tab, already merged + reverse-chronological server-side -- see
+   api.py's copy_trading_activity_feed() docstring). Tab split (issue
+   #1275): Copy · Paper fetches mode=paper, Copy · Live fetches mode=live,
+   and the old Mode select is gone -- the tab is the hard separator, so a
+   paper event can never render on Live nor a live event on Paper (the
+   render also drops any off-mode row defensively). Wallet/event-type
+   filters are applied client-side against that tab's cached payload (never
+   a re-fetch per filter change).
 
-   Uses its own #copy-activity-stale-banner (not the shared
-   #copy-trading-error-banner) so a failed activity-feed poll can't be
-   silently hidden by an unrelated Candidates/Followed/Positions fetch
-   that happens to resolve later in the same 5-minute tick -- still the
-   same .error-banner/.visible inline pattern as everywhere else in this
-   file (Designer decision: no toast/modal component), just scoped so the
-   acceptance criteria's stale-feed indicator is independently correct
-   and testable.
+   Each tab has its own stale banner (#copy-activity-stale-banner on Paper,
+   #copy-live-activity-stale-banner on Live) so a failed activity-feed poll
+   can't be silently hidden by an unrelated fetch resolving later -- still
+   the same .error-banner/.visible inline pattern as everywhere else in
+   this file (Designer decision: no toast/modal component).
    ───────────────────────────────────────── */
 
-let _copyActivityData = null;            // last-fetched full payload ({events: [...]})
-let _copyActivityFilters = { address: '', eventType: '', mode: '' };
-let _copyActivityListenersBound = false;
+// Per-tab activity-feed state + element ids. `mode` is both the server-side
+// query filter and the client-side defensive filter.
+const _copyActivityScopes = {
+  paper: {
+    mode: 'paper',
+    listId: 'copy-activity-list',
+    walletSelectId: 'copy-activity-wallet-select',
+    typeSelectId: 'copy-activity-type-select',
+    bannerId: 'copy-activity-stale-banner',
+    textId: 'copy-activity-stale-text',
+    data: null,                              // last-fetched payload ({events: [...]})
+    filters: { address: '', eventType: '' },
+    listenersBound: false,
+  },
+  live: {
+    mode: 'live',
+    listId: 'copy-live-activity-list',
+    walletSelectId: 'copy-live-activity-wallet-select',
+    typeSelectId: 'copy-live-activity-type-select',
+    bannerId: 'copy-live-activity-stale-banner',
+    textId: 'copy-live-activity-stale-text',
+    data: null,
+    filters: { address: '', eventType: '' },
+    listenersBound: false,
+  },
+};
 
 // Used for the row's aria-label and for the Event type filter's own
 // <option> labels.
@@ -6491,12 +6868,19 @@ function _copyActivityItemHtml(e) {
     </div>`;
 }
 
-function _copyActivityFilteredEvents() {
-  if (!_copyActivityData) return [];
-  return _copyActivityData.events.filter(e => {
-    if (_copyActivityFilters.address && e.address !== _copyActivityFilters.address) return false;
-    if (_copyActivityFilters.eventType && e.event_type !== _copyActivityFilters.eventType) return false;
-    if (_copyActivityFilters.mode && e.mode !== _copyActivityFilters.mode) return false;
+// Events belonging to this tab's mode. A missing mode is treated as paper,
+// matching _copyActivityModeBadgeHtml()'s conservative default.
+function _copyActivityModeEvents(events, scope) {
+  const mode = _copyActivityScopes[scope].mode;
+  return events.filter(e => (e.mode || 'paper') === mode);
+}
+
+function _copyActivityFilteredEvents(scope = 'paper') {
+  const sc = _copyActivityScopes[scope];
+  if (!sc.data) return [];
+  return _copyActivityModeEvents(sc.data.events, scope).filter(e => {
+    if (sc.filters.address && e.address !== sc.filters.address) return false;
+    if (sc.filters.eventType && e.event_type !== sc.filters.eventType) return false;
     return true;
   });
 }
@@ -6511,35 +6895,53 @@ function _copyActivityWalletOptionsHtml(events, selected) {
   return `<option value="">All wallets</option>${opts}`;
 }
 
-// jumps from an activity event to the relevant wallet's detail --
-// Candidates' expandable detail panel for a paper signal event, or the
-// Followed Wallets row for a pause or live event (issue #1149/#1188
-// acceptance criteria). Activity Feed lives inside the same
-// 'copy-trading' tab as those two views (not a separate top-level tab),
-// so this is normally a scroll-only no-op on the tab switch itself --
-// but it still routes through the tab button's existing switchTab()
-// handler (rather than a bespoke jump function) per the acceptance
-// criteria's explicit "switch tabs via the existing switchTab()
-// function", and stays correct if these views are ever split into
-// separate tabs later.
+// Jumps from an activity event to the relevant wallet's detail:
+// - 'pause' (Paper tab) / 'live' (Live tab): the wallet's row in this same
+//   tab's roster -- scroll only, no tab switch;
+// - 'signal' (a paper signal event): the Candidates detail row, which now
+//   lives on the Copy · Wallets tab -- switched via the tab button's own
+//   switchTab() handler (acceptance criteria: "switch tabs via the existing
+//   switchTab() function"). If the candidates table has not rendered yet, the
+//   jump is parked and consumed by renderCopyCandidates().
+let _copyPendingCandidateJump = null;
+
+function _copyJumpToCandidateRow(address) {
+  const row = document.getElementById('copy-row-' + _copySafeId(address));
+  if (!row) return false;
+  row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  if (!_copyExpanded.has(address)) toggleCandidateDetail(address);
+  return true;
+}
+
+function _copyConsumePendingCandidateJump() {
+  if (_copyPendingCandidateJump === null) return;
+  const address = _copyPendingCandidateJump;
+  _copyPendingCandidateJump = null;   // one attempt, never a surprise later
+  _copyJumpToCandidateRow(address);
+}
+
 function _copyActivityJumpToWallet(kind, address) {
   // 'none' (issue #1189's live_balance_mismatch event): not tied to any
   // one wallet row -- nothing to jump to, and no tab switch either.
   if (kind === 'none') return;
-  if (currentTab !== 'copy-trading') {
-    const tabBtn = document.getElementById('tab-btn-copy-trading');
-    if (tabBtn) tabBtn.click();
-  }
   if (kind === 'pause' || kind === 'live') {
-    const row = document.getElementById('followed-row-' + _copySafeId(address));
-    if (row) row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    const safeId = _copySafeId(address);
+    const ids = kind === 'live'
+      ? ['live-followed-row-' + safeId, 'live-ready-row-' + safeId]
+      : ['followed-row-' + safeId];
+    for (const id of ids) {
+      const row = document.getElementById(id);
+      if (row) { row.scrollIntoView({ behavior: 'smooth', block: 'center' }); return; }
+    }
     return;
   }
-  const row = document.getElementById('copy-row-' + _copySafeId(address));
-  if (row) {
-    row.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    if (!_copyExpanded.has(address)) toggleCandidateDetail(address);
+  if (currentTab !== 'copy-wallets') {
+    _copyPendingCandidateJump = address;
+    _copyGoToTab('copy-wallets');
+    if (_copyCandidatesData) _copyConsumePendingCandidateJump();
+    return;
   }
+  _copyJumpToCandidateRow(address);
 }
 
 function _copyActivityOnListClick(event) {
@@ -6556,90 +6958,73 @@ function _copyActivityOnListKeydown(event) {
   _copyActivityJumpToWallet(item.dataset.kind, item.dataset.address);
 }
 
-// Single delegated click/keydown handler bound once to the (never-
-// replaced) #copy-activity-list container, same approach as the other
-// three Copy-Trading views' own _copy*BindListEvents().
-function _copyActivityBindListEvents() {
-  if (_copyActivityListenersBound) return;
-  const wrap = document.getElementById('copy-activity-list');
+// Single delegated click/keydown handler bound once per tab to its (never-
+// replaced) activity list container, same approach as the other
+// Copy-Trading views' own _copy*BindListEvents().
+function _copyActivityBindListEvents(scope = 'paper') {
+  const sc = _copyActivityScopes[scope];
+  if (sc.listenersBound) return;
+  const wrap = document.getElementById(sc.listId);
   if (!wrap) return;
   wrap.addEventListener('click', _copyActivityOnListClick);
   wrap.addEventListener('keydown', _copyActivityOnListKeydown);
-  _copyActivityListenersBound = true;
-}
-
-function _copyActivityOnWalletFilterChange(event) {
-  _copyActivityFilters.address = event.target.value;
-  if (_copyActivityData) renderCopyActivityFeed(_copyActivityData);
-}
-
-function _copyActivityOnEventTypeFilterChange(event) {
-  _copyActivityFilters.eventType = event.target.value;
-  if (_copyActivityData) renderCopyActivityFeed(_copyActivityData);
-}
-
-function _copyActivityOnModeFilterChange(event) {
-  _copyActivityFilters.mode = event.target.value;
-  if (_copyActivityData) renderCopyActivityFeed(_copyActivityData);
+  sc.listenersBound = true;
 }
 
 function _copyActivityInitStaticControls() {
-  const walletSelect = document.getElementById('copy-activity-wallet-select');
-  if (walletSelect) walletSelect.addEventListener('change', _copyActivityOnWalletFilterChange);
-  const typeSelect = document.getElementById('copy-activity-type-select');
-  if (typeSelect) typeSelect.addEventListener('change', _copyActivityOnEventTypeFilterChange);
-  const modeSelect = document.getElementById('copy-activity-mode-select');
-  if (modeSelect) modeSelect.addEventListener('change', _copyActivityOnModeFilterChange);
+  for (const scope of Object.keys(_copyActivityScopes)) {
+    const sc = _copyActivityScopes[scope];
+    const walletSelect = document.getElementById(sc.walletSelectId);
+    if (walletSelect) {
+      walletSelect.addEventListener('change', (event) => {
+        sc.filters.address = event.target.value;
+        if (sc.data) renderCopyActivityFeed(sc.data, scope);
+      });
+    }
+    const typeSelect = document.getElementById(sc.typeSelectId);
+    if (typeSelect) {
+      typeSelect.addEventListener('change', (event) => {
+        sc.filters.eventType = event.target.value;
+        if (sc.data) renderCopyActivityFeed(sc.data, scope);
+      });
+    }
+  }
 }
 
-// Best-effort read of the shared global live/paper posture banner (#1185,
-// #copy-trading-mode-banner, lives in the tab's common header and is
-// refetched on every tab re-entry) -- reused here rather than a second
-// independent /api/config fetch, and rather than introducing new shared
-// state, purely for the Mode=Live empty-state distinction below. This
-// reflects the CURRENT on/off posture only -- there is no audit trail of
-// past COPY_LIVE_TRADING_ENABLED flips (see api.py's
-// copy_trading_activity_feed() docstring), so "has live EVER been turned
-// on" and "is live off right now, having been on before" are not
-// distinguished; flagged in the PR for Designer/PM confirmation.
-function _copyActivityLiveTradingCurrentlyOn() {
-  const banner = document.getElementById('copy-trading-mode-banner');
-  return !!(banner && banner.classList.contains('mode-badge-live'));
-}
+function renderCopyActivityFeed(data, scope = 'paper') {
+  const sc = _copyActivityScopes[scope];
+  sc.data = data;
+  _copyActivityBindListEvents(scope);
 
-function renderCopyActivityFeed(data) {
-  _copyActivityData = data;
-  _copyActivityBindListEvents();
-
-  const walletSelect = document.getElementById('copy-activity-wallet-select');
+  const modeEvents = _copyActivityModeEvents(data.events, scope);
+  const walletSelect = document.getElementById(sc.walletSelectId);
   if (walletSelect) {
-    walletSelect.innerHTML = _copyActivityWalletOptionsHtml(data.events, _copyActivityFilters.address);
+    walletSelect.innerHTML = _copyActivityWalletOptionsHtml(modeEvents, sc.filters.address);
   }
 
-  const wrap = document.getElementById('copy-activity-list');
+  const wrap = document.getElementById(sc.listId);
   if (!wrap) return;
 
-  if (!data.events.length) {
-    wrap.innerHTML = `<div class="empty"><i data-lucide="inbox"></i><h3>No activity yet</h3><p>Signal detections, wallet pauses, and live order activity will appear here.</p></div>`;
-    lucide.createIcons();
-    return;
-  }
-
-  const filtered = _copyActivityFilteredEvents();
-  if (!filtered.length) {
-    // Mode=Live-specific empty states (issue #1188 acceptance criteria):
-    // distinguish "live has never been turned on" from "live is on, but
-    // nothing happened under the current filters" -- "No live activity"
-    // must never read as reassurance if live isn't even running.
-    if (_copyActivityFilters.mode === 'live') {
-      if (_copyActivityLiveTradingCurrentlyOn()) {
-        wrap.innerHTML = `<div class="empty"><i data-lucide="filter-x"></i><h3>No live activity in this range</h3><p>Live trading is on, but nothing has happened yet under the current filters.</p></div>`;
+  if (!modeEvents.length) {
+    if (scope === 'live') {
+      // "No live activity" must never read as reassurance if live isn't
+      // even running (issue #1188 acceptance criteria) -- the live-trading
+      // flag is the shared, fast-polled posture value.
+      if (_copyLiveTradingEnabled) {
+        wrap.innerHTML = `<div class="empty"><i data-lucide="filter-x"></i><h3>No live activity in this range</h3><p>Live trading is on, but nothing has happened yet.</p></div>`;
       } else {
         wrap.innerHTML = `<div class="empty"><i data-lucide="clock"></i><h3>Live trading hasn't been turned on yet</h3><p>Once live trading is enabled, live order activity will appear here.</p></div>`;
       }
     } else {
-      wrap.innerHTML = `<div class="empty"><i data-lucide="filter-x"></i><h3>No matching activity</h3><p>Try a different wallet, event type, or mode filter.</p></div>`;
+      wrap.innerHTML = `<div class="empty"><i data-lucide="inbox"></i><h3>No activity yet</h3><p>Signal detections and wallet pauses will appear here.</p></div>`;
     }
+    lucide.createIcons();
+    return;
+  }
+
+  const filtered = _copyActivityFilteredEvents(scope);
+  if (!filtered.length) {
+    wrap.innerHTML = `<div class="empty"><i data-lucide="filter-x"></i><h3>No matching activity</h3><p>Try a different wallet or event type.</p></div>`;
     lucide.createIcons();
     return;
   }
@@ -6650,28 +7035,32 @@ function renderCopyActivityFeed(data) {
   lucide.createIcons();
 }
 
-async function fetchCopyTradingActivityFeed() {
-  const banner = document.getElementById('copy-activity-stale-banner');
+// scope: 'paper' | 'live' -- the server-side mode filter for this tab's feed.
+async function fetchCopyTradingActivityFeed(scope = 'paper') {
+  const sc = _copyActivityScopes[scope];
+  const banner = document.getElementById(sc.bannerId);
   try {
-    const r = await fetch('/api/copy-trading/activity-feed');
+    const r = await fetch(`/api/copy-trading/activity-feed?mode=${sc.mode}`);
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const data = await r.json();
     if (banner) banner.classList.remove('visible');
-    renderCopyActivityFeed(data);
+    // Identical payload: don't rebuild the feed DOM.
+    if (_copyPayloadUnchanged('activity:' + scope, JSON.stringify(data))) return;
+    renderCopyActivityFeed(data, scope);
   } catch (e) {
     console.error('Copy-trading activity feed fetch failed:', e);
-    if (_copyActivityData) {
+    if (sc.data) {
       // Last-known-good data stays on screen — only the (dedicated) stale
       // banner changes, this view's required stale-feed indicator (issue
       // #1149 acceptance criteria: "don't let the feed silently go stale
       // with no indication").
       if (banner) banner.classList.add('visible');
-      const textEl = document.getElementById('copy-activity-stale-text');
+      const textEl = document.getElementById(sc.textId);
       if (textEl) {
-        textEl.textContent = `Feed fetch failed (${e.message}) — showing last-known data, retrying in 5 min`;
+        textEl.textContent = `Feed fetch failed (${e.message}) — showing last-known data, retrying shortly`;
       }
     } else {
-      const wrap = document.getElementById('copy-activity-list');
+      const wrap = document.getElementById(sc.listId);
       if (wrap) {
         wrap.innerHTML = `<div class="empty"><i data-lucide="alert-circle"></i><h3>Could not load activity feed</h3><p>${e.message} — retrying automatically.</p></div>`;
         lucide.createIcons();

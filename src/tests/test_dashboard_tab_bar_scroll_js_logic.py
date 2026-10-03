@@ -24,24 +24,24 @@ INDEX_HTML = REPO_ROOT / "src" / "dashboard" / "static" / "index.html"
 NODE = shutil.which("node")
 
 
-def test_copy_trading_tab_main_has_wide_modifier():
-    """Verify Copy-Trading tab's <main> element has both 'main' and 'main--wide' classes.
+@pytest.mark.parametrize("tab", ["copy-wallets", "copy-paper", "copy-live"])
+def test_copy_trading_tab_main_has_wide_modifier(tab):
+    """Verify each Copy-Trading tab's <main> element has both 'main' and 'main--wide' classes.
 
-    This is the desktop table-widening fix: the Copy-Trading tab can use
+    This is the desktop table-widening fix: the Copy-Trading tabs can use
     max-width: 1280px instead of 980px to fit wider tables without clipping.
     """
     html = INDEX_HTML.read_text(encoding="utf-8")
 
-    # Find the Copy-Trading tab section and its main element
-    # Should match: <section id="tab-copy-trading" ...>...<main class="main main--wide">
+    # The <main> must be the section's own first element (no lazy match
+    # running on into a later section).
     match = re.search(
-        r'<section id="tab-copy-trading"[^>]*>.*?<main class="main main--wide">',
+        rf'<section id="tab-{tab}"[^>]*>\s*<main class="main main--wide">',
         html,
-        re.DOTALL
     )
     assert match, (
-        "Copy-Trading tab's <main> element must have both 'main' and 'main--wide' classes. "
-        "Expected: <main class=\"main main--wide\"> within <section id=\"tab-copy-trading\">"
+        f"Copy-Trading tab's <main> element must have both 'main' and 'main--wide' classes. "
+        f"Expected: <main class=\"main main--wide\"> directly within <section id=\"tab-{tab}\">"
     )
 
 
@@ -195,7 +195,7 @@ def test_switchTab_scrollIntoView_behavior(tmp_path):
           document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
           document.querySelectorAll('.tab-panel').forEach(panel => panel.classList.remove('active'));
 
-          switchTab('copy-trading');
+          switchTab('copy-paper');
           assert.ok(scrollIntoViewCalled, 'switchTab() must call scrollIntoView on the activated button');
           assert.deepStrictEqual(scrollIntoViewOptions,
             {behavior:'smooth', inline:'nearest', block:'nearest'},
