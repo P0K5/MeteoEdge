@@ -107,7 +107,8 @@ def test_clipboard_api_success_on_secure_context():
           const btn = makeDOMNode();
           btn.parentElement = makeDOMNode();
           const icon = makeDOMNode();
-          btn.querySelector = () => icon;
+          icon.tagName = 'I';
+          btn.querySelector = (sel) => { if (sel === 'svg, i') return icon; return null; };
           btn.parentElement.querySelector = () => makeDOMNode();
 
           await copyAddressToClipboard('0xTEST123', btn);
@@ -196,11 +197,12 @@ def test_manual_input_fallback_on_all_failures():
           const btn = makeDOMNode();
           btn.parentElement = makeDOMNode();
           const icon = makeDOMNode();
+          icon.tagName = 'I';
           const feedbackLabel = makeDOMNode();
           const addressSpan = makeDOMNode();
           addressSpan._originalContent = 'SHOW12…3456';
 
-          btn.querySelector = () => icon;
+          btn.querySelector = (sel) => { if (sel === 'svg, i') return icon; return null; };
           btn.parentElement.querySelector = (sel) => {
             if (sel === '.copy-feedback-label') return feedbackLabel;
             if (sel === '.copy-address-mono') return addressSpan;
@@ -253,7 +255,8 @@ def test_rapid_clicks_reset_timer():
           const btn = makeDOMNode();
           btn.parentElement = makeDOMNode();
           const icon = makeDOMNode();
-          btn.querySelector = () => icon;
+          icon.tagName = 'I';
+          btn.querySelector = (sel) => { if (sel === 'svg, i') return icon; return null; };
           btn.parentElement.querySelector = () => makeDOMNode();
 
           // Track timer cancellations
@@ -325,6 +328,147 @@ def test_detached_button_does_not_throw():
           } catch (e) {
             throw new Error('Function should not throw on detached button: ' + e.message);
           }
+        })();
+    """)
+
+    result = subprocess.run([NODE, "-e", test_code], capture_output=True, text=True, timeout=5)
+    assert result.returncode == 0, f"Test failed:\n{result.stderr}"
+    assert "passed" in result.stdout
+
+
+@pytest.mark.skipif(not NODE, reason="requires node.js")
+def test_second_click_after_lucide_creates_icons_replaces_i_with_svg():
+    """Test: second click works after lucide.createIcons replaces <i> with <svg>."""
+    with open(INDEX_HTML) as f:
+        html = f.read()
+
+    match = re.search(
+        r'(async\s+function\s+copyAddressToClipboard\(address,\s*btn\)\s*\{[\s\S]*?\n\})',
+        html
+    )
+    assert match, "Could not extract function"
+    func = match.group(1)
+
+    test_code = _PRELUDE + "\n" + func + textwrap.dedent("""
+        const assert = require('assert');
+
+        (async () => {
+          window.isSecureContext = true;
+          if (!navigator.clipboard) navigator.clipboard = {};
+          navigator.clipboard.writeText = async () => {};
+
+          // Stub lucide.createIcons to replace <i> with <svg>
+          lucide.createIcons = function() {
+            const icons = document.querySelectorAll('[data-lucide]');
+            icons.forEach(el => {
+              if (el.tagName === 'I') {
+                const svg = makeDOMNode();
+                svg.tagName = 'SVG';
+                if (el.parentElement) {
+                  el.parentElement.insertBefore(svg, el);
+                  el.parentElement.removeChild(el);
+                }
+              }
+            });
+          };
+
+          const btn = makeDOMNode();
+          btn.parentElement = makeDOMNode();
+          const iconI = makeDOMNode();
+          iconI.tagName = 'I';
+          btn.querySelector = function(sel) {
+            if (sel === 'svg, i') {
+              if (this._svgCreated) {
+                const svg = makeDOMNode();
+                svg.tagName = 'SVG';
+                return svg;
+              }
+              return iconI;
+            }
+            return null;
+          };
+          btn.parentElement.querySelector = () => makeDOMNode();
+
+          // First click
+          await copyAddressToClipboard('0xTEST', btn);
+
+          // Simulate lucide.createIcons replacing <i> with <svg>
+          btn._svgCreated = true;
+          iconI.isConnected = false;
+
+          // Second click (should work despite svg replacing i)
+          await copyAddressToClipboard('0xTEST', btn);
+
+          console.log('✓ second click after lucide test passed');
+        })();
+    """)
+
+    result = subprocess.run([NODE, "-e", test_code], capture_output=True, text=True, timeout=5)
+    assert result.returncode == 0, f"Test failed:\n{result.stderr}"
+    assert "passed" in result.stdout
+
+
+@pytest.mark.skipif(not NODE, reason="requires node.js")
+def test_fallback_input_stops_event_propagation():
+    """Test: fallback input stops click, mousedown, keydown propagation."""
+    with open(INDEX_HTML) as f:
+        html = f.read()
+
+    match = re.search(
+        r'(async\s+function\s+copyAddressToClipboard\(address,\s*btn\)\s*\{[\s\S]*?\n\})',
+        html
+    )
+    assert match, "Could not extract function"
+    func = match.group(1)
+
+    test_code = _PRELUDE + "\n" + func + textwrap.dedent("""
+        const assert = require('assert');
+
+        (async () => {
+          window.isSecureContext = false;
+          if (!navigator.clipboard) navigator.clipboard = {};
+          document.execCommand = function() { return false; };
+
+          const btn = makeDOMNode();
+          btn.parentElement = makeDOMNode();
+          const addressSpan = makeDOMNode();
+          addressSpan.textContent = 'ADDR';
+
+          btn.querySelector = (sel) => { if (sel === 'svg, i') return makeDOMNode(); return null; };
+          btn.parentElement.querySelector = (sel) => {
+            if (sel === '.copy-address-mono') return addressSpan;
+            if (sel === '.copy-feedback-label') return makeDOMNode();
+            return null;
+          };
+          addressSpan.parentElement = btn.parentElement;
+
+          let eventListenersAdded = {};
+          const origInsertBefore = btn.parentElement.insertBefore;
+          btn.parentElement.insertBefore = function(el, after) {
+            if (el.className && el.className.includes('copy-address-fallback-input')) {
+              const origAddEventListener = el.addEventListener;
+              el.addEventListener = function(eventType, handler) {
+                if (['click', 'mousedown', 'keydown'].includes(eventType)) {
+                  if (!eventListenersAdded[eventType]) eventListenersAdded[eventType] = false;
+                  // Test by calling handler with mock event that tracks stopPropagation
+                  const mockEvent = {
+                    stopPropagation: function() { eventListenersAdded[eventType] = true; }
+                  };
+                  handler(mockEvent);
+                }
+                origAddEventListener.call(this, eventType, handler);
+              };
+            }
+          };
+
+          await copyAddressToClipboard('0xTEST123', btn);
+
+          // Verify stopPropagation was called for all three events
+          assert.strictEqual(eventListenersAdded['click'], true, 'click handler should call stopPropagation');
+          assert.strictEqual(eventListenersAdded['mousedown'], true, 'mousedown handler should call stopPropagation');
+          assert.strictEqual(eventListenersAdded['keydown'], true, 'keydown handler should call stopPropagation');
+
+          console.log('✓ event propagation stop test passed');
         })();
     """)
 
