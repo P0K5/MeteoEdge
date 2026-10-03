@@ -227,3 +227,13 @@ def test_switchTab_scrollIntoView_behavior(tmp_path):
     )
     assert result.returncode == 0, f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
     assert "ALL_SWITCHTAB_SCROLLINTOVIEW_ASSERTIONS_PASSED" in result.stdout
+
+
+def test_tab_btn_never_wraps_or_shrinks():
+    """Long labels ("Copy · Paper") must stay on one line inside the
+    horizontally scrolling tab bar (375px regression, issue #1275)."""
+    html = INDEX_HTML.read_text(encoding="utf-8")
+    rule = re.search(r'\.tab-btn\{[^}]*\}', html)
+    assert rule, ".tab-btn CSS rule not found"
+    assert "white-space:nowrap" in rule.group(0)
+    assert "flex-shrink:0" in rule.group(0)
