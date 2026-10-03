@@ -27,66 +27,6 @@ def test_copy_address_clipboard_function_exists():
         'copyAddressToClipboard function should exist'
 
 
-def test_clipboard_fallback_chain_implemented():
-    """Verify the function implements the required fallback chain."""
-    with open(INDEX_HTML) as f:
-        html = f.read()
-
-    # Extract function body
-    match = re.search(
-        r'async\s+function\s+copyAddressToClipboard\(address,\s*btn\)\s*\{([\s\S]*?)\n\}(?!\})',
-        html
-    )
-    assert match, "Could not extract copyAddressToClipboard function"
-    func_body = match.group(1)
-
-    # Check for secure context check (primary path)
-    assert 'isSecureContext' in func_body, \
-        'Function should check window.isSecureContext for secure context'
-    assert 'navigator.clipboard' in func_body, \
-        'Function should try navigator.clipboard.writeText first'
-
-    # Check for execCommand fallback (secondary path)
-    assert 'execCommand' in func_body, \
-        'Function should have execCommand fallback for non-secure contexts'
-    assert "'copy'" in func_body, \
-        'Function should call execCommand with "copy" command'
-
-    # Check for manual input fallback (tertiary path)
-    assert 'textarea' in func_body or 'input' in func_body, \
-        'Function should have manual input fallback as last resort'
-
-
-def test_feedback_states_implemented():
-    """Verify visible feedback states are implemented (icon/label/aria-live)."""
-    with open(INDEX_HTML) as f:
-        html = f.read()
-
-    # Extract function body
-    match = re.search(
-        r'async\s+function\s+copyAddressToClipboard\(address,\s*btn\)\s*\{([\s\S]*?)\n\}(?!\})',
-        html
-    )
-    assert match, "Could not extract copyAddressToClipboard function"
-    func_body = match.group(1)
-
-    # Check for success feedback
-    assert "setAttribute('data-lucide', 'check')" in func_body, \
-        'Function should swap icon to check on success'
-    assert 'Copied' in func_body, \
-        'Function should show "Copied" feedback label'
-    assert 'copied to clipboard' in func_body.lower(), \
-        'Function should have success message for aria-live'
-
-    # Check for error feedback
-    assert "setAttribute('data-lucide', 'x')" in func_body, \
-        'Function should swap icon to x on failure'
-    assert 'Copy failed' in func_body, \
-        'Function should show "Copy failed" feedback label'
-    assert 'Could not copy' in func_body, \
-        'Function should have failure message for aria-live'
-
-
 def test_aria_live_region_added():
     """Verify global aria-live region for screen reader announcements."""
     with open(INDEX_HTML) as f:

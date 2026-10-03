@@ -858,6 +858,7 @@ a,button,input,select{transition:color var(--transition),background var(--transi
 .copy-feedback-label i{width:12px;height:12px;}
 .copy-address-fallback-input{font-family:var(--font-mono);font-size:var(--text-sm);padding:2px 6px;border:1px solid var(--muted);border-radius:var(--radius-sm);background:var(--surface);color:var(--text);width:55px;max-width:100%;}
 .copy-address-fallback-input:focus{outline:2px solid var(--primary);outline-offset:1px;}
+.copy-address-hint{font-size:var(--text-xs);color:var(--muted);margin-left:4px;white-space:nowrap;opacity:0;transition:opacity 0.2s;}
 .copy-sr-status{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;}
 .copy-followed-tag{
   font-size:10px;font-weight:700;color:var(--yes);background:var(--yes-bg);
@@ -4138,7 +4139,13 @@ async function copyAddressToClipboard(address, btn) {
     // Show manual fallback
     if (addressSpan && addressSpan.isConnected) {
       const fullAddress = address;
-      const truncatedText = addressSpan.textContent;
+      // Capture original display value (before hiding)
+      const originalDisplay = addressSpan.style.display;
+      // Derive truncated text from data-address attribute for robust restore
+      const dataAddress = addressSpan.getAttribute('data-address') || '';
+      const truncatedMatch = dataAddress.match(/(.{5}).*(.{4})$/);
+      const truncatedText = truncatedMatch ? truncatedMatch[1] + '…' + truncatedMatch[2] : dataAddress;
+
       const input = document.createElement('input');
       input.type = 'text';
       input.className = 'copy-address-fallback-input copy-stake-input copy-address-mono';
@@ -4146,16 +4153,22 @@ async function copyAddressToClipboard(address, btn) {
       input.readOnly = true;
       input.title = 'Press Ctrl/Cmd+C to copy';
 
-      // Store original content and show input instead
-      addressSpan._originalDisplay = addressSpan.style.display;
-      addressSpan._originalContent = addressSpan.textContent;
-      addressSpan.textContent = '';
+      // Create hint element
+      const hint = document.createElement('span');
+      hint.className = 'copy-address-hint';
+      hint.textContent = 'Press Ctrl/Cmd+C';
+
+      // Hide truncated text and insert input + hint
       addressSpan.style.display = 'none';
       addressSpan.parentElement.insertBefore(input, addressSpan.nextSibling);
+      addressSpan.parentElement.insertBefore(hint, input.nextSibling);
 
       // Focus first, then select
       input.focus();
       input.select();
+
+      // Show hint on focus
+      hint.style.opacity = '1';
 
       // Stop propagation on input interactions so row toggles don't trigger
       function stopPropagation(e) {
@@ -4176,9 +4189,12 @@ async function copyAddressToClipboard(address, btn) {
         if (input.isConnected && input.parentElement) {
           input.parentElement.removeChild(input);
         }
+        if (hint.isConnected && hint.parentElement) {
+          hint.parentElement.removeChild(hint);
+        }
         if (addressSpan && addressSpan.isConnected) {
-          addressSpan.style.display = addressSpan._originalDisplay || '';
-          addressSpan.textContent = addressSpan._originalContent || truncatedText;
+          addressSpan.style.display = originalDisplay;
+          addressSpan.textContent = truncatedText;
         }
         input.removeEventListener('blur', restoreTruncated);
         input.removeEventListener('keydown', handleEscape);
