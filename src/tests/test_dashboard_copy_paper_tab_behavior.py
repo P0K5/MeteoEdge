@@ -516,6 +516,19 @@ def test_go_live_link_highlights_immediately_when_live_was_already_rendered(tmp_
     """, tmp_path)
 
 
+def test_go_live_opens_a_collapsed_ready_list_before_scrolling(tmp_path):
+    run_js("""
+        click('copy-live');
+        await settle();
+        const row = el('live-ready-row-0xPaperOne');
+        const details = { open: false };
+        row.closest = (sel) => sel === 'details' ? details : null;
+        assert.strictEqual(_copyHighlightLiveRow('0xPaperOne'), true);
+        assert.strictEqual(details.open, true, 'the collapsed <details> is opened');
+        assert.strictEqual(row._scrolled, 1);
+    """, tmp_path)
+
+
 def test_go_live_for_a_wallet_not_in_the_ready_list_only_switches_tab(tmp_path):
     run_js("""
         click('copy-paper');
