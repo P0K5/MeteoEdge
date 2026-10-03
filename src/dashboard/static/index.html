@@ -4088,36 +4088,46 @@ async function copyAddressToClipboard(address, btn) {
     return btn.querySelector('svg, i');
   }
 
+  // lucide.createIcons() swaps <i data-lucide> for an <svg>, so the data-lucide
+  // attribute on the live node is no longer re-read. Always insert a fresh <i>
+  // (replacing whatever is there) and let lucide render it.
+  function setIcon(name) {
+    const old = getIcon();
+    if (!old || !old.parentNode) return;
+    const fresh = document.createElement('i');
+    fresh.setAttribute('data-lucide', name);
+    if (old.className && typeof old.className === 'string') fresh.className = old.className;
+    old.parentNode.insertBefore(fresh, old);
+    old.parentNode.removeChild(old);
+    lucide.createIcons();
+  }
+
+  function resetFeedback() {
+    if (!btn.isConnected) return;
+    setIcon('copy');
+    if (feedbackLabel && feedbackLabel.isConnected) {
+      feedbackLabel.className = 'copy-feedback-label';
+      feedbackLabel.textContent = '';
+    }
+  }
+
   function showSuccess() {
     // Guard on btn being connected (not on potentially stale icon)
     if (!btn.isConnected) return;
 
-    const icon = getIcon();
-    if (icon) {
-      if (icon.tagName === 'I') {
-        icon.setAttribute('data-lucide', 'check');
-      }
+    if (getIcon()) {
+      setIcon('check');
       if (feedbackLabel && feedbackLabel.isConnected) {
         feedbackLabel.textContent = 'Copied';
         feedbackLabel.className = 'copy-feedback-label visible success';
       }
-      lucide.createIcons();
     }
     srStatus.textContent = 'Address copied to clipboard';
 
     // Reset after 1.5s
     btn._copyTimer = setTimeout(() => {
-      if (!btn.isConnected) return;
-      const currentIcon = getIcon();
-      if (currentIcon && currentIcon.tagName === 'I') {
-        currentIcon.setAttribute('data-lucide', 'copy');
-        if (feedbackLabel && feedbackLabel.isConnected) {
-          feedbackLabel.className = 'copy-feedback-label';
-          feedbackLabel.textContent = '';
-        }
-        lucide.createIcons();
-      }
       btn._copyTimer = null;
+      resetFeedback();
     }, 1500);
   }
 
@@ -4125,14 +4135,13 @@ async function copyAddressToClipboard(address, btn) {
     // Guard on btn being connected
     if (!btn.isConnected) return;
 
-    const icon = getIcon();
-    if (icon && icon.tagName === 'I') {
-      icon.setAttribute('data-lucide', 'x');
+    if (getIcon()) {
+      setIcon('x');
       if (feedbackLabel && feedbackLabel.isConnected) {
         feedbackLabel.innerHTML = '<i data-lucide="x"></i>Copy failed — select manually';
         feedbackLabel.className = 'copy-feedback-label visible error';
+        lucide.createIcons();
       }
-      lucide.createIcons();
     }
     srStatus.textContent = 'Could not copy address to clipboard';
 
@@ -4141,9 +4150,9 @@ async function copyAddressToClipboard(address, btn) {
       const fullAddress = address;
       // Capture original display value (before hiding)
       const originalDisplay = addressSpan.style.display;
-      // Use shared helper for consistent truncation (6+…+4 chars)
-      const dataAddress = addressSpan.getAttribute('data-address') || '';
-      const truncatedText = _copyTruncateAddress(dataAddress);
+      // Use shared helper for consistent truncation (6+…+4 chars). Use the raw
+      // address, never the HTML-escaped data-address attribute.
+      const truncatedText = _copyTruncateAddress(fullAddress);
 
       const input = document.createElement('input');
       input.type = 'text';
@@ -4195,6 +4204,7 @@ async function copyAddressToClipboard(address, btn) {
           addressSpan.style.display = originalDisplay;
           addressSpan.textContent = truncatedText;
         }
+        resetFeedback();
         input.removeEventListener('blur', restoreTruncated);
         input.removeEventListener('keydown', handleEscape);
         input.removeEventListener('focus', pauseTimer);
@@ -4225,10 +4235,13 @@ async function copyAddressToClipboard(address, btn) {
       input.addEventListener('focus', pauseTimer);
       input.addEventListener('blur', resumeTimer);
 
-      // Start 4s timer for auto-dismiss (paused on focus)
-      failureTimer = setTimeout(() => {
-        if (btn.isConnected) restoreTruncated();
-      }, 4000);
+      // Start 4s timer for auto-dismiss, unless the input already has focus
+      // (the focus listener above was attached after focus() ran).
+      if (document.activeElement !== input) {
+        failureTimer = setTimeout(() => {
+          if (btn.isConnected) restoreTruncated();
+        }, 4000);
+      }
     }
   }
 
