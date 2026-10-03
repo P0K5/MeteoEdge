@@ -33,7 +33,7 @@ def get_clob_client() -> ClobClient:
         key=key,
         chain_id=chain_id,
         creds=creds,
-        signature_type=int(SignatureTypeV2.POLY_1271),
+        signature_type=int(SignatureTypeV2.POLY_GNOSIS_SAFE),
         funder=deposit_wallet,
     )
 
