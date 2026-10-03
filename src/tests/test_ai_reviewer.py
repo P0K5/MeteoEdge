@@ -15,8 +15,10 @@ import requests
 from scripts.ai_reviewer import (
     DEEPSEEK_MAX_ATTEMPTS,
     DEEPSEEK_RETRYABLE_STATUS_CODES,
+    DIFF_FALLBACK_MAX_CHARS,
     DIFF_MAX_CHARS,
     GENERATED_PATH_PREFIXES,
+    DeepSeekContextLengthError,
     DeepSeekDegradedError,
     DeepSeekTimeoutError,
     _run,
@@ -24,6 +26,7 @@ from scripts.ai_reviewer import (
     build_review_packet,
     call_deepseek,
     fetch_issue,
+    get_diff_max_chars,
     is_generated_path,
 )
 
@@ -193,6 +196,36 @@ class TestDiffBudget:
         # that would reproduce the #1098 failure.
         assert DIFF_MAX_CHARS >= 70_000
 
+    def test_default_cap_is_300k_and_fallback_is_80k(self, monkeypatch):
+        monkeypatch.delenv("AI_REVIEW_DIFF_MAX_CHARS", raising=False)
+        assert DIFF_MAX_CHARS == 300_000
+        assert DIFF_FALLBACK_MAX_CHARS == 80_000
+        assert get_diff_max_chars() == 300_000
+
+    def test_env_override_valid(self, monkeypatch):
+        monkeypatch.setenv("AI_REVIEW_DIFF_MAX_CHARS", "1234")
+        assert get_diff_max_chars() == 1234
+
+    @pytest.mark.parametrize("raw", ["abc", "0", "-5", "1.5"])
+    def test_env_override_invalid_falls_back_with_log(self, monkeypatch, capsys, raw):
+        monkeypatch.setenv("AI_REVIEW_DIFF_MAX_CHARS", raw)
+        assert get_diff_max_chars() == DIFF_MAX_CHARS
+        assert "Invalid AI_REVIEW_DIFF_MAX_CHARS" in capsys.readouterr().err
+
+    def test_env_override_applies_to_packet(self, monkeypatch):
+        monkeypatch.setenv("AI_REVIEW_DIFF_MAX_CHARS", "100")
+        packet = build_review_packet(
+            _minimal_pr_meta(), [_changed_file("src/x.py", patch="x" * 500)], {}, [], "p",
+        )
+        assert "diff truncated" in packet
+
+    def test_diff_between_old_and_new_cap_is_not_truncated(self, monkeypatch):
+        monkeypatch.delenv("AI_REVIEW_DIFF_MAX_CHARS", raising=False)
+        packet = build_review_packet(
+            _minimal_pr_meta(), [_changed_file("src/x.py", patch="x" * 250_000)], {}, [], "p",
+        )
+        assert "diff truncated" not in packet
+
     def test_diff_under_budget_is_not_truncated(self):
         changed_files = [_changed_file("src/x.py", patch="+line\n" * 10)]
         packet = build_review_packet(
@@ -322,3 +355,73 @@ class TestGeneratedPathExclusion:
         assert "generated noise" not in packet
         # The listing line for the real file must NOT carry the suffix:
         assert "- src/config.py [modified] +1/-0\n" in packet
+
+
+_CONTEXT_ERR = (
+    "This model's maximum context length is 131072 tokens. However, you "
+    "requested 140000 tokens"
+)
+
+
+@patch("scripts.ai_reviewer.time.sleep")
+@patch("scripts.ai_reviewer.requests.post")
+def test_context_length_400_raises_dedicated_error_without_retry(mock_post, mock_sleep):
+    mock_post.return_value = _fake_response(400, _CONTEXT_ERR)
+    with pytest.raises(DeepSeekContextLengthError):
+        call_deepseek("https://x", "key", "model", "sys", "user")
+    assert mock_post.call_count == 1
+    mock_sleep.assert_not_called()
+
+
+def _run_once():
+    _run(
+        api_key="key", deepseek_base_url="https://x", deepseek_model="model",
+        github_token="tok", pr_number="1", pr_head_sha="sha",
+        repo_owner="owner", repo_name="repo", repo_root=Path("."),
+    )
+
+
+def test_run_retries_once_with_smaller_cap_on_context_length(monkeypatch):
+    monkeypatch.delenv("AI_REVIEW_DIFF_MAX_CHARS", raising=False)
+    _patch_run_dependencies(
+        monkeypatch,
+        call_side_effect=[DeepSeekContextLengthError("too long"), "VERDICT: PASS"],
+    )
+    monkeypatch.setattr(
+        "scripts.ai_reviewer.fetch_pr_files",
+        lambda *a, **k: [_changed_file("src/x.py", patch="x" * 200_000)],
+    )
+    check_mock = MagicMock(return_value={"id": 1})
+    monkeypatch.setattr("scripts.ai_reviewer.create_check_run", check_mock)
+    monkeypatch.setattr("scripts.ai_reviewer.post_pr_comment", MagicMock(return_value={"id": 2}))
+
+    _run_once()
+
+    from scripts import ai_reviewer
+    calls = ai_reviewer.call_deepseek.call_args_list
+    assert len(calls) == 2
+    first, second = (c.kwargs["user_content"] for c in calls)
+    assert "diff truncated" not in first
+    assert "diff truncated" in second
+    assert len(second) < len(first)
+    summary = check_mock.call_args.kwargs["review_text"]
+    assert "truncated to 80000 characters to fit the model context" in summary
+
+
+def test_run_does_not_loop_when_retry_also_fails_context_length(monkeypatch):
+    _patch_run_dependencies(
+        monkeypatch,
+        call_side_effect=DeepSeekContextLengthError("too long"),
+    )
+    with pytest.raises(DeepSeekContextLengthError):
+        _run_once()
+    from scripts import ai_reviewer
+    assert ai_reviewer.call_deepseek.call_count == 2
+
+
+def test_run_does_not_retry_other_errors(monkeypatch):
+    _patch_run_dependencies(monkeypatch, call_side_effect=RuntimeError("DeepSeek API 401"))
+    with pytest.raises(RuntimeError):
+        _run_once()
+    from scripts import ai_reviewer
+    assert ai_reviewer.call_deepseek.call_count == 1

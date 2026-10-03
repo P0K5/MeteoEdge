@@ -13,6 +13,7 @@ Workflow env vars required:
 Optional:
   DEEPSEEK_BASE_URL     — default https://api.deepseek.com
   DEEPSEEK_MODEL        — default deepseek-chat
+  AI_REVIEW_DIFF_MAX_CHARS — diff cap in chars (positive int), default 300000
 """
 import json
 import os
@@ -50,6 +51,15 @@ GITHUB_API = "https://api.github.com"
 # text) but covers realistic multi-file feature PRs whole, instead of
 # truncating mid-file.
 #
+# Raised again to 300000 (#1283): a mostly relocation-style refactor (PR
+# #1282, ~258K chars of diff) was BLOCKed with "diff truncated, cannot
+# complete review" at 80000. deepseek-chat has a 128K-token context and ~260K
+# chars of code is roughly 80K tokens, so 300000 fits. The cap is overridable
+# via env AI_REVIEW_DIFF_MAX_CHARS (see get_diff_max_chars()). If DeepSeek
+# nevertheless rejects the request as exceeding the model context, _run()
+# retries ONCE with DIFF_FALLBACK_MAX_CHARS (the previous 80000 cap) and says
+# so in the review summary.
+#
 # Raising this budget fixes each incident it's raised for, but not the root
 # cause: GitHub returns diff hunks in path order, and generated paths
 # (graphify-out/, regenerated on every code-changing PR per CLAUDE.md's
@@ -62,7 +72,9 @@ GITHUB_API = "https://api.github.com"
 # paths from the diff content entirely instead of relying on a bigger budget
 # to outrun them; DIFF_MAX_CHARS remains a safety cap on what's left after
 # that filtering, not the primary defense.
-DIFF_MAX_CHARS = 80000
+DIFF_MAX_CHARS = 300_000
+DIFF_FALLBACK_MAX_CHARS = 80_000
+DIFF_MAX_CHARS_ENV = "AI_REVIEW_DIFF_MAX_CHARS"
 SUMMARY_MAX_CHARS = 65535
 
 # Paths whose diffs are excluded from the AI review packet because they are
@@ -76,8 +88,41 @@ def is_generated_path(filename: str) -> bool:
     return filename.startswith(GENERATED_PATH_PREFIXES)
 
 
+def get_diff_max_chars() -> int:
+    """Return the diff cap: env AI_REVIEW_DIFF_MAX_CHARS if it is a positive
+    int, else DIFF_MAX_CHARS (invalid values fall back with a log line)."""
+    raw = os.environ.get(DIFF_MAX_CHARS_ENV, "").strip()
+    if not raw:
+        return DIFF_MAX_CHARS
+    try:
+        value = int(raw)
+    except ValueError:
+        value = 0
+    if value <= 0:
+        print(
+            f"[ai_reviewer] Invalid {DIFF_MAX_CHARS_ENV}={raw!r} (need a positive "
+            f"integer); using default {DIFF_MAX_CHARS}",
+            file=sys.stderr,
+        )
+        return DIFF_MAX_CHARS
+    return value
+
+
 class DeepSeekDegradedError(RuntimeError):
     """Raised when the DeepSeek backend reports the model function as DEGRADED."""
+
+
+class DeepSeekContextLengthError(RuntimeError):
+    """Raised when DeepSeek rejects the request (HTTP 400) because the input
+    exceeds the model context window."""
+
+
+_CONTEXT_LENGTH_RE = re.compile(
+    r"context[ _-]?length|context window|maximum context|too many tokens|"
+    r"exceeds? the (?:model'?s? )?(?:maximum|max|context)|"
+    r"reduce the length of the messages",
+    re.IGNORECASE,
+)
 
 
 class DeepSeekTimeoutError(RuntimeError):
@@ -314,7 +359,10 @@ def build_review_packet(
     graph: dict,
     linked_issues: list,
     policy_summary: str,
+    diff_max_chars: int = None,
 ) -> str:
+    if diff_max_chars is None:
+        diff_max_chars = get_diff_max_chars()
     # PR Metadata
     pr_number = pr_meta.get("number", "?")
     pr_title = pr_meta.get("title", "")
@@ -344,9 +392,10 @@ def build_review_packet(
         packet_parts.append(f"- {fname} [{status}] +{additions}/-{deletions}{suffix}")
 
     # Diff — built from each file's own patch hunk, excluding generated
-    # paths, then capped at DIFF_MAX_CHARS as a safety net (#1118).
+    # paths, then capped at diff_max_chars (default DIFF_MAX_CHARS, env
+    # override AI_REVIEW_DIFF_MAX_CHARS) as a safety net (#1118, #1283).
     diff = build_diff_from_files(changed_files)
-    truncated_diff = diff if len(diff) <= DIFF_MAX_CHARS else diff[:DIFF_MAX_CHARS] + "\n... (diff truncated)"
+    truncated_diff = diff if len(diff) <= diff_max_chars else diff[:diff_max_chars] + "\n... (diff truncated)"
     packet_parts += [
         "",
         "## Diff",
@@ -451,6 +500,12 @@ def call_deepseek(
         # RuntimeError.
         if resp.status_code in (400, 503) and "DEGRADED" in body:
             raise DeepSeekDegradedError(f"DeepSeek model {model} is DEGRADED: {body}")
+
+        if resp.status_code == 400 and _CONTEXT_LENGTH_RE.search(body):
+            raise DeepSeekContextLengthError(
+                f"DeepSeek model {model} rejected the input as exceeding the model "
+                f"context: {body}"
+            )
 
         if resp.status_code in DEEPSEEK_RETRYABLE_STATUS_CODES:
             if is_last_attempt:
@@ -686,13 +741,41 @@ def _run(
     # 7. Call DeepSeek
     print(f"[ai_reviewer] Calling DeepSeek model {deepseek_model}...")
     try:
-        review_text = call_deepseek(
-            base_url=deepseek_base_url,
-            api_key=api_key,
-            model=deepseek_model,
-            system_prompt=system_prompt,
-            user_content=review_packet,
-        )
+        try:
+            review_text = call_deepseek(
+                base_url=deepseek_base_url,
+                api_key=api_key,
+                model=deepseek_model,
+                system_prompt=system_prompt,
+                user_content=review_packet,
+            )
+        except DeepSeekContextLengthError as exc:
+            # Input exceeded the model context: retry exactly ONCE with the
+            # previous, smaller cap (#1283). A second failure propagates.
+            print(
+                f"[ai_reviewer] Input exceeded model context ({exc}); retrying once "
+                f"with diff cap {DIFF_FALLBACK_MAX_CHARS}",
+                file=sys.stderr,
+            )
+            review_packet = build_review_packet(
+                pr_meta=pr_meta,
+                changed_files=changed_files,
+                graph=graph,
+                linked_issues=linked_issues,
+                policy_summary=policy_summary,
+                diff_max_chars=DIFF_FALLBACK_MAX_CHARS,
+            )
+            review_text = call_deepseek(
+                base_url=deepseek_base_url,
+                api_key=api_key,
+                model=deepseek_model,
+                system_prompt=system_prompt,
+                user_content=review_packet,
+            )
+            review_text += (
+                f"\n\n> Note: the diff was truncated to {DIFF_FALLBACK_MAX_CHARS} "
+                f"characters to fit the model context."
+            )
     except DeepSeekDegradedError as exc:
         # DeepSeek backend is reporting itself degraded — fail closed rather
         # than pass automatically. A required review that could not run must
