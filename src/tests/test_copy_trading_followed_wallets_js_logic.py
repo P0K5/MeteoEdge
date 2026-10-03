@@ -274,9 +274,10 @@ _ASSERTIONS = textwrap.dedent("""
         document.getElementById('followed-pnl-pill').textContent.includes('paper aggregate P&L'),
         'the paper pill must say "paper aggregate P&L", never a bare "aggregate P&L"'
       );
-      assert.strictEqual(document.getElementById('live-followed-live-pnl-pill').textContent, '',
-        'rendering the Paper tab must never write a live aggregate');
-      assert.strictEqual(document.getElementById('live-followed-live-eligible-pill').textContent, '');
+      assert.strictEqual(document.getElementById('copy-live-followed-list').innerHTML, '',
+        'rendering the Paper tab must never write into the Live roster');
+      assert.strictEqual(document.getElementById('copy-live-kpis').innerHTML, '',
+        'rendering the Paper tab must never write a live KPI card');
       assert.strictEqual(toggleCalls.length, 0, 'the Paper render never touches the live-off notice');
 
       // LIVE render: live-eligible count + live aggregate P&L, never a
@@ -284,10 +285,10 @@ _ASSERTIONS = textwrap.dedent("""
       // off" notice toggles strictly off the response's own
       // live_trading_enabled flag -- never inferred from row data.
       renderFollowedWallets(summaryPayload, 'live');
-      assert.strictEqual(document.getElementById('live-followed-live-eligible-pill').textContent, '3 live-eligible');
-      assert.strictEqual(document.getElementById('live-followed-opted-in-pill').textContent, '4 opted into live');
-      assert.ok(document.getElementById('live-followed-live-pnl-pill').textContent.includes('live aggregate P&L'));
-      assert.ok(!document.getElementById('live-followed-live-pnl-pill').textContent.toLowerCase().includes('paper'));
+      // Issue #1278: the Live roster header carries no counts/P&L pills any
+      // more -- the KPI cards own those figures (see the Live tab behaviour
+      // tests), so a live-off roster render prints no aggregate at all.
+      assert.ok(!/aggregate/i.test(document.getElementById('copy-live-followed-list').innerHTML));
       assert.deepStrictEqual(
         toggleCalls[toggleCalls.length - 1], { cls: 'visible', force: true },
         'the off-banner must be shown when live_trading_enabled is false'
@@ -578,7 +579,8 @@ _ASSERTIONS = textwrap.dedent("""
       renderFollowedWallets(optedInPayload, 'paper');
       assert.strictEqual(document.getElementById('followed-opted-in-pill').textContent, '4 opted into live → Live tab');
       renderFollowedWallets(optedInPayload, 'live');
-      assert.strictEqual(document.getElementById('live-followed-opted-in-pill').textContent, '4 opted into live');
+      // The Live roster has no opted-in pill (issue #1278: the "Live wallets"
+      // KPI card carries "N opted in").
 
       // ------------------------------------------------------------------
       // 13. Roster split (issue #1275): the SAME payload renders two
@@ -639,7 +641,13 @@ _ASSERTIONS = textwrap.dedent("""
       // Ready to go live: active, not-yet-opted-in wallets with Go live.
       assert.ok(readyHtml.includes('0xPaperOne') && readyHtml.includes('btn-followed-golive'));
       assert.ok(!readyHtml.includes('0xLiveOne') && !readyHtml.includes('0xPausedOne'));
-      assert.ok(!/[$][0-9]/.test(readyHtml), 'the first-cut Ready list renders no figures at all');
+      // The ONLY figure in the Ready list is the paper P&L reference, and it
+      // always carries an adjacent PAPER badge (PM decision, Open Q2).
+      assert.ok(readyHtml.includes('-$3.25'), 'the paper P&L reference renders');
+      assert.ok(readyHtml.includes('mode-badge-paper">PAPER</span><span class="sr-only">Paper P&amp;L </span>-$3.25'),
+        'the paper P&L figure carries an adjacent PAPER badge');
+      assert.strictEqual((readyHtml.match(/[$][0-9]/g) || []).length, 1, 'exactly one dollar figure (the labelled paper P&L) in the Ready list');
+      assert.ok(!readyHtml.includes('7.00') && !readyHtml.includes('stake'), 'no paper stake in the Ready list');
 
       // No DOM id is shared between the two tabs' rosters.
       const idsOf = (html) => [...html.matchAll(/ id="([^"]+)"/g)].map(m => m[1]);
