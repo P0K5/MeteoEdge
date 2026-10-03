@@ -17,6 +17,17 @@ class LiveTrader:
         self.client = client
         self._db = db
 
+    def _order_options(self, token_id: str) -> CreateOrderOptions:
+        try:
+            tick_size = self.client.get_tick_size(token_id)
+            neg_risk = self.client.get_neg_risk(token_id)
+        except Exception:
+            log.exception("[live] could not read tick size / neg_risk for token %s -- order not placed", token_id)
+            raise
+        if tick_size is None or neg_risk is None:
+            raise RuntimeError(f"exchange returned no tick size or neg_risk for token {token_id} -- order not placed")
+        return CreateOrderOptions(tick_size=tick_size, neg_risk=neg_risk)
+
     def get_usdc_balance(self) -> float:
         """Return available USDC in the CLOB (internal balance, not on-chain)."""
         bal = self.client.get_balance_allowance(BalanceAllowanceParams(asset_type=AssetType.COLLATERAL))
@@ -61,8 +72,7 @@ class LiveTrader:
             size=size,
             side="BUY",  # Always BUY YES or NO tokens -- never short
         )
-        # Weather markets on Polymarket are consistently neg_risk=True, tick_size=0.01
-        options = CreateOrderOptions(tick_size="0.01", neg_risk=True)
+        options = self._order_options(token_id)
         resp = self.client.create_and_post_order(args, options)
         order_id = resp.get("orderID") or resp.get("id")
         if not order_id:
@@ -131,7 +141,7 @@ class LiveTrader:
             size=size_floored,
             side="SELL",
         )
-        options = CreateOrderOptions(tick_size="0.01", neg_risk=True)
+        options = self._order_options(token_id)
         resp = self.client.create_and_post_order(args, options)
         order_id = resp.get("orderID") or resp.get("id")
         if not order_id:
@@ -189,7 +199,7 @@ class LiveTrader:
             size=size_floored,
             side="SELL",
         )
-        options = CreateOrderOptions(tick_size="0.01", neg_risk=True)
+        options = self._order_options(token_id)
         resp = self.client.create_and_post_order(args, options)
         order_id = resp.get("orderID") or resp.get("id")
         if not order_id:
