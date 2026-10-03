@@ -342,7 +342,7 @@ def test_failure_shows_visible_label_input_hint_and_focus_before_select():
         assert.ok(hint && hint.textContent === 'Press Ctrl/Cmd+C');
         const kids = row.children;
         assert.strictEqual(kids[kids.indexOf(span) + 1], input);
-        assert.strictEqual(kids[kids.indexOf(span) + 2], hint);
+        assert.strictEqual(hint.parentNode, label, 'hint stacks inside the failure label overlay');
         const f = order.indexOf('input:focus'), s = order.indexOf('input:select');
         assert.ok(f >= 0 && s > f, 'focus() before select(): ' + order);
         assert.strictEqual(document.activeElement, input);
