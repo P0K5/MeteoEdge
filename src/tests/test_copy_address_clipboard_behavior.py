@@ -48,7 +48,7 @@ def _extract_function(source: str, signature: str) -> str:
         elif ch == "}":
             depth -= 1
             if depth == 0:
-                return source[start : i + 1]
+                return source[start:i + 1]
         i += 1
     raise AssertionError(f"unbalanced braces for {signature}")
 
