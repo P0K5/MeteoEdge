@@ -4141,10 +4141,9 @@ async function copyAddressToClipboard(address, btn) {
       const fullAddress = address;
       // Capture original display value (before hiding)
       const originalDisplay = addressSpan.style.display;
-      // Derive truncated text from data-address attribute for robust restore
+      // Use shared helper for consistent truncation (6+…+4 chars)
       const dataAddress = addressSpan.getAttribute('data-address') || '';
-      const truncatedMatch = dataAddress.match(/(.{5}).*(.{4})$/);
-      const truncatedText = truncatedMatch ? truncatedMatch[1] + '…' + truncatedMatch[2] : dataAddress;
+      const truncatedText = _copyTruncateAddress(dataAddress);
 
       const input = document.createElement('input');
       input.type = 'text';
