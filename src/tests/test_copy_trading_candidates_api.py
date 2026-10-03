@@ -424,13 +424,8 @@ class TestCandidatesPagination:
         client, db = api_client
         _seed_many(db)
         body = client.get("/api/copy-trading/candidates?page=9").json()
-        assert body["candidates"] == [] and body["total_pages"] == 1 and body["page"] == 9
-
-    def test_page_beyond_end_is_empty(self, api_client):
-        client, db = api_client
-        _seed_many(db)
-        body = client.get("/api/copy-trading/candidates?page=9&page_size=25").json()
         assert body["candidates"] == [] and body["total"] == 7
+        assert body["total_pages"] == 1 and body["page"] == 9
 
     def test_search_case_insensitive_and_counts(self, api_client):
         client, db = api_client

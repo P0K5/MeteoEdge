@@ -888,7 +888,15 @@ is served by three read/write endpoints in `src/dashboard/api.py`:
   already followed, and the roster's `slots_remaining`/`max_followed`/
   `active_follow_count` (same computation as the advisory report above,
   via `copy_wallet_promotion.py::active_follow_count`) — one response, not
-  a round-trip per row.
+  a round-trip per row. Optional server-side paging (issue #1274): `page`
+  (>=1), `page_size` (25|50|100, default 25), `sort` (`address`, `window`,
+  `screened_at`, `n_buy_trades`, `n_resolved`, `win_rate`, `mean_roi`,
+  `median_roi`, `mirrored_dollar_pnl`, `flat_dollar_pnl`, `flat_stake`,
+  `eligible_to_follow`, `truncated`, `followed`, `unstable`; default
+  `median_roi`), `dir` (`asc`|`desc`, default `desc`), `q` (address
+  substring, >=3 chars, else ignored). If any is given the request is paged
+  and the response also carries `total`, `unfiltered_total`, `page`,
+  `page_size`, `total_pages`; no params = the legacy full list.
 - `GET /api/copy-trading/wallets/{address}/history` — a single wallet's
   recent screening runs, for the detail panel's median-ROI sparkline.
 - `POST /api/copy-trading/wallets/{address}/follow` — the dashboard's
