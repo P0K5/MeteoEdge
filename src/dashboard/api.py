@@ -45,14 +45,14 @@ from contextlib import redirect_stdout
 from dataclasses import dataclass, field as dc_field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 import httpx
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.gzip import GZipMiddleware
-from pydantic import BaseModel
+from pydantic import AfterValidator, BaseModel
 
 from py_clob_client_v2.clob_types import BookParams
 
@@ -519,7 +519,7 @@ class CopyCandidatesOut(BaseModel):
     slots_remaining: int
     max_followed: int
     active_follow_count: int
-    # Issue #1274: set only when the caller passed page/page_size/sort/dir/q;
+    # Issue #1274: set whenever the caller passed any of page/page_size/sort/dir/q (>= 3 chars);
     # absent (None) for the legacy unpaginated call so existing clients are
     # unaffected. `total` is the count after the `q` filter, `unfiltered_total`
     # before it.
@@ -2631,6 +2631,14 @@ def promotion_bar() -> list[PromotionBarOut]:
 # Copy-trading API — Candidates view (epic F #1143, story F1 #1146)
 # ---------------------------------------------------------------------------
 
+def _check_candidate_page_size(v: int | None) -> int | None:
+    # A Literal[25, 50, 100] annotation rejects the query-string "25" (no
+    # str->int coercion for Literal), so validate after int parsing instead.
+    if v is not None and v not in (25, 50, 100):
+        raise ValueError("page_size must be one of 25, 50, 100")
+    return v
+
+
 _CANDIDATE_PY_SORTS = ("followed", "unstable")
 
 
@@ -2663,7 +2671,7 @@ def _candidate_out(row, previous, followed_status) -> "CopyCandidateOut":
 @app.get("/api/copy-trading/candidates", response_model=CopyCandidatesOut)
 def copy_trading_candidates(
     page: int | None = Query(None, ge=1),
-    page_size: int | None = None,
+    page_size: Annotated[int | None, AfterValidator(_check_candidate_page_size)] = None,
     sort: Literal[
         "address", "window", "screened_at", "n_buy_trades", "n_resolved",
         "win_rate", "mean_roi", "median_roi", "mirrored_dollar_pnl",
@@ -2682,17 +2690,16 @@ def copy_trading_candidates(
     exact mistake the spike already made once, see the design spec).
 
     Optional server-side paging/sort/search (issue #1274, epic #1272). With
-    no query params the response is exactly the legacy full list. Otherwise:
+    none of page/page_size/sort/dir/q (>= 3 chars) the response is exactly
+    the legacy full list. If any is given the request is paged (defaults
+    page=1, page_size=25) and the paging fields are always set:
     `q` = case-insensitive address substring (ignored if < 3 chars),
     `sort`/`dir` = global sort (default median_roi desc; NULLs last when
-    descending), `page`/`page_size` (one of 25/50/100, default 25) slice the sorted result. Search, sort and the page
-    slice run in SQL and the per-row stability check runs only for the
+    descending), `page`/`page_size` (one of 25/50/100) slice the sorted
+    result; total_pages = ceil(total / page_size), 0 when nothing matches.
+    Search, sort and the page slice run in SQL and the per-row stability check runs only for the
     returned page (except sort=unstable, which needs it for every match).
     """
-    if page_size is not None and page_size not in (25, 50, 100):
-        raise HTTPException(
-            status_code=422, detail="page_size must be one of 25, 50, 100"
-        )
     if _db is None:
         raise HTTPException(status_code=503, detail="Database not initialised")
 
@@ -2709,8 +2716,7 @@ def copy_trading_candidates(
     # query never triggers a LIKE scan.
     q = q.strip() if q else None
     q = q if q and len(q) >= 3 else None
-    paged = page is not None or page_size is not None
-    if not (paged or sort or dir or q):
+    if page is None and page_size is None and not (sort or dir or q):
         # Legacy path (unchanged behaviour). One batched query for every
         # address's previous run, instead of an N+1 call per candidate row —
         # this endpoint is polled every 5 minutes by every open dashboard tab.
@@ -2730,6 +2736,7 @@ def copy_trading_candidates(
             active_follow_count=active_count,
         )
 
+    # Any of page/page_size/sort/dir/q (>= 3 chars) => paged mode, always.
     sort = sort or "median_roi"
     descending = (dir or "desc") == "desc"
     eff_page = page or 1
@@ -2748,17 +2755,15 @@ def copy_trading_candidates(
         ]
         items.sort(key=lambda c: c.address)
         items.sort(key=lambda c: getattr(c, sort), reverse=descending)
-        if paged:
-            start = (eff_page - 1) * eff_size
-            items = items[start:start + eff_size]
-        candidates = items
+        start = (eff_page - 1) * eff_size
+        candidates = items[start:start + eff_size]
     else:
         rows, filtered, unfiltered = _db.query_latest_wallet_screenings(
             q=q,
             sort=sort,
             descending=descending,
-            limit=eff_size if paged else None,
-            offset=(eff_page - 1) * eff_size if paged else 0,
+            limit=eff_size,
+            offset=(eff_page - 1) * eff_size,
         )
         previous_runs = _db.get_previous_wallet_screenings(
             [r["address"] for r in rows]
@@ -2775,9 +2780,9 @@ def copy_trading_candidates(
         active_follow_count=active_count,
         total=filtered,
         unfiltered_total=unfiltered,
-        page=eff_page if paged else None,
-        page_size=eff_size if paged else None,
-        total_pages=(max(-(-filtered // eff_size), 1) if paged else None),
+        page=eff_page,
+        page_size=eff_size,
+        total_pages=-(-filtered // eff_size),
     )
 
 

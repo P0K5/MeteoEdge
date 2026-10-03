@@ -413,6 +413,19 @@ class TestCandidatesPagination:
                 f"/api/copy-trading/candidates?page={p}&page_size=25").json()["candidates"]]
         assert len(seen) == len(set(seen)) == 60
 
+    def test_zero_match_q_has_zero_pages(self, api_client):
+        client, db = api_client
+        _seed_many(db)
+        body = client.get("/api/copy-trading/candidates?q=zzzzzz").json()
+        assert body["candidates"] == []
+        assert (body["total"], body["total_pages"], body["unfiltered_total"]) == (0, 0, 7)
+
+    def test_beyond_end_reports_total_pages(self, api_client):
+        client, db = api_client
+        _seed_many(db)
+        body = client.get("/api/copy-trading/candidates?page=9").json()
+        assert body["candidates"] == [] and body["total_pages"] == 1 and body["page"] == 9
+
     def test_page_beyond_end_is_empty(self, api_client):
         client, db = api_client
         _seed_many(db)
@@ -461,7 +474,9 @@ class TestCandidatesPagination:
         _seed_many(db)
         body = client.get("/api/copy-trading/candidates?sort=median_roi&dir=asc").json()
         assert body["candidates"][0]["median_roi"] is None
-        assert body["page"] is None and body["total"] == 7  # sort only: no slice
+        # sort-only is paged with defaults: page 1, size 25, fields never null
+        assert (body["page"], body["page_size"], body["total_pages"]) == (1, 25, 1)
+        assert body["total"] == body["unfiltered_total"] == 7
         body = client.get("/api/copy-trading/candidates?sort=address&dir=asc").json()
         addrs = [c["address"] for c in body["candidates"]]
         assert addrs == sorted(addrs)
