@@ -17,6 +17,12 @@ class LiveTrader:
         self.client = client
         self._db = db
 
+    def _order_options(self, token_id: str) -> CreateOrderOptions:
+        return CreateOrderOptions(
+            tick_size=self.client.get_tick_size(token_id),
+            neg_risk=self.client.get_neg_risk(token_id),
+        )
+
     def get_usdc_balance(self) -> float:
         """Return available USDC in the CLOB (internal balance, not on-chain)."""
         bal = self.client.get_balance_allowance(BalanceAllowanceParams(asset_type=AssetType.COLLATERAL))
@@ -61,8 +67,7 @@ class LiveTrader:
             size=size,
             side="BUY",  # Always BUY YES or NO tokens -- never short
         )
-        # Weather markets on Polymarket are consistently neg_risk=True, tick_size=0.01
-        options = CreateOrderOptions(tick_size="0.01", neg_risk=True)
+        options = self._order_options(token_id)
         resp = self.client.create_and_post_order(args, options)
         order_id = resp.get("orderID") or resp.get("id")
         if not order_id:
@@ -131,7 +136,7 @@ class LiveTrader:
             size=size_floored,
             side="SELL",
         )
-        options = CreateOrderOptions(tick_size="0.01", neg_risk=True)
+        options = self._order_options(token_id)
         resp = self.client.create_and_post_order(args, options)
         order_id = resp.get("orderID") or resp.get("id")
         if not order_id:
@@ -189,7 +194,7 @@ class LiveTrader:
             size=size_floored,
             side="SELL",
         )
-        options = CreateOrderOptions(tick_size="0.01", neg_risk=True)
+        options = self._order_options(token_id)
         resp = self.client.create_and_post_order(args, options)
         order_id = resp.get("orderID") or resp.get("id")
         if not order_id:
