@@ -259,84 +259,51 @@ _ASSERTIONS = textwrap.dedent("""
       const toggleCalls = [];
       offBanner.classList.toggle = (cls, force) => { toggleCalls.push({ cls, force }); };
 
-      renderFollowedWallets({
-        wallets: [], active_count: 0, paused_count: 0, aggregate_pnl_usd: 5, n_settled_total: 2,
+      const summaryPayload = {
+        wallets: [], active_count: 2, paused_count: 1, aggregate_pnl_usd: 5, n_settled_total: 2,
         live_eligible_count: 3, paper_only_count: 1, live_aggregate_pnl_usd: -2, live_n_settled_total: 1,
-        live_trading_enabled: false,
-      });
-      assert.strictEqual(document.getElementById('followed-live-eligible-pill').textContent, '3 live-eligible');
+        live_trading_enabled: false, live_opted_in_count: 4,
+      };
+
+      // PAPER render (issue #1275): paper counts + paper aggregate only --
+      // never a live figure on the Paper tab.
+      renderFollowedWallets(summaryPayload, 'paper');
       assert.strictEqual(document.getElementById('followed-paper-only-pill').textContent, '1 paper-only');
+      assert.strictEqual(document.getElementById('followed-active-pill').textContent, '2 active');
       assert.ok(
         document.getElementById('followed-pnl-pill').textContent.includes('paper aggregate P&L'),
         'the paper pill must say "paper aggregate P&L", never a bare "aggregate P&L"'
       );
-      assert.ok(document.getElementById('followed-live-pnl-pill').textContent.includes('live aggregate P&L'));
+      assert.strictEqual(document.getElementById('live-followed-live-pnl-pill').textContent, '',
+        'rendering the Paper tab must never write a live aggregate');
+      assert.strictEqual(document.getElementById('live-followed-live-eligible-pill').textContent, '');
+      assert.strictEqual(toggleCalls.length, 0, 'the Paper render never touches the live-off notice');
+
+      // LIVE render: live-eligible count + live aggregate P&L, never a
+      // single combined "aggregate P&L", and the table-level "live is
+      // off" notice toggles strictly off the response's own
+      // live_trading_enabled flag -- never inferred from row data.
+      renderFollowedWallets(summaryPayload, 'live');
+      assert.strictEqual(document.getElementById('live-followed-live-eligible-pill').textContent, '3 live-eligible');
+      assert.strictEqual(document.getElementById('live-followed-opted-in-pill').textContent, '4 opted into live');
+      assert.ok(document.getElementById('live-followed-live-pnl-pill').textContent.includes('live aggregate P&L'));
+      assert.ok(!document.getElementById('live-followed-live-pnl-pill').textContent.toLowerCase().includes('paper'));
       assert.deepStrictEqual(
         toggleCalls[toggleCalls.length - 1], { cls: 'visible', force: true },
         'the off-banner must be shown when live_trading_enabled is false'
       );
 
-      renderFollowedWallets({
-        wallets: [], active_count: 0, paused_count: 0, aggregate_pnl_usd: 0, n_settled_total: 0,
-        live_eligible_count: 0, paper_only_count: 0, live_aggregate_pnl_usd: 0, live_n_settled_total: 0,
-        live_trading_enabled: true,
-      });
+      renderFollowedWallets({ ...summaryPayload, live_trading_enabled: true }, 'live');
       assert.deepStrictEqual(
         toggleCalls[toggleCalls.length - 1], { cls: 'visible', force: false },
         'the off-banner must be hidden when live_trading_enabled is true'
       );
 
       // ------------------------------------------------------------------
-      // 6. Followed Wallets gets its own dedicated 30s poll, decoupled
-      //    from the four-view 5-minute group and fetched unconditionally
-      //    on every tab entry -- the same precedent PR #1192 established
-      //    for the global posture banner: this badge is just as
-      //    config-driven and trust-relevant, so it must not risk sitting
-      //    stale for up to 5 minutes on a tab revisit.
+      // 6. (The per-tab 30s poll / refetch-on-entry wiring for the roster
+      //    now lives in COPY_TAB_JOBS and is exercised against a faithful
+      //    DOM in test_dashboard_copy_tab_controller_behavior.py.)
       // ------------------------------------------------------------------
-      let followedFetchCount = 0;
-      fetchFollowedWallets = async () => { followedFetchCount++; };
-      fetchCopyTradingModePosture = async () => {};
-      fetchCopyTradingCandidates = async () => {};
-      fetchCopyTradingPositions = async () => {};
-      fetchCopyTradingActivityFeed = async () => {};
-
-      const setIntervalCalls = [];
-      const clearIntervalCalls = [];
-      let fakeIntervalId = 0;
-      global.setInterval = (fn, delay) => { setIntervalCalls.push({ fn, delay }); return ++fakeIntervalId; };
-      global.clearInterval = (id) => { clearIntervalCalls.push(id); };
-
-      currentTab = 'portfolio';
-      copyTradingLoaded = false;
-      copyTradingIntervalId = null;
-      copyTradingModeIntervalId = null;
-      followedWalletsIntervalId = null;
-
-      switchTab('copy-trading');
-      assert.ok(followedFetchCount >= 1, 'first tab entry must fetch followed wallets immediately');
-      const thirtySecCalls = setIntervalCalls.filter(c => c.delay === 30_000);
-      assert.strictEqual(
-        thirtySecCalls.length, 2,
-        'the posture banner and followed wallets must each get their own dedicated 30s interval, not share one'
-      );
-
-      const clearedBeforeLeaving = clearIntervalCalls.length;
-      switchTab('other-unrelated-tab');
-      assert.ok(
-        clearIntervalCalls.length >= clearedBeforeLeaving + 3,
-        'leaving the tab must clear all three Copy-Trading intervals (view-data, posture, followed wallets)'
-      );
-
-      // Re-entry: the exact bug PR #1192 fixed for the posture banner --
-      // copyTradingLoaded is already true here, so a naive first-activation
-      // gate would silently skip this fetch, leaving the badge stale until
-      // the next poll tick.
-      followedFetchCount = 0;
-      setIntervalCalls.length = 0;
-      switchTab('copy-trading');
-      assert.strictEqual(followedFetchCount, 1, 'followed wallets must refetch immediately on every tab re-entry, not just the first');
-      assert.ok(setIntervalCalls.some(c => c.delay === 30_000), 'a fresh 30s followed-wallets interval must be created on re-entry too');
 
       // ------------------------------------------------------------------
       // 7. Four-state live badge (issues #1254/#1258): LIVE,
@@ -370,20 +337,20 @@ _ASSERTIONS = textwrap.dedent("""
       assert.ok(unknownReasonHtml.includes('>PAPER<'));
 
       // ------------------------------------------------------------------
-      // 8. Two-line paper/live stake display (issue #1259) -- only once a
-      //    wallet is opted into live; never blended into one figure.
+      // 8. Paper / live stake display (issues #1259, #1275): never blended
+      //    -- the Paper roster renders only the paper stake, the Live
+      //    roster only the resolved live stake.
       // ------------------------------------------------------------------
-      const singleStakeHtml = _followedStakeDisplayHtml({ live_enabled: false, stake_per_trade: 5 });
-      assert.ok(singleStakeHtml.includes('$5.00'));
-      assert.ok(!singleStakeHtml.includes('Paper:'), 'a wallet never opted into live keeps the single-value display, no "Paper:" qualifier');
+      const paperStakeHtml = _followedPaperStakeHtml({ stake_per_trade: 5, live_stake_per_trade: 2 });
+      assert.ok(paperStakeHtml.includes('Paper: $5.00'));
+      assert.ok(!paperStakeHtml.includes('$2.00') && !paperStakeHtml.includes('Live'), 'the Paper stake cell must never show a live figure');
 
-      const overrideStakeHtml = _followedStakeDisplayHtml({ live_enabled: true, stake_per_trade: 5, live_stake_per_trade: 2, live_stake_is_override: true });
-      assert.ok(overrideStakeHtml.includes('Paper: $5.00'));
+      const overrideStakeHtml = _followedLiveStakeHtml({ stake_per_trade: 5, live_stake_per_trade: 2, live_stake_is_override: true });
       assert.ok(overrideStakeHtml.includes('Live: $2.00'));
+      assert.ok(!overrideStakeHtml.includes('$5.00') && !overrideStakeHtml.includes('Paper'), 'the Live stake cell must never show the paper figure');
       assert.ok(!overrideStakeHtml.includes('inherits paper'), 'an explicit override must not show the "(inherits paper)" note');
 
-      const inheritedStakeHtml = _followedStakeDisplayHtml({ live_enabled: true, stake_per_trade: 5, live_stake_per_trade: 5, live_stake_is_override: false });
-      assert.ok(inheritedStakeHtml.includes('Paper: $5.00'));
+      const inheritedStakeHtml = _followedLiveStakeHtml({ stake_per_trade: 5, live_stake_per_trade: 5, live_stake_is_override: false });
       assert.ok(inheritedStakeHtml.includes('Live: $5.00'));
       assert.ok(inheritedStakeHtml.includes('(inherits paper)'), 'an inherited (non-override) live stake must be annotated as such');
 
@@ -418,7 +385,7 @@ _ASSERTIONS = textwrap.dedent("""
       //     show LIVE optimistically (issues #1254, #1259).
       // ------------------------------------------------------------------
       function setWallet(w) { _followedWalletsData = { wallets: [w], live_cap_usd: 10 }; }
-      const errBanner = document.getElementById('copy-trading-error-text');
+      const errBanner = document.getElementById('copy-paper-error-text');   // scope falls back to paper off-tab
 
       // 0) Defensive guard (AI review, PR #1268): a missing/non-finite
       //    live_cap_usd must degrade to a clean banner error instead of an
@@ -600,14 +567,109 @@ _ASSERTIONS = textwrap.dedent("""
 
       // ------------------------------------------------------------------
       // 12. Header pill: # opted into live is server-computed, never a
-      //     client-side count (issue #1259).
+      //     client-side count (issue #1259). Paper shows it only as a
+      //     cross-link by count; the Live tab shows it plain.
       // ------------------------------------------------------------------
-      renderFollowedWallets({
+      const optedInPayload = {
         wallets: [], active_count: 0, paused_count: 0, aggregate_pnl_usd: 0, n_settled_total: 0,
         live_eligible_count: 0, paper_only_count: 0, live_aggregate_pnl_usd: 0, live_n_settled_total: 0,
         live_trading_enabled: true, live_cap_usd: 10, live_opted_in_count: 4,
-      });
-      assert.strictEqual(document.getElementById('followed-opted-in-pill').textContent, '4 opted into live');
+      };
+      renderFollowedWallets(optedInPayload, 'paper');
+      assert.strictEqual(document.getElementById('followed-opted-in-pill').textContent, '4 opted into live → Live tab');
+      renderFollowedWallets(optedInPayload, 'live');
+      assert.strictEqual(document.getElementById('live-followed-opted-in-pill').textContent, '4 opted into live');
+
+      // ------------------------------------------------------------------
+      // 13. Roster split (issue #1275): the SAME payload renders two
+      //     rosters that never show the other mode's numbers, with unique
+      //     DOM ids per tab.
+      // ------------------------------------------------------------------
+      const rosterPayload = {
+        wallets: [
+          { address: '0xLiveOne', stake_per_trade: 5, status: 'active', paused_reason: null,
+            added_at: '2026-09-01T00:00:00Z', n_settled: 3, realized_pnl_usd: 12.5,
+            live_enabled: true, live_eligible: true, live_status_reason: 'eligible for live execution',
+            live_stake_per_trade: 2, live_stake_is_override: true },
+          { address: '0xPaperOne', stake_per_trade: 7, status: 'active', paused_reason: null,
+            added_at: '2026-09-02T00:00:00Z', n_settled: 1, realized_pnl_usd: -3.25,
+            live_enabled: false, live_eligible: false, live_status_reason: 'live is not enabled for this wallet',
+            live_stake_per_trade: 7, live_stake_is_override: false },
+          { address: '0xPausedOne', stake_per_trade: 9, status: 'paused', paused_reason: 'unstable',
+            added_at: '2026-09-03T00:00:00Z', n_settled: 0, realized_pnl_usd: 0,
+            live_enabled: false, live_eligible: false, live_status_reason: 'this wallet is paused',
+            live_stake_per_trade: 9, live_stake_is_override: false },
+        ],
+        active_count: 2, paused_count: 1, aggregate_pnl_usd: 9.25, n_settled_total: 4,
+        live_eligible_count: 1, paper_only_count: 2, live_aggregate_pnl_usd: 40, live_n_settled_total: 6,
+        live_trading_enabled: true, live_cap_usd: 10, live_opted_in_count: 1,
+      };
+      renderFollowedWallets(rosterPayload, 'paper');
+      renderFollowedWallets(rosterPayload, 'live');
+      const paperHtmlAll = document.getElementById('copy-followed-list').innerHTML;
+      const liveRosterHtml = document.getElementById('copy-live-followed-list').innerHTML;
+      const readyHtml = document.getElementById('copy-live-ready-list').innerHTML;
+
+      // Paper roster: every followed wallet, paper stake + paper P&L, paper
+      // controls; no live stake / live money action.
+      for (const a of ['0xLiveOne', '0xPaperOne', '0xPausedOne']) assert.ok(paperHtmlAll.includes(a), 'paper roster lists every followed wallet: ' + a);
+      assert.ok(paperHtmlAll.includes('Paper: $5.00') && paperHtmlAll.includes('Paper: $7.00'));
+      assert.ok(!paperHtmlAll.includes('Live: $'), 'the Paper roster must never show a live stake');
+      assert.ok(paperHtmlAll.includes('+$12.50') && paperHtmlAll.includes('-$3.25'), 'paper running P&L renders');
+      assert.ok(paperHtmlAll.includes('btn-followed-pause') && paperHtmlAll.includes('btn-followed-resume'));
+      assert.ok(paperHtmlAll.includes('btn-followed-edit-stake') && paperHtmlAll.includes('btn-followed-unfollow'));
+      assert.ok(!paperHtmlAll.includes('btn-followed-golive') && !paperHtmlAll.includes('btn-followed-revert-live'),
+        'real-money actions (Go live / Revert) must not be on the Paper tab');
+      assert.strictEqual((paperHtmlAll.match(/btn-followed-goto-live/g) || []).length, 1,
+        'only the active, not-yet-opted-in wallet gets the "Go live ->" link to the Live tab');
+      assert.ok(paperHtmlAll.includes('id="followed-row-' + _copySafeId('0xPaperOne') + '"'));
+
+      // Live roster: opted-in wallets only; live stake; Pause + Revert; no
+      // paper stake or paper P&L, no Edit-stake/Unfollow (paper controls).
+      assert.ok(liveRosterHtml.includes('0xLiveOne'));
+      assert.ok(!liveRosterHtml.includes('0xPaperOne') && !liveRosterHtml.includes('0xPausedOne'), 'only opted-in wallets are on the Live roster');
+      assert.ok(liveRosterHtml.includes('Live: $2.00'));
+      assert.ok(!liveRosterHtml.includes('Paper: $') && !liveRosterHtml.includes('$5.00') && !liveRosterHtml.includes('12.50'),
+        'the Live roster must never show a paper stake or paper P&L');
+      assert.ok(liveRosterHtml.includes('btn-followed-pause'), 'Pause is duplicated on the Live tab (PM decision)');
+      assert.ok(liveRosterHtml.includes('btn-followed-revert-live'));
+      assert.ok(!liveRosterHtml.includes('btn-followed-edit-stake') && !liveRosterHtml.includes('btn-followed-unfollow'));
+      assert.ok(liveRosterHtml.includes('id="live-followed-row-' + _copySafeId('0xLiveOne') + '"'));
+
+      // Ready to go live: active, not-yet-opted-in wallets with Go live.
+      assert.ok(readyHtml.includes('0xPaperOne') && readyHtml.includes('btn-followed-golive'));
+      assert.ok(!readyHtml.includes('0xLiveOne') && !readyHtml.includes('0xPausedOne'));
+      assert.ok(!/[$][0-9]/.test(readyHtml), 'the first-cut Ready list renders no figures at all');
+
+      // No DOM id is shared between the two tabs' rosters.
+      const idsOf = (html) => [...html.matchAll(/ id="([^"]+)"/g)].map(m => m[1]);
+      const paperIds = new Set(idsOf(paperHtmlAll));
+      for (const id of [...idsOf(liveRosterHtml), ...idsOf(readyHtml)]) {
+        assert.ok(!paperIds.has(id), 'duplicate DOM id across tabs: ' + id);
+      }
+
+      // Empty states: Paper points at the Wallets tab; Live prints no number.
+      renderFollowedWallets({ ...rosterPayload, wallets: [] }, 'paper');
+      assert.ok(document.getElementById('copy-followed-list').innerHTML.includes('Nothing followed yet'));
+      renderFollowedWallets({ ...rosterPayload, wallets: [] }, 'live');
+      assert.ok(document.getElementById('copy-live-followed-list').innerHTML.includes('No wallets are live'));
+
+      // ------------------------------------------------------------------
+      // 14. Row actions on the Live tab address the Live roster's own DOM
+      //     ids (so the optimistic status flip lands on the visible row).
+      // ------------------------------------------------------------------
+      currentTab = 'copy-live';
+      const liveCell = document.getElementById('live-followed-status-cell-' + _copySafeId('0xLiveOne'));
+      liveCell.innerHTML = _followedStatusBadgeHtml({ status: 'active' })
+        + _followedLiveBadgeHtml({ live_enabled: true, live_eligible: true, live_status_reason: 'eligible for live execution' });
+      const paperCellUntouched = document.getElementById('followed-status-cell-' + _copySafeId('0xLiveOne'));
+      paperCellUntouched.innerHTML = 'PAPER-ROW-UNTOUCHED';
+      window.prompt = () => 'emergency stop';
+      global.fetch = () => new Promise(() => {});   // stays in flight
+      followedPauseWallet('0xLiveOne', makeBtn());
+      assert.ok(liveCell.innerHTML.includes('Paused'), 'Pause on the Live tab flips the Live row optimistically');
+      assert.strictEqual(paperCellUntouched.innerHTML, 'PAPER-ROW-UNTOUCHED');
+      currentTab = 'portfolio';
 
       console.log('ALL_FOLLOWED_WALLETS_JS_ASSERTIONS_PASSED');
     })().catch((err) => {

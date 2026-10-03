@@ -1,4 +1,7 @@
-"""Tests for Copy-Trading dashboard tab shell (issue #1144)."""
+"""Tests for the Copy-Trading dashboard tab shell (issue #1144; split into
+Wallets / Paper / Live tabs, issue #1275)."""
+import re
+
 import pytest
 from pathlib import Path
 from html.parser import HTMLParser
@@ -41,81 +44,80 @@ def html_content():
         return f.read()
 
 
-def test_copy_trading_tab_button_exists(html_content):
-    """Verify that the copy-trading tab button exists in the HTML."""
+COPY_TABS = ["copy-wallets", "copy-paper", "copy-live"]
+
+
+def test_old_copy_trading_tab_id_is_gone(html_content):
+    """The single 'copy-trading' tab was replaced by three tabs -- no
+    leftover button, panel, or switchTab('copy-trading') route."""
     parser = TabButtonParser()
     parser.feed(html_content)
+    assert "copy-trading" not in parser.tab_buttons
+    assert "copy-trading" not in parser.tab_panels
+    assert "switchTab('copy-trading')" not in html_content
+    assert 'id="tab-copy-trading"' not in html_content
+    assert "tab-btn-copy-trading" not in html_content
 
-    assert "copy-trading" in parser.tab_buttons, (
-        "Copy-Trading tab button not found in tab bar"
-    )
 
-
-def test_copy_trading_tab_panel_exists(html_content):
-    """Verify that the copy-trading tab panel section exists in the HTML."""
+def test_three_copy_tab_buttons_and_panels_exist(html_content):
     parser = TabButtonParser()
     parser.feed(html_content)
-
-    assert "copy-trading" in parser.tab_panels, (
-        "Copy-Trading tab panel not found in HTML sections"
-    )
-
-
-def test_copy_trading_tab_has_error_banner(html_content):
-    """Verify the tab has its own error-banner div, matching every other
-    tab's pattern (e.g. #promotion-error-banner) -- required so a future
-    story's fetch-failure handling has somewhere to render into without
-    adding new markup."""
-    assert 'id="copy-trading-error-banner"' in html_content, (
-        "Copy-Trading error-banner div not found"
-    )
-    assert 'class="error-banner" id="copy-trading-error-banner"' in html_content, (
-        "Copy-Trading error-banner div missing the error-banner class"
-    )
+    for tab in COPY_TABS:
+        assert tab in parser.tab_buttons, f"{tab} tab button not found in tab bar"
+        assert tab in parser.tab_panels, f"{tab} tab panel not found in HTML sections"
 
 
-def test_copy_trading_tab_panel_has_empty_content(html_content):
-    """Verify that the copy-trading tab panel contains an empty state."""
-    # Look for the empty state div within the copy-trading tab
-    assert 'id="tab-copy-trading"' in html_content, (
-        "Copy-Trading tab panel section ID not found"
-    )
-    assert 'id="copy-trading-content"' in html_content, (
-        "Copy-Trading content container not found"
-    )
-    # The empty state should be visible initially
-    assert '<div class="empty">' in html_content, (
-        "Empty state placeholder not found"
-    )
+def test_copy_tab_labels(html_content):
+    """PM decision (Open Q1): labels are 'Copy · Wallets/Paper/Live'."""
+    for tab, label in [
+        ("copy-wallets", "Copy · Wallets"),
+        ("copy-paper", "Copy · Paper"),
+        ("copy-live", "Copy · Live"),
+    ]:
+        assert re.search(
+            rf'<button class="tab-btn" id="tab-btn-{tab}"[^>]*>{label}</button>', html_content
+        ), f"{label} tab button missing or mislabelled"
 
 
-def test_copy_trading_tab_matches_existing_tab_structure(html_content):
-    """Verify that copy-trading tab follows same structure as existing tabs."""
-    # Check for standard tab structure elements
-    assert 'class="tab-panel"' in html_content, "Tab-panel class not found"
-    assert 'class="section-hdr"' in html_content, "Section header class not found"
-    assert 'class="section-title"' in html_content, "Section title class not found"
-    # Copy-trading specific markers
-    assert 'id="tab-copy-trading"' in html_content, (
-        "Copy-Trading tab section not found"
-    )
-    assert 'class="tab-panel"' in html_content and 'id="tab-copy-trading"' in html_content, (
-        "Copy-Trading tab is not marked as a tab-panel"
-    )
+def test_each_copy_tab_has_its_own_error_banner(html_content):
+    """Matches every other tab's pattern (e.g. #promotion-error-banner)."""
+    for tab in COPY_TABS:
+        scope = tab.split("-", 1)[1]
+        assert f'class="error-banner" id="copy-{scope}-error-banner"' in html_content, (
+            f"{tab} error-banner div missing"
+        )
+        assert f'id="copy-{scope}-error-text"' in html_content
 
 
-def test_copy_trading_tab_order(html_content):
-    """Verify that copy-trading tab appears after Promotion and before
-    Config, per issue #1144's explicit acceptance criteria (AI review
-    #1150, BLOCK item: the original diff placed it after Config, and this
-    test wrongly codified that instead of catching it)."""
-    promotion_idx = html_content.find('onclick="switchTab(\'promotion\')"')
-    config_idx = html_content.find('onclick="switchTab(\'config\')"')
-    copy_trading_idx = html_content.find('onclick="switchTab(\'copy-trading\')"')
+def test_each_copy_panel_has_content_container(html_content):
+    for scope in ("wallets", "paper", "live"):
+        assert f'id="copy-{scope}-content"' in html_content
+    assert '<div class="empty">' in html_content
 
-    assert promotion_idx != -1, "Promotion tab button not found"
-    assert config_idx != -1, "Config tab button not found"
-    assert copy_trading_idx != -1, "Copy-Trading tab button not found"
-    assert promotion_idx < copy_trading_idx < config_idx, (
-        "Copy-Trading tab should appear after Promotion and before Config"
-    )
+
+def test_copy_panels_are_tab_panels(html_content):
+    for tab in COPY_TABS:
+        assert re.search(rf'<section id="tab-{tab}" class="tab-panel">', html_content), (
+            f"{tab} is not marked as a tab-panel"
+        )
+
+
+def test_copy_tab_order(html_content):
+    """Portfolio | Stations | Edge | EMOS | Promotion | Copy · Wallets |
+    Copy · Paper | Copy · Live | Config."""
+    order = [
+        "portfolio", "stations", "edge", "emos", "promotion",
+        "copy-wallets", "copy-paper", "copy-live", "config",
+    ]
+    idx = [html_content.find(f"onclick=\"switchTab('{t}')\"") for t in order]
+    assert all(i != -1 for i in idx), f"missing tab button(s): {list(zip(order, idx))}"
+    assert idx == sorted(idx), "tab buttons are not in the required order"
+
+
+def test_dom_ids_are_unique(html_content):
+    """The shared posture banner is rendered on three tabs; every id must
+    stay unique (class-based component, per-tab-suffixed ids)."""
+    static_markup = html_content.split("<script>", 1)[0]
+    ids = re.findall(r'\sid="([^"]+)"', static_markup)
+    dupes = sorted({i for i in ids if ids.count(i) > 1})
+    assert not dupes, f"duplicate DOM ids: {dupes}"

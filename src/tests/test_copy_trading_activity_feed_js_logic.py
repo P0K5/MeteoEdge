@@ -1,6 +1,7 @@
 """Unit tests for the Copy-Trading dashboard Activity Feed view's
 client-side logic (epic F #1143, story F4 #1149; live events + mode
-filter, epic J #1161, issue #1188).
+filter, epic J #1161, issue #1188; one feed per mode on the Paper / Live
+tabs, issue #1275).
 
 Same technique as test_copy_trading_followed_wallets_js_logic.py /
 test_edge_tab_js_logic.py (issue #758): this repo has no JS test framework,
@@ -10,9 +11,11 @@ minimal DOM/fetch/window stubs.
 
 Covers the acceptance criteria's explicitly-called-out, separately-tested
 requirement: "stale-feed indicator appears on a simulated poll failure" --
-plus the merged-feed rendering, wallet/event-type/mode filters (client-side,
+plus the per-mode feed rendering, wallet/event-type filters (client-side,
 against the cached payload), click-through cross-navigation, the per-row
-LIVE/PAPER mode badge + left-border accent, and the Mode=Live empty states.
+LIVE/PAPER mode badge + left-border accent, the guarantee that the Paper tab
+never renders a live event nor the Live tab a paper one, and the Live feed's
+empty states.
 
 Also covers the wallet-balance-drift verdict's synthetic
 'live_balance_mismatch' event (issue #1189): address-less rendering (fixed
@@ -88,12 +91,26 @@ _ASSERTIONS = textwrap.dedent("""
         market: 'M1', fill_price: 0.42, size_usd: 5.0, signal_id: 4 },
     ];
 
+    // The static controls bind their change handlers via addEventListener --
+    // capture them so the filters can be driven exactly as a browser would.
+    const handlers = {};
+    for (const id of ['copy-activity-wallet-select', 'copy-activity-type-select',
+                      'copy-live-activity-wallet-select', 'copy-live-activity-type-select']) {
+      document.getElementById(id).addEventListener = (ev, fn) => { handlers[id] = fn; };
+    }
+    _copyActivityInitStaticControls();
+    const paperWallet = (v) => handlers['copy-activity-wallet-select']({ target: { value: v } });
+    const paperType = (v) => handlers['copy-activity-type-select']({ target: { value: v } });
+    const liveWallet = (v) => handlers['copy-live-activity-wallet-select']({ target: { value: v } });
+    const liveType = (v) => handlers['copy-live-activity-type-select']({ target: { value: v } });
+
     (async () => {
       // ------------------------------------------------------------------
-      // 1. A successful fetch renders every event and clears the stale
-      //    banner.
+      // 1. A successful fetch renders every event, clears the stale banner,
+      //    and asks the server for PAPER events only.
       // ------------------------------------------------------------------
-      global.fetch = async () => jsonResp({ events: eventsFixture });
+      const requested = [];
+      global.fetch = async (url) => { requested.push(url); return jsonResp({ events: eventsFixture }); };
       const banner = document.getElementById('copy-activity-stale-banner');
       let bannerRemoveCalled = false;
       banner.classList.remove = (cls) => { if (cls === 'visible') bannerRemoveCalled = true; };
@@ -101,9 +118,10 @@ _ASSERTIONS = textwrap.dedent("""
       banner.classList.add = (cls) => { if (cls === 'visible') bannerAddCalled = true; };
 
       await fetchCopyTradingActivityFeed();
+      assert.deepStrictEqual(requested, ['/api/copy-trading/activity-feed?mode=paper']);
       assert.strictEqual(bannerRemoveCalled, true, 'a successful fetch must clear the stale banner');
       assert.strictEqual(bannerAddCalled, false, 'a successful fetch must never show the stale banner');
-      assert.deepStrictEqual(_copyActivityData.events, eventsFixture);
+      assert.deepStrictEqual(_copyActivityScopes.paper.data.events, eventsFixture);
 
       const listWrap = document.getElementById('copy-activity-list');
       assert.ok(listWrap.innerHTML.includes('Order placed'), 'order_placed event must render');
@@ -129,7 +147,7 @@ _ASSERTIONS = textwrap.dedent("""
       assert.strictEqual(bannerAddCalled, true, 'a poll failure with existing data must show the stale banner');
       assert.strictEqual(bannerRemoveCalled, false, 'a poll failure must not clear the stale banner');
       assert.ok(textEl.textContent.includes('network down'), 'stale banner text must include the failure reason');
-      assert.ok(textEl.textContent.includes('retrying in 5 min'), 'stale banner text must say it will retry');
+      assert.ok(textEl.textContent.includes('retrying'), 'stale banner text must say it will retry');
       assert.strictEqual(listWrap.innerHTML, priorListHtml, 'last-known-good events must stay on screen during a stale poll');
 
       // ------------------------------------------------------------------
@@ -144,7 +162,7 @@ _ASSERTIONS = textwrap.dedent("""
       // 4. First-ever fetch failure (no prior data): the list itself shows
       //    an error state, not a blank screen.
       // ------------------------------------------------------------------
-      _copyActivityData = null;
+      _copyActivityScopes.paper.data = null;
       global.fetch = async () => { throw new Error('boom'); };
       await fetchCopyTradingActivityFeed();
       assert.ok(listWrap.innerHTML.includes('Could not load activity feed'), 'first-load failure must show an explicit error state');
@@ -159,73 +177,85 @@ _ASSERTIONS = textwrap.dedent("""
 
       // ------------------------------------------------------------------
       // 6. Wallet and event-type filters apply client-side against the
-      //    cached payload (no re-fetch), mirroring the Positions view's
-      //    date-range filter.
+      //    cached payload (no re-fetch).
       // ------------------------------------------------------------------
       let refetchCount = 0;
       global.fetch = async () => { refetchCount += 1; return jsonResp({ events: eventsFixture }); };
       await fetchCopyTradingActivityFeed();
       assert.strictEqual(refetchCount, 1);
 
-      _copyActivityOnWalletFilterChange({ target: { value: '0xW1' } });
+      paperWallet('0xW1');
       assert.strictEqual(refetchCount, 1, 'changing the wallet filter must not trigger a network re-fetch');
       assert.ok(!listWrap.innerHTML.includes('Wallet paused'), 'wallet filter must exclude events for other wallets');
       assert.ok(listWrap.innerHTML.includes('Order placed') && listWrap.innerHTML.includes('Order skipped'));
 
-      _copyActivityOnWalletFilterChange({ target: { value: '' } });
-      _copyActivityOnEventTypeFilterChange({ target: { value: 'wallet_paused' } });
+      paperWallet('');
+      paperType('wallet_paused');
       assert.strictEqual(refetchCount, 1, 'changing the event-type filter must not trigger a network re-fetch');
       assert.ok(listWrap.innerHTML.includes('Wallet paused'));
       assert.ok(!listWrap.innerHTML.includes('Order placed') && !listWrap.innerHTML.includes('Order skipped'));
 
       // A filter combination matching nothing shows the "no matching
       // activity" state, not a blank screen or the true-empty message.
-      _copyActivityOnWalletFilterChange({ target: { value: '0xNoSuchWallet' } });
+      paperWallet('0xNoSuchWallet');
       assert.ok(listWrap.innerHTML.includes('No matching activity'));
       assert.ok(!listWrap.innerHTML.includes('No activity yet'));
 
-      // Reset filters for the click-through checks below.
-      _copyActivityOnWalletFilterChange({ target: { value: '' } });
-      _copyActivityOnEventTypeFilterChange({ target: { value: '' } });
+      paperWallet('');
+      paperType('');
 
       // ------------------------------------------------------------------
-      // 7. Click-through cross-navigation: a signal event scrolls to +
-      //    expands the Candidates row; a pause event scrolls to the
-      //    Followed Wallets row. Both route through the tab button's
-      //    switchTab() handler when not already on the copy-trading tab.
+      // 7. Click-through cross-navigation. A paper signal event lives on
+      //    the Copy · Wallets tab (Candidates): routed via the tab button's
+      //    own switchTab() handler, then scrolls to + expands the row. A
+      //    pause event scrolls to the PAPER roster row on this same tab.
       // ------------------------------------------------------------------
-      currentTab = 'portfolio';
-      const tabBtn = document.getElementById('tab-btn-copy-trading');
-      let tabBtnClicked = false;
-      tabBtn.click = () => { tabBtnClicked = true; };
+      currentTab = 'copy-paper';
+      const walletsBtn = document.getElementById('tab-btn-copy-wallets');
+      let walletsBtnClicked = false;
+      walletsBtn.click = () => { walletsBtnClicked = true; };
 
       const candidateRow = document.getElementById('copy-row-' + _copySafeId('0xW1'));
       let candidateScrolled = false;
       candidateRow.scrollIntoView = () => { candidateScrolled = true; };
-      // toggleCandidateDetail() itself is exercised by its own call path
-      // (it in turn calls _renderCandidateDetail(), a no-op-safe fetch
-      // against the stubbed fetch above) -- this checks the jump
-      // function's own observable DOM effect (the scroll), not
-      // toggleCandidateDetail()'s internals.
       _copyExpanded = new Set();
+      _copyCandidatesData = { candidates: [] };   // candidates table already rendered
       _copyActivityJumpToWallet('signal', '0xW1');
-      assert.strictEqual(tabBtnClicked, true, 'jumping while on another tab must click the copy-trading tab button');
+      assert.strictEqual(walletsBtnClicked, true, 'a signal event must route through the Wallets tab button');
       assert.strictEqual(candidateScrolled, true, 'a signal event must scroll to its Candidates row');
 
-      currentTab = 'copy-trading';
-      tabBtnClicked = false;
+      // Candidates not rendered yet: the jump is parked and consumed by
+      // the next render -- never lost, never replayed later.
+      candidateScrolled = false;
+      walletsBtnClicked = false;
+      _copyCandidatesData = null;
+      _copyActivityJumpToWallet('signal', '0xW1');
+      assert.strictEqual(walletsBtnClicked, true);
+      assert.strictEqual(candidateScrolled, false, 'cannot scroll before the candidates table exists');
+      assert.strictEqual(_copyPendingCandidateJump, '0xW1');
+      _copyConsumePendingCandidateJump();
+      assert.strictEqual(candidateScrolled, true, 'the parked jump runs once candidates render');
+      assert.strictEqual(_copyPendingCandidateJump, null);
+
+      // Already on the Wallets tab: no tab switch.
+      currentTab = 'copy-wallets';
+      walletsBtnClicked = false;
+      _copyActivityJumpToWallet('signal', '0xW1');
+      assert.strictEqual(walletsBtnClicked, false, 'already being on the Wallets tab must not re-click the tab button');
+
+      currentTab = 'copy-paper';
       const followedRow = document.getElementById('followed-row-' + _copySafeId('0xW2'));
       let followedScrolled = false;
       followedRow.scrollIntoView = () => { followedScrolled = true; };
+      walletsBtnClicked = false;
       _copyActivityJumpToWallet('pause', '0xW2');
-      assert.strictEqual(tabBtnClicked, false, 'already being on the copy-trading tab must not re-click the tab button');
+      assert.strictEqual(walletsBtnClicked, false, 'a pause event stays on the Paper tab');
       assert.strictEqual(followedScrolled, true, 'a pause event must scroll to its Followed Wallets row');
 
       // ------------------------------------------------------------------
       // 8. issue #1188: events with no 'mode' field (older/unmapped data)
-      //    default to the PAPER badge + border, never LIVE -- "default to
-      //    PAPER when a mode can't be determined" acceptance criterion.
-      //    The eventsFixture above has no 'mode' key on any event.
+      //    default to the PAPER badge + border, never LIVE -- and are
+      //    therefore Paper-tab events, never Live-tab ones.
       // ------------------------------------------------------------------
       global.fetch = async () => jsonResp({ events: eventsFixture });
       await fetchCopyTradingActivityFeed();
@@ -234,11 +264,7 @@ _ASSERTIONS = textwrap.dedent("""
       assert.ok(!listWrap.innerHTML.includes('mode-badge-live'), 'a missing mode must never render as LIVE');
       assert.ok(listWrap.innerHTML.includes('PAPER'), 'the PAPER badge text must be visible');
       // Designer review (PR #1195): row1 keeps Epic F's own distinct,
-      // colored order_placed/order_skipped badges -- collapsing them into
-      // one neutral "Signal detected" badge was a scannability regression
-      // against the Activity Feed's "diagnose why didn't this get copied"
-      // purpose. Mode redundancy comes from the row2 "(paper)" text below
-      // (plus the new mode badge/border), never from touching row1.
+      // colored order_placed/order_skipped badges.
       assert.ok(listWrap.innerHTML.includes('copy-activity-badge-placed'), 'order_placed must keep its own distinct row1 badge');
       assert.ok(listWrap.innerHTML.includes('copy-activity-badge-skipped'), 'order_skipped must keep its own distinct row1 badge');
       assert.ok(!listWrap.innerHTML.includes('Signal detected'), 'the unified "Signal detected" badge must not be used');
@@ -247,88 +273,107 @@ _ASSERTIONS = textwrap.dedent("""
       assert.ok(listWrap.innerHTML.includes('Wallet auto-paused'));
 
       // ------------------------------------------------------------------
-      // 9. Live events: mode badge, left-border accent, Mode filter, and
-      //    live-specific badge/description text (issue #1188).
+      // 9. Paper and Live feeds never show each other's events. Even if the
+      //    server (or a stale/older backend) returned a mixed payload, the
+      //    Paper tab renders only paper rows and the Live tab only live
+      //    rows -- the tab, not a Mode filter, is the separator.
       // ------------------------------------------------------------------
-      const liveAndPaperFixture = [
+      const mixedFixture = [
         { event_type: 'live_order_rejected', ts: '2026-09-06T00:00:00Z', address: '0xW1', mode: 'live',
           market: 'M2', rejected_reason: 'no fill before the timeout window closed', signal_id: 9 },
         { event_type: 'live_circuit_breaker_tripped', ts: '2026-09-05T12:00:00Z', address: '0xW1', mode: 'live',
           market: 'M2', skip_reason: 'the live daily loss limit was reached', signal_id: 8 },
         { event_type: 'live_position_settled', ts: '2026-09-05T00:00:00Z', address: '0xW1', mode: 'live',
           market: 'M2', settled_pnl_usd: -1.5, signal_id: 7 },
-        { event_type: 'order_placed', ts: '2026-09-01T00:00:00Z', address: '0xW1', mode: 'paper',
+        { event_type: 'order_placed', ts: '2026-09-01T00:00:00Z', address: '0xW3', mode: 'paper',
           market: 'M1', fill_price: 0.42, size_usd: 5.0, signal_id: 4 },
       ];
-      global.fetch = async () => jsonResp({ events: liveAndPaperFixture });
-      await fetchCopyTradingActivityFeed();
+      const liveRequested = [];
+      global.fetch = async (url) => { liveRequested.push(url); return jsonResp({ events: mixedFixture }); };
+      await fetchCopyTradingActivityFeed('live');
+      await fetchCopyTradingActivityFeed('paper');
+      assert.deepStrictEqual(liveRequested, [
+        '/api/copy-trading/activity-feed?mode=live',
+        '/api/copy-trading/activity-feed?mode=paper',
+      ]);
 
-      assert.ok(listWrap.innerHTML.includes('mode-badge-live'), 'a live event must render the LIVE badge');
-      assert.ok(listWrap.innerHTML.includes('copy-activity-item-live'), 'a live event must render the live left-border accent');
-      assert.ok(listWrap.innerHTML.includes('Live order rejected'));
-      assert.ok(listWrap.innerHTML.includes('no fill before the timeout window closed'), 'plain-language rejected_reason must render, not a raw constant');
-      assert.ok(listWrap.innerHTML.includes('Live circuit breaker tripped'));
-      assert.ok(listWrap.innerHTML.includes('the live daily loss limit was reached'));
-      assert.ok(listWrap.innerHTML.includes('Live position settled'));
-      assert.ok(listWrap.innerHTML.includes('-$1.50') || listWrap.innerHTML.includes('copy-pnl-neg'), 'a negative settled P&L must render with the negative styling/sign');
+      const liveWrap = document.getElementById('copy-live-activity-list');
+      assert.ok(liveWrap.innerHTML.includes('mode-badge-live'), 'a live event must render the LIVE badge');
+      assert.ok(liveWrap.innerHTML.includes('copy-activity-item-live'), 'a live event must render the live left-border accent');
+      assert.ok(liveWrap.innerHTML.includes('Live order rejected'));
+      assert.ok(liveWrap.innerHTML.includes('no fill before the timeout window closed'), 'plain-language rejected_reason must render, not a raw constant');
+      assert.ok(liveWrap.innerHTML.includes('Live circuit breaker tripped'));
+      assert.ok(liveWrap.innerHTML.includes('the live daily loss limit was reached'));
+      assert.ok(liveWrap.innerHTML.includes('Live position settled'));
+      assert.ok(liveWrap.innerHTML.includes('copy-pnl-neg'), 'a negative settled P&L must render with the negative styling');
+      assert.ok(!liveWrap.innerHTML.includes('mode-badge-paper'), 'the Live feed must never render a paper event');
+      assert.ok(!liveWrap.innerHTML.includes('Order placed'), 'the Live feed must never render a paper event');
 
-      // Mode filter: client-side, no re-fetch.
-      let liveRefetchCount = 0;
-      global.fetch = async () => { liveRefetchCount += 1; return jsonResp({ events: liveAndPaperFixture }); };
-      await fetchCopyTradingActivityFeed();
-      assert.strictEqual(liveRefetchCount, 1);
-
-      _copyActivityOnModeFilterChange({ target: { value: 'live' } });
-      assert.strictEqual(liveRefetchCount, 1, 'changing the mode filter must not trigger a network re-fetch');
-      assert.ok(!listWrap.innerHTML.includes('mode-badge-paper'), 'Mode=Live must exclude paper events');
-      assert.ok(listWrap.innerHTML.includes('mode-badge-live'));
-
-      _copyActivityOnModeFilterChange({ target: { value: 'paper' } });
-      assert.ok(!listWrap.innerHTML.includes('mode-badge-live'), 'Mode=Paper must exclude live events');
       assert.ok(listWrap.innerHTML.includes('mode-badge-paper'));
+      assert.ok(listWrap.innerHTML.includes('Order placed (paper)'));
+      assert.ok(!listWrap.innerHTML.includes('mode-badge-live'), 'the Paper feed must never render a live event');
+      assert.ok(!listWrap.innerHTML.includes('Live order rejected'), 'the Paper feed must never render a live event');
+      // The wallet filter of each feed only lists that feed's own wallets.
+      assert.ok(document.getElementById('copy-activity-wallet-select').innerHTML.includes('0xW3'));
+      assert.ok(!document.getElementById('copy-activity-wallet-select').innerHTML.includes('0xW1'));
+      assert.ok(document.getElementById('copy-live-activity-wallet-select').innerHTML.includes('0xW1'));
 
-      _copyActivityOnModeFilterChange({ target: { value: '' } });
-      assert.ok(listWrap.innerHTML.includes('mode-badge-live') && listWrap.innerHTML.includes('mode-badge-paper'), 'Mode=All must include both');
+      // Live filters are client-side too (no re-fetch) and independent of
+      // the Paper feed's filter state.
+      let liveRefetchCount = 0;
+      global.fetch = async () => { liveRefetchCount += 1; return jsonResp({ events: mixedFixture }); };
+      await fetchCopyTradingActivityFeed('live');
+      liveRefetchCount = 0;
+      liveType('live_position_settled');
+      assert.strictEqual(liveRefetchCount, 0, 'changing a filter must not trigger a network re-fetch');
+      assert.ok(liveWrap.innerHTML.includes('Live position settled'));
+      assert.ok(!liveWrap.innerHTML.includes('Live order rejected'));
+      assert.strictEqual(_copyActivityScopes.paper.filters.eventType, '', 'a Live filter must not leak into the Paper feed');
+      liveType('');
+
+      // Each feed has its own stale banner.
+      const liveBanner = document.getElementById('copy-live-activity-stale-banner');
+      let liveBannerShown = false;
+      liveBanner.classList.add = (cls) => { if (cls === 'visible') liveBannerShown = true; };
+      let paperBannerShown = false;
+      banner.classList.add = (cls) => { if (cls === 'visible') paperBannerShown = true; };
+      global.fetch = async () => { throw new Error('live feed down'); };
+      await fetchCopyTradingActivityFeed('live');
+      assert.strictEqual(liveBannerShown, true, 'a failed live poll shows the LIVE stale banner');
+      assert.strictEqual(paperBannerShown, false, 'a failed live poll must not touch the Paper stale banner');
+      assert.ok(document.getElementById('copy-live-activity-stale-text').textContent.includes('live feed down'));
 
       // ------------------------------------------------------------------
-      // 10. Mode=Live empty states (issue #1188): distinguish "live has
-      //     never been turned on" from "live is on, nothing happened yet",
-      //     read from the shared #copy-trading-mode-banner (issue #1185).
+      // 10. Live-feed empty states (issue #1188): "live has never been
+      //     turned on" vs "live is on, nothing happened yet", read from the
+      //     shared, fast-polled posture flag. A posture flip re-renders the
+      //     loaded Live feed's wording immediately.
       // ------------------------------------------------------------------
-      _copyActivityOnModeFilterChange({ target: { value: 'live' } });
-      const modeBanner = document.getElementById('copy-trading-mode-banner');
-
-      // Live currently OFF (banner not carrying mode-badge-live).
-      modeBanner.classList.contains = (cls) => false;
       global.fetch = async () => jsonResp({ events: [
         { event_type: 'order_placed', ts: '2026-09-01T00:00:00Z', address: '0xW1', mode: 'paper', market: 'M1', signal_id: 1 },
       ] });
-      await fetchCopyTradingActivityFeed();
-      assert.ok(listWrap.innerHTML.includes("hasn't been turned on yet"), 'live-off + Mode=Live-empty must say live was never turned on');
-      assert.ok(!listWrap.innerHTML.includes('No live activity in this range'));
+      renderCopyTradingModePosture(false);
+      await fetchCopyTradingActivityFeed('live');
+      assert.ok(liveWrap.innerHTML.includes("hasn't been turned on yet"), 'live off + no live events must say live was never turned on');
+      assert.ok(!liveWrap.innerHTML.includes('No live activity in this range'));
 
-      // Live currently ON (banner carrying mode-badge-live) but still no
-      // live events matching the current filters.
-      modeBanner.classList.contains = (cls) => cls === 'mode-badge-live';
-      await fetchCopyTradingActivityFeed();
-      assert.ok(listWrap.innerHTML.includes('No live activity in this range'), 'live-on + Mode=Live-empty must say nothing has happened, not that live is off');
-      assert.ok(!listWrap.innerHTML.includes("hasn't been turned on yet"));
-
-      // Reset filters/state for cleanliness.
-      _copyActivityOnModeFilterChange({ target: { value: '' } });
-      _copyActivityOnWalletFilterChange({ target: { value: '' } });
-      _copyActivityOnEventTypeFilterChange({ target: { value: '' } });
+      renderCopyTradingModePosture(true);   // posture poll flips the switch
+      assert.ok(liveWrap.innerHTML.includes('No live activity in this range'), 'live on + no live events must say nothing has happened, not that live is off');
+      assert.ok(!liveWrap.innerHTML.includes("hasn't been turned on yet"));
+      renderCopyTradingModePosture(false);
 
       // ------------------------------------------------------------------
-      // 11. A live event's click-through jumps to the Followed Wallets row
-      //     (no Candidates-equivalent row exists for a live position).
+      // 11. A live event's click-through jumps to the LIVE roster row on
+      //     this same tab (Live wallets, else "Ready to go live").
       // ------------------------------------------------------------------
-      currentTab = 'copy-trading';
-      const liveFollowedRow = document.getElementById('followed-row-' + _copySafeId('0xW1'));
+      currentTab = 'copy-live';
+      const liveFollowedRow = document.getElementById('live-followed-row-' + _copySafeId('0xW1'));
       let liveFollowedScrolled = false;
       liveFollowedRow.scrollIntoView = () => { liveFollowedScrolled = true; };
+      walletsBtnClicked = false;
       _copyActivityJumpToWallet('live', '0xW1');
-      assert.strictEqual(liveFollowedScrolled, true, 'a live event must scroll to its Followed Wallets row');
+      assert.strictEqual(liveFollowedScrolled, true, 'a live event must scroll to its Live roster row');
+      assert.strictEqual(walletsBtnClicked, false, 'a live event must not leave the Live tab');
 
       // ------------------------------------------------------------------
       // 12. issue #1189: the wallet-balance-drift verdict's synthetic
@@ -340,35 +385,46 @@ _ASSERTIONS = textwrap.dedent("""
       const mismatchFixture = [
         { event_type: 'live_balance_mismatch', ts: '2026-09-10T00:00:00Z', address: '', mode: 'live',
           drift_usd: 12.34, expected_balance_usd: 100.0, actual_balance_usd: 112.34 },
-        { event_type: 'order_placed', ts: '2026-09-01T00:00:00Z', address: '0xW1', mode: 'paper',
-          market: 'M1', fill_price: 0.42, size_usd: 5.0, signal_id: 4 },
       ];
       global.fetch = async () => jsonResp({ events: mismatchFixture });
-      await fetchCopyTradingActivityFeed();
+      await fetchCopyTradingActivityFeed('live');
 
-      assert.ok(listWrap.innerHTML.includes('Live balance mismatch'), 'the mismatch event must render its badge/label');
-      assert.ok(listWrap.innerHTML.includes('manual reconciliation required'), 'the mismatch event text must never soften this language');
-      assert.ok(listWrap.innerHTML.includes('12.34'), 'the drift amount must render');
-      assert.ok(listWrap.innerHTML.includes('Live CLOB wallet'), 'the address-less event must show a fixed label, not a blank address');
-      assert.ok(listWrap.innerHTML.includes('mode-badge-live'), 'the mismatch event is always mode=live');
+      assert.ok(liveWrap.innerHTML.includes('Live balance mismatch'), 'the mismatch event must render its badge/label');
+      assert.ok(liveWrap.innerHTML.includes('manual reconciliation required'), 'the mismatch event text must never soften this language');
+      assert.ok(liveWrap.innerHTML.includes('12.34'), 'the drift amount must render');
+      assert.ok(liveWrap.innerHTML.includes('Live CLOB wallet'), 'the address-less event must show a fixed label, not a blank address');
+      assert.ok(liveWrap.innerHTML.includes('mode-badge-live'), 'the mismatch event is always mode=live');
 
-      const walletSelect = document.getElementById('copy-activity-wallet-select');
-      assert.ok(!walletSelect.innerHTML.includes('<option value="">All wallets</option><option value="">'),
+      const liveWalletSelect = document.getElementById('copy-live-activity-wallet-select');
+      assert.ok(!liveWalletSelect.innerHTML.includes('<option value="">All wallets</option><option value="">'),
         'the empty address must not produce a second, indistinguishable blank wallet-filter option');
 
       // Clicking/activating the mismatch row is a documented no-op -- no
       // tab switch, no scroll (it has no wallet row to jump to).
       currentTab = 'portfolio';
       let mismatchTabClicked = false;
-      tabBtn.click = () => { mismatchTabClicked = true; };
+      walletsBtn.click = () => { mismatchTabClicked = true; };
+      document.getElementById('tab-btn-copy-live').click = () => { mismatchTabClicked = true; };
       _copyActivityJumpToWallet('none', '');
       assert.strictEqual(mismatchTabClicked, false, 'the mismatch event must never trigger a tab switch');
 
       // event_type filter isolates it correctly.
-      _copyActivityOnEventTypeFilterChange({ target: { value: 'live_balance_mismatch' } });
-      assert.ok(listWrap.innerHTML.includes('Live balance mismatch'));
-      assert.ok(!listWrap.innerHTML.includes('Order placed'));
-      _copyActivityOnEventTypeFilterChange({ target: { value: '' } });
+      liveType('live_balance_mismatch');
+      assert.ok(liveWrap.innerHTML.includes('Live balance mismatch'));
+      liveType('');
+
+      // ------------------------------------------------------------------
+      // 13. An unchanged poll does not rebuild the feed DOM.
+      // ------------------------------------------------------------------
+      _copyLastPayloadSig['activity:paper'] = undefined;
+      global.fetch = async () => jsonResp({ events: eventsFixture });
+      await fetchCopyTradingActivityFeed('paper');
+      listWrap.innerHTML = 'SENTINEL';   // any rebuild would overwrite this
+      await fetchCopyTradingActivityFeed('paper');
+      assert.strictEqual(listWrap.innerHTML, 'SENTINEL', 'identical payload must not rebuild the list');
+      global.fetch = async () => jsonResp({ events: eventsFixture.slice(1) });
+      await fetchCopyTradingActivityFeed('paper');
+      assert.notStrictEqual(listWrap.innerHTML, 'SENTINEL', 'a changed payload rebuilds the list');
 
       console.log('ALL_ACTIVITY_FEED_JS_ASSERTIONS_PASSED');
     })().catch((err) => {
