@@ -429,3 +429,15 @@ def test_failure_auto_dismisses_after_exactly_4000ms_when_not_focused():
         assert.ok(!input.isConnected, 'dismissed after 4000ms');
         assert.strictEqual(pending(), 0);
     """)
+
+
+def test_fallback_input_sized_to_hidden_span_before_hiding():
+    run_js("""
+        window.isSecureContext = false;
+        const { row, btn, span } = makeRow(ADDR);
+        span.offsetWidth = 123; span.offsetHeight = 18;
+        await copyAddressToClipboard(ADDR, btn);
+        const input = row.querySelector('input');
+        assert.strictEqual(input.style.width, '123px');
+        assert.strictEqual(input.style.height, '18px');
+    """)
