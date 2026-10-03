@@ -35,6 +35,14 @@ def _tab_section(html: str, tab: str) -> str:
     return html[start:end]
 
 
+def _live_open_renderer(html_content: str) -> str:
+    """Body of _copyLiveRenderOpen() (the Live Open Positions section's
+    off/empty/populated state logic, issue #1278)."""
+    start = html_content.index("function _copyLiveRenderOpen(data, liveTradingEnabled, hasHistory)")
+    end = html_content.index("\nfunction _copyLiveRenderPnl", start)
+    return html_content[start:end]
+
+
 def test_positions_sections_live_in_the_paper_and_live_tabs(html_content):
     """Paper positions live ONLY in the Paper tab, live positions ONLY in
     the Live tab (issue #1275: the tab is the hard separator)."""
@@ -144,7 +152,10 @@ def test_each_mode_tab_has_its_mode_badge_heading(html_content):
     assert re.search(r'<span class="mode-badge mode-badge-paper"[^>]*>PAPER</span>', paper)
     assert 'aria-label="Paper positions and P&amp;L"' in paper
     assert re.search(r'<span class="mode-badge mode-badge-live"[^>]*>LIVE</span>', live)
-    assert 'aria-label="Live positions and P&amp;L"' in live
+    # (issue #1278: the live block is split into Open Positions / Recent
+    # Closed / Live P&L sections, each with its own LIVE badge)
+    for label in ("Live open positions", "Live closed positions", "Live realized P&amp;L"):
+        assert f'aria-label="{label}"' in live
     # Never the other mode's badge as a heading on this tab.
     assert 'aria-label="Live positions and P&amp;L"' not in paper
     assert 'aria-label="Paper positions and P&amp;L"' not in live
@@ -173,8 +184,10 @@ def test_each_tab_has_only_its_own_labeled_aggregate_pill(html_content):
     assert 'id="copy-positions-total-pill"' in paper
     assert "Paper aggregate P&amp;L" in paper
     assert "Live aggregate P&amp;L" not in paper
-    assert 'id="copy-positions-live-total-pill"' in live
-    assert "Live aggregate P&amp;L" in live
+    # Live: the figure lives in the KPI card (issue #1278), qualified "Live".
+    assert 'id="copy-live-kpis"' in live
+    assert '<div class="wc-label">Live P&amp;L</div>' in live
+    assert "aggregate P&amp;L" not in live   # never an unqualified/paper aggregate
     assert "Paper aggregate P&amp;L" not in live
 
 
@@ -193,15 +206,13 @@ def test_backtest_toggle_stays_paper_only(html_content):
 def test_live_off_state_has_no_numeric_figures(html_content):
     """Acceptance criteria: the off-state (live off, no historical data)
     must never show a numeric figure, not even $0.00."""
-    live_fn_start = html_content.index("function renderCopyLivePositions(data, liveTradingEnabled)")
-    live_fn_end = html_content.index("\n// scope: 'paper' | 'live'. Both tabs read the SAME")
-    fn_body = html_content[live_fn_start:live_fn_end]
+    fn_body = _live_open_renderer(html_content)
 
     off_state_match = re.search(
-        r"if \(!liveTradingEnabled && !hasAnyLiveData\) \{\s*wrap\.innerHTML = `([^`]*)`",
+        r"if \(offNoHistory\) \{\s*_copySetHtml\(wrap, `([^`]*)`",
         fn_body,
     )
-    assert off_state_match, "off-state branch not found in renderCopyLivePositions()"
+    assert off_state_match, "off-state branch not found in _copyLiveRenderOpen()"
     off_html = off_state_match.group(1)
     assert "Live trading is off" in off_html
     assert "$" not in off_html
@@ -214,22 +225,18 @@ def test_on_but_empty_state_distinct_from_off_state(html_content):
     assert "No live positions yet." in html_content
     assert "Live trading is off" in html_content
 
-    live_fn_start = html_content.index("function renderCopyLivePositions(data, liveTradingEnabled)")
-    live_fn_end = html_content.index("\n// scope: 'paper' | 'live'. Both tabs read the SAME")
-    fn_body = html_content[live_fn_start:live_fn_end]
-    assert "!liveTradingEnabled && !hasAnyLiveData" in fn_body
-    assert "liveTradingEnabled && !hasAnyLiveData" in fn_body
+    fn_body = _live_open_renderer(html_content)
+    assert "const offNoHistory = !liveTradingEnabled && !hasHistory" in fn_body
+    assert "liveTradingEnabled && !hasHistory" in fn_body
 
 
 def test_historical_live_data_shown_even_when_currently_off(html_content):
     """Acceptance criteria: once any copy_live_positions row exists ever,
     show the real historical live aggregate even while currently off, with
     an off-state banner layered on top rather than hiding the data."""
-    live_fn_start = html_content.index("function renderCopyLivePositions(data, liveTradingEnabled)")
-    live_fn_end = html_content.index("\n// scope: 'paper' | 'live'. Both tabs read the SAME")
-    fn_body = html_content[live_fn_start:live_fn_end]
+    fn_body = _live_open_renderer(html_content)
 
-    assert "hasAnyLiveData" in fn_body
+    assert "hasHistory" in fn_body
     assert "offBannerHtml" in fn_body
     assert "warn-banner" in fn_body
 

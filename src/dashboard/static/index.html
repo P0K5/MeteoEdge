@@ -1058,6 +1058,32 @@ a,button,input,select{transition:color var(--transition),background var(--transi
    distinct from the dimmed/neutral "Live trading is off" state, which
    uses .empty's own default (--faint) icon color, unchanged. */
 .copy-positions-live-accent i{color:var(--yes);}
+
+/* ── COPY · LIVE TAB (issue #1278) ── */
+.copy-live-hdr{flex-wrap:wrap;row-gap:var(--space-2);}
+.copy-live-hdr-actions{display:flex;align-items:center;flex-wrap:wrap;gap:var(--space-2) var(--space-4);font-size:var(--text-sm);}
+/* Four KPI cards on wide screens, two per row below 900px (the shared
+   .wallet-row already drops to two columns at 600px). */
+.wallet-row--live{grid-template-columns:repeat(4,1fr);}
+@media(max-width:900px){.wallet-row--live{grid-template-columns:1fr 1fr;}}
+.wallet-row--live .wallet-card{min-width:0;min-height:122px;}
+.wallet-row--live .wc-value{overflow-wrap:anywhere;}
+/* Skeleton blocks match the loaded card's value/sub line heights so the
+   skeleton -> data swap does not shift the layout. */
+.copy-live-skel-val{height:calc(var(--text-xl) * 1.1);width:60%;}
+.copy-live-skel-sub{height:var(--text-xs);width:80%;margin-top:var(--space-2);}
+/* "Live trading is off" / "unavailable" card: one dimmed, neutral card across
+   the whole row -- no live accent, no figures (Epic J). */
+.copy-live-kpi-single{grid-column:1 / -1;opacity:.85;}
+.copy-live-kpi-single .wc-value{color:var(--muted);}
+.copy-live-note{color:var(--muted);font-size:var(--text-sm);padding:var(--space-4) 0;}
+.copy-live-note-accent{border-left:3px solid var(--yes);padding-left:var(--space-3);}
+/* The single, deliberately-labelled paper reference in "Ready to go live". */
+.copy-paper-ref{display:inline-flex;align-items:center;gap:var(--space-2);color:var(--warn);font-weight:600;font-variant-numeric:tabular-nums;}
+.copy-ready-details > summary{cursor:pointer;font-size:var(--text-sm);color:var(--primary);padding:var(--space-2) 0;}
+.copy-ready-details > summary:focus-visible{outline:2px solid var(--primary);outline-offset:2px;}
+#copy-live-activity-list{border:1px solid var(--border);border-radius:var(--radius-lg);}
+#copy-live-activity-list:has(> .empty){border:none;}
 .copy-position-row{cursor:pointer;}
 .copy-position-row:hover{background:var(--surface-off);}
 .copy-position-row:focus-visible{outline:2px solid var(--primary);outline-offset:-2px;}
@@ -1672,13 +1698,19 @@ a,button,input,select{transition:color var(--transition),background var(--transi
       <i data-lucide="alert-circle"></i>
       <span id="copy-live-error-text">Could not reach the copy-trading API — retrying…</span>
     </div>
-    <div class="section-hdr">
+    <div class="section-hdr copy-live-hdr">
       <div class="section-title"><i data-lucide="copy"></i>Copy-Trading
         <span class="mode-badge mode-badge-live" aria-label="Live mode: everything on this tab is real-money trading">LIVE</span>
       </div>
-      <span id="copy-live-mode-banner" class="mode-badge mode-badge-paper copy-trading-mode-banner"
-            role="status" aria-live="polite"
-            aria-label="Live trading is off — paper only">LIVE TRADING OFF — paper only</span>
+      <div class="copy-live-hdr-actions">
+        <!-- Cross-link only, never numbers (design spec: tab split). -->
+        <button type="button" class="copy-empty-link" id="copy-live-paper-link"
+                onclick="_copyGoToTab('copy-paper')"
+                aria-label="Go to the Copy · Paper tab">Paper study → Paper tab</button>
+        <span id="copy-live-mode-banner" class="mode-badge mode-badge-paper copy-trading-mode-banner"
+              role="status" aria-live="polite"
+              aria-label="Live trading is off — paper only">LIVE TRADING OFF — paper only</span>
+      </div>
     </div>
     <!-- Reconciliation-required banner (issue #1189, epic J): a real
          money discrepancy between local bookkeeping and the actual
@@ -1692,15 +1724,20 @@ a,button,input,select{transition:color var(--transition),background var(--transi
       <span id="copy-positions-live-drift-text">Live balance mismatch detected — manual reconciliation required</span>
     </div>
     <div id="copy-live-content">
+      <!-- ── KPI CARDS (issue #1278): same .wallet-card markup as Portfolio.
+           Rendered by _copyLiveRenderKpis(); the initial skeleton is static
+           markup so the first paint already reserves the final height. -->
+      <div class="wallet-row wallet-row--live" id="copy-live-kpis" aria-busy="true">
+        <div class="wallet-card"><div class="wc-label">Live P&amp;L</div><div class="skeleton copy-live-skel-val"></div><div class="skeleton copy-live-skel-sub"></div></div>
+        <div class="wallet-card"><div class="wc-label">Open live exposure</div><div class="skeleton copy-live-skel-val"></div><div class="skeleton copy-live-skel-sub"></div></div>
+        <div class="wallet-card"><div class="wc-label">Open live positions</div><div class="skeleton copy-live-skel-val"></div><div class="skeleton copy-live-skel-sub"></div></div>
+        <div class="wallet-card"><div class="wc-label">Live wallets</div><div class="skeleton copy-live-skel-val"></div><div class="skeleton copy-live-skel-sub"></div></div>
+      </div>
+
       <!-- ── LIVE WALLETS (opted in) + READY TO GO LIVE ── -->
       <div class="section-hdr copy-followed-hdr">
         <div class="section-title"><i data-lucide="users"></i>Live Wallets
           <span class="mode-badge mode-badge-live" aria-label="Live followed wallets">LIVE</span>
-        </div>
-        <div class="copy-summary-strip">
-          <span class="copy-slots-pill" id="live-followed-opted-in-pill">— opted into live</span>
-          <span class="copy-slots-pill" id="live-followed-live-eligible-pill">— live-eligible</span>
-          <span class="copy-slots-pill" id="live-followed-live-pnl-pill">— live aggregate P&amp;L</span>
         </div>
       </div>
       <!-- Table-level notice (issue #1187): avoids an identical badge +
@@ -1720,20 +1757,12 @@ a,button,input,select{transition:color var(--transition),background var(--transi
       <div class="copy-positions-table-title">Ready to go live</div>
       <div id="copy-live-ready-list"></div>
 
-      <!-- ── POSITIONS & P&L: LIVE (issue #1186, Epic J) ── -->
+      <!-- ── OPEN POSITIONS: LIVE (issue #1186, Epic J; #1278) ── -->
       <div class="section-hdr copy-positions-hdr">
-        <div class="section-title"><i data-lucide="line-chart"></i>Positions &amp; P&amp;L
-          <span class="mode-badge mode-badge-live" aria-label="Live positions and P&amp;L">LIVE</span>
+        <div class="section-title"><i data-lucide="zap"></i>Open Positions
+          <span class="mode-badge mode-badge-live" aria-label="Live open positions">LIVE</span>
         </div>
-        <div class="copy-summary-strip">
-          <span class="copy-slots-pill" id="copy-positions-live-total-pill">— Live aggregate P&amp;L</span>
-          <select id="copy-live-range-select" class="config-edit-select" aria-label="Realized live P&amp;L chart date range">
-            <option value="7">Last 7 days</option>
-            <option value="30" selected>Last 30 days</option>
-            <option value="90">Last 90 days</option>
-            <option value="all">All time</option>
-          </select>
-        </div>
+        <span class="count-pill" id="copy-live-open-count" style="display:none">0</span>
       </div>
       <div class="error-banner" id="copy-positions-live-error-banner">
         <i data-lucide="alert-circle"></i>
@@ -1747,7 +1776,52 @@ a,button,input,select{transition:color var(--transition),background var(--transi
         </div>
       </div>
 
-      <!-- ── ACTIVITY FEED: LIVE (issue #1188) ── -->
+      <!-- ── RECENT CLOSED: LIVE (issue #1278) -- newest first, 15 per page,
+           client-side from live_realized_pnl_history. The Prev/Next controls
+           are static markup (never re-rendered) so focus stays on the pressed
+           button. -->
+      <div class="section-hdr copy-positions-hdr">
+        <div class="section-title"><i data-lucide="check-circle-2"></i>Recent Closed
+          <span class="mode-badge mode-badge-live" aria-label="Live closed positions">LIVE</span>
+        </div>
+        <span class="count-pill" id="copy-live-closed-count" style="display:none">0</span>
+      </div>
+      <div id="copy-live-closed-list">
+        <div class="empty">
+          <i data-lucide="loader"></i>
+          <h3>Loading closed live trades…</h3>
+          <p>Fetching settled live positions.</p>
+        </div>
+      </div>
+      <div class="pagination" id="copy-live-closed-pagination" style="display:none">
+        <button type="button" class="pg-btn" id="copy-live-closed-prev" onclick="copyLiveClosedChangePage(-1)">&#8592; Prev</button>
+        <span class="pg-info" id="copy-live-closed-info" aria-live="polite"></span>
+        <button type="button" class="pg-btn" id="copy-live-closed-next" onclick="copyLiveClosedChangePage(1)">Next &#8594;</button>
+      </div>
+
+      <!-- ── LIVE P&L: realized chart + per-wallet breakdown (issue #1186) ── -->
+      <div class="section-hdr copy-positions-hdr">
+        <div class="section-title"><i data-lucide="line-chart"></i>Live P&amp;L
+          <span class="mode-badge mode-badge-live" aria-label="Live realized P&amp;L">LIVE</span>
+        </div>
+        <div class="copy-summary-strip">
+          <select id="copy-live-range-select" class="config-edit-select" aria-label="Realized live P&amp;L chart date range">
+            <option value="7">Last 7 days</option>
+            <option value="30" selected>Last 30 days</option>
+            <option value="90">Last 90 days</option>
+            <option value="all">All time</option>
+          </select>
+        </div>
+      </div>
+      <div id="copy-live-pnl-content">
+        <div class="empty">
+          <i data-lucide="loader"></i>
+          <h3>Loading live P&amp;L…</h3>
+          <p>Fetching realized live P&amp;L.</p>
+        </div>
+      </div>
+
+      <!-- ── ACTIVITY FEED: LIVE (issue #1188; paged at 25, issue #1278) ── -->
       <div class="section-hdr copy-activity-hdr">
         <div class="section-title"><i data-lucide="activity"></i>Activity Feed
           <span class="mode-badge mode-badge-live" aria-label="Live activity">LIVE</span>
@@ -1781,6 +1855,11 @@ a,button,input,select{transition:color var(--transition),background var(--transi
           <h3>Loading activity…</h3>
           <p>Fetching the live copy-trading activity feed.</p>
         </div>
+      </div>
+      <div class="pagination" id="copy-live-activity-pagination" style="display:none">
+        <button type="button" class="pg-btn" id="copy-live-activity-prev" onclick="copyLiveActivityChangePage(-1)">&#8592; Prev</button>
+        <span class="pg-info" id="copy-live-activity-info" aria-live="polite"></span>
+        <button type="button" class="pg-btn" id="copy-live-activity-next" onclick="copyLiveActivityChangePage(1)">Next &#8594;</button>
       </div>
     </div>
   </main>
@@ -4369,6 +4448,19 @@ function _copyPayloadUnchanged(key, sig) {
   return false;
 }
 
+// Writes innerHTML only when it differs from what this element was last
+// given by this helper, so a re-render with identical markup (a 30 s poll, a
+// posture re-check) never rebuilds the DOM. Returns true when it wrote.
+// Every writer of such a container must go through here so the cache never
+// goes stale.
+function _copySetHtml(elm, html) {
+  if (!elm) return false;
+  if (elm._copyHtml === html) return false;
+  elm._copyHtml = html;
+  elm.innerHTML = html;
+  return true;
+}
+
 /* ─────────────────────────────────────────
    COPY-TRADING — CANDIDATES VIEW (epic F #1143, story F1 #1146)
    Data: GET /api/copy-trading/candidates (one response for the whole
@@ -5361,9 +5453,15 @@ async function submitFollow(address, btn) {
 // config-driven live/paper UI in this tab reuses this fast-polled value
 // rather than introducing its own slow-polled copy.
 let _copyLiveTradingEnabled = false;
+// False until the first posture result (success OR the conservative failure
+// fallback) has been applied. Until then the Live tab must not claim "live
+// trading is off" -- that is just the initial default, not a reading -- so it
+// shows skeletons instead (issue #1278).
+let _copyPostureLoaded = false;
 
 function renderCopyTradingModePosture(liveEnabled) {
-  const postureChanged = _copyLiveTradingEnabled !== !!liveEnabled;
+  const postureChanged = !_copyPostureLoaded || _copyLiveTradingEnabled !== !!liveEnabled;
+  _copyPostureLoaded = true;
   _copyLiveTradingEnabled = !!liveEnabled;
   // The same shared component is rendered on all three copy tabs (class
   // .copy-trading-mode-banner, per-tab ids); one fetch updates every
@@ -5391,6 +5489,7 @@ function renderCopyTradingModePosture(liveEnabled) {
   // rebuild those views.
   if (postureChanged) {
     if (_copyLivePositionsData) renderCopyLivePositions(_copyLivePositionsData, _copyLiveTradingEnabled);
+    else _copyLiveRenderKpis();
     const liveFeed = _copyActivityScopes.live;
     if (liveFeed.data) renderCopyActivityFeed(liveFeed.data, 'live');
   }
@@ -5760,7 +5859,15 @@ function _followedRowHtml(w) {
 // LIVE roster row (Copy · Live): opted-in wallets only. Live stake, live
 // badge, and the two live-tab controls -- Pause/Resume (duplicated here on
 // purpose: stopping real-money trades must never need a tab switch) and
-// Revert to paper. No paper figure is rendered. Edit-live-stake is #1278.
+// Edit live stake / Revert to paper). No paper figure is rendered.
+// "Edit live stake" (issue #1262/#1278) is offered only while the wallet is
+// not paused (a paused wallet executes nothing) and only edits the live stake
+// override -- never the paper stake.
+function _followedEditLiveStakeBtnHtml(w, addrEsc) {
+  if (w.status === 'paused') return '';
+  return `<button type="button" class="btn-followed-action btn-followed-edit-live-stake" data-address="${addrEsc}" aria-label="Edit live stake per trade for ${addrEsc}"><span class="spinner"></span><i data-lucide="pencil"></i>Edit live stake</button>`;
+}
+
 function _followedLiveRowHtml(w) {
   const addrEsc = _copyEscapeHtml(w.address);
   const safeId = _copySafeId(w.address);
@@ -5772,21 +5879,29 @@ function _followedLiveRowHtml(w) {
       <td class="copy-td followed-status-cell" id="live-followed-status-cell-${safeId}">${_followedStatusBadgeHtml(w)}${_followedLiveBadgeHtml(w)}</td>
       <td class="copy-td followed-actions-cell">
         ${_followedPauseResumeBtnHtml(w, addrEsc)}
+        ${_followedEditLiveStakeBtnHtml(w, addrEsc)}
         ${revertBtn}
         <p class="followed-live-msg" id="live-followed-live-msg-${safeId}" role="status" aria-live="polite"></p>
       </td>
     </tr>`;
 }
 
-// "Ready to go live": paper-active wallets not yet opted in. Wallet + the
-// Go live action only -- the optional labelled paper-P&L reference column is
-// follow-up work for #1278.
+// "Ready to go live": paper-active wallets not yet opted in. Wallet, one
+// deliberately-labelled PAPER P&L reference (PM decision on the tab-split
+// spec's Open Q2 -- the ONLY paper figure anywhere on the Live tab, needed to
+// justify a promotion; it always carries an adjacent PAPER badge and a
+// screen-reader "Paper P&L" label) and the Go live action.
+function _followedPaperRefHtml(w) {
+  return `<span class="copy-paper-ref"><span class="mode-badge mode-badge-paper">PAPER</span><span class="sr-only">Paper P&amp;L </span>${_followedFmtUsd(w.realized_pnl_usd)}</span>`;
+}
+
 function _followedReadyRowHtml(w) {
   const addrEsc = _copyEscapeHtml(w.address);
   const safeId = _copySafeId(w.address);
   return `
     <tr class="copy-row" data-address="${addrEsc}" id="live-ready-row-${safeId}">
       ${_followedAddressCellHtml(w, addrEsc)}
+      <td class="copy-td">${_followedPaperRefHtml(w)}</td>
       <td class="copy-td followed-actions-cell">
         ${_followedGoLiveButtonHtml(w)}
         <p class="followed-live-msg" id="live-followed-live-msg-${safeId}" role="status" aria-live="polite"></p>
@@ -5840,20 +5955,25 @@ function _followedRenderPaper(data) {
   lucide.createIcons();
 }
 
+// "Ready to go live" collapses into a <details> above this many rows; its
+// open/closed state survives re-renders (see _copyLiveReadyOnToggle).
+const COPY_LIVE_READY_COLLAPSE_ABOVE = 5;
+let _copyLiveReadyOpen = false;
+let _copyLiveFollowedData = null;   // last roster payload as rendered on Copy · Live
+
+function _copyLiveReadyOnToggle(detailsEl) {
+  _copyLiveReadyOpen = !!(detailsEl && detailsEl.open);
+}
+
 function _followedRenderLive(data) {
+  _copyLiveFollowedData = data;
   const wrap = document.getElementById('copy-live-followed-list');
   const readyWrap = document.getElementById('copy-live-ready-list');
-  const optedInPill = document.getElementById('live-followed-opted-in-pill');
-  const liveEligiblePill = document.getElementById('live-followed-live-eligible-pill');
-  const livePnlPill = document.getElementById('live-followed-live-pnl-pill');
   const liveOffBanner = document.getElementById('followed-live-off-banner');
-  // Live-eligibility summary + live P&L only -- never a combined
+  // The roster header carries no counts or P&L any more: the KPI cards above
+  // (Live wallets / Live P&L) own those figures and are replaced by the
+  // numberless "Live trading is off" card when appropriate. Never a combined
   // "aggregate P&L", and no paper aggregate on this tab.
-  if (optedInPill) optedInPill.textContent = `${data.live_opted_in_count} opted into live`;
-  if (liveEligiblePill) liveEligiblePill.textContent = `${data.live_eligible_count} live-eligible`;
-  if (livePnlPill) {
-    livePnlPill.textContent = `${_followedFmtUsd(data.live_aggregate_pnl_usd)} live aggregate P&L (${data.live_n_settled_total} settled)`;
-  }
   if (liveOffBanner) liveOffBanner.classList.toggle('visible', !data.live_trading_enabled);
 
   const liveWallets = data.wallets.filter(w => w.live_enabled);
@@ -5872,12 +5992,18 @@ function _followedRenderLive(data) {
     if (!readyWallets.length) {
       readyWrap.innerHTML = `<div class="empty"><i data-lucide="inbox"></i><h3>No wallets ready to go live</h3><p>Follow a wallet on the Wallets tab; it appears here while paper-active.</p></div>`;
     } else {
-      readyWrap.innerHTML = _followedTableHtml('Wallets ready to go live', [
-        { text: 'Wallet' }, { sr: 'Actions' },
+      const table = _followedTableHtml('Wallets ready to go live', [
+        { text: 'Wallet' },
+        { text: 'Paper P&amp;L <span class="mode-badge mode-badge-paper">PAPER</span>' },
+        { sr: 'Actions' },
       ], readyWallets.map(_followedReadyRowHtml).join(''));
+      readyWrap.innerHTML = readyWallets.length > COPY_LIVE_READY_COLLAPSE_ABOVE
+        ? `<details class="copy-ready-details"${_copyLiveReadyOpen ? ' open' : ''} ontoggle="_copyLiveReadyOnToggle(this)"><summary>${readyWallets.length} wallets ready to go live — show list</summary>${table}</details>`
+        : table;
     }
   }
   lucide.createIcons();
+  _copyLiveRenderKpis();
   _copyConsumePendingLiveHighlight(true);   // "Go live →" from Paper (#1277)
 }
 
@@ -6196,6 +6322,97 @@ async function followedRevertToPaper(address, btn) {
   });
 }
 
+// Edit live stake (issues #1262/#1278): adjusts an ALREADY-live wallet's live
+// stake in place via PATCH .../live-stake. It never touches the paper stake or
+// the opt-in flag, and (like the go-live prompt) it pre-fills the current
+// RESOLVED live stake, never the paper stake.
+//   * A blank answer clears the override -- the live stake re-links to the
+//     wallet's paper stake (wording follows the go-live prompt; no paper
+//     figure is printed in the prompt).
+//   * Same client-side validation as go-live: finite, > 0, <= the live cap.
+//   * No confirmation for an unchanged or LOWER stake (risk-reducing); a
+//     window.confirm when the effective stake goes UP, since a bigger size is
+//     the one direction that adds real-money exposure to a wallet that is
+//     already live (design spec, Open Q7).
+async function followedEditLiveStake(address, btn) {
+  const roster = _copyLiveFollowedData || _followedWalletsData;
+  const wallet = ((roster && roster.wallets) || []).find(w => w.address === address);
+  if (!wallet || wallet.status === 'paused') return;
+  const liveCapUsd = roster.live_cap_usd;
+  if (!Number.isFinite(liveCapUsd)) {
+    _followedShowBannerError(`Could not edit the live stake for ${_copyTruncateAddress(address)} — the live exposure cap is unavailable right now. Try again shortly.`);
+    return;
+  }
+  const currentLive = wallet.live_stake_per_trade;
+
+  const rawStake = window.prompt(
+    `Edit the live stake per trade for ${address}.\n\n` +
+    `Current live stake: $${currentLive.toFixed(2)} per trade.\n\n` +
+    `Leave this blank and press OK to link the live stake to this wallet's ` +
+    `paper stake — it will then follow future paper-stake edits.\n\n` +
+    `Enter a dollar amount to keep the live stake fixed at that amount.\n\n` +
+    `Live per-wallet exposure cap: $${liveCapUsd.toFixed(2)}.`,
+    currentLive.toFixed(2)
+  );
+  if (rawStake === null) return; // cancelled
+
+  const trimmed = rawStake.trim();
+  let newStake = null;             // null -> inherit paper stake
+  if (trimmed !== '') {
+    const parsed = Number(trimmed);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      _followedShowBannerError(`Could not set a live stake for ${_copyTruncateAddress(address)} — enter a live stake greater than $0, or clear the field entirely to inherit the paper stake.`);
+      return;
+    }
+    if (parsed > liveCapUsd) {
+      _followedShowBannerError(`Could not set a live stake for ${_copyTruncateAddress(address)} — $${parsed.toFixed(2)} exceeds this wallet's live exposure cap of $${liveCapUsd.toFixed(2)}. Enter an amount at or under the cap, or clear the field entirely to inherit the paper stake.`);
+      return;
+    }
+    newStake = parsed;
+  }
+
+  const safeId = _copySafeId(address);
+  const msgEl = document.getElementById(_followedIdPrefix() + 'followed-live-msg-' + safeId);
+  const isOverride = newStake !== null;
+  const unchanged = isOverride === wallet.live_stake_is_override
+    && (!isOverride || newStake === currentLive);
+  if (unchanged) {
+    if (msgEl) msgEl.textContent = `Live stake for ${_copyTruncateAddress(address)} is unchanged.`;
+    return;
+  }
+
+  const effective = isOverride ? newStake : wallet.stake_per_trade;
+  if (effective > currentLive) {
+    const confirmed = window.confirm(
+      `Raise the live stake for ${address}?\n\n` +
+      `Every future signal from this wallet will place REAL trades of $${effective.toFixed(2)} per trade ` +
+      `(up from $${currentLive.toFixed(2)}), up to a live exposure cap of $${liveCapUsd.toFixed(2)} for this wallet.` +
+      (isOverride ? '' : `\n\nThis links the live stake to this wallet's paper stake, so it will change automatically if the paper stake is edited later.`)
+    );
+    if (!confirmed) return;
+  }
+
+  await _followedSubmitAction({
+    address, btn,
+    url: `/api/copy-trading/wallets/${encodeURIComponent(address)}/live-stake`,
+    fetchOpts: {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ stake: newStake }),
+    },
+    // No optimistic update: the stake shown must be the one the server
+    // accepted, never an unconfirmed real-money size.
+    failureMessage: `Could not update the live stake for ${_copyTruncateAddress(address)}`,
+    onSuccess: async () => {
+      await fetchFollowedWallets();
+      // Re-query: the refetch rebuilds the roster row, so the element looked
+      // up before the request may be detached by now.
+      const doneEl = document.getElementById(_followedIdPrefix() + 'followed-live-msg-' + safeId);
+      if (doneEl) doneEl.textContent = `Live stake updated for ${_copyTruncateAddress(address)}.`;
+    },
+  });
+}
+
 async function followedUnfollowWallet(address, btn) {
   // Required literal copy (issue #1147 acceptance criteria): must state
   // open positions will NOT be closed, not just imply it.
@@ -6287,6 +6504,8 @@ function _followedOnListClick(event) {
   if (goLiveBtn) { followedGoLive(goLiveBtn.dataset.address, goLiveBtn); return; }
   const revertLiveBtn = event.target.closest('.btn-followed-revert-live');
   if (revertLiveBtn) { followedRevertToPaper(revertLiveBtn.dataset.address, revertLiveBtn); return; }
+  const editLiveStakeBtn = event.target.closest('.btn-followed-edit-live-stake');
+  if (editLiveStakeBtn) { followedEditLiveStake(editLiveStakeBtn.dataset.address, editLiveStakeBtn); return; }
   const editStakeBtn = event.target.closest('.btn-followed-edit-stake');
   if (editStakeBtn) { _followedArmStakeEdit(editStakeBtn.dataset.address); return; }
   const stakeCancelBtn = event.target.closest('.btn-followed-stake-cancel');
@@ -7030,9 +7249,12 @@ function _copyPositionsOnRangeChange(event) {
 function _copyLivePositionsOnRangeChange(event) {
   const val = event.target.value;
   _copyLiveRangeDays = val === 'all' ? 'all' : parseInt(val, 10);
-  if (_copyLivePositionsData && _copyLivePositionsData.live_realized_pnl_history.length) {
-    const filtered = _copyFilteredPnlHistory(_copyLivePositionsData.live_realized_pnl_history, _copyLiveRangeDays);
-    _renderCopyLivePositionsChart(_copyBucketDailyPnl(filtered));
+  // Redraw from the last GOOD payload (a degraded poll must not blank it).
+  const good = _copyLiveGoodData;
+  if (good && good.live_realized_pnl_history.length && document.getElementById('copy-positions-live-canvas')) {
+    const points = _copyBucketDailyPnl(_copyFilteredPnlHistory(good.live_realized_pnl_history, _copyLiveRangeDays));
+    _renderCopyLivePositionsChart(points);
+    _copyLiveChartSig = _copyLiveRangeDays + '|' + JSON.stringify(points);
   }
 }
 
@@ -7265,17 +7487,341 @@ function _copyLivePositionsOnListKeydown(event) {
   );
 }
 
-// Single delegated click/keydown handler for the Live column, bound once
-// to the (never-replaced) #copy-positions-live-content container --
-// mirrors _copyPositionsBindListEvents() for the paper column, kept
-// separate so the two columns' event wiring stays independently correct.
+// Delegated click/keydown handling for the Live sections that render rows
+// (open positions, recent closed, per-wallet P&L). Each container is a
+// never-replaced static node, so the listener is bound once -- mirrors
+// _copyPositionsBindListEvents() for the paper column, kept separate so the
+// two columns' event wiring stays independently correct.
+const _COPY_LIVE_ROW_CONTAINER_IDS = ['copy-positions-live-content', 'copy-live-closed-list', 'copy-live-pnl-content'];
+
 function _copyLivePositionsBindListEvents() {
   if (_copyLivePositionsListenersBound) return;
-  const wrap = document.getElementById('copy-positions-live-content');
+  let bound = false;
+  for (const id of _COPY_LIVE_ROW_CONTAINER_IDS) {
+    const wrap = document.getElementById(id);
+    if (!wrap) continue;
+    wrap.addEventListener('click', _copyLivePositionsOnListClick);
+    wrap.addEventListener('keydown', _copyLivePositionsOnListKeydown);
+    bound = true;
+  }
+  if (bound) _copyLivePositionsListenersBound = true;
+}
+
+/* ── Live tab state (issue #1278) ──────────────────────────────────────────
+   _copyLivePositionsData  latest /positions payload received (may be degraded)
+   _copyLiveGoodData       latest payload WITHOUT live_error -- the only thing
+                           the KPI cards / sections ever render from, so a
+                           degraded or failed poll can never blank them or
+                           substitute anything else ("never fall back to paper
+                           data in a live slot": nothing here reads a paper key)
+   _copyLiveFetchFailed    the most recent live fetch failed (network/HTTP
+                           error or live_error) */
+let _copyLiveGoodData = null;
+let _copyLiveFetchFailed = false;
+let _copyLiveChartSig = null;       // what the live chart currently shows (skip redraws)
+
+// "Is there anything real to show?" -- live positions open or ever settled.
+function _copyLiveHasHistory(d) {
+  return d.live_open_positions.length > 0 || d.live_total.n_settled > 0;
+}
+
+// ── KPI cards ──────────────────────────────────────────────────────────────
+function _copyLiveKpiCardHtml(label, valueHtml, sub, valueCls = '') {
+  return `<div class="wallet-card"><div class="wc-label">${label}</div><div class="wc-value ${valueCls}">${valueHtml}</div><div class="wc-sub">${sub}</div></div>`;
+}
+
+function _copyLiveKpiSkeletonHtml() {
+  return ['Live P&amp;L', 'Open live exposure', 'Open live positions', 'Live wallets']
+    .map(l => `<div class="wallet-card"><div class="wc-label">${l}</div><div class="skeleton copy-live-skel-val"></div><div class="skeleton copy-live-skel-sub"></div></div>`)
+    .join('');
+}
+
+// Epic J: live off + no live history is a dedicated, dimmed, NUMBERLESS state
+// -- a live P&L of literal zero and "live isn't running" must never look the
+// same, so no $0.00 and no counts anywhere in it.
+function _copyLiveKpiOffHtml() {
+  return `<div class="wallet-card copy-live-kpi-single"><div class="wc-label">Live</div><div class="wc-value">Live trading is off</div><div class="wc-sub">Nothing is trading live. <button type="button" class="copy-empty-link" onclick="_copyGoToConfigTab()">Go to Config</button> to turn live trading on.</div></div>`;
+}
+
+function _copyLiveKpiUnavailableHtml() {
+  return `<div class="wallet-card copy-live-kpi-single"><div class="wc-label">Live</div><div class="wc-value">Live figures unavailable</div><div class="wc-sub">Could not load live data — retrying automatically.</div></div>`;
+}
+
+function _copyLiveKpiCardsHtml(d) {
+  const f = _copyLiveFollowedData;
+  const nSettled = d.live_total.n_settled;
+  const pnl = d.live_total.realized_pnl_usd;
+  const pnlCard = nSettled > 0
+    ? _copyLiveKpiCardHtml('Live P&amp;L', _copyFmtUsd(pnl), `${nSettled} settled`, pnl >= 0 ? 'pos' : 'neg')
+    : _copyLiveKpiCardHtml('Live P&amp;L', '—', 'No settled live trades yet');
+
+  const open = d.live_open_positions;
+  const exposure = open.reduce((sum, p) => sum + p.stake_usd, 0);
+  const capKnown = f && Number.isFinite(f.live_cap_usd) && f.live_cap_usd > 0;
+  const exposureCard = _copyLiveKpiCardHtml(
+    'Open live exposure', '$' + exposure.toFixed(2),
+    capKnown ? `cap $${f.live_cap_usd.toFixed(2)} per wallet` : 'committed stake, open live positions');
+
+  const nWallets = new Set(open.map(p => p.address)).size;
+  const positionsCard = _copyLiveKpiCardHtml(
+    'Open live positions', String(open.length),
+    open.length ? `across ${nWallets} wallet${nWallets !== 1 ? 's' : ''}` : 'none open');
+
+  let walletsCard;
+  if (f) {
+    const capped = f.wallets.filter(w => w.live_enabled
+      && !w.live_eligible && w.live_status_reason === "this wallet's live exposure limit is currently reached").length;
+    walletsCard = _copyLiveKpiCardHtml(
+      'Live wallets', String(f.live_eligible_count),
+      `${f.live_opted_in_count} opted in${capped ? ` · ${capped} at cap` : ''}`);
+  } else {
+    walletsCard = _copyLiveKpiCardHtml('Live wallets', '—', 'Loading wallets…');
+  }
+  // A refresh that failed after a good render keeps the last-known figures on
+  // screen, but says so (the stale-data banner is further down the page).
+  const stale = _copyLiveFetchFailed
+    ? `<p class="copy-live-note" style="grid-column:1 / -1;margin:0;padding:0" role="status">Live data refresh is failing — showing the last-known live figures.</p>`
+    : '';
+  return pnlCard + exposureCard + positionsCard + walletsCard + stale;
+}
+
+function _copyLiveRenderKpis() {
+  const wrap = document.getElementById('copy-live-kpis');
   if (!wrap) return;
-  wrap.addEventListener('click', _copyLivePositionsOnListClick);
-  wrap.addEventListener('keydown', _copyLivePositionsOnListKeydown);
-  _copyLivePositionsListenersBound = true;
+  const d = _copyLiveGoodData;
+  let html;
+  let busy = false;
+  if (!d) {
+    if (_copyLiveFetchFailed) {
+      html = _copyLiveKpiUnavailableHtml();
+    } else {
+      html = _copyLiveKpiSkeletonHtml();
+      busy = true;
+    }
+  } else if (!_copyPostureLoaded) {
+    // The off/on posture is not known yet -- never guess "off".
+    html = _copyLiveKpiSkeletonHtml();
+    busy = true;
+  } else if (!_copyLiveTradingEnabled && !_copyLiveHasHistory(d)) {
+    html = _copyLiveKpiOffHtml();
+  } else {
+    html = _copyLiveKpiCardsHtml(d);
+  }
+  _copySetHtml(wrap, html);
+  wrap.setAttribute('aria-busy', busy ? 'true' : 'false');
+}
+
+// ── Recent Closed (live): newest first, paged client-side ─────────────────
+const COPY_LIVE_CLOSED_PAGE_SIZE = 15;
+let _copyLiveClosedRows = [];       // newest first
+let _copyLiveClosedPage = 0;
+
+// The payload is oldest-first; the list is newest-first. Ties on settled_at
+// keep reverse payload order so the very latest row is always on top.
+function _copyLiveClosedNewestFirst(history) {
+  return history
+    .map((p, i) => ({ p, i }))
+    .sort((a, b) => (a.p.settled_at < b.p.settled_at ? 1 : a.p.settled_at > b.p.settled_at ? -1 : b.i - a.i))
+    .map(x => x.p);
+}
+
+function _copyLiveClosedRowHtml(p) {
+  const addrEsc = _copyEscapeHtml(p.address);
+  const pnlCls = p.settled_pnl_usd >= 0 ? 'copy-pnl-pos' : 'copy-pnl-neg';
+  const d = p.settled_at ? new Date(p.settled_at) : null;
+  const closed = d && !isNaN(d) ? d.toLocaleString() : '—';
+  return `
+    <tr class="copy-row" data-address="${addrEsc}">
+      <td class="copy-td" title="${_copyEscapeHtml(p.market)}">${_copyEscapeHtml(_copyTruncateMarket(p.market))}</td>
+      ${_followedAddressCellHtml(p, addrEsc)}
+      <td class="copy-td">$${p.stake_usd.toFixed(2)}</td>
+      <td class="copy-td">${closed}</td>
+      <td class="copy-td ${pnlCls}">${_copyFmtUsd(p.settled_pnl_usd)}</td>
+    </tr>`;
+}
+
+function _copyLiveClosedTableHtml(rows) {
+  return `
+    <div class="copy-table-wrap">
+    <table class="copy-table" aria-label="Recent closed live copy-trading positions">
+      <thead>
+        <tr>
+          <th class="copy-th" scope="col">Market</th>
+          <th class="copy-th" scope="col">Wallet</th>
+          <th class="copy-th" scope="col">Stake</th>
+          <th class="copy-th" scope="col">Closed</th>
+          <th class="copy-th" scope="col">Settled P&amp;L</th>
+        </tr>
+      </thead>
+      <tbody>${rows.map(_copyLiveClosedRowHtml).join('')}</tbody>
+    </table>
+    </div>`;
+}
+
+function _copyLiveSetClosedPager(page, pages) {
+  const pager = document.getElementById('copy-live-closed-pagination');
+  if (!pager) return;
+  pager.style.display = pages > 1 ? 'flex' : 'none';
+  const info = document.getElementById('copy-live-closed-info');
+  const prev = document.getElementById('copy-live-closed-prev');
+  const next = document.getElementById('copy-live-closed-next');
+  if (info) info.textContent = pages > 1 ? `Page ${page + 1} of ${pages}` : '';
+  if (prev) prev.disabled = page <= 0;
+  if (next) next.disabled = page >= pages - 1;
+}
+
+function _copyLiveRenderClosedPage() {
+  const listEl = document.getElementById('copy-live-closed-list');
+  if (!listEl) return;
+  const pages = Math.max(1, Math.ceil(_copyLiveClosedRows.length / COPY_LIVE_CLOSED_PAGE_SIZE));
+  // A background refresh never moves the operator's page, only clamps it.
+  _copyLiveClosedPage = Math.max(0, Math.min(_copyLiveClosedPage, pages - 1));
+  const slice = _copyLiveClosedRows.slice(
+    _copyLiveClosedPage * COPY_LIVE_CLOSED_PAGE_SIZE,
+    (_copyLiveClosedPage + 1) * COPY_LIVE_CLOSED_PAGE_SIZE);
+  if (_copySetHtml(listEl, _copyLiveClosedTableHtml(slice))) lucide.createIcons();
+  _copyLiveSetClosedPager(_copyLiveClosedPage, pages);
+}
+
+function copyLiveClosedChangePage(delta) {
+  if (!_copyLiveClosedRows.length) return;
+  _copyLiveClosedPage += delta;
+  _copyLiveRenderClosedPage();   // clamps
+}
+
+function _copyLiveRenderClosed(data, offNoHistory) {
+  const listEl = document.getElementById('copy-live-closed-list');
+  const countEl = document.getElementById('copy-live-closed-count');
+  if (!listEl) return;
+  const rows = offNoHistory ? [] : _copyLiveClosedNewestFirst(data.live_realized_pnl_history);
+  _copyLiveClosedRows = rows;
+  if (countEl) {
+    countEl.style.display = offNoHistory ? 'none' : '';
+    countEl.textContent = String(rows.length);
+  }
+  if (offNoHistory) {
+    _copySetHtml(listEl, `<div class="copy-live-note">Live trading is off — no closed live trades to show.</div>`);
+    _copyLiveSetClosedPager(0, 1);
+    return;
+  }
+  if (!rows.length) {
+    _copySetHtml(listEl, `<div class="copy-live-note copy-live-note-accent">No closed live trades yet.</div>`);
+    _copyLiveSetClosedPager(0, 1);
+    return;
+  }
+  _copyLiveRenderClosedPage();
+}
+
+// ── Open positions + Live P&L sections ────────────────────────────────────
+function _copyLiveRenderOpen(data, liveTradingEnabled, hasHistory) {
+  const wrap = document.getElementById('copy-positions-live-content');
+  const countEl = document.getElementById('copy-live-open-count');
+  if (!wrap) return;
+  const offNoHistory = !liveTradingEnabled && !hasHistory;
+  if (countEl) {
+    countEl.style.display = offNoHistory ? 'none' : '';
+    countEl.textContent = String(data.live_open_positions.length);
+  }
+  // Dedicated off-state: live is off AND has never produced any data (open or
+  // settled) -- no numeric figures at all, not even a zero, since a live P&L
+  // of literal zero and "live isn't running" must never look the same (design
+  // spec).
+  if (offNoHistory) {
+    _copySetHtml(wrap, `<div class="empty">
+        <i data-lucide="power-off"></i>
+        <h3>Live trading is off</h3>
+        <p>No live copy-trading activity to show. <button type="button" class="copy-empty-link" onclick="_copyGoToConfigTab()">Go to Config</button> to turn on live trading.</p>
+      </div>`);
+    lucide.createIcons();
+    return;
+  }
+  // Live is on, but genuinely nothing has happened yet -- deliberately
+  // distinct from the OFF state above: same live accent (green), but
+  // different text, no numbers pretending to be a real zero-P&L reading.
+  if (liveTradingEnabled && !hasHistory) {
+    _copySetHtml(wrap, `<div class="empty copy-positions-live-accent">
+        <i data-lucide="zap"></i>
+        <h3>No live positions yet.</h3>
+        <p>Live copy-trading is on — positions will appear here once a signal executes live.</p>
+      </div>`);
+    lucide.createIcons();
+    return;
+  }
+  // Populated: real historical/current live data exists. If live is currently
+  // off, layer an off-banner on top instead of hiding the data -- "once live
+  // has ever run, show the real historical aggregate even while currently
+  // off" (issue #1186 acceptance criteria).
+  const offBannerHtml = !liveTradingEnabled
+    ? `<div class="warn-banner visible"><i data-lucide="alert-triangle"></i><span>Live trading is off — showing historical data only, no new live activity is occurring.</span></div>`
+    : '';
+  if (_copySetHtml(wrap, `${offBannerHtml}${_copyLiveOpenPositionsTableHtml(data.live_open_positions)}`)) {
+    lucide.createIcons();
+    _copyReopenExpandedPositionDetails('live-pos-', _copyExpandedLivePositionIds);
+  }
+}
+
+function _copyLiveRenderPnl(data, liveTradingEnabled, hasHistory) {
+  const wrap = document.getElementById('copy-live-pnl-content');
+  if (!wrap) return;
+  if (!liveTradingEnabled && !hasHistory) {
+    _copySetHtml(wrap, `<div class="copy-live-note">Live trading is off — no live P&amp;L to show.</div>`);
+    _copyLiveChartSig = null;
+    return;
+  }
+  if (!hasHistory) {
+    _copySetHtml(wrap, `<div class="copy-live-note copy-live-note-accent">No live P&amp;L yet.</div>`);
+    _copyLiveChartSig = null;
+    return;
+  }
+  const history = data.live_realized_pnl_history;
+  const chartHtml = history.length
+    ? `<div class="chart-wrap copy-positions-chart-wrap"><canvas id="copy-positions-live-canvas"></canvas></div>`
+    : `<div class="copy-positions-chart-empty">
+        <i data-lucide="hourglass"></i>
+        <div><strong>No settled live positions yet</strong></div>
+        <p>${data.live_open_positions.length} open live position${data.live_open_positions.length !== 1 ? 's' : ''} in flight — the realized P&amp;L chart will populate once positions settle.</p>
+      </div>`;
+  const wrote = _copySetHtml(wrap, `
+    ${chartHtml}
+    <div class="copy-positions-table-title">Per-wallet breakdown</div>
+    ${_copyLivePerWalletTableHtml(data.live_per_wallet)}`);
+  if (wrote) lucide.createIcons();
+  if (!history.length) { _copyLiveChartSig = null; return; }
+  const points = _copyBucketDailyPnl(_copyFilteredPnlHistory(history, _copyLiveRangeDays));
+  const sig = _copyLiveRangeDays + '|' + JSON.stringify(points);
+  // Redraw only when the canvas is new or the plotted series changed -- a
+  // no-change 30 s poll must not tear the chart down.
+  if (wrote || sig !== _copyLiveChartSig) {
+    _renderCopyLivePositionsChart(points);
+    _copyLiveChartSig = sig;
+  }
+}
+
+function _copyLiveRenderSections(data, liveTradingEnabled) {
+  const hasHistory = _copyLiveHasHistory(data);
+  _copyLiveRenderOpen(data, liveTradingEnabled, hasHistory);
+  _copyLiveRenderClosed(data, !liveTradingEnabled && !hasHistory);
+  _copyLiveRenderPnl(data, liveTradingEnabled, hasHistory);
+  _copyLiveRenderKpis();
+}
+
+// First-load failure with nothing good to show: every positions-derived Live
+// section says so (and the KPI row says "unavailable") -- never a figure.
+function _copyLiveRenderSectionsError(detail) {
+  const msg = _copyEscapeHtml(detail);
+  _copySetHtml(document.getElementById('copy-positions-live-content'),
+    `<div class="empty"><i data-lucide="alert-circle"></i><h3>Could not load live positions</h3><p>${msg} — retrying automatically.</p></div>`);
+  _copySetHtml(document.getElementById('copy-live-closed-list'),
+    `<div class="copy-live-note">Could not load closed live trades — retrying automatically.</div>`);
+  _copyLiveSetClosedPager(0, 1);
+  _copySetHtml(document.getElementById('copy-live-pnl-content'),
+    `<div class="copy-live-note">Could not load live P&amp;L — retrying automatically.</div>`);
+  const openCount = document.getElementById('copy-live-open-count');
+  const closedCount = document.getElementById('copy-live-closed-count');
+  if (openCount) openCount.style.display = 'none';
+  if (closedCount) closedCount.style.display = 'none';
+  _copyLiveChartSig = null;
+  lucide.createIcons();
 }
 
 // liveTradingEnabled is the shared, fast-polled (30s) posture flag from
@@ -7287,101 +7833,35 @@ function renderCopyLivePositions(data, liveTradingEnabled) {
   _copyLivePositionsData = data;
   _copyLivePositionsBindListEvents();
 
-  const pill = document.getElementById('copy-positions-live-total-pill');
-  if (pill) {
-    pill.textContent = `Live aggregate P&L: ${_copyFmtUsd(data.live_total.realized_pnl_usd)} (${data.live_total.n_settled} settled)`;
-  }
-
   const banner = document.getElementById('copy-positions-live-error-banner');
-  const wrap = document.getElementById('copy-positions-live-content');
-  if (!wrap) return;
+  if (!document.getElementById('copy-positions-live-content')) return;
 
   // A live-side query failure (backend-isolated, see
-  // copy_trading_positions()'s docstring) degrades only this column --
+  // copy_trading_positions()'s docstring) degrades only the Live tab --
   // last-known-good live data was already rendered by a prior successful
-  // poll, so just surface the banner and leave the DOM as-is rather than
-  // overwriting it with the degraded (empty) payload.
+  // poll, so just surface the banner and keep that data (re-rendered from the
+  // last good payload, which is a no-op unless the posture flipped) rather
+  // than overwriting it with the degraded (empty) payload.
   if (data.live_error) {
+    _copyLiveFetchFailed = true;
     if (banner) {
       banner.classList.add('visible');
       const textEl = document.getElementById('copy-positions-live-error-text');
       if (textEl) textEl.textContent = `${data.live_error} — showing last-known data, retrying shortly`;
     }
-    if (!_copyLivePositionsData_hasRenderedOnce) {
-      wrap.innerHTML = `<div class="empty"><i data-lucide="alert-circle"></i><h3>Could not load live positions</h3><p>${_copyEscapeHtml(data.live_error)} — retrying automatically.</p></div>`;
-      lucide.createIcons();
+    if (_copyLiveGoodData) {
+      _copyLiveRenderSections(_copyLiveGoodData, liveTradingEnabled);
+    } else {
+      _copyLiveRenderSectionsError(data.live_error);
+      _copyLiveRenderKpis();
     }
     return;
   }
-  if (banner) banner.classList.remove('visible');
+  _copyLiveFetchFailed = false;
+  _copyLiveGoodData = data;
   _copyLivePositionsData_hasRenderedOnce = true;
-
-  const hasAnyLiveData = data.live_open_positions.length > 0 || data.live_total.n_settled > 0;
-
-  // Dedicated off-state: live is off AND has never produced any data
-  // (open or settled) -- no numeric figures at all, not even a zero,
-  // since a live P&L of literal zero and "live isn't running" must never
-  // look the same (design spec).
-  if (!liveTradingEnabled && !hasAnyLiveData) {
-    wrap.innerHTML = `<div class="empty">
-        <i data-lucide="power-off"></i>
-        <h3>Live trading is off</h3>
-        <p>No live copy-trading activity to show. <button type="button" class="copy-empty-link" onclick="_copyGoToConfigTab()">Go to Config</button> to turn on live trading.</p>
-      </div>`;
-    lucide.createIcons();
-    return;
-  }
-
-  // Live is on, but genuinely nothing has happened yet -- deliberately
-  // distinct from the OFF state above: same live accent (green), but
-  // different text, no numbers pretending to be a real zero-P&L reading.
-  if (liveTradingEnabled && !hasAnyLiveData) {
-    wrap.innerHTML = `<div class="empty copy-positions-live-accent">
-        <i data-lucide="zap"></i>
-        <h3>No live positions yet.</h3>
-        <p>Live copy-trading is on — positions will appear here once a signal executes live.</p>
-      </div>`;
-    lucide.createIcons();
-    return;
-  }
-
-  // Populated: real historical/current live data exists. If live is
-  // currently off, layer an off-banner on top instead of hiding the data
-  // -- "once live has ever run, show the real historical aggregate even
-  // while currently off" (issue #1186 acceptance criteria).
-  const offBannerHtml = !liveTradingEnabled
-    ? `<div class="warn-banner visible"><i data-lucide="alert-triangle"></i><span>Live trading is off — showing historical data only, no new live activity is occurring.</span></div>`
-    : '';
-
-  const chartHtml = data.live_realized_pnl_history.length
-    ? `<div class="chart-wrap copy-positions-chart-wrap"><canvas id="copy-positions-live-canvas"></canvas></div>`
-    : `<div class="copy-positions-chart-empty">
-        <i data-lucide="hourglass"></i>
-        <div><strong>No settled live positions yet</strong></div>
-        <p>${data.live_open_positions.length} open live position${data.live_open_positions.length !== 1 ? 's' : ''} in flight — the realized P&amp;L chart will populate once positions settle.</p>
-      </div>`;
-
-  wrap.innerHTML = `
-    ${offBannerHtml}
-    ${chartHtml}
-    <div class="copy-positions-tables-grid">
-      <div>
-        <div class="copy-positions-table-title">Open positions</div>
-        ${_copyLiveOpenPositionsTableHtml(data.live_open_positions)}
-      </div>
-      <div>
-        <div class="copy-positions-table-title">Per-wallet breakdown</div>
-        ${_copyLivePerWalletTableHtml(data.live_per_wallet)}
-      </div>
-    </div>`;
-  lucide.createIcons();
-
-  if (data.live_realized_pnl_history.length) {
-    const filtered = _copyFilteredPnlHistory(data.live_realized_pnl_history, _copyLiveRangeDays);
-    _renderCopyLivePositionsChart(_copyBucketDailyPnl(filtered));
-  }
-
-  _copyReopenExpandedPositionDetails('live-pos-', _copyExpandedLivePositionIds);
+  if (banner) banner.classList.remove('visible');
+  _copyLiveRenderSections(data, liveTradingEnabled);
 }
 
 /* ─────────────────────────────────────────
@@ -7443,6 +7923,11 @@ async function fetchCopyTradingBalanceDrift() {
 // polled, whereas a live_error on an otherwise-200 response (backend
 // isolation, see copy_trading_positions()'s docstring) degrades only Live.
 // An unchanged payload does not rebuild the DOM.
+//
+// Live (issue #1278): a failed fetch keeps the last-known-good LIVE data (the
+// KPI cards, sections and chart are only ever rendered from live payloads) and
+// shows the banner; with nothing good yet every live section says "could not
+// load" -- it never falls back to paper figures or to a zero.
 async function fetchCopyTradingPositions(scope = 'paper') {
   const live = scope === 'live';
   const banner = document.getElementById(live ? 'copy-positions-live-error-banner' : 'copy-positions-error-banner');
@@ -7451,6 +7936,13 @@ async function fetchCopyTradingPositions(scope = 'paper') {
   try {
     const data = await _copySharedFetch('/api/copy-trading/positions');
     if (banner) banner.classList.remove('visible');
+    if (live && !_copyPostureLoaded) {
+      // Park it: until the first posture result arrives the off/on state is
+      // unknown and "Live trading is off" would be a guess. The posture
+      // render picks this payload up (renderCopyTradingModePosture).
+      _copyLivePositionsData = data;
+      return;
+    }
     // The Live render also depends on the posture flag (off/empty/on states).
     const sig = JSON.stringify(data) + (live ? '|' + _copyLiveTradingEnabled : '');
     if (_copyPayloadUnchanged('positions:' + scope, sig)) return;
@@ -7458,27 +7950,35 @@ async function fetchCopyTradingPositions(scope = 'paper') {
     else renderCopyPositions(data);
   } catch (e) {
     console.error('Copy-trading positions fetch failed:', e);
-    if (live ? _copyLivePositionsData : _copyPositionsData) {
-      // Last-known-good data stays on screen — only the banner changes
-      // (mirrors fetchCopyTradingCandidates()'s design-spec-driven choice).
+    if (live) {
+      _copyLiveFetchFailed = true;
+      if (_copyLiveGoodData) {
+        // Last-known-good data stays on screen — only the banner changes
+        // (mirrors fetchCopyTradingCandidates()'s design-spec-driven choice).
+        if (banner) banner.classList.add('visible');
+        if (textEl) textEl.textContent = `Fetch failed (${e.message}) — showing last-known live data, retrying shortly`;
+      } else {
+        _copyLiveRenderSectionsError(e.message);
+      }
+      _copyLiveRenderKpis();
+      return;
+    }
+    if (_copyPositionsData) {
       if (banner) banner.classList.add('visible');
       if (textEl) {
-        textEl.textContent = `Fetch failed (${e.message}) — showing last-known ${live ? 'live ' : ''}data, retrying shortly`;
+        textEl.textContent = `Fetch failed (${e.message}) — showing last-known data, retrying shortly`;
       }
     } else {
       const wrap = document.getElementById(wrapId);
       if (wrap) {
-        const errHtml = `<div class="empty"><i data-lucide="alert-circle"></i><h3>Could not load ${live ? 'live ' : ''}positions</h3><p>${e.message} — retrying automatically.</p></div>`;
-        if (live) wrap.innerHTML = errHtml;
-        else {
-          // Paper: the KPI cards and Recent Closed are fed by the same payload,
-          // so they get their own per-section error state too. Written via
-          // the cache-aware helper so a later identical render is not skipped.
-          _copyDestroyPositionsChart();
-          _copySetHtmlIfChanged(wrap, errHtml);
-          _paperKpiUnavailable('positions');
-          renderCopyPaperClosedError(e.message);
-        }
+        const errHtml = `<div class="empty"><i data-lucide="alert-circle"></i><h3>Could not load positions</h3><p>${e.message} — retrying automatically.</p></div>`;
+        // Paper: the KPI cards and Recent Closed are fed by the same payload,
+        // so they get their own per-section error state too. Written via the
+        // cache-aware helper so a later identical render is not skipped.
+        _copyDestroyPositionsChart();
+        _copySetHtmlIfChanged(wrap, errHtml);
+        _paperKpiUnavailable('positions');
+        renderCopyPaperClosedError(e.message);
         lucide.createIcons();
       }
     }
@@ -7520,9 +8020,9 @@ const _copyActivityScopes = {
     listenersBound: false,
     // Client-side paging (issue #1277): the server returns the whole merged,
     // newest-first list; 25 per page with Prev/Next.
-    pageSize: 25,
     page: 0,
-    pager: { bar: 'copy-activity-pagination', prev: 'copy-activity-prev', next: 'copy-activity-next', info: 'copy-activity-info' },
+    pager: { pageSize: 25, id: 'copy-activity-pagination', infoId: 'copy-activity-info',
+             prevId: 'copy-activity-prev', nextId: 'copy-activity-next' },
   },
   live: {
     mode: 'live',
@@ -7534,6 +8034,11 @@ const _copyActivityScopes = {
     data: null,
     filters: { address: '', eventType: '' },
     listenersBound: false,
+    // Paged client-side (issue #1278): newest first, 25 per page, static
+    // Prev/Next controls (never re-rendered, so focus stays on the button).
+    pager: { pageSize: 25, id: 'copy-live-activity-pagination', infoId: 'copy-live-activity-info',
+             prevId: 'copy-live-activity-prev', nextId: 'copy-live-activity-next' },
+    page: 0,
   },
 };
 
@@ -7821,7 +8326,7 @@ function _copyActivityInitStaticControls() {
     if (walletSelect) {
       walletSelect.addEventListener('change', (event) => {
         sc.filters.address = event.target.value;
-        sc.page = 0;   // a new filter starts at the first page
+        sc.page = 0;
         if (sc.data) renderCopyActivityFeed(sc.data, scope);
       });
     }
@@ -7834,6 +8339,28 @@ function _copyActivityInitStaticControls() {
       });
     }
   }
+}
+
+// Pager for a scope that has one (Live): shows/hides the static Prev/Next
+// block and keeps "Page X of Y" + the disabled states in sync.
+function _copyActivityUpdatePager(sc, pages) {
+  if (!sc.pager) return;
+  const pager = document.getElementById(sc.pager.id);
+  if (!pager) return;
+  pager.style.display = pages > 1 ? 'flex' : 'none';
+  const info = document.getElementById(sc.pager.infoId);
+  const prev = document.getElementById(sc.pager.prevId);
+  const next = document.getElementById(sc.pager.nextId);
+  if (info) info.textContent = pages > 1 ? `Page ${sc.page + 1} of ${pages}` : '';
+  if (prev) prev.disabled = sc.page <= 0;
+  if (next) next.disabled = sc.page >= pages - 1;
+}
+
+function copyLiveActivityChangePage(delta) {
+  const sc = _copyActivityScopes.live;
+  if (!sc.data) return;
+  sc.page += delta;                       // clamped by the render
+  renderCopyActivityFeed(sc.data, 'live');
 }
 
 function renderCopyActivityFeed(data, scope = 'paper') {
@@ -7849,21 +8376,24 @@ function renderCopyActivityFeed(data, scope = 'paper') {
 
   const wrap = document.getElementById(sc.listId);
   if (!wrap) return;
-  const hidePager = () => { if (sc.pager) _copyUpdatePager(sc.pager, { page: 0, pages: 1 }); };
 
   if (!modeEvents.length) {
-    hidePager();
+    _copyActivityUpdatePager(sc, 1);
     if (scope === 'live') {
       // "No live activity" must never read as reassurance if live isn't
       // even running (issue #1188 acceptance criteria) -- the live-trading
       // flag is the shared, fast-polled posture value.
-      if (_copyLiveTradingEnabled) {
-        wrap.innerHTML = `<div class="empty"><i data-lucide="filter-x"></i><h3>No live activity in this range</h3><p>Live trading is on, but nothing has happened yet.</p></div>`;
+      if (!_copyPostureLoaded) {
+        // Posture not known yet: don't claim "never turned on" on a guess --
+        // the first posture result re-renders this feed.
+        _copySetHtml(wrap, `<div class="empty"><i data-lucide="loader"></i><h3>Loading activity…</h3><p>Fetching the live copy-trading activity feed.</p></div>`);
+      } else if (_copyLiveTradingEnabled) {
+        _copySetHtml(wrap, `<div class="empty"><i data-lucide="filter-x"></i><h3>No live activity in this range</h3><p>Live trading is on, but nothing has happened yet.</p></div>`);
       } else {
-        wrap.innerHTML = `<div class="empty"><i data-lucide="clock"></i><h3>Live trading hasn't been turned on yet</h3><p>Once live trading is enabled, live order activity will appear here.</p></div>`;
+        _copySetHtml(wrap, `<div class="empty"><i data-lucide="clock"></i><h3>Live trading hasn't been turned on yet</h3><p>Once live trading is enabled, live order activity will appear here.</p></div>`);
       }
     } else {
-      wrap.innerHTML = `<div class="empty"><i data-lucide="inbox"></i><h3>No activity yet</h3><p>Signal detections and wallet pauses will appear here.</p></div>`;
+      _copySetHtml(wrap, `<div class="empty"><i data-lucide="inbox"></i><h3>No activity yet</h3><p>Signal detections and wallet pauses will appear here.</p></div>`);
     }
     lucide.createIcons();
     return;
@@ -7871,24 +8401,22 @@ function renderCopyActivityFeed(data, scope = 'paper') {
 
   const filtered = _copyActivityFilteredEvents(scope);
   if (!filtered.length) {
-    hidePager();
-    wrap.innerHTML = `<div class="empty"><i data-lucide="filter-x"></i><h3>No matching activity</h3><p>Try a different wallet or event type.</p></div>`;
+    _copyActivityUpdatePager(sc, 1);
+    _copySetHtml(wrap, `<div class="empty"><i data-lucide="filter-x"></i><h3>No matching activity</h3><p>Try a different wallet or event type.</p></div>`);
     lucide.createIcons();
     return;
   }
 
   // Already reverse-chronological from the backend (copy_trading_activity_feed()) --
-  // no client-side sort needed. Tabs with a pager (Paper) show one page; a
-  // background refresh keeps the current page (clamped), filter changes reset it.
-  let shown = filtered;
+  // no client-side sort needed.
+  let items = filtered;
   if (sc.pager) {
-    const pg = _copyPageSlice(filtered, sc.page, sc.pageSize);
-    sc.page = pg.page;
-    shown = pg.items;
-    _copyUpdatePager(sc.pager, pg);
+    const pages = Math.max(1, Math.ceil(filtered.length / sc.pager.pageSize));
+    sc.page = Math.max(0, Math.min(sc.page, pages - 1));
+    items = filtered.slice(sc.page * sc.pager.pageSize, (sc.page + 1) * sc.pager.pageSize);
+    _copyActivityUpdatePager(sc, pages);
   }
-  wrap.innerHTML = shown.map(_copyActivityItemHtml).join('');
-  lucide.createIcons();
+  if (_copySetHtml(wrap, items.map(_copyActivityItemHtml).join(''))) lucide.createIcons();
 }
 
 // Prev/Next for the paper activity feed (static buttons in the Paper panel).
@@ -7927,7 +8455,7 @@ async function fetchCopyTradingActivityFeed(scope = 'paper') {
     } else {
       const wrap = document.getElementById(sc.listId);
       if (wrap) {
-        wrap.innerHTML = `<div class="empty"><i data-lucide="alert-circle"></i><h3>Could not load activity feed</h3><p>${e.message} — retrying automatically.</p></div>`;
+        _copySetHtml(wrap, `<div class="empty"><i data-lucide="alert-circle"></i><h3>Could not load activity feed</h3><p>${e.message} — retrying automatically.</p></div>`);
         lucide.createIcons();
       }
     }

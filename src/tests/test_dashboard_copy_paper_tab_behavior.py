@@ -374,7 +374,7 @@ def test_no_live_figure_is_rendered_on_paper_even_though_payloads_carry_live_fie
         click('copy-live');
         await settle();
         const live = paperText();
-        for (const v of [LIVE.aggPnl, LIVE.open, LIVE.hist, LIVE.mkt]) assert.ok(live.includes(v), 'control: Live tab shows ' + v);
+        for (const v of [LIVE.total, LIVE.mkt]) assert.ok(live.includes(v), 'control: Live tab shows ' + v);
     """, tmp_path)
 
 
@@ -692,13 +692,18 @@ def test_changing_an_activity_filter_resets_to_page_one(tmp_path):
     """, tmp_path)
 
 
-def test_live_activity_feed_is_not_paged(tmp_path):
-    """Paging is a Paper-tab feature here; the Live feed renders its full list."""
+def test_paper_and_live_activity_pagers_are_independent(tmp_path):
+    """Both feeds page at 25, each with its own page state and its own buttons."""
     run_js("""
         state.activity = { events: Array.from({ length: 40 }, (_, i) => ev(i, { mode: 'live', event_type: 'live_order_filled' })) };
         click('copy-live');
         await settle();
-        assert.strictEqual(el('copy-live-activity-list').innerHTML.match(/class="copy-activity-item /g).length, 40);
+        assert.strictEqual(el('copy-live-activity-list').innerHTML.match(/class="copy-activity-item /g).length, 25);
+        copyLiveActivityChangePage(1);
+        assert.strictEqual(_copyActivityScopes.live.page, 1);
+        assert.strictEqual(_copyActivityScopes.paper.page, 0, 'Paper page untouched by Live paging');
+        assert.strictEqual(_copyActivityScopes.paper.pager.id, 'copy-activity-pagination');
+        assert.strictEqual(_copyActivityScopes.live.pager.id, 'copy-live-activity-pagination');
     """, tmp_path)
 
 
