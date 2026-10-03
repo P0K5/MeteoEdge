@@ -897,6 +897,11 @@ is served by three read/write endpoints in `src/dashboard/api.py`:
   substring, >=3 chars, else ignored). If any is given the request is paged
   and the response also carries `total`, `unfiltered_total`, `page`,
   `page_size`, `total_pages`; no params = the legacy full list.
+  The dashboard's Copy · Wallets tab (issue #1276) always calls it paged:
+  Prev/Next + `Page X of Y`, page size 25/50/100 (remembered in the browser's
+  `localStorage` key `copyWalletsPageSize`), header-click sort and a >=3-char
+  address search (200 ms debounce, in-flight request aborted) all go to the
+  server; the 5-minute poll re-requests the page/sort/search being viewed.
 - `GET /api/copy-trading/wallets/{address}/history` — a single wallet's
   recent screening runs, for the detail panel's median-ROI sparkline.
 - `POST /api/copy-trading/wallets/{address}/follow` — the dashboard's
