@@ -1805,7 +1805,72 @@ class Database:
         )
         return [dict(row) for row in cur.fetchall()]
 
-    def get_previous_wallet_screenings(self) -> dict[str, dict]:
+    # Columns the Candidates view may sort on in SQL (issue #1274). A fixed
+    # allow-list: the value is interpolated into ORDER BY, never user text.
+    WALLET_SCREENING_SORT_COLUMNS = frozenset({
+        "address", "window", "screened_at", "n_buy_trades", "n_resolved",
+        "win_rate", "mean_roi", "median_roi", "mirrored_dollar_pnl",
+        "flat_dollar_pnl", "flat_stake", "eligible_to_follow", "truncated",
+    })
+
+    def query_latest_wallet_screenings(
+        self,
+        *,
+        q: str | None = None,
+        sort: str = "median_roi",
+        descending: bool = True,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> tuple[list[dict], int, int]:
+        """Filtered/sorted/paged variant of ``get_latest_wallet_screenings``
+        (issue #1274), done in SQL so only the requested page's rows are
+        materialised.
+
+        Returns ``(rows, filtered_total, unfiltered_total)``. ``q`` is a
+        case-insensitive substring match on address (LIKE wildcards in ``q``
+        are escaped). NULLs sort as the smallest value (last when descending),
+        matching the legacy Python sort; ``address`` breaks ties so paging is
+        deterministic. ``sort`` must be in ``WALLET_SCREENING_SORT_COLUMNS``.
+        """
+        if sort not in self.WALLET_SCREENING_SORT_COLUMNS:
+            raise ValueError(f"unsupported sort column: {sort!r}")
+        latest = (
+            "FROM copy_wallet_candidates c INNER JOIN ("
+            "  SELECT address, MAX(id) AS max_id FROM copy_wallet_candidates "
+            "  GROUP BY address"
+            ") latest ON c.address = latest.address AND c.id = latest.max_id"
+        )
+        where = ""
+        params: list = []
+        if not q:
+            # No filter: a single count serves as both totals.
+            filtered = unfiltered = self._conn.execute(
+                "SELECT COUNT(*) " + latest
+            ).fetchone()[0]
+        else:
+            unfiltered = self._conn.execute("SELECT COUNT(*) " + latest).fetchone()[0]
+            esc = q.replace("!", "!!").replace("%", "!%").replace("_", "!_")
+            where = " WHERE c.address LIKE ? ESCAPE '!'"
+            params.append(f"%{esc}%")
+            filtered = self._conn.execute(
+                "SELECT COUNT(*) " + latest + where, params
+            ).fetchone()[0]
+        col = f"c.{sort}"
+        null_order = f"{col} IS NULL" if descending else f"{col} IS NOT NULL"
+        sql = (
+            "SELECT c.* " + latest + where
+            + f" ORDER BY {null_order}, {col} {'DESC' if descending else 'ASC'},"
+            " c.address ASC"
+        )
+        if limit is not None:
+            sql += " LIMIT ? OFFSET ?"
+            params = params + [limit, offset]
+        rows = [dict(r) for r in self._conn.execute(sql, params).fetchall()]
+        return rows, filtered, unfiltered
+
+    def get_previous_wallet_screenings(
+        self, addresses: "list[str] | None" = None
+    ) -> dict[str, dict]:
         """Return every screened address's second-most-recent run (the run
         immediately before its current latest one), keyed by address.
 
@@ -1817,16 +1882,27 @@ class Database:
         one screening run ever has no entry in the returned dict -- nothing
         to look up, matching ``get_recent_wallet_screenings(..., limit=2)``
         returning a single-row list in that case.
+
+        ``addresses`` (issue #1274), when given, restricts the lookup to
+        those addresses (the current page) instead of every wallet.
         """
+        if addresses is not None and not addresses:
+            return {}
+        addr_filter = ""
+        params: list = []
+        if addresses is not None:
+            addr_filter = " AND c1.address IN (%s)" % ",".join("?" * len(addresses))
+            params = list(addresses)
         cur = self._conn.execute(
             "SELECT c.* FROM copy_wallet_candidates c "
             "INNER JOIN ("
             "  SELECT c1.address, MAX(c1.id) AS prev_id FROM copy_wallet_candidates c1 "
             "  WHERE c1.id < ("
             "    SELECT MAX(c2.id) FROM copy_wallet_candidates c2 WHERE c2.address = c1.address"
-            "  ) "
+            "  )" + addr_filter +
             "  GROUP BY c1.address"
-            ") prev ON c.address = prev.address AND c.id = prev.prev_id"
+            ") prev ON c.address = prev.address AND c.id = prev.prev_id",
+            params,
         )
         return {row["address"]: dict(row) for row in cur.fetchall()}
 

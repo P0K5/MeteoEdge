@@ -370,3 +370,135 @@ class TestFollowEndpoint:
         body = resp.json()
         assert body["success"] is False
         assert "boom" in body["message"]
+
+
+# ---------------------------------------------------------------------------
+# Server-side pagination / sort / search (issue #1274)
+# ---------------------------------------------------------------------------
+
+def _seed_many(db, n=7):
+    for i in range(n):
+        _screen(
+            db, f"0xabc{i:02d}" if i % 2 == 0 else f"0xdef{i:02d}",
+            screened_at=f"2026-01-0{i + 1}T00:00:00Z",
+            median_roi=0.1 * i if i != 3 else None,
+        )
+
+
+class TestCandidatesPagination:
+    def test_legacy_call_unchanged_no_paging_fields(self, api_client):
+        client, db = api_client
+        _seed_many(db)
+        body = client.get("/api/copy-trading/candidates").json()
+        assert len(body["candidates"]) == 7
+        assert body["total"] is None and body["page"] is None
+        assert body["total_pages"] is None
+
+    def test_paging_slices_and_counts(self, api_client):
+        client, db = api_client
+        _seed_many(db, 60)
+        r1 = client.get("/api/copy-trading/candidates?page=1&page_size=25").json()
+        r3 = client.get("/api/copy-trading/candidates?page=3&page_size=25").json()
+        assert [c["median_roi"] for c in r1["candidates"]][0] == pytest.approx(5.9)
+        assert len(r1["candidates"]) == 25 and len(r3["candidates"]) == 10
+        assert (r1["total"], r1["unfiltered_total"], r1["total_pages"]) == (60, 60, 3)
+        assert r3["candidates"][-1]["median_roi"] is None  # NULL last (desc)
+
+    def test_pages_cover_all_rows_without_overlap(self, api_client):
+        client, db = api_client
+        _seed_many(db, 60)
+        seen = []
+        for p in (1, 2, 3):
+            seen += [c["address"] for c in client.get(
+                f"/api/copy-trading/candidates?page={p}&page_size=25").json()["candidates"]]
+        assert len(seen) == len(set(seen)) == 60
+
+    def test_zero_match_q_has_zero_pages(self, api_client):
+        client, db = api_client
+        _seed_many(db)
+        body = client.get("/api/copy-trading/candidates?q=zzzzzz").json()
+        assert body["candidates"] == []
+        assert (body["total"], body["total_pages"], body["unfiltered_total"]) == (0, 0, 7)
+
+    def test_beyond_end_reports_total_pages(self, api_client):
+        client, db = api_client
+        _seed_many(db)
+        body = client.get("/api/copy-trading/candidates?page=9").json()
+        assert body["candidates"] == [] and body["total"] == 7
+        assert body["total_pages"] == 1 and body["page"] == 9
+
+    def test_search_case_insensitive_and_counts(self, api_client):
+        client, db = api_client
+        _seed_many(db)
+        body = client.get("/api/copy-trading/candidates?q=0xABC&page_size=25").json()
+        assert body["total"] == 4 and body["unfiltered_total"] == 7
+        assert all("abc" in c["address"] for c in body["candidates"])
+
+    def test_search_escapes_like_wildcards(self, api_client):
+        client, db = api_client
+        _seed_many(db)
+        assert client.get("/api/copy-trading/candidates?q=%25%25%25").json()["total"] == 0
+        assert client.get("/api/copy-trading/candidates?q=0x_").json()["total"] == 0
+
+    @pytest.mark.parametrize("size", [25, 50, 100])
+    def test_valid_page_sizes(self, api_client, size):
+        client, db = api_client
+        _seed_many(db)
+        body = client.get(f"/api/copy-trading/candidates?page_size={size}").json()
+        assert body["page_size"] == size
+
+    @pytest.mark.parametrize("q", ["a", "0x", " a "])
+    def test_short_q_ignored_like_no_q(self, api_client, q):
+        client, db = api_client
+        _seed_many(db)
+        body = client.get(f"/api/copy-trading/candidates?page_size=25&q={q}").json()
+        assert body["total"] == body["unfiltered_total"] == 7
+
+    def test_no_q_runs_single_count(self, api_client):
+        _, db = api_client
+        _seed_many(db)
+        stmts = []
+        db._conn.set_trace_callback(stmts.append)
+        _, filtered, unfiltered = db.query_latest_wallet_screenings()
+        db._conn.set_trace_callback(None)
+        assert filtered == unfiltered == 7
+        assert sum("COUNT(*)" in s for s in stmts) == 1
+
+    def test_sort_asc_nulls_first_and_address(self, api_client):
+        client, db = api_client
+        _seed_many(db)
+        body = client.get("/api/copy-trading/candidates?sort=median_roi&dir=asc").json()
+        assert body["candidates"][0]["median_roi"] is None
+        # sort-only is paged with defaults: page 1, size 25, fields never null
+        assert (body["page"], body["page_size"], body["total_pages"]) == (1, 25, 1)
+        assert body["total"] == body["unfiltered_total"] == 7
+        body = client.get("/api/copy-trading/candidates?sort=address&dir=asc").json()
+        addrs = [c["address"] for c in body["candidates"]]
+        assert addrs == sorted(addrs)
+
+    def test_sort_followed_and_unstable_python_path(self, api_client):
+        client, db = api_client
+        _seed_many(db, 30)
+        for key in ("followed", "unstable"):
+            body = client.get(
+                f"/api/copy-trading/candidates?sort={key}&page=1&page_size=25").json()
+            assert len(body["candidates"]) == 25 and body["total"] == 30
+
+    def test_previous_run_still_used_when_paged(self, api_client):
+        client, db = api_client
+        _screen(db, "0xaaa", screened_at="2026-01-01T00:00:00Z", median_roi=0.5)
+        _screen(db, "0xaaa", screened_at="2026-01-02T00:00:00Z", median_roi=0.5)
+        row = client.get("/api/copy-trading/candidates?page=1").json()["candidates"][0]
+        assert row["has_prior_run"] is True
+
+    @pytest.mark.parametrize("qs", [
+        "page=0", "page_size=0", "page_size=257", "page_size=2500", "page_size=2501", "sort=bogus", "dir=sideways",
+    ])
+    def test_invalid_params_422(self, api_client, qs):
+        client, _ = api_client
+        assert client.get(f"/api/copy-trading/candidates?{qs}").status_code == 422
+
+    def test_db_rejects_unknown_sort_column(self, api_client):
+        _, db = api_client
+        with pytest.raises(ValueError):
+            db.query_latest_wallet_screenings(sort="id; DROP TABLE x")

@@ -45,14 +45,14 @@ from contextlib import redirect_stdout
 from dataclasses import dataclass, field as dc_field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 import httpx
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.gzip import GZipMiddleware
-from pydantic import BaseModel
+from pydantic import AfterValidator, BaseModel
 
 from py_clob_client_v2.clob_types import BookParams
 
@@ -519,6 +519,15 @@ class CopyCandidatesOut(BaseModel):
     slots_remaining: int
     max_followed: int
     active_follow_count: int
+    # Issue #1274: set whenever the caller passed any of page/page_size/sort/dir/q (>= 3 chars);
+    # absent (None) for the legacy unpaginated call so existing clients are
+    # unaffected. `total` is the count after the `q` filter, `unfiltered_total`
+    # before it.
+    total: int | None = None
+    unfiltered_total: int | None = None
+    page: int | None = None
+    page_size: int | None = None
+    total_pages: int | None = None
 
 
 class CopyWalletScreeningRunOut(BaseModel):
@@ -2622,8 +2631,56 @@ def promotion_bar() -> list[PromotionBarOut]:
 # Copy-trading API — Candidates view (epic F #1143, story F1 #1146)
 # ---------------------------------------------------------------------------
 
+def _check_candidate_page_size(v: int | None) -> int | None:
+    # A Literal[25, 50, 100] annotation rejects the query-string "25" (no
+    # str->int coercion for Literal), so validate after int parsing instead.
+    if v is not None and v not in (25, 50, 100):
+        raise ValueError("page_size must be one of 25, 50, 100")
+    return v
+
+
+_CANDIDATE_PY_SORTS = ("followed", "unstable")
+
+
+def _candidate_out(row, previous, followed_status) -> "CopyCandidateOut":
+    """Build one candidate row. Reuses check_stability() against the wallet's
+    own last two runs rather than re-deriving the sign/tolerance logic."""
+    from src.scripts.copy_wallet_screening import check_stability
+
+    return CopyCandidateOut(
+        address=row["address"],
+        window=row["window"],
+        screened_at=row["screened_at"],
+        n_buy_trades=row["n_buy_trades"],
+        n_resolved=row["n_resolved"],
+        win_rate=row["win_rate"],
+        mean_roi=row["mean_roi"],
+        median_roi=row["median_roi"],
+        mirrored_dollar_pnl=row["mirrored_dollar_pnl"],
+        flat_dollar_pnl=row["flat_dollar_pnl"],
+        flat_stake=row["flat_stake"],
+        eligible_to_follow=bool(row["eligible_to_follow"]),
+        unstable=not check_stability(row, previous),
+        has_prior_run=previous is not None,
+        truncated=bool(row["truncated"]),
+        followed=row["address"] in followed_status,
+        follow_status=followed_status.get(row["address"]),
+    )
+
+
 @app.get("/api/copy-trading/candidates", response_model=CopyCandidatesOut)
-def copy_trading_candidates() -> CopyCandidatesOut:
+def copy_trading_candidates(
+    page: int | None = Query(None, ge=1),
+    page_size: Annotated[int | None, AfterValidator(_check_candidate_page_size)] = None,
+    sort: Literal[
+        "address", "window", "screened_at", "n_buy_trades", "n_resolved",
+        "win_rate", "mean_roi", "median_roi", "mirrored_dollar_pnl",
+        "flat_dollar_pnl", "flat_stake", "eligible_to_follow", "truncated",
+        "followed", "unstable",
+    ] | None = None,
+    dir: Literal["asc", "desc"] | None = None,
+    q: str | None = Query(None, max_length=100),
+) -> CopyCandidatesOut:
     """Every screened wallet's latest run, plus follow/instability/slots
     context — one response model so the frontend needs a single round-trip
     (issue #1146 acceptance criteria), not several.
@@ -2631,12 +2688,22 @@ def copy_trading_candidates() -> CopyCandidatesOut:
     Default sort is `median_roi` descending, matching the backtest report's
     own methodology — never `mirrored_dollar_pnl`/`flat_dollar_pnl` (the
     exact mistake the spike already made once, see the design spec).
+
+    Optional server-side paging/sort/search (issue #1274, epic #1272). With
+    none of page/page_size/sort/dir/q (>= 3 chars) the response is exactly
+    the legacy full list. If any is given the request is paged (defaults
+    page=1, page_size=25) and the paging fields are always set:
+    `q` = case-insensitive address substring (ignored if < 3 chars),
+    `sort`/`dir` = global sort (default median_roi desc; NULLs last when
+    descending), `page`/`page_size` (one of 25/50/100) slice the sorted
+    result; total_pages = ceil(total / page_size), 0 when nothing matches.
+    Search, sort and the page slice run in SQL and the per-row stability check runs only for the
+    returned page (except sort=unstable, which needs it for every match).
     """
     if _db is None:
         raise HTTPException(status_code=503, detail="Database not initialised")
 
     from src.scripts.copy_wallet_promotion import active_follow_count
-    from src.scripts.copy_wallet_screening import check_stability
 
     live_cfg = get_live_config(_db)
     max_followed = live_cfg["COPY_MAX_WALLETS_FOLLOWED"]
@@ -2644,49 +2711,78 @@ def copy_trading_candidates() -> CopyCandidatesOut:
     slots_remaining = max(max_followed - active_count, 0)
 
     followed_status = {w["address"]: w["status"] for w in _db.get_followed_wallets()}
-    # One batched query for every address's previous run, instead of an
-    # N+1 get_recent_wallet_screenings() call per candidate row — this
-    # endpoint is polled every 5 minutes by every open dashboard tab.
-    previous_runs = _db.get_previous_wallet_screenings()
 
-    candidates = []
-    for row in _db.get_latest_wallet_screenings():
-        # Reuse check_stability() against this wallet's own last two runs
-        # rather than re-deriving the sign/tolerance logic (acceptance
-        # criteria).
-        previous = previous_runs.get(row["address"])
-        unstable = not check_stability(row, previous)
+    # Searches under 3 chars are ignored (spec: min 3 chars) so a 1-2 char
+    # query never triggers a LIKE scan.
+    q = q.strip() if q else None
+    q = q if q and len(q) >= 3 else None
+    if page is None and page_size is None and not (sort or dir or q):
+        # Legacy path (unchanged behaviour). One batched query for every
+        # address's previous run, instead of an N+1 call per candidate row —
+        # this endpoint is polled every 5 minutes by every open dashboard tab.
+        previous_runs = _db.get_previous_wallet_screenings()
+        candidates = [
+            _candidate_out(row, previous_runs.get(row["address"]), followed_status)
+            for row in _db.get_latest_wallet_screenings()
+        ]
+        candidates.sort(
+            key=lambda c: c.median_roi if c.median_roi is not None else float("-inf"),
+            reverse=True,
+        )
+        return CopyCandidatesOut(
+            candidates=candidates,
+            slots_remaining=slots_remaining,
+            max_followed=max_followed,
+            active_follow_count=active_count,
+        )
 
-        candidates.append(CopyCandidateOut(
-            address=row["address"],
-            window=row["window"],
-            screened_at=row["screened_at"],
-            n_buy_trades=row["n_buy_trades"],
-            n_resolved=row["n_resolved"],
-            win_rate=row["win_rate"],
-            mean_roi=row["mean_roi"],
-            median_roi=row["median_roi"],
-            mirrored_dollar_pnl=row["mirrored_dollar_pnl"],
-            flat_dollar_pnl=row["flat_dollar_pnl"],
-            flat_stake=row["flat_stake"],
-            eligible_to_follow=bool(row["eligible_to_follow"]),
-            unstable=unstable,
-            has_prior_run=previous is not None,
-            truncated=bool(row["truncated"]),
-            followed=row["address"] in followed_status,
-            follow_status=followed_status.get(row["address"]),
-        ))
+    # Any of page/page_size/sort/dir/q (>= 3 chars) => paged mode, always.
+    sort = sort or "median_roi"
+    descending = (dir or "desc") == "desc"
+    eff_page = page or 1
+    eff_size = page_size or 25
 
-    candidates.sort(
-        key=lambda c: c.median_roi if c.median_roi is not None else float("-inf"),
-        reverse=True,
-    )
+    if sort in _CANDIDATE_PY_SORTS:
+        # Needs cross-table / stability data: compute for every match, sort
+        # in Python, then slice. Rare path; address tiebreak keeps it stable.
+        rows, filtered, unfiltered = _db.query_latest_wallet_screenings(q=q)
+        previous_runs = _db.get_previous_wallet_screenings(
+            [r["address"] for r in rows]
+        )
+        items = [
+            _candidate_out(r, previous_runs.get(r["address"]), followed_status)
+            for r in rows
+        ]
+        items.sort(key=lambda c: c.address)
+        items.sort(key=lambda c: getattr(c, sort), reverse=descending)
+        start = (eff_page - 1) * eff_size
+        candidates = items[start:start + eff_size]
+    else:
+        rows, filtered, unfiltered = _db.query_latest_wallet_screenings(
+            q=q,
+            sort=sort,
+            descending=descending,
+            limit=eff_size,
+            offset=(eff_page - 1) * eff_size,
+        )
+        previous_runs = _db.get_previous_wallet_screenings(
+            [r["address"] for r in rows]
+        )
+        candidates = [
+            _candidate_out(r, previous_runs.get(r["address"]), followed_status)
+            for r in rows
+        ]
 
     return CopyCandidatesOut(
         candidates=candidates,
         slots_remaining=slots_remaining,
         max_followed=max_followed,
         active_follow_count=active_count,
+        total=filtered,
+        unfiltered_total=unfiltered,
+        page=eff_page,
+        page_size=eff_size,
+        total_pages=-(-filtered // eff_size),
     )
 
 
