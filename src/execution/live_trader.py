@@ -18,10 +18,15 @@ class LiveTrader:
         self._db = db
 
     def _order_options(self, token_id: str) -> CreateOrderOptions:
-        return CreateOrderOptions(
-            tick_size=self.client.get_tick_size(token_id),
-            neg_risk=self.client.get_neg_risk(token_id),
-        )
+        try:
+            tick_size = self.client.get_tick_size(token_id)
+            neg_risk = self.client.get_neg_risk(token_id)
+        except Exception:
+            log.exception("[live] could not read tick size / neg_risk for token %s -- order not placed", token_id)
+            raise
+        if tick_size is None or neg_risk is None:
+            raise RuntimeError(f"exchange returned no tick size or neg_risk for token {token_id} -- order not placed")
+        return CreateOrderOptions(tick_size=tick_size, neg_risk=neg_risk)
 
     def get_usdc_balance(self) -> float:
         """Return available USDC in the CLOB (internal balance, not on-chain)."""

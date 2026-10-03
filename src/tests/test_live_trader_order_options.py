@@ -41,3 +41,21 @@ def test_order_options_tick_size_comes_from_exchange():
     options = trader._order_options("tok-fine")
     assert options.tick_size == "0.001"
     trader.client.get_tick_size.assert_called_with("tok-fine")
+
+
+def test_exchange_lookup_failure_blocks_order_without_posting():
+    import pytest
+    trader = _trader(neg_risk=False)
+    trader.client.get_neg_risk.side_effect = ConnectionError("exchange unreachable")
+    with pytest.raises(ConnectionError):
+        trader.place_order("tok-x", "YES", 50, 5.0, ticker="0xcond", station="")
+    trader.client.create_and_post_order.assert_not_called()
+
+
+def test_missing_exchange_value_blocks_order_without_posting():
+    import pytest
+    trader = _trader(neg_risk=False)
+    trader.client.get_tick_size.return_value = None
+    with pytest.raises(RuntimeError, match="order not placed"):
+        trader.place_order("tok-y", "YES", 50, 5.0, ticker="0xcond", station="")
+    trader.client.create_and_post_order.assert_not_called()
