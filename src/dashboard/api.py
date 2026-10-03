@@ -2663,7 +2663,7 @@ def _candidate_out(row, previous, followed_status) -> "CopyCandidateOut":
 @app.get("/api/copy-trading/candidates", response_model=CopyCandidatesOut)
 def copy_trading_candidates(
     page: int | None = Query(None, ge=1),
-    page_size: int | None = Query(None, ge=1, le=200),
+    page_size: int | None = None,
     sort: Literal[
         "address", "window", "screened_at", "n_buy_trades", "n_resolved",
         "win_rate", "mean_roi", "median_roi", "mirrored_dollar_pnl",
@@ -2683,12 +2683,16 @@ def copy_trading_candidates(
 
     Optional server-side paging/sort/search (issue #1274, epic #1272). With
     no query params the response is exactly the legacy full list. Otherwise:
-    `q` = case-insensitive address substring, `sort`/`dir` = global sort
-    (default median_roi desc; NULLs last when descending), `page`/`page_size`
-    (default 25, max 200) slice the sorted result. Search, sort and the page
+    `q` = case-insensitive address substring (ignored if < 3 chars),
+    `sort`/`dir` = global sort (default median_roi desc; NULLs last when
+    descending), `page`/`page_size` (one of 25/50/100, default 25) slice the sorted result. Search, sort and the page
     slice run in SQL and the per-row stability check runs only for the
     returned page (except sort=unstable, which needs it for every match).
     """
+    if page_size is not None and page_size not in (25, 50, 100):
+        raise HTTPException(
+            status_code=422, detail="page_size must be one of 25, 50, 100"
+        )
     if _db is None:
         raise HTTPException(status_code=503, detail="Database not initialised")
 
@@ -2701,8 +2705,10 @@ def copy_trading_candidates(
 
     followed_status = {w["address"]: w["status"] for w in _db.get_followed_wallets()}
 
+    # Searches under 3 chars are ignored (spec: min 3 chars) so a 1-2 char
+    # query never triggers a LIKE scan.
     q = q.strip() if q else None
-    q = q or None
+    q = q if q and len(q) >= 3 else None
     paged = page is not None or page_size is not None
     if not (paged or sort or dir or q):
         # Legacy path (unchanged behaviour). One batched query for every

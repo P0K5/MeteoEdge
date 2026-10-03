@@ -396,27 +396,27 @@ class TestCandidatesPagination:
 
     def test_paging_slices_and_counts(self, api_client):
         client, db = api_client
-        _seed_many(db)
-        r1 = client.get("/api/copy-trading/candidates?page=1&page_size=3").json()
-        r3 = client.get("/api/copy-trading/candidates?page=3&page_size=3").json()
-        assert [c["median_roi"] for c in r1["candidates"]][0] == pytest.approx(0.6)
-        assert len(r1["candidates"]) == 3 and len(r3["candidates"]) == 1
-        assert (r1["total"], r1["unfiltered_total"], r1["total_pages"]) == (7, 7, 3)
-        assert r3["candidates"][0]["median_roi"] is None  # NULL last (desc)
+        _seed_many(db, 60)
+        r1 = client.get("/api/copy-trading/candidates?page=1&page_size=25").json()
+        r3 = client.get("/api/copy-trading/candidates?page=3&page_size=25").json()
+        assert [c["median_roi"] for c in r1["candidates"]][0] == pytest.approx(5.9)
+        assert len(r1["candidates"]) == 25 and len(r3["candidates"]) == 10
+        assert (r1["total"], r1["unfiltered_total"], r1["total_pages"]) == (60, 60, 3)
+        assert r3["candidates"][-1]["median_roi"] is None  # NULL last (desc)
 
     def test_pages_cover_all_rows_without_overlap(self, api_client):
         client, db = api_client
-        _seed_many(db)
+        _seed_many(db, 60)
         seen = []
         for p in (1, 2, 3):
             seen += [c["address"] for c in client.get(
-                f"/api/copy-trading/candidates?page={p}&page_size=3").json()["candidates"]]
-        assert len(seen) == len(set(seen)) == 7
+                f"/api/copy-trading/candidates?page={p}&page_size=25").json()["candidates"]]
+        assert len(seen) == len(set(seen)) == 60
 
     def test_page_beyond_end_is_empty(self, api_client):
         client, db = api_client
         _seed_many(db)
-        body = client.get("/api/copy-trading/candidates?page=9&page_size=3").json()
+        body = client.get("/api/copy-trading/candidates?page=9&page_size=25").json()
         assert body["candidates"] == [] and body["total"] == 7
 
     def test_search_case_insensitive_and_counts(self, api_client):
@@ -429,8 +429,32 @@ class TestCandidatesPagination:
     def test_search_escapes_like_wildcards(self, api_client):
         client, db = api_client
         _seed_many(db)
-        assert client.get("/api/copy-trading/candidates?q=%25").json()["total"] == 0
-        assert client.get("/api/copy-trading/candidates?q=_").json()["total"] == 0
+        assert client.get("/api/copy-trading/candidates?q=%25%25%25").json()["total"] == 0
+        assert client.get("/api/copy-trading/candidates?q=0x_").json()["total"] == 0
+
+    @pytest.mark.parametrize("size", [25, 50, 100])
+    def test_valid_page_sizes(self, api_client, size):
+        client, db = api_client
+        _seed_many(db)
+        body = client.get(f"/api/copy-trading/candidates?page_size={size}").json()
+        assert body["page_size"] == size
+
+    @pytest.mark.parametrize("q", ["a", "0x", " a "])
+    def test_short_q_ignored_like_no_q(self, api_client, q):
+        client, db = api_client
+        _seed_many(db)
+        body = client.get(f"/api/copy-trading/candidates?page_size=25&q={q}").json()
+        assert body["total"] == body["unfiltered_total"] == 7
+
+    def test_no_q_runs_single_count(self, api_client):
+        _, db = api_client
+        _seed_many(db)
+        stmts = []
+        db._conn.set_trace_callback(stmts.append)
+        _, filtered, unfiltered = db.query_latest_wallet_screenings()
+        db._conn.set_trace_callback(None)
+        assert filtered == unfiltered == 7
+        assert sum("COUNT(*)" in s for s in stmts) == 1
 
     def test_sort_asc_nulls_first_and_address(self, api_client):
         client, db = api_client
@@ -444,11 +468,11 @@ class TestCandidatesPagination:
 
     def test_sort_followed_and_unstable_python_path(self, api_client):
         client, db = api_client
-        _seed_many(db)
+        _seed_many(db, 30)
         for key in ("followed", "unstable"):
             body = client.get(
-                f"/api/copy-trading/candidates?sort={key}&page=1&page_size=2").json()
-            assert len(body["candidates"]) == 2 and body["total"] == 7
+                f"/api/copy-trading/candidates?sort={key}&page=1&page_size=25").json()
+            assert len(body["candidates"]) == 25 and body["total"] == 30
 
     def test_previous_run_still_used_when_paged(self, api_client):
         client, db = api_client
@@ -458,7 +482,7 @@ class TestCandidatesPagination:
         assert row["has_prior_run"] is True
 
     @pytest.mark.parametrize("qs", [
-        "page=0", "page_size=0", "page_size=201", "sort=bogus", "dir=sideways",
+        "page=0", "page_size=0", "page_size=257", "page_size=2500", "page_size=2501", "sort=bogus", "dir=sideways",
     ])
     def test_invalid_params_422(self, api_client, qs):
         client, _ = api_client

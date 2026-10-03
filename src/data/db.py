@@ -1840,18 +1840,21 @@ class Database:
             "  GROUP BY address"
             ") latest ON c.address = latest.address AND c.id = latest.max_id"
         )
-        unfiltered = self._conn.execute("SELECT COUNT(*) " + latest).fetchone()[0]
         where = ""
         params: list = []
-        if q:
+        if not q:
+            # No filter: a single count serves as both totals.
+            filtered = unfiltered = self._conn.execute(
+                "SELECT COUNT(*) " + latest
+            ).fetchone()[0]
+        else:
+            unfiltered = self._conn.execute("SELECT COUNT(*) " + latest).fetchone()[0]
             esc = q.replace("!", "!!").replace("%", "!%").replace("_", "!_")
             where = " WHERE c.address LIKE ? ESCAPE '!'"
             params.append(f"%{esc}%")
             filtered = self._conn.execute(
                 "SELECT COUNT(*) " + latest + where, params
             ).fetchone()[0]
-        else:
-            filtered = unfiltered
         col = f"c.{sort}"
         null_order = f"{col} IS NULL" if descending else f"{col} IS NOT NULL"
         sql = (
