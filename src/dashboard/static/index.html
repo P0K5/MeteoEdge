@@ -823,6 +823,38 @@ a,button,input,select{transition:color var(--transition),background var(--transi
   border-radius:var(--radius-full);border:1px solid var(--border);
 }
 .copy-table-wrap{overflow-x:auto;}
+/* Wallets toolbar + pagination footer (issue #1276). Built from the existing
+   .copy-activity-filters / .pagination / .pg-btn language; only layout glue. */
+.copy-wallets-toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-2) var(--space-4);margin-bottom:var(--space-4);}
+.copy-search-wrap{position:relative;display:inline-flex;align-items:center;}
+.copy-search-input{
+  width:260px;max-width:100%;padding:6px 28px 6px 10px;border-radius:var(--radius-sm);
+  border:1px solid var(--border);background:var(--surface-2);color:var(--text);
+  font-family:var(--font-mono);font-size:var(--text-xs);
+}
+.copy-search-input::-webkit-search-cancel-button{display:none;}
+.copy-search-input:focus-visible{outline:2px solid var(--primary);outline-offset:1px;}
+.copy-search-clear{
+  position:absolute;right:2px;top:50%;transform:translateY(-50%);
+  background:none;border:none;color:var(--muted);cursor:pointer;
+  font-size:var(--text-base);line-height:1;padding:4px 8px;border-radius:var(--radius-sm);
+}
+.copy-search-clear:hover{color:var(--text);}
+.copy-search-clear:focus-visible{outline:2px solid var(--primary);outline-offset:-2px;}
+.copy-search-clear[hidden],.copy-pagination[hidden]{display:none;}
+.copy-refresh-btn{display:inline-flex;align-items:center;gap:var(--space-2);padding:4px var(--space-3);font-size:var(--text-xs);}
+.copy-refresh-btn i{width:14px;height:14px;}
+.copy-showing{margin-left:auto;font-size:var(--text-sm);color:var(--muted);font-variant-numeric:tabular-nums;}
+/* A page/sort/search change keeps the prior rows on screen, dimmed, until the
+   new page lands -- same box, so nothing jumps. */
+#copy-candidates-list.copy-list-loading .copy-table-wrap{opacity:.5;pointer-events:none;transition:opacity .15s;}
+@media(max-width:800px){
+  .copy-search-wrap{width:100%;}
+  .copy-search-input{width:100%;}
+  .copy-showing{margin-left:0;width:100%;}
+  .copy-pagination{flex-wrap:wrap;}
+  .copy-pagination .pg-btn{min-height:44px;}
+}
 /* overflow-x:auto forces overflow-y:auto, which would clip the under-cell copy feedback overlay on the last row: reserve room for label + hint */
 .copy-table-wrap:has(.copy-copy-btn){padding-bottom:var(--space-10);}
 .copy-table{width:100%;border-collapse:collapse;font-size:var(--text-xs);font-variant-numeric:tabular-nums;}
@@ -1371,7 +1403,26 @@ a,button,input,select{transition:color var(--transition),background var(--transi
           <span class="copy-slots-pill" id="copy-slots-pill">— slots remaining</span>
         </div>
       </div>
-      <div id="copy-candidates-list">
+      <!-- Toolbar lives OUTSIDE #copy-candidates-list so list rebuilds never
+           reset the search box (caret/focus) or the page-size select. -->
+      <div class="copy-wallets-toolbar">
+        <div class="copy-search-wrap">
+          <input type="search" id="copy-search-input" class="copy-search-input" placeholder="Search address…"
+                 autocomplete="off" spellcheck="false" maxlength="100" aria-label="Search wallets by address">
+          <button type="button" id="copy-search-clear" class="copy-search-clear" aria-label="Clear search" hidden>&times;</button>
+        </div>
+        <label class="copy-activity-filter-label" for="copy-page-size">Rows</label>
+        <select id="copy-page-size" class="config-edit-select" aria-label="Rows per page">
+          <option value="25" selected>25</option>
+          <option value="50">50</option>
+          <option value="100">100</option>
+        </select>
+        <button type="button" id="copy-refresh-btn" class="pg-btn copy-refresh-btn" aria-label="Refresh candidates">
+          <i data-lucide="refresh-cw"></i>Refresh
+        </button>
+        <span class="copy-showing" id="copy-showing" aria-live="polite"></span>
+      </div>
+      <div id="copy-candidates-list" aria-busy="true">
         <div class="copy-table-wrap">
         <table class="copy-table" aria-label="Screened wallet candidates">
           <thead>
@@ -1396,6 +1447,11 @@ a,button,input,select{transition:color var(--transition),background var(--transi
           </tbody>
         </table>
         </div>
+      </div>
+      <div class="pagination copy-pagination" id="copy-pagination" hidden>
+        <button type="button" class="pg-btn" id="copy-pg-prev">&#8592; Prev</button>
+        <span class="pg-info" id="copy-pg-info" aria-live="polite"></span>
+        <button type="button" class="pg-btn" id="copy-pg-next">Next &#8594;</button>
       </div>
     </div>
   </main>
@@ -4244,11 +4300,48 @@ const COPY_CANDIDATE_COLUMNS = [
 // Default sort: median_roi descending, mirroring the backtest report's own
 // methodology -- NEVER mirrored_dollar_pnl/flat_dollar_pnl as the default,
 // the exact mistake the spike already made once (design spec).
+//
+// Issue #1276: paging, sort and search are SERVER-side
+// (GET /api/copy-trading/candidates?page&page_size&sort&dir&q, issue #1274).
+// The sort keys are the response's own field names. sort=followed/unstable are
+// the slow server sorts and are never the default.
 let _copySort = { key: 'median_roi', dir: 'desc' };
-let _copyCandidatesData = null;   // last-fetched payload, cached for re-sort without a re-fetch
-let _copyCandidates = [];         // current sorted row list
-let _copyExpanded = new Set();    // addresses with an open detail panel
+let _copyCandidatesData = null;   // last-rendered payload (one page)
+let _copyCandidates = [];         // the page's rows, in server order
+let _copyExpanded = new Set();    // addresses with an open detail panel (current page only)
 let _copyListenersBound = false;  // delegated listeners are bound once
+
+const COPY_PAGE_SIZES = [25, 50, 100];
+const COPY_PAGE_SIZE_KEY = 'copyWalletsPageSize';
+const COPY_SEARCH_MIN_CHARS = 3;
+const COPY_SEARCH_DEBOUNCE_MS = 200;
+
+function _copyLoadPageSize() {
+  try {
+    const n = parseInt(localStorage.getItem(COPY_PAGE_SIZE_KEY), 10);
+    if (COPY_PAGE_SIZES.indexOf(n) !== -1) return n;
+  } catch (e) { /* storage blocked/unavailable: fall back to the default */ }
+  return COPY_PAGE_SIZES[0];
+}
+function _copySavePageSize(n) {
+  try { localStorage.setItem(COPY_PAGE_SIZE_KEY, String(n)); } catch (e) { /* non-fatal */ }
+}
+
+let _copyPage = 1;                          // requested page (1-based)
+let _copyPageSize = _copyLoadPageSize();
+let _copyQuery = '';                        // APPLIED search ('' or >= 3 chars)
+let _copyShown = null;                      // {page, pageSize, sort, dir, q} of the last rendered payload
+let _copyAbort = null;                      // AbortController of the in-flight request
+let _copyReqSeq = 0;                        // monotonically increasing request id (stale-response guard)
+let _copyInflightKind = null;               // 'poll' | 'refresh' | 'user' while a request is out
+let _copySearchTimer = null;
+let _copySearchJumpAddress = null;          // wallet to expand once a search-by-address lands
+// address -> {value, focused, selStart, selEnd}: an armed Follow input and the
+// stake typed so far, restored when the list DOM is rebuilt by a refresh.
+const _copyArmed = new Map();
+// address -> screening-history runs: the detail is fetched on first expand only,
+// then re-rendered from here on every list rebuild (no flicker, no refetch).
+const _copyHistoryCache = new Map();
 
 function _copyFmtPct(x) {
   return x == null ? '—' : (x * 100).toFixed(1) + '%';
@@ -4503,20 +4596,6 @@ async function copyAddressToClipboard(address, btn) {
   showFailure();
 }
 
-function _copySortedRows(rows) {
-  const { key, dir } = _copySort;
-  return [...rows].sort((a, b) => {
-    const av = a[key], bv = b[key];
-    if (av == null && bv == null) return 0;
-    if (av == null) return 1;
-    if (bv == null) return -1;
-    if (typeof av === 'string') {
-      return dir === 'asc' ? av.localeCompare(bv) : bv.localeCompare(av);
-    }
-    return dir === 'asc' ? av - bv : bv - av;
-  });
-}
-
 function sortCandidates(key) {
   if (!key) return;
   if (_copySort.key === key) {
@@ -4525,13 +4604,120 @@ function sortCandidates(key) {
     _copySort.key = key;
     _copySort.dir = 'desc';
   }
-  if (_copyCandidatesData) renderCopyCandidates(_copyCandidatesData);
+  // The sort is applied by the server across ALL pages, so re-fetch (page 1).
+  _copyResetToFirstPage();
+  fetchCopyTradingCandidates('user');
+}
+
+// Sort / search / page-size changes land on page 1 and collapse the expanded
+// row (it may not be on the new page).
+function _copyResetToFirstPage() {
+  _copyPage = 1;
+  _copyExpanded.clear();
+  _copyArmed.clear();
+}
+
+function _copyGoToPage(page) {
+  if (!_copyCandidatesData) return;
+  const totalPages = _copyCandidatesData.total_pages || 0;
+  const target = Math.max(1, Math.min(page, Math.max(totalPages, 1)));
+  if (target === _copyPage) return;
+  _copyPage = target;
+  _copyExpanded.clear();   // paging away collapses the detail row
+  _copyArmed.clear();
+  fetchCopyTradingCandidates('user');
+}
+
+// Debounced address search. Only >= 3 chars filter the server (shorter input
+// means "no search"); every applied change goes back to page 1.
+function _copyEffectiveQuery(raw) {
+  const q = String(raw || '').trim();
+  return q.length >= COPY_SEARCH_MIN_CHARS ? q : '';
+}
+
+function _copyApplySearch(raw) {
+  const q = _copyEffectiveQuery(raw);
+  if (q === _copyQuery) return;
+  _copyQuery = q;
+  _copyResetToFirstPage();
+  fetchCopyTradingCandidates('user');
+}
+
+function _copySyncClearButton(raw) {
+  const btn = document.getElementById('copy-search-clear');
+  if (btn) btn.hidden = !raw;
+}
+
+function _copyOnSearchInput() {
+  const input = document.getElementById('copy-search-input');
+  const raw = input ? input.value : '';
+  _copySyncClearButton(raw);
+  if (_copySearchTimer !== null) clearTimeout(_copySearchTimer);
+  _copySearchTimer = setTimeout(() => {
+    _copySearchTimer = null;
+    _copyApplySearch(raw);
+  }, COPY_SEARCH_DEBOUNCE_MS);
+}
+
+function _copyClearSearch() {
+  const input = document.getElementById('copy-search-input');
+  if (input) input.value = '';
+  _copySyncClearButton('');
+  if (_copySearchTimer !== null) { clearTimeout(_copySearchTimer); _copySearchTimer = null; }
+  _copyApplySearch('');
+  if (input && input.focus) input.focus();
+}
+
+function _copyOnPageSizeChange() {
+  const sel = document.getElementById('copy-page-size');
+  const n = sel ? parseInt(sel.value, 10) : NaN;
+  if (COPY_PAGE_SIZES.indexOf(n) === -1 || n === _copyPageSize) return;
+  _copyPageSize = n;
+  _copySavePageSize(n);
+  _copyResetToFirstPage();
+  fetchCopyTradingCandidates('user');
+}
+
+// Jump to a wallet that is not on the current page: search its address.
+function _copyJumpBySearch(address) {
+  const input = document.getElementById('copy-search-input');
+  if (input) input.value = address;
+  _copySyncClearButton(address);
+  if (_copySearchTimer !== null) { clearTimeout(_copySearchTimer); _copySearchTimer = null; }
+  _copySearchJumpAddress = address;
+  _copyQuery = _copyEffectiveQuery(address);
+  _copyResetToFirstPage();
+  fetchCopyTradingCandidates('user');
+}
+
+let _copyToolbarBound = false;
+function _copyBindToolbarEvents() {
+  if (_copyToolbarBound) return;
+  const input = document.getElementById('copy-search-input');
+  if (!input) return;
+  _copyToolbarBound = true;
+  const sel = document.getElementById('copy-page-size');
+  if (sel) {
+    sel.value = String(_copyPageSize);
+    sel.addEventListener('change', _copyOnPageSizeChange);
+  }
+  input.addEventListener('input', _copyOnSearchInput);
+  input.addEventListener('keydown', e => { if (e.key === 'Escape' && input.value) _copyClearSearch(); });
+  const clear = document.getElementById('copy-search-clear');
+  if (clear) clear.addEventListener('click', _copyClearSearch);
+  const prev = document.getElementById('copy-pg-prev');
+  if (prev) prev.addEventListener('click', () => _copyGoToPage(_copyPage - 1));
+  const next = document.getElementById('copy-pg-next');
+  if (next) next.addEventListener('click', () => _copyGoToPage(_copyPage + 1));
+  const refreshBtn = document.getElementById('copy-refresh-btn');
+  if (refreshBtn) refreshBtn.addEventListener('click', () => fetchCopyTradingCandidates('refresh'));
 }
 
 // Single delegated click/keydown handler for the whole candidates panel --
 // bound once to the (never-replaced) #copy-candidates-list container, so
 // it keeps working across every innerHTML re-render without rebinding.
 function _copyOnListClick(event) {
+  if (_copyIsListLoading()) return;   // stale rows are not actionable mid-load
   const copyBtn = event.target.closest('.copy-copy-btn');
   if (copyBtn) {
     event.stopPropagation();
@@ -4542,6 +4728,10 @@ function _copyOnListClick(event) {
   const sortBtn = event.target.closest('.copy-th-btn');
   if (sortBtn) {
     sortCandidates(sortBtn.dataset.sortKey);
+    return;
+  }
+  if (event.target.closest('[data-clear-search]')) {
+    _copyClearSearch();
     return;
   }
   const armBtn = event.target.closest('.copy-follow-arm-btn');
@@ -4567,11 +4757,22 @@ function _copyOnListClick(event) {
 }
 
 function _copyOnListKeydown(event) {
+  if (_copyIsListLoading()) return;
   if (event.key !== 'Enter' && event.key !== ' ') return;
   const row = event.target.closest('.copy-row-expandable');
   if (!row) return;
   event.preventDefault();
   toggleCandidateDetail(row.dataset.address);
+}
+
+// Keeps the typed stake of an armed Follow input so a list rebuild (refresh)
+// can restore it.
+function _copyOnListInput(event) {
+  const input = event.target;
+  if (!input || !input.classList || !input.classList.contains('copy-stake-input')) return;
+  const address = input.closest('[data-address]')?.dataset.address;
+  const armed = address && _copyArmed.get(address);
+  if (armed) armed.value = input.value;
 }
 
 function _copyBindListEvents() {
@@ -4580,6 +4781,7 @@ function _copyBindListEvents() {
   if (!wrap) return;
   wrap.addEventListener('click', _copyOnListClick);
   wrap.addEventListener('keydown', _copyOnListKeydown);
+  wrap.addEventListener('input', _copyOnListInput);
   _copyListenersBound = true;
 }
 
@@ -4595,7 +4797,7 @@ function _copyColumnHeaderHtml(col) {
   const ariaSort = active ? (dir === 'asc' ? 'ascending' : 'descending') : 'none';
   const icon = active ? (dir === 'asc' ? 'chevron-up' : 'chevron-down') : 'chevrons-up-down';
   return `<th class="copy-th" scope="col" aria-sort="${ariaSort}">
-    <button type="button" class="copy-th-btn" data-sort-key="${col.key}"
+    <button type="button" class="copy-th-btn" id="copy-sort-${col.key}" data-sort-key="${col.key}"
             aria-label="Sort by ${col.label}${active ? ', currently ' + ariaSort : ''}">
       <span>${col.label}</span><i data-lucide="${icon}" class="copy-sort-icon"></i>
     </button>
@@ -4668,6 +4870,73 @@ function _copyRowHtml(c) {
     </tr>`;
 }
 
+function _copyFmtInt(n) {
+  return Number(n).toLocaleString('en-US');
+}
+
+// Paging fields of a response. A legacy (un-paged) payload has no `total*`
+// fields -- treat it as a single page so the view still renders.
+function _copyPagingOf(data) {
+  const rows = data.candidates || [];
+  const total = data.total != null ? data.total : rows.length;
+  return {
+    rows,
+    total,
+    unfiltered: data.unfiltered_total != null ? data.unfiltered_total : total,
+    page: data.page != null ? data.page : 1,
+    pageSize: data.page_size != null ? data.page_size : (rows.length || _copyPageSize),
+    totalPages: data.total_pages != null ? data.total_pages : (rows.length ? 1 : 0),
+  };
+}
+
+// Toolbar count text + pagination footer. total_pages === 0 (nothing matches)
+// is an explicit empty state: the footer is hidden, never "Page 1 of 0".
+function _copyRenderPaging(pg) {
+  const showing = document.getElementById('copy-showing');
+  const footer = document.getElementById('copy-pagination');
+  const info = document.getElementById('copy-pg-info');
+  const prev = document.getElementById('copy-pg-prev');
+  const next = document.getElementById('copy-pg-next');
+  if (showing) {
+    if (pg.total === 0 || !pg.rows.length) {
+      showing.textContent = '';
+    } else {
+      const from = (pg.page - 1) * pg.pageSize + 1;
+      const to = from + pg.rows.length - 1;
+      const filtered = pg.total !== pg.unfiltered ? ` (filtered from ${_copyFmtInt(pg.unfiltered)})` : '';
+      showing.textContent = `Showing ${_copyFmtInt(from)}–${_copyFmtInt(to)} of ${_copyFmtInt(pg.total)}${filtered}`;
+    }
+  }
+  const ae = document.activeElement;
+  if (footer) footer.hidden = !(pg.totalPages > 1);
+  if (pg.totalPages > 1) {
+    if (info) info.textContent = `Page ${pg.page} of ${pg.totalPages}`;
+    if (prev) prev.disabled = pg.page <= 1;
+    if (next) next.disabled = pg.page >= pg.totalPages;
+  }
+  // A focused pager button that just became disabled (or hidden) must not
+  // drop keyboard focus to <body>: hand it to the other button, else the list.
+  if (ae && (ae === prev || ae === next)) {
+    const other = ae === prev ? next : prev;
+    if (ae.disabled || (footer && footer.hidden)) {
+      if (other && !other.disabled && !(footer && footer.hidden)) other.focus(); else _copyFocusList();
+    }
+  }
+}
+
+// Remember an armed Follow input's typed stake / focus before the list DOM is
+// replaced, and which sort button / row had focus.
+function _copySnapshotUiState() {
+  const ae = document.activeElement;
+  _copyArmed.forEach((st, address) => {
+    const input = document.getElementById('copy-stake-' + _copySafeId(address));
+    if (!input) return;
+    st.value = input.value;
+    if (input === ae) st.focused = true;   // cleared once restored
+  });
+  return ae && ae.id && /^copy-(sort|row)-/.test(ae.id) ? ae.id : null;
+}
+
 function renderCopyCandidates(data) {
   _copyCandidatesData = data;
   _copyBindListEvents();
@@ -4677,24 +4946,49 @@ function renderCopyCandidates(data) {
     pill.textContent = `${data.slots_remaining}/${data.max_followed} follow slots remaining`;
   }
 
-  if (!data.candidates.length) {
+  const pg = _copyPagingOf(data);
+  _copyCandidates = pg.rows;
+  _copyRenderPaging(pg);
+
+  if (pg.unfiltered === 0) {
     wrap.innerHTML = `<div class="empty"><i data-lucide="inbox"></i><h3>No wallets screened yet</h3><p>Run the copy-trading screening pipeline to populate this list.</p></div>`;
     lucide.createIcons();
     return;
   }
 
-  _copyCandidates = _copySortedRows(data.candidates);
-
+  const refocusId = _copySnapshotUiState() || _copyLoadFocusId;
+  _copyLoadFocusId = null;
+  const range = pg.rows.length
+    ? `, rows ${_copyFmtInt((pg.page - 1) * pg.pageSize + 1)} to ${_copyFmtInt((pg.page - 1) * pg.pageSize + pg.rows.length)} of ${_copyFmtInt(pg.total)}`
+    : '';
+  if (!pg.rows.length) {
+    // No match: a block BELOW the toolbar, outside the horizontally scrolling
+    // table wrapper (a centred cell inside it lands off-screen on mobile).
+    wrap.innerHTML = `<div class="empty copy-no-match" role="status"><i data-lucide="search-x"></i><h3>No wallets match “${_copyEscapeHtml(_copyQuery)}”</h3><p><button type="button" class="copy-empty-link" data-clear-search="1">Clear search</button></p></div>`;
+    lucide.createIcons();
+    if (refocusId) _copyFocusList();
+    return;
+  }
+  const body = pg.rows.map(_copyRowHtml).join('');
   wrap.innerHTML = `
     <div class="copy-table-wrap">
-    <table class="copy-table" aria-label="Screened wallet candidates">
+    <table class="copy-table" aria-label="Screened wallet candidates${range}">
       <thead><tr>${COPY_CANDIDATE_COLUMNS.map(_copyColumnHeaderHtml).join('')}</tr></thead>
-      <tbody>${_copyCandidates.map(_copyRowHtml).join('')}</tbody>
+      <tbody>${body}</tbody>
     </table>
     </div>`;
   lucide.createIcons();
+  if (refocusId) {
+    const target = document.getElementById(refocusId);
+    if (target && target.focus) target.focus();
+  }
   _copyReopenExpandedRows();
   _copyConsumePendingCandidateJump();
+  if (_copySearchJumpAddress !== null) {
+    const address = _copySearchJumpAddress;
+    _copySearchJumpAddress = null;   // one attempt
+    _copyJumpToCandidateRow(address, { viaSearch: false });
+  }
 }
 
 function toggleCandidateDetail(address) {
@@ -4733,11 +5027,11 @@ function _copyFollowIdleHtml() {
   </button>`;
 }
 
-function _copyFollowArmedHtml(address) {
+function _copyFollowArmedHtml(address, stake = '5') {
   const safeId = _copySafeId(address);
   return `
     <label class="copy-stake-label" for="copy-stake-${safeId}">Stake per trade ($)</label>
-    <input type="number" min="0.01" step="0.01" value="5" id="copy-stake-${safeId}" class="copy-stake-input" aria-label="Stake per trade in USD">
+    <input type="number" min="0.01" step="0.01" value="${_copyEscapeHtml(stake)}" id="copy-stake-${safeId}" class="copy-stake-input" aria-label="Stake per trade in USD">
     <button type="button" class="btn-follow btn-follow-confirm" aria-label="Confirm follow at the entered stake">
       <span class="spinner"></span><i data-lucide="check"></i>Confirm follow
     </button>
@@ -4745,18 +5039,26 @@ function _copyFollowArmedHtml(address) {
     <p class="copy-follow-msg" id="copy-follow-msg-${safeId}" role="status" aria-live="polite"></p>`;
 }
 
-function _armFollow(address) {
+function _copyShowArmedFollow(address, stake, focus) {
   const section = document.getElementById('copy-follow-section-' + _copySafeId(address));
   if (!section) return;
-  section.innerHTML = _copyFollowArmedHtml(address);
+  section.innerHTML = _copyFollowArmedHtml(address, stake);
   lucide.createIcons();
   const input = document.getElementById('copy-stake-' + _copySafeId(address));
-  if (input) input.focus();
+  if (input && focus) input.focus();
+}
+
+function _armFollow(address) {
+  if (!document.getElementById('copy-follow-section-' + _copySafeId(address))) return;
+  // Tracked so a refresh-driven list rebuild can re-arm it with the typed stake.
+  _copyArmed.set(address, { value: '5', focused: false });
+  _copyShowArmedFollow(address, '5', true);
 }
 
 function _cancelFollow(address) {
   const section = document.getElementById('copy-follow-section-' + _copySafeId(address));
   if (!section) return;
+  _copyArmed.delete(address);
   section.innerHTML = _copyFollowIdleHtml();
   lucide.createIcons();
 }
@@ -4826,25 +5128,34 @@ function _renderCopySparkline(address, runs) {
   });
 }
 
-async function _renderCandidateDetail(address) {
+// Screening history is fetched on first expand only; later list rebuilds
+// re-render the detail from the cache, synchronously (no "Loading…" flicker).
+const _copyHistoryInflight = new Map();   // address -> Promise<runs>
+
+function _copyLoadHistory(address) {
+  if (_copyHistoryCache.has(address)) return Promise.resolve(_copyHistoryCache.get(address));
+  if (_copyHistoryInflight.has(address)) return _copyHistoryInflight.get(address);
+  const p = (async () => {
+    try {
+      const r = await fetch('/api/copy-trading/wallets/' + encodeURIComponent(address) + '/history?limit=10');
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const history = await r.json();
+      // API returns newest-first; the chart reads left-to-right as oldest-to-newest.
+      const runs = (history.runs || []).slice().reverse();
+      _copyHistoryCache.set(address, runs);
+      return runs;
+    } finally {
+      _copyHistoryInflight.delete(address);
+    }
+  })();
+  _copyHistoryInflight.set(address, p);
+  return p;
+}
+
+function _copyPaintCandidateDetail(address, runs) {
   const panel = document.getElementById('copy-detail-' + _copySafeId(address));
-  if (!panel) return;
+  if (!panel) return;   // paged away / list rebuilt without this row
   const candidate = _copyCandidates.find(c => c.address === address);
-
-  let history;
-  try {
-    const r = await fetch('/api/copy-trading/wallets/' + encodeURIComponent(address) + '/history?limit=10');
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    history = await r.json();
-  } catch (e) {
-    panel.innerHTML = `<div class="chart-empty">Could not load screening history: ${e.message}</div>`;
-    console.error(`Wallet history fetch failed for ${address}:`, e);
-    return;
-  }
-
-  // API returns newest-first; the chart reads left-to-right as oldest-to-newest.
-  const runs = (history.runs || []).slice().reverse();
-
   panel.innerHTML = `
     <div class="copy-detail-grid">
       <div class="copy-detail-chart">
@@ -4860,7 +5171,36 @@ async function _renderCandidateDetail(address) {
     </div>`;
   lucide.createIcons();
 
+  // An armed Follow input (and the stake typed so far) survives a list rebuild.
+  const armed = _copyArmed.get(address);
+  if (armed) {
+    if (document.getElementById('copy-follow-section-' + _copySafeId(address))) {
+      _copyShowArmedFollow(address, armed.value, armed.focused);
+      armed.focused = false;
+    } else {
+      _copyArmed.delete(address);   // wallet became followed/ineligible meanwhile
+    }
+  }
+
   if (runs.length) _renderCopySparkline(address, runs);
+}
+
+async function _renderCandidateDetail(address) {
+  if (!document.getElementById('copy-detail-' + _copySafeId(address))) return;
+  if (_copyHistoryCache.has(address)) {
+    _copyPaintCandidateDetail(address, _copyHistoryCache.get(address));
+    return;
+  }
+  let runs;
+  try {
+    runs = await _copyLoadHistory(address);
+  } catch (e) {
+    const panel = document.getElementById('copy-detail-' + _copySafeId(address));
+    if (panel) panel.innerHTML = `<div class="chart-empty">Could not load screening history: ${_copyEscapeHtml(e.message)}</div>`;
+    console.error(`Wallet history fetch failed for ${address}:`, e);
+    return;
+  }
+  _copyPaintCandidateDetail(address, runs);
 }
 
 async function submitFollow(address, btn) {
@@ -4892,9 +5232,11 @@ async function submitFollow(address, btn) {
     // The roster changed -- drop the shared followed-wallets/positions cache
     // so Paper/Live never serve a pre-follow payload (issue #1275).
     _copyInvalidateShared();
-    // Refresh the candidates list so this row now shows "Followed" — the
-    // open detail panel is preserved via _copyReopenExpandedRows().
-    await fetchCopyTradingCandidates();
+    _copyArmed.delete(address);
+    // Refresh the current page (same page/sort/search) so this row now shows
+    // "Followed" -- the open detail panel is preserved via
+    // _copyReopenExpandedRows().
+    await fetchCopyTradingCandidates('refresh');
   } catch (e) {
     if (msgEl) msgEl.textContent = `Follow request failed: ${e.message}`;
     btn.disabled = false;
@@ -4966,22 +5308,109 @@ async function fetchCopyTradingModePosture() {
   }
 }
 
-async function fetchCopyTradingCandidates() {
+function _copyCandidatesUrl(st) {
+  const p = new URLSearchParams({
+    page: String(st.page),
+    page_size: String(st.pageSize),
+    sort: st.sort,
+    dir: st.dir,
+  });
+  if (st.q) p.set('q', st.q);   // the server ignores < 3 chars; never even send them
+  return '/api/copy-trading/candidates?' + p.toString();
+}
+
+let _copyLoadFocusId = null;   // sort button / row that had focus when loading began
+
+function _copyFocusList() {
+  const list = document.getElementById('copy-candidates-list');
+  if (!list) return;
+  list.setAttribute('tabindex', '-1');
+  list.focus();
+}
+
+function _copyIsListLoading() {
+  const list = document.getElementById('copy-candidates-list');
+  return !!(list && list.classList.contains('copy-list-loading'));
+}
+
+// While a page/sort/search request is out the dimmed prior rows are inert:
+// no click, Enter/Space, Tab stop or Follow on a stale row. Focus that was
+// inside the list moves to the list container (never to <body>) and is
+// restored to the same sort button / row once the new page renders.
+function _copySetListLoading(on) {
+  const list = document.getElementById('copy-candidates-list');
+  if (list) {
+    if (on && !_copyIsListLoading()) {
+      _copyLoadFocusId = _copySnapshotUiState();
+      const ae = document.activeElement;
+      if (_copyLoadFocusId || (ae && ae.id && /^copy-stake-/.test(ae.id))) _copyFocusList();
+    }
+    list.classList.toggle('copy-list-loading', !!on);
+    list.setAttribute('aria-busy', on ? 'true' : 'false');
+    if (on) list.setAttribute('inert', ''); else list.removeAttribute('inert');
+  }
+  const btn = document.getElementById('copy-refresh-btn');
+  if (btn) btn.disabled = !!on;
+}
+
+// kind:
+//   'poll'    -- controller tick / tab re-entry: keeps page, sort, search, size;
+//                skipped if any request is already in flight.
+//   'refresh' -- manual Refresh / post-follow: same state, but supersedes any
+//                in-flight request.
+//   'user'    -- sort / search / page / page-size change: supersedes any
+//                in-flight request; prior rows stay on screen, dimmed.
+// Every new request aborts the previous one (AbortController) and a sequence
+// number guards against a stale response overwriting a newer one even if the
+// transport ignores the abort.
+async function fetchCopyTradingCandidates(kind = 'poll') {
+  _copyBindToolbarEvents();
+  if (kind === 'poll' && _copyInflightKind !== null) return;
   const banner = document.getElementById('copy-wallets-error-banner');
+  if (_copyAbort) _copyAbort.abort();
+  const ctrl = typeof AbortController === 'function' ? new AbortController() : null;
+  _copyAbort = ctrl;
+  const seq = ++_copyReqSeq;
+  _copyInflightKind = kind;
+  if (_copyCandidatesData) _copySetListLoading(kind !== 'poll');
+  const query = { page: _copyPage, pageSize: _copyPageSize, sort: _copySort.key, dir: _copySort.dir, q: _copyQuery };
+  let clampTo = null;
   try {
-    const r = await fetch('/api/copy-trading/candidates');
+    const r = await fetch(_copyCandidatesUrl(query), ctrl ? { signal: ctrl.signal } : undefined);
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const data = await r.json();
+    if (seq !== _copyReqSeq) return;   // superseded by a newer request
     if (banner) banner.classList.remove('visible');
-    // Identical payload: leave the table DOM alone (expanded rows, armed
-    // Follow input, scroll position all survive a no-change poll).
-    if (_copyPayloadUnchanged('candidates', JSON.stringify(data))) return;
-    renderCopyCandidates(data);
+    const pg = _copyPagingOf(data);
+    if (!pg.rows.length && pg.total > 0 && pg.totalPages > 0 && query.page > pg.totalPages) {
+      // The list shrank under us (e.g. a re-screen): fall back to the last page.
+      clampTo = pg.totalPages;
+    } else {
+      // Identical payload for the same query: leave the table DOM alone
+      // (expanded rows, armed Follow input, scroll position all survive).
+      // A user-initiated change always renders -- its UI state was reset.
+      const unchanged = _copyPayloadUnchanged('candidates', JSON.stringify([query, data]));
+      _copyShown = query;
+      if (unchanged && kind !== 'user') return;
+      renderCopyCandidates(data);
+    }
   } catch (e) {
+    if ((e && e.name === 'AbortError') || seq !== _copyReqSeq) return;
     console.error('Copy-trading candidates fetch failed:', e);
     if (_copyCandidatesData) {
-      // Last-known-good data stays on screen — only the banner changes
-      // (design spec: never drop to a blank screen on a fetch failure).
+      // Last-known-good data stays on screen -- only the banner changes
+      // (design spec: never drop to a blank screen on a fetch failure). The
+      // requested page/sort/size/search roll back to what is actually shown,
+      // so the headers, count and controls never describe rows that aren't there.
+      const s = _copyShown;
+      if (s && (s.page !== _copyPage || s.pageSize !== _copyPageSize || s.sort !== _copySort.key
+          || s.dir !== _copySort.dir || s.q !== _copyQuery)) {
+        _copyPage = s.page; _copyPageSize = s.pageSize; _copyQuery = s.q;
+        _copySort = { key: s.sort, dir: s.dir };
+        const sel = document.getElementById('copy-page-size');
+        if (sel) sel.value = String(_copyPageSize);
+        renderCopyCandidates(_copyCandidatesData);
+      }
       if (banner) banner.classList.add('visible');
       const textEl = document.getElementById('copy-wallets-error-text');
       if (textEl) {
@@ -4989,9 +5418,21 @@ async function fetchCopyTradingCandidates() {
       }
     } else {
       const wrap = document.getElementById('copy-candidates-list');
-      wrap.innerHTML = `<div class="empty"><i data-lucide="alert-circle"></i><h3>Could not load candidates</h3><p>${e.message} — retrying automatically.</p></div>`;
+      wrap.innerHTML = `<div class="empty"><i data-lucide="alert-circle"></i><h3>Could not load candidates</h3><p>${_copyEscapeHtml(e.message)} — retrying automatically.</p></div>`;
       lucide.createIcons();
     }
+  } finally {
+    if (seq === _copyReqSeq) {
+      _copyInflightKind = null;
+      _copyAbort = null;
+      _copySetListLoading(false);
+    }
+  }
+  if (clampTo !== null && seq === _copyReqSeq) {
+    _copyPage = clampTo;
+    _copyExpanded.clear();
+    _copyArmed.clear();
+    await fetchCopyTradingCandidates(kind === 'poll' ? 'refresh' : kind);
   }
 }
 
@@ -6905,9 +7346,14 @@ function _copyActivityWalletOptionsHtml(events, selected) {
 //   jump is parked and consumed by renderCopyCandidates().
 let _copyPendingCandidateJump = null;
 
-function _copyJumpToCandidateRow(address) {
+function _copyJumpToCandidateRow(address, { viaSearch = true } = {}) {
   const row = document.getElementById('copy-row-' + _copySafeId(address));
-  if (!row) return false;
+  if (!row) {
+    // Candidates are paged server-side: the wallet may be on another page.
+    // Find it by searching its address (page 1), then expand it on arrival.
+    if (viaSearch) _copyJumpBySearch(address);
+    return false;
+  }
   row.scrollIntoView({ behavior: 'smooth', block: 'center' });
   if (!_copyExpanded.has(address)) toggleCandidateDetail(address);
   return true;
