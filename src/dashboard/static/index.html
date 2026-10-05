@@ -4,10 +4,14 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>MeteoEdge Portfolio</title>
+<link rel="preconnect" href="https://api.fontshare.com" crossorigin>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="preconnect" href="https://unpkg.com" crossorigin>
 <link href="https://api.fontshare.com/v2/css?f[]=satoshi@400,500,600,700&display=swap" rel="stylesheet">
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-<script src="https://unpkg.com/lucide@0.511.0/dist/umd/lucide.js"></script>
-<script src="https://unpkg.com/chart.js@4/dist/chart.umd.min.js"></script>
+<script defer src="https://unpkg.com/lucide@0.511.0/dist/umd/lucide.js"></script>
+<!-- Chart.js is lazy-loaded on first chart render: see _ensureChartJs() -->
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 html{-webkit-font-smoothing:antialiased;scroll-behavior:smooth}
@@ -2345,6 +2349,23 @@ function toggleTheme() {
    POSITION CHARTS
    ───────────────────────────────────────── */
 
+// Chart.js is loaded on demand (first chart render) instead of blocking the
+// initial page load. Memoised; a failed load clears the cache so it can retry.
+const CHARTJS_URL = 'https://unpkg.com/chart.js@4.5.1/dist/chart.umd.min.js';
+let _chartJsPromise = null;
+function _ensureChartJs() {
+  if (typeof Chart !== 'undefined') return Promise.resolve();
+  if (_chartJsPromise) return _chartJsPromise;
+  _chartJsPromise = new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = CHARTJS_URL;
+    s.onload = () => resolve();
+    s.onerror = () => { s.remove(); _chartJsPromise = null; reject(new Error('Chart.js failed to load')); };
+    document.head.appendChild(s);
+  });
+  return _chartJsPromise;
+}
+
 function _autoLoadCharts(positions) {
   positions.forEach(p => {
     if (p.token_id) _renderChart(p.token_id, p.entry_price, p.my_prob, p.market_prob);
@@ -2370,6 +2391,11 @@ async function _renderChart(tokenId, entryPrice, myProb, marketProb) {
 
   if (!rows.length) {
     wrap.innerHTML = '<div class="chart-empty">No snapshots yet — recorded every poll once the position is open.</div>';
+    return;
+  }
+
+  try { await _ensureChartJs(); } catch (e) {
+    wrap.innerHTML = '<div class="chart-empty">Error: ' + e.message + '</div>';
     return;
   }
 
@@ -2515,6 +2541,11 @@ async function _renderClosedChart(tokenId, entryPrice, exitPrice) {
 
   if (!rows.length) {
     wrap.innerHTML = '<div class="chart-empty">No snapshot history recorded for this position.</div>';
+    return;
+  }
+
+  try { await _ensureChartJs(); } catch (e) {
+    wrap.innerHTML = '<div class="chart-empty">Error: ' + e.message + '</div>';
     return;
   }
 
@@ -5276,7 +5307,8 @@ function _copyFollowSectionHtml(address, candidate, runCount) {
   return `<div class="copy-follow-section" data-address="${_copyEscapeHtml(address)}" id="copy-follow-section-${_copySafeId(address)}">${_copyFollowIdleHtml()}</div>`;
 }
 
-function _renderCopySparkline(address, runs) {
+async function _renderCopySparkline(address, runs) {
+  try { await _ensureChartJs(); } catch (e) { console.warn(e.message); return; }
   const canvas = document.getElementById('copy-canvas-' + _copySafeId(address));
   if (!canvas) return;
   const cs = getComputedStyle(document.documentElement);
@@ -6846,7 +6878,8 @@ function _copyDestroyPositionsChart() {
   _copyPositionsChartSig = null;
 }
 
-function _renderCopyPositionsChart(points) {
+async function _renderCopyPositionsChart(points) {
+  try { await _ensureChartJs(); } catch (e) { console.warn(e.message); return; }
   const canvas = document.getElementById('copy-positions-canvas');
   if (!canvas) return;
   const sig = JSON.stringify(points);
@@ -7408,7 +7441,8 @@ function _copyLivePerWalletRowHtml(w) {
     </tr>`;
 }
 
-function _renderCopyLivePositionsChart(points) {
+async function _renderCopyLivePositionsChart(points) {
+  try { await _ensureChartJs(); } catch (e) { console.warn(e.message); return; }
   const canvas = document.getElementById('copy-positions-live-canvas');
   if (!canvas) return;
   const cs = getComputedStyle(document.documentElement);
