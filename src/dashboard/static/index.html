@@ -870,18 +870,27 @@ a,button,input,select{transition:color var(--transition),background var(--transi
 /* overflow-x:auto forces overflow-y:auto, which would clip the under-cell copy feedback overlay on the last row: reserve room for label + hint */
 .copy-table-wrap:has(.copy-copy-btn){padding-bottom:var(--space-10);}
 .copy-table{width:100%;border-collapse:collapse;font-size:var(--text-xs);font-variant-numeric:tabular-nums;}
-#copy-candidates-list .copy-table{min-width:1120px;}
-#copy-candidates-list .copy-th:nth-child(1),#copy-candidates-list .copy-td:nth-child(1){min-width:180px;}
-#copy-candidates-list .copy-th:nth-child(2),#copy-candidates-list .copy-td:nth-child(2){min-width:100px;}
-#copy-candidates-list .copy-th:nth-child(3),#copy-candidates-list .copy-td:nth-child(3){min-width:70px;}
-#copy-candidates-list .copy-th:nth-child(4),#copy-candidates-list .copy-td:nth-child(4){min-width:80px;}
-#copy-candidates-list .copy-th:nth-child(5),#copy-candidates-list .copy-td:nth-child(5){min-width:80px;}
-#copy-candidates-list .copy-th:nth-child(6),#copy-candidates-list .copy-td:nth-child(6){min-width:100px;}
-#copy-candidates-list .copy-th:nth-child(7),#copy-candidates-list .copy-td:nth-child(7){min-width:100px;}
-#copy-candidates-list .copy-th:nth-child(8),#copy-candidates-list .copy-td:nth-child(8){min-width:120px;}
-#copy-candidates-list .copy-th:nth-child(9),#copy-candidates-list .copy-td:nth-child(9){min-width:115px;}
-#copy-candidates-list .copy-th:nth-child(10),#copy-candidates-list .copy-td:nth-child(10){min-width:145px;}
-#copy-candidates-list .copy-th:nth-child(11),#copy-candidates-list .copy-td:nth-child(11){min-width:50px;}
+/* Wallets candidates (#1287): fixed layout so the 11 columns sit at the same
+   x/width on every page regardless of the data (a 'New' vs 'Unstable' badge or a
+   7-digit PnL used to shift them). Widths are border-box (padding included) and
+   sum to 1219px: <= the 1248px wrap at 1280 (no inner scroll), while the table
+   min-width keeps it scrolling inside .copy-table-wrap at 375. Stability >= 115
+   fits the 'Unstable' badge, History >= 145 'Partial history'. Headers wrap and
+   the address truncates with an ellipsis instead of widening a column. */
+#copy-candidates-list .copy-table{table-layout:fixed;min-width:1219px;}
+#copy-candidates-list .copy-th:nth-child(1){width:150px;}
+#copy-candidates-list .copy-th:nth-child(2){width:90px;}
+#copy-candidates-list .copy-th:nth-child(3){width:80px;}
+#copy-candidates-list .copy-th:nth-child(4){width:90px;}
+#copy-candidates-list .copy-th:nth-child(5){width:100px;}
+#copy-candidates-list .copy-th:nth-child(6){width:115px;}
+#copy-candidates-list .copy-th:nth-child(7){width:120px;}
+#copy-candidates-list .copy-th:nth-child(8){width:164px;}
+#copy-candidates-list .copy-th:nth-child(9){width:115px;}
+#copy-candidates-list .copy-th:nth-child(10){width:145px;}
+#copy-candidates-list .copy-th:nth-child(11){width:50px;}
+#copy-candidates-list .copy-th,#copy-candidates-list .copy-th-btn{white-space:normal;}
+#copy-candidates-list .copy-address-mono{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .copy-th{text-align:left;padding:0;font-weight:700;color:var(--muted);letter-spacing:.04em;border-bottom:1px solid var(--divider);white-space:nowrap;}
 .copy-th-btn{
   display:inline-flex;align-items:center;gap:4px;
