@@ -846,6 +846,7 @@ a,button,input,select{transition:color var(--transition),background var(--transi
 .copy-refresh-btn i{width:14px;height:14px;}
 .copy-refresh-btn[aria-busy="true"]{opacity:.6;cursor:wait;}
 .copy-refresh-btn[aria-busy="true"] i{animation:spin 0.6s linear infinite;}
+@media(prefers-reduced-motion:reduce){.copy-refresh-btn[aria-busy="true"] i{animation:none;opacity:.6;}}
 .copy-showing{margin-left:auto;font-size:var(--text-sm);color:var(--muted);font-variant-numeric:tabular-nums;}
 /* A page/sort/search change keeps the prior rows on screen, dimmed, until the
    new page lands -- same box, so nothing jumps. */
@@ -860,7 +861,7 @@ a,button,input,select{transition:color var(--transition),background var(--transi
 /* overflow-x:auto forces overflow-y:auto, which would clip the under-cell copy feedback overlay on the last row: reserve room for label + hint */
 .copy-table-wrap:has(.copy-copy-btn){padding-bottom:var(--space-10);}
 .copy-table{width:100%;border-collapse:collapse;font-size:var(--text-xs);font-variant-numeric:tabular-nums;}
-#copy-candidates-list .copy-table{min-width:1200px;}
+#copy-candidates-list .copy-table{min-width:1120px;}
 #copy-candidates-list .copy-th:nth-child(1),#copy-candidates-list .copy-td:nth-child(1){min-width:180px;}
 #copy-candidates-list .copy-th:nth-child(2),#copy-candidates-list .copy-td:nth-child(2){min-width:100px;}
 #copy-candidates-list .copy-th:nth-child(3),#copy-candidates-list .copy-td:nth-child(3){min-width:70px;}
@@ -869,8 +870,8 @@ a,button,input,select{transition:color var(--transition),background var(--transi
 #copy-candidates-list .copy-th:nth-child(6),#copy-candidates-list .copy-td:nth-child(6){min-width:100px;}
 #copy-candidates-list .copy-th:nth-child(7),#copy-candidates-list .copy-td:nth-child(7){min-width:100px;}
 #copy-candidates-list .copy-th:nth-child(8),#copy-candidates-list .copy-td:nth-child(8){min-width:120px;}
-#copy-candidates-list .copy-th:nth-child(9),#copy-candidates-list .copy-td:nth-child(9){min-width:90px;}
-#copy-candidates-list .copy-th:nth-child(10),#copy-candidates-list .copy-td:nth-child(10){min-width:80px;}
+#copy-candidates-list .copy-th:nth-child(9),#copy-candidates-list .copy-td:nth-child(9){min-width:115px;}
+#copy-candidates-list .copy-th:nth-child(10),#copy-candidates-list .copy-td:nth-child(10){min-width:145px;}
 #copy-candidates-list .copy-th:nth-child(11),#copy-candidates-list .copy-td:nth-child(11){min-width:50px;}
 .copy-th{text-align:left;padding:0;font-weight:700;color:var(--muted);letter-spacing:.04em;border-bottom:1px solid var(--divider);white-space:nowrap;}
 .copy-th-btn{
