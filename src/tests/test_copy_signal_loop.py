@@ -471,6 +471,26 @@ class TestSignalDetectionAndExecution:
         assert signal_kwargs["skip_reason"] == "missing_outcome_index"
         db.insert_copy_position.assert_not_called()
 
+    def test_non_binary_outcome_index_skips_without_executing(self):
+        """Issue #1297: a multi-outcome market trade (outcomeIndex outside
+        0/1) must be skipped like a missing one, never passed through to
+        insert_copy_signal as-is -- copy_signals.outcome_index has
+        CHECK(outcome_index IS NULL OR outcome_index IN (0,1)), so forwarding
+        the raw value (e.g. 2) raises a DB constraint error and aborts the
+        rest of the wallet's cycle instead of a clean skip.
+        """
+        db = _mock_db()
+        raw = _buy_raw(outcomeIndex=2)
+        self._run(db, [raw], resolution=None)
+
+        db.insert_copy_signal.assert_called_once()
+        signal_kwargs = db.insert_copy_signal.call_args.kwargs
+        assert signal_kwargs["skip_reason"] == "non_binary_outcome_index"
+        # The raw out-of-range value must never reach the DB row -- it would
+        # re-trip the exact CHECK constraint this guard exists to avoid.
+        assert signal_kwargs["outcome_index"] is None
+        db.insert_copy_position.assert_not_called()
+
     def test_below_min_entry_price_skips(self):
         """Test that source_price strictly below COPY_MIN_ENTRY_PRICE is skipped."""
         db = _mock_db()
