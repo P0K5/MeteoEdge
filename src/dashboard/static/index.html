@@ -10,7 +10,8 @@
 <link rel="preconnect" href="https://unpkg.com" crossorigin>
 <link href="https://api.fontshare.com/v2/css?f[]=satoshi@400,500,600,700&display=swap" rel="stylesheet">
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-<script defer src="https://unpkg.com/lucide@0.511.0/dist/umd/lucide.js"></script>
+<!-- SRI: sha384 of dist/umd/lucide.js from the lucide@0.511.0 npm tarball -->
+<script defer src="https://unpkg.com/lucide@0.511.0/dist/umd/lucide.js" integrity="sha384-wiwa9EsLK6cl299O7+ll1zRJj8bda9w60syh4sE7vPQO6LAFGF9Fu6/9LKUGQi5S" crossorigin="anonymous"></script>
 <!-- Chart.js is lazy-loaded on first chart render: see _ensureChartJs() -->
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
@@ -2352,6 +2353,8 @@ function toggleTheme() {
 // Chart.js is loaded on demand (first chart render) instead of blocking the
 // initial page load. Memoised; a failed load clears the cache so it can retry.
 const CHARTJS_URL = 'https://unpkg.com/chart.js@4.5.1/dist/chart.umd.min.js';
+// sha384 of dist/chart.umd.min.js from the chart.js@4.5.1 npm tarball (unpkg serves it verbatim).
+const CHARTJS_SRI = 'sha384-jb8JQMbMoBUzgWatfe6COACi2ljcDdZQ2OxczGA3bGNeWe+6DChMTBJemed7ZnvJ';
 let _chartJsPromise = null;
 function _ensureChartJs() {
   if (typeof Chart !== 'undefined') return Promise.resolve();
@@ -2359,6 +2362,8 @@ function _ensureChartJs() {
   _chartJsPromise = new Promise((resolve, reject) => {
     const s = document.createElement('script');
     s.src = CHARTJS_URL;
+    s.integrity = CHARTJS_SRI;
+    s.crossOrigin = 'anonymous';
     s.onload = () => resolve();
     s.onerror = () => { s.remove(); _chartJsPromise = null; reject(new Error('Chart.js failed to load')); };
     document.head.appendChild(s);
