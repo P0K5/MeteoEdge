@@ -41,10 +41,13 @@ never trip (or mask) the other.
 """
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 from src.config import COPY_LIVE_CAPITAL_USD, COPY_TRADING_CAPITAL_USD
+
+log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from src.data.db import Database
@@ -100,6 +103,25 @@ def allow_copy_signal(db: "Database", live_config: dict) -> "tuple[bool, str]":
     return True, ""
 
 
+def _drawdown_baseline(live_config: dict) -> "str | None":
+    """Return the ISO-8601 baseline for the live drawdown, or None for all-time.
+
+    An unparseable value falls back to None, which counts every live loss
+    (the stricter rule), so a typo can never widen the baseline.
+    """
+    raw = live_config.get("COPY_LIVE_DRAWDOWN_SINCE") or ""
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        log.warning("[live-breaker] COPY_LIVE_DRAWDOWN_SINCE=%r is not ISO-8601 -- using all-time", raw)
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.isoformat()
+
+
 def allow_live_copy_signal(db: "Database", live_config: dict) -> "tuple[bool, str]":
     """Determine whether new LIVE copy-signal execution is currently
     permitted (issue #1175, epic I #1160).
@@ -145,7 +167,8 @@ def allow_live_copy_signal(db: "Database", live_config: dict) -> "tuple[bool, st
     if daily["total_pnl_usd"] <= -daily_loss_limit:
         return False, REASON_LIVE_DAILY_LOSS
 
-    total = db.get_copy_live_realized_pnl_total()
+    since = _drawdown_baseline(live_config)
+    total = db.get_copy_live_realized_pnl_total(since=since)
     if COPY_LIVE_CAPITAL_USD > 0:
         drawdown = -total["total_pnl_usd"] / COPY_LIVE_CAPITAL_USD
         if drawdown >= drawdown_stop_pct:

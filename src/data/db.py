@@ -2601,7 +2601,7 @@ class Database:
             )
         return [dict(row) for row in cur.fetchall()]
 
-    def get_copy_live_realized_pnl_total(self) -> dict:
+    def get_copy_live_realized_pnl_total(self, since: "str | None" = None) -> dict:
         """Return realized P&L aggregated over ALL wallets' ``'settled'``
         REAL copy-trading positions: ``{'n_settled': int, 'total_pnl_usd':
         float}`` (issue #1175 live circuit breaker; also consumed by issue
@@ -2615,10 +2615,17 @@ class Database:
         ``0.0`` (not ``None``) when there are no settled real positions
         yet.
         """
-        cur = self._conn.execute(
-            "SELECT COUNT(*) AS n_settled, SUM(settled_pnl_usd) AS total_pnl_usd "
-            "FROM copy_live_positions WHERE status='settled'"
-        )
+        if since is None:
+            cur = self._conn.execute(
+                "SELECT COUNT(*) AS n_settled, SUM(settled_pnl_usd) AS total_pnl_usd "
+                "FROM copy_live_positions WHERE status='settled'"
+            )
+        else:
+            cur = self._conn.execute(
+                "SELECT COUNT(*) AS n_settled, SUM(settled_pnl_usd) AS total_pnl_usd "
+                "FROM copy_live_positions WHERE status='settled' AND settled_at >= ?",
+                (since,),
+            )
         row = cur.fetchone()
         return {
             "n_settled": row["n_settled"],
