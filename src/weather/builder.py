@@ -1,6 +1,7 @@
 """Stateless. Assembles WeatherState from NWP sources. No side effects."""
 import json
 import logging
+import sqlite3
 from datetime import datetime, timezone, timedelta
 
 import pytz
@@ -440,7 +441,26 @@ def _build_one_station(
         icon_forecast_f=extra_stack_highs.get("icon"),
     )
     if db is not None:
-        corrected = compute_correction(city, state, db)
+        # Issue #1238: compute_correction()'s own write (upsert_intraday_correction)
+        # already retries and swallows "database is locked" internally rather than
+        # raising -- this is defense-in-depth for the OTHER db calls in its chain
+        # (e.g. refresh_weights()'s upsert_model_weight, a couple lines above) that
+        # don't have that same retry. Either way, a lock timeout here must degrade
+        # to "no intraday correction this cycle" for THIS ONE station, falling back
+        # to deb_mu_f exactly like the existing `corrected is None` path below --
+        # never abort the per-station loop in build_weather_for_scanning() and
+        # never raise past this point.
+        try:
+            corrected = compute_correction(city, state, db)
+        except sqlite3.OperationalError as exc:
+            if "database is locked" not in str(exc):
+                raise
+            log.warning(
+                "[%s] compute_correction skipped: database is locked -- "
+                "continuing without intraday correction this cycle",
+                station,
+            )
+            corrected = None
         if corrected is not None:
             state.corrected_mu_f = corrected
             # Keep the decayed intraday delta on its own so the EMOS serving

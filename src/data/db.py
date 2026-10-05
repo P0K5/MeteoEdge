@@ -3,6 +3,7 @@ import logging
 import os
 import sqlite3
 import threading
+import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
@@ -39,6 +40,89 @@ _DEB_WEIGHT_LOG_PURGE_CUTOFF = "2026-06-30"
 # completed only 30/50 wallets. 30s gives a large margin over an ordinary WAL
 # checkpoint without masking a genuinely stuck writer for too long.
 _BUSY_TIMEOUT_SECONDS = 30
+
+
+def connect_with_busy_timeout(
+    path: "str | Path", *, check_same_thread: bool = True
+) -> sqlite3.Connection:
+    """Open a ``sqlite3.Connection`` to *path* with the shared busy timeout applied.
+
+    Issue #1238: a second, uncoordinated ``sqlite3.connect()`` call site against
+    ``meteoedge.db`` (no ``timeout=``, no ``PRAGMA busy_timeout``) silently falls
+    back to sqlite3's thin 5s default -- so it gives up waiting on another
+    writer's lock far sooner than every connection opened through ``Database``,
+    and offers no guarantee about how long it will itself hold the lock against
+    everyone else. ``src/scripts/purge_retention.py`` was exactly this: a bare
+    ``sqlite3.connect(str(db_path))`` with no timeout at all, running daily via
+    ``meteoedge-purge-retention.timer`` at 01:00 UTC -- squarely inside the
+    01:00-03:00 local window the "database is locked" errors cluster in.
+
+    Sets both ``timeout=`` (the connection's own busy-handler at open time) and
+    ``PRAGMA busy_timeout`` explicitly (the portable, readback-able way to
+    confirm the same value), matching ``Database.__init__`` exactly so the two
+    code paths can never drift apart. Any first-party script that opens its own
+    connection to the live trading database should call this instead of
+    ``sqlite3.connect()`` directly -- read-only connections (``mode=ro`` URIs)
+    are exempt: WAL readers never block on, or are blocked by, writers, so a
+    busy timeout is a no-op for them.
+    """
+    conn = sqlite3.connect(
+        str(path), timeout=_BUSY_TIMEOUT_SECONDS, check_same_thread=check_same_thread
+    )
+    conn.execute(f"PRAGMA busy_timeout={_BUSY_TIMEOUT_SECONDS * 1000}")
+    return conn
+
+
+# Issue #1238: a lock timeout on `upsert_intraday_correction` (the one write in
+# the per-station scan loop that isn't a read) used to propagate all the way up
+# through compute_correction() -> _build_one_station() -> poll_once() and abort
+# the ENTIRE poll -- every station after the unlucky one in the loop, plus the
+# scan and any trading decision it would have produced. `_UPSERT_RETRY_ATTEMPTS`
+# gives one extra attempt beyond whatever `_conn.execute()` already waited out
+# internally via PRAGMA busy_timeout (up to `_BUSY_TIMEOUT_SECONDS` each); after
+# that the write is dropped (this poll proceeds without persisting the
+# correction for that station -- `state.corrected_mu_f` for the CURRENT scan
+# already comes from the in-memory computation in
+# src/model/intraday_correction.py and is unaffected, so nothing about what
+# gets traded changes) and the drop is recorded via `_LockDropAggregator`
+# rather than raised.
+_UPSERT_RETRY_ATTEMPTS = 2
+_UPSERT_RETRY_SLEEP_SECONDS = 1.0
+
+
+class _LockDropAggregator:
+    """Counts repeated "database is locked" write drops per process.
+
+    Logs the 1st occurrence immediately (so the very first incident is never
+    silent) and then only every `log_every`th occurrence after that, each time
+    including the running count -- turning what used to be one indistinguishable
+    ERROR line per occurrence (249 of them in a single day, issue #1238) into a
+    small, grep-able number of WARNING lines that still show the trend.
+    """
+
+    def __init__(self, log_every: int = 25) -> None:
+        self._log_every = log_every
+        self._counts: "dict[str, int]" = {}
+        self._count_lock = threading.Lock()
+
+    def record(self, context: str, exc: BaseException) -> int:
+        with self._count_lock:
+            count = self._counts.get(context, 0) + 1
+            self._counts[context] = count
+        if count == 1 or count % self._log_every == 0:
+            log.warning(
+                "[db] %s: write dropped after exhausting retries on "
+                "'database is locked' (occurrence #%d this process): %s",
+                context, count, exc,
+            )
+        return count
+
+    def count_for(self, context: str) -> int:
+        with self._count_lock:
+            return self._counts.get(context, 0)
+
+
+_lock_drop_aggregator = _LockDropAggregator()
 
 # ICAO -> Polymarket city name, built once from STATIONS (tuple index 0 = ICAO,
 # index 3 = city). Same mapping pattern as config.get_canonical_station_feeds();
@@ -574,19 +658,14 @@ class Database:
     def __init__(self, path: "str | Path" = _DEFAULT_PATH) -> None:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
-        # Issue #1232: pass timeout= to sqlite3.connect() *and* set
-        # PRAGMA busy_timeout explicitly. connect(timeout=...) only
-        # configures the busy handler used by the connection's own
-        # sqlite3_busy_timeout() call at open time; PRAGMA busy_timeout
-        # is the portable, explicit way to confirm/set the same value and
-        # is what the regression test reads back. Belt-and-braces rather
-        # than relying on one code path across Python versions.
-        self._conn = sqlite3.connect(
-            str(path), timeout=_BUSY_TIMEOUT_SECONDS, check_same_thread=False
-        )
+        # Issue #1232/#1238: busy timeout is set in exactly one place --
+        # connect_with_busy_timeout() -- so every first-party writer against
+        # meteoedge.db (this class, and any one-off script that calls the
+        # helper directly) agrees on the same value. See that function's
+        # docstring for why both timeout= and PRAGMA busy_timeout are set.
+        self._conn = connect_with_busy_timeout(path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
-        self._conn.execute(f"PRAGMA busy_timeout={_BUSY_TIMEOUT_SECONDS * 1000}")
         self._conn.execute("PRAGMA foreign_keys=ON")
         for stmt in _DDL.strip().split(";"):
             stmt = stmt.strip()
@@ -3703,19 +3782,46 @@ class Database:
                 build the intraday consensus basis for this delta (issue #572).
                 Defaults to the legacy open_meteo-only basis for callers that
                 don't pass one.
+
+        Issue #1238: retries once (beyond whatever ``_conn.execute()`` already
+        waited out internally via PRAGMA busy_timeout) on "database is locked",
+        then drops the write and records it via ``_lock_drop_aggregator``
+        instead of raising. The caller (``compute_correction`` in
+        ``src/model/intraday_correction.py``) already has the corrected value
+        in memory for THIS scan from its own computation -- only the
+        persisted historical row for the trailing-window calibration read is
+        lost for this one cycle, not the live decision. Never swallows any
+        other ``OperationalError`` (e.g. a real schema/syntax problem) --
+        those still raise.
         """
-        with self._lock:
-            with self._conn:
-                self._conn.execute(
-                    "INSERT OR REPLACE INTO intraday_corrections"
-                    "(city,station,source,date,obs_time,"
-                    "obs_temp_f,model_temp_f,delta_f,corrected_mu_f,decay_factor,"
-                    "basis_weights) "
-                    "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-                    (city, station, source, date, obs_time,
-                     obs_temp_f, model_temp_f, delta_f, corrected_mu_f, decay_factor,
-                     basis_weights),
+        sql = (
+            "INSERT OR REPLACE INTO intraday_corrections"
+            "(city,station,source,date,obs_time,"
+            "obs_temp_f,model_temp_f,delta_f,corrected_mu_f,decay_factor,"
+            "basis_weights) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?)"
+        )
+        params = (
+            city, station, source, date, obs_time,
+            obs_temp_f, model_temp_f, delta_f, corrected_mu_f, decay_factor,
+            basis_weights,
+        )
+        for attempt in range(1, _UPSERT_RETRY_ATTEMPTS + 1):
+            try:
+                with self._lock:
+                    with self._conn:
+                        self._conn.execute(sql, params)
+                return
+            except sqlite3.OperationalError as exc:
+                if "database is locked" not in str(exc):
+                    raise
+                if attempt < _UPSERT_RETRY_ATTEMPTS:
+                    time.sleep(_UPSERT_RETRY_SLEEP_SECONDS)
+                    continue
+                _lock_drop_aggregator.record(
+                    f"upsert_intraday_correction(city={city!r})", exc
                 )
+                return
 
     def get_intraday_corrections(self, city: str, date: str) -> list[dict]:
         """Return intraday corrections for city on date, ordered by obs_time ascending."""
