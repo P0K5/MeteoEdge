@@ -2644,9 +2644,20 @@ _CANDIDATE_PY_SORTS = ("followed", "unstable")
 
 def _candidate_out(row, previous, followed_status) -> "CopyCandidateOut":
     """Build one candidate row. Reuses check_stability() against the wallet's
-    own last two runs rather than re-deriving the sign/tolerance logic."""
+    own last two runs rather than re-deriving the sign/tolerance logic.
+
+    Note (issue #1298): check_stability() now also returns `unstable=True`
+    when the two rows are too far apart in time to compare at all
+    (reason="stale_comparison") -- this badge does not yet distinguish that
+    case from a proven sign/volume disagreement. Acceptable here because
+    this field only drives an advisory dashboard warning, not an auto-pause
+    decision (unlike copy_wallet_health.py's _stability_pause_reason, which
+    does make that distinction); left as a known limitation rather than
+    widened scope for this backend fix.
+    """
     from src.scripts.copy_wallet_screening import check_stability
 
+    stable, _reason = check_stability(row, previous)
     return CopyCandidateOut(
         address=row["address"],
         window=row["window"],
@@ -2660,7 +2671,7 @@ def _candidate_out(row, previous, followed_status) -> "CopyCandidateOut":
         flat_dollar_pnl=row["flat_dollar_pnl"],
         flat_stake=row["flat_stake"],
         eligible_to_follow=bool(row["eligible_to_follow"]),
-        unstable=not check_stability(row, previous),
+        unstable=not stable,
         has_prior_run=previous is not None,
         truncated=bool(row["truncated"]),
         followed=row["address"] in followed_status,

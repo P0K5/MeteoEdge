@@ -126,6 +126,46 @@ class TestStabilityCheckPause:
         row = db.get_followed_wallets()[0]
         assert row["status"] == "active"
 
+    def test_stale_comparison_gap_is_skipped_not_paused(self, caplog):
+        """Issue #1298 regression fixture: the 0x924379a7 incident. A
+        two-week gap between the two most recent screening rows, with
+        n_resolved growth that would breach the 25% tolerance (317 -> 430,
+        +36%) if compared pairwise, must NOT auto-pause the wallet -- it's
+        stale data, not proven instability."""
+        import logging
+
+        db = _db()
+        _follow(db)
+        _screening_row(db, ADDRESS, "2026-09-20T00:00:00+00:00", median_roi=0.49, n_resolved=317, eligible_to_follow=1)
+        _screening_row(db, ADDRESS, "2026-10-04T00:00:00+00:00", median_roi=0.47, n_resolved=430, eligible_to_follow=0)
+
+        with caplog.at_level(logging.INFO, logger="src.scripts.copy_wallet_health"):
+            summary = run_once(db=db)
+
+        assert summary == {"checked": 1, "paused_stability": 0, "paused_roi": 0}
+        row = db.get_followed_wallets()[0]
+        assert row["status"] == "active"
+        assert any(
+            "stale_comparison" in r.message or "skipping stability check" in r.message
+            for r in caplog.records
+        )
+
+    def test_gap_within_tolerance_still_pauses_on_real_disagreement(self):
+        """A short gap (well under STABILITY_MAX_COMPARISON_GAP_HOURS) must
+        still pause on a genuine disagreement -- the stale-gap fix must not
+        make the check more permissive in general."""
+        db = _db()
+        _follow(db)
+        _screening_row(db, ADDRESS, "2026-09-18T00:00:00+00:00", median_roi=0.3, n_resolved=100, eligible_to_follow=1)
+        _screening_row(db, ADDRESS, "2026-09-19T00:00:00+00:00", median_roi=-0.1, n_resolved=100, eligible_to_follow=0)
+
+        summary = run_once(db=db)
+
+        assert summary == {"checked": 1, "paused_stability": 1, "paused_roi": 0}
+        row = db.get_followed_wallets()[0]
+        assert row["status"] == "paused"
+        assert row["paused_reason"] == "stability_check_failed"
+
 
 class TestLatestRowIneligiblePause:
     def test_pairwise_stable_but_latest_eligible_to_follow_zero_still_pauses(self):

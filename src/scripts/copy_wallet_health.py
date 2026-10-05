@@ -20,12 +20,29 @@ For every ``status='active'`` followed wallet
    Reuse ``copy_wallet_screening.py::check_stability`` directly on those two
    rows -- this module never re-derives its sign/tolerance logic. Auto-pause
    (``paused_reason="stability_check_failed"``) if ``check_stability``
-   returns ``False``, **or** if the latest row's ``eligible_to_follow`` is
-   ``0`` -- a wallet can fail stability against its immediate predecessor
+   returns ``(False, reason)`` for any reason **other than**
+   ``"stale_comparison"``, **or** if the latest row's ``eligible_to_follow``
+   is ``0`` -- a wallet can fail stability against its immediate predecessor
    even if some earlier run set ``eligible_to_follow=1``, so the *current*
    row's own flag is always checked too, not just pairwise agreement. A
    wallet with no screening history yet has nothing to check and is left
    alone.
+
+   **``"stale_comparison"`` is a skip, not a failure (issue #1298).** When
+   the two most recent rows' ``screened_at`` timestamps are more than
+   ``check_stability``'s ``STABILITY_MAX_COMPARISON_GAP_HOURS`` apart (e.g.
+   the wallet dropped out of the ``--top N`` screening pool for a while and
+   the next run it reappears in is compared against a stale row), normal
+   growth in ``n_resolved`` across that gap can exceed the 25% tolerance
+   even though nothing about the wallet actually changed. This function logs
+   and skips the stability signal entirely for that cycle (no pause, the
+   latest row's own ``eligible_to_follow`` is NOT separately consulted
+   either, since it may itself have been computed against the same stale
+   comparison) rather than auto-pausing on it -- see the 0x924379a7 incident
+   this issue was filed for (2026-10-04 run compared against 2026-09-20,
+   a two-week gap). This does not make the check more permissive in the
+   general case: a wallet with a fresh, consecutive comparison that actually
+   disagrees is still paused exactly as before.
 2. **Realized-P&L check.** Skipped entirely if the wallet was just paused
    above (one pause reason per run -- the first one that fires wins).
    ``db.get_settled_copy_positions`` rows are deduped in Python into
@@ -141,7 +158,11 @@ def _stability_pause_reason(db, address: str) -> "str | None":
     the stability signal, else ``None``.
 
     A wallet with no screening history at all (``recent`` empty) has
-    nothing to check and is never paused by this function.
+    nothing to check and is never paused by this function. Same for a
+    wallet whose two most recent rows are too far apart in time to compare
+    at all (``check_stability`` returns reason ``"stale_comparison"``, issue
+    #1298) -- that is logged and treated as "insufficient history for this
+    cycle", not as a stability failure.
     """
     recent = db.get_recent_wallet_screenings(address, limit=2)
     if not recent:
@@ -150,7 +171,18 @@ def _stability_pause_reason(db, address: str) -> "str | None":
     current = recent[0]
     previous = recent[1] if len(recent) > 1 else None
 
-    if not check_stability(current, previous):
+    stable, reason = check_stability(current, previous)
+    if reason == "stale_comparison":
+        log.info(
+            "[copy_wallet_health] %s: skipping stability check this cycle -- "
+            "latest screening row (screened_at=%s) is being compared against "
+            "one too old to be meaningful (screened_at=%s, gap exceeds "
+            "STABILITY_MAX_COMPARISON_GAP_HOURS) -- not treating this as a "
+            "stability failure (issue #1298).",
+            address, current.get("screened_at"), previous.get("screened_at") if previous else None,
+        )
+        return None
+    if not stable:
         return "stability_check_failed"
     if not current.get("eligible_to_follow"):
         return "stability_check_failed"

@@ -71,12 +71,12 @@ def _backtest_result(
 
 class TestCheckStability:
     def test_first_run_is_unstable(self):
-        assert check_stability({"median_roi": 0.1, "n_resolved": 10}, None) is False
+        assert check_stability({"median_roi": 0.1, "n_resolved": 10}, None) == (False, "first_run")
 
     def test_stable_when_sign_matches_and_within_tolerance(self):
         previous = {"median_roi": 0.10, "n_resolved": 100}
         current = {"median_roi": 0.12, "n_resolved": 110}
-        assert check_stability(current, previous) is True
+        assert check_stability(current, previous) == (True, "ok")
 
     def test_reversal_fixture_0xd3b034d7(self):
         # Regression fixture: the spike's own instability finding that
@@ -84,33 +84,33 @@ class TestCheckStability:
         # +33.4% -> -100% across two runs 15 hours apart.
         previous = {"median_roi": 0.334, "n_resolved": 7498}
         current = {"median_roi": -1.0, "n_resolved": 2271}
-        assert check_stability(current, previous) is False
+        assert check_stability(current, previous) == (False, "sign_mismatch")
 
     def test_sign_only_flip_is_unstable(self):
         previous = {"median_roi": 0.05, "n_resolved": 100}
         current = {"median_roi": -0.05, "n_resolved": 100}
-        assert check_stability(current, previous) is False
+        assert check_stability(current, previous) == (False, "sign_mismatch")
 
     def test_volume_only_swing_is_unstable(self):
         previous = {"median_roi": 0.10, "n_resolved": 100}
         current = {"median_roi": 0.10, "n_resolved": 200}
-        assert check_stability(current, previous) is False
+        assert check_stability(current, previous) == (False, "volume_swing")
 
     def test_volume_swing_exactly_at_boundary_is_stable(self):
         previous = {"median_roi": 0.10, "n_resolved": 100}
         current = {"median_roi": 0.10, "n_resolved": 125}  # exactly 25%
-        assert check_stability(current, previous) is True
+        assert check_stability(current, previous) == (True, "ok")
 
     def test_zero_median_roi_never_matches_another_zero(self):
         previous = {"median_roi": 0.0, "n_resolved": 100}
         current = {"median_roi": 0.0, "n_resolved": 100}
-        assert check_stability(current, previous) is False
+        assert check_stability(current, previous) == (False, "sign_mismatch")
 
     def test_zero_previous_n_resolved_does_not_divide_by_zero(self):
         previous = {"median_roi": 0.10, "n_resolved": 0}
         current = {"median_roi": 0.10, "n_resolved": 1}
         # max(previous_n, 1) floors the denominator -- must not raise.
-        assert check_stability(current, previous) is False  # 1/1 = 100% > 25%
+        assert check_stability(current, previous) == (False, "volume_swing")  # 1/1 = 100% > 25%
 
     def test_none_current_median_roi_is_unstable_not_raising(self):
         # Issue #1245: a wallet with zero resolved trades has
@@ -118,12 +118,64 @@ class TestCheckStability:
         # treated as unstable, not raise inside sign().
         previous = {"median_roi": 0.10, "n_resolved": 100}
         current = {"median_roi": None, "n_resolved": 0}
-        assert check_stability(current, previous) is False
+        assert check_stability(current, previous) == (False, "median_roi_missing")
 
     def test_none_previous_median_roi_is_unstable_not_raising(self):
         previous = {"median_roi": None, "n_resolved": 0}
         current = {"median_roi": 0.10, "n_resolved": 100}
-        assert check_stability(current, previous) is False
+        assert check_stability(current, previous) == (False, "median_roi_missing")
+
+
+class TestCheckStabilityStaleComparisonGap:
+    """Issue #1298: two rows too far apart in time must not be compared at
+    all -- reported as "stale_comparison", not run through sign/volume
+    tolerance checks that were never meant to judge multi-day/multi-week
+    drift.
+    """
+
+    def test_gap_within_tolerance_still_compares_normally(self):
+        previous = {"median_roi": 0.10, "n_resolved": 100, "screened_at": "2026-09-19T03:00:00+00:00"}
+        current = {"median_roi": 0.10, "n_resolved": 110, "screened_at": "2026-09-20T03:00:00+00:00"}
+        assert check_stability(current, previous) == (True, "ok")
+
+    def test_gap_exceeding_tolerance_is_stale_not_failed(self):
+        # Regression fixture: the 0x924379a7 incident this issue was filed
+        # for -- n_resolved 317 -> 430 (+36%, breaches the 25% tolerance)
+        # across a two-week gap, same positive median_roi sign throughout.
+        # Must be reported as "stale_comparison", not "volume_swing".
+        previous = {"median_roi": 0.49, "n_resolved": 317, "screened_at": "2026-09-20T03:00:00+00:00"}
+        current = {"median_roi": 0.47, "n_resolved": 430, "screened_at": "2026-10-04T03:00:00+00:00"}
+        assert check_stability(current, previous) == (False, "stale_comparison")
+
+    def test_gap_exceeding_tolerance_is_stale_even_when_otherwise_agreeing(self):
+        # A stale comparison is skipped regardless of whether sign/volume
+        # would have agreed -- the point is the comparison itself is not
+        # trustworthy, not just that it happens to fail a downstream check.
+        previous = {"median_roi": 0.10, "n_resolved": 100, "screened_at": "2026-09-01T00:00:00+00:00"}
+        current = {"median_roi": 0.10, "n_resolved": 105, "screened_at": "2026-10-01T00:00:00+00:00"}
+        assert check_stability(current, previous) == (False, "stale_comparison")
+
+    def test_one_late_run_within_one_and_a_half_intervals_is_not_stale(self):
+        # A run firing ~30h after the previous one (late timer, or one
+        # skipped cycle caught up the next day) must not itself trip
+        # stale_comparison -- see STABILITY_MAX_COMPARISON_GAP_HOURS.
+        previous = {"median_roi": 0.10, "n_resolved": 100, "screened_at": "2026-09-19T03:00:00+00:00"}
+        current = {"median_roi": 0.10, "n_resolved": 110, "screened_at": "2026-09-20T09:00:00+00:00"}
+        assert check_stability(current, previous) == (True, "ok")
+
+    def test_missing_screened_at_falls_back_to_gap_blind_comparison(self):
+        # Callers/fixtures that don't supply screened_at at all (e.g. the
+        # plain dicts in TestCheckStability above) get the pre-#1298
+        # behaviour -- the gap check is only applied when both sides carry a
+        # parseable timestamp.
+        previous = {"median_roi": 0.10, "n_resolved": 100}
+        current = {"median_roi": 0.10, "n_resolved": 200}
+        assert check_stability(current, previous) == (False, "volume_swing")
+
+    def test_unparseable_screened_at_falls_back_to_gap_blind_comparison(self):
+        previous = {"median_roi": 0.10, "n_resolved": 100, "screened_at": "not-a-timestamp"}
+        current = {"median_roi": 0.10, "n_resolved": 200, "screened_at": "2026-10-04T03:00:00+00:00"}
+        assert check_stability(current, previous) == (False, "volume_swing")
 
 
 def _quality_row(
