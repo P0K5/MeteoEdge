@@ -81,7 +81,7 @@ BANNER_IDS = [
 
 
 def _banner_tag(html: str, banner_id: str) -> str:
-    match = re.search(rf'<span id="{banner_id}"[^>]*>[^<]*</span>', html)
+    match = re.search(rf'<span id="{banner_id}"[^>]*>(?:<i[^>]*></i>)?[^<]*</span>', html)
     assert match, f"Could not locate the posture banner element #{banner_id}"
     return match.group(0)
 
@@ -116,20 +116,27 @@ def test_posture_banner_is_landmark_region(html_content):
         assert 'aria-live="polite"' in tag
 
 
-def test_posture_banner_default_state_is_conservative_paper_off(html_content):
-    """Before the config fetch resolves, every banner instance must default
-    to the OFF/paper state -- never claim LIVE without a confirmed signal
-    (same conservative-default rule as the execution_mode precedent)."""
+def test_posture_banner_default_state_is_neutral_unknown_never_off(html_content):
+    """Before the config fetch resolves, every banner instance shows the
+    neutral "Live status unavailable" state (issue #1290) -- never LIVE and
+    never a guessed "off"/PAPER."""
     for banner_id in BANNER_IDS:
         match = re.search(
-            rf'<span id="{banner_id}"([^>]*)>([^<]*)</span>', html_content
+            rf'<span id="{banner_id}"([^>]*)>(?:<i[^>]*></i>)?([^<]*)</span>', html_content
         )
         assert match, f"Could not locate #{banner_id}"
         attrs, text = match.groups()
-        assert "mode-badge-paper" in attrs
-        assert "mode-badge-live" not in attrs
-        assert text.strip() == "LIVE TRADING OFF — paper only"
-        assert 'aria-label="Live trading is off — paper only"' in attrs
+        assert "mode-badge-unknown" in attrs
+        assert "mode-badge-live" not in attrs and "mode-badge-paper" not in attrs
+        assert text.strip() == "Live status unavailable"
+        assert "off" not in text.lower()
+
+
+def test_unavailable_info_banner_exists_on_every_copy_tab(html_content):
+    for tab in ("copy-wallets", "copy-paper", "copy-live"):
+        m = re.search(rf'<div class="info-banner copy-live-status-banner" id="{tab}-live-status-banner" role="status">', html_content)
+        assert m, tab
+    assert "Live status unavailable. Could not load live eligibility for your wallets, so no LIVE or PAPER label is shown. Retrying automatically." in html_content
 
 
 def test_posture_banner_lives_in_each_tabs_shared_header(html_content):

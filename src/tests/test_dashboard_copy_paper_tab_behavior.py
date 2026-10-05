@@ -410,10 +410,10 @@ def test_roster_rows_keep_paper_actions_and_stack_labels_for_narrow_screens(tmp_
         assert.ok(paused.includes('btn-followed-resume') && !paused.includes('btn-followed-goto-live'));
         // Labels used by the <=600px stacked layout.
         for (const l of ['Paper stake/trade', 'Status', 'Date added', 'Paper running P&amp;L']) assert.ok(row.includes('data-label="' + l + '"'), l);
-        // Live roster does not get the paper-only class.
+        // Live roster shares the stacked-block rule (issue #1290).
         click('copy-live');
         await settle();
-        assert.ok(!el('copy-live-followed-list').innerHTML.includes('copy-table--roster'));
+        assert.ok(el('copy-live-followed-list').innerHTML.includes('copy-table--roster'));
     """, tmp_path)
 
 

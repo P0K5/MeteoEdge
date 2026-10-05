@@ -525,6 +525,15 @@ a,button,input,select{transition:color var(--transition),background var(--transi
   display:none;align-items:center;gap:var(--space-2);
 }
 .warn-banner.visible{display:flex;}
+/* Issue #1290: neutral "Live status unavailable" banner (info, not error). */
+.info-banner{
+  background:var(--surface-2);border:1px solid var(--border);color:var(--text);
+  border-radius:var(--radius-md);padding:var(--space-3) var(--space-4);
+  font-size:var(--text-xs);font-weight:600;margin-bottom:var(--space-4);
+  display:none;align-items:center;gap:var(--space-2);
+}
+.info-banner.visible{display:flex;}
+.info-banner i{width:14px;height:14px;flex-shrink:0;}
 
 /* ── STATION CARDS ── */
 .station-card{
@@ -646,6 +655,14 @@ a,button,input,select{transition:color var(--transition),background var(--transi
    -- one visual treatment shared by the LIVE (switch off) and LIVE (cap
    reached) label states, per docs/design/copy-trading-live-views.md. */
 .mode-badge-live-pending{background:var(--yes-dim);color:var(--yes);}
+/* Issue #1290: live status UNKNOWN (posture not loaded / fetch failed / reason
+   missing) is its own neutral state -- never the amber PAPER badge and never
+   "off". --text (not --muted): dark --muted on --surface-off fails 4.5:1. */
+.mode-badge-unknown{
+  background:var(--surface-off);color:var(--text);border:1px solid var(--border);
+  letter-spacing:0;text-transform:none;font-weight:600;
+}
+.mode-badge-unknown i{width:12px;height:12px;flex-shrink:0;}
 
 /* Per-side accent: live/live=green, mixed=blue, shadow/shadow=amber */
 .station-card.accent-live-live{border-left-color:var(--yes);}
@@ -1028,9 +1045,12 @@ a,button,input,select{transition:color var(--transition),background var(--transi
 .btn-followed-golive{border-color:var(--yes-dim);background:var(--yes-bg);color:var(--yes);}
 .btn-followed-golive:hover:not(:disabled){background:var(--yes-dim);}
 .followed-live-msg{font-size:var(--text-xs);color:var(--muted);width:100%;margin:0;}
+/* Issue #1290: validation errors surface in the row's own message line. */
+.followed-live-msg.followed-live-msg-error{color:var(--no);font-weight:600;}
 /* Issue #1259: two-line paper/live stake display, only shown once a wallet
    is opted into live -- never blended into one figure. */
 .followed-stake-live{color:var(--yes);}
+.followed-live-inherit-note{font-size:var(--text-xs);color:var(--text);font-weight:500;}
 .followed-stake-edit{display:flex;align-items:center;gap:4px;}
 .followed-stake-edit input{
   width:70px;padding:4px 6px;border-radius:var(--radius-md);
@@ -1102,6 +1122,12 @@ a,button,input,select{transition:color var(--transition),background var(--transi
   .copy-table--roster td{border-bottom:none;padding:0 var(--space-3);white-space:normal;}
   .copy-table--roster td[data-label]::before{content:attr(data-label);display:block;flex:0 0 100%;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;}
   .copy-table--roster .copy-address-cell,.copy-table--roster .followed-actions-cell{flex:1 0 100%;}
+  /* Issue #1290: the same stacked block serves the Live roster -- full-text
+     action buttons wrap in the Actions cell (44px tall), Unfollow is last and
+     set apart. */
+  .copy-table--roster .followed-actions-cell{gap:var(--space-2);}
+  .copy-table--roster .followed-actions-cell .btn-followed-action{min-height:44px;}
+  .copy-table--roster .followed-actions-cell .btn-followed-unfollow{margin-left:var(--space-3);}
 }
 
 /* ── COPY-TRADING POSITIONS & P&L -- LIVE/PAPER (issue #1186, Epic J;
@@ -1498,16 +1524,20 @@ a,button,input,select{transition:color var(--transition),background var(--transi
       <i data-lucide="alert-circle"></i>
       <span id="copy-wallets-error-text">Could not reach the copy-trading API — retrying…</span>
     </div>
+    <div class="info-banner copy-live-status-banner" id="copy-wallets-live-status-banner" role="status">
+      <i data-lucide="info"></i>
+      <span>Live status unavailable. Could not load live eligibility for your wallets, so no LIVE or PAPER label is shown. Retrying automatically.</span>
+    </div>
     <div class="section-hdr">
       <div class="section-title"><i data-lucide="copy"></i>Copy-Trading — Wallets</div>
       <!-- Tab-wide live/paper posture banner (epic J #1161, issue #1185).
            Distinct element from .live-pill (data-connection freshness,
-           not trading mode). Defaults to the OFF/paper state until
-           fetchCopyTradingModePosture() resolves, same conservative-default
-           rule as the execution_mode fallback. -->
-      <span id="copy-wallets-mode-banner" class="mode-badge mode-badge-paper copy-trading-mode-banner"
+           not trading mode). Defaults to the neutral "Live status unavailable"
+           state until fetchCopyTradingModePosture() resolves (issue #1290:
+           unknown is never rendered as "off"). -->
+      <span id="copy-wallets-mode-banner" class="mode-badge mode-badge-unknown copy-trading-mode-banner"
             role="status" aria-live="polite"
-            aria-label="Live trading is off — paper only">LIVE TRADING OFF — paper only</span>
+            aria-label="Live status unavailable — loading live eligibility"><i data-lucide="help-circle"></i>Live status unavailable</span>
     </div>
     <div id="copy-wallets-content">
       <!-- ── CANDIDATES VIEW (story F1, issue #1146) ── -->
@@ -1578,13 +1608,17 @@ a,button,input,select{transition:color var(--transition),background var(--transi
       <i data-lucide="alert-circle"></i>
       <span id="copy-paper-error-text">Could not reach the copy-trading API — retrying…</span>
     </div>
+    <div class="info-banner copy-live-status-banner" id="copy-paper-live-status-banner" role="status">
+      <i data-lucide="info"></i>
+      <span>Live status unavailable. Could not load live eligibility for your wallets, so no LIVE or PAPER label is shown. Retrying automatically.</span>
+    </div>
     <div class="section-hdr">
       <div class="section-title"><i data-lucide="copy"></i>Copy-Trading
         <span class="mode-badge mode-badge-paper" aria-label="Paper mode: everything on this tab is paper trading">PAPER</span>
       </div>
-      <span id="copy-paper-mode-banner" class="mode-badge mode-badge-paper copy-trading-mode-banner"
+      <span id="copy-paper-mode-banner" class="mode-badge mode-badge-unknown copy-trading-mode-banner"
             role="status" aria-live="polite"
-            aria-label="Live trading is off — paper only">LIVE TRADING OFF — paper only</span>
+            aria-label="Live status unavailable — loading live eligibility"><i data-lucide="help-circle"></i>Live status unavailable</span>
     </div>
     <!-- Muted cross-link, shown only while live trading is ON (design spec:
          "Live positions are on the Live tab"). No number; space is always
@@ -1753,6 +1787,10 @@ a,button,input,select{transition:color var(--transition),background var(--transi
       <i data-lucide="alert-circle"></i>
       <span id="copy-live-error-text">Could not reach the copy-trading API — retrying…</span>
     </div>
+    <div class="info-banner copy-live-status-banner" id="copy-live-live-status-banner" role="status">
+      <i data-lucide="info"></i>
+      <span>Live status unavailable. Could not load live eligibility for your wallets, so no LIVE or PAPER label is shown. Retrying automatically.</span>
+    </div>
     <div class="section-hdr copy-live-hdr">
       <div class="section-title"><i data-lucide="copy"></i>Copy-Trading
         <span class="mode-badge mode-badge-live" aria-label="Live mode: everything on this tab is real-money trading">LIVE</span>
@@ -1762,9 +1800,9 @@ a,button,input,select{transition:color var(--transition),background var(--transi
         <button type="button" class="copy-empty-link" id="copy-live-paper-link"
                 onclick="_copyGoToTab('copy-paper')"
                 aria-label="Go to the Copy · Paper tab">Paper study → Paper tab</button>
-        <span id="copy-live-mode-banner" class="mode-badge mode-badge-paper copy-trading-mode-banner"
+        <span id="copy-live-mode-banner" class="mode-badge mode-badge-unknown copy-trading-mode-banner"
               role="status" aria-live="polite"
-              aria-label="Live trading is off — paper only">LIVE TRADING OFF — paper only</span>
+              aria-label="Live status unavailable — loading live eligibility"><i data-lucide="help-circle"></i>Live status unavailable</span>
       </div>
     </div>
     <!-- Reconciliation-required banner (issue #1189, epic J): a real
@@ -5528,22 +5566,29 @@ async function submitFollow(address, btn) {
 // config-driven live/paper UI in this tab reuses this fast-polled value
 // rather than introducing its own slow-polled copy.
 let _copyLiveTradingEnabled = false;
-// False until the first posture result (success OR the conservative failure
-// fallback) has been applied. Until then the Live tab must not claim "live
-// trading is off" -- that is just the initial default, not a reading -- so it
-// shows skeletons instead (issue #1278).
+// False until the first posture result (a successful /api/config read) has been
+// applied. Until then the Live tab must not claim "live trading is off" -- that
+// is just the initial default, not a reading -- so it shows skeletons instead
+// (issue #1278).
 let _copyPostureLoaded = false;
+// Issue #1290: true while the latest posture fetch FAILED. Unknown posture is a
+// state of its own -- the shared badge/banner say "Live status unavailable",
+// never "off" or PAPER, and "Go live" is disabled. Cleared by the next success.
+let _copyPostureUnavailable = false;
 
-function renderCopyTradingModePosture(liveEnabled) {
-  const postureChanged = !_copyPostureLoaded || _copyLiveTradingEnabled !== !!liveEnabled;
-  _copyPostureLoaded = true;
-  _copyLiveTradingEnabled = !!liveEnabled;
+const _COPY_POSTURE_UNKNOWN_ARIA_FAILED = 'Live status unavailable — could not load live eligibility, retrying automatically';
+const _COPY_POSTURE_UNKNOWN_ARIA_LOADING = 'Live status unavailable — loading live eligibility';
+
+function _copyApplyPostureBadges() {
   // The same shared component is rendered on all three copy tabs (class
   // .copy-trading-mode-banner, per-tab ids); one fetch updates every
   // instance (issue #1275).
-  const banners = document.querySelectorAll('.copy-trading-mode-banner');
-  banners.forEach(el => {
-    if (liveEnabled) {
+  document.querySelectorAll('.copy-trading-mode-banner').forEach(el => {
+    if (_copyPostureUnavailable || !_copyPostureLoaded) {
+      el.className = 'mode-badge mode-badge-unknown copy-trading-mode-banner';
+      el.innerHTML = '<i data-lucide="help-circle"></i>Live status unavailable';
+      el.setAttribute('aria-label', _copyPostureUnavailable ? _COPY_POSTURE_UNKNOWN_ARIA_FAILED : _COPY_POSTURE_UNKNOWN_ARIA_LOADING);
+    } else if (_copyLiveTradingEnabled) {
       el.className = 'mode-badge mode-badge-live copy-trading-mode-banner';
       el.textContent = 'LIVE TRADING ON';
       el.setAttribute('aria-label', 'Live trading is on');
@@ -5553,6 +5598,26 @@ function renderCopyTradingModePosture(liveEnabled) {
       el.setAttribute('aria-label', 'Live trading is off — paper only');
     }
   });
+  document.querySelectorAll('.copy-live-status-banner').forEach(el => {
+    el.classList.toggle('visible', _copyPostureUnavailable);
+  });
+  if (_copyPostureUnavailable || !_copyPostureLoaded) lucide.createIcons();
+}
+
+// Roster rows carry live-status badges / a Go-live button that depend on the
+// posture availability; rebuild them when that availability flips.
+function _copyRerenderRostersForPosture() {
+  if (_followedPaperData) _followedRenderPaper(_followedPaperData);
+  if (_copyLiveFollowedData) _followedRenderLive(_copyLiveFollowedData);
+}
+
+function renderCopyTradingModePosture(liveEnabled) {
+  const wasUnavailable = _copyPostureUnavailable;
+  const postureChanged = !_copyPostureLoaded || _copyLiveTradingEnabled !== !!liveEnabled || wasUnavailable;
+  _copyPostureLoaded = true;
+  _copyPostureUnavailable = false;
+  _copyLiveTradingEnabled = !!liveEnabled;
+  _copyApplyPostureBadges();
   // Paper tab cross-link: only while live trading is on (no number).
   const paperLiveNote = document.getElementById('copy-paper-live-note');
   if (paperLiveNote) paperLiveNote.style.visibility = liveEnabled ? 'visible' : 'hidden';
@@ -5568,6 +5633,19 @@ function renderCopyTradingModePosture(liveEnabled) {
     const liveFeed = _copyActivityScopes.live;
     if (liveFeed.data) renderCopyActivityFeed(liveFeed.data, 'live');
   }
+  if (wasUnavailable) _copyRerenderRostersForPosture();
+}
+
+// Issue #1290: the posture could not be read. Do NOT guess "off" (and never
+// claim LIVE): show the neutral unavailable state until the next success. Any
+// previously-read live/paper value is left untouched for the data views.
+function renderCopyTradingModePostureUnavailable() {
+  const changed = !_copyPostureUnavailable;
+  _copyPostureUnavailable = true;
+  _copyApplyPostureBadges();
+  const paperLiveNote = document.getElementById('copy-paper-live-note');
+  if (paperLiveNote) paperLiveNote.style.visibility = 'hidden';
+  if (changed) _copyRerenderRostersForPosture();
 }
 
 async function fetchCopyTradingModePosture() {
@@ -5576,10 +5654,7 @@ async function fetchCopyTradingModePosture() {
     const param = data && data.copy_trading && data.copy_trading.COPY_LIVE_TRADING_ENABLED;
     renderCopyTradingModePosture(!!(param && param.value));
   } catch (e) {
-    // Conservative default: never claim LIVE when the source of truth is
-    // unavailable -- same "assume paper" fallback rule as execution_mode
-    // elsewhere in this epic (docs/design/copy-trading-live-views.md).
-    renderCopyTradingModePosture(false);
+    renderCopyTradingModePostureUnavailable();
     console.error('Copy-trading mode posture fetch failed:', e);
   }
 }
@@ -5808,6 +5883,11 @@ const _FOLLOWED_LIVE_PENDING_BADGES = {
 };
 
 function _followedLiveBadgeHtml(w) {
+  // Issue #1290: unknown live status (posture fetch failed, or the wallet has
+  // no live_status_reason) is its own neutral badge -- never PAPER.
+  if (_copyPostureUnavailable || w.live_status_reason === null || w.live_status_reason === undefined) {
+    return `<span class="mode-badge mode-badge-unknown" aria-label="${_COPY_POSTURE_UNKNOWN_ARIA_FAILED}"><i data-lucide="help-circle"></i>Live status unavailable</span>`;
+  }
   if (w.live_eligible) {
     const label = `Live status: live — ${_copyEscapeHtml(w.live_status_reason)}`;
     return `<span class="mode-badge mode-badge-live" aria-label="${label}">LIVE</span>`;
@@ -5832,7 +5912,7 @@ function _followedPaperStakeHtml(w) {
 function _followedLiveStakeHtml(w) {
   const inheritedNote = w.live_stake_is_override
     ? ''
-    : ` <span class="followed-paused-reason" style="display:inline">(inherits paper)</span>`;
+    : ` <span class="followed-live-inherit-note">· follows paper stake</span>`;
   return `<span class="followed-stake-value followed-stake-live">Live: $${w.live_stake_per_trade.toFixed(2)}${inheritedNote}</span>`;
 }
 
@@ -5878,6 +5958,13 @@ function _followedGoLiveButtonHtml(w) {
     const reason = 'Live opt-in is unavailable while this wallet is paused — resume it first.';
     const reasonEsc = _copyEscapeHtml(reason);
     return `<button type="button" class="btn-followed-action ${actionClass}" data-address="${addrEsc}" aria-label="${reasonEsc}" title="${reasonEsc}" disabled>
+      <span class="spinner"></span><i data-lucide="${icon}"></i>${label}
+    </button>`;
+  }
+  if (!wantsDemote && _copyPostureUnavailable) {
+    // Risk-increasing action is blocked while live status is unknown;
+    // Revert / Pause / Unfollow (risk-reducing) are never blocked.
+    return `<button type="button" class="btn-followed-action ${actionClass}" data-address="${addrEsc}" aria-label="Go live for ${addrEsc} — Live status unavailable" title="Live status unavailable" disabled>
       <span class="spinner"></span><i data-lucide="${icon}"></i>${label}
     </button>`;
   }
@@ -5953,8 +6040,8 @@ function _followedLiveRowHtml(w) {
   return `
     <tr class="copy-row" data-address="${addrEsc}" id="live-followed-row-${safeId}">
       ${_followedAddressCellHtml(w, addrEsc)}
-      <td class="copy-td followed-stake-cell" id="live-followed-stake-cell-${safeId}">${_followedLiveStakeHtml(w)}</td>
-      <td class="copy-td followed-status-cell" id="live-followed-status-cell-${safeId}">${_followedStatusBadgeHtml(w)}${_followedLiveBadgeHtml(w)}</td>
+      <td class="copy-td followed-stake-cell" data-label="Live stake/trade" id="live-followed-stake-cell-${safeId}">${_followedLiveStakeHtml(w)}</td>
+      <td class="copy-td followed-status-cell" data-label="Status" id="live-followed-status-cell-${safeId}">${_followedStatusBadgeHtml(w)}${_followedLiveBadgeHtml(w)}</td>
       <td class="copy-td followed-actions-cell">
         ${_followedPauseResumeBtnHtml(w, addrEsc)}
         ${_followedEditLiveStakeBtnHtml(w, addrEsc)}
@@ -6001,7 +6088,9 @@ function _followedTableHtml(label, headers, rowsHtml, tableCls = '') {
     </div>`;
 }
 
+let _followedPaperData = null;   // last roster payload as rendered on Copy · Paper
 function _followedRenderPaper(data) {
+  _followedPaperData = data;
   _paperKpiFromFollowed(data);
   const wrap = document.getElementById('copy-followed-list');
   const activePill = document.getElementById('followed-active-pill');
@@ -6063,7 +6152,7 @@ function _followedRenderLive(data) {
     } else {
       wrap.innerHTML = _followedTableHtml('Live wallets', [
         { text: 'Wallet' }, { text: 'Live stake/trade' }, { text: 'Status' }, { sr: 'Actions' },
-      ], liveWallets.map(_followedLiveRowHtml).join(''));
+      ], liveWallets.map(_followedLiveRowHtml).join(''), 'copy-table--roster');
     }
   }
   if (readyWrap) {
@@ -6225,6 +6314,59 @@ async function followedResumeWallet(address, btn) {
   });
 }
 
+// Issue #1290: live-stake prompt shared by Go live and Edit live stake. The
+// prompt is pre-filled with the RESOLVED live stake; the copy differs for an
+// inheriting wallet vs one with a fixed override, and the write rule is:
+//   unchanged value -> keep the wallet's current state (no stake write),
+//   changed value   -> explicit override, cleared field -> inherit.
+function _followedLiveStakePromptText(address, wallet, liveCapUsd) {
+  const paper = `$${wallet.stake_per_trade.toFixed(2)}`;
+  const live = `$${wallet.live_stake_per_trade.toFixed(2)}`;
+  const cap = `Live per-wallet exposure cap: $${liveCapUsd.toFixed(2)}.`;
+  if (!wallet.live_stake_is_override) {
+    return `Set a live stake per trade for ${address}.\n\n` +
+      `This wallet currently follows its paper stake (${paper} per trade) and will change automatically when the paper stake changes.\n\n` +
+      `Leave the amount as it is (or clear it) to keep following the paper stake.\n` +
+      `Enter a different dollar amount to fix the live stake at that amount.\n\n` + cap;
+  }
+  return `Set a live stake per trade for ${address}.\n\n` +
+    `This wallet's live stake is fixed at ${live} per trade (its paper stake is ${paper}).\n\n` +
+    `Keep the amount to leave it unchanged. Enter a different amount to change it, or clear the field to follow the paper stake instead.\n\n` + cap;
+}
+
+// Row message line (followed-live-msg): validation errors live here, next to
+// the wallet, not in the tab-top banner (which stays for server/network
+// failures). Cleared at the start of each attempt.
+function _followedSetLiveMsg(address, text, isError) {
+  const el = document.getElementById(_followedIdPrefix() + 'followed-live-msg-' + _copySafeId(address));
+  if (!el) return false;
+  el.textContent = text;
+  el.classList.toggle('followed-live-msg-error', !!isError);
+  return true;
+}
+
+function _followedLiveStakeError(address, detail) {
+  const text = `Could not set live stake: ${detail}`;
+  if (!_followedSetLiveMsg(address, text, true)) _followedShowBannerError(text);
+}
+
+const _followedCents = n => Math.round(n * 100);
+
+// -> { error } | { mode: 'keep'|'inherit'|'override', stake? }
+function _followedParseLiveStakeInput(rawStake, wallet, liveCapUsd) {
+  const trimmed = rawStake.trim();
+  if (trimmed === '') return { mode: 'inherit' };
+  const parsed = Number(trimmed);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return { error: 'enter an amount above $0, or clear the field to follow the paper stake.' };
+  }
+  if (parsed > liveCapUsd) {
+    return { error: `$${parsed.toFixed(2)} is over this wallet's $${liveCapUsd.toFixed(2)} live cap. Enter $${liveCapUsd.toFixed(2)} or less.` };
+  }
+  if (_followedCents(parsed) === _followedCents(wallet.live_stake_per_trade)) return { mode: 'keep' };
+  return { mode: 'override', stake: parsed };
+}
+
 // Enabling live opt-in (issues #1258, #1259): a real-money action, so it
 // folds two operator-facing steps into one flow, per
 // docs/design/copy-trading-live-views.md -- "Enabling live: stake +
@@ -6256,44 +6398,41 @@ async function followedGoLive(address, btn) {
     return;
   }
 
+  if (_copyPostureUnavailable) return;   // Go live is disabled while live status is unknown (#1290)
+  _followedSetLiveMsg(address, '', false);
+
   const rawStake = window.prompt(
-    `Set a live stake per trade for ${address}.\n\n` +
-    `Leave this blank and press OK to keep the live stake linked to this ` +
-    `wallet's paper stake (currently $${wallet.stake_per_trade.toFixed(2)} per ` +
-    `trade) — it will automatically track future paper-stake edits.\n\n` +
-    `Enter a dollar amount to set a live stake that stays fixed at that ` +
-    `amount even if the paper stake later changes.\n\n` +
-    `Live per-wallet exposure cap: $${liveCapUsd.toFixed(2)}.`,
+    _followedLiveStakePromptText(address, wallet, liveCapUsd),
     wallet.live_stake_per_trade.toFixed(2)
   );
   if (rawStake === null) return; // operator cancelled the whole action, identical to Unfollow's short-circuit
 
-  const trimmed = rawStake.trim();
-  let liveStake = null;            // null -> inherit paper stake
-  let liveStakeOverride = false;
-  if (trimmed !== '') {
-    const parsed = parseFloat(trimmed);
-    if (!Number.isFinite(parsed) || parsed <= 0) {
-      _followedShowBannerError(`Could not set a live stake for ${_copyTruncateAddress(address)} — enter a live stake greater than $0, or clear the field entirely to inherit the paper stake.`);
-      return;
-    }
-    if (parsed > liveCapUsd) {
-      _followedShowBannerError(`Could not set a live stake for ${_copyTruncateAddress(address)} — $${parsed.toFixed(2)} exceeds this wallet's live exposure cap of $${liveCapUsd.toFixed(2)}. Enter an amount at or under the cap, or clear the field entirely to inherit the paper stake.`);
-      return;
-    }
-    liveStake = parsed;
+  const parsedInput = _followedParseLiveStakeInput(rawStake, wallet, liveCapUsd);
+  if (parsedInput.error) {
+    _followedLiveStakeError(address, parsedInput.error);
+    return;
+  }
+  // keep: current state unchanged (inheriting stays inheriting, an override
+  // stays the same override); inherit: cleared field; override: changed value.
+  let liveStakeOverride, liveStake;
+  if (parsedInput.mode === 'keep') {
+    liveStakeOverride = !!wallet.live_stake_is_override;
+    liveStake = wallet.live_stake_per_trade;
+  } else if (parsedInput.mode === 'inherit') {
+    liveStakeOverride = false;
+    liveStake = null;
+  } else {
     liveStakeOverride = true;
+    liveStake = parsedInput.stake;
   }
 
-  const resolvedStakeText = liveStakeOverride
-    ? `$${liveStake.toFixed(2)} per trade`
-    : `$${wallet.stake_per_trade.toFixed(2)} per trade (this inherits this wallet's paper stake and will change automatically if the paper stake is edited later)`;
+  const middleClause = liveStakeOverride
+    ? `Real trades of $${liveStake.toFixed(2)} each (fixed)`
+    : `Real trades of $${wallet.stake_per_trade.toFixed(2)} each, following this wallet's paper stake (it will change if the paper stake changes)`;
   const confirmed = window.confirm(
     `Go live for ${address}?\n\n` +
-    `Every future signal from this wallet will place REAL trades of ${resolvedStakeText}, ` +
-    `up to a live exposure cap of $${liveCapUsd.toFixed(2)} for this wallet.\n\n` +
-    `Paper trading for this wallet continues unaffected, at its own stake of ` +
-    `$${wallet.stake_per_trade.toFixed(2)} per trade.`
+    `${middleClause}, up to $${liveCapUsd.toFixed(2)} live exposure for this wallet.\n\n` +
+    `Paper trading continues unchanged.`
   );
   if (!confirmed) return;
 
@@ -6303,8 +6442,9 @@ async function followedGoLive(address, btn) {
   // Stake-first: skip the write entirely when nothing changed (e.g.
   // re-enabling a wallet whose stake override was already set correctly
   // from a prior enable/disable cycle) -- avoids a redundant write.
-  const needsStakeCall = liveStakeOverride !== wallet.live_stake_is_override
-    || (liveStakeOverride && liveStake !== wallet.live_stake_per_trade);
+  const needsStakeCall = parsedInput.mode !== 'keep'
+    && (liveStakeOverride !== !!wallet.live_stake_is_override
+      || (liveStakeOverride && _followedCents(liveStake) !== _followedCents(wallet.live_stake_per_trade)));
 
   if (needsStakeCall) {
     if (btn.disabled) return;
@@ -6423,41 +6563,28 @@ async function followedEditLiveStake(address, btn) {
   }
   const currentLive = wallet.live_stake_per_trade;
 
+  _followedSetLiveMsg(address, '', false);
   const rawStake = window.prompt(
-    `Edit the live stake per trade for ${address}.\n\n` +
-    `Current live stake: $${currentLive.toFixed(2)} per trade.\n\n` +
-    `Leave this blank and press OK to link the live stake to this wallet's ` +
-    `paper stake — it will then follow future paper-stake edits.\n\n` +
-    `Enter a dollar amount to keep the live stake fixed at that amount.\n\n` +
-    `Live per-wallet exposure cap: $${liveCapUsd.toFixed(2)}.`,
+    _followedLiveStakePromptText(address, wallet, liveCapUsd),
     currentLive.toFixed(2)
   );
   if (rawStake === null) return; // cancelled
 
-  const trimmed = rawStake.trim();
-  let newStake = null;             // null -> inherit paper stake
-  if (trimmed !== '') {
-    const parsed = Number(trimmed);
-    if (!Number.isFinite(parsed) || parsed <= 0) {
-      _followedShowBannerError(`Could not set a live stake for ${_copyTruncateAddress(address)} — enter a live stake greater than $0, or clear the field entirely to inherit the paper stake.`);
-      return;
-    }
-    if (parsed > liveCapUsd) {
-      _followedShowBannerError(`Could not set a live stake for ${_copyTruncateAddress(address)} — $${parsed.toFixed(2)} exceeds this wallet's live exposure cap of $${liveCapUsd.toFixed(2)}. Enter an amount at or under the cap, or clear the field entirely to inherit the paper stake.`);
-      return;
-    }
-    newStake = parsed;
-  }
-
-  const safeId = _copySafeId(address);
-  const msgEl = document.getElementById(_followedIdPrefix() + 'followed-live-msg-' + safeId);
-  const isOverride = newStake !== null;
-  const unchanged = isOverride === wallet.live_stake_is_override
-    && (!isOverride || newStake === currentLive);
-  if (unchanged) {
-    if (msgEl) msgEl.textContent = `Live stake for ${_copyTruncateAddress(address)} is unchanged.`;
+  const parsedInput = _followedParseLiveStakeInput(rawStake, wallet, liveCapUsd);
+  if (parsedInput.error) {
+    _followedLiveStakeError(address, parsedInput.error);
     return;
   }
+  const safeId = _copySafeId(address);
+  if (parsedInput.mode === 'keep'
+      || (parsedInput.mode === 'inherit' && !wallet.live_stake_is_override)) {
+    // Unchanged (pre-fill accepted, or an already-inheriting wallet cleared):
+    // nothing is written and the wallet keeps its current state.
+    _followedSetLiveMsg(address, `Live stake for ${_copyTruncateAddress(address)} is unchanged.`, false);
+    return;
+  }
+  const newStake = parsedInput.mode === 'override' ? parsedInput.stake : null;
+  const isOverride = newStake !== null;
 
   const effective = isOverride ? newStake : wallet.stake_per_trade;
   if (effective > currentLive) {
@@ -7651,7 +7778,7 @@ function _copyLiveKpiCardsHtml(d) {
   const nSettled = d.live_total.n_settled;
   const pnl = d.live_total.realized_pnl_usd;
   const pnlCard = nSettled > 0
-    ? _copyLiveKpiCardHtml('Live P&amp;L', _copyFmtUsd(pnl), `${nSettled} settled`, pnl >= 0 ? 'pos' : 'neg')
+    ? _copyLiveKpiCardHtml('Live P&amp;L', _copyFmtUsd(pnl), 'since first live trade', pnl >= 0 ? 'pos' : 'neg')
     : _copyLiveKpiCardHtml('Live P&amp;L', '—', 'No settled live trades yet');
 
   const open = d.live_open_positions;
