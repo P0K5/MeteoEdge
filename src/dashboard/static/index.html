@@ -1026,8 +1026,20 @@ a,button,input,select{transition:color var(--transition),background var(--transi
 .wc-skeleton{display:block;width:6em;height:1.1em;}
 .copy-closed-hdr{margin-top:var(--space-6);}
 /* Roster row stays highlighted briefly after "Go live →" jumps to it. */
-@keyframes copy-row-flash{0%,60%{background:var(--warn-bg);box-shadow:inset 3px 0 0 var(--warn);}100%{background:transparent;box-shadow:none;}}
+@keyframes copy-row-flash{0%,60%{background:var(--primary-bg);box-shadow:inset 3px 0 0 var(--primary);}100%{background:transparent;box-shadow:none;}}
 .copy-row-highlight{animation:copy-row-flash 2.4s ease-out 1;}
+/* Reduced motion (#1291): static highlight (JS drops it after 2.4 s), no smooth scroll, no spin/pulse. */
+@media (prefers-reduced-motion: reduce){
+  html{scroll-behavior:auto;}
+  .copy-row-highlight{animation:none;background:var(--primary-bg);box-shadow:inset 3px 0 0 var(--primary);}
+  .live-dot,.skeleton,.spinner{animation:none;}
+}
+/* Paper KPI: the third card spans both columns once the grid drops to 2-up (#1291). */
+@media(max-width:600px){.copy-paper-kpis .wallet-card:last-child:nth-child(odd){grid-column:1/-1;}}
+/* Recent Closed copy button: 44px touch target without growing the row (#1291). */
+@media(max-width:600px){
+  .copy-table .copy-address-cell .copy-copy-btn{min-width:44px;min-height:44px;display:inline-flex;align-items:center;justify-content:center;margin:-12px 0;}
+}
 /* Narrow screens: the paper roster stacks each wallet into a wrapping block so
    the Actions (Pause / Edit stake / Unfollow) are reachable without
    horizontal scrolling. */
@@ -4158,7 +4170,7 @@ function switchTab(tab) {
   // Show selected panel and activate button
   document.getElementById('tab-' + tab).classList.add('active');
   event.target.classList.add('active');
-  if (event.target.scrollIntoView) event.target.scrollIntoView({behavior:'smooth', inline:'nearest', block:'nearest'});
+  if (event.target.scrollIntoView) event.target.scrollIntoView(_copyScrollOpts({behavior:'smooth', inline:'nearest', block:'nearest'}));
 
   // Stop portfolio polling when leaving Portfolio tab
   if (currentTab === 'portfolio' && tab !== 'portfolio') {
@@ -5818,7 +5830,7 @@ function _followedPauseResumeBtnHtml(w, addrEsc) {
 function _followedAddressCellHtml(w, addrEsc) {
   return `<td class="copy-td copy-address-cell">
         <span class="copy-address-mono" title="${addrEsc}" data-address="${addrEsc}">${_copyEscapeHtml(_copyTruncateAddress(w.address))}</span>
-        <button type="button" class="copy-copy-btn" aria-label="Copy full wallet address to clipboard" title="Copy address">
+        <button type="button" class="copy-copy-btn" aria-label="Copy wallet address ${_copyEscapeHtml(_copyTruncateAddress(w.address))}" title="Copy address">
           <i data-lucide="copy"></i>
         </button>
         <span class="copy-feedback-label" data-address="${addrEsc}"></span>
@@ -6520,7 +6532,7 @@ function _followedOnListClick(event) {
 
 // Containers whose rows carry roster actions: the Paper roster, the Live
 // roster and the "Ready to go live" list. Bound once each, never replaced.
-const _FOLLOWED_LIST_IDS = ['copy-followed-list', 'copy-live-followed-list', 'copy-live-ready-list'];
+const _FOLLOWED_LIST_IDS = ['copy-followed-list', 'copy-live-followed-list', 'copy-live-ready-list', 'copy-paper-closed-list'];
 
 function _followedBindListEvents() {
   if (_followedListenersBound) return;
@@ -6650,12 +6662,12 @@ function _copyPaperClosedRowHtml(p) {
   const when = p.settled_at ? new Date(p.settled_at).toLocaleString() : '—';
   const cls = p.settled_pnl_usd >= 0 ? 'copy-pnl-pos' : 'copy-pnl-neg';
   return `
-    <tr class="copy-row">
+    <tr class="copy-row" data-address="${addrEsc}">
       <td class="copy-td" title="${_copyEscapeHtml(p.market)}">${_copyEscapeHtml(_copyTruncateMarket(p.market))}</td>
-      <td class="copy-td"><span class="copy-address-mono" title="${addrEsc}">${_copyEscapeHtml(_copyTruncateAddress(p.address))}</span></td>
-      <td class="copy-td">${when}</td>
-      <td class="copy-td">$${p.stake_usd.toFixed(2)}</td>
       <td class="copy-td ${cls}">${_copyFmtUsd(p.settled_pnl_usd)}</td>
+      <td class="copy-td">$${p.stake_usd.toFixed(2)}</td>
+      <td class="copy-td">${when}</td>
+      ${_followedAddressCellHtml(p, addrEsc)}
     </tr>`;
 }
 
@@ -6681,10 +6693,10 @@ function _renderCopyPaperClosedPage() {
       <thead>
         <tr>
           <th class="copy-th" scope="col">Market</th>
-          <th class="copy-th" scope="col">Wallet</th>
-          <th class="copy-th" scope="col">Settled</th>
-          <th class="copy-th" scope="col">Paper stake</th>
           <th class="copy-th" scope="col">Paper settled P&amp;L</th>
+          <th class="copy-th" scope="col">Paper stake</th>
+          <th class="copy-th" scope="col">Settled</th>
+          <th class="copy-th" scope="col">Wallet</th>
         </tr>
       </thead>
       <tbody>${pg.items.map(_copyPaperClosedRowHtml).join('')}</tbody>
@@ -6713,6 +6725,7 @@ function renderCopyPaperClosedError(message) {
 function copyPaperClosedChangePage(delta) {
   _copyPaperClosedPage += delta;   // clamped by the page slice
   _renderCopyPaperClosedPage();
+  _copyScrollListToTop('copy-paper-closed-list');
 }
 
 // ── "Go live →" on a paper roster row ──────────────────────────────────────
@@ -6724,6 +6737,24 @@ function copyPaperClosedChangePage(delta) {
 // surprise later.
 let _copyPendingLiveHighlight = null;   // { address, ts }
 
+// Reduced-motion aware scroll options (#1291): drop `behavior:'smooth'`.
+function _copyPrefersReducedMotion() {
+  return typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+function _copyScrollOpts(opts) {
+  if (!_copyPrefersReducedMotion()) return opts;
+  const { behavior, ...rest } = opts;
+  return rest;
+}
+// After Prev/Next, bring the top of a Recent Closed list back into view.
+function _copyScrollListToTop(id) {
+  const wrap = document.getElementById(id);
+  if (!wrap) return;
+  wrap.scrollTop = 0;
+  const r = wrap.getBoundingClientRect ? wrap.getBoundingClientRect() : null;
+  if (r && r.top < 0 && wrap.scrollIntoView) wrap.scrollIntoView(_copyScrollOpts({ behavior: 'smooth', block: 'start' }));
+}
+
 function _copyHighlightLiveRow(address) {
   const safeId = _copySafeId(address);
   for (const id of ['live-ready-row-' + safeId, 'live-followed-row-' + safeId]) {
@@ -6731,10 +6762,12 @@ function _copyHighlightLiveRow(address) {
     if (!row) continue;
     const details = row.closest ? row.closest('details') : null;
     if (details) details.open = true;          // the ready list may be collapsed
-    row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    row.scrollIntoView(_copyScrollOpts({ behavior: 'smooth', block: 'center' }));
     row.classList.remove('copy-row-highlight');
     void row.offsetWidth;                      // restart the CSS animation
     row.classList.add('copy-row-highlight');
+    // Reduced motion: the highlight is static, so it must not persist.
+    if (_copyPrefersReducedMotion()) setTimeout(() => row.classList.remove('copy-row-highlight'), 2400);
     return true;
   }
   return false;
@@ -7633,10 +7666,10 @@ function _copyLiveClosedRowHtml(p) {
   return `
     <tr class="copy-row" data-address="${addrEsc}">
       <td class="copy-td" title="${_copyEscapeHtml(p.market)}">${_copyEscapeHtml(_copyTruncateMarket(p.market))}</td>
-      ${_followedAddressCellHtml(p, addrEsc)}
+      <td class="copy-td ${pnlCls}">${_copyFmtUsd(p.settled_pnl_usd)}</td>
       <td class="copy-td">$${p.stake_usd.toFixed(2)}</td>
       <td class="copy-td">${closed}</td>
-      <td class="copy-td ${pnlCls}">${_copyFmtUsd(p.settled_pnl_usd)}</td>
+      ${_followedAddressCellHtml(p, addrEsc)}
     </tr>`;
 }
 
@@ -7647,10 +7680,10 @@ function _copyLiveClosedTableHtml(rows) {
       <thead>
         <tr>
           <th class="copy-th" scope="col">Market</th>
-          <th class="copy-th" scope="col">Wallet</th>
+          <th class="copy-th" scope="col">Settled P&amp;L</th>
           <th class="copy-th" scope="col">Stake</th>
           <th class="copy-th" scope="col">Closed</th>
-          <th class="copy-th" scope="col">Settled P&amp;L</th>
+          <th class="copy-th" scope="col">Wallet</th>
         </tr>
       </thead>
       <tbody>${rows.map(_copyLiveClosedRowHtml).join('')}</tbody>
@@ -7687,6 +7720,7 @@ function copyLiveClosedChangePage(delta) {
   if (!_copyLiveClosedRows.length) return;
   _copyLiveClosedPage += delta;
   _copyLiveRenderClosedPage();   // clamps
+  _copyScrollListToTop('copy-live-closed-list');
 }
 
 function _copyLiveRenderClosed(data, offNoHistory) {
@@ -8256,7 +8290,7 @@ function _copyJumpToCandidateRow(address, { viaSearch = true } = {}) {
     if (viaSearch) _copyJumpBySearch(address);
     return false;
   }
-  row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  row.scrollIntoView(_copyScrollOpts({ behavior: 'smooth', block: 'center' }));
   if (!_copyExpanded.has(address)) toggleCandidateDetail(address);
   return true;
 }
@@ -8279,7 +8313,7 @@ function _copyActivityJumpToWallet(kind, address) {
       : ['followed-row-' + safeId];
     for (const id of ids) {
       const row = document.getElementById(id);
-      if (row) { row.scrollIntoView({ behavior: 'smooth', block: 'center' }); return; }
+      if (row) { row.scrollIntoView(_copyScrollOpts({ behavior: 'smooth', block: 'center' })); return; }
     }
     return;
   }
