@@ -197,6 +197,9 @@ opted-in wallet" below).
     which would look identical to a wallet the operator never opted in. Do
     not invent further reason-specific labels beyond these two muted-green
     variants — see the fallback rule immediately below.
+  - **`Live status unavailable`** — neutral `.mode-badge-unknown` — when the
+    live status is unknown (reason missing / fetch failed). Supersedes the
+    PAPER fallback below for *unknown* status; see `polish-wave-rulings.md` (#1290).
   - **`PAPER`** — `.mode-badge-paper` (amber) — every other case:
     `live_enabled` is false, **or** the wallet is `paused` (paused always
     wins and shows plain `PAPER`, never a `LIVE (...)` variant, even if

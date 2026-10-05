@@ -201,6 +201,8 @@ dashboard); `await navigator.clipboard.writeText` throws a TypeError and the
 - **Go-live entry point:** each active wallet row shows a text link
   "Go live ->" that switches to the Live tab and scrolls/highlights that
   wallet in "Ready to go live". It does **not** open the live prompt here.
+  The jump highlight is neutral (`--primary-bg` + `--primary` rail, not amber)
+  and honours `prefers-reduced-motion`; see `polish-wave-rulings.md` (#1291).
 - **States:** KPI cards use `.skeleton` blocks while loading; roster/positions/
   activity use skeleton rows. Empty roster: "Nothing followed yet — go to
   **Wallets**" (`.copy-empty-link` switching tabs). Empty positions: "No
