@@ -99,10 +99,15 @@ _PRELUDE = textwrap.dedent(r"""
     function el(id) { return _byId[id] || (_byId[id] = new Element(id)); }
     const _banners = ['copy-wallets-mode-banner', 'copy-paper-mode-banner', 'copy-live-mode-banner'].map(id => el(id));
 
+    const _infoBanners = ['copy-wallets', 'copy-paper', 'copy-live'].map(t => el(t + '-live-status-banner'));
     global.document = {
       hidden: false,
       getElementById: (id) => el(id),
-      querySelectorAll(sel) { return sel === '.copy-trading-mode-banner' ? _banners : []; },
+      querySelectorAll(sel) {
+        if (sel === '.copy-trading-mode-banner') return _banners;
+        if (sel === '.copy-live-status-banner') return _infoBanners;
+        return [];
+      },
       querySelector() { return null; },
       createElement: () => new Element(),
       documentElement: { getAttribute() { return 'dark'; }, setAttribute() {} },
@@ -316,7 +321,7 @@ def test_kpi_cards_show_live_figures_only(tmp_path):
         await fetchFollowedWallets('live');
         await fetchCopyTradingPositions('live');
         const k = el('copy-live-kpis').innerHTML;
-        assert.ok(k.includes('Live P&amp;L') && k.includes('+$12.50') && k.includes('3 settled'), k);
+        assert.ok(k.includes('Live P&amp;L') && k.includes('+$12.50') && k.includes('since first live trade') && !k.includes('3 settled'), k);
         assert.ok(k.includes('wc-value pos'), 'positive P&L is green');
         assert.ok(k.includes('Open live exposure') && k.includes('$19.50') && k.includes('cap $10.00 per wallet'), k);
         assert.ok(k.includes('Open live positions') && k.includes('across 2 wallets'), k);
@@ -772,18 +777,27 @@ def test_edit_live_stake_cancel_invalid_and_unchanged_never_call_the_api(tmp_pat
         setup(LIVE_W('0xLive'));
         promptAnswer = null;
         await followedEditLiveStake('0xLive', mkBtn());                 // cancelled
+        const msg = el('live-followed-live-msg-' + _copySafeId('0xLive'));
         for (const bad of ['abc', '0', '-1', '1e999', '10.01', '5abc']) {
           promptAnswer = bad;
           await followedEditLiveStake('0xLive', mkBtn());
-          assert.ok(el('copy-live-error-banner').classList.contains('visible'), 'banner for ' + bad);
-          el('copy-live-error-banner').classList.remove('visible');
+          assert.ok(msg.textContent.startsWith('Could not set live stake: '), 'row message for ' + bad + ': ' + msg.textContent);
+          assert.ok(msg.classList.contains('followed-live-msg-error'), 'error modifier for ' + bad);
+          assert.ok(!el('copy-live-error-banner').classList.contains('visible'), 'validation errors stay out of the tab banner: ' + bad);
         }
-        assert.ok(el('copy-live-error-text').textContent.includes('Could not set a live stake') || true);
+        promptAnswer = '10.01';
+        await followedEditLiveStake('0xLive', mkBtn());
+        assert.strictEqual(msg.textContent, "Could not set live stake: $10.01 is over this wallet's $10.00 live cap. Enter $10.00 or less.");
+        promptAnswer = '0';
+        await followedEditLiveStake('0xLive', mkBtn());
+        assert.strictEqual(msg.textContent, 'Could not set live stake: enter an amount above $0, or clear the field to follow the paper stake.');
         promptAnswer = '2.00';                                          // unchanged
         await followedEditLiveStake('0xLive', mkBtn());
         assert.strictEqual(patches().length, 0, 'no request for cancel / invalid / unchanged input');
         assert.strictEqual(confirms.length, 0);
-        assert.ok(prompts[0].def === '2.00' && !prompts[0].msg.includes('5.55'), 'prefilled with the live stake; the prompt prints no paper figure');
+        assert.ok(prompts[0].def === '2.00', 'prefilled with the live stake');
+        assert.ok(!msg.classList.contains('followed-live-msg-error'), 'unchanged message is not styled as an error');
+        assert.ok(msg.textContent.includes('unchanged'));
         assert.ok(prompts[0].msg.includes('$10.00'), 'names the live cap');
     """), tmp_path)
 
@@ -868,3 +882,200 @@ def test_edit_live_stake_needs_a_finite_cap(tmp_path):
         assert.strictEqual(patches().length, 0);
         assert.ok(el('copy-live-error-banner').classList.contains('visible'));
     """), tmp_path)
+
+
+def test_edit_live_stake_inheriting_wallet_pressing_ok_on_prefill_writes_nothing(tmp_path):
+    """#1290: an inheriting wallet must never silently become a fixed override."""
+    run_js(_edit_stake_js("""
+        setup(LIVE_W('0xLive', { live_stake_per_trade: 5.55, live_stake_is_override: false }));
+        promptAnswer = '5.55';                                     // OK on the pre-filled value
+        await followedEditLiveStake('0xLive', mkBtn());
+        assert.strictEqual(prompts[0].def, '5.55');
+        assert.ok(prompts[0].msg.includes('currently follows its paper stake ($5.55 per trade)'), prompts[0].msg);
+        assert.ok(prompts[0].msg.includes('Leave the amount as it is (or clear it) to keep following the paper stake.'));
+        assert.strictEqual(patches().length, 0, 'unchanged pre-fill sends no stake change');
+        assert.strictEqual(confirms.length, 0);
+        // a CHANGED value is an explicit override
+        promptAnswer = '3';
+        await followedEditLiveStake('0xLive', mkBtn());
+        assert.deepStrictEqual(JSON.parse(patches()[0].opts.body), { stake: 3 });
+    """), tmp_path)
+
+
+def test_edit_live_stake_override_wallet_prompt_copy_and_keep_semantics(tmp_path):
+    run_js(_edit_stake_js("""
+        setup(LIVE_W('0xLive'));                                    // override $2.00, paper $5.55
+        promptAnswer = '2';                                         // OK on the pre-fill
+        await followedEditLiveStake('0xLive', mkBtn());
+        assert.ok(prompts[0].msg.includes("This wallet's live stake is fixed at $2.00 per trade (its paper stake is $5.55)."), prompts[0].msg);
+        assert.ok(prompts[0].msg.includes('Keep the amount to leave it unchanged.'));
+        assert.strictEqual(patches().length, 0, 'the override is kept untouched');
+        promptAnswer = '';                                          // cleared -> inherit
+        await followedEditLiveStake('0xLive', mkBtn());
+        assert.deepStrictEqual(JSON.parse(patches()[0].opts.body), { stake: null });
+    """), tmp_path)
+
+
+def _go_live_js(body: str) -> str:
+    return _edit_stake_js("""
+        const lives = () => calls.filter(c => c.opts && c.opts.method === 'POST' && c.url.endsWith('/live'));
+        const setupReady = (wallet) => {
+          renderFollowedWallets(FOLLOWED([wallet]), 'live');
+          routes['/api/copy-trading/wallets/'] = () => ({ body: { success: true, message: 'ok' } });
+          routes['/api/copy-trading/followed-wallets'] = () => ({ body: FOLLOWED([wallet]) });
+          fresh();
+        };
+    """) + textwrap.dedent(body)
+
+
+def test_go_live_inheriting_wallet_ok_on_prefill_stays_inheriting(tmp_path):
+    run_js(_go_live_js("""
+        setupReady(W('0xReady'));                                   // inheriting, resolved $5.55
+        promptAnswer = '5.55';                                      // OK on the pre-fill
+        await followedGoLive('0xReady', mkBtn());
+        assert.ok(prompts[0].msg.includes('currently follows its paper stake'), prompts[0].msg);
+        assert.strictEqual(patches().length, 0, 'no stake override is written');
+        assert.strictEqual(lives().length, 1, 'live is enabled');
+        assert.ok(confirms[0].includes("Real trades of $5.55 each, following this wallet's paper stake (it will change if the paper stake changes), up to $10.00 live exposure for this wallet."), confirms[0]);
+        assert.ok(confirms[0].startsWith('Go live for 0xReady?') && confirms[0].endsWith('Paper trading continues unchanged.'));
+
+        // a changed value is an explicit fixed override, written BEFORE enabling
+        calls.length = 0; confirms.length = 0;
+        promptAnswer = '3';
+        await followedGoLive('0xReady', mkBtn());
+        assert.deepStrictEqual(JSON.parse(patches()[0].opts.body), { stake: 3 });
+        assert.ok(confirms[0].includes('Real trades of $3.00 each (fixed), up to $10.00 live exposure'), confirms[0]);
+        assert.ok(calls.indexOf(patches()[0]) < calls.indexOf(lives()[0]), 'stake first, enable last');
+    """), tmp_path)
+
+
+def test_go_live_wallet_with_override_keeps_it_when_prefill_accepted(tmp_path):
+    run_js(_go_live_js("""
+        setupReady(W('0xReady', { live_stake_per_trade: 2, live_stake_is_override: true }));
+        promptAnswer = '2.00';
+        await followedGoLive('0xReady', mkBtn());
+        assert.ok(prompts[0].msg.includes("fixed at $2.00 per trade (its paper stake is $5.55)"), prompts[0].msg);
+        assert.strictEqual(patches().length, 0, 'the existing override is neither rewritten nor cleared');
+        assert.strictEqual(lives().length, 1);
+        assert.ok(confirms[0].includes('Real trades of $2.00 each (fixed)'), confirms[0]);
+
+        // clearing the field is the explicit way to inherit
+        calls.length = 0;
+        promptAnswer = '';
+        await followedGoLive('0xReady', mkBtn());
+        assert.deepStrictEqual(JSON.parse(patches()[0].opts.body), { stake: null });
+    """), tmp_path)
+
+
+def test_go_live_validation_errors_show_in_the_row_and_write_nothing(tmp_path):
+    run_js(_go_live_js("""
+        setupReady(W('0xReady'));
+        const msg = el('live-followed-live-msg-' + _copySafeId('0xReady'));
+        for (const bad of ['abc', '-2', '0', '11']) {
+          promptAnswer = bad;
+          await followedGoLive('0xReady', mkBtn());
+          assert.ok(msg.textContent.startsWith('Could not set live stake: '), bad + ': ' + msg.textContent);
+          assert.ok(msg.classList.contains('followed-live-msg-error'));
+        }
+        assert.ok(msg.textContent.includes("$11.00 is over this wallet's $10.00 live cap. Enter $10.00 or less."));
+        assert.ok(!el('copy-live-error-banner').classList.contains('visible'));
+        assert.strictEqual(confirms.length, 0, 'no confirm on a validation failure');
+        assert.strictEqual(calls.length, 0, 'nothing written');
+        // the error clears at the start of the next attempt
+        promptAnswer = null;
+        await followedGoLive('0xReady', mkBtn());
+        assert.strictEqual(msg.textContent, '');
+        assert.ok(!msg.classList.contains('followed-live-msg-error'));
+    """), tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# Issue #1290: unknown posture is "Live status unavailable", never "off"/PAPER
+# ---------------------------------------------------------------------------
+
+def test_posture_fetch_failure_shows_neutral_unavailable_never_off(tmp_path):
+    run_js("""
+        routes['/api/config'] = () => new Error('boom');
+        await fetchCopyTradingModePosture();
+        for (const b of _banners) {
+          assert.ok(b.classList.contains('mode-badge-unknown'), b.id);
+          assert.ok(!b.classList.contains('mode-badge-paper') && !b.classList.contains('mode-badge-live'), b.id);
+          assert.ok(b.innerHTML.includes('Live status unavailable') && b.innerHTML.includes('help-circle'));
+          assert.ok(!/off|paper/i.test(textOf(b.innerHTML)), 'never says off/paper: ' + b.innerHTML);
+          assert.ok(b.getAttribute('aria-label').startsWith('Live status unavailable'));
+        }
+        for (const t of ['copy-wallets', 'copy-paper', 'copy-live']) {
+          assert.ok(el(t + '-live-status-banner').classList.contains('visible'), t + ' info banner visible');
+        }
+        // the Live tab does not guess "off" either
+        routes['/api/copy-trading/positions'] = () => ({ body: POS() });
+        await fetchCopyTradingPositions('live');
+        assert.ok(!liveDom().includes('Live trading is off'));
+
+        // recovery: badge becomes real, banner auto-hides
+        posture(false);
+        _copyInvalidateShared();
+        await fetchCopyTradingModePosture();
+        for (const b of _banners) assert.ok(b.classList.contains('mode-badge-paper') && b.textContent.includes('LIVE TRADING OFF'));
+        for (const t of ['copy-wallets', 'copy-paper', 'copy-live']) assert.ok(!el(t + '-live-status-banner').classList.contains('visible'));
+        posture(true);
+        _copyInvalidateShared();
+        await fetchCopyTradingModePosture();
+        for (const b of _banners) assert.ok(b.classList.contains('mode-badge-live') && b.textContent === 'LIVE TRADING ON');
+    """, tmp_path)
+
+
+def test_unavailable_posture_disables_go_live_but_keeps_risk_reducing_actions(tmp_path):
+    run_js("""
+        routes['/api/config'] = () => new Error('boom');
+        await fetchCopyTradingModePosture();
+        renderFollowedWallets(FOLLOWED([LIVE_W('0xLive'), W('0xReady')]), 'live');
+        const live = el('copy-live-followed-list').innerHTML;
+        const ready = el('copy-live-ready-list').innerHTML;
+        // every roster row shows the unknown badge, never PAPER
+        assert.ok(live.includes('mode-badge-unknown') && !live.includes('mode-badge-paper') && !live.includes('>LIVE<'), live);
+        // Revert / Pause / Edit stay enabled
+        for (const cls of ['btn-followed-revert-live', 'btn-followed-pause', 'btn-followed-edit-live-stake']) {
+          const tag = live.match(new RegExp('<button[^>]*' + cls + '[^>]*>'))[0];
+          assert.ok(!/\\sdisabled/.test(tag), cls + ' stays enabled: ' + tag);
+        }
+        const go = ready.match(/<button[^>]*btn-followed-golive[^>]*>/)[0];
+        assert.ok(/\\sdisabled/.test(go) && go.includes('title="Live status unavailable"'), go);
+        // and a click path is refused too
+        let prompted = 0; window.prompt = () => { prompted++; return '1'; };
+        await followedGoLive('0xReady', new Element('b'));
+        assert.strictEqual(prompted, 0);
+
+        // recovery re-renders the roster with real badges and an enabled Go live
+        posture(true);
+        _copyInvalidateShared();
+        await fetchCopyTradingModePosture();
+        assert.ok(!el('copy-live-followed-list').innerHTML.includes('mode-badge-unknown'));
+        assert.ok(!/<button[^>]*btn-followed-golive[^>]*\\sdisabled/.test(el('copy-live-ready-list').innerHTML));
+    """, tmp_path)
+
+
+def test_wallet_without_live_status_reason_is_unknown_not_paper(tmp_path):
+    run_js("""
+        const h = _followedLiveBadgeHtml({ live_enabled: false, live_eligible: false, live_status_reason: null });
+        assert.ok(h.includes('mode-badge-unknown') && !h.includes('PAPER'));
+        assert.ok(_followedLiveBadgeHtml({ live_enabled: false, live_eligible: false }).includes('mode-badge-unknown'));
+        // an unrecognised reason string with live_enabled=false still renders PAPER
+        assert.ok(_followedLiveBadgeHtml({ live_enabled: false, live_eligible: false, live_status_reason: 'something new' }).includes('PAPER'));
+    """, tmp_path)
+
+
+def test_live_roster_uses_stacked_block_class_and_css_rule_below_600px(tmp_path):
+    run_js("""
+        renderFollowedWallets(FOLLOWED([LIVE_W('0xLive')]), 'live');
+        const html = el('copy-live-followed-list').innerHTML;
+        assert.ok(html.includes('copy-table copy-table--roster'));
+        assert.ok(html.includes('data-label="Live stake/trade"') && html.includes('data-label="Status"'));
+    """, tmp_path)
+    css = INDEX_HTML.read_text(encoding="utf-8")
+    media = css[css.index("@media(max-width:600px){\n  /* Two-line sub text"):]
+    media = media[: media.index("\n}\n")]
+    assert ".copy-table--roster .followed-actions-cell{gap:var(--space-2);}" in media
+    assert ".copy-table--roster .followed-actions-cell .btn-followed-action{min-height:44px;}" in media
+    assert ".btn-followed-unfollow{margin-left:var(--space-3);}" in media
+    assert ".copy-table--roster .copy-address-cell,.copy-table--roster .followed-actions-cell{flex:1 0 100%;}" in media
