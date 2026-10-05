@@ -262,16 +262,53 @@ def fetch_related_prs(
         )
         return []
     related = []
+    enriched = 0
     for item in items:
         if str(item.get("number")) == str(exclude_pr):
             continue
         merged = bool((item.get("pull_request") or {}).get("merged_at"))
-        related.append({
+        entry = {
             "number": item.get("number"),
             "title": item.get("title", ""),
             "state": "merged" if merged else item.get("state", "open"),
-        })
+            "commit": None,
+            "files": None,
+        }
+        if merged and enriched < RELATED_PRS_ENRICH_MAX:
+            enriched += 1
+            entry["commit"], entry["files"] = _fetch_merge_commit_and_files(
+                owner, repo, item.get("number"), token
+            )
+        related.append(entry)
     return related
+
+
+RELATED_PRS_ENRICH_MAX = 5
+RELATED_PR_FILES_MAX = 20
+
+
+def _fetch_merge_commit_and_files(owner, repo, pr_number, token):
+    """Return (merge_commit_sha, [changed filenames]) for a merged PR, or
+    (None, None) if either lookup fails. A merged PR without both is not
+    citable as delivering a criterion (AC1 of #1033): the packet marks it
+    MISSING rather than guessing."""
+    try:
+        pr = _github_get(f"/repos/{owner}/{repo}/pulls/{pr_number}", token).json()
+        sha = pr.get("merge_commit_sha")
+        files_json = _github_get(
+            f"/repos/{owner}/{repo}/pulls/{pr_number}/files?per_page={RELATED_PR_FILES_MAX}",
+            token,
+        ).json()
+        files = [f.get("filename") for f in files_json if f.get("filename")]
+    except Exception as exc:
+        print(
+            f"[ai_reviewer] Failed to read merge commit/files for PR #{pr_number}: {exc}",
+            file=sys.stderr,
+        )
+        return None, None
+    if not sha or not files:
+        return None, None
+    return sha, files
 
 
 def fetch_issue(owner: str, repo: str, issue_number: int, token: str) -> dict | None:
@@ -562,9 +599,25 @@ def _format_related_prs(related) -> str:
         return "(not checked)"
     if not related:
         return "(none found)"
-    return "\n".join(
-        f"- PR #{r['number']} [{r['state']}]: {r['title']}" for r in related
-    )
+    lines = []
+    for r in related:
+        head = f"- PR #{r['number']} [{r['state']}]: {r['title']}"
+        if r["state"] != "merged":
+            lines.append(f"{head} — not merged; cannot be cited as delivering a criterion")
+        elif r.get("commit") and r.get("files"):
+            # AC1 (#1033): a citable merged PR names the merge commit and the
+            # files it changed, so the reviewer can point at where the
+            # criterion was delivered.
+            lines.append(
+                f"{head} — merge commit {r['commit'][:12]}; changed files: "
+                f"{', '.join(r['files'])}"
+            )
+        else:
+            lines.append(
+                f"{head} — MISSING merge commit or changed files; cannot be "
+                "cited as delivering a criterion"
+            )
+    return "\n".join(lines)
 
 
 def build_review_packet(

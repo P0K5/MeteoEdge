@@ -30,6 +30,8 @@ from scripts.ai_reviewer import (
     call_deepseek,
     extract_acceptance_criteria,
     extract_referenced_issue_numbers,
+    RELATED_PRS_ENRICH_MAX,
+    _format_related_prs,
     fetch_related_prs,
     fetch_issue,
     get_diff_max_chars,
@@ -708,19 +710,98 @@ class TestRelatedPRsForCriteria:
 
     @patch("scripts.ai_reviewer._github_get")
     def test_fetch_related_prs_excludes_current_pr_and_marks_merged(self, mock_get):
-        resp = MagicMock()
-        resp.json.return_value = {"items": [
-            {"number": 1032, "title": "this PR", "state": "open", "pull_request": {}},
-            {"number": 1031, "title": "pre-registration", "state": "closed",
-             "pull_request": {"merged_at": "2026-08-01T00:00:00Z"}},
-            {"number": 1040, "title": "open follow-up", "state": "open", "pull_request": {}},
-        ]}
-        mock_get.return_value = resp
+        def route(path, token, **kwargs):
+            resp = MagicMock()
+            if path.startswith("/search/issues"):
+                resp.json.return_value = {"items": [
+                    {"number": 1032, "title": "this PR", "state": "open", "pull_request": {}},
+                    {"number": 1031, "title": "pre-registration", "state": "closed",
+                     "pull_request": {"merged_at": "2026-08-01T00:00:00Z"}},
+                    {"number": 1040, "title": "open follow-up", "state": "open", "pull_request": {}},
+                ]}
+            elif path.endswith("/files?per_page=20"):
+                resp.json.return_value = [{"filename": "docs/REMEDIATION_PLAN.md"}]
+            else:
+                resp.json.return_value = {"merge_commit_sha": "8b4c7f0aaaaabbbbcccc"}
+            return resp
+        mock_get.side_effect = route
         related = fetch_related_prs("o", "r", 1028, "tok", exclude_pr="1032")
         assert related == [
-            {"number": 1031, "title": "pre-registration", "state": "merged"},
-            {"number": 1040, "title": "open follow-up", "state": "open"},
+            {"number": 1031, "title": "pre-registration", "state": "merged",
+             "commit": "8b4c7f0aaaaabbbbcccc", "files": ["docs/REMEDIATION_PLAN.md"]},
+            {"number": 1040, "title": "open follow-up", "state": "open",
+             "commit": None, "files": None},
         ]
+
+    @patch("scripts.ai_reviewer._github_get")
+    def test_merged_pr_whose_commit_lookup_fails_is_marked_missing(self, mock_get, capsys):
+        """AC1 (#1033): if the merge commit or files cannot be read, the
+        merged PR must not be presented as citable evidence."""
+        def route(path, token, **kwargs):
+            if path.startswith("/search/issues"):
+                resp = MagicMock()
+                resp.json.return_value = {"items": [
+                    {"number": 1031, "title": "pre-registration", "state": "closed",
+                     "pull_request": {"merged_at": "2026-08-01T00:00:00Z"}},
+                ]}
+                return resp
+            raise RuntimeError("404 on pulls lookup")
+        mock_get.side_effect = route
+        related = fetch_related_prs("o", "r", 1028, "tok", exclude_pr="1032")
+        assert related[0]["commit"] is None and related[0]["files"] is None
+        assert "Failed to read merge commit/files for PR #1031" in capsys.readouterr().err
+        rendered = _format_related_prs(related)
+        assert "MISSING" in rendered
+        assert "changed files:" not in rendered
+
+    @patch("scripts.ai_reviewer._github_get")
+    def test_enrichment_is_capped_so_a_busy_issue_cannot_fan_out(self, mock_get):
+        items = [
+            {"number": n, "title": f"pr {n}", "state": "closed",
+             "pull_request": {"merged_at": "2026-08-01T00:00:00Z"}}
+            for n in range(100, 100 + 10)
+        ]
+        def route(path, token, **kwargs):
+            resp = MagicMock()
+            if path.startswith("/search/issues"):
+                resp.json.return_value = {"items": items}
+            elif path.endswith("/files?per_page=20"):
+                resp.json.return_value = [{"filename": "x.py"}]
+            else:
+                resp.json.return_value = {"merge_commit_sha": "abc123def456"}
+            return resp
+        mock_get.side_effect = route
+        related = fetch_related_prs("o", "r", 1028, "tok", exclude_pr="1")
+        enriched = [r for r in related if r["commit"]]
+        assert len(enriched) == RELATED_PRS_ENRICH_MAX
+
+    def test_merged_pr_without_commit_or_files_is_not_citable(self):
+        """Pins the AC1 failure case: a merged PR entry lacking a merge
+        commit or changed files renders MISSING and never a 'changed files:'
+        citation."""
+        rendered = _format_related_prs(
+            [{"number": 1031, "title": "pre-registration", "state": "merged",
+              "commit": None, "files": None}]
+        )
+        assert "PR #1031 [merged]" in rendered
+        assert "MISSING merge commit or changed files" in rendered
+        assert "changed files:" not in rendered
+
+    def test_open_pr_is_never_citable_even_with_files(self):
+        rendered = _format_related_prs(
+            [{"number": 1040, "title": "open follow-up", "state": "open",
+              "commit": None, "files": ["x.py"]}]
+        )
+        assert "cannot be cited as delivering a criterion" in rendered
+        assert "changed files:" not in rendered
+
+    def test_merged_pr_with_commit_and_files_is_citable(self):
+        rendered = _format_related_prs(
+            [{"number": 1031, "title": "pre-registration", "state": "merged",
+              "commit": "8b4c7f0aaaaabbbbcccc", "files": ["docs/REMEDIATION_PLAN.md"]}]
+        )
+        assert "merge commit 8b4c7f0aaaaa" in rendered  # shown as 12 chars
+        assert "changed files: docs/REMEDIATION_PLAN.md" in rendered
 
     @patch("scripts.ai_reviewer._github_get")
     def test_fetch_related_prs_failure_degrades_to_empty_list(self, mock_get, capsys):
@@ -733,10 +814,13 @@ class TestRelatedPRsForCriteria:
         PR #1031 (merged) delivered it. The packet must show #1031 under the
         issue so the reviewer can cite it."""
         issue = _issue(1028, "M3 pre-registration", "## Acceptance criteria\n- docs/REMEDIATION_PLAN.md records the decision\n")
-        related = {1028: [{"number": 1031, "title": "pre-registration", "state": "merged"}]}
+        related = {1028: [{"number": 1031, "title": "pre-registration", "state": "merged",
+                           "commit": "8b4c7f0aaaaabbbbcccc",
+                           "files": ["docs/REMEDIATION_PLAN.md"]}]}
         pr_meta = _minimal_pr_meta(body="Closes #1028")
         packet = build_review_packet(pr_meta, [], {}, [issue], "policy", related_prs=related)
         assert "- PR #1031 [merged]: pre-registration" in packet
+        assert "changed files: docs/REMEDIATION_PLAN.md" in packet
 
     def test_genuinely_missing_criterion_with_no_related_pr_says_none_found(self):
         """The no-evidence case: nothing in the packet vouches for the
