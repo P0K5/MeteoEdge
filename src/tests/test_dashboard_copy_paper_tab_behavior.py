@@ -963,3 +963,115 @@ def test_paper_polling_cadence_unchanged(tmp_path):
         click('config');
         assert.deepStrictEqual(delays(), []);
     """, tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# Polish (#1291): neutral highlight, reduced motion, Recent Closed address cell,
+# column order, KPI third card, pager scroll
+# ---------------------------------------------------------------------------
+
+def test_go_live_highlight_is_neutral_primary_not_amber():
+    html = INDEX_HTML.read_text(encoding="utf-8")
+    kf = re.search(r"@keyframes copy-row-flash\{([^@]*?)\}\s*\.copy-row-highlight", html)
+    assert kf, "copy-row-flash keyframes not found"
+    assert "var(--primary-bg)" in kf.group(1) and "var(--primary)" in kf.group(1)
+    assert "--warn" not in kf.group(1), "amber means paper; the jump highlight must be neutral"
+
+
+def test_reduced_motion_css_and_kpi_third_card_span():
+    html = INDEX_HTML.read_text(encoding="utf-8")
+    rm = re.search(r"@media \(prefers-reduced-motion: reduce\)\{(.*?)\n\}", html, re.S)
+    assert rm, "reduced-motion block missing"
+    assert "scroll-behavior:auto" in rm.group(1)
+    assert ".copy-row-highlight{animation:none" in rm.group(1)
+    assert ".live-dot,.skeleton,.spinner{animation:none;}" in rm.group(1)
+    assert re.search(
+        r"@media\(max-width:600px\)\{\.copy-paper-kpis \.wallet-card:last-child:nth-child\(odd\)\{grid-column:1/-1;\}\}", html
+    ), "third Paper KPI card must span the full row at <=600px"
+    assert "min-width:44px;min-height:44px" in html
+
+
+def test_recent_closed_column_order_is_identical_on_paper_and_live(tmp_path):
+    run_js(_CLOSED_SETUP + """
+        click('copy-paper');
+        await settle();
+        const heads = (html) => [...html.matchAll(/<th class="copy-th" scope="col">([^<]*)<\\/th>/g)].map(m => m[1]);
+        assert.deepStrictEqual(heads(el('copy-paper-closed-list').innerHTML),
+          ['Market', 'Paper settled P&amp;L', 'Paper stake', 'Settled', 'Wallet']);
+        assert.deepStrictEqual(heads(_copyLiveClosedTableHtml([])),
+          ['Market', 'Settled P&amp;L', 'Stake', 'Closed', 'Wallet']);
+        // Body cells follow the header: P&L is the 2nd cell, the wallet cell the last.
+        const row = el('copy-paper-closed-list').innerHTML.match(/<tr class="copy-row"[\\s\\S]*?<\\/tr>/)[0];
+        const cells = [...row.matchAll(/<td class="copy-td([^"]*)"/g)].map(m => m[1].trim());
+        assert.ok(/copy-pnl-(pos|neg)/.test(cells[1]), 'P&L second');
+        assert.ok(cells[4].includes('copy-address-cell'), 'wallet last');
+    """, tmp_path)
+
+
+def test_paper_recent_closed_has_a_labelled_copy_button_wired_to_the_address(tmp_path):
+    run_js(_CLOSED_SETUP + """
+        click('copy-paper');
+        await settle();
+        const html = el('copy-paper-closed-list').innerHTML;
+        assert.ok(/<button type="button" class="copy-copy-btn" aria-label="Copy wallet address 0xPape/.test(html),
+          'native button with a labelled address');
+        assert.ok(html.includes('class="copy-feedback-label"'));
+        // The delegated click on the Paper closed list copies the row's full address.
+        let copied = null;
+        document.body = { appendChild() {} };
+        window.isSecureContext = true;
+        navigator.clipboard.writeText = async (t) => { copied = t; };
+        const btn = new Element();
+        btn.isConnected = true;
+        btn.querySelector = () => null;
+        btn.parentElement = { querySelector: () => null };
+        btn.closest = (sel) => sel === '[data-address]' ? { dataset: { address: '0xPaperOne' } } : null;
+        el('copy-paper-closed-list').fire('click', { target: { closest: (s) => s === '.copy-copy-btn' ? btn : null }, stopPropagation() {} });
+        await settle();
+        assert.strictEqual(copied, '0xPaperOne');
+    """, tmp_path)
+
+
+def test_reduced_motion_scrolls_without_smooth_and_drops_the_highlight(tmp_path):
+    run_js(f"""
+        window.matchMedia = (q) => ({{ matches: /reduce/.test(q) }});
+        const timers = [];
+        global.setTimeout = (fn, ms) => {{ timers.push({{ fn, ms }}); return timers.length; }};
+        click('copy-paper');
+        await settle();
+        {_click_goto_live('0xPaperOne')}
+        const row = el('live-ready-row-0xPaperOne');
+        assert.deepStrictEqual(row._scrollOpts, {{ block: 'center' }}, 'no smooth behaviour');
+        assert.ok(row.classList.contains('copy-row-highlight'));
+        const t = timers.find(x => x.ms === 2400);
+        assert.ok(t, 'highlight removal scheduled at 2400 ms');
+        t.fn();
+        assert.ok(!row.classList.contains('copy-row-highlight'), 'static highlight does not persist');
+    """, tmp_path)
+
+
+def test_recent_closed_pager_scrolls_the_list_back_into_view(tmp_path):
+    run_js(_CLOSED_SETUP + """
+        state.positions = positions({ realized_pnl_history: hist(40) });
+        click('copy-paper');
+        await settle();
+        const wrap = el('copy-paper-closed-list');
+        wrap.scrollTop = 99;
+        wrap.getBoundingClientRect = () => ({ top: -300 });   // list top is above the viewport
+        copyPaperClosedChangePage(1);
+        assert.strictEqual(wrap.scrollTop, 0);
+        assert.deepStrictEqual(wrap._scrollOpts, { behavior: 'smooth', block: 'start' });
+        assert.strictEqual(info(), 'Page 2 of 3');
+    """, tmp_path)
+
+
+def test_reduced_motion_skeleton_is_static_and_busy_buttons_keep_their_text_label():
+    html = INDEX_HTML.read_text(encoding="utf-8")
+    rm = re.search(r"@media \(prefers-reduced-motion: reduce\)\{(.*?)\n\}", html, re.S).group(1)
+    assert ".skeleton{background:var(--surface-off);}" in rm, "static --surface-off block"
+    # Busy state is never rotation-only: every roster button that hosts a spinner
+    # also carries a visible text label (the JS only toggles the `loading` class
+    # and never replaces the button text), so state survives animation:none.
+    for m in re.finditer(r'<button[^>]*btn-followed-(?:pause|resume)[^>]*>(.*?)</button>', html):
+        label = re.sub(r"<[^>]+>", "", m.group(1)).strip()
+        assert "spinner" in m.group(1) and label in ("Pause", "Resume")
