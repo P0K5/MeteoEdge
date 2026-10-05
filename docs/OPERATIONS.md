@@ -3044,9 +3044,19 @@ For issues beyond this runbook, escalate to:
 
 ## AI PR Review
 
-`AI / DeepSeek review` (`scripts/ai_reviewer.py`, workflow `.github/workflows/ai-review.yml`) is a required check on every PR. It builds a review packet (diff, changed files, graphify context, linked-issue acceptance criteria, CLAUDE.md policy summary) and sends it to DeepSeek (`deepseek-chat` by default) for a `PASS`/`BLOCK` verdict, posted as both a Check Run and a PR comment.
+`AI / DeepSeek review` (`scripts/ai_reviewer.py`, workflow `.github/workflows/ai-review.yml`) is a required check on every PR. It builds a review packet (PR description, diff, changed files, graphify context, linked-issue bodies and acceptance criteria, CLAUDE.md policy summary) and sends it to DeepSeek (`deepseek-chat` by default) for a `PASS`/`BLOCK` verdict, posted as both a Check Run and a PR comment.
 
 Previously ran on NVIDIA NIM (`z-ai/glm-5.2`); switched to DeepSeek after NIM's endpoint proved unreliable under load and the EOL'd model had no working replacement on that backend (#1037).
+
+### Packet content budgets (#1243)
+
+Before #1243, the packet discarded the PR body entirely (only a regex-derived "closing keywords found" line reached the model) and capped each linked issue's body at a flat 500 characters — about one paragraph, cutting most issues in this repo mid-sentence and producing false `BLOCK` verdicts on PRs whose rationale lived in the body. The packet now includes:
+
+- **PR Description** — the PR body verbatim, up to `PR_BODY_MAX_CHARS` (20,000 chars). An empty body is reported to the model as a genuine policy violation, not a blank section.
+- **Linked issue bodies** — full text per issue, up to `ISSUE_BODY_MAX_CHARS` (16,000 chars each).
+- **Acceptance criteria** — extracted from `## Acceptance criteria` / `**Acceptance criteria**` headings (nested/wrapped bullets kept), up to `AC_TEXT_MAX_CHARS` (4,000 chars).
+
+Each budget is independent and additive with `DIFF_MAX_CHARS`; if any section is truncated, the packet says so explicitly and the reviewer prompt instructs the model to mark truncated criteria unverifiable rather than unmet. If a PR closes several large issues plus carries a near-cap diff, the combined packet can still exceed DeepSeek's context — that case is caught by the existing `DeepSeekContextLengthError` retry-with-smaller-diff-cap path (see below); the PR body and issue-body budgets are not currently reduced on that retry.
 
 ### Transient-failure handling, and fail-closed (issues #960, #1037)
 

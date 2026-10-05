@@ -13,11 +13,14 @@ import pytest
 import requests
 
 from scripts.ai_reviewer import (
+    AC_TEXT_MAX_CHARS,
     DEEPSEEK_MAX_ATTEMPTS,
     DEEPSEEK_RETRYABLE_STATUS_CODES,
     DIFF_FALLBACK_MAX_CHARS,
     DIFF_MAX_CHARS,
     GENERATED_PATH_PREFIXES,
+    ISSUE_BODY_MAX_CHARS,
+    PR_BODY_MAX_CHARS,
     DeepSeekContextLengthError,
     DeepSeekDegradedError,
     DeepSeekTimeoutError,
@@ -25,10 +28,13 @@ from scripts.ai_reviewer import (
     build_diff_from_files,
     build_review_packet,
     call_deepseek,
+    extract_acceptance_criteria,
     fetch_issue,
     get_diff_max_chars,
     is_generated_path,
 )
+
+FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
 
 
 def _fake_response(status_code, body_text):
@@ -182,6 +188,10 @@ def _changed_file(filename, patch="+line", status="modified", additions=1, delet
         "deletions": deletions,
         "patch": patch,
     }
+
+
+def _issue(number, title="t", body=""):
+    return {"number": number, "title": title, "body": body}
 
 
 class TestDiffBudget:
@@ -425,3 +435,214 @@ def test_run_does_not_retry_other_errors(monkeypatch):
         _run_once()
     from scripts import ai_reviewer
     assert ai_reviewer.call_deepseek.call_count == 1
+
+
+# ---------------------------------------------------------------------------
+# #1243: the PR body never reached the model, and linked-issue bodies were
+# truncated to 500 chars / 10 extracted AC lines, producing false BLOCKs on
+# PRs whose rationale lived in the body (#1231, #1241) and whose acceptance
+# criteria were cut mid-sentence (#1230) or dropped past the line cap.
+# ---------------------------------------------------------------------------
+
+class TestPRBodyInPacket:
+    """The PR description is now included verbatim (within budget) under its
+    own heading, instead of being discarded right after the closing-keyword
+    regex ran over it."""
+
+    def test_packet_contains_pr_body_verbatim(self):
+        pr_meta = _minimal_pr_meta(body="Closes #1\n\n## Why\nBecause reasons, explained at length.")
+        packet = build_review_packet(pr_meta, [], {}, [], "policy")
+        assert "## PR Description" in packet
+        assert "Because reasons, explained at length." in packet
+
+    def test_empty_pr_body_is_flagged_as_policy_violation(self):
+        pr_meta = _minimal_pr_meta(body="")
+        packet = build_review_packet(pr_meta, [], {}, [], "policy")
+        assert "PR body is empty" in packet
+        assert "policy violation" in packet
+
+    def test_whitespace_only_pr_body_is_flagged_as_policy_violation(self):
+        pr_meta = _minimal_pr_meta(body="   \n\n  ")
+        packet = build_review_packet(pr_meta, [], {}, [], "policy")
+        assert "PR body is empty" in packet
+
+    def test_oversized_pr_body_is_truncated_with_explicit_marker(self):
+        pr_meta = _minimal_pr_meta(body="Closes #1\n" + "x" * (PR_BODY_MAX_CHARS + 500))
+        packet = build_review_packet(pr_meta, [], {}, [], "policy")
+        assert "PR body truncated" in packet
+        assert "unverifiable" in packet
+
+    def test_pr_body_under_budget_is_not_truncated(self):
+        pr_meta = _minimal_pr_meta(body="Closes #1\n\nshort body, well under budget")
+        packet = build_review_packet(pr_meta, [], {}, [], "policy")
+        assert "PR body truncated" not in packet
+
+    def test_real_world_1305_body_reaches_packet_with_closing_keyword_intact(self):
+        """Live evidence (PR #1305, docs-only, 'Closes #1303' as the literal
+        first line): the reviewer BLOCKed claiming no closing keyword was
+        present in the body, because the body never reached it. With the
+        body now in the packet, the literal keyword text is visible."""
+        body = (
+            "Closes #1303\n\n## Summary\n"
+            "The standalone dashboard.service was retired because run.py:930 "
+            "already calls start_dashboard()...\n"
+        )
+        pr_meta = _minimal_pr_meta(body=body)
+        packet = build_review_packet(pr_meta, [], {}, [], "policy")
+        assert "Closes #1303" in packet
+        assert "- Closing keywords in PR body: #1303" in packet
+
+
+class TestLinkedIssueBodyBudget:
+    """Linked-issue bodies were previously capped at issue_body[:500]
+    (~one paragraph), cutting real issues in this repo mid-sentence (#1230
+    was the concrete example in #1243)."""
+
+    def test_full_issue_body_reaches_packet_for_realistic_1230_fixture(self):
+        body = (FIXTURES_DIR / "issue_1230_body.md").read_text(encoding="utf-8")
+        assert len(body) < ISSUE_BODY_MAX_CHARS, "fixture should fit whole, not just survive truncation"
+        issue = _issue(1230, "Fetch-RemoteData.ps1 rewrite", body)
+        pr_meta = _minimal_pr_meta(body="Closes #1230")
+        packet = build_review_packet(pr_meta, [], {}, [issue], "policy")
+        # The sentence #1243 reports the old 500-char cap cut mid-sentence.
+        assert "neither blocks nor is" in packet
+        assert "blocked by the bot's writers" in packet
+        assert "issue body truncated" not in packet
+
+    def test_oversized_issue_body_is_truncated_with_explicit_marker(self):
+        issue = _issue(1, "t", "x" * (ISSUE_BODY_MAX_CHARS + 500))
+        pr_meta = _minimal_pr_meta(body="Closes #1")
+        packet = build_review_packet(pr_meta, [], {}, [issue], "policy")
+        assert "issue body truncated" in packet
+        assert "unverifiable, not unmet" in packet
+
+    def test_empty_issue_body_is_shown_explicitly(self):
+        issue = _issue(1, "t", "")
+        pr_meta = _minimal_pr_meta(body="Closes #1")
+        packet = build_review_packet(pr_meta, [], {}, [issue], "policy")
+        assert "(issue body is empty)" in packet
+
+    def test_missing_issue_among_multiple_closing_keywords_is_named(self):
+        """A PR closing two issues where only one fetch succeeds must name
+        the missing one, not go silent on it (prior behavior only handled
+        the all-fetches-failed case)."""
+        pr_meta = _minimal_pr_meta(body="Closes #1\nCloses #2")
+        issue2 = _issue(2, "t2", "body2")
+        packet = build_review_packet(pr_meta, [], {}, [issue2], "policy")
+        assert "#1" in packet
+        assert "unavailable" in packet
+        assert "### Issue #2: t2" in packet
+
+
+class TestAcceptanceCriteriaHeadingStyles:
+    """The extractor must recognize '## Acceptance criteria' and
+    '**Acceptance criteria**' headings, keep nested/wrapped bullets, not
+    false-trigger on a mid-sentence mention of the phrase, and never
+    silently drop content below its stated character budget (replacing the
+    old ac_lines[:10] cap, which counted each wrapped continuation line of a
+    bullet as if it were its own top-level criterion)."""
+
+    def test_atx_heading(self):
+        text, truncated = extract_acceptance_criteria(
+            "## Acceptance criteria\n- one\n- two\n\n## Next section\nnope"
+        )
+        assert "one" in text and "two" in text
+        assert "nope" not in text
+        assert not truncated
+
+    def test_bold_heading(self):
+        text, _ = extract_acceptance_criteria(
+            "**Acceptance criteria**\n- one\n- two\n\n**Next section**\nnope"
+        )
+        assert "one" in text and "two" in text
+        assert "nope" not in text
+
+    def test_bold_heading_with_trailing_colon(self):
+        text, _ = extract_acceptance_criteria(
+            "**Acceptance Criteria:**\n- one\n\n## Next\nnope"
+        )
+        assert "one" in text
+        assert "nope" not in text
+
+    def test_nested_bullets_all_kept(self):
+        text, _ = extract_acceptance_criteria(
+            "## Acceptance criteria\n- top\n  - nested\n    - deeper\n\n## Next\nnope"
+        )
+        assert "top" in text
+        assert "nested" in text
+        assert "deeper" in text
+
+    def test_checklist_style_bullets_kept(self):
+        text, _ = extract_acceptance_criteria(
+            "## Acceptance criteria\n- [ ] first\n- [ ] second\n\n## Dependencies\nnone"
+        )
+        assert "first" in text and "second" in text
+        assert "none" not in text
+
+    def test_mid_sentence_mention_does_not_false_trigger(self):
+        body = (
+            "This PR satisfies the acceptance criteria from issue #1 already.\n\n"
+            "## Acceptance criteria\n- real one\n"
+        )
+        text, _ = extract_acceptance_criteria(body)
+        assert "real one" in text
+        assert "satisfies the acceptance criteria" not in text
+
+    def test_no_ac_section_returns_none_extracted(self):
+        text, truncated = extract_acceptance_criteria("just some text, no heading at all")
+        assert text == "(none extracted)"
+        assert not truncated
+
+    def test_empty_body_returns_none_extracted(self):
+        text, truncated = extract_acceptance_criteria("")
+        assert text == "(none extracted)"
+        assert not truncated
+
+    def test_wrapped_bullets_not_dropped_by_old_line_count_cap(self):
+        """Regression for #1230: the old ac_lines[:10] cap exhausted after
+        roughly 2-3 wrapped bullets because each wrapped continuation line
+        counted toward the cap. 15 bullets here, each wrapped across 3
+        physical lines (45 lines total), must all survive."""
+        bullets = "\n".join(
+            f"- item {i} line one\n  continuation line two\n  continuation line three"
+            for i in range(15)
+        )
+        body = f"## Acceptance criteria\n{bullets}\n"
+        text, truncated = extract_acceptance_criteria(body)
+        for i in range(15):
+            assert f"item {i} line one" in text
+        assert not truncated
+
+    def test_truncated_past_char_budget_states_so(self):
+        body = "## Acceptance criteria\n" + "\n".join(f"- {'x' * 100}" for _ in range(100))
+        text, truncated = extract_acceptance_criteria(body)
+        assert truncated
+        assert len(text) == AC_TEXT_MAX_CHARS
+
+    def test_packet_states_ac_truncation_explicitly(self):
+        body = "## Acceptance criteria\n" + "\n".join(f"- {'x' * 100}" for _ in range(100))
+        issue = _issue(1, "t", body)
+        pr_meta = _minimal_pr_meta(body="Closes #1")
+        packet = build_review_packet(pr_meta, [], {}, [issue], "policy")
+        assert "acceptance criteria truncated" in packet
+
+
+class TestBudgetInteraction:
+    """An oversized PR body, oversized diff, and oversized issue body
+    together must still yield a packet bounded by the sum of the individual
+    caps, not an unbounded concatenation."""
+
+    def test_oversized_everything_still_yields_bounded_packet(self):
+        pr_meta = _minimal_pr_meta(body="Closes #1\n" + "p" * (PR_BODY_MAX_CHARS * 3))
+        changed_files = [_changed_file("src/x.py", patch="d" * (DIFF_MAX_CHARS * 3))]
+        issue = _issue(1, "t", "i" * (ISSUE_BODY_MAX_CHARS * 3))
+        packet = build_review_packet(pr_meta, changed_files, {}, [issue], "policy")
+
+        max_expected = (
+            DIFF_MAX_CHARS + PR_BODY_MAX_CHARS + ISSUE_BODY_MAX_CHARS
+            + AC_TEXT_MAX_CHARS + 5_000  # headroom: headings, labels, markers
+        )
+        assert len(packet) < max_expected
+        assert "PR body truncated" in packet
+        assert "issue body truncated" in packet
+        assert "diff truncated" in packet
