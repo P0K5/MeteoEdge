@@ -4266,9 +4266,11 @@ def _validate_config_value(key: str, raw_value: Any) -> "tuple[str, str | None]"
             if text == "":
                 return "", None
             try:
-                datetime.fromisoformat(text.replace("Z", "+00:00"))
+                parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
             except ValueError:
                 return "", f"{key} must be an ISO-8601 timestamp (e.g. 2026-10-05T00:00:00+00:00) or empty"
+            if parsed.tzinfo is None:
+                return "", f"{key} must include a timezone (e.g. 2026-10-05T00:00:00+00:00)"
             return text, None
 
         if param_type == "enum":

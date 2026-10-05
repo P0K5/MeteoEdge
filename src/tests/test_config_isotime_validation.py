@@ -19,3 +19,8 @@ def test_accepts_empty_as_all_time():
 def test_rejects_partial_date_with_clear_error():
     value, err = _validate_config_value("COPY_LIVE_DRAWDOWN_SINCE", "2026-10-0")
     assert value == "" and "ISO-8601" in err
+
+
+def test_rejects_naive_timestamp_without_timezone():
+    value, err = _validate_config_value("COPY_LIVE_DRAWDOWN_SINCE", "2026-10-05T00:00:00")
+    assert value == "" and "timezone" in err
