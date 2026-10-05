@@ -7,7 +7,7 @@ the injected <script> so each test can fire `onload` / `onerror` by hand.
 
 Covered:
 
-* `_ensureChartJs` injects ONE pinned script with SRI + crossorigin, resolves
+* `_ensureChartJs` injects ONE version-pinned script, resolves
   once it loads, and `Chart` is then defined;
 * a load error clears the memoised promise, so a retry injects a fresh script
   and succeeds;
@@ -89,18 +89,18 @@ def test_head_has_no_blocking_chartjs_tag():
     head = html.split("</head>", 1)[0]
     assert "chart.umd" not in head and "chart.js@" not in head
     assert re.search(r'<link rel="preconnect" href="https://unpkg.com"', head)
-    assert re.search(r'<script defer src="https://unpkg.com/lucide@\d+\.\d+\.\d+/[^"]*" integrity="sha384-', head)
+    assert re.search(r'<script defer src="https://unpkg.com/lucide@\d+\.\d+\.\d+/[^"]*"></script>', head)
+    assert "integrity" not in html, "SRI intentionally not used (hashes unverifiable against unpkg; see #808)"
 
 
-def test_ensure_chartjs_injects_pinned_sri_script_and_resolves(tmp_path):
+def test_ensure_chartjs_injects_pinned_script_and_resolves(tmp_path):
     _run("""
         assert.strictEqual(typeof Chart, 'undefined');
         const p = _ensureChartJs();
         assert.strictEqual(appended.length, 1, 'one script injected');
         const s = appended[0];
         assert.match(s.src, /chart\\.js@\\d+\\.\\d+\\.\\d+\\/dist\\/chart\\.umd\\.min\\.js$/);
-        assert.match(s.integrity, /^sha384-/);
-        assert.strictEqual(s.crossOrigin, 'anonymous');
+        assert.strictEqual(s.integrity, undefined, 'no SRI attribute (deliberate)');
         assert.strictEqual(_ensureChartJs(), p, 'concurrent callers share one promise');
         assert.strictEqual(appended.length, 1);
         installChart();
