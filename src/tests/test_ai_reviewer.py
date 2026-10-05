@@ -13,11 +13,14 @@ import pytest
 import requests
 
 from scripts.ai_reviewer import (
+    AC_TEXT_MAX_CHARS,
     DEEPSEEK_MAX_ATTEMPTS,
     DEEPSEEK_RETRYABLE_STATUS_CODES,
     DIFF_FALLBACK_MAX_CHARS,
     DIFF_MAX_CHARS,
     GENERATED_PATH_PREFIXES,
+    ISSUE_BODY_MAX_CHARS,
+    PR_BODY_MAX_CHARS,
     DeepSeekContextLengthError,
     DeepSeekDegradedError,
     DeepSeekTimeoutError,
@@ -25,10 +28,17 @@ from scripts.ai_reviewer import (
     build_diff_from_files,
     build_review_packet,
     call_deepseek,
+    extract_acceptance_criteria,
+    extract_referenced_issue_numbers,
+    RELATED_PRS_ENRICH_MAX,
+    _format_related_prs,
+    fetch_related_prs,
     fetch_issue,
     get_diff_max_chars,
     is_generated_path,
 )
+
+FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
 
 
 def _fake_response(status_code, body_text):
@@ -182,6 +192,10 @@ def _changed_file(filename, patch="+line", status="modified", additions=1, delet
         "deletions": deletions,
         "patch": patch,
     }
+
+
+def _issue(number, title="t", body=""):
+    return {"number": number, "title": title, "body": body}
 
 
 class TestDiffBudget:
@@ -425,3 +439,457 @@ def test_run_does_not_retry_other_errors(monkeypatch):
         _run_once()
     from scripts import ai_reviewer
     assert ai_reviewer.call_deepseek.call_count == 1
+
+
+# ---------------------------------------------------------------------------
+# #1243: the PR body never reached the model, and linked-issue bodies were
+# truncated to 500 chars / 10 extracted AC lines, producing false BLOCKs on
+# PRs whose rationale lived in the body (#1231, #1241) and whose acceptance
+# criteria were cut mid-sentence (#1230) or dropped past the line cap.
+# ---------------------------------------------------------------------------
+
+class TestPRBodyInPacket:
+    """The PR description is now included verbatim (within budget) under its
+    own heading, instead of being discarded right after the closing-keyword
+    regex ran over it."""
+
+    def test_packet_contains_pr_body_verbatim(self):
+        pr_meta = _minimal_pr_meta(body="Closes #1\n\n## Why\nBecause reasons, explained at length.")
+        packet = build_review_packet(pr_meta, [], {}, [], "policy")
+        assert "## PR Description" in packet
+        assert "Because reasons, explained at length." in packet
+
+    def test_empty_pr_body_is_flagged_as_policy_violation(self):
+        pr_meta = _minimal_pr_meta(body="")
+        packet = build_review_packet(pr_meta, [], {}, [], "policy")
+        assert "PR body is empty" in packet
+        assert "policy violation" in packet
+
+    def test_whitespace_only_pr_body_is_flagged_as_policy_violation(self):
+        pr_meta = _minimal_pr_meta(body="   \n\n  ")
+        packet = build_review_packet(pr_meta, [], {}, [], "policy")
+        assert "PR body is empty" in packet
+
+    def test_oversized_pr_body_is_truncated_with_explicit_marker(self):
+        pr_meta = _minimal_pr_meta(body="Closes #1\n" + "x" * (PR_BODY_MAX_CHARS + 500))
+        packet = build_review_packet(pr_meta, [], {}, [], "policy")
+        assert "PR body truncated" in packet
+        assert "unverifiable" in packet
+
+    def test_pr_body_under_budget_is_not_truncated(self):
+        pr_meta = _minimal_pr_meta(body="Closes #1\n\nshort body, well under budget")
+        packet = build_review_packet(pr_meta, [], {}, [], "policy")
+        assert "PR body truncated" not in packet
+
+    def test_real_world_1305_body_reaches_packet_with_closing_keyword_intact(self):
+        """Live evidence (PR #1305, docs-only, 'Closes #1303' as the literal
+        first line): the reviewer BLOCKed claiming no closing keyword was
+        present in the body, because the body never reached it. With the
+        body now in the packet, the literal keyword text is visible."""
+        body = (
+            "Closes #1303\n\n## Summary\n"
+            "The standalone dashboard.service was retired because run.py:930 "
+            "already calls start_dashboard()...\n"
+        )
+        pr_meta = _minimal_pr_meta(body=body)
+        packet = build_review_packet(pr_meta, [], {}, [], "policy")
+        assert "Closes #1303" in packet
+        assert "Closing keywords (auto-closes on merge): #1303" in packet
+
+
+class TestLinkedIssueBodyBudget:
+    """Linked-issue bodies were previously capped at issue_body[:500]
+    (~one paragraph), cutting real issues in this repo mid-sentence (#1230
+    was the concrete example in #1243)."""
+
+    def test_full_issue_body_reaches_packet_for_realistic_1230_fixture(self):
+        body = (FIXTURES_DIR / "issue_1230_body.md").read_text(encoding="utf-8")
+        assert len(body) < ISSUE_BODY_MAX_CHARS, "fixture should fit whole, not just survive truncation"
+        issue = _issue(1230, "Fetch-RemoteData.ps1 rewrite", body)
+        pr_meta = _minimal_pr_meta(body="Closes #1230")
+        packet = build_review_packet(pr_meta, [], {}, [issue], "policy")
+        # The sentence #1243 reports the old 500-char cap cut mid-sentence.
+        assert "neither blocks nor is" in packet
+        assert "blocked by the bot's writers" in packet
+        assert "issue body truncated" not in packet
+
+    def test_oversized_issue_body_is_truncated_with_explicit_marker(self):
+        issue = _issue(1, "t", "x" * (ISSUE_BODY_MAX_CHARS + 500))
+        pr_meta = _minimal_pr_meta(body="Closes #1")
+        packet = build_review_packet(pr_meta, [], {}, [issue], "policy")
+        assert "issue body truncated" in packet
+        assert "unverifiable, not unmet" in packet
+
+    def test_empty_issue_body_is_shown_explicitly(self):
+        issue = _issue(1, "t", "")
+        pr_meta = _minimal_pr_meta(body="Closes #1")
+        packet = build_review_packet(pr_meta, [], {}, [issue], "policy")
+        assert "(issue body is empty)" in packet
+
+    def test_missing_issue_among_multiple_closing_keywords_is_named(self):
+        """A PR closing two issues where only one fetch succeeds must name
+        the missing one, not go silent on it (prior behavior only handled
+        the all-fetches-failed case)."""
+        pr_meta = _minimal_pr_meta(body="Closes #1\nCloses #2")
+        issue2 = _issue(2, "t2", "body2")
+        packet = build_review_packet(pr_meta, [], {}, [issue2], "policy")
+        assert "#1" in packet
+        assert "unavailable" in packet
+        assert "### Issue #2 (closing): t2" in packet
+
+
+class TestAcceptanceCriteriaHeadingStyles:
+    """The extractor must recognize '## Acceptance criteria' and
+    '**Acceptance criteria**' headings, keep nested/wrapped bullets, not
+    false-trigger on a mid-sentence mention of the phrase, and never
+    silently drop content below its stated character budget (replacing the
+    old ac_lines[:10] cap, which counted each wrapped continuation line of a
+    bullet as if it were its own top-level criterion)."""
+
+    def test_atx_heading(self):
+        text, truncated = extract_acceptance_criteria(
+            "## Acceptance criteria\n- one\n- two\n\n## Next section\nnope"
+        )
+        assert "one" in text and "two" in text
+        assert "nope" not in text
+        assert not truncated
+
+    def test_bold_heading(self):
+        text, _ = extract_acceptance_criteria(
+            "**Acceptance criteria**\n- one\n- two\n\n**Next section**\nnope"
+        )
+        assert "one" in text and "two" in text
+        assert "nope" not in text
+
+    def test_bold_heading_with_trailing_colon(self):
+        text, _ = extract_acceptance_criteria(
+            "**Acceptance Criteria:**\n- one\n\n## Next\nnope"
+        )
+        assert "one" in text
+        assert "nope" not in text
+
+    def test_nested_bullets_all_kept(self):
+        text, _ = extract_acceptance_criteria(
+            "## Acceptance criteria\n- top\n  - nested\n    - deeper\n\n## Next\nnope"
+        )
+        assert "top" in text
+        assert "nested" in text
+        assert "deeper" in text
+
+    def test_checklist_style_bullets_kept(self):
+        text, _ = extract_acceptance_criteria(
+            "## Acceptance criteria\n- [ ] first\n- [ ] second\n\n## Dependencies\nnone"
+        )
+        assert "first" in text and "second" in text
+        assert "none" not in text
+
+    def test_mid_sentence_mention_does_not_false_trigger(self):
+        body = (
+            "This PR satisfies the acceptance criteria from issue #1 already.\n\n"
+            "## Acceptance criteria\n- real one\n"
+        )
+        text, _ = extract_acceptance_criteria(body)
+        assert "real one" in text
+        assert "satisfies the acceptance criteria" not in text
+
+    def test_no_ac_section_returns_none_extracted(self):
+        text, truncated = extract_acceptance_criteria("just some text, no heading at all")
+        assert text == "(none extracted)"
+        assert not truncated
+
+    def test_empty_body_returns_none_extracted(self):
+        text, truncated = extract_acceptance_criteria("")
+        assert text == "(none extracted)"
+        assert not truncated
+
+    def test_wrapped_bullets_not_dropped_by_old_line_count_cap(self):
+        """Regression for #1230: the old ac_lines[:10] cap exhausted after
+        roughly 2-3 wrapped bullets because each wrapped continuation line
+        counted toward the cap. 15 bullets here, each wrapped across 3
+        physical lines (45 lines total), must all survive."""
+        bullets = "\n".join(
+            f"- item {i} line one\n  continuation line two\n  continuation line three"
+            for i in range(15)
+        )
+        body = f"## Acceptance criteria\n{bullets}\n"
+        text, truncated = extract_acceptance_criteria(body)
+        for i in range(15):
+            assert f"item {i} line one" in text
+        assert not truncated
+
+    def test_truncated_past_char_budget_states_so(self):
+        body = "## Acceptance criteria\n" + "\n".join(f"- {'x' * 100}" for _ in range(100))
+        text, truncated = extract_acceptance_criteria(body)
+        assert truncated
+        assert len(text) == AC_TEXT_MAX_CHARS
+
+    def test_packet_states_ac_truncation_explicitly(self):
+        body = "## Acceptance criteria\n" + "\n".join(f"- {'x' * 100}" for _ in range(100))
+        issue = _issue(1, "t", body)
+        pr_meta = _minimal_pr_meta(body="Closes #1")
+        packet = build_review_packet(pr_meta, [], {}, [issue], "policy")
+        assert "acceptance criteria truncated" in packet
+
+
+class TestNonClosingReferenceLinkage:
+    """#1243 follow-up (live evidence from PR #1306/#1305, 2026-10-05): the
+    reviewer reached opposite verdicts on an unchanged linkage state, and
+    separately BLOCKed a PR while itself suggesting 'Refs #N' as the fix --
+    advice a strict closing-keyword-only check would then also fail. Fix:
+    recognize non-closing references ('Refs #N', 'Part of #N', 'Related to
+    #N', 'See #N') as valid linkage, and present linkage to the model as an
+    explicit, deterministic fact it must not re-derive."""
+
+    def test_extract_referenced_issue_numbers_recognizes_refs(self):
+        # The live remedy a reviewer run suggested for PR #1306 was exactly
+        # this comma-separated two-issue list under one keyword.
+        assert extract_referenced_issue_numbers("Refs #1264, #1266") == [1264, 1266]
+        assert extract_referenced_issue_numbers("Refs #1264 and #1266") == [1264, 1266]
+        assert extract_referenced_issue_numbers("Refs #1264. Refs #1266.") == [1264, 1266]
+
+    def test_extract_referenced_issue_numbers_recognizes_part_of_and_related(self):
+        assert extract_referenced_issue_numbers("Part of #993") == [993]
+        assert extract_referenced_issue_numbers("Related to #42") == [42]
+        assert extract_referenced_issue_numbers("See #7") == [7]
+
+    def test_extract_referenced_issue_numbers_empty_for_closing_only_body(self):
+        # "Closes #N" must not also register as a reference (no double count).
+        assert extract_referenced_issue_numbers("Closes #5") == []
+
+    def test_packet_states_linkage_as_deterministic_fact(self):
+        pr_meta = _minimal_pr_meta(body="Refs #1264, #1266")
+        packet = build_review_packet(pr_meta, [], {}, [], "policy")
+        assert "DETERMINISTIC FACT" in packet
+        assert "do not independently re-derive" in packet
+
+    def test_non_closing_reference_alone_is_not_no_linked_issue(self):
+        """A PR with only 'Refs #N' (no closing keyword) must show a
+        non-empty references list and must NOT fall into the 'no closing
+        keywords or non-closing references' branch."""
+        pr_meta = _minimal_pr_meta(body="Refs #1264\n\nDesign input only.")
+        packet = build_review_packet(pr_meta, [], {}, [], "policy")
+        assert "Closing keywords (auto-closes on merge): (none)" in packet
+        assert "Non-closing references" in packet
+        assert "#1264" in packet
+        assert "no closing keywords or non-closing references in PR body" not in packet
+
+    def test_reviewer_suggested_refs_remedy_is_accepted_as_linkage(self):
+        """Reconstructs the live #1306 scenario: the reviewer's own
+        suggested fix on a blocked run was 'Refs #1264, #1266'. A PR that
+        follows that advice must register both issues as linked."""
+        pr_meta = _minimal_pr_meta(body="Refs #1264, #1266.\n\nDesign input for the live-badge pause UX.")
+        packet = build_review_packet(pr_meta, [], {}, [], "policy")
+        metadata_block = packet.split("## PR Metadata")[1].split("## PR Description")[0]
+        assert "#1264" in metadata_block
+        assert "#1266" in metadata_block
+
+    def test_referenced_issue_is_fetched_and_labeled_non_closing(self):
+        issue = _issue(1264, "live badge pause UX", "body text")
+        pr_meta = _minimal_pr_meta(body="Refs #1264")
+        packet = build_review_packet(pr_meta, [], {}, [issue], "policy")
+        assert "### Issue #1264 (referenced, non-closing): live badge pause UX" in packet
+
+    def test_closing_issue_is_labeled_closing(self):
+        issue = _issue(1, "t", "body text")
+        pr_meta = _minimal_pr_meta(body="Closes #1")
+        packet = build_review_packet(pr_meta, [], {}, [issue], "policy")
+        assert "### Issue #1 (closing): t" in packet
+
+    def test_no_linkage_at_all_still_reports_the_violation_branch(self):
+        pr_meta = _minimal_pr_meta(body="No issue reference of any kind here.")
+        packet = build_review_packet(pr_meta, [], {}, [], "policy")
+        assert "no closing keywords or non-closing references in PR body" in packet
+
+
+class TestRelatedPRsForCriteria:
+    """#1033: a criterion satisfied by an earlier merged PR (PR #1031
+    delivered #1028's pre-registration) read as unmet because the reviewer
+    only saw this PR's diff. The packet now lists other PRs mentioning the
+    issue, as context only. The gate must still BLOCK a genuinely missing
+    criterion, so the no-evidence case is pinned too."""
+
+    @patch("scripts.ai_reviewer._github_get")
+    def test_fetch_related_prs_excludes_current_pr_and_marks_merged(self, mock_get):
+        def route(path, token, **kwargs):
+            resp = MagicMock()
+            if path.startswith("/search/issues"):
+                resp.json.return_value = {"items": [
+                    {"number": 1032, "title": "this PR", "state": "open", "pull_request": {}},
+                    {"number": 1031, "title": "pre-registration", "state": "closed",
+                     "pull_request": {"merged_at": "2026-08-01T00:00:00Z"}},
+                    {"number": 1040, "title": "open follow-up", "state": "open", "pull_request": {}},
+                ]}
+            elif path.endswith("/files?per_page=20"):
+                resp.json.return_value = [{"filename": "docs/REMEDIATION_PLAN.md"}]
+            else:
+                resp.json.return_value = {"merge_commit_sha": "8b4c7f0aaaaabbbbcccc"}
+            return resp
+        mock_get.side_effect = route
+        related = fetch_related_prs("o", "r", 1028, "tok", exclude_pr="1032")
+        assert related == [
+            {"number": 1031, "title": "pre-registration", "state": "merged",
+             "commit": "8b4c7f0aaaaabbbbcccc", "files": ["docs/REMEDIATION_PLAN.md"]},
+            {"number": 1040, "title": "open follow-up", "state": "open",
+             "commit": None, "files": None},
+        ]
+
+    @patch("scripts.ai_reviewer._github_get")
+    def test_merged_pr_whose_commit_lookup_fails_is_marked_missing(self, mock_get, capsys):
+        """AC1 (#1033): if the merge commit or files cannot be read, the
+        merged PR must not be presented as citable evidence."""
+        def route(path, token, **kwargs):
+            if path.startswith("/search/issues"):
+                resp = MagicMock()
+                resp.json.return_value = {"items": [
+                    {"number": 1031, "title": "pre-registration", "state": "closed",
+                     "pull_request": {"merged_at": "2026-08-01T00:00:00Z"}},
+                ]}
+                return resp
+            raise RuntimeError("404 on pulls lookup")
+        mock_get.side_effect = route
+        related = fetch_related_prs("o", "r", 1028, "tok", exclude_pr="1032")
+        assert related[0]["commit"] is None and related[0]["files"] is None
+        assert "Failed to read merge commit/files for PR #1031" in capsys.readouterr().err
+        rendered = _format_related_prs(related)
+        assert "MISSING" in rendered
+        assert "changed files:" not in rendered
+
+    @patch("scripts.ai_reviewer._github_get")
+    def test_enrichment_is_capped_so_a_busy_issue_cannot_fan_out(self, mock_get):
+        items = [
+            {"number": n, "title": f"pr {n}", "state": "closed",
+             "pull_request": {"merged_at": "2026-08-01T00:00:00Z"}}
+            for n in range(100, 100 + 10)
+        ]
+        def route(path, token, **kwargs):
+            resp = MagicMock()
+            if path.startswith("/search/issues"):
+                resp.json.return_value = {"items": items}
+            elif path.endswith("/files?per_page=20"):
+                resp.json.return_value = [{"filename": "x.py"}]
+            else:
+                resp.json.return_value = {"merge_commit_sha": "abc123def456"}
+            return resp
+        mock_get.side_effect = route
+        related = fetch_related_prs("o", "r", 1028, "tok", exclude_pr="1")
+        enriched = [r for r in related if r["commit"]]
+        assert len(enriched) == RELATED_PRS_ENRICH_MAX
+
+    def test_merged_pr_without_commit_or_files_is_not_citable(self):
+        """Pins the AC1 failure case: a merged PR entry lacking a merge
+        commit or changed files renders MISSING and never a 'changed files:'
+        citation."""
+        rendered = _format_related_prs(
+            [{"number": 1031, "title": "pre-registration", "state": "merged",
+              "commit": None, "files": None}]
+        )
+        assert "PR #1031 [merged]" in rendered
+        assert "MISSING merge commit or changed files" in rendered
+        assert "changed files:" not in rendered
+
+    def test_open_pr_is_never_citable_even_with_files(self):
+        rendered = _format_related_prs(
+            [{"number": 1040, "title": "open follow-up", "state": "open",
+              "commit": None, "files": ["x.py"]}]
+        )
+        assert "cannot be cited as delivering a criterion" in rendered
+        assert "changed files:" not in rendered
+
+    def test_merged_pr_with_commit_and_files_is_citable(self):
+        rendered = _format_related_prs(
+            [{"number": 1031, "title": "pre-registration", "state": "merged",
+              "commit": "8b4c7f0aaaaabbbbcccc", "files": ["docs/REMEDIATION_PLAN.md"]}]
+        )
+        assert "merge commit 8b4c7f0aaaaa" in rendered  # shown as 12 chars
+        assert "changed files: docs/REMEDIATION_PLAN.md" in rendered
+
+    @patch("scripts.ai_reviewer._github_get")
+    def test_fetch_related_prs_failure_degrades_to_empty_list(self, mock_get, capsys):
+        mock_get.side_effect = RuntimeError("search down")
+        assert fetch_related_prs("o", "r", 1028, "tok", exclude_pr="1") == []
+        assert "Failed to search PRs for issue #1028" in capsys.readouterr().err
+
+    def test_criterion_satisfied_by_earlier_merged_pr_is_visible_in_packet(self):
+        """Reconstructs #1033: this PR's diff lacks the docs update, but
+        PR #1031 (merged) delivered it. The packet must show #1031 under the
+        issue so the reviewer can cite it."""
+        issue = _issue(1028, "M3 pre-registration", "## Acceptance criteria\n- docs/REMEDIATION_PLAN.md records the decision\n")
+        related = {1028: [{"number": 1031, "title": "pre-registration", "state": "merged",
+                           "commit": "8b4c7f0aaaaabbbbcccc",
+                           "files": ["docs/REMEDIATION_PLAN.md"]}]}
+        pr_meta = _minimal_pr_meta(body="Closes #1028")
+        packet = build_review_packet(pr_meta, [], {}, [issue], "policy", related_prs=related)
+        assert "- PR #1031 [merged]: pre-registration" in packet
+        assert "changed files: docs/REMEDIATION_PLAN.md" in packet
+
+    def test_genuinely_missing_criterion_with_no_related_pr_says_none_found(self):
+        """The no-evidence case: nothing in the packet vouches for the
+        criterion, so it stays unmet and the gate still blocks."""
+        issue = _issue(1028, "M3 pre-registration", "## Acceptance criteria\n- docs/REMEDIATION_PLAN.md records the decision\n")
+        pr_meta = _minimal_pr_meta(body="Closes #1028")
+        packet = build_review_packet(pr_meta, [], {}, [issue], "policy", related_prs={1028: []})
+        assert "Other PRs mentioning #1028" in packet
+        assert "(none found)" in packet
+        assert "- PR #1031" not in packet
+
+    def test_packet_builder_without_lookup_marks_not_checked(self):
+        """Direct callers that do not run the lookup must not look like
+        'checked, nothing found'."""
+        issue = _issue(1, "t", "body")
+        pr_meta = _minimal_pr_meta(body="Closes #1")
+        packet = build_review_packet(pr_meta, [], {}, [issue], "policy")
+        assert "(not checked)" in packet
+
+    def test_prompt_keeps_unmet_criteria_blocking(self):
+        """Pins the narrowed wording: merged-PR evidence may PASS a
+        criterion only with a clear citation, and absent that an unmet
+        criterion still BLOCKs. Guards against a broad waiver creeping in."""
+        prompt = (
+            Path(__file__).resolve().parents[2] / "agents" / "reviewer_prompt_deepseek.md"
+        ).read_text(encoding="utf-8")
+        assert "may be PASSed only when a listed PR is clearly identified" in prompt
+        assert "Without such evidence, an unmet criterion is still FAIL and BLOCK" in prompt
+        assert "Never PASS a criterion merely because a related PR exists" in prompt
+
+
+class TestDeliberatelySequencedPRLinkage:
+    """#1001: a 'Part of #N' PR (one of N for a sequenced issue) must not be
+    BLOCKed for missing linkage. A PR with no reference of any kind still is."""
+
+    def test_part_of_reference_satisfies_linkage(self):
+        pr_meta = _minimal_pr_meta(body="Part of #993\n\nPR 1 of 2; #993 stays open until PR 2 merges.")
+        packet = build_review_packet(pr_meta, [], {}, [], "policy")
+        assert "Non-closing references (Refs/Part of/Related to/See — valid linkage, does NOT auto-close): #993" in packet
+        assert "no closing keywords or non-closing references in PR body" not in packet
+
+    def test_sequenced_issue_is_fetched_and_labelled_non_closing(self):
+        issue = _issue(993, "audit first", "## Acceptance criteria\n- reviewed on its own\n")
+        pr_meta = _minimal_pr_meta(body="Part of #993")
+        packet = build_review_packet(pr_meta, [], {}, [issue], "policy")
+        assert "### Issue #993 (referenced, non-closing): audit first" in packet
+
+    def test_no_reference_of_any_kind_is_still_flagged(self):
+        pr_meta = _minimal_pr_meta(body="Ships a fix, no issue mentioned anywhere.")
+        packet = build_review_packet(pr_meta, [], {}, [], "policy")
+        assert "no closing keywords or non-closing references in PR body" in packet
+
+
+class TestBudgetInteraction:
+    """An oversized PR body, oversized diff, and oversized issue body
+    together must still yield a packet bounded by the sum of the individual
+    caps, not an unbounded concatenation."""
+
+    def test_oversized_everything_still_yields_bounded_packet(self):
+        pr_meta = _minimal_pr_meta(body="Closes #1\n" + "p" * (PR_BODY_MAX_CHARS * 3))
+        changed_files = [_changed_file("src/x.py", patch="d" * (DIFF_MAX_CHARS * 3))]
+        issue = _issue(1, "t", "i" * (ISSUE_BODY_MAX_CHARS * 3))
+        packet = build_review_packet(pr_meta, changed_files, {}, [issue], "policy")
+
+        max_expected = (
+            DIFF_MAX_CHARS + PR_BODY_MAX_CHARS + ISSUE_BODY_MAX_CHARS
+            + AC_TEXT_MAX_CHARS + 5_000  # headroom: headings, labels, markers
+        )
+        assert len(packet) < max_expected
+        assert "PR body truncated" in packet
+        assert "issue body truncated" in packet
+        assert "diff truncated" in packet

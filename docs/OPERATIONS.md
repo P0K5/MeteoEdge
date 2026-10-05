@@ -131,6 +131,7 @@ WantedBy=multi-user.target
 - **Polling interval**: Reads `COPY_SIGNAL_POLL_INTERVAL_SECONDS` from live config (default 300s / 5 minutes) each cycle. Configurable via dashboard config tab.
 - **Kill switch**: `COPY_TRADING_ENABLED` (live-read each cycle, not just at startup) — operator can disable without stopping the service. When `False` (default), cycles run silently with no signals executed; when `True`, actively detects and executes trades within exposure limits.
 - **Realized-P&L circuit breaker** (issue #1139): checked every cycle, same place as the kill switch. `COPY_DAILY_LOSS_LIMIT_USD` blocks new signal execution for the rest of the UTC day once today's realized copy-trading P&L is `<= -this value`; `COPY_DRAWDOWN_STOP_PCT` blocks it until manually cleared once cumulative realized P&L is a drawdown of at least this fraction of `COPY_TRADING_CAPITAL_USD`. Both are DB-derived (`Database.get_copy_realized_pnl_total[_for_date]`), not in-memory, so they survive a service restart. Unlike the kill switch, a tripped breaker never stops the loop from *detecting* and logging signals — it only blocks execution, and never affects settlement (`copy_settle.py`). Both keys are live-editable via the dashboard config tab (`copy_trading` group).
+- **Live drawdown baseline** (issue #1317): `COPY_LIVE_DRAWDOWN_SINCE` (ISO-8601 UTC timestamp, must include a timezone). Empty means every live loss counts toward the stop. A timestamp means only settled live trades on or after it count, so earlier losses are closed as a phase. A future timestamp is rejected on the config tab, since it would ignore all live losses. A value that fails to parse falls back to all-time, the stricter rule. Set it from the dashboard config tab (`copy_trading` group), or it takes effect on the next cycle without a restart.
 - **Logging**: Appends to `/home/p0k5/MeteoEdge/logs/copy_signals.log`. Signal detection, execution, skips, and errors all logged here.
 
 **Operational commands:**
@@ -3044,9 +3045,33 @@ For issues beyond this runbook, escalate to:
 
 ## AI PR Review
 
-`AI / DeepSeek review` (`scripts/ai_reviewer.py`, workflow `.github/workflows/ai-review.yml`) is a required check on every PR. It builds a review packet (diff, changed files, graphify context, linked-issue acceptance criteria, CLAUDE.md policy summary) and sends it to DeepSeek (`deepseek-chat` by default) for a `PASS`/`BLOCK` verdict, posted as both a Check Run and a PR comment.
+`AI / DeepSeek review` (`scripts/ai_reviewer.py`, workflow `.github/workflows/ai-review.yml`) is a required check on every PR. It builds a review packet (PR description, diff, changed files, graphify context, linked-issue bodies and acceptance criteria, CLAUDE.md policy summary) and sends it to DeepSeek (`deepseek-chat` by default) for a `PASS`/`BLOCK` verdict, posted as both a Check Run and a PR comment.
 
 Previously ran on NVIDIA NIM (`z-ai/glm-5.2`); switched to DeepSeek after NIM's endpoint proved unreliable under load and the EOL'd model had no working replacement on that backend (#1037).
+
+### Packet content budgets (#1243)
+
+Before #1243, the packet discarded the PR body entirely (only a regex-derived "closing keywords found" line reached the model) and capped each linked issue's body at a flat 500 characters — about one paragraph, cutting most issues in this repo mid-sentence and producing false `BLOCK` verdicts on PRs whose rationale lived in the body. The packet now includes:
+
+- **PR Description** — the PR body verbatim, up to `PR_BODY_MAX_CHARS` (20,000 chars). An empty body is reported to the model as a genuine policy violation, not a blank section.
+- **Linked issue bodies** — full text per issue, up to `ISSUE_BODY_MAX_CHARS` (16,000 chars each).
+- **Acceptance criteria** — extracted from `## Acceptance criteria` / `**Acceptance criteria**` headings (nested/wrapped bullets kept), up to `AC_TEXT_MAX_CHARS` (4,000 chars).
+
+Each budget is independent and additive with `DIFF_MAX_CHARS`; if any section is truncated, the packet says so explicitly and the reviewer prompt instructs the model to mark truncated criteria unverifiable rather than unmet. If a PR closes several large issues plus carries a near-cap diff, the combined packet can still exceed DeepSeek's context — that case is caught by the existing `DeepSeekContextLengthError` retry-with-smaller-diff-cap path (see below); the PR body and issue-body budgets are not currently reduced on that retry.
+
+### Issue linkage is a deterministic, non-LLM fact (#1243 follow-up)
+
+Live evidence (PR #1306, two commits, unchanged linkage state, opposite verdicts; PR #1305, closing keyword present, BLOCKed for its claimed absence) showed the reviewer sometimes re-deriving linkage itself instead of trusting the regex-computed fact already in the packet, and treating "no closing keyword" as equivalent to "no linked issue" even when a non-closing reference was present. Fixes:
+
+- `extract_referenced_issue_numbers()` recognizes `Refs #N` / `Part of #N` / `Related to #N` / `See #N` (including a comma/"and"-separated list after one keyword) as valid, non-auto-closing linkage — the sanctioned pattern for one PR of a deliberately-sequenced multi-PR issue (#1001), and literally the remedy a reviewer run once suggested for a PR it had just blocked.
+- The packet states linkage as two explicit lists (closing / referenced) labeled **"DETERMINISTIC FACT... do not independently re-derive"**, and fetches issues from the union of both so referenced-only issues still get their acceptance criteria shown.
+- The reviewer prompt instructs the model never to dispute this list from the diff, branch name, or its own reading of the body, and to treat a non-empty references list as satisfying the linking requirement even when the closing-keywords list is empty.
+
+### Criteria already delivered by an earlier PR (#1033, #1001)
+
+Each linked issue now lists the other PRs that mention it (`fetch_related_prs()`, a GitHub issue search, capped at 10). These are context only. A criterion the diff does not show may be passed only when a listed PR is clearly named as delivering it; an unmet criterion with no such evidence still blocks. A failed search degrades to an empty list and is logged. Reviewer quotations must appear verbatim in the diff or PR description. Sequenced PRs (`Part of #N` / `Refs #N`) are documented in `.claude/instructions/governance.md`.
+
+This narrows the gap but does not make the review fully deterministic — the underlying verdict is still an LLM call at `temperature=0.1`, not 0, so some run-to-run variance on borderline judgment calls (e.g. whether a genuinely unlinked PR's content justifies the exception) remains possible even with the fact stated unambiguously.
 
 ### Transient-failure handling, and fail-closed (issues #960, #1037)
 

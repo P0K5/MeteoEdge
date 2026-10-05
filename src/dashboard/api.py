@@ -2644,9 +2644,20 @@ _CANDIDATE_PY_SORTS = ("followed", "unstable")
 
 def _candidate_out(row, previous, followed_status) -> "CopyCandidateOut":
     """Build one candidate row. Reuses check_stability() against the wallet's
-    own last two runs rather than re-deriving the sign/tolerance logic."""
+    own last two runs rather than re-deriving the sign/tolerance logic.
+
+    Note (issue #1298): check_stability() now also returns `unstable=True`
+    when the two rows are too far apart in time to compare at all
+    (reason="stale_comparison") -- this badge does not yet distinguish that
+    case from a proven sign/volume disagreement. Acceptable here because
+    this field only drives an advisory dashboard warning, not an auto-pause
+    decision (unlike copy_wallet_health.py's _stability_pause_reason, which
+    does make that distinction); left as a known limitation rather than
+    widened scope for this backend fix.
+    """
     from src.scripts.copy_wallet_screening import check_stability
 
+    stable, _reason = check_stability(row, previous)
     return CopyCandidateOut(
         address=row["address"],
         window=row["window"],
@@ -2660,7 +2671,7 @@ def _candidate_out(row, previous, followed_status) -> "CopyCandidateOut":
         flat_dollar_pnl=row["flat_dollar_pnl"],
         flat_stake=row["flat_stake"],
         eligible_to_follow=bool(row["eligible_to_follow"]),
-        unstable=not check_stability(row, previous),
+        unstable=not stable,
         has_prior_run=previous is not None,
         truncated=bool(row["truncated"]),
         followed=row["address"] in followed_status,
@@ -4200,7 +4211,7 @@ _CONFIG_META: dict[str, dict] = {
     },
     "COPY_LIVE_DRAWDOWN_SINCE": {
         "description": "Live drawdown baseline (ISO-8601 UTC, e.g. 2026-10-05T00:00:00+00:00). Empty = count every live loss. Only settled live trades on or after this timestamp count toward the drawdown stop (issue #1317).",
-        "type": "str",
+        "type": "isotime",
         "group": "copy_trading",
     },
     "COPY_LIVE_DRAWDOWN_STOP_PCT": {
@@ -4260,6 +4271,20 @@ def _validate_config_value(key: str, raw_value: Any) -> "tuple[str, str | None]"
             if hi is not None and coerced > hi:
                 return "", f"{key} must be <= {hi}, got {coerced}"
             return str(coerced), None
+
+        if param_type == "isotime":
+            text = str(raw_value).strip()
+            if text == "":
+                return "", None
+            try:
+                parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+            except ValueError:
+                return "", f"{key} must be an ISO-8601 timestamp (e.g. 2026-10-05T00:00:00+00:00) or empty"
+            if parsed.tzinfo is None:
+                return "", f"{key} must include a timezone (e.g. 2026-10-05T00:00:00+00:00)"
+            if parsed > datetime.now(timezone.utc):
+                return "", f"{key} cannot be in the future -- a future baseline would ignore all live losses"
+            return text, None
 
         if param_type == "enum":
             val = str(raw_value)

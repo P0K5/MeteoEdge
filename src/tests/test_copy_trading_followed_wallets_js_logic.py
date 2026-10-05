@@ -349,11 +349,11 @@ _ASSERTIONS = textwrap.dedent("""
       const overrideStakeHtml = _followedLiveStakeHtml({ stake_per_trade: 5, live_stake_per_trade: 2, live_stake_is_override: true });
       assert.ok(overrideStakeHtml.includes('Live: $2.00'));
       assert.ok(!overrideStakeHtml.includes('$5.00') && !overrideStakeHtml.includes('Paper'), 'the Live stake cell must never show the paper figure');
-      assert.ok(!overrideStakeHtml.includes('inherits paper'), 'an explicit override must not show the "(inherits paper)" note');
+      assert.ok(!overrideStakeHtml.includes('follows paper stake'), 'an explicit override must not show the "follows paper stake" note');
 
       const inheritedStakeHtml = _followedLiveStakeHtml({ stake_per_trade: 5, live_stake_per_trade: 5, live_stake_is_override: false });
       assert.ok(inheritedStakeHtml.includes('Live: $5.00'));
-      assert.ok(inheritedStakeHtml.includes('(inherits paper)'), 'an inherited (non-override) live stake must be annotated as such');
+      assert.ok(inheritedStakeHtml.includes('· follows paper stake'), 'an inherited (non-override) live stake must be annotated as such');
 
       // ------------------------------------------------------------------
       // 9. "Go live" / "Revert to paper" control states (issue #1254).
@@ -414,7 +414,8 @@ _ASSERTIONS = textwrap.dedent("""
       window.prompt = () => 'abc';
       await followedGoLive('0xGoLive1', makeBtn());
       assert.strictEqual(flowFetchCount, 0, 'a non-finite stake must not call any API');
-      assert.ok(errBanner.textContent.includes('enter a live stake greater than $0'), 'non-finite stake must show the finite/positive validation copy');
+      const rowMsg = document.getElementById('followed-live-msg-' + _copySafeId('0xGoLive1'));
+      assert.ok(rowMsg.textContent.startsWith('Could not set live stake: enter an amount above $0'), 'non-finite stake must show the finite/positive validation copy in the row message (#1290)');
 
       // c) Non-positive stake -> banner error, no API call.
       window.prompt = () => '0';
@@ -425,7 +426,7 @@ _ASSERTIONS = textwrap.dedent("""
       window.prompt = () => '999';
       await followedGoLive('0xGoLive1', makeBtn());
       assert.strictEqual(flowFetchCount, 0, 'a stake above the live cap must not call any API');
-      assert.ok(errBanner.textContent.includes("exceeds this wallet's live exposure cap"), 'an above-cap stake must show the cap-specific validation copy');
+      assert.ok(rowMsg.textContent.includes("is over this wallet's $10.00 live cap"), 'an above-cap stake must show the cap-specific validation copy in the row message (#1290): ' + rowMsg.textContent);
 
       // e) Cancelling the final confirm() makes no API call either.
       window.prompt = () => '3';
@@ -485,16 +486,15 @@ _ASSERTIONS = textwrap.dedent("""
       assert.ok(glMsgEl.textContent.includes('Live trading enabled'), 'the per-row status region must announce success for screen readers');
       assert.strictEqual(glLoadingRemoves.length, 1, 'the loading state must be held across the stake-then-enable boundary, only cleared once at the very end (Designer nitpick)');
 
-      // g) Accepting the pre-filled resolved value as-is is an explicit
-      //    override -- the stake PATCH still fires even though the number
-      //    is numerically unchanged, per the design spec's "accepting the
-      //    default is an explicit override" rule.
+      // g) Issue #1290 (amends the old "accepting the default is an explicit
+      //    override" rule): accepting the pre-filled resolved value of an
+      //    INHERITING wallet must not silently convert it to a fixed override.
       setWallet({ address: '0xGoLive2', stake_per_trade: 5, live_stake_per_trade: 5, live_stake_is_override: false, live_enabled: false, status: 'active' });
       window.prompt = () => '5';
       window.confirm = () => true;
       callOrder.length = 0;
       await followedGoLive('0xGoLive2', makeBtn());
-      assert.deepStrictEqual(callOrder, ['live-stake', 'live']);
+      assert.deepStrictEqual(callOrder, ['live'], 'no stake write for an unchanged pre-fill on an inheriting wallet');
 
       // Truly-unchanged case: an existing override, re-entered as itself --
       // the stake PATCH must be skipped entirely, avoiding a redundant

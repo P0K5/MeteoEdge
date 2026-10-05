@@ -536,6 +536,18 @@ def _handle_buy_trade(
             # assign a positional side to can never be executed -- only
             # signal-logged.
             skip_reason = "missing_outcome_index"
+        elif outcome_index not in (0, 1):
+            # Data-integrity guard (issue #1297): normalize_trade() accepts
+            # any integer outcomeIndex the public trade tape hands back, but
+            # copy_signals/copy_positions CHECK(outcome_index IS NULL OR
+            # outcome_index IN (0,1)) only models binary markets. A trade on
+            # a multi-outcome market (index 2+) can't be assigned a side
+            # here either -- same disposition as missing_outcome_index
+            # (log-only, never executed), not a DB error. The raw value is
+            # never written to the DB (see the skip-row insert below):
+            # writing it as-is would trip the exact CHECK this guard exists
+            # to avoid.
+            skip_reason = "non_binary_outcome_index"
         elif (
             live_config["COPY_MIN_ENTRY_PRICE"] > 0.0
             and source_price < live_config["COPY_MIN_ENTRY_PRICE"]
@@ -566,8 +578,14 @@ def _handle_buy_trade(
                         skip_reason = "total_exposure_limit"
 
         if skip_reason is not None:
+            # copy_signals.outcome_index carries the same CHECK(... IN
+            # (0,1)) as the non_binary_outcome_index guard above -- null out
+            # anything outside that range for the skip row itself (the
+            # original value is already captured by skip_reason /
+            # normalize_trade's source data, nothing is lost).
+            signal_outcome_index = outcome_index if outcome_index in (0, 1) else None
             db.insert_copy_signal(
-                address=address, market=market, outcome_index=outcome_index,
+                address=address, market=market, outcome_index=signal_outcome_index,
                 source_price=source_price, source_trade_id=source_trade_id,
                 detected_at=now_iso, order_placed=0, skip_reason=skip_reason,
             )

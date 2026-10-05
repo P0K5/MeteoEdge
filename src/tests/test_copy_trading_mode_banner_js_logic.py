@@ -167,7 +167,15 @@ _ASSERTIONS = textwrap.dedent("""
       _copyInvalidateShared();
       global.fetch = async () => { throw new Error('network down'); };
       await fetchCopyTradingModePosture();
-      assertAllBanners(...OFF, 'a failed fetch must never leave/claim the LIVE state');
+      // Issue #1290: unknown is its own neutral state -- never LIVE, never a
+      // guessed "off"/paper.
+      for (const t of ['copy-wallets', 'copy-paper', 'copy-live']) {
+        const b = document.getElementById(t + '-mode-banner');
+        assert.strictEqual(b.className, 'mode-badge mode-badge-unknown copy-trading-mode-banner', 'a failed fetch must never leave/claim the LIVE state');
+        assert.ok(b.innerHTML.includes('Live status unavailable'));
+        assert.ok(!/off|paper/i.test(b.innerHTML.replace(/<[^>]*>/g, '')));
+        assert.ok(b.getAttribute('aria-label').startsWith('Live status unavailable'));
+      }
 
       // ------------------------------------------------------------------
       // 5. A missing/malformed config payload (e.g. key absent) also

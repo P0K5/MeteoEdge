@@ -2,6 +2,8 @@
 
 This guide helps operators diagnose and recover from missing or incorrect position rendering on the MeteoEdge dashboard.
 
+**Architecture note:** The dashboard runs as an embedded thread inside `meteoedge.service`, so its logs are found in `bot.log`, not a separate file.
+
 ## How to Diagnose a Missing Position
 
 Follow these steps in order to identify why a position is not appearing on the dashboard.
@@ -219,18 +221,14 @@ Follow these steps in order to identify why a position is not appearing on the d
 **Root cause:** The dashboard's wallet fetch is stale or the enrichment is missing.
 
 **Recovery:**
-1. Clear the dashboard cache:
+1. Restart the bot service to refresh the embedded dashboard:
    ```bash
-   # If the dashboard is running in a separate process
-   pkill -f "uvicorn src.dashboard.api"
-   sleep 2
-   uvicorn src.dashboard.api:app --port 8000 &
+   sudo systemctl restart meteoedge.service
    ```
 2. Refresh the dashboard in your browser (hard refresh: Ctrl+Shift+R or Cmd+Shift+R)
-3. Check the dashboard logs for errors:
+3. Check the dashboard logs for errors — dashboard output goes to bot.log:
    ```bash
-   # If logged to a file
-   tail -n 50 logs/dashboard.log | grep -i "error\|exception\|portfolio"
+   tail -n 50 logs/bot.log | grep -i "error\|exception\|portfolio"
    ```
 
 **If still missing:**
@@ -321,12 +319,11 @@ curl -s http://localhost:8000/health | jq '.status'
 # Expected: "ok"
 ```
 
-If not responding, restart:
+If not responding, restart the bot service:
 ```bash
-pkill -f "uvicorn src.dashboard.api" || true
-sleep 2
-nohup uvicorn src.dashboard.api:app --port 8000 > logs/dashboard.log 2>&1 &
+sudo systemctl restart meteoedge.service
 ```
+The dashboard is embedded in the bot process (see `src/scripts/run.py:930` `start_dashboard()`), so restarting the service will restart the dashboard. Do not attempt to start the dashboard as a standalone process — the embedded launcher spawns a daemon thread that would exit immediately and take the thread with it.
 
 ### Check 3: Open Position Count is Consistent
 
@@ -433,7 +430,7 @@ grep "CRITICAL" logs/bot.log | head -n 5
 
 - **Bot operational questions:** Check logs/bot.log and this guide
 - **Persistent position sync failures:** Escalate to the Tech Lead PM with the output of Steps 1–4 above
-- **Dashboard rendering issues:** Restart the dashboard and check logs/dashboard.log
+- **Dashboard rendering issues:** Restart the bot service (`sudo systemctl restart meteoedge.service`) and check logs/bot.log
 - **Database corruption:** Contact the Tech Lead PM immediately
 
 ---

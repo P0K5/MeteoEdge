@@ -41,6 +41,14 @@ templates, invoke the **board-status** skill.
 
 1. **Every PR** must reference its issues with closing keywords: `Closes #N`,
    `Fixes #N`, or `Resolves #N`. PRs without issue links will be rejected.
+   - **Exception: deliberately-sequenced PRs.** When one issue is delivered by
+     N PRs, only the final PR uses a closing keyword. Earlier PRs use a
+     non-closing reference: `Part of #N`, `Refs #N`, `Related to #N`, or
+     `See #N` (comma/"and" lists allowed, e.g. `Refs #1264, #1266`). Non-closing
+     references satisfy the linking requirement and do not auto-close the
+     issue on merge, so no close/reopen step is needed. The AI reviewer treats
+     either form as valid linkage. A PR with no issue reference of either kind
+     is still a violation.
 2. **Every PR description** must include:
    - What issue(s) it addresses (with `#N` references)
    - What changed (brief summary)

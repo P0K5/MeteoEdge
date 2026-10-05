@@ -81,7 +81,7 @@ BANNER_IDS = [
 
 
 def _banner_tag(html: str, banner_id: str) -> str:
-    match = re.search(rf'<span id="{banner_id}"[^>]*>[^<]*</span>', html)
+    match = re.search(rf'<span id="{banner_id}"[^>]*>(?:<i[^>]*></i>)?[^<]*</span>', html)
     assert match, f"Could not locate the posture banner element #{banner_id}"
     return match.group(0)
 
@@ -116,20 +116,27 @@ def test_posture_banner_is_landmark_region(html_content):
         assert 'aria-live="polite"' in tag
 
 
-def test_posture_banner_default_state_is_conservative_paper_off(html_content):
-    """Before the config fetch resolves, every banner instance must default
-    to the OFF/paper state -- never claim LIVE without a confirmed signal
-    (same conservative-default rule as the execution_mode precedent)."""
+def test_posture_banner_default_state_is_neutral_unknown_never_off(html_content):
+    """Before the config fetch resolves, every banner instance shows the
+    neutral "Live status unavailable" state (issue #1290) -- never LIVE and
+    never a guessed "off"/PAPER."""
     for banner_id in BANNER_IDS:
         match = re.search(
-            rf'<span id="{banner_id}"([^>]*)>([^<]*)</span>', html_content
+            rf'<span id="{banner_id}"([^>]*)>(?:<i[^>]*></i>)?([^<]*)</span>', html_content
         )
         assert match, f"Could not locate #{banner_id}"
         attrs, text = match.groups()
-        assert "mode-badge-paper" in attrs
-        assert "mode-badge-live" not in attrs
-        assert text.strip() == "LIVE TRADING OFF — paper only"
-        assert 'aria-label="Live trading is off — paper only"' in attrs
+        assert "mode-badge-unknown" in attrs
+        assert "mode-badge-live" not in attrs and "mode-badge-paper" not in attrs
+        assert text.strip() == "Live status unavailable"
+        assert "off" not in text.lower()
+
+
+def test_unavailable_info_banner_exists_on_every_copy_tab(html_content):
+    for tab in ("copy-wallets", "copy-paper", "copy-live"):
+        m = re.search(rf'<div class="info-banner copy-live-status-banner" id="{tab}-live-status-banner" role="status">', html_content)
+        assert m, tab
+    assert "Live status unavailable. Could not load live eligibility for your wallets, so no LIVE or PAPER label is shown. Retrying automatically." in html_content
 
 
 def test_posture_banner_lives_in_each_tabs_shared_header(html_content):
@@ -173,3 +180,87 @@ def test_posture_job_is_30s_and_always_on_every_copy_tab(html_content):
         "Each copy tab must poll the posture banner every 30 s and refetch it "
         "on every entry (always: true)"
     )
+
+
+# ---------------------------------------------------------------------------
+# WCAG contrast ratio validation (issue #602)
+#
+# Light-theme badge text colors must achieve 4.5:1 contrast ratio (WCAG AA)
+# against their backgrounds. Test extracts token values from the HTML and
+# verifies all badge pairs meet the minimum requirement.
+# ---------------------------------------------------------------------------
+
+def _hex_to_rgb(hex_color: str) -> tuple[int, int, int]:
+    """Convert hex color to RGB tuple."""
+    hex_color = hex_color.lstrip("#")
+    return tuple(int(hex_color[i:i + 2], 16) for i in (0, 2, 4))
+
+
+def _rgb_to_luminance(r: int, g: int, b: int) -> float:
+    """
+    Calculate relative luminance per WCAG 2.1 algorithm.
+    Applies gamma correction and returns the linear luminance value.
+    """
+
+    def linearize(c: int) -> float:
+        c = c / 255.0
+        if c <= 0.03928:
+            return c / 12.92
+        else:
+            return ((c + 0.055) / 1.055) ** 2.4
+
+    R = linearize(r)
+    G = linearize(g)
+    B = linearize(b)
+    return 0.2126 * R + 0.7152 * G + 0.0722 * B
+
+
+def _contrast_ratio(fg_hex: str, bg_hex: str) -> float:
+    """Calculate WCAG contrast ratio between foreground and background."""
+    fg_rgb = _hex_to_rgb(fg_hex)
+    bg_rgb = _hex_to_rgb(bg_hex)
+
+    fg_lum = _rgb_to_luminance(*fg_rgb)
+    bg_lum = _rgb_to_luminance(*bg_rgb)
+
+    lighter = max(fg_lum, bg_lum)
+    darker = min(fg_lum, bg_lum)
+
+    return (lighter + 0.05) / (darker + 0.05)
+
+
+def test_light_theme_badge_contrast_wcag_aa(html_content):
+    """Light-theme badge text (--yes, --warn) must achieve 4.5:1 contrast
+    ratio against their badge backgrounds (issue #602 fix).
+    Dark theme is unaffected; dark badge pairs already pass.
+    """
+    # Extract light theme token values from the CSS
+    light_theme_match = re.search(r'\[data-theme="light"\]\{([^}]*)\}', html_content)
+    assert light_theme_match, "Could not find [data-theme='light'] CSS rule"
+
+    tokens_str = light_theme_match.group(1)
+    tokens = {}
+
+    for token, var_match in [
+        ("--yes", r"--yes:([#\da-f]+)"),
+        ("--warn", r"--warn:([#\da-f]+)"),
+        ("--yes-bg", r"--yes-bg:([#\da-f]+)"),
+        ("--warn-bg", r"--warn-bg:([#\da-f]+)"),
+    ]:
+        match = re.search(var_match, tokens_str)
+        assert match, f"Could not extract {token} from light theme CSS"
+        tokens[token] = match.group(1)
+
+    # Test primary badge pairs (the critical paths per issue #602)
+    pairs_to_test = [
+        ("--yes on --yes-bg", tokens["--yes"], tokens["--yes-bg"]),
+        ("--warn on --warn-bg", tokens["--warn"], tokens["--warn-bg"]),
+    ]
+
+    min_ratio = 4.5  # WCAG AA standard
+    for pair_name, fg_hex, bg_hex in pairs_to_test:
+        ratio = _contrast_ratio(fg_hex, bg_hex)
+        assert ratio >= min_ratio, (
+            f"Badge pair '{pair_name}' fails WCAG AA: ratio={ratio:.2f}:1 "
+            f"(need {min_ratio}:1) — fg={fg_hex}, bg={bg_hex}"
+        )
