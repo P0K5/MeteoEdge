@@ -44,3 +44,35 @@ def test_topbar_title_block_can_shrink():
     html = INDEX_HTML.read_text(encoding="utf-8")
     assert re.search(r"\.logo,\.logo>div\{[^}]*min-width:0", html)
     assert "text-overflow:ellipsis" in _rule(html, ".logo-text,.logo-sub")
+
+
+def test_wallets_candidates_table_has_fixed_stable_column_layout():
+    """#1287: 11 columns keep the same x/width on every page.
+
+    Chromium measurements (1280 px and 375 px, page 1 'New' vs page 2
+    'Unstable'+'Partial history' with 7-digit/negative PnL) are in the PR: the
+    columns are identical, the table is exactly the 1248 px wrap at 1280 (no
+    inner scroll) and 1219 px inside a 343 px wrap at 375 (scrolls in the wrap,
+    page scrollWidth == clientWidth).
+    """
+    html = INDEX_HTML.read_text(encoding="utf-8")
+    table = _rule(html, "#copy-candidates-list .copy-table")
+    assert "table-layout:fixed" in table
+    min_width = int(re.search(r"min-width:(\d+)px", table).group(1))
+    widths = [
+        int(re.search(
+            r"#copy-candidates-list \.copy-th:nth-child\(%d\)\{width:(\d+)px;\}" % i, html
+        ).group(1))
+        for i in range(1, 12)
+    ]
+    assert len(widths) == 11
+    # Wrap is 1248 px at a 1280 px viewport; the columns must fit without scroll
+    # yet the table must stay wider than a 375 px viewport so it scrolls there.
+    assert sum(widths) <= 1248
+    assert min_width <= 1248
+    assert min_width >= 600
+    assert min_width == sum(widths)
+    assert widths[8] >= 115   # Stability: 'Unstable' badge
+    assert widths[9] >= 145   # History: 'Partial history' badge
+    mono = _rule(html, "#copy-candidates-list .copy-address-mono")
+    assert "text-overflow:ellipsis" in mono and "overflow:hidden" in mono

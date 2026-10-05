@@ -924,3 +924,60 @@ def test_focus_never_drops_to_body_when_the_list_goes_inert_or_a_pager_button_di
         assert.strictEqual(el('copy-pg-next').disabled, true);
         assert.strictEqual(document.activeElement, el('copy-pg-prev'));
     """, tmp_path)
+
+
+def test_refresh_button_shows_busy_cue_while_request_is_in_flight(tmp_path):
+    run_js("""
+        await openWallets();
+        const btn = el('copy-refresh-btn');
+        assert.strictEqual(btn.disabled, false, 'button is enabled when not loading');
+        assert.strictEqual(btn._attrs['aria-busy'], 'false');
+
+        srv.hold = true;
+        btn.fire('click'); await settle();
+        assert.strictEqual(btn.disabled, true, 'button is disabled while loading');
+        assert.strictEqual(btn._attrs['aria-busy'], 'true', 'aria-busy="true" indicates busy state to screen readers');
+
+        srv.hold = false; await releaseAll();
+        assert.strictEqual(btn.disabled, false, 'button re-enabled after load');
+        assert.strictEqual(btn._attrs['aria-busy'], 'false');
+    """, tmp_path)
+
+
+def test_no_wallets_match_shows_status_role(tmp_path):
+    run_js("""
+        await openWallets();
+        // Search for something that won't match
+        el('copy-search-input').value = 'nomatch123456';
+        el('copy-search-input').fire('input');
+        await advance(200);  // wait for debounce
+        await settle();
+
+        // Check that the "No wallets match" message has role="status"
+        assert.ok(list.innerHTML.includes('role="status"'), 'no-match message has role="status" for screen readers');
+        assert.ok(list.innerHTML.includes('No wallets match'), 'displays no-match message');
+    """, tmp_path)
+
+
+def test_showing_numbers_use_thousands_separators(tmp_path):
+    run_js("""
+        await openWallets();
+        assert.strictEqual(_copyFmtInt(1234), '1,234');
+        assert.strictEqual(_copyFmtInt(1234567), '1,234,567');
+        assert.strictEqual(_copyFmtInt(999), '999');
+
+        const rows25 = Array.from({ length: 25 }, (_, i) => ({ address: '0x' + i }));
+        // Page 1 of a filtered view: total 12,345 filtered from 54,321.
+        _copyRenderPaging(_copyPagingOf({
+          candidates: rows25, total: 12345, unfiltered_total: 54321,
+          page: 1, page_size: 25, total_pages: 494,
+        }));
+        assert.strictEqual(showing(), 'Showing 1\u201325 of 12,345 (filtered from 54,321)');
+
+        // A later page: from/to are >= 1000 too (page 41 -> 1,001-1,025).
+        _copyRenderPaging(_copyPagingOf({
+          candidates: rows25, total: 12345, unfiltered_total: 12345,
+          page: 41, page_size: 25, total_pages: 494,
+        }));
+        assert.strictEqual(showing(), 'Showing 1,001\u20131,025 of 12,345');
+    """, tmp_path)
