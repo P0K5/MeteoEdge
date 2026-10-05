@@ -4200,7 +4200,7 @@ _CONFIG_META: dict[str, dict] = {
     },
     "COPY_LIVE_DRAWDOWN_SINCE": {
         "description": "Live drawdown baseline (ISO-8601 UTC, e.g. 2026-10-05T00:00:00+00:00). Empty = count every live loss. Only settled live trades on or after this timestamp count toward the drawdown stop (issue #1317).",
-        "type": "str",
+        "type": "isotime",
         "group": "copy_trading",
     },
     "COPY_LIVE_DRAWDOWN_STOP_PCT": {
@@ -4260,6 +4260,16 @@ def _validate_config_value(key: str, raw_value: Any) -> "tuple[str, str | None]"
             if hi is not None and coerced > hi:
                 return "", f"{key} must be <= {hi}, got {coerced}"
             return str(coerced), None
+
+        if param_type == "isotime":
+            text = str(raw_value).strip()
+            if text == "":
+                return "", None
+            try:
+                datetime.fromisoformat(text.replace("Z", "+00:00"))
+            except ValueError:
+                return "", f"{key} must be an ISO-8601 timestamp (e.g. 2026-10-05T00:00:00+00:00) or empty"
+            return text, None
 
         if param_type == "enum":
             val = str(raw_value)
