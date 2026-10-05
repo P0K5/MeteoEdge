@@ -4198,6 +4198,11 @@ _CONFIG_META: dict[str, dict] = {
         "min": 1.0,
         "max": 1000.0,
     },
+    "COPY_LIVE_DRAWDOWN_SINCE": {
+        "description": "Live drawdown baseline (ISO-8601 UTC, e.g. 2026-10-05T00:00:00+00:00). Empty = count every live loss. Only settled live trades on or after this timestamp count toward the drawdown stop (issue #1317).",
+        "type": "str",
+        "group": "copy_trading",
+    },
     "COPY_LIVE_DRAWDOWN_STOP_PCT": {
         "description": "Block new LIVE copy-signal execution until manually cleared once cumulative realized LIVE P&L is a drawdown of at least this fraction of COPY_LIVE_CAPITAL_USD (issue #1175 live circuit breaker) — separate from COPY_DRAWDOWN_STOP_PCT (paper)",
         "type": "float",

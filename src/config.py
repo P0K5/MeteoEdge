@@ -836,6 +836,9 @@ CONFIG_DEFAULTS: "dict[str, str | int | float | bool]" = {
     # src/risk/copy_risk_manager.py::allow_live_copy_signal.
     "COPY_LIVE_DAILY_LOSS_LIMIT_USD": 25.0,
     "COPY_LIVE_DRAWDOWN_STOP_PCT": 0.20,
+    # ISO-8601 UTC. Empty = all-time (drawdown counts every live loss). Set to a
+    # later timestamp to close earlier losses as a closed phase (issue #1317).
+    "COPY_LIVE_DRAWDOWN_SINCE": "",
     # Wallet-balance reconciliation tolerance (issue #1174). copy_live_settle.py
     # compares LiveTrader.get_usdc_balance() (the real exchange balance)
     # against an expected balance derived from copy_live_positions
