@@ -31,13 +31,13 @@ def _follow(db: Database, address: str = ADDRESS, status: str = "active", **over
 
 def _screening_row(
     db: Database, address: str, screened_at: str, median_roi: float, n_resolved: int,
-    eligible_to_follow: int,
+    eligible_to_follow: int, flat_dollar_pnl: "float | None" = None,
 ) -> None:
     db.insert_wallet_screening(
         address=address, window="month", screened_at=screened_at,
         n_buy_trades=n_resolved, n_resolved=n_resolved, win_rate=0.5,
         mean_roi=median_roi, median_roi=median_roi, slippage_bps=50.0,
-        eligible_to_follow=eligible_to_follow,
+        eligible_to_follow=eligible_to_follow, flat_dollar_pnl=flat_dollar_pnl,
     )
 
 
@@ -131,13 +131,23 @@ class TestStabilityCheckPause:
         two-week gap between the two most recent screening rows, with
         n_resolved growth that would breach the 25% tolerance (317 -> 430,
         +36%) if compared pairwise, must NOT auto-pause the wallet -- it's
-        stale data, not proven instability."""
+        stale data, not proven instability. flat_dollar_pnl is set positive
+        on the current row so the quality gate -- which this function must
+        still consult directly on a stale comparison (review follow-up) --
+        genuinely passes too; see the sibling test below for the opposite
+        case."""
         import logging
 
         db = _db()
         _follow(db)
-        _screening_row(db, ADDRESS, "2026-09-20T00:00:00+00:00", median_roi=0.49, n_resolved=317, eligible_to_follow=1)
-        _screening_row(db, ADDRESS, "2026-10-04T00:00:00+00:00", median_roi=0.47, n_resolved=430, eligible_to_follow=0)
+        _screening_row(
+            db, ADDRESS, "2026-09-20T00:00:00+00:00", median_roi=0.49, n_resolved=317,
+            eligible_to_follow=1, flat_dollar_pnl=50.0,
+        )
+        _screening_row(
+            db, ADDRESS, "2026-10-04T00:00:00+00:00", median_roi=0.47, n_resolved=430,
+            eligible_to_follow=0, flat_dollar_pnl=60.0,
+        )
 
         with caplog.at_level(logging.INFO, logger="src.scripts.copy_wallet_health"):
             summary = run_once(db=db)
@@ -147,6 +157,40 @@ class TestStabilityCheckPause:
         assert row["status"] == "active"
         assert any(
             "stale_comparison" in r.message or "skipping stability check" in r.message
+            for r in caplog.records
+        )
+
+    def test_stale_comparison_but_failing_quality_still_pauses(self, caplog):
+        """Review follow-up to the fixture above: a stale comparison must
+        drop ONLY the pairwise stability signal, not the quality gate --
+        otherwise a wallet that is independently failing quality (here:
+        flat_dollar_pnl <= 0) escapes auto-pause for as long as its
+        screening history happens to have a gap, which is exactly when a
+        degrading wallet is most likely to have one. Must still pause, with
+        paused_reason="stability_check_failed" (same reason string as a
+        pairwise failure -- this module has no finer-grained reason today)."""
+        import logging
+
+        db = _db()
+        _follow(db)
+        _screening_row(
+            db, ADDRESS, "2026-09-20T00:00:00+00:00", median_roi=0.49, n_resolved=317,
+            eligible_to_follow=1, flat_dollar_pnl=50.0,
+        )
+        _screening_row(
+            db, ADDRESS, "2026-10-04T00:00:00+00:00", median_roi=0.47, n_resolved=430,
+            eligible_to_follow=0, flat_dollar_pnl=-5.0,
+        )
+
+        with caplog.at_level(logging.INFO, logger="src.scripts.copy_wallet_health"):
+            summary = run_once(db=db)
+
+        assert summary == {"checked": 1, "paused_stability": 1, "paused_roi": 0}
+        row = db.get_followed_wallets()[0]
+        assert row["status"] == "paused"
+        assert row["paused_reason"] == "stability_check_failed"
+        assert any(
+            "stale" in r.message and "quality" in r.message
             for r in caplog.records
         )
 

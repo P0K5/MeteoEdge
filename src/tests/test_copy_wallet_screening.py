@@ -172,6 +172,17 @@ class TestCheckStabilityStaleComparisonGap:
         current = {"median_roi": 0.10, "n_resolved": 200}
         assert check_stability(current, previous) == (False, "volume_swing")
 
+    def test_missing_median_roi_takes_precedence_over_a_stale_gap(self):
+        # Documented ordering (check_stability docstring, condition (a)):
+        # a missing median_roi is reported as "median_roi_missing" even when
+        # the two rows are also more than STABILITY_MAX_COMPARISON_GAP_HOURS
+        # apart -- there's no "wait for a fresher comparison" that would
+        # make a missing ROI signal usable, so this does NOT get the
+        # stale-comparison carve-out.
+        previous = {"median_roi": 0.10, "n_resolved": 100, "screened_at": "2026-09-01T00:00:00+00:00"}
+        current = {"median_roi": None, "n_resolved": 0, "screened_at": "2026-10-01T00:00:00+00:00"}
+        assert check_stability(current, previous) == (False, "median_roi_missing")
+
     def test_unparseable_screened_at_falls_back_to_gap_blind_comparison(self):
         previous = {"median_roi": 0.10, "n_resolved": 100, "screened_at": "not-a-timestamp"}
         current = {"median_roi": 0.10, "n_resolved": 200, "screened_at": "2026-10-04T03:00:00+00:00"}

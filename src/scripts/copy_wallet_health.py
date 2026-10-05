@@ -28,21 +28,39 @@ For every ``status='active'`` followed wallet
    wallet with no screening history yet has nothing to check and is left
    alone.
 
-   **``"stale_comparison"`` is a skip, not a failure (issue #1298).** When
-   the two most recent rows' ``screened_at`` timestamps are more than
+   **``"stale_comparison"`` drops ONLY the pairwise comparison, not the
+   whole check (issue #1298, tightened after initial review).** When the
+   two most recent rows' ``screened_at`` timestamps are more than
    ``check_stability``'s ``STABILITY_MAX_COMPARISON_GAP_HOURS`` apart (e.g.
    the wallet dropped out of the ``--top N`` screening pool for a while and
    the next run it reappears in is compared against a stale row), normal
    growth in ``n_resolved`` across that gap can exceed the 25% tolerance
-   even though nothing about the wallet actually changed. This function logs
-   and skips the stability signal entirely for that cycle (no pause, the
-   latest row's own ``eligible_to_follow`` is NOT separately consulted
-   either, since it may itself have been computed against the same stale
-   comparison) rather than auto-pausing on it -- see the 0x924379a7 incident
-   this issue was filed for (2026-10-04 run compared against 2026-09-20,
-   a two-week gap). This does not make the check more permissive in the
-   general case: a wallet with a fresh, consecutive comparison that actually
-   disagrees is still paused exactly as before.
+   even though nothing about the wallet actually changed -- that pairwise
+   comparison (same-sign median_roi, volume within 25%) is skipped and
+   logged, not failed. See the 0x924379a7 incident this issue was filed for
+   (2026-10-04 run compared against 2026-09-20, a two-week gap).
+
+   This does NOT skip the latest row's own quality standing, though: this
+   module separately re-runs ``copy_wallet_screening.py::check_quality``
+   against the CURRENT row (minimum resolved-trade sample size, positive
+   flat-stake P&L, tail risk -- none of which are gap-contaminated the way
+   the pairwise stability comparison is; its only use of ``previous`` is the
+   truncated-wallet reproduction criterion, which still compares against the
+   same, possibly stale, ``previous["flat_dollar_pnl"]`` -- acceptable
+   because that comparison fails CLOSED: a stale/wrong previous row can at
+   worst wrongly deny reproduction and pause a wallet that was actually
+   fine, never wrongly confirm one that wasn't). A wallet whose current row
+   fails quality outright is still paused even on a stale-comparison cycle.
+   Skipping both stability AND quality on a stale gap would fail OPEN (keep
+   trading an already-bad wallet) precisely when a wallet has been out of
+   the screening pool -- which correlates with having gone quiet or
+   degraded, not an independent coincidence -- so only the pairwise
+   comparison is dropped; quality is still enforced directly, not through
+   the (potentially gap-contaminated) composite ``eligible_to_follow`` flag.
+   This does not make the check more permissive in the general case: a
+   wallet with a fresh, consecutive comparison that actually disagrees is
+   still paused exactly as before, and a wallet that fails quality is still
+   paused regardless of the comparison gap.
 2. **Realized-P&L check.** Skipped entirely if the wallet was just paused
    above (one pause reason per run -- the first one that fires wins).
    ``db.get_settled_copy_positions`` rows are deduped in Python into
@@ -129,7 +147,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from src.config import CONFIG_DEFAULTS, get_live_config  # noqa: E402
-from src.scripts.copy_wallet_screening import check_stability  # noqa: E402
+from src.scripts.copy_wallet_screening import (  # noqa: E402
+    _min_resolved_trades_threshold,
+    check_quality,
+    check_stability,
+)
 
 log = logging.getLogger(__name__)
 
@@ -158,11 +180,30 @@ def _stability_pause_reason(db, address: str) -> "str | None":
     the stability signal, else ``None``.
 
     A wallet with no screening history at all (``recent`` empty) has
-    nothing to check and is never paused by this function. Same for a
-    wallet whose two most recent rows are too far apart in time to compare
-    at all (``check_stability`` returns reason ``"stale_comparison"``, issue
-    #1298) -- that is logged and treated as "insufficient history for this
-    cycle", not as a stability failure.
+    nothing to check and is never paused by this function.
+
+    **On a stale comparison (issue #1298), only the pairwise agreement is
+    dropped -- quality is still checked directly, so this fails CLOSED, not
+    open.** When the two most recent rows are too far apart in time to
+    compare at all (``check_stability`` returns reason
+    ``"stale_comparison"``), that specific signal -- same-sign median_roi,
+    volume within 25% -- is logged and skipped as "insufficient history for
+    this cycle". The latest row's own ``eligible_to_follow`` flag is
+    deliberately NOT consulted as a substitute in this branch, because it
+    may itself have been computed from the very same stale comparison (see
+    ``copy_wallet_screening.py::run()``) -- using it here would silently let
+    the gap-contaminated verdict back in through the side door. Instead,
+    ``check_quality()`` is re-run directly against the CURRENT row: its
+    conditions (minimum resolved-trade sample size via
+    ``_min_resolved_trades_threshold()``, positive flat-stake P&L, tail
+    risk) read off ``current`` alone and are not gap-contaminated, so a
+    wallet that is independently failing quality -- too few resolved trades,
+    negative flat P&L -- is still paused even on a stale-comparison cycle.
+    The one exception is ``check_quality()``'s truncated-wallet reproduction
+    criterion, which does compare against ``previous["flat_dollar_pnl"]`` --
+    still acceptable here because it fails CLOSED (a stale/wrong ``previous``
+    can at worst wrongly deny reproduction and pause a wallet that was
+    actually fine; it can never wrongly confirm one that wasn't).
     """
     recent = db.get_recent_wallet_screenings(address, limit=2)
     if not recent:
@@ -173,12 +214,25 @@ def _stability_pause_reason(db, address: str) -> "str | None":
 
     stable, reason = check_stability(current, previous)
     if reason == "stale_comparison":
+        quality_ok, quality_reason = check_quality(
+            current, previous, min_resolved_trades=_min_resolved_trades_threshold(db),
+        )
+        if not quality_ok:
+            log.info(
+                "[copy_wallet_health] %s: stability comparison skipped as stale "
+                "(screened_at=%s vs %s, gap exceeds STABILITY_MAX_COMPARISON_GAP_HOURS), "
+                "but the latest row still fails the quality gate (%s) -- "
+                "pausing on that signal instead of silently passing (issue #1298).",
+                address, current.get("screened_at"),
+                previous.get("screened_at") if previous else None, quality_reason,
+            )
+            return "stability_check_failed"
         log.info(
             "[copy_wallet_health] %s: skipping stability check this cycle -- "
             "latest screening row (screened_at=%s) is being compared against "
             "one too old to be meaningful (screened_at=%s, gap exceeds "
             "STABILITY_MAX_COMPARISON_GAP_HOURS) -- not treating this as a "
-            "stability failure (issue #1298).",
+            "stability failure; quality gate still passes (issue #1298).",
             address, current.get("screened_at"), previous.get("screened_at") if previous else None,
         )
         return None
