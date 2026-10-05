@@ -256,12 +256,18 @@ wallet" below, which supersedes this document's prior text on that point.
     *specific to this wallet*; see above. Don't conflate the two
     justifications for muted-green — they're different reasons for the
     same color, not the same reason twice.)
+  - **`Live status unavailable`** — neutral `.mode-badge-unknown` — when the
+    live status is unknown (reason missing / fetch failed). Supersedes the
+    PAPER fallback below for *unknown* status; see `polish-wave-rulings.md` (#1290).
   - **`PAPER`** — `.mode-badge-paper` (amber) — every other case:
     `live_enabled` is false, **or** the wallet is `paused` (paused always
     wins and shows plain `PAPER`, never a `LIVE (...)` variant, even if
     `live_enabled` is true underneath — same rule as before), **or** the
-    live-status derivation itself couldn't be computed (conservative
-    fallback, unchanged from the existing rule below).
+    live-status derivation returned a reason string this view does not
+    recognise (conservative fallback, unchanged from the existing rule
+    below). A *missing* reason, or a failed live-status/posture fetch, is
+    NOT `PAPER`: it renders the neutral `Live status unavailable` badge
+    above (#1290, shipped in #1331).
   - Label text is driven directly off `live_status_reason` on both the
     muted-green branch and the new muted-red branch — never a
     hand-maintained copy of the backend's reason strings — so a future new
@@ -306,11 +312,14 @@ wallet" below, which supersedes this document's prior text on that point.
 ### States
 
 Unchanged from Epic F (default/loading/empty/row-level action error) with
-one addition: the live badge and table-level banner degrade to "PAPER" /
-"off" language whenever the live-status derivation can't be computed (e.g.
-API error fetching live config) — never guess LIVE when the source of truth
-is unavailable, same conservative-default rule as the `execution_mode`
-precedent.
+one addition: whenever the live status cannot be determined (e.g. API error
+fetching live config, or a missing `live_status_reason`) the live badge and
+the tab-header badge degrade to the neutral **`Live status unavailable`** state
+(`.mode-badge-unknown`, `.info-banner`, `Go live` disabled; Pause / Revert /
+Unfollow stay enabled). Never guess LIVE, and never guess "off" or PAPER
+either: unknown is its own state (#1290, shipped in #1331; supersedes the
+earlier "degrade to PAPER / off" rule). Only an unrecognised *known-format*
+reason string still falls through to PAPER, as the `execution_mode` precedent.
 
 ### Per-wallet live opt-in control (issues #1258, #1259)
 
@@ -425,6 +434,18 @@ const rawStake = window.prompt(
 );
 if (rawStake === null) return; // operator cancelled the whole action, identical to Unfollow's short-circuit
 ```
+
+> **Amendment (#1290, `polish-wave-rulings.md`).** The live-stake entry stays on
+> `window.prompt` + `window.confirm`; the inline editor is deferred and does not
+> ship in #1290. Prompt copy is clarified there (inheriting vs override
+> variants), validation errors go in the row's `followed-live-msg` element, and
+> the write rule below changes: an *unchanged* pre-filled value keeps the
+> wallet's current state (no stake change sent) instead of forcing an explicit
+> override. Changed value = override; cleared field = inherit. Where the next
+> paragraph says accepting the pre-fill is an explicit override, this
+> amendment wins. The banner-based validation snippet below is likewise superseded:
+> errors render in the row's `followed-live-msg` element (`.followed-live-msg-error`,
+> `Could not set live stake: …`). The inline editor is deferred to #1330.
 
 **Pre-filled with the wallet's current *resolved* live stake — its existing
 override if it has one, otherwise its paper stake (corrected 2026-09-30,
@@ -798,6 +819,11 @@ explanation, rather than adding a new line to an already-dense cell:
 </div>
 ```
 
+- Combining with #1290: an inheriting wallet that also exceeds the cap keeps
+  the `· follows paper stake` note (`.followed-live-inherit-note`) immediately
+  after the figure, then the exceeds-cap explanation span; the override case
+  has only the exceeds-cap span. (#1266's blocked styling is not yet
+  implemented in `_followedLiveStakeHtml`; this is the target.)
 - `.followed-stake-live-blocked` overrides the figure's color from `--yes`
   to `--no` (Design tokens below) — the dollar figure itself turns red, not
   just the badge up in the status cell, so the one number that's actually
