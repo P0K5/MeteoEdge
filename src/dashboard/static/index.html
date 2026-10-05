@@ -42,9 +42,9 @@ html{-webkit-font-smoothing:antialiased;scroll-behavior:smooth}
   --surface-dyn:#e3e8f2;--divider:#e0e5f0;--border:#d0d8ea;
   --text:#18202e;--muted:#5e6a88;--faint:#b8c2d8;--inverse:#fff;
   --primary:#1a6fa0;--primary-h:#155a84;--primary-bg:#d4eaf5;
-  --yes:#1e7a42;--yes-bg:#d8f0e3;--yes-dim:#e8f7ee;
+  --yes:#1a6f3a;--yes-bg:#d8f0e3;--yes-dim:#e8f7ee;
   --no:#b82020;--no-bg:#f8dada;--no-dim:#fef0f0;
-  --warn:#9a6010;--warn-bg:#fef0d8;
+  --warn:#8a5309;--warn-bg:#fef0d8;
   --edge:#6040b0;--edge-bg:#ece8f8;
   --sh-sm:0 1px 3px #1820380a;--sh-md:0 4px 16px #1820380f;
 }
@@ -65,6 +65,12 @@ a,button,input,select{transition:color var(--transition),background var(--transi
 .logo-text{font-weight:700;font-size:var(--text-base);color:var(--text);}
 .logo-sub{font-size:var(--text-xs);color:var(--muted);}
 .topbar-spacer{flex:1;}
+/* Narrow screens: the title block shrinks (ellipsis) instead of pushing the
+   topbar -- and with it the whole page -- wider than the viewport (#1286). */
+.logo,.logo>div{min-width:0;}
+.logo-text,.logo-sub{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.logo-img,.live-pill,.btn-outline,.theme-btn{flex-shrink:0;}
+@media(max-width:600px){.topbar{padding:0 var(--space-4);gap:var(--space-2);}}
 .live-pill{
   display:flex;align-items:center;gap:6px;
   padding:4px 10px;border-radius:var(--radius-full);
@@ -822,7 +828,10 @@ a,button,input,select{transition:color var(--transition),background var(--transi
   font-size:var(--text-xs);font-weight:600;padding:4px 12px;
   border-radius:var(--radius-full);border:1px solid var(--border);
 }
-.copy-table-wrap{overflow-x:auto;}
+/* position:relative makes the wrap the containing block of absolutely-positioned
+   descendants (.sr-only header labels, the 375px roster's clipped <thead>) so a
+   scrolled-away one is clipped here instead of stretching the page (#1286). */
+.copy-table-wrap{overflow-x:auto;position:relative;}
 /* Wallets toolbar + pagination footer (issue #1276). Built from the existing
    .copy-activity-filters / .pagination / .pg-btn language; only layout glue. */
 .copy-wallets-toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:var(--space-2) var(--space-4);margin-bottom:var(--space-4);}
@@ -899,6 +908,8 @@ a,button,input,select{transition:color var(--transition),background var(--transi
 .copy-copy-btn{padding:3px;border-radius:var(--radius-sm);color:var(--muted);display:inline-flex;align-items:center;}
 .copy-copy-btn:hover{background:var(--surface-off);color:var(--text);}
 .copy-copy-btn:focus-visible{outline:2px solid var(--primary);outline-offset:1px;}
+.copy-copy-btn[data-copy-state=success],.copy-copy-btn[data-copy-state=success]:hover{color:var(--yes);}
+.copy-copy-btn[data-copy-state=error],.copy-copy-btn[data-copy-state=error]:hover{color:var(--no);}
 .copy-copy-btn i{width:12px;height:12px;}
 .copy-feedback-label{font-size:var(--text-xs);font-weight:500;position:absolute;top:100%;left:0;background:var(--surface);padding:0 4px;border-radius:var(--radius-sm);z-index:5;pointer-events:none;display:inline-flex;flex-wrap:wrap;width:max-content;align-items:center;gap:0 4px;opacity:0;transition:opacity 0.2s;white-space:nowrap;}
 .copy-feedback-label.visible{opacity:1;}
@@ -908,6 +919,13 @@ a,button,input,select{transition:color var(--transition),background var(--transi
 .copy-address-fallback-input{font-family:var(--font-mono);font-size:var(--text-sm);padding:0 6px;border:1px solid var(--muted);border-radius:var(--radius-sm);background:var(--surface);color:var(--text);width:55px;min-width:55px;box-sizing:border-box;}
 .copy-address-fallback-input:focus{outline:2px solid var(--primary);outline-offset:1px;}
 .copy-address-hint{flex-basis:100%;font-size:var(--text-xs);color:var(--text);white-space:nowrap;pointer-events:none;}
+/* Narrow screens: the overlay wraps inside the viewport instead of running off
+   the right edge, and the manual-copy input may shrink with its cell. */
+@media(max-width:600px){
+  .copy-feedback-label{white-space:normal;max-width:min(240px,calc(100vw - 3 * var(--space-4)));}
+  .copy-address-hint{white-space:normal;}
+  .copy-address-fallback-input{min-width:0;max-width:100%;}
+}
 .copy-sr-status{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;}
 .copy-followed-tag{
   font-size:10px;font-weight:700;color:var(--yes);background:var(--yes-bg);
@@ -1041,8 +1059,21 @@ a,button,input,select{transition:color var(--transition),background var(--transi
 .wc-skeleton{display:block;width:6em;height:1.1em;}
 .copy-closed-hdr{margin-top:var(--space-6);}
 /* Roster row stays highlighted briefly after "Go live →" jumps to it. */
-@keyframes copy-row-flash{0%,60%{background:var(--warn-bg);box-shadow:inset 3px 0 0 var(--warn);}100%{background:transparent;box-shadow:none;}}
+@keyframes copy-row-flash{0%,60%{background:var(--primary-bg);box-shadow:inset 3px 0 0 var(--primary);}100%{background:transparent;box-shadow:none;}}
 .copy-row-highlight{animation:copy-row-flash 2.4s ease-out 1;}
+/* Reduced motion (#1291): static highlight (JS drops it after 2.4 s), no smooth scroll, no spin/pulse. */
+@media (prefers-reduced-motion: reduce){
+  html{scroll-behavior:auto;}
+  .copy-row-highlight{animation:none;background:var(--primary-bg);box-shadow:inset 3px 0 0 var(--primary);}
+  .live-dot,.skeleton,.spinner{animation:none;}
+  .skeleton{background:var(--surface-off);}   /* static block, no gradient sweep */
+}
+/* Paper KPI: the third card spans both columns once the grid drops to 2-up (#1291). */
+@media(max-width:600px){.copy-paper-kpis .wallet-card:last-child:nth-child(odd){grid-column:1/-1;}}
+/* Recent Closed copy button: 44px touch target without growing the row (#1291). */
+@media(max-width:600px){
+  .copy-table .copy-address-cell .copy-copy-btn{min-width:44px;min-height:44px;display:inline-flex;align-items:center;justify-content:center;margin:-12px 0;}
+}
 /* Narrow screens: the paper roster stacks each wallet into a wrapping block so
    the Actions (Pause / Edit stake / Unfollow) are reachable without
    horizontal scrolling. */
@@ -4173,7 +4204,7 @@ function switchTab(tab) {
   // Show selected panel and activate button
   document.getElementById('tab-' + tab).classList.add('active');
   event.target.classList.add('active');
-  if (event.target.scrollIntoView) event.target.scrollIntoView({behavior:'smooth', inline:'nearest', block:'nearest'});
+  if (event.target.scrollIntoView) event.target.scrollIntoView(_copyScrollOpts({behavior:'smooth', inline:'nearest', block:'nearest'}));
 
   // Stop portfolio polling when leaving Portfolio tab
   if (currentTab === 'portfolio' && tab !== 'portfolio') {
@@ -4621,8 +4652,20 @@ async function copyAddressToClipboard(address, btn) {
     lucide.createIcons();
   }
 
+  // Repeat copies must re-announce: clear the live region, then set the text on
+  // the next tick so assistive tech sees a change even for identical text.
+  function announce(text) {
+    srStatus.textContent = '';
+    if (srStatus._announceTimer) clearTimeout(srStatus._announceTimer);
+    srStatus._announceTimer = setTimeout(() => {
+      srStatus._announceTimer = null;
+      srStatus.textContent = text;
+    }, 0);
+  }
+
   function resetFeedback() {
     if (!btn.isConnected) return;
+    btn.setAttribute('data-copy-state', '');
     setIcon('copy');
     if (feedbackLabel && feedbackLabel.isConnected) {
       feedbackLabel.className = 'copy-feedback-label';
@@ -4636,12 +4679,13 @@ async function copyAddressToClipboard(address, btn) {
 
     if (getIcon()) {
       setIcon('check');
+      btn.setAttribute('data-copy-state', 'success');
       if (feedbackLabel && feedbackLabel.isConnected) {
         feedbackLabel.textContent = 'Copied';
         feedbackLabel.className = 'copy-feedback-label visible success';
       }
     }
-    srStatus.textContent = 'Address copied to clipboard';
+    announce('Address copied to clipboard');
 
     // Reset after 1.5s
     btn._copyTimer = setTimeout(() => {
@@ -4654,24 +4698,27 @@ async function copyAddressToClipboard(address, btn) {
     // Guard on btn being connected
     if (!btn.isConnected) return;
 
+    // A failure while the manual-copy input from a previous failure is still
+    // showing: dismiss it first so the span's display is restored properly
+    // (otherwise 'none' would be captured as the "original" display).
+    if (btn._copyFallbackDismiss) btn._copyFallbackDismiss();
+
     if (getIcon()) {
       setIcon('x');
+      btn.setAttribute('data-copy-state', 'error');
       if (feedbackLabel && feedbackLabel.isConnected) {
         feedbackLabel.innerHTML = '<i data-lucide="x"></i>Copy failed — select manually';
         feedbackLabel.className = 'copy-feedback-label visible error';
         lucide.createIcons();
       }
     }
-    srStatus.textContent = 'Could not copy address to clipboard';
+    announce('Could not copy address to clipboard');
 
     // Show manual fallback
     if (addressSpan && addressSpan.isConnected) {
       const fullAddress = address;
       // Capture original display value (before hiding)
       const originalDisplay = addressSpan.style.display;
-      // Use shared helper for consistent truncation (6+…+4 chars). Use the raw
-      // address, never the HTML-escaped data-address attribute.
-      const truncatedText = _copyTruncateAddress(fullAddress);
 
       // Measure before hiding so the cell width does not change
       const spanRect = addressSpan.getBoundingClientRect ? addressSpan.getBoundingClientRect() : null;
@@ -4727,8 +4774,11 @@ async function copyAddressToClipboard(address, btn) {
         }
         if (addressSpan && addressSpan.isConnected) {
           addressSpan.style.display = originalDisplay;
-          addressSpan.textContent = truncatedText;
+          // Re-derived from the raw address on every restore (shared 6+…+4
+          // helper) -- never cached, never read from the HTML-escaped attribute.
+          addressSpan.textContent = _copyTruncateAddress(fullAddress);
         }
+        if (btn._copyFallbackDismiss === restoreTruncated) btn._copyFallbackDismiss = null;
         resetFeedback();
         input.removeEventListener('blur', restoreTruncated);
         input.removeEventListener('keydown', handleEscape);
@@ -4745,6 +4795,7 @@ async function copyAddressToClipboard(address, btn) {
       input.addEventListener('blur', restoreTruncated);
       input.addEventListener('keydown', handleEscape);
       input.addEventListener('focus', clearFailureTimer);
+      btn._copyFallbackDismiss = restoreTruncated;
 
       // Start 4s timer for auto-dismiss, unless the input already has focus
       // (the focus listener above was attached after focus() ran).
@@ -5053,7 +5104,7 @@ function _copyRowHtml(c) {
                 aria-label="Copy full wallet address to clipboard" title="Copy address">
           <i data-lucide="copy"></i>
         </button>
-        <span class="copy-feedback-label" data-address="${addrEsc}"></span>
+        <span class="copy-feedback-label"></span>
         ${followedTag}
       </td>
       <td class="copy-td">${c.n_resolved}</td>
@@ -5836,10 +5887,10 @@ function _followedPauseResumeBtnHtml(w, addrEsc) {
 function _followedAddressCellHtml(w, addrEsc) {
   return `<td class="copy-td copy-address-cell">
         <span class="copy-address-mono" title="${addrEsc}" data-address="${addrEsc}">${_copyEscapeHtml(_copyTruncateAddress(w.address))}</span>
-        <button type="button" class="copy-copy-btn" aria-label="Copy full wallet address to clipboard" title="Copy address">
+        <button type="button" class="copy-copy-btn" aria-label="Copy wallet address ${_copyEscapeHtml(_copyTruncateAddress(w.address))}" title="Copy address">
           <i data-lucide="copy"></i>
         </button>
-        <span class="copy-feedback-label" data-address="${addrEsc}"></span>
+        <span class="copy-feedback-label"></span>
       </td>`;
 }
 
@@ -6538,7 +6589,7 @@ function _followedOnListClick(event) {
 
 // Containers whose rows carry roster actions: the Paper roster, the Live
 // roster and the "Ready to go live" list. Bound once each, never replaced.
-const _FOLLOWED_LIST_IDS = ['copy-followed-list', 'copy-live-followed-list', 'copy-live-ready-list'];
+const _FOLLOWED_LIST_IDS = ['copy-followed-list', 'copy-live-followed-list', 'copy-live-ready-list', 'copy-paper-closed-list'];
 
 function _followedBindListEvents() {
   if (_followedListenersBound) return;
@@ -6668,12 +6719,12 @@ function _copyPaperClosedRowHtml(p) {
   const when = p.settled_at ? new Date(p.settled_at).toLocaleString() : '—';
   const cls = p.settled_pnl_usd >= 0 ? 'copy-pnl-pos' : 'copy-pnl-neg';
   return `
-    <tr class="copy-row">
+    <tr class="copy-row" data-address="${addrEsc}">
       <td class="copy-td" title="${_copyEscapeHtml(p.market)}">${_copyEscapeHtml(_copyTruncateMarket(p.market))}</td>
-      <td class="copy-td"><span class="copy-address-mono" title="${addrEsc}">${_copyEscapeHtml(_copyTruncateAddress(p.address))}</span></td>
-      <td class="copy-td">${when}</td>
-      <td class="copy-td">$${p.stake_usd.toFixed(2)}</td>
       <td class="copy-td ${cls}">${_copyFmtUsd(p.settled_pnl_usd)}</td>
+      <td class="copy-td">$${p.stake_usd.toFixed(2)}</td>
+      <td class="copy-td">${when}</td>
+      ${_followedAddressCellHtml(p, addrEsc)}
     </tr>`;
 }
 
@@ -6699,10 +6750,10 @@ function _renderCopyPaperClosedPage() {
       <thead>
         <tr>
           <th class="copy-th" scope="col">Market</th>
-          <th class="copy-th" scope="col">Wallet</th>
-          <th class="copy-th" scope="col">Settled</th>
-          <th class="copy-th" scope="col">Paper stake</th>
           <th class="copy-th" scope="col">Paper settled P&amp;L</th>
+          <th class="copy-th" scope="col">Paper stake</th>
+          <th class="copy-th" scope="col">Settled</th>
+          <th class="copy-th" scope="col">Wallet</th>
         </tr>
       </thead>
       <tbody>${pg.items.map(_copyPaperClosedRowHtml).join('')}</tbody>
@@ -6731,6 +6782,7 @@ function renderCopyPaperClosedError(message) {
 function copyPaperClosedChangePage(delta) {
   _copyPaperClosedPage += delta;   // clamped by the page slice
   _renderCopyPaperClosedPage();
+  _copyScrollListToTop('copy-paper-closed-list');
 }
 
 // ── "Go live →" on a paper roster row ──────────────────────────────────────
@@ -6742,6 +6794,24 @@ function copyPaperClosedChangePage(delta) {
 // surprise later.
 let _copyPendingLiveHighlight = null;   // { address, ts }
 
+// Reduced-motion aware scroll options (#1291): drop `behavior:'smooth'`.
+function _copyPrefersReducedMotion() {
+  return typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+function _copyScrollOpts(opts) {
+  if (!_copyPrefersReducedMotion()) return opts;
+  const { behavior, ...rest } = opts;
+  return rest;
+}
+// After Prev/Next, bring the top of a Recent Closed list back into view.
+function _copyScrollListToTop(id) {
+  const wrap = document.getElementById(id);
+  if (!wrap) return;
+  wrap.scrollTop = 0;
+  const r = wrap.getBoundingClientRect ? wrap.getBoundingClientRect() : null;
+  if (r && r.top < 0 && wrap.scrollIntoView) wrap.scrollIntoView(_copyScrollOpts({ behavior: 'smooth', block: 'start' }));
+}
+
 function _copyHighlightLiveRow(address) {
   const safeId = _copySafeId(address);
   for (const id of ['live-ready-row-' + safeId, 'live-followed-row-' + safeId]) {
@@ -6749,10 +6819,12 @@ function _copyHighlightLiveRow(address) {
     if (!row) continue;
     const details = row.closest ? row.closest('details') : null;
     if (details) details.open = true;          // the ready list may be collapsed
-    row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    row.scrollIntoView(_copyScrollOpts({ behavior: 'smooth', block: 'center' }));
     row.classList.remove('copy-row-highlight');
     void row.offsetWidth;                      // restart the CSS animation
     row.classList.add('copy-row-highlight');
+    // Reduced motion: the highlight is static, so it must not persist.
+    if (_copyPrefersReducedMotion()) setTimeout(() => row.classList.remove('copy-row-highlight'), 2400);
     return true;
   }
   return false;
@@ -6963,7 +7035,7 @@ function _copyOpenPositionRowHtml(p) {
                 aria-label="Copy full wallet address to clipboard" title="Copy address">
           <i data-lucide="copy"></i>
         </button>
-        <span class="copy-feedback-label" data-address="${addrEsc}"></span>
+        <span class="copy-feedback-label"></span>
       </td>
       <td class="copy-td" title="${_copyEscapeHtml(p.market)}">${_copyEscapeHtml(_copyTruncateMarket(p.market))}</td>
       <td class="copy-td">${p.outcome_index === 0 ? 'YES' : 'NO'}</td>
@@ -7026,7 +7098,7 @@ function _copyPerWalletRowHtml(w) {
                 aria-label="Copy full wallet address to clipboard" title="Copy address">
           <i data-lucide="copy"></i>
         </button>
-        <span class="copy-feedback-label" data-address="${addrEsc}"></span>
+        <span class="copy-feedback-label"></span>
       </td>
       <td class="copy-td">${w.n_settled}</td>
       <td class="copy-td ${pnlCls}">${_copyFmtUsd(w.realized_pnl_usd)}</td>
@@ -7372,7 +7444,7 @@ function _copyLiveOpenPositionRowHtml(p) {
                 aria-label="Copy full wallet address to clipboard" title="Copy address">
           <i data-lucide="copy"></i>
         </button>
-        <span class="copy-feedback-label" data-address="${addrEsc}"></span>
+        <span class="copy-feedback-label"></span>
       </td>
       <td class="copy-td" title="${_copyEscapeHtml(p.market)}">${_copyEscapeHtml(_copyTruncateMarket(p.market))}</td>
       <td class="copy-td">${p.outcome_index === 0 ? 'YES' : 'NO'}</td>
@@ -7419,7 +7491,7 @@ function _copyLivePerWalletRowHtml(w) {
                 aria-label="Copy full wallet address to clipboard" title="Copy address">
           <i data-lucide="copy"></i>
         </button>
-        <span class="copy-feedback-label" data-address="${addrEsc}"></span>
+        <span class="copy-feedback-label"></span>
       </td>
       <td class="copy-td">${w.n_settled}</td>
       <td class="copy-td ${pnlCls}">${_copyFmtUsd(w.realized_pnl_usd)}</td>
@@ -7651,10 +7723,10 @@ function _copyLiveClosedRowHtml(p) {
   return `
     <tr class="copy-row" data-address="${addrEsc}">
       <td class="copy-td" title="${_copyEscapeHtml(p.market)}">${_copyEscapeHtml(_copyTruncateMarket(p.market))}</td>
-      ${_followedAddressCellHtml(p, addrEsc)}
+      <td class="copy-td ${pnlCls}">${_copyFmtUsd(p.settled_pnl_usd)}</td>
       <td class="copy-td">$${p.stake_usd.toFixed(2)}</td>
       <td class="copy-td">${closed}</td>
-      <td class="copy-td ${pnlCls}">${_copyFmtUsd(p.settled_pnl_usd)}</td>
+      ${_followedAddressCellHtml(p, addrEsc)}
     </tr>`;
 }
 
@@ -7665,10 +7737,10 @@ function _copyLiveClosedTableHtml(rows) {
       <thead>
         <tr>
           <th class="copy-th" scope="col">Market</th>
-          <th class="copy-th" scope="col">Wallet</th>
+          <th class="copy-th" scope="col">Settled P&amp;L</th>
           <th class="copy-th" scope="col">Stake</th>
           <th class="copy-th" scope="col">Closed</th>
-          <th class="copy-th" scope="col">Settled P&amp;L</th>
+          <th class="copy-th" scope="col">Wallet</th>
         </tr>
       </thead>
       <tbody>${rows.map(_copyLiveClosedRowHtml).join('')}</tbody>
@@ -7705,6 +7777,7 @@ function copyLiveClosedChangePage(delta) {
   if (!_copyLiveClosedRows.length) return;
   _copyLiveClosedPage += delta;
   _copyLiveRenderClosedPage();   // clamps
+  _copyScrollListToTop('copy-live-closed-list');
 }
 
 function _copyLiveRenderClosed(data, offNoHistory) {
@@ -8274,7 +8347,7 @@ function _copyJumpToCandidateRow(address, { viaSearch = true } = {}) {
     if (viaSearch) _copyJumpBySearch(address);
     return false;
   }
-  row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  row.scrollIntoView(_copyScrollOpts({ behavior: 'smooth', block: 'center' }));
   if (!_copyExpanded.has(address)) toggleCandidateDetail(address);
   return true;
 }
@@ -8297,7 +8370,7 @@ function _copyActivityJumpToWallet(kind, address) {
       : ['followed-row-' + safeId];
     for (const id of ids) {
       const row = document.getElementById(id);
-      if (row) { row.scrollIntoView({ behavior: 'smooth', block: 'center' }); return; }
+      if (row) { row.scrollIntoView(_copyScrollOpts({ behavior: 'smooth', block: 'center' })); return; }
     }
     return;
   }

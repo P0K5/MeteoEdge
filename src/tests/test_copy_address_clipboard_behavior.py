@@ -295,9 +295,11 @@ def test_rapid_clicks_clear_first_timer_single_reset():
     run_js("""
         const { btn } = makeRow(ADDR);
         await copyAddressToClipboard(ADDR, btn);
+        tick(0);   // flush the screen-reader announce timer (#1281)
         assert.strictEqual(pending(), 1);
         tick(1000);
         await copyAddressToClipboard(ADDR, btn);
+        tick(0);
         assert.strictEqual(pending(), 1, 'first timer cleared; exactly one pending');
         tick(600);   // 1600ms after first click: the first timer would have fired
         assert.strictEqual(iconName(btn), 'check', 'first timer must not reset early');
@@ -331,6 +333,7 @@ def test_failure_shows_visible_label_input_hint_and_focus_before_select():
         window.isSecureContext = false;
         const { row, btn, label, span } = makeRow(ADDR);
         await copyAddressToClipboard(ADDR, btn);
+        tick(0);
         assert.ok(label.innerHTML.includes('Copy failed — select manually'), label.innerHTML);
         assert.ok(label.className.includes('error') && label.className.includes('visible'));
         assert.strictEqual(document.getElementById('copy-sr-status').textContent, 'Could not copy address to clipboard');
@@ -389,6 +392,7 @@ def test_dismiss_restores_truncated_text_display_and_removes_hint(how):
         const input = row.querySelector('input');
         const hint = row.querySelector('.copy-address-hint');
         assert.strictEqual(span.style.display, 'none');
+        tick(0);   // flush the screen-reader announce timer (#1281)
         if (how === 'escape') input.dispatch('keydown', { key: 'Escape' });
         else if (how === 'blur') input.dispatch('blur');
         else tick(4000);
@@ -441,3 +445,94 @@ def test_fallback_input_sized_to_hidden_span_before_hiding():
         assert.strictEqual(input.style.width, '123px');
         assert.strictEqual(input.style.height, '18px');
     """)
+
+
+def test_repeat_copy_reannounces_by_clearing_then_setting_on_next_tick():
+    run_js("""
+        const { btn } = makeRow(ADDR);
+        const sr = () => document.getElementById('copy-sr-status').textContent;
+        await copyAddressToClipboard(ADDR, btn);
+        assert.strictEqual(sr(), '', 'cleared synchronously, set on the next tick');
+        tick(0);
+        assert.strictEqual(sr(), 'Address copied to clipboard');
+        // Same text again: must pass through '' so the live region re-announces.
+        const seen = [];
+        const node = document.getElementById('copy-sr-status');
+        let v = node.textContent;
+        Object.defineProperty(node, 'textContent', { get: () => v, set: (x) => { seen.push(x); v = x; } });
+        await copyAddressToClipboard(ADDR, btn);
+        tick(0);
+        assert.deepStrictEqual(seen, ['', 'Address copied to clipboard']);
+        assert.strictEqual(pending(), 1, 'only the 1500ms reset timer remains');
+    """)
+
+
+def test_rapid_repeat_copy_announces_once():
+    run_js("""
+        const { btn } = makeRow(ADDR);
+        await copyAddressToClipboard(ADDR, btn);
+        await copyAddressToClipboard(ADDR, btn);
+        assert.strictEqual(pending(), 2, 'one announce + one reset timer');
+        tick(0);
+        assert.strictEqual(document.getElementById('copy-sr-status').textContent, 'Address copied to clipboard');
+    """)
+
+
+def test_icon_takes_success_and_error_state_and_resets():
+    run_js("""
+        const { btn } = makeRow(ADDR);
+        const state = () => btn.getAttribute('data-copy-state');
+        await copyAddressToClipboard(ADDR, btn);
+        assert.strictEqual(state(), 'success');
+        tick(1500);
+        assert.strictEqual(state(), '');
+        window.isSecureContext = false;
+        document._noFocus = true;
+        await copyAddressToClipboard(ADDR, btn);
+        assert.strictEqual(state(), 'error');
+        tick(4000);
+        assert.strictEqual(state(), '', 'dismiss resets the icon colour state');
+    """)
+
+
+def test_failure_while_input_already_showing_restores_span_and_keeps_one_input():
+    """A second failure used to capture display:'none' as the 'original', leaving
+    the address permanently hidden after dismissal."""
+    run_js("""
+        window.isSecureContext = false;
+        document._noFocus = true;
+        const { row, btn, span } = makeRow(ADDR);
+        span.style.display = 'inline-block';
+        await copyAddressToClipboard(ADDR, btn);
+        assert.strictEqual(span.style.display, 'none');
+        span.textContent = '';                      // nothing cached can rescue it
+        await copyAddressToClipboard(ADDR, btn);    // fails again with input showing
+        assert.strictEqual(row.children.filter(c => c.tagName === 'input').length, 1, 'one input, not two');
+        tick(4000);
+        assert.ok(!row.querySelector('input') && !row.querySelector('.copy-address-hint'));
+        assert.strictEqual(span.style.display, 'inline-block');
+        assert.strictEqual(span.textContent, '0x1234…5678', 'truncated text re-derived from the address');
+        assert.strictEqual(pending(), 0);
+    """)
+
+
+def test_hint_is_visible_text_in_overlay_not_only_a_title():
+    run_js("""
+        window.isSecureContext = false;
+        const { row, btn, label } = makeRow(ADDR);
+        await copyAddressToClipboard(ADDR, btn);
+        const hint = row.querySelector('.copy-address-hint');
+        assert.strictEqual(hint.textContent, 'Press Ctrl/Cmd+C');
+        assert.strictEqual(hint.parentNode, label);
+        assert.ok(label.className.includes('visible'));
+    """)
+
+
+def test_css_icon_colour_and_mobile_rules_exist():
+    html = INDEX_HTML.read_text()
+    assert ".copy-copy-btn[data-copy-state=success]" in html and "color:var(--yes)" in html
+    assert ".copy-copy-btn[data-copy-state=error]" in html
+    mobile = html[html.index("@media(max-width:600px){\n  .copy-feedback-label"):]
+    mobile = mobile[:mobile.index("\n}")]
+    assert "white-space:normal" in mobile and "max-width:min(240px" in mobile
+    assert ".copy-address-fallback-input{min-width:0;max-width:100%;}" in mobile
