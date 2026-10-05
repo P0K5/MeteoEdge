@@ -962,15 +962,22 @@ def test_no_wallets_match_shows_status_role(tmp_path):
 def test_showing_numbers_use_thousands_separators(tmp_path):
     run_js("""
         await openWallets();
-        // The current showing text should contain formatted numbers
-        const showingText = showing();
-        // With 120 total items and the specific range, we should see formatted numbers
-        assert.ok(showingText.includes('Showing'), 'has Showing prefix');
-        // The "of 120" should just be "of 120" (no separator needed for 3-digit number),
-        // but we verify the format is correct with our _copyFmtInt function
-        assert.ok(showingText.includes(' of '), 'has "of" separator');
+        assert.strictEqual(_copyFmtInt(1234), '1,234');
+        assert.strictEqual(_copyFmtInt(1234567), '1,234,567');
+        assert.strictEqual(_copyFmtInt(999), '999');
 
-        // Test with larger pages by going to later pages to ensure separators work
-        // First verify initial state (1–25 of 120)
-        assert.ok(showingText.includes('1') && showingText.includes('25') && showingText.includes('120'), 'initial showing has correct numeric format');
+        const rows25 = Array.from({ length: 25 }, (_, i) => ({ address: '0x' + i }));
+        // Page 1 of a filtered view: total 12,345 filtered from 54,321.
+        _copyRenderPaging(_copyPagingOf({
+          candidates: rows25, total: 12345, unfiltered_total: 54321,
+          page: 1, page_size: 25, total_pages: 494,
+        }));
+        assert.strictEqual(showing(), 'Showing 1\u201325 of 12,345 (filtered from 54,321)');
+
+        // A later page: from/to are >= 1000 too (page 41 -> 1,001-1,025).
+        _copyRenderPaging(_copyPagingOf({
+          candidates: rows25, total: 12345, unfiltered_total: 12345,
+          page: 41, page_size: 25, total_pages: 494,
+        }));
+        assert.strictEqual(showing(), 'Showing 1,001\u20131,025 of 12,345');
     """, tmp_path)
