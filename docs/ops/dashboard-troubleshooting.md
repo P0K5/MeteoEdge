@@ -221,12 +221,9 @@ Follow these steps in order to identify why a position is not appearing on the d
 **Root cause:** The dashboard's wallet fetch is stale or the enrichment is missing.
 
 **Recovery:**
-1. Clear the dashboard cache:
+1. Restart the bot service to refresh the embedded dashboard:
    ```bash
-   # If the dashboard is running in a separate process
-   pkill -f "uvicorn src.dashboard.api"
-   sleep 2
-   uvicorn src.dashboard.api:app --port 8000 &
+   sudo systemctl restart meteoedge.service
    ```
 2. Refresh the dashboard in your browser (hard refresh: Ctrl+Shift+R or Cmd+Shift+R)
 3. Check the dashboard logs for errors — dashboard output goes to bot.log:
