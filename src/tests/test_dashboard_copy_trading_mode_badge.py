@@ -186,7 +186,7 @@ def test_posture_job_is_30s_and_always_on_every_copy_tab(html_content):
 def _hex_to_rgb(hex_color: str) -> tuple[int, int, int]:
     """Convert hex color to RGB tuple."""
     hex_color = hex_color.lstrip("#")
-    return tuple(int(hex_color[i : i + 2], 16) for i in (0, 2, 4))
+    return tuple(int(hex_color[i:i + 2], 16) for i in (0, 2, 4))
 
 
 def _rgb_to_luminance(r: int, g: int, b: int) -> float:
