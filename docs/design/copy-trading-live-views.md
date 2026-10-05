@@ -364,6 +364,16 @@ const rawStake = window.prompt(
 if (rawStake === null) return; // operator cancelled the whole action, identical to Unfollow's short-circuit
 ```
 
+> **Amendment (#1290, `polish-wave-rulings.md`).** The live-stake entry stays on
+> `window.prompt` + `window.confirm`; the inline editor is deferred and does not
+> ship in #1290. Prompt copy is clarified there (inheriting vs override
+> variants), validation errors go in the row's `followed-live-msg` element, and
+> the write rule below changes: an *unchanged* pre-filled value keeps the
+> wallet's current state (no stake change sent) instead of forcing an explicit
+> override. Changed value = override; cleared field = inherit. Where the next
+> paragraph says accepting the pre-fill is an explicit override, this
+> amendment wins.
+
 **Pre-filled with the wallet's current *resolved* live stake — its existing
 override if it has one, otherwise its paper stake (corrected 2026-09-30,
 per #1258's corrected acceptance criteria; the original wording said

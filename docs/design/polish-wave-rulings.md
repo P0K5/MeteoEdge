@@ -41,61 +41,107 @@ green, not red).
   Unknown *reasons* (a string we do not recognise) with `live_enabled=false`
   still render `PAPER`.
 
-### 2. Per-row stake error
+> **Owner decision (via Tech Lead PM): #1290 ships as scoped below.** Section 1
+> (Live status unavailable) is binding and unchanged. The inline stake editor,
+> the inline `followed-stake-error` element and the sticky icon-only 375px
+> actions row are **DEFERRED to a follow-up issue** and are NOT part of #1290.
+> Sections 2-4 below give the interim behaviour that #1290 implements; the
+> deferred design is kept at the end of this section for the follow-up.
 
-Validation errors (empty/<=0, over cap) appear **in the row, directly under
-the stake input**, not in the page banner. The banner stays for
-server/network failures only.
+### 2. Stake validation errors (interim, #1290)
 
-- Element: `<p class="followed-stake-error" id="followed-stake-err-{safeId}" role="alert">`
-  inside `.followed-stake-edit`'s cell, below the input+Save row;
-  `font-size:var(--text-xs);color:var(--no);margin-top:var(--space-1);`
-  with a leading `alert-circle` 12px icon (error is never colour-only).
-- Input gets `aria-invalid="true"` and `aria-describedby` -> the error id; the
-  input keeps focus and its value. Error clears on next `input` event or
-  successful save. One error at a time per row.
-- Copy:
-  - Empty/not a number/<=0: **`Enter an amount above $0, or clear the field to follow the paper stake.`** (clear-to-inherit applies to the live-stake editor only; in the paper stake editor use **`Enter an amount above $0.`**)
-  - Over cap: **`$X.XX is over this wallet's $CAP live cap. Enter $CAP or less.`**
-- Consequence: the live-stake entry (Go live, Edit live stake) moves from
-  `window.prompt` (cannot host an inline error) to the existing inline
-  `.followed-stake-edit` editor in the row. The final real-money
-  `window.confirm` stays unchanged in structure (copy below).
+Validation errors (empty/<=0, over cap) appear in the row's existing
+`<p class="followed-live-msg" role="status" aria-live="polite">` element
+(`live-followed-live-msg-{safeId}`), not in the page banner. The banner stays
+for server/network failures only.
 
-### 3. Inheriting-wallet copy
+- Add a modifier class `.followed-live-msg-error{color:var(--no);}` while an
+  error is shown; remove it when the message is cleared. The text itself must
+  start with `Could not set live stake: ` so the error is never colour-only.
+- Copy (replaces the banner text for validation):
+  - Not a number / <=0: **`Could not set live stake: enter an amount above $0, or clear the field to follow the paper stake.`**
+  - Over cap: **`Could not set live stake: $X.XX is over this wallet's $CAP live cap. Enter $CAP or less.`**
+- One message at a time per row; cleared at the start of the next attempt and
+  on success. Nothing is written and no `window.confirm` opens on a validation
+  failure; the operator re-clicks the action (native `prompt` cannot re-ask).
+- Entry stays on `window.prompt` (stake) then `window.confirm` (final), exactly
+  as in `copy-trading-live-views.md`. Paper-stake editor copy is unchanged.
 
-Field helper (below the input, `--text-xs`, `color:var(--text)` in both themes;
-`--muted` fails 4.5:1 in dark):
+### 3. Inheriting-wallet clarity (interim, #1290)
 
-- Input `placeholder`: `Follow paper ($5.00)` (paper stake substituted).
-- Helper: **`Leave blank to follow this wallet's paper stake ($5.00). It changes automatically when the paper stake changes.`**
+No new helper element. The inherit case is made explicit in the prompt and by
+never writing an unchanged value.
 
-Roster stake line (replaces the 10px `(inherits paper)` span): 
-**`Live: $5.00 · follows paper stake`** — second part at `--text-xs`
-(not 10px), `--text`. Override case shows only `Live: $5.00`.
+**Prompt copy, wallet currently inheriting** (`live_stake_is_override=false`;
+prefill = resolved stake = paper stake):
 
-Final confirm (`window.confirm`) when inheriting:
+```
+Set a live stake per trade for {address}.
+
+This wallet currently follows its paper stake ($5.00 per trade) and will change automatically when the paper stake changes.
+
+Leave the amount as it is (or clear it) to keep following the paper stake.
+Enter a different dollar amount to fix the live stake at that amount.
+
+Live per-wallet exposure cap: $CAP.
+```
+
+**Prompt copy, wallet has an override** (prefill = override, e.g. $2.00):
+
+```
+Set a live stake per trade for {address}.
+
+This wallet's live stake is fixed at $2.00 per trade (its paper stake is $5.00).
+
+Keep the amount to leave it unchanged. Enter a different amount to change it, or clear the field to follow the paper stake instead.
+
+Live per-wallet exposure cap: $CAP.
+```
+
+**Write rule (amends the earlier "accepting the pre-fill = explicit override"):**
+compare the entered value with the resolved stake shown. Unchanged value ->
+keep the wallet's current state (inheriting stays inheriting; an override stays
+the same override); send no stake change. Changed value -> explicit override.
+Cleared field -> inherit. This stays safe for the re-enable hazard (override
+persists and is the prefill), and a wallet never silently flips from inherit
+to a fixed value just by pressing OK.
+
+Roster stake line (replaces the 10px `(inherits paper)` span), unchanged ruling:
+**`Live: $5.00 · follows paper stake`** with the second part at `--text-xs`,
+`--text`. Override case shows only `Live: $5.00`.
+
+Final `window.confirm` copy when inheriting:
 **`Go live for {address}?\n\nReal trades of $5.00 each, following this wallet's paper stake (it will change if the paper stake changes), up to $CAP live exposure for this wallet.\n\nPaper trading continues unchanged.`**
 When overriding: replace the middle clause with `Real trades of $X.XX each (fixed), up to $CAP live exposure for this wallet.`
 
-### 4. 375px action layout (Paper and Live rosters)
+### 4. 375px actions (interim, #1290): stack like the Paper roster
 
-Single rule, shared with the #816 wide-table pattern (no stacked-block layout):
-at `max-width:600px` the Actions cell is the **sticky-right** column and renders
-icon-only buttons in one row: `min-width:44px;min-height:44px`, `gap:var(--space-2)`,
-`aria-label` and `title` keep the full text ("Pause", "Edit stake", "Unfollow").
-Order left to right: `Pause/Resume`, `Edit stake`, then `Unfollow` last, with
-`margin-left:var(--space-3)` extra separation and `--no` styling (destructive
-action never adjacent-by-accident). Live roster: `Edit live stake`,
-`Revert to paper`, `Unfollow`.
+No sticky column, no icon-only buttons. Below `max-width:600px` the Live roster
+uses the **same stacked-block rule the Paper roster already has** (the
+"Narrow screens" `.copy-table--roster` block): extend that selector to the Live
+roster rather than writing new CSS.
 
-- `Go live` / `Go live ->` is a labelled full-width 44px button placed inside the
-  first (Wallet) cell under the address, not an icon, so the primary action is
-  never ambiguous and the sticky-right cell stays at three icons (~148px).
-- Stake editor open: it replaces the row's actions with a full-width block under
-  the row: input full width, `Save | Cancel` 50/50 beneath, error (section 2)
-  under that.
-- At 601px and above the Actions cell keeps today's wrapping label buttons.
+- Each wallet row becomes a wrapping block; the Actions cell is
+  `display:flex;flex-wrap:wrap;gap:var(--space-2);` with full-text labelled
+  buttons (`Edit live stake`, `Revert to paper`, `Unfollow`; `Go live ->` in
+  Paper), each `min-height:44px` so wrapping rows are tappable.
+- `Unfollow` is last in DOM order, with `margin-left:var(--space-3)` and its
+  existing `--no` styling.
+- At 601px and above nothing changes.
+- No horizontal page scroll; the block fits the viewport (#1286 guarantee).
+
+### DEFERRED (follow-up issue, not in #1290): inline editor + sticky actions
+
+Kept for the follow-up; implementers of #1290 must not build any of this.
+- Inline `.followed-stake-edit` editor replacing `window.prompt` for Go live /
+  Edit live stake, with `<p class="followed-stake-error" role="alert">` under
+  the input (`aria-invalid`, `aria-describedby`, `alert-circle` icon), field
+  helper `Leave blank to follow this wallet's paper stake ($5.00). It changes
+  automatically when the paper stake changes.` and placeholder
+  `Follow paper ($5.00)`. Final `window.confirm` stays.
+- 375px sticky-right Actions column, icon-only 44px buttons with `aria-label`/
+  `title`, `Go live ->` as a full-width 44px labelled button under the address,
+  open editor as a full-width block under the row.
 
 ---
 
@@ -281,16 +327,25 @@ and any bare overflow. Applies to every data table (`.copy-table`, perf, edge de
    (Market, or Wallet in rosters).
 3. Column order is fixed by priority, key figure second (P&L / status), never
    reordered per breakpoint. Secondary columns trail and scroll.
-4. Roster Actions column: sticky **right** at phone, icon-only, exactly as #1290 section 4.
+4. Roster Actions column: stays as shipped by #1290 section 4 (stacked, labelled
+   buttons below 600px). The sticky-right icon-only Actions column is part of the
+   DEFERRED roster redesign; #816 must not assume it. Roster tables therefore keep
+   their #1290 stacked layout under 600px until the follow-up lands; the sticky
+   first-column pattern applies to all other tables.
 5. Cells stay `white-space:nowrap`; min column widths not forced. No card/stacked layout anywhere.
 6. Wrapper gets `tabindex="0"` and `role="region"` with `aria-label` = the
    table's label so keyboard users can scroll it.
 
-Dev order: implement #816 table pattern together with #1290 section 4 and
-the #1291 column order; do not ship the old stacked `.copy-table--roster` block.
+Dev order: the #1291 column order is already shipped. Do not replace the
+`.copy-table--roster` stacked block for the rosters in #816 (see item 4); only
+non-roster tables adopt the sticky-first-column pattern.
 
-[Tech constraint: none identified; pending PM feasibility confirmation on
-replacing `.copy-table--roster` — agreed approach to be recorded here.]
+[Tech constraint: UNVERIFIED. No feasibility check on the #816 table pattern
+(sticky first column inside the `overflow-x:auto` wrapper, interplay with the
+#1286 `position:relative` wrap and the `.copy-table-wrap:has(.copy-copy-btn)`
+padding, and the `.copy-feedback-label` overlay clipping) has been done. The
+Tech Lead PM must confirm it, and the agreed approach be recorded here, BEFORE
+#816 starts.]
 
 ### States (all new surfaces)
 
