@@ -5,8 +5,12 @@ follow-ups from the 2026-10-04 incident on wallet `0x924379a7` — live
 trading ran 4/4 losing trades and is now halted). Both updates are to
 sections that already existed in this document; see "Pausing an opted-in
 wallet" (now superseding its own prior text, #1264) and the fifth badge
-state under "Followed Wallets" (#1266). This revision is design direction
-only — implementation for both issues is still open.
+state under "Followed Wallets" (#1266). All open questions raised by this
+revision have since been decided by the Tech Lead PM (2026-10-05) and are
+folded in as decisions, not left open — see the `_derive_live_eligibility`
+ordering, the cap-lowering behavior, and the `live_enabled_cleared_at`
+field, all below. This revision is design direction only — implementation
+for both issues is still open.
 
 Addendum to `docs/design/copy-trading-dashboard.md` (Epic F, shipped) and
 `docs/design/copy-trading-architecture.md` (Epic J, #1161). Read the Epic F
@@ -181,18 +185,20 @@ history; do not re-derive from (b) — the real column exists now.]`
 `_derive_live_eligibility` (`src/dashboard/api.py`) returns
 `(is_live, reason)` checked in this deterministic order — the same order
 this spec's copy below assumes: `paused` → not `live_enabled` → live config
-unreadable → **live stake exceeds the per-wallet cap (new, issue #1266 —
-see the fifth badge state below)** → global switch off → per-wallet
-exposure cap reached (transient) → eligible. The new #1266 check is placed
-ahead of "global switch off" and the transient exposure check deliberately:
-it is the one permanent, human-actionable blocker in this list, and it
-would still block every order even once the switch is on and exposure is
-clear, so it should win the reported reason regardless of what else happens
-to be true at the same moment — surfacing "switch off" or "cap reached"
-first would hide the actual, permanent problem behind a transient-looking
-one. `[Tech constraint: confirm this ordering with Tech Lead PM before
-implementation — feasibility isn't in question, this is purely about which
-reason wins when more than one is simultaneously true.]`
+unreadable → global switch off → **live stake exceeds the per-wallet cap
+(new, issue #1266 — see the fifth badge state below)** → per-wallet
+exposure cap reached (transient) → eligible. **Decided (Tech Lead PM,
+2026-10-05):** the new #1266 check sits ahead of the transient exposure
+check but *behind* "global switch off" — the two permanent-vs-transient
+reasons (stake-exceeds-cap, cap-reached) must not let the transient one
+hide the permanent one, exactly the trap #1266 was filed about, so
+stake-exceeds-cap wins over cap-reached whenever both are true. But the
+global switch is a precondition for *any* wallet trading live at all, not a
+per-wallet fact — when it's off, telling an operator about one wallet's own
+stake-versus-cap misconfiguration points them at the wrong lever (their own
+wallet's config) instead of the right one (the platform switch, set
+elsewhere). So "switch off" stays the first-checked, highest-precedence
+reason among the four non-paused/non-opt-in checks.
 
 A `paused` wallet is always PAPER regardless of every other flag, including
 `live_enabled` — this is unchanged. What pausing itself *does* to the
@@ -208,17 +214,12 @@ wallet" below, which supersedes this document's prior text on that point.
     (see Design tokens below) — `live_enabled` is true but
     `live_status_reason === "live trading is currently off"`. Reads as "this
     wallet is opted in and will go live the moment the global switch flips
-    on," distinct from a wallet that was never opted in at all.
-  - **`LIVE (cap reached)`** — same muted-green variant as above, required
-    by the acceptance criteria specifically because `_derive_live_eligibility`
-    already returns this as its own distinct reason
-    (`"this wallet's live exposure limit is currently reached"`) once
-    `live_enabled` exists as a true operator toggle — an opted-in wallet
-    temporarily throttled by its own cap must not collapse to plain `PAPER`,
-    which would look identical to a wallet the operator never opted in. This
-    state is **transient**: it clears on its own the moment an open live
-    position settles and frees up exposure, with no operator action
-    required.
+    on," distinct from a wallet that was never opted in at all. Muted green
+    here signals "opted in, waiting on something outside this wallet's own
+    configuration" — the switch is a platform-wide state shared identically
+    by every opted-in wallet, not a defect in this wallet's setup, even
+    though (see the wording note below) flipping it does require a human
+    action elsewhere.
   - **`LIVE (stake exceeds cap)`** (new, issue #1266) — a **third, distinct
     visual treatment**, `.mode-badge-live-blocked` (muted red — see Design
     tokens below), for `live_status_reason === "this wallet's live stake
@@ -229,16 +230,32 @@ wallet" below, which supersedes this document's prior text on that point.
     stake or raises the cap.** This is deliberately a different color from
     `LIVE (switch off)` / `LIVE (cap reached)`, not a third muted-green
     variant, because it is a categorically different kind of "not eligible
-    right now": the two muted-green states are self-resolving (wait for the
-    switch, wait for a position to settle) and need no operator action;
-    this one is permanent until a human changes a number — exactly the
-    distinction #1266's issue text draws between this state and the
-    existing cap-reached reason. Reusing the red (`--no`) family this same
-    view already uses for `.btn-followed-unfollow`, and that the dashboard
+    right now": this state is a defect in *this specific wallet's own*
+    configuration, requiring a fix scoped to this wallet (lower its stake,
+    or raise the cap that applies to it) — unlike `LIVE (switch off)`
+    (a shared platform state, not a fact about this wallet) and unlike
+    `LIVE (cap reached)` (see below, genuinely self-resolving with no
+    operator action at all). Reusing the red (`--no`) family this same view
+    already uses for `.btn-followed-unfollow`, and that the dashboard
     already uses for blocked-gate styling elsewhere (`.gate-entry_guard`),
     keeps "red means stop, this needs you" consistent with vocabulary this
     operator already reads, rather than inventing a new color meaning for
     the same concept.
+  - **`LIVE (cap reached)`** — same muted-green variant as `LIVE (switch
+    off)`, required by the acceptance criteria specifically because
+    `_derive_live_eligibility` already returns this as its own distinct
+    reason (`"this wallet's live exposure limit is currently reached"`)
+    once `live_enabled` exists as a true operator toggle — an opted-in
+    wallet temporarily throttled by its own cap must not collapse to plain
+    `PAPER`, which would look identical to a wallet the operator never
+    opted in. Of the three non-`LIVE` states, this is the only one that is
+    genuinely **self-resolving with zero operator action**: it clears on
+    its own the moment an open live position settles and frees up
+    exposure. (`LIVE (switch off)` still needs a human to flip the global
+    switch — it isn't self-resolving either, it just isn't a defect
+    *specific to this wallet*; see above. Don't conflate the two
+    justifications for muted-green — they're different reasons for the
+    same color, not the same reason twice.)
   - **`PAPER`** — `.mode-badge-paper` (amber) — every other case:
     `live_enabled` is false, **or** the wallet is `paused` (paused always
     wins and shows plain `PAPER`, never a `LIVE (...)` variant, even if
@@ -672,15 +689,23 @@ one:
      `mode="live"` — it is still fundamentally a pause, which is correctly
      paper — just flagged, exactly as a live-relevant paper-mode row is
      flagged elsewhere in this same view.
-   `[Tech constraint: the synthetic `wallet_paused` event is derived purely
-   from the wallet's CURRENT `paused_at`/`status` row at query time — there
-   is no stored history of what `live_enabled` was a moment *before* that
-   particular pause, and by the time this renders, the flag has already
-   been cleared. Rendering this correctly needs one new persisted fact set
-   at the same `update_followed_wallet_status` chokepoint that clears the
-   flag (e.g. a boolean recorded alongside `paused_at`/`paused_reason`) —
-   flagging for Tech Lead PM feasibility confirmation; this is a schema
-   question, not a UX one, and this spec is not prescribing the column.]`
+   **Decided (Tech Lead PM, 2026-10-05):** the synthetic `wallet_paused`
+   event is derived purely from the wallet's CURRENT `paused_at`/`status`
+   row at query time — there is no stored history of what `live_enabled`
+   was a moment *before* a particular pause, and by the time this renders,
+   the flag has already been cleared. Rendering this correctly needs one
+   new persisted fact at the same `update_followed_wallet_status`
+   chokepoint that clears the flag: a **nullable timestamp**,
+   `copy_wallets_followed.live_enabled_cleared_at`, following the existing
+   `paused_at` precedent — not a boolean. A boolean would only answer "did
+   this ever happen" and would itself need clearing on the next Resume,
+   leaving no history at all after one pause/resume cycle; a timestamp
+   answers "when," survives repeated pause/resume cycles with its meaning
+   intact (each new clearing overwrites it with the latest occurrence, same
+   semantics as `paused_at` itself), and lets the Activity Feed order the
+   revocation against the pause it accompanied. The `wallet_paused` event
+   carries the appended sentence above whenever this timestamp is non-null
+   and at or after the pause's own `paused_at` for that row.
 
 3. **The row itself, after the fact.** No new badge state is needed here
    (the badge already correctly shows plain `PAPER` for any paused wallet,
@@ -785,6 +810,32 @@ explanation, rather than adding a new line to an already-dense cell:
   exact silent-failure trap #1266 exists to close, the explanation needs to
   survive a screenshot or a glance, not require the operator to find and
   hover the right element.
+
+**Issue #1266 decision — lowering the cap below an existing wallet's
+resolved live stake: surface it, never refuse it (Tech Lead PM,
+2026-10-05).** Saving a lower `COPY_LIVE_MAX_EXPOSURE_PER_WALLET_USD`
+always succeeds. The cap is itself the safety control, and refusing to
+*tighten* a safety limit would mean the system blocking an operator from
+making the configuration safer — exactly backwards, and especially costly
+mid-incident, when tightening the cap needs to stay frictionless. Compare
+the two failure modes directly: refuse the save, and real money stays
+exposed at the old, looser cap while the operator works out which wallet to
+fix first; let the save through, and the affected wallets immediately
+render in the `LIVE (stake exceeds cap)` state specified above — unable to
+place a new order is the safe direction to fail in. So the reduction always
+succeeds, and any wallet it strands renders in that state on its very next
+fetch.
+
+This is a config-tab action, outside the three views this document
+otherwise covers, but the response copy belongs here since it's the one
+place this decision is operator-facing: saving the new cap value names the
+wallets it just stranded in its own save-confirmation text — e.g. `"Live
+exposure cap updated to $X.XX. {N} wallet(s) now exceed this cap and will
+not trade live until their stake is lowered or the cap is raised:
+{addresses}."` when `N > 0`, or the existing unqualified success text when
+`N = 0` — so the operator learns the consequence at the moment they caused
+it, from the same screen where they made the change, not only later from a
+badge on a different tab.
 
 **Header pill.** Covered above (Summary strip bullet in the Followed Wallets
 badge section) — **# opted into live**, positioned before **# live-eligible**
@@ -973,21 +1024,17 @@ Unchanged from Epic F (default/loading/empty/auto-refresh-paused) plus:
    confirmation specifically when *raising* an already-live wallet's stake,
    since a size increase is the one direction on an already-live wallet that
    adds real-money exposure, unlike a decrease or an unchanged value.
-8. **Reverse direction: lowering the live cap below an existing wallet's
-   resolved live stake** (#1266 acceptance criteria) — refuse the config
-   change outright (naming the affected wallets) vs. let it through and let
-   the new `LIVE (stake exceeds cap)` badge/stake-line above silently catch
-   it on the next render. This is a config-validation *behavior* decision,
-   not a badge-*design* one, so it isn't answered by this spec — Tech Lead
-   PM call. Either choice is compatible with everything specified above:
-   the badge and stake-figure copy are correct regardless of which path put
-   a wallet into that state.
-9. **Persisted "was this wallet live immediately before this pause" fact**
-   (#1264, Activity Feed durable record) — see the `[Tech constraint ...]`
-   block in "Pausing an opted-in wallet" above. Needs a Tech Lead PM
-   feasibility call on the smallest way to persist this (e.g. a new boolean
-   column alongside `paused_at`/`paused_reason`) before the Activity Feed
-   half of that design can ship. Not a blocker for the rest of #1264's UX:
-   the pre-pause prompt warning, the pause-success toast, and the corrected
-   Resume/Go-live copy all use only data already available client-side and
-   can ship independently of this one.
+8. ~~**Reverse direction: lowering the live cap below an existing wallet's
+   resolved live stake**~~ — **RESOLVED.** Surface it, never refuse it
+   (Tech Lead PM decision, 2026-10-05) — see "Issue #1266 decision —
+   lowering the cap below an existing wallet's resolved live stake" under
+   Followed Wallets, above, for the full rationale and the save-confirmation
+   copy.
+9. ~~**Persisted "was this wallet live immediately before this pause"
+   fact**~~ — **RESOLVED.** A nullable timestamp,
+   `copy_wallets_followed.live_enabled_cleared_at` (Tech Lead PM decision,
+   2026-10-05) — see "Pausing an opted-in wallet" → "Durable record — the
+   Activity Feed," above, for the full rationale. The pre-pause prompt
+   warning, the pause-success toast, and the corrected Resume/Go-live copy
+   in that same section do not depend on this field and ship independently
+   of it.
