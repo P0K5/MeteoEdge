@@ -3058,6 +3058,16 @@ Before #1243, the packet discarded the PR body entirely (only a regex-derived "c
 
 Each budget is independent and additive with `DIFF_MAX_CHARS`; if any section is truncated, the packet says so explicitly and the reviewer prompt instructs the model to mark truncated criteria unverifiable rather than unmet. If a PR closes several large issues plus carries a near-cap diff, the combined packet can still exceed DeepSeek's context — that case is caught by the existing `DeepSeekContextLengthError` retry-with-smaller-diff-cap path (see below); the PR body and issue-body budgets are not currently reduced on that retry.
 
+### Issue linkage is a deterministic, non-LLM fact (#1243 follow-up)
+
+Live evidence (PR #1306, two commits, unchanged linkage state, opposite verdicts; PR #1305, closing keyword present, BLOCKed for its claimed absence) showed the reviewer sometimes re-deriving linkage itself instead of trusting the regex-computed fact already in the packet, and treating "no closing keyword" as equivalent to "no linked issue" even when a non-closing reference was present. Fixes:
+
+- `extract_referenced_issue_numbers()` recognizes `Refs #N` / `Part of #N` / `Related to #N` / `See #N` (including a comma/"and"-separated list after one keyword) as valid, non-auto-closing linkage — the sanctioned pattern for one PR of a deliberately-sequenced multi-PR issue (#1001), and literally the remedy a reviewer run once suggested for a PR it had just blocked.
+- The packet states linkage as two explicit lists (closing / referenced) labeled **"DETERMINISTIC FACT... do not independently re-derive"**, and fetches issues from the union of both so referenced-only issues still get their acceptance criteria shown.
+- The reviewer prompt instructs the model never to dispute this list from the diff, branch name, or its own reading of the body, and to treat a non-empty references list as satisfying the linking requirement even when the closing-keywords list is empty.
+
+This narrows the gap but does not make the review fully deterministic — the underlying verdict is still an LLM call at `temperature=0.1`, not 0, so some run-to-run variance on borderline judgment calls (e.g. whether a genuinely unlinked PR's content justifies the exception) remains possible even with the fact stated unambiguously.
+
 ### Transient-failure handling, and fail-closed (issues #960, #1037)
 
 `call_deepseek()` retries up to `DEEPSEEK_MAX_ATTEMPTS` (3) times with backoff (10s, 30s) on:

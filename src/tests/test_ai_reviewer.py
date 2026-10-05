@@ -29,6 +29,7 @@ from scripts.ai_reviewer import (
     build_review_packet,
     call_deepseek,
     extract_acceptance_criteria,
+    extract_referenced_issue_numbers,
     fetch_issue,
     get_diff_max_chars,
     is_generated_path,
@@ -490,7 +491,7 @@ class TestPRBodyInPacket:
         pr_meta = _minimal_pr_meta(body=body)
         packet = build_review_packet(pr_meta, [], {}, [], "policy")
         assert "Closes #1303" in packet
-        assert "- Closing keywords in PR body: #1303" in packet
+        assert "Closing keywords (auto-closes on merge): #1303" in packet
 
 
 class TestLinkedIssueBodyBudget:
@@ -531,7 +532,7 @@ class TestLinkedIssueBodyBudget:
         packet = build_review_packet(pr_meta, [], {}, [issue2], "policy")
         assert "#1" in packet
         assert "unavailable" in packet
-        assert "### Issue #2: t2" in packet
+        assert "### Issue #2 (closing): t2" in packet
 
 
 class TestAcceptanceCriteriaHeadingStyles:
@@ -625,6 +626,76 @@ class TestAcceptanceCriteriaHeadingStyles:
         pr_meta = _minimal_pr_meta(body="Closes #1")
         packet = build_review_packet(pr_meta, [], {}, [issue], "policy")
         assert "acceptance criteria truncated" in packet
+
+
+class TestNonClosingReferenceLinkage:
+    """#1243 follow-up (live evidence from PR #1306/#1305, 2026-10-05): the
+    reviewer reached opposite verdicts on an unchanged linkage state, and
+    separately BLOCKed a PR while itself suggesting 'Refs #N' as the fix --
+    advice a strict closing-keyword-only check would then also fail. Fix:
+    recognize non-closing references ('Refs #N', 'Part of #N', 'Related to
+    #N', 'See #N') as valid linkage, and present linkage to the model as an
+    explicit, deterministic fact it must not re-derive."""
+
+    def test_extract_referenced_issue_numbers_recognizes_refs(self):
+        # The live remedy a reviewer run suggested for PR #1306 was exactly
+        # this comma-separated two-issue list under one keyword.
+        assert extract_referenced_issue_numbers("Refs #1264, #1266") == [1264, 1266]
+        assert extract_referenced_issue_numbers("Refs #1264 and #1266") == [1264, 1266]
+        assert extract_referenced_issue_numbers("Refs #1264. Refs #1266.") == [1264, 1266]
+
+    def test_extract_referenced_issue_numbers_recognizes_part_of_and_related(self):
+        assert extract_referenced_issue_numbers("Part of #993") == [993]
+        assert extract_referenced_issue_numbers("Related to #42") == [42]
+        assert extract_referenced_issue_numbers("See #7") == [7]
+
+    def test_extract_referenced_issue_numbers_empty_for_closing_only_body(self):
+        # "Closes #N" must not also register as a reference (no double count).
+        assert extract_referenced_issue_numbers("Closes #5") == []
+
+    def test_packet_states_linkage_as_deterministic_fact(self):
+        pr_meta = _minimal_pr_meta(body="Refs #1264, #1266")
+        packet = build_review_packet(pr_meta, [], {}, [], "policy")
+        assert "DETERMINISTIC FACT" in packet
+        assert "do not independently re-derive" in packet
+
+    def test_non_closing_reference_alone_is_not_no_linked_issue(self):
+        """A PR with only 'Refs #N' (no closing keyword) must show a
+        non-empty references list and must NOT fall into the 'no closing
+        keywords or non-closing references' branch."""
+        pr_meta = _minimal_pr_meta(body="Refs #1264\n\nDesign input only.")
+        packet = build_review_packet(pr_meta, [], {}, [], "policy")
+        assert "Closing keywords (auto-closes on merge): (none)" in packet
+        assert "Non-closing references" in packet
+        assert "#1264" in packet
+        assert "no closing keywords or non-closing references in PR body" not in packet
+
+    def test_reviewer_suggested_refs_remedy_is_accepted_as_linkage(self):
+        """Reconstructs the live #1306 scenario: the reviewer's own
+        suggested fix on a blocked run was 'Refs #1264, #1266'. A PR that
+        follows that advice must register both issues as linked."""
+        pr_meta = _minimal_pr_meta(body="Refs #1264, #1266.\n\nDesign input for the live-badge pause UX.")
+        packet = build_review_packet(pr_meta, [], {}, [], "policy")
+        metadata_block = packet.split("## PR Metadata")[1].split("## PR Description")[0]
+        assert "#1264" in metadata_block
+        assert "#1266" in metadata_block
+
+    def test_referenced_issue_is_fetched_and_labeled_non_closing(self):
+        issue = _issue(1264, "live badge pause UX", "body text")
+        pr_meta = _minimal_pr_meta(body="Refs #1264")
+        packet = build_review_packet(pr_meta, [], {}, [issue], "policy")
+        assert "### Issue #1264 (referenced, non-closing): live badge pause UX" in packet
+
+    def test_closing_issue_is_labeled_closing(self):
+        issue = _issue(1, "t", "body text")
+        pr_meta = _minimal_pr_meta(body="Closes #1")
+        packet = build_review_packet(pr_meta, [], {}, [issue], "policy")
+        assert "### Issue #1 (closing): t" in packet
+
+    def test_no_linkage_at_all_still_reports_the_violation_branch(self):
+        pr_meta = _minimal_pr_meta(body="No issue reference of any kind here.")
+        packet = build_review_packet(pr_meta, [], {}, [], "policy")
+        assert "no closing keywords or non-closing references in PR body" in packet
 
 
 class TestBudgetInteraction:

@@ -263,11 +263,43 @@ CLOSING_PATTERN = re.compile(
     r"(?:closes|fixes|resolves)\s+#(\d+)", re.IGNORECASE
 )
 
+# Non-closing references: deliberately-sequenced multi-PR issues (one of N,
+# closing keyword reserved for the final PR) and design-input PRs legitimately
+# link an issue without wanting GitHub to auto-close it on merge. #1001
+# proposed "Part of #N" as a sanctioned pattern; a live reviewer run (seen on
+# PR #1306) independently suggested "Refs #N" as its own remedy for a PR it
+# had just blocked for "missing issue linkage" -- a PR that followed that
+# advice would then fail a strict closing-keyword-only check. Both forms (and
+# the common "Related to #N" / "See #N") are recognized here as valid, if
+# non-closing, linkage.
+# Matches the keyword plus a comma/"and"/"&"-separated list of #N tokens
+# that follows it (e.g. "Refs #1264, #1266"), not just a single number --
+# the live remedy a reviewer run suggested for PR #1306 was exactly that
+# two-issue list.
+REFERENCE_PATTERN = re.compile(
+    r"(?:refs?|references?|related(?: to)?|part of|see(?: also)?)\s+"
+    r"(#\d+(?:\s*(?:,|and|&)\s*#\d+)*)",
+    re.IGNORECASE,
+)
+_HASH_NUMBER_RE = re.compile(r"#(\d+)")
+
 
 def extract_linked_issue_numbers(text: str) -> list:
     if not text:
         return []
     return [int(m) for m in CLOSING_PATTERN.findall(text)]
+
+
+def extract_referenced_issue_numbers(text: str) -> list:
+    """Non-closing references (`Refs #N`, `Part of #N`, `Related to #N`,
+    `See #N`, including a comma/"and"-separated list after one keyword) --
+    valid issue linkage that does not auto-close on merge."""
+    if not text:
+        return []
+    nums = []
+    for clause in REFERENCE_PATTERN.findall(text):
+        nums.extend(int(n) for n in _HASH_NUMBER_RE.findall(clause))
+    return nums
 
 
 # ---------------------------------------------------------------------------
@@ -504,14 +536,35 @@ def build_review_packet(
 
     pr_body = pr_meta.get("body") or ""
     closing_nums = extract_linked_issue_numbers(pr_body)
-    closing_txt = ", ".join(f"#{n}" for n in closing_nums) if closing_nums else "(none found)"
+    # Non-closing references (`Refs #N`, `Part of #N`, `Related to #N`,
+    # `See #N`) are valid linkage too -- a deliberately-sequenced multi-PR
+    # issue defers the closing keyword to its final PR, and the reviewer's
+    # own suggested remedy on a live BLOCKed run was "Refs #N" (#1243
+    # follow-up, PR #1306/#1305 live evidence). Dedup: a number already
+    # counted as closing is not repeated as referenced-only.
+    reference_nums = [
+        n for n in extract_referenced_issue_numbers(pr_body) if n not in closing_nums
+    ]
+    all_linked_nums = closing_nums + reference_nums
+    closing_txt = ", ".join(f"#{n}" for n in closing_nums) if closing_nums else "(none)"
+    reference_txt = ", ".join(f"#{n}" for n in reference_nums) if reference_nums else "(none)"
 
     packet_parts = [
         "## PR Metadata",
         f"- PR #{pr_number}: {pr_title}",
         f"- Author: {author}",
         f"- Base: {base_branch} ← {head_branch}",
-        f"- Closing keywords in PR body: {closing_txt}",
+        "- Issue linkage — DETERMINISTIC FACT, computed by regex over the PR "
+        "body below. This is ground truth, not an assessment: do not "
+        "independently re-derive, dispute, or second-guess it from the diff, "
+        "the branch name, or your own reading of the PR body text.",
+        f"    - Closing keywords (auto-closes on merge): {closing_txt}",
+        f"    - Non-closing references (Refs/Part of/Related to/See — valid "
+        f"linkage, does NOT auto-close): {reference_txt}",
+        "    - A PR with at least one number in EITHER list above has "
+        "satisfied the issue-linking requirement. Do not treat an empty "
+        "closing-keywords list as 'no linked issue' when the references "
+        "list is non-empty.",
         "",
         "## PR Description",
     ]
@@ -564,22 +617,28 @@ def build_review_packet(
 
     # Linked issues
     packet_parts += ["", "## Linked Issues"]
-    if not closing_nums:
-        packet_parts.append("(no closing keywords in PR body — policy violation)")
+    if not all_linked_nums:
+        packet_parts.append(
+            "(no closing keywords or non-closing references in PR body — a "
+            "genuine candidate for a policy violation, but judge from the PR "
+            "Description above: a PR that is itself design input with no "
+            "code change may legitimately need none. Do not override the "
+            "deterministic linkage fact stated in PR Metadata.)"
+        )
     else:
-        # Surface EACH closing-keyword number that failed to fetch, not just
-        # the all-or-nothing case — a PR closing multiple issues where only
-        # one fetch fails used to show no explanation for the missing one
+        # Surface EACH linked number that failed to fetch, not just the
+        # all-or-nothing case — a PR linking multiple issues where only one
+        # fetch fails used to show no explanation for the missing one
         # (#1243 follow-up: a single missing input must not silently read as
         # "acceptance criteria unmet" for an issue that was never actually
         # unreachable in full).
         fetched_nums = {issue.get("number") for issue in linked_issues}
-        missing_nums = [n for n in closing_nums if n not in fetched_nums]
+        missing_nums = [n for n in all_linked_nums if n not in fetched_nums]
         if missing_nums:
             missing_txt = ", ".join(f"#{n}" for n in missing_nums)
             packet_parts.append(
                 f"(issue(s) {missing_txt} unavailable — access restricted or "
-                "fetch failed; closing keyword(s) confirmed in PR body above. "
+                "fetch failed; linkage already confirmed in PR Metadata above. "
                 "Do not block on acceptance criteria you cannot see for these "
                 "— mark unverifiable, not unmet.)"
             )
@@ -587,6 +646,7 @@ def build_review_packet(
         issue_num = issue.get("number", "?")
         issue_title = issue.get("title", "")
         issue_body = issue.get("body") or ""
+        linkage_type = "closing" if issue_num in closing_nums else "referenced, non-closing"
 
         ac_text, ac_truncated = extract_acceptance_criteria(issue_body)
         if ac_truncated:
@@ -609,7 +669,7 @@ def build_review_packet(
                 )
 
         packet_parts += [
-            f"### Issue #{issue_num}: {issue_title}",
+            f"### Issue #{issue_num} ({linkage_type}): {issue_title}",
             f"Body:\n{body_block}",
             f"Acceptance Criteria:\n{ac_text}",
             "",
@@ -878,10 +938,20 @@ def _run(
     # changed_files entries above), filtered by GENERATED_PATH_PREFIXES,
     # instead of truncating one flat full-PR diff blob (#1118).
 
-    # 2. Resolve linked issues
+    # 2. Resolve linked issues — closing keywords AND non-closing references
+    # (`Refs #N`, `Part of #N`) both count as valid linkage (#1243 follow-up:
+    # a deliberately-sequenced multi-PR issue defers its closing keyword to
+    # the final PR, and must not be fetched-and-treated as unlinked).
     pr_body = pr_meta.get("body") or ""
-    linked_nums = extract_linked_issue_numbers(pr_body)
-    print(f"[ai_reviewer] Found linked issue numbers: {linked_nums}")
+    closing_nums = extract_linked_issue_numbers(pr_body)
+    reference_nums = [
+        n for n in extract_referenced_issue_numbers(pr_body) if n not in closing_nums
+    ]
+    linked_nums = closing_nums + reference_nums
+    print(
+        f"[ai_reviewer] Found linked issue numbers: closing={closing_nums} "
+        f"referenced={reference_nums}"
+    )
 
     linked_issues = []
     for num in linked_nums:
