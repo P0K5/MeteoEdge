@@ -1063,3 +1063,15 @@ def test_recent_closed_pager_scrolls_the_list_back_into_view(tmp_path):
         assert.deepStrictEqual(wrap._scrollOpts, { behavior: 'smooth', block: 'start' });
         assert.strictEqual(info(), 'Page 2 of 3');
     """, tmp_path)
+
+
+def test_reduced_motion_skeleton_is_static_and_busy_buttons_keep_their_text_label():
+    html = INDEX_HTML.read_text(encoding="utf-8")
+    rm = re.search(r"@media \(prefers-reduced-motion: reduce\)\{(.*?)\n\}", html, re.S).group(1)
+    assert ".skeleton{background:var(--surface-off);}" in rm, "static --surface-off block"
+    # Busy state is never rotation-only: every roster button that hosts a spinner
+    # also carries a visible text label (the JS only toggles the `loading` class
+    # and never replaces the button text), so state survives animation:none.
+    for m in re.finditer(r'<button[^>]*btn-followed-(?:pause|resume)[^>]*>(.*?)</button>', html):
+        label = re.sub(r"<[^>]+>", "", m.group(1)).strip()
+        assert "spinner" in m.group(1) and label in ("Pause", "Resume")

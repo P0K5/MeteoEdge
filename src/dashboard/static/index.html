@@ -1033,6 +1033,7 @@ a,button,input,select{transition:color var(--transition),background var(--transi
   html{scroll-behavior:auto;}
   .copy-row-highlight{animation:none;background:var(--primary-bg);box-shadow:inset 3px 0 0 var(--primary);}
   .live-dot,.skeleton,.spinner{animation:none;}
+  .skeleton{background:var(--surface-off);}   /* static block, no gradient sweep */
 }
 /* Paper KPI: the third card spans both columns once the grid drops to 2-up (#1291). */
 @media(max-width:600px){.copy-paper-kpis .wallet-card:last-child:nth-child(odd){grid-column:1/-1;}}
