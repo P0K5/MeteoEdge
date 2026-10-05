@@ -1,7 +1,8 @@
 # Design Rulings — Frontend Polish Wave (#1290, #1291, #602, #816)
 
-Status: approved by Design-Agent; feasibility check with Tech Lead PM is the
-PR review of this file. All files: `src/dashboard/static/index.html`.
+Status: the #1290, #1291 and #602 rulings are implemented (PRs #1331, #1326,
+#1325). The #816 section remains a proposal pending the Tech Lead PM's
+feasibility check (see its UNVERIFIED note). All files: `src/dashboard/static/index.html`.
 No new design language: every ruling reuses an existing token or class.
 Where this file conflicts with `copy-trading-live-views.md` or
 `copy-trading-tab-split.md`, this file wins (those specs are amended in the
@@ -177,6 +178,9 @@ for active tabs/pills. Duration/ease unchanged (2.4s ease-out).
 - Spinner: under reduced motion keep the control's text label visible
   (`Saving…`) so state is not conveyed by rotation alone. Skeleton: static
   `--surface-off` block.
+  **As shipped (#1326):** busy buttons keep their existing visible text label
+  (Pause / Resume etc.; no `Saving…` string was added), and `.skeleton` is a
+  static `--surface-off` block under reduced motion.
 
 ### 3. Recent Closed address cell — tap/keyboard
 
@@ -191,7 +195,8 @@ control is added there.
   `min-width:44px;min-height:44px;display:inline-flex;align-items:center;justify-content:center;margin:-12px 0` so row height does not grow.
 - Feedback: existing `.copy-feedback-label` plus an `aria-live="polite"`
   `.copy-sr-status` announcement `Address copied`. Failure text unchanged
-  (fallback select-input).
+  (fallback select-input). **As shipped:** the shared copy function still
+  announces `Address copied to clipboard`.
 - Focus ring: existing `outline:2px solid var(--primary);outline-offset:1px`.
 - Truncated address keeps `title` for hover; on touch, the full address is
   reachable by copy (no long-press tooltip dependency).
@@ -316,8 +321,9 @@ and made discoverable.
 
 ### ONE wide-table pattern: scroll container + sticky first column
 
-Replaces the stacked-block roster pattern (`.copy-table--roster` at <=600)
-and any bare overflow. Applies to every data table (`.copy-table`, perf, edge decision, closed lists).
+Applies to non-roster data tables only (`.copy-table`, perf, edge decision,
+closed lists) and replaces any bare overflow there. Roster tables keep the
+stacked-block `.copy-table--roster` layout at <=600 (see item 4).
 
 1. Table sits in `.table-wrap` (existing `.copy-table-wrap`):
    `overflow-x:auto;-webkit-overflow-scrolling:touch;overscroll-behavior-x:contain;`
