@@ -36,9 +36,10 @@ def test_all_six_copy_buttons_have_same_feedback_markup():
     # Count rendered markup (not the CSS rule): one feedback label per button.
     assert html.count('<span class="copy-feedback-label"') == buttons
     # (a seventh, button-less .copy-address-mono exists elsewhere and is not a call site)
-    for cls in ("copy-feedback-label", "copy-address-mono"):
-        spans = re.findall(r'<span class="%s"[^>]*data-address=[^>]*>' % cls, html)
-        assert len(spans) == buttons, cls
+    spans = re.findall(r'<span class="copy-address-mono"[^>]*data-address=[^>]*>', html)
+    assert len(spans) == buttons
+    # Issue #1281: the label never reads data-address, so it must not carry one.
+    assert not re.findall(r'<span class="copy-feedback-label"[^>]*data-address', html)
 
 
 if __name__ == '__main__':
