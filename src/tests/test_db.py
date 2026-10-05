@@ -6,14 +6,23 @@ file (WAL and cross-connection lock contention are both no-ops for
 ':memory:' -- each ':memory:' connection is its own private database).
 """
 import os
+import re
 import sqlite3
 import tempfile
 import threading
 import time
+from pathlib import Path
+from unittest import mock
 
 import pytest
 
-from src.data.db import Database, _BUSY_TIMEOUT_SECONDS
+from src.data.db import (
+    Database,
+    _BUSY_TIMEOUT_SECONDS,
+    _UPSERT_RETRY_ATTEMPTS,
+    _lock_drop_aggregator,
+    connect_with_busy_timeout,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -651,6 +660,323 @@ class TestIntradayCorrectionTable:
         rows = db.get_intraday_corrections("Tokyo", "2024-01-15")
         assert len(rows) == 1, "Expected exactly 1 row after upsert"
         assert rows[0]["corrected_mu_f"] == pytest.approx(99.0)
+
+
+# ---------------------------------------------------------------------------
+# upsert_intraday_correction -- lock-timeout retry and aggregation (#1238)
+# ---------------------------------------------------------------------------
+
+def _install_flaky_execute(db, *, fail_times, exc=None):
+    """Replace ``db._conn`` with a wrapper whose ``.execute()`` raises *exc*
+    for the first *fail_times* calls, then delegates to the real connection.
+
+    Returns the mock so callers can assert on ``execute.call_count``.
+    """
+    real_conn = db._conn
+    real_execute = real_conn.execute
+    if exc is None:
+        exc = sqlite3.OperationalError("database is locked")
+    calls = {"n": 0}
+
+    def _side_effect(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] <= fail_times:
+            raise exc
+        return real_execute(*args, **kwargs)
+
+    wrapped = mock.MagicMock(wraps=real_conn)
+    wrapped.execute.side_effect = _side_effect
+    db._conn = wrapped
+    return wrapped
+
+
+_CORRECTION_KWARGS = dict(
+    city="Tokyo",
+    date="2024-01-15",
+    obs_time="2024-01-15T09:00:00+00:00",
+    obs_temp_f=68.0,
+    model_temp_f=65.0,
+    delta_f=2.4,
+    corrected_mu_f=82.4,
+    decay_factor=0.8,
+)
+
+
+class TestUpsertIntradayCorrectionLockHandling:
+    """A lock timeout on this write must retry, then drop (never raise) --
+    issue #1238. Before this fix, ``sqlite3.OperationalError: database is
+    locked`` propagated out of this call, up through ``compute_correction()``
+    and ``_build_one_station()``, and aborted the entire poll.
+    """
+
+    def test_retries_and_succeeds_once_lock_clears(self):
+        """One transient lock failure, then the lock clears -- must retry and
+        persist the row rather than giving up after the first failure."""
+        db = _db()
+        assert _UPSERT_RETRY_ATTEMPTS >= 2, (
+            "test assumes at least one retry is configured"
+        )
+        real_conn = db._conn
+        mocked = _install_flaky_execute(db, fail_times=1)
+
+        with mock.patch("src.data.db.time.sleep") as mocked_sleep:
+            db.upsert_intraday_correction(**_CORRECTION_KWARGS)
+        mocked_sleep.assert_called_once()  # slept before the retry, not busy-looped
+        assert mocked.execute.call_count == 2  # 1 failed attempt + 1 successful retry
+
+        db._conn = real_conn  # read back through the real connection, not the mock
+        rows = db.get_intraday_corrections("Tokyo", "2024-01-15")
+        assert len(rows) == 1, "Write must have succeeded on retry"
+        assert rows[0]["corrected_mu_f"] == pytest.approx(82.4)
+
+    def test_does_not_raise_when_lock_persists(self, caplog):
+        """Every attempt hits 'database is locked' -- the write is dropped,
+        not raised, and the drop is logged."""
+        db = _db()
+        real_conn = db._conn
+        _install_flaky_execute(db, fail_times=_UPSERT_RETRY_ATTEMPTS + 5)
+        # Unique city -- _lock_drop_aggregator's counters are keyed by context
+        # string and persist for the process, so a city reused across tests
+        # would not start at occurrence #1.
+        kwargs = {**_CORRECTION_KWARGS, "city": "LockPersistsCity"}
+
+        with mock.patch("src.data.db.time.sleep"):
+            with caplog.at_level("WARNING"):
+                db.upsert_intraday_correction(**kwargs)  # must not raise
+
+        db._conn = real_conn  # read back through the real connection, not the mock
+        rows = db.get_intraday_corrections("LockPersistsCity", "2024-01-15")
+        assert rows == [], "Dropped write must not have persisted a row"
+        assert any(
+            "database is locked" in r.message or "database is locked" in str(r.msg)
+            for r in caplog.records
+        )
+
+    def test_other_operational_errors_still_raise(self):
+        """Only 'database is locked' is swallowed -- any other OperationalError
+        (e.g. a genuine schema/syntax problem) must propagate normally."""
+        db = _db()
+        _install_flaky_execute(
+            db, fail_times=1, exc=sqlite3.OperationalError("no such table: bogus")
+        )
+        with pytest.raises(sqlite3.OperationalError, match="no such table"):
+            db.upsert_intraday_correction(**_CORRECTION_KWARGS)
+
+    def test_non_lock_exceptions_are_not_retried(self):
+        """A non-OperationalError must propagate immediately, with no retry."""
+        db = _db()
+        mocked = _install_flaky_execute(db, fail_times=99, exc=ValueError("boom"))
+        with pytest.raises(ValueError, match="boom"):
+            db.upsert_intraday_correction(**_CORRECTION_KWARGS)
+        assert mocked.execute.call_count == 1  # no retry attempted
+
+    def test_repeated_lock_failures_are_aggregated_not_logged_every_time(self, caplog):
+        """249 identical lock-drops in one day (the pre-fix 09-26 log count)
+        must not produce 249 WARNING lines -- issue #1238's acceptance
+        criterion that the outcome is "a counted, aggregated warning, not
+        anonymous lines"."""
+        db = _db()
+        _install_flaky_execute(db, fail_times=10_000)  # always locked
+        # Unique city -- see test_does_not_raise_when_lock_persists for why.
+        kwargs = {**_CORRECTION_KWARGS, "city": "AggregationCity"}
+
+        n_occurrences = 60
+        with mock.patch("src.data.db.time.sleep"):
+            with caplog.at_level("WARNING"):
+                for i in range(n_occurrences):
+                    db.upsert_intraday_correction(
+                        **{**kwargs, "obs_time": f"2024-01-15T09:{i:02d}:00+00:00"}
+                    )
+
+        lock_warnings = [r for r in caplog.records if "database is locked" in r.message]
+        assert 0 < len(lock_warnings) < n_occurrences, (
+            f"Expected aggregated logging (far fewer than {n_occurrences} "
+            f"WARNING lines for {n_occurrences} occurrences), got "
+            f"{len(lock_warnings)}"
+        )
+        # First occurrence is always surfaced immediately -- never silent.
+        assert "occurrence #1 " in lock_warnings[0].message
+
+
+# ---------------------------------------------------------------------------
+# connect_with_busy_timeout -- centralised connection helper (#1238)
+# ---------------------------------------------------------------------------
+
+class TestConnectWithBusyTimeout:
+    """Every first-party writer against meteoedge.db must open its connection
+    through this one function so the busy timeout can never drift between
+    call sites (issue #1238)."""
+
+    def test_sets_busy_timeout_pragma(self):
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tf:
+            path = tf.name
+        conn = None
+        try:
+            conn = connect_with_busy_timeout(path)
+            timeout_ms = conn.execute("PRAGMA busy_timeout").fetchone()[0]
+            assert timeout_ms == _BUSY_TIMEOUT_SECONDS * 1000
+        finally:
+            if conn is not None:
+                conn.close()
+            os.unlink(path)
+            for ext in ("-wal", "-shm"):
+                try:
+                    os.unlink(path + ext)
+                except FileNotFoundError:
+                    pass
+
+    def test_database_class_uses_the_shared_helper(self):
+        """Database.__init__ must not configure its own, independent busy
+        timeout -- regression guard for the two code paths drifting apart."""
+        import inspect
+
+        source = inspect.getsource(Database.__init__)
+        assert "connect_with_busy_timeout" in source, (
+            "Database.__init__ must open its connection via "
+            "connect_with_busy_timeout(), not a separate sqlite3.connect() call"
+        )
+
+    @pytest.mark.integration
+    def test_second_writer_waits_rather_than_raising(self):
+        """Two independent connect_with_busy_timeout() connections to the same
+        file: one holds a write transaction, the other must wait for it and
+        succeed rather than raising 'database is locked' (issue #1238's
+        required integration test)."""
+        HOLD_SECONDS = 2.0
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tf:
+            path = tf.name
+        blocker_conn = None
+        waiter_conn = None
+        lock_acquired = threading.Event()
+        release_lock = threading.Event()
+        try:
+            setup_conn = connect_with_busy_timeout(path)
+            setup_conn.execute("CREATE TABLE t(x INTEGER)")
+            setup_conn.commit()
+            setup_conn.close()
+
+            def _hold_write_lock():
+                nonlocal blocker_conn
+                blocker_conn = connect_with_busy_timeout(path)
+                blocker_conn.execute("BEGIN IMMEDIATE")
+                blocker_conn.execute("INSERT INTO t VALUES (1)")
+                lock_acquired.set()
+                release_lock.wait(timeout=HOLD_SECONDS + 10)
+                blocker_conn.rollback()
+
+            blocker = threading.Thread(target=_hold_write_lock)
+            blocker.start()
+            assert lock_acquired.wait(timeout=5)
+
+            def _release_after_hold():
+                time.sleep(HOLD_SECONDS)
+                release_lock.set()
+
+            releaser = threading.Thread(target=_release_after_hold)
+            releaser.start()
+
+            waiter_conn = connect_with_busy_timeout(path)
+            started = time.monotonic()
+            waiter_conn.execute("INSERT INTO t VALUES (2)")  # must wait, not raise
+            waiter_conn.commit()
+            elapsed = time.monotonic() - started
+
+            releaser.join(timeout=5)
+            blocker.join(timeout=5)
+
+            assert elapsed >= HOLD_SECONDS - 0.5, (
+                "Write returned before the held lock was released -- no real "
+                "contention was exercised"
+            )
+            count = waiter_conn.execute("SELECT COUNT(*) FROM t").fetchone()[0]
+            assert count == 1  # only the waiter's row; blocker rolled back
+        finally:
+            release_lock.set()
+            for conn in (blocker_conn, waiter_conn):
+                if conn is not None:
+                    try:
+                        conn.close()
+                    except sqlite3.Error:
+                        pass
+            # Windows sometimes keeps a brief handle on a just-closed WAL-mode
+            # file; best-effort cleanup, not part of what this test verifies.
+            for target in (path, path + "-wal", path + "-shm"):
+                try:
+                    os.unlink(target)
+                except OSError:
+                    pass
+
+
+class TestEveryScheduledWriterUsesTheSharedBusyTimeout:
+    """Issue #1238 acceptance criterion: "the connection's busy_timeout is the
+    intended value on every code path that opens the database (a test that
+    fails if a new connection site forgets it)".
+
+    Scans every systemd-timer/service-driven script (the unattended writers
+    that can actually contend on meteoedge.db -- as opposed to the one-off,
+    human-run backfill/repair scripts) for a raw, read-write
+    ``sqlite3.connect()`` call that bypasses ``connect_with_busy_timeout()``.
+    ``purge_retention.py`` was exactly this (issue #1238's root cause for the
+    01:00-03:00 clustering); this guards against a new one appearing.
+    """
+
+    _REPO_ROOT = Path(__file__).resolve().parents[2]
+    _SYSTEMD_DIR = _REPO_ROOT / "deploy" / "systemd"
+    _EXEC_START_RE = re.compile(r"ExecStart=\S*python3?\s+-u\s+(?:-m\s+)?(\S+)")
+    # cryptoedge is a separate subsystem with its own database file
+    # (cryptoedge/db.py) -- not a writer against meteoedge.db.
+    _EXCLUDED_PREFIXES = ("cryptoedge",)
+
+    def _service_source_files(self) -> "list[Path]":
+        files = []
+        for svc in sorted(self._SYSTEMD_DIR.glob("*.service")):
+            m = self._EXEC_START_RE.search(svc.read_text(encoding="utf-8"))
+            if not m:
+                continue
+            target = m.group(1)
+            if target.startswith(self._EXCLUDED_PREFIXES):
+                continue
+            rel = target.split("MeteoEdge/")[-1] if target.endswith(".py") else target.replace(".", "/") + ".py"
+            path = self._REPO_ROOT / rel
+            if path.exists():
+                files.append(path)
+        return files
+
+    def test_systemd_scan_finds_the_known_services(self):
+        """Sanity check on the scan itself -- if this starts failing, the
+        regex or directory stopped matching deploy/systemd/*.service and the
+        real assertion below would silently pass on zero files."""
+        found = {p.name for p in self._service_source_files()}
+        assert "purge_retention.py" in found
+        assert "run.py" in found
+
+    def test_no_unprotected_raw_connect_site(self):
+        # Deliberately NOT exempting a whole file just because it mentions
+        # connect_with_busy_timeout() somewhere (e.g. in an import or a
+        # comment) -- that would pass even if the actual connect() call on
+        # the very next line were still the raw, unprotected form. Every
+        # individual `sqlite3.connect(` call site must itself be the one
+        # inside connect_with_busy_timeout()'s own definition (not reachable
+        # here, since none of these scripts are db.py) or read-only.
+        offenders = []
+        for path in self._service_source_files():
+            text = path.read_text(encoding="utf-8")
+            if "sqlite3.connect(" not in text:
+                continue
+            for lineno, line in enumerate(text.splitlines(), start=1):
+                stripped = line.strip()
+                if "sqlite3.connect(" not in stripped:
+                    continue
+                if stripped.startswith("#"):
+                    continue  # prose referencing the pattern, not a call site
+                if "mode=ro" in line or "mode%3Dro" in line:
+                    continue  # read-only: WAL readers never block on writers
+                offenders.append(f"{path.relative_to(self._REPO_ROOT)}:{lineno}: {stripped}")
+        assert offenders == [], (
+            "Found a systemd-scheduled script with a raw, read-write "
+            "sqlite3.connect() call that doesn't use connect_with_busy_timeout() "
+            f"(issue #1238):\n" + "\n".join(offenders)
+        )
 
 
 # ---------------------------------------------------------------------------

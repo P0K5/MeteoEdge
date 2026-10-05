@@ -19,11 +19,30 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from src.data.db import connect_with_busy_timeout
+
 log = logging.getLogger(__name__)
 
 _DEFAULT_DB_PATH = os.getenv("DB_PATH", "data/meteoedge.db")
 _DEFAULT_CANDIDATES_DAYS = int(os.getenv("CANDIDATES_RETAIN_DAYS", "90"))
 _DEFAULT_GUARDRAIL_DAYS = int(os.getenv("GUARDRAIL_RETAIN_DAYS", "60"))
+
+# Issue #1238: meteoedge-purge-retention.timer runs daily at 01:00 UTC
+# (02:00 local during DST) -- squarely inside the 01:00-03:00 local window
+# where the live bot and the MSS collector cluster "database is locked"
+# errors. This job's own connection used to be a bare sqlite3.connect() with
+# no busy_timeout at all (the default 5s), and -- more importantly, since
+# this job is the one HOLDING the write lock, not waiting on one -- each
+# DELETE ran as a single transaction over however many rows matched the
+# retention cutoff. `candidates` is the highest-write-volume table in the
+# schema (one row per bracket per station per poll), so after a long
+# retention window its matching-row count isn't bounded by anything this
+# script controls. Chunking bounds how long any ONE transaction holds the
+# write lock to roughly one chunk's delete time, independent of how many
+# rows total are past the cutoff -- the property needed here, since the
+# actual row count on the host isn't something this PR can measure without
+# host access.
+_DELETE_CHUNK_SIZE = 2000
 
 
 def _get_cutoff_ts(days: int) -> str:
@@ -35,6 +54,57 @@ def _get_cutoff_ts(days: int) -> str:
     """
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
     return cutoff.isoformat()
+
+
+def _purge_table_chunked(
+    conn: sqlite3.Connection,
+    table: str,
+    days: int,
+    dry_run: bool = False,
+) -> int:
+    """Delete *table* rows older than *days* days, in bounded-size chunks.
+
+    Each chunk is its own transaction (commit after every chunk) so the
+    write lock is held for roughly one chunk's delete time rather than for
+    however long the full matching set takes -- see `_DELETE_CHUNK_SIZE`'s
+    docstring comment (issue #1238). Purging is idempotent either way: an
+    interrupted run simply leaves the remaining old rows for the next one.
+
+    Args:
+        conn: SQLite connection to meteoedge.db.
+        table: Table name (``"candidates"`` or ``"guardrail_events"``) --
+            trusted, not user input; never built from external data.
+        days: Retention window in days.
+        dry_run: If True, count rows but do not delete.
+
+    Returns:
+        Number of rows deleted (or that would be deleted if dry_run=True).
+    """
+    cutoff_ts = _get_cutoff_ts(days)
+    count_sql = f"SELECT COUNT(*) FROM {table} WHERE ts < ?"  # noqa: S608 - table is trusted
+    count_to_delete = conn.execute(count_sql, (cutoff_ts,)).fetchone()[0]
+
+    if count_to_delete == 0:
+        return 0
+
+    if dry_run:
+        log.info(f"[DRY RUN] Would delete {count_to_delete} {table} rows older than {cutoff_ts}")
+        return count_to_delete
+
+    delete_sql = (
+        f"DELETE FROM {table} WHERE id IN "  # noqa: S608 - table is trusted
+        f"(SELECT id FROM {table} WHERE ts < ? LIMIT ?)"
+    )
+    deleted_total = 0
+    while True:
+        cur = conn.execute(delete_sql, (cutoff_ts, _DELETE_CHUNK_SIZE))
+        conn.commit()
+        deleted_total += cur.rowcount
+        if cur.rowcount < _DELETE_CHUNK_SIZE:
+            break
+
+    log.info(f"Deleted {deleted_total} {table} rows older than {cutoff_ts}")
+    return deleted_total
 
 
 def purge_candidates(
@@ -52,20 +122,7 @@ def purge_candidates(
     Returns:
         Number of rows deleted (or that would be deleted if dry_run=True).
     """
-    cutoff_ts = _get_cutoff_ts(days)
-    sql = "SELECT COUNT(*) FROM candidates WHERE ts < ?"
-    cur = conn.execute(sql, (cutoff_ts,))
-    count_to_delete = cur.fetchone()[0]
-
-    if count_to_delete > 0 and not dry_run:
-        sql_delete = "DELETE FROM candidates WHERE ts < ?"
-        conn.execute(sql_delete, (cutoff_ts,))
-        conn.commit()
-        log.info(f"Deleted {count_to_delete} candidates rows older than {cutoff_ts}")
-    elif dry_run and count_to_delete > 0:
-        log.info(f"[DRY RUN] Would delete {count_to_delete} candidates rows older than {cutoff_ts}")
-
-    return count_to_delete
+    return _purge_table_chunked(conn, "candidates", days, dry_run)
 
 
 def purge_guardrail_events(
@@ -83,20 +140,7 @@ def purge_guardrail_events(
     Returns:
         Number of rows deleted (or that would be deleted if dry_run=True).
     """
-    cutoff_ts = _get_cutoff_ts(days)
-    sql = "SELECT COUNT(*) FROM guardrail_events WHERE ts < ?"
-    cur = conn.execute(sql, (cutoff_ts,))
-    count_to_delete = cur.fetchone()[0]
-
-    if count_to_delete > 0 and not dry_run:
-        sql_delete = "DELETE FROM guardrail_events WHERE ts < ?"
-        conn.execute(sql_delete, (cutoff_ts,))
-        conn.commit()
-        log.info(f"Deleted {count_to_delete} guardrail_events rows older than {cutoff_ts}")
-    elif dry_run and count_to_delete > 0:
-        log.info(f"[DRY RUN] Would delete {count_to_delete} guardrail_events rows older than {cutoff_ts}")
-
-    return count_to_delete
+    return _purge_table_chunked(conn, "guardrail_events", days, dry_run)
 
 
 def run(
@@ -122,7 +166,7 @@ def run(
         log.error(f"Database not found: {db_path}")
         sys.exit(1)
 
-    conn = sqlite3.connect(str(db_path))
+    conn = connect_with_busy_timeout(str(db_path))  # issue #1238
     try:
         cand_deleted = purge_candidates(conn, candidates_days, dry_run)
         guard_deleted = purge_guardrail_events(conn, guardrail_days, dry_run)

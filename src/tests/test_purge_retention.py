@@ -7,9 +7,11 @@ from __future__ import annotations
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest import mock
 
 import pytest
 
+from src.data.db import connect_with_busy_timeout
 from src.scripts.purge_retention import purge_candidates, purge_guardrail_events, run
 
 
@@ -360,3 +362,95 @@ class TestPurgeIntegration:
         purge_record = [r for r in caplog.records if "[purge_retention]" in r.message][0]
         assert "candidates: retention=90d, deleted=1" in purge_record.message
         assert "guardrail_events: retention=60d, deleted=1" in purge_record.message
+
+
+# ---------------------------------------------------------------------------
+# Issue #1238 -- chunked deletes and the shared busy timeout
+# ---------------------------------------------------------------------------
+
+class TestPurgeChunkedDeletes:
+    """A single DELETE over the ENTIRE overdue set holds the write lock for
+    however long matching + deleting all of it takes -- unbounded by anything
+    this script controls. Chunking bounds any ONE transaction's hold to
+    roughly one chunk's delete time, which is what actually matters for the
+    01:00-03:00 contention (issue #1238): this job is the one HOLDING the
+    lock other writers wait on, not the one waiting.
+    """
+
+    def test_chunks_across_multiple_transactions(self, tmp_path):
+        conn = _create_test_db(tmp_path)
+        now = datetime.now(timezone.utc)
+        old_ts = (now - timedelta(days=100)).isoformat()
+        n_rows = 25
+        for _ in range(n_rows):
+            _insert_candidate(conn, old_ts)
+        assert _count_rows(conn, "candidates") == n_rows
+
+        wrapped = mock.MagicMock(wraps=conn)
+        wrapped.execute.side_effect = conn.execute
+        wrapped.commit.side_effect = conn.commit
+
+        with mock.patch("src.scripts.purge_retention._DELETE_CHUNK_SIZE", 7):
+            deleted = purge_candidates(wrapped, days=90, dry_run=False)
+
+        assert deleted == n_rows
+        assert _count_rows(conn, "candidates") == 0
+        # ceil(25/7) == 4 delete batches -> 4 commits. If this were still one
+        # big transaction it would be exactly 1, regardless of row count.
+        assert wrapped.commit.call_count == 4
+
+        conn.close()
+
+    def test_chunking_is_still_idempotent_and_exact_at_the_boundary(self, tmp_path):
+        """Row count an exact multiple of the chunk size must not loop forever
+        or under/over-count (off-by-one guard on the `rowcount < chunk size`
+        termination condition)."""
+        conn = _create_test_db(tmp_path)
+        now = datetime.now(timezone.utc)
+        old_ts = (now - timedelta(days=100)).isoformat()
+        for _ in range(10):
+            _insert_candidate(conn, old_ts)
+
+        with mock.patch("src.scripts.purge_retention._DELETE_CHUNK_SIZE", 5):
+            deleted = purge_candidates(conn, days=90, dry_run=False)
+
+        assert deleted == 10
+        assert _count_rows(conn, "candidates") == 0
+        conn.close()
+
+    def test_dry_run_does_not_chunk_or_delete(self, tmp_path):
+        """dry_run must still report the correct count without touching rows,
+        even when the chunked path is active."""
+        conn = _create_test_db(tmp_path)
+        now = datetime.now(timezone.utc)
+        old_ts = (now - timedelta(days=100)).isoformat()
+        for _ in range(10):
+            _insert_candidate(conn, old_ts)
+
+        with mock.patch("src.scripts.purge_retention._DELETE_CHUNK_SIZE", 3):
+            deleted = purge_candidates(conn, days=90, dry_run=True)
+
+        assert deleted == 10
+        assert _count_rows(conn, "candidates") == 10
+        conn.close()
+
+
+class TestPurgeRetentionUsesSharedBusyTimeout:
+    """run() must open its connection through connect_with_busy_timeout()
+    (issue #1238), not a bare sqlite3.connect() -- see also
+    test_db.py::TestEveryScheduledWriterUsesTheSharedBusyTimeout, which
+    guards the same property via a source scan across every systemd-scheduled
+    writer."""
+
+    def test_run_opens_via_the_shared_helper(self, tmp_path):
+        conn = _create_test_db(tmp_path)
+        conn.close()
+        db_path = tmp_path / "test.db"
+
+        with mock.patch(
+            "src.scripts.purge_retention.connect_with_busy_timeout",
+            wraps=connect_with_busy_timeout,
+        ) as mocked_connect:
+            run(db_path=db_path, candidates_days=90, guardrail_days=60, dry_run=False)
+
+        mocked_connect.assert_called_once_with(str(db_path))
