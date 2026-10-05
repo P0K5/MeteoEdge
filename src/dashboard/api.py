@@ -4271,6 +4271,8 @@ def _validate_config_value(key: str, raw_value: Any) -> "tuple[str, str | None]"
                 return "", f"{key} must be an ISO-8601 timestamp (e.g. 2026-10-05T00:00:00+00:00) or empty"
             if parsed.tzinfo is None:
                 return "", f"{key} must include a timezone (e.g. 2026-10-05T00:00:00+00:00)"
+            if parsed > datetime.now(timezone.utc):
+                return "", f"{key} cannot be in the future -- a future baseline would ignore all live losses"
             return text, None
 
         if param_type == "enum":

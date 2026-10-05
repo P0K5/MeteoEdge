@@ -24,3 +24,8 @@ def test_rejects_partial_date_with_clear_error():
 def test_rejects_naive_timestamp_without_timezone():
     value, err = _validate_config_value("COPY_LIVE_DRAWDOWN_SINCE", "2026-10-05T00:00:00")
     assert value == "" and "timezone" in err
+
+
+def test_rejects_future_timestamp():
+    value, err = _validate_config_value("COPY_LIVE_DRAWDOWN_SINCE", "2099-01-01T00:00:00+00:00")
+    assert value == "" and "future" in err
