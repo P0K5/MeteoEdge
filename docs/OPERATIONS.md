@@ -3067,6 +3067,10 @@ Live evidence (PR #1306, two commits, unchanged linkage state, opposite verdicts
 - The packet states linkage as two explicit lists (closing / referenced) labeled **"DETERMINISTIC FACT... do not independently re-derive"**, and fetches issues from the union of both so referenced-only issues still get their acceptance criteria shown.
 - The reviewer prompt instructs the model never to dispute this list from the diff, branch name, or its own reading of the body, and to treat a non-empty references list as satisfying the linking requirement even when the closing-keywords list is empty.
 
+### Criteria already delivered by an earlier PR (#1033, #1001)
+
+Each linked issue now lists the other PRs that mention it (`fetch_related_prs()`, a GitHub issue search, capped at 10). These are context only. A criterion the diff does not show may be passed only when a listed PR is clearly named as delivering it; an unmet criterion with no such evidence still blocks. A failed search degrades to an empty list and is logged. Reviewer quotations must appear verbatim in the diff or PR description. Sequenced PRs (`Part of #N` / `Refs #N`) are documented in `.claude/instructions/governance.md`.
+
 This narrows the gap but does not make the review fully deterministic — the underlying verdict is still an LLM call at `temperature=0.1`, not 0, so some run-to-run variance on borderline judgment calls (e.g. whether a genuinely unlinked PR's content justifies the exception) remains possible even with the fact stated unambiguously.
 
 ### Transient-failure handling, and fail-closed (issues #960, #1037)

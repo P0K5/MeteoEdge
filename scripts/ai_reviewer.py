@@ -236,6 +236,81 @@ def fetch_pr_diff(owner: str, repo: str, pr_number: str, token: str) -> str:
     return resp.text
 
 
+RELATED_PRS_MAX = 10
+
+
+def fetch_related_prs(
+    owner: str, repo: str, issue_number: int, token: str, exclude_pr: str
+) -> list:
+    """PRs whose text mentions #issue_number (merged or open), excluding the
+    PR under review. #1033: an acceptance criterion may already be satisfied
+    by an earlier merged PR, which the diff alone cannot show. This is
+    context for the reviewer, not proof a criterion is met. Failure degrades
+    to [] (logged), never to a verdict.
+    """
+    query = f"repo:{owner}/{repo} type:pr #{issue_number}"
+    try:
+        resp = _github_get(
+            f"/search/issues?q={requests.utils.quote(query)}&per_page={RELATED_PRS_MAX}",
+            token,
+        )
+        items = resp.json().get("items", [])
+    except Exception as exc:
+        print(
+            f"[ai_reviewer] Failed to search PRs for issue #{issue_number}: {exc}",
+            file=sys.stderr,
+        )
+        return []
+    related = []
+    enriched = 0
+    for item in items:
+        if str(item.get("number")) == str(exclude_pr):
+            continue
+        merged = bool((item.get("pull_request") or {}).get("merged_at"))
+        entry = {
+            "number": item.get("number"),
+            "title": item.get("title", ""),
+            "state": "merged" if merged else item.get("state", "open"),
+            "commit": None,
+            "files": None,
+        }
+        if merged and enriched < RELATED_PRS_ENRICH_MAX:
+            enriched += 1
+            entry["commit"], entry["files"] = _fetch_merge_commit_and_files(
+                owner, repo, item.get("number"), token
+            )
+        related.append(entry)
+    return related
+
+
+RELATED_PRS_ENRICH_MAX = 5
+RELATED_PR_FILES_MAX = 20
+
+
+def _fetch_merge_commit_and_files(owner, repo, pr_number, token):
+    """Return (merge_commit_sha, [changed filenames]) for a merged PR, or
+    (None, None) if either lookup fails. A merged PR without both is not
+    citable as delivering a criterion (AC1 of #1033): the packet marks it
+    MISSING rather than guessing."""
+    try:
+        pr = _github_get(f"/repos/{owner}/{repo}/pulls/{pr_number}", token).json()
+        sha = pr.get("merge_commit_sha")
+        files_json = _github_get(
+            f"/repos/{owner}/{repo}/pulls/{pr_number}/files?per_page={RELATED_PR_FILES_MAX}",
+            token,
+        ).json()
+        files = [f.get("filename") for f in files_json if f.get("filename")]
+    except Exception as exc:
+        print(
+            f"[ai_reviewer] Failed to read merge commit/files for PR #{pr_number}: {exc}",
+            file=sys.stderr,
+        )
+        return None, None
+    if not sha or not files:
+        return None, None
+    return sha, files
+
+
 def fetch_issue(owner: str, repo: str, issue_number: int, token: str) -> dict | None:
     try:
         resp = _github_get(f"/repos/{owner}/{repo}/issues/{issue_number}", token)
@@ -517,6 +592,34 @@ def build_diff_from_files(changed_files: list) -> str:
     return "\n".join(parts)
 
 
+def _format_related_prs(related) -> str:
+    """Render fetch_related_prs() output. None means the lookup was not run
+    (e.g. direct packet-builder callers); [] means it ran and found nothing."""
+    if related is None:
+        return "(not checked)"
+    if not related:
+        return "(none found)"
+    lines = []
+    for r in related:
+        head = f"- PR #{r['number']} [{r['state']}]: {r['title']}"
+        if r["state"] != "merged":
+            lines.append(f"{head} — not merged; cannot be cited as delivering a criterion")
+        elif r.get("commit") and r.get("files"):
+            # AC1 (#1033): a citable merged PR names the merge commit and the
+            # files it changed, so the reviewer can point at where the
+            # criterion was delivered.
+            lines.append(
+                f"{head} — merge commit {r['commit'][:12]}; changed files: "
+                f"{', '.join(r['files'])}"
+            )
+        else:
+            lines.append(
+                f"{head} — MISSING merge commit or changed files; cannot be "
+                "cited as delivering a criterion"
+            )
+    return "\n".join(lines)
+
+
 def build_review_packet(
     pr_meta: dict,
     changed_files: list,
@@ -524,6 +627,7 @@ def build_review_packet(
     linked_issues: list,
     policy_summary: str,
     diff_max_chars: int = None,
+    related_prs: dict = None,
 ) -> str:
     if diff_max_chars is None:
         diff_max_chars = get_diff_max_chars()
@@ -668,10 +772,19 @@ def build_review_packet(
                     "criteria beyond this point as unverifiable, not unmet.]"
                 )
 
+        # #1033: other PRs that mention this issue, so a criterion already
+        # satisfied by an earlier merged PR can be checked. Context only: a
+        # mention is not evidence a criterion is met.
+        related_block = _format_related_prs(
+            (related_prs or {}).get(issue_num)
+        )
+
         packet_parts += [
             f"### Issue #{issue_num} ({linkage_type}): {issue_title}",
             f"Body:\n{body_block}",
             f"Acceptance Criteria:\n{ac_text}",
+            f"Other PRs mentioning #{issue_num} (context only — a mention is "
+            f"not proof a criterion is met):\n{related_block}",
             "",
         ]
     packet_parts += ["", "## Policy Summary", policy_summary]
@@ -954,10 +1067,14 @@ def _run(
     )
 
     linked_issues = []
+    related_prs = {}
     for num in linked_nums:
         issue = fetch_issue(repo_owner, repo_name, num, github_token)
         if issue is not None:
             linked_issues.append(issue)
+            related_prs[num] = fetch_related_prs(
+                repo_owner, repo_name, num, github_token, exclude_pr=pr_number
+            )
 
     # 3. Graphify context
     print("[ai_reviewer] Loading graph context...")
@@ -972,6 +1089,7 @@ def _run(
         changed_files=changed_files,
         graph=graph,
         linked_issues=linked_issues,
+        related_prs=related_prs,
         policy_summary=policy_summary,
     )
 
@@ -1005,6 +1123,7 @@ def _run(
                 changed_files=changed_files,
                 graph=graph,
                 linked_issues=linked_issues,
+                related_prs=related_prs,
                 policy_summary=policy_summary,
                 diff_max_chars=DIFF_FALLBACK_MAX_CHARS,
             )
