@@ -236,6 +236,44 @@ def fetch_pr_diff(owner: str, repo: str, pr_number: str, token: str) -> str:
     return resp.text
 
 
+RELATED_PRS_MAX = 10
+
+
+def fetch_related_prs(
+    owner: str, repo: str, issue_number: int, token: str, exclude_pr: str
+) -> list:
+    """PRs whose text mentions #issue_number (merged or open), excluding the
+    PR under review. #1033: an acceptance criterion may already be satisfied
+    by an earlier merged PR, which the diff alone cannot show. This is
+    context for the reviewer, not proof a criterion is met. Failure degrades
+    to [] (logged), never to a verdict.
+    """
+    query = f"repo:{owner}/{repo} type:pr #{issue_number}"
+    try:
+        resp = _github_get(
+            f"/search/issues?q={requests.utils.quote(query)}&per_page={RELATED_PRS_MAX}",
+            token,
+        )
+        items = resp.json().get("items", [])
+    except Exception as exc:
+        print(
+            f"[ai_reviewer] Failed to search PRs for issue #{issue_number}: {exc}",
+            file=sys.stderr,
+        )
+        return []
+    related = []
+    for item in items:
+        if str(item.get("number")) == str(exclude_pr):
+            continue
+        merged = bool((item.get("pull_request") or {}).get("merged_at"))
+        related.append({
+            "number": item.get("number"),
+            "title": item.get("title", ""),
+            "state": "merged" if merged else item.get("state", "open"),
+        })
+    return related
+
+
 def fetch_issue(owner: str, repo: str, issue_number: int, token: str) -> dict | None:
     try:
         resp = _github_get(f"/repos/{owner}/{repo}/issues/{issue_number}", token)
@@ -517,6 +555,18 @@ def build_diff_from_files(changed_files: list) -> str:
     return "\n".join(parts)
 
 
+def _format_related_prs(related) -> str:
+    """Render fetch_related_prs() output. None means the lookup was not run
+    (e.g. direct packet-builder callers); [] means it ran and found nothing."""
+    if related is None:
+        return "(not checked)"
+    if not related:
+        return "(none found)"
+    return "\n".join(
+        f"- PR #{r['number']} [{r['state']}]: {r['title']}" for r in related
+    )
+
+
 def build_review_packet(
     pr_meta: dict,
     changed_files: list,
@@ -524,6 +574,7 @@ def build_review_packet(
     linked_issues: list,
     policy_summary: str,
     diff_max_chars: int = None,
+    related_prs: dict = None,
 ) -> str:
     if diff_max_chars is None:
         diff_max_chars = get_diff_max_chars()
@@ -668,10 +719,19 @@ def build_review_packet(
                     "criteria beyond this point as unverifiable, not unmet.]"
                 )
 
+        # #1033: other PRs that mention this issue, so a criterion already
+        # satisfied by an earlier merged PR can be checked. Context only: a
+        # mention is not evidence a criterion is met.
+        related_block = _format_related_prs(
+            (related_prs or {}).get(issue_num)
+        )
+
         packet_parts += [
             f"### Issue #{issue_num} ({linkage_type}): {issue_title}",
             f"Body:\n{body_block}",
             f"Acceptance Criteria:\n{ac_text}",
+            f"Other PRs mentioning #{issue_num} (context only — a mention is "
+            f"not proof a criterion is met):\n{related_block}",
             "",
         ]
     packet_parts += ["", "## Policy Summary", policy_summary]
@@ -954,10 +1014,14 @@ def _run(
     )
 
     linked_issues = []
+    related_prs = {}
     for num in linked_nums:
         issue = fetch_issue(repo_owner, repo_name, num, github_token)
         if issue is not None:
             linked_issues.append(issue)
+            related_prs[num] = fetch_related_prs(
+                repo_owner, repo_name, num, github_token, exclude_pr=pr_number
+            )
 
     # 3. Graphify context
     print("[ai_reviewer] Loading graph context...")
@@ -972,6 +1036,7 @@ def _run(
         changed_files=changed_files,
         graph=graph,
         linked_issues=linked_issues,
+        related_prs=related_prs,
         policy_summary=policy_summary,
     )
 
@@ -1005,6 +1070,7 @@ def _run(
                 changed_files=changed_files,
                 graph=graph,
                 linked_issues=linked_issues,
+                related_prs=related_prs,
                 policy_summary=policy_summary,
                 diff_max_chars=DIFF_FALLBACK_MAX_CHARS,
             )

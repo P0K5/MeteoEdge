@@ -30,6 +30,7 @@ from scripts.ai_reviewer import (
     call_deepseek,
     extract_acceptance_criteria,
     extract_referenced_issue_numbers,
+    fetch_related_prs,
     fetch_issue,
     get_diff_max_chars,
     is_generated_path,
@@ -694,6 +695,97 @@ class TestNonClosingReferenceLinkage:
 
     def test_no_linkage_at_all_still_reports_the_violation_branch(self):
         pr_meta = _minimal_pr_meta(body="No issue reference of any kind here.")
+        packet = build_review_packet(pr_meta, [], {}, [], "policy")
+        assert "no closing keywords or non-closing references in PR body" in packet
+
+
+class TestRelatedPRsForCriteria:
+    """#1033: a criterion satisfied by an earlier merged PR (PR #1031
+    delivered #1028's pre-registration) read as unmet because the reviewer
+    only saw this PR's diff. The packet now lists other PRs mentioning the
+    issue, as context only. The gate must still BLOCK a genuinely missing
+    criterion, so the no-evidence case is pinned too."""
+
+    @patch("scripts.ai_reviewer._github_get")
+    def test_fetch_related_prs_excludes_current_pr_and_marks_merged(self, mock_get):
+        resp = MagicMock()
+        resp.json.return_value = {"items": [
+            {"number": 1032, "title": "this PR", "state": "open", "pull_request": {}},
+            {"number": 1031, "title": "pre-registration", "state": "closed",
+             "pull_request": {"merged_at": "2026-08-01T00:00:00Z"}},
+            {"number": 1040, "title": "open follow-up", "state": "open", "pull_request": {}},
+        ]}
+        mock_get.return_value = resp
+        related = fetch_related_prs("o", "r", 1028, "tok", exclude_pr="1032")
+        assert related == [
+            {"number": 1031, "title": "pre-registration", "state": "merged"},
+            {"number": 1040, "title": "open follow-up", "state": "open"},
+        ]
+
+    @patch("scripts.ai_reviewer._github_get")
+    def test_fetch_related_prs_failure_degrades_to_empty_list(self, mock_get, capsys):
+        mock_get.side_effect = RuntimeError("search down")
+        assert fetch_related_prs("o", "r", 1028, "tok", exclude_pr="1") == []
+        assert "Failed to search PRs for issue #1028" in capsys.readouterr().err
+
+    def test_criterion_satisfied_by_earlier_merged_pr_is_visible_in_packet(self):
+        """Reconstructs #1033: this PR's diff lacks the docs update, but
+        PR #1031 (merged) delivered it. The packet must show #1031 under the
+        issue so the reviewer can cite it."""
+        issue = _issue(1028, "M3 pre-registration", "## Acceptance criteria\n- docs/REMEDIATION_PLAN.md records the decision\n")
+        related = {1028: [{"number": 1031, "title": "pre-registration", "state": "merged"}]}
+        pr_meta = _minimal_pr_meta(body="Closes #1028")
+        packet = build_review_packet(pr_meta, [], {}, [issue], "policy", related_prs=related)
+        assert "- PR #1031 [merged]: pre-registration" in packet
+
+    def test_genuinely_missing_criterion_with_no_related_pr_says_none_found(self):
+        """The no-evidence case: nothing in the packet vouches for the
+        criterion, so it stays unmet and the gate still blocks."""
+        issue = _issue(1028, "M3 pre-registration", "## Acceptance criteria\n- docs/REMEDIATION_PLAN.md records the decision\n")
+        pr_meta = _minimal_pr_meta(body="Closes #1028")
+        packet = build_review_packet(pr_meta, [], {}, [issue], "policy", related_prs={1028: []})
+        assert "Other PRs mentioning #1028" in packet
+        assert "(none found)" in packet
+        assert "- PR #1031" not in packet
+
+    def test_packet_builder_without_lookup_marks_not_checked(self):
+        """Direct callers that do not run the lookup must not look like
+        'checked, nothing found'."""
+        issue = _issue(1, "t", "body")
+        pr_meta = _minimal_pr_meta(body="Closes #1")
+        packet = build_review_packet(pr_meta, [], {}, [issue], "policy")
+        assert "(not checked)" in packet
+
+    def test_prompt_keeps_unmet_criteria_blocking(self):
+        """Pins the narrowed wording: merged-PR evidence may PASS a
+        criterion only with a clear citation, and absent that an unmet
+        criterion still BLOCKs. Guards against a broad waiver creeping in."""
+        prompt = (
+            Path(__file__).resolve().parents[2] / "agents" / "reviewer_prompt_deepseek.md"
+        ).read_text(encoding="utf-8")
+        assert "may be PASSed only when a listed PR is clearly identified" in prompt
+        assert "Without such evidence, an unmet criterion is still FAIL and BLOCK" in prompt
+        assert "Never PASS a criterion merely because a related PR exists" in prompt
+
+
+class TestDeliberatelySequencedPRLinkage:
+    """#1001: a 'Part of #N' PR (one of N for a sequenced issue) must not be
+    BLOCKed for missing linkage. A PR with no reference of any kind still is."""
+
+    def test_part_of_reference_satisfies_linkage(self):
+        pr_meta = _minimal_pr_meta(body="Part of #993\n\nPR 1 of 2; #993 stays open until PR 2 merges.")
+        packet = build_review_packet(pr_meta, [], {}, [], "policy")
+        assert "Non-closing references (Refs/Part of/Related to/See — valid linkage, does NOT auto-close): #993" in packet
+        assert "no closing keywords or non-closing references in PR body" not in packet
+
+    def test_sequenced_issue_is_fetched_and_labelled_non_closing(self):
+        issue = _issue(993, "audit first", "## Acceptance criteria\n- reviewed on its own\n")
+        pr_meta = _minimal_pr_meta(body="Part of #993")
+        packet = build_review_packet(pr_meta, [], {}, [issue], "policy")
+        assert "### Issue #993 (referenced, non-closing): audit first" in packet
+
+    def test_no_reference_of_any_kind_is_still_flagged(self):
+        pr_meta = _minimal_pr_meta(body="Ships a fix, no issue mentioned anywhere.")
         packet = build_review_packet(pr_meta, [], {}, [], "policy")
         assert "no closing keywords or non-closing references in PR body" in packet
 
