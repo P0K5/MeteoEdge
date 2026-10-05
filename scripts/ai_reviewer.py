@@ -77,6 +77,53 @@ DIFF_FALLBACK_MAX_CHARS = 80_000
 DIFF_MAX_CHARS_ENV = "AI_REVIEW_DIFF_MAX_CHARS"
 SUMMARY_MAX_CHARS = 65535
 
+# ---------------------------------------------------------------------------
+# PR body / linked-issue body budgets (#1243)
+#
+# Before this fix, the packet builder discarded the PR body entirely after
+# regexing closing keywords out of it (the model never saw a single character
+# of the description, so "the PR body only contains the closing keyword" was
+# the reviewer accurately describing its own truncated input, not a real
+# finding), and capped each linked issue's body at a flat 500 characters
+# (`issue_body[:500]`) -- roughly one paragraph, cutting most issues in this
+# repo mid-sentence.
+#
+# Budgets below were sized against real issue bodies in this repo, measured
+# 2026-10-05: #1230 is 8,002 chars, #1236 is 8,644 chars (the two issues
+# #1243's acceptance criteria cite by name). Both fit with >1.8x headroom
+# under ISSUE_BODY_MAX_CHARS. PR_BODY_MAX_CHARS is larger than any PR body
+# observed in this repo's history (the #1241 body that triggered the original
+# false BLOCK was 3,511 chars) because, unlike issue bodies, a PR body is
+# never fetched elsewhere in the packet, so under-budgeting it has no
+# fallback.
+#
+# Interaction with DIFF_MAX_CHARS: these budgets are additive with the diff
+# cap, not sliced out of it. Worst case for a single-issue PR is
+# DIFF_MAX_CHARS (300,000) + PR_BODY_MAX_CHARS (20,000) +
+# ISSUE_BODY_MAX_CHARS (16,000) + AC_TEXT_MAX_CHARS (4,000, itself a slice of
+# the issue body already counted once) ~= 336,000 chars, roughly 84K tokens
+# at the ~4 chars/token ratio DIFF_MAX_CHARS's own sizing already assumes --
+# still under deepseek-chat's 128K-token context with room for the rest of
+# the packet (metadata, graphify context, policy summary). A PR closing
+# several issues multiplies ISSUE_BODY_MAX_CHARS per issue, so a PR closing
+# many large issues *plus* carrying a near-cap diff can still exceed context;
+# that case is covered by the existing DeepSeekContextLengthError retry in
+# _run(), which already falls back to a smaller diff cap on a 400. The PR
+# body and per-issue budgets are NOT reduced on that retry (they are small
+# relative to the diff, so shrinking the diff alone is expected to be
+# sufficient in practice) -- if that assumption turns out wrong in a future
+# incident, shrink these too in the same retry path.
+PR_BODY_MAX_CHARS = 20_000
+ISSUE_BODY_MAX_CHARS = 16_000
+AC_TEXT_MAX_CHARS = 4_000
+
+
+def _budget(text: str, max_chars: int) -> tuple:
+    """Return (possibly-truncated text, was_truncated)."""
+    if len(text) <= max_chars:
+        return text, False
+    return text[:max_chars], True
+
 # Paths whose diffs are excluded from the AI review packet because they are
 # machine-generated and not meaningful for a human/AI code review -- they
 # still appear in the "## Changed Files" listing (so the reviewer knows they
@@ -216,11 +263,128 @@ CLOSING_PATTERN = re.compile(
     r"(?:closes|fixes|resolves)\s+#(\d+)", re.IGNORECASE
 )
 
+# Non-closing references: deliberately-sequenced multi-PR issues (one of N,
+# closing keyword reserved for the final PR) and design-input PRs legitimately
+# link an issue without wanting GitHub to auto-close it on merge. #1001
+# proposed "Part of #N" as a sanctioned pattern; a live reviewer run (seen on
+# PR #1306) independently suggested "Refs #N" as its own remedy for a PR it
+# had just blocked for "missing issue linkage" -- a PR that followed that
+# advice would then fail a strict closing-keyword-only check. Both forms (and
+# the common "Related to #N" / "See #N") are recognized here as valid, if
+# non-closing, linkage.
+# Matches the keyword plus a comma/"and"/"&"-separated list of #N tokens
+# that follows it (e.g. "Refs #1264, #1266"), not just a single number --
+# the live remedy a reviewer run suggested for PR #1306 was exactly that
+# two-issue list.
+REFERENCE_PATTERN = re.compile(
+    r"(?:refs?|references?|related(?: to)?|part of|see(?: also)?)\s+"
+    r"(#\d+(?:\s*(?:,|and|&)\s*#\d+)*)",
+    re.IGNORECASE,
+)
+_HASH_NUMBER_RE = re.compile(r"#(\d+)")
+
 
 def extract_linked_issue_numbers(text: str) -> list:
     if not text:
         return []
     return [int(m) for m in CLOSING_PATTERN.findall(text)]
+
+
+def extract_referenced_issue_numbers(text: str) -> list:
+    """Non-closing references (`Refs #N`, `Part of #N`, `Related to #N`,
+    `See #N`, including a comma/"and"-separated list after one keyword) --
+    valid issue linkage that does not auto-close on merge."""
+    if not text:
+        return []
+    nums = []
+    for clause in REFERENCE_PATTERN.findall(text):
+        nums.extend(int(n) for n in _HASH_NUMBER_RE.findall(clause))
+    return nums
+
+
+# ---------------------------------------------------------------------------
+# Acceptance-criteria extractor (#1243)
+#
+# The previous version matched ANY line containing the substring "acceptance
+# criteria" (so a sentence merely mentioning the phrase could false-trigger
+# it) and capped output at ac_lines[:10] -- counting every wrapped
+# continuation line of a bulleted item as if it were its own top-level
+# criterion. Issue #1230's real "## Acceptance criteria" section wraps most
+# bullets across 2-4 physical lines, so the old cap exhausted after roughly
+# the first 2-3 bullets and silently dropped the rest -- the exact failure
+# #1243 reports. This version triggers only on a genuine heading line (ATX
+# `#`..`######`, or a standalone bold `**Acceptance Criteria**` / `__..__`,
+# with an optional trailing colon) instead of a substring match anywhere in
+# the body, stops at the next genuine heading (same detection) instead of any
+# line merely starting with `#`, keeps nested/indented bullets (handled via
+# per-line .strip()), and replaces the line-count cap with a character budget
+# (AC_TEXT_MAX_CHARS) that states explicitly when it truncated instead of
+# dropping content with no trace.
+# ---------------------------------------------------------------------------
+
+_BOLD_OR_ITALIC_STRIP_RE = re.compile(r"^[*_]{1,2}|[*_]{1,2}$")
+_ATX_HEADING_PREFIX_RE = re.compile(r"^#{1,6}\s*")
+_ATX_HEADING_RE = re.compile(r"^#{1,6}\s+\S")
+_STANDALONE_BOLD_HEADING_RE = re.compile(r"^(?:\*\*[^*]+\*\*|__[^_]+__):?$")
+
+
+def _heading_text(line: str) -> str:
+    """Normalize a candidate heading line to bare text for comparison:
+    strip ATX `#` markers, then surrounding bold/italic markers, then a
+    trailing colon. Returns '' if the line isn't heading-shaped at all
+    (callers compare the result against a target phrase)."""
+    s = line.strip()
+    s = _ATX_HEADING_PREFIX_RE.sub("", s, count=1) if s.startswith("#") else s
+    s = _BOLD_OR_ITALIC_STRIP_RE.sub("", s)
+    return s.strip().rstrip(":").strip()
+
+
+def _is_ac_heading(line: str) -> bool:
+    return _heading_text(line).lower() == "acceptance criteria"
+
+
+def _is_markdown_heading(line: str) -> bool:
+    s = line.strip()
+    if not s:
+        return False
+    if _ATX_HEADING_RE.match(s):
+        return True
+    if _STANDALONE_BOLD_HEADING_RE.match(s):
+        return True
+    return False
+
+
+def extract_acceptance_criteria(issue_body: str) -> tuple:
+    """Return (ac_text, was_truncated) for the first 'Acceptance criteria'
+    section found in issue_body, recognizing `## Acceptance criteria`,
+    `**Acceptance criteria**`, and `__Acceptance criteria__` (with or
+    without a trailing colon) as the section heading. Nested/indented
+    bullets and wrapped continuation lines are kept (not just top-level
+    `-`/`*`/`[` items). Stops at the next heading of any of those same
+    forms. ac_text is capped at AC_TEXT_MAX_CHARS; if none extracted,
+    returns ("(none extracted)", False).
+    """
+    if not issue_body:
+        return "(none extracted)", False
+
+    collected = []
+    in_ac = False
+    for line in issue_body.splitlines():
+        if not in_ac:
+            if _is_ac_heading(line):
+                in_ac = True
+            continue
+        if _is_markdown_heading(line):
+            break
+        stripped = line.strip()
+        if stripped:
+            collected.append(stripped)
+
+    if not collected:
+        return "(none extracted)", False
+
+    text = "\n".join(collected)
+    return _budget(text, AC_TEXT_MAX_CHARS)
 
 
 # ---------------------------------------------------------------------------
@@ -372,17 +536,61 @@ def build_review_packet(
 
     pr_body = pr_meta.get("body") or ""
     closing_nums = extract_linked_issue_numbers(pr_body)
-    closing_txt = ", ".join(f"#{n}" for n in closing_nums) if closing_nums else "(none found)"
+    # Non-closing references (`Refs #N`, `Part of #N`, `Related to #N`,
+    # `See #N`) are valid linkage too -- a deliberately-sequenced multi-PR
+    # issue defers the closing keyword to its final PR, and the reviewer's
+    # own suggested remedy on a live BLOCKed run was "Refs #N" (#1243
+    # follow-up, PR #1306/#1305 live evidence). Dedup: a number already
+    # counted as closing is not repeated as referenced-only.
+    reference_nums = [
+        n for n in extract_referenced_issue_numbers(pr_body) if n not in closing_nums
+    ]
+    all_linked_nums = closing_nums + reference_nums
+    closing_txt = ", ".join(f"#{n}" for n in closing_nums) if closing_nums else "(none)"
+    reference_txt = ", ".join(f"#{n}" for n in reference_nums) if reference_nums else "(none)"
 
     packet_parts = [
         "## PR Metadata",
         f"- PR #{pr_number}: {pr_title}",
         f"- Author: {author}",
         f"- Base: {base_branch} ← {head_branch}",
-        f"- Closing keywords in PR body: {closing_txt}",
+        "- Issue linkage — DETERMINISTIC FACT, computed by regex over the PR "
+        "body below. This is ground truth, not an assessment: do not "
+        "independently re-derive, dispute, or second-guess it from the diff, "
+        "the branch name, or your own reading of the PR body text.",
+        f"    - Closing keywords (auto-closes on merge): {closing_txt}",
+        f"    - Non-closing references (Refs/Part of/Related to/See — valid "
+        f"linkage, does NOT auto-close): {reference_txt}",
+        "    - A PR with at least one number in EITHER list above has "
+        "satisfied the issue-linking requirement. Do not treat an empty "
+        "closing-keywords list as 'no linked issue' when the references "
+        "list is non-empty.",
         "",
-        "## Changed Files",
+        "## PR Description",
     ]
+    # The PR body itself — previously discarded after regexing closing
+    # keywords out of it, so the model never saw a word of the description
+    # (#1243). An empty body is a genuine policy violation (governance rule
+    # 2: every PR description must state what/why/how-to-test) and is
+    # called out explicitly rather than left as a blank section.
+    if not pr_body.strip():
+        packet_parts.append(
+            "(PR body is empty — this is a policy violation: PR descriptions "
+            "must state what changed, why, and how to test, per governance "
+            "rule 2. This is a legitimate basis to flag Acceptance criteria "
+            "and CI integrity.)"
+        )
+    else:
+        pr_body_text, pr_body_truncated = _budget(pr_body, PR_BODY_MAX_CHARS)
+        packet_parts.append(pr_body_text)
+        if pr_body_truncated:
+            packet_parts.append(
+                f"\n[... PR body truncated to {PR_BODY_MAX_CHARS} characters "
+                "for the model's context budget. Content beyond this point "
+                "was NOT shown to the reviewer — treat any criteria you "
+                "cannot verify from this excerpt as unverifiable, not failed.]"
+            )
+    packet_parts += ["", "## Changed Files"]
     for f in changed_files:
         fname = f.get("filename", "?")
         status = f.get("status", "")
@@ -409,38 +617,63 @@ def build_review_packet(
 
     # Linked issues
     packet_parts += ["", "## Linked Issues"]
-    if not linked_issues and closing_nums:
-        packet_parts.append("(issue details unavailable — access restricted; closing keywords confirmed in PR body above)")
-    elif not closing_nums:
-        packet_parts.append("(no closing keywords in PR body — policy violation)")
-    if linked_issues:
-        for issue in linked_issues:
-            issue_num = issue.get("number", "?")
-            issue_title = issue.get("title", "")
-            issue_body = issue.get("body") or ""
-            # Extract acceptance criteria bullets
-            ac_lines = []
-            in_ac = False
-            for line in issue_body.splitlines():
-                if re.search(r"acceptance criteria", line, re.IGNORECASE):
-                    in_ac = True
-                    continue
-                if in_ac:
-                    stripped = line.strip()
-                    if stripped.startswith(("-", "*", "[")):
-                        ac_lines.append(stripped)
-                    elif stripped and not stripped.startswith("#"):
-                        ac_lines.append(stripped)
-                    elif stripped.startswith("#"):
-                        break
-            body_excerpt = issue_body[:500].replace("\n", " ")
-            ac_text = "\n".join(ac_lines[:10]) if ac_lines else "(none extracted)"
-            packet_parts += [
-                f"### Issue #{issue_num}: {issue_title}",
-                f"Body excerpt: {body_excerpt}",
-                f"Acceptance Criteria:\n{ac_text}",
-                "",
-            ]
+    if not all_linked_nums:
+        packet_parts.append(
+            "(no closing keywords or non-closing references in PR body — a "
+            "genuine candidate for a policy violation, but judge from the PR "
+            "Description above: a PR that is itself design input with no "
+            "code change may legitimately need none. Do not override the "
+            "deterministic linkage fact stated in PR Metadata.)"
+        )
+    else:
+        # Surface EACH linked number that failed to fetch, not just the
+        # all-or-nothing case — a PR linking multiple issues where only one
+        # fetch fails used to show no explanation for the missing one
+        # (#1243 follow-up: a single missing input must not silently read as
+        # "acceptance criteria unmet" for an issue that was never actually
+        # unreachable in full).
+        fetched_nums = {issue.get("number") for issue in linked_issues}
+        missing_nums = [n for n in all_linked_nums if n not in fetched_nums]
+        if missing_nums:
+            missing_txt = ", ".join(f"#{n}" for n in missing_nums)
+            packet_parts.append(
+                f"(issue(s) {missing_txt} unavailable — access restricted or "
+                "fetch failed; linkage already confirmed in PR Metadata above. "
+                "Do not block on acceptance criteria you cannot see for these "
+                "— mark unverifiable, not unmet.)"
+            )
+    for issue in linked_issues:
+        issue_num = issue.get("number", "?")
+        issue_title = issue.get("title", "")
+        issue_body = issue.get("body") or ""
+        linkage_type = "closing" if issue_num in closing_nums else "referenced, non-closing"
+
+        ac_text, ac_truncated = extract_acceptance_criteria(issue_body)
+        if ac_truncated:
+            ac_text += (
+                f"\n[... acceptance criteria truncated to {AC_TEXT_MAX_CHARS} "
+                "characters; criteria beyond this point are unverifiable, "
+                "not unmet.]"
+            )
+
+        if not issue_body.strip():
+            body_block = "(issue body is empty)"
+        else:
+            body_text, body_truncated = _budget(issue_body, ISSUE_BODY_MAX_CHARS)
+            body_block = body_text
+            if body_truncated:
+                body_block += (
+                    f"\n[... issue body truncated to {ISSUE_BODY_MAX_CHARS} "
+                    "characters for the model's context budget. Treat "
+                    "criteria beyond this point as unverifiable, not unmet.]"
+                )
+
+        packet_parts += [
+            f"### Issue #{issue_num} ({linkage_type}): {issue_title}",
+            f"Body:\n{body_block}",
+            f"Acceptance Criteria:\n{ac_text}",
+            "",
+        ]
     packet_parts += ["", "## Policy Summary", policy_summary]
 
     return "\n".join(packet_parts)
@@ -705,10 +938,20 @@ def _run(
     # changed_files entries above), filtered by GENERATED_PATH_PREFIXES,
     # instead of truncating one flat full-PR diff blob (#1118).
 
-    # 2. Resolve linked issues
+    # 2. Resolve linked issues — closing keywords AND non-closing references
+    # (`Refs #N`, `Part of #N`) both count as valid linkage (#1243 follow-up:
+    # a deliberately-sequenced multi-PR issue defers its closing keyword to
+    # the final PR, and must not be fetched-and-treated as unlinked).
     pr_body = pr_meta.get("body") or ""
-    linked_nums = extract_linked_issue_numbers(pr_body)
-    print(f"[ai_reviewer] Found linked issue numbers: {linked_nums}")
+    closing_nums = extract_linked_issue_numbers(pr_body)
+    reference_nums = [
+        n for n in extract_referenced_issue_numbers(pr_body) if n not in closing_nums
+    ]
+    linked_nums = closing_nums + reference_nums
+    print(
+        f"[ai_reviewer] Found linked issue numbers: closing={closing_nums} "
+        f"referenced={reference_nums}"
+    )
 
     linked_issues = []
     for num in linked_nums:
