@@ -2366,6 +2366,8 @@ function _ensureChartJs() {
   return _chartJsPromise;
 }
 
+const _chartLoadTok = {};
+
 function _autoLoadCharts(positions) {
   positions.forEach(p => {
     if (p.token_id) _renderChart(p.token_id, p.entry_price, p.my_prob, p.market_prob);
@@ -5307,8 +5309,14 @@ function _copyFollowSectionHtml(address, candidate, runCount) {
   return `<div class="copy-follow-section" data-address="${_copyEscapeHtml(address)}" id="copy-follow-section-${_copySafeId(address)}">${_copyFollowIdleHtml()}</div>`;
 }
 
-async function _renderCopySparkline(address, runs) {
-  try { await _ensureChartJs(); } catch (e) { console.warn(e.message); return; }
+function _renderCopySparkline(address, runs) {
+  // Sync when Chart.js is already loaded (keeps redraw/reuse logic synchronous);
+  // otherwise load, then re-run only if no newer call superseded this one.
+  if (typeof Chart === 'undefined') {
+    const tok = _chartLoadTok.sp = (_chartLoadTok.sp || 0) + 1;
+    _ensureChartJs().then(() => { if (_chartLoadTok.sp === tok) _renderCopySparkline(address, runs); }, e => console.warn(e.message));
+    return;
+  }
   const canvas = document.getElementById('copy-canvas-' + _copySafeId(address));
   if (!canvas) return;
   const cs = getComputedStyle(document.documentElement);
@@ -6878,8 +6886,14 @@ function _copyDestroyPositionsChart() {
   _copyPositionsChartSig = null;
 }
 
-async function _renderCopyPositionsChart(points) {
-  try { await _ensureChartJs(); } catch (e) { console.warn(e.message); return; }
+function _renderCopyPositionsChart(points) {
+  // Sync when Chart.js is already loaded (keeps redraw/reuse logic synchronous);
+  // otherwise load, then re-run only if no newer call superseded this one.
+  if (typeof Chart === 'undefined') {
+    const tok = _chartLoadTok.pc = (_chartLoadTok.pc || 0) + 1;
+    _ensureChartJs().then(() => { if (_chartLoadTok.pc === tok) _renderCopyPositionsChart(points); }, e => console.warn(e.message));
+    return;
+  }
   const canvas = document.getElementById('copy-positions-canvas');
   if (!canvas) return;
   const sig = JSON.stringify(points);
@@ -7441,8 +7455,14 @@ function _copyLivePerWalletRowHtml(w) {
     </tr>`;
 }
 
-async function _renderCopyLivePositionsChart(points) {
-  try { await _ensureChartJs(); } catch (e) { console.warn(e.message); return; }
+function _renderCopyLivePositionsChart(points) {
+  // Sync when Chart.js is already loaded (keeps redraw/reuse logic synchronous);
+  // otherwise load, then re-run only if no newer call superseded this one.
+  if (typeof Chart === 'undefined') {
+    const tok = _chartLoadTok.lc = (_chartLoadTok.lc || 0) + 1;
+    _ensureChartJs().then(() => { if (_chartLoadTok.lc === tok) _renderCopyLivePositionsChart(points); }, e => console.warn(e.message));
+    return;
+  }
   const canvas = document.getElementById('copy-positions-live-canvas');
   if (!canvas) return;
   const cs = getComputedStyle(document.documentElement);
