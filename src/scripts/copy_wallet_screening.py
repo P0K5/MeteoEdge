@@ -83,6 +83,25 @@ _LOCK = None
 #: mitigation -- a cross-process shared limiter is explicitly out of scope.
 MAX_WALLETS_PER_RUN = 50
 
+#: Nominal cadence of `meteoedge-copy-screening.timer` (docs/OPERATIONS.md:
+#: daily at 03:00 UTC). Used only to judge whether two `copy_wallet_candidates`
+#: rows are close enough together to be meaningfully compared for stability
+#: (issue #1298) -- NOT a live-trading parameter, so this stays a plain module
+#: constant rather than a `get_live_config()` key, unlike the quality-gate
+#: thresholds below.
+SCREENING_INTERVAL_HOURS = 24.0
+
+#: How far apart two rows' `screened_at` timestamps may be before
+#: `check_stability()` refuses to compare them at all (issue #1298). 1.5x the
+#: nominal daily cadence tolerates one run firing a few hours late, or one
+#: run being skipped (single-instance lock contention, issue #1247; host
+#: downtime) and the next day's run catching up -- without opening the
+#: window to the kind of gap that caused the false pause this issue was
+#: filed for (0x924379a7: 2026-09-20 compared against 2026-10-04, a
+#: two-week gap, n_resolved 317->430 read as a 25%-tolerance breach that was
+#: really just normal growth over two weeks, not one day).
+STABILITY_MAX_COMPARISON_GAP_HOURS = SCREENING_INTERVAL_HOURS * 1.5
+
 #: Quality gate thresholds (issue #1209). `check_stability()` only proves a
 #: screening run was *reproducible* -- these thresholds separately gate on
 #: whether the wallet is actually worth following. Derived from the
@@ -251,46 +270,96 @@ def sign(x: float) -> int:
     return 1 if x > 0 else (-1 if x < 0 else 0)
 
 
-def check_stability(current: dict, previous: "dict | None") -> bool:
-    """True only if *current*'s run agrees with the immediately-previous run.
+def _parse_screened_at(value) -> "datetime | None":
+    """Best-effort ISO-8601 parse of a ``screened_at`` value.
+
+    Returns ``None`` (never raises) for anything missing or unparseable --
+    ``check_stability()`` treats that the same as "gap unknown", matching
+    its existing no-raise contract for malformed/absent inputs (issue
+    #1245's precedent).
+    """
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def check_stability(current: dict, previous: "dict | None") -> "tuple[bool, str]":
+    """Returns ``(stable, reason)``: ``stable`` is True only if *current*'s
+    run agrees with the immediately-previous run; ``reason`` is ``"ok"`` iff
+    ``stable`` is True, else one of the reasons below.
 
     Pure function, no I/O. ``previous=None`` (first-ever run for a wallet)
-    is always unstable -- there's nothing yet to agree with. A wallet is
-    stable only when BOTH:
+    is always unstable -- there's nothing yet to agree with
+    (``reason="first_run"``).
 
-    (a) ``sign(current["median_roi"]) == sign(previous["median_roi"])`` --
+    Checked in this order -- ``stable`` ends up False either because a
+    condition was evaluated and DISAGREED, or because the comparison was
+    refused outright as not meaningful; the two are different outcomes (see
+    (b) below) but both leave ``stable=False``:
+
+    (a) ``current``/``previous["median_roi"]`` is ``None`` (a wallet with
+        zero resolved trades -- see ``copy_trade_backtest.py``'s
+        ``_stats()``) -- ``reason="median_roi_missing"``. Checked BEFORE the
+        gap check in (b): a wallet with no usable ROI signal right now is
+        treated as unstable regardless of whether the comparison row is
+        recent or stale -- there is no "fresher comparison" that would make
+        a missing signal usable, so this does NOT get the stale-comparison
+        carve-out. Also guarantees ``sign()`` is never called with ``None``
+        (issue #1245) -- this guard runs before any ``sign()`` call, so
+        ``sign()`` itself stays a plain numeric helper that never has to
+        handle it.
+    (b) The two rows' ``screened_at`` timestamps are more than
+        ``STABILITY_MAX_COMPARISON_GAP_HOURS`` apart (issue #1298) --
+        ``reason="stale_comparison"``. **This is a REFUSAL TO EVALUATE, not
+        a disagreement** -- it means the two rows are too far apart in time
+        to compare at all (e.g. the wallet dropped out of the screening pool
+        for a while), not that (c)/(d) below were checked and disagreed. A
+        caller that auto-pauses an existing follow on instability (
+        ``copy_wallet_health.py::_stability_pause_reason``) MUST treat
+        ``"stale_comparison"`` as "this specific signal is unavailable this
+        cycle", never as a failure -- unlike every other ``reason`` value,
+        which does mean a check ran and failed. Only checked when BOTH rows
+        carry a parseable ``screened_at`` -- a caller that omits it (e.g. a
+        bare fixture dict) gets the pre-#1298, gap-blind comparison instead
+        of a spurious skip.
+    (c) ``sign(current["median_roi"]) == sign(previous["median_roi"])`` --
         a ``median_roi`` of exactly ``0`` never matches another ``0``
-        (treated as unstable, not stable-at-zero).
-    (b) ``n_resolved`` hasn't swung by more than 25% relative to the
+        (treated as unstable, not stable-at-zero). Otherwise
+        ``reason="sign_mismatch"``.
+    (d) ``n_resolved`` hasn't swung by more than 25% relative to the
         previous run's ``n_resolved`` (floor of 1 in the denominator so a
-        previous ``n_resolved=0`` can't divide by zero).
-
-    ``median_roi`` on EITHER side being ``None`` (a wallet with zero
-    resolved trades -- see ``copy_trade_backtest.py``'s ``_stats()``) is
-    treated as unstable rather than raising, so this stays safe for any
-    caller, not just one that happens to pre-filter zero-resolved wallets
-    (issue #1245). ``sign()`` itself is never called with ``None`` -- this
-    guard runs first, so ``sign()`` stays a plain numeric helper.
+        previous ``n_resolved=0`` can't divide by zero). Otherwise
+        ``reason="volume_swing"``.
     """
     if previous is None:
-        return False
+        return False, "first_run"
 
     current_median = current["median_roi"]
     previous_median = previous["median_roi"]
     if current_median is None or previous_median is None:
-        return False
+        return False, "median_roi_missing"
+
+    current_ts = _parse_screened_at(current.get("screened_at"))
+    previous_ts = _parse_screened_at(previous.get("screened_at"))
+    if current_ts is not None and previous_ts is not None:
+        gap_hours = abs((current_ts - previous_ts).total_seconds()) / 3600.0
+        if gap_hours > STABILITY_MAX_COMPARISON_GAP_HOURS:
+            return False, "stale_comparison"
 
     current_sign = sign(current_median)
     previous_sign = sign(previous_median)
     if current_sign == 0 or previous_sign == 0 or current_sign != previous_sign:
-        return False
+        return False, "sign_mismatch"
 
     previous_n = previous["n_resolved"]
     delta_ratio = abs(current["n_resolved"] - previous_n) / max(previous_n, 1)
     if delta_ratio > 0.25:
-        return False
+        return False, "volume_swing"
 
-    return True
+    return True, "ok"
 
 
 def check_quality(
@@ -516,14 +585,22 @@ def run(
                 # through by backtest_wallet() -- see check_quality()'s
                 # condition (d).
                 "truncated": result.get("truncated", False),
+                # issue #1298: lets check_stability() judge whether `previous`
+                # (below) is recent enough to compare against at all.
+                "screened_at": screened_at,
             }
 
             previous_rows = db.get_recent_wallet_screenings(address, limit=1)
             previous = previous_rows[0] if previous_rows else None
-            stable = check_stability(current, previous)
+            stable, stability_reason = check_stability(current, previous)
             quality_ok, quality_reason = check_quality(
                 current, previous, min_resolved_trades=min_resolved_trades,
             )
+            if not stable:
+                log.info(
+                    "[copy-wallet-screening] %s: failed stability check (%s), not eligible.",
+                    address, stability_reason,
+                )
             if not quality_ok:
                 log.info(
                     "[copy-wallet-screening] %s: failed quality check (%s), not eligible.",
