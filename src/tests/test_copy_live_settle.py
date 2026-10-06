@@ -655,3 +655,73 @@ class TestRunOnce:
 
         assert result["ghost_recovery"] == {"recovered": 0, "confirmed_dead": 0, "still_ambiguous": 1}
         assert result["balance_check"]["actual_balance_usd"] == 100.0
+
+
+class TestFillCostCoalesceIssue1336:
+    """Issue #1336: realized P&L and committed exposure must use
+    COALESCE(filled_stake_usd, stake_usd) for FULL fills too, not only
+    partials. A 'filled' row with a recorded (short) cost must not be booked
+    at its intended stake."""
+
+    def test_short_full_status_fill_pnl_uses_recorded_cost_loss(self):
+        """Intended $10 at 0.40, but only $3.00 actually matched. A losing
+        position must lose $3.00, not $10.00."""
+        db = Database(":memory:")
+        position_id = _seed_live_position(
+            db, market="0xm1", status="filled", stake_usd=10.0,
+            filled_stake_usd=3.0, fill_price=0.40,
+        )
+        with patch.object(cls, "fetch_market_resolution", return_value=False):  # NO wins, YES position loses
+            summary = cls._settle_live_positions(db)
+
+        assert summary == {"settled": 1, "pending": 0, "errors": 0}
+        row = db._conn.execute(
+            "SELECT settled_pnl_usd FROM copy_live_positions WHERE id=?", (position_id,)
+        ).fetchone()
+        assert row["settled_pnl_usd"] == -3.0
+
+    def test_short_full_status_fill_pnl_uses_recorded_cost_win(self):
+        """$3.00 matched at 0.40 wins: shares = 7.5, payout 7.5 -> pnl 4.5."""
+        db = Database(":memory:")
+        position_id = _seed_live_position(
+            db, market="0xm1", status="filled", stake_usd=10.0,
+            filled_stake_usd=3.0, fill_price=0.40,
+        )
+        with patch.object(cls, "fetch_market_resolution", return_value=True):
+            cls._settle_live_positions(db)
+
+        row = db._conn.execute(
+            "SELECT settled_pnl_usd FROM copy_live_positions WHERE id=?", (position_id,)
+        ).fetchone()
+        assert row["settled_pnl_usd"] == 4.5  # 3*(1-0.4)/0.4
+
+    def test_null_filled_stake_falls_back_to_stake_usd_on_loss(self):
+        """Legacy 'filled' row with no recorded cost: fallback to stake_usd."""
+        db = Database(":memory:")
+        position_id = _seed_live_position(
+            db, market="0xm1", status="filled", stake_usd=10.0, fill_price=0.40,
+        )
+        with patch.object(cls, "fetch_market_resolution", return_value=False):
+            cls._settle_live_positions(db)
+
+        row = db._conn.execute(
+            "SELECT settled_pnl_usd FROM copy_live_positions WHERE id=?", (position_id,)
+        ).fetchone()
+        assert row["settled_pnl_usd"] == -10.0
+
+    def test_drift_committed_exposure_uses_recorded_full_fill_cost(self):
+        """Committed exposure for an unsettled 'filled' row must be the $3.00
+        actually spent, not the $10.00 intended stake. Expected = 100 - 3 = 97."""
+        db = Database(":memory:")
+        _seed_live_position(
+            db, market="0xm1", status="filled", stake_usd=10.0, filled_stake_usd=3.0,
+        )
+        trader = MagicMock()
+        trader.get_usdc_balance.return_value = 97.0
+        factory = MagicMock(return_value=MagicMock())
+        with patch.object(cls, "COPY_LIVE_CAPITAL_USD", 100.0), \
+             patch.object(cls, "LiveTrader", return_value=trader):
+            result = cls.check_wallet_balance_drift(db, factory)
+
+        assert result["expected_balance_usd"] == 97.0
+        assert result["within_tolerance"] is True

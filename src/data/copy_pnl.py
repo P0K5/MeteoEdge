@@ -27,6 +27,21 @@ def copy_position_won(outcome_index: int, yes_won: bool) -> bool:
     return not yes_won
 
 
+def effective_stake_usd(filled_stake_usd: "float | None", stake_usd: float) -> float:
+    """Return the USD actually spent on a real fill (issue #1336).
+
+    Mirrors ``COALESCE(filled_stake_usd, stake_usd)`` (the schema contract in
+    ``src/data/db.py``): the recorded fill cost wins whenever one exists --
+    full AND partial fills both record it now -- and the row's intended
+    ``stake_usd`` is used only for rows written before the column was
+    populated (legacy full fills, or any row whose fill record was never
+    retrieved). Used by copy_live_settle for both realized P&L and the
+    committed-exposure side of the wallet-balance drift check, so the two
+    can never disagree about what a position cost.
+    """
+    return float(filled_stake_usd) if filled_stake_usd is not None else float(stake_usd)
+
+
 def compute_realized_pnl_usd(
     *,
     entry_price: float,

@@ -58,7 +58,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from src.config import COPY_LIVE_CAPITAL_USD, get_live_config  # noqa: E402
-from src.data.copy_pnl import compute_realized_pnl_usd  # noqa: E402
+from src.data.copy_pnl import compute_realized_pnl_usd, effective_stake_usd  # noqa: E402
 from src.data.polymarket import fetch_market_resolution  # noqa: E402
 from src.execution.live_trader import LiveTrader  # noqa: E402
 
@@ -98,10 +98,11 @@ def _settle_live_positions(db) -> dict:
     one layer up, with two differences: the source query
     (``get_unsettled_copy_live_positions`` instead of
     ``get_open_copy_positions``) and the effective stake used for P&L --
-    ``filled_stake_usd`` when a partial fill recorded one (issue #1171 item
-    3), falling back to the row's own ``stake_usd`` otherwise (covers
-    ``'filled'`` rows, and any ``'partial'`` row written before this column
-    existed).
+    ``filled_stake_usd`` when a fill recorded one (issue #1171 item 3 for
+    partials; issue #1336 for full fills), falling back to the row's own
+    ``stake_usd`` otherwise (legacy ``'filled'`` rows whose fill record was
+    never captured, and any row written before this column existed). This is
+    ``COALESCE(filled_stake_usd, stake_usd)`` -- see ``effective_stake_usd``.
     """
     rows = db.get_unsettled_copy_live_positions()
     if not rows:
@@ -133,10 +134,8 @@ def _settle_live_positions(db) -> dict:
             continue
 
         try:
-            effective_stake = (
-                r["filled_stake_usd"] if r.get("filled_stake_usd") is not None
-                else r["stake_usd"]
-            )
+            # COALESCE(filled_stake_usd, stake_usd) -- issue #1336.
+            effective_stake = effective_stake_usd(r.get("filled_stake_usd"), r["stake_usd"])
             pnl = compute_realized_pnl_usd(
                 entry_price=float(r["fill_price"]),
                 stake_usd=float(effective_stake),
@@ -329,10 +328,7 @@ def check_wallet_balance_drift(db, clob_client_factory, *, now: "datetime | None
     committed = 0.0
     for p in db.get_open_copy_live_positions():
         if p["status"] in ("filled", "partial"):
-            committed += (
-                p["filled_stake_usd"] if p.get("filled_stake_usd") is not None
-                else p["stake_usd"]
-            )
+            committed += effective_stake_usd(p.get("filled_stake_usd"), p["stake_usd"])
         # 'pending' rows contribute 0 -- see docstring.
 
     realized = db.get_copy_live_realized_pnl_total()["total_pnl_usd"]

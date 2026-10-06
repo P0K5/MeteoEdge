@@ -64,6 +64,7 @@ class TestFillOnFirstAttempt:
         trader = MagicMock()
         trader.place_order.return_value = "oid"
         trader.check_fill.return_value = "filled"
+        trader.get_order_fill_size.return_value = 0.0  # no fill record -> no cost recorded
         factory = MagicMock(return_value=MagicMock())
         with patch.object(cle, "LiveTrader", return_value=trader), \
              patch.object(cle.time, "sleep", lambda s: None), \
@@ -312,3 +313,57 @@ class TestNeverRaises:
             timeout=True, book_asks=[], resolution=None, fill_size=0.0,
         )
         assert result["status"] in ("rejected", "partial", "filled")
+
+
+class TestFullFillRecordsFilledStakeUsd:
+    """Issue #1336: a full ``"filled"`` result must record its actual USD
+    cost (CLOB fill size x placed price), not only partials -- otherwise
+    settlement books every fill at the intended stake_usd, overstating the
+    loss on any order that matched for less than requested."""
+
+    def test_full_fill_records_actual_cost_from_fill_record(self):
+        # stake 10.0 at 0.40 -> 25 shares requested; the fill record shows all 25.
+        result, trader, gob, _, _ = _run(fill_status="filled", timeout=False, fill_size=25.0)
+        assert result == {
+            "status": "filled",
+            "order_id": "order-id-abc123",
+            "fill_price": 0.40,
+            "filled_stake_usd": 10.0,
+        }
+        trader.get_order_fill_size.assert_called_once_with("order-id-abc123")
+
+    def test_short_fill_on_filled_status_records_smaller_cost(self):
+        # Order reports 'filled' but the fill record shows only 7.5 of 25
+        # shares matched: 7.5 * 0.40 = 3.0 is the real spend, not 10.0.
+        result, _, _, _, _ = _run(fill_status="filled", timeout=False, fill_size=7.5)
+        assert result["status"] == "filled"
+        assert result["filled_stake_usd"] == 3.0
+
+    def test_short_partial_after_timeout_records_smaller_cost(self):
+        # Timeout, cancel succeeds, 2.5 of 25 shares matched -> 2.5 * 0.40 = 1.0.
+        result, _, _, _, _ = _run(
+            timeout=True, book_asks=[], resolution=None, fill_size=2.5,
+        )
+        assert result["status"] == "partial"
+        assert result["filled_stake_usd"] == 1.0
+
+    def test_full_fill_with_no_fill_record_omits_cost_for_stake_fallback(self):
+        """No fill record (size 0) -> no filled_stake_usd key at all, so the
+        caller persists NULL and settlement falls back to stake_usd."""
+        result, _, _, _, _ = _run(fill_status="filled", timeout=False, fill_size=0.0)
+        assert result == {"status": "filled", "order_id": "order-id-abc123", "fill_price": 0.40}
+
+    def test_full_fill_whose_fill_lookup_raises_still_reports_filled(self):
+        trader = MagicMock()
+        trader.place_order.return_value = "oid-x"
+        trader.check_fill.return_value = "filled"
+        trader.get_order_fill_size.side_effect = RuntimeError("CLOB 500")
+        factory = MagicMock(return_value=MagicMock())
+        with patch.object(cle, "LiveTrader", return_value=trader), \
+             patch.object(cle.time, "sleep", lambda s: None), \
+             patch.object(cle, "FILL_MAX_WAIT_S", 100):
+            result = cle.execute_live_copy_order(
+                factory, token_id="t", market="m", side_label="YES",
+                price=0.40, stake_usd=10.0,
+            )
+        assert result == {"status": "filled", "order_id": "oid-x", "fill_price": 0.40}

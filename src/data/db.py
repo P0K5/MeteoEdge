@@ -843,8 +843,15 @@ class Database:
             # 'filled' rows where the fill is assumed equal to the full
             # stake_usd (no partial-fill precision needed there); populated
             # only when execute_live_copy_order confirms a partial fill.
+            # Issue #1336: full 'filled' rows now also record their actual
+            # USD cost (CLOB fill size x placed price) here -- a short match
+            # on a 'filled' order was previously booked at the full
+            # stake_usd. Rows written before #1336, and any fill whose fill
+            # record was unavailable, stay NULL.
             # Readers should use COALESCE(filled_stake_usd, stake_usd) to
-            # stay correct for rows written before this migration.
+            # stay correct for rows written before this migration. Settlement
+            # P&L and the wallet-balance drift check both do (via
+            # copy_pnl.effective_stake_usd).
             ("copy_live_positions", "filled_stake_usd", "REAL"),
             # Issue #1233: whether the screening run's get_wallet_trades()
             # fetch was truncated (see copy_wallet_candidates' CREATE TABLE
@@ -2570,9 +2577,11 @@ class Database:
         an order (still ``'pending'``) passes only ``order_id``; a fill
         passes ``status='filled'``/``'partial'`` with ``fill_price``; a
         rejection passes ``status='rejected'`` with ``rejected_reason``.
-        A confirmed partial fill (issue #1171 item 3 / #1174) also passes
-        ``filled_stake_usd`` -- the actual USD spent on the fill, distinct
-        from the row's own ``stake_usd`` (the originally-intended amount).
+        A confirmed fill (issue #1171 item 3 / #1174 for partials; issue
+        #1336 for full fills) also passes ``filled_stake_usd`` -- the actual
+        USD spent on the fill, distinct from the row's own ``stake_usd``
+        (the originally-intended amount). Readers use
+        ``COALESCE(filled_stake_usd, stake_usd)``.
 
         ``order_id``/``fill_price``/``rejected_reason``/``filled_stake_usd``
         each default to ``None`` and use ``COALESCE`` against the existing
