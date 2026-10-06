@@ -113556,7 +113556,7 @@
       "file_type": "code",
       "norm_label": "src/scripts/__init__.py",
       "source_file": "src/scripts/__init__.py",
-      "source_location": "L1"
+      "source_location": null
     },
     {
       "id": "src_tests_test_backfill_live_settlements",
@@ -120802,7 +120802,7 @@
       "file_type": "code",
       "norm_label": "execution/__init__.py",
       "source_file": "src/execution/__init__.py",
-      "source_location": "L1"
+      "source_location": null
     },
     {
       "id": "src_tests_test_copy_live_executor",
@@ -122428,7 +122428,7 @@
       "file_type": "code",
       "norm_label": "scripts/__init__.py",
       "source_file": "scripts/__init__.py",
-      "source_location": "L1"
+      "source_location": null
     },
     {
       "id": "src_tests_test_remote_sync",
@@ -142283,7 +142283,7 @@
       "file_type": "code",
       "norm_label": "src/__init__.py",
       "source_file": "src/__init__.py",
-      "source_location": "L1"
+      "source_location": null
     },
     {
       "id": "src_model_envelope",
@@ -142349,7 +142349,7 @@
       "file_type": "code",
       "norm_label": "strategy/__init__.py",
       "source_file": "src/strategy/__init__.py",
-      "source_location": "L1"
+      "source_location": null
     },
     {
       "id": "src_strategy_scanner",
@@ -149589,7 +149589,7 @@
       "file_type": "code",
       "norm_label": "dashboard/__init__.py",
       "source_file": "src/dashboard/__init__.py",
-      "source_location": "L1"
+      "source_location": null
     },
     {
       "id": "src_tests_test_db_rationale_3136",
@@ -149732,7 +149732,7 @@
       "file_type": "code",
       "norm_label": "model/__init__.py",
       "source_file": "src/model/__init__.py",
-      "source_location": "L1"
+      "source_location": null
     },
     {
       "id": "src_tests_test_db_rationale_3195",
@@ -149765,7 +149765,7 @@
       "file_type": "code",
       "norm_label": "risk/__init__.py",
       "source_file": "src/risk/__init__.py",
-      "source_location": "L1"
+      "source_location": null
     },
     {
       "id": "src_tests_test_trade_cost_accounting_rationale_280",
@@ -149908,7 +149908,7 @@
       "file_type": "code",
       "norm_label": "src/tests/__init__.py",
       "source_file": "src/tests/__init__.py",
-      "source_location": "L1"
+      "source_location": null
     },
     {
       "id": "src_utils_init",
@@ -149919,7 +149919,7 @@
       "file_type": "code",
       "norm_label": "utils/__init__.py",
       "source_file": "src/utils/__init__.py",
-      "source_location": "L1"
+      "source_location": null
     },
     {
       "id": "src_weather_init",
@@ -149930,7 +149930,7 @@
       "file_type": "code",
       "norm_label": "weather/__init__.py",
       "source_file": "src/weather/__init__.py",
-      "source_location": "L1"
+      "source_location": null
     },
     {
       "id": "tests_init",
@@ -149941,7 +149941,7 @@
       "file_type": "code",
       "norm_label": "tests/__init__.py",
       "source_file": "tests/__init__.py",
-      "source_location": "L1"
+      "source_location": null
     },
     {
       "id": "tests_integration_init",
@@ -149952,7 +149952,7 @@
       "file_type": "code",
       "norm_label": "integration/__init__.py",
       "source_file": "tests/integration/__init__.py",
-      "source_location": "L1"
+      "source_location": null
     },
     {
       "id": "src_tests_test_taf_schema_py_database",
@@ -152999,7 +152999,7 @@
       "file_type": "code",
       "norm_label": "monitoring/__init__.py",
       "source_file": "src/monitoring/__init__.py",
-      "source_location": "L1"
+      "source_location": null
     },
     {
       "id": "src_tests_test_capture_staleness",
@@ -459231,5 +459231,5 @@
     }
   ],
   "hyperedges": [],
-  "built_at_commit": "e24c9048b80107757d06a303cbd0fc2641ee5e82"
+  "built_at_commit": "05fcd834f4f65101f3a850a47661ff23f59074cc"
 }
