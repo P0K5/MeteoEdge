@@ -140,7 +140,7 @@ class TestComputeEnsembleSigma:
 
         mock_db = MagicMock()
         # Return too few pairs
-        mock_db._conn.execute.return_value.fetchall.return_value = [
+        mock_db.query_rows.return_value = [
             ("2026-07-01", 72.0, 3.0),
         ]
 
@@ -177,7 +177,7 @@ class TestComputeEnsembleSigma:
         with patch("src.model.ensemble_sigma._load_calibration_pairs", return_value=[]):
             compute_ensemble_sigma(members, "KORD", history_db=mock_db)
         # No write calls
-        mock_db._conn.execute.assert_not_called()
+        mock_db.query_rows.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
