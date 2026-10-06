@@ -286,12 +286,11 @@ def _open_positions_count() -> int:
     if _db is None:
         return 0
     try:
-        cur = _db._conn.execute(
+        rows = _db.query_rows(
             "SELECT open_positions FROM risk_state WHERE trade_date=?",
             (_today_utc(),),
         )
-        row = cur.fetchone()
-        return int(row[0]) if row else 0
+        return int(rows[0][0]) if rows else 0
     except Exception:
         logger.warning("[dashboard] failed to read open_positions count", exc_info=True)
         return 0
@@ -4551,13 +4550,13 @@ def station_residual(metar: str) -> list[StationResidualOut]:
     since_date = (_date.today() - _timedelta(days=30)).isoformat()
     last_obs_map: dict[tuple[str, str], "str | None"] = {}
     try:
-        rows = _db._conn.execute(
+        rows = _db.query_rows(
             "SELECT station, source, MAX(obs_time) AS last_obs "
             "FROM intraday_corrections "
             "WHERE city=? AND date>=? "
             "GROUP BY station, source",
             (city, since_date),
-        ).fetchall()
+        )
         for r in rows:
             last_obs_map[(r[0], r[1])] = r[2]
     except Exception as exc:

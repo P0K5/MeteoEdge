@@ -22,7 +22,6 @@ def client(tmp_path):
     import src.dashboard.api as api_mod
 
     mock_db = MagicMock()
-    mock_db._conn = MagicMock()
 
     with patch.object(api_mod, "_db", mock_db):
         from fastapi.testclient import TestClient
@@ -63,7 +62,7 @@ class TestStationResidualEndpoint:
         """compute_residual_stats_per_pair returns [] → endpoint returns []."""
         tc, mock_db = client
         # Set up last_obs query to return nothing
-        mock_db._conn.execute.return_value.fetchall.return_value = []
+        mock_db.query_rows.return_value = []
 
         with patch("src.dashboard.api.compute_residual_stats_per_pair", return_value=[]):
             # Use a METAR that IS in STATIONS, e.g. KORD = Chicago
@@ -75,7 +74,7 @@ class TestStationResidualEndpoint:
     def test_correct_shape_with_data(self, client):
         """Endpoint returns correct shape for a single (station, source) pair."""
         tc, mock_db = client
-        mock_db._conn.execute.return_value.fetchall.return_value = []
+        mock_db.query_rows.return_value = []
 
         stats = _make_stats(station="Busan", source="amos", scope="pair")
 
@@ -101,7 +100,7 @@ class TestStationResidualEndpoint:
     def test_multiple_pairs_returned(self, client):
         """Multiple (station, source) pairs all appear in the response."""
         tc, mock_db = client
-        mock_db._conn.execute.return_value.fetchall.return_value = []
+        mock_db.query_rows.return_value = []
 
         stats_list = [
             _make_stats(station="Busan", source="amos", scope="pair"),
@@ -121,7 +120,7 @@ class TestStationResidualEndpoint:
         """last_obs_time is populated from DB query when available."""
         tc, mock_db = client
         # Simulate last_obs_time query returning a timestamp
-        mock_db._conn.execute.return_value.fetchall.return_value = [
+        mock_db.query_rows.return_value = [
             ("Busan", "amos", "2024-06-01T08:00:00+00:00")
         ]
 

@@ -120,11 +120,11 @@ def _load_calibration_pairs(
     try:
         # model_forecast_log rows with sigma_f: only the migrated schema has it.
         # Fall back gracefully to an empty list if the column is absent.
-        forecast_rows = history_db._conn.execute(
+        forecast_rows = history_db.query_rows(
             "SELECT date, forecast_high_f, sigma_f FROM model_forecast_log "
             "WHERE station=? AND date>=? AND sigma_f IS NOT NULL ORDER BY date ASC",
             (station, since),
-        ).fetchall()
+        )
     except Exception:
         return []
 
@@ -137,11 +137,11 @@ def _load_calibration_pairs(
     }
 
     try:
-        settlement_rows = history_db._conn.execute(
+        settlement_rows = history_db.query_rows(
             "SELECT DATE(ts) as settle_date, actual_high_f "
             "FROM settlements WHERE station=? AND ts>=? ORDER BY ts ASC",
             (station, since + "T00:00:00Z"),
-        ).fetchall()
+        )
     except Exception:
         return []
 

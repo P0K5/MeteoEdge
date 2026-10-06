@@ -235,3 +235,195 @@ class TestLockAttribute:
         # RLock type check: acquire/release API
         assert db._lock.acquire(blocking=False), "Lock should be acquirable"
         db._lock.release()
+
+
+# ---------------------------------------------------------------------------
+# Issue #1335: shared connection must be lock-guarded for READS too
+# ---------------------------------------------------------------------------
+
+class TestSharedConnectionMixedReadWrite:
+    """N threads doing mixed reads and writes against ONE Database for a fixed
+    duration must raise nothing.
+
+    Production shares a single ``sqlite3.Connection`` between the bot poll
+    thread and the FastAPI threadpool. Before #1335 only writes took
+    ``Database._lock``, so reads could touch the connection's statement cache
+    concurrently (``KeyError: ('SELECT effective_mode ...',)`` in the field).
+    Uses a file-backed WAL database, like production, rather than ``:memory:``.
+    """
+
+    DURATION_SECONDS = 3.0
+    N_READERS = 8
+    N_WRITERS = 4
+
+    def test_mixed_reads_and_writes_raise_nothing(self, tmp_path):
+        import time
+
+        db = Database(tmp_path / "shared_conn_stress.db")
+        db.insert_followed_wallet(address="0xseed", stake_per_trade=1.0, added_at="2024-01-01T00:00:00+00:00")
+        db.set_emos_effective_mode("chicago", "shadow")
+
+        errors: list = []
+        errors_lock = threading.Lock()
+        counts = {"reads": 0, "writes": 0}
+        counts_lock = threading.Lock()
+        start = threading.Barrier(self.N_READERS + self.N_WRITERS)
+        deadline = [0.0]
+
+        def record(exc: BaseException) -> None:
+            with errors_lock:
+                errors.append(exc)
+
+        def bump(key: str) -> None:
+            with counts_lock:
+                counts[key] += 1
+
+        def reader(idx: int) -> None:
+            reads = (
+                lambda: db.get_open_copy_live_positions(),
+                lambda: db.get_followed_wallets(),
+                lambda: db.get_emos_effective_mode("chicago"),
+                lambda: db.get_obs_highs_range("KORD", "2024-01-01"),
+                lambda: db.get_trades(limit=10),
+                lambda: db.get_observations("KORD", "2024-01-01T00:00:00+00:00"),
+            )
+            start.wait()
+            i = 0
+            while time.monotonic() < deadline[0]:
+                try:
+                    reads[(idx + i) % len(reads)]()
+                    bump("reads")
+                except Exception as exc:  # noqa: BLE001 - the whole point is to catch any
+                    record(exc)
+                i += 1
+
+        def writer(idx: int) -> None:
+            start.wait()
+            i = 0
+            while time.monotonic() < deadline[0]:
+                try:
+                    db.insert_observation(
+                        ts=f"2024-01-15T{idx:02d}:{i // 60 % 60:02d}:{i % 60:02d}+00:00",
+                        station="KORD",
+                        temp_f=float(i),
+                        temp_native=float(i),
+                        unit="F",
+                        source="metar",
+                    )
+                    address = f"0x{idx:02d}{i:06d}"
+                    db.insert_followed_wallet(
+                        address=address, stake_per_trade=1.0, added_at="2024-01-01T00:00:00+00:00"
+                    )
+                    db.update_followed_wallet_last_seen(address, i)
+                    db.set_emos_effective_mode("chicago", "shadow" if i % 2 else "live")
+                    db.insert_trade(**_base_trade_kwargs(idx * 100_000 + i))
+                    bump("writes")
+                except Exception as exc:  # noqa: BLE001
+                    record(exc)
+                i += 1
+
+        threads = [
+            threading.Thread(target=reader, args=(r,)) for r in range(self.N_READERS)
+        ] + [
+            threading.Thread(target=writer, args=(w,)) for w in range(self.N_WRITERS)
+        ]
+        deadline[0] = time.monotonic() + self.DURATION_SECONDS
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=self.DURATION_SECONDS + 60)
+        assert not any(t.is_alive() for t in threads), "stress threads did not finish"
+
+        assert not errors, f"{len(errors)} exceptions under concurrent use, first: {errors[:3]!r}"
+        # The run must actually have exercised both paths, not exited early.
+        assert counts["reads"] > 0 and counts["writes"] > 0, counts
+
+        # Every write that reported success must be durably visible afterwards.
+        obs_rows = db._conn.execute("SELECT COUNT(*) FROM observations").fetchone()[0]
+        assert obs_rows == counts["writes"], (obs_rows, counts)
+
+
+class TestSharedConnectionLockingGuard:
+    """Static guard (issue #1335): every ``Database`` method that touches
+    ``self._conn`` must do so lexically inside ``with self._lock:``.
+
+    A structural check rather than a timing test: a race that only shows up
+    under load can pass a stress run and still be present, and new read
+    methods are the regression risk. ``__init__`` is the one exemption --
+    it creates the connection and the lock, and the object is not yet shared.
+    """
+
+    def test_every_conn_access_is_under_lock(self):
+        import ast
+        from pathlib import Path
+
+        import src.data.db as db_module
+
+        tree = ast.parse(Path(db_module.__file__).read_text(encoding="utf-8"))
+        database = next(
+            n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "Database"
+        )
+
+        def is_self_attr(node: ast.AST, attr: str) -> bool:
+            return (
+                isinstance(node, ast.Attribute)
+                and node.attr == attr
+                and isinstance(node.value, ast.Name)
+                and node.value.id == "self"
+            )
+
+        unguarded: list[str] = []
+        for fn in database.body:
+            if not isinstance(fn, ast.FunctionDef) or fn.name == "__init__":
+                continue
+            # Map each node to its parent so we can walk outward from a _conn access.
+            parents: dict[int, ast.AST] = {}
+            for parent in ast.walk(fn):
+                for child in ast.iter_child_nodes(parent):
+                    parents[id(child)] = parent
+            for node in ast.walk(fn):
+                if not is_self_attr(node, "_conn"):
+                    continue
+                guarded = False
+                cur = node
+                while id(cur) in parents and cur is not fn:
+                    cur = parents[id(cur)]
+                    if isinstance(cur, ast.With) and any(
+                        is_self_attr(item.context_expr, "_lock") for item in cur.items
+                    ):
+                        guarded = True
+                        break
+                if not guarded:
+                    unguarded.append(f"{fn.name}:{node.lineno}")
+
+        assert not unguarded, (
+            "self._conn used outside `with self._lock:` (issue #1335): "
+            + ", ".join(sorted(set(unguarded)))
+        )
+
+    def test_no_in_process_module_reads_conn_directly(self):
+        """Modules that run in the bot/dashboard process must go through the
+        lock-guarded ``Database`` API, never ``<db>._conn`` (issue #1335).
+
+        Excluded: ``src/data/db.py`` (checked above), ``src/data/archive_db.py``
+        (its own class, its own lock), and ``src/scripts`` (one-shot CLI
+        processes with a private connection, so nothing shares it).
+        """
+        from pathlib import Path
+
+        import src.data.db as db_module
+
+        src_root = Path(db_module.__file__).resolve().parents[1]
+        allowed = {
+            Path(db_module.__file__).resolve(),
+            (src_root / "data" / "archive_db.py").resolve(),
+        }
+        offenders: list[str] = []
+        for path in src_root.rglob("*.py"):
+            rel = path.relative_to(src_root)
+            if rel.parts[0] in {"scripts", "tests"} or path.resolve() in allowed:
+                continue
+            for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+                if "._conn" in line:
+                    offenders.append(f"{rel}:{lineno}")
+        assert not offenders, "direct ._conn access outside Database (issue #1335): " + ", ".join(offenders)

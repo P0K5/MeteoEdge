@@ -676,232 +676,233 @@ class Database:
 
     def _migrate(self) -> None:
         """Run idempotent schema migrations."""
-        for table, col, definition in [
-            ("observations", "cadence_min", "INTEGER"),
-            ("observations", "is_official", "INTEGER DEFAULT 1"),
-            ("trades", "estimated_fee_cents", "REAL"),
-            ("trades", "size_eur", "REAL"),
-            ("trades", "close_reason", "TEXT"),
-            ("trades", "minutes_to_settlement_at_close", "REAL"),
-            ("trades", "bid_depth_at_close", "INTEGER"),
-            ("station_overrides", "yes_enabled", "INTEGER NOT NULL DEFAULT 1"),
-            ("station_overrides", "no_enabled", "INTEGER NOT NULL DEFAULT 1"),
-            ("candidates", "direction", "TEXT NOT NULL DEFAULT 'high'"),
-            ("trades", "direction", "TEXT NOT NULL DEFAULT 'high'"),
-            ("settlements", "direction", "TEXT NOT NULL DEFAULT 'high'"),
-            ("station_overrides", "low_no_enabled", "INTEGER NOT NULL DEFAULT 0"),
-            ("emos_calibration", "forecast_source", "TEXT NOT NULL DEFAULT 'nws_open_meteo'"),
-            # Issue #551 stage 1: nullable raw (pre-MODEL_PROB_CAP) probability,
-            # logged alongside the existing capped value. NULL for rows written
-            # before this migration.
-            ("candidates", "p_yes_raw", "REAL"),
-            ("trades", "p_yes_raw", "REAL"),
-            # Issue #553: sample count for model_weights to distinguish calibrated
-            # models (sample_count >= MIN_SAMPLES) from cold-start (sample_count < MIN_SAMPLES).
-            ("model_weights", "sample_count", "INTEGER DEFAULT 0"),
-            # Issue #572: snapshot of the DEB weights dict used to build the
-            # intraday consensus basis for this delta, so the residual layer
-            # can later segment pre/post-fix deltas instead of mixing the
-            # open_meteo-only regime and the live-DEB-weighted regime in one
-            # rolling window. Default matches the legacy hardcoded basis, so
-            # historical rows (written before this migration) are tagged
-            # consistently with genuine fallback rows.
-            ("intraday_corrections", "basis_weights", "TEXT NOT NULL DEFAULT '{\"open_meteo\": 1.0}'"),
-            # Issue #609: market end date (YYYY-MM-DD), populated at live-trade
-            # insert time from the market's endDate so settle_live_trades() can
-            # match DB rows to a settlement date without depending on
-            # live_trades.jsonl. NULL for rows written before this migration
-            # ("legacy" rows) -- settle.py falls back to the station-local date
-            # of `ts` for those.
-            ("trades", "end_date", "TEXT"),
-            # Issue #622: track whether settlement outcome came from Gamma market
-            # resolution or METAR weather truth. NULL for rows written before this
-            # migration (legacy rows without a known source).
-            ("settlements", "resolution_source", "TEXT"),
-            # Issue #449: sigma-source axis for EMOS retraining ('fixed' | 'ensemble'),
-            # keyed alongside forecast_source so a sigma_source='ensemble' retrain is
-            # stored as an independent row and never overwrites the legacy
-            # sigma_source='fixed' calibration (same non-overwrite pattern as #659's
-            # forecast_source column). Default 'fixed' matches every row written
-            # before this migration -- readers that don't pass sigma_source keep
-            # resolving to the same rows they always have (see _active_sigma_source).
-            ("emos_calibration", "sigma_source", "TEXT NOT NULL DEFAULT 'fixed'"),
-            # Issue #665: per-lead-bin EMOS coefficients. Default 24 matches the
-            # implicit lead bin every pre-#665 row was trained/served at
-            # (fetch_training_data's own default), so existing rows keep serving
-            # identically until a caller explicitly fits/reads a different bin.
-            ("emos_calibration", "lead_hours", "INTEGER NOT NULL DEFAULT 24"),
-            # Issue #687: discriminator for next-day (forecast-only, shadow-only)
-            # candidates vs. same-day candidates -- next-day rows flow into the
-            # same candidates/snapshot_archive populations feeding the prob-cap
-            # report and saturation baselines, so they must be explicitly
-            # filterable rather than inferred from minutes_to_settlement.
-            # Default 0 matches every pre-#687 row (all same-day).
-            ("candidates", "is_next_day", "INTEGER NOT NULL DEFAULT 0"),
-            # Issue #704 (Gap 1): same discriminator as candidates.is_next_day,
-            # but on trades -- upsert_shadow_trade() (the next-day shadow write
-            # path) had no way to tag its own rows, so once NEXT_DAY_EVALUATION
-            # is on, next-day shadow trades are indistinguishable from same-day
-            # shadow trades in every trades-based consumer (promotion gate,
-            # prob-cap report, shadow-health calibration). Default 0 matches
-            # every pre-#704 row (all same-day).
-            ("trades", "is_next_day", "INTEGER NOT NULL DEFAULT 0"),
-            # Issue #704 (Gap 2): records whether a same-station LIVE position
-            # was open at next-day-evaluation time, so the ≥7-day shadow window
-            # can quantify how often cross-day exposure would actually occur
-            # (the approved #687 design's deferred-question-1 data need).
-            # Always 0 for same-day candidates -- only populated by scanner.py's
-            # next-day-eval branch. Default 0 matches every pre-#704 row.
-            ("candidates", "today_position_open", "INTEGER NOT NULL DEFAULT 0"),
-            # Issue #759: forecast-stack axis for the CRPS promotion counter.
-            # Without this, get_emos_crps_count/emos_crps_logged_for_date key
-            # on (city, model_mode) only, so two stacks' shadow runs on the
-            # same day collide on the one-sample-per-city-per-day dedup guard
-            # and the promotion count silently pools CRPS from whichever
-            # stack happens to log first. Default 'baseline' backfills every
-            # pre-#759 row (all logged before forecast-stack expansion
-            # existed) and matches _active_forecast_source's own fallback, so
-            # the already-accumulated baseline promotion evidence keeps
-            # counting unchanged.
-            ("emos_crps_log", "forecast_source", "TEXT NOT NULL DEFAULT 'baseline'"),
-            # Issue #851: sigma-source axis for the CRPS promotion counter,
-            # mirroring #759's forecast_source fix. Without this,
-            # get_emos_crps_count/emos_crps_logged_for_date key on
-            # (city, model_mode, forecast_source) only, so a sigma_source
-            # switch (#799, fixed -> ensemble) does NOT reset the promotion
-            # clock: shadow-day evidence logged under the old fixed-sigma
-            # coefficients keeps counting toward the newly-retrained
-            # ensemble-sigma lineage's promotion decision -- the exact
-            # #658-style train/serve-evidence skew #799 closed for the
-            # coefficients themselves. Default 'fixed' backfills every
-            # pre-#851 row -- every CRPS row logged before this migration was
-            # scored against a sigma_source='fixed' (or unresolved,
-            # equivalently pre-#449) coefficient fit, so this is the accurate
-            # historical tag, not merely a matching-default placeholder.
-            ("emos_crps_log", "sigma_source", "TEXT NOT NULL DEFAULT 'fixed'"),
-            # Issue #780: distinguishes a confirmed live fill from the
-            # scanner's paper-mode "would trade live" placeholder for
-            # traded_live rows -- see _persist_scan_decisions in run.py for
-            # where it's stamped. Default 'paper' backfills every pre-#780
-            # row conservatively (never claim a legacy row as a confirmed
-            # live fill it can't prove).
-            ("scan_decisions", "execution_mode", "TEXT NOT NULL DEFAULT 'paper'"),
-            # Issue #900: scan_decisions never carried the high/low market
-            # discriminator that candidates/trades/settlements already have
-            # (see the direction migrations above) -- the scanner has stamped
-            # every snapshot dict with a direction key since #876 (high-side
-            # "high", low-side "low"), but upsert_scan_decision() had no
-            # direction parameter at all, so every call raised TypeError:
-            # unexpected keyword argument 'direction'. Adding the column here
-            # alongside the new parameter (see upsert_scan_decision below) so
-            # both fresh and existing DBs accept it in this same PR. Default
-            # 'high' matches every row written before this migration --
-            # scan_decisions only started existing after the high-side
-            # scanner did, so every legacy row is genuinely high-side.
-            ("scan_decisions", "direction", "TEXT NOT NULL DEFAULT 'high'"),
-            # Issue #1076: unclamped float ask prices ([0,1], not cents)
-            # alongside the existing yes_ask/no_ask integer-cent columns,
-            # which clamp to [1, 99] and destroy sub-penny prices in
-            # exactly the region (>0.96 or <0.04) where 74% of brackets sit
-            # -- see Bracket's own docstring in src/model/envelope.py for
-            # the full rationale. NULL for every row written before this
-            # migration (the clamp already discarded that information, so
-            # there is nothing to backfill). Additive only -- yes_ask/no_ask
-            # and every downstream gate/trading consumer are unchanged.
-            ("scan_decisions", "yes_price_raw", "REAL"),
-            ("scan_decisions", "no_price_raw", "REAL"),
-            # Issue #1236: scan_decisions had received zero writes since
-            # 2026-08-28 -- #1077 added yes_bid_raw/no_bid_raw to every
-            # scanner snapshot dict, but never extended
-            # Database.upsert_scan_decision() to accept them, so
-            # db.upsert_scan_decision(**decision) raised TypeError on every
-            # bracket of every poll and the broad `except Exception` in
-            # _persist_scan_decisions (src/scripts/run.py) downgraded that
-            # into a swallowed per-bracket warning. Adding the columns here
-            # (mirroring the #1076 yes_price_raw/no_price_raw precedent
-            # immediately above) alongside the new upsert_scan_decision
-            # parameters is half the fix; the other half is
-            # _persist_scan_decisions no longer blindly splatting the full
-            # snapshot dict (see its docstring). NULL for every row written
-            # before this migration -- the bug meant no row was written at
-            # all during the outage window, so there is nothing to backfill.
-            ("scan_decisions", "yes_bid_raw", "REAL"),
-            ("scan_decisions", "no_bid_raw", "REAL"),
-            # Issue #1145: paused_at timestamp for copy_wallets_followed
-            # When a wallet is paused, record the UTC timestamp of the pause event
-            # (used by story F4's Activity Feed to show real pause timestamps).
-            # NULL for rows written before this migration or paused wallets
-            # without a known pause time.
-            ("copy_wallets_followed", "paused_at", "TEXT"),
-            # Issue #1171 item 3 / #1174: actual filled stake in USD, distinct
-            # from copy_live_positions.stake_usd (the originally-INTENDED
-            # stake). Before this column existed, a 'partial' row's P&L had
-            # no way to be computed from what actually filled -- only the
-            # full intended stake was available, silently overstating both
-            # exposure and (once settlement existed) P&L on every partial
-            # fill. NULL for 'pending'/'rejected' rows (never filled) and for
-            # 'filled' rows where the fill is assumed equal to the full
-            # stake_usd (no partial-fill precision needed there); populated
-            # only when execute_live_copy_order confirms a partial fill.
-            # Readers should use COALESCE(filled_stake_usd, stake_usd) to
-            # stay correct for rows written before this migration.
-            ("copy_live_positions", "filled_stake_usd", "REAL"),
-            # Issue #1233: whether the screening run's get_wallet_trades()
-            # fetch was truncated (see copy_wallet_candidates' CREATE TABLE
-            # comment above for the full rationale). Default 0 backfills
-            # every pre-#1233 row -- the old gate's inert count comparison
-            # never actually flagged any row as truncated either, so 0
-            # (not-truncated) is the accurate carry-forward, not merely a
-            # placeholder default.
-            ("copy_wallet_candidates", "truncated", "INTEGER NOT NULL DEFAULT 0"),
-            # Issue #1253: per-wallet live opt-in (see the CREATE TABLE
-            # comment above for the full rationale). Default 0 backfills
-            # every pre-#1253 row -- no wallet becomes live as a side
-            # effect of this migration running.
-            (
-                "copy_wallets_followed", "live_enabled",
-                "INTEGER NOT NULL DEFAULT 0 CHECK(live_enabled IN (0,1))",
-            ),
-            # Issue #1259: optional live-only stake override (see the
-            # CREATE TABLE comment above for the full rationale). NULL
-            # backfills every pre-#1259 row -- no wallet's effective live
-            # sizing changes as a result of this migration running (readers
-            # resolve via COALESCE(live_stake_per_trade, stake_per_trade)).
-            ("copy_wallets_followed", "live_stake_per_trade", "REAL"),
-        ]:
-            try:
-                self._conn.execute(
-                    f"ALTER TABLE {table} ADD COLUMN {col} {definition}"
-                )
-                self._conn.commit()
-            except sqlite3.OperationalError:
-                pass  # column already exists
+        with self._lock:
+            for table, col, definition in [
+                ("observations", "cadence_min", "INTEGER"),
+                ("observations", "is_official", "INTEGER DEFAULT 1"),
+                ("trades", "estimated_fee_cents", "REAL"),
+                ("trades", "size_eur", "REAL"),
+                ("trades", "close_reason", "TEXT"),
+                ("trades", "minutes_to_settlement_at_close", "REAL"),
+                ("trades", "bid_depth_at_close", "INTEGER"),
+                ("station_overrides", "yes_enabled", "INTEGER NOT NULL DEFAULT 1"),
+                ("station_overrides", "no_enabled", "INTEGER NOT NULL DEFAULT 1"),
+                ("candidates", "direction", "TEXT NOT NULL DEFAULT 'high'"),
+                ("trades", "direction", "TEXT NOT NULL DEFAULT 'high'"),
+                ("settlements", "direction", "TEXT NOT NULL DEFAULT 'high'"),
+                ("station_overrides", "low_no_enabled", "INTEGER NOT NULL DEFAULT 0"),
+                ("emos_calibration", "forecast_source", "TEXT NOT NULL DEFAULT 'nws_open_meteo'"),
+                # Issue #551 stage 1: nullable raw (pre-MODEL_PROB_CAP) probability,
+                # logged alongside the existing capped value. NULL for rows written
+                # before this migration.
+                ("candidates", "p_yes_raw", "REAL"),
+                ("trades", "p_yes_raw", "REAL"),
+                # Issue #553: sample count for model_weights to distinguish calibrated
+                # models (sample_count >= MIN_SAMPLES) from cold-start (sample_count < MIN_SAMPLES).
+                ("model_weights", "sample_count", "INTEGER DEFAULT 0"),
+                # Issue #572: snapshot of the DEB weights dict used to build the
+                # intraday consensus basis for this delta, so the residual layer
+                # can later segment pre/post-fix deltas instead of mixing the
+                # open_meteo-only regime and the live-DEB-weighted regime in one
+                # rolling window. Default matches the legacy hardcoded basis, so
+                # historical rows (written before this migration) are tagged
+                # consistently with genuine fallback rows.
+                ("intraday_corrections", "basis_weights", "TEXT NOT NULL DEFAULT '{\"open_meteo\": 1.0}'"),
+                # Issue #609: market end date (YYYY-MM-DD), populated at live-trade
+                # insert time from the market's endDate so settle_live_trades() can
+                # match DB rows to a settlement date without depending on
+                # live_trades.jsonl. NULL for rows written before this migration
+                # ("legacy" rows) -- settle.py falls back to the station-local date
+                # of `ts` for those.
+                ("trades", "end_date", "TEXT"),
+                # Issue #622: track whether settlement outcome came from Gamma market
+                # resolution or METAR weather truth. NULL for rows written before this
+                # migration (legacy rows without a known source).
+                ("settlements", "resolution_source", "TEXT"),
+                # Issue #449: sigma-source axis for EMOS retraining ('fixed' | 'ensemble'),
+                # keyed alongside forecast_source so a sigma_source='ensemble' retrain is
+                # stored as an independent row and never overwrites the legacy
+                # sigma_source='fixed' calibration (same non-overwrite pattern as #659's
+                # forecast_source column). Default 'fixed' matches every row written
+                # before this migration -- readers that don't pass sigma_source keep
+                # resolving to the same rows they always have (see _active_sigma_source).
+                ("emos_calibration", "sigma_source", "TEXT NOT NULL DEFAULT 'fixed'"),
+                # Issue #665: per-lead-bin EMOS coefficients. Default 24 matches the
+                # implicit lead bin every pre-#665 row was trained/served at
+                # (fetch_training_data's own default), so existing rows keep serving
+                # identically until a caller explicitly fits/reads a different bin.
+                ("emos_calibration", "lead_hours", "INTEGER NOT NULL DEFAULT 24"),
+                # Issue #687: discriminator for next-day (forecast-only, shadow-only)
+                # candidates vs. same-day candidates -- next-day rows flow into the
+                # same candidates/snapshot_archive populations feeding the prob-cap
+                # report and saturation baselines, so they must be explicitly
+                # filterable rather than inferred from minutes_to_settlement.
+                # Default 0 matches every pre-#687 row (all same-day).
+                ("candidates", "is_next_day", "INTEGER NOT NULL DEFAULT 0"),
+                # Issue #704 (Gap 1): same discriminator as candidates.is_next_day,
+                # but on trades -- upsert_shadow_trade() (the next-day shadow write
+                # path) had no way to tag its own rows, so once NEXT_DAY_EVALUATION
+                # is on, next-day shadow trades are indistinguishable from same-day
+                # shadow trades in every trades-based consumer (promotion gate,
+                # prob-cap report, shadow-health calibration). Default 0 matches
+                # every pre-#704 row (all same-day).
+                ("trades", "is_next_day", "INTEGER NOT NULL DEFAULT 0"),
+                # Issue #704 (Gap 2): records whether a same-station LIVE position
+                # was open at next-day-evaluation time, so the ≥7-day shadow window
+                # can quantify how often cross-day exposure would actually occur
+                # (the approved #687 design's deferred-question-1 data need).
+                # Always 0 for same-day candidates -- only populated by scanner.py's
+                # next-day-eval branch. Default 0 matches every pre-#704 row.
+                ("candidates", "today_position_open", "INTEGER NOT NULL DEFAULT 0"),
+                # Issue #759: forecast-stack axis for the CRPS promotion counter.
+                # Without this, get_emos_crps_count/emos_crps_logged_for_date key
+                # on (city, model_mode) only, so two stacks' shadow runs on the
+                # same day collide on the one-sample-per-city-per-day dedup guard
+                # and the promotion count silently pools CRPS from whichever
+                # stack happens to log first. Default 'baseline' backfills every
+                # pre-#759 row (all logged before forecast-stack expansion
+                # existed) and matches _active_forecast_source's own fallback, so
+                # the already-accumulated baseline promotion evidence keeps
+                # counting unchanged.
+                ("emos_crps_log", "forecast_source", "TEXT NOT NULL DEFAULT 'baseline'"),
+                # Issue #851: sigma-source axis for the CRPS promotion counter,
+                # mirroring #759's forecast_source fix. Without this,
+                # get_emos_crps_count/emos_crps_logged_for_date key on
+                # (city, model_mode, forecast_source) only, so a sigma_source
+                # switch (#799, fixed -> ensemble) does NOT reset the promotion
+                # clock: shadow-day evidence logged under the old fixed-sigma
+                # coefficients keeps counting toward the newly-retrained
+                # ensemble-sigma lineage's promotion decision -- the exact
+                # #658-style train/serve-evidence skew #799 closed for the
+                # coefficients themselves. Default 'fixed' backfills every
+                # pre-#851 row -- every CRPS row logged before this migration was
+                # scored against a sigma_source='fixed' (or unresolved,
+                # equivalently pre-#449) coefficient fit, so this is the accurate
+                # historical tag, not merely a matching-default placeholder.
+                ("emos_crps_log", "sigma_source", "TEXT NOT NULL DEFAULT 'fixed'"),
+                # Issue #780: distinguishes a confirmed live fill from the
+                # scanner's paper-mode "would trade live" placeholder for
+                # traded_live rows -- see _persist_scan_decisions in run.py for
+                # where it's stamped. Default 'paper' backfills every pre-#780
+                # row conservatively (never claim a legacy row as a confirmed
+                # live fill it can't prove).
+                ("scan_decisions", "execution_mode", "TEXT NOT NULL DEFAULT 'paper'"),
+                # Issue #900: scan_decisions never carried the high/low market
+                # discriminator that candidates/trades/settlements already have
+                # (see the direction migrations above) -- the scanner has stamped
+                # every snapshot dict with a direction key since #876 (high-side
+                # "high", low-side "low"), but upsert_scan_decision() had no
+                # direction parameter at all, so every call raised TypeError:
+                # unexpected keyword argument 'direction'. Adding the column here
+                # alongside the new parameter (see upsert_scan_decision below) so
+                # both fresh and existing DBs accept it in this same PR. Default
+                # 'high' matches every row written before this migration --
+                # scan_decisions only started existing after the high-side
+                # scanner did, so every legacy row is genuinely high-side.
+                ("scan_decisions", "direction", "TEXT NOT NULL DEFAULT 'high'"),
+                # Issue #1076: unclamped float ask prices ([0,1], not cents)
+                # alongside the existing yes_ask/no_ask integer-cent columns,
+                # which clamp to [1, 99] and destroy sub-penny prices in
+                # exactly the region (>0.96 or <0.04) where 74% of brackets sit
+                # -- see Bracket's own docstring in src/model/envelope.py for
+                # the full rationale. NULL for every row written before this
+                # migration (the clamp already discarded that information, so
+                # there is nothing to backfill). Additive only -- yes_ask/no_ask
+                # and every downstream gate/trading consumer are unchanged.
+                ("scan_decisions", "yes_price_raw", "REAL"),
+                ("scan_decisions", "no_price_raw", "REAL"),
+                # Issue #1236: scan_decisions had received zero writes since
+                # 2026-08-28 -- #1077 added yes_bid_raw/no_bid_raw to every
+                # scanner snapshot dict, but never extended
+                # Database.upsert_scan_decision() to accept them, so
+                # db.upsert_scan_decision(**decision) raised TypeError on every
+                # bracket of every poll and the broad `except Exception` in
+                # _persist_scan_decisions (src/scripts/run.py) downgraded that
+                # into a swallowed per-bracket warning. Adding the columns here
+                # (mirroring the #1076 yes_price_raw/no_price_raw precedent
+                # immediately above) alongside the new upsert_scan_decision
+                # parameters is half the fix; the other half is
+                # _persist_scan_decisions no longer blindly splatting the full
+                # snapshot dict (see its docstring). NULL for every row written
+                # before this migration -- the bug meant no row was written at
+                # all during the outage window, so there is nothing to backfill.
+                ("scan_decisions", "yes_bid_raw", "REAL"),
+                ("scan_decisions", "no_bid_raw", "REAL"),
+                # Issue #1145: paused_at timestamp for copy_wallets_followed
+                # When a wallet is paused, record the UTC timestamp of the pause event
+                # (used by story F4's Activity Feed to show real pause timestamps).
+                # NULL for rows written before this migration or paused wallets
+                # without a known pause time.
+                ("copy_wallets_followed", "paused_at", "TEXT"),
+                # Issue #1171 item 3 / #1174: actual filled stake in USD, distinct
+                # from copy_live_positions.stake_usd (the originally-INTENDED
+                # stake). Before this column existed, a 'partial' row's P&L had
+                # no way to be computed from what actually filled -- only the
+                # full intended stake was available, silently overstating both
+                # exposure and (once settlement existed) P&L on every partial
+                # fill. NULL for 'pending'/'rejected' rows (never filled) and for
+                # 'filled' rows where the fill is assumed equal to the full
+                # stake_usd (no partial-fill precision needed there); populated
+                # only when execute_live_copy_order confirms a partial fill.
+                # Readers should use COALESCE(filled_stake_usd, stake_usd) to
+                # stay correct for rows written before this migration.
+                ("copy_live_positions", "filled_stake_usd", "REAL"),
+                # Issue #1233: whether the screening run's get_wallet_trades()
+                # fetch was truncated (see copy_wallet_candidates' CREATE TABLE
+                # comment above for the full rationale). Default 0 backfills
+                # every pre-#1233 row -- the old gate's inert count comparison
+                # never actually flagged any row as truncated either, so 0
+                # (not-truncated) is the accurate carry-forward, not merely a
+                # placeholder default.
+                ("copy_wallet_candidates", "truncated", "INTEGER NOT NULL DEFAULT 0"),
+                # Issue #1253: per-wallet live opt-in (see the CREATE TABLE
+                # comment above for the full rationale). Default 0 backfills
+                # every pre-#1253 row -- no wallet becomes live as a side
+                # effect of this migration running.
+                (
+                    "copy_wallets_followed", "live_enabled",
+                    "INTEGER NOT NULL DEFAULT 0 CHECK(live_enabled IN (0,1))",
+                ),
+                # Issue #1259: optional live-only stake override (see the
+                # CREATE TABLE comment above for the full rationale). NULL
+                # backfills every pre-#1259 row -- no wallet's effective live
+                # sizing changes as a result of this migration running (readers
+                # resolve via COALESCE(live_stake_per_trade, stake_per_trade)).
+                ("copy_wallets_followed", "live_stake_per_trade", "REAL"),
+            ]:
+                try:
+                    self._conn.execute(
+                        f"ALTER TABLE {table} ADD COLUMN {col} {definition}"
+                    )
+                    self._conn.commit()
+                except sqlite3.OperationalError:
+                    pass  # column already exists
 
-        # Index on trades.close_reason — added after migration ensures column exists
-        self._conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_trades_close_reason ON trades(close_reason)"
-        )
-        # Composite indices on (station, direction) — added after ALTER TABLE migration
-        for tbl in ("candidates", "trades", "settlements"):
+            # Index on trades.close_reason — added after migration ensures column exists
             self._conn.execute(
-                f"CREATE INDEX IF NOT EXISTS idx_{tbl}_station_direction "
-                f"ON {tbl}(station, direction)"
+                "CREATE INDEX IF NOT EXISTS idx_trades_close_reason ON trades(close_reason)"
             )
-        self._conn.commit()
-
-        # Migration: add station + source columns to intraday_corrections and
-        # update PK to (city, station, source, date, obs_time).
-        # SQLite cannot modify a PRIMARY KEY in place — requires table rebuild.
-        # Detect old schema by checking whether 'station' column is absent.
-        ic_info = self._conn.execute(
-            "PRAGMA table_info(intraday_corrections)"
-        ).fetchall()
-        ic_cols = {row[1] for row in ic_info}
-        if "station" not in ic_cols:
-            with self._conn:
-                self._conn.execute("DROP TABLE IF EXISTS intraday_corrections_new")
+            # Composite indices on (station, direction) — added after ALTER TABLE migration
+            for tbl in ("candidates", "trades", "settlements"):
                 self._conn.execute(
-                    """
+                    f"CREATE INDEX IF NOT EXISTS idx_{tbl}_station_direction "
+                    f"ON {tbl}(station, direction)"
+                )
+            self._conn.commit()
+
+            # Migration: add station + source columns to intraday_corrections and
+            # update PK to (city, station, source, date, obs_time).
+            # SQLite cannot modify a PRIMARY KEY in place — requires table rebuild.
+            # Detect old schema by checking whether 'station' column is absent.
+            ic_info = self._conn.execute(
+                "PRAGMA table_info(intraday_corrections)"
+            ).fetchall()
+            ic_cols = {row[1] for row in ic_info}
+            if "station" not in ic_cols:
+                with self._conn:
+                    self._conn.execute("DROP TABLE IF EXISTS intraday_corrections_new")
+                    self._conn.execute(
+                        """
                     CREATE TABLE intraday_corrections_new (
                         city           TEXT NOT NULL,
                         station        TEXT NOT NULL DEFAULT '',
@@ -917,9 +918,9 @@ class Database:
                         PRIMARY KEY (city, station, source, date, obs_time)
                     )
                     """
-                )
-                self._conn.execute(
-                    """
+                    )
+                    self._conn.execute(
+                        """
                     INSERT INTO intraday_corrections_new
                         (city, station, source, date, obs_time,
                          obs_temp_f, model_temp_f, delta_f,
@@ -930,59 +931,59 @@ class Database:
                            '{"open_meteo": 1.0}' AS basis_weights
                     FROM intraday_corrections
                     """
-                )
-                self._conn.execute("DROP TABLE intraday_corrections")
-                self._conn.execute(
-                    "ALTER TABLE intraday_corrections_new "
-                    "RENAME TO intraday_corrections"
-                )
-                self._conn.execute(
-                    "CREATE INDEX IF NOT EXISTS idx_ic_city_date "
-                    "ON intraday_corrections(city, date)"
-                )
-                self._conn.execute(
-                    "CREATE INDEX IF NOT EXISTS idx_ic_city_station_source_date "
-                    "ON intraday_corrections(city, station, source, date)"
-                )
+                    )
+                    self._conn.execute("DROP TABLE intraday_corrections")
+                    self._conn.execute(
+                        "ALTER TABLE intraday_corrections_new "
+                        "RENAME TO intraday_corrections"
+                    )
+                    self._conn.execute(
+                        "CREATE INDEX IF NOT EXISTS idx_ic_city_date "
+                        "ON intraday_corrections(city, date)"
+                    )
+                    self._conn.execute(
+                        "CREATE INDEX IF NOT EXISTS idx_ic_city_station_source_date "
+                        "ON intraday_corrections(city, station, source, date)"
+                    )
 
-        # Back-compat: rows where legacy enabled=0 → shadow both sides
-        self._conn.execute(
-            "UPDATE station_overrides SET yes_enabled=0, no_enabled=0 WHERE enabled=0"
-        )
-        self._conn.commit()
+            # Back-compat: rows where legacy enabled=0 → shadow both sides
+            self._conn.execute(
+                "UPDATE station_overrides SET yes_enabled=0, no_enabled=0 WHERE enabled=0"
+            )
+            self._conn.commit()
 
-        # Migration: extend model_forecast_log to include lead_hours, issued_at, sigma_f.
-        # Strategy (idempotent):
-        #   1. If model_forecast_log_legacy_v1 does not exist: rename current table to legacy,
-        #      create new table with full schema (including new columns and new unique index).
-        #   2. If legacy table already exists but current table has the old unique index
-        #      (station, model, date) — drop+recreate current table (partial migration).
-        #   3. If both legacy table exists and current table has the new schema — no-op.
-        self._migrate_forecast_log()
+            # Migration: extend model_forecast_log to include lead_hours, issued_at, sigma_f.
+            # Strategy (idempotent):
+            #   1. If model_forecast_log_legacy_v1 does not exist: rename current table to legacy,
+            #      create new table with full schema (including new columns and new unique index).
+            #   2. If legacy table already exists but current table has the old unique index
+            #      (station, model, date) — drop+recreate current table (partial migration).
+            #   3. If both legacy table exists and current table has the new schema — no-op.
+            self._migrate_forecast_log()
 
-        # Migration: widen emos_calibration's UNIQUE constraint to (city, model_mode,
-        # forecast_source, sigma_source, lead_hours) — issues #449/#665. The ALTER
-        # TABLE ADD COLUMN above gives existing DBs the sigma_source/lead_hours
-        # columns, but SQLite cannot widen a UNIQUE constraint in place; a DB whose
-        # table was created before this migration still has an older UNIQUE index
-        # (just city+model_mode, or city+model_mode+forecast_source), which would
-        # silently collide a sigma_source='ensemble' or non-default lead_hours
-        # retrain into the 'fixed'/lead_hours=24 legacy row via INSERT OR REPLACE.
-        # Detect the narrow constraint via SQLite's own index catalog (PRAGMA
-        # index_list/index_info) rather than matching sqlite_master's free-form SQL
-        # text, which formatting changes could silently desync from.
-        _ec_unique_cols: set = set()
-        for _idx in self._conn.execute("PRAGMA index_list(emos_calibration)").fetchall():
-            if not _idx[2]:  # idx[2] = unique flag
-                continue
-            _ec_unique_cols |= {
-                col[2] for col in self._conn.execute(f"PRAGMA index_info({_idx[1]})").fetchall()
-            }
-        if not {"sigma_source", "lead_hours"}.issubset(_ec_unique_cols):
-            with self._conn:
-                self._conn.execute("DROP TABLE IF EXISTS emos_calibration_new")
-                self._conn.execute(
-                    """
+            # Migration: widen emos_calibration's UNIQUE constraint to (city, model_mode,
+            # forecast_source, sigma_source, lead_hours) — issues #449/#665. The ALTER
+            # TABLE ADD COLUMN above gives existing DBs the sigma_source/lead_hours
+            # columns, but SQLite cannot widen a UNIQUE constraint in place; a DB whose
+            # table was created before this migration still has an older UNIQUE index
+            # (just city+model_mode, or city+model_mode+forecast_source), which would
+            # silently collide a sigma_source='ensemble' or non-default lead_hours
+            # retrain into the 'fixed'/lead_hours=24 legacy row via INSERT OR REPLACE.
+            # Detect the narrow constraint via SQLite's own index catalog (PRAGMA
+            # index_list/index_info) rather than matching sqlite_master's free-form SQL
+            # text, which formatting changes could silently desync from.
+            _ec_unique_cols: set = set()
+            for _idx in self._conn.execute("PRAGMA index_list(emos_calibration)").fetchall():
+                if not _idx[2]:  # idx[2] = unique flag
+                    continue
+                _ec_unique_cols |= {
+                    col[2] for col in self._conn.execute(f"PRAGMA index_info({_idx[1]})").fetchall()
+                }
+            if not {"sigma_source", "lead_hours"}.issubset(_ec_unique_cols):
+                with self._conn:
+                    self._conn.execute("DROP TABLE IF EXISTS emos_calibration_new")
+                    self._conn.execute(
+                        """
                     CREATE TABLE emos_calibration_new (
                         id                  INTEGER PRIMARY KEY AUTOINCREMENT,
                         city                TEXT NOT NULL,
@@ -1000,9 +1001,9 @@ class Database:
                         UNIQUE(city, model_mode, forecast_source, sigma_source, lead_hours)
                     )
                     """
-                )
-                self._conn.execute(
-                    """
+                    )
+                    self._conn.execute(
+                        """
                     INSERT INTO emos_calibration_new
                         (id, city, model_mode, forecast_source, sigma_source, lead_hours,
                          a, b, c, d, crps_score, ready_for_promotion, trained_at)
@@ -1011,40 +1012,40 @@ class Database:
                            a, b, c, d, crps_score, ready_for_promotion, trained_at
                     FROM emos_calibration
                     """
-                )
-                self._conn.execute("DROP TABLE emos_calibration")
-                self._conn.execute(
-                    "ALTER TABLE emos_calibration_new RENAME TO emos_calibration"
-                )
+                    )
+                    self._conn.execute("DROP TABLE emos_calibration")
+                    self._conn.execute(
+                        "ALTER TABLE emos_calibration_new RENAME TO emos_calibration"
+                    )
+                self._conn.commit()
+
+            # Migration: add/update partial UNIQUE index for shadow-trade dedup (issue #376, #613).
+            # When the index definition changes (e.g., adding direction column), we must drop
+            # and recreate to ensure the new definition is used.
+            self._conn.execute("DROP INDEX IF EXISTS idx_trades_shadow_unique")
+            self._conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_trades_shadow_unique "
+                "ON trades(station, bracket_low, bracket_high, side, direction, substr(ts,1,10)) "
+                "WHERE mode='shadow'"
+            )
             self._conn.commit()
 
-        # Migration: add/update partial UNIQUE index for shadow-trade dedup (issue #376, #613).
-        # When the index definition changes (e.g., adding direction column), we must drop
-        # and recreate to ensure the new definition is used.
-        self._conn.execute("DROP INDEX IF EXISTS idx_trades_shadow_unique")
-        self._conn.execute(
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_trades_shadow_unique "
-            "ON trades(station, bracket_low, bracket_high, side, direction, substr(ts,1,10)) "
-            "WHERE mode='shadow'"
-        )
-        self._conn.commit()
-
-        # Migration: extend trades.mode CHECK to include 'shadow'.
-        # SQLite cannot ALTER a CHECK constraint in place — requires table rebuild.
-        # Detect whether the old constraint (without 'shadow') is still present by
-        # inspecting sqlite_master for the CREATE TABLE source text.
-        row = self._conn.execute(
-            "SELECT sql FROM sqlite_master WHERE type='table' AND name='trades'"
-        ).fetchone()
-        if row and "'shadow'" not in row[0]:
-            # Temporarily disable FK checks so the DROP TABLE does not violate
-            # the open_positions.trade_id → trades(id) foreign key.
-            self._conn.execute("PRAGMA foreign_keys=OFF")
-            try:
-                with self._conn:
-                    self._conn.execute("DROP TABLE IF EXISTS trades_new")
-                    self._conn.execute(
-                        """
+            # Migration: extend trades.mode CHECK to include 'shadow'.
+            # SQLite cannot ALTER a CHECK constraint in place — requires table rebuild.
+            # Detect whether the old constraint (without 'shadow') is still present by
+            # inspecting sqlite_master for the CREATE TABLE source text.
+            row = self._conn.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='trades'"
+            ).fetchone()
+            if row and "'shadow'" not in row[0]:
+                # Temporarily disable FK checks so the DROP TABLE does not violate
+                # the open_positions.trade_id → trades(id) foreign key.
+                self._conn.execute("PRAGMA foreign_keys=OFF")
+                try:
+                    with self._conn:
+                        self._conn.execute("DROP TABLE IF EXISTS trades_new")
+                        self._conn.execute(
+                            """
                         CREATE TABLE trades_new (
                             id              INTEGER PRIMARY KEY AUTOINCREMENT,
                             ts              TEXT NOT NULL,
@@ -1071,73 +1072,73 @@ class Database:
                             end_date        TEXT
                         )
                         """
-                    )
-                    # direction/p_yes_raw/end_date/estimated_fee_cents may not exist in old table — coalesce
-                    old_cols_q = self._conn.execute(
-                        "PRAGMA table_info(trades)"
-                    ).fetchall()
-                    old_col_names = {r[1] for r in old_cols_q}
-                    direction_expr = (
-                        "direction" if "direction" in old_col_names else "'high'"
-                    )
-                    p_yes_raw_expr = (
-                        "p_yes_raw" if "p_yes_raw" in old_col_names else "NULL"
-                    )
-                    end_date_expr = (
-                        "end_date" if "end_date" in old_col_names else "NULL"
-                    )
-                    # Migration: rename actual_fee_cents → estimated_fee_cents if old table has it
-                    if "estimated_fee_cents" in old_col_names:
-                        fee_expr = "estimated_fee_cents"
-                    elif "actual_fee_cents" in old_col_names:
-                        fee_expr = "actual_fee_cents"
-                    else:
-                        fee_expr = "NULL"
-                    self._conn.execute(
-                        "INSERT INTO trades_new SELECT "
-                        "id,ts,station,ticker,bracket_low,bracket_high,side,"
-                        "predicted_price,actual_price,slippage,predicted_edge,mode,"
-                        "order_id,outcome,pnl,capital_before,capital_after,settled_at,"
-                        f"{fee_expr},size_eur,{direction_expr},{p_yes_raw_expr},{end_date_expr} "
-                        "FROM trades"
-                    )
-                    self._conn.execute("DROP TABLE trades")
-                    self._conn.execute(
-                        "ALTER TABLE trades_new RENAME TO trades"
-                    )
-                    self._conn.execute(
-                        "CREATE INDEX IF NOT EXISTS idx_trades_station_ts "
-                        "ON trades(station, ts)"
-                    )
-                    self._conn.execute(
-                        "CREATE INDEX IF NOT EXISTS idx_trades_mode ON trades(mode)"
-                    )
-            finally:
-                self._conn.execute("PRAGMA foreign_keys=ON")
+                        )
+                        # direction/p_yes_raw/end_date/estimated_fee_cents may not exist in old table — coalesce
+                        old_cols_q = self._conn.execute(
+                            "PRAGMA table_info(trades)"
+                        ).fetchall()
+                        old_col_names = {r[1] for r in old_cols_q}
+                        direction_expr = (
+                            "direction" if "direction" in old_col_names else "'high'"
+                        )
+                        p_yes_raw_expr = (
+                            "p_yes_raw" if "p_yes_raw" in old_col_names else "NULL"
+                        )
+                        end_date_expr = (
+                            "end_date" if "end_date" in old_col_names else "NULL"
+                        )
+                        # Migration: rename actual_fee_cents → estimated_fee_cents if old table has it
+                        if "estimated_fee_cents" in old_col_names:
+                            fee_expr = "estimated_fee_cents"
+                        elif "actual_fee_cents" in old_col_names:
+                            fee_expr = "actual_fee_cents"
+                        else:
+                            fee_expr = "NULL"
+                        self._conn.execute(
+                            "INSERT INTO trades_new SELECT "
+                            "id,ts,station,ticker,bracket_low,bracket_high,side,"
+                            "predicted_price,actual_price,slippage,predicted_edge,mode,"
+                            "order_id,outcome,pnl,capital_before,capital_after,settled_at,"
+                            f"{fee_expr},size_eur,{direction_expr},{p_yes_raw_expr},{end_date_expr} "
+                            "FROM trades"
+                        )
+                        self._conn.execute("DROP TABLE trades")
+                        self._conn.execute(
+                            "ALTER TABLE trades_new RENAME TO trades"
+                        )
+                        self._conn.execute(
+                            "CREATE INDEX IF NOT EXISTS idx_trades_station_ts "
+                            "ON trades(station, ts)"
+                        )
+                        self._conn.execute(
+                            "CREATE INDEX IF NOT EXISTS idx_trades_mode ON trades(mode)"
+                        )
+                finally:
+                    self._conn.execute("PRAGMA foreign_keys=ON")
 
-        # Migration: drop the scan_decisions.gate_verdict CHECK constraint
-        # (issue #912). SQLite cannot ALTER a CHECK in place -- requires a
-        # table rebuild. This constraint was hand-maintained separately from
-        # scanner.GATE_VERDICTS/Database._SCAN_DECISION_GATE_VERDICTS and
-        # fell out of sync when 'day_mismatch_shadow' (issue #820) was added
-        # to those two but not here: every existing database kept rejecting
-        # that verdict with a raw sqlite3.IntegrityError even after #820
-        # shipped, because CREATE TABLE IF NOT EXISTS is a no-op against a
-        # table that already exists. The constraint is now removed entirely
-        # (not widened) -- validation lives solely in the Python validator
-        # at upsert_scan_decision, which checks against the single
-        # src.strategy.gate_verdicts.GATE_VERDICTS source of truth and
-        # raises a clear ValueError instead of an opaque CHECK failure.
-        # Detect the old constraint via sqlite_master's stored CREATE TABLE
-        # text -- same pattern as the trades.mode migration above.
-        row = self._conn.execute(
-            "SELECT sql FROM sqlite_master WHERE type='table' AND name='scan_decisions'"
-        ).fetchone()
-        if row and row[0] and "CHECK(gate_verdict" in row[0]:
-            with self._conn:
-                self._conn.execute("DROP TABLE IF EXISTS scan_decisions_new")
-                self._conn.execute(
-                    """
+            # Migration: drop the scan_decisions.gate_verdict CHECK constraint
+            # (issue #912). SQLite cannot ALTER a CHECK in place -- requires a
+            # table rebuild. This constraint was hand-maintained separately from
+            # scanner.GATE_VERDICTS/Database._SCAN_DECISION_GATE_VERDICTS and
+            # fell out of sync when 'day_mismatch_shadow' (issue #820) was added
+            # to those two but not here: every existing database kept rejecting
+            # that verdict with a raw sqlite3.IntegrityError even after #820
+            # shipped, because CREATE TABLE IF NOT EXISTS is a no-op against a
+            # table that already exists. The constraint is now removed entirely
+            # (not widened) -- validation lives solely in the Python validator
+            # at upsert_scan_decision, which checks against the single
+            # src.strategy.gate_verdicts.GATE_VERDICTS source of truth and
+            # raises a clear ValueError instead of an opaque CHECK failure.
+            # Detect the old constraint via sqlite_master's stored CREATE TABLE
+            # text -- same pattern as the trades.mode migration above.
+            row = self._conn.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='scan_decisions'"
+            ).fetchone()
+            if row and row[0] and "CHECK(gate_verdict" in row[0]:
+                with self._conn:
+                    self._conn.execute("DROP TABLE IF EXISTS scan_decisions_new")
+                    self._conn.execute(
+                        """
                     CREATE TABLE scan_decisions_new (
                         station               TEXT NOT NULL,
                         ticker                TEXT NOT NULL,
@@ -1180,68 +1181,68 @@ class Database:
                         PRIMARY KEY (station, ticker, date)
                     )
                     """
-                )
-                old_cols = {
-                    r[1] for r in self._conn.execute(
-                        "PRAGMA table_info(scan_decisions)"
-                    ).fetchall()
-                }
-                new_cols = {
-                    r[1] for r in self._conn.execute(
-                        "PRAGMA table_info(scan_decisions_new)"
-                    ).fetchall()
-                }
-                common_cols = [c for c in (
-                    "station", "ticker", "date", "ts", "poll_ts", "bracket_low",
-                    "bracket_high", "side", "yes_ask", "no_ask",
-                    "yes_price_raw", "no_price_raw", "yes_bid_raw", "no_bid_raw",
-                    "current_high",
-                    "latest_temp", "forecast_high", "p_yes", "raw_p_yes",
-                    "capped_p_yes", "ev_yes", "ev_no", "ev_yes_raw", "ev_no_raw",
-                    "minutes_to_settlement", "emos_mode", "is_next_day",
-                    "gate_verdict", "gate_actual", "gate_threshold", "gate_unit",
-                    "gate_detail", "execution_mode", "ensemble_mean",
-                    "ensemble_members", "ensemble_range_low", "ensemble_range_high",
-                    "direction",
-                ) if c in old_cols and c in new_cols]
-                cols_csv = ",".join(common_cols)
-                self._conn.execute(
-                    f"INSERT INTO scan_decisions_new ({cols_csv}) "
-                    f"SELECT {cols_csv} FROM scan_decisions"
-                )
-                self._conn.execute("DROP TABLE scan_decisions")
-                self._conn.execute(
-                    "ALTER TABLE scan_decisions_new RENAME TO scan_decisions"
-                )
-                self._conn.execute(
-                    "CREATE INDEX IF NOT EXISTS idx_scan_decisions_station_date "
-                    "ON scan_decisions(station, date)"
-                )
+                    )
+                    old_cols = {
+                        r[1] for r in self._conn.execute(
+                            "PRAGMA table_info(scan_decisions)"
+                        ).fetchall()
+                    }
+                    new_cols = {
+                        r[1] for r in self._conn.execute(
+                            "PRAGMA table_info(scan_decisions_new)"
+                        ).fetchall()
+                    }
+                    common_cols = [c for c in (
+                        "station", "ticker", "date", "ts", "poll_ts", "bracket_low",
+                        "bracket_high", "side", "yes_ask", "no_ask",
+                        "yes_price_raw", "no_price_raw", "yes_bid_raw", "no_bid_raw",
+                        "current_high",
+                        "latest_temp", "forecast_high", "p_yes", "raw_p_yes",
+                        "capped_p_yes", "ev_yes", "ev_no", "ev_yes_raw", "ev_no_raw",
+                        "minutes_to_settlement", "emos_mode", "is_next_day",
+                        "gate_verdict", "gate_actual", "gate_threshold", "gate_unit",
+                        "gate_detail", "execution_mode", "ensemble_mean",
+                        "ensemble_members", "ensemble_range_low", "ensemble_range_high",
+                        "direction",
+                    ) if c in old_cols and c in new_cols]
+                    cols_csv = ",".join(common_cols)
+                    self._conn.execute(
+                        f"INSERT INTO scan_decisions_new ({cols_csv}) "
+                        f"SELECT {cols_csv} FROM scan_decisions"
+                    )
+                    self._conn.execute("DROP TABLE scan_decisions")
+                    self._conn.execute(
+                        "ALTER TABLE scan_decisions_new RENAME TO scan_decisions"
+                    )
+                    self._conn.execute(
+                        "CREATE INDEX IF NOT EXISTS idx_scan_decisions_station_date "
+                        "ON scan_decisions(station, date)"
+                    )
 
-        # Migration: rename actual_fee_cents → estimated_fee_cents (issue #1075).
-        # This column has always held estimated fees (from estimate_fee_cents model),
-        # never observed fill costs. The rename is idempotent.
-        # If actual_fee_cents has data and estimated_fee_cents is empty, copy the data.
-        old_cols = {
-            r[1] for r in self._conn.execute(
-                "PRAGMA table_info(trades)"
-            ).fetchall()
-        }
-        if "actual_fee_cents" in old_cols:
-            # Copy data from actual_fee_cents to estimated_fee_cents if needed
-            if "estimated_fee_cents" in old_cols:
-                # Both columns exist — copy data and drop the old column
-                self._conn.execute(
-                    "UPDATE trades SET estimated_fee_cents = actual_fee_cents "
-                    "WHERE estimated_fee_cents IS NULL AND actual_fee_cents IS NOT NULL"
-                )
-                # Now rebuild the table to drop actual_fee_cents
-                self._conn.execute("PRAGMA foreign_keys=OFF")
-                try:
-                    with self._conn:
-                        self._conn.execute("DROP TABLE IF EXISTS trades_new")
-                        self._conn.execute(
-                            """
+            # Migration: rename actual_fee_cents → estimated_fee_cents (issue #1075).
+            # This column has always held estimated fees (from estimate_fee_cents model),
+            # never observed fill costs. The rename is idempotent.
+            # If actual_fee_cents has data and estimated_fee_cents is empty, copy the data.
+            old_cols = {
+                r[1] for r in self._conn.execute(
+                    "PRAGMA table_info(trades)"
+                ).fetchall()
+            }
+            if "actual_fee_cents" in old_cols:
+                # Copy data from actual_fee_cents to estimated_fee_cents if needed
+                if "estimated_fee_cents" in old_cols:
+                    # Both columns exist — copy data and drop the old column
+                    self._conn.execute(
+                        "UPDATE trades SET estimated_fee_cents = actual_fee_cents "
+                        "WHERE estimated_fee_cents IS NULL AND actual_fee_cents IS NOT NULL"
+                    )
+                    # Now rebuild the table to drop actual_fee_cents
+                    self._conn.execute("PRAGMA foreign_keys=OFF")
+                    try:
+                        with self._conn:
+                            self._conn.execute("DROP TABLE IF EXISTS trades_new")
+                            self._conn.execute(
+                                """
                             CREATE TABLE trades_new (
                                 id              INTEGER PRIMARY KEY AUTOINCREMENT,
                                 ts              TEXT NOT NULL,
@@ -1272,51 +1273,51 @@ class Database:
                                 is_next_day     INTEGER NOT NULL DEFAULT 0
                             )
                             """
-                        )
-                        self._conn.execute(
-                            "INSERT INTO trades_new SELECT "
-                            "id,ts,station,ticker,bracket_low,bracket_high,side,"
-                            "predicted_price,actual_price,slippage,predicted_edge,mode,"
-                            "order_id,outcome,pnl,capital_before,capital_after,settled_at,"
-                            "estimated_fee_cents,size_eur,close_reason,minutes_to_settlement_at_close,"
-                            "bid_depth_at_close,direction,p_yes_raw,end_date,is_next_day "
-                            "FROM trades"
-                        )
-                        self._conn.execute("DROP TABLE trades")
-                        self._conn.execute(
-                            "ALTER TABLE trades_new RENAME TO trades"
-                        )
-                        self._conn.execute(
-                            "CREATE INDEX IF NOT EXISTS idx_trades_station_ts "
-                            "ON trades(station, ts)"
-                        )
-                        self._conn.execute(
-                            "CREATE INDEX IF NOT EXISTS idx_trades_mode ON trades(mode)"
-                        )
-                finally:
-                    self._conn.execute("PRAGMA foreign_keys=ON")
-            else:
-                # Only actual_fee_cents exists (very old DB) — just rename via ADD
-                self._conn.execute("ALTER TABLE trades ADD COLUMN estimated_fee_cents REAL")
-                self._conn.execute(
-                    "UPDATE trades SET estimated_fee_cents = actual_fee_cents"
-                )
+                            )
+                            self._conn.execute(
+                                "INSERT INTO trades_new SELECT "
+                                "id,ts,station,ticker,bracket_low,bracket_high,side,"
+                                "predicted_price,actual_price,slippage,predicted_edge,mode,"
+                                "order_id,outcome,pnl,capital_before,capital_after,settled_at,"
+                                "estimated_fee_cents,size_eur,close_reason,minutes_to_settlement_at_close,"
+                                "bid_depth_at_close,direction,p_yes_raw,end_date,is_next_day "
+                                "FROM trades"
+                            )
+                            self._conn.execute("DROP TABLE trades")
+                            self._conn.execute(
+                                "ALTER TABLE trades_new RENAME TO trades"
+                            )
+                            self._conn.execute(
+                                "CREATE INDEX IF NOT EXISTS idx_trades_station_ts "
+                                "ON trades(station, ts)"
+                            )
+                            self._conn.execute(
+                                "CREATE INDEX IF NOT EXISTS idx_trades_mode ON trades(mode)"
+                            )
+                    finally:
+                        self._conn.execute("PRAGMA foreign_keys=ON")
+                else:
+                    # Only actual_fee_cents exists (very old DB) — just rename via ADD
+                    self._conn.execute("ALTER TABLE trades ADD COLUMN estimated_fee_cents REAL")
+                    self._conn.execute(
+                        "UPDATE trades SET estimated_fee_cents = actual_fee_cents"
+                    )
 
-        self._purge_stale_deb_weight_log()
+            self._purge_stale_deb_weight_log()
 
-        # Migration: purge intraday_corrections rows poisoned by the build_consensus
-        # weight-scaling bug (issue #615). Rows recorded while the bug was active have
-        # inflated delta_f values (~30-45°F for US cities) that corrupt the MAE gate
-        # and residual bias window. Rows matching the poisoned signature:
-        #   date >= '2026-07-02'  — #576 deploy date (when live DEB weights switched on)
-        #   basis_weights != '{"open_meteo": 1.0}'  — non-fallback weights = US stations
-        # are deleted so the MAE gate and residual correction window recover immediately.
-        self._conn.execute(
-            "DELETE FROM intraday_corrections "
-            "WHERE date >= '2026-07-02' "
-            "AND basis_weights != '{\"open_meteo\": 1.0}'"
-        )
-        self._conn.commit()
+            # Migration: purge intraday_corrections rows poisoned by the build_consensus
+            # weight-scaling bug (issue #615). Rows recorded while the bug was active have
+            # inflated delta_f values (~30-45°F for US cities) that corrupt the MAE gate
+            # and residual bias window. Rows matching the poisoned signature:
+            #   date >= '2026-07-02'  — #576 deploy date (when live DEB weights switched on)
+            #   basis_weights != '{"open_meteo": 1.0}'  — non-fallback weights = US stations
+            # are deleted so the MAE gate and residual correction window recover immediately.
+            self._conn.execute(
+                "DELETE FROM intraday_corrections "
+                "WHERE date >= '2026-07-02' "
+                "AND basis_weights != '{\"open_meteo\": 1.0}'"
+            )
+            self._conn.commit()
 
     def _purge_stale_deb_weight_log(self) -> None:
         """One-time idempotent cleanup for issue #552.
@@ -1341,7 +1342,8 @@ class Database:
 
     def close(self) -> None:
         """Close the underlying SQLite connection."""
-        self._conn.close()
+        with self._lock:
+            self._conn.close()
 
     def __enter__(self):
         """Context manager entry."""
@@ -1350,6 +1352,17 @@ class Database:
     def __exit__(self, *args):
         """Context manager exit; closes the connection."""
         self.close()
+
+    def query_rows(self, sql: str, params: "tuple | list" = ()) -> list:
+        """Run a read-only query under ``self._lock`` and return all rows.
+
+        Issue #1335: code outside this class that runs in the same process as
+        the bot (dashboard, ensemble_sigma) must not call ``_conn.execute``
+        directly -- that bypasses the lock that serialises access to the one
+        shared connection. Rows keep the connection's ``sqlite3.Row`` factory.
+        """
+        with self._lock:
+            return self._conn.execute(sql, params).fetchall()
 
     def _now(self) -> str:
         return datetime.now(timezone.utc).isoformat()
@@ -1377,20 +1390,21 @@ class Database:
         The legacy table is never dropped; it is kept as a permanent read-only
         audit trail of nowcast-snapshot rows captured before the migration.
         """
-        # Inspect current table columns
-        mfl_info = self._conn.execute(
-            "PRAGMA table_info(model_forecast_log)"
-        ).fetchall()
-        mfl_cols = {row[1] for row in mfl_info}
-        has_new_schema = "lead_hours" in mfl_cols and "sigma_f" in mfl_cols
+        with self._lock:
+            # Inspect current table columns
+            mfl_info = self._conn.execute(
+                "PRAGMA table_info(model_forecast_log)"
+            ).fetchall()
+            mfl_cols = {row[1] for row in mfl_info}
+            has_new_schema = "lead_hours" in mfl_cols and "sigma_f" in mfl_cols
 
-        # Check whether legacy table exists
-        legacy_exists = self._conn.execute(
-            "SELECT name FROM sqlite_master "
-            "WHERE type='table' AND name='model_forecast_log_legacy_v1'"
-        ).fetchone() is not None
+            # Check whether legacy table exists
+            legacy_exists = self._conn.execute(
+                "SELECT name FROM sqlite_master "
+                "WHERE type='table' AND name='model_forecast_log_legacy_v1'"
+            ).fetchone() is not None
 
-        _new_table_ddl = """
+            _new_table_ddl = """
             CREATE TABLE model_forecast_log (
                 id              INTEGER PRIMARY KEY AUTOINCREMENT,
                 station         TEXT NOT NULL,
@@ -1403,78 +1417,78 @@ class Database:
                 sigma_f         REAL
             )
         """
-        _new_index_ddl = (
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_mfl_station_model_date_lead "
-            "ON model_forecast_log(station, model, date, lead_hours)"
-        )
+            _new_index_ddl = (
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_mfl_station_model_date_lead "
+                "ON model_forecast_log(station, model, date, lead_hours)"
+            )
 
-        if has_new_schema:
-            # Case A: schema already correct — just ensure index exists.
-            self._conn.execute(_new_index_ddl)
-            self._conn.commit()
-            return
-
-        # Count existing rows to distinguish fresh vs pre-migration DB.
-        row_count = self._conn.execute(
-            "SELECT COUNT(*) FROM model_forecast_log"
-        ).fetchone()[0]
-
-        if not legacy_exists and row_count > 0:
-            # Case B: pre-#422 production DB with nowcast snapshots.
-            # Rename old table to legacy, drop its orphaned index, create fresh table.
-            with self._conn:
-                self._conn.execute(
-                    "ALTER TABLE model_forecast_log "
-                    "RENAME TO model_forecast_log_legacy_v1"
-                )
-                self._conn.execute(
-                    "DROP INDEX IF EXISTS idx_mfl_station_model_date"
-                )
-                self._conn.execute(_new_table_ddl)
+            if has_new_schema:
+                # Case A: schema already correct — just ensure index exists.
                 self._conn.execute(_new_index_ddl)
+                self._conn.commit()
+                return
 
-        elif not legacy_exists and row_count == 0:
-            # Case C: fresh install — add new columns to the empty table in place.
-            with self._conn:
-                for col, defn in [
-                    ("lead_hours", "INTEGER"),
-                    ("issued_at", "TEXT"),
-                    ("sigma_f", "REAL"),
-                ]:
-                    try:
-                        self._conn.execute(
-                            f"ALTER TABLE model_forecast_log ADD COLUMN {col} {defn}"
-                        )
-                    except sqlite3.OperationalError:
-                        pass  # column already exists
-                # Drop old index if it exists (single-column key won't work for v2)
-                self._conn.execute(
-                    "DROP INDEX IF EXISTS idx_mfl_station_model_date"
-                )
-                self._conn.execute(_new_index_ddl)
+            # Count existing rows to distinguish fresh vs pre-migration DB.
+            row_count = self._conn.execute(
+                "SELECT COUNT(*) FROM model_forecast_log"
+            ).fetchone()[0]
 
-        else:
-            # Case D: legacy exists but current table still lacks new columns
-            # (crash-recovery / partial migration path).
-            with self._conn:
-                self._conn.execute("DROP TABLE IF EXISTS model_forecast_log_new")
-                self._conn.execute(_new_table_ddl.replace(
-                    "CREATE TABLE model_forecast_log",
-                    "CREATE TABLE model_forecast_log_new",
-                ))
-                self._conn.execute(
-                    """
+            if not legacy_exists and row_count > 0:
+                # Case B: pre-#422 production DB with nowcast snapshots.
+                # Rename old table to legacy, drop its orphaned index, create fresh table.
+                with self._conn:
+                    self._conn.execute(
+                        "ALTER TABLE model_forecast_log "
+                        "RENAME TO model_forecast_log_legacy_v1"
+                    )
+                    self._conn.execute(
+                        "DROP INDEX IF EXISTS idx_mfl_station_model_date"
+                    )
+                    self._conn.execute(_new_table_ddl)
+                    self._conn.execute(_new_index_ddl)
+
+            elif not legacy_exists and row_count == 0:
+                # Case C: fresh install — add new columns to the empty table in place.
+                with self._conn:
+                    for col, defn in [
+                        ("lead_hours", "INTEGER"),
+                        ("issued_at", "TEXT"),
+                        ("sigma_f", "REAL"),
+                    ]:
+                        try:
+                            self._conn.execute(
+                                f"ALTER TABLE model_forecast_log ADD COLUMN {col} {defn}"
+                            )
+                        except sqlite3.OperationalError:
+                            pass  # column already exists
+                    # Drop old index if it exists (single-column key won't work for v2)
+                    self._conn.execute(
+                        "DROP INDEX IF EXISTS idx_mfl_station_model_date"
+                    )
+                    self._conn.execute(_new_index_ddl)
+
+            else:
+                # Case D: legacy exists but current table still lacks new columns
+                # (crash-recovery / partial migration path).
+                with self._conn:
+                    self._conn.execute("DROP TABLE IF EXISTS model_forecast_log_new")
+                    self._conn.execute(_new_table_ddl.replace(
+                        "CREATE TABLE model_forecast_log",
+                        "CREATE TABLE model_forecast_log_new",
+                    ))
+                    self._conn.execute(
+                        """
                     INSERT INTO model_forecast_log_new
                         (station, model, date, forecast_high_f, logged_at)
                     SELECT station, model, date, forecast_high_f, logged_at
                     FROM model_forecast_log
                     """
-                )
-                self._conn.execute("DROP TABLE model_forecast_log")
-                self._conn.execute(
-                    "ALTER TABLE model_forecast_log_new RENAME TO model_forecast_log"
-                )
-                self._conn.execute(_new_index_ddl)
+                    )
+                    self._conn.execute("DROP TABLE model_forecast_log")
+                    self._conn.execute(
+                        "ALTER TABLE model_forecast_log_new RENAME TO model_forecast_log"
+                    )
+                    self._conn.execute(_new_index_ddl)
 
     # ------------------------------------------------------------------
     # observations
@@ -1532,11 +1546,12 @@ class Database:
 
     def get_observations(self, station: str, since: str) -> list:
         """Return observations for *station* at or after *since* (ISO timestamp), oldest first."""
-        cur = self._conn.execute(
-            "SELECT * FROM observations WHERE station=? AND ts>=? ORDER BY ts ASC",
-            (station, since),
-        )
-        return [dict(row) for row in cur.fetchall()]
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT * FROM observations WHERE station=? AND ts>=? ORDER BY ts ASC",
+                (station, since),
+            )
+            return [dict(row) for row in cur.fetchall()]
 
     def get_observations_multi_station(self, stations: "list[str]", since: str) -> list:
         """Return observations for *stations* (multiple DB keys) at or after *since*, oldest first.
@@ -1553,23 +1568,25 @@ class Database:
         Returns:
             List of observation dicts ordered by ts ascending.
         """
-        if not stations:
-            return []
-        placeholders = ",".join("?" * len(stations))
-        cur = self._conn.execute(
-            f"SELECT * FROM observations WHERE station IN ({placeholders}) AND ts>=? ORDER BY ts ASC",
-            (*stations, since),
-        )
-        return [dict(row) for row in cur.fetchall()]
+        with self._lock:
+            if not stations:
+                return []
+            placeholders = ",".join("?" * len(stations))
+            cur = self._conn.execute(
+                f"SELECT * FROM observations WHERE station IN ({placeholders}) AND ts>=? ORDER BY ts ASC",
+                (*stations, since),
+            )
+            return [dict(row) for row in cur.fetchall()]
 
     def get_latest_observation(self, source: str, station: str) -> "dict | None":
         """Return the most recent observation for a source and station, or None if none exists."""
-        cur = self._conn.execute(
-            "SELECT * FROM observations WHERE source=? AND station=? ORDER BY ts DESC LIMIT 1",
-            (source, station),
-        )
-        row = cur.fetchone()
-        return dict(row) if row else None
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT * FROM observations WHERE source=? AND station=? ORDER BY ts DESC LIMIT 1",
+                (source, station),
+            )
+            row = cur.fetchone()
+            return dict(row) if row else None
 
     # ------------------------------------------------------------------
     # candidates
@@ -1629,11 +1646,12 @@ class Database:
 
     def count_candidates_today(self, ticker: str) -> int:
         """Return the number of candidates logged today (UTC) for *ticker*."""
-        cur = self._conn.execute(
-            "SELECT COUNT(*) FROM candidates WHERE ticker=? AND DATE(ts)=DATE('now')",
-            (ticker,),
-        )
-        return cur.fetchone()[0]
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT COUNT(*) FROM candidates WHERE ticker=? AND DATE(ts)=DATE('now')",
+                (ticker,),
+            )
+            return cur.fetchone()[0]
 
     # ------------------------------------------------------------------
     # scan_decisions (issue #756 -- Edge tab bot's-eye per-bracket view)
@@ -1783,19 +1801,20 @@ class Database:
         Ordered ascending by bracket_low, matching the Edge tab's per-bracket
         table row order (design spec docs/design/edge-tab-bracket-decisions.md §4).
         """
-        cur = self._conn.execute(
-            "SELECT station,ticker,date,ts,poll_ts,bracket_low,bracket_high,side,"
-            "yes_ask,no_ask,yes_price_raw,no_price_raw,yes_bid_raw,no_bid_raw,"
-            "current_high,latest_temp,forecast_high,"
-            "p_yes,raw_p_yes,capped_p_yes,ev_yes,ev_no,ev_yes_raw,ev_no_raw,"
-            "minutes_to_settlement,emos_mode,is_next_day,gate_verdict,"
-            "gate_actual,gate_threshold,gate_unit,gate_detail,execution_mode,"
-            "ensemble_mean,ensemble_members,ensemble_range_low,ensemble_range_high,direction "
-            "FROM scan_decisions WHERE station=? AND date=? ORDER BY bracket_low ASC",
-            (station, date),
-        )
-        cols = [d[0] for d in cur.description]
-        return [dict(zip(cols, row)) for row in cur.fetchall()]
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT station,ticker,date,ts,poll_ts,bracket_low,bracket_high,side,"
+                "yes_ask,no_ask,yes_price_raw,no_price_raw,yes_bid_raw,no_bid_raw,"
+                "current_high,latest_temp,forecast_high,"
+                "p_yes,raw_p_yes,capped_p_yes,ev_yes,ev_no,ev_yes_raw,ev_no_raw,"
+                "minutes_to_settlement,emos_mode,is_next_day,gate_verdict,"
+                "gate_actual,gate_threshold,gate_unit,gate_detail,execution_mode,"
+                "ensemble_mean,ensemble_members,ensemble_range_low,ensemble_range_high,direction "
+                "FROM scan_decisions WHERE station=? AND date=? ORDER BY bracket_low ASC",
+                (station, date),
+            )
+            cols = [d[0] for d in cur.description]
+            return [dict(zip(cols, row)) for row in cur.fetchall()]
 
     # ------------------------------------------------------------------
     # copy_wallet_candidates (issue #1108, epic #1099 -- copy-trading wallet
@@ -1859,12 +1878,13 @@ class Database:
         share a timestamp, and ``id`` is the only guaranteed-monotonic
         tiebreak. Returns ``[]`` for an unknown address, never raises.
         """
-        cur = self._conn.execute(
-            "SELECT * FROM copy_wallet_candidates WHERE address=? "
-            "ORDER BY id DESC LIMIT ?",
-            (address, int(limit)),
-        )
-        return [dict(row) for row in cur.fetchall()]
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT * FROM copy_wallet_candidates WHERE address=? "
+                "ORDER BY id DESC LIMIT ?",
+                (address, int(limit)),
+            )
+            return [dict(row) for row in cur.fetchall()]
 
     def get_latest_wallet_screenings(self) -> list[dict]:
         """Return every screened address's single most-recent screening row.
@@ -1875,14 +1895,15 @@ class Database:
         ``id DESC`` per address, matching ``get_recent_wallet_screenings``.
         Returns ``[]`` if no wallet has ever been screened.
         """
-        cur = self._conn.execute(
-            "SELECT c.* FROM copy_wallet_candidates c "
-            "INNER JOIN ("
-            "  SELECT address, MAX(id) AS max_id FROM copy_wallet_candidates "
-            "  GROUP BY address"
-            ") latest ON c.address = latest.address AND c.id = latest.max_id"
-        )
-        return [dict(row) for row in cur.fetchall()]
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT c.* FROM copy_wallet_candidates c "
+                "INNER JOIN ("
+                "  SELECT address, MAX(id) AS max_id FROM copy_wallet_candidates "
+                "  GROUP BY address"
+                ") latest ON c.address = latest.address AND c.id = latest.max_id"
+            )
+            return [dict(row) for row in cur.fetchall()]
 
     # Columns the Candidates view may sort on in SQL (issue #1274). A fixed
     # allow-list: the value is interpolated into ORDER BY, never user text.
@@ -1911,41 +1932,42 @@ class Database:
         matching the legacy Python sort; ``address`` breaks ties so paging is
         deterministic. ``sort`` must be in ``WALLET_SCREENING_SORT_COLUMNS``.
         """
-        if sort not in self.WALLET_SCREENING_SORT_COLUMNS:
-            raise ValueError(f"unsupported sort column: {sort!r}")
-        latest = (
-            "FROM copy_wallet_candidates c INNER JOIN ("
-            "  SELECT address, MAX(id) AS max_id FROM copy_wallet_candidates "
-            "  GROUP BY address"
-            ") latest ON c.address = latest.address AND c.id = latest.max_id"
-        )
-        where = ""
-        params: list = []
-        if not q:
-            # No filter: a single count serves as both totals.
-            filtered = unfiltered = self._conn.execute(
-                "SELECT COUNT(*) " + latest
-            ).fetchone()[0]
-        else:
-            unfiltered = self._conn.execute("SELECT COUNT(*) " + latest).fetchone()[0]
-            esc = q.replace("!", "!!").replace("%", "!%").replace("_", "!_")
-            where = " WHERE c.address LIKE ? ESCAPE '!'"
-            params.append(f"%{esc}%")
-            filtered = self._conn.execute(
-                "SELECT COUNT(*) " + latest + where, params
-            ).fetchone()[0]
-        col = f"c.{sort}"
-        null_order = f"{col} IS NULL" if descending else f"{col} IS NOT NULL"
-        sql = (
-            "SELECT c.* " + latest + where
-            + f" ORDER BY {null_order}, {col} {'DESC' if descending else 'ASC'},"
-            " c.address ASC"
-        )
-        if limit is not None:
-            sql += " LIMIT ? OFFSET ?"
-            params = params + [limit, offset]
-        rows = [dict(r) for r in self._conn.execute(sql, params).fetchall()]
-        return rows, filtered, unfiltered
+        with self._lock:
+            if sort not in self.WALLET_SCREENING_SORT_COLUMNS:
+                raise ValueError(f"unsupported sort column: {sort!r}")
+            latest = (
+                "FROM copy_wallet_candidates c INNER JOIN ("
+                "  SELECT address, MAX(id) AS max_id FROM copy_wallet_candidates "
+                "  GROUP BY address"
+                ") latest ON c.address = latest.address AND c.id = latest.max_id"
+            )
+            where = ""
+            params: list = []
+            if not q:
+                # No filter: a single count serves as both totals.
+                filtered = unfiltered = self._conn.execute(
+                    "SELECT COUNT(*) " + latest
+                ).fetchone()[0]
+            else:
+                unfiltered = self._conn.execute("SELECT COUNT(*) " + latest).fetchone()[0]
+                esc = q.replace("!", "!!").replace("%", "!%").replace("_", "!_")
+                where = " WHERE c.address LIKE ? ESCAPE '!'"
+                params.append(f"%{esc}%")
+                filtered = self._conn.execute(
+                    "SELECT COUNT(*) " + latest + where, params
+                ).fetchone()[0]
+            col = f"c.{sort}"
+            null_order = f"{col} IS NULL" if descending else f"{col} IS NOT NULL"
+            sql = (
+                "SELECT c.* " + latest + where
+                + f" ORDER BY {null_order}, {col} {'DESC' if descending else 'ASC'},"
+                " c.address ASC"
+            )
+            if limit is not None:
+                sql += " LIMIT ? OFFSET ?"
+                params = params + [limit, offset]
+            rows = [dict(r) for r in self._conn.execute(sql, params).fetchall()]
+            return rows, filtered, unfiltered
 
     def get_previous_wallet_screenings(
         self, addresses: "list[str] | None" = None
@@ -1965,25 +1987,26 @@ class Database:
         ``addresses`` (issue #1274), when given, restricts the lookup to
         those addresses (the current page) instead of every wallet.
         """
-        if addresses is not None and not addresses:
-            return {}
-        addr_filter = ""
-        params: list = []
-        if addresses is not None:
-            addr_filter = " AND c1.address IN (%s)" % ",".join("?" * len(addresses))
-            params = list(addresses)
-        cur = self._conn.execute(
-            "SELECT c.* FROM copy_wallet_candidates c "
-            "INNER JOIN ("
-            "  SELECT c1.address, MAX(c1.id) AS prev_id FROM copy_wallet_candidates c1 "
-            "  WHERE c1.id < ("
-            "    SELECT MAX(c2.id) FROM copy_wallet_candidates c2 WHERE c2.address = c1.address"
-            "  )" + addr_filter +
-            "  GROUP BY c1.address"
-            ") prev ON c.address = prev.address AND c.id = prev.prev_id",
-            params,
-        )
-        return {row["address"]: dict(row) for row in cur.fetchall()}
+        with self._lock:
+            if addresses is not None and not addresses:
+                return {}
+            addr_filter = ""
+            params: list = []
+            if addresses is not None:
+                addr_filter = " AND c1.address IN (%s)" % ",".join("?" * len(addresses))
+                params = list(addresses)
+            cur = self._conn.execute(
+                "SELECT c.* FROM copy_wallet_candidates c "
+                "INNER JOIN ("
+                "  SELECT c1.address, MAX(c1.id) AS prev_id FROM copy_wallet_candidates c1 "
+                "  WHERE c1.id < ("
+                "    SELECT MAX(c2.id) FROM copy_wallet_candidates c2 WHERE c2.address = c1.address"
+                "  )" + addr_filter +
+                "  GROUP BY c1.address"
+                ") prev ON c.address = prev.address AND c.id = prev.prev_id",
+                params,
+            )
+            return {row["address"]: dict(row) for row in cur.fetchall()}
 
     # ------------------------------------------------------------------
     # market_resolutions (issue #1221 -- persistent cross-run cache of
@@ -1999,12 +2022,13 @@ class Database:
         docstring), so a cache hit here is always a real answer, never a
         placeholder for "still unresolved".
         """
-        cur = self._conn.execute(
-            "SELECT resolved_yes FROM market_resolutions WHERE market=?",
-            (market,),
-        )
-        row = cur.fetchone()
-        return bool(row["resolved_yes"]) if row is not None else None
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT resolved_yes FROM market_resolutions WHERE market=?",
+                (market,),
+            )
+            row = cur.fetchone()
+            return bool(row["resolved_yes"]) if row is not None else None
 
     def cache_market_resolution(
         self, market: str, resolved_yes: bool, cached_at: "str | None" = None,
@@ -2073,13 +2097,14 @@ class Database:
         (issue #1259; see ``src.scripts.copy_signal_loop._process_wallet``
         and ``src.dashboard.api.copy_trading_followed_wallets`` for the two
         current call sites)."""
-        if status is not None:
-            cur = self._conn.execute(
-                "SELECT * FROM copy_wallets_followed WHERE status=?", (status,)
-            )
-        else:
-            cur = self._conn.execute("SELECT * FROM copy_wallets_followed")
-        return [dict(row) for row in cur.fetchall()]
+        with self._lock:
+            if status is not None:
+                cur = self._conn.execute(
+                    "SELECT * FROM copy_wallets_followed WHERE status=?", (status,)
+                )
+            else:
+                cur = self._conn.execute("SELECT * FROM copy_wallets_followed")
+            return [dict(row) for row in cur.fetchall()]
 
     def update_followed_wallet_status(
         self, address: str, status: str, paused_reason: "str | None" = None
@@ -2310,14 +2335,15 @@ class Database:
         no reliable identity to dedupe against, so such trades are always
         processed rather than silently dropped.
         """
-        if source_trade_id is None:
-            return False
-        cur = self._conn.execute(
-            "SELECT 1 FROM copy_signals WHERE source_trade_id=? AND address=? "
-            "AND market=? AND source_price=? LIMIT 1",
-            (source_trade_id, address, market, source_price),
-        )
-        return cur.fetchone() is not None
+        with self._lock:
+            if source_trade_id is None:
+                return False
+            cur = self._conn.execute(
+                "SELECT 1 FROM copy_signals WHERE source_trade_id=? AND address=? "
+                "AND market=? AND source_price=? LIMIT 1",
+                (source_trade_id, address, market, source_price),
+            )
+            return cur.fetchone() is not None
 
     def get_open_copy_positions(self, address: "str | None" = None) -> list[dict]:
         """Return ``status='open'`` copy-trading positions, optionally
@@ -2328,14 +2354,15 @@ class Database:
         the DB rather than an in-memory counter, so exposure state
         survives process restarts.
         """
-        if address is not None:
-            cur = self._conn.execute(
-                "SELECT * FROM copy_positions WHERE status='open' AND address=?",
-                (address,),
-            )
-        else:
-            cur = self._conn.execute("SELECT * FROM copy_positions WHERE status='open'")
-        return [dict(row) for row in cur.fetchall()]
+        with self._lock:
+            if address is not None:
+                cur = self._conn.execute(
+                    "SELECT * FROM copy_positions WHERE status='open' AND address=?",
+                    (address,),
+                )
+            else:
+                cur = self._conn.execute("SELECT * FROM copy_positions WHERE status='open'")
+            return [dict(row) for row in cur.fetchall()]
 
     def settle_copy_position(
         self, position_id: int, settled_pnl_usd: float, settled_at: str
@@ -2378,18 +2405,19 @@ class Database:
         below, which sums directly rather than summing this method's
         per-wallet rows in Python.
         """
-        if address is not None:
-            cur = self._conn.execute(
-                "SELECT address, COUNT(*) AS n_settled, SUM(settled_pnl_usd) AS total_pnl_usd "
-                "FROM copy_positions WHERE status='settled' AND address=? GROUP BY address",
-                (address,),
-            )
-        else:
-            cur = self._conn.execute(
-                "SELECT address, COUNT(*) AS n_settled, SUM(settled_pnl_usd) AS total_pnl_usd "
-                "FROM copy_positions WHERE status='settled' GROUP BY address"
-            )
-        return [dict(row) for row in cur.fetchall()]
+        with self._lock:
+            if address is not None:
+                cur = self._conn.execute(
+                    "SELECT address, COUNT(*) AS n_settled, SUM(settled_pnl_usd) AS total_pnl_usd "
+                    "FROM copy_positions WHERE status='settled' AND address=? GROUP BY address",
+                    (address,),
+                )
+            else:
+                cur = self._conn.execute(
+                    "SELECT address, COUNT(*) AS n_settled, SUM(settled_pnl_usd) AS total_pnl_usd "
+                    "FROM copy_positions WHERE status='settled' GROUP BY address"
+                )
+            return [dict(row) for row in cur.fetchall()]
 
     def get_copy_realized_pnl_total(self) -> dict:
         """Return realized P&L aggregated over ALL wallets' ``'settled'``
@@ -2401,15 +2429,16 @@ class Database:
         ``total_pnl_usd`` is ``0.0`` (not ``None``) when there are no
         settled positions yet.
         """
-        cur = self._conn.execute(
-            "SELECT COUNT(*) AS n_settled, SUM(settled_pnl_usd) AS total_pnl_usd "
-            "FROM copy_positions WHERE status='settled'"
-        )
-        row = cur.fetchone()
-        return {
-            "n_settled": row["n_settled"],
-            "total_pnl_usd": row["total_pnl_usd"] if row["total_pnl_usd"] is not None else 0.0,
-        }
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT COUNT(*) AS n_settled, SUM(settled_pnl_usd) AS total_pnl_usd "
+                "FROM copy_positions WHERE status='settled'"
+            )
+            row = cur.fetchone()
+            return {
+                "n_settled": row["n_settled"],
+                "total_pnl_usd": row["total_pnl_usd"] if row["total_pnl_usd"] is not None else 0.0,
+            }
 
     def get_settled_copy_positions(self, address: str) -> list[dict]:
         """Return *address*'s individual ``status='settled'`` copy-trading
@@ -2425,12 +2454,13 @@ class Database:
         matching this section's ``get_recent_wallet_screenings`` tiebreak
         convention. Returns ``[]`` for a wallet with no settled positions.
         """
-        cur = self._conn.execute(
-            "SELECT * FROM copy_positions WHERE status='settled' AND address=? "
-            "ORDER BY id DESC",
-            (address,),
-        )
-        return [dict(row) for row in cur.fetchall()]
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT * FROM copy_positions WHERE status='settled' AND address=? "
+                "ORDER BY id DESC",
+                (address,),
+            )
+            return [dict(row) for row in cur.fetchall()]
 
     def get_copy_realized_pnl_total_for_date(self, date_str: str) -> dict:
         """Return realized P&L aggregated over ``status='settled'``
@@ -2458,16 +2488,17 @@ class Database:
         ``0.0`` (not ``None``) when there are no settled positions on
         that day.
         """
-        cur = self._conn.execute(
-            "SELECT COUNT(*) AS n_settled, SUM(settled_pnl_usd) AS total_pnl_usd "
-            "FROM copy_positions WHERE status='settled' AND substr(settled_at,1,10)=?",
-            (date_str,),
-        )
-        row = cur.fetchone()
-        return {
-            "n_settled": row["n_settled"],
-            "total_pnl_usd": row["total_pnl_usd"] if row["total_pnl_usd"] is not None else 0.0,
-        }
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT COUNT(*) AS n_settled, SUM(settled_pnl_usd) AS total_pnl_usd "
+                "FROM copy_positions WHERE status='settled' AND substr(settled_at,1,10)=?",
+                (date_str,),
+            )
+            row = cur.fetchone()
+            return {
+                "n_settled": row["n_settled"],
+                "total_pnl_usd": row["total_pnl_usd"] if row["total_pnl_usd"] is not None else 0.0,
+            }
 
     def get_copy_signal(self, signal_id: int) -> "dict | None":
         """Return one ``copy_signals`` row by primary key, or ``None`` if no
@@ -2479,9 +2510,10 @@ class Database:
         this section, there's no existing read this could reuse, so it's
         added directly rather than assembled from other calls.
         """
-        cur = self._conn.execute("SELECT * FROM copy_signals WHERE id=?", (signal_id,))
-        row = cur.fetchone()
-        return dict(row) if row is not None else None
+        with self._lock:
+            cur = self._conn.execute("SELECT * FROM copy_signals WHERE id=?", (signal_id,))
+            row = cur.fetchone()
+            return dict(row) if row is not None else None
 
     def get_copy_signals(self, address: "str | None" = None) -> list[dict]:
         """Return every ``copy_signals`` row, optionally filtered to one
@@ -2496,17 +2528,18 @@ class Database:
         ``get_settled_copy_positions``/``get_recent_wallet_screenings``
         ``id DESC`` tiebreak convention.
         """
-        if address is not None:
-            cur = self._conn.execute(
-                "SELECT * FROM copy_signals WHERE address=? "
-                "ORDER BY detected_at DESC, id DESC",
-                (address,),
-            )
-        else:
-            cur = self._conn.execute(
-                "SELECT * FROM copy_signals ORDER BY detected_at DESC, id DESC"
-            )
-        return [dict(row) for row in cur.fetchall()]
+        with self._lock:
+            if address is not None:
+                cur = self._conn.execute(
+                    "SELECT * FROM copy_signals WHERE address=? "
+                    "ORDER BY detected_at DESC, id DESC",
+                    (address,),
+                )
+            else:
+                cur = self._conn.execute(
+                    "SELECT * FROM copy_signals ORDER BY detected_at DESC, id DESC"
+                )
+            return [dict(row) for row in cur.fetchall()]
 
     # ------------------------------------------------------------------
     # copy_live_positions (issue #1166, epic H #1159) -- one layer up from
@@ -2642,17 +2675,18 @@ class Database:
         ``address`` filter) for the same per-wallet/total exposure-check
         use case the follow-up issue (#1167) will need.
         """
-        if address is not None:
-            cur = self._conn.execute(
-                "SELECT * FROM copy_live_positions WHERE status NOT IN ('rejected','settled') "
-                "AND address=?",
-                (address,),
-            )
-        else:
-            cur = self._conn.execute(
-                "SELECT * FROM copy_live_positions WHERE status NOT IN ('rejected','settled')"
-            )
-        return [dict(row) for row in cur.fetchall()]
+        with self._lock:
+            if address is not None:
+                cur = self._conn.execute(
+                    "SELECT * FROM copy_live_positions WHERE status NOT IN ('rejected','settled') "
+                    "AND address=?",
+                    (address,),
+                )
+            else:
+                cur = self._conn.execute(
+                    "SELECT * FROM copy_live_positions WHERE status NOT IN ('rejected','settled')"
+                )
+            return [dict(row) for row in cur.fetchall()]
 
     def get_copy_live_positions(self, address: "str | None" = None) -> list[dict]:
         """Return EVERY ``copy_live_positions`` row regardless of status,
@@ -2668,17 +2702,18 @@ class Database:
         -- to synthesize its live event rows. Mirrors ``get_copy_signals``'
         "every row, no status filtering" shape exactly, one layer up.
         """
-        if address is not None:
-            cur = self._conn.execute(
-                "SELECT * FROM copy_live_positions WHERE address=? "
-                "ORDER BY entry_ts DESC, id DESC",
-                (address,),
-            )
-        else:
-            cur = self._conn.execute(
-                "SELECT * FROM copy_live_positions ORDER BY entry_ts DESC, id DESC"
-            )
-        return [dict(row) for row in cur.fetchall()]
+        with self._lock:
+            if address is not None:
+                cur = self._conn.execute(
+                    "SELECT * FROM copy_live_positions WHERE address=? "
+                    "ORDER BY entry_ts DESC, id DESC",
+                    (address,),
+                )
+            else:
+                cur = self._conn.execute(
+                    "SELECT * FROM copy_live_positions ORDER BY entry_ts DESC, id DESC"
+                )
+            return [dict(row) for row in cur.fetchall()]
 
     def get_copy_live_realized_pnl_total(self, since: "str | None" = None) -> dict:
         """Return realized P&L aggregated over ALL wallets' ``'settled'``
@@ -2694,22 +2729,23 @@ class Database:
         ``0.0`` (not ``None``) when there are no settled real positions
         yet.
         """
-        if since is None:
-            cur = self._conn.execute(
-                "SELECT COUNT(*) AS n_settled, SUM(settled_pnl_usd) AS total_pnl_usd "
-                "FROM copy_live_positions WHERE status='settled'"
-            )
-        else:
-            cur = self._conn.execute(
-                "SELECT COUNT(*) AS n_settled, SUM(settled_pnl_usd) AS total_pnl_usd "
-                "FROM copy_live_positions WHERE status='settled' AND settled_at >= ?",
-                (since,),
-            )
-        row = cur.fetchone()
-        return {
-            "n_settled": row["n_settled"],
-            "total_pnl_usd": row["total_pnl_usd"] if row["total_pnl_usd"] is not None else 0.0,
-        }
+        with self._lock:
+            if since is None:
+                cur = self._conn.execute(
+                    "SELECT COUNT(*) AS n_settled, SUM(settled_pnl_usd) AS total_pnl_usd "
+                    "FROM copy_live_positions WHERE status='settled'"
+                )
+            else:
+                cur = self._conn.execute(
+                    "SELECT COUNT(*) AS n_settled, SUM(settled_pnl_usd) AS total_pnl_usd "
+                    "FROM copy_live_positions WHERE status='settled' AND settled_at >= ?",
+                    (since,),
+                )
+            row = cur.fetchone()
+            return {
+                "n_settled": row["n_settled"],
+                "total_pnl_usd": row["total_pnl_usd"] if row["total_pnl_usd"] is not None else 0.0,
+            }
 
     def get_unsettled_copy_live_positions(self, address: "str | None" = None) -> list[dict]:
         """Return ``copy_live_positions`` rows ready to settle -- ``status``
@@ -2722,17 +2758,18 @@ class Database:
         ``get_open_copy_positions``' shape for ``copy_settle.py`` to consume,
         one layer up.
         """
-        if address is not None:
-            cur = self._conn.execute(
-                "SELECT * FROM copy_live_positions WHERE status IN ('filled','partial') "
-                "AND address=?",
-                (address,),
-            )
-        else:
-            cur = self._conn.execute(
-                "SELECT * FROM copy_live_positions WHERE status IN ('filled','partial')"
-            )
-        return [dict(row) for row in cur.fetchall()]
+        with self._lock:
+            if address is not None:
+                cur = self._conn.execute(
+                    "SELECT * FROM copy_live_positions WHERE status IN ('filled','partial') "
+                    "AND address=?",
+                    (address,),
+                )
+            else:
+                cur = self._conn.execute(
+                    "SELECT * FROM copy_live_positions WHERE status IN ('filled','partial')"
+                )
+            return [dict(row) for row in cur.fetchall()]
 
     def get_ghost_order_positions(self) -> list[dict]:
         """Return ``copy_live_positions`` rows left in an ambiguous state by
@@ -2750,11 +2787,12 @@ class Database:
         construction, always has one (it reached the cancel step, which
         requires an already-placed order).
         """
-        cur = self._conn.execute(
-            "SELECT * FROM copy_live_positions WHERE status='rejected' "
-            "AND rejected_reason='cancel_failed_ghost' AND order_id IS NOT NULL"
-        )
-        return [dict(row) for row in cur.fetchall()]
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT * FROM copy_live_positions WHERE status='rejected' "
+                "AND rejected_reason='cancel_failed_ghost' AND order_id IS NOT NULL"
+            )
+            return [dict(row) for row in cur.fetchall()]
 
     def get_copy_live_realized_pnl_total_for_date(self, date_str: str) -> dict:
         """Return realized P&L aggregated over ``status='settled'`` REAL
@@ -2771,16 +2809,17 @@ class Database:
         specific day deterministically). ``total_pnl_usd`` is ``0.0`` (not
         ``None``) when there are no settled real positions on that day.
         """
-        cur = self._conn.execute(
-            "SELECT COUNT(*) AS n_settled, SUM(settled_pnl_usd) AS total_pnl_usd "
-            "FROM copy_live_positions WHERE status='settled' AND substr(settled_at,1,10)=?",
-            (date_str,),
-        )
-        row = cur.fetchone()
-        return {
-            "n_settled": row["n_settled"],
-            "total_pnl_usd": row["total_pnl_usd"] if row["total_pnl_usd"] is not None else 0.0,
-        }
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT COUNT(*) AS n_settled, SUM(settled_pnl_usd) AS total_pnl_usd "
+                "FROM copy_live_positions WHERE status='settled' AND substr(settled_at,1,10)=?",
+                (date_str,),
+            )
+            row = cur.fetchone()
+            return {
+                "n_settled": row["n_settled"],
+                "total_pnl_usd": row["total_pnl_usd"] if row["total_pnl_usd"] is not None else 0.0,
+            }
 
     def get_copy_live_realized_pnl_by_wallet(self, address: "str | None" = None) -> list[dict]:
         """Return realized P&L aggregated over ``status='settled'`` REAL
@@ -2795,18 +2834,19 @@ class Database:
         zero settled REAL positions has no matching row, same as the paper
         method -- never a zero-valued row.
         """
-        if address is not None:
-            cur = self._conn.execute(
-                "SELECT address, COUNT(*) AS n_settled, SUM(settled_pnl_usd) AS total_pnl_usd "
-                "FROM copy_live_positions WHERE status='settled' AND address=? GROUP BY address",
-                (address,),
-            )
-        else:
-            cur = self._conn.execute(
-                "SELECT address, COUNT(*) AS n_settled, SUM(settled_pnl_usd) AS total_pnl_usd "
-                "FROM copy_live_positions WHERE status='settled' GROUP BY address"
-            )
-        return [dict(row) for row in cur.fetchall()]
+        with self._lock:
+            if address is not None:
+                cur = self._conn.execute(
+                    "SELECT address, COUNT(*) AS n_settled, SUM(settled_pnl_usd) AS total_pnl_usd "
+                    "FROM copy_live_positions WHERE status='settled' AND address=? GROUP BY address",
+                    (address,),
+                )
+            else:
+                cur = self._conn.execute(
+                    "SELECT address, COUNT(*) AS n_settled, SUM(settled_pnl_usd) AS total_pnl_usd "
+                    "FROM copy_live_positions WHERE status='settled' GROUP BY address"
+                )
+            return [dict(row) for row in cur.fetchall()]
 
     def get_settled_copy_live_positions(self, address: str) -> list[dict]:
         """Return *address*'s individual ``status='settled'`` REAL
@@ -2819,12 +2859,13 @@ class Database:
         the paper method feeds the Paper column's chart. Returns ``[]``
         for a wallet with no settled REAL positions.
         """
-        cur = self._conn.execute(
-            "SELECT * FROM copy_live_positions WHERE status='settled' AND address=? "
-            "ORDER BY id DESC",
-            (address,),
-        )
-        return [dict(row) for row in cur.fetchall()]
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT * FROM copy_live_positions WHERE status='settled' AND address=? "
+                "ORDER BY id DESC",
+                (address,),
+            )
+            return [dict(row) for row in cur.fetchall()]
 
     # ------------------------------------------------------------------
     # trades
@@ -3021,9 +3062,10 @@ class Database:
 
         Covers only live, closed trades so paper/shadow noise is excluded.
         """
-        since = (date.today() - timedelta(days=days)).isoformat()
-        cur = self._conn.execute(
-            """
+        with self._lock:
+            since = (date.today() - timedelta(days=days)).isoformat()
+            cur = self._conn.execute(
+                """
             SELECT
                 COUNT(*)                                          AS trade_count,
                 SUM(CASE WHEN estimated_fee_cents IS NOT NULL
@@ -3039,24 +3081,24 @@ class Database:
               AND outcome = 'sold'
               AND ts >= ?
             """,
-            (since,),
-        )
-        row = cur.fetchone()
-        if row is None:
+                (since,),
+            )
+            row = cur.fetchone()
+            if row is None:
+                return {
+                    "period_days": days, "trade_count": 0, "fee_populated_count": 0,
+                    "total_fee_eur": 0.0, "avg_fee_eur": 0.0,
+                    "total_size_eur": 0.0, "total_pnl": 0.0,
+                }
             return {
-                "period_days": days, "trade_count": 0, "fee_populated_count": 0,
-                "total_fee_eur": 0.0, "avg_fee_eur": 0.0,
-                "total_size_eur": 0.0, "total_pnl": 0.0,
+                "period_days": days,
+                "trade_count": int(row["trade_count"] or 0),
+                "fee_populated_count": int(row["fee_populated_count"] or 0),
+                "total_fee_eur": float(row["total_fee_eur"] or 0.0),
+                "avg_fee_eur": float(row["avg_fee_eur"] or 0.0),
+                "total_size_eur": float(row["total_size_eur"] or 0.0),
+                "total_pnl": float(row["total_pnl"] or 0.0),
             }
-        return {
-            "period_days": days,
-            "trade_count": int(row["trade_count"] or 0),
-            "fee_populated_count": int(row["fee_populated_count"] or 0),
-            "total_fee_eur": float(row["total_fee_eur"] or 0.0),
-            "avg_fee_eur": float(row["avg_fee_eur"] or 0.0),
-            "total_size_eur": float(row["total_size_eur"] or 0.0),
-            "total_pnl": float(row["total_pnl"] or 0.0),
-        }
 
     def get_close_reason_stats(self) -> list[dict]:
         """Return P&L, win rate, count, avg PnL, and worst PnL grouped by close_reason.
@@ -3064,8 +3106,9 @@ class Database:
         Covers live and paper trades (excludes shadow).  Trades where close_reason
         is NULL are grouped under 'settled' (legacy rows without telemetry).
         """
-        cur = self._conn.execute(
-            """
+        with self._lock:
+            cur = self._conn.execute(
+                """
             SELECT
                 COALESCE(close_reason, 'settled')                           AS close_reason,
                 COUNT(*)                                                     AS count,
@@ -3079,20 +3122,20 @@ class Database:
             GROUP BY COALESCE(close_reason, 'settled')
             ORDER BY total_pnl DESC
             """
-        )
-        rows = []
-        for row in cur.fetchall():
-            count = row["count"] or 0
-            win_count = row["win_count"] or 0
-            rows.append({
-                "close_reason": row["close_reason"],
-                "count": count,
-                "total_pnl": float(row["total_pnl"] or 0.0),
-                "avg_pnl": float(row["avg_pnl"] or 0.0),
-                "worst_pnl": float(row["worst_pnl"] or 0.0),
-                "win_rate": round(win_count / count, 4) if count else None,
-            })
-        return rows
+            )
+            rows = []
+            for row in cur.fetchall():
+                count = row["count"] or 0
+                win_count = row["win_count"] or 0
+                rows.append({
+                    "close_reason": row["close_reason"],
+                    "count": count,
+                    "total_pnl": float(row["total_pnl"] or 0.0),
+                    "avg_pnl": float(row["avg_pnl"] or 0.0),
+                    "worst_pnl": float(row["worst_pnl"] or 0.0),
+                    "win_rate": round(win_count / count, 4) if count else None,
+                })
+            return rows
 
     def get_trades(
         self,
@@ -3114,23 +3157,24 @@ class Database:
                 next-day rows (different sigma/lead-time regime) never
                 silently contaminate the same-day population.
         """
-        conditions = []
-        params: list = []
-        if mode is not None:
-            conditions.append("mode=?")
-            params.append(mode)
-        if direction is not None:
-            conditions.append("direction=?")
-            params.append(direction)
-        if is_next_day is not None:
-            conditions.append("is_next_day=?")
-            params.append(int(is_next_day))
-        where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
-        sql = f"SELECT * FROM trades{where} ORDER BY ts DESC"
-        if limit is not None:
-            sql += f" LIMIT {int(limit)}"
-        cur = self._conn.execute(sql, params)
-        return [dict(row) for row in cur.fetchall()]
+        with self._lock:
+            conditions = []
+            params: list = []
+            if mode is not None:
+                conditions.append("mode=?")
+                params.append(mode)
+            if direction is not None:
+                conditions.append("direction=?")
+                params.append(direction)
+            if is_next_day is not None:
+                conditions.append("is_next_day=?")
+                params.append(int(is_next_day))
+            where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
+            sql = f"SELECT * FROM trades{where} ORDER BY ts DESC"
+            if limit is not None:
+                sql += f" LIMIT {int(limit)}"
+            cur = self._conn.execute(sql, params)
+            return [dict(row) for row in cur.fetchall()]
 
     def get_unsettled_shadow_trades(self, target_date: str, lookback_days: int = 0) -> list:
         """Return unsettled shadow trades for *target_date* (YYYY-MM-DD).
@@ -3139,13 +3183,14 @@ class Database:
         target_date are included too, so markets that had not resolved on
         Polymarket by an earlier settle run get retried (issue #644).
         """
-        cur = self._conn.execute(
-            "SELECT * FROM trades "
-            "WHERE mode='shadow' AND settled_at IS NULL "
-            "AND DATE(ts) BETWEEN DATE(?, ?) AND ?",
-            (target_date, f"-{int(lookback_days)} days", target_date),
-        )
-        return [dict(row) for row in cur.fetchall()]
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT * FROM trades "
+                "WHERE mode='shadow' AND settled_at IS NULL "
+                "AND DATE(ts) BETWEEN DATE(?, ?) AND ?",
+                (target_date, f"-{int(lookback_days)} days", target_date),
+            )
+            return [dict(row) for row in cur.fetchall()]
 
     def get_settled_live_trades(self) -> list:
         """Return held-to-expiry settled live trades (issue #617).
@@ -3161,12 +3206,13 @@ class Database:
         order_manager writes directly and independently of settle.py, so they
         are unaffected by the removal of the settle.py JSONL write-back.
         """
-        cur = self._conn.execute(
-            "SELECT * FROM trades "
-            "WHERE mode='live' AND outcome='filled' AND settled_at IS NOT NULL "
-            "ORDER BY settled_at DESC"
-        )
-        return [dict(row) for row in cur.fetchall()]
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT * FROM trades "
+                "WHERE mode='live' AND outcome='filled' AND settled_at IS NOT NULL "
+                "ORDER BY settled_at DESC"
+            )
+            return [dict(row) for row in cur.fetchall()]
 
     def get_unsettled_live_trades(self) -> list:
         """Return ALL live held-to-expiry trades not yet settled (issue #609).
@@ -3183,11 +3229,12 @@ class Database:
         update_trade_by_order at exit time, see order_manager._record_sell_in_db)
         are naturally excluded and never double-settled here.
         """
-        cur = self._conn.execute(
-            "SELECT * FROM trades "
-            "WHERE mode='live' AND outcome='filled' AND settled_at IS NULL"
-        )
-        return [dict(row) for row in cur.fetchall()]
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT * FROM trades "
+                "WHERE mode='live' AND outcome='filled' AND settled_at IS NULL"
+            )
+            return [dict(row) for row in cur.fetchall()]
 
     def has_live_trade_today(self, station: str, ticker: str, side: str, day: str) -> bool:
         """Return True if a live trade already exists for (station, ticker, side, day).
@@ -3206,14 +3253,15 @@ class Database:
         whole life of the market day, not just the wall-clock day the poll
         happens to run in.
         """
-        cur = self._conn.execute(
-            "SELECT 1 FROM trades "
-            "WHERE mode='live' AND station=? AND ticker=? AND side=? "
-            "AND COALESCE(substr(end_date,1,10), substr(ts,1,10))=? "
-            "LIMIT 1",
-            (station, ticker, side, day),
-        )
-        return cur.fetchone() is not None
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT 1 FROM trades "
+                "WHERE mode='live' AND station=? AND ticker=? AND side=? "
+                "AND COALESCE(substr(end_date,1,10), substr(ts,1,10))=? "
+                "LIMIT 1",
+                (station, ticker, side, day),
+            )
+            return cur.fetchone() is not None
 
     def has_open_live_position(self, station: str) -> bool:
         """Return True if *station* has a LIVE position currently open.
@@ -3229,13 +3277,14 @@ class Database:
         this cross-day overlap would actually occur. Read-only telemetry
         only -- never used to gate or alter the live entry decision.
         """
-        cur = self._conn.execute(
-            "SELECT 1 FROM trades "
-            "WHERE mode='live' AND station=? AND outcome='filled' AND settled_at IS NULL "
-            "LIMIT 1",
-            (station,),
-        )
-        return cur.fetchone() is not None
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT 1 FROM trades "
+                "WHERE mode='live' AND station=? AND outcome='filled' AND settled_at IS NULL "
+                "LIMIT 1",
+                (station,),
+            )
+            return cur.fetchone() is not None
 
     def upsert_shadow_trade(
         self,
@@ -3353,18 +3402,19 @@ class Database:
         Args:
             direction: Optional filter — ``'high'`` or ``'low'``.
         """
-        if direction is not None:
-            cur = self._conn.execute(
-                "SELECT * FROM settlements WHERE station=? AND ts>=? AND direction=?"
-                " ORDER BY ts ASC",
-                (station, since, direction),
-            )
-        else:
-            cur = self._conn.execute(
-                "SELECT * FROM settlements WHERE station=? AND ts>=? ORDER BY ts ASC",
-                (station, since),
-            )
-        return [dict(row) for row in cur.fetchall()]
+        with self._lock:
+            if direction is not None:
+                cur = self._conn.execute(
+                    "SELECT * FROM settlements WHERE station=? AND ts>=? AND direction=?"
+                    " ORDER BY ts ASC",
+                    (station, since, direction),
+                )
+            else:
+                cur = self._conn.execute(
+                    "SELECT * FROM settlements WHERE station=? AND ts>=? ORDER BY ts ASC",
+                    (station, since),
+                )
+            return [dict(row) for row in cur.fetchall()]
 
     def get_all_settlements(
         self,
@@ -3381,17 +3431,18 @@ class Database:
         Args:
             direction: Optional filter — ``'high'`` or ``'low'``.
         """
-        if direction is not None:
-            cur = self._conn.execute(
-                "SELECT * FROM settlements WHERE ts>=? AND direction=? ORDER BY ts ASC",
-                (since, direction),
-            )
-        else:
-            cur = self._conn.execute(
-                "SELECT * FROM settlements WHERE ts>=? ORDER BY ts ASC",
-                (since,),
-            )
-        return [dict(row) for row in cur.fetchall()]
+        with self._lock:
+            if direction is not None:
+                cur = self._conn.execute(
+                    "SELECT * FROM settlements WHERE ts>=? AND direction=? ORDER BY ts ASC",
+                    (since, direction),
+                )
+            else:
+                cur = self._conn.execute(
+                    "SELECT * FROM settlements WHERE ts>=? ORDER BY ts ASC",
+                    (since,),
+                )
+            return [dict(row) for row in cur.fetchall()]
 
     # ------------------------------------------------------------------
     # open_positions
@@ -3476,8 +3527,9 @@ class Database:
         predicted_price.  Aliases token_id → no_token_id, entry_price →
         price_cents, and computes size_eur so callers match the JSONL schema.
         """
-        cur = self._conn.execute(
-            """
+        with self._lock:
+            cur = self._conn.execute(
+                """
             SELECT
                 op.id, op.trade_id, op.station,
                 op.ticker, op.token_id,
@@ -3497,16 +3549,17 @@ class Database:
             LEFT JOIN trades t ON t.id = op.trade_id
             ORDER BY op.entry_ts ASC
             """
-        )
-        return [dict(row) for row in cur.fetchall()]
+            )
+            return [dict(row) for row in cur.fetchall()]
 
     def get_open_position_by_token(self, token_id: str) -> list[dict]:
         """Return open positions for a single token_id (parameterised WHERE clause).
 
         Avoids full table scan by filtering at the SQL level for the manual sell path.
         """
-        cur = self._conn.execute(
-            """
+        with self._lock:
+            cur = self._conn.execute(
+                """
             SELECT
                 op.id, op.trade_id, op.station,
                 op.ticker, op.token_id,
@@ -3527,9 +3580,9 @@ class Database:
             WHERE op.token_id = ?
             ORDER BY op.entry_ts ASC
             """,
-            (token_id,),
-        )
-        return [dict(row) for row in cur.fetchall()]
+                (token_id,),
+            )
+            return [dict(row) for row in cur.fetchall()]
 
     # ------------------------------------------------------------------
     # risk_state
@@ -3537,11 +3590,12 @@ class Database:
 
     def get_daily_pnl(self, date_str: str) -> float:
         """Return accumulated PnL for *date_str* (YYYY-MM-DD); 0.0 if no row exists."""
-        cur = self._conn.execute(
-            "SELECT daily_pnl FROM risk_state WHERE trade_date=?", (date_str,)
-        )
-        row = cur.fetchone()
-        return row[0] if row else 0.0
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT daily_pnl FROM risk_state WHERE trade_date=?", (date_str,)
+            )
+            row = cur.fetchone()
+            return row[0] if row else 0.0
 
     def upsert_daily_risk(
         self, date_str: str, pnl_delta: float, open_positions: int
@@ -3607,14 +3661,15 @@ class Database:
 
     def get_taf_windows(self, city: str, from_ts: str, to_ts: str) -> list[dict]:
         """Return taf_windows for *city* where valid_from is in [from_ts, to_ts], ordered by valid_from."""
+        with self._lock:
 
-        cur = self._conn.execute(
-            "SELECT * FROM taf_windows "
-            "WHERE city=? AND valid_from>=? AND valid_from<=? "
-            "ORDER BY valid_from ASC",
-            (city, from_ts, to_ts),
-        )
-        return [dict(r) for r in cur.fetchall()]
+            cur = self._conn.execute(
+                "SELECT * FROM taf_windows "
+                "WHERE city=? AND valid_from>=? AND valid_from<=? "
+                "ORDER BY valid_from ASC",
+                (city, from_ts, to_ts),
+            )
+            return [dict(r) for r in cur.fetchall()]
 
     # ------------------------------------------------------------------
     # model_weights
@@ -3636,11 +3691,12 @@ class Database:
 
     def get_model_weights(self, city: str) -> list[dict]:
         """Return model weights for *city*, ordered by date descending (most recent first)."""
-        cur = self._conn.execute(
-            "SELECT * FROM model_weights WHERE city=? ORDER BY date DESC",
-            (city,),
-        )
-        return [dict(r) for r in cur.fetchall()]
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT * FROM model_weights WHERE city=? ORDER BY date DESC",
+                (city,),
+            )
+            return [dict(r) for r in cur.fetchall()]
 
     # ------------------------------------------------------------------
     # model_forecast_log
@@ -3710,11 +3766,12 @@ class Database:
         Returns all rows (all lead_hours). Callers that need a specific lead-time bin
         should use get_forecast_log_by_lead().
         """
-        cur = self._conn.execute(
-            "SELECT * FROM model_forecast_log WHERE station=? AND date>=? ORDER BY date ASC",
-            (station, since_date),
-        )
-        return [dict(r) for r in cur.fetchall()]
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT * FROM model_forecast_log WHERE station=? AND date>=? ORDER BY date ASC",
+                (station, since_date),
+            )
+            return [dict(r) for r in cur.fetchall()]
 
     def get_forecast_log_for_date(self, station: str, date: str) -> list[dict]:
         """Return all model_forecast_log rows for *station* on the exact *date*.
@@ -3725,11 +3782,12 @@ class Database:
         the closest-to-valid capture should group by model and keep the lowest
         lead_hours.
         """
-        cur = self._conn.execute(
-            "SELECT * FROM model_forecast_log WHERE station=? AND date=? ORDER BY model ASC",
-            (station, date),
-        )
-        return [dict(r) for r in cur.fetchall()]
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT * FROM model_forecast_log WHERE station=? AND date=? ORDER BY model ASC",
+                (station, date),
+            )
+            return [dict(r) for r in cur.fetchall()]
 
     def get_forecast_log_by_lead(
         self, station: str, since_date: str, lead_hours: int
@@ -3744,12 +3802,13 @@ class Database:
         Returns:
             List of row dicts ordered by date ascending.
         """
-        cur = self._conn.execute(
-            "SELECT * FROM model_forecast_log "
-            "WHERE station=? AND date>=? AND lead_hours=? ORDER BY date ASC",
-            (station, since_date, lead_hours),
-        )
-        return [dict(r) for r in cur.fetchall()]
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT * FROM model_forecast_log "
+                "WHERE station=? AND date>=? AND lead_hours=? ORDER BY date ASC",
+                (station, since_date, lead_hours),
+            )
+            return [dict(r) for r in cur.fetchall()]
 
     def get_last_forecast_capture_ts(self) -> "str | None":
         """Return MAX(logged_at) across all of model_forecast_log, or None if empty.
@@ -3759,9 +3818,10 @@ class Database:
         the separate meteoedge-capture-forecasts.service/.timer). Read-only --
         does not touch the capture process itself.
         """
-        cur = self._conn.execute("SELECT MAX(logged_at) FROM model_forecast_log")
-        row = cur.fetchone()
-        return row[0] if row and row[0] is not None else None
+        with self._lock:
+            cur = self._conn.execute("SELECT MAX(logged_at) FROM model_forecast_log")
+            row = cur.fetchone()
+            return row[0] if row and row[0] is not None else None
 
     # ------------------------------------------------------------------
     # intraday_corrections
@@ -3832,11 +3892,12 @@ class Database:
 
     def get_intraday_corrections(self, city: str, date: str) -> list[dict]:
         """Return intraday corrections for city on date, ordered by obs_time ascending."""
-        cur = self._conn.execute(
-            "SELECT * FROM intraday_corrections WHERE city=? AND date=? ORDER BY obs_time ASC",
-            (city, date),
-        )
-        return [dict(r) for r in cur.fetchall()]
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT * FROM intraday_corrections WHERE city=? AND date=? ORDER BY obs_time ASC",
+                (city, date),
+            )
+            return [dict(r) for r in cur.fetchall()]
 
     def get_trailing_deltas(
         self,
@@ -3859,23 +3920,24 @@ class Database:
         under a prior consensus basis regime without shortening the window for
         callers that don't care (issue #586).
         """
-        since_date = (date.today() - timedelta(days=window_days)).isoformat()
-        if min_date is not None and min_date > since_date:
-            since_date = min_date
-        if station is not None and source is not None:
-            cur = self._conn.execute(
-                "SELECT delta_f FROM intraday_corrections "
-                "WHERE city=? AND station=? AND source=? AND date>=? "
-                "ORDER BY date ASC, obs_time ASC",
-                (city, station, source, since_date),
-            )
-        else:
-            cur = self._conn.execute(
-                "SELECT delta_f FROM intraday_corrections "
-                "WHERE city=? AND date>=? ORDER BY date ASC, obs_time ASC",
-                (city, since_date),
-            )
-        return [float(row[0]) for row in cur.fetchall()]
+        with self._lock:
+            since_date = (date.today() - timedelta(days=window_days)).isoformat()
+            if min_date is not None and min_date > since_date:
+                since_date = min_date
+            if station is not None and source is not None:
+                cur = self._conn.execute(
+                    "SELECT delta_f FROM intraday_corrections "
+                    "WHERE city=? AND station=? AND source=? AND date>=? "
+                    "ORDER BY date ASC, obs_time ASC",
+                    (city, station, source, since_date),
+                )
+            else:
+                cur = self._conn.execute(
+                    "SELECT delta_f FROM intraday_corrections "
+                    "WHERE city=? AND date>=? ORDER BY date ASC, obs_time ASC",
+                    (city, since_date),
+                )
+            return [float(row[0]) for row in cur.fetchall()]
 
     def get_distinct_pairs(self, city: str, since_date: str) -> "list[tuple[str, str]]":
         """Return distinct (station, source) pairs from intraday_corrections since since_date."""
@@ -3906,13 +3968,14 @@ class Database:
         Returns:
             List of row dicts ordered by date, obs_time ascending.
         """
-        cur = self._conn.execute(
-            "SELECT * FROM intraday_corrections "
-            "WHERE city=? AND station=? AND source=? AND date>=? "
-            "ORDER BY date ASC, obs_time ASC",
-            (city, station, source, since_date),
-        )
-        return [dict(r) for r in cur.fetchall()]
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT * FROM intraday_corrections "
+                "WHERE city=? AND station=? AND source=? AND date>=? "
+                "ORDER BY date ASC, obs_time ASC",
+                (city, station, source, since_date),
+            )
+            return [dict(r) for r in cur.fetchall()]
 
     # ------------------------------------------------------------------
     # emos_calibration
@@ -4016,10 +4079,11 @@ class Database:
         observation exists for that station).  Uses the (station, ts) index for
         an efficient MAX(ts) GROUP BY scan.
         """
-        cur = self._conn.execute(
-            "SELECT station, MAX(ts) AS last_obs_ts FROM observations GROUP BY station"
-        )
-        return {row["station"]: row["last_obs_ts"] for row in cur.fetchall()}
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT station, MAX(ts) AS last_obs_ts FROM observations GROUP BY station"
+            )
+            return {row["station"]: row["last_obs_ts"] for row in cur.fetchall()}
 
     def get_stations_open_positions_count(self) -> dict:
         """Return the count of open positions per station.
@@ -4027,10 +4091,11 @@ class Database:
         Returns a dict mapping station → integer count (0 for stations with no
         open positions).
         """
-        cur = self._conn.execute(
-            "SELECT station, COUNT(*) AS cnt FROM open_positions GROUP BY station"
-        )
-        return {row["station"]: row["cnt"] for row in cur.fetchall()}
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT station, COUNT(*) AS cnt FROM open_positions GROUP BY station"
+            )
+            return {row["station"]: row["cnt"] for row in cur.fetchall()}
 
     def get_stations_trade_stats(self) -> dict:
         """Return trade stats per station: trade_count, filled_count, win_rate, total_pnl, last_trade_ts.
@@ -4039,8 +4104,9 @@ class Database:
         aggregation instead of loading all trades into Python.  Returns a dict
         mapping station → stats dict.
         """
-        cur = self._conn.execute(
-            """
+        with self._lock:
+            cur = self._conn.execute(
+                """
             SELECT
                 station,
                 COUNT(*)                                                                        AS trade_count,
@@ -4051,20 +4117,20 @@ class Database:
             FROM trades
             GROUP BY station
             """
-        )
-        result = {}
-        for row in cur.fetchall():
-            filled = row["filled_count"] or 0
-            win_count = row["win_count"] or 0
-            win_rate = round(win_count / filled, 4) if filled else None
-            result[row["station"]] = {
-                "trade_count": row["trade_count"],
-                "filled_count": filled,
-                "win_rate": win_rate,
-                "total_pnl": round(float(row["total_pnl"] or 0.0), 2),
-                "last_trade_ts": row["last_trade_ts"],
-            }
-        return result
+            )
+            result = {}
+            for row in cur.fetchall():
+                filled = row["filled_count"] or 0
+                win_count = row["win_count"] or 0
+                win_rate = round(win_count / filled, 4) if filled else None
+                result[row["station"]] = {
+                    "trade_count": row["trade_count"],
+                    "filled_count": filled,
+                    "win_rate": win_rate,
+                    "total_pnl": round(float(row["total_pnl"] or 0.0), 2),
+                    "last_trade_ts": row["last_trade_ts"],
+                }
+            return result
 
     def get_emos_coefficients(
         self, city: str, model_mode: str,
@@ -4082,23 +4148,24 @@ class Database:
         lead_hours defaults to 24, the lead bin every pre-#665 row lives at, so
         callers that don't care about per-lead-bin serving see unchanged behaviour.
         """
-        if forecast_source is None:
-            forecast_source = self._active_forecast_source()
-        if sigma_source is None:
-            sigma_source = self._active_sigma_source()
-        cur = self._conn.execute(
-            "SELECT a, b, c, d, crps_score, ready_for_promotion, trained_at "
-            "FROM emos_calibration WHERE city=? AND model_mode=? AND forecast_source=? "
-            "AND sigma_source=? AND lead_hours=?",
-            (city, model_mode, forecast_source, sigma_source, lead_hours),
-        )
-        row = cur.fetchone()
-        if row is None:
-            return None
-        return {
-            "a": row[0], "b": row[1], "c": row[2], "d": row[3],
-            "crps_score": row[4], "ready_for_promotion": row[5], "trained_at": row[6],
-        }
+        with self._lock:
+            if forecast_source is None:
+                forecast_source = self._active_forecast_source()
+            if sigma_source is None:
+                sigma_source = self._active_sigma_source()
+            cur = self._conn.execute(
+                "SELECT a, b, c, d, crps_score, ready_for_promotion, trained_at "
+                "FROM emos_calibration WHERE city=? AND model_mode=? AND forecast_source=? "
+                "AND sigma_source=? AND lead_hours=?",
+                (city, model_mode, forecast_source, sigma_source, lead_hours),
+            )
+            row = cur.fetchone()
+            if row is None:
+                return None
+            return {
+                "a": row[0], "b": row[1], "c": row[2], "d": row[3],
+                "crps_score": row[4], "ready_for_promotion": row[5], "trained_at": row[6],
+            }
 
     def get_emos_coefficients_by_lead(
         self, city: str, model_mode: str,
@@ -4121,33 +4188,35 @@ class Database:
         the shorter lead bin on an exact tie, matching this codebase's existing
         "lowest lead_hours wins" convention (see ensemble_distribution.py).
         """
-        if forecast_source is None:
-            forecast_source = self._active_forecast_source()
-        if sigma_source is None:
-            sigma_source = self._active_sigma_source()
-        cur = self._conn.execute(
-            "SELECT lead_hours, a, b, c, d, crps_score, ready_for_promotion, trained_at "
-            "FROM emos_calibration WHERE city=? AND model_mode=? AND forecast_source=? "
-            "AND sigma_source=? ORDER BY lead_hours ASC",
-            (city, model_mode, forecast_source, sigma_source),
-        )
-        return {
-            row[0]: {
-                "a": row[1], "b": row[2], "c": row[3], "d": row[4],
-                "crps_score": row[5], "ready_for_promotion": row[6], "trained_at": row[7],
+        with self._lock:
+            if forecast_source is None:
+                forecast_source = self._active_forecast_source()
+            if sigma_source is None:
+                sigma_source = self._active_sigma_source()
+            cur = self._conn.execute(
+                "SELECT lead_hours, a, b, c, d, crps_score, ready_for_promotion, trained_at "
+                "FROM emos_calibration WHERE city=? AND model_mode=? AND forecast_source=? "
+                "AND sigma_source=? ORDER BY lead_hours ASC",
+                (city, model_mode, forecast_source, sigma_source),
+            )
+            return {
+                row[0]: {
+                    "a": row[1], "b": row[2], "c": row[3], "d": row[4],
+                    "crps_score": row[5], "ready_for_promotion": row[6], "trained_at": row[7],
+                }
+                for row in cur.fetchall()
             }
-            for row in cur.fetchall()
-        }
 
     def get_all_emos_calibration(self) -> list[dict]:
         """Return all rows from emos_calibration as dicts."""
-        cur = self._conn.execute(
-            "SELECT city, model_mode, forecast_source, sigma_source, lead_hours, "
-            "a, b, c, d, crps_score, ready_for_promotion, trained_at "
-            "FROM emos_calibration "
-            "ORDER BY city, model_mode, forecast_source, sigma_source, lead_hours"
-        )
-        return [dict(row) for row in cur.fetchall()]
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT city, model_mode, forecast_source, sigma_source, lead_hours, "
+                "a, b, c, d, crps_score, ready_for_promotion, trained_at "
+                "FROM emos_calibration "
+                "ORDER BY city, model_mode, forecast_source, sigma_source, lead_hours"
+            )
+            return [dict(row) for row in cur.fetchall()]
 
     def get_settled_days_available(self, station: str) -> int:
         """Return count of distinct dates in model_forecast_log joined to observations for a station.
@@ -4155,8 +4224,9 @@ class Database:
         A "settled day" is a date where a forecast exists AND a METAR observation
         (source='metar') also exists, meaning the actual high can be determined.
         """
-        cur = self._conn.execute(
-            """
+        with self._lock:
+            cur = self._conn.execute(
+                """
             SELECT COUNT(DISTINCT mfl.date)
             FROM model_forecast_log mfl
             WHERE mfl.station = ?
@@ -4167,19 +4237,20 @@ class Database:
                     AND DATE(o.ts) = mfl.date
               )
             """,
-            (station, station),
-        )
-        row = cur.fetchone()
-        return int(row[0]) if row else 0
+                (station, station),
+            )
+            row = cur.fetchone()
+            return int(row[0]) if row else 0
 
     def get_emos_effective_mode(self, city: str) -> "str | None":
         """Return the effective EMOS mode override for a city, or None if not set."""
-        cur = self._conn.execute(
-            "SELECT effective_mode FROM emos_mode_override WHERE city=?",
-            (city,),
-        )
-        row = cur.fetchone()
-        return row[0] if row else None
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT effective_mode FROM emos_mode_override WHERE city=?",
+                (city,),
+            )
+            row = cur.fetchone()
+            return row[0] if row else None
 
     def set_emos_effective_mode(self, city: str, effective_mode: str) -> None:
         """Upsert the effective EMOS mode for a city."""
@@ -4298,47 +4369,49 @@ class Database:
             'entry_guard_blocks' (issue #611), each containing
             {'total': int, 'last_7d': int, 'avg_delta': float}.
         """
-        cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+        with self._lock:
+            cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
 
-        def _query(event_type: str) -> dict:
-            row_total = self._conn.execute(
-                "SELECT COUNT(*), AVG(delta) FROM guardrail_events WHERE event_type=?",
-                (event_type,),
-            ).fetchone()
-            row_7d = self._conn.execute(
-                "SELECT COUNT(*) FROM guardrail_events WHERE event_type=? AND ts>=?",
-                (event_type, cutoff),
-            ).fetchone()
+            def _query(event_type: str) -> dict:
+                row_total = self._conn.execute(
+                    "SELECT COUNT(*), AVG(delta) FROM guardrail_events WHERE event_type=?",
+                    (event_type,),
+                ).fetchone()
+                row_7d = self._conn.execute(
+                    "SELECT COUNT(*) FROM guardrail_events WHERE event_type=? AND ts>=?",
+                    (event_type, cutoff),
+                ).fetchone()
+                return {
+                    "total": int(row_total[0] or 0),
+                    "last_7d": int(row_7d[0] or 0),
+                    "avg_delta": round(float(row_total[1] or 0.0), 4),
+                }
+
             return {
-                "total": int(row_total[0] or 0),
-                "last_7d": int(row_7d[0] or 0),
-                "avg_delta": round(float(row_total[1] or 0.0), 4),
+                "cap_events": _query("cap_applied"),
+                "correction_events": _query("correction_applied"),
+                "entry_guard_blocks": _query("entry_guard_block"),
             }
-
-        return {
-            "cap_events": _query("cap_applied"),
-            "correction_events": _query("correction_applied"),
-            "entry_guard_blocks": _query("entry_guard_block"),
-        }
 
     def get_forced_exit_stats(self) -> dict:
         """Return forced-exit trade counts: total, last_7d, and by_station dict."""
-        cutoff_7d = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
-        total_row = self._conn.execute(
-            "SELECT COUNT(*) FROM trades WHERE close_reason='forced_exit'"
-        ).fetchone()
-        seven_day_row = self._conn.execute(
-            "SELECT COUNT(*) FROM trades WHERE close_reason='forced_exit' AND ts>=?",
-            (cutoff_7d,),
-        ).fetchone()
-        by_station_rows = self._conn.execute(
-            "SELECT station, COUNT(*) FROM trades WHERE close_reason='forced_exit' GROUP BY station"
-        ).fetchall()
-        return {
-            "total": int(total_row[0] or 0),
-            "last_7d": int(seven_day_row[0] or 0),
-            "by_station": {r[0]: int(r[1]) for r in by_station_rows},
-        }
+        with self._lock:
+            cutoff_7d = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+            total_row = self._conn.execute(
+                "SELECT COUNT(*) FROM trades WHERE close_reason='forced_exit'"
+            ).fetchone()
+            seven_day_row = self._conn.execute(
+                "SELECT COUNT(*) FROM trades WHERE close_reason='forced_exit' AND ts>=?",
+                (cutoff_7d,),
+            ).fetchone()
+            by_station_rows = self._conn.execute(
+                "SELECT station, COUNT(*) FROM trades WHERE close_reason='forced_exit' GROUP BY station"
+            ).fetchall()
+            return {
+                "total": int(total_row[0] or 0),
+                "last_7d": int(seven_day_row[0] or 0),
+                "by_station": {r[0]: int(r[1]) for r in by_station_rows},
+            }
 
     def get_emos_shadow_city_status(self, city: str) -> dict:
         """Return EMOS shadow status for a single city.
@@ -4367,59 +4440,61 @@ class Database:
         forecast_source — a pre-existing gap from before issue #759 that is
         out of scope for #851's sigma_source fix; tracked separately.
         """
-        sigma_source = self._active_sigma_source()
-        crps_row = self._conn.execute(
-            "SELECT AVG(crps_score) FROM emos_crps_log "
-            "WHERE city=? AND model_mode='emos_shadow' AND sigma_source=?",
-            (city, sigma_source),
-        ).fetchone()
-        legacy_row = self._conn.execute(
-            "SELECT AVG(crps_score) FROM emos_crps_log "
-            "WHERE city=? AND model_mode='legacy' AND sigma_source=?",
-            (city, sigma_source),
-        ).fetchone()
+        with self._lock:
+            sigma_source = self._active_sigma_source()
+            crps_row = self._conn.execute(
+                "SELECT AVG(crps_score) FROM emos_crps_log "
+                "WHERE city=? AND model_mode='emos_shadow' AND sigma_source=?",
+                (city, sigma_source),
+            ).fetchone()
+            legacy_row = self._conn.execute(
+                "SELECT AVG(crps_score) FROM emos_crps_log "
+                "WHERE city=? AND model_mode='legacy' AND sigma_source=?",
+                (city, sigma_source),
+            ).fetchone()
 
-        # Get all model weights for this city, ordered by date DESC
-        model_weights = self.get_model_weights(city)
+            # Get all model weights for this city, ordered by date DESC
+            model_weights = self.get_model_weights(city)
 
-        # Extract the snapshot for the most recent date
-        model_weights_snapshot = None
-        if model_weights:
-            # Get the most recent date (first row since ordered DESC)
-            most_recent_date = model_weights[0]["date"]
-            # Build dict of {model: weight} for this date
-            snapshot = {}
-            for row in model_weights:
-                if row["date"] == most_recent_date:
-                    snapshot[row["model"]] = row["weight"]
-                else:
-                    # Since ordered by date DESC, we can stop when date changes
-                    break
-            model_weights_snapshot = snapshot if snapshot else None
+            # Extract the snapshot for the most recent date
+            model_weights_snapshot = None
+            if model_weights:
+                # Get the most recent date (first row since ordered DESC)
+                most_recent_date = model_weights[0]["date"]
+                # Build dict of {model: weight} for this date
+                snapshot = {}
+                for row in model_weights:
+                    if row["date"] == most_recent_date:
+                        snapshot[row["model"]] = row["weight"]
+                    else:
+                        # Since ordered by date DESC, we can stop when date changes
+                        break
+                model_weights_snapshot = snapshot if snapshot else None
 
-        mean_crps = float(crps_row[0]) if crps_row and crps_row[0] is not None else None
-        legacy_mean_crps = (
-            float(legacy_row[0]) if legacy_row and legacy_row[0] is not None else None
-        )
-        crps_delta = (
-            legacy_mean_crps - mean_crps
-            if mean_crps is not None and legacy_mean_crps is not None
-            else None
-        )
-        return {
-            "mean_crps": mean_crps,
-            "legacy_mean_crps": legacy_mean_crps,
-            "crps_delta": crps_delta,
-            "model_weights_snapshot": model_weights_snapshot,
-        }
+            mean_crps = float(crps_row[0]) if crps_row and crps_row[0] is not None else None
+            legacy_mean_crps = (
+                float(legacy_row[0]) if legacy_row and legacy_row[0] is not None else None
+            )
+            crps_delta = (
+                legacy_mean_crps - mean_crps
+                if mean_crps is not None and legacy_mean_crps is not None
+                else None
+            )
+            return {
+                "mean_crps": mean_crps,
+                "legacy_mean_crps": legacy_mean_crps,
+                "crps_delta": crps_delta,
+                "model_weights_snapshot": model_weights_snapshot,
+            }
 
     def get_trades_missing_fee_costs(self) -> list:
         """Return live closed trades where estimated_fee_cents is NULL.
 
         Used by backfill_trade_costs.py. Each row has: id, order_id, actual_price, size_eur.
         """
-        cur = self._conn.execute(
-            """
+        with self._lock:
+            cur = self._conn.execute(
+                """
             SELECT id, order_id, actual_price, size_eur
             FROM trades
             WHERE mode = 'live'
@@ -4428,8 +4503,8 @@ class Database:
               AND order_id IS NOT NULL
             ORDER BY ts ASC
             """
-        )
-        return [dict(row) for row in cur.fetchall()]
+            )
+            return [dict(row) for row in cur.fetchall()]
 
     # ------------------------------------------------------------------
     # bot_config
@@ -4437,11 +4512,12 @@ class Database:
 
     def get_config(self, key: str) -> "str | None":
         """Return the stored value for *key*, or None if no row exists."""
-        cur = self._conn.execute(
-            "SELECT value FROM bot_config WHERE key=?", (key,)
-        )
-        row = cur.fetchone()
-        return row[0] if row else None
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT value FROM bot_config WHERE key=?", (key,)
+            )
+            row = cur.fetchone()
+            return row[0] if row else None
 
     def set_config(self, key: str, value: str) -> None:
         """Upsert a config value. Thread-safe via the existing RLock."""
@@ -4455,8 +4531,9 @@ class Database:
 
     def get_all_config(self) -> "dict[str, str]":
         """Return all bot_config rows as a plain {key: value} dict."""
-        cur = self._conn.execute("SELECT key, value FROM bot_config")
-        return {row[0]: row[1] for row in cur.fetchall()}
+        with self._lock:
+            cur = self._conn.execute("SELECT key, value FROM bot_config")
+            return {row[0]: row[1] for row in cur.fetchall()}
 
     # ------------------------------------------------------------------
     # station_overrides
@@ -4464,19 +4541,20 @@ class Database:
 
     def get_station_override(self, station: str) -> "dict | None":
         """Return {yes_enabled, no_enabled, low_no_enabled} for *station*, or None if absent."""
-        cur = self._conn.execute(
-            "SELECT yes_enabled, no_enabled, low_no_enabled "
-            "FROM station_overrides WHERE station=?",
-            (station,),
-        )
-        row = cur.fetchone()
-        if row is None:
-            return None
-        return {
-            "yes_enabled": bool(row[0]),
-            "no_enabled": bool(row[1]),
-            "low_no_enabled": bool(row[2]),
-        }
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT yes_enabled, no_enabled, low_no_enabled "
+                "FROM station_overrides WHERE station=?",
+                (station,),
+            )
+            row = cur.fetchone()
+            if row is None:
+                return None
+            return {
+                "yes_enabled": bool(row[0]),
+                "no_enabled": bool(row[1]),
+                "low_no_enabled": bool(row[2]),
+            }
 
     def set_station_override(
         self,
@@ -4500,17 +4578,18 @@ class Database:
 
     def get_all_station_overrides(self) -> "dict[str, dict]":
         """Return all station_overrides rows as {station: {yes_enabled, no_enabled, low_no_enabled}}."""
-        cur = self._conn.execute(
-            "SELECT station, yes_enabled, no_enabled, low_no_enabled FROM station_overrides"
-        )
-        return {
-            row[0]: {
-                "yes_enabled": bool(row[1]),
-                "no_enabled": bool(row[2]),
-                "low_no_enabled": bool(row[3]),
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT station, yes_enabled, no_enabled, low_no_enabled FROM station_overrides"
+            )
+            return {
+                row[0]: {
+                    "yes_enabled": bool(row[1]),
+                    "no_enabled": bool(row[2]),
+                    "low_no_enabled": bool(row[3]),
+                }
+                for row in cur.fetchall()
             }
-            for row in cur.fetchall()
-        }
 
     def get_hourly_obs_for_climb(self, station: str) -> list[dict]:
         """Return all observations for *station* as raw timestamps + temps.
@@ -4523,12 +4602,13 @@ class Database:
         (issue #587 — a previous version truncated to UTC date/hour here, which
         made local binning impossible and mislabeled the column as hour_local).
         """
-        cur = self._conn.execute(
-            "SELECT ts, temp_f FROM observations "
-            "WHERE station=? AND temp_f IS NOT NULL ORDER BY ts ASC",
-            (station,),
-        )
-        return [{"ts": row[0], "temp_f": float(row[1])} for row in cur.fetchall()]
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT ts, temp_f FROM observations "
+                "WHERE station=? AND temp_f IS NOT NULL ORDER BY ts ASC",
+                (station,),
+            )
+            return [{"ts": row[0], "temp_f": float(row[1])} for row in cur.fetchall()]
 
     # ------------------------------------------------------------------
     # emos_crps_log / deb_weight_log
@@ -4551,73 +4631,74 @@ class Database:
         city-keyed high-cadence feed and the ICAO-keyed METAR feed for WSSS),
         so verification uses the same source-of-truth as scan-time nowcasting.
         """
-        if station not in STATION_TZ:
-            return None
-
-        city = _icao_to_city(station)
-        if city is not None and not is_training_eligible(city):
-            return None
-
-        try:
-            target_date = dtparse.parse(date).date()
-        except (ValueError, TypeError):
-            return None
-
-        if city is not None:
-            eligible_since = get_training_eligible_since(city)
-            if eligible_since is not None and target_date < eligible_since:
+        with self._lock:
+            if station not in STATION_TZ:
                 return None
 
-        tz = pytz.timezone(STATION_TZ[station])
+            city = _icao_to_city(station)
+            if city is not None and not is_training_eligible(city):
+                return None
 
-        # Fetch observations in a ±1 day window around the target date to avoid
-        # missing observations that fall on the target local day but different UTC day.
-        date_minus_1 = (target_date - timedelta(days=1)).isoformat()
-        date_plus_2 = (target_date + timedelta(days=2)).isoformat()
-
-        feed_keys = get_canonical_station_feeds(station)
-        placeholders = ",".join("?" * len(feed_keys))
-        # Issue #731: exclude is_official=0 (Open-Meteo fallback) rows from the
-        # daily-high TRUTH. The canonical feed union pools a city-keyed
-        # high-cadence feed with the ICAO-keyed METAR feed and takes the MAX;
-        # a city feed sourced from modelled Open-Meteo data (is_official=0)
-        # could otherwise override the real METAR reading as the "observed"
-        # high that EMOS/DEB train against (circular truth). Historically this
-        # applied to Seoul/Busan (amos, retired -- issue #740) and could apply
-        # to any future city-keyed feed that falls back to modelled data.
-        # NULL is treated as official (legacy rows predate the column default).
-        # Issue #741: also exclude via raw_json LIKE '%source_fallback%' as a
-        # second, independent signal -- every fallback writer (e.g. the former
-        # amos Open-Meteo fallback) tags raw_json with "source_fallback" AND
-        # sets is_official=0, so this OR condition is redundant by design and
-        # only catches a row where one of the two markers was set incorrectly.
-        # NULL raw_json is treated as non-fallback (most rows have no raw_json
-        # at all and must not be excluded).
-        cur = self._conn.execute(
-            f"SELECT ts, temp_f FROM observations "
-            f"WHERE station IN ({placeholders}) AND ts >= ? AND ts < ? AND temp_f IS NOT NULL "
-            f"AND (is_official IS NULL OR is_official = 1) "
-            f"AND (raw_json IS NULL OR raw_json NOT LIKE '%source_fallback%') "
-            f"ORDER BY ts",
-            (*feed_keys, date_minus_1, date_plus_2),
-        )
-
-        best = None
-        for row in cur.fetchall():
-            ts_str, temp_f = row[0], row[1]
             try:
-                t = dtparse.parse(ts_str)
-                if t.tzinfo is None:
-                    t = t.replace(tzinfo=pytz.UTC)
-                local_date = t.astimezone(tz).date()
-                if local_date == target_date:
-                    temp_f = float(temp_f)
-                    if best is None or temp_f > best:
-                        best = temp_f
-            except (ValueError, OverflowError):
-                continue
+                target_date = dtparse.parse(date).date()
+            except (ValueError, TypeError):
+                return None
 
-        return best
+            if city is not None:
+                eligible_since = get_training_eligible_since(city)
+                if eligible_since is not None and target_date < eligible_since:
+                    return None
+
+            tz = pytz.timezone(STATION_TZ[station])
+
+            # Fetch observations in a ±1 day window around the target date to avoid
+            # missing observations that fall on the target local day but different UTC day.
+            date_minus_1 = (target_date - timedelta(days=1)).isoformat()
+            date_plus_2 = (target_date + timedelta(days=2)).isoformat()
+
+            feed_keys = get_canonical_station_feeds(station)
+            placeholders = ",".join("?" * len(feed_keys))
+            # Issue #731: exclude is_official=0 (Open-Meteo fallback) rows from the
+            # daily-high TRUTH. The canonical feed union pools a city-keyed
+            # high-cadence feed with the ICAO-keyed METAR feed and takes the MAX;
+            # a city feed sourced from modelled Open-Meteo data (is_official=0)
+            # could otherwise override the real METAR reading as the "observed"
+            # high that EMOS/DEB train against (circular truth). Historically this
+            # applied to Seoul/Busan (amos, retired -- issue #740) and could apply
+            # to any future city-keyed feed that falls back to modelled data.
+            # NULL is treated as official (legacy rows predate the column default).
+            # Issue #741: also exclude via raw_json LIKE '%source_fallback%' as a
+            # second, independent signal -- every fallback writer (e.g. the former
+            # amos Open-Meteo fallback) tags raw_json with "source_fallback" AND
+            # sets is_official=0, so this OR condition is redundant by design and
+            # only catches a row where one of the two markers was set incorrectly.
+            # NULL raw_json is treated as non-fallback (most rows have no raw_json
+            # at all and must not be excluded).
+            cur = self._conn.execute(
+                f"SELECT ts, temp_f FROM observations "
+                f"WHERE station IN ({placeholders}) AND ts >= ? AND ts < ? AND temp_f IS NOT NULL "
+                f"AND (is_official IS NULL OR is_official = 1) "
+                f"AND (raw_json IS NULL OR raw_json NOT LIKE '%source_fallback%') "
+                f"ORDER BY ts",
+                (*feed_keys, date_minus_1, date_plus_2),
+            )
+
+            best = None
+            for row in cur.fetchall():
+                ts_str, temp_f = row[0], row[1]
+                try:
+                    t = dtparse.parse(ts_str)
+                    if t.tzinfo is None:
+                        t = t.replace(tzinfo=pytz.UTC)
+                    local_date = t.astimezone(tz).date()
+                    if local_date == target_date:
+                        temp_f = float(temp_f)
+                        if best is None or temp_f > best:
+                            best = temp_f
+                except (ValueError, OverflowError):
+                    continue
+
+            return best
 
     def get_obs_highs_range(self, station: str, since_date: str) -> dict:
         """Return {date_str: max_temp_f} for all dates >= since_date for *station*.
@@ -4635,59 +4716,60 @@ class Database:
         ``config.get_canonical_station_feeds(station)``, same as
         ``get_daily_obs_high``.
         """
-        if station not in STATION_TZ:
-            return {}
+        with self._lock:
+            if station not in STATION_TZ:
+                return {}
 
-        city = _icao_to_city(station)
-        if city is not None and not is_training_eligible(city):
-            return {}
+            city = _icao_to_city(station)
+            if city is not None and not is_training_eligible(city):
+                return {}
 
-        try:
-            since_date_obj = dtparse.parse(since_date).date()
-        except (ValueError, TypeError):
-            return {}
-
-        eligible_since = get_training_eligible_since(city) if city is not None else None
-        if eligible_since is not None and eligible_since > since_date_obj:
-            since_date_obj = eligible_since
-
-        tz = pytz.timezone(STATION_TZ[station])
-
-        # Fetch all observations (across every canonical feed key) with temp_f
-        # IS NOT NULL. Issue #731: exclude is_official=0 (Open-Meteo fallback)
-        # rows so modelled data can't override real METAR as the observed daily
-        # high the DEB weights train against -- same rationale as
-        # get_daily_obs_high(). NULL is treated as official (legacy rows).
-        # Issue #741: same raw_json LIKE '%source_fallback%' second signal as
-        # get_daily_obs_high() -- see the comment there for the full rationale.
-        feed_keys = get_canonical_station_feeds(station)
-        placeholders = ",".join("?" * len(feed_keys))
-        cur = self._conn.execute(
-            f"SELECT ts, temp_f FROM observations "
-            f"WHERE station IN ({placeholders}) AND temp_f IS NOT NULL "
-            f"AND (is_official IS NULL OR is_official = 1) "
-            f"AND (raw_json IS NULL OR raw_json NOT LIKE '%source_fallback%') "
-            f"ORDER BY ts",
-            (*feed_keys,),
-        )
-
-        result: dict[str, float] = {}
-        for row in cur.fetchall():
-            ts_str, temp_f = row[0], row[1]
             try:
-                t = dtparse.parse(ts_str)
-                if t.tzinfo is None:
-                    t = t.replace(tzinfo=pytz.UTC)
-                local_date = t.astimezone(tz).date()
-                if local_date >= since_date_obj:
-                    date_str = local_date.isoformat()
-                    temp_f = float(temp_f)
-                    if date_str not in result or temp_f > result[date_str]:
-                        result[date_str] = temp_f
-            except (ValueError, OverflowError):
-                continue
+                since_date_obj = dtparse.parse(since_date).date()
+            except (ValueError, TypeError):
+                return {}
 
-        return result
+            eligible_since = get_training_eligible_since(city) if city is not None else None
+            if eligible_since is not None and eligible_since > since_date_obj:
+                since_date_obj = eligible_since
+
+            tz = pytz.timezone(STATION_TZ[station])
+
+            # Fetch all observations (across every canonical feed key) with temp_f
+            # IS NOT NULL. Issue #731: exclude is_official=0 (Open-Meteo fallback)
+            # rows so modelled data can't override real METAR as the observed daily
+            # high the DEB weights train against -- same rationale as
+            # get_daily_obs_high(). NULL is treated as official (legacy rows).
+            # Issue #741: same raw_json LIKE '%source_fallback%' second signal as
+            # get_daily_obs_high() -- see the comment there for the full rationale.
+            feed_keys = get_canonical_station_feeds(station)
+            placeholders = ",".join("?" * len(feed_keys))
+            cur = self._conn.execute(
+                f"SELECT ts, temp_f FROM observations "
+                f"WHERE station IN ({placeholders}) AND temp_f IS NOT NULL "
+                f"AND (is_official IS NULL OR is_official = 1) "
+                f"AND (raw_json IS NULL OR raw_json NOT LIKE '%source_fallback%') "
+                f"ORDER BY ts",
+                (*feed_keys,),
+            )
+
+            result: dict[str, float] = {}
+            for row in cur.fetchall():
+                ts_str, temp_f = row[0], row[1]
+                try:
+                    t = dtparse.parse(ts_str)
+                    if t.tzinfo is None:
+                        t = t.replace(tzinfo=pytz.UTC)
+                    local_date = t.astimezone(tz).date()
+                    if local_date >= since_date_obj:
+                        date_str = local_date.isoformat()
+                        temp_f = float(temp_f)
+                        if date_str not in result or temp_f > result[date_str]:
+                            result[date_str] = temp_f
+                except (ValueError, OverflowError):
+                    continue
+
+            return result
 
     def log_crps(
         self,
@@ -4753,17 +4835,18 @@ class Database:
         (e.g. pre-#799 'fixed' coefficients) across a sigma_source switch
         (issue #851) — mirroring the #759 forecast_source guard above.
         """
-        if forecast_source is None:
-            forecast_source = self._active_forecast_source()
-        if sigma_source is None:
-            sigma_source = self._active_sigma_source()
-        cur = self._conn.execute(
-            "SELECT COUNT(*) FROM emos_crps_log "
-            "WHERE city=? AND model_mode=? AND forecast_source=? AND sigma_source=?",
-            (city, model_mode, forecast_source, sigma_source),
-        )
-        row = cur.fetchone()
-        return int(row[0]) if row else 0
+        with self._lock:
+            if forecast_source is None:
+                forecast_source = self._active_forecast_source()
+            if sigma_source is None:
+                sigma_source = self._active_sigma_source()
+            cur = self._conn.execute(
+                "SELECT COUNT(*) FROM emos_crps_log "
+                "WHERE city=? AND model_mode=? AND forecast_source=? AND sigma_source=?",
+                (city, model_mode, forecast_source, sigma_source),
+            )
+            row = cur.fetchone()
+            return int(row[0]) if row else 0
 
     def emos_crps_logged_for_date(
         self,
@@ -4793,16 +4876,17 @@ class Database:
         that day's (city, date, model_mode, forecast_source) slot
         (issue #851).
         """
-        if forecast_source is None:
-            forecast_source = self._active_forecast_source()
-        if sigma_source is None:
-            sigma_source = self._active_sigma_source()
-        cur = self._conn.execute(
-            "SELECT 1 FROM emos_crps_log WHERE city=? AND date=? AND model_mode=? "
-            "AND forecast_source=? AND sigma_source=? LIMIT 1",
-            (city, date, model_mode, forecast_source, sigma_source),
-        )
-        return cur.fetchone() is not None
+        with self._lock:
+            if forecast_source is None:
+                forecast_source = self._active_forecast_source()
+            if sigma_source is None:
+                sigma_source = self._active_sigma_source()
+            cur = self._conn.execute(
+                "SELECT 1 FROM emos_crps_log WHERE city=? AND date=? AND model_mode=? "
+                "AND forecast_source=? AND sigma_source=? LIMIT 1",
+                (city, date, model_mode, forecast_source, sigma_source),
+            )
+            return cur.fetchone() is not None
 
     def log_deb_weights(self, city: str, date: str, weights_json: str) -> None:
         """Insert a DEB weights snapshot for *city* on *date*."""
@@ -4820,9 +4904,10 @@ class Database:
         Used by get_ensemble_distribution() (issue #511) to weight the active
         FORECAST_STACK models by DEB weight when computing ensemble_mean.
         """
-        cur = self._conn.execute(
-            "SELECT weights_json FROM deb_weight_log WHERE city=? ORDER BY logged_at DESC LIMIT 1",
-            (city,),
-        )
-        row = cur.fetchone()
-        return row[0] if row else None
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT weights_json FROM deb_weight_log WHERE city=? ORDER BY logged_at DESC LIMIT 1",
+                (city,),
+            )
+            row = cur.fetchone()
+            return row[0] if row else None
