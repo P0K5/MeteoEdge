@@ -1280,6 +1280,26 @@ class TestLiveExecution:
             filled_stake_usd=3.5,
         )
 
+    def test_full_fill_with_filled_stake_usd_is_passed_through(self):
+        """Issue #1336: a full 'filled' result now carries its actual USD
+        cost too; it must reach the DB write so settlement does not fall
+        back to the intended stake_usd for a short-matched order."""
+        db = _mock_db()
+        live_config = _live_enabled_config()
+        with patch(
+            "src.scripts.copy_signal_loop.execute_live_copy_order",
+            return_value={
+                "status": "filled", "order_id": "oid-1", "fill_price": 0.40,
+                "filled_stake_usd": 3.0,
+            },
+        ):
+            self._run(db, [_buy_raw()], live_config=live_config, resolution=None)
+
+        db.update_copy_live_position_status.assert_called_once_with(
+            101, status="filled", order_id="oid-1", fill_price=0.40, rejected_reason=None,
+            filled_stake_usd=3.0,
+        )
+
     def test_db_write_failure_after_real_fill_logs_critical_and_does_not_raise(self, caplog):
         """The order already filled on the exchange by the time this write
         is attempted -- a failure here must be LOUD (CRITICAL), never a

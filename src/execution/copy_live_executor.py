@@ -129,7 +129,10 @@ def execute_live_copy_order(
 
     Returns:
         One of:
-          ``{"status": "filled", "order_id": str, "fill_price": float}``
+          ``{"status": "filled", "order_id": str, "fill_price": float,
+              "filled_stake_usd": float}`` (the ``filled_stake_usd`` key is
+              omitted only when no fill-size record is available -- see
+              below)
           ``{"status": "partial", "order_id": str, "fill_price": float,
               "filled_stake_usd": float}``
           ``{"status": "rejected", "order_id": str | None,
@@ -145,11 +148,15 @@ def execute_live_copy_order(
         GTC BUY limit order fills at its limit price or better; price
         improvement, if any, is not captured here or there).
 
-        ``filled_stake_usd`` on a ``"partial"`` result is the actual USD
-        spent (``filled_shares * fill_price``), distinct from the caller's
-        originally-requested *stake_usd* -- issue #1171 item 3 / #1174:
-        a partial fill's P&L must be computed from what actually filled,
-        not the full intended stake.
+        ``filled_stake_usd`` on a ``"filled"`` or ``"partial"`` result is
+        the actual USD spent (``filled_shares * fill_price``), distinct from
+        the caller's originally-requested *stake_usd* -- issue #1171 item 3 /
+        #1174 for partials, extended to full fills by issue #1336: a fill's
+        P&L must be computed from what actually matched, not the intended
+        stake. ``filled_shares`` is the CLOB fill record
+        (``get_order_fill_size``); ``fill_price`` is the placed limit price,
+        so this is an upper bound on the true cost when the match was at a
+        better price.
 
     **Ghost orders (issue #1171 item 1 / #1174).** When the exchange
     ``cancel_order`` call itself raises after a fill-wait timeout, the
@@ -293,11 +300,33 @@ def execute_live_copy_order(
                         return _partial_result(order_id, price_cents, filled_shares)
 
     if outcome == "filled":
-        return {
+        # Issue #1336: a full fill must record its actual USD cost too, not
+        # only partials. Previously this branch returned no filled_stake_usd,
+        # so settlement fell back to the intended stake_usd -- overstating
+        # the cost (and loss) of any order that matched for less than
+        # requested. The CLOB fill record is the authority for the matched
+        # size (same get_order_fill_size() source the partial path uses).
+        result = {
             "status": "filled",
             "order_id": order_id,
             "fill_price": round(price_cents / 100, 4),
         }
+        try:
+            filled_shares = trader.get_order_fill_size(order_id)
+        except Exception as e:  # defensive: the "never raises" contract
+            log.warning("  [copy-live] fill-size lookup failed for %s...: %s", order_id[:12], e)
+            filled_shares = 0.0
+        if filled_shares and filled_shares > 0:
+            result["filled_stake_usd"] = round(filled_shares * result["fill_price"], 6)
+        else:
+            # No fill record available: the caller (and settlement) falls
+            # back to the intended stake_usd, the pre-#1336 behaviour. Logged
+            # so an unrecorded cost is visible rather than silent.
+            log.warning(
+                "  [copy-live] filled order %s... has no fill-size record -- "
+                "cost will fall back to intended stake", order_id[:12],
+            )
+        return result
 
     if not cancel_ok:
         # Ghost order (see module docstring): the cancel call itself failed,
