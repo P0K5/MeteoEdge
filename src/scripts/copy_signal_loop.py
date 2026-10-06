@@ -378,9 +378,11 @@ def _handle_live_order(
         _record_live_outcome(
             db, position_id, status=result["status"], order_id=result.get("order_id"),
             fill_price=result.get("fill_price"), address=address,
-            # Only a confirmed "partial" result carries this (issue #1171
-            # item 3 / #1174); None for "filled" (assumed == the row's own
-            # stake_usd) -- see Database.update_copy_live_position_status.
+            # Confirmed "partial" and "filled" results both carry the actual
+            # USD cost (issue #1171 item 3 / #1174, extended to full fills by
+            # #1336); absent only when no fill record was retrievable, in
+            # which case settlement falls back to stake_usd -- see
+            # Database.update_copy_live_position_status.
             filled_stake_usd=result.get("filled_stake_usd"),
         )
 
