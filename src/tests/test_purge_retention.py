@@ -12,7 +12,7 @@ from unittest import mock
 import pytest
 
 from src.data.db import connect_with_busy_timeout
-from src.scripts.purge_retention import purge_candidates, purge_guardrail_events, run
+from src.scripts.purge_retention import purge_candidates, purge_copy_signals, purge_guardrail_events, run
 
 
 def _create_test_db(tmp_path: Path) -> sqlite3.Connection:
@@ -53,6 +53,26 @@ def _create_test_db(tmp_path: Path) -> sqlite3.Connection:
         );
     """)
 
+    # Issue #1339: copy_signals has no `ts` column -- its timestamp column
+    # is `detected_at` -- which is exactly why _purge_table_chunked() needed
+    # a ts_column parameter rather than a hardcoded "ts".
+    conn.execute("""
+        CREATE TABLE copy_signals (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            address          TEXT NOT NULL,
+            market           TEXT NOT NULL,
+            outcome_index    INTEGER,
+            source_price     REAL NOT NULL,
+            source_trade_id  TEXT,
+            detected_at      TEXT NOT NULL,
+            order_placed     INTEGER NOT NULL DEFAULT 0,
+            fill_price       REAL,
+            size_usd         REAL,
+            position_id      INTEGER,
+            skip_reason      TEXT
+        );
+    """)
+
     conn.commit()
     return conn
 
@@ -80,6 +100,18 @@ def _insert_guardrail_event(conn: sqlite3.Connection, ts: str) -> None:
            VALUES (?, 'KORD', 'zero_eval_tick', 0.5, 0.5, 0.0, 'HIGH-TEMP-KORD-2026-06-15-90-94')
         """,
         (ts,),
+    )
+    conn.commit()
+
+
+def _insert_copy_signal(conn: sqlite3.Connection, detected_at: str) -> None:
+    """Insert a test copy_signals row at the given detected_at timestamp."""
+    conn.execute(
+        """INSERT INTO copy_signals
+           (address, market, outcome_index, source_price, detected_at, order_placed)
+           VALUES ('0xabc', '0xmarket1', 0, 0.45, ?, 0)
+        """,
+        (detected_at,),
     )
     conn.commit()
 
@@ -273,6 +305,98 @@ class TestPurgeGuardrailEvents:
         conn.close()
 
 
+class TestPurgeCopySignals:
+    """Test purging copy_signals table (issue #1339). Mirrors
+    TestPurgeGuardrailEvents exactly, but cuts on `detected_at` -- this
+    table has no `ts` column.
+    """
+
+    def test_purge_copy_signals_deletes_old_rows(self, tmp_path):
+        """Rows older than retention window are deleted."""
+        conn = _create_test_db(tmp_path)
+
+        now = datetime.now(timezone.utc)
+        old_ts = (now - timedelta(days=40)).isoformat()
+        new_ts = (now - timedelta(days=10)).isoformat()
+
+        _insert_copy_signal(conn, old_ts)
+        _insert_copy_signal(conn, old_ts)
+        _insert_copy_signal(conn, new_ts)
+
+        assert _count_rows(conn, "copy_signals") == 3
+
+        deleted = purge_copy_signals(conn, days=30, dry_run=False)
+
+        assert deleted == 2
+        assert _count_rows(conn, "copy_signals") == 1
+
+        conn.close()
+
+    def test_purge_copy_signals_respects_retention_window(self, tmp_path):
+        """Rows within retention window are not deleted."""
+        conn = _create_test_db(tmp_path)
+
+        now = datetime.now(timezone.utc)
+        cutoff_ts = (now - timedelta(days=30)).isoformat()
+        safe_ts = (now - timedelta(days=29)).isoformat()  # Just inside window
+
+        _insert_copy_signal(conn, cutoff_ts)
+        _insert_copy_signal(conn, safe_ts)
+
+        deleted = purge_copy_signals(conn, days=30, dry_run=False)
+
+        assert deleted == 1
+        assert _count_rows(conn, "copy_signals") == 1
+
+        conn.close()
+
+    def test_purge_copy_signals_dry_run(self, tmp_path):
+        """Dry-run counts but does not delete."""
+        conn = _create_test_db(tmp_path)
+
+        now = datetime.now(timezone.utc)
+        old_ts = (now - timedelta(days=40)).isoformat()
+
+        _insert_copy_signal(conn, old_ts)
+        _insert_copy_signal(conn, old_ts)
+
+        deleted = purge_copy_signals(conn, days=30, dry_run=True)
+
+        assert deleted == 2
+        assert _count_rows(conn, "copy_signals") == 2  # Not actually deleted
+
+        conn.close()
+
+    def test_purge_copy_signals_empty_table(self, tmp_path):
+        """Purging empty table returns 0."""
+        conn = _create_test_db(tmp_path)
+
+        deleted = purge_copy_signals(conn, days=30, dry_run=False)
+
+        assert deleted == 0
+
+        conn.close()
+
+    def test_purge_copy_signals_idempotent(self, tmp_path):
+        """Running purge multiple times is idempotent."""
+        conn = _create_test_db(tmp_path)
+
+        now = datetime.now(timezone.utc)
+        old_ts = (now - timedelta(days=40)).isoformat()
+
+        _insert_copy_signal(conn, old_ts)
+        _insert_copy_signal(conn, old_ts)
+
+        deleted1 = purge_copy_signals(conn, days=30, dry_run=False)
+        deleted2 = purge_copy_signals(conn, days=30, dry_run=False)
+
+        assert deleted1 == 2
+        assert deleted2 == 0
+        assert _count_rows(conn, "copy_signals") == 0
+
+        conn.close()
+
+
 class TestPurgeIntegration:
     """Integration tests for the full run() function."""
 
@@ -347,11 +471,13 @@ class TestPurgeIntegration:
 
         _insert_candidate(conn, old_ts)
         _insert_guardrail_event(conn, old_ts)
+        _insert_copy_signal(conn, old_ts)
         conn.close()
 
         # Capture log output
         with caplog.at_level(logging.INFO):
-            run(db_path=db_path, candidates_days=90, guardrail_days=60, dry_run=False)
+            run(db_path=db_path, candidates_days=90, guardrail_days=60,
+                copy_signals_days=30, dry_run=False)
 
         # Check that the log contains the purge_retention summary message
         # This confirms that run() now uses log.info() instead of bare print()
@@ -362,6 +488,7 @@ class TestPurgeIntegration:
         purge_record = [r for r in caplog.records if "[purge_retention]" in r.message][0]
         assert "candidates: retention=90d, deleted=1" in purge_record.message
         assert "guardrail_events: retention=60d, deleted=1" in purge_record.message
+        assert "copy_signals: retention=30d, deleted=1" in purge_record.message
 
 
 # ---------------------------------------------------------------------------

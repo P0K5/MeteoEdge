@@ -665,6 +665,7 @@ pattern as the `trades.mode` migration above).
 
 **Notes:**
 - Append-only: one row per detected signal, executed or skipped, never overwritten.
+- Issue #1339: this table grows ~120 rows/hour with no bound of its own -- `Database.get_copy_signals()` (the Activity Feed's only reader) defaults to `_COPY_SIGNALS_DEFAULT_LIMIT` (2000) most-recent rows rather than every row ever detected, and `src/scripts/purge_retention.py` now purges rows older than `COPY_SIGNALS_RETAIN_DAYS` (default 30d) on the existing daily retention timer, same as `candidates`/`guardrail_events`. A supporting index, `idx_copy_signals_detected (detected_at, id)`, lets the no-address-filter read use an index-driven reverse scan instead of a full-table sort.
 
 ---
 

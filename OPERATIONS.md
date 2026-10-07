@@ -364,12 +364,14 @@ database size:
 |---|---|---|---|
 | `candidates` | 90 days | Daily at 01:00 UTC | DELETE WHERE ts < cutoff |
 | `guardrail_events` | 60 days | Daily at 01:00 UTC | DELETE WHERE ts < cutoff |
+| `copy_signals` | 30 days | Daily at 01:00 UTC | DELETE WHERE detected_at < cutoff (issue #1339) |
 
 The purge job is:
 - **Idempotent:** Safe to run repeatedly; only deletes rows older than the window.
 - **Configurable:** Retention windows can be adjusted via environment variables:
   - `CANDIDATES_RETAIN_DAYS` (default: 90)
   - `GUARDRAIL_RETAIN_DAYS` (default: 60)
+  - `COPY_SIGNALS_RETAIN_DAYS` (default: 30, issue #1339)
 - **Monitorable:** Logs deleted row counts to `logs/purge.log`.
 
 **Scheduled via systemd:**
@@ -393,4 +395,4 @@ Note: The 90-day candidates window allows sufficient time for population-level
 analysis (#682 counterfactuals, #670 crowding backtests) and coincides with the
 annual settlement cycle. The 60-day guardrail_events window balances operational
 alerting history with database size, and can be extended during investigation
-windows if needed (via `GUARDRAIL_RETAIN_DAYS` env var).
+windows if needed (via `GUARDRAIL_RETAIN_DAYS` env var). The 30-day `copy_signals` window (issue #1339) matches the Activity Feed's own practical lookback -- the table was previously unbounded and growing ~120 rows/hour with no retention policy at all, which was also the root cause of the Activity Feed endpoint's full-table-scan latency (separately bounded via a query `LIMIT`, see `Database.get_copy_signals`).

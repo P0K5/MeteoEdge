@@ -2679,6 +2679,88 @@ class TestCopySignalsAndPositions:
         ) is False
 
 
+class TestGetCopySignalsBounded:
+    """Issue #1339: get_copy_signals() must never do an unbounded full-table
+    read -- copy_signals is append-only, growing ~120 rows/hour with no
+    retention policy of its own, and this was the Activity Feed endpoint's
+    only caller with no LIMIT at all.
+    """
+
+    def _insert_signals(self, db, n, address="0xabc"):
+        ids = []
+        for i in range(n):
+            ids.append(db.insert_copy_signal(
+                address=address, market="0xmarket1", source_price=0.45,
+                detected_at=f"2026-09-19T00:00:{i:02d}+00:00",
+            ))
+        return ids
+
+    def _bulk_insert_signals(self, db, n, address="0xabc"):
+        """Insert *n* rows directly (bypassing insert_copy_signal's
+        one-row-per-commit shape) -- fast enough to exercise the real
+        production default (2000), not a mocked stand-in, so this actually
+        proves the shipped default bounds the query, not just that
+        mock.patch works."""
+        rows = [
+            (address, "0xmarket1", 0, 0.45, None,
+             f"2026-09-19T00:{(i // 60) % 60:02d}:{i % 60:02d}+00:00", 0, None, None, None, None)
+            for i in range(n)
+        ]
+        with db._lock:
+            db._conn.executemany(
+                "INSERT INTO copy_signals"
+                "(address,market,outcome_index,source_price,source_trade_id,"
+                "detected_at,order_placed,fill_price,size_usd,position_id,skip_reason) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                rows,
+            )
+            db._conn.commit()
+
+    def test_default_limit_bounds_result_regardless_of_table_size(self):
+        """The row count returned must not scale with the table size --
+        the exact defect this issue reports (every row loaded on every
+        request). Exercises the real shipped default, not a mocked one."""
+        import src.data.db as db_module
+        db = _db()
+        self._bulk_insert_signals(db, db_module._COPY_SIGNALS_DEFAULT_LIMIT + 500)
+        rows = db.get_copy_signals()
+        assert len(rows) == db_module._COPY_SIGNALS_DEFAULT_LIMIT
+
+    def test_default_limit_returns_the_most_recent_rows(self):
+        db = _db()
+        ids = self._insert_signals(db, 5)
+        rows = db.get_copy_signals(limit=2)
+        assert [r["id"] for r in rows] == list(reversed(ids))[:2]
+
+    def test_explicit_limit_overrides_default(self):
+        db = _db()
+        self._insert_signals(db, 10)
+        rows = db.get_copy_signals(limit=4)
+        assert len(rows) == 4
+
+    def test_limit_none_restores_unbounded_behavior(self):
+        """Escape hatch for any caller that genuinely needs every row --
+        must still be available, just never the default."""
+        db = _db()
+        self._insert_signals(db, 10)
+        rows = db.get_copy_signals(limit=None)
+        assert len(rows) == 10
+
+    def test_limit_applies_with_address_filter_too(self):
+        db = _db()
+        self._insert_signals(db, 5, address="0xW1")
+        self._insert_signals(db, 5, address="0xW2")
+        rows = db.get_copy_signals(address="0xW1", limit=2)
+        assert len(rows) == 2
+        assert all(r["address"] == "0xW1" for r in rows)
+
+    def test_fewer_rows_than_limit_returns_all_of_them(self):
+        db = _db()
+        self._insert_signals(db, 2)
+        rows = db.get_copy_signals(limit=100)
+        assert len(rows) == 2
+
+
 class TestCopyLivePositions:
     """copy_live_positions (issue #1166, epic H #1159) -- one layer up from
     copy_positions for REAL fills. Schema/data-access only: no order
