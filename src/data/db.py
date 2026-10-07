@@ -41,6 +41,18 @@ _DEB_WEIGHT_LOG_PURGE_CUTOFF = "2026-06-30"
 # checkpoint without masking a genuinely stuck writer for too long.
 _BUSY_TIMEOUT_SECONDS = 30
 
+# Issue #1339: copy_signals is append-only and growing ~120 rows/hour
+# (114,886 rows and counting as of 2026-10-07) with no retention bound --
+# get_copy_signals()'s only caller (the Activity Feed endpoint) had no
+# LIMIT at all, so every request sorted the entire table. This is a row
+# count, not a day window: the growth rate makes a day window's own row
+# count unbounded too, so only a hard cap actually bounds per-request work
+# regardless of how fast the table grows. ~2000 rows covers roughly a
+# day's worth of signals at the current rate -- flagged for Designer/PM
+# confirmation in the PR per the issue's own acceptance criteria, not a
+# final UX decision.
+_COPY_SIGNALS_DEFAULT_LIMIT = 2000
+
 
 def connect_with_busy_timeout(
     path: "str | Path", *, check_same_thread: bool = True
@@ -558,6 +570,14 @@ CREATE INDEX IF NOT EXISTS idx_copy_signals_address_detected
     ON copy_signals(address, detected_at);
 CREATE INDEX IF NOT EXISTS idx_copy_signals_source_trade_id
     ON copy_signals(source_trade_id);
+-- Issue #1339: supports get_copy_signals()'s no-address-filter ORDER BY
+-- detected_at DESC, id DESC LIMIT ? (the Activity Feed's default,
+-- wallet-unscoped call) with an index-driven reverse scan + early
+-- termination, instead of a full-table sort. idx_copy_signals_address_
+-- detected above doesn't help this case -- address is its leading
+-- column, unusable without a WHERE address=? filter.
+CREATE INDEX IF NOT EXISTS idx_copy_signals_detected
+    ON copy_signals(detected_at, id);
 
 -- Copy-trading open paper positions (issue #1121). Mirrors open_positions'
 -- shape (docs/DB_SCHEMA.md) conceptually, but is NOT deleted on
@@ -2522,9 +2542,13 @@ class Database:
             row = cur.fetchone()
             return dict(row) if row is not None else None
 
-    def get_copy_signals(self, address: "str | None" = None) -> list[dict]:
-        """Return every ``copy_signals`` row, optionally filtered to one
-        wallet, newest-detected first.
+    def get_copy_signals(
+        self,
+        address: "str | None" = None,
+        limit: "int | None" = _COPY_SIGNALS_DEFAULT_LIMIT,
+    ) -> list[dict]:
+        """Return the *limit* most recent ``copy_signals`` rows, optionally
+        filtered to one wallet, newest-detected first.
 
         Added for the Activity Feed view (issue #1149) -- unlike
         ``get_copy_signal`` (singular, by primary key), the feed needs
@@ -2534,18 +2558,30 @@ class Database:
         deterministically) -- following this section's existing
         ``get_settled_copy_positions``/``get_recent_wallet_screenings``
         ``id DESC`` tiebreak convention.
+
+        Issue #1339: this table has no retention bound on write (it is
+        append-only, growing ~120 rows/hour) and this was the Activity
+        Feed's only caller, with no ``LIMIT`` at all -- a full table scan
+        and sort of every row, every request. ``limit`` defaults to
+        ``_COPY_SIGNALS_DEFAULT_LIMIT`` (a row count, not a date window --
+        the growth rate makes a date window's own row count unbounded too,
+        and the existing Activity Feed API tests seed fixed historical
+        timestamps unrelated to wall-clock "now", which a date-based filter
+        would have silently broken). Pass ``limit=None`` for the old
+        unbounded behavior (no production caller does this). Mirrors
+        ``get_trades(limit=50, ...)``'s "append LIMIT only when not None"
+        shape, one layer over in the trades section.
         """
         with self._lock:
             if address is not None:
-                cur = self._conn.execute(
-                    "SELECT * FROM copy_signals WHERE address=? "
-                    "ORDER BY detected_at DESC, id DESC",
-                    (address,),
-                )
+                sql = "SELECT * FROM copy_signals WHERE address=? ORDER BY detected_at DESC, id DESC"
+                params: tuple = (address,)
             else:
-                cur = self._conn.execute(
-                    "SELECT * FROM copy_signals ORDER BY detected_at DESC, id DESC"
-                )
+                sql = "SELECT * FROM copy_signals ORDER BY detected_at DESC, id DESC"
+                params = ()
+            if limit is not None:
+                sql += f" LIMIT {int(limit)}"
+            cur = self._conn.execute(sql, params)
             return [dict(row) for row in cur.fetchall()]
 
     # ------------------------------------------------------------------

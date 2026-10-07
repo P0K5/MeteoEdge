@@ -1,5 +1,5 @@
 [Unit]
-Description=MeteoEdge daily retention purge (candidates, guardrail_events)
+Description=MeteoEdge daily retention purge (candidates, guardrail_events, copy_signals)
 After=network-online.target
 Wants=network-online.target
 

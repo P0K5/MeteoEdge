@@ -3634,10 +3634,13 @@ def copy_trading_activity_feed(
     frontend-side reconciliation.
 
     Sources:
-    - ``copy_signals`` (via ``get_copy_signals``): every detected signal,
-      each a terminal ``order_placed`` or ``order_skipped`` outcome (see
-      ``CopyActivityEventOut``'s docstring for why there is no separate
-      "signal detected" event). Always ``mode="paper"``.
+    - ``copy_signals`` (via ``get_copy_signals``): the most recent detected
+      signals (issue #1339 -- ``get_copy_signals`` bounds this to its own
+      ``_COPY_SIGNALS_DEFAULT_LIMIT``, not every row ever detected; see that
+      method's docstring), each a terminal ``order_placed`` or
+      ``order_skipped`` outcome (see ``CopyActivityEventOut``'s docstring
+      for why there is no separate "signal detected" event). Always
+      ``mode="paper"``.
     - ``copy_wallets_followed`` rows with ``status='paused'``: surfaced as
       a synthetic ``wallet_paused`` event at ``paused_at``. A row with
       ``paused_at IS NULL`` (a pre-#1145 legacy pause, before the
