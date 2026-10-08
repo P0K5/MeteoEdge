@@ -30,8 +30,13 @@ blocks the others:
 3. **Wallet-balance reconciliation** (``check_wallet_balance_drift``): the
    actual "reconciliation" this epic is named for. Compares the real CLOB
    USDC balance (``LiveTrader.get_usdc_balance()``) against an expected
-   balance derived from local ``copy_live_positions`` bookkeeping, and logs
-   a loud ``log.critical`` (never a silent log line) when drift exceeds a
+   balance computed from a **full on-chain + Data API reconciliation of the
+   deposit wallet's entire transaction history** (issue #1345; rebuilt from
+   the original static-``COPY_LIVE_CAPITAL_USD``-ledger model, which broke
+   the moment the wallet saw a manual trade or deposit outside the bot's
+   own bookkeeping -- see ``src.data.wallet_reconciliation`` and
+   ``check_wallet_balance_drift()``'s own docstring), and logs a loud
+   ``log.critical`` (never a silent log line) when drift exceeds a
    configurable tolerance -- mirrors ``_record_live_outcome``'s existing
    "local bookkeeping and exchange state may have diverged" precedent. Every
    computed verdict is also persisted to ``bot_config`` (issue #1189, epic J
@@ -51,6 +56,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -60,6 +66,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from src.config import COPY_LIVE_CAPITAL_USD, get_live_config  # noqa: E402
 from src.data.copy_pnl import compute_realized_pnl_usd, effective_stake_usd  # noqa: E402
 from src.data.polymarket import fetch_market_resolution  # noqa: E402
+from src.data.wallet_reconciliation import compute_wallet_reconciliation  # noqa: E402
 from src.execution.live_trader import LiveTrader  # noqa: E402
 
 log = logging.getLogger(__name__)
@@ -285,52 +292,89 @@ def recover_ghost_orders(db, clob_client_factory) -> dict:
 
 def check_wallet_balance_drift(db, clob_client_factory, *, now: "datetime | None" = None) -> "dict | None":
     """Compare the real CLOB USDC balance against an expected balance
-    derived from local ``copy_live_positions`` bookkeeping, and flag drift
-    beyond ``COPY_LIVE_BALANCE_DRIFT_TOLERANCE_USD`` -- the actual
-    "reconciliation" this epic (#1160) is named for.
+    computed as the **full on-chain + Data API cash-accounting
+    reconciliation** of the deposit wallet's entire transaction history
+    (issue #1345), and flag drift beyond
+    ``COPY_LIVE_BALANCE_DRIFT_TOLERANCE_USD`` -- the actual "reconciliation"
+    this epic (#1160) is named for.
 
-    **Persistence (issue #1189):** every time this function actually
-    computes a verdict (i.e. does not return ``None``), it persists that
-    exact ``result`` dict plus a ``checked_at`` timestamp to
-    ``_BALANCE_DRIFT_STATUS_KEY`` via ``db.set_config`` -- readable by the
-    dashboard through ``get_wallet_balance_drift_status()`` below, without
-    needing a live CLOB call of its own. A later within-tolerance run
-    overwrites the same key, which is what makes a resolved drift stop
-    showing as a warning (only the LATEST verdict is ever kept -- no
-    history). The ``None``-return paths (no capital allocated, CLOB
-    unreachable) deliberately do NOT touch the persisted row: a stale
-    timestamp on the dashboard is the intended signal that the last real
-    check is old, rather than silently erasing the last known verdict.
-    *now* overrides "current time" for the persisted timestamp (testing
-    only); defaults to UTC now.
+    **Rebuilt 2026-10-08 (issue #1345) -- replaces the old static-capital
+    model.** The previous formula (``COPY_LIVE_CAPITAL_USD - committed +
+    realized``, derived purely from local ``copy_live_positions`` rows) was
+    wrong by construction the moment the wallet saw anything outside the
+    bot's own bookkeeping -- confirmed in production: a real ~$20 external
+    top-up, and ongoing operator manual trades on the same wallet, neither
+    of which ``copy_live_positions`` has any row for. The new formula (see
+    ``src.data.wallet_reconciliation.compute_wallet_reconciliation``) is a
+    cash-accounting identity over the wallet's *entire* real history, not a
+    delta from a capital constant::
 
-    **Expected-balance derivation (a ledger walk from ``COPY_LIVE_CAPITAL_USD``,
-    assumed to be the exact real CLOB balance at the moment live
-    copy-trading began, and never adjusted afterward -- see this function's
-    "Design uncertainty" note in the PR description for why this
-    assumption, not a schema/DB fact, is the load-bearing one here):
+        expected_balance = sum(TRADE/REDEEM cash flow, Data API activity)
+            + sum(external deposits, on-chain pUSD transfers)
+            - sum(external withdrawals, on-chain pUSD transfers)
 
-        expected_balance = COPY_LIVE_CAPITAL_USD
-            - sum(committed stake over still-unsettled 'filled'/'partial' rows)
-            + sum(realized P&L over 'settled' rows)
+    This covers every dollar that ever moved the wallet's balance --
+    bot-placed trades, manual trades, redemptions, deposits, withdrawals --
+    regardless of which local table (if any) recorded it, which is exactly
+    why it stays correct where the old model didn't.
 
-    Derivation: every dollar spent on a fill leaves the USDC balance
-    immediately; every settlement returns ``filled_stake_usd + settled_pnl_usd``
-    (which collapses to the intended payout on both a win and a loss -- see
-    ``compute_realized_pnl_usd``'s own docstring) back into it. Summing that
-    identity over every position ever filled algebraically reduces to the
-    formula above (the settled positions' stake terms cancel, leaving only
-    their P&L). ``'pending'`` rows (order placed, no confirmed fill yet) are
-    NOT counted as committed -- this does not model whether a still-resting
-    GTC order's collateral is locked by the exchange in the interim (see PR
-    description).
+    **Persistence (issue #1189, interface unchanged by #1345):** every time
+    this function actually computes a verdict (i.e. does not return
+    ``None``), it persists that exact ``result`` dict plus a ``checked_at``
+    timestamp to ``_BALANCE_DRIFT_STATUS_KEY`` via ``db.set_config`` --
+    readable by the dashboard through ``get_wallet_balance_drift_status()``
+    below, without needing a live CLOB call of its own. A later
+    within-tolerance run overwrites the same key, which is what makes a
+    resolved drift stop showing as a warning (only the LATEST verdict is
+    ever kept -- no history). The persisted dict keeps its original five
+    keys (``expected_balance_usd``, ``actual_balance_usd``, ``drift_usd``,
+    ``within_tolerance``, ``checked_at``) exactly as #1189 shaped them, plus
+    new additive-only keys from the #1345 rebuild (``external_deposits_usd``,
+    ``external_withdrawals_usd``, ``transfers_unverified``,
+    ``unresolved_usd``, ``unresolved_count``) -- ``CopyLiveBalanceDriftOut``
+    (``src/dashboard/api.py``) only reads the original five, so this is
+    forward-compatible, not a breaking change to #1189's contract. The
+    ``None``-return paths (no capital allocated, no deposit wallet
+    configured, Data API unreachable, CLOB unreachable) deliberately do NOT
+    touch the persisted row: a stale timestamp on the dashboard is the
+    intended signal that the last real check is old, rather than silently
+    erasing the last known verdict. *now* overrides "current time" for the
+    persisted timestamp (testing only); defaults to UTC now.
+
+    **Degraded mode -- missing/invalid ``ETHERSCAN_API_KEY`` (issue #1345
+    acceptance criteria).** The on-chain-transfer dimension is the only part
+    that key gates -- Data API trade/redeem cash flow has no such
+    dependency. When the key is absent (or the fetch otherwise fails), this
+    function does NOT skip the whole check: it still computes
+    ``expected_balance`` from Data API activity alone (external transfers
+    contribute $0 that run) and persists ``transfers_unverified=True`` so a
+    real external deposit/withdrawal since the last verified run shows up
+    as reported-unverified-risk, not as a silently-assumed "zero external
+    activity" fact nor a crash.
+
+    **Unresolved transfers never get folded into "drift".** A transfer that
+    looks like trade settlement (by its on-chain method selector) but is
+    absent from the Data API activity feed -- the known Data-API trade gap,
+    confirmed in #1342 -- is reported separately (``unresolved_usd``,
+    ``unresolved_count``), not guessed into a deposit/withdrawal and not
+    silently absorbed into ``drift_usd`` with no explanation. See
+    ``src.data.wallet_reconciliation.classify_onchain_transfers``.
 
     Returns ``None`` (skips entirely, no CLOB call made) when
     ``COPY_LIVE_CAPITAL_USD<=0`` -- the same "operator hasn't allocated real
     capital yet" safety-default precedent ``live_startup_sanity_check`` and
     ``COPY_LIVE_TRADING_ENABLED`` already establish elsewhere in this epic
-    set -- or when the CLOB balance call itself fails (network/auth issue;
-    logged as a warning, not a drift verdict this run cannot actually make).
+    set. **Carried over unchanged from the pre-#1345 model, deliberately --
+    flagged as a design question for PR review**, not an oversight: this
+    gate is now orthogonal to the expected-balance formula (which no longer
+    references ``COPY_LIVE_CAPITAL_USD`` at all), so it currently serves
+    only as a cheap "is live copy-trading in use at all" toggle to avoid
+    spending Data-API/Etherscan calls when the feature isn't allocated any
+    capital. Also returns ``None`` when ``POLYMARKET_DEPOSIT_WALLET`` is
+    unset (nothing to reconcile), when the Data API activity feed itself is
+    unreachable (no cash-flow signal at all to build an expected balance
+    from), or when the CLOB balance call fails (network/auth issue; logged
+    as a warning, not a drift verdict this run cannot actually make).
     """
     if COPY_LIVE_CAPITAL_USD <= 0:
         log.debug(
@@ -339,17 +383,25 @@ def check_wallet_balance_drift(db, clob_client_factory, *, now: "datetime | None
         )
         return None
 
+    wallet_address = os.environ.get("POLYMARKET_DEPOSIT_WALLET")
+    if not wallet_address:
+        log.warning(
+            "[copy-live-settle] POLYMARKET_DEPOSIT_WALLET not set -- skipping "
+            "wallet-balance reconciliation (nothing to reconcile against)",
+        )
+        return None
+
     live_config = get_live_config(db)
     tolerance = live_config["COPY_LIVE_BALANCE_DRIFT_TOLERANCE_USD"]
 
-    committed = 0.0
-    for p in db.get_open_copy_live_positions():
-        if p["status"] in ("filled", "partial"):
-            committed += effective_stake_usd(p.get("filled_stake_usd"), p["stake_usd"])
-        # 'pending' rows contribute 0 -- see docstring.
-
-    realized = db.get_copy_live_realized_pnl_total()["total_pnl_usd"]
-    expected_balance = COPY_LIVE_CAPITAL_USD - committed + realized
+    reconciliation = compute_wallet_reconciliation(wallet_address)
+    if not reconciliation.activity_available:
+        log.warning(
+            "[copy-live-settle] wallet-balance check failed (Data API activity feed "
+            "unreachable for %s...) -- no cash-flow signal to build an expected "
+            "balance from this run", wallet_address[:10],
+        )
+        return None
 
     try:
         actual_balance = LiveTrader(clob_client_factory(), db=None).get_usdc_balance()
@@ -359,6 +411,7 @@ def check_wallet_balance_drift(db, clob_client_factory, *, now: "datetime | None
         )
         return None
 
+    expected_balance = reconciliation.expected_balance_usd
     drift = actual_balance - expected_balance
     within_tolerance = abs(drift) <= tolerance
     result = {
@@ -366,15 +419,32 @@ def check_wallet_balance_drift(db, clob_client_factory, *, now: "datetime | None
         "actual_balance_usd": actual_balance,
         "drift_usd": drift,
         "within_tolerance": within_tolerance,
+        "external_deposits_usd": reconciliation.external_deposits_usd,
+        "external_withdrawals_usd": reconciliation.external_withdrawals_usd,
+        "transfers_unverified": reconciliation.transfers_unverified,
+        "transfers_unverified_reason": reconciliation.transfers_unverified_reason,
+        "unresolved_usd": reconciliation.unresolved_usd,
+        "unresolved_count": len(reconciliation.unresolved),
     }
     if not within_tolerance:
         log.critical(
             "[copy-live-settle] CRITICAL: WALLET BALANCE DRIFT of $%.4f exceeds tolerance "
-            "$%.2f -- expected $%.4f (capital=$%.2f - committed=$%.4f + realized_pnl=$%.4f) "
-            "vs actual exchange balance $%.4f. Local bookkeeping and exchange state may "
-            "have diverged -- manual reconciliation required.",
-            drift, tolerance, expected_balance, COPY_LIVE_CAPITAL_USD, committed, realized,
-            actual_balance,
+            "$%.2f -- expected $%.4f (activity_cash_flow=$%.4f + external_deposits=$%.4f "
+            "- external_withdrawals=$%.4f) vs actual exchange balance $%.4f. "
+            "transfers_unverified=%s unresolved_usd=$%.4f (%s transfer(s)). Local "
+            "bookkeeping and exchange state may have diverged -- manual reconciliation "
+            "required.",
+            drift, tolerance, expected_balance, reconciliation.activity_cash_flow_usd,
+            reconciliation.external_deposits_usd, reconciliation.external_withdrawals_usd,
+            actual_balance, reconciliation.transfers_unverified, reconciliation.unresolved_usd,
+            len(reconciliation.unresolved),
+        )
+    elif reconciliation.transfers_unverified:
+        log.warning(
+            "[copy-live-settle] wallet balance within tolerance ($%.4f drift) but "
+            "on-chain external-transfer verification was UNVERIFIED this run (%s) -- "
+            "expected $%.4f reflects Data API trade/redeem activity only",
+            drift, reconciliation.transfers_unverified_reason, expected_balance,
         )
     else:
         log.info(
