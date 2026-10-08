@@ -69,6 +69,7 @@ _DOMAIN_INTERVALS: dict[str, float] = {
     "api.open-meteo.com": 0.5,
     "gamma-api.polymarket.com": 0.5,
     "data-api.polymarket.com": 0.5,
+    "api.etherscan.io": 0.25,          # free tier: 5 req/s
 }
 
 # ---------------------------------------------------------------------------

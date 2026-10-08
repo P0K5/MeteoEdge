@@ -279,6 +279,79 @@ def get_wallet_trades_since(
     return trades
 
 
+#: Activity record ``type`` values this module's callers care about --
+#: ``TRADE`` (a buy/sell fill) and ``REDEEM`` (a resolved-market payout).
+#: The live endpoint also emits ``SPLIT``/``MERGE``/``REWARD``/``CONVERSION``
+#: for other on-chain actions (verified 2026-10-08 against
+#: ``POLYMARKET_DEPOSIT_WALLET``'s real activity feed); this module only
+#: normalizes the two cash-flow-relevant types -- see
+#: ``src.data.wallet_reconciliation`` for why ``REDEEM``/``TRADE`` are the
+#: two types a full balance reconciliation needs.
+ACTIVITY_CASH_FLOW_TYPES = {"TRADE", "REDEEM"}
+
+
+def get_wallet_activity(
+    address: str,
+    max_pages: int = MAX_TRADE_PAGES,
+    page_size: int = DEFAULT_TRADE_PAGE_SIZE,
+) -> TradeList:
+    """Fetch *address*'s full activity tape from the Data API's
+    ``/activity`` endpoint -- every ``TRADE`` (buy/sell fill) and
+    ``REDEEM`` (resolved-market payout) record, each carrying its own
+    ``transactionHash`` and ``usdcSize`` (issue #1345).
+
+    **Verified against live traffic 2026-10-08** (``POLYMARKET_DEPOSIT_WALLET``,
+    ~1,100 records): this is a *different*, richer endpoint than
+    ``get_wallet_trades()``'s ``/trades`` -- it merges trades and
+    redemptions into one newest-first feed and, critically, includes the
+    on-chain ``transactionHash`` on every record (not just trades). This
+    is what ``src.data.wallet_reconciliation`` uses to tell a genuine
+    external USDC-equivalent transfer apart from a transfer that is
+    actually trade/redeem settlement already accounted for here -- by
+    matching transaction hashes, not by guessing at a fixed set of
+    "Polymarket contract" addresses (see that module's docstring for why
+    an address allowlist does not work: real ``matchOrders`` settlement
+    moves funds directly between the two trading wallets, not through a
+    central exchange contract).
+
+    Other activity types (``SPLIT``, ``MERGE``, ``REWARD``, ``CONVERSION``,
+    seen live but not cash-flow-relevant to a USDC-equivalent-balance
+    reconciliation) are returned as-is in the raw list -- callers that
+    only want the two cash-flow types should filter on
+    ``type in ACTIVITY_CASH_FLOW_TYPES`` themselves (mirrors
+    ``normalize_trade()``'s "never guess, drop/ignore what you can't
+    confidently classify" rule at one layer up).
+
+    Pagination/truncation semantics are identical to ``get_wallet_trades()``
+    (newest-first, ``.truncated`` flag, same depth cap) -- see that
+    function's docstring. Never raises; a failed page stops pagination and
+    returns whatever was already collected.
+    """
+    records: list[dict] = []
+    truncated = False
+    for page in range(max_pages):
+        offset = page * page_size
+        url = f"{POLYMARKET_DATA_API}/activity?user={address}&limit={page_size}&offset={offset}"
+        try:
+            r = fetch(url, timeout=HTTP_TIMEOUT_SECONDS)
+            batch = r.json()
+        except Exception as exc:
+            log.warning(
+                "[polymarket-traders] get_wallet_activity(%s...): page %s failed: %s",
+                address[:10], page, exc,
+            )
+            truncated = True
+            break
+        if not batch:
+            break
+        records.extend(batch)
+        if len(batch) < page_size:
+            break
+    else:
+        truncated = True
+    return TradeList(records, truncated=truncated)
+
+
 def normalize_trade(raw: dict) -> "dict | None":
     """Normalize one raw trade record to the fields the backtest needs:
     ``market`` (condition ID), ``side`` ("BUY"/"SELL"), ``price`` (0-1

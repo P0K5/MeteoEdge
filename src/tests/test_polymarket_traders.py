@@ -8,7 +8,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src.data.polymarket_traders import (
+    ACTIVITY_CASH_FLOW_TYPES,
     get_leaderboard,
+    get_wallet_activity,
     get_wallet_trades,
     get_wallet_trades_since,
     normalize_trade,
@@ -135,6 +137,63 @@ class TestGetWalletTrades:
         ) as mock_fetch:
             result = get_wallet_trades(ADDRESS, page_size=10, max_pages=3)
         assert mock_fetch.call_count == 3
+
+
+class TestGetWalletActivity:
+    """Issue #1345: /activity returns both TRADE and REDEEM records, each
+    with its own transactionHash -- the field src.data.wallet_reconciliation
+    needs to tell on-chain settlement transfers apart from genuine external
+    deposits/withdrawals."""
+
+    def test_hits_the_activity_endpoint_not_trades(self):
+        with patch(
+            "src.data.polymarket_traders.fetch", return_value=_mock_response([])
+        ) as mock_fetch:
+            get_wallet_activity(ADDRESS)
+        called_url = mock_fetch.call_args[0][0]
+        assert "/activity" in called_url
+        assert "/trades" not in called_url
+
+    def test_trade_and_redeem_records_both_returned_verbatim(self):
+        records = [
+            {"type": "TRADE", "transactionHash": "0xa", "usdcSize": 1.5, "side": "BUY"},
+            {"type": "REDEEM", "transactionHash": "0xb", "usdcSize": 2.5},
+        ]
+        with patch("src.data.polymarket_traders.fetch", return_value=_mock_response(records)):
+            result = get_wallet_activity(ADDRESS)
+        assert result == records
+        assert {r["type"] for r in result} <= ACTIVITY_CASH_FLOW_TYPES
+
+    def test_other_activity_types_pass_through_unfiltered(self):
+        """SPLIT/MERGE/REWARD/CONVERSION are real activity types seen live
+        -- get_wallet_activity() itself doesn't filter them (callers that
+        only want cash-flow-relevant records filter on
+        ACTIVITY_CASH_FLOW_TYPES themselves, per this function's docstring)."""
+        records = [{"type": "SPLIT", "transactionHash": "0xc"}]
+        with patch("src.data.polymarket_traders.fetch", return_value=_mock_response(records)):
+            result = get_wallet_activity(ADDRESS)
+        assert result == records
+
+    def test_short_final_page_is_not_truncated(self):
+        full_page = [{"transactionHash": f"0x{i}", "type": "TRADE"} for i in range(500)]
+        short_page = [{"transactionHash": "0xlast", "type": "REDEEM"}]
+        with patch(
+            "src.data.polymarket_traders.fetch",
+            side_effect=[_mock_response(full_page), _mock_response(short_page)],
+        ):
+            result = get_wallet_activity(ADDRESS, page_size=500)
+        assert len(result) == 501
+        assert result.truncated is False
+
+    def test_page_failure_is_flagged_truncated_and_keeps_partial_results(self):
+        full_page = [{"transactionHash": f"0x{i}", "type": "TRADE"} for i in range(500)]
+        with patch(
+            "src.data.polymarket_traders.fetch",
+            side_effect=[_mock_response(full_page), ConnectionError("boom")],
+        ):
+            result = get_wallet_activity(ADDRESS, page_size=500)
+        assert len(result) == 500
+        assert result.truncated is True
         assert result.truncated is True
 
     def test_regression_10500_trades_then_400_is_truncated(self):

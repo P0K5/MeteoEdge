@@ -19,6 +19,19 @@ POLYMARKET_CLOB_API = "https://clob.polymarket.com"
 # hypothesis spike — see issue #1097 and docs/design/copy-trading-architecture.md).
 POLYMARKET_DATA_API = "https://data-api.polymarket.com"
 
+# Etherscan's unified v2 multichain API -- polygonscan.com's own API was
+# merged into this host and now requires a key even for Polygon (chainid=137)
+# requests (issue #1345 research, confirmed live 2026-10-08: a keyless request
+# returns {"status":"0","message":"NOTOK","result":"Missing/Invalid API Key"}).
+# Used by src/data/onchain_transfers.py to read ERC-20 Transfer events the
+# Data API above cannot see (raw deposits/withdrawals, not Polymarket trade
+# activity). `ETHERSCAN_API_KEY` is read lazily (os.environ, not a
+# module-level constant here) by that module, mirroring
+# src/execution/auth.py's own lazy-read-at-call-time convention for secrets
+# -- so it degrades (clear "unverified" state, never a crash) when unset,
+# exactly like that module's required env vars degrade the CLOB client.
+ETHERSCAN_API_BASE = "https://api.etherscan.io/v2/api"
+
 # Polymarket Gamma API tag filter for weather/temperature markets.
 # This is how the daily city temperature markets are discovered — the Gamma
 # API ignores text search params (`q`, `keyword`), but `tag_id` works.

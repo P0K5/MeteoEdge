@@ -11,10 +11,12 @@ from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
 from src.data.db import Database
+from src.data.wallet_reconciliation import ReconciliationResult
 from src.scripts import copy_live_settle as cls
 
 ADDRESS = "0xwallet1"
 NOW_ISO = "2026-09-20T00:00:00+00:00"
+DEPOSIT_WALLET = "0xdeposit00000000000000000000000000000001"
 
 
 def _seed_signal(db: Database, *, market: str, address: str = ADDRESS, **overrides) -> int:
@@ -48,51 +50,64 @@ def _seed_live_position(
 
 
 class TestWalletBalanceDriftDetection:
-    """The actual "reconciliation" this epic is named for -- written first,
-    per the issue's own instruction."""
+    """The actual "reconciliation" this epic is named for.
+
+    Rebuilt for issue #1345: ``expected_balance`` now comes from
+    ``src.data.wallet_reconciliation.compute_wallet_reconciliation`` (full
+    on-chain + Data API cash-flow reconciliation of the deposit wallet's
+    entire history), not local ``copy_live_positions`` bookkeeping -- so
+    these tests patch that function directly (its own module has its own
+    dedicated test file, ``test_wallet_reconciliation.py``) rather than
+    seeding ``copy_live_positions`` rows to control the expected-balance
+    math.
+    """
 
     def _factory(self, balance: float):
         trader = MagicMock()
-        trader.get_order_fill_cost_usd.return_value = 0.0  # default: fall back to shares*price approximation
         trader.get_usdc_balance.return_value = balance
         factory = MagicMock(return_value=MagicMock())
         return factory, trader
 
-    def test_drift_within_tolerance_is_not_flagged_and_not_critical(self, caplog):
-        db = Database(":memory:")
-        # committed: one 'filled' (no filled_stake_usd -> falls back to
-        # stake_usd=20) + one 'partial' with filled_stake_usd=4 -> 24 total.
-        _seed_live_position(db, market="0xm1", status="filled", stake_usd=20.0)
-        _seed_live_position(db, market="0xm2", status="partial", stake_usd=10.0, filled_stake_usd=4.0)
-        _seed_live_position(db, market="0xm3", status="pending", stake_usd=999.0)  # never counted
-        # realized: one settled position, pnl=5.0
-        settled_id = _seed_live_position(db, market="0xm4", status="filled", stake_usd=5.0)
-        db.settle_copy_live_position(settled_id, 5.0, NOW_ISO)
+    def _recon(self, expected_balance, **overrides) -> ReconciliationResult:
+        kwargs = dict(
+            activity_available=True, expected_balance_usd=expected_balance,
+            activity_cash_flow_usd=expected_balance, transfers_unverified=False,
+        )
+        kwargs.update(overrides)
+        return ReconciliationResult(**kwargs)
 
-        # expected = 100 (capital) - 24 (committed) + 5 (realized) = 81
+    def test_drift_within_tolerance_is_not_flagged_and_not_critical(self, caplog, monkeypatch):
+        monkeypatch.setenv("POLYMARKET_DEPOSIT_WALLET", DEPOSIT_WALLET)
+        db = Database(":memory:")
         factory, trader = self._factory(balance=81.0)
         with patch.object(cls, "COPY_LIVE_CAPITAL_USD", 100.0), \
              patch.object(cls, "LiveTrader", return_value=trader), \
+             patch.object(cls, "compute_wallet_reconciliation", return_value=self._recon(81.0)) as mock_recon, \
              caplog.at_level("CRITICAL"):
             result = cls.check_wallet_balance_drift(db, factory)
 
+        mock_recon.assert_called_once_with(DEPOSIT_WALLET)
         assert result == {
             "expected_balance_usd": 81.0,
             "actual_balance_usd": 81.0,
             "drift_usd": 0.0,
             "within_tolerance": True,
+            "external_deposits_usd": 0.0,
+            "external_withdrawals_usd": 0.0,
+            "transfers_unverified": False,
+            "transfers_unverified_reason": None,
+            "unresolved_usd": 0.0,
+            "unresolved_count": 0,
         }
         assert not any("CRITICAL" in rec.message for rec in caplog.records)
 
-    def test_drift_beyond_tolerance_is_flagged_loudly(self, caplog):
+    def test_drift_beyond_tolerance_is_flagged_loudly(self, caplog, monkeypatch):
+        monkeypatch.setenv("POLYMARKET_DEPOSIT_WALLET", DEPOSIT_WALLET)
         db = Database(":memory:")
-        _seed_live_position(db, market="0xm1", status="filled", stake_usd=20.0)
-
-        # expected = 100 - 20 + 0 = 80; actual = 100 -> drift = 20, way beyond
-        # the default $2.00 tolerance.
-        factory, trader = self._factory(balance=100.0)
+        factory, trader = self._factory(balance=100.0)  # expected=80 -> drift=20
         with patch.object(cls, "COPY_LIVE_CAPITAL_USD", 100.0), \
              patch.object(cls, "LiveTrader", return_value=trader), \
+             patch.object(cls, "compute_wallet_reconciliation", return_value=self._recon(80.0)), \
              caplog.at_level("CRITICAL"):
             result = cls.check_wallet_balance_drift(db, factory)
 
@@ -103,21 +118,27 @@ class TestWalletBalanceDriftDetection:
             for rec in caplog.records
         )
 
-    def test_drift_exactly_at_tolerance_boundary_is_not_flagged(self):
+    def test_drift_exactly_at_tolerance_boundary_is_not_flagged(self, monkeypatch):
+        monkeypatch.setenv("POLYMARKET_DEPOSIT_WALLET", DEPOSIT_WALLET)
         db = Database(":memory:")
         db.set_config("COPY_LIVE_BALANCE_DRIFT_TOLERANCE_USD", "1.0")
 
         factory, trader = self._factory(balance=99.0)  # expected=100, drift=-1.0
         with patch.object(cls, "COPY_LIVE_CAPITAL_USD", 100.0), \
-             patch.object(cls, "LiveTrader", return_value=trader):
+             patch.object(cls, "LiveTrader", return_value=trader), \
+             patch.object(cls, "compute_wallet_reconciliation", return_value=self._recon(100.0)):
             result = cls.check_wallet_balance_drift(db, factory)
 
         assert result["within_tolerance"] is True
 
-    def test_skips_entirely_when_no_real_capital_allocated(self):
+    def test_skips_entirely_when_no_real_capital_allocated(self, monkeypatch):
         """COPY_LIVE_CAPITAL_USD<=0 (the safety default) -- must skip
         without ever calling the CLOB, mirroring COPY_LIVE_TRADING_ENABLED's
-        own inert-by-default precedent."""
+        own inert-by-default precedent. Carried over unchanged from the
+        pre-#1345 model -- see check_wallet_balance_drift()'s own docstring
+        for why this gate stays even though the formula it used to feed no
+        longer exists."""
+        monkeypatch.setenv("POLYMARKET_DEPOSIT_WALLET", DEPOSIT_WALLET)
         db = Database(":memory:")
         factory = MagicMock()
         with patch.object(cls, "COPY_LIVE_CAPITAL_USD", 0.0):
@@ -126,49 +147,156 @@ class TestWalletBalanceDriftDetection:
         assert result is None
         factory.assert_not_called()
 
-    def test_clob_failure_returns_none_without_raising(self, caplog):
+    def test_skips_entirely_when_deposit_wallet_not_set(self, monkeypatch):
+        """Issue #1345's new gate: with no wallet address there is nothing
+        to reconcile against -- must skip, never crash, never call the
+        CLOB or the reconciliation."""
+        monkeypatch.delenv("POLYMARKET_DEPOSIT_WALLET", raising=False)
+        db = Database(":memory:")
+        factory = MagicMock()
+        with patch.object(cls, "COPY_LIVE_CAPITAL_USD", 100.0), \
+             patch.object(cls, "compute_wallet_reconciliation") as mock_recon:
+            result = cls.check_wallet_balance_drift(db, factory)
+
+        assert result is None
+        factory.assert_not_called()
+        mock_recon.assert_not_called()
+
+    def test_activity_unavailable_returns_none_without_raising(self, monkeypatch):
+        """The Data API activity feed being unreachable leaves no cash-flow
+        signal at all to build an expected balance from -- must skip
+        cleanly, mirroring the CLOB-unreachable precedent below."""
+        monkeypatch.setenv("POLYMARKET_DEPOSIT_WALLET", DEPOSIT_WALLET)
+        db = Database(":memory:")
+        factory = MagicMock()
+        with patch.object(cls, "COPY_LIVE_CAPITAL_USD", 100.0), \
+             patch.object(
+                 cls, "compute_wallet_reconciliation",
+                 return_value=ReconciliationResult(activity_available=False, expected_balance_usd=None),
+             ):
+            result = cls.check_wallet_balance_drift(db, factory)
+
+        assert result is None
+        factory.assert_not_called()
+
+    def test_clob_failure_returns_none_without_raising(self, caplog, monkeypatch):
         """A network/auth blip fetching the real balance must never crash
         the whole hourly run -- this is one of three independent things
         run_once does."""
+        monkeypatch.setenv("POLYMARKET_DEPOSIT_WALLET", DEPOSIT_WALLET)
         db = Database(":memory:")
         factory = MagicMock(return_value=MagicMock())
         with patch.object(cls, "COPY_LIVE_CAPITAL_USD", 100.0), \
-             patch.object(cls, "LiveTrader", side_effect=RuntimeError("CLOB unreachable")):
+             patch.object(cls, "LiveTrader", side_effect=RuntimeError("CLOB unreachable")), \
+             patch.object(cls, "compute_wallet_reconciliation", return_value=self._recon(80.0)):
             result = cls.check_wallet_balance_drift(db, factory)
 
         assert result is None
 
-    def test_partial_fill_uses_filled_stake_usd_not_full_stake(self):
-        """A 'partial' row's committed exposure must use filled_stake_usd,
-        never the full originally-intended stake_usd -- the same #1171
-        item 3 precision this epic's settlement also depends on."""
+    def test_detected_external_deposit_is_added_to_expected_balance(self, monkeypatch):
+        """The ground-truth scenario this issue is named for: a real $20
+        external top-up must be reflected in expected_balance, not treated
+        as unexplained drift."""
+        monkeypatch.setenv("POLYMARKET_DEPOSIT_WALLET", DEPOSIT_WALLET)
         db = Database(":memory:")
-        _seed_live_position(
-            db, market="0xm1", status="partial", stake_usd=50.0, filled_stake_usd=3.0,
-        )
-
-        # If this wrongly used the full stake_usd=50, expected would be 50;
-        # using filled_stake_usd=3.0 it's 97.
-        factory, trader = self._factory(balance=97.0)
+        # Trades/redeems cash flow alone would say 80; the $20 deposit
+        # brings expected_balance to 100, matching the real exchange
+        # balance -- zero drift, not a $20 "mystery".
+        factory, trader = self._factory(balance=100.0)
+        recon = self._recon(100.0, activity_cash_flow_usd=80.0, external_deposits_usd=20.0)
         with patch.object(cls, "COPY_LIVE_CAPITAL_USD", 100.0), \
-             patch.object(cls, "LiveTrader", return_value=trader):
+             patch.object(cls, "LiveTrader", return_value=trader), \
+             patch.object(cls, "compute_wallet_reconciliation", return_value=recon):
             result = cls.check_wallet_balance_drift(db, factory)
 
-        assert result["expected_balance_usd"] == 97.0
+        assert result["expected_balance_usd"] == 100.0
+        assert result["external_deposits_usd"] == 20.0
         assert result["within_tolerance"] is True
+
+    def test_detected_external_withdrawal_reduces_expected_balance(self, monkeypatch):
+        monkeypatch.setenv("POLYMARKET_DEPOSIT_WALLET", DEPOSIT_WALLET)
+        db = Database(":memory:")
+        factory, trader = self._factory(balance=70.0)
+        recon = self._recon(70.0, activity_cash_flow_usd=80.0, external_withdrawals_usd=10.0)
+        with patch.object(cls, "COPY_LIVE_CAPITAL_USD", 100.0), \
+             patch.object(cls, "LiveTrader", return_value=trader), \
+             patch.object(cls, "compute_wallet_reconciliation", return_value=recon):
+            result = cls.check_wallet_balance_drift(db, factory)
+
+        assert result["expected_balance_usd"] == 70.0
+        assert result["external_withdrawals_usd"] == 10.0
+        assert result["within_tolerance"] is True
+
+    def test_missing_etherscan_key_reports_unverified_not_silent_zero(self, caplog, monkeypatch):
+        """Issue #1345 acceptance criteria: a missing ETHERSCAN_API_KEY must
+        never be silently treated as "confirmed zero external transfers" --
+        the check still produces a verdict (from Data API activity alone)
+        but flags transfers_unverified=True."""
+        monkeypatch.setenv("POLYMARKET_DEPOSIT_WALLET", DEPOSIT_WALLET)
+        db = Database(":memory:")
+        factory, trader = self._factory(balance=80.0)
+        recon = self._recon(
+            80.0, transfers_unverified=True, transfers_unverified_reason="no_api_key",
+        )
+        with patch.object(cls, "COPY_LIVE_CAPITAL_USD", 100.0), \
+             patch.object(cls, "LiveTrader", return_value=trader), \
+             patch.object(cls, "compute_wallet_reconciliation", return_value=recon), \
+             caplog.at_level("WARNING"):
+            result = cls.check_wallet_balance_drift(db, factory)
+
+        assert result["transfers_unverified"] is True
+        assert result["transfers_unverified_reason"] == "no_api_key"
+        assert result["within_tolerance"] is True  # no false-positive drift flag
+        assert any("UNVERIFIED" in rec.message for rec in caplog.records)
+
+    def test_unresolved_transfer_is_reported_not_folded_into_drift(self, monkeypatch):
+        """A transfer that looks like trade settlement but is absent from
+        the Data API (the known #1342 gap) must be surfaced distinctly,
+        never silently absorbed into drift_usd or guessed as a deposit."""
+        monkeypatch.setenv("POLYMARKET_DEPOSIT_WALLET", DEPOSIT_WALLET)
+        db = Database(":memory:")
+        factory, trader = self._factory(balance=80.0)
+        recon = self._recon(
+            80.0, unresolved=[{"transaction_hash": "0xabc", "amount_usd": 3.5,
+                                "function_name": "matchOrders", "timestamp": "123",
+                                "reason": "possible_trade_missing_from_data_api"}],
+            unresolved_usd=3.5,
+        )
+        with patch.object(cls, "COPY_LIVE_CAPITAL_USD", 100.0), \
+             patch.object(cls, "LiveTrader", return_value=trader), \
+             patch.object(cls, "compute_wallet_reconciliation", return_value=recon):
+            result = cls.check_wallet_balance_drift(db, factory)
+
+        assert result["unresolved_usd"] == 3.5
+        assert result["unresolved_count"] == 1
+        # The $3.50 unresolved amount is reported on its own, not added
+        # into expected_balance (which came straight from the mocked
+        # recon's expected_balance_usd=80.0) or hidden inside drift_usd.
+        assert result["expected_balance_usd"] == 80.0
 
 
 class TestWalletBalanceDriftPersistence:
     """Issue #1189: check_wallet_balance_drift()'s result must be queryable
     by the dashboard API after the hourly job exits, via
-    get_wallet_balance_drift_status()."""
+    get_wallet_balance_drift_status(). The persisted/read contract's
+    original five keys are unchanged by issue #1345's computation rebuild
+    -- CopyLiveBalanceDriftOut (src/dashboard/api.py) only ever reads
+    those five, so the extra #1345 keys on the persisted row are additive
+    and inert to it."""
 
     def _factory(self, balance: float):
         trader = MagicMock()
-        trader.get_order_fill_cost_usd.return_value = 0.0  # default: fall back to shares*price approximation
         trader.get_usdc_balance.return_value = balance
         factory = MagicMock(return_value=MagicMock())
         return factory, trader
+
+    def _recon(self, expected_balance, **overrides) -> ReconciliationResult:
+        kwargs = dict(
+            activity_available=True, expected_balance_usd=expected_balance,
+            activity_cash_flow_usd=expected_balance, transfers_unverified=False,
+        )
+        kwargs.update(overrides)
+        return ReconciliationResult(**kwargs)
 
     def test_never_checked_returns_all_none(self):
         db = Database(":memory:")
@@ -181,13 +309,14 @@ class TestWalletBalanceDriftPersistence:
             "actual_balance_usd": None,
         }
 
-    def test_drift_beyond_tolerance_persists_and_is_readable(self):
+    def test_drift_beyond_tolerance_persists_and_is_readable(self, monkeypatch):
+        monkeypatch.setenv("POLYMARKET_DEPOSIT_WALLET", DEPOSIT_WALLET)
         db = Database(":memory:")
-        _seed_live_position(db, market="0xm1", status="filled", stake_usd=20.0)
         factory, trader = self._factory(balance=100.0)  # expected=80, drift=20
 
         with patch.object(cls, "COPY_LIVE_CAPITAL_USD", 100.0), \
-             patch.object(cls, "LiveTrader", return_value=trader):
+             patch.object(cls, "LiveTrader", return_value=trader), \
+             patch.object(cls, "compute_wallet_reconciliation", return_value=self._recon(80.0)):
             result = cls.check_wallet_balance_drift(
                 db, factory, now=datetime(2026, 9, 20, 12, 0, tzinfo=timezone.utc),
             )
@@ -199,15 +328,16 @@ class TestWalletBalanceDriftPersistence:
         assert status["expected_balance_usd"] == result["expected_balance_usd"]
         assert status["actual_balance_usd"] == result["actual_balance_usd"]
 
-    def test_within_tolerance_result_clears_a_prior_warning(self):
+    def test_within_tolerance_result_clears_a_prior_warning(self, monkeypatch):
         """A dashboard must never keep showing a stale drift warning after
         it's resolved -- a later clean run overwrites the persisted row."""
+        monkeypatch.setenv("POLYMARKET_DEPOSIT_WALLET", DEPOSIT_WALLET)
         db = Database(":memory:")
-        _seed_live_position(db, market="0xm1", status="filled", stake_usd=20.0)
 
         bad_factory, bad_trader = self._factory(balance=100.0)  # drift=20, flagged
         with patch.object(cls, "COPY_LIVE_CAPITAL_USD", 100.0), \
-             patch.object(cls, "LiveTrader", return_value=bad_trader):
+             patch.object(cls, "LiveTrader", return_value=bad_trader), \
+             patch.object(cls, "compute_wallet_reconciliation", return_value=self._recon(80.0)):
             cls.check_wallet_balance_drift(
                 db, bad_factory, now=datetime(2026, 9, 20, 1, 0, tzinfo=timezone.utc),
             )
@@ -215,7 +345,8 @@ class TestWalletBalanceDriftPersistence:
 
         good_factory, good_trader = self._factory(balance=80.0)  # drift=0, clean
         with patch.object(cls, "COPY_LIVE_CAPITAL_USD", 100.0), \
-             patch.object(cls, "LiveTrader", return_value=good_trader):
+             patch.object(cls, "LiveTrader", return_value=good_trader), \
+             patch.object(cls, "compute_wallet_reconciliation", return_value=self._recon(80.0)):
             cls.check_wallet_balance_drift(
                 db, good_factory, now=datetime(2026, 9, 20, 2, 0, tzinfo=timezone.utc),
             )
@@ -225,15 +356,16 @@ class TestWalletBalanceDriftPersistence:
         assert status["drift_usd"] == 0.0
         assert status["checked_at"] == "2026-09-20T02:00:00+00:00"
 
-    def test_skip_no_capital_never_persists_or_clears(self):
+    def test_skip_no_capital_never_persists_or_clears(self, monkeypatch):
         """A None-return (no capital allocated) must not overwrite a
         previously-persisted verdict -- see the function's own docstring on
         why a stale timestamp, not silence, is the intended signal."""
+        monkeypatch.setenv("POLYMARKET_DEPOSIT_WALLET", DEPOSIT_WALLET)
         db = Database(":memory:")
-        _seed_live_position(db, market="0xm1", status="filled", stake_usd=20.0)
         factory, trader = self._factory(balance=100.0)
         with patch.object(cls, "COPY_LIVE_CAPITAL_USD", 100.0), \
-             patch.object(cls, "LiveTrader", return_value=trader):
+             patch.object(cls, "LiveTrader", return_value=trader), \
+             patch.object(cls, "compute_wallet_reconciliation", return_value=self._recon(80.0)):
             cls.check_wallet_balance_drift(
                 db, factory, now=datetime(2026, 9, 20, 1, 0, tzinfo=timezone.utc),
             )
@@ -245,19 +377,21 @@ class TestWalletBalanceDriftPersistence:
         assert result is None
         assert cls.get_wallet_balance_drift_status(db) == before
 
-    def test_clob_failure_never_persists_or_clears(self):
+    def test_clob_failure_never_persists_or_clears(self, monkeypatch):
+        monkeypatch.setenv("POLYMARKET_DEPOSIT_WALLET", DEPOSIT_WALLET)
         db = Database(":memory:")
-        _seed_live_position(db, market="0xm1", status="filled", stake_usd=20.0)
         factory, trader = self._factory(balance=100.0)
         with patch.object(cls, "COPY_LIVE_CAPITAL_USD", 100.0), \
-             patch.object(cls, "LiveTrader", return_value=trader):
+             patch.object(cls, "LiveTrader", return_value=trader), \
+             patch.object(cls, "compute_wallet_reconciliation", return_value=self._recon(80.0)):
             cls.check_wallet_balance_drift(
                 db, factory, now=datetime(2026, 9, 20, 1, 0, tzinfo=timezone.utc),
             )
         before = cls.get_wallet_balance_drift_status(db)
 
         with patch.object(cls, "COPY_LIVE_CAPITAL_USD", 100.0), \
-             patch.object(cls, "LiveTrader", side_effect=RuntimeError("CLOB unreachable")):
+             patch.object(cls, "LiveTrader", side_effect=RuntimeError("CLOB unreachable")), \
+             patch.object(cls, "compute_wallet_reconciliation", return_value=self._recon(80.0)):
             result = cls.check_wallet_balance_drift(db, factory)
 
         assert result is None
@@ -667,7 +801,8 @@ class TestRunOnce:
         assert result["balance_check"] is None
         assert result["ghost_recovery"] == {"recovered": 0, "confirmed_dead": 0, "still_ambiguous": 0}
 
-    def test_explicit_clob_client_factory_is_used_for_both_ghost_and_balance(self):
+    def test_explicit_clob_client_factory_is_used_for_both_ghost_and_balance(self, monkeypatch):
+        monkeypatch.setenv("POLYMARKET_DEPOSIT_WALLET", DEPOSIT_WALLET)
         db = Database(":memory:")
         _seed_live_position(
             db, market="0xm1", status="rejected", stake_usd=10.0, fill_price=0.40,
@@ -680,8 +815,13 @@ class TestRunOnce:
         trader.get_usdc_balance.return_value = 100.0
         factory = MagicMock(return_value=MagicMock())
 
+        recon = ReconciliationResult(
+            activity_available=True, expected_balance_usd=100.0,
+            activity_cash_flow_usd=100.0, transfers_unverified=False,
+        )
         with patch.object(cls, "COPY_LIVE_CAPITAL_USD", 100.0), \
              patch.object(cls, "LiveTrader", return_value=trader), \
+             patch.object(cls, "compute_wallet_reconciliation", return_value=recon), \
              patch.object(cls, "fetch_market_resolution", return_value=None):
             result = cls.run_once(db=db, clob_client_factory=factory)
 
@@ -741,20 +881,13 @@ class TestFillCostCoalesceIssue1336:
         ).fetchone()
         assert row["settled_pnl_usd"] == -10.0
 
-    def test_drift_committed_exposure_uses_recorded_full_fill_cost(self):
-        """Committed exposure for an unsettled 'filled' row must be the $3.00
-        actually spent, not the $10.00 intended stake. Expected = 100 - 3 = 97."""
-        db = Database(":memory:")
-        _seed_live_position(
-            db, market="0xm1", status="filled", stake_usd=10.0, filled_stake_usd=3.0,
-        )
-        trader = MagicMock()
-        trader.get_order_fill_cost_usd.return_value = 0.0  # default: fall back to shares*price approximation
-        trader.get_usdc_balance.return_value = 97.0
-        factory = MagicMock(return_value=MagicMock())
-        with patch.object(cls, "COPY_LIVE_CAPITAL_USD", 100.0), \
-             patch.object(cls, "LiveTrader", return_value=trader):
-            result = cls.check_wallet_balance_drift(db, factory)
-
-        assert result["expected_balance_usd"] == 97.0
-        assert result["within_tolerance"] is True
+    # NOTE: the pre-#1345 "committed exposure" test that lived here
+    # (`test_drift_committed_exposure_uses_recorded_full_fill_cost`) tested
+    # the old COPY_LIVE_CAPITAL_USD-minus-committed-plus-realized formula's
+    # own COALESCE(filled_stake_usd, stake_usd) usage. That formula (and the
+    # "committed exposure" concept itself) no longer exists after #1345's
+    # rebuild -- expected_balance now comes entirely from
+    # wallet_reconciliation.compute_wallet_reconciliation, which has no
+    # local-ledger "committed" term to get right or wrong. Removed, not
+    # replaced: TestWalletBalanceDriftDetection above covers the current
+    # formula's own correctness.

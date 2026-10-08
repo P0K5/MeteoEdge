@@ -502,15 +502,27 @@ class TestBalanceDriftEndpoint:
         assert body["expected_balance_usd"] == pytest.approx(100.0)
         assert body["actual_balance_usd"] == pytest.approx(112.34)
 
-    def test_a_later_clean_check_overwrites_the_prior_verdict(self, api_client):
+    def test_a_later_clean_check_overwrites_the_prior_verdict(self, api_client, monkeypatch):
         client, db = api_client
         from src.scripts.copy_live_settle import check_wallet_balance_drift
         from datetime import datetime, timezone
         from unittest.mock import MagicMock, patch
         from src.scripts import copy_live_settle as cls
+        from src.data.wallet_reconciliation import ReconciliationResult
+
+        # check_wallet_balance_drift's expected_balance now comes from a
+        # real on-chain + Data API reconciliation (issue #1345) -- mock it
+        # here exactly like test_copy_live_settle.py does, so this
+        # dashboard-endpoint test never makes a live network call.
+        monkeypatch.setenv("POLYMARKET_DEPOSIT_WALLET", "0xdeposit00000000000000000000000000000001")
+        recon = ReconciliationResult(
+            activity_available=True, expected_balance_usd=100.0,
+            activity_cash_flow_usd=100.0, transfers_unverified=False,
+        )
 
         with patch.object(cls, "COPY_LIVE_CAPITAL_USD", 100.0), \
-             patch.object(cls, "LiveTrader") as mock_live_trader:
+             patch.object(cls, "LiveTrader") as mock_live_trader, \
+             patch.object(cls, "compute_wallet_reconciliation", return_value=recon):
             mock_live_trader.return_value.get_usdc_balance.return_value = 50.0  # drift
             check_wallet_balance_drift(
                 db, MagicMock(), now=datetime(2026, 9, 10, 0, 0, tzinfo=timezone.utc),
@@ -518,7 +530,8 @@ class TestBalanceDriftEndpoint:
         assert client.get("/api/copy-trading/balance-drift").json()["within_tolerance"] is False
 
         with patch.object(cls, "COPY_LIVE_CAPITAL_USD", 100.0), \
-             patch.object(cls, "LiveTrader") as mock_live_trader:
+             patch.object(cls, "LiveTrader") as mock_live_trader, \
+             patch.object(cls, "compute_wallet_reconciliation", return_value=recon):
             mock_live_trader.return_value.get_usdc_balance.return_value = 100.0  # clean
             check_wallet_balance_drift(
                 db, MagicMock(), now=datetime(2026, 9, 10, 1, 0, tzinfo=timezone.utc),
