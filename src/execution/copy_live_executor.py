@@ -149,14 +149,17 @@ def execute_live_copy_order(
         improvement, if any, is not captured here or there).
 
         ``filled_stake_usd`` on a ``"filled"`` or ``"partial"`` result is
-        the actual USD spent (``filled_shares * fill_price``), distinct from
-        the caller's originally-requested *stake_usd* -- issue #1171 item 3 /
-        #1174 for partials, extended to full fills by issue #1336: a fill's
-        P&L must be computed from what actually matched, not the intended
-        stake. ``filled_shares`` is the CLOB fill record
-        (``get_order_fill_size``); ``fill_price`` is the placed limit price,
-        so this is an upper bound on the true cost when the match was at a
-        better price.
+        the actual USD spent, distinct from the caller's
+        originally-requested *stake_usd* -- issue #1171 item 3 / #1174 for
+        partials, extended to full fills by issue #1336: a fill's P&L must
+        be computed from what actually matched, not the intended stake.
+        Issue #1341: this now prefers ``LiveTrader.get_order_fill_cost_usd``
+        -- the sum of ``size * price`` over the order's own confirmed
+        (non-``"FAILED"``) trades, the exchange's own record of what
+        actually executed -- falling back to ``filled_shares * fill_price``
+        (``get_order_fill_size()`` times the *placed* limit price, an upper
+        bound whenever the match crossed the spread at a better price) only
+        when no resolved-trade cost is available yet.
 
     **Ghost orders (issue #1171 item 1 / #1174).** When the exchange
     ``cancel_order`` call itself raises after a fill-wait timeout, the
@@ -239,6 +242,29 @@ def execute_live_copy_order(
         log.info("  [copy-live] %s %s...", outcome, order_id[:12])
         return order_id, outcome, cancel_ok
 
+    def _fill_cost_usd(oid: str, filled_shares: float, placed_price: float) -> float:
+        """Return the actual USD spent on *oid*, preferring the order's own
+        confirmed trades over the ``filled_shares * placed_price`` upper
+        bound (issue #1341: the #1336 approximation overstates cost
+        whenever the match crossed the spread at a better price than the
+        placed limit, or part of an off-chain CLOB match failed on-chain
+        settlement -- see ``LiveTrader.get_order_fill_cost_usd``'s
+        docstring). Falls back to the approximation, logged, only when the
+        trade-cost lookup itself has nothing yet (e.g. trades not resolved
+        at query time) -- never silently drops the fill's cost entirely."""
+        try:
+            actual_cost = trader.get_order_fill_cost_usd(oid)
+        except Exception as e:  # defensive: the "never raises" contract
+            log.warning("  [copy-live] fill-cost lookup failed for %s...: %s", oid[:12], e)
+            actual_cost = 0.0
+        if actual_cost and actual_cost > 0:
+            return round(actual_cost, 6)
+        log.warning(
+            "  [copy-live] order %s... has no resolved-trade cost yet -- "
+            "falling back to shares*placed-price approximation", oid[:12],
+        )
+        return round(filled_shares * placed_price, 6)
+
     def _partial_result(oid: str, cents: int, filled_shares: float) -> dict:
         """Build a "partial" result dict, including the actual USD spent
         (issue #1171 item 3 / #1174) -- distinct from the caller's
@@ -248,7 +274,7 @@ def execute_live_copy_order(
             "status": "partial",
             "order_id": oid,
             "fill_price": fp,
-            "filled_stake_usd": round(filled_shares * fp, 6),
+            "filled_stake_usd": _fill_cost_usd(oid, filled_shares, fp),
         }
 
     price_cents = _price_to_cents(price)
@@ -304,8 +330,9 @@ def execute_live_copy_order(
         # only partials. Previously this branch returned no filled_stake_usd,
         # so settlement fell back to the intended stake_usd -- overstating
         # the cost (and loss) of any order that matched for less than
-        # requested. The CLOB fill record is the authority for the matched
-        # size (same get_order_fill_size() source the partial path uses).
+        # requested. Issue #1341: #1336's own formula (filled_shares *
+        # placed price) was itself still wrong -- see _fill_cost_usd above --
+        # so this now prefers the order's actual confirmed-trade cost.
         result = {
             "status": "filled",
             "order_id": order_id,
@@ -317,7 +344,7 @@ def execute_live_copy_order(
             log.warning("  [copy-live] fill-size lookup failed for %s...: %s", order_id[:12], e)
             filled_shares = 0.0
         if filled_shares and filled_shares > 0:
-            result["filled_stake_usd"] = round(filled_shares * result["fill_price"], 6)
+            result["filled_stake_usd"] = _fill_cost_usd(order_id, filled_shares, result["fill_price"])
         else:
             # No fill record available: the caller (and settlement) falls
             # back to the intended stake_usd, the pre-#1336 behaviour. Logged

@@ -24,9 +24,9 @@ blocks the others:
    periodically re-checks ``copy_live_positions`` rows left in an ambiguous
    state after a failed GTC cancel (``rejected_reason='cancel_failed_ghost'``,
    written by ``src.execution.copy_live_executor``) via
-   ``LiveTrader.check_fill``/``get_order_fill_size``, and trues them up to
-   a correct terminal status instead of leaving a real fill permanently
-   mis-recorded as a dead rejection.
+   ``LiveTrader.check_fill``/``get_order_fill_size``/``get_order_fill_cost_usd``
+   (issue #1341), and trues them up to a correct terminal status instead of
+   leaving a real fill permanently mis-recorded as a dead rejection.
 3. **Wallet-balance reconciliation** (``check_wallet_balance_drift``): the
    actual "reconciliation" this epic is named for. Compares the real CLOB
    USDC balance (``LiveTrader.get_usdc_balance()``) against an expected
@@ -232,7 +232,24 @@ def recover_ghost_orders(db, clob_client_factory) -> dict:
 
             intended_shares = round(r["stake_usd"] / fill_price, 2)
             new_status = "filled" if filled_shares >= intended_shares - 1e-6 else "partial"
-            filled_stake_usd = round(filled_shares * fill_price, 6)
+            # Issue #1341: prefer the order's own confirmed-trade cost over
+            # filled_shares * placed fill_price -- the latter is only an
+            # upper bound (see LiveTrader.get_order_fill_cost_usd's
+            # docstring), the exact same bug #1336 shipped for the normal
+            # fill/partial paths in copy_live_executor.py, which this ghost
+            # recovery path must not repeat.
+            try:
+                actual_cost = trader.get_order_fill_cost_usd(order_id)
+            except Exception as e:
+                log.warning(
+                    "[copy-live-settle] fill-cost lookup failed for ghost order "
+                    "%s... (position %s): %s", str(order_id)[:12], r["id"], e,
+                )
+                actual_cost = 0.0
+            filled_stake_usd = (
+                round(actual_cost, 6) if actual_cost and actual_cost > 0
+                else round(filled_shares * fill_price, 6)
+            )
             db.update_copy_live_position_status(
                 r["id"], status=new_status, filled_stake_usd=filled_stake_usd,
             )
