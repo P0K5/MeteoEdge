@@ -707,15 +707,28 @@ and unit (issue #1100 isolation: never touches `copy_positions`/
    fill, escalated via `log.critical`) or a confirmed
    `'cancel_confirmed_zero_fill'` rejection. Still-ambiguous rows (order
    still resting) are left for the next run.
-3. **Wallet-balance reconciliation:** compares the real CLOB USDC balance
-   (`LiveTrader.get_usdc_balance()`) against an expected balance derived
-   from local bookkeeping (`COPY_LIVE_CAPITAL_USD` minus currently-committed
-   fills, plus realized settled P&L), and `log.critical`s when the drift
-   exceeds `COPY_LIVE_BALANCE_DRIFT_TOLERANCE_USD` (live-editable via the
-   dashboard config tab, default $2.00). Skipped entirely (no CLOB call)
-   when `COPY_LIVE_CAPITAL_USD<=0` -- the same "no real capital allocated
-   yet" safety default `COPY_LIVE_TRADING_ENABLED` and
-   `live_startup_sanity_check` already use elsewhere in this epic set.
+3. **Wallet-balance reconciliation (rebuilt, issue #1345):** compares the
+   real CLOB USDC balance (`LiveTrader.get_usdc_balance()`) against an
+   expected balance computed as a **full cash-accounting reconciliation of
+   the deposit wallet's entire real transaction history** --
+   Data API trade/redeem cash flow, plus external deposits/withdrawals
+   detected on-chain (Etherscan pUSD `Transfer` events, gated on
+   `ETHERSCAN_API_KEY` above) -- not a delta from the static
+   `COPY_LIVE_CAPITAL_USD` constant as before. This correctly accounts for
+   manual trades and deposits/withdrawals the bot's own `copy_live_positions`
+   table never sees. `log.critical`s when the drift exceeds
+   `COPY_LIVE_BALANCE_DRIFT_TOLERANCE_USD` (live-editable via the dashboard
+   config tab, default $2.00); also logs distinctly when on-chain transfers
+   are unverified (no/invalid `ETHERSCAN_API_KEY`) or when a transfer looks
+   like trade settlement but is missing from the Data API (known gap,
+   issue #1342) -- neither case is silently folded into the drift number.
+   Skipped entirely (no CLOB call) when `COPY_LIVE_CAPITAL_USD<=0` or
+   `POLYMARKET_DEPOSIT_WALLET` is unset -- the same "no real capital
+   allocated yet" safety default `COPY_LIVE_TRADING_ENABLED` and
+   `live_startup_sanity_check` already use elsewhere in this epic set. See
+   `src/data/wallet_reconciliation.py` for the full computation, and run
+   `python -m src.scripts.verify_wallet_reconciliation` any time to manually
+   verify it against the real wallet.
 
 A single row/check that fails is logged and skipped — it never aborts the
 run or blocks the other two things this script does.
@@ -1188,11 +1201,16 @@ Every block is visible in two places:
 | `POLYMARKET_L2_API_SECRET` | (unset) | Derived L2 API secret for live trading | **Yes (live mode)** |
 | `POLYMARKET_L2_API_PASSPHRASE` | (unset) | Derived L2 API passphrase for live trading | **Yes (live mode)** |
 | `POLYMARKET_CHAIN_ID` | 137 | 137 for mainnet (real), 80002 for Amoy testnet | No |
+| `ETHERSCAN_API_KEY` | (unset) | Etherscan v2 multichain API key (free tier), used by `check_wallet_balance_drift`'s on-chain reconciliation (issue #1345) to read pUSD `Transfer` events on Polygon for `POLYMARKET_DEPOSIT_WALLET` -- detects external deposits/withdrawals the Data API alone cannot see. Absent-safe: without it, the wallet-balance drift check still runs (from Data API trade/redeem activity alone) but persists `transfers_unverified=true` instead of silently assuming zero external transfers. Get a free key at etherscan.io -- it works across all their supported chains including Polygon, no cost. | No (degrades, does not block live trading) |
 
 **Live mode requirements:**
 - `POLYMARKET_DEPOSIT_WALLET`: Your funded L2 proxy address (see `.env.example`)
 - `POLYMARKET_API_KEY`: Your L1 wallet private key (see `.env.example`)
 - `POLYMARKET_L2_API_*`: Derived credentials (see `.env.example` for derivation command)
+- `ETHERSCAN_API_KEY` (optional but recommended for live trading): without it, the wallet-balance
+  drift check (below) can't verify external deposits/withdrawals -- real drift could be masked by
+  an unverified manual deposit/withdrawal. Run `python -m src.scripts.verify_wallet_reconciliation`
+  after setting it to confirm it's picking up your wallet's real history correctly.
 
 **Order-book fields on `bracket_evals` (issue #1077).** When `ENABLE_CLOB_ENRICHMENT=true`,
 every `logs/bracket_evals.*.jsonl` row also carries, per side (`yes`/`no`):
@@ -2090,6 +2108,9 @@ Before going live, verify:
 
 - [ ] `.env` file present with all required credentials
 - [ ] `POLYMARKET_API_KEY`, `POLYMARKET_L2_API_*`, `POLYMARKET_DEPOSIT_WALLET` set
+- [ ] `ETHERSCAN_API_KEY` set for live copy-trading (issue #1345) -- without it the
+      wallet-balance drift check can't verify external deposits/withdrawals; run
+      `python -m src.scripts.verify_wallet_reconciliation` to confirm it's working
 - [ ] `STARTING_CAPITAL_EUR` set to a safe amount (start with 100-500 EUR)
 - [ ] `POSITION_SIZE_EUR` set appropriately (recommend 5-10 EUR per position)
 - [ ] `RISK_DAILY_LOSS_LIMIT_EUR` set (recommend 10-20% of capital)
