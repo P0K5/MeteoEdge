@@ -39,7 +39,7 @@ _clob_stub.ClobClient = MagicMock  # type: ignore[attr-defined]
 _clob_types_stub = ModuleType("py_clob_client_v2.clob_types")
 for _name in (
     "AssetType", "BalanceAllowanceParams", "CreateOrderOptions",
-    "OrderArgs", "OpenOrderParams", "OrderPayload",
+    "OrderArgs", "OpenOrderParams", "OrderPayload", "TradeParams",
 ):
     setattr(_clob_types_stub, _name, MagicMock)
 sys.modules.setdefault("py_clob_client_v2", _clob_stub)

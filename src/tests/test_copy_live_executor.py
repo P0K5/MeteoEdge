@@ -12,10 +12,15 @@ from src.execution import copy_live_executor as cle
 def _run(
     *, book_asks=None, timeout=True, fill_status="open", resolution=None,
     fill_size=0.0, retry_enabled=True, place_order_side_effect=None,
+    fill_cost_usd=0.0,
 ):
     """Run execute_live_copy_order with LiveTrader/get_orderbook/fetch_market_resolution
     mocked. Returns (result, trader_mock, orderbook_mock)."""
     trader = MagicMock()
+    # Default 0.0 -> no resolved-trade cost available yet, so the result
+    # falls back to the shares*placed-price approximation (issue #1341).
+    # Pass a positive fill_cost_usd to exercise the actual-cost path instead.
+    trader.get_order_fill_cost_usd.return_value = fill_cost_usd
     if place_order_side_effect is not None:
         trader.place_order.side_effect = place_order_side_effect
     else:
@@ -62,6 +67,7 @@ class TestFillOnFirstAttempt:
 
     def test_price_clamped_and_converted_to_cents(self):
         trader = MagicMock()
+        trader.get_order_fill_cost_usd.return_value = 0.0  # default: fall back to shares*price approximation
         trader.place_order.return_value = "oid"
         trader.check_fill.return_value = "filled"
         trader.get_order_fill_size.return_value = 0.0  # no fill record -> no cost recorded
@@ -93,6 +99,7 @@ class TestTimeoutRepriceRetry:
         the retry is covered separately (TestFillOnFirstAttempt exercises
         the fill path in isolation)."""
         trader = MagicMock()
+        trader.get_order_fill_cost_usd.return_value = 0.0  # default: fall back to shares*price approximation
         trader.place_order.side_effect = ["oid-1", "oid-2"]
         trader.check_fill.return_value = "open"
         trader.get_order_fill_size.return_value = 0.0
@@ -167,6 +174,7 @@ class TestCancelFailureNeverRetries:
 
     def test_cancel_raising_prevents_reprice_retry(self):
         trader = MagicMock()
+        trader.get_order_fill_cost_usd.return_value = 0.0  # default: fall back to shares*price approximation
         trader.place_order.return_value = "oid-1"
         trader.check_fill.return_value = "open"  # never resolves -> always 'timeout'
         trader.cancel_order.side_effect = RuntimeError("cancel API down")
@@ -198,6 +206,7 @@ class TestGhostOrderReporting:
 
     def test_cancel_raising_reports_distinct_ghost_reason_and_fill_price(self):
         trader = MagicMock()
+        trader.get_order_fill_cost_usd.return_value = 0.0  # default: fall back to shares*price approximation
         trader.place_order.return_value = "oid-1"
         trader.check_fill.return_value = "open"  # never resolves -> always 'timeout'
         trader.cancel_order.side_effect = RuntimeError("cancel API down")
@@ -234,6 +243,7 @@ class TestGhostOrderReporting:
         failure on the RETRY's own attempt fell through to a plain
         outcome-string rejection instead of being flagged as a ghost."""
         trader = MagicMock()
+        trader.get_order_fill_cost_usd.return_value = 0.0  # default: fall back to shares*price approximation
         trader.place_order.side_effect = ["oid-1", "oid-2"]
         trader.check_fill.return_value = "open"  # both attempts always 'timeout'
         # First cancel (of oid-1) succeeds; second cancel (of oid-2, the
@@ -278,6 +288,7 @@ class TestPartialFillIncludesFilledStakeUsd:
 
     def test_partial_fill_on_retry_attempt_includes_filled_stake_usd(self):
         trader = MagicMock()
+        trader.get_order_fill_cost_usd.return_value = 0.0  # default: fall back to shares*price approximation
         trader.place_order.side_effect = ["oid-1", "oid-2"]
         trader.check_fill.return_value = "open"
         trader.cancel_order.return_value = None  # cancel succeeds both times
@@ -355,6 +366,7 @@ class TestFullFillRecordsFilledStakeUsd:
 
     def test_full_fill_whose_fill_lookup_raises_still_reports_filled(self):
         trader = MagicMock()
+        trader.get_order_fill_cost_usd.return_value = 0.0  # default: fall back to shares*price approximation
         trader.place_order.return_value = "oid-x"
         trader.check_fill.return_value = "filled"
         trader.get_order_fill_size.side_effect = RuntimeError("CLOB 500")
@@ -367,3 +379,62 @@ class TestFullFillRecordsFilledStakeUsd:
                 price=0.40, stake_usd=10.0,
             )
         assert result == {"status": "filled", "order_id": "oid-x", "fill_price": 0.40}
+
+
+class TestActualFillCostPreferredOverApproximation:
+    """Issue #1341: the #1336 fix's own formula (filled_shares * placed
+    price) was itself still wrong -- a GTC BUY that crosses the spread can
+    match at a materially better price than its limit, and/or part of an
+    off-chain CLOB match can fail on-chain settlement. Real example traced
+    from production position #97: stake $3.00 placed at 0.37, matched 8.11
+    shares at an actual execution price of 0.22 -- true cost $1.7842, not
+    the $3.0007 the #1336 formula alone would produce (8.11 * 0.37)."""
+
+    def test_full_fill_uses_actual_cost_when_available(self):
+        # Placed price 0.40 (price_cents=40) would give 25 shares * 0.40 =
+        # 10.0 under the old #1336 approximation; the order's own confirmed
+        # trades instead report a much cheaper true cost.
+        result, trader, _, _, _ = _run(
+            fill_status="filled", timeout=False, fill_size=25.0, fill_cost_usd=5.5,
+        )
+        assert result["status"] == "filled"
+        assert result["fill_price"] == 0.40  # still the placed price, informational
+        assert result["filled_stake_usd"] == 5.5  # NOT 25.0 * 0.40 == 10.0
+        trader.get_order_fill_cost_usd.assert_called_once_with("order-id-abc123")
+
+    def test_production_position_97_shape_crossed_spread_fill(self):
+        """Mirrors the real #97 row: placed 0.37, 8.11 shares matched, real
+        execution price 0.22 -> true cost 1.7842, not 8.11*0.37=3.0007."""
+        result, _, _, _, _ = _run(
+            fill_status="filled", timeout=False, fill_size=8.1081, fill_cost_usd=1.7842,
+        )
+        assert result["status"] == "filled"
+        assert result["filled_stake_usd"] == 1.7842
+
+    def test_partial_fill_uses_actual_cost_when_available(self):
+        result, trader, _, _, _ = _run(
+            timeout=True, book_asks=[], resolution=None, fill_size=2.5, fill_cost_usd=0.4,
+        )
+        assert result["status"] == "partial"
+        # Old approximation would be 2.5 * 0.40 = 1.0 -- actual cost wins.
+        assert result["filled_stake_usd"] == 0.4
+        trader.get_order_fill_cost_usd.assert_called_once_with("order-id-abc123")
+
+    def test_falls_back_to_approximation_when_actual_cost_lookup_raises(self):
+        trader = MagicMock()
+        trader.get_order_fill_cost_usd.side_effect = RuntimeError("CLOB 500")
+        trader.place_order.return_value = "oid-x"
+        trader.check_fill.return_value = "filled"
+        trader.get_order_fill_size.return_value = 25.0
+        factory = MagicMock(return_value=MagicMock())
+        with patch.object(cle, "LiveTrader", return_value=trader), \
+             patch.object(cle.time, "sleep", lambda s: None), \
+             patch.object(cle, "FILL_MAX_WAIT_S", 100):
+            result = cle.execute_live_copy_order(
+                factory, token_id="t", market="m", side_label="YES",
+                price=0.40, stake_usd=10.0,
+            )
+        # Lookup raised -> falls back to shares*placed-price, same as a
+        # zero/no-cost response -- never propagates, never drops the fill.
+        assert result["status"] == "filled"
+        assert result["filled_stake_usd"] == 10.0

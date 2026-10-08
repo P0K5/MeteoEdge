@@ -53,6 +53,7 @@ class TestWalletBalanceDriftDetection:
 
     def _factory(self, balance: float):
         trader = MagicMock()
+        trader.get_order_fill_cost_usd.return_value = 0.0  # default: fall back to shares*price approximation
         trader.get_usdc_balance.return_value = balance
         factory = MagicMock(return_value=MagicMock())
         return factory, trader
@@ -164,6 +165,7 @@ class TestWalletBalanceDriftPersistence:
 
     def _factory(self, balance: float):
         trader = MagicMock()
+        trader.get_order_fill_cost_usd.return_value = 0.0  # default: fall back to shares*price approximation
         trader.get_usdc_balance.return_value = balance
         factory = MagicMock(return_value=MagicMock())
         return factory, trader
@@ -430,6 +432,7 @@ class TestGhostOrderRecovery:
             order_id="oid-ghost", rejected_reason="cancel_failed_ghost",
         )
         trader = MagicMock()
+        trader.get_order_fill_cost_usd.return_value = 0.0  # default: fall back to shares*price approximation
         trader.check_fill.return_value = "filled"
         trader.get_order_fill_size.return_value = 25.0  # 10/0.40 = 25 intended shares
         factory = MagicMock(return_value=MagicMock())
@@ -445,6 +448,30 @@ class TestGhostOrderRecovery:
         assert row["filled_stake_usd"] == 25.0 * 0.40
         assert any("CRITICAL" in rec.message and "recovered" in rec.message for rec in caplog.records)
 
+    def test_recovered_fill_prefers_actual_cost_over_approximation(self):
+        """Issue #1341: recover_ghost_orders must not repeat the #1336
+        shares*placed-price bug -- the order's own confirmed-trade cost
+        wins when available."""
+        db = Database(":memory:")
+        position_id = _seed_live_position(
+            db, market="0xm1", status="rejected", stake_usd=10.0, fill_price=0.40,
+            order_id="oid-ghost", rejected_reason="cancel_failed_ghost",
+        )
+        trader = MagicMock()
+        trader.check_fill.return_value = "filled"
+        trader.get_order_fill_size.return_value = 25.0  # 10/0.40 = 25 intended shares
+        trader.get_order_fill_cost_usd.return_value = 5.5  # real cost, far below 25*0.40
+        factory = MagicMock(return_value=MagicMock())
+
+        with patch.object(cls, "LiveTrader", return_value=trader):
+            summary = cls.recover_ghost_orders(db, factory)
+
+        assert summary == {"recovered": 1, "confirmed_dead": 0, "still_ambiguous": 0}
+        row = db._conn.execute(
+            "SELECT filled_stake_usd FROM copy_live_positions WHERE id=?", (position_id,)
+        ).fetchone()
+        assert row["filled_stake_usd"] == 5.5  # NOT 25.0 * 0.40 == 10.0
+
     def test_confirmed_smaller_fill_recovers_to_partial(self):
         db = Database(":memory:")
         position_id = _seed_live_position(
@@ -452,6 +479,7 @@ class TestGhostOrderRecovery:
             order_id="oid-ghost", rejected_reason="cancel_failed_ghost",
         )
         trader = MagicMock()
+        trader.get_order_fill_cost_usd.return_value = 0.0  # default: fall back to shares*price approximation
         trader.check_fill.return_value = "open"
         trader.get_order_fill_size.return_value = 5.0  # < 25 intended shares
         factory = MagicMock(return_value=MagicMock())
@@ -473,6 +501,7 @@ class TestGhostOrderRecovery:
             order_id="oid-ghost", rejected_reason="cancel_failed_ghost",
         )
         trader = MagicMock()
+        trader.get_order_fill_cost_usd.return_value = 0.0  # default: fall back to shares*price approximation
         trader.check_fill.return_value = "cancelled"
         trader.get_order_fill_size.return_value = 0.0
         factory = MagicMock(return_value=MagicMock())
@@ -498,6 +527,7 @@ class TestGhostOrderRecovery:
             order_id="oid-ghost", rejected_reason="cancel_failed_ghost",
         )
         trader = MagicMock()
+        trader.get_order_fill_cost_usd.return_value = 0.0  # default: fall back to shares*price approximation
         trader.check_fill.return_value = "open"
         trader.get_order_fill_size.return_value = 0.0
         factory = MagicMock(return_value=MagicMock())
@@ -519,6 +549,7 @@ class TestGhostOrderRecovery:
             order_id="oid-ghost", rejected_reason="cancel_failed_ghost",
         )
         trader = MagicMock()
+        trader.get_order_fill_cost_usd.return_value = 0.0  # default: fall back to shares*price approximation
         trader.check_fill.side_effect = RuntimeError("CLOB unreachable")
         factory = MagicMock(return_value=MagicMock())
 
@@ -643,6 +674,7 @@ class TestRunOnce:
             order_id="oid-ghost", rejected_reason="cancel_failed_ghost",
         )
         trader = MagicMock()
+        trader.get_order_fill_cost_usd.return_value = 0.0  # default: fall back to shares*price approximation
         trader.check_fill.return_value = "open"
         trader.get_order_fill_size.return_value = 0.0
         trader.get_usdc_balance.return_value = 100.0
@@ -717,6 +749,7 @@ class TestFillCostCoalesceIssue1336:
             db, market="0xm1", status="filled", stake_usd=10.0, filled_stake_usd=3.0,
         )
         trader = MagicMock()
+        trader.get_order_fill_cost_usd.return_value = 0.0  # default: fall back to shares*price approximation
         trader.get_usdc_balance.return_value = 97.0
         factory = MagicMock(return_value=MagicMock())
         with patch.object(cls, "COPY_LIVE_CAPITAL_USD", 100.0), \

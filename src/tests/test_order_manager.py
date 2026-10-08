@@ -34,6 +34,7 @@ for _name in (
     "OrderArgs",
     "OpenOrderParams",
     "OrderPayload",
+    "TradeParams",
 ):
     setattr(_clob_types_stub, _name, MagicMock)
 sys.modules.setdefault("py_clob_client_v2", _clob_stub)

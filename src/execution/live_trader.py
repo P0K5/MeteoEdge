@@ -7,7 +7,14 @@ log = logging.getLogger(__name__)
 from typing import Literal
 
 from py_clob_client_v2 import ClobClient
-from py_clob_client_v2.clob_types import AssetType, BalanceAllowanceParams, CreateOrderOptions, OrderArgs, OrderPayload
+from py_clob_client_v2.clob_types import (
+    AssetType,
+    BalanceAllowanceParams,
+    CreateOrderOptions,
+    OrderArgs,
+    OrderPayload,
+    TradeParams,
+)
 
 from src.data.polymarket import get_orderbook
 
@@ -164,6 +171,61 @@ class LiveTrader:
         except Exception as e:
             log.warning("[live] get_order_fill_size %s... error: %s", order_id[:12], e)
             return 0.0
+
+    def get_order_fill_cost_usd(self, order_id: str) -> float:
+        """Return the actual USD spent on *order_id*'s own confirmed trades
+        (0.0 on error, no trades, or no confirmed trade -- never raises).
+
+        Issue #1341: ``get_order_fill_size()``'s ``size_matched`` tells us
+        *how many shares* the CLOB's matching engine matched off-chain, but
+        not at what price, nor whether that match actually settled on-chain.
+        Two distinct failure modes both make ``filled_shares * placed_price``
+        (the #1336 approximation) wrong, sometimes by 50%+ of the stake:
+        (1) a GTC BUY limit order that crosses the spread matches at a
+        *better* price than its limit -- the placed price is only ever an
+        upper bound; (2) Polymarket's CLOB is a hybrid off-chain-match /
+        on-chain-settlement exchange, and a trade that matched off-chain can
+        still fail to settle on-chain (``py_clob_client_v2.client`` already
+        has its own ``FAILED_TRADE_STATUS = "FAILED"`` handling for exactly
+        this, used internally by ``post_order()``'s settlement-hash
+        resolution) -- counting it would overstate real spend.
+
+        This walks the order's own ``associate_trades`` (the order's trade
+        ids, same field ``post_order()`` resolves internally) via
+        ``client.get_trades(TradeParams(id=...))``, and sums ``size *
+        price`` for every trade that is NOT ``status == "FAILED"`` -- the
+        exchange's own record of what actually executed, captured
+        synchronously at the same call site that already queries fill
+        state (no later reconstruction needed).
+        """
+        try:
+            order = self.client.get_order(order_id) or {}
+        except Exception as e:
+            log.warning("[live] get_order_fill_cost_usd %s... order lookup error: %s", order_id[:12], e)
+            return 0.0
+        trade_ids = order.get("associate_trades") or []
+        if not trade_ids:
+            return 0.0
+        total = 0.0
+        for trade_id in trade_ids:
+            try:
+                trades = self.client.get_trades(TradeParams(id=trade_id), only_first_page=True)
+            except Exception as e:
+                log.warning(
+                    "[live] get_order_fill_cost_usd %s... trade %s... lookup error: %s",
+                    order_id[:12], str(trade_id)[:12], e,
+                )
+                continue
+            for trade in trades or []:
+                if trade.get("id") != trade_id:
+                    continue
+                if str(trade.get("status") or "").upper() == "FAILED":
+                    continue
+                try:
+                    total += float(trade.get("size") or 0) * float(trade.get("price") or 0)
+                except (TypeError, ValueError):
+                    continue
+        return round(total, 6)
 
     def sell_position_immediate(
         self, token_id: str, shares: float, aggression_cents: int = 2,

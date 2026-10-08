@@ -9,7 +9,7 @@ import pytest
 _clob_stub = ModuleType("py_clob_client_v2")
 _clob_stub.ClobClient = MagicMock  # type: ignore[attr-defined]
 _clob_types_stub = ModuleType("py_clob_client_v2.clob_types")
-for _name in ("AssetType", "BalanceAllowanceParams", "CreateOrderOptions", "OrderArgs", "OrderPayload"):
+for _name in ("AssetType", "BalanceAllowanceParams", "CreateOrderOptions", "OrderArgs", "OrderPayload", "TradeParams"):
     setattr(_clob_types_stub, _name, MagicMock)
 sys.modules.setdefault("py_clob_client_v2", _clob_stub)
 sys.modules.setdefault("py_clob_client_v2.clob_types", _clob_types_stub)
@@ -43,6 +43,107 @@ class TestGetOrderFillSize:
         trader = _make_trader()
         trader.client.get_order.return_value = {"status": "live"}
         assert trader.get_order_fill_size("ord-003") == 0.0
+
+
+class TestGetOrderFillCostUsd:
+    """LiveTrader.get_order_fill_cost_usd() (issue #1341) -- the actual-cost
+    authority, replacing the `filled_shares * placed_price` approximation
+    (#1336) which overstates cost whenever a GTC BUY crosses the spread at
+    a better price, or part of an off-chain CLOB match fails on-chain
+    settlement."""
+
+    def test_sums_size_times_price_across_multiple_trades(self):
+        """Multi-leg fill: an order matched via two separate trades."""
+        trader = _make_trader()
+        trader.client.get_order.return_value = {
+            "status": "matched", "associate_trades": ["trade-1", "trade-2"],
+        }
+
+        def _get_trades(params, only_first_page=True):
+            return {
+                "trade-1": [{"id": "trade-1", "size": "5.0", "price": "0.22", "status": "CONFIRMED"}],
+                "trade-2": [{"id": "trade-2", "size": "3.11", "price": "0.22", "status": "CONFIRMED"}],
+            }[params.id]
+
+        trader.client.get_trades.side_effect = _get_trades
+        # 5.0*0.22 + 3.11*0.22 = 1.1 + 0.6842 = 1.7842
+        assert trader.get_order_fill_cost_usd("ord-full") == pytest.approx(1.7842)
+
+    def test_uses_actual_execution_price_not_placed_limit_price(self):
+        """A single trade matched far better than the placed limit -- the
+        whole point of #1341: this must reflect the trade's OWN price."""
+        trader = _make_trader()
+        trader.client.get_order.return_value = {
+            "status": "matched", "associate_trades": ["trade-1"],
+        }
+        trader.client.get_trades.return_value = [
+            {"id": "trade-1", "size": "8.11", "price": "0.22", "status": "MATCHED"},
+        ]
+        # Placed limit was 0.37 (not passed to this method at all) --
+        # actual cost must be 8.11 * 0.22, never 8.11 * 0.37.
+        assert trader.get_order_fill_cost_usd("ord-x") == pytest.approx(1.7842)
+
+    def test_excludes_failed_trade_status(self):
+        """A trade that matched off-chain but failed on-chain settlement
+        (py_clob_client_v2's own FAILED_TRADE_STATUS) must not count."""
+        trader = _make_trader()
+        trader.client.get_order.return_value = {
+            "status": "matched", "associate_trades": ["trade-ok", "trade-failed"],
+        }
+
+        def _get_trades(params, only_first_page=True):
+            return {
+                "trade-ok": [{"id": "trade-ok", "size": "4.0", "price": "0.5", "status": "CONFIRMED"}],
+                "trade-failed": [{"id": "trade-failed", "size": "4.0", "price": "0.5", "status": "FAILED"}],
+            }[params.id]
+
+        trader.client.get_trades.side_effect = _get_trades
+        assert trader.get_order_fill_cost_usd("ord-y") == pytest.approx(2.0)
+
+    def test_returns_zero_when_no_associate_trades(self):
+        trader = _make_trader()
+        trader.client.get_order.return_value = {"status": "live", "associate_trades": []}
+        assert trader.get_order_fill_cost_usd("ord-z") == 0.0
+        trader.client.get_trades.assert_not_called()
+
+    def test_returns_zero_when_associate_trades_field_missing(self):
+        trader = _make_trader()
+        trader.client.get_order.return_value = {"status": "live"}
+        assert trader.get_order_fill_cost_usd("ord-missing") == 0.0
+
+    def test_returns_zero_on_order_lookup_error(self):
+        trader = _make_trader()
+        trader.client.get_order.side_effect = Exception("network blip")
+        assert trader.get_order_fill_cost_usd("ord-err") == 0.0
+
+    def test_one_trade_lookup_failure_does_not_block_the_others(self):
+        """A single trade-id lookup raising must not zero out the whole
+        result -- the other, successfully-resolved legs still count."""
+        trader = _make_trader()
+        trader.client.get_order.return_value = {
+            "status": "matched", "associate_trades": ["trade-good", "trade-bad"],
+        }
+
+        def _get_trades(params, only_first_page=True):
+            if params.id == "trade-bad":
+                raise Exception("timeout")
+            return [{"id": "trade-good", "size": "2.0", "price": "0.3", "status": "CONFIRMED"}]
+
+        trader.client.get_trades.side_effect = _get_trades
+        assert trader.get_order_fill_cost_usd("ord-partial-error") == pytest.approx(0.6)
+
+    def test_mismatched_trade_id_in_response_is_skipped(self):
+        """Defensive: only count a trade record whose own id matches what
+        was requested (get_trades is a filtered list, but never trust it
+        blindly)."""
+        trader = _make_trader()
+        trader.client.get_order.return_value = {
+            "status": "matched", "associate_trades": ["trade-1"],
+        }
+        trader.client.get_trades.return_value = [
+            {"id": "some-other-trade", "size": "99.0", "price": "0.99", "status": "CONFIRMED"},
+        ]
+        assert trader.get_order_fill_cost_usd("ord-mismatch") == 0.0
 
 
 class TestSellPositionImmediateCancelReturnsOrderId:
