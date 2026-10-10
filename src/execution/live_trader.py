@@ -192,11 +192,28 @@ class LiveTrader:
 
         This walks the order's own ``associate_trades`` (the order's trade
         ids, same field ``post_order()`` resolves internally) via
-        ``client.get_trades(TradeParams(id=...))``, and sums ``size *
-        price`` for every trade that is NOT ``status == "FAILED"`` -- the
-        exchange's own record of what actually executed, captured
+        ``client.get_trades(TradeParams(id=...))``, and sums the cost of
+        *our own leg* of every trade that is NOT ``status == "FAILED"`` --
+        the exchange's own record of what actually executed, captured
         synchronously at the same call site that already queries fill
         state (no later reconstruction needed).
+
+        Issue #1347: a trade record's top-level ``size``/``price`` describe
+        the *taker's* own order and outcome -- correct to use directly only
+        when ``order_id`` IS the taker (``trade["taker_order_id"] ==
+        order_id``). When our order instead filled as a **maker** leg
+        (resting liquidity matched by someone else's taker order --
+        ``trade["trader_side"] == "MAKER"``), the top-level fields belong
+        to the taker's complementary outcome (e.g. YES @ 0.79 for a trade
+        where we supplied NO @ 0.21 -- prices sum to ~1, they are not
+        interchangeable) and must not be used for our own cost. Verified
+        against real production trades for the 3 corrupted rows in the
+        issue (#334/#336/#338): each was a maker fill split across two
+        trade events, and summing the top-level (taker-side) ``size *
+        price`` instead of our own ``maker_orders[]`` leg reproduces the
+        exact ~3.76x/~2.03x overcounts recorded in the DB. This is a
+        wrong-field bug, not a duplicate-row one -- each ``trade_id``
+        resolves to exactly one trade record.
         """
         try:
             order = self.client.get_order(order_id) or {}
@@ -221,10 +238,29 @@ class LiveTrader:
                     continue
                 if str(trade.get("status") or "").upper() == "FAILED":
                     continue
-                try:
-                    total += float(trade.get("size") or 0) * float(trade.get("price") or 0)
-                except (TypeError, ValueError):
+                if trade.get("taker_order_id") == order_id:
+                    # We were the taker: the top-level fields are our own fill.
+                    legs = [{"matched_amount": trade.get("size"), "price": trade.get("price")}]
+                else:
+                    # We were a maker leg (possibly alongside other makers
+                    # in the same multi-maker match) -- use only our own
+                    # entry in maker_orders, never the taker-side totals.
+                    legs = [
+                        m for m in (trade.get("maker_orders") or [])
+                        if m.get("order_id") == order_id
+                    ]
+                if not legs:
+                    log.warning(
+                        "[live] get_order_fill_cost_usd %s... trade %s... order is neither "
+                        "taker nor a maker leg of this trade, skipping",
+                        order_id[:12], str(trade_id)[:12],
+                    )
                     continue
+                for leg in legs:
+                    try:
+                        total += float(leg.get("matched_amount") or 0) * float(leg.get("price") or 0)
+                    except (TypeError, ValueError):
+                        continue
         return round(total, 6)
 
     def sell_position_immediate(
