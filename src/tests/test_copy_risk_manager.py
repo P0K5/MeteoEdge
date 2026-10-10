@@ -1,5 +1,6 @@
 """Unit tests for src/risk/copy_risk_manager.py (issue #1139, story D1 of
-epic #1138; plus its live counterpart, issue #1175, epic I #1160). Fully
+epic #1138; plus its live counterpart, issue #1175, epic I #1160; plus the
+live breaker's persisted-trip/manual-reset mechanics, issue #1348). Fully
 mocked -- no real DB, mirroring test_copy_signal_loop.py's MagicMock db
 style. COPY_TRADING_CAPITAL_USD / COPY_LIVE_CAPITAL_USD are patched
 per-test rather than relying on their real config.py defaults so these
@@ -16,6 +17,8 @@ from src.risk.copy_risk_manager import (
     REASON_LIVE_DRAWDOWN,
     allow_copy_signal,
     allow_live_copy_signal,
+    get_live_circuit_breaker_status,
+    reset_live_circuit_breaker,
 )
 
 
@@ -55,6 +58,38 @@ def _mock_live_db(daily_total_pnl: float = 0.0, cumulative_total_pnl: float = 0.
     db.get_copy_live_realized_pnl_total.return_value = {
         "n_settled": 1, "total_pnl_usd": cumulative_total_pnl,
     }
+    return db
+
+
+class _FakeConfigStore:
+    """A tiny in-memory substitute for ``Database.get_config``/``set_config``,
+    backed by a plain dict -- lets the persisted-trip tests (issue #1348)
+    exercise copy_risk_manager's real read/write/clear cycle without a real
+    sqlite ``Database``. Crucially, this dict lives OUTSIDE any mock db
+    object: wiring a brand-new ``MagicMock`` to the SAME store (see
+    ``_mock_live_db_with_config``) stands in for a ``copy_signal_loop.py``
+    process restart -- a fresh object, same persisted facts, proving the
+    "no in-memory module state" contract this module's docstring claims.
+    """
+
+    def __init__(self):
+        self._store: dict = {}
+
+    def get_config(self, key):
+        return self._store.get(key)
+
+    def set_config(self, key, value):
+        self._store[key] = value
+
+
+def _mock_live_db_with_config(
+    store: "_FakeConfigStore", daily_total_pnl: float = 0.0, cumulative_total_pnl: float = 0.0,
+) -> MagicMock:
+    """``_mock_live_db``, plus ``get_config``/``set_config`` wired to
+    *store* so the persisted live-breaker trip can actually round-trip."""
+    db = _mock_live_db(daily_total_pnl=daily_total_pnl, cumulative_total_pnl=cumulative_total_pnl)
+    db.get_config.side_effect = store.get_config
+    db.set_config.side_effect = store.set_config
     return db
 
 
@@ -402,3 +437,246 @@ class TestPaperLiveBreakerIndependence:
             allow_copy_signal(db, _live_config())
         db.get_copy_live_realized_pnl_total_for_date.assert_not_called()
         db.get_copy_live_realized_pnl_total.assert_not_called()
+
+
+# ----------------------------------------------------------------------
+# Persisted live-breaker trip state (issue #1348): stay-tripped-same-day,
+# UTC-midnight auto-clear, manual reset, and restart-persistence.
+# ----------------------------------------------------------------------
+
+class TestLiveBreakerStaysTrippedSameDay:
+    def test_daily_loss_trip_persists_across_calls_even_as_pnl_recovers(self):
+        store = _FakeConfigStore()
+        db = _mock_live_db_with_config(store, daily_total_pnl=-30.0)
+        cfg = _live_breaker_config(COPY_LIVE_DAILY_LOSS_LIMIT_USD=25.0)
+        with patch("src.risk.copy_risk_manager.COPY_LIVE_CAPITAL_USD", CAPITAL):
+            ok1, reason1 = allow_live_copy_signal(db, cfg)
+        assert ok1 is False
+        assert reason1 == REASON_LIVE_DAILY_LOSS
+
+        # PnL recovers mid-day (a later win pushes the running total back
+        # above the limit) -- the trip must NOT flicker off.
+        db.get_copy_live_realized_pnl_total_for_date.return_value = {
+            "n_settled": 2, "total_pnl_usd": 5.0,
+        }
+        with patch("src.risk.copy_risk_manager.COPY_LIVE_CAPITAL_USD", CAPITAL):
+            ok2, reason2 = allow_live_copy_signal(db, cfg)
+        assert ok2 is False
+        assert reason2 == REASON_LIVE_DAILY_LOSS
+
+        # The second call must be a pure short-circuit on the persisted
+        # trip -- PnL is never re-read once a trip exists for today.
+        db.get_copy_live_realized_pnl_total_for_date.assert_called_once()
+
+    def test_drawdown_trip_persists_across_calls_even_as_pnl_recovers(self):
+        store = _FakeConfigStore()
+        db = _mock_live_db_with_config(store, daily_total_pnl=-5.0, cumulative_total_pnl=-50.0)
+        cfg = _live_breaker_config(COPY_LIVE_DAILY_LOSS_LIMIT_USD=999.0, COPY_LIVE_DRAWDOWN_STOP_PCT=0.20)
+        with patch("src.risk.copy_risk_manager.COPY_LIVE_CAPITAL_USD", CAPITAL):
+            ok1, reason1 = allow_live_copy_signal(db, cfg)
+        assert ok1 is False
+        assert reason1 == REASON_LIVE_DRAWDOWN
+
+        # Cumulative P&L "recovers" (e.g. a later settlement) -- still must
+        # stay tripped for the rest of the day, one-way-door problem fixed.
+        db.get_copy_live_realized_pnl_total.return_value = {"n_settled": 2, "total_pnl_usd": 0.0}
+        with patch("src.risk.copy_risk_manager.COPY_LIVE_CAPITAL_USD", CAPITAL):
+            ok2, reason2 = allow_live_copy_signal(db, cfg)
+        assert ok2 is False
+        assert reason2 == REASON_LIVE_DRAWDOWN
+        db.get_copy_live_realized_pnl_total.assert_called_once()
+
+    def test_not_tripped_stays_not_tripped_and_still_reads_pnl_fresh_each_call(self):
+        """No persisted trip ever gets written when nothing breaches --
+        every call keeps re-deriving fresh, exactly like before #1348."""
+        store = _FakeConfigStore()
+        db = _mock_live_db_with_config(store, daily_total_pnl=0.0, cumulative_total_pnl=0.0)
+        cfg = _live_breaker_config()
+        with patch("src.risk.copy_risk_manager.COPY_LIVE_CAPITAL_USD", CAPITAL):
+            ok1, _ = allow_live_copy_signal(db, cfg)
+            ok2, _ = allow_live_copy_signal(db, cfg)
+        assert ok1 is True
+        assert ok2 is True
+        assert db.get_copy_live_realized_pnl_total_for_date.call_count == 2
+
+
+class TestLiveBreakerAutoClearsAtUtcMidnight:
+    def test_stale_trip_is_cleared_and_reevaluated_fresh_next_day(self):
+        store = _FakeConfigStore()
+        db = _mock_live_db_with_config(store, daily_total_pnl=-30.0)
+        cfg = _live_breaker_config(COPY_LIVE_DAILY_LOSS_LIMIT_USD=25.0)
+
+        with patch("src.risk.copy_risk_manager.COPY_LIVE_CAPITAL_USD", CAPITAL), \
+             patch("src.risk.copy_risk_manager._today_utc", return_value="2026-10-10"):
+            ok1, reason1 = allow_live_copy_signal(db, cfg)
+        assert ok1 is False
+        assert reason1 == REASON_LIVE_DAILY_LOSS
+
+        # New UTC day: PnL for the new day is healthy.
+        db.get_copy_live_realized_pnl_total_for_date.return_value = {
+            "n_settled": 0, "total_pnl_usd": 0.0,
+        }
+        db.get_copy_live_realized_pnl_total.return_value = {"n_settled": 0, "total_pnl_usd": 0.0}
+        with patch("src.risk.copy_risk_manager.COPY_LIVE_CAPITAL_USD", CAPITAL), \
+             patch("src.risk.copy_risk_manager._today_utc", return_value="2026-10-11"):
+            ok2, reason2 = allow_live_copy_signal(db, cfg)
+        assert ok2 is True
+        assert reason2 == ""
+        # Re-evaluated fresh on the new day -- PnL WAS consulted again.
+        assert db.get_copy_live_realized_pnl_total_for_date.call_count == 2
+
+    def test_stale_trip_can_immediately_retrip_on_the_new_day(self):
+        """A new day re-evaluating to "still bad" is a fresh verdict, not a
+        bug -- distinct from the old trip simply persisting."""
+        store = _FakeConfigStore()
+        db = _mock_live_db_with_config(store, daily_total_pnl=-30.0)
+        cfg = _live_breaker_config(COPY_LIVE_DAILY_LOSS_LIMIT_USD=25.0)
+
+        with patch("src.risk.copy_risk_manager.COPY_LIVE_CAPITAL_USD", CAPITAL), \
+             patch("src.risk.copy_risk_manager._today_utc", return_value="2026-10-10"):
+            ok1, _ = allow_live_copy_signal(db, cfg)
+        assert ok1 is False
+
+        # New UTC day, but still losing just as badly.
+        with patch("src.risk.copy_risk_manager.COPY_LIVE_CAPITAL_USD", CAPITAL), \
+             patch("src.risk.copy_risk_manager._today_utc", return_value="2026-10-11"):
+            ok2, reason2 = allow_live_copy_signal(db, cfg)
+        assert ok2 is False
+        assert reason2 == REASON_LIVE_DAILY_LOSS
+        # Both days' PnL were genuinely (re-)consulted -- not a leftover flag.
+        assert db.get_copy_live_realized_pnl_total_for_date.call_count == 2
+
+
+class TestLiveBreakerManualReset:
+    def test_reset_clears_the_trip_immediately_mid_day(self):
+        store = _FakeConfigStore()
+        db = _mock_live_db_with_config(store, daily_total_pnl=-30.0)
+        cfg = _live_breaker_config(COPY_LIVE_DAILY_LOSS_LIMIT_USD=25.0)
+        with patch("src.risk.copy_risk_manager.COPY_LIVE_CAPITAL_USD", CAPITAL):
+            ok1, _ = allow_live_copy_signal(db, cfg)
+        assert ok1 is False
+
+        cleared = reset_live_circuit_breaker(db)
+        assert cleared is True
+
+        # P&L has since recovered (the scenario the operator reviewed) --
+        # the very next call, same UTC day, must re-evaluate fresh and
+        # allow trading again, independent of the day boundary.
+        db.get_copy_live_realized_pnl_total_for_date.return_value = {
+            "n_settled": 2, "total_pnl_usd": 10.0,
+        }
+        db.get_copy_live_realized_pnl_total.reset_mock()
+        with patch("src.risk.copy_risk_manager.COPY_LIVE_CAPITAL_USD", CAPITAL):
+            ok2, reason2 = allow_live_copy_signal(db, cfg)
+        assert ok2 is True
+        assert reason2 == ""
+
+    def test_reset_is_a_fresh_evaluation_not_a_forced_allow(self):
+        """A reset clears the STATE, it does not force the next verdict to
+        True -- if PnL is still bad, the very next call legitimately
+        re-trips, from a genuinely fresh read (proven by the call count),
+        not a leftover persisted flag."""
+        store = _FakeConfigStore()
+        db = _mock_live_db_with_config(store, daily_total_pnl=-30.0)
+        cfg = _live_breaker_config(COPY_LIVE_DAILY_LOSS_LIMIT_USD=25.0)
+        with patch("src.risk.copy_risk_manager.COPY_LIVE_CAPITAL_USD", CAPITAL):
+            ok1, _ = allow_live_copy_signal(db, cfg)
+        assert ok1 is False
+        db.get_copy_live_realized_pnl_total_for_date.assert_called_once()
+
+        assert reset_live_circuit_breaker(db) is True
+
+        with patch("src.risk.copy_risk_manager.COPY_LIVE_CAPITAL_USD", CAPITAL):
+            ok2, reason2 = allow_live_copy_signal(db, cfg)
+        assert ok2 is False
+        assert reason2 == REASON_LIVE_DAILY_LOSS
+        assert db.get_copy_live_realized_pnl_total_for_date.call_count == 2
+
+    def test_reset_is_a_noop_when_nothing_is_tripped(self):
+        store = _FakeConfigStore()
+        db = _mock_live_db_with_config(store, daily_total_pnl=0.0, cumulative_total_pnl=0.0)
+        assert reset_live_circuit_breaker(db) is False
+
+    def test_reset_logs_the_fact_and_timestamp(self, caplog):
+        store = _FakeConfigStore()
+        db = _mock_live_db_with_config(store, daily_total_pnl=-30.0)
+        cfg = _live_breaker_config(COPY_LIVE_DAILY_LOSS_LIMIT_USD=25.0)
+        with patch("src.risk.copy_risk_manager.COPY_LIVE_CAPITAL_USD", CAPITAL):
+            allow_live_copy_signal(db, cfg)
+
+        with caplog.at_level("WARNING", logger="src.risk.copy_risk_manager"):
+            reset_live_circuit_breaker(db)
+        assert any("manual reset" in rec.message for rec in caplog.records)
+
+
+class TestLiveBreakerPersistsAcrossProcessRestart:
+    def test_persisted_trip_survives_a_fresh_db_handle(self):
+        """Same DB-backed, no-in-memory-state contract as the rest of this
+        module: a brand-new MagicMock db wired to the SAME backing store
+        stands in for a ``copy_signal_loop.py`` process restart -- no
+        module-level state is ever touched, so the answer must be
+        identical."""
+        store = _FakeConfigStore()
+        db1 = _mock_live_db_with_config(store, daily_total_pnl=-30.0)
+        cfg = _live_breaker_config(COPY_LIVE_DAILY_LOSS_LIMIT_USD=25.0)
+        with patch("src.risk.copy_risk_manager.COPY_LIVE_CAPITAL_USD", CAPITAL):
+            ok1, reason1 = allow_live_copy_signal(db1, cfg)
+        assert ok1 is False
+        assert reason1 == REASON_LIVE_DAILY_LOSS
+
+        # "Restart": a brand-new double, even wired to PnL numbers that
+        # would otherwise allow trading -- proving the verdict comes
+        # purely from the persisted DB row, not anything in-process.
+        db2 = _mock_live_db_with_config(store, daily_total_pnl=999.0, cumulative_total_pnl=999.0)
+        with patch("src.risk.copy_risk_manager.COPY_LIVE_CAPITAL_USD", CAPITAL):
+            ok2, reason2 = allow_live_copy_signal(db2, cfg)
+        assert ok2 is False
+        assert reason2 == REASON_LIVE_DAILY_LOSS
+        db2.get_copy_live_realized_pnl_total_for_date.assert_not_called()
+        db2.get_copy_live_realized_pnl_total.assert_not_called()
+
+
+class TestGetLiveCircuitBreakerStatus:
+    def test_not_tripped_returns_all_none(self):
+        store = _FakeConfigStore()
+        db = _mock_live_db_with_config(store, daily_total_pnl=0.0, cumulative_total_pnl=0.0)
+        status = get_live_circuit_breaker_status(db)
+        assert status == {
+            "tripped": False, "reason": None, "tripped_at": None, "trip_utc_date": None,
+        }
+
+    def test_tripped_today_returns_reason_and_timestamp(self):
+        store = _FakeConfigStore()
+        db = _mock_live_db_with_config(store, daily_total_pnl=-30.0)
+        cfg = _live_breaker_config(COPY_LIVE_DAILY_LOSS_LIMIT_USD=25.0)
+        with patch("src.risk.copy_risk_manager.COPY_LIVE_CAPITAL_USD", CAPITAL), \
+             patch("src.risk.copy_risk_manager._today_utc", return_value="2026-10-10"):
+            allow_live_copy_signal(db, cfg)
+            status = get_live_circuit_breaker_status(db)
+        assert status["tripped"] is True
+        assert status["reason"] == REASON_LIVE_DAILY_LOSS
+        assert status["trip_utc_date"] == "2026-10-10"
+        assert status["tripped_at"] is not None
+
+    def test_stale_prior_day_trip_reports_not_tripped_without_writing(self):
+        store = _FakeConfigStore()
+        db = _mock_live_db_with_config(store, daily_total_pnl=-30.0)
+        cfg = _live_breaker_config(COPY_LIVE_DAILY_LOSS_LIMIT_USD=25.0)
+        with patch("src.risk.copy_risk_manager.COPY_LIVE_CAPITAL_USD", CAPITAL), \
+             patch("src.risk.copy_risk_manager._today_utc", return_value="2026-10-10"):
+            allow_live_copy_signal(db, cfg)
+
+        raw_before = dict(store._store)
+        with patch("src.risk.copy_risk_manager._today_utc", return_value="2026-10-11"):
+            status = get_live_circuit_breaker_status(db)
+        assert status["tripped"] is False
+        # A status read must stay read-only -- the stale row is left exactly
+        # as-is; clearing it is allow_live_copy_signal's job, not this getter's.
+        assert store._store == raw_before
+
+    def test_corrupt_persisted_value_degrades_to_not_tripped(self):
+        store = _FakeConfigStore()
+        store.set_config("COPY_LIVE_BREAKER_TRIP_STATE", "not valid json")
+        db = _mock_live_db_with_config(store)
+        status = get_live_circuit_breaker_status(db)
+        assert status["tripped"] is False

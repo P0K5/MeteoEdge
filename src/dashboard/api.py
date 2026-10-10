@@ -787,6 +787,27 @@ class CopyLiveBalanceDriftOut(BaseModel):
     actual_balance_usd: "float | None" = None
 
 
+class CopyLiveBreakerStatusOut(BaseModel):
+    """Current trip state of the LIVE copy-trading circuit breaker (issue
+    #1348) -- see ``src.risk.copy_risk_manager.get_live_circuit_breaker_status``
+    for the persistence/read contract this mirrors field-for-field. Paper's
+    own breaker (``allow_copy_signal``) is explicitly out of scope; this is
+    LIVE-only.
+
+    ``tripped=False`` with every other field ``None`` covers both "never
+    tripped" and "a trip from a prior UTC day, now stale" -- the frontend
+    doesn't need to distinguish those, it just hides the tripped banner.
+    ``reason_text`` is plain language for the dashboard (same map the
+    Activity Feed's own circuit-breaker labels use); ``reason`` is the raw
+    constant for anything that wants it.
+    """
+    tripped: bool
+    reason: "str | None" = None
+    reason_text: "str | None" = None
+    tripped_at: "str | None" = None
+    trip_utc_date: "str | None" = None
+
+
 class CopySignalOut(BaseModel):
     """One copy_signals row, for a position's source-signal click-through
     (issue #1148 acceptance criteria)."""
@@ -3495,6 +3516,59 @@ def copy_trading_balance_drift() -> CopyLiveBalanceDriftOut:
 
     from src.scripts.copy_live_settle import get_wallet_balance_drift_status
     return CopyLiveBalanceDriftOut(**get_wallet_balance_drift_status(_db))
+
+
+@app.get("/api/copy-trading/live-breaker", response_model=CopyLiveBreakerStatusOut)
+def copy_trading_live_breaker_status() -> CopyLiveBreakerStatusOut:
+    """Current trip state of the LIVE copy-trading circuit breaker (issue
+    #1348) -- the dashboard's "the breaker is currently tripped, here's why
+    and since when" view, distinct from the per-row
+    ``copy_live_positions.rejected_reason`` the Activity Feed already shows
+    (that's per-attempt; this is the single current gate state). Read-only,
+    deliberately never clears a stale (prior-UTC-day) trip itself -- see
+    ``get_live_circuit_breaker_status``'s own docstring for why that stays
+    the signal loop's job.
+
+    No 503 for "never tripped" -- that is the normal, expected state, same
+    no-404/503-for-absent-data convention as ``copy_trading_balance_drift``
+    immediately above.
+    """
+    if _db is None:
+        raise HTTPException(status_code=503, detail="Database not initialised")
+
+    from src.risk.copy_risk_manager import get_live_circuit_breaker_status
+    status = get_live_circuit_breaker_status(_db)
+    reason_text = _LIVE_CIRCUIT_BREAKER_REASON_TEXT.get(status["reason"]) if status["reason"] else None
+    return CopyLiveBreakerStatusOut(**status, reason_text=reason_text)
+
+
+@app.post("/api/copy-trading/live-breaker/reset", response_model=CopyFollowResultOut)
+def copy_trading_live_breaker_reset() -> CopyFollowResultOut:
+    """Manually clear a tripped LIVE circuit breaker immediately, independent
+    of the UTC day boundary (issue #1348 acceptance criteria) -- wraps
+    ``copy_risk_manager.reset_live_circuit_breaker`` directly, which also
+    logs the reset (fact + timestamp; "operator" is the only actor in this
+    single-operator system today). Resuming trading early after reviewing a
+    bad session is the entire point of this endpoint, so a reset here takes
+    effect on the very next ``copy_signal_loop.py`` cycle, not at the next
+    UTC midnight.
+
+    Paper's breaker is untouched -- there is no paper equivalent of this
+    endpoint, by design (issue #1348 explicitly scopes paper out).
+    """
+    if _db is None:
+        raise HTTPException(status_code=503, detail="Database not initialised")
+
+    from src.risk.copy_risk_manager import reset_live_circuit_breaker
+    try:
+        cleared = reset_live_circuit_breaker(_db)
+    except Exception as e:  # noqa: BLE001 — surface as a structured refusal, never a bare 500
+        logger.exception("copy_trading_live_breaker_reset: reset_live_circuit_breaker raised")
+        return CopyFollowResultOut(success=False, message=f"Reset failed: {e}")
+
+    if cleared:
+        return CopyFollowResultOut(success=True, message="Live circuit breaker reset — trading can resume.")
+    return CopyFollowResultOut(success=True, message="Live circuit breaker was not tripped — nothing to reset.")
 
 
 @app.get("/api/copy-trading/signals/{signal_id}", response_model=CopySignalOut)

@@ -15,6 +15,9 @@ Covers:
 - GET /api/copy-trading/balance-drift (issue #1189): the latest persisted
   wallet-balance-drift verdict, including the all-None "never checked"
   default.
+- GET /api/copy-trading/live-breaker and
+  POST /api/copy-trading/live-breaker/reset (issue #1348): the LIVE
+  circuit breaker's current trip state and manual-reset control.
 """
 from __future__ import annotations
 
@@ -540,3 +543,104 @@ class TestBalanceDriftEndpoint:
         body = client.get("/api/copy-trading/balance-drift").json()
         assert body["within_tolerance"] is True
         assert body["checked_at"] == "2026-09-10T01:00:00+00:00"
+
+
+class TestLiveBreakerEndpoints:
+    """GET /api/copy-trading/live-breaker and
+    POST /api/copy-trading/live-breaker/reset (issue #1348)."""
+
+    def test_get_503_when_db_not_initialised(self):
+        from src.dashboard import api as api_module
+        original_db = api_module._db
+        try:
+            api_module.set_db(None)
+            client = TestClient(api_module.app, raise_server_exceptions=False)
+            resp = client.get("/api/copy-trading/live-breaker")
+            assert resp.status_code == 503
+        finally:
+            api_module.set_db(original_db)
+
+    def test_post_503_when_db_not_initialised(self):
+        from src.dashboard import api as api_module
+        original_db = api_module._db
+        try:
+            api_module.set_db(None)
+            client = TestClient(api_module.app, raise_server_exceptions=False)
+            resp = client.post("/api/copy-trading/live-breaker/reset")
+            assert resp.status_code == 503
+        finally:
+            api_module.set_db(original_db)
+
+    def test_never_tripped_returns_200_with_all_none(self, api_client):
+        client, _ = api_client
+        resp = client.get("/api/copy-trading/live-breaker")
+        assert resp.status_code == 200
+        assert resp.json() == {
+            "tripped": False, "reason": None, "reason_text": None,
+            "tripped_at": None, "trip_utc_date": None,
+        }
+
+    def test_tripped_returns_reason_text_and_timestamp(self, api_client):
+        import json
+        from datetime import datetime, timezone
+
+        client, db = api_client
+        from src.risk.copy_risk_manager import _LIVE_BREAKER_STATE_KEY
+        db.set_config(_LIVE_BREAKER_STATE_KEY, json.dumps({
+            "tripped_at": "2026-10-10T12:00:00+00:00",
+            "reason": "live_circuit_breaker_daily_loss",
+            "trip_utc_date": datetime.now(timezone.utc).date().isoformat(),
+        }))
+
+        resp = client.get("/api/copy-trading/live-breaker")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["tripped"] is True
+        assert body["reason"] == "live_circuit_breaker_daily_loss"
+        assert body["reason_text"] == "the live daily loss limit was reached"
+        assert body["tripped_at"] == "2026-10-10T12:00:00+00:00"
+
+    def test_stale_prior_day_trip_reports_not_tripped(self, api_client):
+        import json
+
+        client, db = api_client
+        from src.risk.copy_risk_manager import _LIVE_BREAKER_STATE_KEY
+        db.set_config(_LIVE_BREAKER_STATE_KEY, json.dumps({
+            "tripped_at": "2020-01-01T00:00:00+00:00",
+            "reason": "live_circuit_breaker_drawdown",
+            "trip_utc_date": "2020-01-01",
+        }))
+
+        body = client.get("/api/copy-trading/live-breaker").json()
+        assert body["tripped"] is False
+        assert body["reason"] is None
+
+    def test_reset_clears_a_tripped_breaker(self, api_client):
+        import json
+        from datetime import datetime, timezone
+
+        client, db = api_client
+        from src.risk.copy_risk_manager import _LIVE_BREAKER_STATE_KEY
+        db.set_config(_LIVE_BREAKER_STATE_KEY, json.dumps({
+            "tripped_at": "2026-10-10T12:00:00+00:00",
+            "reason": "live_circuit_breaker_daily_loss",
+            "trip_utc_date": datetime.now(timezone.utc).date().isoformat(),
+        }))
+
+        resp = client.post("/api/copy-trading/live-breaker/reset")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["success"] is True
+        assert "reset" in body["message"].lower()
+
+        # The breaker now reports not-tripped.
+        status = client.get("/api/copy-trading/live-breaker").json()
+        assert status["tripped"] is False
+
+    def test_reset_is_a_noop_when_nothing_tripped(self, api_client):
+        client, _ = api_client
+        resp = client.post("/api/copy-trading/live-breaker/reset")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["success"] is True
+        assert "not tripped" in body["message"].lower()

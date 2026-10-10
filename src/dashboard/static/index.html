@@ -1820,6 +1820,19 @@ a,button,input,select{transition:color var(--transition),background var(--transi
       <i data-lucide="alert-triangle"></i>
       <span id="copy-positions-live-drift-text">Live balance mismatch detected — manual reconciliation required</span>
     </div>
+    <!-- Live circuit-breaker tripped banner (issue #1348): the "the breaker
+         is currently tripped, here's why and since when" view, plus the
+         manual-reset control. Reuses .error-banner the same way the
+         balance-drift banner above does, and sits above it in source order
+         so the breaker (the reason NO new live signals are placed at all)
+         reads before the balance-mismatch warning (which is about already-
+         placed fills) when both happen to be visible together. Rendered by
+         renderCopyLiveBreakerStatus(); GET /api/copy-trading/live-breaker. -->
+    <div class="error-banner" id="copy-live-breaker-banner">
+      <i data-lucide="alert-octagon"></i>
+      <span id="copy-live-breaker-text">Live circuit breaker tripped</span>
+      <button class="btn-retry" id="copy-live-breaker-reset-btn" onclick="resetCopyLiveBreaker()">Reset</button>
+    </div>
     <div id="copy-live-content">
       <!-- ── KPI CARDS (issue #1278): same .wallet-card markup as Portfolio.
            Rendered by _copyLiveRenderKpis(); the initial skeleton is static
@@ -4453,6 +4466,11 @@ const COPY_TAB_JOBS = {
     { key: 'activity', run: () => fetchCopyTradingActivityFeed('live'), everyMs: 30_000 },
     // The underlying check only runs hourly.
     { key: 'drift', run: () => fetchCopyTradingBalanceDrift(), everyMs: 300_000 },
+    // Real money + the whole point of #1348 is the operator noticing a
+    // trip promptly -- same fast cadence as positions/activity above, and
+    // `always: true` so a stale tripped/not-tripped read never survives a
+    // tab revisit (same rule PR #1192 established for the posture job).
+    { key: 'breaker', run: () => fetchCopyTradingLiveBreakerStatus(), everyMs: 30_000, always: true },
   ],
 };
 
@@ -8192,6 +8210,78 @@ async function fetchCopyTradingBalanceDrift() {
     // never guess a mismatch on a network blip, but also never silently
     // clear a real, previously-shown one just because this one poll failed.
     console.error('Copy-trading balance-drift fetch failed:', e);
+  }
+}
+
+/* ─────────────────────────────────────────
+   COPY-TRADING — LIVE CIRCUIT-BREAKER TRIPPED BANNER + MANUAL RESET
+   (issue #1348)
+   Data: GET /api/copy-trading/live-breaker, same deliberately-own-fetch
+   rationale as the balance-drift banner immediately above (independent
+   poll cadence, independent of the /positions round-trip). Shows/hides
+   #copy-live-breaker-banner; the Reset button posts to
+   POST /api/copy-trading/live-breaker/reset.
+   ───────────────────────────────────────── */
+let _copyLiveBreakerData = null;
+
+function renderCopyLiveBreakerStatus(status) {
+  _copyLiveBreakerData = status;
+  const banner = document.getElementById('copy-live-breaker-banner');
+  if (!banner) return;
+
+  if (status && status.tripped) {
+    banner.classList.add('visible');
+    const textEl = document.getElementById('copy-live-breaker-text');
+    if (textEl) {
+      const reason = status.reason_text || 'a risk limit was reached';
+      const since = status.tripped_at ? ` (since ${status.tripped_at})` : '';
+      textEl.textContent = `Live circuit breaker tripped — ${reason}${since}. New live signals are blocked for the rest of the UTC day.`;
+    }
+  } else {
+    // Covers both "never tripped" and a stale prior-UTC-day trip the
+    // backend already treats as cleared -- never render a tripped banner
+    // when the source of truth says clean or is unavailable (same
+    // conservative-default rule as the balance-drift banner above).
+    banner.classList.remove('visible');
+  }
+}
+
+async function fetchCopyTradingLiveBreakerStatus() {
+  try {
+    const r = await fetch('/api/copy-trading/live-breaker');
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json();
+    renderCopyLiveBreakerStatus(data);
+  } catch (e) {
+    // Same transient-failure rule as fetchCopyTradingBalanceDrift: leave
+    // the banner exactly as it was rather than guessing either way.
+    console.error('Copy-trading live-breaker status fetch failed:', e);
+  }
+}
+
+async function resetCopyLiveBreaker() {
+  const confirmed = window.confirm(
+    'Reset the live circuit breaker now?\n\nNew live signals will be evaluated again starting with the next cycle, independent of the UTC day boundary. This does not change why it tripped — review the situation first.'
+  );
+  if (!confirmed) return;
+
+  const btn = document.getElementById('copy-live-breaker-reset-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Resetting…'; }
+  try {
+    const r = await fetch('/api/copy-trading/live-breaker/reset', { method: 'POST' });
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok || body.success === false) {
+      const detail = body.message || body.detail || `HTTP ${r.status}`;
+      console.warn(`Live-breaker reset failed: ${detail}`);
+      window.alert(`Could not reset the live circuit breaker: ${detail}`);
+    } else {
+      await fetchCopyTradingLiveBreakerStatus();
+    }
+  } catch (e) {
+    console.error('Live-breaker reset request failed:', e);
+    window.alert('Could not reset the live circuit breaker — network error.');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Reset'; }
   }
 }
 

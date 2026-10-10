@@ -356,7 +356,7 @@ def test_intervals_start_on_entry_and_stop_when_leaving_each_copy_tab(tmp_path):
         assert.deepStrictEqual(activeDelays(), [S, S, M, M], 'Paper: posture, followed (30s); positions, activity (5min)');
 
         click('copy-live');
-        assert.deepStrictEqual(activeDelays(), [S, S, S, S, M], 'Live: posture, followed, positions, activity (30s); drift (5min)');
+        assert.deepStrictEqual(activeDelays(), [S, S, S, S, S, M], 'Live: posture, followed, positions, activity, breaker (30s); drift (5min)');
 
         click('copy-paper');
         assert.deepStrictEqual(activeDelays(), [S, S, M, M], 'back on Paper: Live intervals are gone');
@@ -366,7 +366,7 @@ def test_intervals_start_on_entry_and_stop_when_leaving_each_copy_tab(tmp_path):
 
         // Re-entry restarts, and re-clicking the same tab never stacks intervals.
         click('copy-live'); click('copy-live'); click('copy-live');
-        assert.deepStrictEqual(activeDelays(), [S, S, S, S, M]);
+        assert.deepStrictEqual(activeDelays(), [S, S, S, S, S, M]);
     """, tmp_path)
 
 
@@ -382,6 +382,7 @@ def test_a_left_tabs_jobs_stop_firing(tmp_path):
         resetRequests();
         await advance(10 * 60_000);
         assert.strictEqual(count('balance-drift'), 0, 'Live-only drift poll must be stopped');
+        assert.strictEqual(count('live-breaker'), 0, 'Live-only breaker-status poll must be stopped');
         assert.ok(!requests.includes('/api/copy-trading/activity-feed?mode=live'), 'Live activity poll must be stopped');
         assert.strictEqual(count('candidates'), 0, 'Wallets poll never ran on Paper');
         assert.ok(count('/api/copy-trading/followed-wallets') >= 1, 'Paper still polls its own roster');
@@ -414,6 +415,7 @@ def test_poll_cadences_per_tab(tmp_path):
         assert.strictEqual(count('/api/copy-trading/positions'), 10, 'Live polls positions every 30s (real money)');
         assert.strictEqual(count('activity-feed?mode=live'), 10);
         assert.strictEqual(count('balance-drift'), 1);
+        assert.strictEqual(count('live-breaker'), 10, 'Breaker status polls every 30s (real money)');
     """, tmp_path)
 
 
@@ -425,7 +427,7 @@ def test_polling_pauses_while_document_hidden_and_resumes_with_immediate_refresh
     run_js("""
         click('copy-live');
         await settle();
-        assert.strictEqual(activeDelays().length, 5);
+        assert.strictEqual(activeDelays().length, 6);
 
         setHidden(true);
         assert.deepStrictEqual(activeDelays(), [], 'hiding the page stops every copy interval');
@@ -435,12 +437,13 @@ def test_polling_pauses_while_document_hidden_and_resumes_with_immediate_refresh
 
         setHidden(false);
         await settle();
-        assert.strictEqual(activeDelays().length, 5, 'intervals restarted when visible again');
+        assert.strictEqual(activeDelays().length, 6, 'intervals restarted when visible again');
         assert.strictEqual(count('/api/config'), 1, 'immediate posture refresh on return');
         assert.strictEqual(count('/api/copy-trading/followed-wallets'), 1, 'immediate roster refresh on return');
         assert.strictEqual(count('/api/copy-trading/positions'), 1, 'immediate positions refresh on return');
         assert.strictEqual(count('activity-feed?mode=live'), 1, 'stale (30 min old) activity refreshed on return');
         assert.strictEqual(count('balance-drift'), 1, 'stale (30 min old) drift refreshed on return');
+        assert.strictEqual(count('live-breaker'), 1, 'immediate breaker-status refresh on return');
 
         // And the restarted intervals keep working.
         resetRequests();
