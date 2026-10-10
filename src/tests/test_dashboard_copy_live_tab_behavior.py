@@ -1079,3 +1079,125 @@ def test_live_roster_uses_stacked_block_class_and_css_rule_below_600px(tmp_path)
     assert ".copy-table--roster .followed-actions-cell .btn-followed-action{min-height:44px;}" in media
     assert ".btn-followed-unfollow{margin-left:var(--space-3);}" in media
     assert ".copy-table--roster .copy-address-cell,.copy-table--roster .followed-actions-cell{flex:1 0 100%;}" in media
+
+
+# ---------------------------------------------------------------------------
+# Live circuit-breaker banner + manual reset (issue #1348; Designer review
+# fixes on PR #1349: static role/aria-live, locale-formatted timestamp,
+# reset failures routed through the tab's own error-banner mechanism
+# instead of window.alert()).
+# ---------------------------------------------------------------------------
+
+def test_live_breaker_banner_is_a_static_assertive_status_region():
+    """The banner must carry role="status" aria-live="assertive" statically
+    in the markup -- toggling the .visible class alone is not announced by
+    a screen reader. "assertive" (not this file's usual "polite") because
+    this is a real-money trading halt."""
+    html, _ = _html_parts()
+    m = re.search(r'<div class="error-banner" id="copy-live-breaker-banner"([^>]*)>', html)
+    assert m, "Could not find #copy-live-breaker-banner"
+    attrs = m.group(1)
+    assert 'role="status"' in attrs
+    assert 'aria-live="assertive"' in attrs
+
+
+def test_live_breaker_banner_has_no_window_alert_anywhere_in_the_file():
+    """window.alert() is not used anywhere in this file (Designer review,
+    PR #1349) -- failures from the reset control must surface through the
+    existing tab-level error-banner mechanism instead."""
+    html = INDEX_HTML.read_text(encoding="utf-8")
+    assert "window.alert(" not in html
+
+
+def test_live_breaker_banner_renders_locale_formatted_timestamp_not_raw_iso(tmp_path):
+    run_js("""
+        renderCopyLiveBreakerStatus({
+          tripped: true, reason: 'live_circuit_breaker_daily_loss',
+          reason_text: 'the live daily loss limit was reached',
+          tripped_at: '2026-10-10T12:00:00+00:00', trip_utc_date: '2026-10-10',
+        });
+        assert.ok(el('copy-live-breaker-banner').classList.contains('visible'));
+        const text = el('copy-live-breaker-text').textContent;
+        assert.ok(text.includes('the live daily loss limit was reached'));
+        // Never the raw ISO-8601 string -- it must go through
+        // new Date(...).toLocaleString(), same as every other timestamp
+        // in this file (entry_ts/settled_at/detected_at etc.).
+        assert.ok(!text.includes('2026-10-10T12:00:00+00:00'), 'raw ISO string leaked into the banner: ' + text);
+        assert.ok(text.includes(new Date('2026-10-10T12:00:00+00:00').toLocaleString()), 'expected the locale-formatted timestamp: ' + text);
+    """, tmp_path)
+
+
+def test_live_breaker_banner_hides_when_not_tripped(tmp_path):
+    run_js("""
+        renderCopyLiveBreakerStatus({ tripped: true, reason: 'x', reason_text: 'x', tripped_at: null, trip_utc_date: '2026-10-10' });
+        assert.ok(el('copy-live-breaker-banner').classList.contains('visible'));
+        renderCopyLiveBreakerStatus({ tripped: false, reason: null, reason_text: null, tripped_at: null, trip_utc_date: null });
+        assert.ok(!el('copy-live-breaker-banner').classList.contains('visible'));
+    """, tmp_path)
+
+
+def test_live_breaker_reset_failure_uses_the_tab_error_banner_not_a_dialog(tmp_path):
+    run_js("""
+        currentTab = 'copy-live';
+        let alertCalls = 0;
+        window.alert = () => { alertCalls += 1; };
+        window.confirm = () => true;
+        routes['/api/copy-trading/live-breaker/reset'] = () => ({ body: { success: false, message: 'still tripped' } });
+
+        await resetCopyLiveBreaker();
+        assert.strictEqual(alertCalls, 0, 'reset failure must never use window.alert()');
+        assert.ok(el('copy-live-error-banner').classList.contains('visible'), 'the tab error banner must show the failure');
+        assert.ok(el('copy-live-error-text').textContent.includes('still tripped'));
+    """, tmp_path)
+
+
+def test_live_breaker_reset_network_failure_also_uses_the_tab_error_banner(tmp_path):
+    run_js("""
+        currentTab = 'copy-live';
+        let alertCalls = 0;
+        window.alert = () => { alertCalls += 1; };
+        window.confirm = () => true;
+        routes['/api/copy-trading/live-breaker/reset'] = () => new Error('network down');
+
+        await resetCopyLiveBreaker();
+        assert.strictEqual(alertCalls, 0, 'reset failure must never use window.alert()');
+        assert.ok(el('copy-live-error-banner').classList.contains('visible'));
+        assert.ok(el('copy-live-error-text').textContent.includes('network down'));
+    """, tmp_path)
+
+
+def test_live_breaker_reset_success_hides_the_tab_error_banner_and_clears_breaker_banner(tmp_path):
+    run_js("""
+        currentTab = 'copy-live';
+        window.confirm = () => true;
+        routes['/api/copy-trading/live-breaker/reset'] = () => ({ body: { success: true, message: 'Live circuit breaker reset — trading can resume.' } });
+
+        // A stale, previously-shown error from some other action must be cleared on success.
+        el('copy-live-error-banner').classList.add('visible');
+        el('copy-live-error-text').textContent = 'some earlier unrelated failure';
+
+        renderCopyLiveBreakerStatus({
+          tripped: true, reason: 'x', reason_text: 'x reason',
+          tripped_at: '2026-10-10T12:00:00+00:00', trip_utc_date: '2026-10-10',
+        });
+        assert.ok(el('copy-live-breaker-banner').classList.contains('visible'));
+
+        await resetCopyLiveBreaker();
+        assert.ok(!el('copy-live-error-banner').classList.contains('visible'), 'reset success clears the tab error banner');
+        // fetchCopyTradingLiveBreakerStatus() is called on success; the unmatched
+        // GET /api/copy-trading/live-breaker route falls through to the stub's
+        // default {} body, which renderCopyLiveBreakerStatus treats as not-tripped.
+        assert.ok(!el('copy-live-breaker-banner').classList.contains('visible'));
+    """, tmp_path)
+
+
+def test_live_breaker_reset_does_nothing_when_not_confirmed(tmp_path):
+    run_js("""
+        currentTab = 'copy-live';
+        window.confirm = () => false;
+        let posted = false;
+        routes['/api/copy-trading/live-breaker/reset'] = () => { posted = true; return { body: { success: true, message: 'ok' } }; };
+
+        await resetCopyLiveBreaker();
+        assert.strictEqual(posted, false, 'declining the confirm dialog must never call the reset endpoint');
+    """, tmp_path)

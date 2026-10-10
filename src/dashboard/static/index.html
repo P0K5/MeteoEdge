@@ -520,6 +520,12 @@ a,button,input,select{transition:color var(--transition),background var(--transi
   cursor:pointer;
 }
 .error-banner .btn-retry:hover{background:var(--no-dim);}
+/* The live circuit-breaker banner's text is longer than every other
+   .error-banner's (reason + "since" timestamp + fixed trailing sentence) --
+   scoped to just this banner (not the base .error-banner rule) so every
+   other banner's shorter, already-fine single-line layout is unaffected
+   (Designer review, PR #1349). */
+#copy-live-breaker-banner{flex-wrap:wrap;}
 
 /* ── WEATHER-FEED WARNING BANNER ── */
 .warn-banner{
@@ -1827,8 +1833,13 @@ a,button,input,select{transition:color var(--transition),background var(--transi
          so the breaker (the reason NO new live signals are placed at all)
          reads before the balance-mismatch warning (which is about already-
          placed fills) when both happen to be visible together. Rendered by
-         renderCopyLiveBreakerStatus(); GET /api/copy-trading/live-breaker. -->
-    <div class="error-banner" id="copy-live-breaker-banner">
+         renderCopyLiveBreakerStatus(); GET /api/copy-trading/live-breaker.
+         role="status" aria-live (static, same pattern as
+         #followed-live-off-banner / #copy-live-mode-banner -- toggling the
+         .visible class alone does not get announced): "assertive" rather
+         than this file's usual "polite" since this is a real-money trading
+         halt, per Designer review on PR #1349. -->
+    <div class="error-banner" id="copy-live-breaker-banner" role="status" aria-live="assertive">
       <i data-lucide="alert-octagon"></i>
       <span id="copy-live-breaker-text">Live circuit breaker tripped</span>
       <button class="btn-retry" id="copy-live-breaker-reset-btn" onclick="resetCopyLiveBreaker()">Reset</button>
@@ -8234,7 +8245,11 @@ function renderCopyLiveBreakerStatus(status) {
     const textEl = document.getElementById('copy-live-breaker-text');
     if (textEl) {
       const reason = status.reason_text || 'a risk limit was reached';
-      const since = status.tripped_at ? ` (since ${status.tripped_at})` : '';
+      // Locale-formatted, like every other timestamp in this file
+      // (entry_ts/settled_at/detected_at etc.) -- never a raw ISO-8601
+      // string (Designer review, PR #1349).
+      const trippedAtDate = status.tripped_at ? new Date(status.tripped_at) : null;
+      const since = trippedAtDate && !isNaN(trippedAtDate) ? ` (since ${trippedAtDate.toLocaleString()})` : '';
       textEl.textContent = `Live circuit breaker tripped — ${reason}${since}. New live signals are blocked for the rest of the UTC day.`;
     }
   } else {
@@ -8273,13 +8288,19 @@ async function resetCopyLiveBreaker() {
     if (!r.ok || body.success === false) {
       const detail = body.message || body.detail || `HTTP ${r.status}`;
       console.warn(`Live-breaker reset failed: ${detail}`);
-      window.alert(`Could not reset the live circuit breaker: ${detail}`);
+      // Route failures through the Copy · Live tab's own error-banner
+      // mechanism -- same one _followedSubmitAction already uses for
+      // go-live/raise-stake/pause/unfollow -- rather than a native alert
+      // dialog (Designer review, PR #1349: a native dialog here would have
+      // been the only one of its kind in this file).
+      _followedShowBannerError(`Could not reset the live circuit breaker — ${detail}`);
     } else {
+      _followedHideBanner();
       await fetchCopyTradingLiveBreakerStatus();
     }
   } catch (e) {
     console.error('Live-breaker reset request failed:', e);
-    window.alert('Could not reset the live circuit breaker — network error.');
+    _followedShowBannerError(`Could not reset the live circuit breaker — ${e.message}`);
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = 'Reset'; }
   }
