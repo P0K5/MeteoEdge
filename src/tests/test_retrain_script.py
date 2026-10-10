@@ -5,8 +5,8 @@ Tests cover:
 2. VPS guard — systemd unit file presence triggers SystemExit
 3. VPS guard — clean environment (no match) passes without exception
 4. dry-run mode — upsert_emos_coefficients is never called
-5. Promotion logic — both criteria met (CRPS < threshold AND samples >= min) => ready=1
-6. Promotion logic — CRPS not met (>= threshold) => ready=0
+5. Promotion logic — both criteria met (relative improvement > min AND samples >= min) => ready=1
+6. Promotion logic — relative improvement not met => ready=0
 7. Promotion logic — samples not met (< min) => skipped (InsufficientDataError)
 8. Atomic write — interrupted rename leaves no .json file
 9. validate_report — passes on valid entry
@@ -112,7 +112,7 @@ class TestDryRun:
                 db=":memory:",
                 city="Chicago",
                 min_samples=60,
-                promote_threshold=0.08,
+                promote_min_relative_improvement=0.10,
                 dry_run=True,
                 report_only=False,
             )
@@ -128,39 +128,53 @@ class TestDryRun:
 # ---------------------------------------------------------------------------
 
 class TestPromotionBothCriteriaMet:
-    """ready_for_promotion=1 when crps_holdout < threshold AND samples >= min_samples."""
+    """ready_for_promotion=1 when the relative improvement over legacy exceeds
+    the minimum AND samples >= min_samples."""
 
     def test_ready_for_promotion_when_both_criteria_met(self):
-        crps_holdout = 0.05  # < 0.08
-        samples = 100        # >= 60
-        min_samples = 60
-        promote_threshold = 0.08
-        ready = 1 if (crps_holdout < promote_threshold and samples >= min_samples) else 0
+        mod = _load_script()
+        # 0.053 vs legacy=0.06 is a ~11.7% improvement, clearing the 10% bar.
+        ready = mod._ready_for_promotion(
+            crps_holdout=0.053, crps_holdout_legacy=0.06,
+            samples=100, min_samples=60, min_relative_improvement=0.10,
+        )
         assert ready == 1
 
 
 # ---------------------------------------------------------------------------
-# 6. Promotion logic — CRPS not met => ready=0
+# 6. Promotion logic — relative improvement not met => ready=0
 # ---------------------------------------------------------------------------
 
 class TestPromotionCrpsNotMet:
-    """ready_for_promotion=0 when crps_holdout >= promote_threshold."""
+    """ready_for_promotion=0 when EMOS doesn't beat its own legacy holdout
+    CRPS by more than the minimum relative improvement."""
 
-    def test_crps_above_threshold_not_ready(self):
-        crps_holdout = 0.10   # >= 0.08
-        samples = 100
-        min_samples = 60
-        promote_threshold = 0.08
-        ready = 1 if (crps_holdout < promote_threshold and samples >= min_samples) else 0
+    def test_improvement_below_minimum_not_ready(self):
+        # 0.057 vs legacy=0.06 is only a 5% improvement, below the 10% bar.
+        mod = _load_script()
+        ready = mod._ready_for_promotion(
+            crps_holdout=0.057, crps_holdout_legacy=0.06,
+            samples=100, min_samples=60, min_relative_improvement=0.10,
+        )
         assert ready == 0
 
-    def test_crps_equal_threshold_not_ready(self):
-        """Boundary: crps_holdout exactly equal to threshold => not ready."""
-        crps_holdout = 0.08
-        samples = 100
-        min_samples = 60
-        promote_threshold = 0.08
-        ready = 1 if (crps_holdout < promote_threshold and samples >= min_samples) else 0
+    def test_improvement_equal_to_minimum_not_ready(self):
+        """Boundary: improvement exactly equal to the minimum => not ready (strict >)."""
+        mod = _load_script()
+        # 0.054 vs legacy=0.06 is exactly a 10% improvement.
+        ready = mod._ready_for_promotion(
+            crps_holdout=0.054, crps_holdout_legacy=0.06,
+            samples=100, min_samples=60, min_relative_improvement=0.10,
+        )
+        assert ready == 0
+
+    def test_emos_worse_than_legacy_not_ready(self):
+        """EMOS holdout CRPS worse than legacy's own => never ready, regardless of samples."""
+        mod = _load_script()
+        ready = mod._ready_for_promotion(
+            crps_holdout=1.45, crps_holdout_legacy=1.21,
+            samples=100, min_samples=60, min_relative_improvement=0.10,
+        )
         assert ready == 0
 
 
@@ -186,7 +200,7 @@ class TestPromotionSamplesNotMet:
                 db=":memory:",
                 city=None,
                 min_samples=60,
-                promote_threshold=0.08,
+                promote_min_relative_improvement=0.10,
                 dry_run=False,
                 report_only=False,
             )
@@ -197,12 +211,12 @@ class TestPromotionSamplesNotMet:
         mock_upsert.assert_not_called()
 
     def test_samples_below_min_yields_ready_zero(self):
-        """Even if CRPS is excellent, samples < min_samples => ready=0."""
-        crps_holdout = 0.01   # << 0.08
-        samples = 30          # < 60
-        min_samples = 60
-        promote_threshold = 0.08
-        ready = 1 if (crps_holdout < promote_threshold and samples >= min_samples) else 0
+        """Even with a huge relative improvement, samples < min_samples => ready=0."""
+        mod = _load_script()
+        ready = mod._ready_for_promotion(
+            crps_holdout=0.01, crps_holdout_legacy=1.0,
+            samples=30, min_samples=60, min_relative_improvement=0.10,
+        )
         assert ready == 0
 
 
@@ -228,7 +242,7 @@ class TestAtomicWriteNoPartial:
                 db=":memory:",
                 city="Chicago",
                 min_samples=60,
-                promote_threshold=0.08,
+                promote_min_relative_improvement=0.10,
                 dry_run=False,
                 report_only=False,
             )
@@ -327,7 +341,7 @@ class TestReportOnly:
                 db=":memory:",
                 city=None,
                 min_samples=60,
-                promote_threshold=0.08,
+                promote_min_relative_improvement=0.10,
                 dry_run=False,
                 report_only=True,
             )
@@ -369,7 +383,7 @@ class TestSigmaSourceCoupling:
              patch.object(mod, "fetch_training_data", side_effect=fake_fetch):
             test_args = argparse.Namespace(
                 db=":memory:", city="Chicago", min_samples=60,
-                promote_threshold=0.08, dry_run=False, report_only=False,
+                promote_min_relative_improvement=0.10, dry_run=False, report_only=False,
             )
             with patch("argparse.ArgumentParser.parse_args", return_value=test_args), \
                  patch("scripts.auto_retrain_probability_calibration.Database", return_value=db):
@@ -395,7 +409,7 @@ class TestSigmaSourceCoupling:
              patch.object(mod, "fetch_training_data", side_effect=fake_fetch):
             test_args = argparse.Namespace(
                 db=":memory:", city="Chicago", min_samples=60,
-                promote_threshold=0.08, dry_run=False, report_only=False,
+                promote_min_relative_improvement=0.10, dry_run=False, report_only=False,
             )
             with patch("argparse.ArgumentParser.parse_args", return_value=test_args), \
                  patch("scripts.auto_retrain_probability_calibration.Database", return_value=db):
@@ -418,7 +432,7 @@ class TestSigmaSourceCoupling:
              patch.object(mod, "fetch_training_data", return_value=_make_triples(80)):
             test_args = argparse.Namespace(
                 db=":memory:", city="Chicago", min_samples=60,
-                promote_threshold=0.08, dry_run=False, report_only=False,
+                promote_min_relative_improvement=0.10, dry_run=False, report_only=False,
             )
             with patch("argparse.ArgumentParser.parse_args", return_value=test_args), \
                  patch("scripts.auto_retrain_probability_calibration.Database", return_value=db):
@@ -456,7 +470,7 @@ class TestSigmaSourceCoupling:
              patch.object(mod, "fetch_training_data", side_effect=fake_fetch):
             test_args = argparse.Namespace(
                 db=":memory:", city="Chicago", min_samples=60,
-                promote_threshold=0.08, dry_run=False, report_only=False,
+                promote_min_relative_improvement=0.10, dry_run=False, report_only=False,
                 sigma_source="fixed",  # ...but the CLI override forces 'fixed'
             )
             with patch("argparse.ArgumentParser.parse_args", return_value=test_args), \
