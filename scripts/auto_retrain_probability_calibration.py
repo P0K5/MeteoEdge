@@ -11,10 +11,12 @@ Usage:
 auto_retrain_report.json schema (one entry per city):
     {
         "Tokyo": {
-            "crps_train": 0.071,        # mean CRPS on training set
-            "crps_holdout": 0.073,      # mean CRPS on held-out 20%
-            "samples": 120,             # total training triples used
-            "ready_for_promotion": 1,   # 1 if criteria met, 0 otherwise
+            "crps_train": 0.071,          # mean EMOS-corrected CRPS on training set
+            "crps_holdout": 0.073,        # mean EMOS-corrected CRPS on held-out 20%
+            "crps_holdout_legacy": 0.091, # same holdout, uncorrected (mu, sigma) -- what legacy serves
+            "samples": 120,               # total training triples used
+            "ready_for_promotion": 1,     # 1 iff samples>=min AND crps_holdout beats
+                                           # crps_holdout_legacy by > --promote-min-relative-improvement
             "trained_at": "2026-06-12T18:00:00+00:00"
         }
     }
@@ -70,6 +72,32 @@ def get_all_cities() -> list:
     return [cfg[3] for cfg in STATIONS]
 
 
+def _ready_for_promotion(
+    crps_holdout: float,
+    crps_holdout_legacy: float,
+    samples: int,
+    min_samples: int,
+    min_relative_improvement: float,
+) -> int:
+    """Return 1 iff EMOS clears the sample floor and beats its own legacy
+    (uncorrected mu/sigma) holdout CRPS by at least *min_relative_improvement*.
+
+    A fixed absolute CRPS threshold doesn't generalise: observed holdout CRPS
+    for real stations ranges roughly 0.7-2.4 depending on each city's own
+    temperature spread, so a single absolute cutoff is either unreachable for
+    every city or meaningless for picking out real skill. Comparing against
+    the SAME holdout triples' legacy score is scale-free and mirrors the
+    emos_shadow/legacy CRPS pair run_emos_shadow.py already logs daily for
+    exactly this comparison (issue #667).
+    """
+    if samples < min_samples:
+        return 0
+    if crps_holdout_legacy <= 0:
+        return 0
+    improvement = 1.0 - (crps_holdout / crps_holdout_legacy)
+    return 1 if improvement > min_relative_improvement else 0
+
+
 log = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 
@@ -83,10 +111,14 @@ def main() -> None:
     parser.add_argument("--city", default=None, help="Retrain one city (default: all)")
     parser.add_argument("--min-samples", type=int, default=60)
     parser.add_argument(
-        "--promote-threshold",
+        "--promote-min-relative-improvement",
         type=float,
-        default=0.08,
-        help="Holdout CRPS threshold for ready_for_promotion=1",
+        default=0.10,
+        help=(
+            "Minimum fractional improvement of EMOS holdout CRPS over its own "
+            "legacy (uncorrected) holdout CRPS required for ready_for_promotion=1 "
+            "(default 0.10 = EMOS must beat legacy by >10%% on held-out data)."
+        ),
     )
     parser.add_argument(
         "--dry-run",
@@ -177,21 +209,28 @@ def main() -> None:
         crps_holdout = mean_crps(
             [(a + b * mu, max(c + d * sigma, 1e-6), y) for mu, sigma, y in holdout]
         )
+        # Same holdout triples, uncorrected (mu, sigma) -- what legacy actually
+        # serves -- so readiness compares EMOS against ITS OWN holdout baseline
+        # rather than an arbitrary absolute CRPS number (issue #667 precedent).
+        crps_holdout_legacy = mean_crps(
+            [(mu, max(sigma, 1e-6), y) for mu, sigma, y in holdout]
+        )
 
         # Default to 0 if somehow empty
         crps_train = crps_train if crps_train is not None else float("inf")
         crps_holdout = crps_holdout if crps_holdout is not None else float("inf")
+        crps_holdout_legacy = crps_holdout_legacy if crps_holdout_legacy is not None else 0.0
 
-        ready = (
-            1
-            if (crps_holdout < args.promote_threshold and len(data) >= args.min_samples)
-            else 0
+        ready = _ready_for_promotion(
+            crps_holdout, crps_holdout_legacy, len(data),
+            args.min_samples, args.promote_min_relative_improvement,
         )
         trained_at = datetime.now(timezone.utc).isoformat()
 
         report[city] = {
             "crps_train": round(crps_train, 6),
             "crps_holdout": round(crps_holdout, 6),
+            "crps_holdout_legacy": round(crps_holdout_legacy, 6),
             "samples": len(data),
             "ready_for_promotion": ready,
             "trained_at": trained_at,
@@ -227,7 +266,7 @@ def main() -> None:
 
         print(
             f"  {city}: CRPS train={crps_train:.4f} holdout={crps_holdout:.4f} "
-            f"samples={len(data)} ready={ready}"
+            f"(legacy={crps_holdout_legacy:.4f}) samples={len(data)} ready={ready}"
         )
 
     if not args.dry_run and report:
@@ -243,12 +282,14 @@ def main() -> None:
     # Summary table
     print("\n=== Retraining Summary ===")
     print(
-        f"{'City':<15} {'Samples':>8} {'CRPS Train':>11} {'CRPS Hold':>10} {'Promote':>8}"
+        f"{'City':<15} {'Samples':>8} {'CRPS Train':>11} {'CRPS Hold':>10} "
+        f"{'CRPS Legacy':>11} {'Promote':>8}"
     )
     for city, r in report.items():
         print(
             f"{city:<15} {r['samples']:>8} {r['crps_train']:>11.4f} "
-            f"{r['crps_holdout']:>10.4f} {r['ready_for_promotion']:>8}"
+            f"{r['crps_holdout']:>10.4f} {r['crps_holdout_legacy']:>11.4f} "
+            f"{r['ready_for_promotion']:>8}"
         )
 
 
