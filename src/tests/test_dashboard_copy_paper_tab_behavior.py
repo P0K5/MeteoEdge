@@ -957,7 +957,7 @@ def test_paper_polling_cadence_unchanged(tmp_path):
         click('copy-paper');
         assert.deepStrictEqual(delays(), [30_000, 30_000, 300_000, 300_000]);
         click('copy-live');
-        assert.strictEqual(delays().length, 5);
+        assert.strictEqual(delays().length, 6);
         click('copy-paper');
         assert.deepStrictEqual(delays(), [30_000, 30_000, 300_000, 300_000]);
         click('config');
