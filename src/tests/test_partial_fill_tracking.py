@@ -53,7 +53,8 @@ class TestGetOrderFillCostUsd:
     settlement."""
 
     def test_sums_size_times_price_across_multiple_trades(self):
-        """Multi-leg fill: an order matched via two separate trades."""
+        """Multi-leg fill: an order matched via two separate trades, both
+        as the taker (crossed the spread, took resting liquidity)."""
         trader = _make_trader()
         trader.client.get_order.return_value = {
             "status": "matched", "associate_trades": ["trade-1", "trade-2"],
@@ -61,8 +62,8 @@ class TestGetOrderFillCostUsd:
 
         def _get_trades(params, only_first_page=True):
             return {
-                "trade-1": [{"id": "trade-1", "size": "5.0", "price": "0.22", "status": "CONFIRMED"}],
-                "trade-2": [{"id": "trade-2", "size": "3.11", "price": "0.22", "status": "CONFIRMED"}],
+                "trade-1": [{"id": "trade-1", "taker_order_id": "ord-full", "size": "5.0", "price": "0.22", "status": "CONFIRMED"}],
+                "trade-2": [{"id": "trade-2", "taker_order_id": "ord-full", "size": "3.11", "price": "0.22", "status": "CONFIRMED"}],
             }[params.id]
 
         trader.client.get_trades.side_effect = _get_trades
@@ -77,7 +78,7 @@ class TestGetOrderFillCostUsd:
             "status": "matched", "associate_trades": ["trade-1"],
         }
         trader.client.get_trades.return_value = [
-            {"id": "trade-1", "size": "8.11", "price": "0.22", "status": "MATCHED"},
+            {"id": "trade-1", "taker_order_id": "ord-x", "size": "8.11", "price": "0.22", "status": "MATCHED"},
         ]
         # Placed limit was 0.37 (not passed to this method at all) --
         # actual cost must be 8.11 * 0.22, never 8.11 * 0.37.
@@ -93,8 +94,8 @@ class TestGetOrderFillCostUsd:
 
         def _get_trades(params, only_first_page=True):
             return {
-                "trade-ok": [{"id": "trade-ok", "size": "4.0", "price": "0.5", "status": "CONFIRMED"}],
-                "trade-failed": [{"id": "trade-failed", "size": "4.0", "price": "0.5", "status": "FAILED"}],
+                "trade-ok": [{"id": "trade-ok", "taker_order_id": "ord-y", "size": "4.0", "price": "0.5", "status": "CONFIRMED"}],
+                "trade-failed": [{"id": "trade-failed", "taker_order_id": "ord-y", "size": "4.0", "price": "0.5", "status": "FAILED"}],
             }[params.id]
 
         trader.client.get_trades.side_effect = _get_trades
@@ -127,7 +128,7 @@ class TestGetOrderFillCostUsd:
         def _get_trades(params, only_first_page=True):
             if params.id == "trade-bad":
                 raise Exception("timeout")
-            return [{"id": "trade-good", "size": "2.0", "price": "0.3", "status": "CONFIRMED"}]
+            return [{"id": "trade-good", "taker_order_id": "ord-partial-error", "size": "2.0", "price": "0.3", "status": "CONFIRMED"}]
 
         trader.client.get_trades.side_effect = _get_trades
         assert trader.get_order_fill_cost_usd("ord-partial-error") == pytest.approx(0.6)
@@ -144,6 +145,112 @@ class TestGetOrderFillCostUsd:
             {"id": "some-other-trade", "size": "99.0", "price": "0.99", "status": "CONFIRMED"},
         ]
         assert trader.get_order_fill_cost_usd("ord-mismatch") == 0.0
+
+    def test_maker_leg_uses_own_price_not_taker_top_level_fields(self):
+        """Issue #1347: when our order filled as a MAKER (resting liquidity
+        hit by someone else's taker order), the trade's top-level
+        size/price belong to the TAKER's own order on the COMPLEMENTARY
+        outcome (e.g. YES @ 0.79 for a trade where we supplied NO @ 0.21 --
+        prices sum to ~1, they are not interchangeable with ours). Must use
+        our own `maker_orders[]` leg instead."""
+        trader = _make_trader()
+        trader.client.get_order.return_value = {
+            "status": "matched", "associate_trades": ["trade-1"],
+        }
+        trader.client.get_trades.return_value = [
+            {
+                "id": "trade-1",
+                "taker_order_id": "0xsomeone-elses-order",
+                "size": "14",
+                "price": "0.79",
+                "status": "CONFIRMED",
+                "trader_side": "MAKER",
+                "maker_orders": [
+                    {"order_id": "ord-maker", "matched_amount": "14", "price": "0.21"},
+                ],
+            },
+        ]
+        # Correct cost is OUR leg: 14 * 0.21 = 2.94 -- never 14 * 0.79 = 11.06.
+        assert trader.get_order_fill_cost_usd("ord-maker") == pytest.approx(2.94)
+
+    def test_multi_maker_match_picks_only_our_own_leg(self):
+        """A single trade can have several maker_orders (true multi-maker
+        match) -- only our own order's leg should count, never the other
+        makers' or the taker's totals."""
+        trader = _make_trader()
+        trader.client.get_order.return_value = {
+            "status": "matched", "associate_trades": ["trade-1"],
+        }
+        trader.client.get_trades.return_value = [
+            {
+                "id": "trade-1",
+                "taker_order_id": "0xtaker",
+                "size": "20",
+                "price": "0.79",
+                "status": "CONFIRMED",
+                "trader_side": "MAKER",
+                "maker_orders": [
+                    {"order_id": "0xother-maker", "matched_amount": "6", "price": "0.21"},
+                    {"order_id": "ord-maker-2", "matched_amount": "14", "price": "0.21"},
+                ],
+            },
+        ]
+        assert trader.get_order_fill_cost_usd("ord-maker-2") == pytest.approx(2.94)
+
+    def test_corrupted_production_row_334_reproduces_true_cost(self):
+        """Regression for issue #1347: real production evidence for
+        position #334 -- a $3 stake filled as a MAKER across two separate
+        trade events (14 shares and 0.29 shares, both @ 0.21), while each
+        trade's top-level (taker-side) fields show the complementary
+        outcome @ 0.79. The pre-fix formula summed the top-level fields and
+        recorded $11.2891 (verified in the live DB and bug report); the
+        true on-chain cost is $3.0009 (also independently verified against
+        the Data API in the issue)."""
+        trader = _make_trader()
+        trader.client.get_order.return_value = {
+            "status": "matched", "associate_trades": ["trade-a", "trade-b"],
+        }
+
+        def _get_trades(params, only_first_page=True):
+            return {
+                "trade-a": [{
+                    "id": "trade-a", "taker_order_id": "0xtaker-a", "size": "14", "price": "0.79",
+                    "status": "CONFIRMED", "trader_side": "MAKER",
+                    "maker_orders": [{"order_id": "ord-334", "matched_amount": "14", "price": "0.21"}],
+                }],
+                "trade-b": [{
+                    "id": "trade-b", "taker_order_id": "0xtaker-b", "size": "0.29", "price": "0.79",
+                    "status": "CONFIRMED", "trader_side": "MAKER",
+                    "maker_orders": [{"order_id": "ord-334", "matched_amount": "0.29", "price": "0.21"}],
+                }],
+            }[params.id]
+
+        trader.client.get_trades.side_effect = _get_trades
+        # 14*0.21 + 0.29*0.21 = 2.94 + 0.0609 = 3.0009 (true cost).
+        # Pre-fix this returned 14*0.79 + 0.29*0.79 = 11.2891 (the bug).
+        assert trader.get_order_fill_cost_usd("ord-334") == pytest.approx(3.0009)
+
+    def test_order_neither_taker_nor_maker_leg_is_skipped_not_misattributed(self):
+        """Defensive: if our order_id can't be found as the taker or in any
+        maker leg of a resolved trade, skip it (and warn) rather than
+        guessing with the taker's unrelated top-level fields."""
+        trader = _make_trader()
+        trader.client.get_order.return_value = {
+            "status": "matched", "associate_trades": ["trade-1"],
+        }
+        trader.client.get_trades.return_value = [
+            {
+                "id": "trade-1",
+                "taker_order_id": "0xsomeone-else",
+                "size": "14",
+                "price": "0.79",
+                "status": "CONFIRMED",
+                "maker_orders": [
+                    {"order_id": "0xa-different-maker", "matched_amount": "14", "price": "0.21"},
+                ],
+            },
+        ]
+        assert trader.get_order_fill_cost_usd("ord-not-in-this-trade") == 0.0
 
 
 class TestSellPositionImmediateCancelReturnsOrderId:
