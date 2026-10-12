@@ -586,6 +586,20 @@ worst-case call volume per run, plus the isolated 03:00 UTC schedule. A cross-pr
 shared rate limiter is explicitly deferred — no incident has justified that
 complexity yet; revisit if 429s / throttling are observed against either host.
 
+**Run-time bound and timer overlap (issue #1114):** `MAX_RUN_SECONDS = 2 * 60 * 60`
+(2 hours) in `src/scripts/copy_wallet_screening.py` is a wall-clock budget for one
+run. It is checked before each wallet: once the budget is spent, the run stops
+screening further wallets, keeps every `copy_wallet_candidates` row it has already
+persisted, logs a warning with how many wallets were left unscreened, and exits 0.
+Worst-case overshoot is the duration of the wallet in progress when the budget
+expires. Why 2h: the timer fires every 24h, so a bounded run always finishes well
+before the next 03:00 UTC trigger. Overlap is also guarded independently by the
+single-instance `fcntl` lock (`data/.copy_wallet_screening.lock`, issue #1247), and
+systemd does not start a second instance of this `Type=oneshot` service while one is
+still active. Unscreened wallets get no row for that run; the next day's run re-fetches the
+leaderboard and screens them again if they are still in the top N. The budget is a module constant (not a live config key) and is not
+exposed as a CLI flag.
+
 **Operational commands:**
 ```bash
 # Check next scheduled run

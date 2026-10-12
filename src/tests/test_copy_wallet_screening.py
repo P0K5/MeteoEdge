@@ -9,9 +9,11 @@ from unittest.mock import MagicMock, patch
 
 from src.data.db import Database
 from src.scripts.copy_wallet_screening import (
+    MAX_RUN_SECONDS,
     MAX_WALLETS_PER_RUN,
     QUALITY_MAX_MEAN_MEDIAN_ROI_RATIO,
     QUALITY_MIN_RESOLVED_TRADES,
+    SCREENING_INTERVAL_HOURS,
     PersistentResolutionCache,
     _min_resolved_trades_threshold,
     check_quality,
@@ -1097,6 +1099,52 @@ class TestMaxWalletsPerRun:
             rc = run(window="month", top=10, slippage_bps=150.0, db=db)
         assert rc == 0
         mock_lb.assert_called_once_with(window="month", limit=10)
+
+
+class TestMaxRunSeconds:
+    def test_budget_is_well_under_daily_timer_interval(self):
+        # Issue #1114: a bounded run must always finish before the next
+        # daily timer fire, so runs cannot overlap.
+        assert MAX_RUN_SECONDS < SCREENING_INTERVAL_HOURS * 3600 / 2
+
+    def test_budget_exceeded_mid_run_persists_partial_results(self):
+        leaderboard = _leaderboard(5)
+        db = MagicMock()
+        db.get_recent_wallet_screenings.return_value = []
+        # Fake clock, one reading per call: run start, then the pre-wallet
+        # check for wallets 0 and 1 (within budget), then wallet 2 (over budget).
+        # Exactly four readings are supplied, so any extra call would fail loudly.
+        clock = [0.0, 0.0, 1.0, MAX_RUN_SECONDS + 1.0]
+        with patch(
+            "src.scripts.copy_wallet_screening.get_leaderboard", return_value=leaderboard,
+        ), patch(
+            "src.scripts.copy_wallet_screening.backtest_wallet",
+            side_effect=lambda addr, *a, **kw: _backtest_result(addr),
+        ) as mock_bt, patch(
+            "src.scripts.copy_wallet_screening.time.monotonic", side_effect=clock,
+        ):
+            rc = run(window="month", top=5, slippage_bps=150.0, db=db)
+        assert rc == 0
+        assert mock_bt.call_count == 2
+        inserted = [c.kwargs["address"] for c in db.insert_wallet_screening.call_args_list]
+        assert inserted == ["0xwallet0", "0xwallet1"]
+
+    def test_run_within_budget_screens_every_wallet(self):
+        leaderboard = _leaderboard(3)
+        db = MagicMock()
+        db.get_recent_wallet_screenings.return_value = []
+        with patch(
+            "src.scripts.copy_wallet_screening.get_leaderboard", return_value=leaderboard,
+        ), patch(
+            "src.scripts.copy_wallet_screening.backtest_wallet",
+            side_effect=lambda addr, *a, **kw: _backtest_result(addr),
+        ), patch(
+            "src.scripts.copy_wallet_screening.time.monotonic",
+            side_effect=lambda: 0.0,
+        ):
+            rc = run(window="month", top=3, slippage_bps=150.0, db=db)
+        assert rc == 0
+        assert db.insert_wallet_screening.call_count == 3
 
 
 class TestPersistentResolutionCache:

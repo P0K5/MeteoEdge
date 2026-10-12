@@ -49,6 +49,7 @@ import argparse
 import logging
 import os
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -82,6 +83,14 @@ _LOCK = None
 #: Bounding worst-case call volume per run via a hard cap is the v1
 #: mitigation -- a cross-process shared limiter is explicitly out of scope.
 MAX_WALLETS_PER_RUN = 50
+
+#: Wall-clock budget for one screening run (issue #1114). Checked between
+#: wallets in run(): once exceeded, the run stops screening further wallets,
+#: keeps every row already persisted, and returns normally. Worst-case
+#: overshoot is the duration of the wallet in progress when the budget
+#: expires. Sized at 2h so a run is always finished well before the next
+#: daily timer fire (see SCREENING_INTERVAL_HOURS), so runs cannot overlap.
+MAX_RUN_SECONDS = 2 * 60 * 60
 
 #: Nominal cadence of `meteoedge-copy-screening.timer` (docs/OPERATIONS.md:
 #: daily at 03:00 UTC). Used only to judge whether two `copy_wallet_candidates`
@@ -484,6 +493,7 @@ def run(
     flat_stake: "float | None" = None, db: "Database | None" = None,
     screened_at: "str | None" = None,
 ) -> int:
+    run_started = time.monotonic()
     screened_at = screened_at or datetime.now(timezone.utc).isoformat()
 
     if not flat_stake:
@@ -532,7 +542,17 @@ def run(
 
     n_screened = 0
     n_errors = 0
-    for address in addresses:
+    for index, address in enumerate(addresses):
+        # Issue #1114: wall-clock budget, checked before each wallet so a run
+        # that has already used MAX_RUN_SECONDS stops cleanly and keeps the
+        # rows it has persisted.
+        if time.monotonic() - run_started >= MAX_RUN_SECONDS:
+            log.warning(
+                "[copy-wallet-screening] wall-clock budget of %ss exceeded -- stopping "
+                "after %s/%s wallets, %s left unscreened (see MAX_RUN_SECONDS).",
+                MAX_RUN_SECONDS, index, len(addresses), len(addresses) - index,
+            )
+            break
         # Issue #1245: one wallet raising must never abort the rest of the
         # run -- mirrors copy_settle.py's per-row try/except (see that
         # module's docstring). KeyboardInterrupt/SystemExit are NOT
