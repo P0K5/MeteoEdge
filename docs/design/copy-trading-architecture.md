@@ -364,7 +364,18 @@ spec'd by #1258). **Status: Built (this issue, backend only).**
    Wallets view (`CopyFollowedWalletOut.opposite_side_contamination_pairs`/
    `_usd`, `src.data.copy_pnl.summarize_opposite_side_overlap`) until those
    legacy pairs settle out, so a reader does not compare a cleaned-up
-   wallet's P&L against a still-contaminated one. The Health/backtest
-   per-wallet comparison table is a second such surface and does not yet
-   carry the same disclosure — tracked separately rather than folded into
-   this already-multi-file fix.
+   wallet's P&L against a still-contaminated one. Styled as a dedicated RED
+   tier (`.followed-contamination-note`, `var(--no)`) — the same token
+   #1266/PR #1355 uses on this same row for its own blocking signal, not
+   the neutral `.followed-paused-reason` caption color, since this is a
+   real, locked-in-loss, real-money disclosure, not a benign status note —
+   with the `alert-triangle` icon convention and the full explanation as
+   persistent visible text (never title-attribute-only, which isn't
+   reliably exposed to screen readers; see `docs/design/copy-trading-live-views.md`'s
+   same rule). Issue #1359 is filed to do one joint copy-density pass
+   across this note and #1266/#1355's exceeds-cap note once #1355 also
+   lands, rather than each landing PR re-deriving the same row layout
+   independently. The Health/backtest
+   per-wallet comparison table is a second disclosure surface and does not
+   yet carry the same note — tracked separately as issue #1357 rather than
+   folded into this already-multi-file fix.

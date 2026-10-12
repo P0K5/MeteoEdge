@@ -629,6 +629,20 @@ _ASSERTIONS = textwrap.dedent("""
         'contamination note renders for the affected wallet');
       assert.strictEqual((paperHtmlAll.match(/locked-in loss pending/g) || []).length, 1,
         'only the contaminated wallet gets a contamination note');
+      // Designer review (PR #1354, round 1): dedicated red tier, not the
+      // neutral .followed-paused-reason caption style; the alert-triangle
+      // icon convention, not a raw glyph; and the full explanation is
+      // persistent visible text, never title-only (not reliably exposed to
+      // screen readers).
+      assert.ok(paperHtmlAll.includes('class="followed-contamination-note"'),
+        'contamination note uses its own dedicated red-tier class, not .followed-paused-reason');
+      assert.ok(paperHtmlAll.includes('<i data-lucide="alert-triangle"></i>$1.46 locked-in loss pending'),
+        'contamination note uses the established alert-triangle icon convention, not a raw glyph');
+      assert.ok(!paperHtmlAll.includes('⚠'), 'no raw warning glyph anywhere in the contamination note');
+      assert.ok(paperHtmlAll.includes('not yet settled into realized P&amp;L'),
+        'the full explanation is persistent visible text, not hidden in a title attribute');
+      assert.ok(!/followed-contamination-note[^>]*title=/.test(paperHtmlAll),
+        'the contamination note must not rely on a title attribute for its explanation');
       assert.ok(paperHtmlAll.includes('btn-followed-pause') && paperHtmlAll.includes('btn-followed-resume'));
       assert.ok(paperHtmlAll.includes('btn-followed-edit-stake') && paperHtmlAll.includes('btn-followed-unfollow'));
       assert.ok(!paperHtmlAll.includes('btn-followed-golive') && !paperHtmlAll.includes('btn-followed-revert-live'),

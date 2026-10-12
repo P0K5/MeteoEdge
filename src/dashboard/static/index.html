@@ -1027,6 +1027,16 @@ a,button,input,select{transition:color var(--transition),background var(--transi
 .followed-status-paused{background:var(--warn-bg);color:var(--warn);}
 .followed-status-badge i{width:12px;height:12px;}
 .followed-paused-reason{display:block;font-size:10px;color:var(--muted);margin-top:2px;max-width:220px;white-space:normal;}
+/* Issue #1316 (Designer review on PR #1354, round 1): a dedicated RED tier
+   for a real, locked-in-loss, real-money disclosure -- same var(--no)
+   token #1266 (PR #1355) already established on this same row for its
+   own blocking/risk signal (.followed-stake-live-blocked), deliberately
+   NOT a third use of .followed-paused-reason's neutral --muted caption
+   color, which is reserved for benign/informational notes (why a wallet
+   is paused, "inherits paper stake"). Same block/size/wrap layout as
+   .followed-paused-reason otherwise -- only the color tier changes. */
+.followed-contamination-note{display:block;font-size:10px;color:var(--no);margin-top:2px;max-width:220px;white-space:normal;}
+.followed-contamination-note i{width:12px;height:12px;flex-shrink:0;vertical-align:text-bottom;margin-right:2px;}
 /* Status cell now holds two independent badges (paper status + live
    eligibility, issue #1187) -- wrap and gap so they don't collide, and the
    paused-reason line (which is `display:block` above) still falls onto its
@@ -5915,8 +5925,22 @@ function _followedContaminationNoteHtml(w) {
   if (!n) return '';
   const usd = Math.abs(w.opposite_side_contamination_usd || 0).toFixed(2);
   const plural = n === 1 ? 'pair' : 'pairs';
-  return `<span class="followed-paused-reason" title="Pre-fix guaranteed-loss both-sides-above-parity ${plural} still open for this wallet (issue #1316) — locked-in loss not yet settled into realized P&amp;L">`
-    + `⚠ $${usd} locked-in loss pending (${n} both-sides ${plural})</span>`;
+  // Issue #1316 (Designer review on PR #1354, round 1):
+  // - alert-triangle icon, not a raw "⚠" glyph -- this file's established
+  //   convention (15+ existing uses, e.g. .copy-follow-reason above).
+  // - .followed-contamination-note, not .followed-paused-reason -- a real,
+  //   locked-in-loss, real-money disclosure gets the same dedicated RED
+  //   tier #1266/PR #1355 established on this same row, not the neutral
+  //   muted caption style.
+  // - The full explanation is persistent, visible text, never title-only
+  //   (title is not reliably exposed to screen readers -- this file's own
+  //   tooltip-isn't-enough-for-screen-readers rule, also recorded in
+  //   docs/design/copy-trading-live-views.md). No title attribute here at
+  //   all: everything a reader needs is already in the rendered text.
+  return `<span class="followed-contamination-note"><i data-lucide="alert-triangle"></i>`
+    + `$${usd} locked-in loss pending (${n} both-sides ${plural}) — `
+    + `pre-fix guaranteed-loss position${n === 1 ? '' : 's'} still open for this wallet `
+    + `(issue #1316), not yet settled into realized P&amp;L</span>`;
 }
 
 // Candidates now live on the Copy · Wallets tab (issue #1275).
