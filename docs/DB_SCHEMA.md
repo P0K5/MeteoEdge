@@ -686,9 +686,13 @@ pattern as the `trades.mode` migration above).
 | `entry_price` | REAL NOT NULL CHECK(entry_price >= 0 AND entry_price <= 1) | 0–1 probability | No | This position's own fill price (may differ from the signal's `source_price`/`fill_price` due to slippage) |
 | `stake_usd` | REAL NOT NULL CHECK(stake_usd > 0) | USD | No | Amount staked on this position |
 | `entry_ts` | TEXT NOT NULL | ISO 8601 timestamp (UTC) | No | Entry/fill timestamp |
-| `status` | TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open','settled')) | categorical | No | Whether this position is still open or has settled |
-| `settled_pnl_usd` | REAL | USD | Yes | Only populated once `status='settled'` |
+| `status` | TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open','settled','abandoned')) | categorical | No | Open, settled, or `abandoned` (operator-only terminal state, issue #1301) |
+| `settled_pnl_usd` | REAL | USD | Yes | Only populated once `status='settled'` (never for `abandoned`) |
 | `settled_at` | TEXT | ISO 8601 timestamp (UTC) | Yes | Only populated once `status='settled'` |
+| `stuck_level` | INTEGER NOT NULL DEFAULT 0 | 0/1/2 | No | Highest escalation emitted by `copy_settle.py` (1 = >48h, 2 = >7d); makes the alert once-per-position-per-step (#1301) |
+| `stuck_flagged_at` | TEXT | ISO 8601 (UTC) | Yes | When `stuck_level` last increased |
+| `abandoned_at` / `abandoned_by` / `abandon_reason` | TEXT | | Yes | Audit trail, written only by `src/scripts/copy_abandon.py` (operator-run, never timer-driven) |
+| `abandon_observed_price` | REAL | 0-1 | Yes | Price the operator saw; audit only, never used in P&L |
 
 **Notes:**
 - Unlike `open_positions`, rows are retained (not deleted) after settlement — `status` flips in place so epic C's P&L history can read them later.

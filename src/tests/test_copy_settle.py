@@ -152,7 +152,7 @@ class TestRunOnceStaleTracking:
     """Test the fallback stale-position warning (issue #1218).
 
     When positions remain unresolved for >48 hours, emit ONE aggregate warning
-    per run reporting the count. This prevents per-market log floods while
+    per run reporting the count (superseded by #1301). This prevents per-market log floods while
     surfacing genuine settlement delays.
     """
 
@@ -191,13 +191,19 @@ class TestRunOnceStaleTracking:
                     mock_dt.side_effect = lambda *args, **kw: datetime(*args, **kw)
                     summary = run_once(db=db)
 
-        # Find all WARNING logs about stale positions
+        # Issue #1301: the identical aggregate warning is replaced by one
+        # per-position STUCK warning per escalation step.
         stale_warnings = [r for r in caplog.records
-                            if r.levelno == logging.WARNING and "unresolved for > 48 hours" in r.message]
+                          if r.levelno == logging.WARNING and "STUCK" in r.message]
+        assert len(stale_warnings) == 2
+        assert not any("unresolved for > 48 hours" in r.message for r in caplog.records)
 
-        # EXACTLY one aggregate warning, not two
-        assert len(stale_warnings) == 1, f"Expected exactly 1 stale warning, got {len(stale_warnings)}"
-        assert "2 open position(s)" in stale_warnings[0].message
+        # A second run emits no new STUCK warning (already escalated).
+        caplog.clear()
+        with patch("src.scripts.copy_settle.fetch_market_resolution", return_value=None):
+            with caplog.at_level(logging.WARNING, logger="src.scripts.copy_settle"):
+                run_once(db=db)
+        assert not [r for r in caplog.records if "STUCK" in r.message]
 
         # Settlement counts unaffected
         assert summary["pending"] == 2

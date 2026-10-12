@@ -37,12 +37,13 @@ from __future__ import annotations
 
 import logging
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from src.data.copy_pnl import compute_realized_pnl_usd  # noqa: E402
+from src.data.copy_stuck import LEVEL_LABELS, age_hours, stuck_level  # noqa: E402
 from src.data.polymarket import fetch_market_resolution  # noqa: E402
 
 log = logging.getLogger(__name__)
@@ -58,7 +59,7 @@ def _open_db():
         return None
 
 
-def run_once(db=None) -> dict:
+def run_once(db=None, escalations: "list | None" = None) -> dict:
     """Run a single settlement pass over open ``copy_positions``.
 
     Returns a summary dict ``{'settled': int, 'pending': int, 'errors': int}``
@@ -68,6 +69,15 @@ def run_once(db=None) -> dict:
     If *db* is not given, opens (and owns -- callers never need to close it
     themselves) a real ``Database()`` handle. Passing *db* explicitly is how
     tests inject a seeded / mocked database.
+
+    If *escalations* is a list, each newly-emitted stuck-position record
+    (issue #1301) is appended to it. Escalation is once per position per
+    level (48h, then 7d): the level is persisted in
+    ``copy_positions.stuck_level``, so repeated runs over the same stuck
+    position emit nothing new. Chosen over "newly stuck + stable count"
+    because the per-position record is what an operator can act on, and the
+    daily health report carries the full stable listing. Escalation is
+    bookkeeping only: nothing here can move a position out of ``open``.
     """
     if db is None:
         db = _open_db()
@@ -98,17 +108,36 @@ def run_once(db=None) -> dict:
         yes_won = resolutions.get(market)
         if yes_won is None:
             n_pending += 1
-            # Track positions open > 48 hours (settlement latency is ~6h avg, tail > 24h)
-            # Stale threshold: 48 hours, well above observed settle latency
             try:
-                entry_time = datetime.fromisoformat(r["entry_ts"])
-                if entry_time.tzinfo is None:
-                    entry_time = entry_time.replace(tzinfo=timezone.utc)
-                age = now - entry_time
-                if age > timedelta(hours=48):
+                lvl = stuck_level(r["entry_ts"], now)
+                if lvl > 0:
                     n_stale += 1
+                if lvl > int(r.get("stuck_level") or 0):
+                    rec = {
+                        "position_id": r["id"],
+                        "wallet": r.get("address"),
+                        "market": market,
+                        "age_hours": round(age_hours(r["entry_ts"], now), 1),
+                        "entry_price": r["entry_price"],
+                        "stake_usd": r["stake_usd"],
+                        "level": lvl,
+                        "category": LEVEL_LABELS[lvl],
+                    }
+                    db.set_copy_position_stuck_level(r["id"], lvl, now_iso)
+                    if escalations is not None:
+                        escalations.append(rec)
+                    log.warning(
+                        "[copy_settle] STUCK %s position=%s wallet=%s market=%s "
+                        "age_h=%s entry_price=%s stake_usd=%s -- unresolved, stays open; "
+                        "operator action: copy_abandon.py if market is dead",
+                        rec["category"], rec["position_id"], rec["wallet"],
+                        rec["market"], rec["age_hours"], rec["entry_price"],
+                        rec["stake_usd"], extra={"stuck_record": rec},
+                    )
             except (ValueError, KeyError) as e:
                 log.debug("[copy_settle] position %s has malformed entry_ts, skipping stale tracking: %s", r.get("id"), e)
+            except Exception as e:  # noqa: BLE001 -- a DB hiccup must not abort the run; malformed entry_ts or a DB hiccup: never abort the run
+                log.warning("[copy_settle] stuck tracking skipped for position %s: %s", r.get("id"), e)
             log.debug(
                 "[copy_settle] market %s... not resolved yet -- position %s stays open",
                 str(market)[:14], r["id"],
@@ -139,14 +168,10 @@ def run_once(db=None) -> dict:
         n_settled, n_pending, n_errors, len(rows),
     )
 
-    # Emit one aggregate WARNING if any positions have been open > 48 hours
-    # (well above observed settlement latency of ~6h average, tail past 24h)
+    # The per-position STUCK records above replace the old identical
+    # aggregate WARNING (issue #1301). Only a stable count at INFO remains.
     if n_stale > 0:
-        log.warning(
-            "[copy_settle] %s open position(s) unresolved for > 48 hours -- "
-            "market may be stuck or settlement delayed",
-            n_stale,
-        )
+        log.info("[copy_settle] %s open position(s) past the 48h stuck threshold", n_stale)
 
     return {"settled": n_settled, "pending": n_pending, "errors": n_errors}
 

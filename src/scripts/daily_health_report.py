@@ -1055,6 +1055,53 @@ def _build_emos_progress(db, today: datetime) -> list[str]:
     return lines
 
 
+def _build_copy_stuck(db, today: datetime) -> "tuple[list[str], dict]":
+    """Copy-trading paper positions stuck open past the 48h / 7d thresholds
+    (issue #1301). Lists every one with id, wallet, market, age and entry
+    price, so the report is actionable; the 15-minute settle job logs each
+    position only once per level. Abandoned positions are counted so the
+    ROI denominator gap is visible."""
+    from src.data.copy_stuck import (
+        LEVEL_LABELS, PATHOLOGICAL_HOURS, STUCK_HOURS, age_hours, stuck_level,
+    )
+    lines = ["Copy-trading stuck positions", "-" * 28]
+    flags: dict = {"n_aged": 0, "n_pathological": 0}
+    try:
+        stuck = []
+        for r in db.get_open_copy_positions():
+            try:
+                lvl = stuck_level(r["entry_ts"], today)
+            except (ValueError, KeyError, TypeError):
+                continue
+            if lvl:
+                stuck.append((lvl, age_hours(r["entry_ts"], today), r))
+        stuck.sort(key=lambda t: (-t[0], -t[1]))
+        flags["n_aged"] = sum(1 for t in stuck if t[0] == 1)
+        flags["n_pathological"] = sum(1 for t in stuck if t[0] == 2)
+        stake = sum(float(t[2]["stake_usd"]) for t in stuck)
+        lines.append(
+            f"  Aged >{STUCK_HOURS}h: {flags['n_aged']}  |  "
+            f"Pathological >{PATHOLOGICAL_HOURS}h: {flags['n_pathological']}  |  "
+            f"stake unresolved: ${stake:.2f}"
+        )
+        if flags["n_pathological"]:
+            lines.append(
+                "  [WARN] pathological positions are EXCLUDED from ROI/win-rate; "
+                "operator: python -m src.scripts.copy_abandon if the market is dead"
+            )
+        for lvl, age, r in stuck:
+            lines.append(
+                f"  [{LEVEL_LABELS[lvl]}] id={r['id']} wallet={r['address']} "
+                f"market={r['market']} age={age / 24:.1f}d "
+                f"entry={float(r['entry_price']):.3f} stake=${float(r['stake_usd']):.2f}"
+            )
+    except Exception:
+        log.exception("Copy stuck-position query failed")
+        lines.append("  (unavailable -- query error)")
+    lines.append("")
+    return lines, flags
+
+
 def _build_blockers(db, today: datetime) -> list[str]:
     """Known open issues status check."""
     lines = ["Open Blockers", "-" * 8]
@@ -1146,6 +1193,16 @@ def _build_verdict(sections: "list[tuple[str, list[str], dict]]") -> list[str]:
     elif m3_flags.get("gaps_status") == "UNKNOWN":
         unknown_issues.append("M3 gaps not assessed")
 
+    copy_stuck_flags = flags_by_section.get("copy_stuck", {})
+    if copy_stuck_flags.get("n_pathological"):
+        warn_issues.append(
+            f"{copy_stuck_flags['n_pathological']} copy position(s) stuck >7d"
+        )
+    elif copy_stuck_flags.get("n_aged"):
+        warn_issues.append(
+            f"{copy_stuck_flags['n_aged']} copy position(s) stuck >48h"
+        )
+
     blockers_text = "\n".join(lines_by_section.get("blockers", []))
     if "[WARN] gap confirmed" in blockers_text:
         warn_issues.append("#897 KORD gap")
@@ -1192,6 +1249,7 @@ def build_report(db) -> str:
         ("guardrails", _build_guardrails),
         ("m3", _build_m3_progress),
         ("emos", _build_emos_progress),
+        ("copy_stuck", _build_copy_stuck),
         ("blockers", _build_blockers),
     ]:
         try:

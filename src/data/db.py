@@ -595,9 +595,15 @@ CREATE TABLE IF NOT EXISTS copy_positions (
     entry_price      REAL NOT NULL CHECK(entry_price >= 0 AND entry_price <= 1),
     stake_usd        REAL NOT NULL CHECK(stake_usd > 0),
     entry_ts         TEXT NOT NULL,
-    status           TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open','settled')),
+    status           TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open','settled','abandoned')),
     settled_pnl_usd  REAL,
-    settled_at       TEXT
+    settled_at       TEXT,
+    stuck_level      INTEGER NOT NULL DEFAULT 0,
+    stuck_flagged_at TEXT,
+    abandoned_at     TEXT,
+    abandoned_by     TEXT,
+    abandon_reason   TEXT,
+    abandon_observed_price REAL
 );
 CREATE INDEX IF NOT EXISTS idx_copy_positions_address_status
     ON copy_positions(address, status);
@@ -896,6 +902,14 @@ class Database:
                 # sizing changes as a result of this migration running (readers
                 # resolve via COALESCE(live_stake_per_trade, stake_per_trade)).
                 ("copy_wallets_followed", "live_stake_per_trade", "REAL"),
+                # Issue #1301: stuck-position escalation state + operator-only
+                # 'abandoned' terminal audit columns.
+                ("copy_positions", "stuck_level", "INTEGER NOT NULL DEFAULT 0"),
+                ("copy_positions", "stuck_flagged_at", "TEXT"),
+                ("copy_positions", "abandoned_at", "TEXT"),
+                ("copy_positions", "abandoned_by", "TEXT"),
+                ("copy_positions", "abandon_reason", "TEXT"),
+                ("copy_positions", "abandon_observed_price", "REAL"),
             ]:
                 try:
                     self._conn.execute(
@@ -904,6 +918,8 @@ class Database:
                     self._conn.commit()
                 except sqlite3.OperationalError:
                     pass  # column already exists
+
+            self._migrate_copy_positions_abandoned()
 
             # Index on trades.close_reason — added after migration ensures column exists
             self._conn.execute(
@@ -1393,6 +1409,64 @@ class Database:
 
     def _now(self) -> str:
         return datetime.now(timezone.utc).isoformat()
+
+    def _migrate_copy_positions_abandoned(self) -> None:
+        """Issue #1301: widen ``copy_positions.status`` CHECK to allow
+        ``'abandoned'``. SQLite cannot ALTER a CHECK, so rebuild the table
+        (only when the stored DDL lacks ``'abandoned'``). Caller holds the
+        lock; the six #1301 columns already exist (ALTER loop ran first).
+        ``copy_signals.position_id`` references this table, so FK checks are
+        off for the DROP/RENAME, as in the trades rebuild above."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='copy_positions'"
+            ).fetchone()
+            if not row or "'abandoned'" in row[0]:
+                return
+            cols = (
+                "id,signal_id,address,market,outcome_index,entry_price,stake_usd,"
+                "entry_ts,status,settled_pnl_usd,settled_at,stuck_level,"
+                "stuck_flagged_at,abandoned_at,abandoned_by,abandon_reason,"
+                "abandon_observed_price"
+            )
+            self._conn.execute("PRAGMA foreign_keys=OFF")
+            try:
+                with self._conn:
+                    self._conn.execute("DROP TABLE IF EXISTS copy_positions_new")
+                    self._conn.execute(
+                        """
+                        CREATE TABLE copy_positions_new (
+                            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                            signal_id        INTEGER NOT NULL REFERENCES copy_signals(id),
+                            address          TEXT NOT NULL,
+                            market           TEXT NOT NULL,
+                            outcome_index    INTEGER NOT NULL CHECK(outcome_index IN (0,1)),
+                            entry_price      REAL NOT NULL CHECK(entry_price >= 0 AND entry_price <= 1),
+                            stake_usd        REAL NOT NULL CHECK(stake_usd > 0),
+                            entry_ts         TEXT NOT NULL,
+                            status           TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open','settled','abandoned')),
+                            settled_pnl_usd  REAL,
+                            settled_at       TEXT,
+                            stuck_level      INTEGER NOT NULL DEFAULT 0,
+                            stuck_flagged_at TEXT,
+                            abandoned_at     TEXT,
+                            abandoned_by     TEXT,
+                            abandon_reason   TEXT,
+                            abandon_observed_price REAL
+                        )
+                        """
+                    )
+                    self._conn.execute(
+                        f"INSERT INTO copy_positions_new ({cols}) SELECT {cols} FROM copy_positions"
+                    )
+                    self._conn.execute("DROP TABLE copy_positions")
+                    self._conn.execute("ALTER TABLE copy_positions_new RENAME TO copy_positions")
+                    self._conn.execute(
+                        "CREATE INDEX IF NOT EXISTS idx_copy_positions_address_status "
+                        "ON copy_positions(address, status)"
+                    )
+            finally:
+                self._conn.execute("PRAGMA foreign_keys=ON")
 
     def _migrate_forecast_log(self) -> None:
         """Idempotent migration for model_forecast_log.
@@ -2462,6 +2536,78 @@ class Database:
             )
             self._conn.commit()
 
+    def set_copy_position_stuck_level(
+        self, position_id: int, level: int, flagged_at: str
+    ) -> None:
+        """Record that a still-open position has been escalated to *level*
+        (issue #1301). Monotonic and scoped ``status='open'`` so a re-run
+        never lowers the level or touches a settled/abandoned row. Escalation
+        bookkeeping only: never changes ``status``."""
+        with self._lock:
+            self._conn.execute(
+                "UPDATE copy_positions SET stuck_level=?, stuck_flagged_at=? "
+                "WHERE id=? AND status='open' AND stuck_level<?",
+                (level, flagged_at, position_id, level),
+            )
+            self._conn.commit()
+
+    def abandon_copy_position(
+        self,
+        position_id: int,
+        operator: str,
+        reason: str,
+        abandoned_at: str,
+        observed_price: "float | None" = None,
+    ) -> bool:
+        """Operator-driven terminal transition ``open -> abandoned`` for a
+        genuinely-dead market (issue #1301). NEVER called from a timer or
+        heuristic; only ``copy_abandon.py``. Writes no P&L (the position is
+        excluded from ROI/win-rate and from exposure), and records who/when/
+        why plus the observed price (audit only, not used in any P&L).
+
+        Idempotent: scoped ``WHERE status='open'``. Returns True if this call
+        performed the transition, False if the row was not open (already
+        abandoned/settled, or unknown id)."""
+        if not operator or not operator.strip() or not reason or not reason.strip():
+            raise ValueError("operator and reason are required to abandon a position")
+        with self._lock:
+            cur = self._conn.execute(
+                "UPDATE copy_positions SET status='abandoned', abandoned_at=?, "
+                "abandoned_by=?, abandon_reason=?, abandon_observed_price=? "
+                "WHERE id=? AND status='open'",
+                (abandoned_at, operator.strip(), reason.strip(), observed_price, position_id),
+            )
+            self._conn.commit()
+            return cur.rowcount == 1
+
+    def get_copy_unresolved_by_wallet(self, min_age_hours: float) -> dict:
+        """Per-wallet count and stake of ``open`` positions entered more than
+        *min_age_hours* ago, plus abandoned counts (issue #1301):
+        ``{address: {'n_unresolved', 'unresolved_stake_usd', 'n_abandoned',
+        'abandoned_stake_usd'}}``. Lets any per-wallet realized-performance
+        surface state its denominator is incomplete instead of silently
+        omitting these positions."""
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=min_age_hours)).isoformat()
+        out: dict = {}
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT address, status, COUNT(*) AS n, SUM(stake_usd) AS stake "
+                "FROM copy_positions WHERE (status='open' AND entry_ts < ?) "
+                "OR status='abandoned' GROUP BY address, status",
+                (cutoff,),
+            ).fetchall()
+        for r in rows:
+            d = out.setdefault(
+                r["address"],
+                {"n_unresolved": 0, "unresolved_stake_usd": 0.0,
+                 "n_abandoned": 0, "abandoned_stake_usd": 0.0},
+            )
+            if r["status"] == "open":
+                d["n_unresolved"], d["unresolved_stake_usd"] = r["n"], r["stake"]
+            else:
+                d["n_abandoned"], d["abandoned_stake_usd"] = r["n"], r["stake"]
+        return out
+
     def get_copy_realized_pnl_by_wallet(self, address: "str | None" = None) -> list[dict]:
         """Return realized P&L aggregated over ``status='settled'``
         positions, one row per wallet: ``{'address', 'n_settled',
@@ -2493,7 +2639,18 @@ class Database:
                     "SELECT address, COUNT(*) AS n_settled, SUM(settled_pnl_usd) AS total_pnl_usd "
                     "FROM copy_positions WHERE status='settled' GROUP BY address"
                 )
-            return [dict(row) for row in cur.fetchall()]
+            rows = [dict(row) for row in cur.fetchall()]
+        # Issue #1301: state the incomplete denominator explicitly. Positions
+        # open past the pathological threshold (and abandoned ones) are in
+        # neither n_settled nor total_pnl_usd.
+        from src.data.copy_stuck import PATHOLOGICAL_HOURS
+        unresolved = self.get_copy_unresolved_by_wallet(PATHOLOGICAL_HOURS)
+        for r in rows:
+            u = unresolved.get(r["address"], {})
+            r["n_unresolved"] = u.get("n_unresolved", 0)
+            r["unresolved_stake_usd"] = u.get("unresolved_stake_usd", 0.0)
+            r["n_abandoned"] = u.get("n_abandoned", 0)
+        return rows
 
     def get_copy_realized_pnl_total(self) -> dict:
         """Return realized P&L aggregated over ALL wallets' ``'settled'``
