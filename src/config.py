@@ -783,7 +783,17 @@ CONFIG_DEFAULTS: "dict[str, str | int | float | bool]" = {
     "COPY_MAX_EXPOSURE_PER_WALLET_USD": 50.0,
     "COPY_MAX_TOTAL_EXPOSURE_USD": 250.0,
     "COPY_SIGNAL_POLL_INTERVAL_SECONDS": 300,
-    "COPY_ONE_POSITION_PER_MARKET": True,
+    # Renamed from COPY_ONE_POSITION_PER_MARKET (issue #1316): the old name
+    # said "per market" but the gate it drives in copy_signal_loop.py has
+    # always been per (wallet, market, outcome) -- an open position on
+    # outcome 0 never blocked a new one on outcome 1 of the same market.
+    # That mismatch between name and behaviour is how #1316's 185
+    # guaranteed-loss both-sides pairs went unnoticed; the actual
+    # market-level guard (refusing a guaranteed-loss opposite-side entry)
+    # is now unconditional in copy_signal_loop.py, not gated by this flag.
+    # seed_config() below migrates any already-persisted value under the
+    # old key so an operator override survives the rename unchanged.
+    "COPY_ONE_POSITION_PER_MARKET_OUTCOME": True,
     "COPY_MIN_ENTRY_PRICE": 0.10,
     # Realized-P&L circuit breaker (issue #1139, epic D #1138). Distinct from
     # the open-EXPOSURE caps above -- those bound how much capital can be at
@@ -904,18 +914,43 @@ MODEL_STATE_ATTRS: dict[str, str] = {
 }
 
 
+# Renamed config keys (old name -> new name). seed_config() below migrates
+# any already-persisted value under the OLD key the first time the NEW key
+# is seeded, so an operator override set before a rename survives it
+# unchanged instead of silently resetting to the new key's hardcoded
+# default. Append here, never remove -- a long-lived production DB may
+# still carry the old key for a long time after the rename ships.
+_RENAMED_CONFIG_KEYS: "dict[str, str]" = {
+    # issue #1316: the old name claimed market-level dedup scope the flag
+    # never actually had (always per (wallet, market, outcome)).
+    "COPY_ONE_POSITION_PER_MARKET": "COPY_ONE_POSITION_PER_MARKET_OUTCOME",
+}
+
+
 def seed_config(db) -> None:
     """Seed bot_config from env vars / hardcoded defaults on first run.
 
     For each key in CONFIG_DEFAULTS:
-    - If no DB row exists: seed from env var (if set) or hardcoded default.
-    - If a row already exists: leave it alone — DB is authoritative.
+    - If no DB row exists AND no value exists under a prior name for this
+      key (``_RENAMED_CONFIG_KEYS``): seed from env var (if set) or
+      hardcoded default.
+    - If no DB row exists but the key was renamed and the OLD name has a
+      persisted value: migrate that value verbatim (issue #1316) rather
+      than resetting to the new key's hardcoded default.
+    - If a row already exists under the current name: leave it alone — DB
+      is authoritative.
 
     Call once at process start before the first poll cycle.
     """
+    legacy_key_by_new_key = {new: old for old, new in _RENAMED_CONFIG_KEYS.items()}
     for key, default in CONFIG_DEFAULTS.items():
         existing = db.get_config(key)
         if existing is None:
+            legacy_key = legacy_key_by_new_key.get(key)
+            legacy_value = db.get_config(legacy_key) if legacy_key else None
+            if legacy_value is not None:
+                db.set_config(key, legacy_value)
+                continue
             # First run — seed from env var if set, otherwise use hardcoded default
             value = os.getenv(key, str(default))
             db.set_config(key, value)

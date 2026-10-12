@@ -583,7 +583,7 @@ class TestSignalDetectionAndExecution:
                 "status": "open",
             }
         ]
-        live_config = _live_config(COPY_ONE_POSITION_PER_MARKET=True)
+        live_config = _live_config(COPY_ONE_POSITION_PER_MARKET_OUTCOME=True)
         self._run(db, [_buy_raw()], live_config=live_config, resolution=None)
 
         signal_kwargs = db.insert_copy_signal.call_args.kwargs
@@ -593,7 +593,8 @@ class TestSignalDetectionAndExecution:
 
     def test_different_outcome_index_allowed(self):
         """Same market but different outcome_index → allowed through
-        (not a duplicate)."""
+        (not a duplicate), as long as it's not a guaranteed-loss pair
+        (issue #1316): existing 0.30 + incoming 0.40 = 0.70, sub-parity."""
         db = _mock_db()
         # Existing open position: same market, DIFFERENT outcome_index
         db.get_open_copy_positions.return_value = [
@@ -602,11 +603,12 @@ class TestSignalDetectionAndExecution:
                 "address": ADDRESS,
                 "market": MARKET,
                 "outcome_index": 1,  # Different outcome
+                "entry_price": 0.30,
                 "stake_usd": 5.0,
                 "status": "open",
             }
         ]
-        live_config = _live_config(COPY_ONE_POSITION_PER_MARKET=True)
+        live_config = _live_config(COPY_ONE_POSITION_PER_MARKET_OUTCOME=True)
         self._run(
             db,
             [_buy_raw(outcomeIndex=0)],  # outcome_index 0
@@ -625,7 +627,7 @@ class TestSignalDetectionAndExecution:
         db = _mock_db()
         # Existing settled position: same market, same outcome_index
         db.get_open_copy_positions.return_value = []  # No OPEN positions
-        live_config = _live_config(COPY_ONE_POSITION_PER_MARKET=True)
+        live_config = _live_config(COPY_ONE_POSITION_PER_MARKET_OUTCOME=True)
         self._run(db, [_buy_raw()], live_config=live_config, resolution=None)
 
         signal_kwargs = db.insert_copy_signal.call_args.kwargs
@@ -656,7 +658,7 @@ class TestSignalDetectionAndExecution:
                 }
             ]
         db.get_open_copy_positions.side_effect = _open_positions
-        live_config = _live_config(COPY_ONE_POSITION_PER_MARKET=True)
+        live_config = _live_config(COPY_ONE_POSITION_PER_MARKET_OUTCOME=True)
         self._run(db, [_buy_raw()], live_config=live_config, resolution=None)
 
         signal_kwargs = db.insert_copy_signal.call_args.kwargs
@@ -665,7 +667,7 @@ class TestSignalDetectionAndExecution:
         db.insert_copy_position.assert_called_once()
 
     def test_duplicate_disabled_allows_both_fills(self):
-        """When COPY_ONE_POSITION_PER_MARKET=False, both fills open
+        """When COPY_ONE_POSITION_PER_MARKET_OUTCOME=False, both fills open
         positions (current behaviour preserved)."""
         db = _mock_db()
         db.get_open_copy_positions.return_value = [
@@ -678,7 +680,7 @@ class TestSignalDetectionAndExecution:
                 "status": "open",
             }
         ]
-        live_config = _live_config(COPY_ONE_POSITION_PER_MARKET=False)
+        live_config = _live_config(COPY_ONE_POSITION_PER_MARKET_OUTCOME=False)
         self._run(db, [_buy_raw()], live_config=live_config, resolution=None)
 
         signal_kwargs = db.insert_copy_signal.call_args.kwargs
@@ -705,7 +707,7 @@ class TestSignalDetectionAndExecution:
             }
         ]
         live_config = _live_config(
-            COPY_ONE_POSITION_PER_MARKET=True,
+            COPY_ONE_POSITION_PER_MARKET_OUTCOME=True,
             COPY_MAX_EXPOSURE_PER_WALLET_USD=50.0,
         )
         self._run(db, [_buy_raw()], live_config=live_config, resolution=None)
@@ -714,6 +716,144 @@ class TestSignalDetectionAndExecution:
         # Should be duplicate, not wallet_exposure_limit
         assert signal_kwargs["skip_reason"] == "duplicate_market_exposure"
         db.insert_copy_position.assert_not_called()
+
+
+class TestOppositeSideAboveParityGuard:
+    """Issue #1316, option (b) per docs/design/copy-trading-architecture.md:
+    an incoming BUY on the OTHER outcome of a market with an open position
+    is refused when the combined entry cost (existing leg + incoming leg)
+    is at or above $1.00 -- a mathematically guaranteed loss -- and
+    permitted when it's a genuine sub-parity pair. Unconditional: not
+    gated by COPY_ONE_POSITION_PER_MARKET_OUTCOME, which only dedupes the
+    SAME outcome."""
+
+    def _run(self, db, raw_trades, live_config=None, resolution=None):
+        with patch(
+            "src.scripts.copy_signal_loop.get_live_config",
+            return_value=live_config or _live_config(),
+        ), patch(
+            "src.scripts.copy_signal_loop.get_wallet_trades_since",
+            return_value=raw_trades,
+        ), patch(
+            "src.scripts.copy_signal_loop.fetch_market_resolution",
+            return_value=resolution,
+        ):
+            run_cycle(db)
+
+    def _opposite_leg(self, entry_price, **overrides):
+        row = dict(
+            id=101, address=ADDRESS, market=MARKET, outcome_index=1,
+            entry_price=entry_price, stake_usd=5.0, status="open",
+        )
+        row.update(overrides)
+        return [row]
+
+    def test_boundary_exactly_one_dollar_is_refused(self):
+        """0.60 (existing) + 0.40 (incoming) == 1.00 exactly → refused.
+        The boundary is inclusive: a combined cost of exactly $1.00 can
+        never profit, only break even at best."""
+        db = _mock_db()
+        db.get_open_copy_positions.return_value = self._opposite_leg(0.60)
+        self._run(db, [_buy_raw(price="0.40")], resolution=None)
+
+        signal_kwargs = db.insert_copy_signal.call_args.kwargs
+        assert signal_kwargs["skip_reason"] == "opposite_side_above_parity"
+        assert signal_kwargs["order_placed"] == 0
+        db.insert_copy_position.assert_not_called()
+
+    def test_boundary_just_under_one_dollar_is_permitted(self):
+        """0.60 (existing) + 0.39 (incoming) == 0.99 → permitted (a genuine
+        sub-parity pair, option (b)'s explicitly-kept case)."""
+        db = _mock_db()
+        db.get_open_copy_positions.return_value = self._opposite_leg(0.60)
+        self._run(db, [_buy_raw(price="0.39")], resolution=None)
+
+        signal_kwargs = db.insert_copy_signal.call_args.kwargs
+        assert signal_kwargs.get("skip_reason") != "opposite_side_above_parity"
+        assert signal_kwargs["order_placed"] == 1
+        db.insert_copy_position.assert_called_once()
+
+    def test_above_parity_is_refused(self):
+        """0.9135 + 0.8221 = 1.7356 -- the worst pair measured in issue
+        #1316 -- is refused."""
+        db = _mock_db()
+        db.get_open_copy_positions.return_value = self._opposite_leg(0.9135)
+        self._run(db, [_buy_raw(price="0.8221")], resolution=None)
+
+        signal_kwargs = db.insert_copy_signal.call_args.kwargs
+        assert signal_kwargs["skip_reason"] == "opposite_side_above_parity"
+        db.insert_copy_position.assert_not_called()
+
+    def test_sub_parity_pair_is_not_option_a(self):
+        """A clearly sub-parity pair (0.20 + 0.20 = 0.40) is permitted --
+        pins that the fix is option (b), not option (a) (refuse the
+        opposite side outright)."""
+        db = _mock_db()
+        db.get_open_copy_positions.return_value = self._opposite_leg(0.20)
+        self._run(db, [_buy_raw(price="0.20")], resolution=None)
+
+        signal_kwargs = db.insert_copy_signal.call_args.kwargs
+        assert signal_kwargs.get("skip_reason") is None
+        assert signal_kwargs["order_placed"] == 1
+        db.insert_copy_position.assert_called_once()
+
+    def test_same_outcome_still_hits_duplicate_market_exposure(self):
+        """An above-parity-looking price on the SAME outcome is still
+        duplicate_market_exposure, not opposite_side_above_parity -- the
+        two guards are disjoint by outcome_index, never conflated."""
+        db = _mock_db()
+        db.get_open_copy_positions.return_value = [
+            {
+                "id": 101, "address": ADDRESS, "market": MARKET,
+                "outcome_index": 0, "entry_price": 0.60, "stake_usd": 5.0,
+                "status": "open",
+            }
+        ]
+        live_config = _live_config(COPY_ONE_POSITION_PER_MARKET_OUTCOME=True)
+        self._run(db, [_buy_raw(price="0.40", outcomeIndex=0)], live_config=live_config, resolution=None)
+
+        signal_kwargs = db.insert_copy_signal.call_args.kwargs
+        assert signal_kwargs["skip_reason"] == "duplicate_market_exposure"
+        db.insert_copy_position.assert_not_called()
+
+    def test_settled_opposite_leg_does_not_block(self):
+        """A SETTLED opposite-side leg never reaches this guard at all --
+        get_open_copy_positions only returns status='open' rows, so a
+        settled above-parity-looking leg does not block re-entry (today's
+        documented settled-position behaviour, unchanged by this issue)."""
+        db = _mock_db()
+        db.get_open_copy_positions.return_value = []  # settled leg: not open
+        self._run(db, [_buy_raw(price="0.90")], resolution=None)
+
+        signal_kwargs = db.insert_copy_signal.call_args.kwargs
+        assert signal_kwargs.get("skip_reason") is None
+        assert signal_kwargs["order_placed"] == 1
+        db.insert_copy_position.assert_called_once()
+
+    def test_different_wallet_opposite_side_unaffected(self):
+        """A different wallet's opposite-side open leg never pairs with
+        this wallet's incoming BUY -- the guard is per-wallet, like every
+        other dedup/exposure check in this ladder."""
+        db = _mock_db()
+
+        def _open_positions(address=None):
+            if address is not None:
+                return []  # our wallet: no open positions
+            return [
+                {
+                    "id": 101, "address": "0xother_wallet", "market": MARKET,
+                    "outcome_index": 1, "entry_price": 0.90, "stake_usd": 5.0,
+                    "status": "open",
+                }
+            ]
+
+        db.get_open_copy_positions.side_effect = _open_positions
+        self._run(db, [_buy_raw(price="0.90")], resolution=None)
+
+        signal_kwargs = db.insert_copy_signal.call_args.kwargs
+        assert signal_kwargs.get("skip_reason") is None
+        assert signal_kwargs["order_placed"] == 1
+        db.insert_copy_position.assert_called_once()
 
 
 class TestFirstPollBootstrapGuard:

@@ -2391,6 +2391,55 @@ class Database:
                 cur = self._conn.execute("SELECT * FROM copy_positions WHERE status='open'")
             return [dict(row) for row in cur.fetchall()]
 
+    def get_opposite_side_overlap_pairs(self, address: "str | None" = None) -> list[dict]:
+        """Return every pair of opposite-outcome ``copy_positions`` rows for
+        the same (wallet, market) whose holding periods overlapped -- the
+        later leg entered while the earlier one was still ``status='open'``
+        (issue #1316's measurement definition, reused verbatim here so the
+        live disclosure and any one-off analysis never disagree about what
+        counts as "overlap").
+
+        Each row is ``{"address", "market", "a_id", "b_id",
+        "a_entry_price", "b_entry_price", "a_stake_usd", "b_stake_usd",
+        "a_entry_ts", "b_entry_ts", "a_status", "b_status"}`` -- ``a`` is
+        always the earlier-entered leg (by ``entry_ts``, ``id`` as the
+        tiebreak), ``b`` the later one.
+
+        Includes every overlapping pair regardless of combined cost --
+        callers (e.g. ``src.data.copy_pnl.summarize_opposite_side_overlap``)
+        decide which pairs are actually a guaranteed loss (combined entry
+        cost >= $1.00). This query only establishes which pairs overlapped
+        at all, matching exactly one earlier leg to exactly one later leg
+        per row -- a naive join without the overlap/ordering conditions
+        would pair every leg against every other opposite-outcome leg ever
+        held, badly over-counting (issue #1316's own warning about this).
+        """
+        where_address = "AND a.address = ?" if address is not None else ""
+        params = (address,) if address is not None else ()
+        with self._lock:
+            cur = self._conn.execute(
+                f"""
+                SELECT
+                    a.address AS address, a.market AS market,
+                    a.id AS a_id, b.id AS b_id,
+                    a.entry_price AS a_entry_price, b.entry_price AS b_entry_price,
+                    a.stake_usd AS a_stake_usd, b.stake_usd AS b_stake_usd,
+                    a.entry_ts AS a_entry_ts, b.entry_ts AS b_entry_ts,
+                    a.status AS a_status, b.status AS b_status
+                FROM copy_positions a
+                JOIN copy_positions b
+                    ON a.address = b.address
+                   AND a.market = b.market
+                   AND a.outcome_index != b.outcome_index
+                   AND (a.entry_ts < b.entry_ts
+                        OR (a.entry_ts = b.entry_ts AND a.id < b.id))
+                WHERE (a.status = 'open' OR a.settled_at > b.entry_ts)
+                {where_address}
+                """,
+                params,
+            )
+            return [dict(row) for row in cur.fetchall()]
+
     def settle_copy_position(
         self, position_id: int, settled_pnl_usd: float, settled_at: str
     ) -> None:

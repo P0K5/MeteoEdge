@@ -131,6 +131,34 @@ class TestSeedConfig:
         second = db.get_all_config()
         assert first == second
 
+    def test_renamed_key_migrates_legacy_value(self):
+        """Issue #1316: COPY_ONE_POSITION_PER_MARKET was renamed to
+        COPY_ONE_POSITION_PER_MARKET_OUTCOME. An operator override
+        persisted under the OLD key before the rename must survive it
+        unchanged -- seed_config must not silently reset to the new key's
+        hardcoded default."""
+        db = _db()
+        db.set_config("COPY_ONE_POSITION_PER_MARKET", "false")
+        seed_config(db)
+        assert db.get_config("COPY_ONE_POSITION_PER_MARKET_OUTCOME") == "false"
+
+    def test_renamed_key_uses_default_when_no_legacy_value(self):
+        """No value under the old key -> the new key seeds from its own
+        hardcoded default (True), exactly like any other first-run key."""
+        db = _db()
+        seed_config(db)
+        assert db.get_config("COPY_ONE_POSITION_PER_MARKET_OUTCOME") == "True"
+
+    def test_renamed_key_leaves_existing_new_key_alone(self):
+        """DB is authoritative: if the NEW key already has a row (e.g. a
+        second seed_config() call, or an operator explicitly set it), the
+        legacy key's value is never consulted, even if it differs."""
+        db = _db()
+        db.set_config("COPY_ONE_POSITION_PER_MARKET_OUTCOME", "false")
+        db.set_config("COPY_ONE_POSITION_PER_MARKET", "true")
+        seed_config(db)
+        assert db.get_config("COPY_ONE_POSITION_PER_MARKET_OUTCOME") == "false"
+
 
 # ---------------------------------------------------------------------------
 # get_live_config

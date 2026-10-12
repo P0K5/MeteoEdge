@@ -313,3 +313,69 @@ spec'd by #1258). **Status: Built (this issue, backend only).**
    stake (e.g., scale down a wallet whose edge is degrading before fully
    pausing it)? v1 as scoped above is fixed-stake-until-paused; scaling is
    explicitly deferred, flagged here so it isn't silently assumed later.
+5. **Opposite-side entry cost (issue #1316).** The engine never copies
+   SELLs (only BUYs) and dedupes only per `(wallet, market, outcome)` —
+   so when a followed wallet rotates from one side of a market to the
+   other, the engine ends up holding BOTH sides to settlement, for a
+   combined cost that can exceed the market's $1.00 maximum payout. Found
+   185 times in the paper book as of 2026-10-05 (≈$89 locked-in loss at
+   $5/leg), concentrated in the main engine wallet (`0xbca08c1b`, 155 of
+   310 measured overlapping both-sides pairs) — not a paper-only artifact,
+   since the live path shares this exact loop and dedup logic.
+
+   Three options were on the table:
+   - (a) Refuse the opposite side outright — extend dedup to
+     `(wallet, market)`.
+   - **(b) Refuse only when it is a guaranteed loss — chosen.** Permit the
+     opposite side when `existing_price + new_price < 1.00` (a genuine
+     sub-parity arbitrage — 125 of the 310 measured pairs), refuse at or
+     above 1.00.
+   - (c) Mirror exits (copy SELLs) — most faithful to copy-trading's
+     premise, by far the largest change (needs source/copy position
+     mapping and partial-fill handling); not attempted here, remains open
+     for a future issue if the engine's exit behaviour needs to improve
+     further.
+
+   **Decided: (b).** It is the smallest change that eliminates the
+   mathematically guaranteed-loss case while still keeping the genuinely
+   profitable sub-parity instances — unlike (a), which would also reject
+   those 125 profitable pairs to remove the 185 unprofitable ones. (c) is
+   not ruled out for later, but is a materially bigger change than this
+   issue's scope. Implemented as an unconditional guard in
+   `copy_signal_loop.py`'s skip ladder (`skip_reason=
+   "opposite_side_above_parity"`), independent of
+   `COPY_ONE_POSITION_PER_MARKET_OUTCOME` (which only dedupes the SAME
+   outcome and was never responsible for this case). The boundary
+   (combined cost exactly $1.00) is refused, not permitted: it can only
+   ever break even, never profit, so there is no reason to accept the
+   risk.
+
+   This surfaced a second, pre-existing issue, fixed in the same change:
+   `COPY_ONE_POSITION_PER_MARKET`'s name claimed market-level dedup scope
+   it never had (always `(wallet, market, outcome)`, never
+   `(wallet, market)`) — that mismatch between name and actual behaviour
+   is how 185 guaranteed-loss pairs went unnoticed for this long. Renamed
+   to `COPY_ONE_POSITION_PER_MARKET_OUTCOME` (migrated automatically from
+   any already-persisted value under the old key, see `seed_config()` in
+   `src/config.py`).
+
+   Disclosure of the historical drag: per-wallet counts/dollar figures for
+   still-open both-sides-above-parity pairs are surfaced on the Followed
+   Wallets view (`CopyFollowedWalletOut.opposite_side_contamination_pairs`/
+   `_usd`, `src.data.copy_pnl.summarize_opposite_side_overlap`) until those
+   legacy pairs settle out, so a reader does not compare a cleaned-up
+   wallet's P&L against a still-contaminated one. Styled as a dedicated RED
+   tier (`.followed-contamination-note`, `var(--no)`) — the same token
+   #1266/PR #1355 uses on this same row for its own blocking signal, not
+   the neutral `.followed-paused-reason` caption color, since this is a
+   real, locked-in-loss, real-money disclosure, not a benign status note —
+   with the `alert-triangle` icon convention and the full explanation as
+   persistent visible text (never title-attribute-only, which isn't
+   reliably exposed to screen readers; see `docs/design/copy-trading-live-views.md`'s
+   same rule). Issue #1359 is filed to do one joint copy-density pass
+   across this note and #1266/#1355's exceeds-cap note once #1355 also
+   lands, rather than each landing PR re-deriving the same row layout
+   independently. The Health/backtest
+   per-wallet comparison table is a second disclosure surface and does not
+   yet carry the same note — tracked separately as issue #1357 rather than
+   folded into this already-multi-file fix.
