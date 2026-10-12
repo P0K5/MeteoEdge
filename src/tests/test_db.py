@@ -2587,6 +2587,84 @@ class TestCopySignalsAndPositions:
         assert row["settled_pnl_usd"] == -3.5
         assert row["settled_at"] == "2026-09-20T00:00:00+00:00"
 
+    def test_get_opposite_side_overlap_pairs_matches_overlapping_opposite_legs(self):
+        """Issue #1316: two opposite-outcome legs of the same market, the
+        later entered while the earlier was still open, are returned as
+        one pair with the earlier leg as 'a' and the later as 'b'."""
+        db = _db()
+        signal_a = db.insert_copy_signal(**self._signal_kwargs())
+        a_id = db.insert_copy_position(**self._position_kwargs(
+            signal_a, outcome_index=0, entry_price=0.60, entry_ts="2026-09-19T00:00:00+00:00",
+        ))
+        signal_b = db.insert_copy_signal(**self._signal_kwargs())
+        b_id = db.insert_copy_position(**self._position_kwargs(
+            signal_b, outcome_index=1, entry_price=0.50, entry_ts="2026-09-19T01:00:00+00:00",
+        ))
+
+        pairs = db.get_opposite_side_overlap_pairs()
+        assert len(pairs) == 1
+        pair = pairs[0]
+        assert pair["address"] == "0xabc"
+        assert pair["market"] == "0xmarket1"
+        assert pair["a_id"] == a_id
+        assert pair["b_id"] == b_id
+        assert pair["a_entry_price"] == 0.60
+        assert pair["b_entry_price"] == 0.50
+        assert pair["a_status"] == "open"
+        assert pair["b_status"] == "open"
+
+    def test_get_opposite_side_overlap_pairs_excludes_non_overlapping(self):
+        """The earlier leg already settled BEFORE the later leg entered ->
+        not an overlap, not returned."""
+        db = _db()
+        signal_a = db.insert_copy_signal(**self._signal_kwargs())
+        a_id = db.insert_copy_position(**self._position_kwargs(
+            signal_a, outcome_index=0, entry_price=0.60, entry_ts="2026-09-19T00:00:00+00:00",
+        ))
+        db._conn.execute(
+            "UPDATE copy_positions SET status='settled', settled_pnl_usd=1.0, "
+            "settled_at='2026-09-19T00:30:00+00:00' WHERE id=?",
+            (a_id,),
+        )
+        db._conn.commit()
+        signal_b = db.insert_copy_signal(**self._signal_kwargs())
+        db.insert_copy_position(**self._position_kwargs(
+            signal_b, outcome_index=1, entry_price=0.50, entry_ts="2026-09-19T01:00:00+00:00",
+        ))
+
+        assert db.get_opposite_side_overlap_pairs() == []
+
+    def test_get_opposite_side_overlap_pairs_excludes_same_outcome(self):
+        """Two legs on the SAME outcome are a duplicate_market_exposure
+        concern, never an opposite-side overlap pair."""
+        db = _db()
+        signal_a = db.insert_copy_signal(**self._signal_kwargs())
+        db.insert_copy_position(**self._position_kwargs(
+            signal_a, outcome_index=0, entry_price=0.60, entry_ts="2026-09-19T00:00:00+00:00",
+        ))
+        signal_b = db.insert_copy_signal(**self._signal_kwargs())
+        db.insert_copy_position(**self._position_kwargs(
+            signal_b, outcome_index=0, entry_price=0.50, entry_ts="2026-09-19T01:00:00+00:00",
+        ))
+
+        assert db.get_opposite_side_overlap_pairs() == []
+
+    def test_get_opposite_side_overlap_pairs_filters_by_address(self):
+        db = _db()
+        signal_a = db.insert_copy_signal(**self._signal_kwargs(address="0xaaa"))
+        db.insert_copy_position(**self._position_kwargs(
+            signal_a, address="0xaaa", outcome_index=0, entry_price=0.60,
+            entry_ts="2026-09-19T00:00:00+00:00",
+        ))
+        signal_b = db.insert_copy_signal(**self._signal_kwargs(address="0xaaa"))
+        db.insert_copy_position(**self._position_kwargs(
+            signal_b, address="0xaaa", outcome_index=1, entry_price=0.50,
+            entry_ts="2026-09-19T01:00:00+00:00",
+        ))
+
+        assert db.get_opposite_side_overlap_pairs("0xbbb") == []
+        assert len(db.get_opposite_side_overlap_pairs("0xaaa")) == 1
+
     def test_insert_signal_with_out_of_range_source_price_raises(self):
         """source_price CHECK(source_price >= 0 AND source_price <= 1) --
         a price outside the valid probability range is rejected at the DB

@@ -5903,6 +5903,22 @@ function _followedFmtUsd(x) {
   return (x >= 0 ? '+' : '-') + '$' + Math.abs(x).toFixed(2);
 }
 
+// Issue #1316: disclose still-open pre-fix both-sides-above-parity pairs
+// next to the Paper P&L they contaminate, so a reader doesn't compare a
+// cleaned-up wallet against a contaminated one. Reuses the same
+// .followed-paused-reason small-muted-text treatment as the paused-reason
+// note above rather than a new component -- disappears on its own once
+// those legacy pairs settle out (server sends 0 pairs / $0, nothing to
+// render).
+function _followedContaminationNoteHtml(w) {
+  const n = w.opposite_side_contamination_pairs;
+  if (!n) return '';
+  const usd = Math.abs(w.opposite_side_contamination_usd || 0).toFixed(2);
+  const plural = n === 1 ? 'pair' : 'pairs';
+  return `<span class="followed-paused-reason" title="Pre-fix guaranteed-loss both-sides-above-parity ${plural} still open for this wallet (issue #1316) — locked-in loss not yet settled into realized P&amp;L">`
+    + `⚠ $${usd} locked-in loss pending (${n} both-sides ${plural})</span>`;
+}
+
 // Candidates now live on the Copy · Wallets tab (issue #1275).
 function scrollToCopyCandidates() {
   _copyGoToTab('copy-wallets');
@@ -6076,7 +6092,7 @@ function _followedRowHtml(w) {
       <td class="copy-td followed-stake-cell" data-label="Paper stake/trade" id="followed-stake-cell-${safeId}">${_followedPaperStakeHtml(w)}</td>
       <td class="copy-td followed-status-cell" data-label="Status" id="followed-status-cell-${safeId}">${_followedStatusBadgeHtml(w)}${_followedLiveBadgeHtml(w)}</td>
       <td class="copy-td" data-label="Date added">${addedDate}</td>
-      <td class="copy-td" data-label="Paper running P&amp;L">${_followedFmtUsd(w.realized_pnl_usd)}</td>
+      <td class="copy-td" data-label="Paper running P&amp;L">${_followedFmtUsd(w.realized_pnl_usd)}${_followedContaminationNoteHtml(w)}</td>
       <td class="copy-td followed-actions-cell">
         ${_followedPauseResumeBtnHtml(w, addrEsc)}
         <button type="button" class="btn-followed-action btn-followed-edit-stake" data-address="${addrEsc}" aria-label="Edit paper stake per trade for ${addrEsc}">

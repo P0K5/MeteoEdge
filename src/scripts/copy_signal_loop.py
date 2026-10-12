@@ -562,14 +562,40 @@ def _handle_buy_trade(
             # Duplicate check (issue #1207): cap to one open position per
             # (wallet, market, outcome). Only blocks if the prior position
             # is status='open'; settled positions do not block re-entry.
+            # Renamed from COPY_ONE_POSITION_PER_MARKET (issue #1316): the
+            # old name claimed market-level scope it never had -- this gate
+            # has always been per (wallet, market, outcome), never per
+            # (wallet, market); see docs/design/copy-trading-architecture.md.
             if (
-                live_config["COPY_ONE_POSITION_PER_MARKET"]
+                live_config["COPY_ONE_POSITION_PER_MARKET_OUTCOME"]
                 and any(
                     p["market"] == market and p["outcome_index"] == outcome_index
                     for p in open_positions
                 )
             ):
                 skip_reason = "duplicate_market_exposure"
+            elif outcome_index in (0, 1) and any(
+                p["market"] == market
+                and p["outcome_index"] == 1 - outcome_index
+                and p["entry_price"] + source_price >= 1.0
+                for p in open_positions
+            ):
+                # Guaranteed-loss guard (issue #1316, option (b) --
+                # docs/design/copy-trading-architecture.md "Opposite-side
+                # entry cost" decision). An open leg on the OTHER outcome
+                # of this same market pays out at most $1.00 combined with
+                # this incoming leg -- paying >= $1.00 for the pair is a
+                # mathematically guaranteed loss fixed at entry, found 185
+                # times in the paper book (issue #1316). This is
+                # deliberately UNCONDITIONAL, independent of
+                # COPY_ONE_POSITION_PER_MARKET_OUTCOME above, which only
+                # dedupes the SAME outcome and has no opinion on the
+                # opposite one. A genuine sub-parity pair (combined < $1.00,
+                # a real arbitrage -- 125 of 310 measured instances) is
+                # deliberately still permitted through to the exposure
+                # checks below: this is option (b), not option (a)
+                # (refuse the opposite side outright).
+                skip_reason = "opposite_side_above_parity"
             else:
                 wallet_exposure = sum(p["stake_usd"] for p in open_positions)
                 if wallet_exposure + stake > live_config["COPY_MAX_EXPOSURE_PER_WALLET_USD"]:

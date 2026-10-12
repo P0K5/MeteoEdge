@@ -70,6 +70,7 @@ from src.model.residual_correction import (
 )
 from src.risk.copy_risk_manager import REASON_LIVE_DAILY_LOSS, REASON_LIVE_DRAWDOWN
 from src.data.archive_db import ArchiveDatabase
+from src.data.copy_pnl import summarize_opposite_side_overlap
 from src.data.db import Database, compute_win_rate
 from src.data.nws import fetch_nws_forecast_high
 from src.data.polymarket import get_orderbook
@@ -577,6 +578,14 @@ class CopyFollowedWalletOut(BaseModel):
     inheriting the paper stake, which the enable-live confirmation dialog
     (#1254) needs to word correctly ("live-executes at $X" vs. "live-executes
     at the same $X as paper").
+
+    ``opposite_side_contamination_pairs``/``opposite_side_contamination_usd``
+    (issue #1316) disclose this wallet's still-OPEN both-sides-above-parity
+    pairs from before the #1316 fix shipped -- see
+    ``src.data.copy_pnl.summarize_opposite_side_overlap``. ``0``/``0.0``
+    once every such pair has settled out; a wallet that never had one is
+    indistinguishable from a wallet whose pairs already settled, which is
+    correct -- both have nothing left to disclose.
     """
     address: str
     stake_per_trade: float
@@ -590,6 +599,8 @@ class CopyFollowedWalletOut(BaseModel):
     live_status_reason: str
     live_stake_per_trade: float
     live_stake_is_override: bool
+    opposite_side_contamination_pairs: int
+    opposite_side_contamination_usd: float
 
 
 class CopyFollowedWalletsOut(BaseModel):
@@ -2965,6 +2976,13 @@ def copy_trading_followed_wallets() -> CopyFollowedWalletsOut:
     pnl_by_wallet = {row["address"]: row for row in _db.get_copy_realized_pnl_by_wallet()}
     total = _db.get_copy_realized_pnl_total()
     live_total = _db.get_copy_live_realized_pnl_total()
+    # Issue #1316: still-open both-sides-above-parity contamination, disclosed
+    # per wallet until those historical pairs settle out. A wallet absent from
+    # this summary has nothing to disclose (never had one, or it already
+    # settled) -- see summarize_opposite_side_overlap's docstring.
+    contamination_by_wallet = summarize_opposite_side_overlap(
+        _db.get_opposite_side_overlap_pairs()
+    )
 
     try:
         live_cfg = get_live_config(_db)
@@ -3014,6 +3032,7 @@ def copy_trading_followed_wallets() -> CopyFollowedWalletsOut:
         resolved_live_stake = raw_live_stake if live_stake_is_override else w["stake_per_trade"]
 
         pnl_row = pnl_by_wallet.get(w["address"])
+        contamination_row = contamination_by_wallet.get(w["address"])
         wallets.append(CopyFollowedWalletOut(
             address=w["address"],
             stake_per_trade=w["stake_per_trade"],
@@ -3027,6 +3046,12 @@ def copy_trading_followed_wallets() -> CopyFollowedWalletsOut:
             live_status_reason=live_status_reason,
             live_stake_per_trade=resolved_live_stake,
             live_stake_is_override=live_stake_is_override,
+            opposite_side_contamination_pairs=(
+                contamination_row["n_above_parity_pairs_still_open"] if contamination_row else 0
+            ),
+            opposite_side_contamination_usd=(
+                contamination_row["locked_loss_usd_still_open"] if contamination_row else 0.0
+            ),
         ))
 
     # Most-recently-followed first — an operator managing the roster cares
@@ -4219,8 +4244,8 @@ _CONFIG_META: dict[str, dict] = {
         "min": 30,
         "max": 3600,
     },
-    "COPY_ONE_POSITION_PER_MARKET": {
-        "description": "Cap copy-trading to one open position per (wallet, market, outcome) — prevents unintended leverage on correlated risk when a source wallet splits one order across multiple fills (issue #1207)",
+    "COPY_ONE_POSITION_PER_MARKET_OUTCOME": {
+        "description": "Cap copy-trading to one open position per (wallet, market, outcome) — prevents unintended leverage on correlated risk when a source wallet splits one order across multiple fills (issue #1207). Renamed from COPY_ONE_POSITION_PER_MARKET (issue #1316) to match its actual per-outcome scope — it never blocked an opposite-outcome entry on the same market; that is now a separate, unconditional guard (see 'opposite_side_above_parity')",
         "type": "bool",
         "group": "copy_trading",
     },

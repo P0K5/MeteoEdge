@@ -86,3 +86,88 @@ def compute_realized_pnl_usd(
             )
         return stake_usd * (1 - entry_price) / entry_price
     return -stake_usd
+
+
+def is_guaranteed_loss_pair(entry_price_a: float, entry_price_b: float) -> bool:
+    """Return True if two opposite-outcome legs of the same binary market,
+    held simultaneously, can only ever pay out less than their combined
+    cost (issue #1316).
+
+    A binary market's two outcome tokens pay out exactly $1.00 combined,
+    always (one pays $1, the other $0). Paying >= $1.00 total to hold both
+    legs is therefore a mathematically guaranteed loss, fixed at entry,
+    regardless of which side eventually resolves. The boundary (exactly
+    $1.00) counts as guaranteed loss: "guaranteed loss" means "cannot
+    possibly profit", and a combined cost of exactly $1.00 nets exactly
+    $0.00 — never a gain. This is ``copy_signal_loop.py``'s
+    ``opposite_side_above_parity`` skip-reason condition, lifted out here
+    so the live guard and any offline analysis apply the identical rule.
+    """
+    return (entry_price_a + entry_price_b) >= 1.0
+
+
+def opposite_side_pair_locked_loss_usd(
+    entry_price_a: float, stake_usd_a: float, entry_price_b: float, stake_usd_b: float,
+) -> float:
+    """Return the dollar loss locked in at entry for an above-parity
+    opposite-side pair (issue #1316), or ``0.0`` if the pair is not
+    actually above parity.
+
+    Approximates both legs as sized at the AVERAGE of the two stakes --
+    exact when both legs use the same flat per-trade stake (the common
+    case, both paper and live today), an approximation otherwise (e.g. a
+    wallet whose ``stake_per_trade`` changed between the two fills).
+    Generalizes the simple ``(price_0 + price_1 - 1.00) x stake``
+    arithmetic issue #1316 used for its own measurement (which assumed
+    equal $5/leg stakes) to unequal stakes, without claiming more
+    precision than the two different stake amounts actually support.
+    """
+    if not is_guaranteed_loss_pair(entry_price_a, entry_price_b):
+        return 0.0
+    avg_stake_usd = (stake_usd_a + stake_usd_b) / 2.0
+    return (entry_price_a + entry_price_b - 1.0) * avg_stake_usd
+
+
+def summarize_opposite_side_overlap(pairs: "list[dict]") -> "dict[str, dict]":
+    """Aggregate raw overlap pairs (``Database.get_opposite_side_overlap_pairs``)
+    into a per-wallet disclosure summary (issue #1316).
+
+    Returns ``{address: {"n_above_parity_pairs": int,
+    "n_above_parity_pairs_still_open": int, "locked_loss_usd": float,
+    "locked_loss_usd_still_open": float}}`` for every wallet with at least
+    one above-parity pair — a wallet with none is simply absent, mirroring
+    ``Database.get_copy_realized_pnl_by_wallet``'s "absent, not zero"
+    convention. Pairs at or below parity (a genuine sub-parity arbitrage,
+    option (b)'s permitted case) contribute nothing and are silently
+    skipped, not counted as zero-loss entries.
+
+    ``*_still_open`` counts/sums only pairs where at least one of the two
+    legs has not yet settled -- this is what a per-wallet performance
+    surface needs to keep disclosing per the issue's "until the historical
+    positions have settled out" requirement. Once both legs of a pair are
+    settled, that pair's loss is already fully and correctly reflected in
+    the wallet's own realized P&L, so there is nothing further to flag for
+    it; the non-``_still_open`` totals are kept too for one-off historical
+    reporting (e.g. a PR's own drag quantification), where the fully
+    historical picture — including already-settled pairs — is the point.
+    """
+    summary: "dict[str, dict]" = {}
+    for pair in pairs:
+        loss_usd = opposite_side_pair_locked_loss_usd(
+            pair["a_entry_price"], pair["a_stake_usd"],
+            pair["b_entry_price"], pair["b_stake_usd"],
+        )
+        if loss_usd <= 0.0:
+            continue
+        row = summary.setdefault(pair["address"], {
+            "n_above_parity_pairs": 0,
+            "n_above_parity_pairs_still_open": 0,
+            "locked_loss_usd": 0.0,
+            "locked_loss_usd_still_open": 0.0,
+        })
+        row["n_above_parity_pairs"] += 1
+        row["locked_loss_usd"] += loss_usd
+        if pair["a_status"] == "open" or pair["b_status"] == "open":
+            row["n_above_parity_pairs_still_open"] += 1
+            row["locked_loss_usd_still_open"] += loss_usd
+    return summary

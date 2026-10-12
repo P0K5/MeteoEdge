@@ -592,15 +592,20 @@ _ASSERTIONS = textwrap.dedent("""
           { address: '0xLiveOne', stake_per_trade: 5, status: 'active', paused_reason: null,
             added_at: '2026-09-01T00:00:00Z', n_settled: 3, realized_pnl_usd: 12.5,
             live_enabled: true, live_eligible: true, live_status_reason: 'eligible for live execution',
-            live_stake_per_trade: 2, live_stake_is_override: true },
+            live_stake_per_trade: 2, live_stake_is_override: true,
+            opposite_side_contamination_pairs: 0, opposite_side_contamination_usd: 0 },
+          // Issue #1316: a wallet still carrying open, pre-fix both-sides-
+          // above-parity pairs discloses them next to its paper P&L.
           { address: '0xPaperOne', stake_per_trade: 7, status: 'active', paused_reason: null,
             added_at: '2026-09-02T00:00:00Z', n_settled: 1, realized_pnl_usd: -3.25,
             live_enabled: false, live_eligible: false, live_status_reason: 'live is not enabled for this wallet',
-            live_stake_per_trade: 7, live_stake_is_override: false },
+            live_stake_per_trade: 7, live_stake_is_override: false,
+            opposite_side_contamination_pairs: 2, opposite_side_contamination_usd: 1.46 },
           { address: '0xPausedOne', stake_per_trade: 9, status: 'paused', paused_reason: 'unstable',
             added_at: '2026-09-03T00:00:00Z', n_settled: 0, realized_pnl_usd: 0,
             live_enabled: false, live_eligible: false, live_status_reason: 'this wallet is paused',
-            live_stake_per_trade: 9, live_stake_is_override: false },
+            live_stake_per_trade: 9, live_stake_is_override: false,
+            opposite_side_contamination_pairs: 0, opposite_side_contamination_usd: 0 },
         ],
         active_count: 2, paused_count: 1, aggregate_pnl_usd: 9.25, n_settled_total: 4,
         live_eligible_count: 1, paper_only_count: 2, live_aggregate_pnl_usd: 40, live_n_settled_total: 6,
@@ -618,6 +623,12 @@ _ASSERTIONS = textwrap.dedent("""
       assert.ok(paperHtmlAll.includes('Paper: $5.00') && paperHtmlAll.includes('Paper: $7.00'));
       assert.ok(!paperHtmlAll.includes('Live: $'), 'the Paper roster must never show a live stake');
       assert.ok(paperHtmlAll.includes('+$12.50') && paperHtmlAll.includes('-$3.25'), 'paper running P&L renders');
+      // Issue #1316: the contaminated wallet discloses its still-open
+      // both-sides-above-parity pairs; an unaffected wallet shows nothing.
+      assert.ok(paperHtmlAll.includes('$1.46 locked-in loss pending (2 both-sides pairs)'),
+        'contamination note renders for the affected wallet');
+      assert.strictEqual((paperHtmlAll.match(/locked-in loss pending/g) || []).length, 1,
+        'only the contaminated wallet gets a contamination note');
       assert.ok(paperHtmlAll.includes('btn-followed-pause') && paperHtmlAll.includes('btn-followed-resume'));
       assert.ok(paperHtmlAll.includes('btn-followed-edit-stake') && paperHtmlAll.includes('btn-followed-unfollow'));
       assert.ok(!paperHtmlAll.includes('btn-followed-golive') && !paperHtmlAll.includes('btn-followed-revert-live'),
