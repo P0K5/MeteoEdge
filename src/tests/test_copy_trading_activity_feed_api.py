@@ -210,6 +210,24 @@ class TestActivityFeedEndpoint:
         assert resp.status_code == 200
         assert resp.json()["events"] == []
 
+    def test_wallet_paused_event_flags_revoked_live_optin(self, api_client):
+        """Issue #1264: a real pause of an opted-in wallet is flagged."""
+        client, db = api_client
+        db.insert_followed_wallet(address="0xW1", stake_per_trade=5.0, added_at="2026-08-01T00:00:00Z")
+        db.set_followed_wallet_live_enabled("0xW1", True)
+        db.update_followed_wallet_status("0xW1", "paused", "realized_roi_negative")
+        e = client.get("/api/copy-trading/activity-feed").json()["events"][0]
+        assert e["event_type"] == "wallet_paused"
+        assert e["mode"] == "paper"
+        assert e["live_optin_revoked"] is True
+
+    def test_wallet_paused_event_not_flagged_for_paper_only_wallet(self, api_client):
+        client, db = api_client
+        db.insert_followed_wallet(address="0xW1", stake_per_trade=5.0, added_at="2026-08-01T00:00:00Z")
+        db.update_followed_wallet_status("0xW1", "paused", "manual")
+        e = client.get("/api/copy-trading/activity-feed").json()["events"][0]
+        assert e["live_optin_revoked"] is False
+
     def test_interleaves_signal_and_pause_events_in_timestamp_order(self, api_client):
         client, db = api_client
         _order_placed_signal(db, "0xW1", detected_at="2026-09-01T00:00:00Z")

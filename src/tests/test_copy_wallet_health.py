@@ -253,6 +253,34 @@ class TestRealizedPnlPause:
         assert row["status"] == "paused"
         assert row["paused_reason"] == "realized_roi_negative"
 
+    def test_auto_pause_clears_live_optin_and_resume_leaves_paper_only(self):
+        """Issue #1264: health-job pause of an opted-in wallet revokes live,
+        identically to a manual pause; resume does not restore it."""
+        db = _db()
+        _follow(db)
+        db.set_followed_wallet_live_enabled(ADDRESS, True)
+        _screening_row(db, ADDRESS, "2026-09-18T00:00:00+00:00", median_roi=0.10, n_resolved=100, eligible_to_follow=1)
+        _screening_row(db, ADDRESS, "2026-09-19T00:00:00+00:00", median_roi=0.10, n_resolved=100, eligible_to_follow=1)
+        _settled_decisions(db, ADDRESS, [-1.0] * MIN_DECISIONS_FOR_ROI_CHECK)
+
+        run_once(db=db)
+        auto = db.get_followed_wallets()[0]
+        assert auto["status"] == "paused"
+        assert auto["live_enabled"] == 0
+        assert auto["live_enabled_cleared_at"] is not None
+
+        # Manual pause of an identically opted-in wallet ends the same way.
+        _follow(db, address="0xmanual")
+        db.set_followed_wallet_live_enabled("0xmanual", True)
+        db.update_followed_wallet_status("0xmanual", "paused", "manual")
+        manual = next(w for w in db.get_followed_wallets() if w["address"] == "0xmanual")
+        assert manual["live_enabled"] == auto["live_enabled"] == 0
+
+        db.update_followed_wallet_status(ADDRESS, "active", None)
+        resumed = next(w for w in db.get_followed_wallets() if w["address"] == ADDRESS)
+        assert resumed["status"] == "active"
+        assert resumed["live_enabled"] == 0
+
     def test_positive_total_pnl_at_threshold_is_not_paused(self):
         db = _db()
         _follow(db)

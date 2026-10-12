@@ -6116,7 +6116,7 @@ function _followedGoLiveButtonHtml(w) {
   // modifier -- "Revert to paper" stays visually neutral, like Resume.
   const actionClass = wantsDemote ? 'btn-followed-revert-live' : 'btn-followed-golive';
   if (w.status === 'paused') {
-    const reason = 'Live opt-in is unavailable while this wallet is paused — resume it first.';
+    const reason = 'Live opt-in is unavailable while this wallet is paused. Pausing clears any prior live opt-in — resume the wallet, then use "Go live" again to re-enable live trading.';
     const reasonEsc = _copyEscapeHtml(reason);
     return `<button type="button" class="btn-followed-action ${actionClass}" data-address="${addrEsc}" aria-label="${reasonEsc}" title="${reasonEsc}" disabled>
       <span class="spinner"></span><i data-lucide="${icon}"></i>${label}
@@ -6137,7 +6137,7 @@ function _followedGoLiveButtonHtml(w) {
 
 function _followedPauseResumeBtnHtml(w, addrEsc) {
   return w.status === 'paused'
-    ? `<button type="button" class="btn-followed-action btn-followed-resume" data-address="${addrEsc}" aria-label="Resume copying ${addrEsc}"><span class="spinner"></span><i data-lucide="play"></i>Resume</button>`
+    ? `<button type="button" class="btn-followed-action btn-followed-resume" data-address="${addrEsc}" title="Resuming restores paper-following only. Live trading opt-in is cleared whenever a wallet is paused and must be re-enabled separately via Go live." aria-label="Resume copying ${addrEsc}. Resuming restores paper-following only — live trading opt-in is cleared whenever a wallet is paused and must be re-enabled separately."><span class="spinner"></span><i data-lucide="play"></i>Resume</button>`
     : `<button type="button" class="btn-followed-action btn-followed-pause" data-address="${addrEsc}" aria-label="Pause copying ${addrEsc}"><span class="spinner"></span><i data-lucide="pause"></i>Pause</button>`;
 }
 
@@ -6404,7 +6404,17 @@ async function _followedSubmitAction({ address, btn, url, fetchOpts, optimisticA
 }
 
 async function followedPauseWallet(address, btn) {
-  const reason = window.prompt(`Reason for pausing ${_copyTruncateAddress(address)} (required):`, '');
+  // Issue #1264: pausing revokes the live opt-in -- disclose that before the
+  // operator commits, folded into the existing single reason prompt.
+  const pausedWallet = ((_followedWalletsData && _followedWalletsData.wallets) || []).find(w => w.address === address);
+  const wasLiveOptedIn = !!(pausedWallet && pausedWallet.live_enabled);
+  const liveWarning = wasLiveOptedIn
+    ? `\n\nThis wallet is currently opted into live trading. Pausing it ` +
+      `will revoke that opt-in — resuming will restore paper-following ` +
+      `only, and live trading will need to be re-enabled separately via ` +
+      `"Go live."\n`
+    : '';
+  const reason = window.prompt(`Reason for pausing ${_copyTruncateAddress(address)} (required):${liveWarning}`, '');
   if (reason === null) return; // operator cancelled
   const trimmed = reason.trim();
   if (!trimmed) {
@@ -6439,7 +6449,18 @@ async function followedPauseWallet(address, btn) {
     },
     rollback: () => { if (cell && prevHtml !== null) { cell.innerHTML = prevHtml; lucide.createIcons(); } },
     failureMessage: `Could not pause ${_copyTruncateAddress(address)}`,
-    onSuccess: async () => { await fetchFollowedWallets(); },
+    onSuccess: async () => {
+      await fetchFollowedWallets();
+      if (wasLiveOptedIn) {
+        // Re-query: the refetch rebuilds the roster row.
+        const doneEl = document.getElementById(_followedIdPrefix() + 'followed-live-msg-' + safeId);
+        const revokedText = `${_copyTruncateAddress(address)} paused. Live trading opt-in was revoked — resume will restore paper-following only.`;
+        // The paused wallet drops out of the Live roster on refetch, so its
+        // row message element is usually gone -- fall back to the tab banner.
+        if (doneEl) doneEl.textContent = revokedText;
+        else _followedShowBannerError(revokedText);
+      }
+    },
   });
 }
 
@@ -8612,7 +8633,13 @@ function _copyActivityDescriptionHtml(e) {
     return `<span class="copy-activity-desc">Order skipped (paper) — ${_copyEscapeHtml(e.market || '—')}${reason}</span>`;
   }
   if (e.event_type === 'wallet_paused') {
-    return `<span class="copy-activity-desc">Wallet auto-paused — ${e.paused_reason ? _copyEscapeHtml(e.paused_reason) : 'No reason given'}</span>`;
+    const base = e.paused_reason ? _copyEscapeHtml(e.paused_reason) : 'No reason given';
+    // Issue #1264: a pause that also revoked the live opt-in is flagged with
+    // the warning icon (it stays mode=paper, so a Live filter would miss it).
+    if (e.live_optin_revoked) {
+      return `<span class="copy-activity-desc"><i data-lucide="alert-triangle"></i> Wallet auto-paused — ${base}. Live trading opt-in was revoked.</span>`;
+    }
+    return `<span class="copy-activity-desc">Wallet auto-paused — ${base}</span>`;
   }
   // Live events (issue #1188) -- market + stage-specific detail; the
   // reason text (skip_reason/rejected_reason) already arrives plain-

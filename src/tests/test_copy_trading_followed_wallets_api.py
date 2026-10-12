@@ -203,12 +203,31 @@ class TestFollowedWalletsLiveEligibility:
         db.insert_followed_wallet(address="0xW", stake_per_trade=5.0, added_at="2026-09-01T00:00:00Z")
         db.set_followed_wallet_live_enabled("0xW", True)
         db.update_followed_wallet_status("0xW", "paused", "unstable")
+        # Issue #1264: the pause chokepoint now clears live_enabled, so force
+        # the legacy/inconsistent paused+opted-in state directly to prove the
+        # paused check still wins regardless of the flag.
+        db._conn.execute("UPDATE copy_wallets_followed SET live_enabled=1 WHERE address='0xW'")
+        db._conn.commit()
 
         resp = client.get("/api/copy-trading/followed-wallets")
         row = resp.json()["wallets"][0]
         assert row["live_enabled"] is True
         assert row["live_eligible"] is False
         assert row["live_status_reason"] == "this wallet is paused"
+
+    def test_pausing_opted_in_wallet_reports_not_opted_in_and_paused(self, api_client):
+        """Issue #1264: pausing clears the opt-in; reason is still 'paused'."""
+        client, db = api_client
+        db.set_config("COPY_LIVE_TRADING_ENABLED", "True")
+        db.insert_followed_wallet(address="0xW", stake_per_trade=5.0, added_at="2026-09-01T00:00:00Z")
+        db.set_followed_wallet_live_enabled("0xW", True)
+        db.update_followed_wallet_status("0xW", "paused", "unstable")
+
+        data = client.get("/api/copy-trading/followed-wallets").json()
+        row = data["wallets"][0]
+        assert row["live_enabled"] is False
+        assert row["live_status_reason"] == "this wallet is paused"
+        assert data["live_opted_in_count"] == 0
 
     def test_live_trading_off_by_default_all_wallets_paper(self, api_client):
         """COPY_LIVE_TRADING_ENABLED defaults to False (seed_config) --
@@ -354,6 +373,11 @@ class TestFollowedWalletsLiveEligibility:
         db.insert_followed_wallet(address="0xW", stake_per_trade=5.0, added_at="2026-09-01T00:00:00Z")
         db.set_followed_wallet_live_enabled("0xW", True)
         db.update_followed_wallet_status("0xW", "paused", "unstable")
+        # Issue #1264: the pause chokepoint now clears live_enabled, so force
+        # the legacy/inconsistent paused+opted-in state directly to prove the
+        # paused check still wins regardless of the flag.
+        db._conn.execute("UPDATE copy_wallets_followed SET live_enabled=1 WHERE address='0xW'")
+        db._conn.commit()
 
         resp = client.get("/api/copy-trading/followed-wallets")
         data = resp.json()

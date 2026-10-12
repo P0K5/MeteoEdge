@@ -904,6 +904,10 @@ class CopyActivityEventOut(BaseModel):
     size_usd: float | None = None
     skip_reason: str | None = None
     paused_reason: str | None = None
+    # Issue #1264: True only on a wallet_paused event whose pause also
+    # revoked the wallet's live opt-in (live_enabled_cleared_at at/after
+    # paused_at). Lets the feed append a sentence and show the live warning.
+    live_optin_revoked: bool = False
     signal_id: int | None = None
     rejected_reason: str | None = None
     filled_stake_usd: float | None = None
@@ -3896,6 +3900,10 @@ def copy_trading_activity_feed(
             mode="paper",
             address=w["address"],
             paused_reason=w.get("paused_reason"),
+            live_optin_revoked=bool(
+                w.get("live_enabled_cleared_at")
+                and w["live_enabled_cleared_at"] >= w["paused_at"]
+            ),
         ))
 
     for row in _db.get_copy_live_positions(address=address):
