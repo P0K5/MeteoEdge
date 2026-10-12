@@ -69,6 +69,30 @@ to a dashboard control), and :func:`get_live_circuit_breaker_status` is
 the read-only accessor the dashboard uses to show current trip state.
 Paper's :func:`allow_copy_signal` is explicitly OUT of scope for this --
 it keeps the pure re-derive-every-call design unchanged.
+
+**Fail-closed without capital, and a clear that moves a baseline (issue
+#1300).** Two gaps survived #1348. First: :func:`allow_live_copy_signal`
+used to guard its drawdown branch with ``if COPY_LIVE_CAPITAL_USD > 0``,
+which meant an unset/zeroed ``COPY_LIVE_CAPITAL_USD`` (its own safety
+default in ``src/config.py``) silently skipped the drawdown check instead
+of refusing -- a deploy that loses that env var quietly disarmed the
+stricter of the two live limits. It now refuses outright
+(``REASON_LIVE_NO_CAPITAL``) before even looking at PnL or the persisted
+trip, whenever ``COPY_LIVE_CAPITAL_USD <= 0``. Second: :func:`reset_live_circuit_breaker`
+used to clear the persisted trip and nothing else, which for a
+drawdown-driven trip was a no-op in practice -- the very next call would
+recompute the same all-time cumulative loss and re-trip immediately.
+A clear now also persists a "cleared-at" baseline (bot_config key
+``COPY_LIVE_DRAWDOWN_CLEARED_AT``, a plain ISO-8601 timestamp, mirroring
+``COPY_LIVE_DRAWDOWN_SINCE``'s own format), and :func:`_effective_drawdown_baseline`
+combines the two -- whichever is LATER wins, so neither can widen the
+other's window -- everywhere the drawdown total is read. No
+``copy_live_positions`` row is ever mutated by a clear; this only moves
+the measurement window forward, it never erases history. The reset's own
+audit log line also now records the cumulative P&L figure that was in
+effect at the moment of the clear (not just tripped_at/reason), so the
+single warning line remains the full audit trail for this
+single-operator system, same precedent as #1348's own reset logging.
 """
 from __future__ import annotations
 
@@ -88,12 +112,25 @@ REASON_DAILY_LOSS = "circuit_breaker_daily_loss"
 REASON_DRAWDOWN = "circuit_breaker_drawdown"
 REASON_LIVE_DAILY_LOSS = "live_circuit_breaker_daily_loss"
 REASON_LIVE_DRAWDOWN = "live_circuit_breaker_drawdown"
+# issue #1300: distinct from REASON_LIVE_DRAWDOWN -- this is a structural
+# misconfiguration (no capital allocated), not a PnL-derived trip, and it
+# is never persisted (see allow_live_copy_signal's own docstring): it
+# self-resolves the moment COPY_LIVE_CAPITAL_USD is set and the process
+# restarts, with nothing for reset_live_circuit_breaker to clear.
+REASON_LIVE_NO_CAPITAL = "live_circuit_breaker_no_capital"
 
 # bot_config key for the live breaker's persisted trip record (issue #1348).
 # JSON-encoded {"tripped_at": <iso>, "reason": <REASON_LIVE_*>,
 # "trip_utc_date": <YYYY-MM-DD>}. Absent/empty/unparseable all mean
 # "not currently tripped" -- see _read_live_breaker_trip.
 _LIVE_BREAKER_STATE_KEY = "COPY_LIVE_BREAKER_TRIP_STATE"
+
+# bot_config key for the drawdown "cleared-at" baseline a manual reset
+# persists (issue #1300) -- plain ISO-8601 UTC timestamp string, same
+# format/semantics as the operator-editable COPY_LIVE_DRAWDOWN_SINCE
+# config key, but system-managed by reset_live_circuit_breaker rather than
+# the dashboard config tab. See _effective_drawdown_baseline.
+_LIVE_DRAWDOWN_CLEAR_BASELINE_KEY = "COPY_LIVE_DRAWDOWN_CLEARED_AT"
 
 
 def allow_copy_signal(db: "Database", live_config: dict) -> "tuple[bool, str]":
@@ -202,7 +239,61 @@ def _clear_live_breaker_trip(db: "Database") -> None:
         log.warning("[live-breaker] failed to clear trip state: %s", e)
 
 
-def reset_live_circuit_breaker(db: "Database") -> bool:
+def _persist_live_drawdown_clear_baseline(db: "Database", iso_ts: str) -> None:
+    """Record *iso_ts* as the drawdown's new "cleared-at" baseline (issue
+    #1300) -- see :func:`_effective_drawdown_baseline`."""
+    try:
+        db.set_config(_LIVE_DRAWDOWN_CLEAR_BASELINE_KEY, iso_ts)
+    except Exception as e:  # noqa: BLE001 — see _read_live_breaker_trip's own rationale
+        log.warning("[live-breaker] failed to persist drawdown clear baseline: %s", e)
+
+
+def _read_live_drawdown_clear_baseline(db: "Database") -> "str | None":
+    """Read the most recent manual-clear baseline (issue #1300), or
+    ``None`` if the breaker has never been manually cleared.
+
+    Same "never raises, degrade to the strictest default" contract as
+    :func:`_drawdown_baseline` and :func:`_read_live_breaker_trip`: an
+    absent row, a read failure, or an unparseable value all fall back to
+    ``None`` (all-time), never widening what counts toward the drawdown.
+    """
+    try:
+        raw = db.get_config(_LIVE_DRAWDOWN_CLEAR_BASELINE_KEY)
+    except Exception as e:  # noqa: BLE001
+        log.warning("[live-breaker] drawdown clear-baseline read failed: %s", e)
+        return None
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+    except (ValueError, TypeError) as e:
+        log.warning("[live-breaker] persisted drawdown clear-baseline %r is not ISO-8601 -- ignoring (%s)", raw, e)
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.isoformat()
+
+
+def _effective_drawdown_baseline(db: "Database", live_config: dict) -> "str | None":
+    """Combine the operator-set ``COPY_LIVE_DRAWDOWN_SINCE`` config
+    baseline with the most recent manual-clear baseline (issue #1300):
+    whichever is LATER wins. A later baseline only narrows (never widens)
+    the window of realized P&L counted toward the drawdown stop, so a
+    manual clear can never un-close a phase the operator already closed
+    via config, and an older config value can never override a more
+    recent clear. Returns ``None`` (all-time, the strictest rule) when
+    neither is set or both fail to parse.
+    """
+    config_since = _drawdown_baseline(live_config)
+    clear_since = _read_live_drawdown_clear_baseline(db)
+    if config_since is None:
+        return clear_since
+    if clear_since is None:
+        return config_since
+    return config_since if config_since >= clear_since else clear_since
+
+
+def reset_live_circuit_breaker(db: "Database", live_config: "dict | None" = None) -> bool:
     """Manually clear a persisted live-breaker trip immediately, independent
     of the UTC day boundary (issue #1348 acceptance criteria) -- the
     operator's "I've reviewed the situation, resume trading now" path,
@@ -215,14 +306,49 @@ def reset_live_circuit_breaker(db: "Database") -> bool:
     always logged at ``warning`` with what was cleared and when -- "who" is
     just "operator" (single-operator system today, per the issue), but the
     fact and timestamp are always on record in the application log.
+
+    **Moves a baseline, does not erase history (issue #1300).** A clear
+    that only dropped the persisted trip record would be a no-op in
+    practice for a drawdown-driven trip: the very next call would
+    recompute the same all-time (or config-baseline) cumulative loss and
+    re-trip immediately. So a clear here also persists a new "cleared-at"
+    drawdown baseline (:func:`_persist_live_drawdown_clear_baseline`) at
+    the moment of the clear -- :func:`allow_live_copy_signal`'s drawdown
+    check is measured against realized P&L accrued SINCE that baseline
+    from here on (via :func:`_effective_drawdown_baseline`). No
+    ``copy_live_positions`` row is ever read for writing, let alone
+    mutated; the pre-clear ledger is untouched, just no longer counted.
+    The audit log line also now records the cumulative P&L figure (and
+    the capital it was measured against) at the moment of the clear, not
+    just tripped_at/reason, so the one warning line stays a complete
+    audit trail. *live_config* is optional (``None`` defaults to an empty
+    dict, i.e. no operator-set ``COPY_LIVE_DRAWDOWN_SINCE``) so existing
+    callers with only a ``Database`` handle keep working; the dashboard
+    endpoint passes the real ``get_live_config(db)`` so the recorded PnL
+    figure reflects whatever baseline was already in effect.
     """
     persisted = _read_live_breaker_trip(db)
     if persisted is None:
         return False
+
+    cfg = live_config or {}
+    since_before_clear = _effective_drawdown_baseline(db, cfg)
+    try:
+        total = db.get_copy_live_realized_pnl_total(since=since_before_clear)
+        pnl_at_clear = total.get("total_pnl_usd")
+    except Exception as e:  # noqa: BLE001 — audit detail must never block a clear
+        log.warning("[live-breaker] manual reset: could not read PnL for the audit record: %s", e)
+        pnl_at_clear = None
+
+    now = _now_utc_iso()
     _clear_live_breaker_trip(db)
+    _persist_live_drawdown_clear_baseline(db, now)
+
     log.warning(
-        "[live-breaker] manual reset by operator at %s -- was tripped since %s (reason=%s)",
-        _now_utc_iso(), persisted.get("tripped_at"), persisted.get("reason"),
+        "[live-breaker] manual reset by operator at %s -- was tripped since %s "
+        "(reason=%s, cumulative_pnl_usd=%s, capital_usd=%s). Drawdown baseline "
+        "moved to the clear time; pre-clear settled rows are unchanged.",
+        now, persisted.get("tripped_at"), persisted.get("reason"), pnl_at_clear, COPY_LIVE_CAPITAL_USD,
     )
     return True
 
@@ -243,6 +369,14 @@ def get_live_circuit_breaker_status(db: "Database") -> dict:
     next actual signal-loop cycle, not by a dashboard poll. Never raises:
     a missing DB, missing config row, or corrupt JSON blob all degrade to
     ``tripped=False``, never a 500.
+
+    **Deliberately does NOT report ``REASON_LIVE_NO_CAPITAL`` (issue
+    #1300).** That refusal is a structural misconfiguration, not a
+    persisted trip -- it is never written to ``bot_config`` (see
+    :func:`allow_live_copy_signal`'s own docstring), so there is nothing
+    for this getter to read. It is visible instead the same way the other
+    two reasons already are per-attempt: ``copy_live_positions.rejected_reason``
+    via ``copy_signal_loop.py``'s existing ``live_gate_reason`` mechanism.
     """
     empty = {"tripped": False, "reason": None, "tripped_at": None, "trip_utc_date": None}
     persisted = _read_live_breaker_trip(db)
@@ -336,7 +470,21 @@ def allow_live_copy_signal(db: "Database", live_config: dict) -> "tuple[bool, st
     :func:`allow_copy_signal`'s own documented precedence. This is a
     deliberate, documented choice, not an accident of code order -- pick
     whichever one changes, this docstring must be updated to match.
+
+    **Fail closed without capital (issue #1300).** Checked FIRST, ahead of
+    the persisted trip and both PnL limits: when ``COPY_LIVE_CAPITAL_USD``
+    (the module constant, read once at import time) is ``<= 0`` -- its own
+    safety default in ``src/config.py`` -- this refuses outright with
+    ``REASON_LIVE_NO_CAPITAL`` rather than silently skipping the drawdown
+    branch below (the old ``if COPY_LIVE_CAPITAL_USD > 0`` guard was a
+    silent-disarm defect, not a deliberate design). This reason is never
+    persisted as a trip: it is not PnL-derived, so there is nothing for
+    :func:`reset_live_circuit_breaker` to clear -- it self-resolves the
+    instant an operator sets real capital and restarts the process.
     """
+    if COPY_LIVE_CAPITAL_USD <= 0:
+        return False, REASON_LIVE_NO_CAPITAL
+
     today = _today_utc()
     persisted = _read_live_breaker_trip(db)
     if persisted is not None:
@@ -354,12 +502,15 @@ def allow_live_copy_signal(db: "Database", live_config: dict) -> "tuple[bool, st
         _persist_live_breaker_trip(db, REASON_LIVE_DAILY_LOSS)
         return False, REASON_LIVE_DAILY_LOSS
 
-    since = _drawdown_baseline(live_config)
+    # COPY_LIVE_CAPITAL_USD is guaranteed > 0 here (checked at entry), so
+    # the drawdown below is always evaluated -- issue #1300: this no longer
+    # silently skips when capital is missing, it refuses before reaching
+    # this point at all.
+    since = _effective_drawdown_baseline(db, live_config)
     total = db.get_copy_live_realized_pnl_total(since=since)
-    if COPY_LIVE_CAPITAL_USD > 0:
-        drawdown = -total["total_pnl_usd"] / COPY_LIVE_CAPITAL_USD
-        if drawdown >= drawdown_stop_pct:
-            _persist_live_breaker_trip(db, REASON_LIVE_DRAWDOWN)
-            return False, REASON_LIVE_DRAWDOWN
+    drawdown = -total["total_pnl_usd"] / COPY_LIVE_CAPITAL_USD
+    if drawdown >= drawdown_stop_pct:
+        _persist_live_breaker_trip(db, REASON_LIVE_DRAWDOWN)
+        return False, REASON_LIVE_DRAWDOWN
 
     return True, ""

@@ -1,11 +1,13 @@
 """Unit tests for src/risk/copy_risk_manager.py (issue #1139, story D1 of
 epic #1138; plus its live counterpart, issue #1175, epic I #1160; plus the
-live breaker's persisted-trip/manual-reset mechanics, issue #1348). Fully
-mocked -- no real DB, mirroring test_copy_signal_loop.py's MagicMock db
+live breaker's persisted-trip/manual-reset mechanics, issue #1348; plus the
+fail-closed-without-capital and clear-moves-a-baseline fixes, issue #1300).
+Fully mocked -- no real DB, mirroring test_copy_signal_loop.py's MagicMock db
 style. COPY_TRADING_CAPITAL_USD / COPY_LIVE_CAPITAL_USD are patched
 per-test rather than relying on their real config.py defaults so these
 tests never break if those defaults change.
 """
+from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -15,6 +17,7 @@ from src.risk.copy_risk_manager import (
     REASON_DRAWDOWN,
     REASON_LIVE_DAILY_LOSS,
     REASON_LIVE_DRAWDOWN,
+    REASON_LIVE_NO_CAPITAL,
     allow_copy_signal,
     allow_live_copy_signal,
     get_live_circuit_breaker_status,
@@ -680,3 +683,247 @@ class TestGetLiveCircuitBreakerStatus:
         db = _mock_live_db_with_config(store)
         status = get_live_circuit_breaker_status(db)
         assert status["tripped"] is False
+
+
+# ----------------------------------------------------------------------
+# Issue #1300: fail closed without capital, and a manual clear that moves
+# a baseline rather than erasing history.
+# ----------------------------------------------------------------------
+
+class TestLiveBreakerFailsClosedWithoutCapital:
+    """Acceptance criterion: COPY_LIVE_TRADING_ENABLED=true with
+    COPY_LIVE_CAPITAL_USD<=0 refuses execution with a distinct reason --
+    pinning the inversion of the old ``if COPY_LIVE_CAPITAL_USD > 0:``
+    guard, which used to silently skip the drawdown check and fall through
+    to an allow."""
+
+    def test_refuses_when_capital_is_zero(self):
+        store = _FakeConfigStore()
+        db = _mock_live_db_with_config(store, daily_total_pnl=0.0, cumulative_total_pnl=0.0)
+        with patch("src.risk.copy_risk_manager.COPY_LIVE_CAPITAL_USD", 0.0):
+            ok, reason = allow_live_copy_signal(db, _live_breaker_config())
+        assert ok is False
+        assert reason == REASON_LIVE_NO_CAPITAL
+
+    def test_refuses_when_capital_is_negative(self):
+        store = _FakeConfigStore()
+        db = _mock_live_db_with_config(store)
+        with patch("src.risk.copy_risk_manager.COPY_LIVE_CAPITAL_USD", -5.0):
+            ok, reason = allow_live_copy_signal(db, _live_breaker_config())
+        assert ok is False
+        assert reason == REASON_LIVE_NO_CAPITAL
+
+    def test_refuses_even_with_healthy_pnl(self):
+        """Pins the inversion explicitly: before this fix, missing capital
+        skipped the drawdown branch and fell through to an ALLOW whenever
+        PnL happened to be healthy. Healthy PnL must not matter now."""
+        store = _FakeConfigStore()
+        db = _mock_live_db_with_config(store, daily_total_pnl=50.0, cumulative_total_pnl=200.0)
+        with patch("src.risk.copy_risk_manager.COPY_LIVE_CAPITAL_USD", 0.0):
+            ok, reason = allow_live_copy_signal(db, _live_breaker_config())
+        assert ok is False
+        assert reason == REASON_LIVE_NO_CAPITAL
+
+    def test_wins_over_daily_loss_too(self):
+        db = _mock_live_db(daily_total_pnl=-999.0, cumulative_total_pnl=-999.0)
+        with patch("src.risk.copy_risk_manager.COPY_LIVE_CAPITAL_USD", 0.0):
+            ok, reason = allow_live_copy_signal(
+                db, _live_breaker_config(COPY_LIVE_DAILY_LOSS_LIMIT_USD=25.0)
+            )
+        assert ok is False
+        assert reason == REASON_LIVE_NO_CAPITAL
+
+    def test_does_not_consult_pnl_or_persisted_trip_when_capital_missing(self):
+        store = _FakeConfigStore()
+        db = _mock_live_db_with_config(store)
+        with patch("src.risk.copy_risk_manager.COPY_LIVE_CAPITAL_USD", 0.0):
+            allow_live_copy_signal(db, _live_breaker_config())
+        db.get_config.assert_not_called()
+        db.get_copy_live_realized_pnl_total_for_date.assert_not_called()
+        db.get_copy_live_realized_pnl_total.assert_not_called()
+
+    def test_never_persists_a_trip_for_the_no_capital_reason(self):
+        store = _FakeConfigStore()
+        db = _mock_live_db_with_config(store)
+        with patch("src.risk.copy_risk_manager.COPY_LIVE_CAPITAL_USD", 0.0):
+            allow_live_copy_signal(db, _live_breaker_config())
+        assert store._store == {}
+        # The status getter is deliberately out of scope for this reason
+        # (see get_live_circuit_breaker_status's own docstring) -- nothing
+        # was ever written, so it still reports not-tripped.
+        assert get_live_circuit_breaker_status(db)["tripped"] is False
+
+    def test_allows_normal_evaluation_once_capital_is_configured(self):
+        """Regression guard: the fail-closed check must not fire once
+        capital is properly configured."""
+        db = _mock_live_db(daily_total_pnl=0.0, cumulative_total_pnl=0.0)
+        with patch("src.risk.copy_risk_manager.COPY_LIVE_CAPITAL_USD", CAPITAL):
+            ok, reason = allow_live_copy_signal(db, _live_breaker_config())
+        assert ok is True
+        assert reason == ""
+
+
+class TestEffectiveDrawdownBaseline:
+    """Unit coverage for _effective_drawdown_baseline: the LATER of the
+    operator-set COPY_LIVE_DRAWDOWN_SINCE config value and the most recent
+    manual-clear baseline always wins, in both directions."""
+
+    def test_all_time_when_neither_is_set(self):
+        from src.risk.copy_risk_manager import _effective_drawdown_baseline
+        store = _FakeConfigStore()
+        db = _mock_live_db_with_config(store)
+        assert _effective_drawdown_baseline(db, _live_breaker_config()) is None
+
+    def test_config_baseline_used_when_no_clear_exists(self):
+        from src.risk.copy_risk_manager import _effective_drawdown_baseline
+        store = _FakeConfigStore()
+        db = _mock_live_db_with_config(store)
+        cfg = _live_breaker_config(COPY_LIVE_DRAWDOWN_SINCE="2026-01-01T00:00:00+00:00")
+        assert _effective_drawdown_baseline(db, cfg).startswith("2026-01-01")
+
+    def test_clear_baseline_used_when_no_config_value(self):
+        from src.risk.copy_risk_manager import (
+            _effective_drawdown_baseline, _persist_live_drawdown_clear_baseline,
+        )
+        store = _FakeConfigStore()
+        db = _mock_live_db_with_config(store)
+        _persist_live_drawdown_clear_baseline(db, "2026-10-12T00:00:00+00:00")
+        assert _effective_drawdown_baseline(db, _live_breaker_config()).startswith("2026-10-12")
+
+    def test_config_baseline_wins_when_later_than_clear(self):
+        from src.risk.copy_risk_manager import (
+            _effective_drawdown_baseline, _persist_live_drawdown_clear_baseline,
+        )
+        store = _FakeConfigStore()
+        db = _mock_live_db_with_config(store)
+        _persist_live_drawdown_clear_baseline(db, "2020-01-01T00:00:00+00:00")
+        cfg = _live_breaker_config(COPY_LIVE_DRAWDOWN_SINCE="2099-01-01T00:00:00+00:00")
+        assert _effective_drawdown_baseline(db, cfg).startswith("2099-01-01")
+
+    def test_clear_baseline_wins_when_later_than_config(self):
+        from src.risk.copy_risk_manager import (
+            _effective_drawdown_baseline, _persist_live_drawdown_clear_baseline,
+        )
+        store = _FakeConfigStore()
+        db = _mock_live_db_with_config(store)
+        _persist_live_drawdown_clear_baseline(db, "2026-10-12T00:00:00+00:00")
+        cfg = _live_breaker_config(COPY_LIVE_DRAWDOWN_SINCE="2020-01-01T00:00:00+00:00")
+        assert _effective_drawdown_baseline(db, cfg).startswith("2026-10-12")
+
+
+class TestLiveBreakerManualResetMovesDrawdownBaseline:
+    """Acceptance criterion: clearing moves a baseline, it does not erase
+    history -- after a clear, the drawdown is measured against realized
+    P&L accrued SINCE the clear, and a further loss past the threshold
+    measured from the clear blocks again."""
+
+    @staticmethod
+    def _since_aware_db(store, *, all_time_pnl, since_clear_pnl):
+        """A live-db double whose get_copy_live_realized_pnl_total actually
+        varies with the `since` kwarg -- unlike the rest of this file's
+        fixed .return_value doubles, this is needed to prove the baseline
+        is genuinely threaded through to the DB call, not just computed
+        and discarded."""
+        db = _mock_live_db_with_config(store, daily_total_pnl=0.0)
+
+        def _pnl(since=None):
+            if since is None:
+                return {"n_settled": 5, "total_pnl_usd": all_time_pnl}
+            return {"n_settled": 1, "total_pnl_usd": since_clear_pnl}
+
+        db.get_copy_live_realized_pnl_total.side_effect = _pnl
+        return db
+
+    def test_reset_permits_execution_then_a_further_loss_retrips(self):
+        store = _FakeConfigStore()
+        db = self._since_aware_db(store, all_time_pnl=-50.0, since_clear_pnl=0.0)
+        cfg = _live_breaker_config(COPY_LIVE_DAILY_LOSS_LIMIT_USD=999.0, COPY_LIVE_DRAWDOWN_STOP_PCT=0.20)
+
+        with patch("src.risk.copy_risk_manager.COPY_LIVE_CAPITAL_USD", CAPITAL):
+            ok1, reason1 = allow_live_copy_signal(db, cfg)
+        assert ok1 is False
+        assert reason1 == REASON_LIVE_DRAWDOWN
+
+        with patch("src.risk.copy_risk_manager.COPY_LIVE_CAPITAL_USD", CAPITAL):
+            cleared = reset_live_circuit_breaker(db, cfg)
+        assert cleared is True
+
+        # The same all-time cumulative loss is still on the books, but the
+        # clear moved the baseline forward -- nothing has settled SINCE
+        # the clear, so execution is now permitted.
+        with patch("src.risk.copy_risk_manager.COPY_LIVE_CAPITAL_USD", CAPITAL):
+            ok2, reason2 = allow_live_copy_signal(db, cfg)
+        assert ok2 is True
+        assert reason2 == ""
+
+        # A further loss past the threshold, measured from the clear,
+        # blocks again.
+        db.get_copy_live_realized_pnl_total.side_effect = lambda since=None: (
+            {"n_settled": 5, "total_pnl_usd": -50.0} if since is None
+            else {"n_settled": 1, "total_pnl_usd": -25.0}
+        )
+        with patch("src.risk.copy_risk_manager.COPY_LIVE_CAPITAL_USD", CAPITAL):
+            ok3, reason3 = allow_live_copy_signal(db, cfg)
+        assert ok3 is False
+        assert reason3 == REASON_LIVE_DRAWDOWN
+
+    def test_reset_passes_a_since_argument_at_or_after_the_clear(self):
+        store = _FakeConfigStore()
+        db = self._since_aware_db(store, all_time_pnl=-50.0, since_clear_pnl=0.0)
+        cfg = _live_breaker_config(COPY_LIVE_DAILY_LOSS_LIMIT_USD=999.0, COPY_LIVE_DRAWDOWN_STOP_PCT=0.20)
+        with patch("src.risk.copy_risk_manager.COPY_LIVE_CAPITAL_USD", CAPITAL):
+            allow_live_copy_signal(db, cfg)
+            before = datetime.now(timezone.utc).isoformat()
+            reset_live_circuit_breaker(db, cfg)
+            after = datetime.now(timezone.utc).isoformat()
+            db.get_copy_live_realized_pnl_total.side_effect = None
+            db.get_copy_live_realized_pnl_total.return_value = {"n_settled": 0, "total_pnl_usd": 0.0}
+            allow_live_copy_signal(db, cfg)
+
+        since_args = [
+            kwargs.get("since") for _args, kwargs in db.get_copy_live_realized_pnl_total.call_args_list
+        ]
+        last_since = since_args[-1]
+        assert last_since is not None
+        assert before <= last_since <= after
+
+    def test_reset_does_not_modify_settled_pnl_rows(self):
+        """Test requirement: a clear never changes any
+        copy_live_positions.settled_pnl_usd value -- asserted directly
+        against the db double's call surface (no row-mutation method is
+        ever invoked by a reset)."""
+        store = _FakeConfigStore()
+        db = self._since_aware_db(store, all_time_pnl=-50.0, since_clear_pnl=0.0)
+        cfg = _live_breaker_config(COPY_LIVE_DAILY_LOSS_LIMIT_USD=999.0, COPY_LIVE_DRAWDOWN_STOP_PCT=0.20)
+        with patch("src.risk.copy_risk_manager.COPY_LIVE_CAPITAL_USD", CAPITAL):
+            allow_live_copy_signal(db, cfg)
+            reset_live_circuit_breaker(db, cfg)
+
+        allowed_methods = {
+            "get_config", "set_config",
+            "get_copy_live_realized_pnl_total",
+            "get_copy_live_realized_pnl_total_for_date",
+        }
+        called_methods = {c[0] for c in db.method_calls}
+        assert called_methods <= allowed_methods
+
+    def test_reset_with_no_live_config_argument_still_works(self):
+        """reset_live_circuit_breaker(db) with no live_config -- backward
+        compatible with any pre-#1300 caller that only has a db handle."""
+        store = _FakeConfigStore()
+        db = self._since_aware_db(store, all_time_pnl=-50.0, since_clear_pnl=0.0)
+        cfg = _live_breaker_config(COPY_LIVE_DAILY_LOSS_LIMIT_USD=999.0, COPY_LIVE_DRAWDOWN_STOP_PCT=0.20)
+        with patch("src.risk.copy_risk_manager.COPY_LIVE_CAPITAL_USD", CAPITAL):
+            allow_live_copy_signal(db, cfg)
+            cleared = reset_live_circuit_breaker(db)
+        assert cleared is True
+
+    def test_reset_logs_the_pnl_figure_at_clear(self, caplog):
+        store = _FakeConfigStore()
+        db = self._since_aware_db(store, all_time_pnl=-50.0, since_clear_pnl=0.0)
+        cfg = _live_breaker_config(COPY_LIVE_DAILY_LOSS_LIMIT_USD=999.0, COPY_LIVE_DRAWDOWN_STOP_PCT=0.20)
+        with patch("src.risk.copy_risk_manager.COPY_LIVE_CAPITAL_USD", CAPITAL):
+            allow_live_copy_signal(db, cfg)
+            with caplog.at_level("WARNING", logger="src.risk.copy_risk_manager"):
+                reset_live_circuit_breaker(db, cfg)
+        assert any("manual reset" in rec.message and "-50.0" in rec.message for rec in caplog.records)

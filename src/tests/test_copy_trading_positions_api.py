@@ -17,7 +17,8 @@ Covers:
   default.
 - GET /api/copy-trading/live-breaker and
   POST /api/copy-trading/live-breaker/reset (issue #1348): the LIVE
-  circuit breaker's current trip state and manual-reset control.
+  circuit breaker's current trip state and manual-reset control; plus the
+  reset endpoint also moving the drawdown baseline forward (issue #1300).
 """
 from __future__ import annotations
 
@@ -644,3 +645,29 @@ class TestLiveBreakerEndpoints:
         body = resp.json()
         assert body["success"] is True
         assert "not tripped" in body["message"].lower()
+
+    def test_reset_persists_a_drawdown_clear_baseline(self, api_client):
+        """Issue #1300: the reset endpoint now passes get_live_config(db)
+        through to reset_live_circuit_breaker, which moves the drawdown's
+        measurement baseline forward to the moment of the clear."""
+        import json
+        from datetime import datetime, timezone
+
+        client, db = api_client
+        from src.risk.copy_risk_manager import (
+            _LIVE_BREAKER_STATE_KEY, _LIVE_DRAWDOWN_CLEAR_BASELINE_KEY,
+        )
+        db.set_config(_LIVE_BREAKER_STATE_KEY, json.dumps({
+            "tripped_at": "2026-10-10T12:00:00+00:00",
+            "reason": "live_circuit_breaker_drawdown",
+            "trip_utc_date": datetime.now(timezone.utc).date().isoformat(),
+        }))
+        assert not db.get_config(_LIVE_DRAWDOWN_CLEAR_BASELINE_KEY)
+
+        resp = client.post("/api/copy-trading/live-breaker/reset")
+        assert resp.status_code == 200
+        assert resp.json()["success"] is True
+
+        baseline = db.get_config(_LIVE_DRAWDOWN_CLEAR_BASELINE_KEY)
+        assert baseline  # non-empty -- a real ISO-8601 timestamp was persisted
+        datetime.fromisoformat(baseline)  # must parse cleanly
