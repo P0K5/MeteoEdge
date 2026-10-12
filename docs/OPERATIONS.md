@@ -827,8 +827,13 @@ and reuses `copy_wallet_screening.py::check_stability` on them — auto-pauses
 (`paused_reason="stability_check_failed"`) on a failed pairwise check *or* if
 the latest row's own `eligible_to_follow` is `0`; (2) for wallets with at
 least `MIN_SETTLED_TRADES_FOR_ROI_CHECK` (5) settled `copy_positions` rows,
-computes the median per-trade ROI (`settled_pnl_usd / stake_usd`) and
-auto-pauses (`paused_reason="realized_roi_negative"`) if it's negative. An
+computes the **total realized PnL over deduped decisions** (fills of the
+same market/outcome summed into one decision; see
+`_realized_pnl_pause_reason`) and auto-pauses
+(`paused_reason="realized_roi_negative"`) if it's negative. (Not a median
+per-trade ROI.) The screening job (`copy_wallet_screening`) screens every
+followed wallet each run, in addition to the leaderboard top-N, so these
+stability comparisons always use fresh rows (issue #1256). An
 already-`paused` wallet is left alone by both checks (idempotent, matching
 `copy_wallet_promotion.py`'s own guard). Logs a summary line (checked /
 paused-for-stability / paused-for-roi counts) at the end of the run.

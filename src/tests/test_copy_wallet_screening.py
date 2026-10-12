@@ -1508,3 +1508,45 @@ class TestMainLockHandling:
             rc = main(["--top", "1"])
         assert rc == 0
         mock_run.assert_called_once()
+
+
+class TestRunScreensFollowedWallets:
+    """issue #1256: followed wallets outside the leaderboard are screened too."""
+
+    def _run(self, followed, leaderboard, top=20):
+        db = MagicMock()
+        db.get_recent_wallet_screenings.return_value = []
+        db.get_followed_wallets.return_value = [{"address": a} for a in followed]
+        screened = []
+
+        def fake(addr, *a, **kw):
+            screened.append(addr)
+            return _backtest_result(addr)
+
+        with patch(
+            "src.scripts.copy_wallet_screening.get_leaderboard", return_value=leaderboard,
+        ) as lb, patch(
+            "src.scripts.copy_wallet_screening.backtest_wallet", side_effect=fake,
+        ):
+            rc = run(window="month", top=top, slippage_bps=150.0, db=db)
+        return rc, screened, db, lb
+
+    def test_followed_wallet_absent_from_leaderboard_gets_row(self):
+        rc, screened, db, _ = self._run(["0xold"], _leaderboard(2))
+        assert rc == 0
+        assert "0xold" in screened
+        assert db.insert_wallet_screening.call_count == 3
+
+    def test_followed_wallet_in_leaderboard_screened_once(self):
+        _, screened, _, _ = self._run(["0xWALLET1", "0xwallet0"], _leaderboard(2))
+        assert sorted(a.lower() for a in screened) == ["0xwallet0", "0xwallet1"]
+
+    def test_top_caps_leaderboard_only(self):
+        _, screened, _, lb = self._run(["0xa", "0xb", "0xc"], _leaderboard(2), top=2)
+        assert lb.call_args.kwargs["limit"] == 2
+        assert len(screened) == 5
+
+    def test_summary_reports_off_leaderboard_count(self, caplog):
+        with caplog.at_level("INFO", logger="src.scripts.copy_wallet_screening"):
+            self._run(["0xa", "0xwallet0"], _leaderboard(1))
+        assert "followed_off_leaderboard=1" in caplog.text
