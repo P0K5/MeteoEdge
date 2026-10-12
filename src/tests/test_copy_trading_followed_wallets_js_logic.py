@@ -338,6 +338,19 @@ _ASSERTIONS = textwrap.dedent("""
       assert.ok(unknownReasonHtml.includes('>PAPER<'));
 
       // ------------------------------------------------------------------
+      // 7b. Fifth live badge state (issue #1266): "stake exceeds cap" is a
+      //     third, distinct visual treatment (muted RED, not the
+      //     muted-green pending class above) -- a permanent, wallet-
+      //     specific misconfiguration, not a shared platform state and not
+      //     self-resolving like cap-reached.
+      // ------------------------------------------------------------------
+      const stakeExceedsCapHtml = _followedLiveBadgeHtml({ live_enabled: true, live_eligible: false, live_status_reason: "this wallet's live stake exceeds its live exposure cap" });
+      assert.ok(stakeExceedsCapHtml.includes('mode-badge-live-blocked'), 'stake-exceeds-cap must use its own distinct (red) class, not the muted-green pending one');
+      assert.ok(!stakeExceedsCapHtml.includes('mode-badge-live-pending'));
+      assert.ok(stakeExceedsCapHtml.includes('>LIVE (stake exceeds cap)<'));
+      assert.ok(stakeExceedsCapHtml.includes('No live orders can be placed until the stake is lowered or the cap is raised'));
+
+      // ------------------------------------------------------------------
       // 8. Paper / live stake display (issues #1259, #1275): never blended
       //    -- the Paper roster renders only the paper stake, the Live
       //    roster only the resolved live stake.
@@ -354,6 +367,25 @@ _ASSERTIONS = textwrap.dedent("""
       const inheritedStakeHtml = _followedLiveStakeHtml({ stake_per_trade: 5, live_stake_per_trade: 5, live_stake_is_override: false });
       assert.ok(inheritedStakeHtml.includes('Live: $5.00'));
       assert.ok(inheritedStakeHtml.includes('· follows paper stake'), 'an inherited (non-override) live stake must be annotated as such');
+      assert.ok(!inheritedStakeHtml.includes('followed-stake-live-blocked'), 'below the cap, the blocked styling/note must not appear');
+
+      // ------------------------------------------------------------------
+      // 8b. Stake figure itself turns red + persistent note when the
+      //     resolved live stake exceeds the live cap (issue #1266) --
+      //     reads the cap off the last-rendered roster payload, mirroring
+      //     followedGoLive/followedEditLiveStake's own `_copyLiveFollowedData
+      //     || _followedWalletsData` fallback.
+      // ------------------------------------------------------------------
+      _copyLiveFollowedData = { live_cap_usd: 10.0 };
+      const overCapStakeHtml = _followedLiveStakeHtml({ stake_per_trade: 5, live_stake_per_trade: 15, live_stake_is_override: true });
+      assert.ok(overCapStakeHtml.includes('followed-stake-live-blocked'), 'a resolved live stake above the cap must get the blocked color modifier');
+      assert.ok(overCapStakeHtml.includes('Live: $15.00'));
+      assert.ok(overCapStakeHtml.includes('exceeds the $10.00 cap'), 'the note must name the cap, persistently, not as a hover-only tooltip');
+      assert.ok(overCapStakeHtml.includes('no live orders will place until the stake is lowered or the cap is raised'));
+
+      const atCapStakeHtml = _followedLiveStakeHtml({ stake_per_trade: 5, live_stake_per_trade: 10, live_stake_is_override: true });
+      assert.ok(!atCapStakeHtml.includes('followed-stake-live-blocked'), 'exactly at the cap must not be flagged as blocked (matches the backend\\'s own ">" comparison)');
+      _copyLiveFollowedData = null;   // restore for subsequent assertions below
 
       // ------------------------------------------------------------------
       // 9. "Go live" / "Revert to paper" control states (issue #1254).

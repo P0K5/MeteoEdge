@@ -822,8 +822,10 @@ explanation, rather than adding a new line to an already-dense cell:
 - Combining with #1290: an inheriting wallet that also exceeds the cap keeps
   the `· follows paper stake` note (`.followed-live-inherit-note`) immediately
   after the figure, then the exceeds-cap explanation span; the override case
-  has only the exceeds-cap span. (#1266's blocked styling is not yet
-  implemented in `_followedLiveStakeHtml`; this is the target.)
+  has only the exceeds-cap span. (Implemented in `_followedLiveStakeHtml`,
+  issue #1266 — reads the cap off the last-rendered roster payload, same
+  `_copyLiveFollowedData || _followedWalletsData` fallback the enable-live
+  flow already uses.)
 - `.followed-stake-live-blocked` overrides the figure's color from `--yes`
   to `--no` (Design tokens below) — the dollar figure itself turns red, not
   just the badge up in the status cell, so the one number that's actually

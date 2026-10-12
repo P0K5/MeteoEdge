@@ -1,6 +1,7 @@
 """Advisory-only wallet-promotion CLI: follow / pause / resume / live-on /
 live-off / live-stake (issue #1122, epic #1101 story B2; live opt-in added
-by issue #1253; live-only stake override added by issue #1259).
+by issue #1253; live-only stake override added by issue #1259; stake-vs-cap
+write-time guard added by issue #1266).
 
 Epic A's screening pipeline (``copy_wallet_screening.py``) produces
 ``copy_wallet_candidates`` rows with ``eligible_to_follow`` computed per run,
@@ -24,7 +25,11 @@ live-only per-trade stake override -- the CLI counterpart to the
 dashboard's ``PATCH .../live-stake`` endpoint. ``VALUE`` of ``none`` or
 ``inherit`` clears the override back to "same as the paper stake"
 (``--stake``'s value); any other ``VALUE`` must parse as a finite positive
-USD amount.
+USD amount, and (issue #1266) must not exceed
+``COPY_LIVE_MAX_EXPOSURE_PER_WALLET_USD`` -- a value above that cap is
+refused (non-zero exit) rather than silently accepted, since the wallet
+would then never be able to place a live order (see ``live_stake()``'s
+docstring for why).
 
 Usage::
 
@@ -237,7 +242,7 @@ def live_off(db, address: str) -> int:
     return 0
 
 
-def live_stake(db, address: str, value: str) -> int:
+def live_stake(db, address: str, value: str, live_cap_usd: float) -> int:
     """Set or clear *address*'s live-only per-trade stake override (issue
     #1259) -- the CLI counterpart to ``PATCH .../live-stake``.
 
@@ -250,6 +255,15 @@ def live_stake(db, address: str, value: str) -> int:
     unlike ``live_on``, always allowed regardless of ``status`` (setting a
     live-only stake, like disabling live, never itself causes anything to
     execute).
+
+    Issue #1266: also refuses a value above *live_cap_usd*
+    (``COPY_LIVE_MAX_EXPOSURE_PER_WALLET_USD``) -- without this, the value
+    was previously accepted (only "finite and > 0") and the wallet would
+    then report LIVE while silently never being able to place an order,
+    since ``_handle_live_order``'s per-wallet exposure gate rejects every
+    attempt at order time. This is a write-time snapshot, not a guarantee
+    -- the cap is live-editable -- so order-time enforcement is unchanged
+    and stays the authoritative check.
     """
     known = {w["address"] for w in db.get_followed_wallets()}
     if address not in known:
@@ -274,6 +288,14 @@ def live_stake(db, address: str, value: str) -> int:
         print(
             f"Refusing to set live stake for {address}: must be a finite positive "
             f"number in USD, got {stake!r}."
+        )
+        return 1
+
+    if stake > live_cap_usd:
+        print(
+            f"Refusing to set live stake for {address}: ${stake:.2f} exceeds "
+            f"COPY_LIVE_MAX_EXPOSURE_PER_WALLET_USD (${live_cap_usd:.2f}) -- this "
+            f"wallet would never be able to place a live order at this stake."
         )
         return 1
 
@@ -341,7 +363,10 @@ def main(argv: "list[str] | None" = None) -> int:
     if args.live_off is not None:
         return live_off(db, args.live_off)
     if args.live_stake is not None:
-        return live_stake(db, args.live_stake[0], args.live_stake[1])
+        return live_stake(
+            db, args.live_stake[0], args.live_stake[1],
+            live_cfg["COPY_LIVE_MAX_EXPOSURE_PER_WALLET_USD"],
+        )
 
     return report(db, max_followed)
 

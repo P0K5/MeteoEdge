@@ -673,6 +673,15 @@ a,button,input,select{transition:color var(--transition),background var(--transi
   letter-spacing:0;text-transform:none;font-weight:600;
 }
 .mode-badge-unknown i{width:12px;height:12px;flex-shrink:0;}
+/* Issue #1266: "LIVE (stake exceeds cap)" -- a third, distinct visual
+   treatment, deliberately NOT a third muted-green variant. Reuses
+   var(--no-bg)/var(--no) exactly as .btn-followed-unfollow already does for
+   this row's other consequential/blocking signal -- no new color token.
+   This is a defect in this specific wallet's own configuration (lower its
+   stake or raise the cap), unlike the shared-platform-state / self-resolving
+   reasons above, so it reads as "stop, this needs you", not "wait". See
+   docs/design/copy-trading-live-views.md. */
+.mode-badge-live-blocked{background:var(--no-bg);color:var(--no);}
 
 /* Per-side accent: live/live=green, mixed=blue, shadow/shadow=amber */
 .station-card.accent-live-live{border-left-color:var(--yes);}
@@ -1061,6 +1070,12 @@ a,button,input,select{transition:color var(--transition),background var(--transi
    is opted into live -- never blended into one figure. */
 .followed-stake-live{color:var(--yes);}
 .followed-live-inherit-note{font-size:var(--text-xs);color:var(--text);font-weight:500;}
+/* Issue #1266: applied alongside (not instead of) .followed-stake-live --
+   this rule wins on color, same modifier-class composition used elsewhere
+   in this file. The dollar figure itself turns red, not just the status
+   badge, so the one number that's actually the problem is flagged at its
+   own location in the row. See docs/design/copy-trading-live-views.md. */
+.followed-stake-live-blocked{color:var(--no);}
 .followed-stake-edit{display:flex;align-items:center;gap:4px;}
 .followed-stake-edit input{
   width:70px;padding:4px 6px;border-radius:var(--radius-md);
@@ -5951,6 +5966,22 @@ const _FOLLOWED_LIVE_PENDING_BADGES = {
   },
 };
 
+// Issue #1266: a third, distinct visual treatment -- muted RED (see
+// .mode-badge-live-blocked above), deliberately NOT a third muted-green
+// "pending" variant. This is a defect in THIS wallet's own configuration
+// (its resolved live stake itself exceeds the cap -- no order can ever
+// place at any exposure level until the stake is lowered or the cap is
+// raised), unlike the shared-platform-state / self-resolving reasons in
+// _FOLLOWED_LIVE_PENDING_BADGES above. Checked ahead of that map below so
+// it wins whenever both would otherwise match (mirrors the backend's own
+// check ordering in _derive_live_eligibility).
+const _FOLLOWED_LIVE_BLOCKED_BADGES = {
+  "this wallet's live stake exceeds its live exposure cap": {
+    text: 'LIVE (stake exceeds cap)',
+    aria: "Live status: live opt-in blocked — this wallet's live stake exceeds its live exposure cap. No live orders can be placed until the stake is lowered or the cap is raised.",
+  },
+};
+
 function _followedLiveBadgeHtml(w) {
   // Issue #1290: unknown live status (posture fetch failed, or the wallet has
   // no live_status_reason) is its own neutral badge -- never PAPER.
@@ -5960,6 +5991,10 @@ function _followedLiveBadgeHtml(w) {
   if (w.live_eligible) {
     const label = `Live status: live — ${_copyEscapeHtml(w.live_status_reason)}`;
     return `<span class="mode-badge mode-badge-live" aria-label="${label}">LIVE</span>`;
+  }
+  const blocked = w.live_enabled ? _FOLLOWED_LIVE_BLOCKED_BADGES[w.live_status_reason] : undefined;
+  if (blocked) {
+    return `<span class="mode-badge mode-badge-live-blocked" aria-label="${blocked.aria}">${blocked.text}</span>`;
   }
   const pending = w.live_enabled ? _FOLLOWED_LIVE_PENDING_BADGES[w.live_status_reason] : undefined;
   if (pending) {
@@ -5982,7 +6017,24 @@ function _followedLiveStakeHtml(w) {
   const inheritedNote = w.live_stake_is_override
     ? ''
     : ` <span class="followed-live-inherit-note">· follows paper stake</span>`;
-  return `<span class="followed-stake-value followed-stake-live">Live: $${w.live_stake_per_trade.toFixed(2)}${inheritedNote}</span>`;
+  // Issue #1266: when this wallet's resolved live stake itself exceeds the
+  // live cap, flag the dollar figure red (.followed-stake-live-blocked,
+  // applied alongside -- not instead of -- .followed-stake-live) with a
+  // persistent explanation, not a hover-only tooltip -- this is the exact
+  // silent-failure trap #1266 exists to close, so the note must survive a
+  // screenshot or a glance. Reuses .followed-paused-reason's existing
+  // small/muted treatment, same component already used two lines above for
+  // "(inherits paper)" and for the paper pause-reason text.
+  const roster = _copyLiveFollowedData || _followedWalletsData;
+  const liveCapUsd = roster && roster.live_cap_usd;
+  const overCap = Number.isFinite(liveCapUsd) && w.live_stake_per_trade > liveCapUsd;
+  const cls = overCap
+    ? 'followed-stake-value followed-stake-live followed-stake-live-blocked'
+    : 'followed-stake-value followed-stake-live';
+  const blockedNote = overCap
+    ? ` <span class="followed-paused-reason" style="display:inline">(exceeds the $${liveCapUsd.toFixed(2)} cap — no live orders will place until the stake is lowered or the cap is raised)</span>`
+    : '';
+  return `<span class="${cls}">Live: $${w.live_stake_per_trade.toFixed(2)}${inheritedNote}${blockedNote}</span>`;
 }
 
 function _followedStakeEditHtml(address, currentStake) {

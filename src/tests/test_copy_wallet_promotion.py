@@ -249,7 +249,7 @@ class TestLiveStake:
         db = MagicMock()
         db.get_followed_wallets.return_value = [_followed_row(address="0xabc", status="active")]
 
-        rc = live_stake(db, "0xabc", "2.0")
+        rc = live_stake(db, "0xabc", "2.0", live_cap_usd=1000.0)
 
         assert rc == 0
         db.set_followed_wallet_live_stake.assert_called_once_with("0xabc", 2.0)
@@ -259,7 +259,7 @@ class TestLiveStake:
         db = MagicMock()
         db.get_followed_wallets.return_value = [_followed_row(address="0xabc", status="active")]
 
-        rc = live_stake(db, "0xabc", value)
+        rc = live_stake(db, "0xabc", value, live_cap_usd=1000.0)
 
         assert rc == 0
         db.set_followed_wallet_live_stake.assert_called_once_with("0xabc", None)
@@ -268,7 +268,7 @@ class TestLiveStake:
         db = MagicMock()
         db.get_followed_wallets.return_value = []
 
-        rc = live_stake(db, "0xabc", "2.0")
+        rc = live_stake(db, "0xabc", "2.0", live_cap_usd=1000.0)
 
         assert rc == 1
         db.set_followed_wallet_live_stake.assert_not_called()
@@ -279,7 +279,7 @@ class TestLiveStake:
         db = MagicMock()
         db.get_followed_wallets.return_value = [_followed_row(address="0xabc", status="paused")]
 
-        rc = live_stake(db, "0xabc", "2.0")
+        rc = live_stake(db, "0xabc", "2.0", live_cap_usd=1000.0)
 
         assert rc == 0
         db.set_followed_wallet_live_stake.assert_called_once_with("0xabc", 2.0)
@@ -289,7 +289,7 @@ class TestLiveStake:
         db = MagicMock()
         db.get_followed_wallets.return_value = [_followed_row(address="0xabc", status="active")]
 
-        rc = live_stake(db, "0xabc", value)
+        rc = live_stake(db, "0xabc", value, live_cap_usd=1000.0)
 
         assert rc == 1
         db.set_followed_wallet_live_stake.assert_not_called()
@@ -298,10 +298,33 @@ class TestLiveStake:
         db = MagicMock()
         db.get_followed_wallets.return_value = [_followed_row(address="0xabc", status="active")]
 
-        rc = live_stake(db, "0xabc", "not-a-number")
+        rc = live_stake(db, "0xabc", "not-a-number", live_cap_usd=1000.0)
 
         assert rc == 1
         db.set_followed_wallet_live_stake.assert_not_called()
+
+    def test_refuses_value_above_live_cap(self):
+        """Issue #1266: a value above COPY_LIVE_MAX_EXPOSURE_PER_WALLET_USD
+        is refused -- without this, the wallet would report LIVE while
+        _handle_live_order silently rejects every order at order time."""
+        db = MagicMock()
+        db.get_followed_wallets.return_value = [_followed_row(address="0xabc", status="active")]
+
+        rc = live_stake(db, "0xabc", "15.0", live_cap_usd=10.0)
+
+        assert rc == 1
+        db.set_followed_wallet_live_stake.assert_not_called()
+
+    def test_allows_value_at_live_cap(self):
+        """At-the-cap is allowed -- only strictly above is refused, matching
+        _handle_live_order's own '>' comparison."""
+        db = MagicMock()
+        db.get_followed_wallets.return_value = [_followed_row(address="0xabc", status="active")]
+
+        rc = live_stake(db, "0xabc", "10.0", live_cap_usd=10.0)
+
+        assert rc == 0
+        db.set_followed_wallet_live_stake.assert_called_once_with("0xabc", 10.0)
 
 
 class TestReport:
