@@ -685,6 +685,86 @@ class TestGetLiveCircuitBreakerStatus:
         assert status["tripped"] is False
 
 
+class TestGetLiveCircuitBreakerStatusNoCapital:
+    """PR #1356 review feedback: the "tripped breaker visible without
+    reading the database" acceptance criterion applies to the no-capital
+    fail-closed case the same as it does to the pre-existing PnL-derived
+    trips -- not just via the per-row rejected_reason label."""
+
+    def test_reports_no_capital_when_trading_enabled_and_capital_missing(self):
+        store = _FakeConfigStore()
+        db = _mock_live_db_with_config(store)
+        cfg = {"COPY_LIVE_TRADING_ENABLED": True}
+        with patch("src.risk.copy_risk_manager.COPY_LIVE_CAPITAL_USD", 0.0):
+            status = get_live_circuit_breaker_status(db, cfg)
+        assert status == {
+            "tripped": True, "reason": REASON_LIVE_NO_CAPITAL,
+            "tripped_at": None, "trip_utc_date": None,
+        }
+
+    def test_reports_no_capital_with_negative_capital_too(self):
+        store = _FakeConfigStore()
+        db = _mock_live_db_with_config(store)
+        cfg = {"COPY_LIVE_TRADING_ENABLED": True}
+        with patch("src.risk.copy_risk_manager.COPY_LIVE_CAPITAL_USD", -1.0):
+            status = get_live_circuit_breaker_status(db, cfg)
+        assert status["tripped"] is True
+        assert status["reason"] == REASON_LIVE_NO_CAPITAL
+
+    def test_does_not_report_no_capital_when_trading_disabled(self):
+        """Gated on COPY_LIVE_TRADING_ENABLED, not just capital<=0 --
+        matches allow_live_copy_signal's own precondition (it is never
+        even called by copy_signal_loop.py unless trading is enabled)."""
+        store = _FakeConfigStore()
+        db = _mock_live_db_with_config(store)
+        cfg = {"COPY_LIVE_TRADING_ENABLED": False}
+        with patch("src.risk.copy_risk_manager.COPY_LIVE_CAPITAL_USD", 0.0):
+            status = get_live_circuit_breaker_status(db, cfg)
+        assert status["tripped"] is False
+
+    def test_no_live_config_argument_keeps_pre_1300_behavior(self):
+        """Backward compatible: callers with only a Database handle (every
+        existing caller before this review round) never see the no-capital
+        branch fire, regardless of the real COPY_LIVE_CAPITAL_USD value --
+        this is what keeps the suite's pre-existing default-capital=0.0
+        tests green without themselves changing."""
+        store = _FakeConfigStore()
+        db = _mock_live_db_with_config(store)
+        with patch("src.risk.copy_risk_manager.COPY_LIVE_CAPITAL_USD", 0.0):
+            status = get_live_circuit_breaker_status(db)
+        assert status["tripped"] is False
+
+    def test_no_capital_takes_precedence_over_a_stale_persisted_trip(self):
+        store = _FakeConfigStore()
+        db = _mock_live_db_with_config(store, daily_total_pnl=-30.0)
+        cfg = _live_breaker_config(COPY_LIVE_DAILY_LOSS_LIMIT_USD=25.0)
+        with patch("src.risk.copy_risk_manager.COPY_LIVE_CAPITAL_USD", CAPITAL), \
+             patch("src.risk.copy_risk_manager._today_utc", return_value="2020-01-01"):
+            allow_live_copy_signal(db, cfg)  # persists a stale (prior-day) trip
+
+        enabled_cfg = {**cfg, "COPY_LIVE_TRADING_ENABLED": True}
+        with patch("src.risk.copy_risk_manager.COPY_LIVE_CAPITAL_USD", 0.0):
+            status = get_live_circuit_breaker_status(db, enabled_cfg)
+        assert status["reason"] == REASON_LIVE_NO_CAPITAL
+
+    def test_capital_configured_falls_through_to_normal_persisted_trip_logic(self):
+        """Regression guard: passing a live_config with trading enabled AND
+        real capital must not disturb the pre-existing persisted-trip
+        reporting -- this test would have caught a sloppy "always skip
+        persisted-trip lookup once live_config is passed" mistake."""
+        store = _FakeConfigStore()
+        db = _mock_live_db_with_config(store, daily_total_pnl=-30.0)
+        cfg = _live_breaker_config(COPY_LIVE_DAILY_LOSS_LIMIT_USD=25.0)
+        with patch("src.risk.copy_risk_manager.COPY_LIVE_CAPITAL_USD", CAPITAL), \
+             patch("src.risk.copy_risk_manager._today_utc", return_value="2026-10-10"):
+            allow_live_copy_signal(db, cfg)
+            enabled_cfg = {**cfg, "COPY_LIVE_TRADING_ENABLED": True}
+            status = get_live_circuit_breaker_status(db, enabled_cfg)
+        assert status["tripped"] is True
+        assert status["reason"] == REASON_LIVE_DAILY_LOSS
+        assert status["trip_utc_date"] == "2026-10-10"
+
+
 # ----------------------------------------------------------------------
 # Issue #1300: fail closed without capital, and a manual clear that moves
 # a baseline rather than erasing history.
@@ -748,9 +828,11 @@ class TestLiveBreakerFailsClosedWithoutCapital:
         with patch("src.risk.copy_risk_manager.COPY_LIVE_CAPITAL_USD", 0.0):
             allow_live_copy_signal(db, _live_breaker_config())
         assert store._store == {}
-        # The status getter is deliberately out of scope for this reason
-        # (see get_live_circuit_breaker_status's own docstring) -- nothing
-        # was ever written, so it still reports not-tripped.
+        # Nothing was ever written to bot_config for this reason -- the
+        # status getter reports it live (see TestGetLiveCircuitBreakerStatusNoCapital)
+        # only when given a live_config saying trading is enabled; called
+        # with just a db handle (no live_config), it still reports
+        # not-tripped, since there is no persisted row to find.
         assert get_live_circuit_breaker_status(db)["tripped"] is False
 
     def test_allows_normal_evaluation_once_capital_is_configured(self):

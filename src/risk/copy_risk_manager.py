@@ -78,7 +78,11 @@ default in ``src/config.py``) silently skipped the drawdown check instead
 of refusing -- a deploy that loses that env var quietly disarmed the
 stricter of the two live limits. It now refuses outright
 (``REASON_LIVE_NO_CAPITAL``) before even looking at PnL or the persisted
-trip, whenever ``COPY_LIVE_CAPITAL_USD <= 0``. Second: :func:`reset_live_circuit_breaker`
+trip, whenever ``COPY_LIVE_CAPITAL_USD <= 0``. :func:`get_live_circuit_breaker_status`
+reports this state too (PR #1356 review) when given a *live_config* that
+says trading is enabled -- the dashboard surfaces it exactly like a
+PnL-derived trip, not just via the per-attempt
+``copy_live_positions.rejected_reason``. Second: :func:`reset_live_circuit_breaker`
 used to clear the persisted trip and nothing else, which for a
 drawdown-driven trip was a no-op in practice -- the very next call would
 recompute the same all-time cumulative loss and re-trip immediately.
@@ -353,7 +357,7 @@ def reset_live_circuit_breaker(db: "Database", live_config: "dict | None" = None
     return True
 
 
-def get_live_circuit_breaker_status(db: "Database") -> dict:
+def get_live_circuit_breaker_status(db: "Database", live_config: "dict | None" = None) -> dict:
     """Read-only accessor for the live breaker's current trip state (issue
     #1348) -- exposed to the dashboard via ``GET
     /api/copy-trading/live-breaker`` (``src/dashboard/api.py``), mirroring
@@ -370,15 +374,34 @@ def get_live_circuit_breaker_status(db: "Database") -> dict:
     a missing DB, missing config row, or corrupt JSON blob all degrade to
     ``tripped=False``, never a 500.
 
-    **Deliberately does NOT report ``REASON_LIVE_NO_CAPITAL`` (issue
-    #1300).** That refusal is a structural misconfiguration, not a
-    persisted trip -- it is never written to ``bot_config`` (see
-    :func:`allow_live_copy_signal`'s own docstring), so there is nothing
-    for this getter to read. It is visible instead the same way the other
-    two reasons already are per-attempt: ``copy_live_positions.rejected_reason``
-    via ``copy_signal_loop.py``'s existing ``live_gate_reason`` mechanism.
+    **Also reports ``REASON_LIVE_NO_CAPITAL`` (issue #1300, PR #1356
+    review).** That refusal is a structural misconfiguration, not a
+    persisted trip -- there is no ``bot_config`` row for it (see
+    :func:`allow_live_copy_signal`'s own docstring) -- but the acceptance
+    criterion "a tripped breaker is visible without reading the database"
+    applies to it exactly as much as to the PnL-derived trips, per the
+    issue's own wording ("not only in
+    ``copy_live_positions.rejected_reason``"). Checked FIRST, ahead of the
+    persisted-trip lookup, mirroring :func:`allow_live_copy_signal`'s own
+    check order: when *live_config* says ``COPY_LIVE_TRADING_ENABLED`` is
+    true AND ``COPY_LIVE_CAPITAL_USD <= 0``, this returns
+    ``{"tripped": True, "reason": REASON_LIVE_NO_CAPITAL, "tripped_at": None,
+    "trip_utc_date": None}`` -- ``reason_text`` (``src/dashboard/api.py``)
+    spells out that it is measuring against an invalid/zero capital figure.
+    *live_config* is optional (``None`` -> ``{}``, i.e. "trading not
+    enabled") so existing callers that only have a ``Database`` handle keep
+    the pre-#1300 behavior unchanged; the dashboard endpoint passes the
+    real ``get_live_config(db)``.
     """
     empty = {"tripped": False, "reason": None, "tripped_at": None, "trip_utc_date": None}
+
+    cfg = live_config or {}
+    if cfg.get("COPY_LIVE_TRADING_ENABLED") and COPY_LIVE_CAPITAL_USD <= 0:
+        return {
+            "tripped": True, "reason": REASON_LIVE_NO_CAPITAL,
+            "tripped_at": None, "trip_utc_date": None,
+        }
+
     persisted = _read_live_breaker_trip(db)
     if persisted is None:
         return empty

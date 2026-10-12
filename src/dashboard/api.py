@@ -3534,12 +3534,21 @@ def copy_trading_live_breaker_status() -> CopyLiveBreakerStatusOut:
     No 503 for "never tripped" -- that is the normal, expected state, same
     no-404/503-for-absent-data convention as ``copy_trading_balance_drift``
     immediately above.
+
+    **Also surfaces the no-capital fail-closed state (issue #1300, PR
+    #1356 review).** Passes ``get_live_config(db)`` through so
+    ``get_live_circuit_breaker_status`` can report
+    ``REASON_LIVE_NO_CAPITAL`` when live trading is enabled but
+    ``COPY_LIVE_CAPITAL_USD <= 0`` -- the acceptance criterion "visible
+    without reading the database" applies to that case the same as the
+    pre-existing PnL-derived trips, not just via the per-row
+    ``rejected_reason`` label.
     """
     if _db is None:
         raise HTTPException(status_code=503, detail="Database not initialised")
 
     from src.risk.copy_risk_manager import get_live_circuit_breaker_status
-    status = get_live_circuit_breaker_status(_db)
+    status = get_live_circuit_breaker_status(_db, get_live_config(_db))
     reason_text = _LIVE_CIRCUIT_BREAKER_REASON_TEXT.get(status["reason"]) if status["reason"] else None
     return CopyLiveBreakerStatusOut(**status, reason_text=reason_text)
 
