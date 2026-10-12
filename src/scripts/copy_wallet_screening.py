@@ -520,6 +520,27 @@ def run(
 
     db = db or Database()
 
+    # Issue #1256: also screen every followed wallet (any status) that is
+    # not already in the leaderboard list, so copy_wallet_health.py always
+    # compares fresh rows. These do not count toward --top / the
+    # MAX_WALLETS_PER_RUN cap (applied to the leaderboard list above).
+    seen = {a.lower() for a in addresses}
+    n_off_leaderboard = 0
+    try:
+        followed = db.get_followed_wallets()
+    except Exception as e:
+        log.warning(
+            "[copy-wallet-screening] could not read followed wallets (%s) -- "
+            "screening leaderboard wallets only.", e,
+        )
+        followed = []
+    for w in followed:
+        addr = w.get("address")
+        if addr and addr.lower() not in seen:
+            seen.add(addr.lower())
+            addresses.append(addr)
+            n_off_leaderboard += 1
+
     # Issue #1248: resolved once per run, not once per wallet -- mirrors
     # resolution_cache below and copy_wallet_health.py's own threshold read.
     min_resolved_trades = _min_resolved_trades_threshold(db)
@@ -635,8 +656,10 @@ def run(
             )
 
     log.info(
-        "[copy-wallet-screening] screened %s/%s wallets (window=%s, top=%s, errors=%s).",
+        "[copy-wallet-screening] screened %s/%s wallets (window=%s, top=%s, errors=%s, "
+        "followed_off_leaderboard=%s).",
         n_screened, len(addresses), window, effective_top, n_errors,
+        n_off_leaderboard,
     )
     log.info(
         "[copy-wallet-screening] resolution cache: %s hits, %s misses.",
