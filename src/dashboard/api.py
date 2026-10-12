@@ -63,6 +63,7 @@ from src.config import (
     EMOS_DEFAULT_MODE, CONFIG_DEFAULTS, get_live_config, station_city,
     MODEL_PROB_CAP, METAR_SKIP_STATIONS,
     COPY_TRADING_CAPITAL_USD, COPY_LIVE_CAPITAL_USD,
+    live_exposure_drawdown_bound_error,
 )
 from src.model.residual_correction import (
     compute_residual_stats,
@@ -4496,6 +4497,39 @@ def _validate_capital_ceiling(key: str, value: float) -> "str | None":
     return None
 
 
+def _validate_live_exposure_drawdown_bound(
+    key: str, value: float, live: dict
+) -> "str | None":
+    """Issue #1310: enforce exposure <= capital x drawdown-stop on live writes.
+
+    Applies when either COPY_LIVE_MAX_TOTAL_EXPOSURE_USD or
+    COPY_LIVE_DRAWDOWN_STOP_PCT is being written; the other value comes from
+    the current live config. Closes the "tighten at boot, loosen mid-run" gap
+    left by the startup-only check. Skipped when COPY_LIVE_CAPITAL_USD <= 0
+    (live unconfigured: the live loop refuses to run on its own, and this
+    keeps unrelated paper-only deployments able to edit the drawdown stop).
+    """
+    if key not in ("COPY_LIVE_MAX_TOTAL_EXPOSURE_USD", "COPY_LIVE_DRAWDOWN_STOP_PCT"):
+        return None
+    if COPY_LIVE_CAPITAL_USD <= 0:
+        return None
+    try:
+        if key == "COPY_LIVE_MAX_TOTAL_EXPOSURE_USD":
+            max_total = value
+            stop_pct = float(live.get(
+                "COPY_LIVE_DRAWDOWN_STOP_PCT", CONFIG_DEFAULTS["COPY_LIVE_DRAWDOWN_STOP_PCT"]))
+        else:
+            stop_pct = value
+            max_total = float(live.get(
+                "COPY_LIVE_MAX_TOTAL_EXPOSURE_USD", CONFIG_DEFAULTS["COPY_LIVE_MAX_TOTAL_EXPOSURE_USD"]))
+    except (TypeError, ValueError):
+        return None
+    err = live_exposure_drawdown_bound_error(max_total, COPY_LIVE_CAPITAL_USD, stop_pct)
+    if err:
+        return f"Rejected {key}={value:g}: {err} Adjust the other value first."
+    return None
+
+
 def _typed_value(key: str, raw: str) -> Any:
     """Cast raw DB string to the correct Python type for the API response."""
     meta = _CONFIG_META.get(key, {})
@@ -4584,6 +4618,10 @@ def patch_config(req: ConfigPatchRequest) -> dict:
         ceiling_err = _validate_capital_ceiling(key, typed_value)
         if ceiling_err:
             raise HTTPException(status_code=400, detail=ceiling_err)
+        bound_err = _validate_live_exposure_drawdown_bound(
+            key, typed_value, get_live_config(_db))
+        if bound_err:
+            raise HTTPException(status_code=400, detail=bound_err)
 
     _db.set_config(key, serialised)
 

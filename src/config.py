@@ -302,6 +302,33 @@ COPY_TRADING_CAPITAL_USD = float(os.getenv("COPY_TRADING_CAPITAL_USD", "100.0"))
 # time yet -- that's epic H's (#1159) job.
 COPY_LIVE_CAPITAL_USD = float(os.getenv("COPY_LIVE_CAPITAL_USD", "0.0"))
 
+
+def live_exposure_drawdown_bound_error(
+    max_total_exposure_usd: float, capital_usd: float, drawdown_stop_pct: float
+) -> "str | None":
+    """Return an error message if the live exposure cap outruns the drawdown stop.
+
+    Issue #1310 invariant: ``COPY_LIVE_MAX_TOTAL_EXPOSURE_USD <=
+    COPY_LIVE_CAPITAL_USD * COPY_LIVE_DRAWDOWN_STOP_PCT``. The live drawdown
+    breaker only sees *settled* P&L, so the worst case "every open unsettled
+    position is a total loss" must land at (never past) the stop threshold.
+    Shared by ``live_startup_sanity_check`` and the dashboard config write
+    path so the two can never drift. Pure function (no module state).
+    """
+    bound = capital_usd * drawdown_stop_pct
+    # Tiny epsilon so exact-boundary values survive float rounding.
+    if max_total_exposure_usd > bound + 1e-9:
+        return (
+            f"COPY_LIVE_MAX_TOTAL_EXPOSURE_USD (${max_total_exposure_usd:.2f}) exceeds "
+            f"COPY_LIVE_CAPITAL_USD (${capital_usd:.2f}) x "
+            f"COPY_LIVE_DRAWDOWN_STOP_PCT ({drawdown_stop_pct:g}) = ${bound:.2f}: "
+            "the drawdown breaker only sees settled P&L, so unsettled live "
+            "exposure must not exceed the stop threshold "
+            "(COPY_LIVE_MAX_TOTAL_EXPOSURE_USD <= COPY_LIVE_CAPITAL_USD x "
+            "COPY_LIVE_DRAWDOWN_STOP_PCT)."
+        )
+    return None
+
 # Copy-signal poll loop cadence (issue #1123). Unlike Epic A's screening
 # cadence (a systemd oneshot, not live-editable), src/scripts/copy_signal_loop.py
 # is a genuine persistent process like run.py -- POLL_INTERVAL_SECONDS is its
