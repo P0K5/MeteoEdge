@@ -68,7 +68,9 @@ from src.model.residual_correction import (
     compute_residual_stats,
     compute_residual_stats_per_pair,
 )
-from src.risk.copy_risk_manager import REASON_LIVE_DAILY_LOSS, REASON_LIVE_DRAWDOWN
+from src.risk.copy_risk_manager import (
+    REASON_LIVE_DAILY_LOSS, REASON_LIVE_DRAWDOWN, REASON_LIVE_NO_CAPITAL,
+)
 from src.data.archive_db import ArchiveDatabase
 from src.data.db import Database, compute_win_rate
 from src.data.nws import fetch_nws_forecast_high
@@ -3532,12 +3534,21 @@ def copy_trading_live_breaker_status() -> CopyLiveBreakerStatusOut:
     No 503 for "never tripped" -- that is the normal, expected state, same
     no-404/503-for-absent-data convention as ``copy_trading_balance_drift``
     immediately above.
+
+    **Also surfaces the no-capital fail-closed state (issue #1300, PR
+    #1356 review).** Passes ``get_live_config(db)`` through so
+    ``get_live_circuit_breaker_status`` can report
+    ``REASON_LIVE_NO_CAPITAL`` when live trading is enabled but
+    ``COPY_LIVE_CAPITAL_USD <= 0`` -- the acceptance criterion "visible
+    without reading the database" applies to that case the same as the
+    pre-existing PnL-derived trips, not just via the per-row
+    ``rejected_reason`` label.
     """
     if _db is None:
         raise HTTPException(status_code=503, detail="Database not initialised")
 
     from src.risk.copy_risk_manager import get_live_circuit_breaker_status
-    status = get_live_circuit_breaker_status(_db)
+    status = get_live_circuit_breaker_status(_db, get_live_config(_db))
     reason_text = _LIVE_CIRCUIT_BREAKER_REASON_TEXT.get(status["reason"]) if status["reason"] else None
     return CopyLiveBreakerStatusOut(**status, reason_text=reason_text)
 
@@ -3555,13 +3566,22 @@ def copy_trading_live_breaker_reset() -> CopyFollowResultOut:
 
     Paper's breaker is untouched -- there is no paper equivalent of this
     endpoint, by design (issue #1348 explicitly scopes paper out).
+
+    **Moves the drawdown baseline forward (issue #1300).** Passes the
+    current ``get_live_config(db)`` through so ``reset_live_circuit_breaker``
+    can record the cumulative P&L figure (measured against whatever
+    baseline was already in effect) in its audit log line, and so the
+    drawdown breaker is measured against realized P&L accrued since this
+    clear from here on -- no ``copy_live_positions`` row is read for
+    writing or mutated by this endpoint.
     """
     if _db is None:
         raise HTTPException(status_code=503, detail="Database not initialised")
 
     from src.risk.copy_risk_manager import reset_live_circuit_breaker
     try:
-        cleared = reset_live_circuit_breaker(_db)
+        live_cfg = get_live_config(_db)
+        cleared = reset_live_circuit_breaker(_db, live_cfg)
     except Exception as e:  # noqa: BLE001 — surface as a structured refusal, never a bare 500
         logger.exception("copy_trading_live_breaker_reset: reset_live_circuit_breaker raised")
         return CopyFollowResultOut(success=False, message=f"Reset failed: {e}")
@@ -3658,6 +3678,9 @@ def _is_live_post_submission_rejection(reason: "str | None") -> bool:
 _LIVE_CIRCUIT_BREAKER_REASON_TEXT = {
     REASON_LIVE_DAILY_LOSS: "the live daily loss limit was reached",
     REASON_LIVE_DRAWDOWN: "the live drawdown stop was reached",
+    # issue #1300: COPY_LIVE_CAPITAL_USD <= 0 while live trading is enabled
+    # -- fails closed rather than silently skipping the drawdown check.
+    REASON_LIVE_NO_CAPITAL: "COPY_LIVE_CAPITAL_USD is not configured (<= 0) -- set it and restart",
 }
 
 # Plain-language text for the remaining (non-circuit-breaker) gate-skip

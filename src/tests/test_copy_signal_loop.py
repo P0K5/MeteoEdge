@@ -981,6 +981,8 @@ class TestLiveExecution:
             return_value=resolution,
         ), patch(
             "src.scripts.copy_signal_loop.COPY_LIVE_CAPITAL_USD", live_capital_usd,
+        ), patch(
+            "src.risk.copy_risk_manager.COPY_LIVE_CAPITAL_USD", live_capital_usd,
         ):
             run_cycle(db, clob_client_factory=clob_client_factory)
 
@@ -1346,6 +1348,8 @@ class TestPerWalletLiveOptIn:
             return_value=resolution,
         ), patch(
             "src.scripts.copy_signal_loop.COPY_LIVE_CAPITAL_USD", live_capital_usd,
+        ), patch(
+            "src.risk.copy_risk_manager.COPY_LIVE_CAPITAL_USD", live_capital_usd,
         ):
             run_cycle(db, clob_client_factory=clob_client_factory)
 
@@ -1425,7 +1429,17 @@ class TestLiveCircuitBreaker:
 
     def _run(
         self, db, raw_trades, live_config=None, resolution=None, live_capital_usd=250.0,
+        risk_manager_capital_usd=None,
     ):
+        # issue #1300: allow_live_copy_signal now fails closed when
+        # src.risk.copy_risk_manager's own COPY_LIVE_CAPITAL_USD binding is
+        # <= 0, so every live-breaker scenario below needs it patched to a
+        # real value too -- not just copy_signal_loop's own binding (used
+        # by the unrelated exposure sanity check). *risk_manager_capital_usd*
+        # defaults to *live_capital_usd* (keeping them in sync, the common
+        # case) but can be set independently for a test that deliberately
+        # wants a specific drawdown denominator without also perturbing the
+        # exposure sanity check's own capital figure.
         with patch(
             "src.scripts.copy_signal_loop.get_live_config",
             return_value=live_config if live_config is not None else _live_enabled_config(),
@@ -1437,6 +1451,9 @@ class TestLiveCircuitBreaker:
             return_value=resolution,
         ), patch(
             "src.scripts.copy_signal_loop.COPY_LIVE_CAPITAL_USD", live_capital_usd,
+        ), patch(
+            "src.risk.copy_risk_manager.COPY_LIVE_CAPITAL_USD",
+            risk_manager_capital_usd if risk_manager_capital_usd is not None else live_capital_usd,
         ):
             run_cycle(db)
 
@@ -1473,10 +1490,18 @@ class TestLiveCircuitBreaker:
         live_config = _live_enabled_config(
             COPY_LIVE_DAILY_LOSS_LIMIT_USD=999.0, COPY_LIVE_DRAWDOWN_STOP_PCT=0.20,
         )
-        with patch("src.risk.copy_risk_manager.COPY_LIVE_CAPITAL_USD", 100.0), patch(
+        with patch(
             "src.scripts.copy_signal_loop.execute_live_copy_order",
         ) as mock_exec:
-            self._run(db, [_buy_raw()], live_config=live_config, resolution=None)
+            # risk_manager_capital_usd=100.0 so the drawdown is a clean 50%
+            # against the 20% stop, while live_capital_usd stays at _run's
+            # own 250.0 default so copy_signal_loop's unrelated exposure
+            # sanity check still passes (issue #1300: the two bindings are
+            # now kept independently overridable -- see _run's docstring).
+            self._run(
+                db, [_buy_raw()], live_config=live_config, resolution=None,
+                risk_manager_capital_usd=100.0,
+            )
 
         mock_exec.assert_not_called()
         db.update_copy_live_position_status.assert_called_once_with(
@@ -1608,6 +1633,8 @@ class TestWalletAutoPauseHaltsLiveExecution:
             return_value=resolution,
         ), patch(
             "src.scripts.copy_signal_loop.COPY_LIVE_CAPITAL_USD", live_capital_usd,
+        ), patch(
+            "src.risk.copy_risk_manager.COPY_LIVE_CAPITAL_USD", live_capital_usd,
         ):
             run_cycle(db, clob_client_factory=clob_client_factory)
 
@@ -1728,6 +1755,8 @@ class TestPaperIndependentOfLive:
         ), patch(
             "src.scripts.copy_signal_loop.COPY_LIVE_CAPITAL_USD", live_capital_usd,
         ), patch(
+            "src.risk.copy_risk_manager.COPY_LIVE_CAPITAL_USD", live_capital_usd,
+        ), patch(
             "src.execution.live_trader.LiveTrader.place_order",
             return_value="oid-independent",
         ), patch(
@@ -1769,6 +1798,8 @@ class TestPaperIndependentOfLive:
         ), patch(
             "src.scripts.copy_signal_loop.COPY_LIVE_CAPITAL_USD", 250.0,
         ), patch(
+            "src.risk.copy_risk_manager.COPY_LIVE_CAPITAL_USD", 250.0,
+        ), patch(
             "src.execution.live_trader.LiveTrader.place_order",
             side_effect=RuntimeError("insufficient balance"),
         ):
@@ -1797,6 +1828,8 @@ class TestPaperIndependentOfLive:
             "src.scripts.copy_signal_loop.fetch_market_resolution", return_value=None,
         ), patch(
             "src.scripts.copy_signal_loop.COPY_LIVE_CAPITAL_USD", 250.0,
+        ), patch(
+            "src.risk.copy_risk_manager.COPY_LIVE_CAPITAL_USD", 250.0,
         ), patch(
             "src.scripts.copy_signal_loop.execute_live_copy_order",
             return_value={"status": "filled", "order_id": "oid-live", "fill_price": 0.41},
@@ -1836,6 +1869,8 @@ class TestPaperIndependentOfLive:
             "src.scripts.copy_signal_loop.fetch_market_resolution", return_value=None,
         ), patch(
             "src.scripts.copy_signal_loop.COPY_LIVE_CAPITAL_USD", 250.0,
+        ), patch(
+            "src.risk.copy_risk_manager.COPY_LIVE_CAPITAL_USD", 250.0,
         ), patch(
             "src.scripts.copy_signal_loop.execute_live_copy_order",
         ) as mock_exec:

@@ -17,7 +17,8 @@ Covers:
   default.
 - GET /api/copy-trading/live-breaker and
   POST /api/copy-trading/live-breaker/reset (issue #1348): the LIVE
-  circuit breaker's current trip state and manual-reset control.
+  circuit breaker's current trip state and manual-reset control; plus the
+  reset endpoint also moving the drawdown baseline forward (issue #1300).
 """
 from __future__ import annotations
 
@@ -580,6 +581,38 @@ class TestLiveBreakerEndpoints:
             "tripped_at": None, "trip_utc_date": None,
         }
 
+    def test_no_capital_fail_closed_is_visible_without_a_persisted_trip(self, api_client):
+        """PR #1356 review feedback: the no-capital fail-closed state
+        (issue #1300) must be visible on this same dashboard surface, not
+        only via the per-row rejected_reason -- end-to-end through the
+        real endpoint + get_live_config(db), no bot_config row involved."""
+        from unittest.mock import patch
+
+        client, db = api_client
+        db.set_config("COPY_LIVE_TRADING_ENABLED", "true")
+
+        with patch("src.risk.copy_risk_manager.COPY_LIVE_CAPITAL_USD", 0.0):
+            resp = client.get("/api/copy-trading/live-breaker")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["tripped"] is True
+        assert body["reason"] == "live_circuit_breaker_no_capital"
+        assert "capital" in body["reason_text"].lower()
+        assert body["tripped_at"] is None
+        assert body["trip_utc_date"] is None
+
+    def test_no_capital_fail_closed_not_reported_when_trading_disabled(self, api_client):
+        """Gated on COPY_LIVE_TRADING_ENABLED (seeded False by default),
+        not just capital<=0 -- regression guard for the existing
+        default-capital=0.0 test-suite fixtures."""
+        from unittest.mock import patch
+
+        client, _db = api_client
+        with patch("src.risk.copy_risk_manager.COPY_LIVE_CAPITAL_USD", 0.0):
+            resp = client.get("/api/copy-trading/live-breaker")
+        assert resp.status_code == 200
+        assert resp.json()["tripped"] is False
+
     def test_tripped_returns_reason_text_and_timestamp(self, api_client):
         import json
         from datetime import datetime, timezone
@@ -644,3 +677,29 @@ class TestLiveBreakerEndpoints:
         body = resp.json()
         assert body["success"] is True
         assert "not tripped" in body["message"].lower()
+
+    def test_reset_persists_a_drawdown_clear_baseline(self, api_client):
+        """Issue #1300: the reset endpoint now passes get_live_config(db)
+        through to reset_live_circuit_breaker, which moves the drawdown's
+        measurement baseline forward to the moment of the clear."""
+        import json
+        from datetime import datetime, timezone
+
+        client, db = api_client
+        from src.risk.copy_risk_manager import (
+            _LIVE_BREAKER_STATE_KEY, _LIVE_DRAWDOWN_CLEAR_BASELINE_KEY,
+        )
+        db.set_config(_LIVE_BREAKER_STATE_KEY, json.dumps({
+            "tripped_at": "2026-10-10T12:00:00+00:00",
+            "reason": "live_circuit_breaker_drawdown",
+            "trip_utc_date": datetime.now(timezone.utc).date().isoformat(),
+        }))
+        assert not db.get_config(_LIVE_DRAWDOWN_CLEAR_BASELINE_KEY)
+
+        resp = client.post("/api/copy-trading/live-breaker/reset")
+        assert resp.status_code == 200
+        assert resp.json()["success"] is True
+
+        baseline = db.get_config(_LIVE_DRAWDOWN_CLEAR_BASELINE_KEY)
+        assert baseline  # non-empty -- a real ISO-8601 timestamp was persisted
+        datetime.fromisoformat(baseline)  # must parse cleanly
