@@ -319,6 +319,27 @@ class TestPatchConfigEndpoint:
         assert "type" in data
         assert data["type"] == "float"
 
+    def test_lowering_live_exposure_cap_below_existing_stake_always_succeeds(self, api_client):
+        """Issue #1266 decision (docs/design/copy-trading-live-views.md,
+        2026-10-05): lowering COPY_LIVE_MAX_EXPOSURE_PER_WALLET_USD below an
+        already-opted-in wallet's resolved live stake is surfaced, never
+        refused -- the cap is itself the safety control, and refusing to
+        *tighten* a safety limit would be exactly backwards. The save
+        succeeds; the stranded wallet's eligibility derivation (tested in
+        test_copy_trading_followed_wallets_api.py) picks up the new,
+        distinct "stake exceeds cap" reason on its very next fetch."""
+        client, db = api_client
+        db.insert_followed_wallet(address="0xW", stake_per_trade=20.0, added_at="2026-09-01T00:00:00Z")
+        db.set_followed_wallet_live_enabled("0xW", True)
+        # 20.0 is below the current (default 50.0) cap -- fine for now.
+
+        resp = client.patch(
+            "/api/config", json={"key": "COPY_LIVE_MAX_EXPOSURE_PER_WALLET_USD", "value": 10.0},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["value"] == pytest.approx(10.0)
+        assert db.get_config("COPY_LIVE_MAX_EXPOSURE_PER_WALLET_USD") == "10.0"
+
 
 # ---------------------------------------------------------------------------
 # _db=None guard — both config endpoints must return 503, not 500

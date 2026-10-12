@@ -2897,12 +2897,14 @@ def copy_trading_follow_wallet(address: str, req: CopyFollowRequest) -> CopyFoll
 
 def _derive_live_eligibility(
     db, wallet: dict, *, live_trading_enabled: bool, live_cap_usd: float,
-    live_config_available: bool,
+    live_config_available: bool, resolved_live_stake: float,
 ) -> tuple[bool, str]:
     """Confirmed derivation (issue #1187, no new schema): LIVE requires the
     global switch on AND this wallet's own live opt-in flag on (issue
-    #1253) AND this wallet's current committed live exposure below its
-    per-wallet cap AND the wallet's paper status is ``active``.
+    #1253) AND this wallet's resolved live stake (issue #1259) not itself
+    exceeding the per-wallet cap (issue #1266) AND this wallet's current
+    committed live exposure below that same cap AND the wallet's paper
+    status is ``active``.
 
     Checked in this order, deterministic facts first: a ``paused`` wallet
     is always PAPER regardless of the global switch (it executes nothing
@@ -2916,6 +2918,18 @@ def _derive_live_eligibility(
     query failure) -- never guess LIVE when the source of truth is
     unavailable, mirroring the ``execution_mode`` fallback rule used
     elsewhere in this file.
+
+    The resolved-stake-exceeds-cap check (issue #1266) sits ahead of the
+    transient exposure-reached check below but behind "global switch off"
+    -- decided in ``docs/design/copy-trading-live-views.md`` (2026-10-05):
+    stake-exceeds-cap is a permanent, wallet-specific misconfiguration (no
+    order can ever place at any exposure level until the stake is lowered
+    or the cap is raised) and must not be hidden behind the transient
+    cap-reached reason, which is exactly the silent-trap issue #1266 was
+    filed about. But the global switch is a platform-wide precondition,
+    not a fact about this wallet, so it still wins when it's off -- telling
+    an operator about their own wallet's stake-vs-cap mismatch while the
+    switch is off would point them at the wrong lever.
     """
     if wallet["status"] == "paused":
         return False, "this wallet is paused"
@@ -2925,6 +2939,8 @@ def _derive_live_eligibility(
         return False, "the live status could not be determined"
     if not live_trading_enabled:
         return False, "live trading is currently off"
+    if resolved_live_stake > live_cap_usd:
+        return False, "this wallet's live stake exceeds its live exposure cap"
 
     try:
         exposure = sum(
@@ -2997,21 +3013,24 @@ def copy_trading_followed_wallets() -> CopyFollowedWalletsOut:
             # the live_eligible_count branch below.
             live_opted_in_count += 1
 
+        # Issue #1259: resolved live stake -- COALESCE(live_stake_per_trade,
+        # stake_per_trade) -- and whether that resolution came from an
+        # explicit override. Never null in the response. Computed before
+        # _derive_live_eligibility below (issue #1266) since the derivation
+        # itself now needs the resolved value, not just the raw column.
+        raw_live_stake = w.get("live_stake_per_trade")
+        live_stake_is_override = raw_live_stake is not None
+        resolved_live_stake = raw_live_stake if live_stake_is_override else w["stake_per_trade"]
+
         live_eligible, live_status_reason = _derive_live_eligibility(
             _db, w,
             live_trading_enabled=live_trading_enabled,
             live_cap_usd=live_cap_usd,
             live_config_available=live_config_available,
+            resolved_live_stake=resolved_live_stake,
         )
         if live_eligible:
             live_eligible_count += 1
-
-        # Issue #1259: resolved live stake -- COALESCE(live_stake_per_trade,
-        # stake_per_trade) -- and whether that resolution came from an
-        # explicit override. Never null in the response.
-        raw_live_stake = w.get("live_stake_per_trade")
-        live_stake_is_override = raw_live_stake is not None
-        resolved_live_stake = raw_live_stake if live_stake_is_override else w["stake_per_trade"]
 
         pnl_row = pnl_by_wallet.get(w["address"])
         wallets.append(CopyFollowedWalletOut(
@@ -3208,19 +3227,26 @@ def copy_trading_update_wallet_live_stake(
     #1259) -- independent of the paper stake endpoint above, following the
     same conventions (``CopyFollowResultOut`` response, 404-as-a-structured-
     refusal rather than an HTTP 404, mirroring ``copy_trading_update_wallet_stake``,
-    not the 404/409 style ``copy_trading_set_wallet_live_enabled`` uses).
+    not the 404/409 style ``copy_trading_set_wallet_live_enabled`` uses) --
+    *except* for the cap guard below, which uses an actual 409 per issue
+    #1266's acceptance criteria.
 
     ``req.stake is None`` explicitly resets to "same as the paper stake"
     (``Database.set_followed_wallet_live_stake``'s ``None``-clears contract)
     -- a deliberate action, not just "no value supplied" (the field is
     required in the request body). Any non-``None`` value is validated
-    exactly like the paper stake endpoint: finite and ``> 0``. Unlike the
-    paper endpoint, this does not re-check the value against
-    COPY_LIVE_MAX_EXPOSURE_PER_WALLET_USD -- that cap already bounds the
-    wallet's *open committed exposure* at order time (``_handle_live_order``),
-    not the configured per-trade stake value itself, and the issue's own
-    validation requirement is just "finite and > 0", mirroring here would
-    add an untested, unspecified refusal path.
+    exactly like the paper stake endpoint: finite and ``> 0``.
+
+    Issue #1266: a stake above ``COPY_LIVE_MAX_EXPOSURE_PER_WALLET_USD`` is
+    now refused at set-time with a 409, naming both numbers and the
+    consequence plainly -- without this, the value was previously accepted
+    (only "finite and > 0", per #1259's own acceptance criteria) and the
+    wallet would then report LIVE while silently never being able to place
+    an order, since ``_handle_live_order``'s per-wallet exposure gate
+    (``0 + live_stake > cap``) rejects every attempt at order time. This is
+    a write-time snapshot, not a guarantee -- the cap is live-editable via
+    the dashboard config tab -- so order-time enforcement in
+    ``_handle_live_order`` is unchanged and stays the authoritative check.
     """
     if _db is None:
         raise HTTPException(status_code=503, detail="Database not initialised")
@@ -3243,6 +3269,18 @@ def copy_trading_update_wallet_live_stake(
         return CopyFollowResultOut(
             success=False,
             message=f"Live stake must be a finite positive number in USD, got {req.stake!r}.",
+        )
+
+    live_cfg = get_live_config(_db)
+    live_cap_usd = live_cfg["COPY_LIVE_MAX_EXPOSURE_PER_WALLET_USD"]
+    if req.stake > live_cap_usd:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Refusing to set live stake to ${req.stake:.2f} for {address}: exceeds "
+                f"COPY_LIVE_MAX_EXPOSURE_PER_WALLET_USD (${live_cap_usd:.2f}). This wallet "
+                f"would never be able to place a live order at this stake."
+            ),
         )
 
     _db.set_followed_wallet_live_stake(address, req.stake)

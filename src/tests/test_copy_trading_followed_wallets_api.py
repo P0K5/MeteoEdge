@@ -382,6 +382,91 @@ class TestFollowedWalletsLiveEligibility:
         assert data["live_opted_in_count"] == 1
         assert data["live_eligible_count"] == 0
 
+    def test_live_stake_override_exceeding_cap_is_not_live_eligible_with_distinct_reason(self, api_client):
+        """Issue #1266: a resolved live stake above the per-wallet cap is a
+        permanent misconfiguration, distinct from the transient cap-reached
+        reason -- no order can ever place at any exposure level until the
+        stake is lowered or the cap is raised."""
+        client, db = api_client
+        db.set_config("COPY_LIVE_TRADING_ENABLED", "True")
+        db.set_config("COPY_LIVE_MAX_EXPOSURE_PER_WALLET_USD", "10.0")
+        db.insert_followed_wallet(address="0xW", stake_per_trade=5.0, added_at="2026-09-01T00:00:00Z")
+        db.set_followed_wallet_live_enabled("0xW", True)
+        db.set_followed_wallet_live_stake("0xW", 15.0)
+
+        resp = client.get("/api/copy-trading/followed-wallets")
+        data = resp.json()
+        row = data["wallets"][0]
+        assert row["live_eligible"] is False
+        assert row["live_status_reason"] == "this wallet's live stake exceeds its live exposure cap"
+        assert data["live_opted_in_count"] == 1
+        assert data["live_eligible_count"] == 0
+
+    def test_inherited_paper_stake_exceeding_cap_also_blocked(self, api_client):
+        """The #1266 check uses the *resolved* stake -- COALESCE(live_stake_
+        per_trade, stake_per_trade) -- so a wallet with no live-stake override
+        is caught too when its paper stake itself exceeds the live cap."""
+        client, db = api_client
+        db.set_config("COPY_LIVE_TRADING_ENABLED", "True")
+        db.set_config("COPY_LIVE_MAX_EXPOSURE_PER_WALLET_USD", "10.0")
+        db.insert_followed_wallet(address="0xW", stake_per_trade=15.0, added_at="2026-09-01T00:00:00Z")
+        db.set_followed_wallet_live_enabled("0xW", True)
+
+        resp = client.get("/api/copy-trading/followed-wallets")
+        row = resp.json()["wallets"][0]
+        assert row["live_eligible"] is False
+        assert row["live_status_reason"] == "this wallet's live stake exceeds its live exposure cap"
+
+    def test_stake_exceeds_cap_wins_over_transient_cap_reached_reason(self, api_client):
+        """Ordering (docs/design/copy-trading-live-views.md, 2026-10-05):
+        when both the permanent stake-exceeds-cap condition and the
+        transient exposure-reached condition are true, the permanent reason
+        must win -- otherwise the operator sees a self-resolving reason for
+        a wallet that can never actually place an order."""
+        client, db = api_client
+        db.set_config("COPY_LIVE_TRADING_ENABLED", "True")
+        db.set_config("COPY_LIVE_MAX_EXPOSURE_PER_WALLET_USD", "10.0")
+        db.insert_followed_wallet(address="0xW", stake_per_trade=5.0, added_at="2026-09-01T00:00:00Z")
+        db.set_followed_wallet_live_enabled("0xW", True)
+        db.set_followed_wallet_live_stake("0xW", 15.0)
+        _open_live_position(db, "0xW", stake_usd=10.0)  # also at/over the cap
+
+        resp = client.get("/api/copy-trading/followed-wallets")
+        row = resp.json()["wallets"][0]
+        assert row["live_eligible"] is False
+        assert row["live_status_reason"] == "this wallet's live stake exceeds its live exposure cap"
+
+    def test_global_switch_off_wins_over_stake_exceeds_cap(self, api_client):
+        """Ordering: the global switch is a platform-wide precondition, not
+        a fact about this wallet, so it still takes precedence over the new
+        #1266 check -- pointing the operator at the right lever first."""
+        client, db = api_client
+        db.set_config("COPY_LIVE_MAX_EXPOSURE_PER_WALLET_USD", "10.0")
+        db.insert_followed_wallet(address="0xW", stake_per_trade=5.0, added_at="2026-09-01T00:00:00Z")
+        db.set_followed_wallet_live_enabled("0xW", True)
+        db.set_followed_wallet_live_stake("0xW", 15.0)
+
+        resp = client.get("/api/copy-trading/followed-wallets")
+        row = resp.json()["wallets"][0]
+        assert row["live_eligible"] is False
+        assert row["live_status_reason"] == "live trading is currently off"
+
+    def test_live_stake_exactly_at_cap_is_live_eligible(self, api_client):
+        """Only strictly-above-cap is blocked -- matches
+        _handle_live_order's own '>' comparison, so a stake exactly at the
+        cap is eligible (consistent with the exposure-reached check's own
+        '>=' semantics on open exposure, which is unrelated and unaffected)."""
+        client, db = api_client
+        db.set_config("COPY_LIVE_TRADING_ENABLED", "True")
+        db.set_config("COPY_LIVE_MAX_EXPOSURE_PER_WALLET_USD", "10.0")
+        db.insert_followed_wallet(address="0xW", stake_per_trade=10.0, added_at="2026-09-01T00:00:00Z")
+        db.set_followed_wallet_live_enabled("0xW", True)
+
+        resp = client.get("/api/copy-trading/followed-wallets")
+        row = resp.json()["wallets"][0]
+        assert row["live_eligible"] is True
+        assert row["live_status_reason"] == "eligible for live execution"
+
 
 # ---------------------------------------------------------------------------
 # Resolved live stake + override flag (issue #1259)
@@ -655,6 +740,35 @@ class TestUpdateLiveStakeEndpoint:
         assert body["success"] is False
         wallets = {w["address"]: w for w in db.get_followed_wallets()}
         assert wallets["0xW"]["live_stake_per_trade"] is None  # unchanged
+
+    def test_refuses_stake_exceeding_live_exposure_cap_with_409(self, api_client):
+        """Issue #1266: a stake above COPY_LIVE_MAX_EXPOSURE_PER_WALLET_USD
+        is refused with a 409 (not the usual success=False/200 shape this
+        endpoint otherwise uses) -- the message names both numbers and the
+        consequence plainly."""
+        client, db = api_client
+        db.set_config("COPY_LIVE_MAX_EXPOSURE_PER_WALLET_USD", "10.0")
+        db.insert_followed_wallet(address="0xW", stake_per_trade=5.0, added_at="2026-09-01T00:00:00Z")
+
+        resp = client.patch("/api/copy-trading/wallets/0xW/live-stake", json={"stake": 15.0})
+        assert resp.status_code == 409
+        detail = resp.json()["detail"]
+        assert "15.00" in detail
+        assert "10.00" in detail
+        assert "never" in detail.lower()
+        wallets = {w["address"]: w for w in db.get_followed_wallets()}
+        assert wallets["0xW"]["live_stake_per_trade"] is None  # unchanged
+
+    def test_allows_stake_exactly_at_live_exposure_cap(self, api_client):
+        client, db = api_client
+        db.set_config("COPY_LIVE_MAX_EXPOSURE_PER_WALLET_USD", "10.0")
+        db.insert_followed_wallet(address="0xW", stake_per_trade=5.0, added_at="2026-09-01T00:00:00Z")
+
+        resp = client.patch("/api/copy-trading/wallets/0xW/live-stake", json={"stake": 10.0})
+        assert resp.status_code == 200
+        assert resp.json()["success"] is True
+        wallets = {w["address"]: w for w in db.get_followed_wallets()}
+        assert wallets["0xW"]["live_stake_per_trade"] == 10.0
 
 
 # ---------------------------------------------------------------------------
