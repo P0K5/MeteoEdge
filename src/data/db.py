@@ -600,6 +600,7 @@ CREATE TABLE IF NOT EXISTS copy_positions (
     settled_at       TEXT,
     stuck_level      INTEGER NOT NULL DEFAULT 0,
     stuck_flagged_at TEXT,
+    stuck_category   TEXT,
     abandoned_at     TEXT,
     abandoned_by     TEXT,
     abandon_reason   TEXT,
@@ -906,6 +907,7 @@ class Database:
                 # 'abandoned' terminal audit columns.
                 ("copy_positions", "stuck_level", "INTEGER NOT NULL DEFAULT 0"),
                 ("copy_positions", "stuck_flagged_at", "TEXT"),
+                ("copy_positions", "stuck_category", "TEXT"),
                 ("copy_positions", "abandoned_at", "TEXT"),
                 ("copy_positions", "abandoned_by", "TEXT"),
                 ("copy_positions", "abandon_reason", "TEXT"),
@@ -1426,7 +1428,7 @@ class Database:
             cols = (
                 "id,signal_id,address,market,outcome_index,entry_price,stake_usd,"
                 "entry_ts,status,settled_pnl_usd,settled_at,stuck_level,"
-                "stuck_flagged_at,abandoned_at,abandoned_by,abandon_reason,"
+                "stuck_flagged_at,stuck_category,abandoned_at,abandoned_by,abandon_reason,"
                 "abandon_observed_price"
             )
             self._conn.execute("PRAGMA foreign_keys=OFF")
@@ -1449,6 +1451,7 @@ class Database:
                             settled_at       TEXT,
                             stuck_level      INTEGER NOT NULL DEFAULT 0,
                             stuck_flagged_at TEXT,
+                        stuck_category   TEXT,
                             abandoned_at     TEXT,
                             abandoned_by     TEXT,
                             abandon_reason   TEXT,
@@ -2537,7 +2540,8 @@ class Database:
             self._conn.commit()
 
     def set_copy_position_stuck_level(
-        self, position_id: int, level: int, flagged_at: str
+        self, position_id: int, level: int, flagged_at: str,
+        category: "str | None" = None,
     ) -> None:
         """Record that a still-open position has been escalated to *level*
         (issue #1301). Monotonic and scoped ``status='open'`` so a re-run
@@ -2545,9 +2549,9 @@ class Database:
         bookkeeping only: never changes ``status``."""
         with self._lock:
             self._conn.execute(
-                "UPDATE copy_positions SET stuck_level=?, stuck_flagged_at=? "
-                "WHERE id=? AND status='open' AND stuck_level<?",
-                (level, flagged_at, position_id, level),
+                "UPDATE copy_positions SET stuck_level=?, stuck_flagged_at=?, "
+                "stuck_category=? WHERE id=? AND status='open' AND stuck_level<?",
+                (level, flagged_at, category, position_id, level),
             )
             self._conn.commit()
 
@@ -2580,32 +2584,77 @@ class Database:
             self._conn.commit()
             return cur.rowcount == 1
 
-    def get_copy_unresolved_by_wallet(self, min_age_hours: float) -> dict:
-        """Per-wallet count and stake of ``open`` positions entered more than
-        *min_age_hours* ago, plus abandoned counts (issue #1301):
-        ``{address: {'n_unresolved', 'unresolved_stake_usd', 'n_abandoned',
-        'abandoned_stake_usd'}}``. Lets any per-wallet realized-performance
-        surface state its denominator is incomplete instead of silently
-        omitting these positions."""
+    def settle_copy_position_at_price(
+        self, position_id: int, operator: str, reason: str, observed_price: float,
+        settled_at: str,
+    ) -> bool:
+        """Operator-driven settle at an observed final YES price (issue #1301),
+        e.g. 0.5 for a verified 50/50 void: the loss stays in ROI. Uses the
+        same share math as normal settlement
+        (``compute_pnl_at_observed_price_usd``). Records who/when/why/price in
+        the audit columns. Idempotent (``WHERE status='open'``); returns True
+        only if this call performed the transition. Never called by the settle
+        job."""
+        from src.data.copy_pnl import compute_pnl_at_observed_price_usd
+        if not operator or not operator.strip() or not reason or not reason.strip():
+            raise ValueError("operator and reason are required")
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT entry_price, stake_usd, outcome_index FROM copy_positions "
+                "WHERE id=? AND status='open'", (position_id,),
+            ).fetchone()
+            if row is None:
+                return False
+            pnl = compute_pnl_at_observed_price_usd(
+                entry_price=float(row["entry_price"]), stake_usd=float(row["stake_usd"]),
+                outcome_index=int(row["outcome_index"]), yes_price=observed_price,
+            )
+            cur = self._conn.execute(
+                "UPDATE copy_positions SET status='settled', settled_pnl_usd=?, "
+                "settled_at=?, abandoned_at=?, abandoned_by=?, abandon_reason=?, "
+                "abandon_observed_price=? WHERE id=? AND status='open'",
+                (round(pnl, 6), settled_at, settled_at, operator.strip(),
+                 reason.strip(), observed_price, position_id),
+            )
+            self._conn.commit()
+            return cur.rowcount == 1
+
+    def get_copy_unresolved_by_wallet(self, min_age_hours: float = 48.0) -> dict:
+        """Per-wallet incomplete-denominator counts (issue #1301):
+        ``{address: {n_unresolved, unresolved_stake_usd, n_not_due,
+        n_abandoned, abandoned_stake_usd}}``.
+
+        ``n_unresolved``: open positions already escalated (``stuck_level>=1``,
+        i.e. PAST_END_UNRESOLVED / CLOSED_AMBIGUOUS / UNRETRIEVABLE) -- these
+        are excluded from ROI/win-rate. ``n_not_due``: open, older than
+        *min_age_hours*, not escalated (healthy long-dated markets) -- a plain
+        count so nothing is silently dropped, but not called stuck."""
         cutoff = (datetime.now(timezone.utc) - timedelta(hours=min_age_hours)).isoformat()
         out: dict = {}
+
+        def slot(addr):
+            return out.setdefault(addr, {
+                "n_unresolved": 0, "unresolved_stake_usd": 0.0, "n_not_due": 0,
+                "n_abandoned": 0, "abandoned_stake_usd": 0.0})
+
         with self._lock:
             rows = self._conn.execute(
-                "SELECT address, status, COUNT(*) AS n, SUM(stake_usd) AS stake "
-                "FROM copy_positions WHERE (status='open' AND entry_ts < ?) "
-                "OR status='abandoned' GROUP BY address, status",
+                "SELECT address, "
+                "CASE WHEN status='abandoned' THEN 'abandoned' "
+                "WHEN stuck_level>=1 THEN 'stuck' ELSE 'not_due' END AS k, "
+                "COUNT(*) AS n, SUM(stake_usd) AS stake FROM copy_positions "
+                "WHERE status='abandoned' OR (status='open' AND "
+                "(stuck_level>=1 OR entry_ts < ?)) GROUP BY address, k",
                 (cutoff,),
             ).fetchall()
         for r in rows:
-            d = out.setdefault(
-                r["address"],
-                {"n_unresolved": 0, "unresolved_stake_usd": 0.0,
-                 "n_abandoned": 0, "abandoned_stake_usd": 0.0},
-            )
-            if r["status"] == "open":
+            d = slot(r["address"])
+            if r["k"] == "stuck":
                 d["n_unresolved"], d["unresolved_stake_usd"] = r["n"], r["stake"]
-            else:
+            elif r["k"] == "abandoned":
                 d["n_abandoned"], d["abandoned_stake_usd"] = r["n"], r["stake"]
+            else:
+                d["n_not_due"] = r["n"]
         return out
 
     def get_copy_realized_pnl_by_wallet(self, address: "str | None" = None) -> list[dict]:
@@ -2640,15 +2689,14 @@ class Database:
                     "FROM copy_positions WHERE status='settled' GROUP BY address"
                 )
             rows = [dict(row) for row in cur.fetchall()]
-        # Issue #1301: state the incomplete denominator explicitly. Positions
-        # open past the pathological threshold (and abandoned ones) are in
+        # Escalated (stuck_level>=1) and abandoned positions are in
         # neither n_settled nor total_pnl_usd.
-        from src.data.copy_stuck import PATHOLOGICAL_HOURS
-        unresolved = self.get_copy_unresolved_by_wallet(PATHOLOGICAL_HOURS)
+        unresolved = self.get_copy_unresolved_by_wallet()
         for r in rows:
             u = unresolved.get(r["address"], {})
             r["n_unresolved"] = u.get("n_unresolved", 0)
             r["unresolved_stake_usd"] = u.get("unresolved_stake_usd", 0.0)
+            r["n_not_due"] = u.get("n_not_due", 0)
             r["n_abandoned"] = u.get("n_abandoned", 0)
         return rows
 

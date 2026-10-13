@@ -182,7 +182,8 @@ class TestRunOnceStaleTracking:
         )
         db._conn.commit()
 
-        with patch("src.scripts.copy_settle.fetch_market_resolution", return_value=None):
+        with patch("src.scripts.copy_settle.fetch_market_resolution", return_value=None), \
+             patch("src.scripts.copy_settle.fetch_market_state", return_value=None):
             with caplog.at_level(logging.WARNING, logger="src.scripts.copy_settle"):
                 # Mock datetime.now to match the stale_time scenario
                 with patch("src.scripts.copy_settle.datetime") as mock_dt:
@@ -200,7 +201,8 @@ class TestRunOnceStaleTracking:
 
         # A second run emits no new STUCK warning (already escalated).
         caplog.clear()
-        with patch("src.scripts.copy_settle.fetch_market_resolution", return_value=None):
+        with patch("src.scripts.copy_settle.fetch_market_resolution", return_value=None), \
+             patch("src.scripts.copy_settle.fetch_market_state", return_value=None):
             with caplog.at_level(logging.WARNING, logger="src.scripts.copy_settle"):
                 run_once(db=db)
         assert not [r for r in caplog.records if "STUCK" in r.message]

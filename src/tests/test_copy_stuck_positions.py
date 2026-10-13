@@ -27,9 +27,31 @@ def _seed(db, market="0xm", hours_ago=60.0, address=W, price=0.45, stake=5.0):
     return pid
 
 
-def _run(db):
+def _state(**kw):
+    base = {"closed": False, "end_date": datetime.now(timezone.utc) + timedelta(days=30),
+            "uma": None, "yes_price_cents": 45}
+    base.update(kw)
+    return base
+
+
+NOT_DUE = _state()
+PAST_END = _state(end_date=datetime.now(timezone.utc) - timedelta(hours=60))
+VOID = _state(closed=True, uma="resolved", yes_price_cents=50,
+              end_date=datetime.now(timezone.utc) - timedelta(hours=3))
+
+
+def _run(db, state=NOT_DUE, calls=None):
     esc: list = []
-    with patch("src.scripts.copy_settle.fetch_market_resolution", return_value=None):
+
+    def fake(market):
+        if calls is not None:
+            calls.append(market)
+        if isinstance(state, Exception):
+            raise state
+        return state
+
+    with patch("src.scripts.copy_settle.fetch_market_resolution", return_value=None), \
+         patch("src.scripts.copy_settle.fetch_market_state", side_effect=fake):
         run_once(db=db, escalations=esc)
     return esc
 
@@ -38,49 +60,156 @@ def _status(db, pid):
     return db._conn.execute("SELECT status FROM copy_positions WHERE id=?", (pid,)).fetchone()[0]
 
 
-def test_stuck_position_reported_with_record_and_stays_open():
+def test_long_dated_open_market_is_not_escalated():
     db = Database(":memory:")
-    pid = _seed(db, hours_ago=60)
-    esc = _run(db)
-    assert len(esc) == 1
-    rec = esc[0]
-    assert rec["position_id"] == pid and rec["wallet"] == W and rec["market"] == "0xm"
-    assert rec["category"] == "AGED_48H" and rec["level"] == 1
-    assert 59 < rec["age_hours"] < 61 and rec["entry_price"] == 0.45
+    pid = _seed(db, hours_ago=24 * 20)
+    assert _run(db, NOT_DUE) == []
     assert _status(db, pid) == "open"
 
 
-def test_fresh_position_not_reported():
+def test_past_end_date_unresolved_escalates_from_end_date():
+    db = Database(":memory:")
+    pid = _seed(db, hours_ago=24 * 20)
+    esc = _run(db, PAST_END)
+    assert len(esc) == 1
+    rec = esc[0]
+    assert rec["position_id"] == pid and rec["wallet"] == W and rec["market"] == "0xm"
+    assert rec["category"] == "PAST_END_UNRESOLVED" and rec["level"] == 1
+    assert rec["entry_price"] == 0.45 and rec["age_hours"] > 400
+    assert _status(db, pid) == "open"
+
+
+def test_past_end_under_48h_not_escalated_even_if_position_old():
+    db = Database(":memory:")
+    _seed(db, hours_ago=24 * 20)
+    assert _run(db, _state(end_date=datetime.now(timezone.utc) - timedelta(hours=10))) == []
+
+
+def test_past_end_over_7d_is_level_2():
+    db = Database(":memory:")
+    _seed(db, hours_ago=24 * 20)
+    esc = _run(db, _state(end_date=datetime.now(timezone.utc) - timedelta(days=8)))
+    assert esc[0]["level"] == 2 and esc[0]["step"] == "PATHOLOGICAL_7D"
+
+
+def test_closed_ambiguous_void_escalates_immediately_once():
+    db = Database(":memory:")
+    pid = _seed(db, hours_ago=60)
+    esc = _run(db, VOID)
+    assert [e["category"] for e in esc] == ["CLOSED_AMBIGUOUS"] and esc[0]["level"] == 3
+    assert _run(db, VOID) == [] and _run(db, VOID) == []
+    assert _status(db, pid) == "open"
+
+
+def test_unretrievable_escalates_by_entry_age():
+    db = Database(":memory:")
+    _seed(db, hours_ago=60)
+    esc = _run(db, None)
+    assert esc[0]["category"] == "UNRETRIEVABLE" and esc[0]["level"] == 1
+
+
+def test_state_lookup_failure_does_not_escalate():
+    db = Database(":memory:")
+    _seed(db, hours_ago=60)
+    assert _run(db, RuntimeError("down")) == []
+
+
+def test_under_48h_position_never_fetches_state():
     db = Database(":memory:")
     _seed(db, hours_ago=5)
-    assert _run(db) == []
+    calls: list = []
+    assert _run(db, PAST_END, calls) == [] and calls == []
 
 
-def test_pathological_is_distinct_category():
+def test_one_state_lookup_per_distinct_market():
     db = Database(":memory:")
-    _seed(db, hours_ago=24 * 8)
-    esc = _run(db)
-    assert [e["category"] for e in esc] == ["PATHOLOGICAL_7D"] and esc[0]["level"] == 2
+    _seed(db, market="0xm", hours_ago=60)
+    _seed(db, market="0xm", hours_ago=61)
+    _seed(db, market="0xn", hours_ago=62)
+    calls: list = []
+    _run(db, NOT_DUE, calls)
+    assert sorted(calls) == ["0xm", "0xn"]
 
 
 def test_repeated_runs_do_not_reemit_and_escalation_steps_once():
     db = Database(":memory:")
-    pid = _seed(db, hours_ago=60)
-    assert len(_run(db)) == 1
-    assert _run(db) == [] and _run(db) == []
-    # ages past the pathological threshold -> exactly one more (new level)
-    db._conn.execute("UPDATE copy_positions SET entry_ts=? WHERE id=?", (_iso(24 * 9), pid))
-    db._conn.commit()
-    assert [e["level"] for e in _run(db)] == [2]
-    assert _run(db) == []
+    _seed(db, hours_ago=24 * 20)
+    assert len(_run(db, PAST_END)) == 1
+    assert _run(db, PAST_END) == [] and _run(db, PAST_END) == []
+    esc = _run(db, _state(end_date=datetime.now(timezone.utc) - timedelta(days=9)))
+    assert [e["level"] for e in esc] == [2]
+    assert _run(db, _state(end_date=datetime.now(timezone.utc) - timedelta(days=9))) == []
 
 
-def test_no_path_reaches_abandoned_without_operator():
+def test_no_path_reaches_terminal_state_without_operator():
     db = Database(":memory:")
     pid = _seed(db, hours_ago=24 * 30)
-    for _ in range(5):
-        _run(db)
-        assert _status(db, pid) == "open"
+    for st in (NOT_DUE, PAST_END, VOID, None):
+        for _ in range(3):
+            _run(db, st)
+            assert _status(db, pid) == "open"
+
+
+def test_settle_at_half_for_void_keeps_loss_in_roi_and_is_idempotent():
+    db = Database(":memory:")
+    pid = _seed(db, hours_ago=60, price=0.604, stake=5.0)
+    assert copy_abandon.settle_at_price(db, pid, "andre", "50/50 void", 0.5) is True
+    row = dict(db._conn.execute("SELECT * FROM copy_positions WHERE id=?", (pid,)).fetchone())
+    assert row["status"] == "settled"
+    assert row["settled_pnl_usd"] == pytest.approx(5.0 * (0.5 / 0.604 - 1), abs=1e-5)
+    assert row["abandoned_by"] == "andre" and row["abandon_reason"] == "50/50 void"
+    assert row["abandon_observed_price"] == 0.5 and row["settled_at"]
+    assert copy_abandon.settle_at_price(db, pid, "x", "again", 0.1) is False
+    assert db._conn.execute("SELECT settled_pnl_usd FROM copy_positions WHERE id=?", (pid,)).fetchone()[0] == row["settled_pnl_usd"]
+
+
+def test_settle_at_price_no_side_and_extremes_match_normal_formula():
+    from src.data.copy_pnl import compute_pnl_at_observed_price_usd as f, compute_realized_pnl_usd as g
+    for oi in (0, 1):
+        for yes_won in (True, False):
+            assert f(entry_price=0.4, stake_usd=10, outcome_index=oi, yes_price=1.0 if yes_won else 0.0) \
+                == pytest.approx(g(entry_price=0.4, stake_usd=10, outcome_index=oi, yes_won=yes_won))
+    assert f(entry_price=0.4, stake_usd=10, outcome_index=1, yes_price=0.5) == pytest.approx(10 * (0.5 / 0.4 - 1))
+
+
+def test_settle_at_price_requires_operator_reason_valid_price():
+    db = Database(":memory:")
+    pid = _seed(db)
+    with pytest.raises(ValueError):
+        db.settle_copy_position_at_price(pid, "", "r", 0.5, "t")
+    with pytest.raises(ValueError):
+        db.settle_copy_position_at_price(pid, "op", "r", 1.5, "t")
+    assert _status(db, pid) == "open"
+
+
+def test_fetch_market_state_queries_both_ways_and_unions():
+    from src.data import polymarket as pm
+    calls = []
+
+    class R:
+        def __init__(s, j): s.j = j
+        def raise_for_status(s): pass
+        def json(s): return s.j
+
+    row = {"conditionId": "0xabc", "closed": False, "endDate": "2026-10-16T12:00:00Z",
+           "umaResolutionStatus": None, "outcomePrices": '["0.4","0.6"]'}
+
+    def fake_fetch(url, timeout=None):
+        calls.append(url)
+        return R([] if "closed=true" in url else [row])
+
+    with patch.object(pm, "fetch", fake_fetch):
+        st = pm.fetch_market_state("0xabc")
+    assert "closed=true" in calls[0] and "closed" not in calls[1]
+    assert st["closed"] is False and st["yes_price_cents"] == 40 and st["end_date"].year == 2026
+
+    with patch.object(pm, "fetch", lambda url, timeout=None: R([])):
+        assert pm.fetch_market_state("0xabc") is None
+
+    def boom(url, timeout=None):
+        raise OSError("x")
+    with patch.object(pm, "fetch", boom), pytest.raises(RuntimeError):
+        pm.fetch_market_state("0xabc")
 
 
 def test_abandon_is_audited_and_idempotent():
@@ -120,23 +249,35 @@ def test_per_wallet_pnl_reports_incomplete_denominator():
     db = Database(":memory:")
     done = _seed(db, market="0xdone", hours_ago=300)
     db.settle_copy_position(done, 2.0, _iso(0))
-    _seed(db, market="0xstuck", hours_ago=24 * 9, stake=7.0)   # pathological
-    _seed(db, market="0xaged", hours_ago=60, stake=3.0)         # aged only: not counted
+    s1 = _seed(db, market="0xstuck", hours_ago=24 * 9, stake=7.0)
+    _seed(db, market="0xlong", hours_ago=24 * 9, stake=3.0)   # long-dated, never escalated
+    _seed(db, market="0xnew", hours_ago=5, stake=3.0)          # young: nowhere
+    db.set_copy_position_stuck_level(s1, 2, _iso(0), "PAST_END_UNRESOLVED")
     ab = _seed(db, market="0xdead", hours_ago=24 * 10)
     db.abandon_copy_position(ab, "op", "dead", _iso(0))
     (row,) = db.get_copy_realized_pnl_by_wallet(W)
     assert row["n_settled"] == 1
     assert row["n_unresolved"] == 1 and row["unresolved_stake_usd"] == 7.0
-    assert row["n_abandoned"] == 1
+    assert row["n_not_due"] == 1 and row["n_abandoned"] == 1
 
 
-def test_health_report_section_lists_details():
+def test_health_report_lists_stuck_and_counts_not_due_separately():
     db = Database(":memory:")
     pid = _seed(db, hours_ago=24 * 9)
+    _seed(db, market="0xlong", hours_ago=24 * 9)
+    db.set_copy_position_stuck_level(pid, 3, _iso(0), "CLOSED_AMBIGUOUS")
     lines, flags = _build_copy_stuck(db, datetime.now(timezone.utc))
     text = "\n".join(lines)
-    assert flags == {"n_aged": 0, "n_pathological": 1}
-    assert f"id={pid}" in text and W in text and "0xm" in text and "PATHOLOGICAL_7D" in text
+    assert flags == {"n_stuck": 1, "n_urgent": 1}
+    assert f"id={pid}" in text and W in text and "0xm" in text and "CLOSED_AMBIGUOUS" in text
+    assert "not due (long-dated, not stuck): 1" in text
+
+
+def test_health_report_clean_when_only_long_dated():
+    db = Database(":memory:")
+    _seed(db, hours_ago=24 * 9)
+    _, flags = _build_copy_stuck(db, datetime.now(timezone.utc))
+    assert flags == {"n_stuck": 0, "n_urgent": 0}
 
 
 def test_migration_rebuilds_old_check_and_preserves_rows(tmp_path):

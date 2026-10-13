@@ -1056,43 +1056,44 @@ def _build_emos_progress(db, today: datetime) -> list[str]:
 
 
 def _build_copy_stuck(db, today: datetime) -> "tuple[list[str], dict]":
-    """Copy-trading paper positions stuck open past the 48h / 7d thresholds
-    (issue #1301). Lists every one with id, wallet, market, age and entry
-    price, so the report is actionable; the 15-minute settle job logs each
-    position only once per level. Abandoned positions are counted so the
-    ROI denominator gap is visible."""
-    from src.data.copy_stuck import (
-        LEVEL_LABELS, PATHOLOGICAL_HOURS, STUCK_HOURS, age_hours, stuck_level,
-    )
+    """Copy-trading paper positions escalated by ``copy_settle`` (issue #1301):
+    PAST_END_UNRESOLVED, CLOSED_AMBIGUOUS, UNRETRIEVABLE. Healthy long-dated
+    open markets (NOT_DUE) are only counted, never called stuck. Lists every
+    escalated position with id, wallet, market, age and entry price."""
+    from src.data.copy_stuck import LEVEL_LABELS, STUCK_HOURS, age_hours
     lines = ["Copy-trading stuck positions", "-" * 28]
-    flags: dict = {"n_aged": 0, "n_pathological": 0}
+    flags: dict = {"n_stuck": 0, "n_urgent": 0}
     try:
-        stuck = []
-        for r in db.get_open_copy_positions():
-            try:
-                lvl = stuck_level(r["entry_ts"], today)
-            except (ValueError, KeyError, TypeError):
-                continue
-            if lvl:
-                stuck.append((lvl, age_hours(r["entry_ts"], today), r))
-        stuck.sort(key=lambda t: (-t[0], -t[1]))
-        flags["n_aged"] = sum(1 for t in stuck if t[0] == 1)
-        flags["n_pathological"] = sum(1 for t in stuck if t[0] == 2)
-        stake = sum(float(t[2]["stake_usd"]) for t in stuck)
-        lines.append(
-            f"  Aged >{STUCK_HOURS}h: {flags['n_aged']}  |  "
-            f"Pathological >{PATHOLOGICAL_HOURS}h: {flags['n_pathological']}  |  "
-            f"stake unresolved: ${stake:.2f}"
+        open_rows = db.get_open_copy_positions()
+        stuck = sorted(
+            (r for r in open_rows if int(r.get("stuck_level") or 0) >= 1),
+            key=lambda r: (-int(r["stuck_level"]), r["id"]),
         )
-        if flags["n_pathological"]:
+        n_not_due = 0
+        for r in open_rows:
+            try:
+                if int(r.get("stuck_level") or 0) == 0 and age_hours(r["entry_ts"], today) > STUCK_HOURS:
+                    n_not_due += 1
+            except (ValueError, KeyError, TypeError):
+                pass
+        flags["n_stuck"] = len(stuck)
+        flags["n_urgent"] = sum(1 for r in stuck if int(r["stuck_level"]) >= 2)
+        stake = sum(float(r["stake_usd"]) for r in stuck)
+        lines.append(
+            f"  Escalated: {len(stuck)} (urgent: {flags['n_urgent']})  |  "
+            f"stake unresolved: ${stake:.2f}  |  "
+            f"open >48h but not due (long-dated, not stuck): {n_not_due}"
+        )
+        if stuck:
             lines.append(
-                "  [WARN] pathological positions are EXCLUDED from ROI/win-rate; "
-                "operator: python -m src.scripts.copy_abandon if the market is dead"
+                "  [WARN] escalated positions are EXCLUDED from ROI/win-rate; operator: "
+                "python -m src.scripts.copy_abandon (--settle-at-price 0.5 for a verified 50/50 void)"
             )
-        for lvl, age, r in stuck:
+        for r in stuck:
             lines.append(
-                f"  [{LEVEL_LABELS[lvl]}] id={r['id']} wallet={r['address']} "
-                f"market={r['market']} age={age / 24:.1f}d "
+                f"  [{r.get('stuck_category') or '?'}/{LEVEL_LABELS[int(r['stuck_level'])]}] "
+                f"id={r['id']} wallet={r['address']} market={r['market']} "
+                f"age={age_hours(r['entry_ts'], today) / 24:.1f}d "
                 f"entry={float(r['entry_price']):.3f} stake=${float(r['stake_usd']):.2f}"
             )
     except Exception:
@@ -1194,13 +1195,10 @@ def _build_verdict(sections: "list[tuple[str, list[str], dict]]") -> list[str]:
         unknown_issues.append("M3 gaps not assessed")
 
     copy_stuck_flags = flags_by_section.get("copy_stuck", {})
-    if copy_stuck_flags.get("n_pathological"):
+    if copy_stuck_flags.get("n_stuck"):
         warn_issues.append(
-            f"{copy_stuck_flags['n_pathological']} copy position(s) stuck >7d"
-        )
-    elif copy_stuck_flags.get("n_aged"):
-        warn_issues.append(
-            f"{copy_stuck_flags['n_aged']} copy position(s) stuck >48h"
+            f"{copy_stuck_flags['n_stuck']} copy position(s) stuck "
+            f"({copy_stuck_flags.get('n_urgent', 0)} urgent)"
         )
 
     blockers_text = "\n".join(lines_by_section.get("blockers", []))

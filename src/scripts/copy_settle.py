@@ -43,10 +43,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from src.data.copy_pnl import compute_realized_pnl_usd  # noqa: E402
-from src.data.copy_stuck import LEVEL_LABELS, age_hours, stuck_level  # noqa: E402
-from src.data.polymarket import fetch_market_resolution  # noqa: E402
+from src.data.copy_stuck import LEVEL_LABELS, STUCK_HOURS, age_hours, classify_market  # noqa: E402
+from src.data.polymarket import fetch_market_resolution, fetch_market_state  # noqa: E402
 
 log = logging.getLogger(__name__)
+
+_STATE_ERROR = object()
 
 
 def _open_db():
@@ -72,7 +74,7 @@ def run_once(db=None, escalations: "list | None" = None) -> dict:
 
     If *escalations* is a list, each newly-emitted stuck-position record
     (issue #1301) is appended to it. Escalation is once per position per
-    level (48h, then 7d): the level is persisted in
+    level (48h, 7d from endDate, or immediately for a verified ambiguous close): the level is persisted in
     ``copy_positions.stuck_level``, so repeated runs over the same stuck
     position emit nothing new. Chosen over "newly stuck + stable count"
     because the per-position record is what an operator can act on, and the
@@ -102,41 +104,53 @@ def run_once(db=None, escalations: "list | None" = None) -> dict:
     n_settled = 0
     n_pending = 0
     n_errors = 0
-    n_stale = 0  # Positions open > 48 hours
+    states: dict = {}
+    n_stale = 0  # escalated positions
     for r in rows:
         market = r["market"]
         yes_won = resolutions.get(market)
         if yes_won is None:
             n_pending += 1
             try:
-                lvl = stuck_level(r["entry_ts"], now)
-                if lvl > 0:
-                    n_stale += 1
-                if lvl > int(r.get("stuck_level") or 0):
-                    rec = {
-                        "position_id": r["id"],
-                        "wallet": r.get("address"),
-                        "market": market,
-                        "age_hours": round(age_hours(r["entry_ts"], now), 1),
-                        "entry_price": r["entry_price"],
-                        "stake_usd": r["stake_usd"],
-                        "level": lvl,
-                        "category": LEVEL_LABELS[lvl],
-                    }
-                    db.set_copy_position_stuck_level(r["id"], lvl, now_iso)
-                    if escalations is not None:
-                        escalations.append(rec)
-                    log.warning(
-                        "[copy_settle] STUCK %s position=%s wallet=%s market=%s "
-                        "age_h=%s entry_price=%s stake_usd=%s -- unresolved, stays open; "
-                        "operator action: copy_abandon.py if market is dead",
-                        rec["category"], rec["position_id"], rec["wallet"],
-                        rec["market"], rec["age_hours"], rec["entry_price"],
-                        rec["stake_usd"], extra={"stuck_record": rec},
-                    )
+                if age_hours(r["entry_ts"], now) > STUCK_HOURS:
+                    if market not in states:
+                        # One state lookup per distinct market (batching contract).
+                        try:
+                            states[market] = fetch_market_state(market)
+                        except RuntimeError as e:
+                            log.warning("[copy_settle] market state unavailable for %s...: %s -- not escalating this run", str(market)[:14], e)
+                            states[market] = _STATE_ERROR
+                    st = states[market]
+                    if st is not _STATE_ERROR:
+                        category, lvl = classify_market(st, r["entry_ts"], now)
+                        if lvl > 0:
+                            n_stale += 1
+                        if lvl > int(r.get("stuck_level") or 0):
+                            rec = {
+                                "position_id": r["id"],
+                                "wallet": r.get("address"),
+                                "market": market,
+                                "age_hours": round(age_hours(r["entry_ts"], now), 1),
+                                "entry_price": r["entry_price"],
+                                "stake_usd": r["stake_usd"],
+                                "level": lvl,
+                                "step": LEVEL_LABELS[lvl],
+                                "category": category,
+                            }
+                            db.set_copy_position_stuck_level(r["id"], lvl, now_iso, category)
+                            if escalations is not None:
+                                escalations.append(rec)
+                            log.warning(
+                                "[copy_settle] STUCK %s/%s position=%s wallet=%s market=%s "
+                                "age_h=%s entry_price=%s stake_usd=%s -- unresolved, stays open; "
+                                "operator action: copy_abandon.py (abandon or --settle-at-price)",
+                                category, rec["step"], rec["position_id"], rec["wallet"],
+                                rec["market"], rec["age_hours"], rec["entry_price"],
+                                rec["stake_usd"], extra={"stuck_record": rec},
+                            )
             except (ValueError, KeyError) as e:
                 log.debug("[copy_settle] position %s has malformed entry_ts, skipping stale tracking: %s", r.get("id"), e)
-            except Exception as e:  # noqa: BLE001 -- a DB hiccup must not abort the run; malformed entry_ts or a DB hiccup: never abort the run
+            except Exception as e:  # noqa: BLE001 -- a DB hiccup must not abort the run
                 log.warning("[copy_settle] stuck tracking skipped for position %s: %s", r.get("id"), e)
             log.debug(
                 "[copy_settle] market %s... not resolved yet -- position %s stays open",
@@ -171,7 +185,7 @@ def run_once(db=None, escalations: "list | None" = None) -> dict:
     # The per-position STUCK records above replace the old identical
     # aggregate WARNING (issue #1301). Only a stable count at INFO remains.
     if n_stale > 0:
-        log.info("[copy_settle] %s open position(s) past the 48h stuck threshold", n_stale)
+        log.info("[copy_settle] %s open position(s) in an escalated stuck category", n_stale)
 
     return {"settled": n_settled, "pending": n_pending, "errors": n_errors}
 

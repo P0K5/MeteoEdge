@@ -88,6 +88,23 @@ def compute_realized_pnl_usd(
     return -stake_usd
 
 
+def compute_pnl_at_observed_price_usd(
+    *, entry_price: float, stake_usd: float, outcome_index: int, yes_price: float,
+) -> float:
+    """P&L if the position's shares pay out at an operator-observed final YES
+    price (issue #1301), e.g. 0.5 for a 50/50 void. Same share math as
+    ``compute_realized_pnl_usd`` with payout-per-share = ``yes_price`` (YES
+    side) or ``1 - yes_price`` (NO side): ``stake * (payout / entry - 1)``.
+    At yes_price 1.0/0.0 it equals ``compute_realized_pnl_usd``. Only reachable
+    from the operator CLI."""
+    if not 0.0 <= yes_price <= 1.0:
+        raise ValueError("yes_price must be within [0, 1]")
+    payout = yes_price if outcome_index == 0 else 1.0 - yes_price
+    if entry_price <= 0:
+        raise ValueError(f"entry_price={entry_price!r} <= 0")
+    return stake_usd * (payout / entry_price - 1.0)
+
+
 def is_guaranteed_loss_pair(entry_price_a: float, entry_price_b: float) -> bool:
     """Return True if two opposite-outcome legs of the same binary market,
     held simultaneously, can only ever pay out less than their combined
