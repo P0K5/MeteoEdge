@@ -1,5 +1,6 @@
 """Polymarket API client. No authentication required for read-only access."""
 import logging
+from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from src.http_client import cached_fetch_json, fetch
@@ -178,7 +179,6 @@ def _classify_resolution(price: "int | None", ticker: str) -> "bool | None":
 
 
 def _parse_gamma_dt(raw) -> "datetime | None":
-    from datetime import datetime, timezone
     if not raw or not isinstance(raw, str):
         return None
     try:
