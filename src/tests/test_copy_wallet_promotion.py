@@ -131,6 +131,18 @@ class TestPause:
         assert rc == 0
         db.update_followed_wallet_status.assert_called_once_with("0xabc", "paused", "unstable")
 
+    def test_reports_revoked_live_optin(self, capsys):
+        db = MagicMock()
+        db.get_followed_wallets.return_value = [_followed_row(address="0xabc", live_enabled=1)]
+        assert pause(db, "0xabc", "unstable") == 0
+        assert "Live trading opt-in was revoked" in capsys.readouterr().out
+
+    def test_no_revoked_notice_for_paper_only_wallet(self, capsys):
+        db = MagicMock()
+        db.get_followed_wallets.return_value = [_followed_row(address="0xabc")]
+        assert pause(db, "0xabc", "unstable") == 0
+        assert "revoked" not in capsys.readouterr().out
+
     def test_refuses_when_address_not_followed(self):
         db = MagicMock()
         db.get_followed_wallets.return_value = []

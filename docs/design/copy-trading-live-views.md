@@ -679,6 +679,15 @@ one:
      opt-in (the common case — most wallets are paper-only) announces
      nothing new, matching today's silent-on-success behavior; this is
      additive, not a change to the existing common path.
+   - **Fallback when the row is gone.** A paused wallet leaves the Live
+     roster on refetch, so on the Live tab `followed-live-msg-${safeId}`
+     usually no longer exists. [Tech constraint: row removed by refetch —
+     agreed approach: show the same sentence in a non-error `info-banner`
+     (`role="status"`, `aria-live="polite"`) inserted above the tab's
+     error banner, with a "Dismiss" button.] It must never reuse the red
+     `error-banner` (a success is not an error, and that banner is not a
+     live region). It persists across polls and is cleared by the next
+     user action or by Dismiss.
    - **Auto-pause has no equivalent moment** — `copy_wallet_health.py` runs
      with no operator present to warn beforehand or hand a success toast
      to. This is an unavoidable asymmetry in *which* surface carries the

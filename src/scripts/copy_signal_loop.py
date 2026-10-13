@@ -153,6 +153,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from src.config import (  # noqa: E402
     CONFIG_DEFAULTS, COPY_LIVE_CAPITAL_USD, COPY_TRADING_CAPITAL_USD,
+    live_exposure_drawdown_bound_error,
     get_live_config, seed_config,
 )
 from src.data.db import Database  # noqa: E402
@@ -210,6 +211,14 @@ def live_startup_sanity_check(live_config: dict) -> "str | None":
             "refusing to start. Fix the config values (dashboard config "
             "tab or env vars) before restarting."
         )
+    # Issue #1310: bound unsettled exposure by the drawdown-stop threshold.
+    bound_err = live_exposure_drawdown_bound_error(
+        max_total,
+        COPY_LIVE_CAPITAL_USD,
+        live_config["COPY_LIVE_DRAWDOWN_STOP_PCT"],
+    )
+    if bound_err:
+        return f"{bound_err} Refusing to start. Fix the config values before restarting."
     return None
 
 

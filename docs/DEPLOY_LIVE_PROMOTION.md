@@ -142,6 +142,12 @@ import time, deliberately *not* live-editable, and it defaults to `0.0`.
 `COPY_LIVE_MAX_TOTAL_EXPOSURE_USD > COPY_LIVE_CAPITAL_USD`. With the shipped
 defaults that is `250.0 > 0.0`, so **every live order is rejected** until you fix it.
 
+Since #1310 it also enforces `COPY_LIVE_MAX_TOTAL_EXPOSURE_USD <=
+COPY_LIVE_CAPITAL_USD x COPY_LIVE_DRAWDOWN_STOP_PCT` (e.g. $20 x 0.20 = $4):
+the drawdown breaker only sees settled P&L, so unsettled exposure must not
+exceed the stop threshold. `PATCH /api/config` enforces the same rule on writes
+to either key (when `COPY_LIVE_CAPITAL_USD > 0`).
+
 Know which knob is which — confusing them is what makes this fail quietly:
 
 | Key | Where it lives | Change requires |
@@ -164,7 +170,7 @@ sudo systemctl restart meteoedge.service
 # 2. DB-backed caps, at or under the pool (no restart needed)
 curl -s -X PATCH localhost:8000/api/config \
   -H 'Content-Type: application/json' \
-  -d '{"key":"COPY_LIVE_MAX_TOTAL_EXPOSURE_USD","value":50.0}'
+  -d '{"key":"COPY_LIVE_MAX_TOTAL_EXPOSURE_USD","value":10.0}'
 
 curl -s -X PATCH localhost:8000/api/config \
   -H 'Content-Type: application/json' \

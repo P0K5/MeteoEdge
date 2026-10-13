@@ -131,6 +131,20 @@ _ASSERTIONS = textwrap.dedent("""
       assert.ok(listWrap.innerHTML.includes('unstable'), 'paused_reason must render');
 
       // ------------------------------------------------------------------
+      // 1b. Issue #1264: a wallet_paused event whose pause revoked a live
+      //     opt-in gets the sentence, an aria-hidden icon, and the row's
+      //     aria-label (role=button overrides inner text) says so too.
+      // ------------------------------------------------------------------
+      const revokedHtml = _copyActivityItemHtml({ event_type: 'wallet_paused', ts: '2026-09-03T00:00:00Z',
+        mode: 'paper', address: '0xW2', paused_reason: 'roi', live_optin_revoked: true });
+      assert.ok(revokedHtml.includes('Live trading opt-in was revoked.'));
+      assert.ok(revokedHtml.includes('data-lucide="alert-triangle" aria-hidden="true"'));
+      assert.ok(/aria-label="[^"]*, live trading opt-in revoked, click to view wallet detail"/.test(revokedHtml));
+      const plainHtml = _copyActivityItemHtml({ event_type: 'wallet_paused', ts: '2026-09-03T00:00:00Z',
+        mode: 'paper', address: '0xW2', paused_reason: 'roi', live_optin_revoked: false });
+      assert.ok(!plainHtml.includes('revoked'));
+
+      // ------------------------------------------------------------------
       // 2. Stale-feed indicator: a poll failure AFTER data already loaded
       //    must show the banner (with last-known data still on screen),
       //    never silently go stale with no indication (acceptance

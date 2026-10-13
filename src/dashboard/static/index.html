@@ -1045,6 +1045,7 @@ a,button,input,select{transition:color var(--transition),background var(--transi
    is paused, "inherits paper stake"). Same block/size/wrap layout as
    .followed-paused-reason otherwise -- only the color tier changes. */
 .followed-contamination-note{display:block;font-size:10px;color:var(--no);margin-top:2px;max-width:220px;white-space:normal;}
+.copy-activity-desc i{width:12px;height:12px;flex-shrink:0;vertical-align:text-bottom;margin-right:2px;color:var(--warn);}
 .followed-contamination-note i{width:12px;height:12px;flex-shrink:0;vertical-align:text-bottom;margin-right:2px;}
 /* Status cell now holds two independent badges (paper status + live
    eligibility, issue #1187) -- wrap and gap so they don't collide, and the
@@ -6116,7 +6117,7 @@ function _followedGoLiveButtonHtml(w) {
   // modifier -- "Revert to paper" stays visually neutral, like Resume.
   const actionClass = wantsDemote ? 'btn-followed-revert-live' : 'btn-followed-golive';
   if (w.status === 'paused') {
-    const reason = 'Live opt-in is unavailable while this wallet is paused — resume it first.';
+    const reason = 'Live opt-in is unavailable while this wallet is paused. Pausing clears any prior live opt-in — resume the wallet, then use "Go live" again to re-enable live trading.';
     const reasonEsc = _copyEscapeHtml(reason);
     return `<button type="button" class="btn-followed-action ${actionClass}" data-address="${addrEsc}" aria-label="${reasonEsc}" title="${reasonEsc}" disabled>
       <span class="spinner"></span><i data-lucide="${icon}"></i>${label}
@@ -6137,7 +6138,7 @@ function _followedGoLiveButtonHtml(w) {
 
 function _followedPauseResumeBtnHtml(w, addrEsc) {
   return w.status === 'paused'
-    ? `<button type="button" class="btn-followed-action btn-followed-resume" data-address="${addrEsc}" aria-label="Resume copying ${addrEsc}"><span class="spinner"></span><i data-lucide="play"></i>Resume</button>`
+    ? `<button type="button" class="btn-followed-action btn-followed-resume" data-address="${addrEsc}" title="Resuming restores paper-following only. Live trading opt-in is cleared whenever a wallet is paused and must be re-enabled separately via Go live." aria-label="Resume copying ${addrEsc}. Resuming restores paper-following only — live trading opt-in is cleared whenever a wallet is paused and must be re-enabled separately."><span class="spinner"></span><i data-lucide="play"></i>Resume</button>`
     : `<button type="button" class="btn-followed-action btn-followed-pause" data-address="${addrEsc}" aria-label="Pause copying ${addrEsc}"><span class="spinner"></span><i data-lucide="pause"></i>Pause</button>`;
 }
 
@@ -6352,6 +6353,38 @@ function _followedShowBannerError(text) {
 function _followedHideBanner() {
   const { banner } = _copyErrorEls(_copyCurrentScope());
   if (banner) banner.classList.remove('visible');
+  const note = document.getElementById(`copy-${_copyCurrentScope()}-followed-notice`);
+  if (note) note.remove();
+}
+
+// Non-error success notice (issue #1264): an info-banner with role="status"
+// inserted just above the scope's error banner. Polls never call
+// _followedHideBanner, so it persists until the next user action (which
+// does) or the operator dismisses it.
+function _followedShowNotice(text) {
+  const scope = _copyCurrentScope();
+  const { banner } = _copyErrorEls(scope);
+  if (!banner || !banner.parentNode) return;
+  const id = `copy-${scope}-followed-notice`;
+  let note = document.getElementById(id);
+  if (!note) {
+    note = document.createElement('div');
+    note.id = id;
+    note.className = 'info-banner visible';
+    note.setAttribute('role', 'status');
+    note.setAttribute('aria-live', 'polite');
+    banner.parentNode.insertBefore(note, banner);
+  }
+  note.textContent = '';
+  const span = document.createElement('span');
+  span.textContent = text;
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'btn-followed-action';
+  btn.textContent = 'Dismiss';
+  btn.setAttribute('aria-label', 'Dismiss notice');
+  btn.addEventListener('click', () => note.remove());
+  note.append(span, btn);
 }
 
 // Shared runner for every Followed Wallets row action (pause/resume/
@@ -6404,7 +6437,17 @@ async function _followedSubmitAction({ address, btn, url, fetchOpts, optimisticA
 }
 
 async function followedPauseWallet(address, btn) {
-  const reason = window.prompt(`Reason for pausing ${_copyTruncateAddress(address)} (required):`, '');
+  // Issue #1264: pausing revokes the live opt-in -- disclose that before the
+  // operator commits, folded into the existing single reason prompt.
+  const pausedWallet = ((_followedWalletsData && _followedWalletsData.wallets) || []).find(w => w.address === address);
+  const wasLiveOptedIn = !!(pausedWallet && pausedWallet.live_enabled);
+  const liveWarning = wasLiveOptedIn
+    ? `\n\nThis wallet is currently opted into live trading. Pausing it ` +
+      `will revoke that opt-in — resuming will restore paper-following ` +
+      `only, and live trading will need to be re-enabled separately via ` +
+      `"Go live."\n`
+    : '';
+  const reason = window.prompt(`Reason for pausing ${_copyTruncateAddress(address)} (required):${liveWarning}`, '');
   if (reason === null) return; // operator cancelled
   const trimmed = reason.trim();
   if (!trimmed) {
@@ -6439,7 +6482,18 @@ async function followedPauseWallet(address, btn) {
     },
     rollback: () => { if (cell && prevHtml !== null) { cell.innerHTML = prevHtml; lucide.createIcons(); } },
     failureMessage: `Could not pause ${_copyTruncateAddress(address)}`,
-    onSuccess: async () => { await fetchFollowedWallets(); },
+    onSuccess: async () => {
+      await fetchFollowedWallets();
+      if (wasLiveOptedIn) {
+        // Re-query: the refetch rebuilds the roster row.
+        const doneEl = document.getElementById(_followedIdPrefix() + 'followed-live-msg-' + safeId);
+        const revokedText = `${_copyTruncateAddress(address)} paused. Live trading opt-in was revoked — resume will restore paper-following only.`;
+        // The paused wallet drops out of the Live roster on refetch, so its
+        // row message element is usually gone -- fall back to the tab banner.
+        if (doneEl) doneEl.textContent = revokedText;
+        else _followedShowNotice(revokedText);
+      }
+    },
   });
 }
 
@@ -8612,7 +8666,13 @@ function _copyActivityDescriptionHtml(e) {
     return `<span class="copy-activity-desc">Order skipped (paper) — ${_copyEscapeHtml(e.market || '—')}${reason}</span>`;
   }
   if (e.event_type === 'wallet_paused') {
-    return `<span class="copy-activity-desc">Wallet auto-paused — ${e.paused_reason ? _copyEscapeHtml(e.paused_reason) : 'No reason given'}</span>`;
+    const base = e.paused_reason ? _copyEscapeHtml(e.paused_reason) : 'No reason given';
+    // Issue #1264: a pause that also revoked the live opt-in is flagged with
+    // the warning icon (it stays mode=paper, so a Live filter would miss it).
+    if (e.live_optin_revoked) {
+      return `<span class="copy-activity-desc"><i data-lucide="alert-triangle" aria-hidden="true"></i> Wallet auto-paused — ${base}. Live trading opt-in was revoked.</span>`;
+    }
+    return `<span class="copy-activity-desc">Wallet auto-paused — ${base}</span>`;
   }
   // Live events (issue #1188) -- market + stage-specific detail; the
   // reason text (skip_reason/rejected_reason) already arrives plain-
@@ -8676,7 +8736,8 @@ function _copyActivityItemHtml(e) {
   // CopyActivityEventOut's docstring), so row2 and the aria-label show a
   // fixed label instead of an empty/truncated address.
   const addrLabel = kind === 'none' ? 'Live CLOB wallet' : _copyTruncateAddress(e.address);
-  const ariaLabel = kind === 'none' ? label : `${label} for ${addrEsc}, click to view wallet detail`;
+  const revokedSuffix = e.live_optin_revoked ? ', live trading opt-in revoked' : '';
+  const ariaLabel = kind === 'none' ? label : `${label} for ${addrEsc}${revokedSuffix}, click to view wallet detail`;
   return `
     <div class="copy-activity-item ${modeCls}" role="button" tabindex="0"
          data-kind="${kind}" data-address="${addrEsc}"

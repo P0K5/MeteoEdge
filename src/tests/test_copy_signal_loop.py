@@ -50,6 +50,9 @@ def _live_config(**overrides) -> dict:
         COPY_MAX_EXPOSURE_PER_WALLET_USD=50.0,
         COPY_MAX_TOTAL_EXPOSURE_USD=250.0,
         COPY_TRADING_CAPITAL_USD=250.0,
+        # Issue #1310: live exposure must be <= live capital (250 in the
+        # tests) x COPY_LIVE_DRAWDOWN_STOP_PCT (0.20) = 50 to pass the sanity check.
+        COPY_LIVE_MAX_TOTAL_EXPOSURE_USD=50.0,
     )
     cfg.update(overrides)
     return cfg
@@ -136,7 +139,7 @@ def _live_enabled_config(**overrides) -> dict:
     cfg = _live_config(
         COPY_LIVE_TRADING_ENABLED=True,
         COPY_LIVE_MAX_EXPOSURE_PER_WALLET_USD=50.0,
-        COPY_LIVE_MAX_TOTAL_EXPOSURE_USD=250.0,
+        COPY_LIVE_MAX_TOTAL_EXPOSURE_USD=50.0,
     )
     cfg.update(overrides)
     return cfg
@@ -189,7 +192,7 @@ class TestLiveStartupSanityCheck:
     def test_allows_when_live_total_exposure_at_or_below_live_capital(self):
         with patch("src.scripts.copy_signal_loop.COPY_LIVE_CAPITAL_USD", 250.0):
             error = live_startup_sanity_check(
-                _live_config(COPY_LIVE_MAX_TOTAL_EXPOSURE_USD=250.0)
+                _live_config(COPY_LIVE_MAX_TOTAL_EXPOSURE_USD=50.0)
             )
         assert error is None
 
@@ -205,6 +208,40 @@ class TestLiveStartupSanityCheck:
              patch("src.scripts.copy_signal_loop.COPY_LIVE_CAPITAL_USD", 100.0):
             assert startup_sanity_check(cfg) is None
             assert live_startup_sanity_check(cfg) is not None
+
+
+class TestLiveExposureDrawdownBound:
+    """Issue #1310: COPY_LIVE_MAX_TOTAL_EXPOSURE_USD <= CAPITAL x DRAWDOWN_STOP_PCT."""
+
+    def _check(self, exposure, capital=20.0, stop_pct=0.20):
+        with patch("src.scripts.copy_signal_loop.COPY_LIVE_CAPITAL_USD", capital):
+            return live_startup_sanity_check(_live_config(
+                COPY_LIVE_MAX_TOTAL_EXPOSURE_USD=exposure,
+                COPY_LIVE_DRAWDOWN_STOP_PCT=stop_pct,
+            ))
+
+    def test_rejects_exposure_above_bound_naming_values_and_inequality(self):
+        error = self._check(20.0)  # the 2026-10-04 incident config
+        assert error is not None
+        for name in ("COPY_LIVE_MAX_TOTAL_EXPOSURE_USD", "COPY_LIVE_CAPITAL_USD",
+                     "COPY_LIVE_DRAWDOWN_STOP_PCT"):
+            assert name in error
+        assert "$20.00" in error and "$4.00" in error and "<=" in error
+
+    def test_accepts_exactly_at_boundary(self):
+        assert self._check(4.0) is None
+
+    def test_accepts_below_boundary(self):
+        assert self._check(3.0) is None
+
+    def test_existing_exposure_vs_capital_check_still_rejects(self):
+        error = self._check(25.0)
+        assert error is not None
+        assert "exceeds COPY_LIVE_CAPITAL_USD" in error
+
+    def test_wider_stop_pct_widens_bound(self):
+        assert self._check(10.0, stop_pct=0.5) is None
+        assert self._check(10.1, stop_pct=0.5) is not None
 
 
 class TestKillSwitch:
@@ -1282,12 +1319,12 @@ class TestLiveExecution:
         def _open_live_positions(address=None):
             if address is not None:
                 return [{"stake_usd": 5.0}]  # well under per-wallet cap
-            return [{"stake_usd": 245.0}]  # near total cap
+            return [{"stake_usd": 49.0}]  # near total cap (50)
 
         db.get_open_copy_live_positions.side_effect = _open_live_positions
         live_config = _live_enabled_config(
             COPY_LIVE_MAX_EXPOSURE_PER_WALLET_USD=50.0,
-            COPY_LIVE_MAX_TOTAL_EXPOSURE_USD=250.0,
+            COPY_LIVE_MAX_TOTAL_EXPOSURE_USD=50.0,
         )
         with patch(
             "src.scripts.copy_signal_loop.execute_live_copy_order",
@@ -1852,7 +1889,8 @@ class TestWalletAutoPauseHaltsLiveExecution:
             "CREATE TABLE copy_wallets_followed ("
             "address TEXT PRIMARY KEY, status TEXT, paused_reason TEXT, "
             "paused_at TEXT, stake_per_trade REAL, added_at TEXT, "
-            "last_seen_trade_ts INTEGER)"
+            "last_seen_trade_ts INTEGER, live_enabled INTEGER NOT NULL DEFAULT 0, "
+            "live_enabled_cleared_at TEXT)"
         )
         conn.execute(
             "INSERT INTO copy_wallets_followed "

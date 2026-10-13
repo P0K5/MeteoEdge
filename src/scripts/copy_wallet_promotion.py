@@ -172,12 +172,17 @@ def follow(db, address: str, stake: float, max_followed: int) -> int:
 
 
 def pause(db, address: str, reason: str) -> int:
-    known = {w["address"] for w in db.get_followed_wallets()}
+    known = {w["address"]: w for w in db.get_followed_wallets()}
     if address not in known:
         print(f"Refusing to pause {address}: not a followed wallet.")
         return 1
+    was_live = bool(known[address].get("live_enabled"))
+    # Issue #1264: pausing clears the live opt-in (inside the DB chokepoint).
     db.update_followed_wallet_status(address, "paused", reason)
-    print(f"Paused {address} (reason: {reason}).")
+    msg = f"Paused {address} (reason: {reason})."
+    if was_live:
+        msg += " Live trading opt-in was revoked; re-enable it with --live-on after resuming."
+    print(msg)
     return 0
 
 

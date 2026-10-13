@@ -420,6 +420,8 @@ def run_once(db=None) -> dict:
     for wallet in wallets:
         address = wallet["address"]
         n_checked += 1
+        # Issue #1264: the pause below also clears live_enabled (in
+        # update_followed_wallet_status), identically to a manual pause.
 
         reason = _stability_pause_reason(db, address)
         if reason is not None:

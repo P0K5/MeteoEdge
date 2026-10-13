@@ -590,9 +590,9 @@ class TestCopyLiveTradingConfigBounds:
 
         client, db = api_client
         # In-bounds (< min/max AND < capital): should succeed
-        resp = client.patch("/api/config", json={"key": "COPY_LIVE_MAX_TOTAL_EXPOSURE_USD", "value": 100.0})
+        resp = client.patch("/api/config", json={"key": "COPY_LIVE_MAX_TOTAL_EXPOSURE_USD", "value": 40.0})
         assert resp.status_code == 200, f"In-bounds rejected: {resp.json()}"
-        assert db.get_config("COPY_LIVE_MAX_TOTAL_EXPOSURE_USD") == "100.0"
+        assert db.get_config("COPY_LIVE_MAX_TOTAL_EXPOSURE_USD") == "40.0"
 
         # Out-of-bounds (> min/max, but < capital): should fail on bounds
         resp = client.patch("/api/config", json={"key": "COPY_LIVE_MAX_TOTAL_EXPOSURE_USD", "value": 99999.0})
@@ -721,25 +721,25 @@ class TestCapitalCeilingValidation:
         client, db = api_client
         resp = client.patch(
             "/api/config",
-            json={"key": "COPY_LIVE_MAX_TOTAL_EXPOSURE_USD", "value": 100.0}
+            json={"key": "COPY_LIVE_MAX_TOTAL_EXPOSURE_USD", "value": 40.0}
         )
         assert resp.status_code == 200, f"Unexpected error: {resp.json()}"
-        assert resp.json()["value"] == pytest.approx(100.0)
-        assert db.get_config("COPY_LIVE_MAX_TOTAL_EXPOSURE_USD") == "100.0"
+        assert resp.json()["value"] == pytest.approx(40.0)
+        assert db.get_config("COPY_LIVE_MAX_TOTAL_EXPOSURE_USD") == "40.0"
 
     def test_patch_copy_live_max_exposure_equals_capital_returns_200(self, api_client, monkeypatch):
-        """COPY_LIVE_MAX_TOTAL_EXPOSURE_USD == COPY_LIVE_CAPITAL_USD must be accepted."""
+        """COPY_LIVE_MAX_TOTAL_EXPOSURE_USD == CAPITAL x DRAWDOWN_STOP_PCT (250 x 0.20) must be accepted."""
         from src.dashboard import api as api_module
         monkeypatch.setattr(api_module, "COPY_LIVE_CAPITAL_USD", 250.0)
 
         client, db = api_client
         resp = client.patch(
             "/api/config",
-            json={"key": "COPY_LIVE_MAX_TOTAL_EXPOSURE_USD", "value": 250.0}
+            json={"key": "COPY_LIVE_MAX_TOTAL_EXPOSURE_USD", "value": 50.0}
         )
         assert resp.status_code == 200, f"Boundary case failed: {resp.json()}"
-        assert resp.json()["value"] == pytest.approx(250.0)
-        assert db.get_config("COPY_LIVE_MAX_TOTAL_EXPOSURE_USD") == "250.0"
+        assert resp.json()["value"] == pytest.approx(50.0)
+        assert db.get_config("COPY_LIVE_MAX_TOTAL_EXPOSURE_USD") == "50.0"
 
     def test_patch_copy_live_max_exposure_exceeds_capital_returns_400(self, api_client, monkeypatch):
         """COPY_LIVE_MAX_TOTAL_EXPOSURE_USD > COPY_LIVE_CAPITAL_USD must be rejected."""
@@ -757,6 +757,69 @@ class TestCapitalCeilingValidation:
         assert "COPY_LIVE_CAPITAL_USD" in detail
         assert "100.00" in detail or "100.0" in detail
         assert "200.00" in detail or "200.0" in detail
+
+    def test_patch_live_exposure_above_drawdown_bound_returns_400(self, api_client, monkeypatch):
+        """Issue #1310: exposure within capital but above capital x stop_pct is rejected."""
+        from src.dashboard import api as api_module
+        monkeypatch.setattr(api_module, "COPY_LIVE_CAPITAL_USD", 20.0)
+
+        client, db = api_client
+        resp = client.patch(
+            "/api/config",
+            json={"key": "COPY_LIVE_MAX_TOTAL_EXPOSURE_USD", "value": 20.0}
+        )
+        assert resp.status_code == 400
+        detail = resp.json()["detail"]
+        for name in ("COPY_LIVE_MAX_TOTAL_EXPOSURE_USD", "COPY_LIVE_CAPITAL_USD",
+                     "COPY_LIVE_DRAWDOWN_STOP_PCT"):
+            assert name in detail
+        assert "4.00" in detail
+        assert db.get_config("COPY_LIVE_MAX_TOTAL_EXPOSURE_USD") != "20.0"
+
+    def test_patch_live_exposure_exactly_at_drawdown_bound_returns_200(self, api_client, monkeypatch):
+        from src.dashboard import api as api_module
+        monkeypatch.setattr(api_module, "COPY_LIVE_CAPITAL_USD", 20.0)
+
+        client, _ = api_client
+        resp = client.patch(
+            "/api/config",
+            json={"key": "COPY_LIVE_MAX_TOTAL_EXPOSURE_USD", "value": 4.0}
+        )
+        assert resp.status_code == 200, resp.json()
+
+    def test_patch_drawdown_stop_pct_loosening_below_exposure_bound_returns_400(
+        self, api_client, monkeypatch
+    ):
+        """Cannot tighten the stop below what the current exposure cap allows
+        (the 'tighten at boot then loosen mid-run' gap, other direction)."""
+        from src.dashboard import api as api_module
+        monkeypatch.setattr(api_module, "COPY_LIVE_CAPITAL_USD", 20.0)
+
+        client, db = api_client
+        assert client.patch(
+            "/api/config", json={"key": "COPY_LIVE_MAX_TOTAL_EXPOSURE_USD", "value": 4.0}
+        ).status_code == 200
+        # 20 * 0.1 = 2 < 4 -> rejected
+        resp = client.patch(
+            "/api/config", json={"key": "COPY_LIVE_DRAWDOWN_STOP_PCT", "value": 0.1}
+        )
+        assert resp.status_code == 400
+        assert "COPY_LIVE_DRAWDOWN_STOP_PCT" in resp.json()["detail"]
+        # 20 * 0.2 = 4 == 4 -> boundary accepted
+        resp = client.patch(
+            "/api/config", json={"key": "COPY_LIVE_DRAWDOWN_STOP_PCT", "value": 0.2}
+        )
+        assert resp.status_code == 200, resp.json()
+
+    def test_patch_drawdown_stop_pct_skipped_when_live_capital_unset(self, api_client, monkeypatch):
+        from src.dashboard import api as api_module
+        monkeypatch.setattr(api_module, "COPY_LIVE_CAPITAL_USD", 0.0)
+
+        client, _ = api_client
+        resp = client.patch(
+            "/api/config", json={"key": "COPY_LIVE_DRAWDOWN_STOP_PCT", "value": 0.1}
+        )
+        assert resp.status_code == 200, resp.json()
 
     def test_patch_unrelated_key_still_works(self, api_client, monkeypatch):
         """Unrelated config keys (e.g., COPY_DEFAULT_FLAT_STAKE_USD) must not be affected."""

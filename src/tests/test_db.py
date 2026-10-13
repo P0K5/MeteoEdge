@@ -2081,6 +2081,35 @@ class TestCopyWalletsFollowed:
         # Verify it's a valid ISO-8601 UTC timestamp format (contains + or Z)
         assert "+" in row["paused_at"] or "Z" in row["paused_at"]
 
+    def test_pause_clears_live_enabled_and_stamps_cleared_at(self):
+        """Issue #1264: any transition to paused revokes the live opt-in."""
+        db = _db()
+        db.insert_followed_wallet(**self._followed_kwargs())
+        db.set_followed_wallet_live_enabled("0xabc", True)
+        db.update_followed_wallet_status("0xabc", "paused", paused_reason="x")
+        row = db.get_followed_wallets()[0]
+        assert row["live_enabled"] == 0
+        assert row["live_enabled_cleared_at"] == row["paused_at"]
+
+    def test_pause_of_paper_only_wallet_does_not_stamp_cleared_at(self):
+        db = _db()
+        db.insert_followed_wallet(**self._followed_kwargs())
+        db.update_followed_wallet_status("0xabc", "paused", paused_reason="x")
+        row = db.get_followed_wallets()[0]
+        assert row["live_enabled"] == 0
+        assert row["live_enabled_cleared_at"] is None
+
+    def test_resume_does_not_restore_live_enabled(self):
+        db = _db()
+        db.insert_followed_wallet(**self._followed_kwargs())
+        db.set_followed_wallet_live_enabled("0xabc", True)
+        db.update_followed_wallet_status("0xabc", "paused", paused_reason="x")
+        db.update_followed_wallet_status("0xabc", "active")
+        row = db.get_followed_wallets()[0]
+        assert row["status"] == "active"
+        assert row["live_enabled"] == 0
+        assert row["live_enabled_cleared_at"] is not None  # history survives resume
+
     def test_resume_clears_paused_at(self):
         db = _db()
         db.insert_followed_wallet(**self._followed_kwargs())

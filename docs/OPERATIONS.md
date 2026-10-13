@@ -586,6 +586,20 @@ worst-case call volume per run, plus the isolated 03:00 UTC schedule. A cross-pr
 shared rate limiter is explicitly deferred — no incident has justified that
 complexity yet; revisit if 429s / throttling are observed against either host.
 
+**Run-time bound and timer overlap (issue #1114):** `MAX_RUN_SECONDS = 2 * 60 * 60`
+(2 hours) in `src/scripts/copy_wallet_screening.py` is a wall-clock budget for one
+run. It is checked before each wallet: once the budget is spent, the run stops
+screening further wallets, keeps every `copy_wallet_candidates` row it has already
+persisted, logs a warning with how many wallets were left unscreened, and exits 0.
+Worst-case overshoot is the duration of the wallet in progress when the budget
+expires. Why 2h: the timer fires every 24h, so a bounded run always finishes well
+before the next 03:00 UTC trigger. Overlap is also guarded independently by the
+single-instance `fcntl` lock (`data/.copy_wallet_screening.lock`, issue #1247), and
+systemd does not start a second instance of this `Type=oneshot` service while one is
+still active. Unscreened wallets get no row for that run; the next day's run re-fetches the
+leaderboard and screens them again if they are still in the top N. The budget is a module constant (not a live config key) and is not
+exposed as a CLI flag.
+
 **Operational commands:**
 ```bash
 # Check next scheduled run
@@ -813,8 +827,13 @@ and reuses `copy_wallet_screening.py::check_stability` on them — auto-pauses
 (`paused_reason="stability_check_failed"`) on a failed pairwise check *or* if
 the latest row's own `eligible_to_follow` is `0`; (2) for wallets with at
 least `MIN_SETTLED_TRADES_FOR_ROI_CHECK` (5) settled `copy_positions` rows,
-computes the median per-trade ROI (`settled_pnl_usd / stake_usd`) and
-auto-pauses (`paused_reason="realized_roi_negative"`) if it's negative. An
+computes the **total realized PnL over deduped decisions** (fills of the
+same market/outcome summed into one decision; see
+`_realized_pnl_pause_reason`) and auto-pauses
+(`paused_reason="realized_roi_negative"`) if it's negative. (Not a median
+per-trade ROI.) The screening job (`copy_wallet_screening`) screens every
+followed wallet each run, in addition to the leaderboard top-N, so these
+stability comparisons always use fresh rows (issue #1256). An
 already-`paused` wallet is left alone by both checks (idempotent, matching
 `copy_wallet_promotion.py`'s own guard). Logs a summary line (checked /
 paused-for-stability / paused-for-roi counts) at the end of the run.

@@ -530,7 +530,12 @@ CREATE TABLE IF NOT EXISTS copy_wallets_followed (
     -- constraint here (unlike stake_per_trade) because NULL must remain a
     -- valid, common value -- the API/CLI layer enforces "finite and > 0" for
     -- non-NULL values, mirroring the paper stake endpoint's own validation.
-    live_stake_per_trade REAL
+    live_stake_per_trade REAL,
+    -- Issue #1264: pausing (manual or automatic, identically) clears
+    -- live_enabled. This nullable timestamp records WHEN a pause actually
+    -- revoked a live opt-in (NULL = never), following the paused_at
+    -- precedent, so the Activity Feed's wallet_paused event can say so.
+    live_enabled_cleared_at TEXT
 );
 
 -- Copy-trading detected signals (issue #1121). One row per detected BUY
@@ -912,6 +917,9 @@ class Database:
                 ("copy_positions", "abandoned_by", "TEXT"),
                 ("copy_positions", "abandon_reason", "TEXT"),
                 ("copy_positions", "abandon_observed_price", "REAL"),
+                # Issue #1264: when a pause last revoked the live opt-in.
+                # NULL backfills every existing row (nothing revoked yet).
+                ("copy_wallets_followed", "live_enabled_cleared_at", "TEXT"),
             ]:
                 try:
                     self._conn.execute(
@@ -2222,16 +2230,39 @@ class Database:
 
         ``paused_at`` is set to the current UTC ISO-8601 timestamp when
         pausing, and cleared to ``None`` when resuming to ``'active'``.
+
+        Pausing also clears ``live_enabled`` (issue #1264, decision (a):
+        manual and automatic pauses identically) and, only if the flag was
+        set, stamps ``live_enabled_cleared_at`` with the same timestamp.
+        Resuming never restores it -- re-promotion goes through the full
+        enable-live confirmation.
         """
         paused_at = None
         if status == "paused":
             paused_at = datetime.now(timezone.utc).isoformat()
 
         with self._lock:
-            self._conn.execute(
-                "UPDATE copy_wallets_followed SET status=?, paused_reason=?, paused_at=? WHERE address=?",
-                (status, paused_reason, paused_at, address),
-            )
+            if status == "paused":
+                # Issue #1264: ANY transition to paused (manual or auto)
+                # revokes the live opt-in, atomically with the pause, so
+                # Resume can never silently restore real-money exposure.
+                # live_enabled_cleared_at is stamped only when the flag was
+                # actually set, so this runs before the flag is cleared.
+                self._conn.execute(
+                    "UPDATE copy_wallets_followed SET live_enabled_cleared_at=? "
+                    "WHERE address=? AND live_enabled=1",
+                    (paused_at, address),
+                )
+                self._conn.execute(
+                    "UPDATE copy_wallets_followed SET status=?, paused_reason=?, "
+                    "paused_at=?, live_enabled=0 WHERE address=?",
+                    (status, paused_reason, paused_at, address),
+                )
+            else:
+                self._conn.execute(
+                    "UPDATE copy_wallets_followed SET status=?, paused_reason=?, paused_at=? WHERE address=?",
+                    (status, paused_reason, paused_at, address),
+                )
             self._conn.commit()
 
     def update_followed_wallet_last_seen(self, address: str, last_seen_trade_ts: int) -> None:
