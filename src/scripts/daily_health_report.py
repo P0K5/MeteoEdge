@@ -1,8 +1,15 @@
 """Daily health report email for MeteoEdge.
 
 Gathers a snapshot of bot health, trading activity, data pipeline status,
-guardrail events, EMOS progress, and M3 remediation-plan metrics, then
+guardrail events, EMOS progress, and the impact of the 2026-10-11 entry-gate
+widening experiment (MAX_CONFIDENCE_YES_FOR_NO 0.05->0.10 + the first
+emos_primary promotions) -- overall and broken down per station -- then
 emails it as a plain-text report via SMTP.
+
+The M3 remediation-plan metrics and their open-blocker checklist (#885/#897/
+#893) are retired from this report now that the weather-trading thesis is
+closed (M3/M3d, 2026-08-28/2026-10-03) -- their functions and tests remain in
+this module for now, just unused here, rather than deleted outright.
 
 Usage::
 
@@ -56,6 +63,25 @@ from src.logging_config import setup_logging  # noqa: E402
 #: to print "362/300 (121%)" on 2026-08-04 against a window that was entirely
 #: contaminated. Keep in step with docs/REMEDIATION_PLAN.md's M3 section.
 M3_CLEAN_DATA_CLOCK_START = "2026-08-06"
+
+#: Date the entry-gate widening experiment landed: MAX_CONFIDENCE_YES_FOR_NO
+#: raised 0.05 -> 0.10 and the first batch of cities promoted to emos_primary
+#: (2026-10-10/11, same change). "Since the change" figures in this report
+#: anchor here rather than a rolling window, so the sample grows every day
+#: this report runs instead of resetting to "last 24h" each time. Settlement
+#: lags entry by ~1-2 days (settle.py runs as a daily batch), so a trade's
+#: absence from "settled" counts here is expected for the last day or two,
+#: not evidence of a stuck pipeline.
+PARAM_CHANGE_DATE = "2026-10-11T00:00:00"
+
+#: Cities promoted to emos_primary as part of the same change -- used to
+#: split "is the promotion itself paying off" from the gate-widening effect,
+#: which otherwise land in the same window and would be impossible to tell
+#: apart.
+EMOS_PRIMARY_PROMOTED_CITIES = (
+    "Miami", "Seoul", "Kuala Lumpur", "Singapore",
+    "Panama City", "London", "Paris",
+)
 
 log = logging.getLogger(__name__)
 
@@ -1103,6 +1129,180 @@ def _build_copy_stuck(db, today: datetime) -> "tuple[list[str], dict]":
     return lines, flags
 
 
+def _build_param_change_impact(db, today: datetime) -> list[str]:
+    """Shadow PnL/win-rate since the entry-gate widening experiment landed.
+
+    Three cuts, in order: the whole shadow book since the change (context),
+    the specific NO/p_yes-0.05-0.10 pocket the gate change itself opened up
+    (the thing actually being tested), and the 7 emos_primary-promoted
+    cities (a *different* change that landed the same day) -- kept separate
+    so a swing in one is never misread as evidence about the other.
+    """
+    lines = ["Entry-Gate Widening Experiment (since 2026-10-11)", "-" * 50]
+    try:
+        since = PARAM_CHANGE_DATE
+
+        overall = db._conn.execute(
+            "SELECT side, COUNT(*), "
+            "SUM(CASE WHEN outcome IS NOT NULL THEN 1 ELSE 0 END), "
+            "SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END), "
+            "SUM(CASE WHEN pnl < 0 THEN 1 ELSE 0 END), "
+            "COALESCE(SUM(pnl), 0) "
+            "FROM trades WHERE mode='shadow' AND direction='high' AND ts >= ? "
+            "GROUP BY side",
+            (since,),
+        ).fetchall()
+        if not overall:
+            lines.append("  No shadow trades since the change yet.")
+            lines.append("")
+            return lines
+
+        total_trades = total_settled = 0
+        total_pnl = 0.0
+        for side, n, settled, wins, losses, pnl in overall:
+            total_trades += n
+            total_settled += settled or 0
+            total_pnl += pnl or 0
+            wr = (wins / (wins + losses)) if (wins or losses) else None
+            pnl_display = pnl if settled else None
+            lines.append(
+                f"  {side:<4} {n:>4} trades, {settled or 0:>4} settled, "
+                f"win% {_fmt_pct(wr)} ({wins or 0}W/{losses or 0}L), {_fmt_pnl(pnl_display)}"
+            )
+        pending = total_trades - total_settled
+        lines.append(f"  TOTAL {total_trades} trades, {total_settled} settled "
+                     f"({pending} pending -- settlement lags ~1-2 days), {_fmt_pnl(total_pnl)}")
+
+        # The specific pocket MAX_CONFIDENCE_YES_FOR_NO=0.10 opened: NO-side
+        # entries at p_yes in (0.05, 0.10] that the old 0.05 ceiling would
+        # have rejected outright before this change. This is the one number
+        # that directly answers "is the parameter change itself paying off".
+        pocket = db._conn.execute(
+            "SELECT COUNT(*), "
+            "SUM(CASE WHEN outcome IS NOT NULL THEN 1 ELSE 0 END), "
+            "SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END), "
+            "SUM(CASE WHEN pnl < 0 THEN 1 ELSE 0 END), "
+            "COALESCE(SUM(pnl), 0), "
+            "SUM(COALESCE(is_next_day, 0)) "
+            "FROM trades WHERE mode='shadow' AND side='NO' AND ts >= ? "
+            "AND p_yes_raw > 0.0501 AND p_yes_raw <= 0.10",
+            (since,),
+        ).fetchone()
+        lines.append("")
+        if pocket and pocket[0]:
+            n, settled, wins, losses, pnl, next_day_n = pocket
+            wr = (wins / (wins + losses)) if (wins or losses) else None
+            pnl_display = pnl if settled else None
+            lines.append(
+                f"  Widened pocket (NO, p_yes 0.05-0.10): {n} trades "
+                f"({next_day_n} next-day -- unvalidated by the backtest), "
+                f"{settled} settled, win% {_fmt_pct(wr)} ({wins}W/{losses}L), "
+                f"{_fmt_pnl(pnl_display)}"
+            )
+        else:
+            lines.append("  Widened pocket (NO, p_yes 0.05-0.10): no trades yet")
+
+        # Same-day change, different mechanism: 7 cities promoted to
+        # emos_primary. Tracked separately so this section answers both
+        # "is the gate change working" and "is the promotion working"
+        # without conflating them.
+        from src.config import STATIONS, station_city
+        promoted_stations = tuple(
+            s[0] for s in STATIONS if station_city(s) in EMOS_PRIMARY_PROMOTED_CITIES
+        )
+        if promoted_stations:
+            placeholders = ",".join("?" * len(promoted_stations))
+            promo_row = db._conn.execute(
+                "SELECT COUNT(*), "
+                "SUM(CASE WHEN outcome IS NOT NULL THEN 1 ELSE 0 END), "
+                "SUM(CASE WHEN pnl>0 THEN 1 ELSE 0 END), "
+                "SUM(CASE WHEN pnl<0 THEN 1 ELSE 0 END), COALESCE(SUM(pnl),0) "
+                f"FROM trades WHERE mode='shadow' AND ts >= ? "
+                f"AND station IN ({placeholders})",
+                (since, *promoted_stations),
+            ).fetchone()
+            n, settled, wins, losses, pnl = promo_row
+            wr = (wins / (wins + losses)) if (wins or losses) else None
+            pnl_display = pnl if settled else None
+            lines.append(
+                f"  emos_primary cities (7): {n or 0} trades, {settled or 0} settled, "
+                f"win% {_fmt_pct(wr)} ({wins or 0}W/{losses or 0}L), {_fmt_pnl(pnl_display)}"
+            )
+
+    except Exception:
+        log.exception("Param-change impact query failed")
+        lines.append("  (unavailable -- query error)")
+    lines.append("")
+    return lines
+
+
+def _build_station_breakdown(db, today: datetime) -> list[str]:
+    """Per-station shadow PnL/win-rate since the change, alongside each
+    city's latest EMOS-vs-legacy CRPS -- so a station's trading edge and its
+    underlying forecast quality are read side by side, not as two separate
+    reports that have to be mentally merged.
+
+    Sorted by trade count (most data first), not PnL -- this early, one
+    settled trade swinging +/-100% is not what should decide a top-10 slot.
+    """
+    lines = ["Per-Station Breakdown (top 10 by trade count, since 2026-10-11)", "-" * 55]
+    try:
+        from src.config import STATIONS, station_city
+        station_to_city = {s[0]: station_city(s) for s in STATIONS}
+
+        rows = db._conn.execute(
+            "SELECT station, COUNT(*), "
+            "SUM(CASE WHEN outcome IS NOT NULL THEN 1 ELSE 0 END), "
+            "SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END), "
+            "SUM(CASE WHEN pnl < 0 THEN 1 ELSE 0 END), "
+            "COALESCE(SUM(pnl), 0) "
+            "FROM trades WHERE mode='shadow' AND direction='high' AND ts >= ? "
+            "GROUP BY station ORDER BY COUNT(*) DESC LIMIT 10",
+            (PARAM_CHANGE_DATE,),
+        ).fetchall()
+        if not rows:
+            lines.append("  No shadow trades since the change yet.")
+            lines.append("")
+            return lines
+
+        lines.append(f"  {'Station':<8}{'N':>5}{'Set':>5}{'Win%':>7}{'PnL':>11}"
+                     f"{'EMOS CRPS':>11}{'Legacy':>9}")
+        for station, n, settled, wins, losses, pnl in rows:
+            wr = (wins / (wins + losses)) if (wins or losses) else None
+            # COALESCE(SUM(pnl), 0) turns "nothing settled yet" into a
+            # literal 0.0, which _fmt_pnl would print as "+EUR0.00" -- that
+            # reads as "broke even", not "no data yet". Show N/A instead
+            # whenever nothing has actually settled.
+            pnl_display = pnl if settled else None
+            city = station_to_city.get(station)
+            emos_crps = legacy_crps = None
+            if city:
+                crps_row = db._conn.execute(
+                    "SELECT crps_score FROM emos_calibration "
+                    "WHERE city=? AND model_mode='emos_shadow' "
+                    "ORDER BY trained_at DESC LIMIT 1",
+                    (city,),
+                ).fetchone()
+                emos_crps = crps_row[0] if crps_row else None
+                legacy_row = db._conn.execute(
+                    "SELECT AVG(crps_score) FROM emos_crps_log "
+                    "WHERE city=? AND model_mode='legacy'",
+                    (city,),
+                ).fetchone()
+                legacy_crps = legacy_row[0] if legacy_row else None
+            emos_str = f"{emos_crps:.3f}" if emos_crps is not None else "N/A"
+            legacy_str = f"{legacy_crps:.3f}" if legacy_crps is not None else "N/A"
+            lines.append(
+                f"  {station:<8}{n:>5}{settled:>5}{_fmt_pct(wr):>7}"
+                f"{_fmt_pnl(pnl_display):>11}{emos_str:>11}{legacy_str:>9}"
+            )
+    except Exception:
+        log.exception("Station breakdown query failed")
+        lines.append("  (unavailable -- query error)")
+    lines.append("")
+    return lines
+
+
 def _build_blockers(db, today: datetime) -> list[str]:
     """Known open issues status check."""
     lines = ["Open Blockers", "-" * 8]
@@ -1137,25 +1337,16 @@ def _build_verdict(sections: "list[tuple[str, list[str], dict]]") -> list[str]:
 
     ``sections`` is ``[(name, lines, flags), ...]`` as assembled by
     ``build_report``. Sections that have been migrated to the flags contract
-    (currently: ``bot``, ``m3``) are checked via their ``flags`` dict --
-    ``m3`` in particular reports THREE independent indicators
-    (``mass_status`` / ``rail_status`` / ``gaps_status``) so a WARN on one is
-    never misattributed to another (issue #972: a section-wide
-    ``"[WARN]" in m3_text`` scan used to name every M3 WARN "artifact rate
-    high", even when it was the mass or rail indicator that tripped).
-    Sections that have not yet migrated are checked against *their own*
-    lines only, keyed by section name -- this still eliminates the issue
-    #914 defect-3 bug (a WARN anywhere in the report getting attributed to
-    an unrelated section) because each check is scoped to the section that
-    produced the condition, not the full report text. Full flags migration
-    for the remaining sections (``trading``, ``pipeline``, ``guardrails``,
-    ``emos``, ``blockers``) is a natural fast-follow.
+    (currently: ``bot``, ``table_liveness``) are checked via their ``flags``
+    dict, scoped to the section that produced the condition -- this is what
+    eliminates the issue #914 defect-3 bug (a WARN anywhere in the report
+    getting attributed to an unrelated section). Full flags migration for the
+    remaining sections (``trading``, ``pipeline``, ``guardrails``, ``emos``)
+    is a natural fast-follow.
 
-    Add new conditions here by reading ``flags_by_section`` /
-    ``lines_by_section`` -- this is the extension point for #913's
-    error-aggregation section and CRIT path.
+    Add new conditions here by reading ``flags_by_section`` -- this is the
+    extension point for #913's error-aggregation section and CRIT path.
     """
-    lines_by_section = {name: lines for name, lines, _flags in sections}
     flags_by_section = {name: flags for name, _lines, flags in sections}
     all_text = "\n".join(line for _name, lines, _flags in sections for line in lines)
 
@@ -1178,34 +1369,12 @@ def _build_verdict(sections: "list[tuple[str, list[str], dict]]") -> list[str]:
     if table_liveness_flags.get("status") == "WARN":
         warn_issues.extend(table_liveness_flags.get("details", []))
 
-    m3_flags = flags_by_section.get("m3", {})
-    if m3_flags.get("mass_status") == "WARN":
-        warn_issues.append("M3 ladder mass leaking")
-    elif m3_flags.get("mass_status") == "UNKNOWN":
-        unknown_issues.append("M3 ladder mass not assessed")
-
-    if m3_flags.get("rail_status") == "WARN":
-        warn_issues.append("M3 high rail vs structural ceiling")
-    elif m3_flags.get("rail_status") == "UNKNOWN":
-        unknown_issues.append("M3 high rail not assessed")
-
-    if m3_flags.get("gaps_status") == "WARN":
-        warn_issues.append("artifact rate high")
-    elif m3_flags.get("gaps_status") == "UNKNOWN":
-        unknown_issues.append("M3 gaps not assessed")
-
     copy_stuck_flags = flags_by_section.get("copy_stuck", {})
     if copy_stuck_flags.get("n_stuck"):
         warn_issues.append(
             f"{copy_stuck_flags['n_stuck']} copy position(s) stuck "
             f"({copy_stuck_flags.get('n_urgent', 0)} urgent)"
         )
-
-    blockers_text = "\n".join(lines_by_section.get("blockers", []))
-    if "[WARN] gap confirmed" in blockers_text:
-        warn_issues.append("#897 KORD gap")
-    if "NO GEFS DATA" in blockers_text:
-        warn_issues.append("#885 no GEFS data")
 
     # "unavailable" is the shared query-error fallback string emitted by
     # every section's own except-block -- it is intentionally checked across
@@ -1223,7 +1392,7 @@ def _build_verdict(sections: "list[tuple[str, list[str], dict]]") -> list[str]:
     elif unknown_issues:
         verdict = f"[UNKNOWN] Cannot fully assess -- {', '.join(unknown_issues)}"
     else:
-        verdict = "[OK] Healthy -- all systems nominal, M3 accruing on track"
+        verdict = "[OK] Healthy -- all systems nominal"
 
     return ["Verdict", "-" * 6, f"  {verdict}", ""]
 
@@ -1245,10 +1414,10 @@ def build_report(db) -> str:
         ("trading", _build_trading),
         ("pipeline", _build_pipeline),
         ("guardrails", _build_guardrails),
-        ("m3", _build_m3_progress),
         ("emos", _build_emos_progress),
         ("copy_stuck", _build_copy_stuck),
-        ("blockers", _build_blockers),
+        ("param_change", _build_param_change_impact),
+        ("stations", _build_station_breakdown),
     ]:
         try:
             result = builder(db, today)

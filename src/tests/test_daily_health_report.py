@@ -429,43 +429,6 @@ class TestBuildVerdict:
         text = "\n".join(result)
         assert "[OK] Healthy" in text
 
-    def test_warn_when_artifact_rate_high(self):
-        sections = [("m3", ["M3 Progress", "Interior-zero gaps: 5 of 20 ladders (25.0%) [WARN]"],
-                     {"mass_status": "OK", "rail_status": "OK", "gaps_status": "WARN"})]
-        result = _build_verdict(sections)
-        text = "\n".join(result)
-        assert "[WARN]" in text
-        assert "artifact rate high" in text
-
-    def test_m3_high_rail_warns_gaps_ok_names_the_rail_not_artifact_rate(self):
-        """Issue #972: a high-rail WARN must be named as a rail/sharpness
-        problem, not folded into "artifact rate high" just because it is a
-        WARN somewhere in the M3 section."""
-        sections = [("m3", ["M3 Progress", "High rail ... [WARN]", "Interior-zero gaps: 0 of 20 (0.0%) [OK]"],
-                     {"mass_status": "OK", "rail_status": "WARN", "gaps_status": "OK"})]
-        result = _build_verdict(sections)
-        text = "\n".join(result)
-        assert "[WARN]" in text
-        assert "rail" in text.lower()
-        assert "artifact rate high" not in text
-
-    def test_m3_gaps_warn_rail_ok_names_the_gaps(self):
-        sections = [("m3", ["M3 Progress", "High rail ... [OK]", "Interior-zero gaps: 5 of 20 (25.0%) [WARN]"],
-                     {"mass_status": "OK", "rail_status": "OK", "gaps_status": "WARN"})]
-        result = _build_verdict(sections)
-        text = "\n".join(result)
-        assert "[WARN]" in text
-        assert "artifact rate high" in text
-        assert "rail" not in text.lower()
-
-    def test_m3_both_rail_and_gaps_warn_produce_both_labels(self):
-        sections = [("m3", ["M3 Progress", "High rail ... [WARN]", "Interior-zero gaps: 5 of 20 (25.0%) [WARN]"],
-                     {"mass_status": "OK", "rail_status": "WARN", "gaps_status": "WARN"})]
-        result = _build_verdict(sections)
-        text = "\n".join(result)
-        assert "artifact rate high" in text
-        assert "rail" in text.lower()
-
     def test_m3_healthy_section_produces_no_m3_label(self):
         sections = [("m3", ["M3 Progress", "everything [OK]"],
                      {"mass_status": "OK", "rail_status": "OK", "gaps_status": "OK"})]
@@ -475,18 +438,6 @@ class TestBuildVerdict:
         assert "artifact rate high" not in text
         assert "rail" not in text.lower()
         assert "mass" not in text.lower()
-
-    def test_m3_ladder_mass_warn_names_mass_not_artifact_rate(self):
-        """Issue #972 required test: a ladder-mass WARN must name the mass
-        problem, not "artifact rate high"."""
-        sections = [("m3", ["M3 Progress", "Ladder mass: 0.80 mean ... [WARN]",
-                             "Interior-zero gaps: 0 of 20 (0.0%) [OK]"],
-                     {"mass_status": "WARN", "rail_status": "OK", "gaps_status": "OK"})]
-        result = _build_verdict(sections)
-        text = "\n".join(result)
-        assert "[WARN]" in text
-        assert "mass" in text.lower()
-        assert "artifact rate high" not in text
 
     def test_crit_when_bot_stale(self):
         sections = [
@@ -498,51 +449,34 @@ class TestBuildVerdict:
         assert "[CRIT]" in text
         assert "bot stale" in text
 
-    def test_warn_for_kord_gap(self):
-        sections = [("blockers", ["Open Blockers", "KORD GEFS capture gap -- [WARN] gap confirmed"], {})]
-        result = _build_verdict(sections)
-        text = "\n".join(result)
-        assert "[WARN]" in text
-        assert "#897 KORD gap" in text
-
-    def test_warn_for_no_gefs_data(self):
-        sections = [("blockers", ["Open Blockers", "NO GEFS DATA"], {})]
-        result = _build_verdict(sections)
-        text = "\n".join(result)
-        assert "[WARN]" in text
-        assert "#885 no GEFS data" in text
-
-    def test_multiple_warnings_demoted(self):
-        """Multiple WARN-level issues stay at WARN (not CRIT unless there's a CRIT trigger)."""
+    def test_multiple_warnings_combined(self):
+        """Multiple WARN-level issues from different sections all appear,
+        and stay at WARN (not CRIT unless there's a CRIT trigger)."""
         sections = [
-            ("m3", ["M3 Progress", "Interior-zero gaps: 5 of 20 ladders (25.0%) [WARN]"],
-             {"mass_status": "OK", "rail_status": "OK", "gaps_status": "WARN"}),
-            ("blockers", [
-                "Open Blockers",
-                "KORD GEFS capture gap -- [WARN] gap confirmed",
-                "NO GEFS DATA",
-            ], {}),
+            ("bot", ["Bot Pulse", "Status: [WARN] 25 min since last poll"],
+             {"status": "WARN", "detail": "25 min since last poll"}),
+            ("table_liveness", ["Table Liveness", "scan_decisions ... [WARN]"],
+             {"status": "WARN", "details": ["scan_decisions stale (400 min)"]}),
         ]
         result = _build_verdict(sections)
         text = "\n".join(result)
         assert "[WARN]" in text
-        assert "artifact rate high" in text
-        assert "#897 KORD gap" in text
-        assert "#885 no GEFS data" in text
+        assert "25 min since last poll" in text
+        assert "scan_decisions stale (400 min)" in text
 
     def test_crit_with_warns_combined(self):
         """CRIT + WARN → CRIT verdict listing all issues."""
         sections = [
             ("bot", ["Bot Pulse", "Status: [STALE] 90 min since last poll"],
              {"status": "STALE", "detail": "90 min since last poll"}),
-            ("m3", ["M3 Progress", "Interior-zero gaps: 5 of 20 ladders (25.0%) [WARN]"],
-             {"mass_status": "OK", "rail_status": "OK", "gaps_status": "WARN"}),
+            ("table_liveness", ["Table Liveness", "scan_decisions ... [WARN]"],
+             {"status": "WARN", "details": ["scan_decisions stale (400 min)"]}),
         ]
         result = _build_verdict(sections)
         text = "\n".join(result)
         assert "[CRIT]" in text
         assert "bot stale" in text
-        assert "artifact rate high" in text
+        assert "scan_decisions stale (400 min)" in text
 
     def test_unrelated_warn_not_attributed_to_artifact_rate(self):
         """Regression test for issue #914 defect 3.
@@ -583,68 +517,26 @@ class TestBuildVerdict:
         assert "[OK] Healthy" in text
         assert "bot stale" not in text
 
-    def test_all_m3_flags_unknown_yields_unknown_verdict(self):
-        """All three m3 flags UNKNOWN → verdict is NOT [OK] Healthy, and names all three."""
-        sections = [("m3", ["M3 Progress", "(no ladders in 24h -- cannot assess)", "(no brackets in 24h -- cannot assess)"],
-                     {"mass_status": "UNKNOWN", "rail_status": "UNKNOWN", "gaps_status": "UNKNOWN"})]
-        result = _build_verdict(sections)
-        text = "\n".join(result)
-        assert "[UNKNOWN]" in text
-        assert "[OK] Healthy" not in text
-        assert "M3 ladder mass not assessed" in text
-        assert "M3 high rail not assessed" in text
-        assert "M3 gaps not assessed" in text
-
-    def test_one_unknown_others_ok_yields_unknown_verdict(self):
-        """One UNKNOWN, others OK → [UNKNOWN] Cannot fully assess, naming only the unassessed one."""
-        sections = [("m3", ["M3 Progress", "Ladder mass: 1.00 mean [OK]", "High rail ... [OK]", "Interior-zero gaps: 0 of 20 (0.0%) [OK]"],
-                     {"mass_status": "UNKNOWN", "rail_status": "OK", "gaps_status": "OK"})]
-        result = _build_verdict(sections)
-        text = "\n".join(result)
-        assert "[UNKNOWN]" in text
-        assert "[OK] Healthy" not in text
-        assert "M3 ladder mass not assessed" in text
-        assert "M3 high rail not assessed" not in text
-        assert "M3 gaps not assessed" not in text
-
-    def test_one_warn_one_unknown_warn_wins_both_labels_appear(self):
-        """One WARN + one UNKNOWN → [WARN] tag wins, and BOTH labels appear."""
-        sections = [("m3", ["M3 Progress", "Ladder mass: 0.80 mean [WARN]", "High rail: (no ceiling -- cannot assess)", "Interior-zero gaps: 0 of 20 (0.0%) [OK]"],
-                     {"mass_status": "WARN", "rail_status": "UNKNOWN", "gaps_status": "OK"})]
-        result = _build_verdict(sections)
-        text = "\n".join(result)
-        assert "[WARN]" in text
-        assert "[OK] Healthy" not in text
-        assert "M3 ladder mass leaking" in text
-        assert "M3 high rail not assessed" in text
-        assert "M3 gaps not assessed" not in text
-
-    def test_all_m3_ok_still_yields_ok_verdict(self):
-        """All three OK → still [OK] Healthy (regression guard)."""
-        sections = [("m3", ["M3 Progress", "Ladder mass: 1.00 mean [OK]", "High rail ... [OK]", "Interior-zero gaps: 0 of 20 (0.0%) [OK]"],
-                     {"mass_status": "OK", "rail_status": "OK", "gaps_status": "OK"})]
+    def test_all_ok_still_yields_ok_verdict(self):
+        """All sections OK, no flags of note → still [OK] Healthy (regression guard)."""
+        sections = [("pipeline", ["Data Pipeline", "Observations: 740 [OK]"], {})]
         result = _build_verdict(sections)
         text = "\n".join(result)
         assert "[OK] Healthy" in text
         assert "[UNKNOWN]" not in text
-        assert "not assessed" not in text
 
-    def test_query_error_yields_partial_data_distinct_from_empty_window(self):
-        """Query-error path yields 'partial data only' and is distinguishable from empty-window path."""
-        # Query-error path: has "unavailable" in the text
-        sections_error = [("m3", ["M3 Progress", "(unavailable -- query error)"], {"mass_status": "UNKNOWN", "rail_status": "UNKNOWN", "gaps_status": "UNKNOWN"})]
-        result_error = _build_verdict(sections_error)
-        text_error = "\n".join(result_error)
-        assert "[WARN]" in text_error  # "partial data only" is a WARN
-        assert "partial data only" in text_error
-
-        # Empty-window path: no "unavailable", just UNKNOWN flags
-        sections_empty = [("m3", ["M3 Progress", "(no ladders in 24h -- cannot assess)"], {"mass_status": "UNKNOWN", "rail_status": "UNKNOWN", "gaps_status": "UNKNOWN"})]
-        result_empty = _build_verdict(sections_empty)
-        text_empty = "\n".join(result_empty)
-        assert "[UNKNOWN]" in text_empty  # Only UNKNOWN flags, no query error
-        assert "partial data only" not in text_empty
-        assert "cannot assess" in text_empty or "not assessed" in text_empty
+    def test_query_error_yields_partial_data_warn(self):
+        """Any section's 'unavailable -- query error' fallback text triggers
+        a 'partial data only' WARN, regardless of which section emitted it --
+        this check scans the whole rendered report by design, unlike the
+        per-section flag checks above (issue #914 defect 3's one exception,
+        since there is no section-specific flag for 'this section's query
+        itself failed')."""
+        sections = [("pipeline", ["Data Pipeline", "(unavailable -- query error)"], {})]
+        result = _build_verdict(sections)
+        text = "\n".join(result)
+        assert "[WARN]" in text
+        assert "partial data only" in text
 
 
 # ---------------------------------------------------------------------------
@@ -667,9 +559,9 @@ class TestBuildReport:
             "Trading (last 24h UTC)",
             "Data Pipeline (today UTC)",
             "Guardrails (last 24h)",
-            "M3 Progress",
             "EMOS Status",
-            "Open Blockers",
+            "Entry-Gate Widening Experiment",
+            "Per-Station Breakdown",
             "Verdict",
         ]:
             assert header in result, f"Missing section: {header}"
@@ -733,9 +625,7 @@ class TestBuildReport:
             result = build_report(db)
         assert "280/288" in result or "280" in result
         assert "1,500" in result
-        assert "6/300" in result
         assert "Singapore" in result
-        assert "3,445 GEFS rows" in result
 
 
 # ---------------------------------------------------------------------------
