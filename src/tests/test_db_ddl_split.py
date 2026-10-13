@@ -103,3 +103,31 @@ def test_malformed_statement_error_names_sql(tmp_path, monkeypatch):
         Database(tmp_path / "bad.db")
     assert "broken_tbl_1267" in str(ei.value)
     assert isinstance(ei.value.__cause__, sqlite3.Error)
+
+
+def test_archive_db_schema_identical_and_semicolon_in_comment(tmp_path, monkeypatch):
+    from src.data import archive_db as amod
+
+    c = sqlite3.connect(":memory:")
+    for stmt in amod._DDL.strip().split(";"):
+        if stmt.strip():
+            c.execute(stmt.strip())
+    expected = sorted(tuple(r) for r in c.execute(
+        "SELECT type, name, tbl_name, sql FROM sqlite_master"))
+    c.close()
+    assert expected
+
+    a = amod.ArchiveDatabase(tmp_path / "a.db")
+    got = sorted(tuple(r) for r in a._conn.execute(
+        "SELECT type, name, tbl_name, sql FROM sqlite_master"))
+    # _migrate may only ALTER columns (rewriting sql text); object set same
+    assert [g[:3] for g in got] == [e[:3] for e in expected]
+    a._conn.close()
+
+    first = amod._DDL.strip().splitlines()[0]
+    monkeypatch.setattr(amod, "_DDL", "-- a; b; c\n" + amod._DDL.replace(
+        first, first + " -- tail; comment", 1))
+    b = amod.ArchiveDatabase(tmp_path / "b.db")
+    got2 = [tuple(r)[:3] for r in b._conn.execute(
+        "SELECT type, name, tbl_name, sql FROM sqlite_master")]
+    assert sorted(got2) == [e[:3] for e in expected]

@@ -10,6 +10,8 @@ import sqlite3
 import threading
 from pathlib import Path
 
+from src.data.sql_split import execute_ddl_script
+
 _DEFAULT_ARCHIVE_PATH = os.getenv("ARCHIVE_DB_PATH", "data/analytics.db")
 
 _DDL = """
@@ -96,10 +98,7 @@ class ArchiveDatabase:
         self._conn = sqlite3.connect(str(path), check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
-        for stmt in _DDL.strip().split(";"):
-            stmt = stmt.strip()
-            if stmt:
-                self._conn.execute(stmt)
+        execute_ddl_script(self._conn, _DDL)
         self._migrate()
         self._conn.commit()
 
