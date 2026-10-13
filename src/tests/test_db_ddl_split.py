@@ -1,6 +1,8 @@
 """Issue #1267: schema DDL must not be split on a naive semicolon."""
 import sqlite3
 
+import pytest
+
 from src.data import db as dbmod
 from src.data.db import Database, _split_sql_statements
 
@@ -70,3 +72,34 @@ def test_real_schema_identical_objects(tmp_path):
         "SELECT type, name, tbl_name, sql FROM sqlite_master ORDER BY type, name"
     ).fetchall()
     assert [tuple(r) for r in split_rows] == [tuple(r) for r in _naive_objects()]
+
+
+def test_semicolon_in_ddl_comment_constructs_database(tmp_path, monkeypatch):
+    base = Database(tmp_path / "base.db")
+    expected = {tuple(r) for r in base._conn.execute(
+        "SELECT type, name, tbl_name FROM sqlite_master").fetchall()}
+    base._conn.close()
+    ddl = dbmod._DDL.replace(
+        "CREATE TABLE IF NOT EXISTS observations (",
+        "-- note; a semicolon in a comment; must not split\n"
+        "CREATE TABLE IF NOT EXISTS observations (",
+        1,
+    ).replace("    station       TEXT NOT NULL,",
+              "    station       TEXT NOT NULL, -- stn; id",
+              1)
+    assert ddl != dbmod._DDL
+    monkeypatch.setattr(dbmod, "_DDL", ddl)
+    d = Database(tmp_path / "semi.db")
+    got = {tuple(r) for r in d._conn.execute(
+        "SELECT type, name, tbl_name FROM sqlite_master").fetchall()}
+    assert got == expected
+
+
+def test_malformed_statement_error_names_sql(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        dbmod, "_DDL", dbmod._DDL + "\nCREATE TABLE broken_tbl_1267 (id INTEGER,;\n"
+    )
+    with pytest.raises(sqlite3.OperationalError) as ei:
+        Database(tmp_path / "bad.db")
+    assert "broken_tbl_1267" in str(ei.value)
+    assert isinstance(ei.value.__cause__, sqlite3.Error)

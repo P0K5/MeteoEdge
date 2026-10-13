@@ -680,6 +680,11 @@ def _split_sql_statements(script: str) -> "list[str]":
     (``sqlite3.complete_statement``) says the text is a complete statement.
     Statements are returned stripped, without empty fragments, and are still
     executed one at a time by the caller (same semantics as before).
+
+    Failure diagnostics: because statements stay individual, the caller
+    wraps each ``execute`` and re-raises with the failing statement's text in
+    the message (original error kept as ``__cause__``), so a malformed schema
+    is identified by its SQL rather than a bare "incomplete input".
     """
     statements: "list[str]" = []
     start = 0
@@ -727,7 +732,12 @@ class Database:
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA foreign_keys=ON")
         for stmt in _split_sql_statements(_DDL):
-            self._conn.execute(stmt)
+            try:
+                self._conn.execute(stmt)
+            except sqlite3.Error as exc:
+                raise sqlite3.OperationalError(
+                    f"schema DDL statement failed: {exc}: {stmt[:300]!r}"
+                ) from exc
         self._conn.commit()
         self._migrate()
 
