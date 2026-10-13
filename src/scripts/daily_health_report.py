@@ -53,6 +53,10 @@ if str(_HERE.parents[1]) not in sys.path:
     sys.path.insert(0, str(_HERE.parents[1]))
 
 from src.logging_config import setup_logging  # noqa: E402
+from src.data.copy_skip_reasons import (  # noqa: E402
+    BASELINE_DAYS as _SKIP_BASELINE_DAYS,
+    WINDOW_HOURS as _SKIP_WINDOW_HOURS,
+)
 
 #: Start of the M3 clean-data collection window, and the date station-days are
 #: counted from. This has moved TWICE as probability defects landed mid-window
@@ -1129,6 +1133,83 @@ def _build_copy_stuck(db, today: datetime) -> "tuple[list[str], dict]":
     return lines, flags
 
 
+def _copy_skip_counts(db, now: datetime) -> "dict":
+    """Per-wallet counts: ``{address: {"placed": n, "skipped": {reason: (window, baseline_total)}}}``.
+
+    Lives here, not in src/data, because the db-lock guard forbids `_conn`
+    reads outside db.py/scripts. Read-only; one grouped query over ``idx_copy_signals_address_detected``.
+    """
+    win_start = (now - timedelta(hours=_SKIP_WINDOW_HOURS)).isoformat()
+    base_start = (now - timedelta(hours=_SKIP_WINDOW_HOURS, days=_SKIP_BASELINE_DAYS)).isoformat()
+    with db._lock:
+        rows = db._conn.execute(
+            "SELECT address, order_placed, skip_reason, "
+            "SUM(detected_at >= ?) AS n_win, SUM(detected_at < ?) AS n_base "
+            "FROM copy_signals WHERE detected_at >= ? "
+            "GROUP BY address, order_placed, skip_reason",
+            (win_start, win_start, base_start),
+        ).fetchall()
+    out: dict = {}
+    for r in rows:
+        w = out.setdefault(r["address"], {"placed": 0, "skipped": {}})
+        if r["order_placed"]:
+            w["placed"] += int(r["n_win"] or 0)
+        elif r["skip_reason"]:
+            w["skipped"][r["skip_reason"]] = (int(r["n_win"] or 0), int(r["n_base"] or 0))
+    return out
+
+
+def _build_copy_skips(db, today: datetime) -> "tuple[list[str], dict]":
+    """Copy-signal skip reasons per wallet over the last 24h (issue #1314).
+
+    Counts only. Trend basis: 24h count vs the prior 7-day daily average
+    (NEW / SPIKE / steady). STRUCTURAL reasons (e.g. non_binary_outcome_index:
+    the wallet trades markets this engine cannot represent) are separated from
+    routine gate rejections. Each wallet line states placed vs skipped so the
+    paper-performance denominator's incompleteness is visible."""
+    from src.data.copy_skip_reasons import (
+        STRUCTURAL, UNKNOWN, classify, trend,
+    )
+    lines = ["Copy-trading skipped signals (last 24h)", "-" * 38]
+    flags: dict = {"n_structural": 0, "n_unknown": 0, "n_spike": 0}
+    try:
+        data = _copy_skip_counts(db, today)
+        shown = False
+        for addr in sorted(data):
+            w = data[addr]
+            window = {k: v[0] for k, v in w["skipped"].items() if v[0] > 0}
+            if not window:
+                continue
+            shown = True
+            lines.append(f"  {addr}: placed={w['placed']} skipped={sum(window.values())}")
+            for reason, n in sorted(window.items(), key=lambda kv: (-kv[1], kv[0])):
+                cls = classify(reason)
+                t = trend(n, w["skipped"][reason][1])
+                avg = w["skipped"][reason][1] / _SKIP_BASELINE_DAYS
+                mark = "[WARN] " if cls in (STRUCTURAL, UNKNOWN) or t != "STEADY" else ""
+                lines.append(
+                    f"    {mark}{reason:<28} {n:>4}  {cls:<10} {t} (prior {_SKIP_BASELINE_DAYS}d avg {avg:.1f}/day)"
+                )
+                if cls == STRUCTURAL:
+                    flags["n_structural"] += n
+                if cls == UNKNOWN:
+                    flags["n_unknown"] += n
+                if t != "STEADY":
+                    flags["n_spike"] += 1
+        if not shown:
+            lines.append("  no skipped signals in the last 24h")
+        elif flags["n_structural"]:
+            lines.append(
+                "  [WARN] STRUCTURAL skips = wallet trades markets this engine cannot "
+                "represent; its paper record excludes them (see docs/OPERATIONS.md)"
+            )
+    except Exception:
+        log.exception("Copy skip-reason query failed")
+        lines.append("  (unavailable -- query error)")
+    lines.append("")
+    return lines, flags
+
+
 def _build_param_change_impact(db, today: datetime) -> list[str]:
     """Shadow PnL/win-rate since the entry-gate widening experiment landed.
 
@@ -1518,6 +1599,13 @@ def _build_verdict(sections: "list[tuple[str, list[str], dict]]") -> list[str]:
             f"({copy_stuck_flags.get('n_urgent', 0)} urgent)"
         )
 
+    copy_skip_flags = flags_by_section.get("copy_skips", {})
+    if copy_skip_flags.get("n_structural") or copy_skip_flags.get("n_unknown"):
+        warn_issues.append(
+            f"copy skips: {copy_skip_flags.get('n_structural', 0)} structural, "
+            f"{copy_skip_flags.get('n_unknown', 0)} unknown-reason in 24h"
+        )
+
     # "unavailable" is the shared query-error fallback string emitted by
     # every section's own except-block -- it is intentionally checked across
     # the whole report, unlike the section-specific WARN markers above.
@@ -1559,6 +1647,7 @@ def build_report(db) -> str:
         ("guardrails", _build_guardrails),
         ("emos", _build_emos_progress),
         ("copy_stuck", _build_copy_stuck),
+        ("copy_skips", _build_copy_skips),
         ("silent_failures", _build_silent_failures),
         ("param_change", _build_param_change_impact),
         ("stations", _build_station_breakdown),
