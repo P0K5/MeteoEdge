@@ -92,3 +92,10 @@ def test_managed_units_reads_deploy_dir():
 def test_verdict_surfaces_services_warning():
     out = dhr._build_verdict([("services", ["Services"], {"status": "WARN", "details": ["1 unit(s) failed/restarting: x"]})])
     assert "[WARN]" in "\n".join(out) and "failed/restarting" in "\n".join(out)
+
+
+def test_missing_systemd_dir_degrades_to_unknown(tmp_path):
+    with patch.object(dhr, "_SYSTEMD_DIR", tmp_path / "nope"):
+        lines, flags = dhr._build_services(None, NOW)
+    assert flags["status"] == "UNKNOWN"
+    assert "(unavailable" in "\n".join(lines)
