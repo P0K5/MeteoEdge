@@ -1,5 +1,6 @@
 """Polymarket API client. No authentication required for read-only access."""
 import logging
+from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from src.http_client import cached_fetch_json, fetch
@@ -174,6 +175,56 @@ def _classify_resolution(price: "int | None", ticker: str) -> "bool | None":
         "[polymarket] market %s... closed with ambiguous final YES price %sc "
         "-- treating as unresolved", str(ticker)[:14], price,
     )
+    return None
+
+
+def _parse_gamma_dt(raw) -> "datetime | None":
+    if not raw or not isinstance(raw, str):
+        return None
+    try:
+        dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
+def fetch_market_state(ticker: str) -> "dict | None":
+    """Market metadata for stuck-position triage (issue #1301). Read-only;
+    does NOT feed any settlement decision and does not touch
+    ``_classify_resolution`` / ``RESOLVED_*_CENTS``.
+
+    Gamma returns nothing for a closed market unless ``closed=true`` is
+    passed, and (per the 2026-10-13 host diagnosis) nothing for an open one
+    when it is -- so both lookups are tried (closed=true first, then the
+    default) and the first row matching *ticker* wins. Returns
+    ``{'closed': bool, 'end_date': datetime|None, 'uma': str|None,
+    'yes_price_cents': int|None}``, or ``None`` if both lookups succeeded but
+    found no matching market. Raises ``RuntimeError`` if a lookup failed and
+    nothing was found (a network error must not read as "unretrievable").
+    """
+    from datetime import datetime  # noqa: F401
+    failed = False
+    for suffix in ("&closed=true", ""):
+        url = f"{POLYMARKET_GAMMA_API}/markets?condition_ids={ticker}{suffix}"
+        try:
+            r = fetch(url, timeout=HTTP_TIMEOUT_SECONDS)
+            r.raise_for_status()
+            result = r.json()
+        except Exception as e:
+            log.warning("[polymarket] fetch_market_state(%s...): %s", str(ticker)[:14], e)
+            failed = True
+            continue
+        market = _select_matching_market(result, ticker) if result else None
+        if market is None:
+            continue
+        return {
+            "closed": bool(market.get("closed")),
+            "end_date": _parse_gamma_dt(market.get("endDate")),
+            "uma": market.get("umaResolutionStatus"),
+            "yes_price_cents": _parse_outcome_yes_price(market),
+        }
+    if failed:
+        raise RuntimeError(f"Gamma lookup failed for {ticker}")
     return None
 
 
