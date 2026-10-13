@@ -263,6 +263,16 @@ class TestCopyTradingCapitalIsolation:
         import dotenv
 
         monkeypatch.setattr(dotenv, "load_dotenv", lambda *a, **k: False)
+        yield
+        # Issue #1366: the tests' own ``finally: importlib.reload`` runs while
+        # monkeypatch's env overrides (e.g. STARTING_CAPITAL_EUR=999.0) are
+        # still active, which leaves the module-level constants poisoned for
+        # later tests. Undo the patches first, then reload to restore the
+        # real environment-derived values.
+        monkeypatch.undo()
+        import src.config as config_module
+
+        importlib.reload(config_module)
 
     def test_defaults_when_neither_env_var_set(self, monkeypatch):
         import src.config as config_module
@@ -324,6 +334,16 @@ class TestCopyLiveCapitalIsolation:
         import dotenv
 
         monkeypatch.setattr(dotenv, "load_dotenv", lambda *a, **k: False)
+        yield
+        # Issue #1366: the tests' own ``finally: importlib.reload`` runs while
+        # monkeypatch's env overrides (e.g. STARTING_CAPITAL_EUR=999.0) are
+        # still active, which leaves the module-level constants poisoned for
+        # later tests. Undo the patches first, then reload to restore the
+        # real environment-derived values.
+        monkeypatch.undo()
+        import src.config as config_module
+
+        importlib.reload(config_module)
 
     def test_defaults_when_no_env_vars_set(self, monkeypatch):
         import src.config as config_module
