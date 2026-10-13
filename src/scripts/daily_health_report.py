@@ -1141,7 +1141,7 @@ def _build_services(db, today: datetime) -> "tuple[list[str], dict]":
         for unit in managed:
             out = _systemctl("show", unit, "-p",
                              "ActiveState,SubState,NRestarts,LoadState")
-            props = dict(l.split("=", 1) for l in out.splitlines() if "=" in l)
+            props = dict(line.split("=", 1) for line in out.splitlines() if "=" in line)
             if props.get("LoadState") == "not-found":
                 continue  # shipped but not installed on this host
             active = props.get("ActiveState", "?")
@@ -1158,7 +1158,7 @@ def _build_services(db, today: datetime) -> "tuple[list[str], dict]":
                 problems.append(f"{unit} ({n_restarts} restarts)")
         host = _systemctl("list-units", "meteoedge*", "--all", "--plain",
                           "--no-legend", "--no-pager")
-        host_units = {l.split()[0] for l in host.splitlines() if l.split()}
+        host_units = {line.split()[0] for line in host.splitlines() if line.split()}
         unmanaged = sorted(u for u in host_units
                            if u.endswith((".service", ".timer"))
                            and u not in set(managed))

@@ -35,7 +35,7 @@ def test_healthy():
         {"meteoedge.service": _show(), "meteoedge-settle.timer": _show(sub="waiting")},
         "meteoedge.service loaded active running x\nmeteoedge-settle.timer loaded active waiting y\n")
     assert flags["status"] == "OK"
-    assert not any("[WARN]" in l for l in lines)
+    assert not any("[WARN]" in line for line in lines)
 
 
 def test_failed_unit():
@@ -57,7 +57,7 @@ def test_unmanaged_unit():
         {"meteoedge.service": _show(), "meteoedge-settle.timer": _show()},
         "meteoedge.service loaded active running x\nmeteoedge-shadow.service loaded failed failed y\n")
     assert flags["status"] == "WARN"
-    assert any("unmanaged" in l and "meteoedge-shadow.service" in l for l in lines)
+    assert any("unmanaged" in line and "meteoedge-shadow.service" in line for line in lines)
 
 
 def test_not_installed_unit_skipped():
