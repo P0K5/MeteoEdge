@@ -6,12 +6,67 @@ so concurrent processes are distinguishable, while maintaining timestamp-first i
 import logging
 import os
 import re
+import time
+from datetime import datetime, timezone
 
 from src.logging_config import setup_logging
 
 
 class TestLoggingConfigFormat:
     """Test suite for log format configuration."""
+
+    def test_log_timestamp_renders_utc_not_local(self):
+        """Verify %(asctime)s renders UTC wall-clock time, not host-local time.
+
+        Pin the process timezone to a fixed UTC+3 offset (POSIX TZ string, no
+        zoneinfo dependency) so a local-time formatter would render 22:45:15
+        for an instant that is 19:45:15 UTC. The rendered line must show UTC.
+        """
+        root_logger = logging.getLogger()
+        original_handlers = root_logger.handlers[:]
+        original_converter = logging.Formatter.converter
+        original_tz = os.environ.get("TZ")
+        root_logger.handlers = []
+
+        try:
+            os.environ["TZ"] = "XYZ-3"
+            time.tzset()
+
+            setup_logging()
+
+            formatter = None
+            for handler in root_logger.handlers:
+                if handler.formatter:
+                    formatter = handler.formatter
+                    break
+            assert formatter is not None, "setup_logging() must configure a formatter"
+
+            record = logging.LogRecord(
+                name="src.tests.test_logging_config",
+                level=logging.INFO,
+                pathname="test.py",
+                lineno=1,
+                msg="UTC timestamp check",
+                args=(),
+                exc_info=None,
+            )
+            # 2026-10-04 19:45:15 UTC, the instant from the #1312 incident timeline
+            record.created = datetime(2026, 10, 4, 19, 45, 15, tzinfo=timezone.utc).timestamp()
+            record.msecs = 0
+
+            formatted = formatter.format(record)
+
+            assert formatted.startswith("2026-10-04T19:45:15 "), (
+                f"Log timestamp must render in UTC (19:45:15), got: {formatted}"
+            )
+        finally:
+            root_logger.handlers = original_handlers
+            logging.Formatter.converter = original_converter
+            if original_tz is not None:
+                os.environ["TZ"] = original_tz
+            else:
+                os.environ.pop("TZ", None)
+            time.tzset()
 
     def test_log_format_includes_process_id(self):
         """Verify that the log format includes the process ID.
