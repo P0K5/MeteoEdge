@@ -889,3 +889,50 @@ class TestPersistScanDecisionsFieldFiltering:
 
         rows = db.get_scan_decisions("KATL", list(snaps.values())[0]["date"])
         assert rows == []
+
+
+class TestScanDecisionFailureObservability:
+    """Issue #913: write failures are recorded, never abort the poll."""
+
+    @pytest.fixture()
+    def db(self, tmp_path):
+        return Database(tmp_path / "scan-decisions-observability-test.db")
+
+    def _events(self, db):
+        rows = db._conn.execute(
+            "SELECT event_type, raw_value, adj_value FROM guardrail_events"
+        ).fetchall()
+        return [tuple(r) for r in rows]
+
+    def test_value_error_failures_recorded_once_per_poll(self, db):
+        snaps = {
+            f"0xobs{i}": _snap(f"0xobs{i}", gate_verdict="not_a_real_verdict")
+            for i in range(4)
+        }
+        run_module._persist_scan_decisions(snaps, {}, live_trader=None, db=db)
+        assert self._events(db) == [("scan_decision_write_failed", 4.0, 4.0)]
+
+    def test_type_error_trips_circuit_breaker_and_does_not_raise(self, db, caplog):
+        mock_db = MagicMock()
+        mock_db.upsert_scan_decision.side_effect = TypeError("unexpected kwarg")
+        snaps = {f"0xtype{i}": _snap(f"0xtype{i}") for i in range(5)}
+        with caplog.at_level(logging.ERROR, logger="src.scripts.run"):
+            run_module._persist_scan_decisions(snaps, {}, live_trader=None, db=mock_db)
+        assert mock_db.upsert_scan_decision.call_count == 1  # breaker tripped
+        assert any("circuit breaker" in r.message for r in caplog.records)
+        args = mock_db.log_guardrail_event.call_args[0]
+        assert args[2] == "scan_decision_signature_mismatch"
+
+    def test_recording_failure_never_propagates(self):
+        mock_db = MagicMock()
+        mock_db.upsert_scan_decision.side_effect = ValueError("bad")
+        mock_db.log_guardrail_event.side_effect = RuntimeError("db locked")
+        run_module._persist_scan_decisions(
+            {"0xa": _snap("0xa")}, {}, live_trader=None, db=mock_db,
+        )
+
+    def test_success_records_nothing(self, db):
+        run_module._persist_scan_decisions(
+            {"0xok": _snap("0xok")}, {}, live_trader=None, db=db,
+        )
+        assert self._events(db) == []

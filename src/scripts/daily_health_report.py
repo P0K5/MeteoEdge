@@ -1303,6 +1303,60 @@ def _build_station_breakdown(db, today: datetime) -> list[str]:
     return lines
 
 
+def _running_commit_sha() -> "str | None":
+    """Short SHA of the checked-out code (issue #913 item 4)."""
+    import subprocess
+    try:
+        out = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True, timeout=5,
+            cwd=str(Path(__file__).resolve().parent),
+        )
+        sha = out.stdout.strip()
+        return sha if out.returncode == 0 and sha else None
+    except Exception:
+        return None
+
+
+def _build_silent_failures(db, today: datetime) -> "tuple[list[str], dict]":
+    """Errors / silent failures (24h): scan_decisions write failures (issue
+    #913), recorded by run.py as guardrail_events rows, plus the running
+    commit SHA so "merged" vs "deployed" is visible. Any non-zero write
+    failure sets ``n_write_failed`` which the verdict reports as CRIT."""
+    lines = ["Errors / silent failures (24h)", "-" * 30]
+    flags: dict = {"n_write_failed": 0, "n_signature_mismatch": 0}
+    try:
+        since = (today - timedelta(hours=24)).isoformat()
+        rows = db._conn.execute(
+            "SELECT event_type, COUNT(*), COALESCE(SUM(raw_value), 0) "
+            "FROM guardrail_events WHERE ts >= ? AND event_type IN "
+            "('scan_decision_write_failed', 'scan_decision_signature_mismatch') "
+            "GROUP BY event_type",
+            (since,),
+        ).fetchall()
+        by_type = {r[0]: (int(r[1]), int(r[2])) for r in rows}
+        polls_w, rows_w = by_type.get("scan_decision_write_failed", (0, 0))
+        polls_s, rows_s = by_type.get("scan_decision_signature_mismatch", (0, 0))
+        flags["n_write_failed"] = rows_w + rows_s
+        flags["n_signature_mismatch"] = polls_s
+        lines.append(
+            f"  scan_decisions upsert failures: {rows_w + rows_s} rows over "
+            f"{polls_w + polls_s} poll(s)  |  signature/schema mismatch polls: {polls_s}"
+        )
+        if rows_w + rows_s:
+            lines.append(
+                "  [CRIT] scan_decisions writes are failing -- M3 station-days "
+                "are being lost; check logs for '[scan_decisions] upsert failed'"
+            )
+    except Exception:
+        log.exception("Silent-failure query failed")
+        lines.append("  (unavailable -- query error)")
+    sha = _running_commit_sha()
+    lines.append(f"  Running commit: {sha or 'unknown'}")
+    lines.append("")
+    return lines, flags
+
+
 #: A unit with more restarts than this since its last (re)start is alarming
 #: regardless of its momentary state (issue #944: 348,602 / 78,547 restarts).
 UNIT_RESTART_WARN = 5
@@ -1448,6 +1502,12 @@ def _build_verdict(sections: "list[tuple[str, list[str], dict]]") -> list[str]:
     if table_liveness_flags.get("status") == "WARN":
         warn_issues.extend(table_liveness_flags.get("details", []))
 
+    silent_flags = flags_by_section.get("silent_failures", {})
+    if silent_flags.get("n_write_failed"):
+        crit_issues.append(
+            f"{silent_flags['n_write_failed']} scan_decisions write failure(s) in 24h"
+        )
+
     # issue #944: failed / restarting / unmanaged systemd units.
     warn_issues.extend(flags_by_section.get("services", {}).get("details", []))
 
@@ -1499,6 +1559,7 @@ def build_report(db) -> str:
         ("guardrails", _build_guardrails),
         ("emos", _build_emos_progress),
         ("copy_stuck", _build_copy_stuck),
+        ("silent_failures", _build_silent_failures),
         ("param_change", _build_param_change_impact),
         ("stations", _build_station_breakdown),
     ]:
