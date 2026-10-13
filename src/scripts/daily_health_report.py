@@ -1103,6 +1103,85 @@ def _build_copy_stuck(db, today: datetime) -> "tuple[list[str], dict]":
     return lines, flags
 
 
+#: A unit with more restarts than this since its last (re)start is alarming
+#: regardless of its momentary state (issue #944: 348,602 / 78,547 restarts).
+UNIT_RESTART_WARN = 5
+
+_SYSTEMD_DIR = Path(__file__).resolve().parents[2] / "deploy" / "systemd"
+_SYSTEMCTL_TIMEOUT_S = 10
+
+
+def _systemctl(*args: str) -> str:
+    """Run ``systemctl <args>`` and return stdout. Raises on any failure
+    (missing binary, non-zero exit, timeout) so callers can degrade."""
+    import subprocess
+    proc = subprocess.run(
+        ["systemctl", *args], capture_output=True, text=True,
+        timeout=_SYSTEMCTL_TIMEOUT_S, check=True,
+    )
+    return proc.stdout
+
+
+def _managed_units() -> "list[str]":
+    """Unit names shipped in ``deploy/systemd/`` (what install.sh manages)."""
+    return sorted(p.name for p in _SYSTEMD_DIR.iterdir()
+                  if p.suffix in (".service", ".timer"))
+
+
+def _build_services(db, today: datetime) -> "tuple[list[str], dict]":
+    """Systemd unit health (issue #944): failed / restarting units, a high
+    ``NRestarts`` (itself the alarm, independent of current state), and
+    ``meteoedge*`` units present on the host but absent from deploy/systemd/.
+    Degrades to ``(unavailable)`` if systemctl cannot be queried."""
+    lines = ["Services", "-" * 8]
+    flags: dict = {"status": "OK", "details": []}
+    try:
+        managed = _managed_units()
+        problems: list[str] = []
+        for unit in managed:
+            out = _systemctl("show", unit, "-p",
+                             "ActiveState,SubState,NRestarts,LoadState")
+            props = dict(line.split("=", 1) for line in out.splitlines() if "=" in line)
+            if props.get("LoadState") == "not-found":
+                continue  # shipped but not installed on this host
+            active = props.get("ActiveState", "?")
+            sub = props.get("SubState", "?")
+            try:
+                n_restarts = int(props.get("NRestarts") or 0)
+            except ValueError:
+                n_restarts = 0
+            bad = (active == "failed" or "auto-restart" in sub
+                   or n_restarts > UNIT_RESTART_WARN)
+            lines.append(f"  {unit:<44} {active} ({sub})  restarts={n_restarts}"
+                         + ("  [WARN]" if bad else ""))
+            if bad:
+                problems.append(f"{unit} ({n_restarts} restarts)")
+        host = _systemctl("list-units", "meteoedge*", "--all", "--plain",
+                          "--no-legend", "--no-pager")
+        host_units = {line.split()[0] for line in host.splitlines() if line.split()}
+        unmanaged = sorted(u for u in host_units
+                           if u.endswith((".service", ".timer"))
+                           and u not in set(managed))
+        for u in unmanaged:
+            lines.append(f"  [WARN] unmanaged unit on host, not in deploy/systemd/: {u}")
+        details = []
+        if problems:
+            lines.append(f"  [WARN] {len(problems)} unit(s) failed or restarting: "
+                         + ", ".join(problems))
+            details.append(f"{len(problems)} unit(s) failed/restarting: "
+                           + ", ".join(problems))
+        if unmanaged:
+            details.append("unmanaged unit(s): " + ", ".join(unmanaged))
+        if details:
+            flags = {"status": "WARN", "details": details}
+    except Exception:
+        log.exception("Systemd unit query failed")
+        lines.append("  (unavailable -- systemctl query error)")
+        flags = {"status": "UNKNOWN", "details": []}
+    lines.append("")
+    return lines, flags
+
+
 def _build_blockers(db, today: datetime) -> list[str]:
     """Known open issues status check."""
     lines = ["Open Blockers", "-" * 8]
@@ -1178,6 +1257,9 @@ def _build_verdict(sections: "list[tuple[str, list[str], dict]]") -> list[str]:
     if table_liveness_flags.get("status") == "WARN":
         warn_issues.extend(table_liveness_flags.get("details", []))
 
+    # issue #944: failed / restarting / unmanaged systemd units.
+    warn_issues.extend(flags_by_section.get("services", {}).get("details", []))
+
     m3_flags = flags_by_section.get("m3", {})
     if m3_flags.get("mass_status") == "WARN":
         warn_issues.append("M3 ladder mass leaking")
@@ -1240,6 +1322,7 @@ def build_report(db) -> str:
 
     sections: list[tuple[str, list[str], dict]] = []
     for name, builder in [
+        ("services", _build_services),
         ("bot", _build_bot_health),
         ("table_liveness", _build_table_liveness),
         ("trading", _build_trading),

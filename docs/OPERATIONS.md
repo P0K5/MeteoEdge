@@ -478,6 +478,20 @@ sudo journalctl -u meteoedge-health-report.service -f
 tail -f logs/health_report.log
 ```
 
+**Services section of the health report (issue #944):** the first section
+of the report asks systemd about unit health, so a crash-looping or dead unit
+can no longer leave every other line green. For each `.service`/`.timer` in
+`deploy/systemd/` it runs `systemctl show` and prints `[WARN]` if the unit is
+`failed`, is in `auto-restart`, or has `NRestarts` above `UNIT_RESTART_WARN`
+(5) -- a high restart count alarms regardless of the unit's state at sampling
+time. Units shipped in the repo but not installed on the host are skipped. It
+also lists `systemctl list-units 'meteoedge*' --all` and flags any unit on
+the host that is absent from `deploy/systemd/` (unmanaged). Warnings are
+folded into the Verdict line. This needs `systemctl` on the host and the
+`deploy/systemd/` directory beside the code; if either is missing or
+`systemctl` fails, the section prints `(unavailable -- systemctl query error)`
+and the verdict adds "partial data only" instead of crashing the report.
+
 #### meteoedge-purge-retention.service / meteoedge-purge-retention.timer
 
 One-shot service, run daily at **01:00 UTC** by
