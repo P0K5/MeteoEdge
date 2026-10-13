@@ -671,6 +671,33 @@ CREATE TABLE IF NOT EXISTS market_resolutions (
 """
 
 
+def _split_sql_statements(script: str) -> "list[str]":
+    """Split a SQL script into individual statements (issue #1267).
+
+    A naive ``split(";")`` breaks on a ``;`` inside a string literal, a
+    comment, or a ``CREATE TRIGGER ... BEGIN ... END`` body. Instead, grow a
+    candidate statement up to each ``;`` and cut only where SQLite itself
+    (``sqlite3.complete_statement``) says the text is a complete statement.
+    Statements are returned stripped, without empty fragments, and are still
+    executed one at a time by the caller (same semantics as before).
+    """
+    statements: "list[str]" = []
+    start = 0
+    pos = script.find(";")
+    while pos != -1:
+        candidate = script[start:pos + 1]
+        if sqlite3.complete_statement(candidate):
+            candidate = candidate.strip()
+            if candidate.rstrip(";").strip():
+                statements.append(candidate)
+            start = pos + 1
+        pos = script.find(";", pos + 1)
+    tail = script[start:].strip()
+    if tail:
+        statements.append(tail)
+    return statements
+
+
 def compute_win_rate(filled: int, wins: int) -> "float | None":
     """Canonical win-rate definition: wins / filled. None when filled == 0.
 
@@ -699,10 +726,8 @@ class Database:
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA foreign_keys=ON")
-        for stmt in _DDL.strip().split(";"):
-            stmt = stmt.strip()
-            if stmt:
-                self._conn.execute(stmt)
+        for stmt in _split_sql_statements(_DDL):
+            self._conn.execute(stmt)
         self._conn.commit()
         self._migrate()
 
