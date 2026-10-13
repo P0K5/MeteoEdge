@@ -787,7 +787,7 @@ StandardError=append:/home/p0k5/MeteoEdge/logs/copy_live_settle.log
 Description=Run MeteoEdge live copy-trading settlement/reconciliation every 15 minutes
 
 [Timer]
-OnCalendar=*:0/15
+OnCalendar=*:7/15
 AccuracySec=1m
 Persistent=true
 
@@ -803,6 +803,32 @@ ghost-order, or a wallet-balance drift sitting undetected for up to an
 hour is a worse outcome for real-money reconciliation than for the
 once-daily weather strategy, same as the original hourly-over-daily
 reasoning, just carried one step further.
+
+**Staggered from copy-settle (issue #1334):** `meteoedge-copy-settle.timer`
+fires at `:00/:15/:30/:45`; this timer fires at `:07/:22/:37/:52`. Before
+the change both used `OnCalendar=*:0/15`, so the two processes started in
+the same second and both write the one SQLite DB (`copy_settle` ->
+`settle_copy_position`, `copy_live_settle` -> `settle_copy_live_position`),
+producing `database is locked` in the same second on 2026-09-30 and
+2026-10-03. Decision: **stagger** (not serialise, not shorten hold time) --
+it is a two-line, deterministic change that needs no code or new unit
+ordering (`After=` does not order two timer-triggered oneshots that start
+independently, and a `flock` wrapper would change both ExecStart lines).
+A 7-minute offset with `AccuracySec=1m` leaves a >=5 minute gap, far more
+than a no-op run (one query) and normally more than a run with open
+positions. Residual: if a copy-settle run ever exceeds ~5 minutes the two
+could still overlap; that would show up in the grep below and justify
+a hold-time/`flock` follow-up. `meteoedge-copy-health.timer` (daily 03:45
+UTC) still shares a start second with copy-settle at 03:45; not part of
+this issue.
+
+**Verify after deploy (no lock errors for a day):**
+```bash
+grep -n -i "database is locked" logs/copy_settle.log logs/copy_live_settle.log
+sudo systemctl list-timers meteoedge-copy-settle.timer meteoedge-copy-live-settle.timer
+```
+Expected: no matches dated after the deploy; the two NEXT columns differ
+by 7 minutes.
 
 **Operational commands:**
 ```bash

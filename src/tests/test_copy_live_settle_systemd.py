@@ -74,7 +74,9 @@ def test_copy_live_settle_timer_runs_every_15_minutes():
     # Same cadence as meteoedge-copy-settle.timer (issue #1174, tightened
     # from hourly 2026-09-25): real-money reconciliation latency matters
     # at least as much as paper's.
-    assert config.get("Timer", "OnCalendar") == "*:0/15"
+    # Offset 7 min from copy-settle's :00 so the two never start in the same
+    # second and contend on the SQLite DB (issue #1334).
+    assert config.get("Timer", "OnCalendar") == "*:7/15"
     assert config.get("Timer", "Persistent") == "true"
 
 

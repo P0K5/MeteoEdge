@@ -127,7 +127,7 @@ Live positions are settled by a timer, not by the signal loop. Verify it is acti
 *before* you create any live exposure:
 
 ```bash
-systemctl is-active meteoedge-copy-live-settle.timer   # runs every 15 min (*:0/15)
+systemctl is-active meteoedge-copy-live-settle.timer   # runs every 15 min (*:7/15, staggered from copy-settle, #1334)
 systemctl is-active meteoedge-copy-health.timer        # daily 03:45 UTC
 ```
 
