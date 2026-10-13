@@ -1542,8 +1542,8 @@ class TestSilentFailuresSection:
         lines, flags = _build_silent_failures(db, datetime.now(timezone.utc))
         assert flags["n_write_failed"] == 0
         assert "Errors / silent failures (24h)" in lines[0]
-        assert any("Running commit:" in l for l in lines)
-        assert not any("[CRIT]" in l for l in lines)
+        assert any("Running commit:" in ln for ln in lines)
+        assert not any("[CRIT]" in ln for ln in lines)
 
     def test_failures_counted_and_verdict_crit(self, tmp_path):
         db = self._db(tmp_path)
@@ -1555,7 +1555,7 @@ class TestSilentFailuresSection:
         lines, flags = _build_silent_failures(db, now)
         assert flags["n_write_failed"] == 8
         assert flags["n_signature_mismatch"] == 1
-        assert any("[CRIT]" in l for l in lines)
+        assert any("[CRIT]" in ln for ln in lines)
         verdict = "\n".join(_build_verdict([("silent_failures", lines, flags)]))
         assert "[CRIT]" in verdict and "scan_decisions write failure" in verdict
 
@@ -1563,5 +1563,5 @@ class TestSilentFailuresSection:
         db = MagicMock()
         db._conn.execute.side_effect = RuntimeError("boom")
         lines, flags = _build_silent_failures(db, datetime.now(timezone.utc))
-        assert any("unavailable" in l for l in lines)
+        assert any("unavailable" in ln for ln in lines)
         assert flags["n_write_failed"] == 0
