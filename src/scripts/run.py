@@ -342,6 +342,7 @@ def _persist_scan_decisions(
         return
     execution_mode = "live" if live_trader else "paper"
     failures: "list[str]" = []
+    signature_mismatch = False
     for ticker, decision in decisions.items():
         if ticker in confirmed:
             verdict, detail = confirmed[ticker]
@@ -357,6 +358,15 @@ def _persist_scan_decisions(
         }
         try:
             db.upsert_scan_decision(**kwargs)
+        except TypeError as e:
+            # Issue #913: a TypeError here is a signature/schema mismatch
+            # (a deploy-time bug), not a per-row data problem. Trip a
+            # per-poll circuit breaker on the first occurrence instead of
+            # retrying (and logging) for every remaining bracket. The scan
+            # cycle itself is never aborted.
+            failures.append(f"{ticker[:20]}: {e}")
+            signature_mismatch = True
+            break
         except Exception as e:
             failures.append(f"{ticker[:20]}: {e}")
     if failures:
@@ -364,6 +374,43 @@ def _persist_scan_decisions(
             "[scan_decisions] upsert failed for %d/%d evaluated brackets this "
             "poll (first: %s)", len(failures), len(decisions), failures[0],
         )
+        if signature_mismatch:
+            log.error(
+                "[scan_decisions] signature/schema mismatch -- aborting "
+                "scan_decisions writes for this poll (circuit breaker): %s",
+                failures[0],
+            )
+        _record_scan_decision_failures(
+            db, len(failures), len(decisions), failures[0], signature_mismatch,
+        )
+
+
+SCAN_DECISION_WRITE_FAILED = "scan_decision_write_failed"
+SCAN_DECISION_SIGNATURE_MISMATCH = "scan_decision_signature_mismatch"
+
+
+def _record_scan_decision_failures(
+    db, n_failed: int, n_total: int, first_error: str, signature_mismatch: bool,
+) -> None:
+    """Persist one observable row per failing poll (issue #913).
+
+    Reuses ``guardrail_events`` (no schema change): ``raw_value`` = failed
+    upserts, ``adj_value`` = evaluated brackets, ``ticker`` carries the first
+    error text. The daily health report aggregates these. Best-effort: a
+    failure to record must never abort the scan cycle.
+    """
+    try:
+        db.log_guardrail_event(
+            datetime.now(timezone.utc).isoformat(),
+            "*",
+            SCAN_DECISION_SIGNATURE_MISMATCH if signature_mismatch
+            else SCAN_DECISION_WRITE_FAILED,
+            float(n_failed),
+            float(n_total),
+            ticker=first_error[:200],
+        )
+    except Exception:
+        log.exception("[scan_decisions] could not record write-failure event")
 
 
 def _append_candidate(row: dict) -> None:

@@ -30,6 +30,7 @@ from src.scripts.daily_health_report import (
     TABLE_LIVENESS_SPECS,  # noqa: E402
     _build_bot_health,
     _build_header,
+    _build_silent_failures,
     _build_m3_progress,
     _build_table_liveness,
     _build_trading,
@@ -1527,3 +1528,40 @@ class TestApplyExclusionsRowSetUnchanged:
         assert counts["rail_1c_99c"] == 1
         assert counts["kept_after_row_exclusions"] == 1
         assert counts["input_rows"] == 6
+
+
+class TestSilentFailuresSection:
+    """Issue #913: scan_decisions write failures surface as a CRIT."""
+
+    def _db(self, tmp_path):
+        from src.data.db import Database
+        return Database(tmp_path / "silent-failures.db")
+
+    def test_no_failures_is_clean(self, tmp_path):
+        db = self._db(tmp_path)
+        lines, flags = _build_silent_failures(db, datetime.now(timezone.utc))
+        assert flags["n_write_failed"] == 0
+        assert "Errors / silent failures (24h)" in lines[0]
+        assert any("Running commit:" in l for l in lines)
+        assert not any("[CRIT]" in l for l in lines)
+
+    def test_failures_counted_and_verdict_crit(self, tmp_path):
+        db = self._db(tmp_path)
+        now = datetime.now(timezone.utc)
+        db.log_guardrail_event(now.isoformat(), "*", "scan_decision_write_failed", 7.0, 9.0)
+        db.log_guardrail_event(now.isoformat(), "*", "scan_decision_signature_mismatch", 1.0, 9.0)
+        old = (now - timedelta(hours=30)).isoformat()
+        db.log_guardrail_event(old, "*", "scan_decision_write_failed", 100.0, 100.0)
+        lines, flags = _build_silent_failures(db, now)
+        assert flags["n_write_failed"] == 8
+        assert flags["n_signature_mismatch"] == 1
+        assert any("[CRIT]" in l for l in lines)
+        verdict = "\n".join(_build_verdict([("silent_failures", lines, flags)]))
+        assert "[CRIT]" in verdict and "scan_decisions write failure" in verdict
+
+    def test_query_error_degrades_to_unavailable(self):
+        db = MagicMock()
+        db._conn.execute.side_effect = RuntimeError("boom")
+        lines, flags = _build_silent_failures(db, datetime.now(timezone.utc))
+        assert any("unavailable" in l for l in lines)
+        assert flags["n_write_failed"] == 0

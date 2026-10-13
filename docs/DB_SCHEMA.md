@@ -611,6 +611,8 @@ pattern as the `trades.mode` migration above).
 3. If the candidate reaches `_execute_live`, the real per-attempt outcome (`filled` / `timeout` / `cancelled` / `place_failed` / …) resolves the verdict to `traded_live` (only on `filled`) or `timeout_today` (everything else, with the raw outcome kept in `gate_detail`).
 4. Any `traded_live` placeholder that a poll never got around to confirming one way or the other (e.g. the wallet-empty cooldown skipping the candidate loop entirely) is downgraded to `entry_guard` before the DB write, so the table never claims a live trade that did not happen. Paper-mode polls (no live trader configured) have no entry-guard/execution seam at all, so their placeholder is left as `traded_live` — a best-effort "would trade live" reading, not a confirmed exchange fill.
 
+**Write-failure observability (issue #913, no schema change):** when `_persist_scan_decisions` fails to upsert, `run.py` writes one `guardrail_events` row per failing poll with `station='*'`, `event_type='scan_decision_write_failed'` (or `'scan_decision_signature_mismatch'` when a `TypeError` trips the per-poll circuit breaker), `raw_value` = failed upserts, `adj_value` = evaluated brackets, `ticker` = first error text. The daily health report's "Errors / silent failures (24h)" section aggregates these and any non-zero count is a `[CRIT]` verdict. Reuses the existing table/columns, so no migration is needed.
+
 ---
 
 ### copy_wallets_followed
