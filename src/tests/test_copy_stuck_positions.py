@@ -384,3 +384,80 @@ def test_health_report_lists_past_end_trading_and_does_not_warn():
     assert flags == {"n_stuck": 0, "n_urgent": 0}
     assert f"[PAST_END_TRADING] id={pid}" in text
     assert "still trading (not escalated): 1" in text and "not due (long-dated, not stuck): 0" in text
+
+
+# --- #1387: early (<48h) detection of verified 50/50 voids -------------------
+
+_VOID_ROW = {"conditionId": "0xvoid", "closed": True, "umaResolutionStatus": "resolved",
+             "endDate": "2026-10-11T20:00:00Z", "outcomePrices": '["0.5","0.5"]'}
+_OPEN_ROW = {"conditionId": "0xopen", "closed": False, "umaResolutionStatus": None,
+             "endDate": "2027-07-01T00:00:00Z", "outcomePrices": '["0.4","0.6"]'}
+_PAST_END_ROW = {"conditionId": "0xpast", "closed": False, "umaResolutionStatus": None,
+                 "endDate": "2026-10-05T00:00:00Z", "outcomePrices": '["0.874","0.126"]'}
+
+
+def _run_real_gamma(db, rows):
+    """Run copy_settle with only the HTTP layer mocked (real Gamma shapes).
+    Returns (escalations, urls). Gamma returns [] for an open market under
+    closed=true, matching the 2026-10-13 host diagnosis."""
+    from src.data import polymarket as pm
+
+    class R:
+        def __init__(s, j): s.j = j
+        def raise_for_status(s): pass
+        def json(s): return s.j
+
+    urls: list = []
+
+    def fake_fetch(url, timeout=None):
+        urls.append(url)
+        cid = url.split("condition_ids=")[1].split("&")[0]
+        row = rows.get(cid)
+        if row is None or ("closed=true" in url and not row["closed"]):
+            return R([])
+        return R([row])
+
+    esc: list = []
+    pm._CLOSED_SEEN.clear()
+    with patch.object(pm, "fetch", fake_fetch):
+        run_once(db=db, escalations=esc)
+    return esc, urls
+
+
+def test_young_void_reported_immediately_without_waiting_48h():
+    db = Database(":memory:")
+    pid = _seed(db, market="0xvoid", hours_ago=5)
+    esc, _ = _run_real_gamma(db, {"0xvoid": _VOID_ROW})
+    assert [(e["position_id"], e["category"], e["level"]) for e in esc] == [(pid, "CLOSED_AMBIGUOUS", 3)]
+    assert _status(db, pid) == "open"
+    esc2, _ = _run_real_gamma(db, {"0xvoid": _VOID_ROW})
+    assert esc2 == []  # once
+
+
+def test_young_not_due_and_past_end_markets_cost_no_extra_gamma_calls():
+    db = Database(":memory:")
+    _seed(db, market="0xopen", hours_ago=5)
+    _seed(db, market="0xpast", hours_ago=5)
+    esc, urls = _run_real_gamma(db, {"0xopen": _OPEN_ROW, "0xpast": _PAST_END_ROW})
+    assert esc == []
+    # exactly the one closed=true resolution poll per distinct market, nothing else
+    assert len(urls) == 2 and all("closed=true" in u for u in urls)
+
+
+def test_void_call_budget_one_extra_lookup_only_for_closed_market():
+    db = Database(":memory:")
+    _seed(db, market="0xvoid", hours_ago=5)
+    _seed(db, market="0xvoid", hours_ago=6)
+    _seed(db, market="0xopen", hours_ago=5)
+    esc, urls = _run_real_gamma(db, {"0xvoid": _VOID_ROW, "0xopen": _OPEN_ROW})
+    assert len(esc) == 2
+    # 2 resolution polls + 1 state lookup (closed=true hit, so no 2nd query) for the void market
+    assert len(urls) == 3 and sum("0xvoid" in u for u in urls) == 2
+
+
+def test_young_closed_with_extreme_price_settles_normally_no_escalation():
+    db = Database(":memory:")
+    pid = _seed(db, market="0xvoid", hours_ago=5)
+    row = dict(_VOID_ROW, outcomePrices='["1","0"]')
+    esc, _ = _run_real_gamma(db, {"0xvoid": row})
+    assert esc == [] and _status(db, pid) == "settled"
