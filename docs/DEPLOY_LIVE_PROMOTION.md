@@ -128,7 +128,7 @@ Live positions are settled by a timer, not by the signal loop. Verify it is acti
 
 ```bash
 systemctl is-active meteoedge-copy-live-settle.timer   # runs every 15 min (*:7/15, staggered from copy-settle, #1334)
-systemctl is-active meteoedge-copy-health.timer        # daily 03:45 UTC
+systemctl is-active meteoedge-copy-health.timer        # daily 03:56 UTC (#1386)
 ```
 
 ---
@@ -397,7 +397,7 @@ See step 5. This is expected, and the constants must not be tuned.
 | `meteoedge-copy-signals.service` | copy-signal detection and the live-order gate | `logs/copy_signals.log` |
 | `meteoedge-copy-live-settle.timer` | live settlement and reconciliation, every 15 min | — |
 | `meteoedge-copy-settle.timer` | paper settlement | — |
-| `meteoedge-copy-health.timer` | wallet health / auto-pause, 03:45 UTC | — |
+| `meteoedge-copy-health.timer` | wallet health / auto-pause, 03:56 UTC | — |
 | `meteoedge-copy-screening.timer` | candidate wallet screening | — |
 
 Both services read `EnvironmentFile=/home/p0k5/MeteoEdge/.env`. The database

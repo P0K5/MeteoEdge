@@ -66,16 +66,18 @@ def test_copy_health_timer_valid_ini():
     assert "Install" in config, "Missing [Install] section"
 
 
-def test_copy_health_timer_runs_daily_at_0345_utc():
+def test_copy_health_timer_runs_daily_at_0356_utc():
     config = configparser.ConfigParser()
     config.read(TIMER_PATH)
-    # Cadence decision (issue #1140, updated issue #1213): 03:45 UTC, after
-    # meteoedge-copy-screening.timer's 03:00 UTC run. The 45-minute gap is
-    # sized for a 50-wallet screening pool (50 wallets × 40 pages/wallet =
-    # 2000 API calls at 1 req/sec ≈ 33 minutes worst-case), ensuring a fresh
-    # screening row exists to stability-check against on the same day before
-    # health-monitor fires. Future pool widening should re-check this timing.
-    assert config.get("Timer", "OnCalendar") == "*-*-* 03:45:00 UTC"
+    # Cadence decision (issue #1140, updated issue #1213): after
+    # meteoedge-copy-screening.timer's 03:00 UTC run. The gap is sized for a
+    # 50-wallet screening pool (50 wallets × 40 pages/wallet = 2000 API calls
+    # at 1 req/sec ≈ 33 minutes worst-case), ensuring a fresh screening row
+    # exists to stability-check against on the same day before health-monitor
+    # fires. Future pool widening should re-check this timing.
+    # Moved 03:45 -> 03:56 UTC (issue #1386): 03:45 shared a start second with
+    # meteoedge-copy-settle.timer's :45 slot. See test_copy_health_timer_stagger.py.
+    assert config.get("Timer", "OnCalendar") == "*-*-* 03:56:00 UTC"
     assert config.get("Timer", "Persistent") == "true"
 
 
