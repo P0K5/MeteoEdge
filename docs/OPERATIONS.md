@@ -1989,6 +1989,15 @@ reasons never raise it. Source: `src/data/copy_skip_reasons.py` (the vocabulary 
 | `circuit_breaker_daily_loss` / `circuit_breaker_drawdown` | breaker | paper breaker tripped (account-level) |
 | anything else | unknown | not in the vocabulary (new reason or typo) — flagged WARN so it cannot hide |
 
+**Accepted structural skips (#1390).** A permanent WARN trains readers to ignore the section, so known,
+reviewed structural skips can be listed in `ACCEPTED_STRUCTURAL` in `src/data/copy_skip_reasons.py`, keyed
+by `(wallet address prefix, reason)` (empty prefix = every wallet) with the accepting issue/PR and a
+rationale. An accepted skip still renders, annotated `accepted (#NNN)`, but no longer raises the verdict.
+It warns again if it is `NEW` or `SPIKE` (>= 3x its baseline), and any unknown reason or unlisted
+structural reason warns as before. Seeded entry: `0xbca08c1b` / `non_binary_outcome_index` (#1390). To
+accept another, add an entry in a PR that cites the issue recording the decision; classification of the
+reason itself is unchanged. Verify with `python -m src.scripts.daily_health_report --dry-run`.
+
 Live-side reasons (`copy_live_positions.rejected_reason`) are classified separately by the dashboard
 and are not part of this section.
 

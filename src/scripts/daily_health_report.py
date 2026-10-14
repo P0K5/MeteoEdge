@@ -1168,10 +1168,10 @@ def _build_copy_skips(db, today: datetime) -> "tuple[list[str], dict]":
     routine gate rejections. Each wallet line states placed vs skipped so the
     paper-performance denominator's incompleteness is visible."""
     from src.data.copy_skip_reasons import (
-        STRUCTURAL, UNKNOWN, classify, trend,
+        STRUCTURAL, UNKNOWN, accepted_ref, classify, trend,
     )
     lines = ["Copy-trading skipped signals (last 24h)", "-" * 38]
-    flags: dict = {"n_structural": 0, "n_unknown": 0, "n_spike": 0}
+    flags: dict = {"n_structural": 0, "n_unknown": 0, "n_spike": 0, "n_accepted": 0}
     try:
         data = _copy_skip_counts(db, today)
         shown = False
@@ -1186,11 +1186,17 @@ def _build_copy_skips(db, today: datetime) -> "tuple[list[str], dict]":
                 cls = classify(reason)
                 t = trend(n, w["skipped"][reason][1])
                 avg = w["skipped"][reason][1] / _SKIP_BASELINE_DAYS
-                mark = "[WARN] " if cls in (STRUCTURAL, UNKNOWN) or t != "STEADY" else ""
+                # Reviewed allow-list (#1390): accepted only while STEADY.
+                ref = accepted_ref(addr, reason) if t == "STEADY" else None
+                warn = cls in (STRUCTURAL, UNKNOWN) or t != "STEADY"
+                mark = "[WARN] " if warn and not ref else ""
+                note = f" accepted ({ref})" if ref else ""
                 lines.append(
-                    f"    {mark}{reason:<28} {n:>4}  {cls:<10} {t} (prior {_SKIP_BASELINE_DAYS}d avg {avg:.1f}/day)"
+                    f"    {mark}{reason:<28} {n:>4}  {cls:<10} {t} (prior {_SKIP_BASELINE_DAYS}d avg {avg:.1f}/day){note}"
                 )
-                if cls == STRUCTURAL:
+                if ref:
+                    flags["n_accepted"] += n
+                elif cls == STRUCTURAL:
                     flags["n_structural"] += n
                 if cls == UNKNOWN:
                     flags["n_unknown"] += n
