@@ -71,7 +71,7 @@ def test_stale_pending_separate_and_fresh_pending_ignored():
     assert "0xfresh" not in text
 
 
-def test_ghost_listed_not_counted_in_exposure_and_resolved_ghost_gone():
+def test_ghost_listed_and_counted_in_exposure_and_resolved_ghost_gone():
     db = Database(":memory:")
     g = _seed(db, status="rejected", reason="cancel_failed_ghost", order_id="ord1",
               hours_ago=5, stake=9.0)
@@ -81,7 +81,8 @@ def test_ghost_listed_not_counted_in_exposure_and_resolved_ghost_gone():
     text = "\n".join(lines)
     assert flags["n_ghost"] == 1
     assert f"[GHOST_UNRESOLVED] id={g}" in text and "0xdead" not in text
-    assert "counted: $0.00" in text
+    assert "counted: $9.00" in text and "ghosts are NOT counted" not in text
+    assert "1 unresolved ghost(s)" in text
 
 
 def test_exposure_over_cap_warns():

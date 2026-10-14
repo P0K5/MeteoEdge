@@ -116,6 +116,7 @@ def _mock_db(**overrides) -> MagicMock:
     # the live exposure gates never trip unless a test deliberately
     # overrides one of these two to exercise it.
     db.get_open_copy_live_positions.return_value = []
+    db.get_ghost_order_positions.return_value = []
     db.insert_copy_live_position.return_value = 101
     # Live circuit breaker (issue #1175) -- zero realized LIVE P&L by
     # default, mirroring the paper defaults above, so it never trips
