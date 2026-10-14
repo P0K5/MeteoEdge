@@ -62,13 +62,12 @@
         {
           "transcript": "4233b398-ef26-58c4-8967-4c061d78f766.jsonl",
           "turns": [
-            25,
-            36
+            43
           ],
-          "quote": "first PM-side attempt: 'GitHub GraphQL is not available from Claude Code sessions; use the REST API'"
+          "quote": "first PM-side attempt: 'GitHub GraphQL is not available from Claude Code sessions; use the REST API (gh api repos/{owner}/{repo}/...)'"
         }
       ],
-      "scan": "21 of 24 sub-agents hit the GraphQL 403 wall (27 failed tool results among 582 tool calls); 17 `gh pr create` attempts; 4 reviewer-request 422s (author == reviewer).",
+      "scan": "21 of 24 sub-agents hit the GraphQL 403 wall (27 failed tool results among 582 tool calls in 24 sub-agent transcripts); 17 sub-agent tool calls mention `gh pr create` (several then re-did the step via `gh api`); 4 reviewer-request 422s (author == reviewer). Turn numbers are 0-based JSONL line numbers of the sanitized transcripts.",
       "diff_summary": "dev-workflow gets a 'Cloud sessions' section (try the board mutation once, skip with a one-line note; open PRs and read issues via `gh api` REST with the repo spelled out; no reviewer-request retries; report the PR author instead of investigating the token) and checklist wording that accepts 'board not moved: GraphQL unavailable'. board-status gets a 4-line note. Today the skill tells devs to do exactly the steps that fail here.",
       "expected_impact": "~2-4 avoided failed calls plus the explanatory text per dev spawn: est. 3-5k tokens per spawn, ~60-100k over this session's 21 affected agents (estimate, not measured).",
       "confidence": "high"
@@ -84,26 +83,15 @@
             1054,
             1070
           ],
-          "quote": "PR #1375 and #1376 bodies both start 'Closes #944 ... Nothing asked systemd about unit state' (PR #1373's text): shared temp file overwritten by parallel devs; merging would have closed the wrong issue"
-        },
-        {
-          "transcript": "4233b398-ef26-58c4-8967-4c061d78f766.jsonl",
-          "turns": [
-            1068,
-            1074,
-            1076,
-            1077,
-            1088
-          ],
-          "quote": "PM diagnosis and rewrite of both bodies from the dev reports"
+          "quote": "PR #1375 and #1376 bodies both start 'Closes #944 ... Nothing asked systemd about unit state' (PR #1373's text): a shared temp file was overwritten by parallel devs; merging would have closed the wrong issue"
         },
         {
           "transcript": "agent-a89a82ae38a5919b5.jsonl",
           "turns": [
-            28,
-            33
+            33,
+            43
           ],
-          "quote": "#791 dev's own body tripped its new check by quoting a live closing keyword in prose"
+          "quote": "the new CI check run over real merged PRs: 'body closes #1193 but #1193 appears in none of: head branch fix/1366-status-defaults-isolation ... (wrong body for this PR?)' and the incident example 'body closes #944 but #944 appears in none of ...'"
         }
       ],
       "diff_summary": "PR-body hygiene paragraph in dev-workflow step 8: body file named for the issue inside the dev's own worktree (never /tmp), explicit staging, re-read the body through the API and confirm the first line is `Closes #<issue>`; note the new `PR body check` CI job (#791) and that closing keywords count even in prose.",
@@ -131,23 +119,20 @@
           "quote": "CI Lint failed on PR #1373: E741 ambiguous variable name 'l' x4 (dev had not run `python -m flake8 src/`)"
         },
         {
-          "transcript": "4233b398-ef26-58c4-8967-4c061d78f766.jsonl",
+          "transcript": "agent-a7e87291914ef9950.jsonl",
           "turns": [
-            1552,
-            1555,
-            1559
+            39,
+            42
           ],
-          "quote": "#1334 dev put its regression test in tests/, which CI never runs (CI runs src/tests and tests/integration only)"
+          "quote": "#1334 dev created tests/test_copy_settle_timer_stagger.py and told reviewers to run `pytest tests/test_copy_settle_timer_stagger.py`; CI runs only src/tests and tests/integration, so it never ran (PM note at main turn 1005)"
         },
         {
           "transcript": "agent-a7db643f148efd4d1.jsonl",
           "turns": [
             85,
-            86,
-            87,
-            89
+            87
           ],
-          "quote": "#913 dev ran only a `-k` test subset, PR failed lint on CI"
+          "quote": "#913 dev: after the coordinator relayed CI lint failure, flake8 shows E741 in src/tests/test_daily_health_report.py:1545-1546 (earlier verification had been a `-k` subset)"
         }
       ],
       "diff_summary": "dev-workflow step 7 becomes a pre-push gate with the exact CI commands (`python -m flake8 src/`, `python -m pytest src/tests -q -n auto --dist loadfile`), the 'CI runs only src/tests and tests/integration' rule, and 'grep the old value in tests before changing a constant/schedule'. Checklist updated to match.",
@@ -195,7 +180,8 @@
         {
           "transcript": "4233b398-ef26-58c4-8967-4c061d78f766.jsonl",
           "turns": [
-            27
+            25,
+            26
           ],
           "quote": "Read .claude/session-context.env -> 'PARTIAL view ... showing lines 1-502 of 773 total (32699 tokens, cap 25000)'; the session then used ~5 of the IDs (header + a few ITEM_ID lines)"
         },
