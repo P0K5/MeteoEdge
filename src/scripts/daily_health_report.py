@@ -1155,10 +1155,12 @@ def _build_copy_live_stuck(db, today: datetime) -> "tuple[list[str], dict]":
     written by ``copy_live_settle`` (#1392). Lists escalated ``filled``/
     ``partial`` rows; ``pending`` rows older than ``LIVE_PENDING_STALE_HOURS``
     and unresolved ``cancel_failed_ghost`` rows are separate alert-only
-    categories (no status/P&L/exposure change). The exposure line reuses
-    ``get_open_copy_live_positions`` exactly as ``copy_signal_loop`` does.
+    categories (no status/P&L/exposure change). The exposure line uses
+    ``live_exposure_usd`` exactly as ``copy_signal_loop`` does (open rows +
+    unresolved ghosts, #1395).
     """
     from src.config import get_live_config
+    from src.data.copy_pnl import live_exposure_usd
     from src.data.copy_stuck import LEVEL_LABELS, age_hours
     lines = ["Live copy-trading stuck positions", "-" * 33]
     flags: dict = {"n_stuck": 0, "n_urgent": 0, "n_pending_stale": 0, "n_ghost": 0}
@@ -1188,11 +1190,12 @@ def _build_copy_live_stuck(db, today: datetime) -> "tuple[list[str], dict]":
             f"stale pending (>{LIVE_PENDING_STALE_HOURS}h): {len(stale_pending)}  |  "
             f"unresolved cancel_failed_ghost: {len(ghosts)}"
         )
-        exposure = sum(float(p["stake_usd"]) for p in open_rows)
+        exposure = live_exposure_usd(db)
         cap = float(get_live_config(db)["COPY_LIVE_MAX_TOTAL_EXPOSURE_USD"])
         lines.append(
             f"  Unsettled live exposure counted: ${exposure:.2f} of cap ${cap:.2f} "
-            f"({len(open_rows)} open row(s); ghosts are NOT counted)"
+            f"({len(open_rows)} open row(s) + {len(ghosts)} unresolved ghost(s), "
+            f"ghosts counted at stake_usd until recovery resolves them)"
         )
         if exposure > cap:
             lines.append("  [WARN] counted live exposure is above COPY_LIVE_MAX_TOTAL_EXPOSURE_USD")

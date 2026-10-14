@@ -156,6 +156,7 @@ from src.config import (  # noqa: E402
     live_exposure_drawdown_bound_error,
     get_live_config, seed_config,
 )
+from src.data.copy_pnl import live_exposure_usd  # noqa: E402
 from src.data.db import Database  # noqa: E402
 from src.data.polymarket import fetch_market_resolution  # noqa: E402
 from src.data.polymarket_traders import get_wallet_trades_since, normalize_trade  # noqa: E402
@@ -319,15 +320,13 @@ def _handle_live_order(
             # be placed on the CLOB.
             skip_reason = "live_missing_token_id"
         else:
-            wallet_live_exposure = sum(
-                p["stake_usd"] for p in db.get_open_copy_live_positions(address)
-            )
+            # Issue #1395: one helper for both caps; also counts unresolved
+            # cancel_failed_ghost rows (possible real fills) at stake_usd.
+            wallet_live_exposure = live_exposure_usd(db, address)
             if wallet_live_exposure + live_stake > live_config["COPY_LIVE_MAX_EXPOSURE_PER_WALLET_USD"]:
                 skip_reason = "live_wallet_exposure_limit"
             else:
-                total_live_exposure = sum(
-                    p["stake_usd"] for p in db.get_open_copy_live_positions()
-                )
+                total_live_exposure = live_exposure_usd(db)
                 skip_reason = (
                     "live_total_exposure_limit"
                     if total_live_exposure + live_stake > live_config["COPY_LIVE_MAX_TOTAL_EXPOSURE_USD"]

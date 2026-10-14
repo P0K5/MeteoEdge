@@ -769,10 +769,11 @@ daily health report has a "Live copy-trading stuck positions" section
 mid-cycle -- a healthy order leaves `pending` within the fill-wait plus one
 settle cycle) as `[STALE_PENDING]`; unresolved `cancel_failed_ghost` rows
 (`Database.get_ghost_order_positions`; recovery rewrites the reason once
-resolved) as `[GHOST_UNRESOLVED]`, which may be real fills and are NOT counted
-as exposure today (#1395); and an "Unsettled live exposure counted: $X of cap
-$Y" line (the same `get_open_copy_live_positions` sum the order gate uses
-against `COPY_LIVE_MAX_TOTAL_EXPOSURE_USD`). Stuck, stale-pending and ghost
+resolved) as `[GHOST_UNRESOLVED]`, which may be real fills and ARE counted
+as exposure at `stake_usd` until `recover_ghost_orders` resolves them (#1395);
+and an "Unsettled live exposure counted: $X of cap $Y" line (the same
+`live_exposure_usd` sum the order gate uses against
+`COPY_LIVE_MAX_TOTAL_EXPOSURE_USD`; `partial` rows stay at `stake_usd`). Stuck, stale-pending and ghost
 rows each add one WARN to the verdict (no new alerting channel). Alert-only:
 there is no live abandon path; resolving a real void is the deferred #1394.
 Check without emailing: `python -m src.scripts.daily_health_report --dry-run`.
