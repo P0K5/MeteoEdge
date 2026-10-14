@@ -43,10 +43,14 @@ Procedural workflows live in `.claude/skills/` and load only when invoked:
 
 ### Session init (ALWAYS — do this before anything else)
 
-1. Read `.claude/session-context.env` — pre-resolved GitHub Project IDs
-   (project ID, Status field ID, option IDs, per-issue board item IDs).
-   Cache them; agents must never run GraphQL lookups for these. If values are
-   empty or missing, run `bash scripts/bootstrap_session.sh` first.
+1. Read the **header** of `.claude/session-context.env` (`Read` with
+   `limit: 30`) — pre-resolved GitHub Project IDs (project ID, Status field ID,
+   option IDs). Do not read the whole file: it grows with every issue (700+
+   lines, ~33k tokens; a plain `Read` is truncated at the cap). Look up per-issue
+   board item IDs on demand with
+   `grep -E 'ITEM_ID_ISSUE_(N1|N2)=' .claude/session-context.env`. Cache what you
+   read; agents must never run GraphQL lookups for these. If the header is empty
+   or an issue has no entry, run `bash scripts/bootstrap_session.sh` first.
 2. Read `.claude/model-config.env` for `BACKEND` context (fall back to
    `BACKEND=anthropic` if missing). Agent models are already rendered into
    `.claude/agents/*.md` frontmatter by the bootstrap script.
