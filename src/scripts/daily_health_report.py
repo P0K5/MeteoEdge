@@ -1148,6 +1148,12 @@ def _build_copy_stuck(db, today: datetime) -> "tuple[list[str], dict]":
 #: to minutes) plus one settle cycle, so 2h means a crash mid-cycle.
 LIVE_PENDING_STALE_HOURS = 2
 
+#: An unresolved ``cancel_failed_ghost`` row older than this is escalated
+#: (issue #1396, design on #1365). Reuses the live 48h threshold
+#: (``copy_stuck.STUCK_HOURS``). Alert-only: ``recover_ghost_orders`` still
+#: owns every status change; this only changes what the report says.
+LIVE_GHOST_ESCALATE_HOURS = 48
+
 
 def _build_copy_live_stuck(db, today: datetime) -> "tuple[list[str], dict]":
     """Live copy-trading stuck positions (issue #1393, design on #1365).
@@ -1164,7 +1170,8 @@ def _build_copy_live_stuck(db, today: datetime) -> "tuple[list[str], dict]":
     from src.data.copy_pnl import live_exposure_usd
     from src.data.copy_stuck import LEVEL_LABELS, age_hours
     lines = ["Live copy-trading stuck positions", "-" * 33]
-    flags: dict = {"n_stuck": 0, "n_urgent": 0, "n_pending_stale": 0, "n_ghost": 0}
+    flags: dict = {"n_stuck": 0, "n_urgent": 0, "n_pending_stale": 0, "n_ghost": 0,
+                   "n_ghost_escalated": 0}
     try:
         open_rows = db.get_open_copy_live_positions()
         stuck = sorted(
@@ -1184,12 +1191,16 @@ def _build_copy_live_stuck(db, today: datetime) -> "tuple[list[str], dict]":
         flags["n_urgent"] = sum(1 for r in stuck if int(r["stuck_level"]) >= 2)
         flags["n_pending_stale"] = len(stale_pending)
         flags["n_ghost"] = len(ghosts)
+        flags["n_ghost_escalated"] = sum(
+            1 for r in ghosts if age_hours(r["entry_ts"], today) > LIVE_GHOST_ESCALATE_HOURS
+        )
         stake = sum(float(r["stake_usd"]) for r in stuck)
         lines.append(
             f"  Unresolved: {len(stuck)} (urgent: {flags['n_urgent']})  |  "
             f"stake unresolved: ${stake:.2f}  |  "
             f"stale pending (>{LIVE_PENDING_STALE_HOURS}h): {len(stale_pending)}  |  "
-            f"unresolved cancel_failed_ghost: {len(ghosts)}"
+            f"unresolved cancel_failed_ghost: {len(ghosts)} "
+            f"(escalated >{LIVE_GHOST_ESCALATE_HOURS}h: {flags['n_ghost_escalated']})"
         )
         exposure = live_exposure_usd(db)
         cap = float(get_live_config(db)["COPY_LIVE_MAX_TOTAL_EXPOSURE_USD"])
@@ -1218,9 +1229,11 @@ def _build_copy_live_stuck(db, today: datetime) -> "tuple[list[str], dict]":
                 f"age={age_hours(r['entry_ts'], today):.1f}h stake=${float(r['stake_usd']):.2f}"
             )
         for r in ghosts:
+            ghost_age = age_hours(r["entry_ts"], today)
+            tag = "GHOST_ESCALATED" if ghost_age > LIVE_GHOST_ESCALATE_HOURS else "GHOST_UNRESOLVED"
             lines.append(
-                f"  [GHOST_UNRESOLVED] id={r['id']} wallet={r['address']} market={r['market']} "
-                f"order={r['order_id']} age={age_hours(r['entry_ts'], today):.1f}h "
+                f"  [{tag}] id={r['id']} wallet={r['address']} market={r['market']} "
+                f"order={r['order_id']} age={ghost_age:.1f}h "
                 f"stake=${float(r['stake_usd']):.2f} (may be a real fill)"
             )
     except Exception:

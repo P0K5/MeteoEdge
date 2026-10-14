@@ -806,7 +806,7 @@ mid-cycle -- a healthy order leaves `pending` within the fill-wait plus one
 settle cycle) as `[STALE_PENDING]`; unresolved `cancel_failed_ghost` rows
 (`Database.get_ghost_order_positions`; recovery rewrites the reason once
 resolved) as `[GHOST_UNRESOLVED]`, which may be real fills and ARE counted
-as exposure at `stake_usd` until `recover_ghost_orders` resolves them (#1395);
+as exposure at `stake_usd` until `recover_ghost_orders` resolves them (#1395). A ghost older than `LIVE_GHOST_ESCALATE_HOURS = 48` (the live 48h threshold) is tagged `[GHOST_ESCALATED]` instead and counted in the line's `escalated` figure (#1396, alert-only, no status change);
 and an "Unsettled live exposure counted: $X of cap $Y" line (the same
 `live_exposure_usd` sum the order gate uses against
 `COPY_LIVE_MAX_TOTAL_EXPOSURE_USD`; `partial` rows stay at `stake_usd`). Stuck, stale-pending and ghost
