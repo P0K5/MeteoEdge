@@ -615,6 +615,46 @@ pattern as the `trades.mode` migration above).
 
 ---
 
+### copy_wallet_candidates
+
+**Purpose:** One row per wallet per screening run — the copy-trading wallet screening history (epic #1099, story 1 issue #1108). Holds the copier's post-slippage stats for each candidate wallet so the stability check can compare a wallet's latest run against its previous one.
+
+**Writer:** `Database.insert_wallet_screening` (called by `src/scripts/copy_wallet_screening.py`, scheduled daily via `meteoedge-copy-screening.timer` at 03:00 UTC)
+**Reader:** `src/scripts/copy_wallet_screening.py` (previous-run lookup via `Database.get_recent_wallet_screenings(limit=1)` for `check_stability` / `check_quality`), `src/scripts/copy_wallet_health.py` (`get_recent_wallet_screenings(limit=2)` for the daily auto-pause stability check, issue #1140), `src/scripts/copy_wallet_promotion.py` (`get_recent_wallet_screenings(limit=1)` for the `--follow` eligibility check, and `get_latest_wallet_screenings` for the advisory report), `src/data/copy_backtest_comparison.py` (`get_latest_wallet_screenings`, issue #1133), and the dashboard (`src/dashboard/api.py`: wallet-history endpoint via `get_recent_wallet_screenings`, and the wallet-screening list via `query_latest_wallet_screenings` / `get_previous_wallet_screenings`)
+
+| Column | Type | Units | Nullable | Description |
+|--------|------|-------|----------|-------------|
+| `id` | INTEGER PRIMARY KEY AUTOINCREMENT | | No | Auto-increment row ID. Also the tiebreak for "latest run" (`ORDER BY id DESC`), since two rows can share a `screened_at` |
+| `address` | TEXT NOT NULL | wallet address | No | Candidate wallet's proxy address being screened |
+| `window` | TEXT NOT NULL | categorical (`day` / `week` / `month` / `all`) | No | Leaderboard window the wallet was drawn from (`--window`, default `month`) |
+| `screened_at` | TEXT NOT NULL | ISO 8601 timestamp (UTC) | No | When this screening run ran. Used by `check_stability()` to refuse comparisons across runs too far apart (`stale_comparison`) |
+| `n_buy_trades` | INTEGER NOT NULL | count | No | Number of BUY trades in the wallet's fetched history (SELLs are excluded from the copy simulation) |
+| `n_resolved` | INTEGER NOT NULL | count | No | Number of those BUYs whose market has resolved; the sample size the quality gate judges |
+| `win_rate` | REAL | 0–1 fraction | Yes | Share of resolved copied trades that won (`wins / n`), post-slippage copier numbers. Nullable in the schema, but never `NULL` on rows the screening script writes: zero-resolved wallets are skipped before persisting (issue #1245) |
+| `mean_roi` | REAL | fraction (0.334 = +33.4%) | Yes | Mean per-trade copier ROI, `(payout − copier_price) / copier_price`, after slippage. Same nullability note as `win_rate` |
+| `median_roi` | REAL | fraction (0.334 = +33.4%) | Yes | Median per-trade copier ROI, same definition as `mean_roi`. The primary signal for stability and auto-pause checks |
+| `mirrored_dollar_pnl` | REAL | USD | Yes | Dollar P&L of mirroring the wallet's trades at its own size, post-slippage (`copier.dollar_pnl` from the backtest) |
+| `flat_dollar_pnl` | REAL | USD | Yes | Dollar P&L of the same trades at a flat stake (`copier_flat.dollar_pnl`). `NULL` when no flat stake was configured for the run |
+| `flat_stake` | REAL | USD | Yes | The flat stake used to compute `flat_dollar_pnl` (`--flat-stake`, default 5.0). `NULL` when the run had no flat stake |
+| `slippage_bps` | REAL NOT NULL | basis points | No | Slippage assumed for the copier fills (`--slippage-bps`, default 150.0) |
+| `eligible_to_follow` | INTEGER NOT NULL DEFAULT 0 | boolean (0/1) | No | `1` only when this run passed both `check_stability()` (agrees with the immediately previous run) and `check_quality()`. Defaults to `0` so a row written without an explicit verdict is never eligible |
+| `truncated` | INTEGER NOT NULL DEFAULT 0 | boolean (0/1) | No | Issue #1233: whether `get_wallet_trades()` reported this run's history fetch as truncated (error or max-pages, not a genuine short final page). Truncated runs may not have seen the wallet's full history; `check_quality()` applies a dedicated truncated-history condition. Default 0 for fresh tables; the `ALTER TABLE` migration backfills every pre-#1233 row to 0 — the conservative carry-forward, since there is no way to retroactively know whether an old fetch was truncated |
+
+**Indexes:**
+```sql
+CREATE INDEX IF NOT EXISTS idx_copy_wallet_candidates_address_screened
+    ON copy_wallet_candidates(address, screened_at);
+```
+
+**Notes:**
+- **Append-only.** `insert_wallet_screening` is always a plain `INSERT` (never `INSERT OR REPLACE` / upsert). Every run adds a row; prior runs are never overwritten. This is what makes the stability check possible: the scheduled screening compares a wallet's latest row against the one before it.
+- A wallet is **not** persisted (no row, no audit trail) when it is below `--min-trades` or has no usable ROI signal (`median_roi` is `None`, i.e. zero resolved trades; issue #1245). Both cases are only logged.
+- A quality-gate rejection (e.g. `insufficient_resolved_trades`, negative flat P&L, truncated history) still writes the row, with `eligible_to_follow=0` and the reason only logged.
+- `copy_wallets_followed` is the subset of this table's wallets actually being copied. Promotion to followed wallets (`copy_wallet_promotion.py --follow`) inserts into `copy_wallets_followed` only and does not modify this table.
+- The `(address, screened_at)` index supports per-address lookups. The readers above order by `id DESC` for "latest run"; the staleness check compares `screened_at` in Python (`check_stability`).
+
+---
+
 ### copy_wallets_followed
 
 **Purpose:** The subset of screened wallets (`copy_wallet_candidates`) actually being copied. Epic B (issue #1121, epic #1101) — signal detection and flat-stake paper execution reads this table to know which wallets to poll and at what stake.
