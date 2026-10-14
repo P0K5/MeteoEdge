@@ -17,6 +17,28 @@ OWNER="P0K5"
 REPO="MeteoEdge"
 OUT=".claude/session-context.env"
 
+# ---------------------------------------------------------------------------
+# Detect Python interpreter availability (Windows + Unix compatibility)
+#
+# On Windows, python3 may exist as a Store alias stub that exits immediately
+# with an install-nag instead of running. We must runtime-probe to verify
+# the interpreter actually works, not just that it exists on PATH.
+# ---------------------------------------------------------------------------
+PYTHON=""
+if ! command -v python3 >/dev/null 2>&1 || ! python3 -c '' >/dev/null 2>&1; then
+  # python3 missing or non-functional; try python
+  if command -v python >/dev/null 2>&1 && python -c '' >/dev/null 2>&1; then
+    PYTHON="python"
+  else
+    echo "[bootstrap] ERROR: No working Python interpreter found (python3 and python both missing or non-functional)" >&2
+    exit 1
+  fi
+else
+  # python3 is present and functional
+  PYTHON="python3"
+fi
+echo "[bootstrap] Using Python interpreter: $PYTHON"
+
 mkdir -p .claude
 
 echo "[bootstrap] Resolving GitHub Project GraphQL IDs for $OWNER/$REPO"
@@ -33,7 +55,7 @@ PROJECT_JSON=$(gh api graphql -f query='
     }
   }' -f owner="$OWNER" -f repo="$REPO")
 
-PROJECT_ID=$(echo "$PROJECT_JSON" | python3 -c "
+PROJECT_ID=$(echo "$PROJECT_JSON" | $PYTHON -c "
 import sys, json
 nodes = json.load(sys.stdin)['data']['repository']['projectsV2']['nodes']
 if not nodes:
@@ -62,7 +84,7 @@ FIELD_JSON=$(gh api graphql -f query='
     }
   }' -f projectId="$PROJECT_ID")
 
-FIELD_BLOCK=$(echo "$FIELD_JSON" | python3 -c "
+FIELD_BLOCK=$(echo "$FIELD_JSON" | $PYTHON -c "
 import sys, json
 fields = json.load(sys.stdin)['data']['node']['fields']['nodes']
 for f in fields:
@@ -88,7 +110,7 @@ echo "[bootstrap] Status field + options resolved."
 #     The same pattern applies to any *(first: N) query that can exceed N —
 #     e.g. fields(first: 30) above — if the project ever grows past that bound.
 # ---------------------------------------------------------------------------
-ITEM_BLOCK=$(GH_BIN="${GH_BIN:-gh}" python3 - "$PROJECT_ID" <<'PYEOF'
+ITEM_BLOCK=$(GH_BIN="${GH_BIN:-gh}" $PYTHON - "$PROJECT_ID" <<'PYEOF'
 import json, os, subprocess, sys
 
 project_id = sys.argv[1]
@@ -228,7 +250,7 @@ fi
 render_agent_model() {
   local file="$1" model="$2"
   [ -f "$file" ] || { echo "[bootstrap] WARN: $file missing, skipping"; return; }
-  python3 - "$file" "$model" <<'PYEOF'
+  $PYTHON - "$file" "$model" <<'PYEOF'
 import re, sys
 path, model = sys.argv[1], sys.argv[2]
 with open(path, encoding="utf-8") as f:
