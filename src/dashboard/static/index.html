@@ -544,6 +544,10 @@ a,button,input,select{transition:color var(--transition),background var(--transi
 }
 .info-banner.visible{display:flex;}
 .info-banner i{width:14px;height:14px;flex-shrink:0;}
+/* Issue #1381: config-save notice only; 44px dismiss target, wraps on narrow screens. */
+#config-save-notice{flex-wrap:wrap;}
+#config-save-notice span{flex:1 1 12rem;min-width:0;}
+#config-save-notice button{min-height:44px;min-width:44px;margin-left:auto;}
 
 /* ── STATION CARDS ── */
 .station-card{
@@ -4208,6 +4212,40 @@ function _cfgFindParam(key) {
   return null;
 }
 
+// Stranded-wallet save confirmation (issue #1381, follow-up to #1358): shows
+// the API's own `message` (copy lives server-side only) in a non-error
+// info-banner with role="status", dismissible. Full addresses in the message
+// are swapped for the Followed Wallets short form. Any other successful save
+// clears a previous notice. Sits above the error banner, outside
+// #config-groups, so the config poll's re-render does not wipe it.
+function _cfgShowSaveNotice(saved) {
+  const id = 'config-save-notice';
+  const prev = document.getElementById(id);
+  if (prev && prev.remove) prev.remove();
+  if (!saved || !saved.message) return;
+  const banner = document.getElementById('config-error-banner');
+  if (!banner || !banner.parentNode) return;
+  let text = String(saved.message);
+  for (const w of (saved.stranded_wallets || [])) {
+    if (w && w.address) text = text.split(w.address).join(_copyTruncateAddress(w.address));
+  }
+  const note = document.createElement('div');
+  note.id = id;
+  note.className = 'info-banner visible';
+  note.setAttribute('role', 'status');
+  note.setAttribute('aria-live', 'polite');
+  const span = document.createElement('span');
+  span.textContent = text;
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'btn-followed-action';
+  btn.textContent = 'Dismiss';
+  btn.setAttribute('aria-label', 'Dismiss notice');
+  btn.addEventListener('click', () => note.remove());
+  note.append(span, btn);
+  banner.parentNode.insertBefore(note, banner);
+}
+
 async function _patchConfig(key, value) {
   const errEl = document.getElementById('cfgerr-' + key);
   if (errEl) errEl.textContent = '';
@@ -4226,7 +4264,9 @@ async function _patchConfig(key, value) {
     // the copy tabs' posture banner on the very next read, not after the
     // shared cache's TTL.
     _copyInvalidateShared();
-    return await r.json();
+    const saved = await r.json();
+    _cfgShowSaveNotice(saved);
+    return saved;
   } catch (e) {
     if (errEl) errEl.textContent = 'Network error';
     return null;
