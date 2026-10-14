@@ -95,3 +95,26 @@ Then update the board (board-status skill) for every linked issue:
 | Request changes | Move linked issues to **In progress**; comment on the PR listing which issues moved back and why |
 | Approve | Leave statuses as-is (auto-Done on merge) |
 | Needs discussion | Move linked issues to **In progress**; post open questions on each affected issue |
+
+## 6. Reviewer mechanics and blind spots
+
+- **The AI reviewer reads the PR body and the linked issue's body — not
+  comments.** A PM sanction, scope change or acceptance-criteria amendment made
+  only as a comment gets BLOCKed again (PR #1405 / issue #1386). Amend the
+  criterion **in the issue body** (add an "Amended <date> (PM)" line) and note it
+  in the PR body, then re-run the review.
+- **Re-run the review, don't push an empty commit:** find the `AI / DeepSeek
+  review` workflow run for the head SHA (`gh api
+  "repos/{o}/{r}/actions/runs?head_sha=$SHA" --jq '.workflow_runs[]|select(.name|test("DeepSeek"))|.id'`)
+  and `gh api -X POST repos/{o}/{r}/actions/runs/$ID/rerun`. Use this after fixing
+  a PR body whose old text caused a BLOCK.
+- **Verify every dev-created PR's body first** (before reading code): its first
+  line must be `Closes #N` for *that* PR's issue. Parallel agents have written
+  one PR's body into another (#1375, #1376, #1363); a wrong closing keyword
+  closes the wrong issue on merge.
+- **PRs that edit the same file** (e.g. the health report): merge one, re-check
+  `mergeable_state`, and merge master into the next branch to resolve conflicts
+  rather than asking the dev to redo it. Re-run lint and the full suite on the
+  resolved branch; push only when green.
+- **Frontend PRs:** record the Designer's approval against the exact head SHA
+  and check the head has not changed before merging.

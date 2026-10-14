@@ -9,6 +9,12 @@ Status lives EXCLUSIVELY on the GitHub Project board `Status` field, updated
 via GraphQL — never via labels. Every transition needs a matching issue
 comment. Full rules: `.claude/instructions/governance.md`.
 
+> **Cloud sessions (Claude Code on the web):** GraphQL returns HTTP 403 "GraphQL
+> is not available from Claude Code sessions". Try the mutation **once**; on
+> that error skip it, say so in the transition comment ("Board not moved:
+> GraphQL unavailable in cloud sessions"), and let the PM move the card. Don't
+> retry, and never fall back to labels.
+
 ## 1. Get the pre-resolved IDs
 
 Read `.claude/session-context.env`. It contains everything you need:

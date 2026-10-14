@@ -10,6 +10,28 @@ governance steps — mandatory, never skipped. Status transitions and comment
 templates: invoke the **board-status** skill. Full protocol:
 `.claude/instructions/governance.md`.
 
+## Cloud sessions (Claude Code on the web) — read before step 4
+
+GitHub **GraphQL is unavailable** in these sessions (HTTP 403 "GraphQL is not
+available from Claude Code sessions"). That breaks the board mutation, `gh pr
+create`, `gh issue view`, `gh repo view` and reviewer requests. Do not retry or
+hand-roll workarounds; use this instead:
+
+- **Board moves (steps 4, 9):** try the board-status mutation **once**. On the
+  403 above, skip it and say so in the same issue comment you were going to post
+  ("Board not moved: GraphQL unavailable in cloud sessions"). The PM moves the
+  card. Never use labels as a substitute.
+- **Open the PR (step 8) via REST**, with the repo spelled out (`gh repo view`
+  is blocked): `gh api repos/P0K5/MeteoEdge/pulls -X POST -F title=… -F
+  head=<branch> -F base=master -F body=@<body-file>`; read issues with
+  `gh api repos/P0K5/MeteoEdge/issues/N`.
+- **Reviewer request (step 11)** returns 422 when the PR author is the PM's
+  account. Don't retry; state in your "PR #N submitted" comment that review is
+  requested from the PM (and the Designer for frontend PRs).
+- **PR author:** report who the PR shows as author in your hand-back. If it is
+  the PM account, don't investigate the token (environment issue, tracked in
+  #1367) — one line is enough.
+
 1. **Read the issue completely** — acceptance criteria, technical notes,
    test requirements, dependencies.
 2. **Find examples** — look at 2–3 similar implementations in the codebase and
@@ -38,8 +60,21 @@ templates: invoke the **board-status** skill. Full protocol:
    back to the shared checkout. Do every subsequent edit, test run, and commit
    from inside `$WT`; confirm with `git rev-parse --show-toplevel` if unsure.
 6. **Implement** in small, coherent steps, following existing patterns.
-7. **Test** — write tests following existing test patterns; run the full suite
-   before opening the PR.
+7. **Test — run exactly what CI runs, before every push** (CI failures this
+   session were all avoidable: PR #1372 pinned-schedule test, #1373 E741, #1375
+   lint):
+
+   ```bash
+   python -m flake8 src/                                       # whole tree, not just your files
+   python -m pytest src/tests -q -n auto --dist loadfile       # the full suite
+   ```
+
+   - CI runs only `src/tests` and `tests/integration`. A test placed in
+     `tests/` **never runs** — put new tests in `src/tests`.
+   - Before changing a constant, schedule, threshold or default, `grep -rn
+     "<old value>" src/tests tests docs` — an existing test usually pins it.
+   - Write tests following existing patterns; show a new test fails without your
+     change when practical.
 8. **(G) Open a PR** following `.github/pull_request_template.md` — since
    `gh pr create --body …` bypasses the template, you must include its sections
    yourself. **CRITICAL: Before running `gh pr create` or any other `gh`
@@ -62,6 +97,18 @@ templates: invoke the **board-status** skill. Full protocol:
      config/env change, post-deploy validation) or check **"No deploy needed"**
      for docs/tests/CI-only PRs. A PR missing this section is a review blocker.
    - Any trade-offs or uncertainties
+
+   **PR body hygiene (parallel devs have overwritten each other's bodies — PRs
+   #1375/#1376 both got #1373's text and would have closed the wrong issue):**
+   write the body to a file named for your issue **inside your own worktree**
+   (`./.pr-body-<issue>.md`, never `/tmp` or a shared scratch path; stage files
+   explicitly, don't `git add -A`). After creating or editing the PR, **re-read
+   the body via the API and confirm its first line is exactly `Closes #<your
+   issue>`** and the text is yours. The `PR body check` CI job (#791) also fails a
+   body with no non-empty **How to deploy** section or a `Closes #N` whose number
+   is not in the branch name, PR title or a commit message. Closing keywords
+   count even in prose: write examples without the literal keyword, or inside a
+   `code span`.
 9. **(G) Move the issue to In review** on the board.
 10. **(G) Comment on the issue:** "PR #N submitted for review — [brief summary]".
 11. **(G) Request review** from the Tech Lead PM — and the Designer too if the
@@ -105,13 +152,14 @@ cause is likely an environment or token setup issue — escalate immediately.
 
 - [ ] All work was done in an isolated worktree (`git rev-parse --show-toplevel`
       points inside `.claude/worktrees/agent-*`, not the shared checkout)
-- [ ] Issue status is "In review" on the board (via GraphQL, not labels)
+- [ ] Issue status is "In review" on the board (via GraphQL, not labels) — or your issue comment says the board was not moved because GraphQL is unavailable (cloud sessions)
 - [ ] PR references issues with `Closes #N`
 - [ ] PR description includes: what changed, why, how to test
 - [ ] PR description includes a filled **How to deploy** section (or
       "No deploy needed" checked)
 - [ ] Comment posted on issue: "PR #N submitted for review"
 - [ ] Review requested from Tech Lead PM (and Designer if frontend)
-- [ ] All tests pass
+- [ ] `python -m flake8 src/` clean and the full `src/tests` suite passes (commands in step 7)
+- [ ] PR body re-read via the API: first line is `Closes #<your issue>` and the body is yours
 - [ ] `GH_TOKEN="$GITHUB_TOKEN_OPERATIONAL"` was exported before `gh pr create`
-      (verify by checking PR author is the operational account, not P0K5)
+      (check the PR author; in cloud sessions it may still show the PM account — report it, see above)
