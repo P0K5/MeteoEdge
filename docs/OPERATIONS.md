@@ -850,8 +850,8 @@ than a no-op run (one query) and normally more than a run with open
 positions. Residual: if a copy-settle run ever exceeds ~5 minutes the two
 could still overlap; that would show up in the grep below and justify
 a hold-time/`flock` follow-up. `meteoedge-copy-health.timer` (daily 03:45
-UTC) still shares a start second with copy-settle at 03:45; not part of
-this issue.
+UTC) also shared a start second with copy-settle at 03:45; it was moved to
+03:56 UTC in issue #1386 (see the copy-health section below).
 
 **Verify after deploy (no lock errors for a day):**
 ```bash
@@ -876,7 +876,7 @@ tail -f logs/copy_live_settle.log
 
 #### meteoedge-copy-health.service / meteoedge-copy-health.timer
 
-One-shot service, run daily at **03:15 UTC** by `meteoedge-copy-health.timer`.
+One-shot service, run daily at **03:56 UTC** by `meteoedge-copy-health.timer`.
 Runs `src/scripts/copy_wallet_health`, the automated wallet-health monitor +
 auto-pause job (epic #1138 story D2, issue #1140). For every `status='active'`
 followed wallet: (1) pulls its two most recent `copy_wallet_candidates` rows
@@ -914,10 +914,10 @@ StandardError=append:/home/p0k5/MeteoEdge/logs/copy_health.log
 
 ```ini
 [Unit]
-Description=Run MeteoEdge copy-trading wallet health monitor daily at 03:15 UTC
+Description=Run MeteoEdge copy-trading wallet health monitor daily at 03:56 UTC
 
 [Timer]
-OnCalendar=*-*-* 03:15:00 UTC
+OnCalendar=*-*-* 03:56:00 UTC
 AccuracySec=1m
 Persistent=true
 
@@ -925,10 +925,14 @@ Persistent=true
 WantedBy=timers.target
 ```
 
-**Why 03:15 UTC:** Shortly after `meteoedge-copy-screening.timer`'s 03:00 UTC
+**Why 03:56 UTC:** After `meteoedge-copy-screening.timer`'s 03:00 UTC
 run, so a fresh screening row already exists for the stability check to
 compare against on the same day, rather than diffing against a stale
-previous-day pair. No other timer occupies the 03:15 slot.
+previous-day pair. Issue #1386 moved it off 03:45 (which shared a start
+second with `meteoedge-copy-settle.timer`'s :45 slot). The settle slots are
+:00/:15/:30/:45 and :07/:22/:37/:52, so no minute is 5+ minutes from all of
+them; :56 is the largest achievable gap (4 minutes from :52 and from the
+04:00 copy-settle run). No other timer occupies 03:56.
 
 **Operational commands:**
 ```bash
@@ -2026,7 +2030,7 @@ and are not part of this section.
 processes**: `meteoedge` (weather loop + dashboard, continuous),
 `meteoedge-copy-signals` (every 60s), `meteoedge-copy-settle` (every 15
 min), `meteoedge-copy-live-settle` (timer), `meteoedge-copy-health` (daily
-04:45), `meteoedge-copy-screening` (daily 04:00, can run for hours), and
+03:56), `meteoedge-copy-screening` (daily 04:00, can run for hours), and
 `cryptoedge` (continuous). Every one of them constructs its own `Database`
 (`src/data/db.py`), and WAL mode (`PRAGMA journal_mode=WAL`, never
 changed) keeps readers from blocking writers — but **writer-vs-writer
