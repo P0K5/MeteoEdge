@@ -835,8 +835,10 @@ def test_config_save_stranded_wallet_notice(tmp_path):
 
 
 def test_config_save_notice_dismiss_css_scoped():
-    """Issue #1381 (Designer): 44px dismiss target + wrap, scoped to the notice."""
+    """Issues #1381/#1407 (Designer): 44px dismiss target + wrap, shared by all
+    info-banner notices (config-save and Followed Wallets)."""
     html = INDEX_HTML.read_text(encoding="utf-8")
-    assert "#config-save-notice{flex-wrap:wrap;}" in html
-    assert "#config-save-notice span{flex:1 1 12rem;min-width:0;}" in html
-    assert "#config-save-notice button{min-height:44px;min-width:44px;margin-left:auto;}" in html
+    assert ".info-banner{flex-wrap:wrap;}" in html
+    assert ".info-banner span{flex:1 1 12rem;min-width:0;}" in html
+    assert ".info-banner .btn-followed-action{min-height:44px;min-width:44px;margin-left:auto;}" in html
+    assert "#config-save-notice{flex-wrap:wrap;}" not in html
