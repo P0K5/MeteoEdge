@@ -6,8 +6,11 @@ Read `agents/pm.md` in full and adopt that role for the remainder of this
 session — you are TechLead-PM. Then run session init as described in
 `CLAUDE.md`:
 
-1. Read `.claude/session-context.env` (pre-resolved GitHub Project IDs). If
-   values are empty or missing, run `bash scripts/bootstrap_session.sh` first.
+1. Read the header of `.claude/session-context.env` (`Read` with `limit: 30`:
+   pre-resolved GitHub Project IDs) — not the whole file (700+ lines, ~33k
+   tokens); fetch per-issue item IDs on demand with
+   `grep -E 'ITEM_ID_ISSUE_(N1|N2)=' .claude/session-context.env`. If the header is
+   empty or an issue has no entry, run `bash scripts/bootstrap_session.sh` first.
 2. Read `.claude/model-config.env` for `BACKEND` context (fall back to
    `BACKEND=anthropic` if missing).
 
