@@ -19,13 +19,16 @@ jobs:
     - name: Check PR body
       env:
         GH_TOKEN: ${{ github.token }}
-        PR_BODY: ${{ github.event.pull_request.body }}
         PR_TITLE: ${{ github.event.pull_request.title }}
         PR_BRANCH: ${{ github.event.pull_request.head.ref }}
         PR_AUTHOR: ${{ github.event.pull_request.user.login }}
         PR_NUMBER: ${{ github.event.pull_request.number }}
       run: |
-        printf '%s' "$PR_BODY" > "$RUNNER_TEMP/body.md"
+        # Fetch the body live via the REST API, not from the trigger event
+        # payload: the payload is frozen at trigger time and a rerun replays
+        # it, so a body edited afterwards was re-checked against stale text (#1184).
+        gh api "repos/${{ github.repository }}/pulls/${PR_NUMBER}" \
+          --jq '.body // ""' > "$RUNNER_TEMP/body.md"
         gh api --paginate "repos/${{ github.repository }}/pulls/${PR_NUMBER}/commits" \
           --jq '.[].commit.message' > "$RUNNER_TEMP/commits.txt"
         python3 scripts/check_pr_body.py --body-file "$RUNNER_TEMP/body.md" \
