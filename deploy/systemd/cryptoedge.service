@@ -3,6 +3,11 @@ Description=cryptoedge - Polymarket crypto up/down quote collector (research onl
 Documentation=file:///home/p0k5/MeteoEdge/cryptoedge/README.md
 After=network-online.target
 Wants=network-online.target
+# Crash-loop guard (#1384): RestartSec spaces retries; this caps a *sustained*
+# loop (60 starts in 30 min ~ 10 min of back-to-back crashes) so it ends up
+# `failed` (visible in the health report) instead of restarting forever.
+StartLimitIntervalSec=1800
+StartLimitBurst=60
 
 [Service]
 Type=simple
