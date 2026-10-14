@@ -6,7 +6,7 @@ Rules:
 * A Type=oneshot service must never set Restart=always/on-success (systemd
   itself rejects always for oneshot, but a typo'd Type must not slip through).
 * Any service with Restart=always/on-success must be an intentionally
-  persistent one (PERSISTENT_UNITS), and must set RestartSec and a start limit.
+  persistent one (PERSISTENT_UNITS), and must set RestartSec and declare StartLimitIntervalSec.
 * A service with no Type=oneshot but a timer is short-lived and must not
   restart on success.
 """
@@ -79,10 +79,12 @@ def test_persistent_units_have_delay_and_start_limit(name):
     assert _opt(config, "Service", "Restart") == "always"
     restart_sec = _opt(config, "Service", "RestartSec")
     assert restart_sec and int(restart_sec.rstrip("s")) >= 5, "RestartSec must be >= 5s"
+    # Must be declared explicitly. 0 (no start limit) is expected here: a
+    # persistent trading process must never be left `failed` by a transient
+    # outage; crash loops surface via the health report's NRestarts check.
     interval = _opt(config, "Unit", "StartLimitIntervalSec")
-    burst = _opt(config, "Unit", "StartLimitBurst")
-    assert interval and int(interval) > 0, "StartLimitIntervalSec must be set (> 0)"
-    assert burst and int(burst) > 0, "StartLimitBurst must be set"
+    assert interval is not None, "StartLimitIntervalSec must be declared explicitly"
+    assert int(interval) >= 0
     assert not (DEPLOY_DIR / name).with_suffix(".timer").exists()
 
 

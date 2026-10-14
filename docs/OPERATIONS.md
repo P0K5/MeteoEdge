@@ -35,8 +35,8 @@ Runs the main polling loop in live or paper trading mode.
 Description=MeteoEdge live trading bot
 After=network-online.target
 Wants=network-online.target
-StartLimitIntervalSec=1800
-StartLimitBurst=60
+# persistent trading process: never give up after transient outages; crash loops are surfaced by the daily health report Services section (restarts > 5)
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
@@ -59,7 +59,7 @@ WantedBy=multi-user.target
 - **WorkingDirectory**: /home/p0k5/MeteoEdge (change to match your install path)
 - **EnvironmentFile**: Points to `.env` for credentials and configuration
 - **ExecStart**: Runs with `--live` for real trading (change to `--paper` for simulation)
-- **Restart**: Always restarts (10-second delay); gives up after 60 starts in 30 minutes (`StartLimitIntervalSec=1800`, `StartLimitBurst=60`, issue #1384) -- see "Restart policy audit"
+- **Restart**: Always restarts (10-second delay); never gives up (`StartLimitIntervalSec=0`, explicit, issue #1384) -- see "Restart policy audit"
 - **Logging**: Appends to `/home/p0k5/MeteoEdge/logs/bot.log`
 
 **Operational commands:**
@@ -109,23 +109,24 @@ Audited every unit in `deploy/systemd/`:
 
 | Units | Type | Restart | Verdict |
 |---|---|---|---|
-| `meteoedge`, `meteoedge-copy-signals` | simple (persistent) | `always`, `RestartSec=10s` | Intentional. Start limit added: 60 starts / 30 min |
-| `cryptoedge` | simple (persistent) | `always`, `RestartSec=15s` | Intentional. Start limit added: 60 starts / 30 min |
+| `meteoedge`, `meteoedge-copy-signals` | simple (persistent) | `always`, `RestartSec=10s` | Intentional. `StartLimitIntervalSec=0` declared explicitly (never give up) |
+| `cryptoedge` | simple (persistent) | `always`, `RestartSec=15s` | Intentional. `StartLimitIntervalSec=0` declared explicitly (never give up) |
 | every other `.service` (archive, capture-forecasts, copy-health, copy-live-settle, copy-screening, copy-settle, cryptoedge-resolve, health-report, prob-cap-report, purge-retention, resolve-outcomes, rotate-logs, settle) | oneshot, timer-driven | none (default `no`) | Correct. Must stay without `Restart=` |
 
-A crash loop on a persistent unit used to restart every `RestartSec` forever (the
-systemd default start limit, 5 in 10 s, never trips with a 10 s delay). Now, after
-60 starts in 30 minutes (roughly 10 minutes of back-to-back crashes) the unit enters
-`failed` and stays down until `sudo systemctl reset-failed <unit> && sudo systemctl start <unit>`;
-the Services section of the health report flags it. Isolated crashes and short
-outages still restart automatically.
+Persistent units deliberately never enter `failed` from restart rate: they declare
+`StartLimitIntervalSec=0` so a transient outage (network/API/DNS) cannot leave the live
+trading bot dead with open positions and the risk guards not running. A crash loop
+therefore restarts forever every `RestartSec`; it is visible as restarts > 5 in the
+Services section of the daily health report and via `systemctl show <unit> -p NRestarts`.
+The #944 failure mode (a non-persistent unit restarted forever) is prevented by the
+test below, not by a start limit.
 
-Check on the host: `systemctl show <unit> -p Restart,RestartUSec,StartLimitBurst`.
+Check on the host: `systemctl show <unit> -p Restart,RestartUSec,StartLimitIntervalUSec,NRestarts`.
 
 `src/tests/test_systemd_restart_policy.py` parses every unit and fails if a oneshot or
 timer-driven service sets `Restart=always|on-success`, if `Restart=always` appears on a
 unit not in its `PERSISTENT_UNITS` allowlist, or if a persistent unit loses its
-`RestartSec`/start limit.
+`RestartSec`/explicit `StartLimitIntervalSec`.
 
 #### meteoedge-copy-signals.service
 Runs the copy-trading signal detection loop as a **persistent process** (continuous, not scheduled). Detects new trades from followed wallets, decides execute-or-skip per the exposure and market-state rules (epic #1101, story B3), and maintains the copy-trading signal log.
@@ -135,8 +136,8 @@ Runs the copy-trading signal detection loop as a **persistent process** (continu
 Description=MeteoEdge copy-signal detection loop
 After=network-online.target
 Wants=network-online.target
-StartLimitIntervalSec=1800
-StartLimitBurst=60
+# persistent trading process: never give up after transient outages; crash loops are surfaced by the daily health report Services section (restarts > 5)
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
