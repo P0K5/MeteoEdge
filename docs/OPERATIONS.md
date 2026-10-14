@@ -522,6 +522,26 @@ folded into the Verdict line. This needs `systemctl` on the host and the
 `systemctl` fails, the section prints `(unavailable -- systemctl query error)`
 and the verdict adds "partial data only" instead of crashing the report.
 
+**Log WARNING/ERROR classes section of the health report (issue #1385,
+follow-up to #913):** counts WARNING/ERROR/CRITICAL lines from `logs/*.log`
+(plus `*.log.1`, the newest rotation, by name) over the last 24h per
+`[logger]` + normalized message class, and labels each class `NEW` (absent from
+the prior 7 days), `SPIKE` (>= 3x the prior 7-day daily average) or `STEADY`;
+classes under 3 occurrences are always `STEADY`. Normalization (see
+`src/data/log_error_classes.py`) collapses URLs, `0x...`/long hex ids,
+UUIDs, paths and numbers, so "timeout after 12ms" and "timeout after 40ms" are
+one class. INFO (e.g. httpx) is ignored. Any `NEW`/`SPIKE` class adds a WARN to
+the Verdict; no new alerting channel.
+- Runtime is bounded: each file is read backwards from its end and scanning
+  stops at the first line older than 8 days; hard caps of 1,000,000 lines /
+  256 MiB per file, with a "scan capped" note in the section if hit. Expect well
+  under a few seconds even for multi-GB logs.
+- Timestamps: UTC since #1312 (2026-10-14). Older lines are host-local (WEST,
+  UTC+1): lines dated before 2026-10-14 are shifted back 1h; the switch day
+  itself is read as UTC, so at most a 1h error at a window edge, on the boundary
+  day only. Unparseable records are skipped and counted.
+- Check without emailing: `python -m src.scripts.daily_health_report --dry-run`.
+
 #### meteoedge-purge-retention.service / meteoedge-purge-retention.timer
 
 One-shot service, run daily at **01:00 UTC** by
