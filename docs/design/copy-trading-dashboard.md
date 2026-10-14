@@ -111,7 +111,7 @@ reports.
 - **Purpose:** near-real-time visibility into what the signal/execution
   pipeline is doing, for diagnosing "why didn't this get copied."
 - **Key components:** reverse-chronological list of events (signal
-  detected, order placed, order skipped + reason, wallet auto-paused +
+  detected, order placed, order skipped + reason, wallet paused +
   reason); filter by wallet and by event type.
 - **Layout:** single scrolling list, most recent first, auto-refreshing.
 - **Interactions:** filter dropdowns at top; click an event to jump to
