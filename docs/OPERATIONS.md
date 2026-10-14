@@ -35,6 +35,8 @@ Runs the main polling loop in live or paper trading mode.
 Description=MeteoEdge live trading bot
 After=network-online.target
 Wants=network-online.target
+# persistent trading process: never give up after transient outages; crash loops are surfaced by the daily health report Services section (restarts > 5)
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
@@ -57,7 +59,7 @@ WantedBy=multi-user.target
 - **WorkingDirectory**: /home/p0k5/MeteoEdge (change to match your install path)
 - **EnvironmentFile**: Points to `.env` for credentials and configuration
 - **ExecStart**: Runs with `--live` for real trading (change to `--paper` for simulation)
-- **Restart**: Always restarts on failure (10-second delay)
+- **Restart**: Always restarts (10-second delay); never gives up (`StartLimitIntervalSec=0`, explicit, issue #1384) -- see "Restart policy audit"
 - **Logging**: Appends to `/home/p0k5/MeteoEdge/logs/bot.log`
 
 **Operational commands:**
@@ -100,6 +102,32 @@ never serving a request, and invisible because the bot was serving :8000 anyway.
 - Its lifecycle is the bot's: `systemctl restart meteoedge.service` restarts both,
   and `journalctl -u meteoedge.service -f` carries its log
 
+### Restart policy audit (issue #1384)
+
+Follow-up to the #944 incident (`Restart=always` on a process that exited 0, ~78,000 restarts).
+Audited every unit in `deploy/systemd/`:
+
+| Units | Type | Restart | Verdict |
+|---|---|---|---|
+| `meteoedge`, `meteoedge-copy-signals` | simple (persistent) | `always`, `RestartSec=10s` | Intentional. `StartLimitIntervalSec=0` declared explicitly (never give up) |
+| `cryptoedge` | simple (persistent) | `always`, `RestartSec=15s` | Intentional. `StartLimitIntervalSec=0` declared explicitly (never give up) |
+| every other `.service` (archive, capture-forecasts, copy-health, copy-live-settle, copy-screening, copy-settle, cryptoedge-resolve, health-report, prob-cap-report, purge-retention, resolve-outcomes, rotate-logs, settle) | oneshot, timer-driven | none (default `no`) | Correct. Must stay without `Restart=` |
+
+Persistent units deliberately never enter `failed` from restart rate: they declare
+`StartLimitIntervalSec=0` so a transient outage (network/API/DNS) cannot leave the live
+trading bot dead with open positions and the risk guards not running. A crash loop
+therefore restarts forever every `RestartSec`; it is visible as restarts > 5 in the
+Services section of the daily health report and via `systemctl show <unit> -p NRestarts`.
+The #944 failure mode (a non-persistent unit restarted forever) is prevented by the
+test below, not by a start limit.
+
+Check on the host: `systemctl show <unit> -p Restart,RestartUSec,StartLimitIntervalUSec,NRestarts`.
+
+`src/tests/test_systemd_restart_policy.py` parses every unit and fails if a oneshot or
+timer-driven service sets `Restart=always|on-success`, if `Restart=always` appears on a
+unit not in its `PERSISTENT_UNITS` allowlist, or if a persistent unit loses its
+`RestartSec`/explicit `StartLimitIntervalSec`.
+
 #### meteoedge-copy-signals.service
 Runs the copy-trading signal detection loop as a **persistent process** (continuous, not scheduled). Detects new trades from followed wallets, decides execute-or-skip per the exposure and market-state rules (epic #1101, story B3), and maintains the copy-trading signal log.
 
@@ -108,6 +136,8 @@ Runs the copy-trading signal detection loop as a **persistent process** (continu
 Description=MeteoEdge copy-signal detection loop
 After=network-online.target
 Wants=network-online.target
+# persistent trading process: never give up after transient outages; crash loops are surfaced by the daily health report Services section (restarts > 5)
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
@@ -127,7 +157,7 @@ WantedBy=multi-user.target
 
 **Key settings:**
 - **Type**: `simple` — continuous process, not scheduled. Runs continuously once started, unlike the timer-based oneshot services.
-- **Restart**: Always restarts on failure (10-second delay) — mirrors `meteoedge.service` for safety.
+- **Restart**: Always restarts (10-second delay) with the same start limit as `meteoedge.service` (issue #1384).
 - **Polling interval**: Reads `COPY_SIGNAL_POLL_INTERVAL_SECONDS` from live config (default 300s / 5 minutes) each cycle. Configurable via dashboard config tab.
 - **Kill switch**: `COPY_TRADING_ENABLED` (live-read each cycle, not just at startup) — operator can disable without stopping the service. When `False` (default), cycles run silently with no signals executed; when `True`, actively detects and executes trades within exposure limits.
 - **Realized-P&L circuit breaker** (issue #1139): checked every cycle, same place as the kill switch. `COPY_DAILY_LOSS_LIMIT_USD` blocks new signal execution for the rest of the UTC day once today's realized copy-trading P&L is `<= -this value`; `COPY_DRAWDOWN_STOP_PCT` blocks it until manually cleared once cumulative realized P&L is a drawdown of at least this fraction of `COPY_TRADING_CAPITAL_USD`. Both are DB-derived (`Database.get_copy_realized_pnl_total[_for_date]`), not in-memory, so they survive a service restart. Unlike the kill switch, a tripped breaker never stops the loop from *detecting* and logging signals — it only blocks execution, and never affects settlement (`copy_settle.py`). Both keys are live-editable via the dashboard config tab (`copy_trading` group).

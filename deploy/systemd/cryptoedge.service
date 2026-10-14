@@ -3,6 +3,8 @@ Description=cryptoedge - Polymarket crypto up/down quote collector (research onl
 Documentation=file:///home/p0k5/MeteoEdge/cryptoedge/README.md
 After=network-online.target
 Wants=network-online.target
+# persistent trading process: never give up after transient outages; crash loops are surfaced by the daily health report Services section (restarts > 5)
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
