@@ -881,8 +881,27 @@ def scan_markets(
                                 # true_probability_yes uses the EMOS-corrected mean.
                                 # We do this by temporarily wrapping: pass corrected_mu_f
                                 # and a stddev override without mutating the shared state.
+                                #
+                                # obs_bias_offset_f=None alongside it is NOT optional
+                                # (issue #657 recurrence): true_probability_yes adds
+                                # obs_bias_offset_f on top of forecast_mean unconditionally
+                                # (src/model/envelope.py), regardless of where forecast_mean
+                                # came from. builder.py already clears that field to None
+                                # whenever ITS OWN intraday correction (compute_correction)
+                                # succeeds, for exactly this double-counting reason -- but
+                                # compute_correction legitimately returns None for several
+                                # ordinary reasons (no deb_mu_f, no fresh observation, a
+                                # stale one), and emos_serving_mu() above does not depend on
+                                # it succeeding at all. Left unset here, an emos_primary
+                                # city on a poll where compute_correction happened to miss
+                                # would get EMOS's already bias-corrected mean (its fitted
+                                # intercept exists specifically to absorb that bias) PLUS
+                                # the uncapped legacy nowcast nudge stacked on top -- the
+                                # same error class #657 fixed for the legacy path, just
+                                # unguarded on this newer one.
                                 from dataclasses import replace as _dc_replace
-                                state = _dc_replace(state, corrected_mu_f=_mu_final)
+                                state = _dc_replace(state, corrected_mu_f=_mu_final,
+                                                     obs_bias_offset_f=None)
                                 emos_stddev_override = _sigma_cal
                                 emos_mode_used = "emos_primary"
 
