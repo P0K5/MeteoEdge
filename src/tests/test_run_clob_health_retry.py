@@ -273,78 +273,39 @@ class TestLoggingWithTimestamp:
         assert "6 attempts" in msg
         assert "verify POLYMARKET_API_KEY and connectivity" in msg
 
-    def test_error_log_formatted_includes_iso_timestamp(self):
+    def test_error_log_formatted_includes_iso_timestamp(self, real_log_capture):
         """Verify that logged error includes ISO timestamp when formatted with setup_logging().
 
         This test verifies the specific complaint from #1004: logs must be greppable by time,
         meaning they must start with an ISO timestamp (YYYY-MM-DDTHH:MM:SS).
 
-        Critically: this test retrieves the REAL formatter from setup_logging()'s configured
-        root handler, not a hardcoded copy. This ensures we catch if #1005 (or any future change)
-        modifies the format string — if the formatter changes, this test will still pass (because
-        we only assert the invariant: ISO timestamp leads the line) but will validate against
-        the actual configured format, not a stale copy.
-
-        Pytest's caplog interferes with handlers, so we clean and reconfigure logging
-        in isolation, then validate with a custom handler using the real formatter.
+        Critically: the real_log_capture fixture uses the REAL formatter from setup_logging()'s
+        configured root handler, not a hardcoded copy. This ensures we catch if #1005 (or any
+        future change) modifies the format string — if the formatter changes, this test will
+        still pass (because we only assert the invariant: ISO timestamp leads the line) but
+        will validate against the actual configured format, not a stale copy.
         """
-        root_logger = logging.getLogger()
+        # Create a test log record and emit it through the logger
+        logger = logging.getLogger("src.scripts.run")
+        logger.error(
+            "[run] CLOB health check failed after %d attempts over %.1f seconds -- "
+            "verify POLYMARKET_API_KEY and connectivity",
+            6,
+            0.0,
+        )
 
-        # Save and clear existing handlers (pytest's caplog may have added them)
-        original_handlers = root_logger.handlers[:]
-        root_logger.handlers = []
+        # Verify we captured the formatted record
+        assert len(real_log_capture.formatted_records) > 0, "Expected at least one formatted record"
+        formatted = real_log_capture.formatted_records[0]
 
-        try:
-            # Setup logging fresh without pytest's interference
-            setup_logging()
-
-            # Retrieve the REAL formatter from the root logger's handlers
-            formatter = None
-            for handler in root_logger.handlers:
-                if handler.formatter:
-                    formatter = handler.formatter
-                    break
-
-            assert formatter is not None, "setup_logging() must configure a formatter on root logger"
-
-            # Create a capture handler with the REAL formatter
-            class CaptureHandler(logging.Handler):
-                def __init__(self):
-                    super().__init__()
-                    self.formatted_records = []
-
-                def emit(self, record):
-                    formatted = self.formatter.format(record)
-                    self.formatted_records.append(formatted)
-
-            capture = CaptureHandler()
-            capture.setFormatter(formatter)
-            root_logger.addHandler(capture)
-
-            # Create a test log record and emit it through the logger
-            logger = logging.getLogger("src.scripts.run")
-            logger.error(
-                "[run] CLOB health check failed after %d attempts over %.1f seconds -- "
-                "verify POLYMARKET_API_KEY and connectivity",
-                6,
-                0.0,
-            )
-
-            # Verify we captured the formatted record
-            assert len(capture.formatted_records) > 0, "Expected at least one formatted record"
-            formatted = capture.formatted_records[0]
-
-            # INVARIANT: Formatted log must start with ISO timestamp (YYYY-MM-DDTHH:MM:SS)
-            # This is the core complaint from #1004 — logs must be greppable by time.
-            # We assert ONLY this invariant, not the full field layout, because #1005
-            # will legitimately add %(process)d and we must not fail on that.
-            iso_timestamp_pattern = r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\s"
-            assert re.match(iso_timestamp_pattern, formatted), (
-                f"Log output must start with ISO timestamp (YYYY-MM-DDTHH:MM:SS). Got: {formatted}"
-            )
-        finally:
-            # Restore original handlers
-            root_logger.handlers = original_handlers
+        # INVARIANT: Formatted log must start with ISO timestamp (YYYY-MM-DDTHH:MM:SS)
+        # This is the core complaint from #1004 — logs must be greppable by time.
+        # We assert ONLY this invariant, not the full field layout, because #1005
+        # will legitimately add %(process)d and we must not fail on that.
+        iso_timestamp_pattern = r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\s"
+        assert re.match(iso_timestamp_pattern, formatted), (
+            f"Log output must start with ISO timestamp (YYYY-MM-DDTHH:MM:SS). Got: {formatted}"
+        )
 
     def test_setup_logging_called_before_health_check_in_main_ordering(self):
         """Verify that setup_logging() is called before retry_clob_health_with_backoff() in main().

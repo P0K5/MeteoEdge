@@ -34,12 +34,15 @@ assign a per-process path.
 """
 from __future__ import annotations
 
+import logging
 import os
 import sys
 import tempfile
 from pathlib import Path
 
 import pytest
+
+from src.logging_config import setup_logging
 
 
 def pytest_configure(config):
@@ -76,3 +79,50 @@ def _restore_api_db():
         yield
     finally:
         mod._db = saved
+
+
+class _CaptureHandler(logging.Handler):
+    """Collect records rendered by this handler's formatter (strings, not LogRecords)."""
+
+    def __init__(self):
+        super().__init__()
+        self.formatted_records = []
+
+    def emit(self, record):
+        self.formatted_records.append(self.formatter.format(record))
+
+
+@pytest.fixture
+def real_log_capture():
+    """Capture lines rendered by the formatter that ``setup_logging()`` configures.
+
+    Yields a handler exposing ``formatted_records`` (rendered strings) and
+    ``formatter`` (the real formatter read off the root logger's handler), so tests
+    can assert on the actual output format instead of a copy of it.
+
+    Root handlers are cleared before setup because ``setup_logging()`` uses
+    ``basicConfig()``, which is a no-op when handlers already exist, and pytest's
+    caplog handler would otherwise mask the real formatter. Teardown restores the
+    original root handlers and root level.
+    """
+    root_logger = logging.getLogger()
+    original_handlers = root_logger.handlers[:]
+    original_level = root_logger.level
+    root_logger.handlers = []
+    try:
+        setup_logging()
+
+        formatter = None
+        for handler in root_logger.handlers:
+            if handler.formatter:
+                formatter = handler.formatter
+                break
+        assert formatter is not None, "setup_logging() must configure a formatter on the root logger"
+
+        capture = _CaptureHandler()
+        capture.setFormatter(formatter)
+        root_logger.addHandler(capture)
+        yield capture
+    finally:
+        root_logger.handlers = original_handlers
+        root_logger.setLevel(original_level)
