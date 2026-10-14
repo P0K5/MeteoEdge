@@ -111,6 +111,20 @@ def _parse_outcome_yes_price(market: dict) -> "int | None":
     return round(yes_price * 100)
 
 
+#: ticker -> final YES price (cents) for every market whose ``closed=true``
+#: lookup in this process returned a verified matching row (issue #1387).
+#: Written by ``fetch_market_final_price`` as a free by-product of the call
+#: ``fetch_market_resolution`` already makes; read via ``market_seen_closed``.
+_CLOSED_SEEN: "dict[str, int | None]" = {}
+
+
+def market_seen_closed(ticker: str) -> bool:
+    """True if the most recent ``fetch_market_final_price(ticker)`` in this
+    process got a matching ``closed=true`` row (so Gamma says the market is
+    closed). Costs no HTTP call. Never feeds a settlement decision."""
+    return ticker in _CLOSED_SEEN
+
+
 def fetch_market_final_price(ticker: str) -> int | None:
     """Fetch the final resolved YES price (in cents) for a closed market.
 
@@ -127,6 +141,7 @@ def fetch_market_final_price(ticker: str) -> int | None:
     and a resolved-NO market shows YES ~= 0.00 (0c).
     """
     url = f"{POLYMARKET_GAMMA_API}/markets?condition_ids={ticker}&closed=true"
+    _CLOSED_SEEN.pop(ticker, None)
     try:
         r = fetch(url, timeout=HTTP_TIMEOUT_SECONDS)
         r.raise_for_status()
@@ -146,7 +161,9 @@ def fetch_market_final_price(ticker: str) -> int | None:
         log.warning("[polymarket] fetch_market_final_price(%s...): %s", ticker[:14], e)
         return None
 
-    return _parse_outcome_yes_price(market)
+    price = _parse_outcome_yes_price(market)
+    _CLOSED_SEEN[ticker] = price
+    return price
 
 
 # A market only counts as definitively resolved when its final YES price is
