@@ -3019,6 +3019,37 @@ class Database:
             )
             self._conn.commit()
 
+    def set_copy_live_position_stuck_level(
+        self, position_id: int, level: int, seen_at: str, category: "str | None" = None,
+    ) -> None:
+        """Annotate a still-unsettled live position as escalated to *level*
+        (issue #1392). Monotonic (never lowers the level) and scoped to
+        ``status IN ('filled','partial')``; ``stuck_first_seen_at`` keeps its
+        first value. Bookkeeping only: never changes status, P&L or
+        exposure."""
+        with self._lock:
+            self._conn.execute(
+                "UPDATE copy_live_positions SET stuck_level=?, stuck_category=?, "
+                "stuck_first_seen_at=COALESCE(stuck_first_seen_at, ?) "
+                "WHERE id=? AND status IN ('filled','partial') AND stuck_level<?",
+                (level, category, seen_at, position_id, level),
+            )
+            self._conn.commit()
+
+    def reset_copy_live_position_stuck(
+        self, position_id: int, category: "str | None", seen_at: "str | None",
+    ) -> None:
+        """De-escalate a live position to level 0 (issue #1392, #1388
+        parity: past endDate but actively trading). The only place the
+        level may decrease. Same status scope; never changes status."""
+        with self._lock:
+            self._conn.execute(
+                "UPDATE copy_live_positions SET stuck_level=0, stuck_category=?, "
+                "stuck_first_seen_at=? WHERE id=? AND status IN ('filled','partial')",
+                (category, seen_at, position_id),
+            )
+            self._conn.commit()
+
     def get_open_copy_live_positions(self, address: "str | None" = None) -> list[dict]:
         """Return real copy-trading positions not yet in a terminal state
         (``status`` NOT IN ``('rejected','settled')``), optionally filtered
