@@ -522,6 +522,22 @@ folded into the Verdict line. This needs `systemctl` on the host and the
 `systemctl` fails, the section prints `(unavailable -- systemctl query error)`
 and the verdict adds "partial data only" instead of crashing the report.
 
+**Scheduled Jobs section of the health report (issue #1422):** a heartbeat
+for the timer-driven jobs `meteoedge-copy-settle`, `-copy-live-settle`,
+`-copy-health`, `-copy-screening` and `-settle`. Per job it prints the last
+trigger (UTC, from `systemctl show <job>.timer -p LastTriggerUSec`), age, and
+the last `Result` of `<job>.service`, with marks `[OVERDUE]` (age above
+`JOB_OVERDUE_FACTOR` = 2x the interval in `SCHEDULED_JOB_INTERVALS_S`),
+`[FAILED]` (non-`success` result or non-zero exit) and `[INACTIVE]` (timer not
+active). Any mark folds into the Verdict as WARN. A job whose timer is not
+installed on the host prints "timer not installed" and never warns; an
+installed timer that has not fired yet prints "never run" without a WARN.
+If `systemctl` fails the section is `(unavailable ...)`/UNKNOWN. The interval
+table must be updated together with the `OnCalendar` of the timer file;
+`src/tests/test_health_report_job_heartbeat.py` fails on drift. Check with
+`python -m src.scripts.daily_health_report --dry-run`: healthy means every
+job shows a recent `last=` with `result=success` and no marks.
+
 #### meteoedge-purge-retention.service / meteoedge-purge-retention.timer
 
 One-shot service, run daily at **01:00 UTC** by
