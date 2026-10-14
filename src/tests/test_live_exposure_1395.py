@@ -1,14 +1,11 @@
 """Issue #1395 (design #1365): live exposure for partials and ghosts.
 
 Live order gate. Ghosts count at stake_usd until recovery resolves them;
-partials stay at stake_usd (the executor does not prove the remainder is
-cancelled); pending never lowers.
+partials count at stake_usd unless the remainder is proven cancelled (#1428); pending never lowers.
 """
-import re
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from src.data.copy_pnl import live_exposure_usd
+from src.data.copy_pnl import PARTIAL_CANCEL_PROVEN, live_exposure_usd
 from src.data.db import Database
 from src.scripts.copy_live_settle import recover_ghost_orders
 from src.scripts.copy_signal_loop import _handle_live_order, live_startup_sanity_check
@@ -72,12 +69,100 @@ def test_filled_and_pending_unchanged():
     assert live_exposure_usd(db) == 17.0
 
 
-def test_executor_partial_not_proven_cancelled_comment_evidence():
-    # Evidence guard: executor ignores cancel_order's bool result, so a
-    # "partial" can carry a still-resting remainder. If this ever changes,
-    # revisit COALESCE for partials (#1395).
-    src = Path("src/execution/copy_live_executor.py").read_text()
-    assert re.search(r"^\s+trader\.cancel_order\(order_id\)\s*$", src, re.M)
+def test_executor_partial_cancel_false_is_ghost_not_partial():
+    # #1428: cancel_order returning False (no raise) is NOT a clean cancel.
+    from src.execution import copy_live_executor as cle
+    trader = MagicMock()
+    trader.place_order.return_value = "oid"
+    trader.check_fill.return_value = "open"
+    trader.cancel_order.return_value = False
+    trader.get_order_fill_size.return_value = 3.0
+    with patch.object(cle, "LiveTrader", return_value=trader), \
+         patch.object(cle, "get_orderbook", MagicMock(return_value={"asks": [], "bids": []})), \
+         patch.object(cle.time, "sleep", lambda s: None), \
+         patch.object(cle, "FILL_MAX_WAIT_S", 0):
+        res = cle.execute_live_copy_order(
+            MagicMock(), token_id="t", market="0xm", side_label="YES",
+            price=0.4, stake_usd=10.0, retry_enabled=True)
+    assert res["status"] == "rejected"
+    assert res["rejected_reason"] == "cancel_failed_ghost"
+    assert trader.place_order.call_count == 1  # no retry on top of a live order
+
+
+def test_executor_partial_cancel_true_flags_remainder_cancelled():
+    from src.execution import copy_live_executor as cle
+    trader = MagicMock()
+    trader.place_order.return_value = "oid"
+    trader.check_fill.return_value = "open"
+    trader.cancel_order.return_value = True
+    trader.get_order_fill_size.return_value = 3.0
+    trader.get_order_fill_cost_usd.return_value = 1.2
+    with patch.object(cle, "LiveTrader", return_value=trader), \
+         patch.object(cle.time, "sleep", lambda s: None), \
+         patch.object(cle, "FILL_MAX_WAIT_S", 0):
+        res = cle.execute_live_copy_order(
+            MagicMock(), token_id="t", market="0xm", side_label="YES",
+            price=0.4, stake_usd=10.0, retry_enabled=False)
+    assert res["status"] == "partial" and res["remainder_cancelled"] is True
+    assert res["filled_stake_usd"] == 1.2
+
+
+def _record_partial(db, result):
+    """Run the real loop handler with the executor patched to *result*."""
+    sid = db.insert_copy_signal(address=W1, market="0xm", source_price=0.4,
+                                detected_at="2026-10-14T00:00:00+00:00", outcome_index=0)
+    with patch("src.scripts.copy_signal_loop.execute_live_copy_order", return_value=result):
+        _handle_live_order(
+            db, address=W1, market="0xm", outcome_index=0, signal_id=sid,
+            live_stake=10.0, fill_price=0.4, token_id="tok", side_label="YES",
+            live_config=_cfg(1000.0, 1000.0), live_gate_reason=None,
+            clob_client_factory=MagicMock(), now_iso="2026-10-14T01:00:00+00:00",
+            wallet_live_enabled=True,
+        )
+
+
+def test_proven_cancelled_partial_counts_at_filled_amount():
+    db = Database(":memory:")
+    _record_partial(db, {"status": "partial", "order_id": "o", "fill_price": 0.4,
+                         "filled_stake_usd": 3.0, "remainder_cancelled": True})
+    assert db.get_copy_live_positions()[0]["rejected_reason"] == PARTIAL_CANCEL_PROVEN
+    assert live_exposure_usd(db) == 3.0
+    assert live_exposure_usd(db, W1) == 3.0
+
+
+def test_partial_without_cancel_proof_counts_at_stake():
+    db = Database(":memory:")
+    _record_partial(db, {"status": "partial", "order_id": "o", "fill_price": 0.4,
+                         "filled_stake_usd": 3.0})
+    assert db.get_copy_live_positions()[0]["rejected_reason"] is None
+    assert live_exposure_usd(db) == 10.0
+
+
+def test_proven_partial_without_filled_amount_counts_at_stake():
+    db = Database(":memory:")
+    _seed(db, status="partial", stake=10.0, filled=None, reason=PARTIAL_CANCEL_PROVEN)
+    assert live_exposure_usd(db) == 10.0
+
+
+def test_proven_partial_never_exceeds_stake():
+    db = Database(":memory:")
+    _seed(db, status="partial", stake=10.0, filled=12.0, reason=PARTIAL_CANCEL_PROVEN)
+    assert live_exposure_usd(db) == 10.0
+
+
+def test_ghost_recovered_partial_while_open_keeps_stake():
+    db = Database(":memory:")
+    _seed(db, status="rejected", reason="cancel_failed_ghost", order_id="g1",
+          stake=10.0, fill_price=0.5)
+    trader = MagicMock()
+    trader.check_fill.return_value = "open"  # still resting
+    trader.get_order_fill_size.return_value = 4.0  # < intended 20 -> partial
+    trader.get_order_fill_cost_usd.return_value = 2.0
+    with patch("src.scripts.copy_live_settle.LiveTrader", return_value=trader):
+        recover_ghost_orders(db, MagicMock())
+    row = db.get_copy_live_positions()[0]
+    assert row["status"] == "partial" and row["filled_stake_usd"] == 2.0
+    assert live_exposure_usd(db) == 10.0
 
 
 def test_ghost_counted_per_wallet_and_total_then_released_by_recovery():

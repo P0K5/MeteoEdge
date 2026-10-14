@@ -248,7 +248,7 @@ class TestGhostOrderReporting:
         trader.check_fill.return_value = "open"  # both attempts always 'timeout'
         # First cancel (of oid-1) succeeds; second cancel (of oid-2, the
         # reprice-retry) raises.
-        trader.cancel_order.side_effect = [None, RuntimeError("cancel API down")]
+        trader.cancel_order.side_effect = [True, RuntimeError("cancel API down")]
         trader.get_order_fill_size.return_value = 0.0
         factory = MagicMock(return_value=MagicMock())
         gob = MagicMock(return_value={"asks": [{"price": "0.45", "size": "10"}], "bids": []})
@@ -291,7 +291,7 @@ class TestPartialFillIncludesFilledStakeUsd:
         trader.get_order_fill_cost_usd.return_value = 0.0  # default: fall back to shares*price approximation
         trader.place_order.side_effect = ["oid-1", "oid-2"]
         trader.check_fill.return_value = "open"
-        trader.cancel_order.return_value = None  # cancel succeeds both times
+        trader.cancel_order.return_value = True  # cancel succeeds both times
         trader.get_order_fill_size.side_effect = [0.0, 2.0]
         factory = MagicMock(return_value=MagicMock())
         gob = MagicMock(return_value={"asks": [{"price": "0.45", "size": "10"}], "bids": []})
