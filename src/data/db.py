@@ -648,7 +648,13 @@ CREATE TABLE IF NOT EXISTS copy_live_positions (
     rejected_reason  TEXT,
     entry_ts         TEXT NOT NULL,
     settled_pnl_usd  REAL,
-    settled_at       TEXT
+    settled_at       TEXT,
+    -- Issue #1391: stuck-position escalation state for live rows (paper-side
+    -- precedent: copy_positions' #1301 columns). Additive only -- nothing reads
+    -- or writes these until #1392. Default 0 backfills every existing row.
+    stuck_level         INTEGER NOT NULL DEFAULT 0,
+    stuck_category      TEXT,
+    stuck_first_seen_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_copy_live_positions_address_status
     ON copy_live_positions(address, status);
@@ -918,6 +924,12 @@ class Database:
                 # Issue #1264: when a pause last revoked the live opt-in.
                 # NULL backfills every existing row (nothing revoked yet).
                 ("copy_wallets_followed", "live_enabled_cleared_at", "TEXT"),
+                # Issue #1391: live-side stuck-position columns (see the
+                # copy_live_positions CREATE TABLE comment). Default 0 / NULL
+                # backfills every existing row -- nothing is flagged by this.
+                ("copy_live_positions", "stuck_level", "INTEGER NOT NULL DEFAULT 0"),
+                ("copy_live_positions", "stuck_category", "TEXT"),
+                ("copy_live_positions", "stuck_first_seen_at", "TEXT"),
             ]:
                 try:
                     self._conn.execute(
