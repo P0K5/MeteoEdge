@@ -18,6 +18,7 @@ from src.config import (
     get_training_eligible_since,
     is_training_eligible,
 )
+from src.data.sql_split import _split_sql_statements, execute_ddl_script  # noqa: F401
 from src.strategy.gate_verdicts import GATE_VERDICTS
 
 log = logging.getLogger(__name__)
@@ -699,10 +700,7 @@ class Database:
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA foreign_keys=ON")
-        for stmt in _DDL.strip().split(";"):
-            stmt = stmt.strip()
-            if stmt:
-                self._conn.execute(stmt)
+        execute_ddl_script(self._conn, _DDL)
         self._conn.commit()
         self._migrate()
 
