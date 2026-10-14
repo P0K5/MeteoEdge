@@ -102,3 +102,12 @@ def test_cli_exit_codes(tmp_path):
     assert ok.returncode == 0
     assert ko.returncode == 1 and "How to deploy" in ko.stdout
     assert missing.returncode == 2
+
+
+def test_closing_keyword_in_prose_counts_but_code_span_does_not():
+    base = "Closes #5\n" + DEPLOY_OK
+    prose = base + "Example: a body saying Closes #944 here.\n"
+    errs = run(prose, branch="dev/5-x")
+    assert len(errs) == 1 and "#944" in errs[0]
+    fenced = base + "Example: `Closes #944` and\n```\nFixes #945\n```\n"
+    assert run(fenced, branch="dev/5-x") == []

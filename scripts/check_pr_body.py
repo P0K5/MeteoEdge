@@ -11,6 +11,11 @@ Two deterministic rules, nothing more (the AI reviewer covers the rest):
    appears in the head branch name, the PR title, or a commit message of the
    PR. Catches a body written for the wrong PR. "Part of/Refs #N" is exempt.
 
+NOTE: closing keywords in PROSE count (GitHub itself closes the issue on merge
+wherever "Closes #N" appears). Write examples without the literal keyword+hash
+(e.g. "closes issue 944") or inside a `code span` / fenced block, which this
+script ignores.
+
 Exempt: bot authors ("*[bot]"), titles starting "chore(graph)" or "chore(ci)",
 and "[skip ci]" in the title. Docs PRs are NOT exempt.
 
