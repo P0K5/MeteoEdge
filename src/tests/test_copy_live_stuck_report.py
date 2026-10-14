@@ -39,7 +39,7 @@ def _run(db):
 def test_empty_table_is_clean_and_shows_exposure_vs_cap():
     lines, flags = _run(Database(":memory:"))
     text = "\n".join(lines)
-    assert flags == {"n_stuck": 0, "n_urgent": 0, "n_pending_stale": 0, "n_ghost": 0}
+    assert flags == {"n_stuck": 0, "n_urgent": 0, "n_pending_stale": 0, "n_ghost": 0, "n_ghost_escalated": 0}
     assert "Unsettled live exposure counted: $0.00 of cap $250.00" in text
     assert "[WARN]" not in text
 
@@ -83,6 +83,26 @@ def test_ghost_listed_and_counted_in_exposure_and_resolved_ghost_gone():
     assert f"[GHOST_UNRESOLVED] id={g}" in text and "0xdead" not in text
     assert "counted: $9.00" in text and "ghosts are NOT counted" not in text
     assert "1 unresolved ghost(s)" in text
+
+
+def test_ghost_older_than_48h_is_escalated_and_younger_is_not():
+    db = Database(":memory:")
+    old = _seed(db, status="rejected", reason="cancel_failed_ghost", order_id="ord1",
+                hours_ago=60, stake=4.0)
+    young = _seed(db, status="rejected", reason="cancel_failed_ghost", order_id="ord2",
+                  market="0xyoung", hours_ago=5, stake=6.0)
+    lines, flags = _run(db)
+    text = "\n".join(lines)
+    assert flags["n_ghost"] == 2 and flags["n_ghost_escalated"] == 1
+    assert f"[GHOST_ESCALATED] id={old}" in text
+    assert f"[GHOST_UNRESOLVED] id={young}" in text
+    assert "escalated >48h: 1" in text
+    # Alert-only: escalation never changes the row's status or exposure.
+    with db._lock:
+        rows = db._conn.execute(
+            "SELECT id, status FROM copy_live_positions WHERE id IN (?, ?)", (old, young)
+        ).fetchall()
+    assert {r["status"] for r in rows} == {"rejected"}
 
 
 def test_exposure_over_cap_warns():
