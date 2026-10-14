@@ -21,6 +21,7 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
+from src.data.copy_pnl import live_exposure_usd
 from src.data.db import Database
 from src.config import seed_config
 
@@ -83,6 +84,23 @@ def _settle_live(db, address, *, stake_usd, pnl, entry_ts="2026-09-01T00:00:00Z"
     position_id = _open_live_position(db, address, stake_usd=stake_usd, entry_ts=entry_ts, market=market)
     db.update_copy_live_position_status(position_id, "filled", fill_price=0.5)
     db.settle_copy_live_position(position_id, pnl, settled_at)
+
+
+def _ghost_live_position(db, address, *, stake_usd, entry_ts="2026-09-01T00:00:00Z",
+                         market="TEST-MARKET", reason="cancel_failed_ghost"):
+    """Insert one ``copy_live_positions`` row in the ``rejected`` status with
+    an order_id and the given rejected_reason (default: an unresolved
+    ``cancel_failed_ghost``). Counts toward live exposure per
+    ``live_exposure_usd`` (issue #1395), not ``get_open_copy_live_positions``."""
+    position_id = _open_live_position(db, address, stake_usd=stake_usd, entry_ts=entry_ts, market=market)
+    with db._lock:
+        db._conn.execute(
+            "UPDATE copy_live_positions SET status='rejected', rejected_reason=?, "
+            "order_id='g' WHERE id=?",
+            (reason, position_id),
+        )
+        db._conn.commit()
+    return position_id
 
 
 # ---------------------------------------------------------------------------
@@ -495,6 +513,49 @@ class TestFollowedWalletsLiveEligibility:
 # ---------------------------------------------------------------------------
 # Resolved live stake + override flag (issue #1259)
 # ---------------------------------------------------------------------------
+
+class TestFollowedWalletsLiveExposureMatchesGate:
+    """Issue #1429: the dashboard's per-wallet live exposure must equal the
+    order gate's number (``live_exposure_usd``, issue #1395) for the same DB
+    state, so an unresolved ghost can't leave a wallet shown as having
+    headroom the gate no longer grants."""
+
+    def test_unresolved_ghost_at_cap_makes_wallet_paper_only(self, api_client):
+        client, db = api_client
+        db.set_config("COPY_LIVE_TRADING_ENABLED", "True")
+        db.set_config("COPY_LIVE_MAX_EXPOSURE_PER_WALLET_USD", "10.0")
+        db.insert_followed_wallet(address="0xW", stake_per_trade=5.0, added_at="2026-09-01T00:00:00Z")
+        db.set_followed_wallet_live_enabled("0xW", True)
+        _open_live_position(db, "0xW", stake_usd=4.0)
+        _ghost_live_position(db, "0xW", stake_usd=6.0)
+
+        assert live_exposure_usd(db, "0xW") == 10.0
+        row = client.get("/api/copy-trading/followed-wallets").json()["wallets"][0]
+        assert row["live_eligible"] is False
+        assert row["live_status_reason"] == "this wallet's live exposure limit is currently reached"
+
+    def test_recovered_ghost_releases_headroom_on_dashboard(self, api_client):
+        client, db = api_client
+        db.set_config("COPY_LIVE_TRADING_ENABLED", "True")
+        db.set_config("COPY_LIVE_MAX_EXPOSURE_PER_WALLET_USD", "10.0")
+        db.insert_followed_wallet(address="0xW", stake_per_trade=5.0, added_at="2026-09-01T00:00:00Z")
+        db.set_followed_wallet_live_enabled("0xW", True)
+        _open_live_position(db, "0xW", stake_usd=4.0)
+        ghost_id = _ghost_live_position(db, "0xW", stake_usd=6.0)
+
+        # Recovery confirmed a zero fill: the ghost is released from exposure.
+        with db._lock:
+            db._conn.execute(
+                "UPDATE copy_live_positions SET rejected_reason='cancel_confirmed_zero_fill' WHERE id=?",
+                (ghost_id,),
+            )
+            db._conn.commit()
+
+        assert live_exposure_usd(db, "0xW") == 4.0
+        row = client.get("/api/copy-trading/followed-wallets").json()["wallets"][0]
+        assert row["live_eligible"] is True
+        assert row["live_status_reason"] == "eligible for live execution"
+
 
 class TestFollowedWalletsLiveStakeResolution:
     def test_no_override_resolves_to_paper_stake_and_is_not_flagged(self, api_client):

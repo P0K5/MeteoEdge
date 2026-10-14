@@ -73,7 +73,7 @@ from src.risk.copy_risk_manager import (
     REASON_LIVE_DAILY_LOSS, REASON_LIVE_DRAWDOWN, REASON_LIVE_NO_CAPITAL,
 )
 from src.data.archive_db import ArchiveDatabase
-from src.data.copy_pnl import summarize_opposite_side_overlap
+from src.data.copy_pnl import live_exposure_usd, summarize_opposite_side_overlap
 from src.data.db import Database, compute_win_rate
 from src.data.nws import fetch_nws_forecast_high
 from src.data.polymarket import get_orderbook
@@ -2961,12 +2961,10 @@ def _derive_live_eligibility(
         return False, "this wallet's live stake exceeds its live exposure cap"
 
     try:
-        exposure = sum(
-            p["stake_usd"] for p in db.get_open_copy_live_positions(wallet["address"])
-        )
+        exposure = live_exposure_usd(db, wallet["address"])
     except Exception:  # noqa: BLE001 — same conservative-default rule as above
         logger.exception(
-            "copy_trading_followed_wallets: get_open_copy_live_positions failed for %s",
+            "copy_trading_followed_wallets: live_exposure_usd failed for %s",
             wallet["address"],
         )
         return False, "the live status could not be determined"
