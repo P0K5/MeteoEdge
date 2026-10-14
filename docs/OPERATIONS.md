@@ -1963,6 +1963,35 @@ BSS numbers; pass a different date to re-window. Scoped to same-day, high-direct
 see `src.scripts.emos_shadow_reconstruction.reconstruct_bracket_row`'s docstring for what is out
 of scope (next-day and low-direction rows) and why.
 
+### Copy-signal skip reasons (issue #1314)
+
+The daily health report has a **Copy-trading skipped signals (last 24h)** section: per wallet, how many
+signals were `placed` vs `skipped`, and the skipped count per reason (counts only). Read a wallet's
+paper P&L alongside this line — skipped signals are excluded from its record, so the denominator is
+incomplete by exactly that many trades (same caveat as stuck positions, #1301).
+
+**Trend basis:** the last 24h count versus the average daily count over the preceding 7 days. `NEW` =
+at least 5 in 24h and none in the baseline; `SPIKE` = at least 5 and >= 3x the baseline daily average;
+otherwise `STEADY` (a wallet steadily dropping 30/day reads `STEADY`, one that dropped 30 once reads
+`NEW`/`SPIKE`). The verdict line gets a WARN only for structural or unknown-class skips; routine
+reasons never raise it. Source: `src/data/copy_skip_reasons.py` (the vocabulary table is the code).
+
+| skip_reason | class | meaning |
+|---|---|---|
+| `non_binary_outcome_index` | **structural** | multi-outcome market (index 2+); the engine only models binary markets — the wallet's strategy cannot be represented |
+| `missing_outcome_index` | **structural** | trade tape gave no usable outcome side |
+| `below_min_entry_price` | routine | source price under `COPY_MIN_ENTRY_PRICE` |
+| `duplicate_market_exposure` | routine | wallet already holds an open position in the market |
+| `opposite_side_above_parity` | routine | opposite side already held above parity |
+| `wallet_exposure_limit` / `total_exposure_limit` | routine | per-wallet / total exposure cap reached |
+| `wallet_newly_followed` | lifecycle | first poll of a newly followed wallet; history is not copied |
+| `market_resolved` | lifecycle | market already resolved when the trade was seen |
+| `circuit_breaker_daily_loss` / `circuit_breaker_drawdown` | breaker | paper breaker tripped (account-level) |
+| anything else | unknown | not in the vocabulary (new reason or typo) — flagged WARN so it cannot hide |
+
+Live-side reasons (`copy_live_positions.rejected_reason`) are classified separately by the dashboard
+and are not part of this section.
+
 ---
 
 ## Concurrent Writers & Busy Timeout (issue #1232)
