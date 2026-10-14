@@ -760,6 +760,23 @@ and `PAST_END_UNRESOLVED` is not urgent before 48h past `endDate` anyway.
 Verify on the host: `grep "STUCK CLOSED_AMBIGUOUS" logs/copy_settle.log` shows
 the record with `age_h` < 48.
 
+**Live stuck positions in the health report (#1393, design on #1365):** the
+daily health report has a "Live copy-trading stuck positions" section
+(`_build_copy_live_stuck`), read-only, next to the paper one. It shows:
+`filled`/`partial` rows with `stuck_level >= 1` (written by `copy_live_settle`,
+#1392) as `[CATEGORY/LEVEL] id wallet market age status stake`; stale
+`pending` rows (older than `LIVE_PENDING_STALE_HOURS = 2`, i.e. a crash
+mid-cycle -- a healthy order leaves `pending` within the fill-wait plus one
+settle cycle) as `[STALE_PENDING]`; unresolved `cancel_failed_ghost` rows
+(`Database.get_ghost_order_positions`; recovery rewrites the reason once
+resolved) as `[GHOST_UNRESOLVED]`, which may be real fills and are NOT counted
+as exposure today (#1395); and an "Unsettled live exposure counted: $X of cap
+$Y" line (the same `get_open_copy_live_positions` sum the order gate uses
+against `COPY_LIVE_MAX_TOTAL_EXPOSURE_USD`). Stuck, stale-pending and ghost
+rows each add one WARN to the verdict (no new alerting channel). Alert-only:
+there is no live abandon path; resolving a real void is the deferred #1394.
+Check without emailing: `python -m src.scripts.daily_health_report --dry-run`.
+
 **Rate-limit decision — shared with copy-screening and the live weather
 bot:** `fetch_market_resolution` calls `gamma-api.polymarket.com`, throttled
 by the same process-local `DomainRateLimiter` (`src/http_client.py:42-63`)
