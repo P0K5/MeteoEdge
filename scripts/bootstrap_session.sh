@@ -17,6 +17,20 @@ OWNER="P0K5"
 REPO="MeteoEdge"
 OUT=".claude/session-context.env"
 
+# ---------------------------------------------------------------------------
+# Detect Python interpreter availability (Windows + Unix compatibility)
+# ---------------------------------------------------------------------------
+PYTHON=""
+if command -v python3 &> /dev/null; then
+  PYTHON="python3"
+elif command -v python &> /dev/null; then
+  PYTHON="python"
+else
+  echo "[bootstrap] ERROR: Neither python3 nor python found on PATH" >&2
+  exit 1
+fi
+echo "[bootstrap] Using Python interpreter: $PYTHON"
+
 mkdir -p .claude
 
 echo "[bootstrap] Resolving GitHub Project GraphQL IDs for $OWNER/$REPO"
@@ -33,7 +47,7 @@ PROJECT_JSON=$(gh api graphql -f query='
     }
   }' -f owner="$OWNER" -f repo="$REPO")
 
-PROJECT_ID=$(echo "$PROJECT_JSON" | python3 -c "
+PROJECT_ID=$(echo "$PROJECT_JSON" | $PYTHON -c "
 import sys, json
 nodes = json.load(sys.stdin)['data']['repository']['projectsV2']['nodes']
 if not nodes:
@@ -62,7 +76,7 @@ FIELD_JSON=$(gh api graphql -f query='
     }
   }' -f projectId="$PROJECT_ID")
 
-FIELD_BLOCK=$(echo "$FIELD_JSON" | python3 -c "
+FIELD_BLOCK=$(echo "$FIELD_JSON" | $PYTHON -c "
 import sys, json
 fields = json.load(sys.stdin)['data']['node']['fields']['nodes']
 for f in fields:
@@ -88,7 +102,7 @@ echo "[bootstrap] Status field + options resolved."
 #     The same pattern applies to any *(first: N) query that can exceed N —
 #     e.g. fields(first: 30) above — if the project ever grows past that bound.
 # ---------------------------------------------------------------------------
-ITEM_BLOCK=$(GH_BIN="${GH_BIN:-gh}" python3 - "$PROJECT_ID" <<'PYEOF'
+ITEM_BLOCK=$(GH_BIN="${GH_BIN:-gh}" $PYTHON - "$PROJECT_ID" <<'PYEOF'
 import json, os, subprocess, sys
 
 project_id = sys.argv[1]
@@ -228,7 +242,7 @@ fi
 render_agent_model() {
   local file="$1" model="$2"
   [ -f "$file" ] || { echo "[bootstrap] WARN: $file missing, skipping"; return; }
-  python3 - "$file" "$model" <<'PYEOF'
+  $PYTHON - "$file" "$model" <<'PYEOF'
 import re, sys
 path, model = sys.argv[1], sys.argv[2]
 with open(path, encoding="utf-8") as f:
