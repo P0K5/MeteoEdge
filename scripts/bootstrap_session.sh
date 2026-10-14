@@ -19,15 +19,23 @@ OUT=".claude/session-context.env"
 
 # ---------------------------------------------------------------------------
 # Detect Python interpreter availability (Windows + Unix compatibility)
+#
+# On Windows, python3 may exist as a Store alias stub that exits immediately
+# with an install-nag instead of running. We must runtime-probe to verify
+# the interpreter actually works, not just that it exists on PATH.
 # ---------------------------------------------------------------------------
 PYTHON=""
-if command -v python3 &> /dev/null; then
-  PYTHON="python3"
-elif command -v python &> /dev/null; then
-  PYTHON="python"
+if ! command -v python3 >/dev/null 2>&1 || ! python3 -c '' >/dev/null 2>&1; then
+  # python3 missing or non-functional; try python
+  if command -v python >/dev/null 2>&1 && python -c '' >/dev/null 2>&1; then
+    PYTHON="python"
+  else
+    echo "[bootstrap] ERROR: No working Python interpreter found (python3 and python both missing or non-functional)" >&2
+    exit 1
+  fi
 else
-  echo "[bootstrap] ERROR: Neither python3 nor python found on PATH" >&2
-  exit 1
+  # python3 is present and functional
+  PYTHON="python3"
 fi
 echo "[bootstrap] Using Python interpreter: $PYTHON"
 
