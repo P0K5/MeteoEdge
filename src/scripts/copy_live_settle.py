@@ -65,7 +65,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from src.config import COPY_LIVE_CAPITAL_USD, get_live_config  # noqa: E402
 from src.data.copy_pnl import compute_realized_pnl_usd, effective_stake_usd  # noqa: E402
-from src.data.polymarket import fetch_market_resolution  # noqa: E402
+from src.data.copy_stuck import (  # noqa: E402
+    LEVEL_LABELS,
+    PAST_END_TRADING,
+    STUCK_HOURS,
+    age_hours,
+    classify_market,
+)
+from src.data.polymarket import fetch_market_resolution, fetch_market_state  # noqa: E402
 from src.data.wallet_reconciliation import compute_wallet_reconciliation  # noqa: E402
 from src.execution.live_trader import LiveTrader  # noqa: E402
 
@@ -99,6 +106,76 @@ def _open_db():
         return None
 
 
+_STATE_ERROR = object()  # sentinel: Gamma lookup failed this run -> do not escalate
+
+
+def _escalate_unresolved(db, r: dict, now: datetime, states: dict) -> None:
+    """Stuck-position ANNOTATION for one unresolved ``filled``/``partial``
+    live row (issue #1392, design #1365). Never changes ``status``, P&L or
+    exposure -- it only writes ``stuck_level`` / ``stuck_category`` /
+    ``stuck_first_seen_at`` and logs. Mirrors ``copy_settle`` (#1301/#1388):
+    only rows unresolved for more than ``STUCK_HOURS`` are looked at; one
+    ``fetch_market_state`` per distinct market (cached in *states*); each
+    level is persisted and logged once (the persisted level is the dedupe).
+    The settle job cannot reach any terminal state through this path; the
+    operator-only ``void_pending_reconcile`` resolution is a later phase.
+    Any failure here is swallowed so it can never affect settlement."""
+    try:
+        if age_hours(r["entry_ts"], now) <= STUCK_HOURS:
+            return
+        market = r["market"]
+        if market not in states:
+            try:
+                states[market] = fetch_market_state(market)
+            except RuntimeError as e:
+                log.warning(
+                    "[copy-live-settle] market state unavailable for %s...: %s -- not escalating this run",
+                    str(market)[:14], e,
+                )
+                states[market] = _STATE_ERROR
+        st = states[market]
+        if st is _STATE_ERROR:
+            return
+        category, lvl = classify_market(st, r["entry_ts"], now)
+        now_iso = now.isoformat()
+        cur_level = int(r.get("stuck_level") or 0)
+        cur_cat = r.get("stuck_category")
+        if lvl == 0:
+            # #1388 parity: a past-endDate market still actively trading is
+            # tagged (level 0) and any earlier escalation is cleared; it
+            # re-alerts from the 48h step if it stops trading.
+            want_cat = PAST_END_TRADING if category == PAST_END_TRADING else None
+            if (want_cat and (cur_cat != want_cat or cur_level > 0)) or (
+                want_cat is None and cur_cat == PAST_END_TRADING
+            ):
+                db.reset_copy_live_position_stuck(r["id"], want_cat, now_iso if want_cat else None)
+            return
+        if lvl > cur_level:
+            db.set_copy_live_position_stuck_level(r["id"], lvl, now_iso, category)
+            rec = {
+                "position_id": r["id"],
+                "wallet": r.get("address"),
+                "market": market,
+                "age_hours": round(age_hours(r["entry_ts"], now), 1),
+                "stake_usd": effective_stake_usd(r.get("filled_stake_usd"), r["stake_usd"]),
+                "status": r.get("status"),
+                "level": lvl,
+                "step": LEVEL_LABELS[lvl],
+                "category": category,
+            }
+            log.warning(
+                "[copy-live-settle] STUCK %s/%s position=%s wallet=%s market=%s age_h=%s "
+                "stake_usd=%s status=%s -- unresolved, status/P&L/exposure unchanged; "
+                "operator review required",
+                category, rec["step"], rec["position_id"], rec["wallet"], rec["market"],
+                rec["age_hours"], rec["stake_usd"], rec["status"], extra={"stuck_record": rec},
+            )
+    except (ValueError, KeyError) as e:
+        log.debug("[copy-live-settle] position %s: skipping stuck tracking: %s", r.get("id"), e)
+    except Exception as e:  # noqa: BLE001 -- annotation must never break settlement
+        log.warning("[copy-live-settle] stuck tracking skipped for position %s: %s", r.get("id"), e)
+
+
 def _settle_live_positions(db) -> dict:
     """Settle every ``status IN ('filled','partial')`` real position whose
     market has resolved. Mirrors ``copy_settle.run_once``'s body exactly,
@@ -125,15 +202,18 @@ def _settle_live_positions(db) -> dict:
     for market in markets:
         resolutions[market] = fetch_market_resolution(market)
 
-    now_iso = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(timezone.utc)
+    now_iso = now.isoformat()
     n_settled = 0
     n_pending = 0
     n_errors = 0
+    states: dict = {}
     for r in rows:
         market = r["market"]
         yes_won = resolutions.get(market)
         if yes_won is None:
             n_pending += 1
+            _escalate_unresolved(db, r, now, states)
             log.debug(
                 "[copy-live-settle] market %s... not resolved yet -- position %s stays %s",
                 str(market)[:14], r["id"], r["status"],

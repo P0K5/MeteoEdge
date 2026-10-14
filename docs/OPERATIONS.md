@@ -793,6 +793,23 @@ and unit (issue #1100 isolation: never touches `copy_positions`/
    `python -m src.scripts.verify_wallet_reconciliation` any time to manually
    verify it against the real wallet.
 
+**Stuck-position escalation (issue #1392, design #1365; annotation only):**
+inside the settlement pass, a `filled`/`partial` row whose market is still
+unresolved and which is older than 48h gets one `fetch_market_state` lookup
+per distinct market (read-only), classified by the shared
+`copy_stuck.classify_market` (`PAST_END_UNRESOLVED`, `CLOSED_AMBIGUOUS` e.g. a
+50/50 void, `UNRETRIEVABLE`; `NOT_DUE` and `PAST_END_TRADING` are never
+escalated). The level is persisted once per step in
+`copy_live_positions.stuck_level` / `stuck_category` / `stuck_first_seen_at`
+and a structured `[copy-live-settle] STUCK <category>/<step> position=...
+wallet=... market=... age_h=...` WARNING is logged once per step. It never
+changes `status`, P&L or exposure and never settles anything: a void stays
+`filled` and keeps counting as exposure until an operator resolves it (the
+operator path, `void_pending_reconcile`, is a later phase, #1394). Genuine
+resolutions settle exactly as before; a Gamma error skips escalation for that
+market for the run. Verify: `grep "STUCK" logs/copy_live_settle.log` and
+`SELECT id, stuck_level, stuck_category FROM copy_live_positions WHERE stuck_level>0;`.
+
 A single row/check that fails is logged and skipped — it never aborts the
 run or blocks the other two things this script does.
 

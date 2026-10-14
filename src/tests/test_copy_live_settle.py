@@ -7,8 +7,10 @@ calls.
 Per the issue's own instruction ("write the drift-detection test first"),
 TestWalletBalanceDriftDetection is the first test class in this file.
 """
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 from src.data.db import Database
 from src.data.wallet_reconciliation import ReconciliationResult
@@ -47,6 +49,15 @@ def _seed_live_position(
             rejected_reason=rejected_reason, filled_stake_usd=filled_stake_usd,
         )
     return position_id
+
+
+@pytest.fixture(autouse=True)
+def _no_real_gamma_state(request, monkeypatch):
+    """Existing tests seed 2026-09 rows (>48h old); never hit the real Gamma
+    market-state endpoint (#1392). Stuck tests install their own mock."""
+    if "stuck" in request.node.nodeid.lower():
+        return
+    monkeypatch.setattr(cls, "fetch_market_state", MagicMock(side_effect=RuntimeError("offline")))
 
 
 class TestWalletBalanceDriftDetection:
@@ -891,3 +902,184 @@ class TestFillCostCoalesceIssue1336:
     # local-ledger "committed" term to get right or wrong. Removed, not
     # replaced: TestWalletBalanceDriftDetection above covers the current
     # formula's own correctness.
+
+
+class TestStuckEscalationIssue1392:
+    """Annotation-only stuck escalation for unresolved live rows. Gamma
+    shapes are the real ones from the #1301 diagnosis comments."""
+
+    NOW = datetime(2026, 10, 14, 12, 0, tzinfo=timezone.utc)
+
+    @staticmethod
+    def _void_state():  # 560/578/1872: closed, UMA resolved, both tokens 0.5
+        return {"closed": True, "end_date": datetime(2026, 10, 11, tzinfo=timezone.utc),
+                "uma": "resolved", "yes_price_cents": 50,
+                "best_bid": None, "best_ask": None, "last_trade": None}
+
+    @staticmethod
+    def _past_end_trading_state():  # 1752: past endDate, still trading
+        return {"closed": False, "end_date": datetime(2026, 10, 5, tzinfo=timezone.utc),
+                "uma": None, "yes_price_cents": 87,
+                "best_bid": 0.86, "best_ask": 0.88, "last_trade": 0.874}
+
+    @staticmethod
+    def _past_end_dead_state():
+        return {"closed": False, "end_date": datetime(2026, 10, 5, tzinfo=timezone.utc),
+                "uma": None, "yes_price_cents": 87,
+                "best_bid": None, "best_ask": None, "last_trade": None}
+
+    @staticmethod
+    def _not_due_state():  # category A
+        return {"closed": False, "end_date": datetime(2027, 7, 1, tzinfo=timezone.utc),
+                "uma": None, "yes_price_cents": 40,
+                "best_bid": 0.39, "best_ask": 0.41, "last_trade": 0.4}
+
+    def _seed(self, db, market, age_h=60, status="filled", **kw):
+        pid = _seed_live_position(db, market=market, status=status, **kw)
+        entry = (self.NOW - timedelta(hours=age_h)).isoformat()
+        db._conn.execute("UPDATE copy_live_positions SET entry_ts=? WHERE id=?", (entry, pid))
+        db._conn.commit()
+        return pid
+
+    def _row(self, db, pid):
+        return dict(db._conn.execute("SELECT * FROM copy_live_positions WHERE id=?", (pid,)).fetchone())
+
+    def _run(self, db, state, resolution=None, n=1):
+        state_mock = MagicMock(side_effect=state if callable(state) else None, return_value=None if callable(state) else state)
+        with patch.object(cls, "fetch_market_resolution", return_value=resolution), \
+             patch.object(cls, "fetch_market_state", state_mock), \
+             patch.object(cls, "datetime", wraps=datetime) as dt:
+            dt.now.return_value = self.NOW
+            out = [cls._settle_live_positions(db) for _ in range(n)]
+        return out, state_mock
+
+    def test_void_market_annotated_once_and_never_terminal(self, caplog):
+        db = Database(":memory:")
+        pid = self._seed(db, "0xvoid", stake_usd=5.0, fill_price=0.40)
+        before = self._row(db, pid)
+        with caplog.at_level("WARNING"):
+            out, _ = self._run(db, self._void_state(), n=5)
+        assert all(o == {"settled": 0, "pending": 1, "errors": 0} for o in out)
+        row = self._row(db, pid)
+        assert row["status"] == "filled" and row["settled_pnl_usd"] is None
+        assert row["settled_at"] is None
+        assert (row["stuck_level"], row["stuck_category"]) == (3, "CLOSED_AMBIGUOUS")
+        assert row["stuck_first_seen_at"] == self.NOW.isoformat()
+        for k in ("stake_usd", "filled_stake_usd", "fill_price", "order_id"):
+            assert row[k] == before[k]
+        stuck = [r for r in caplog.records if "STUCK" in r.getMessage()]
+        assert len(stuck) == 1  # once per step across 5 runs
+        msg = stuck[0].getMessage()
+        assert "CLOSED_AMBIGUOUS" in msg and f"position={pid}" in msg and ADDRESS in msg and "0xvoid" in msg
+        assert stuck[0].stuck_record["age_hours"] == 60.0
+
+    def test_one_lookup_per_distinct_market(self):
+        db = Database(":memory:")
+        self._seed(db, "0xvoid")
+        self._seed(db, "0xvoid", status="partial", filled_stake_usd=3.0)
+        _, state_mock = self._run(db, self._void_state())
+        assert state_mock.call_count == 1
+
+    def test_young_row_not_looked_up(self):
+        db = Database(":memory:")
+        pid = self._seed(db, "0xyoung", age_h=47)
+        _, state_mock = self._run(db, self._void_state())
+        state_mock.assert_not_called()
+        assert self._row(db, pid)["stuck_level"] == 0
+
+    def test_not_due_and_past_end_trading_not_escalated(self):
+        db = Database(":memory:")
+        a = self._seed(db, "0xa")
+        b = self._seed(db, "0xb")
+        self._run(db, lambda m: {"0xa": self._not_due_state(), "0xb": self._past_end_trading_state()}[m], n=3)
+        assert self._row(db, a)["stuck_level"] == 0 and self._row(db, a)["stuck_category"] is None
+        rb = self._row(db, b)
+        assert (rb["stuck_level"], rb["stuck_category"]) == (0, "PAST_END_TRADING")
+        assert rb["status"] == "filled"
+
+    def test_past_end_unresolved_levels_each_persisted_once(self, caplog):
+        db = Database(":memory:")
+        pid = self._seed(db, "0xdead")
+        # endDate 2026-10-05; now 10-14 12:00 -> 9.5d past -> level 2
+        with caplog.at_level("WARNING"):
+            self._run(db, self._past_end_dead_state(), n=3)
+        r = self._row(db, pid)
+        assert (r["stuck_level"], r["stuck_category"], r["status"]) == (2, "PAST_END_UNRESOLVED", "filled")
+        assert len([x for x in caplog.records if "STUCK" in x.getMessage()]) == 1
+
+    def test_trading_again_resets_level(self):
+        db = Database(":memory:")
+        pid = self._seed(db, "0xm")
+        self._run(db, self._past_end_dead_state())
+        assert self._row(db, pid)["stuck_level"] == 2
+        self._run(db, self._past_end_trading_state())
+        r = self._row(db, pid)
+        assert (r["stuck_level"], r["stuck_category"]) == (0, "PAST_END_TRADING")
+
+    def test_unretrievable_market_escalates_from_entry_age(self):
+        db = Database(":memory:")
+        pid = self._seed(db, "0xgone", age_h=60)
+        self._run(db, None)  # Gamma: no row from either lookup
+        r = self._row(db, pid)
+        assert (r["stuck_level"], r["stuck_category"]) == (1, "UNRETRIEVABLE")
+
+    def test_gamma_error_does_not_escalate_or_break_settle(self):
+        db = Database(":memory:")
+        stuck = self._seed(db, "0xerr")
+        won = self._seed(db, "0xwon")
+        with patch.object(cls, "fetch_market_resolution", side_effect=lambda m: True if m == "0xwon" else None), \
+             patch.object(cls, "fetch_market_state", side_effect=RuntimeError("boom")):
+            out = cls._settle_live_positions(db)
+        assert out == {"settled": 1, "pending": 1, "errors": 0}
+        assert self._row(db, stuck)["stuck_level"] == 0
+        assert self._row(db, won)["status"] == "settled"
+
+    def test_db_failure_in_annotation_does_not_break_settle(self):
+        db = Database(":memory:")
+        self._seed(db, "0xvoid")
+        won = self._seed(db, "0xwon")
+        with patch.object(cls, "fetch_market_resolution", side_effect=lambda m: True if m == "0xwon" else None), \
+             patch.object(cls, "fetch_market_state", return_value=self._void_state()), \
+             patch.object(db, "set_copy_live_position_stuck_level", side_effect=RuntimeError("locked")):
+            out = cls._settle_live_positions(db)
+        assert out["settled"] == 1 and self._row(db, won)["status"] == "settled"
+
+    def test_genuine_resolution_settles_unchanged_and_skips_lookup(self):
+        db = Database(":memory:")
+        pid = self._seed(db, "0xres", stake_usd=10.0, fill_price=0.40)
+        out, state_mock = self._run(db, self._void_state(), resolution=True)
+        assert out[0] == {"settled": 1, "pending": 0, "errors": 0}
+        state_mock.assert_not_called()
+        r = self._row(db, pid)
+        assert r["status"] == "settled" and r["settled_pnl_usd"] == pytest.approx(15.0)
+        assert r["stuck_level"] == 0
+
+    def test_escalated_row_still_settles_when_it_later_resolves(self):
+        db = Database(":memory:")
+        pid = self._seed(db, "0xlate", stake_usd=10.0, fill_price=0.40)
+        self._run(db, self._past_end_dead_state())
+        assert self._row(db, pid)["stuck_level"] == 2
+        self._run(db, self._void_state(), resolution=False)
+        r = self._row(db, pid)
+        assert r["status"] == "settled" and r["settled_pnl_usd"] == pytest.approx(-10.0)
+
+    def test_pending_and_rejected_rows_never_annotated(self):
+        db = Database(":memory:")
+        p = self._seed(db, "0xp", status="pending")
+        rj = self._seed(db, "0xr", status="rejected", rejected_reason="x")
+        db.set_copy_live_position_stuck_level(p, 2, "t", "X")
+        db.set_copy_live_position_stuck_level(rj, 2, "t", "X")
+        assert self._row(db, p)["stuck_level"] == 0 and self._row(db, rj)["stuck_level"] == 0
+
+    def test_level_is_monotonic_and_first_seen_kept(self):
+        db = Database(":memory:")
+        pid = self._seed(db, "0xm")
+        db.set_copy_live_position_stuck_level(pid, 1, "t1", "PAST_END_UNRESOLVED")
+        db.set_copy_live_position_stuck_level(pid, 2, "t2", "PAST_END_UNRESOLVED")
+        db.set_copy_live_position_stuck_level(pid, 1, "t3", "UNRETRIEVABLE")
+        r = self._row(db, pid)
+        assert (r["stuck_level"], r["stuck_category"], r["stuck_first_seen_at"]) == (2, "PAST_END_UNRESOLVED", "t1")
+
+    def test_resolved_cents_constants_unchanged(self):
+        from src.data import polymarket
+        assert (polymarket.RESOLVED_YES_MIN_CENTS, polymarket.RESOLVED_NO_MAX_CENTS) == (95, 5)
