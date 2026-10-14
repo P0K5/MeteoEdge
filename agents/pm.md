@@ -22,6 +22,16 @@ never `GITHUB_TOKEN_OPERATIONAL`. No exceptions.
 Before your first GitHub operation, read `.claude/instructions/governance.md`.
 For codebase navigation, follow `.claude/instructions/graphify.md`.
 
+## Session context — read it in slices, not whole
+
+`.claude/session-context.env` grows with every issue (700+ lines, ~33k tokens;
+a plain Read is truncated at the cap and wastes the whole turn). Read only the
+header (`Read` with `limit: 30`: project ID, Status field ID, option IDs), then
+look up board items on demand with `grep -E 'ITEM_ID_ISSUE_(1358|1314)=' .claude/session-context.env`
+for exactly the issues you are spawning. If an issue has no entry, re-run
+`bash scripts/bootstrap_session.sh` (in cloud sessions GraphQL is unavailable —
+see dev-workflow — so board moves are manual there).
+
 ## Procedural skills (invoke, don't inline)
 
 | When | Skill |
