@@ -57,6 +57,7 @@ from src.data.copy_skip_reasons import (  # noqa: E402
     BASELINE_DAYS as _SKIP_BASELINE_DAYS,
     WINDOW_HOURS as _SKIP_WINDOW_HOURS,
 )
+from src.data.log_error_classes import section as _build_log_errors  # noqa: E402
 
 #: Start of the M3 clean-data collection window, and the date station-days are
 #: counted from. This has moved TWICE as probability defects landed mid-window
@@ -1776,6 +1777,13 @@ def _build_verdict(sections: "list[tuple[str, list[str], dict]]") -> list[str]:
             f"{silent_flags['n_write_failed']} scan_decisions write failure(s) in 24h"
         )
 
+    log_flags = flags_by_section.get("log_errors", {})
+    if log_flags.get("n_new") or log_flags.get("n_spike"):
+        warn_issues.append(
+            f"log errors: {log_flags.get('n_new', 0)} new, "
+            f"{log_flags.get('n_spike', 0)} spiking class(es) in 24h"
+        )
+
     # issue #944: failed / restarting / unmanaged systemd units.
     warn_issues.extend(flags_by_section.get("services", {}).get("details", []))
 
@@ -1849,6 +1857,7 @@ def build_report(db) -> str:
         ("copy_live_stuck", _build_copy_live_stuck),
         ("copy_skips", _build_copy_skips),
         ("silent_failures", _build_silent_failures),
+        ("log_errors", _build_log_errors),
         ("param_change", _build_param_change_impact),
         ("stations", _build_station_breakdown),
     ]:
