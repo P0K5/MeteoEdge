@@ -1211,6 +1211,119 @@ class TestIntradayCorrectionsMigration:
 
 
 # ---------------------------------------------------------------------------
+# copy_live_positions stuck-position columns (issue #1391)
+# ---------------------------------------------------------------------------
+
+_STUCK_LIVE_COLS = ("stuck_level", "stuck_category", "stuck_first_seen_at")
+
+
+def _table_info(conn, table: str) -> dict:
+    """Map column name -> (type, notnull, default, pk) for ``table``."""
+    return {
+        row[1]: (row[2], row[3], row[4], row[5])
+        for row in conn.execute(f"PRAGMA table_info({table})").fetchall()
+    }
+
+
+class TestCopyLiveStuckColumns:
+    """Issue #1391: additive, idempotent stuck_* columns on copy_live_positions."""
+
+    def test_fresh_schema_has_columns_with_defaults(self):
+        info = _table_info(_db()._conn, "copy_live_positions")
+        assert info["stuck_level"][:2] == ("INTEGER", 1)
+        assert info["stuck_level"][2] == "0"
+        assert info["stuck_category"][:2] == ("TEXT", 0)
+        assert info["stuck_first_seen_at"][:2] == ("TEXT", 0)
+
+    def test_migration_idempotent_when_opened_twice(self, tmp_path):
+        path = str(tmp_path / "live_twice.db")
+        Database(path).close()
+        db = Database(path)
+        try:
+            info = _table_info(db._conn, "copy_live_positions")
+            for col in _STUCK_LIVE_COLS:
+                assert col in info
+        finally:
+            db.close()
+
+    def test_upgraded_old_schema_gains_columns_and_keeps_rows(self, tmp_path):
+        path = str(tmp_path / "live_old.db")
+        # Hand-built pre-#1391 copy_live_positions (no stuck_* columns).
+        conn = sqlite3.connect(path)
+        conn.execute("""
+            CREATE TABLE copy_live_positions (
+                id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                signal_id        INTEGER NOT NULL REFERENCES copy_signals(id),
+                address          TEXT NOT NULL,
+                market           TEXT NOT NULL,
+                outcome_index    INTEGER NOT NULL CHECK(outcome_index IN (0,1)),
+                order_id         TEXT,
+                fill_price       REAL CHECK(fill_price IS NULL OR (fill_price >= 0 AND fill_price <= 1)),
+                stake_usd        REAL NOT NULL CHECK(stake_usd > 0),
+                status           TEXT NOT NULL DEFAULT 'pending'
+                                 CHECK(status IN ('pending','filled','partial','rejected','settled')),
+                rejected_reason  TEXT,
+                entry_ts         TEXT NOT NULL,
+                settled_pnl_usd  REAL,
+                settled_at       TEXT
+            )
+        """)
+        conn.execute(
+            "INSERT INTO copy_live_positions (signal_id, address, market, outcome_index, "
+            "order_id, fill_price, stake_usd, status, entry_ts) "
+            "VALUES (1, '0xabc', 'm1', 0, 'ord-1', 0.4, 5.0, 'filled', '2026-01-01T00:00:00+00:00')"
+        )
+        conn.commit()
+        conn.close()
+
+        db = Database(path)
+        try:
+            info = _table_info(db._conn, "copy_live_positions")
+            for col in _STUCK_LIVE_COLS:
+                assert col in info
+            assert info["stuck_level"][1] == 1
+            assert info["stuck_level"][2] == "0"
+            row = db._conn.execute(
+                "SELECT order_id, status, stuck_level, stuck_category, stuck_first_seen_at "
+                "FROM copy_live_positions"
+            ).fetchone()
+            assert tuple(row) == ("ord-1", "filled", 0, None, None)
+        finally:
+            db.close()
+
+    def test_upgraded_stuck_columns_match_fresh_definition(self, tmp_path):
+        fresh_path = str(tmp_path / "live_fresh.db")
+        Database(fresh_path).close()
+        conn = sqlite3.connect(fresh_path)
+        try:
+            fresh = _table_info(conn, "copy_live_positions")
+        finally:
+            conn.close()
+
+        old_path = str(tmp_path / "live_upgraded.db")
+        conn = sqlite3.connect(old_path)
+        conn.execute(
+            "CREATE TABLE copy_live_positions (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "signal_id INTEGER NOT NULL, address TEXT NOT NULL, market TEXT NOT NULL, "
+            "outcome_index INTEGER NOT NULL, order_id TEXT, fill_price REAL, "
+            "stake_usd REAL NOT NULL, status TEXT NOT NULL DEFAULT 'pending', "
+            "rejected_reason TEXT, entry_ts TEXT NOT NULL, settled_pnl_usd REAL, "
+            "settled_at TEXT)"
+        )
+        conn.commit()
+        conn.close()
+        Database(old_path).close()
+        conn = sqlite3.connect(old_path)
+        try:
+            upgraded = _table_info(conn, "copy_live_positions")
+        finally:
+            conn.close()
+
+        for col in _STUCK_LIVE_COLS:
+            assert upgraded[col] == fresh[col]
+
+
+# ---------------------------------------------------------------------------
 # EMOS calibration
 # ---------------------------------------------------------------------------
 
