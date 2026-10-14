@@ -734,7 +734,7 @@ CREATE INDEX IF NOT EXISTS idx_copy_wallet_candidates_address_screened
 | `settled_at` | TEXT | ISO 8601 timestamp (UTC) | Yes | Only populated once `status='settled'` |
 | `stuck_level` | INTEGER NOT NULL DEFAULT 0 | 0/1/2 | No | Highest escalation emitted by `copy_settle.py` (1 = >48h, 2 = >7d, both from the market's endDate; 3 = verified ambiguous close); makes the alert once-per-position-per-step (#1301) |
 | `stuck_flagged_at` | TEXT | ISO 8601 (UTC) | Yes | When `stuck_level` last increased |
-| `stuck_category` | TEXT | | Yes | `PAST_END_UNRESOLVED` / `CLOSED_AMBIGUOUS` / `UNRETRIEVABLE` (market-state based; `NOT_DUE` is never persisted) |
+| `stuck_category` | TEXT | | Yes | `PAST_END_UNRESOLVED` / `CLOSED_AMBIGUOUS` / `UNRETRIEVABLE` (market-state based; `NOT_DUE` is never persisted), or `PAST_END_TRADING` (#1388: past endDate, `closed=false`, actively trading; always `stuck_level=0`, never escalated; a position previously escalated is reset to level 0 when this is observed, and re-alerts from the 48h step if it later stops trading) |
 | `abandoned_at` / `abandoned_by` / `abandon_reason` | TEXT | | Yes | Operator audit trail, written only by `src/scripts/copy_abandon.py` (abandon, or `--settle-at-price`, in which case `status='settled'` with P&L at the observed price); never timer-driven |
 | `abandon_observed_price` | REAL | 0-1 | Yes | Price the operator saw; audit only, never used in P&L |
 

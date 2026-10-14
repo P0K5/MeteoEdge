@@ -188,6 +188,13 @@ def _parse_gamma_dt(raw) -> "datetime | None":
     return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
 
+def _opt_float(raw) -> "float | None":
+    try:
+        return None if raw is None else float(raw)
+    except (TypeError, ValueError):
+        return None
+
+
 def fetch_market_state(ticker: str) -> "dict | None":
     """Market metadata for stuck-position triage (issue #1301). Read-only;
     does NOT feed any settlement decision and does not touch
@@ -198,7 +205,8 @@ def fetch_market_state(ticker: str) -> "dict | None":
     when it is -- so both lookups are tried (closed=true first, then the
     default) and the first row matching *ticker* wins. Returns
     ``{'closed': bool, 'end_date': datetime|None, 'uma': str|None,
-    'yes_price_cents': int|None}``, or ``None`` if both lookups succeeded but
+    'yes_price_cents': int|None, 'best_bid'/'best_ask'/'last_trade':
+    float|None}`` (liquidity fields, #1388), or ``None`` if both lookups succeeded but
     found no matching market. Raises ``RuntimeError`` if a lookup failed and
     nothing was found (a network error must not read as "unretrievable").
     """
@@ -222,6 +230,9 @@ def fetch_market_state(ticker: str) -> "dict | None":
             "end_date": _parse_gamma_dt(market.get("endDate")),
             "uma": market.get("umaResolutionStatus"),
             "yes_price_cents": _parse_outcome_yes_price(market),
+            "best_bid": _opt_float(market.get("bestBid")),
+            "best_ask": _opt_float(market.get("bestAsk")),
+            "last_trade": _opt_float(market.get("lastTradePrice")),
         }
     if failed:
         raise RuntimeError(f"Gamma lookup failed for {ticker}")

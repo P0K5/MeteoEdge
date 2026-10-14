@@ -1100,9 +1100,12 @@ def _build_copy_stuck(db, today: datetime) -> "tuple[list[str], dict]":
             key=lambda r: (-int(r["stuck_level"]), r["id"]),
         )
         n_not_due = 0
+        trading: list = []  # PAST_END_TRADING (#1388): level 0, listed, never WARNs
         for r in open_rows:
             try:
-                if int(r.get("stuck_level") or 0) == 0 and age_hours(r["entry_ts"], today) > STUCK_HOURS:
+                if int(r.get("stuck_level") or 0) == 0 and r.get("stuck_category") == "PAST_END_TRADING":
+                    trading.append(r)
+                elif int(r.get("stuck_level") or 0) == 0 and age_hours(r["entry_ts"], today) > STUCK_HOURS:
                     n_not_due += 1
             except (ValueError, KeyError, TypeError):
                 pass
@@ -1112,8 +1115,14 @@ def _build_copy_stuck(db, today: datetime) -> "tuple[list[str], dict]":
         lines.append(
             f"  Escalated: {len(stuck)} (urgent: {flags['n_urgent']})  |  "
             f"stake unresolved: ${stake:.2f}  |  "
-            f"open >48h but not due (long-dated, not stuck): {n_not_due}"
+            f"open >48h but not due (long-dated, not stuck): {n_not_due}  |  "
+            f"past endDate but still trading (not escalated): {len(trading)}"
         )
+        for r in sorted(trading, key=lambda r: r["id"]):
+            lines.append(
+                f"  [PAST_END_TRADING] id={r['id']} wallet={r['address']} market={r['market']} "
+                f"entry={float(r['entry_price']):.3f} stake=${float(r['stake_usd']):.2f}"
+            )
         if stuck:
             lines.append(
                 "  [WARN] escalated positions are EXCLUDED from ROI/win-rate; operator: "

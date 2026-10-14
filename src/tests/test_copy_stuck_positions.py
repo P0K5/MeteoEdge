@@ -305,3 +305,82 @@ def test_migration_rebuilds_old_check_and_preserves_rows(tmp_path):
     db2 = Database(path)
     assert _status(db2, pid) == "open"
     assert db2.abandon_copy_position(pid, "op", "r", _iso(0)) is True
+
+
+# ---- #1388: PAST_END_TRADING (real shapes from the #1301 host diagnosis) ----
+_PAST = datetime(2026, 10, 5, tzinfo=timezone.utc)
+
+
+def _brazil(price, bid, ask, last):
+    return _state(end_date=datetime.now(timezone.utc) - timedelta(days=9),
+                  yes_price_cents=price, best_bid=bid, best_ask=ask, last_trade=last)
+
+
+BRAZIL = [_brazil(87, 0.86, 0.88, 0.874), _brazil(12, 0.12, 0.13, 0.125), _brazil(98, 0.97, 0.99, 0.98)]
+
+
+@pytest.mark.parametrize("st", BRAZIL)
+def test_past_end_trading_real_shapes_not_escalated(st):
+    from src.data.copy_stuck import PAST_END_TRADING, classify_market
+    assert classify_market(st, _iso(24 * 20), datetime.now(timezone.utc)) == (PAST_END_TRADING, 0)
+    db = Database(":memory:")
+    pid = _seed(db, hours_ago=24 * 20)
+    assert _run(db, st) == []
+    row = db._conn.execute("SELECT stuck_level, stuck_category, status FROM copy_positions WHERE id=?", (pid,)).fetchone()
+    assert tuple(row) == (0, "PAST_END_TRADING", "open")
+
+
+@pytest.mark.parametrize("kw", [
+    {"best_bid": 0.0}, {"best_ask": 1.0}, {"best_bid": 0.2, "best_ask": 0.8},
+    {"best_bid": None}, {"last_trade": None}, {"last_trade": 0.0}, {"closed": True},
+])
+def test_not_trading_still_escalates(kw):
+    from src.data.copy_stuck import PAST_END_UNRESOLVED, classify_market
+    st = {**_brazil(87, 0.86, 0.88, 0.874), **kw}
+    cat, lvl = classify_market(st, _iso(24 * 20), datetime.now(timezone.utc))
+    assert cat == PAST_END_UNRESOLVED and lvl == 2
+
+
+def test_escalated_position_deescalates_then_realerts_once():
+    db = Database(":memory:")
+    pid = _seed(db, hours_ago=24 * 20)
+    stale = _state(end_date=datetime.now(timezone.utc) - timedelta(days=9))
+    assert [e["level"] for e in _run(db, stale)] == [2]
+    assert _run(db, BRAZIL[0]) == []
+    assert tuple(db._conn.execute("SELECT stuck_level, stuck_category FROM copy_positions WHERE id=?", (pid,)).fetchone()) == (0, "PAST_END_TRADING")
+    assert [e["level"] for e in _run(db, stale)] == [2]   # stopped trading: alert again
+    assert _run(db, stale) == []                           # but only once
+    assert _status(db, pid) == "open"
+
+
+def test_trading_category_cleared_when_no_longer_trading_under_48h_of_end():
+    db = Database(":memory:")
+    pid = _seed(db, hours_ago=24 * 20)
+    _run(db, BRAZIL[0])
+    _run(db, _state(end_date=datetime.now(timezone.utc) - timedelta(hours=1)))
+    assert db._conn.execute("SELECT stuck_category FROM copy_positions WHERE id=?", (pid,)).fetchone()[0] is None
+
+
+def test_fetch_market_state_returns_liquidity_fields():
+    from src.data import polymarket as pm
+
+    class R:
+        def raise_for_status(s): pass
+        def json(s): return [{"conditionId": "0xabc", "closed": False, "endDate": "2026-10-05T00:00:00Z",
+                              "umaResolutionStatus": None, "outcomePrices": '["0.874","0.126"]',
+                              "bestBid": 0.86, "bestAsk": "0.88", "lastTradePrice": 0.874}]
+
+    with patch.object(pm, "fetch", lambda url, timeout=None: R()):
+        st = pm.fetch_market_state("0xabc")
+    assert (st["best_bid"], st["best_ask"], st["last_trade"]) == (0.86, 0.88, 0.874)
+
+
+def test_health_report_lists_past_end_trading_and_does_not_warn():
+    db = Database(":memory:")
+    pid = _seed(db, hours_ago=24 * 20)
+    _run(db, BRAZIL[0])
+    lines, flags = _build_copy_stuck(db, datetime.now(timezone.utc))
+    text = "\n".join(lines)
+    assert flags == {"n_stuck": 0, "n_urgent": 0}
+    assert f"[PAST_END_TRADING] id={pid}" in text
+    assert "still trading (not escalated): 1" in text and "not due (long-dated, not stuck): 0" in text

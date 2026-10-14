@@ -43,7 +43,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from src.data.copy_pnl import compute_realized_pnl_usd  # noqa: E402
-from src.data.copy_stuck import LEVEL_LABELS, STUCK_HOURS, age_hours, classify_market  # noqa: E402
+from src.data.copy_stuck import LEVEL_LABELS, PAST_END_TRADING, STUCK_HOURS, age_hours, classify_market  # noqa: E402
 from src.data.polymarket import fetch_market_resolution, fetch_market_state  # noqa: E402
 
 log = logging.getLogger(__name__)
@@ -125,6 +125,17 @@ def run_once(db=None, escalations: "list | None" = None) -> dict:
                         category, lvl = classify_market(st, r["entry_ts"], now)
                         if lvl > 0:
                             n_stale += 1
+                        # #1388: de-escalate / tag a past-endDate market that is
+                        # still trading (level resets to 0; if it stops trading
+                        # the 48h/7d steps alert again). Persist category only
+                        # when it changes.
+                        want_cat = PAST_END_TRADING if category == PAST_END_TRADING else None
+                        cur_cat = r.get("stuck_category")
+                        if lvl == 0 and (
+                            (want_cat and (cur_cat != want_cat or int(r.get("stuck_level") or 0) > 0))
+                            or (want_cat is None and cur_cat == PAST_END_TRADING)
+                        ):
+                            db.reset_copy_position_stuck(r["id"], want_cat, now_iso if want_cat else None)
                         if lvl > int(r.get("stuck_level") or 0):
                             rec = {
                                 "position_id": r["id"],
