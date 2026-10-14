@@ -368,6 +368,57 @@ class TestPatchConfigEndpoint:
         assert resp.json()["value"] == pytest.approx(10.0)
         assert db.get_config("COPY_LIVE_MAX_EXPOSURE_PER_WALLET_USD") == "10.0"
 
+    def _cap_patch(self, client, value):
+        return client.patch(
+            "/api/config", json={"key": "COPY_LIVE_MAX_EXPOSURE_PER_WALLET_USD", "value": value},
+        )
+
+    def test_lowering_cap_names_stranded_wallets(self, api_client):
+        """Issue #1358: response names opted-in wallets the new cap strands."""
+        client, db = api_client
+        db.insert_followed_wallet(address="0xA", stake_per_trade=20.0, added_at="2026-09-01T00:00:00Z")
+        db.set_followed_wallet_live_enabled("0xA", True)
+        db.insert_followed_wallet(address="0xB", stake_per_trade=5.0, added_at="2026-09-01T00:00:00Z")
+        db.set_followed_wallet_live_enabled("0xB", True)
+        db.insert_followed_wallet(address="0xC", stake_per_trade=30.0, added_at="2026-09-01T00:00:00Z")  # not opted in
+
+        data = self._cap_patch(client, 10.0).json()
+        assert data["value"] == pytest.approx(10.0)  # backwards compatible
+        assert [w["address"] for w in data["stranded_wallets"]] == ["0xA"]
+        assert data["stranded_wallets"][0]["live_stake_per_trade"] == pytest.approx(20.0)
+        assert data["message"] == (
+            "Live exposure cap updated to $10.00. 1 wallet(s) now exceed this cap and will "
+            "not trade live until their stake is lowered or the cap is raised: 0xA."
+        )
+
+    def test_live_stake_override_is_used_for_stranding(self, api_client):
+        client, db = api_client
+        db.insert_followed_wallet(address="0xA", stake_per_trade=100.0, added_at="2026-09-01T00:00:00Z")
+        db.set_followed_wallet_live_enabled("0xA", True)
+        db.set_followed_wallet_live_stake("0xA", 5.0)
+        data = self._cap_patch(client, 10.0).json()
+        assert data["stranded_wallets"] == []
+        assert "message" not in data
+
+    def test_no_stranded_wallets_keeps_plain_response(self, api_client):
+        client, _ = api_client
+        data = self._cap_patch(client, 10.0).json()
+        assert data["stranded_wallets"] == []
+        assert "message" not in data
+
+    def test_other_keys_unchanged_shape(self, api_client):
+        client, _ = api_client
+        data = client.patch("/api/config", json={"key": "MAX_EDGE_CENTS", "value": 22.0}).json()
+        assert "stranded_wallets" not in data and "message" not in data
+
+    def test_stranded_lookup_failure_does_not_fail_save(self, api_client, monkeypatch):
+        client, db = api_client
+        monkeypatch.setattr(db, "get_followed_wallets", lambda: (_ for _ in ()).throw(RuntimeError("x")))
+        resp = self._cap_patch(client, 10.0)
+        assert resp.status_code == 200
+        assert "stranded_wallets" not in resp.json()
+        assert db.get_config("COPY_LIVE_MAX_EXPOSURE_PER_WALLET_USD") == "10.0"
+
 
 # ---------------------------------------------------------------------------
 # _db=None guard — both config endpoints must return 503, not 500

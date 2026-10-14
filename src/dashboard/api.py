@@ -4599,6 +4599,36 @@ def get_config() -> dict:
     return result
 
 
+def _stranded_live_wallets(db, cap_usd: float) -> list[dict]:
+    """Issue #1358: opted-in, non-paused wallets whose resolved live stake
+    (``COALESCE(live_stake_per_trade, stake_per_trade)``) exceeds ``cap_usd``.
+
+    Same stake-vs-cap predicate as ``_derive_live_eligibility`` (issue #1266),
+    but independent of the global live switch: these wallets are stranded the
+    moment the switch is turned on.
+    """
+    stranded = []
+    for w in db.get_followed_wallets():
+        if w["status"] == "paused" or not w.get("live_enabled"):
+            continue
+        raw = w.get("live_stake_per_trade")
+        stake = raw if raw is not None else w["stake_per_trade"]
+        if stake > cap_usd:
+            stranded.append({"address": w["address"], "live_stake_per_trade": stake})
+    return stranded
+
+
+def _stranded_wallets_message(cap_usd: float, stranded: list[dict]) -> str:
+    """Single home for the save-confirmation copy (design doc:
+    docs/design/copy-trading-live-views.md, "Live exposure cap" section)."""
+    addresses = ", ".join(w["address"] for w in stranded)
+    return (
+        f"Live exposure cap updated to ${cap_usd:.2f}. {len(stranded)} wallet(s) now "
+        f"exceed this cap and will not trade live until their stake is lowered "
+        f"or the cap is raised: {addresses}."
+    )
+
+
 @app.patch("/api/config")
 def patch_config(req: ConfigPatchRequest) -> dict:
     """Update a single bot parameter.
@@ -4633,7 +4663,20 @@ def patch_config(req: ConfigPatchRequest) -> dict:
 
     _db.set_config(key, serialised)
 
-    return _build_param_entry(key, serialised)
+    entry = _build_param_entry(key, serialised)
+    if key == "COPY_LIVE_MAX_EXPOSURE_PER_WALLET_USD":
+        # Issue #1358: additive fields only. The save always succeeds (#1266
+        # decision); a failure to compute the advisory must not turn a
+        # committed write into a 500.
+        try:
+            stranded = _stranded_live_wallets(_db, float(serialised))
+        except Exception:  # noqa: BLE001
+            logger.exception("patch_config: stranded-wallet lookup failed")
+        else:
+            entry["stranded_wallets"] = stranded
+            if stranded:
+                entry["message"] = _stranded_wallets_message(float(serialised), stranded)
+    return entry
 
 
 # ---------------------------------------------------------------------------
