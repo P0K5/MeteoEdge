@@ -769,3 +769,66 @@ def test_followed_wallets_optimistic_toggle_and_confirm_copy(tmp_path):
     )
     assert result.returncode == 0, f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
     assert "ALL_FOLLOWED_WALLETS_JS_ASSERTIONS_PASSED" in result.stdout
+
+
+_CFG_NOTICE_ASSERTIONS = textwrap.dedent("""
+    const assert = require('assert');
+    const byId = {};
+    function mk() {
+      const el = makeStubElement();
+      el.attrs = {}; el.listeners = {}; el.kids = [];
+      el.setAttribute = (k, v) => { el.attrs[k] = v; };
+      el.addEventListener = (ev, fn) => { el.listeners[ev] = fn; };
+      el.append = (...k) => { el.kids.push(...k); };
+      el.remove = () => { delete byId[el.id]; };
+      return el;
+    }
+    const parent = { insertBefore(n) { n.parentNode = parent; byId[n.id] = n; } };
+    const banner = mk(); banner.parentNode = parent;
+    byId['config-error-banner'] = banner;
+    document.getElementById = (id) => byId[id] || null;
+    document.createElement = () => mk();
+    global.fetch = async () => ({ ok: true, json: async () => body });
+    const A = '0xabcdef1234567890abcdef1234567890abcdef12';
+    const B = '0x1111111111111111111111111111111111112222';
+    let body = { value: 5, stranded_wallets: [{address: A}, {address: B}],
+      message: `Live exposure cap updated to $5.00. 2 wallet(s) now exceed this cap and will not trade live until their stake is lowered or the cap is raised: ${A}, ${B}.` };
+    (async () => {
+      await _patchConfig('COPY_LIVE_MAX_EXPOSURE_PER_WALLET_USD', 5);
+      const n = byId['config-save-notice'];
+      assert(n, 'notice shown');
+      assert.strictEqual(n.className, 'info-banner visible');
+      assert.strictEqual(n.attrs.role, 'status');
+      assert.strictEqual(n.attrs['aria-live'], 'polite');
+      const txt = n.kids[0].textContent;
+      assert(txt.startsWith('Live exposure cap updated to $5.00. 2 wallet(s)'), txt);
+      assert(txt.includes(_copyTruncateAddress(A)) && txt.includes(_copyTruncateAddress(B)), txt);
+      assert(!txt.includes(A) && !txt.includes(B), txt);
+      n.kids[1].listeners.click();
+      assert(!byId['config-save-notice'], 'dismissed');
+      await _patchConfig('X', 1);
+      assert(byId['config-save-notice']);
+      body = { value: 9, stranded_wallets: [] };
+      await _patchConfig('COPY_LIVE_MAX_EXPOSURE_PER_WALLET_USD', 9);
+      assert(!byId['config-save-notice'], 'no notice when nothing stranded');
+      body = { value: true };
+      assert.deepStrictEqual(await _patchConfig('Y', true), { value: true });
+      assert(!byId['config-save-notice']);
+      global.fetch = async () => ({ ok: false, status: 400, json: async () => ({ detail: 'bad' }) });
+      assert.strictEqual(await _patchConfig('Y', 1), null);
+      assert(!byId['config-save-notice']);
+      console.log('CFG_NOTICE_PASSED');
+    })().catch((e) => { console.error(e); process.exit(1); });
+""")
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not on PATH in this environment")
+def test_config_save_stranded_wallet_notice(tmp_path):
+    """Issue #1381: _patchConfig surfaces the API's stranded-wallet message
+    as a dismissible polite info notice with short-form addresses."""
+    combined = _PRELUDE + "\n" + _extract_inline_script() + "\n" + _CFG_NOTICE_ASSERTIONS
+    script_path = tmp_path / "cfg_notice_check.js"
+    script_path.write_text(combined, encoding="utf-8")
+    result = subprocess.run([NODE, str(script_path)], capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+    assert "CFG_NOTICE_PASSED" in result.stdout
