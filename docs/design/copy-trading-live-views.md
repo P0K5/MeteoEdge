@@ -706,9 +706,9 @@ one:
    deliberate rationale in `CopyActivityEventOut`'s docstring for why a
    pause event is always `mode="paper"`; this spec isn't asking to
    relitigate that.
-   - Unchanged (no live opt-in involved): `"Wallet auto-paused —
+   - Unchanged (no live opt-in involved): `"Wallet paused —
      {paused_reason}"`.
-   - New: `"Wallet auto-paused — {paused_reason}. Live trading opt-in was
+   - New: `"Wallet paused — {paused_reason}. Live trading opt-in was
      revoked."`
    - Because the event stays `mode="paper"`, an operator filtered to
      Mode=Live would miss it entirely — given the real-money relevance,
@@ -891,7 +891,7 @@ alongside them):**
 - "Signal detected"
 - "Order placed (paper)"
 - "Order skipped (paper) — `{skip_reason}`"
-- "Wallet auto-paused — `{paused_reason}`" — gains a conditional appended
+- "Wallet paused — `{paused_reason}`" — gains a conditional appended
   sentence, `"Live trading opt-in was revoked."`, plus the same small
   warning icon the live-rejection/skip rows use below (issue #1264) when
   this particular pause also cleared the wallet's `live_enabled` flag. Full

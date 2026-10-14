@@ -143,6 +143,11 @@ _ASSERTIONS = textwrap.dedent("""
       const plainHtml = _copyActivityItemHtml({ event_type: 'wallet_paused', ts: '2026-09-03T00:00:00Z',
         mode: 'paper', address: '0xW2', paused_reason: 'roi', live_optin_revoked: false });
       assert.ok(!plainHtml.includes('revoked'));
+      // Issue #1368: origin (manual vs automatic) is not recorded, so the
+      // text must be neutral -- never claim "auto-paused".
+      assert.ok(plainHtml.includes('Wallet paused — roi'));
+      assert.ok(revokedHtml.includes('Wallet paused — roi. Live trading opt-in was revoked.'));
+      assert.ok(!plainHtml.includes('auto-paused') && !revokedHtml.includes('auto-paused'));
 
       // ------------------------------------------------------------------
       // 2. Stale-feed indicator: a poll failure AFTER data already loaded
@@ -284,7 +289,7 @@ _ASSERTIONS = textwrap.dedent("""
       assert.ok(!listWrap.innerHTML.includes('Signal detected'), 'the unified "Signal detected" badge must not be used');
       assert.ok(listWrap.innerHTML.includes('Order placed (paper)'), 'the description text must independently state the mode, not just the badge');
       assert.ok(listWrap.innerHTML.includes('Order skipped (paper)'));
-      assert.ok(listWrap.innerHTML.includes('Wallet auto-paused'));
+      assert.ok(listWrap.innerHTML.includes('Wallet paused —'));
 
       // ------------------------------------------------------------------
       // 9. Paper and Live feeds never show each other's events. Even if the

@@ -8670,9 +8670,9 @@ function _copyActivityDescriptionHtml(e) {
     // Issue #1264: a pause that also revoked the live opt-in is flagged with
     // the warning icon (it stays mode=paper, so a Live filter would miss it).
     if (e.live_optin_revoked) {
-      return `<span class="copy-activity-desc"><i data-lucide="alert-triangle" aria-hidden="true"></i> Wallet auto-paused — ${base}. Live trading opt-in was revoked.</span>`;
+      return `<span class="copy-activity-desc"><i data-lucide="alert-triangle" aria-hidden="true"></i> Wallet paused — ${base}. Live trading opt-in was revoked.</span>`;
     }
-    return `<span class="copy-activity-desc">Wallet auto-paused — ${base}</span>`;
+    return `<span class="copy-activity-desc">Wallet paused — ${base}</span>`;
   }
   // Live events (issue #1188) -- market + stage-specific detail; the
   // reason text (skip_reason/rejected_reason) already arrives plain-
