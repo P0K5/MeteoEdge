@@ -711,6 +711,25 @@ stops trading it alerts again from the 48h step (once per step, as before).
 `RESOLVED_*_CENTS`/`_classify_resolution` are unchanged; the abandon /
 settle-at-price paths remain operator-only.
 
+**Early void detection (#1387):** the market-state lookup is no longer
+gated on the 48h age alone. It is *due* for a distinct market when the
+position is older than 48h **or** the hourly resolution poll
+(`fetch_market_final_price`, `closed=true` query, already made for every open
+market) just returned a matching row, i.e. Gamma says the market is closed
+(`polymarket.market_seen_closed`, an in-process by-product, zero extra HTTP).
+A closed market whose price is not pinned is exactly the 50/50-void candidate,
+so `classify_market` (unchanged) reports a verified one (closed + UMA
+`resolved` + ambiguous price) as `CLOSED_AMBIGUOUS` on the first run that sees
+it (position 2775 previously waited ~2.6 days). Cost: one extra state lookup
+(one request, since the `closed=true` query hits) only for young positions on
+closed-but-unresolved markets; not-due/open markets add no calls. **Rejected:**
+looking up every market whose `endDate` is past: `endDate` is not stored and
+open markets return nothing for `closed=true`, so learning it costs an extra
+call per open market every hour (~2x Gamma load for mostly long-dated markets),
+and `PAST_END_UNRESOLVED` is not urgent before 48h past `endDate` anyway.
+Verify on the host: `grep "STUCK CLOSED_AMBIGUOUS" logs/copy_settle.log` shows
+the record with `age_h` < 48.
+
 **Live stuck positions in the health report (#1393, design on #1365):** the
 daily health report has a "Live copy-trading stuck positions" section
 (`_build_copy_live_stuck`), read-only, next to the paper one. It shows:

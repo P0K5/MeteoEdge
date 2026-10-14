@@ -44,7 +44,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from src.data.copy_pnl import compute_realized_pnl_usd  # noqa: E402
 from src.data.copy_stuck import LEVEL_LABELS, PAST_END_TRADING, STUCK_HOURS, age_hours, classify_market  # noqa: E402
-from src.data.polymarket import fetch_market_resolution, fetch_market_state  # noqa: E402
+from src.data.polymarket import fetch_market_resolution, fetch_market_state, market_seen_closed  # noqa: E402
 
 log = logging.getLogger(__name__)
 
@@ -112,7 +112,12 @@ def run_once(db=None, escalations: "list | None" = None) -> dict:
         if yes_won is None:
             n_pending += 1
             try:
-                if age_hours(r["entry_ts"], now) > STUCK_HOURS:
+                # #1387: a state lookup is "due" once the position is >48h old OR
+                # the resolution poll we just made already saw closed=true for
+                # this market (free signal, no extra call). That lets a verified
+                # 50/50 void (closed + UMA resolved + ambiguous price) be reported
+                # at once instead of after 48h. classify_market still decides.
+                if age_hours(r["entry_ts"], now) > STUCK_HOURS or market_seen_closed(market):
                     if market not in states:
                         # One state lookup per distinct market (batching contract).
                         try:
