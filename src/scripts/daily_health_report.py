@@ -1142,6 +1142,90 @@ def _build_copy_stuck(db, today: datetime) -> "tuple[list[str], dict]":
     return lines, flags
 
 
+#: A live ``pending`` row older than this is stale (issue #1393): a healthy
+#: order resolves to filled/rejected within the executor's fill-wait (seconds
+#: to minutes) plus one settle cycle, so 2h means a crash mid-cycle.
+LIVE_PENDING_STALE_HOURS = 2
+
+
+def _build_copy_live_stuck(db, today: datetime) -> "tuple[list[str], dict]":
+    """Live copy-trading stuck positions (issue #1393, design on #1365).
+
+    READ-ONLY. Reads ``stuck_level``/``stuck_category``/``stuck_first_seen_at``
+    written by ``copy_live_settle`` (#1392). Lists escalated ``filled``/
+    ``partial`` rows; ``pending`` rows older than ``LIVE_PENDING_STALE_HOURS``
+    and unresolved ``cancel_failed_ghost`` rows are separate alert-only
+    categories (no status/P&L/exposure change). The exposure line reuses
+    ``get_open_copy_live_positions`` exactly as ``copy_signal_loop`` does.
+    """
+    from src.config import get_live_config
+    from src.data.copy_stuck import LEVEL_LABELS, age_hours
+    lines = ["Live copy-trading stuck positions", "-" * 33]
+    flags: dict = {"n_stuck": 0, "n_urgent": 0, "n_pending_stale": 0, "n_ghost": 0}
+    try:
+        open_rows = db.get_open_copy_live_positions()
+        stuck = sorted(
+            (r for r in open_rows if r["status"] in ("filled", "partial")
+             and int(r.get("stuck_level") or 0) >= 1),
+            key=lambda r: (-int(r["stuck_level"]), r["id"]),
+        )
+        stale_pending = []
+        for r in open_rows:
+            try:
+                if r["status"] == "pending" and age_hours(r["entry_ts"], today) > LIVE_PENDING_STALE_HOURS:
+                    stale_pending.append(r)
+            except (ValueError, KeyError, TypeError):
+                pass
+        ghosts = sorted(db.get_ghost_order_positions(), key=lambda r: r["id"])
+        flags["n_stuck"] = len(stuck)
+        flags["n_urgent"] = sum(1 for r in stuck if int(r["stuck_level"]) >= 2)
+        flags["n_pending_stale"] = len(stale_pending)
+        flags["n_ghost"] = len(ghosts)
+        stake = sum(float(r["stake_usd"]) for r in stuck)
+        lines.append(
+            f"  Unresolved: {len(stuck)} (urgent: {flags['n_urgent']})  |  "
+            f"stake unresolved: ${stake:.2f}  |  "
+            f"stale pending (>{LIVE_PENDING_STALE_HOURS}h): {len(stale_pending)}  |  "
+            f"unresolved cancel_failed_ghost: {len(ghosts)}"
+        )
+        exposure = sum(float(p["stake_usd"]) for p in open_rows)
+        cap = float(get_live_config(db)["COPY_LIVE_MAX_TOTAL_EXPOSURE_USD"])
+        lines.append(
+            f"  Unsettled live exposure counted: ${exposure:.2f} of cap ${cap:.2f} "
+            f"({len(open_rows)} open row(s); ghosts are NOT counted)"
+        )
+        if exposure > cap:
+            lines.append("  [WARN] counted live exposure is above COPY_LIVE_MAX_TOTAL_EXPOSURE_USD")
+        if stuck:
+            lines.append(
+                "  [WARN] stuck live rows still count as exposure and are invisible to "
+                "the breaker; alert-only -- no live abandon path exists (#1365)"
+            )
+        for r in stuck:
+            lines.append(
+                f"  [{r.get('stuck_category') or '?'}/{LEVEL_LABELS.get(int(r['stuck_level']), '?')}] "
+                f"id={r['id']} wallet={r['address']} market={r['market']} "
+                f"age={age_hours(r['entry_ts'], today) / 24:.1f}d "
+                f"status={r['status']} stake=${float(r['stake_usd']):.2f}"
+            )
+        for r in stale_pending:
+            lines.append(
+                f"  [STALE_PENDING] id={r['id']} wallet={r['address']} market={r['market']} "
+                f"age={age_hours(r['entry_ts'], today):.1f}h stake=${float(r['stake_usd']):.2f}"
+            )
+        for r in ghosts:
+            lines.append(
+                f"  [GHOST_UNRESOLVED] id={r['id']} wallet={r['address']} market={r['market']} "
+                f"order={r['order_id']} age={age_hours(r['entry_ts'], today):.1f}h "
+                f"stake=${float(r['stake_usd']):.2f} (may be a real fill)"
+            )
+    except Exception:
+        log.exception("Live copy stuck-position query failed")
+        lines.append("  (unavailable -- query error)")
+    lines.append("")
+    return lines, flags
+
+
 def _copy_skip_counts(db, now: datetime) -> "dict":
     """Per-wallet counts: ``{address: {"placed": n, "skipped": {reason: (window, baseline_total)}}}``.
 
@@ -1614,6 +1698,14 @@ def _build_verdict(sections: "list[tuple[str, list[str], dict]]") -> list[str]:
             f"({copy_stuck_flags.get('n_urgent', 0)} urgent)"
         )
 
+    live_stuck = flags_by_section.get("copy_live_stuck", {})
+    if live_stuck.get("n_stuck") or live_stuck.get("n_pending_stale") or live_stuck.get("n_ghost"):
+        warn_issues.append(
+            f"live copy: {live_stuck.get('n_stuck', 0)} stuck, "
+            f"{live_stuck.get('n_pending_stale', 0)} stale pending, "
+            f"{live_stuck.get('n_ghost', 0)} unresolved ghost"
+        )
+
     copy_skip_flags = flags_by_section.get("copy_skips", {})
     if copy_skip_flags.get("n_structural") or copy_skip_flags.get("n_unknown"):
         warn_issues.append(
@@ -1662,6 +1754,7 @@ def build_report(db) -> str:
         ("guardrails", _build_guardrails),
         ("emos", _build_emos_progress),
         ("copy_stuck", _build_copy_stuck),
+        ("copy_live_stuck", _build_copy_live_stuck),
         ("copy_skips", _build_copy_skips),
         ("silent_failures", _build_silent_failures),
         ("param_change", _build_param_change_impact),
