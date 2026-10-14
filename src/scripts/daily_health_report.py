@@ -1617,6 +1617,94 @@ def _build_services(db, today: datetime) -> "tuple[list[str], dict]":
     return lines, flags
 
 
+#: Scheduled jobs watched by the heartbeat section (issue #1422) and their
+#: expected run interval in seconds. Keyed to ``OnCalendar`` in
+#: deploy/systemd/<job>.timer; src/tests asserts the two cannot drift.
+SCHEDULED_JOB_INTERVALS_S = {
+    "meteoedge-copy-settle": 15 * 60,       # *:0/15
+    "meteoedge-copy-live-settle": 15 * 60,  # *:7/15
+    "meteoedge-copy-health": 24 * 3600,     # daily 03:56 UTC
+    "meteoedge-copy-screening": 24 * 3600,  # daily 03:00 UTC
+    "meteoedge-settle": 24 * 3600,          # daily 12:00 UTC
+}
+#: A job is overdue when its last trigger is older than this many intervals.
+JOB_OVERDUE_FACTOR = 2
+
+
+def _parse_systemd_ts(value: str) -> "datetime | None":
+    """Parse a ``systemctl show`` timestamp (``Tue 2026-10-13 12:00:01 UTC``)
+    to an aware datetime; ``None`` for empty / ``n/a`` / ``0``. Non-UTC zone
+    names are interpreted in the host's local zone (what systemd printed)."""
+    value = (value or "").strip()
+    if value in ("", "n/a", "0"):
+        return None
+    parts = value.split()
+    if parts and parts[0].isalpha():
+        parts = parts[1:]  # drop weekday
+    if len(parts) < 2:
+        return None
+    try:
+        naive = datetime.strptime(" ".join(parts[:2]), "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return None
+    if len(parts) > 2 and parts[2] in ("UTC", "GMT"):
+        return naive.replace(tzinfo=timezone.utc)
+    return naive.astimezone().astimezone(timezone.utc)
+
+
+def _show_props(*args: str) -> "dict[str, str]":
+    out = _systemctl("show", *args)
+    return dict(line.split("=", 1) for line in out.splitlines() if "=" in line)
+
+
+def _build_job_heartbeat(db, today: datetime) -> "tuple[list[str], dict]":
+    """Scheduled-job heartbeat (issue #1422): per timer-driven job, last run,
+    last result, age, and an [OVERDUE]/[FAILED]/[INACTIVE] mark. A job whose
+    timer is not installed on this host is skipped, never a WARN. Degrades to
+    UNKNOWN if systemctl cannot be queried."""
+    lines = ["Scheduled Jobs", "-" * 14]
+    flags: dict = {"status": "OK", "details": []}
+    try:
+        problems: list[str] = []
+        for job, interval in SCHEDULED_JOB_INTERVALS_S.items():
+            timer = _show_props(f"{job}.timer", "-p",
+                                "LoadState,ActiveState,LastTriggerUSec")
+            if timer.get("LoadState") == "not-found":
+                lines.append(f"  {job:<30} (timer not installed on this host)")
+                continue
+            svc = _show_props(f"{job}.service", "-p", "Result,ExecMainStatus")
+            last = _parse_systemd_ts(timer.get("LastTriggerUSec", ""))
+            result = svc.get("Result", "?")
+            status = svc.get("ExecMainStatus", "0")
+            marks: list[str] = []
+            if timer.get("ActiveState") != "active":
+                marks.append("[INACTIVE]")
+                problems.append(f"{job} timer {timer.get('ActiveState', '?')}")
+            if last is None:
+                when = "never run"
+            else:
+                age_s = (today - last).total_seconds()
+                when = (f"{last:%Y-%m-%d %H:%M} UTC "
+                        f"({age_s / 3600:.1f}h ago)")
+                if age_s > JOB_OVERDUE_FACTOR * interval:
+                    marks.append("[OVERDUE]")
+                    problems.append(f"{job} overdue ({age_s / 3600:.1f}h)")
+            if result not in ("success", "?") or status not in ("0", ""):
+                marks.append("[FAILED]")
+                problems.append(f"{job} last run failed "
+                                f"(result={result}, exit={status})")
+            lines.append(f"  {job:<30} last={when}  result={result}"
+                         + ("  " + " ".join(marks) if marks else ""))
+        if problems:
+            flags = {"status": "WARN", "details": problems}
+    except Exception:
+        log.exception("Scheduled job heartbeat query failed")
+        lines.append("  (unavailable -- systemctl query error)")
+        flags = {"status": "UNKNOWN", "details": []}
+    lines.append("")
+    return lines, flags
+
+
 def _build_blockers(db, today: datetime) -> list[str]:
     """Known open issues status check."""
     lines = ["Open Blockers", "-" * 8]
@@ -1699,6 +1787,9 @@ def _build_verdict(sections: "list[tuple[str, list[str], dict]]") -> list[str]:
     # issue #944: failed / restarting / unmanaged systemd units.
     warn_issues.extend(flags_by_section.get("services", {}).get("details", []))
 
+    # issue #1422: overdue / failed / inactive scheduled jobs.
+    warn_issues.extend(flags_by_section.get("job_heartbeat", {}).get("details", []))
+
     copy_stuck_flags = flags_by_section.get("copy_stuck", {})
     if copy_stuck_flags.get("n_stuck"):
         warn_issues.append(
@@ -1755,6 +1846,7 @@ def build_report(db) -> str:
     sections: list[tuple[str, list[str], dict]] = []
     for name, builder in [
         ("services", _build_services),
+        ("job_heartbeat", _build_job_heartbeat),
         ("bot", _build_bot_health),
         ("table_liveness", _build_table_liveness),
         ("trading", _build_trading),

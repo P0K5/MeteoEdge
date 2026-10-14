@@ -544,10 +544,10 @@ a,button,input,select{transition:color var(--transition),background var(--transi
 }
 .info-banner.visible{display:flex;}
 .info-banner i{width:14px;height:14px;flex-shrink:0;}
-/* Issue #1381: config-save notice only; 44px dismiss target, wraps on narrow screens. */
-#config-save-notice{flex-wrap:wrap;}
-#config-save-notice span{flex:1 1 12rem;min-width:0;}
-#config-save-notice button{min-height:44px;min-width:44px;margin-left:auto;}
+/* Issues #1381/#1264/#1407: shared dismiss target for info-banner notices (44px, wraps on narrow screens). */
+.info-banner{flex-wrap:wrap;}
+.info-banner span{flex:1 1 12rem;min-width:0;}
+.info-banner .btn-followed-action{min-height:44px;min-width:44px;margin-left:auto;}
 
 /* ── STATION CARDS ── */
 .station-card{
