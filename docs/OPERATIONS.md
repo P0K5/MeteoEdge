@@ -694,6 +694,23 @@ under the previous hourly cadence) — cost scales with distinct open
 markets on a run that actually has work, not with how often the timer
 fires.
 
+**Stuck-position categories and PAST_END_TRADING (#1388):** Gamma's `endDate`
+is sometimes a placeholder (Brazilian-election markets show 2026-10-05 but
+resolve after the runoff). A market past `endDate` that is still
+`closed=false` AND *actively trading* is classified `PAST_END_TRADING`:
+level 0, never escalated, shown in the health report's "Copy-trading stuck
+positions" section as a plain count plus one line per position (like the
+NOT_DUE count) and never contributing to the WARN verdict. "Actively
+trading" (`copy_stuck.is_actively_trading`, deliberately conservative) means
+ALL of: `closed=false`; Gamma `bestBid` > 0, `bestAsk` < 1, `bestAsk >=
+bestBid` and `bestAsk - bestBid <= 0.10`; and `lastTradePrice` strictly in
+(0, 1). Any missing field means not trading, so the existing escalation
+applies. De-escalation: a previously escalated position observed trading is
+reset to `stuck_level=0` (`Database.reset_copy_position_stuck`); if it later
+stops trading it alerts again from the 48h step (once per step, as before).
+`RESOLVED_*_CENTS`/`_classify_resolution` are unchanged; the abandon /
+settle-at-price paths remain operator-only.
+
 **Rate-limit decision — shared with copy-screening and the live weather
 bot:** `fetch_market_resolution` calls `gamma-api.polymarket.com`, throttled
 by the same process-local `DomainRateLimiter` (`src/http_client.py:42-63`)

@@ -2584,6 +2584,23 @@ class Database:
             )
             self._conn.commit()
 
+    def reset_copy_position_stuck(
+        self, position_id: int, category: "str | None", flagged_at: "str | None",
+    ) -> None:
+        """De-escalate a still-open position (issue #1388): set ``stuck_level``
+        back to 0 and record *category* (``PAST_END_TRADING`` or None). The
+        only place the level may decrease; called by copy_settle when a
+        market past its endDate is observed actively trading. If it later
+        stops trading the normal 48h/7d steps alert again from scratch.
+        Scoped ``status='open'``; never changes ``status``."""
+        with self._lock:
+            self._conn.execute(
+                "UPDATE copy_positions SET stuck_level=0, stuck_flagged_at=?, "
+                "stuck_category=? WHERE id=? AND status='open'",
+                (flagged_at, category, position_id),
+            )
+            self._conn.commit()
+
     def abandon_copy_position(
         self,
         position_id: int,

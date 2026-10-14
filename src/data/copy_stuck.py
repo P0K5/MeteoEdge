@@ -21,6 +21,10 @@ Thresholds:
   market's ``endDate`` (the moment resolution could start), not from entry.
 - level 3 -- CLOSED_AMBIGUOUS: deterministic and verifiable (closed, UMA
   resolved, price in the ambiguous band), so no waiting period applies.
+- PAST_END_TRADING (#1388) -- Gamma's ``endDate`` is sometimes a placeholder
+  (Brazilian-election markets show 2026-10-05 but resolve after the runoff).
+  A market past ``endDate`` that is still ``closed=false`` AND actively
+  trading is never escalated. See ``is_actively_trading`` for the rule.
 Every escalated position (level >= 1) is reported as excluded from
 ROI/win-rate denominators.
 """
@@ -42,6 +46,29 @@ NOT_DUE = "NOT_DUE"
 PAST_END_UNRESOLVED = "PAST_END_UNRESOLVED"
 CLOSED_AMBIGUOUS = "CLOSED_AMBIGUOUS"
 UNRETRIEVABLE = "UNRETRIEVABLE"
+#   PAST_END_TRADING     endDate passed but closed=false AND actively trading
+#                        -> level 0, never escalated, reported like NOT_DUE
+PAST_END_TRADING = "PAST_END_TRADING"
+
+#: Max bestAsk - bestBid for a book to count as "actively trading". Deliberately
+#: tight: a stale/abandoned book tends to be one-sided or very wide.
+MAX_TRADING_SPREAD = 0.10
+
+
+def is_actively_trading(state: dict) -> bool:
+    """Conservative liveness rule (#1388), from ``fetch_market_state`` fields.
+
+    True only when ALL hold: ``closed`` is false; a two-sided book exists
+    (``best_bid`` > 0 and ``best_ask`` < 1, ``best_ask`` >= ``best_bid``) with
+    ``best_ask - best_bid`` <= MAX_TRADING_SPREAD; and ``last_trade`` is a real
+    price strictly inside (0, 1). Any missing field -> False (escalation then
+    proceeds as before: when in doubt, alert)."""
+    if state.get("closed"):
+        return False
+    bid, ask, last = state.get("best_bid"), state.get("best_ask"), state.get("last_trade")
+    if bid is None or ask is None or last is None:
+        return False
+    return 0 < bid <= ask < 1 and (ask - bid) <= MAX_TRADING_SPREAD + 1e-9 and 0 < last < 1
 
 #: level -> label. 3 is the most urgent (verified ambiguous close).
 LEVEL_LABELS = {1: "AGED_48H", 2: "PATHOLOGICAL_7D", 3: "CLOSED_AMBIGUOUS"}
@@ -77,6 +104,8 @@ def classify_market(state: "dict | None", entry_ts: str, now: datetime) -> "tupl
         end = end.replace(tzinfo=timezone.utc)
     if not state.get("closed") and end is not None and end > now:
         return NOT_DUE, 0
+    if not state.get("closed") and end is not None and is_actively_trading(state):
+        return PAST_END_TRADING, 0
     ref_hours = (now - end).total_seconds() / 3600.0 if end is not None else age_hours(entry_ts, now)
     return PAST_END_UNRESOLVED, level_for_hours(ref_hours)
 
