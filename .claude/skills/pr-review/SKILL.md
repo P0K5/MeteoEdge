@@ -74,6 +74,29 @@ Before posting ANY approval:
 Never approve while CI is running, never approve with a failing check, never
 push directly to master.
 
+**Known flake, not a real finding:** a check literally named `AI / DeepSeek
+review` sometimes appears a *second* time under an unrelated workflow name
+(`Secret Scanning` or plain `CI`) and fails instantly with zero steps run
+(`gh api repos/{owner}/{repo}/actions/jobs/<id>` shows `"steps": []` and
+`started_at == completed_at`). That is a ghost duplicate, not a review
+result — confirm the *real* `AI / DeepSeek review` entry (the one whose own
+workflow name matches) actually completed and check its verdict; don't
+re-derive this from scratch each time it shows up. One retrigger (push an
+empty commit, or re-run the job) is enough to try; if it recurs, that's a CI
+config issue worth its own backlog ticket, not something to keep
+re-investigating per PR.
+
+**Verify the approval actually landed before merging — never assume it did.**
+`gh pr review --approve` can fail silently from your own perspective: GitHub
+rejects self-approval ("Can not approve your own pull request") as a
+separate, later error than any merge call in the same batch, so a
+multi-command batch can have its approve call rejected while its merge call
+*still succeeds* — merging an unreviewed PR without anyone noticing. After
+calling `gh pr review --approve`, run `gh pr view <N> --json reviews` and
+confirm the latest entry shows your account with `state: APPROVED` *before*
+calling `gh pr merge`. Never issue the approve and the merge in the same
+tool call or batch.
+
 **Frontend PRs** also require Designer approval before merge; Designer change
 requests are blockers.
 

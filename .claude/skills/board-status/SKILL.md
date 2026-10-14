@@ -29,6 +29,18 @@ Read `.claude/session-context.env`. It contains everything you need:
 empty, or lacks your issue's item ID: run `bash scripts/bootstrap_session.sh`
 (needs a token with `project` scope), then re-read the file.
 
+**On Windows, this fails with "Python was not found" before it does anything
+useful** — the script calls `python3`, which resolves to a broken Windows
+Store alias stub, not the real interpreter (that's `python` on this machine).
+Shim it once per session rather than debugging the same failure again:
+```bash
+mkdir -p /tmp/pyshim
+printf '#!/bin/bash\nexec python "$@"\n' > /tmp/pyshim/python3
+chmod +x /tmp/pyshim/python3
+PATH="/tmp/pyshim:$PATH" bash scripts/bootstrap_session.sh
+```
+Keep `/tmp/pyshim` on `PATH` for any later re-run in the same session.
+
 ## 2. Run the mutation
 
 Use your role's token. **CRITICAL: Always export the correct token BEFORE
