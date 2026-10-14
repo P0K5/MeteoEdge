@@ -55,6 +55,31 @@ MIN_COUNT = 5
 SPIKE_RATIO = 3.0
 
 
+# Reviewed allow-list (#1390): STRUCTURAL reasons that are known and accepted for
+# a wallet, so the daily verdict does not WARN on them forever. Key is
+# (wallet address prefix, reason); a prefix of "" applies to every wallet.
+# value = (accepting issue/PR, rationale). Only STRUCTURAL reasons can be
+# accepted; an accepted reason that is NEW or SPIKEs (see ``trend``) still warns.
+# Adding an entry is a reviewed code change: cite the issue/PR that accepted it.
+ACCEPTED_STRUCTURAL: "dict[tuple[str, str], tuple[str, str]]" = {
+    ("0xbca08c1b", "non_binary_outcome_index"): (
+        "#1390",
+        "wallet persistently trades multi-outcome markets (~4-6/day); the engine models "
+        "binary markets only, so its paper record knowingly excludes them",
+    ),
+}
+
+
+def accepted_ref(address: str, reason: str) -> "str | None":
+    """Issue/PR that accepted this structural ``reason`` for ``address``, else None."""
+    if classify(reason) != STRUCTURAL:
+        return None
+    for (prefix, r), (ref, _why) in ACCEPTED_STRUCTURAL.items():
+        if r == reason and address.startswith(prefix):
+            return ref
+    return None
+
+
 def classify(reason: str) -> str:
     if reason in SKIP_REASONS:
         return SKIP_REASONS[reason][0]

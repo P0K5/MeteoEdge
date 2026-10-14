@@ -5,7 +5,7 @@ import pytest
 
 from src.data.copy_skip_reasons import (
     BREAKER, LIFECYCLE, ROUTINE, STRUCTURAL, UNKNOWN, SKIP_REASONS,
-    classify, trend,
+    classify, trend, accepted_ref, ACCEPTED_STRUCTURAL,
 )
 from src.data.db import Database
 from src.scripts.daily_health_report import _build_copy_skips, _copy_skip_counts, _build_verdict
@@ -93,3 +93,42 @@ def test_section_query_error_degrades():
         pass
     lines, flags = _build_copy_skips(Bad(), NOW)
     assert "unavailable" in "\n".join(lines)
+
+
+def _steady(db, addr, reason, n_win=5, n_base=70):
+    for _ in range(n_win):
+        _sig(db, addr, reason, 3)
+    for _ in range(n_base):
+        _sig(db, addr, reason, 72)
+
+
+def test_accepted_ref():
+    assert accepted_ref("0xbca08c1b99", "non_binary_outcome_index") == "#1390"
+    assert accepted_ref("0xother", "non_binary_outcome_index") is None
+    assert accepted_ref("0xbca08c1b99", "missing_outcome_index") is None
+    assert all(classify(r) == STRUCTURAL for _, r in ACCEPTED_STRUCTURAL)
+
+
+def test_accepted_steady_annotated_no_verdict_warn(db):
+    _steady(db, "0xbca08c1b99", "non_binary_outcome_index")
+    lines, flags = _build_copy_skips(db, NOW)
+    text = "\n".join(lines)
+    assert "accepted (#1390)" in text and "[WARN]" not in text
+    assert flags["n_structural"] == 0 and flags["n_accepted"] == 5
+    assert "OK" in "\n".join(_build_verdict([("copy_skips", lines, flags)]))
+
+
+def test_accepted_spike_or_new_still_warns(db):
+    _steady(db, "0xbca08c1b99", "non_binary_outcome_index", n_win=30, n_base=7)
+    lines, flags = _build_copy_skips(db, NOW)
+    assert "accepted" not in "\n".join(lines) and "[WARN]" in "\n".join(lines)
+    assert flags["n_structural"] == 30
+
+
+def test_unlisted_wallet_and_reason_still_warn(db):
+    _steady(db, "0xzzz", "non_binary_outcome_index")
+    _steady(db, "0xbca08c1b99", "missing_outcome_index")
+    _steady(db, "0xbca08c1b99", "brand_new_reason")
+    lines, flags = _build_copy_skips(db, NOW)
+    assert "accepted" not in "\n".join(lines)
+    assert flags["n_structural"] == 10 and flags["n_unknown"] == 5
