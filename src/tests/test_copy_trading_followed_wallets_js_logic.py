@@ -832,3 +832,11 @@ def test_config_save_stranded_wallet_notice(tmp_path):
     result = subprocess.run([NODE, str(script_path)], capture_output=True, text=True, timeout=30)
     assert result.returncode == 0, f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
     assert "CFG_NOTICE_PASSED" in result.stdout
+
+
+def test_config_save_notice_dismiss_css_scoped():
+    """Issue #1381 (Designer): 44px dismiss target + wrap, scoped to the notice."""
+    html = INDEX_HTML.read_text(encoding="utf-8")
+    assert "#config-save-notice{flex-wrap:wrap;}" in html
+    assert "#config-save-notice span{flex:1 1 12rem;min-width:0;}" in html
+    assert "#config-save-notice button{min-height:44px;min-width:44px;margin-left:auto;}" in html
