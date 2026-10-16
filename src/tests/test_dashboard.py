@@ -32,10 +32,13 @@ def client():
     # Save original state
     original_db = dash_api._db
     original_last_poll_ts = dash_api.last_poll_ts
+    original_portfolio_cache = dict(dash_api._portfolio_cache)
 
     # Reset to clean state
     dash_api._db = None
     dash_api.last_poll_ts = None
+    dash_api._portfolio_cache["ts"] = 0.0
+    dash_api._portfolio_cache["data"] = None
 
     # Also clear the data cache to avoid stale hits between tests
     import src.dashboard.data as _data
@@ -49,6 +52,7 @@ def client():
     # Restore original state after test
     dash_api._db = original_db
     dash_api.last_poll_ts = original_last_poll_ts
+    dash_api._portfolio_cache.update(original_portfolio_cache)
 
 
 # ---------------------------------------------------------------------------
@@ -1676,6 +1680,43 @@ class TestSellPositionEndpoint:
         dash_api._db = None
         resp = client.post("/api/positions/tok-4/sell")
         assert resp.status_code == 503
+
+    def test_sell_success_invalidates_portfolio_cache(self, client):
+        """Issue #812: a successful sell must bust the /api/portfolio cache so
+        the next read doesn't serve a stale, already-sold position."""
+        from unittest.mock import MagicMock
+        dash_api._db = MagicMock()
+        dash_api._portfolio_cache["ts"] = time.monotonic()
+        dash_api._portfolio_cache["data"] = "stale-cached-portfolio"
+        sell_result = {
+            "status": "sold", "order_id": "sell-x", "sell_price_cents": 90,
+            "shares": 6.25, "pnl": 0.62,
+        }
+        with patch("src.execution.auth.get_clob_client", return_value=MagicMock()), \
+             patch("src.dashboard.api.LiveTrader", return_value=MagicMock()), \
+             patch.object(dash_api.order_manager, "manual_sell_position",
+                          return_value=sell_result):
+            resp = client.post("/api/positions/tok-1/sell")
+        assert resp.status_code == 200
+        assert dash_api._portfolio_cache["data"] is None
+        assert dash_api._portfolio_cache["ts"] == 0.0
+
+    def test_sell_no_fill_does_not_invalidate_portfolio_cache(self, client):
+        """A no-fill sell attempt changed nothing, so the cache should be left
+        alone rather than forcing an unnecessary refetch."""
+        from unittest.mock import MagicMock
+        dash_api._db = MagicMock()
+        cached_ts = time.monotonic()
+        dash_api._portfolio_cache["ts"] = cached_ts
+        dash_api._portfolio_cache["data"] = "still-fresh-portfolio"
+        with patch("src.execution.auth.get_clob_client", return_value=MagicMock()), \
+             patch("src.dashboard.api.LiveTrader", return_value=MagicMock()), \
+             patch.object(dash_api.order_manager, "manual_sell_position",
+                          return_value={"status": "no_fill", "detail": "retry"}):
+            resp = client.post("/api/positions/tok-2/sell")
+        assert resp.status_code == 200
+        assert dash_api._portfolio_cache["data"] == "still-fresh-portfolio"
+        assert dash_api._portfolio_cache["ts"] == cached_ts
 
 
 # ---------------------------------------------------------------------------

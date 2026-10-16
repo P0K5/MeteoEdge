@@ -14,6 +14,19 @@ import pytest
 from fastapi.testclient import TestClient
 
 
+@pytest.fixture(autouse=True)
+def _reset_portfolio_cache():
+    """Clear the issue #812 /api/portfolio cache around every test in this
+    module so one test's cached response can't leak into the next (many
+    tests here hit the endpoint repeatedly with different mocks)."""
+    from src.dashboard import api
+    original = dict(api._portfolio_cache)
+    api._portfolio_cache["ts"] = 0.0
+    api._portfolio_cache["data"] = None
+    yield
+    api._portfolio_cache.update(original)
+
+
 # ---------------------------------------------------------------------------
 # /api/health
 # ---------------------------------------------------------------------------
@@ -351,3 +364,98 @@ class TestPositionsFromWalletConcurrency:
         assert open_pos[0].forecast_high_f == 82.0
         # Concurrent: total time ~= max(0.3, 0.3), not sum (0.6).
         assert elapsed < 0.5, f"expected concurrent execution, took {elapsed:.3f}s"
+
+
+# ---------------------------------------------------------------------------
+# /api/portfolio — issue #812: short-TTL server-side cache
+# ---------------------------------------------------------------------------
+
+class TestPortfolioCache:
+    """A short TTL cache should wrap the composite portfolio fetch so rapid
+    repeat requests (multiple tabs, the 30s frontend poll firing early on a
+    re-render) don't each re-pay the external round trip."""
+
+    def test_ttl_is_a_named_constant_shorter_than_frontend_poll(self):
+        from src.dashboard import api
+        # The frontend polls /api/portfolio every 30s (index.html,
+        # portfolioIntervalId) -- the cache TTL must stay below that so it
+        # only absorbs bursts, never masks a genuinely new poll.
+        assert api._PORTFOLIO_CACHE_TTL < 30.0
+
+    def test_second_request_within_ttl_served_from_cache(self):
+        from src.dashboard import api
+
+        pos_mock = MagicMock(return_value=([], []))
+        cash_mock = MagicMock(return_value=10.0)
+
+        with patch.object(api, "_positions_from_wallet", pos_mock), \
+             patch.object(api, "_cash_usdc", cash_mock), \
+             patch("src.execution.auth.get_clob_client", return_value=MagicMock()):
+            client = TestClient(api.app)
+            resp1 = client.get("/api/portfolio")
+            resp2 = client.get("/api/portfolio")
+
+        assert resp1.status_code == 200
+        assert resp2.status_code == 200
+        assert resp1.json() == resp2.json()
+        # Only the first request should hit the external fetches.
+        pos_mock.assert_called_once()
+        cash_mock.assert_called_once()
+
+    def test_ttl_expiry_triggers_a_fresh_fetch(self):
+        from src.dashboard import api
+
+        pos_mock = MagicMock(return_value=([], []))
+        cash_mock = MagicMock(side_effect=[10.0, 20.0])
+
+        with patch.object(api, "_positions_from_wallet", pos_mock), \
+             patch.object(api, "_cash_usdc", cash_mock), \
+             patch("src.execution.auth.get_clob_client", return_value=MagicMock()):
+            client = TestClient(api.app)
+            resp1 = client.get("/api/portfolio")
+            # Simulate TTL expiry without sleeping in the test.
+            api._portfolio_cache["ts"] -= (api._PORTFOLIO_CACHE_TTL + 1.0)
+            resp2 = client.get("/api/portfolio")
+
+        assert resp1.json()["cash_usdc"] == pytest.approx(10.0)
+        assert resp2.json()["cash_usdc"] == pytest.approx(20.0)
+        assert pos_mock.call_count == 2
+        assert cash_mock.call_count == 2
+
+    def test_wallet_fetch_failure_is_not_cached(self):
+        """A failed wallet fetch must not be cached, or the empty-positions
+        fallback would be served for the full TTL instead of retrying the
+        external call on the very next poll (issue #812 AC)."""
+        from src.dashboard import api
+
+        pos_mock = MagicMock(side_effect=RuntimeError("wallet API down"))
+        cash_mock = MagicMock(return_value=0.0)
+
+        with patch.object(api, "_positions_from_wallet", pos_mock), \
+             patch.object(api, "_cash_usdc", cash_mock), \
+             patch("src.execution.auth.get_clob_client", return_value=MagicMock()):
+            client = TestClient(api.app)
+            resp1 = client.get("/api/portfolio")
+            resp2 = client.get("/api/portfolio")
+
+        assert resp1.status_code == 200
+        assert resp2.status_code == 200
+        assert resp1.json()["open_positions"] == []
+        assert resp2.json()["open_positions"] == []
+        # Not cached -- each request retries the failing external call.
+        assert pos_mock.call_count == 2
+
+    def test_cache_populated_after_a_successful_fetch(self):
+        from src.dashboard import api
+
+        pos_mock = MagicMock(return_value=([], []))
+        cash_mock = MagicMock(return_value=5.0)
+
+        with patch.object(api, "_positions_from_wallet", pos_mock), \
+             patch.object(api, "_cash_usdc", cash_mock), \
+             patch("src.execution.auth.get_clob_client", return_value=MagicMock()):
+            client = TestClient(api.app)
+            client.get("/api/portfolio")
+
+        assert api._portfolio_cache["data"] is not None
+        assert api._portfolio_cache["ts"] > 0.0
