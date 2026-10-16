@@ -6268,7 +6268,7 @@ function _followedReadyRowHtml(w) {
   return `
     <tr class="copy-row" data-address="${addrEsc}" id="live-ready-row-${safeId}">
       ${_followedAddressCellHtml(w, addrEsc)}
-      <td class="copy-td">${_followedPaperRefHtml(w)}</td>
+      <td class="copy-td" data-label="Paper P&amp;L">${_followedPaperRefHtml(w)}</td>
       <td class="copy-td followed-actions-cell">
         ${_followedGoLiveButtonHtml(w)}
         <p class="followed-live-msg" id="live-followed-live-msg-${safeId}" role="status" aria-live="polite"></p>
@@ -6365,7 +6365,7 @@ function _followedRenderLive(data) {
         { text: 'Wallet' },
         { text: 'Paper P&amp;L <span class="mode-badge mode-badge-paper">PAPER</span>' },
         { sr: 'Actions' },
-      ], readyWallets.map(_followedReadyRowHtml).join(''));
+      ], readyWallets.map(_followedReadyRowHtml).join(''), 'copy-table--roster');
       readyWrap.innerHTML = readyWallets.length > COPY_LIVE_READY_COLLAPSE_ABOVE
         ? `<details class="copy-ready-details"${_copyLiveReadyOpen ? ' open' : ''} ontoggle="_copyLiveReadyOnToggle(this)"><summary>${readyWallets.length} wallets ready to go live — show list</summary>${table}</details>`
         : table;
