@@ -116,5 +116,52 @@ def test_no_regressions_at_600px_and_above():
         "The min-height:44px rule must be inside the @media(max-width:600px) block, not at root level"
 
 
+def test_disabled_go_live_button_keeps_css_classes():
+    """The disabled 'Go live' button (paused wallet or posture unavailable)
+    must still carry btn-followed-action class to maintain the 44px min-height
+    in the copy-table--roster context."""
+    html = INDEX_HTML.read_text(encoding='utf-8')
+
+    # Find the _followedGoLiveButtonHtml function to verify disabled branches
+    # The function has three branches:
+    # 1. status='paused' -> returns disabled button with class btn-followed-action
+    # 2. _copyPostureUnavailable -> returns disabled button with class btn-followed-action
+    # 3. normal case -> returns enabled button with class btn-followed-action
+
+    # Verify all branches render the btn-followed-action class
+    golive_func = re.search(
+        r"function _followedGoLiveButtonHtml\(.*?\{.*?return.*?\}(?=\n\n)",
+        html,
+        re.DOTALL
+    )
+    assert golive_func, "Could not find _followedGoLiveButtonHtml function"
+    func_text = golive_func.group(0)
+
+    # All return statements should include class="btn-followed-action"
+    # (either as btn-followed-revert-live or btn-followed-golive, but always btn-followed-action)
+    disabled_returns = re.findall(
+        r"return\s+`<button[^>]*class=\"[^\"]*btn-followed-action[^\"]*\"[^`]*disabled[^`]*`",
+        func_text,
+        re.DOTALL
+    )
+    assert len(disabled_returns) >= 2, \
+        "Expected at least 2 disabled button returns with btn-followed-action class (paused + posture-unavailable)"
+
+    # Verify enabled return also has the class (the last return statement)
+    # Count all button returns - should be 3 total (paused, posture-unavailable, enabled)
+    all_button_returns = re.findall(
+        r"return\s+`<button[^`]*`",
+        func_text,
+        re.DOTALL
+    )
+    assert len(all_button_returns) >= 3, \
+        f"Expected at least 3 return statements with buttons, found {len(all_button_returns)}"
+
+    # Verify all have the btn-followed-action class (both enabled and disabled)
+    for ret in all_button_returns:
+        assert "btn-followed-action" in ret, \
+            "All button returns (enabled and disabled) must have btn-followed-action class"
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
