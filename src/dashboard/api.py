@@ -1813,8 +1813,26 @@ def bot_log(lines: int = 200) -> dict:
         return {"path": str(path), "lines": [], "error": str(e)}
 
 
+# Issue #812: short-TTL cache around the composite /api/portfolio payload.
+# Follows the _stations_overview_cache / _STATIONS_OVERVIEW_TTL pattern
+# (api.py, _stations_overview_cache above). TTL is deliberately shorter than
+# the frontend's 30s poll interval (index.html, portfolioIntervalId) so it
+# only absorbs bursts (multiple tabs / rapid re-renders) rather than masking
+# genuinely new data. A failed wallet-position fetch is never cached -- see
+# the comment at the end of portfolio() below -- so a transient external
+# failure doesn't get "stuck" serving an empty-positions result for the
+# whole TTL window.
+_portfolio_cache: dict = {"ts": 0.0, "data": None}
+_PORTFOLIO_CACHE_TTL = 12.0  # seconds
+
+
 @app.get("/api/portfolio", response_model=PortfolioOut)
 def portfolio() -> PortfolioOut:
+    now = time.monotonic()
+    cached = _portfolio_cache
+    if cached["data"] is not None and (now - cached["ts"]) < _PORTFOLIO_CACHE_TTL:
+        return cached["data"]
+
     # Issue #813: build the authenticated CLOB client once per request and
     # hand it to both the positions fetch and the cash fetch below, instead
     # of each independently constructing (and authenticating) its own.
@@ -1834,19 +1852,30 @@ def portfolio() -> PortfolioOut:
     with ThreadPoolExecutor(max_workers=2) as ex:
         pos_future = ex.submit(_positions_from_wallet, client)
         cash_future = ex.submit(_cash_usdc, client)
+        positions_fetch_failed = False
         try:
             open_pos, closed_pos = pos_future.result()
         except Exception as e:
             logger.warning("Wallet positions fetch failed (%s) — returning empty", e)
             open_pos, closed_pos = [], []
+            positions_fetch_failed = True
         cash = cash_future.result()
 
-    return PortfolioOut(
+    result = PortfolioOut(
         cash_usdc=round(cash, 2),
         open_positions=open_pos,
         closed_positions=closed_pos,
         updated_at=datetime.now(timezone.utc).isoformat(),
     )
+
+    # Don't cache a wallet-fetch failure: caching it would serve the
+    # empty-positions fallback for the full TTL instead of retrying the
+    # external call on the next poll.
+    if not positions_fetch_failed:
+        _portfolio_cache["ts"] = now
+        _portfolio_cache["data"] = result
+
+    return result
 
 
 @app.post("/api/positions/{token_id}/sell", response_model=SellPositionOut)
@@ -1886,6 +1915,12 @@ def sell_position(token_id: str) -> SellPositionOut:
         raise HTTPException(status_code=409, detail=result.get("detail", "Position already sold"))
     if status == "no_fill":
         return SellPositionOut(token_id=token_id, status="no_fill", detail=result.get("detail", ""))
+
+    # Issue #812: invalidate the /api/portfolio cache so the next read
+    # reflects this sale immediately instead of serving a stale
+    # already-sold position for the remainder of the TTL window.
+    _portfolio_cache["ts"] = 0.0
+    _portfolio_cache["data"] = None
 
     return SellPositionOut(
         token_id=token_id,
