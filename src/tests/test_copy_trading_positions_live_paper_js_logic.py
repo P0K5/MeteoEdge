@@ -291,9 +291,9 @@ _ASSERTIONS = textwrap.dedent("""
       const perWalletHtml = _copyPerWalletTableHtml(perWalletRows);
       assert.ok(perWalletHtml.includes('0xClean') && perWalletHtml.includes('0xContam'),
         'per-wallet table must still render both rows');
-      assert.ok(perWalletHtml.includes('$1.46 locked-in loss pending (2 both-sides pairs)'),
+      assert.ok(perWalletHtml.includes('$1.46 locked-in loss from 2 contaminated positions'),
         'contamination note must render for the affected wallet in the Health/backtest table');
-      assert.strictEqual((perWalletHtml.match(/locked-in loss pending/g) || []).length, 1,
+      assert.strictEqual((perWalletHtml.match(/locked-in loss from/g) || []).length, 1,
         'only the contaminated wallet gets a contamination note');
       assert.ok(perWalletHtml.includes('class="followed-contamination-note"'),
         'reuses the same dedicated note component/class as the Followed Wallets view, not a new one');
