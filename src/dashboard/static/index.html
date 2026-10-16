@@ -5994,7 +5994,7 @@ function _followedContaminationNoteHtml(w) {
   //   docs/design/copy-trading-live-views.md). No title attribute here at
   //   all: everything a reader needs is already in the rendered text.
   return `<span class="followed-contamination-note"><i data-lucide="alert-triangle"></i>`
-    + `$${usd} locked in from ${n} contaminated position${n === 1 ? '' : 's'} — `
+    + `$${usd} locked-in loss from ${n} contaminated position${n === 1 ? '' : 's'} — `
     + `legacy issue, not yet settled into realized P&amp;L</span>`;
 }
 
