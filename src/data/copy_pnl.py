@@ -42,6 +42,13 @@ def effective_stake_usd(filled_stake_usd: "float | None", stake_usd: float) -> f
     return float(filled_stake_usd) if filled_stake_usd is not None else float(stake_usd)
 
 
+# Issue #1428: marker written to ``rejected_reason`` of a ``partial`` row ONLY
+# when copy_live_executor proved the unfilled remainder cancelled
+# (cancel_order returned True, or check_fill reported 'cancelled'). Absent
+# marker => remainder not proven dead => exposure counted at stake_usd.
+PARTIAL_CANCEL_PROVEN = "partial_remainder_cancelled"
+
+
 def live_exposure_usd(db, address: "str | None" = None) -> float:
     """Return the live exposure the order gate counts (issue #1395, #1365).
 
@@ -50,11 +57,13 @@ def live_exposure_usd(db, address: "str | None" = None) -> float:
     ``stake_usd``:
 
     - every open row (``get_open_copy_live_positions``: ``pending`` /
-      ``filled`` / ``partial``), at ``stake_usd``. ``partial`` is NOT lowered
-      to ``filled_stake_usd``: ``copy_live_executor`` does not prove the
-      unfilled remainder is dead (``cancel_order``'s boolean result is
-      ignored and ``recover_ghost_orders`` can mark a still-resting order
-      partial), so the remainder may still fill. ``pending`` never lowers.
+      ``filled`` / ``partial``), at ``stake_usd``. The one exception (#1428)
+      is a ``partial`` row carrying ``rejected_reason == PARTIAL_CANCEL_PROVEN``,
+      written only when the executor saw ``cancel_order`` return True (or
+      ``check_fill`` == 'cancelled'): its remainder is dead, so it counts at
+      ``min(filled_stake_usd, stake_usd)``. Any other partial (e.g. recovered
+      from a ghost while the order may still rest) stays at ``stake_usd``.
+      ``pending`` never lowers.
     - every unresolved ``cancel_failed_ghost`` row
       (``get_ghost_order_positions``), at ``stake_usd``: status is
       ``rejected`` but the order may be a real fill. It stops counting when
@@ -63,7 +72,16 @@ def live_exposure_usd(db, address: "str | None" = None) -> float:
 
     Only ever >= the pre-#1395 sum, so the gate can only get stricter.
     """
-    total = sum(float(p["stake_usd"]) for p in db.get_open_copy_live_positions(address))
+    total = 0.0
+    for p in db.get_open_copy_live_positions(address):
+        stake = float(p["stake_usd"])
+        if (
+            p.get("status") == "partial"
+            and p.get("rejected_reason") == PARTIAL_CANCEL_PROVEN
+            and p.get("filled_stake_usd") is not None
+        ):
+            stake = min(stake, effective_stake_usd(p["filled_stake_usd"], stake))
+        total += stake
     total += sum(
         float(g["stake_usd"])
         for g in db.get_ghost_order_positions()

@@ -224,7 +224,17 @@ def execute_live_copy_order(
         cancel_ok = True
         if outcome == "timeout":
             try:
-                trader.cancel_order(order_id)
+                # Issue #1428: act on the boolean result. LiveTrader.cancel_order
+                # returns False (without raising) on a None/error response, which
+                # does NOT prove the order is dead -- treat it exactly like a
+                # raised cancel (ghost / ambiguous), never as a clean cancel.
+                if not trader.cancel_order(order_id):
+                    cancel_ok = False
+                    log.critical(
+                        "  [copy-live] CRITICAL: cancel_order returned False for GTC order %s "
+                        "after timeout. Order may still be live on the exchange and may fill "
+                        "as a ghost trade.", order_id[:12],
+                    )
             except Exception as e:
                 cancel_ok = False
                 # Issue #1171 item 2: this is CRITICAL severity (an order
@@ -275,6 +285,11 @@ def execute_live_copy_order(
             "order_id": oid,
             "fill_price": fp,
             "filled_stake_usd": _fill_cost_usd(oid, filled_shares, fp),
+            # Issue #1428: _partial_result is only reached when cancel_ok, i.e.
+            # cancel_order returned True or check_fill reported 'cancelled' --
+            # the unfilled remainder is proven dead. The caller persists this
+            # so live_exposure_usd may count the partial at filled_stake_usd.
+            "remainder_cancelled": True,
         }
 
     price_cents = _price_to_cents(price)

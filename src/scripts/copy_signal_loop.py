@@ -156,7 +156,7 @@ from src.config import (  # noqa: E402
     live_exposure_drawdown_bound_error,
     get_live_config, seed_config,
 )
-from src.data.copy_pnl import live_exposure_usd  # noqa: E402
+from src.data.copy_pnl import PARTIAL_CANCEL_PROVEN, live_exposure_usd  # noqa: E402
 from src.data.db import Database  # noqa: E402
 from src.data.polymarket import fetch_market_resolution  # noqa: E402
 from src.data.polymarket_traders import get_wallet_trades_since, normalize_trade  # noqa: E402
@@ -392,6 +392,14 @@ def _handle_live_order(
             # which case settlement falls back to stake_usd -- see
             # Database.update_copy_live_position_status.
             filled_stake_usd=result.get("filled_stake_usd"),
+            # Issue #1428: only a partial whose remainder was PROVEN cancelled
+            # gets the marker (so the exposure gate may count it at the filled
+            # amount). Anything else leaves it None -> counted at stake_usd.
+            rejected_reason=(
+                PARTIAL_CANCEL_PROVEN
+                if result["status"] == "partial" and result.get("remainder_cancelled") is True
+                else None
+            ),
         )
 
 
