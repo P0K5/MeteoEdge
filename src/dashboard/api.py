@@ -41,6 +41,7 @@ import os
 import time
 import threading
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import redirect_stdout
 from dataclasses import dataclass, field as dc_field
 from datetime import datetime, timedelta, timezone
@@ -1450,18 +1451,33 @@ def _market_question(condition_id: str) -> str:
         return ""
 
 
-def _cash_usdc() -> float:
+def _cash_usdc(client=None) -> float:
+    """Fetch the live USDC balance.
+
+    Accepts an already-constructed CLOB *client* (issue #813) so callers that
+    already built one for this request — e.g. ``portfolio()`` — don't pay for
+    a second ``get_clob_client()`` construction. Falls back to building its
+    own when called standalone (unchanged behavior for other callers/tests).
+    """
     try:
-        from src.execution.auth import get_clob_client
         from src.execution.live_trader import LiveTrader
-        return LiveTrader(get_clob_client()).get_usdc_balance()
+        if client is None:
+            from src.execution.auth import get_clob_client
+            client = get_clob_client()
+        return LiveTrader(client).get_usdc_balance()
     except Exception:
         logger.warning("Could not fetch USDC balance — returning 0.0")
         return 0.0
 
 
-def _positions_from_wallet() -> tuple[list[PositionOut], list[ClosedPositionOut]]:
-    """Fetch positions directly from Polymarket Data API by wallet address."""
+def _positions_from_wallet(client=None) -> tuple[list[PositionOut], list[ClosedPositionOut]]:
+    """Fetch positions directly from Polymarket Data API by wallet address.
+
+    Accepts an already-constructed CLOB *client* (issue #813) so callers that
+    already built one for this request — e.g. ``portfolio()`` — don't pay for
+    a second ``get_clob_client()`` construction. Falls back to building its
+    own when called standalone (unchanged behavior for other callers/tests).
+    """
     wallet = os.environ.get("POLYMARKET_DEPOSIT_WALLET", "")
     if not wallet:
         raise RuntimeError("POLYMARKET_DEPOSIT_WALLET not set")
@@ -1502,19 +1518,14 @@ def _positions_from_wallet() -> tuple[list[PositionOut], list[ClosedPositionOut]
 
     def _nws_for_question(question: str) -> "float | None":
         t = question.lower()
-        for city, (lat, lon) in _CITY_COORDS.items():
+        for city in _CITY_COORDS:
             if city.lower() in t:
-                if city not in _nws_city_cache:
-                    try:
-                        _nws_city_cache[city] = fetch_nws_forecast_high(lat, lon)
-                    except Exception:
-                        _nws_city_cache[city] = None
-                return _nws_city_cache[city]
+                return _nws_city_cache.get(city)
         return None
 
-    # Batch-fetch live midpoints for non-resolved positions only
-    from src.execution.auth import get_clob_client
-    client = get_clob_client()
+    if client is None:
+        from src.execution.auth import get_clob_client
+        client = get_clob_client()
     active_token_ids = [
         str(row.get("asset") or "")
         for row in rows
@@ -1525,7 +1536,35 @@ def _positions_from_wallet() -> tuple[list[PositionOut], list[ClosedPositionOut]
         for row in rows
     }
     fallbacks = {t: max(1, min(99, round(avg_prices.get(t, 0) * 100))) for t in active_token_ids}
-    midpoints = _batch_midpoints(client, active_token_ids, fallbacks)
+
+    # Distinct cities referenced by open (non-redeemable) positions only --
+    # _nws_for_question() below is only ever called for those rows, matching
+    # the original lazy-cache's reach.
+    cities_needed: dict[str, tuple[float, float]] = {}
+    for row in rows:
+        if row.get("redeemable"):
+            continue
+        t = str(row.get("title") or "").lower()
+        for city, coords in _CITY_COORDS.items():
+            if city.lower() in t:
+                cities_needed.setdefault(city, coords)
+                break
+
+    # Issue #813: the midpoints batch call and the per-city NWS lookups are
+    # independent of each other -- run them concurrently instead of
+    # sequentially.
+    with ThreadPoolExecutor(max_workers=max(1, 1 + len(cities_needed))) as ex:
+        midpoints_future = ex.submit(_batch_midpoints, client, active_token_ids, fallbacks)
+        nws_futures = {
+            city: ex.submit(fetch_nws_forecast_high, lat, lon)
+            for city, (lat, lon) in cities_needed.items()
+        }
+        midpoints = midpoints_future.result()
+        for city, fut in nws_futures.items():
+            try:
+                _nws_city_cache[city] = fut.result()
+            except Exception:
+                _nws_city_cache[city] = None
 
     open_positions: list[PositionOut] = []
     closed_positions: list[ClosedPositionOut] = []
@@ -1776,13 +1815,32 @@ def bot_log(lines: int = 200) -> dict:
 
 @app.get("/api/portfolio", response_model=PortfolioOut)
 def portfolio() -> PortfolioOut:
+    # Issue #813: build the authenticated CLOB client once per request and
+    # hand it to both the positions fetch and the cash fetch below, instead
+    # of each independently constructing (and authenticating) its own.
+    from src.execution.auth import get_clob_client
     try:
-        open_pos, closed_pos = _positions_from_wallet()
+        client = get_clob_client()
     except Exception as e:
-        logger.warning("Wallet positions fetch failed (%s) — returning empty", e)
-        open_pos, closed_pos = [], []
+        # Deterministic given the same env/config, so letting each fetch
+        # retry its own construction below reproduces the pre-#813 fallback
+        # behavior exactly -- it just costs the (rare, mis-configured-deploy)
+        # failure path a couple of extra attempts instead of the happy path.
+        logger.warning("CLOB client init failed (%s) — positions/cash fetch will retry independently", e)
+        client = None
 
-    cash = _cash_usdc()
+    # The USDC balance fetch has no dependency on the wallet-position fetch
+    # (or vice versa) -- run them concurrently rather than sequentially.
+    with ThreadPoolExecutor(max_workers=2) as ex:
+        pos_future = ex.submit(_positions_from_wallet, client)
+        cash_future = ex.submit(_cash_usdc, client)
+        try:
+            open_pos, closed_pos = pos_future.result()
+        except Exception as e:
+            logger.warning("Wallet positions fetch failed (%s) — returning empty", e)
+            open_pos, closed_pos = [], []
+        cash = cash_future.result()
+
     return PortfolioOut(
         cash_usdc=round(cash, 2),
         open_positions=open_pos,

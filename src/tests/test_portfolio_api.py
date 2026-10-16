@@ -6,6 +6,7 @@ enrichment is now sourced from the DB open_positions table.
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -171,3 +172,182 @@ class TestPortfolioEndpoint:
                     resp = client.get("/api/portfolio")
         assert resp.status_code == 200
         assert len(resp.json()["open_positions"]) == 1
+
+
+# ---------------------------------------------------------------------------
+# /api/portfolio — issue #813: single CLOB client reuse + concurrency
+# ---------------------------------------------------------------------------
+
+class TestPortfolioClobClientReuse:
+    """Only one CLOB client should be constructed per /api/portfolio request,
+    and it must be the same instance handed to both the positions fetch and
+    the cash fetch."""
+
+    def test_builds_clob_client_once_and_shares_it(self):
+        from src.dashboard import api
+
+        sentinel_client = object()
+        pos_mock = MagicMock(return_value=([], []))
+        cash_mock = MagicMock(return_value=10.0)
+
+        with patch.object(api, "_positions_from_wallet", pos_mock), \
+             patch.object(api, "_cash_usdc", cash_mock), \
+             patch("src.execution.auth.get_clob_client",
+                   return_value=sentinel_client) as mock_get_client:
+            client = TestClient(api.app)
+            resp = client.get("/api/portfolio")
+
+        assert resp.status_code == 200
+        assert mock_get_client.call_count == 1
+        pos_mock.assert_called_once_with(sentinel_client)
+        cash_mock.assert_called_once_with(sentinel_client)
+
+    def test_client_init_failure_falls_back_to_none_for_both_fetches(self):
+        """No behavior-shape change: if building the shared client fails,
+        both fetches still run (with client=None) and each is responsible
+        for its own fallback, exactly as before #813."""
+        from src.dashboard import api
+
+        pos_mock = MagicMock(return_value=([], []))
+        cash_mock = MagicMock(return_value=0.0)
+
+        with patch.object(api, "_positions_from_wallet", pos_mock), \
+             patch.object(api, "_cash_usdc", cash_mock), \
+             patch("src.execution.auth.get_clob_client",
+                   side_effect=RuntimeError("missing creds")):
+            client = TestClient(api.app)
+            resp = client.get("/api/portfolio")
+
+        assert resp.status_code == 200
+        pos_mock.assert_called_once_with(None)
+        cash_mock.assert_called_once_with(None)
+
+
+class TestPortfolioConcurrency:
+    """USDC balance fetch and wallet-position fetch must run concurrently,
+    not sequentially (issue #813 acceptance criteria)."""
+
+    def test_cash_and_positions_fetched_concurrently(self):
+        from src.dashboard import api
+
+        def slow_positions(client):
+            time.sleep(0.3)
+            return [], []
+
+        def slow_cash(client):
+            time.sleep(0.3)
+            return 42.0
+
+        with patch.object(api, "_positions_from_wallet", side_effect=slow_positions), \
+             patch.object(api, "_cash_usdc", side_effect=slow_cash), \
+             patch("src.execution.auth.get_clob_client", return_value=MagicMock()):
+            client = TestClient(api.app)
+            start = time.monotonic()
+            resp = client.get("/api/portfolio")
+            elapsed = time.monotonic() - start
+
+        assert resp.status_code == 200
+        assert resp.json()["cash_usdc"] == pytest.approx(42.0)
+        # Concurrent: total time ~= max(0.3, 0.3), not sum (0.6).
+        assert elapsed < 0.5, f"expected concurrent execution, took {elapsed:.3f}s"
+
+
+class TestCashUsdcClientReuse:
+    """_cash_usdc() must reuse a passed-in client instead of rebuilding one."""
+
+    def test_uses_provided_client_without_rebuilding(self):
+        from src.dashboard import api
+
+        mock_client = MagicMock()
+        mock_trader = MagicMock()
+        mock_trader.get_usdc_balance.return_value = 7.5
+
+        with patch("src.execution.live_trader.LiveTrader",
+                   return_value=mock_trader) as mock_lt, \
+             patch("src.execution.auth.get_clob_client") as mock_get_client:
+            result = api._cash_usdc(mock_client)
+
+        assert result == 7.5
+        mock_get_client.assert_not_called()
+        mock_lt.assert_called_once_with(mock_client)
+
+    def test_builds_own_client_when_none_provided(self):
+        """Backward compatible: calling _cash_usdc() with no args (e.g. from
+        existing tests/callers) still builds its own client."""
+        from src.dashboard import api
+
+        mock_client = object()
+        mock_trader = MagicMock()
+        mock_trader.get_usdc_balance.return_value = 3.0
+
+        with patch("src.execution.live_trader.LiveTrader",
+                   return_value=mock_trader) as mock_lt, \
+             patch("src.execution.auth.get_clob_client",
+                   return_value=mock_client) as mock_get_client:
+            result = api._cash_usdc()
+
+        assert result == 3.0
+        mock_get_client.assert_called_once()
+        mock_lt.assert_called_once_with(mock_client)
+
+
+class TestPositionsFromWalletConcurrency:
+    """Within _positions_from_wallet(), the midpoints batch call and the
+    per-city NWS lookups must run concurrently (issue #813)."""
+
+    @staticmethod
+    def _fake_wallet_response(rows):
+        class _FakeResp:
+            def __init__(self, data):
+                self._data = data
+
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                return self._data
+
+        def _fake_get(url, timeout=None):
+            if "offset=0" in url:
+                return _FakeResp(rows)
+            return _FakeResp([])
+
+        return _fake_get
+
+    def test_midpoints_and_nws_run_concurrently(self, monkeypatch):
+        from src.dashboard import api
+
+        monkeypatch.setenv("POLYMARKET_DEPOSIT_WALLET", "0x" + "1" * 40)
+
+        wallet_row = {
+            "asset": "tok1",
+            "size": 10,
+            "avgPrice": 0.5,
+            "outcome": "YES",
+            "title": "Will the high temperature in Chicago be above 80F?",
+            "redeemable": False,
+            "conditionId": "0xcond1",
+            "currentValue": 5.0,
+        }
+
+        def slow_batch_midpoints(client, token_ids, fallbacks):
+            time.sleep(0.3)
+            return {t: 50 for t in token_ids}
+
+        def slow_nws(lat, lon):
+            time.sleep(0.3)
+            return 82.0
+
+        with patch.object(api, "_db", None), \
+             patch.object(api, "httpx") as mock_httpx, \
+             patch.object(api, "_batch_midpoints", side_effect=slow_batch_midpoints), \
+             patch.object(api, "fetch_nws_forecast_high", side_effect=slow_nws):
+            mock_httpx.get.side_effect = self._fake_wallet_response([wallet_row])
+            start = time.monotonic()
+            open_pos, _closed_pos = api._positions_from_wallet(client=MagicMock())
+            elapsed = time.monotonic() - start
+
+        assert len(open_pos) == 1
+        assert open_pos[0].forecast_high_f == 82.0
+        # Concurrent: total time ~= max(0.3, 0.3), not sum (0.6).
+        assert elapsed < 0.5, f"expected concurrent execution, took {elapsed:.3f}s"
