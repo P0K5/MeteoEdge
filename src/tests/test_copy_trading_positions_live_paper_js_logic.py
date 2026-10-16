@@ -26,6 +26,11 @@ column, independent of the Paper column:
   banner stays hidden when never-checked or within-tolerance, appears with
   the un-softened "manual reconciliation required" language on a flagged
   drift, and hides again once a later clean check clears it.
+- _copyPerWalletTableHtml/_copyPerWalletRowHtml (issue #1357): the paper
+  Health/backtest per-wallet comparison table renders the same still-open
+  opposite-side-contamination note as the Followed Wallets view (issue
+  #1316), reusing its exact component, next to Realized P&L and only for
+  the affected row.
 """
 from __future__ import annotations
 
@@ -266,6 +271,39 @@ _ASSERTIONS = textwrap.dedent("""
       });
       driftBanner = document.getElementById('copy-positions-live-drift-banner');
       assert.ok(!driftBanner.classList.contains('visible'), 'a later clean check must clear a previously-shown drift banner');
+
+      // ------------------------------------------------------------------
+      // 10. Issue #1357: the Health/backtest per-wallet comparison table
+      //     (_copyPerWalletTableHtml/_copyPerWalletRowHtml) discloses the
+      //     same still-open both-sides-above-parity contamination as the
+      //     Followed Wallets view (issue #1316), reusing the identical
+      //     _followedContaminationNoteHtml component -- next to Realized
+      //     P&L, not a new column, and only for the contaminated row.
+      // ------------------------------------------------------------------
+      const perWalletRows = [
+        { address: '0xClean', n_settled: 2, realized_pnl_usd: 4.0,
+          projected_flat_dollar_pnl: null, divergence_usd: null, divergence_pct: null,
+          opposite_side_contamination_pairs: 0, opposite_side_contamination_usd: 0 },
+        { address: '0xContam', n_settled: 1, realized_pnl_usd: -3.25,
+          projected_flat_dollar_pnl: null, divergence_usd: null, divergence_pct: null,
+          opposite_side_contamination_pairs: 2, opposite_side_contamination_usd: 1.46 },
+      ];
+      const perWalletHtml = _copyPerWalletTableHtml(perWalletRows);
+      assert.ok(perWalletHtml.includes('0xClean') && perWalletHtml.includes('0xContam'),
+        'per-wallet table must still render both rows');
+      assert.ok(perWalletHtml.includes('$1.46 locked-in loss pending (2 both-sides pairs)'),
+        'contamination note must render for the affected wallet in the Health/backtest table');
+      assert.strictEqual((perWalletHtml.match(/locked-in loss pending/g) || []).length, 1,
+        'only the contaminated wallet gets a contamination note');
+      assert.ok(perWalletHtml.includes('class="followed-contamination-note"'),
+        'reuses the same dedicated note component/class as the Followed Wallets view, not a new one');
+
+      // A clean 0/0.0 row is byte-for-byte unaffected by this issue (no
+      // stray empty note markup injected for a wallet with nothing to
+      // disclose).
+      const cleanOnlyHtml = _copyPerWalletRowHtml(perWalletRows[0]);
+      assert.ok(!cleanOnlyHtml.includes('followed-contamination-note'),
+        'a 0-pairs wallet must not render any contamination note markup');
 
       console.log('ALL_POSITIONS_LIVE_PAPER_JS_ASSERTIONS_PASSED');
     })().catch((err) => {
