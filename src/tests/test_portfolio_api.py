@@ -459,3 +459,210 @@ class TestPortfolioCache:
 
         assert api._portfolio_cache["data"] is not None
         assert api._portfolio_cache["ts"] > 0.0
+
+
+# ---------------------------------------------------------------------------
+# /api/portfolio — issue #814: trade history decoupled from the wallet fetch
+# ---------------------------------------------------------------------------
+
+class TestPortfolioHistoryDecoupling:
+    """Trade history (closed_positions) must still be returned when the live
+    wallet fetch is slow/failing (issue #814 AC) -- it comes from local
+    DB/JSONL reads, unrelated to the failing wallet/CLOB call."""
+
+    def test_wallet_fetch_failure_still_returns_trade_history(self):
+        from src.dashboard import api
+        from src.dashboard.api import ClosedPositionOut
+
+        history = [
+            ClosedPositionOut(
+                station="KLAX", side="NO", entry_price=40, exit_price=0,
+                pnl=-12.0, shares=30.0, closed_at="2026-10-01T00:00:00+00:00",
+                token_id="tok-history", exit_reason="lost",
+            ),
+        ]
+
+        pos_mock = MagicMock(side_effect=RuntimeError("wallet API timed out"))
+        history_mock = MagicMock(return_value=(history, {}, set(), set()))
+        cash_mock = MagicMock(return_value=0.0)
+
+        with patch.object(api, "_positions_from_wallet", pos_mock), \
+             patch.object(api, "_closed_positions_from_jsonl_and_db", history_mock), \
+             patch.object(api, "_cash_usdc", cash_mock), \
+             patch("src.execution.auth.get_clob_client", return_value=MagicMock()):
+            client = TestClient(api.app)
+            resp = client.get("/api/portfolio")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["open_positions"] == []
+        assert len(data["closed_positions"]) == 1
+        assert data["closed_positions"][0]["token_id"] == "tok-history"
+        history_mock.assert_called_once()
+
+    def test_wallet_fetch_slow_timeout_still_returns_trade_history(self):
+        """A timeout (the other half of the test plan's "slow/failing") is
+        just another exception from _positions_from_wallet()'s perspective --
+        same fallback path as a hard failure."""
+        import httpx as httpx_module
+        from src.dashboard import api
+        from src.dashboard.api import ClosedPositionOut
+
+        history = [
+            ClosedPositionOut(
+                station="KORD", side="YES", entry_price=60, exit_price=100,
+                pnl=20.0, shares=50.0, closed_at="2026-10-05T00:00:00+00:00",
+                token_id="tok-timeout-history", exit_reason="won",
+            ),
+        ]
+
+        pos_mock = MagicMock(side_effect=httpx_module.TimeoutException("timed out"))
+        history_mock = MagicMock(return_value=(history, {}, set(), set()))
+        cash_mock = MagicMock(return_value=0.0)
+
+        with patch.object(api, "_positions_from_wallet", pos_mock), \
+             patch.object(api, "_closed_positions_from_jsonl_and_db", history_mock), \
+             patch.object(api, "_cash_usdc", cash_mock), \
+             patch("src.execution.auth.get_clob_client", return_value=MagicMock()):
+            client = TestClient(api.app)
+            resp = client.get("/api/portfolio")
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data["closed_positions"]) == 1
+        assert data["closed_positions"][0]["token_id"] == "tok-timeout-history"
+
+    def test_history_fallback_itself_failing_does_not_break_endpoint(self):
+        """Defense in depth: even if the local DB/JSONL fallback read also
+        raises, /api/portfolio must still return 200 with empty history
+        rather than propagating a 500."""
+        from src.dashboard import api
+
+        pos_mock = MagicMock(side_effect=RuntimeError("wallet API down"))
+        history_mock = MagicMock(side_effect=RuntimeError("DB unavailable"))
+        cash_mock = MagicMock(return_value=0.0)
+
+        with patch.object(api, "_positions_from_wallet", pos_mock), \
+             patch.object(api, "_closed_positions_from_jsonl_and_db", history_mock), \
+             patch.object(api, "_cash_usdc", cash_mock), \
+             patch("src.execution.auth.get_clob_client", return_value=MagicMock()):
+            client = TestClient(api.app)
+            resp = client.get("/api/portfolio")
+
+        assert resp.status_code == 200
+        assert resp.json()["closed_positions"] == []
+
+
+# ---------------------------------------------------------------------------
+# NWS forecast lookups — issue #814: process-level TTL cache across requests
+# ---------------------------------------------------------------------------
+
+class TestNwsForecastProcessCache:
+    """_cached_nws_forecast_high() must cache per city across calls/requests
+    (not just within one, as the old _nws_city_cache did), with a TTL."""
+
+    def test_ttl_is_a_named_constant_of_several_minutes(self):
+        from src.dashboard import api
+        # 5-10 min per issue #814's fix proposal.
+        assert 300.0 <= api._NWS_FORECAST_CACHE_TTL <= 600.0
+
+    def test_second_call_within_ttl_is_served_from_cache(self):
+        from src.dashboard import api
+
+        fetch_mock = MagicMock(return_value=77.0)
+        with patch.object(api, "fetch_nws_forecast_high", fetch_mock):
+            first = api._cached_nws_forecast_high("Chicago", 41.97, -87.9)
+            second = api._cached_nws_forecast_high("Chicago", 41.97, -87.9)
+
+        assert first == 77.0
+        assert second == 77.0
+        fetch_mock.assert_called_once_with(41.97, -87.9)
+
+    def test_different_cities_are_cached_independently(self):
+        from src.dashboard import api
+
+        fetch_mock = MagicMock(side_effect=[77.0, 55.0])
+        with patch.object(api, "fetch_nws_forecast_high", fetch_mock):
+            chicago = api._cached_nws_forecast_high("Chicago", 41.97, -87.9)
+            atlanta = api._cached_nws_forecast_high("Atlanta", 33.64, -84.43)
+
+        assert chicago == 77.0
+        assert atlanta == 55.0
+        assert fetch_mock.call_count == 2
+
+    def test_ttl_expiry_triggers_a_fresh_fetch(self):
+        from src.dashboard import api
+
+        fetch_mock = MagicMock(side_effect=[77.0, 80.0])
+        with patch.object(api, "fetch_nws_forecast_high", fetch_mock):
+            api._cached_nws_forecast_high("Chicago", 41.97, -87.9)
+            # Simulate TTL expiry without sleeping in the test.
+            cached_ts, _ = api._NWS_FORECAST_CACHE["Chicago"]
+            api._NWS_FORECAST_CACHE["Chicago"] = (
+                cached_ts - (api._NWS_FORECAST_CACHE_TTL + 1.0), 77.0,
+            )
+            second = api._cached_nws_forecast_high("Chicago", 41.97, -87.9)
+
+        assert second == 80.0
+        assert fetch_mock.call_count == 2
+
+    def test_fetch_failure_is_cached_too_not_retried_every_call(self):
+        """A failure caches None for the TTL window rather than hammering a
+        down NWS API on every subsequent call within the window."""
+        from src.dashboard import api
+
+        fetch_mock = MagicMock(side_effect=RuntimeError("NWS API down"))
+        with patch.object(api, "fetch_nws_forecast_high", fetch_mock):
+            first = api._cached_nws_forecast_high("Chicago", 41.97, -87.9)
+            second = api._cached_nws_forecast_high("Chicago", 41.97, -87.9)
+
+        assert first is None
+        assert second is None
+        fetch_mock.assert_called_once()
+
+    def test_repeated_positions_from_wallet_calls_reuse_nws_cache(self, monkeypatch):
+        """Two separate _positions_from_wallet() calls (standing in for two
+        /api/portfolio polls within the NWS cache TTL) must only hit the NWS
+        API once per city, not once per call."""
+        from src.dashboard import api
+
+        monkeypatch.setenv("POLYMARKET_DEPOSIT_WALLET", "0x" + "2" * 40)
+
+        wallet_row = {
+            "asset": "tok-nws-reuse",
+            "size": 10,
+            "avgPrice": 0.5,
+            "outcome": "YES",
+            "title": "Will the high temperature in Chicago be above 80F?",
+            "redeemable": False,
+            "conditionId": "0xcondnws",
+            "currentValue": 5.0,
+        }
+
+        class _FakeResp:
+            def __init__(self, data):
+                self._data = data
+
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                return self._data
+
+        def _fake_get(url, timeout=None):
+            if "offset=0" in url:
+                return _FakeResp([wallet_row])
+            return _FakeResp([])
+
+        fetch_mock = MagicMock(return_value=82.0)
+
+        with patch.object(api, "_db", None), \
+             patch.object(api, "httpx") as mock_httpx, \
+             patch.object(api, "fetch_nws_forecast_high", fetch_mock):
+            mock_httpx.get.side_effect = _fake_get
+            open_pos_1, _ = api._positions_from_wallet(client=MagicMock())
+            open_pos_2, _ = api._positions_from_wallet(client=MagicMock())
+
+        assert open_pos_1[0].forecast_high_f == 82.0
+        assert open_pos_2[0].forecast_high_f == 82.0
+        fetch_mock.assert_called_once()

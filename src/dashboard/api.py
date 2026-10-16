@@ -1245,6 +1245,38 @@ _CITY_COORDS: dict[str, tuple[float, float]] = {
     city: (lat, lon) for _, lat, lon, city, *_ in STATIONS
 }
 
+# Issue #814: process-level TTL cache for fetch_nws_forecast_high(), keyed by
+# city. Replaces the old per-request-only cache in _positions_from_wallet()
+# (issue #170), which deduplicated NWS HTTP calls *within* a single request
+# but still re-fetched every city's forecast on every /api/portfolio poll.
+# NWS forecasts change on the scale of hours, so a few minutes of staleness
+# is a non-issue; 5 minutes is comfortably longer than the frontend's 30s
+# poll interval, so most polls are served from cache.
+_NWS_FORECAST_CACHE: dict[str, tuple[float, "float | None"]] = {}
+_NWS_FORECAST_CACHE_TTL = 300.0  # seconds (5 min)
+
+
+def _cached_nws_forecast_high(city: str, lat: float, lon: float) -> "float | None":
+    """Return ``fetch_nws_forecast_high(lat, lon)``, cached per city across requests.
+
+    A cache miss (including a prior fetch failure) re-fetches and stores
+    whatever comes back -- ``None`` included -- for _NWS_FORECAST_CACHE_TTL.
+    Caching a transient failure for the TTL window matches the old
+    per-request cache's blast radius (a failure already suppressed that city
+    for the rest of that request) while avoiding hammering the NWS API every
+    poll during an outage.
+    """
+    now = time.monotonic()
+    cached = _NWS_FORECAST_CACHE.get(city)
+    if cached is not None and (now - cached[0]) < _NWS_FORECAST_CACHE_TTL:
+        return cached[1]
+    try:
+        value = fetch_nws_forecast_high(lat, lon)
+    except Exception:
+        value = None
+    _NWS_FORECAST_CACHE[city] = (now, value)
+    return value
+
 
 def _stopped_positions() -> list[ClosedPositionOut]:
     """Return positions closed before settlement (METAR stop-loss or take-profit).
@@ -1367,6 +1399,50 @@ def _db_settled_positions() -> list[ClosedPositionOut]:
                 r.get("id"), exc_info=True,
             )
     return result, condition_ids
+
+
+def _closed_positions_from_jsonl_and_db() -> (
+    "tuple[list[ClosedPositionOut], dict[str, dict], set[str], set[str]]"
+):
+    """Closed positions sourced purely from local JSONL/DB reads (issue #814).
+
+    Touches no network (no wallet/CLOB/Data-API calls), unlike the rest of
+    ``_positions_from_wallet()`` -- so it's always cheap and can be computed
+    independently of, and survive the failure of, the live wallet fetch. This
+    is what lets ``portfolio()`` still return trade history when the wallet
+    fetch is slow or raises, instead of the previous behavior where a wallet
+    failure zeroed out history too (see ``portfolio()``'s except branch).
+
+    Returns ``(closed_positions, jsonl_enrichment, jsonl_settled_tokens,
+    db_settled_condition_ids)``:
+
+    - ``closed_positions``: early-exit (stop-loss/take-profit, from
+      ``_cached_live_trades()``'s stopped list) + held-to-expiry (from
+      ``_db_settled_positions()``) rows, deduped against each other and
+      sorted newest-first.
+    - ``jsonl_enrichment``: per-token_id dict (station/bracket/predicted
+      price) used by ``_positions_from_wallet()`` to enrich *open* positions
+      built from the wallet fetch -- unrelated to closed positions, just
+      piggy-backed here since it comes from the same ``_cached_live_trades()``
+      call.
+    - ``jsonl_settled_tokens`` / ``db_settled_condition_ids``: used by
+      ``_positions_from_wallet()``'s wallet loop to skip redeemable wallet
+      rows already covered by the closed positions returned here (see that
+      function's docstring for why double-counting would otherwise happen).
+    """
+    jsonl_enrichment, stopped_list, _unused_settled = _cached_live_trades()
+    settled_list, db_settled_condition_ids = _db_settled_positions()
+    jsonl_settled_tokens: set[str] = {p.token_id for p in stopped_list if p.token_id}
+
+    closed_positions: list[ClosedPositionOut] = list(stopped_list)
+    seen_token_ids = set(jsonl_settled_tokens)
+    for p in settled_list:
+        if not p.token_id or p.token_id not in seen_token_ids:
+            closed_positions.append(p)
+            if p.token_id:
+                seen_token_ids.add(p.token_id)
+    closed_positions.sort(key=lambda p: p.closed_at, reverse=True)
+    return closed_positions, jsonl_enrichment, jsonl_settled_tokens, db_settled_condition_ids
 
 
 def _nws_forecast_for_title(title: str) -> float | None:
@@ -1497,15 +1573,18 @@ def _positions_from_wallet(client=None) -> tuple[list[PositionOut], list[ClosedP
         offset += 100
 
     enrichment = _db_open_positions_enrichment()
-    # Single cached pass over live_trades.jsonl for enrichment + early-exit
-    # (sold) positions, which are still written directly by order_manager at
-    # sell time and unaffected by issue #617. Held-to-expiry settlements no
-    # longer come from this parse — see _db_settled_positions() below.
-    jsonl_enrichment, stopped_list, _unused_settled = _cached_live_trades()
-    # Issue #617: held-to-expiry settlements now come from the trades table
-    # directly (settle_live_trades() writes pnl/settled_at onto the row) --
-    # settle.py no longer patches these back into live_trades.jsonl.
-    settled_list, db_settled_condition_ids = _db_settled_positions()
+    # Issue #814: closed positions (history) are computed by a dedicated
+    # network-free helper so they're available even when the rest of this
+    # function (the wallet/CLOB/NWS fetches below) is slow or fails --
+    # portfolio() calls the same helper directly as its fallback when this
+    # function raises. jsonl_settled_tokens/db_settled_condition_ids let the
+    # wallet loop below skip redeemable rows already covered by history.
+    (
+        closed_positions,
+        jsonl_enrichment,
+        jsonl_settled_tokens,
+        db_settled_condition_ids,
+    ) = _closed_positions_from_jsonl_and_db()
     snap_probs = _latest_model_probs()
     # Fallback prob source for stations outside scanner active-hours window (#425).
     # The always-on re-pricer writes position_snapshots.jsonl 24/7; we use it
@@ -1552,11 +1631,13 @@ def _positions_from_wallet(client=None) -> tuple[list[PositionOut], list[ClosedP
 
     # Issue #813: the midpoints batch call and the per-city NWS lookups are
     # independent of each other -- run them concurrently instead of
-    # sequentially.
+    # sequentially. Issue #814: the NWS lookup itself now goes through the
+    # process-level _cached_nws_forecast_high() TTL cache, so most of these
+    # "fetches" are in-process cache hits rather than real HTTP calls.
     with ThreadPoolExecutor(max_workers=max(1, 1 + len(cities_needed))) as ex:
         midpoints_future = ex.submit(_batch_midpoints, client, active_token_ids, fallbacks)
         nws_futures = {
-            city: ex.submit(fetch_nws_forecast_high, lat, lon)
+            city: ex.submit(_cached_nws_forecast_high, city, lat, lon)
             for city, (lat, lon) in cities_needed.items()
         }
         midpoints = midpoints_future.result()
@@ -1567,15 +1648,19 @@ def _positions_from_wallet(client=None) -> tuple[list[PositionOut], list[ClosedP
                 _nws_city_cache[city] = None
 
     open_positions: list[PositionOut] = []
-    closed_positions: list[ClosedPositionOut] = []
+    # closed_positions already holds the stopped/settled (JSONL/DB) rows from
+    # _closed_positions_from_jsonl_and_db() above -- the wallet loop below
+    # only ever *adds* to it (the "manual trade" branch), it never replaces
+    # it, so history survives even if everything below this point fails.
 
     # JSONL/DB-driven outcomes (stopped + settled) are authoritative for
     # win/loss because settle.py records the realised pnl against actual_high
     # vs the bracket.  The Polymarket Data API reports curPrice=0 for BOTH
     # winning and losing redeemable tokens once the orderbook is gone, which
     # would otherwise label every unredeemed winner as a -initial_value loss.
-    # Build the covered-position sets up front so the wallet redeemable
-    # branch can defer to them.
+    # jsonl_settled_tokens/db_settled_condition_ids (from the helper above)
+    # let the wallet redeemable branch below defer to the already-known
+    # outcome instead of double-counting it.
     #
     # stopped_list (early exits) still carries a real token_id -- those JSONL
     # records are written directly by order_manager at sell time, unaffected
@@ -1584,10 +1669,6 @@ def _positions_from_wallet(client=None) -> tuple[list[PositionOut], list[ClosedP
     # time) -- it's matched instead by market condition ID via
     # db_settled_condition_ids, since trades.ticker stores the same 0x
     # condition ID the wallet API reports as `conditionId` for a position.
-    jsonl_settled_tokens: set[str] = {
-        p.token_id for p in stopped_list if p.token_id
-    }
-
     for row in rows:
         token_id = str(row.get("asset") or "")
         if not token_id:
@@ -1676,26 +1757,13 @@ def _positions_from_wallet(client=None) -> tuple[list[PositionOut], list[ClosedP
                 token_id=token_id,
             ))
 
-    # Append JSONL/DB-authoritative outcomes.  The wallet loop above already
-    # skipped any redeemable row whose token_id is in jsonl_settled_tokens or
-    # whose market condition ID is in db_settled_condition_ids, so there are
-    # no collisions with the wallet-produced entries.  stopped_list entries
-    # always carry a token_id (JSONL, unaffected by #617) and are deduped
-    # defensively against each other; settled_list entries (DB-sourced, #617)
-    # never carry a token_id post-settlement, so they are always appended --
-    # dedup for those already happened above via db_settled_condition_ids.
-    seen_token_ids = {p.token_id for p in closed_positions if p.token_id}
-    for p in stopped_list:
-        if not p.token_id or p.token_id not in seen_token_ids:
-            closed_positions.append(p)
-            if p.token_id:
-                seen_token_ids.add(p.token_id)
-    for p in settled_list:
-        if not p.token_id or p.token_id not in seen_token_ids:
-            closed_positions.append(p)
-            if p.token_id:
-                seen_token_ids.add(p.token_id)
-
+    # closed_positions already contains the JSONL/DB-sourced stopped/settled
+    # rows (seeded by _closed_positions_from_jsonl_and_db() above) plus any
+    # "manual trade" rows appended by the wallet loop -- the wallet loop's
+    # skip check (jsonl_settled_tokens / db_settled_condition_ids) guarantees
+    # those never collide, so no further merge/dedup is needed here (issue
+    # #814 -- this used to be a second pass that re-appended stopped_list/
+    # settled_list after the loop; now it's folded into the shared helper).
     open_positions.sort(key=lambda p: p.invested, reverse=True)
     closed_positions.sort(key=lambda p: p.closed_at, reverse=True)
     return open_positions, closed_positions
@@ -1856,8 +1924,21 @@ def portfolio() -> PortfolioOut:
         try:
             open_pos, closed_pos = pos_future.result()
         except Exception as e:
-            logger.warning("Wallet positions fetch failed (%s) — returning empty", e)
-            open_pos, closed_pos = [], []
+            # Issue #814: a wallet/CLOB fetch failure used to zero out BOTH
+            # open_positions and closed_positions (trade history), even
+            # though history comes from local DB/JSONL reads that have
+            # nothing to do with the failing wallet call. Recompute it
+            # directly here instead of discarding it.
+            logger.warning(
+                "Wallet positions fetch failed (%s) — open positions empty, "
+                "trade history served from local DB/JSONL reads", e,
+            )
+            open_pos = []
+            try:
+                closed_pos, *_ = _closed_positions_from_jsonl_and_db()
+            except Exception:
+                logger.warning("Local trade-history fallback read also failed", exc_info=True)
+                closed_pos = []
             positions_fetch_failed = True
         cash = cash_future.result()
 

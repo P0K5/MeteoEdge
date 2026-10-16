@@ -81,6 +81,31 @@ def _restore_api_db():
         mod._db = saved
 
 
+@pytest.fixture(autouse=True)
+def _reset_nws_forecast_cache():
+    """Clear the issue #814 process-level NWS forecast cache around every test.
+
+    ``src.dashboard.api._NWS_FORECAST_CACHE`` is a module-level dict keyed by
+    city with a 5-minute TTL, intended to persist across real requests. Left
+    alone across tests in the same process (xdist packs multiple files onto
+    one worker), a city cached with a mocked value in one test would leak
+    into a later test that mocks ``fetch_nws_forecast_high`` differently for
+    the same city — mirrors the ``_restore_api_db``/``_reset_portfolio_cache``
+    pattern already used for the other module-level caches in this file.
+    """
+    mod = sys.modules.get("src.dashboard.api")
+    if mod is None:
+        yield
+        return
+    saved = dict(mod._NWS_FORECAST_CACHE)
+    mod._NWS_FORECAST_CACHE.clear()
+    try:
+        yield
+    finally:
+        mod._NWS_FORECAST_CACHE.clear()
+        mod._NWS_FORECAST_CACHE.update(saved)
+
+
 class _CaptureHandler(logging.Handler):
     """Collect records rendered by this handler's formatter (strings, not LogRecords)."""
 
