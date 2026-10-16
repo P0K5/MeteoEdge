@@ -5714,6 +5714,58 @@ let _copyPostureUnavailable = false;
 const _COPY_POSTURE_UNKNOWN_ARIA_FAILED = 'Live status unavailable — could not load live eligibility, retrying automatically';
 const _COPY_POSTURE_UNKNOWN_ARIA_LOADING = 'Live status unavailable — loading live eligibility';
 
+// Issue #1332: an indefinite skeleton (permanent aria-busy) is unfriendly to
+// screen-reader users and hides that the rest of the tab's data is already
+// ready -- it is only the KPI row's off/on reading that is blocked on the
+// posture. Once the posture has stayed unknown this long with no successful
+// /api/config read yet, the KPI row swaps the skeleton for neutral "--"
+// cards with a hint (never a guessed "off"/PAPER). Named per the acceptance
+// criteria ("about 30 to 60 seconds"); sits above the 30s posture-poll
+// cadence so a single slow poll never flips it.
+const COPY_LIVE_POSTURE_UNKNOWN_HINT_MS = 45_000;
+const COPY_LIVE_POSTURE_UNKNOWN_HINT_TEXT = 'Waiting for live status';
+let _copyPostureUnknownTimer = null;
+// Sticky once true: _copyPostureLoaded only ever flips false -> true once
+// (see renderCopyTradingModePosture), so this flag is never consulted again
+// after that first success.
+let _copyPostureUnknownExpired = false;
+
+function _copyLivePostureUnknownTimeout() {
+  _copyPostureUnknownTimer = null;
+  if (_copyPostureLoaded) return;   // resolved in the meantime -- nothing to flip
+  _copyPostureUnknownExpired = true;
+  _copyLiveRenderKpis();
+}
+
+// Armed lazily the first time the KPI row renders while the posture is still
+// unknown (never at script load) so a posture that resolves quickly never
+// starts a timer at all.
+function _copyArmPostureUnknownTimer() {
+  if (_copyPostureUnknownTimer || _copyPostureUnknownExpired || _copyPostureLoaded) return;
+  _copyPostureUnknownTimer = setTimeout(_copyLivePostureUnknownTimeout, COPY_LIVE_POSTURE_UNKNOWN_HINT_MS);
+  // Node (the behaviour-test harnesses that run this inline script directly,
+  // not through a browser) keeps the process alive until every timer fires
+  // or is unref'd -- without this a stuck posture would hang any test that
+  // happens to render the Live KPI row for the whole threshold. Browsers
+  // return a plain number from setTimeout with no .unref method, so this is
+  // a no-op there.
+  if (_copyPostureUnknownTimer && typeof _copyPostureUnknownTimer.unref === 'function') {
+    _copyPostureUnknownTimer.unref();
+  }
+}
+
+// Shared by both call sites in _copyLiveRenderKpis() that need "posture is
+// still unknown" treatment (the common parked-fetch path where there is no
+// positions data yet, and the defense-in-depth path where positions data
+// already arrived by some other caller) so the skeleton/waiting decision and
+// the timer-arming are made in exactly one place.
+function _copyLiveKpiPostureWaitState() {
+  _copyArmPostureUnknownTimer();
+  return _copyPostureUnknownExpired
+    ? { html: _copyLiveKpiWaitingHtml(), busy: false }
+    : { html: _copyLiveKpiSkeletonHtml(), busy: true };
+}
+
 function _copyApplyPostureBadges() {
   // The same shared component is rendered on all three copy tabs (class
   // .copy-trading-mode-banner, per-tab ids); one fetch updates every
@@ -5752,6 +5804,8 @@ function renderCopyTradingModePosture(liveEnabled) {
   _copyPostureLoaded = true;
   _copyPostureUnavailable = false;
   _copyLiveTradingEnabled = !!liveEnabled;
+  // #1332: the posture resolved -- no need for the stuck-posture timer any more.
+  if (_copyPostureUnknownTimer) { clearTimeout(_copyPostureUnknownTimer); _copyPostureUnknownTimer = null; }
   _copyApplyPostureBadges();
   // Paper tab cross-link: only while live trading is on (no number).
   const paperLiveNote = document.getElementById('copy-paper-live-note');
@@ -8042,6 +8096,16 @@ function _copyLiveKpiUnavailableHtml() {
   return `<div class="wallet-card copy-live-kpi-single"><div class="wc-label">Live</div><div class="wc-value">Live figures unavailable</div><div class="wc-sub">Could not load live data — retrying automatically.</div></div>`;
 }
 
+// #1332: replaces the skeleton once the posture has been unknown too long --
+// same four-card shape as the skeleton, neutral "--" values (never a guess),
+// and a hint that the rest of the tab is not stuck, just waiting on this one
+// signal. aria-busy is cleared by the caller for this state.
+function _copyLiveKpiWaitingHtml() {
+  return ['Live P&amp;L', 'Open live exposure', 'Open live positions', 'Live wallets']
+    .map(l => _copyLiveKpiCardHtml(l, '—', COPY_LIVE_POSTURE_UNKNOWN_HINT_TEXT))
+    .join('');
+}
+
 function _copyLiveKpiCardsHtml(d) {
   const f = _copyLiveFollowedData;
   const nSettled = d.live_total.n_settled;
@@ -8089,14 +8153,21 @@ function _copyLiveRenderKpis() {
   if (!d) {
     if (_copyLiveFetchFailed) {
       html = _copyLiveKpiUnavailableHtml();
+    } else if (!_copyPostureLoaded) {
+      // Nothing to show yet because the posture fetch (not the positions
+      // fetch) is the one stuck -- same waiting-or-skeleton decision as the
+      // branch below (#1332).
+      ({ html, busy } = _copyLiveKpiPostureWaitState());
     } else {
       html = _copyLiveKpiSkeletonHtml();
       busy = true;
     }
   } else if (!_copyPostureLoaded) {
-    // The off/on posture is not known yet -- never guess "off".
-    html = _copyLiveKpiSkeletonHtml();
-    busy = true;
+    // The off/on posture is not known yet -- never guess "off". Defense in
+    // depth: in normal operation positions stay parked (above) until the
+    // posture is known, so `d` is null here too, but a caller that renders
+    // positions directly must still get the same treatment (#1332).
+    ({ html, busy } = _copyLiveKpiPostureWaitState());
   } else if (!_copyLiveTradingEnabled && !_copyLiveHasHistory(d)) {
     html = _copyLiveKpiOffHtml();
   } else {

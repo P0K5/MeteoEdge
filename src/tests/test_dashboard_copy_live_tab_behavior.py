@@ -124,6 +124,32 @@ _PRELUDE = textwrap.dedent(r"""
     console.error = () => {};
     const settle = async () => { for (let i = 0; i < 6; i++) await new Promise(r => setImmediate(r)); };
 
+    // ---- virtual clock for setTimeout (issue #1332: deterministic control
+    // over the posture-unknown threshold timer; nothing else in this file's
+    // tests depends on a REAL setTimeout/Date.now ever firing or advancing,
+    // same technique as test_dashboard_copy_tab_controller_behavior.py's
+    // setInterval/Date.now override) -------------------------------------
+    let _now = 1_000_000;
+    Date.now = () => _now;
+    let _timeoutId = 0;
+    const _timeouts = new Map();   // id -> { fn, due }
+    global.setTimeout = (fn, ms) => { const id = ++_timeoutId; _timeouts.set(id, { fn, due: _now + (ms || 0) }); return id; };
+    global.clearTimeout = (id) => { _timeouts.delete(id); };
+    async function advanceTime(ms) {
+      const end = _now + ms;
+      for (;;) {
+        const due = [..._timeouts.entries()].filter(([, t]) => t.due <= end).sort((a, b) => a[1].due - b[1].due)[0];
+        if (!due) break;
+        const [id, t] = due;
+        _timeouts.delete(id);
+        _now = Math.max(_now, t.due);
+        t.fn();
+        await settle();
+      }
+      _now = end;
+      await settle();
+    }
+
     // ---- fetch stub: routes by URL prefix, records every call ---------------
     const calls = [];                      // { url, opts }
     const routes = {};                     // prefix -> () => ({ ok, status, body })
@@ -266,6 +292,52 @@ def test_kpi_skeleton_has_no_numbers_and_marks_busy(tmp_path):
         assert.strictEqual(el('copy-live-kpis').getAttribute('aria-busy'), 'true');
         renderCopyTradingModePosture(true);
         assert.ok(el('copy-live-kpis').innerHTML.includes('+$9.00'), 'the first posture result resolves the skeleton');
+        assert.strictEqual(el('copy-live-kpis').getAttribute('aria-busy'), 'false');
+    """, tmp_path)
+
+
+def test_kpi_row_switches_to_a_waiting_hint_after_the_threshold(tmp_path):
+    """#1332: if the posture fetch never succeeds, the KPI row must not stay
+    an indefinite skeleton -- past the named threshold it shows neutral "--"
+    cards with a hint and clears aria-busy, but still never guesses off/paper."""
+    run_js("""
+        // Arms the #1332 timer the same way a real tab entry does (the
+        // followed-wallets render is the first thing to call _copyLiveRenderKpis()).
+        renderFollowedWallets(FOLLOWED([LIVE_W('0xLive')]), 'live');
+        let html = el('copy-live-kpis').innerHTML;
+        assert.ok(html.includes('skeleton'), 'still a skeleton before the threshold');
+        assert.strictEqual(el('copy-live-kpis').getAttribute('aria-busy'), 'true');
+
+        await advanceTime(COPY_LIVE_POSTURE_UNKNOWN_HINT_MS);
+        html = el('copy-live-kpis').innerHTML;
+        assert.ok(!html.includes('skeleton'), 'no longer a skeleton past the threshold');
+        assert.ok(html.includes('—'), 'neutral dash, not a guessed figure');
+        assert.ok(html.includes('Waiting for live status'), 'hint text explains the wait');
+        assert.strictEqual(el('copy-live-kpis').getAttribute('aria-busy'), 'false', 'aria-busy is cleared');
+        assert.ok(!html.includes('Live trading is off') && !/PAPER/.test(html), 'never a guessed off/paper state');
+        assert.ok(!NO_NUMBERS.test(textOf(html)), 'no figures either, just the dash: ' + html);
+    """, tmp_path)
+
+
+def test_kpi_row_recovers_with_real_figures_once_posture_succeeds(tmp_path):
+    """#1332: once the posture finally resolves after the waiting-hint kicked
+    in, the cards fill with real data exactly as the non-degraded path does."""
+    run_js("""
+        routes['/api/copy-trading/positions'] = () => ({ body: POS({
+          live_total: { n_settled: 1, realized_pnl_usd: 9 }, live_realized_pnl_history: [CLOSED(1, 9)] }) });
+        await fetchCopyTradingPositions('live');                       // parked: posture still unknown
+        renderFollowedWallets(FOLLOWED([LIVE_W('0xLive')]), 'live');   // arms the #1332 timer
+
+        await advanceTime(COPY_LIVE_POSTURE_UNKNOWN_HINT_MS);
+        let html = el('copy-live-kpis').innerHTML;
+        assert.ok(html.includes('Waiting for live status'), 'past the threshold: waiting hint');
+        assert.strictEqual(el('copy-live-kpis').getAttribute('aria-busy'), 'false');
+
+        posture(true);
+        await fetchCopyTradingModePosture();            // posture finally succeeds -- unparks the payload
+        html = el('copy-live-kpis').innerHTML;
+        assert.ok(html.includes('+$9.00'), 'real figures render once posture recovers');
+        assert.ok(!html.includes('Waiting for live status') && !html.includes('skeleton'));
         assert.strictEqual(el('copy-live-kpis').getAttribute('aria-busy'), 'false');
     """, tmp_path)
 
