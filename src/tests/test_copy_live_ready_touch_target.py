@@ -3,16 +3,58 @@
 Verifies that the Ready roster applies the same CSS class and structure
 as the Live roster to ensure action buttons meet the 44px touch-target
 minimum at 375px viewport width.
+
+AC4 test (_followedGoLiveButtonHtml disabled states) uses the established
+pattern from test_copy_trading_followed_wallets_js_logic.py: extracts and
+executes the actual inline <script> block under Node, calling the real
+function with test wallet objects and asserting on the actual returned HTML.
 """
 from __future__ import annotations
 
 from pathlib import Path
 import re
+import shutil
+import subprocess
+import textwrap
 
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 INDEX_HTML = REPO_ROOT / "src" / "dashboard" / "static" / "index.html"
+NODE = shutil.which("node")
+
+# Minimal DOM/window stubs (same pattern as test_copy_trading_followed_wallets_js_logic.py)
+_PRELUDE = textwrap.dedent("""
+    function makeStubElement() {
+      const el = {
+        style: {}, classList: { add(){}, remove(){}, toggle(){}, contains(){ return false; } },
+        dataset: {}, children: [], childElementCount: 0,
+        addEventListener(){}, removeEventListener(){},
+        querySelectorAll(){ return []; }, querySelector(){ return null; },
+        appendChild(){}, remove(){}, disabled: false, title: '',
+        focus(){}, setAttribute(){}, removeAttribute(){}, closest(){ return null; },
+      };
+      Object.defineProperty(el, 'innerHTML', { get(){ return this._innerHTML || ''; }, set(v){ this._innerHTML = v; } });
+      Object.defineProperty(el, 'textContent', { get(){ return this._textContent || ''; }, set(v){ this._textContent = v; } });
+      return el;
+    }
+    const _elementsById = {};
+    global.document = {
+      getElementById(id) {
+        if (!_elementsById[id]) _elementsById[id] = makeStubElement();
+        return _elementsById[id];
+      },
+      querySelectorAll() { return []; },
+      querySelector() { return null; },
+      createElement() { return makeStubElement(); },
+      documentElement: { getAttribute(){ return 'dark'; }, setAttribute(){} },
+      addEventListener() {},
+    };
+    global.window = { addEventListener() {}, prompt: () => '', confirm: () => true };
+    global.localStorage = { getItem() { return null; }, setItem() {} };
+    global.fetch = async () => ({ ok: true, json: async () => ({}) });
+    global.lucide = { createIcons() {} };
+""")
 
 
 def test_ready_roster_has_copy_table_roster_class():
@@ -116,51 +158,78 @@ def test_no_regressions_at_600px_and_above():
         "The min-height:44px rule must be inside the @media(max-width:600px) block, not at root level"
 
 
-def test_disabled_go_live_button_keeps_css_classes():
-    """The disabled 'Go live' button (paused wallet or posture unavailable)
-    must still carry btn-followed-action class to maintain the 44px min-height
-    in the copy-table--roster context."""
+def _extract_inline_script() -> str:
+    """Extract the inline <script> block from index.html."""
     html = INDEX_HTML.read_text(encoding='utf-8')
+    match = re.search(r"<script>([\s\S]*?)</script>", html)
+    assert match, "Could not find the dashboard's inline <script> block"
+    return match.group(1)
 
-    # Find the _followedGoLiveButtonHtml function to verify disabled branches
-    # The function has three branches:
-    # 1. status='paused' -> returns disabled button with class btn-followed-action
-    # 2. _copyPostureUnavailable -> returns disabled button with class btn-followed-action
-    # 3. normal case -> returns enabled button with class btn-followed-action
 
-    # Verify all branches render the btn-followed-action class
-    golive_func = re.search(
-        r"function _followedGoLiveButtonHtml\(.*?\{.*?return.*?\}(?=\n\n)",
-        html,
-        re.DOTALL
+@pytest.mark.skipif(NODE is None, reason="node is not on PATH in this environment")
+def test_disabled_go_live_button_keeps_css_classes(tmp_path):
+    """AC4: The disabled 'Go live' button (paused wallet or posture unavailable)
+    must still carry btn-followed-action class and disabled attribute to maintain
+    the 44px min-height in the copy-table--roster context.
+
+    This test executes the actual _followedGoLiveButtonHtml function under Node
+    with real wallet objects, not just scanning source text."""
+
+    # Build test script: prelude + real script + assertions
+    test_script = _PRELUDE + "\n" + _extract_inline_script() + "\n" + textwrap.dedent("""
+        const assert = require('assert');
+
+        // Test 1: paused wallet renders disabled button with btn-followed-action
+        const pausedWallet = {
+          address: '0xPausedWallet123456789abcdef0123456789ab',
+          status: 'paused',
+          live_enabled: false
+        };
+        let pausedHtml = _followedGoLiveButtonHtml(pausedWallet);
+        assert.ok(pausedHtml.includes('disabled'), 'paused wallet should render disabled button');
+        assert.ok(pausedHtml.includes('btn-followed-action'), 'paused wallet button must have btn-followed-action class');
+        assert.ok(pausedHtml.includes('<button'), 'paused wallet must return a button element');
+
+        // Test 2: posture-unavailable wallet renders disabled button with btn-followed-action
+        _copyPostureUnavailable = true;
+        const postureWallet = {
+          address: '0xPostureUnavail123456789abcdef0123456789ab',
+          status: 'active',
+          live_enabled: false
+        };
+        let postureHtml = _followedGoLiveButtonHtml(postureWallet);
+        assert.ok(postureHtml.includes('disabled'), 'posture-unavailable wallet should render disabled button');
+        assert.ok(postureHtml.includes('btn-followed-action'), 'posture-unavailable button must have btn-followed-action class');
+        assert.ok(postureHtml.includes('<button'), 'posture-unavailable must return a button element');
+
+        // Test 3: enabled wallet renders enabled button with btn-followed-action
+        _copyPostureUnavailable = false;
+        const enabledWallet = {
+          address: '0xEnabledWallet12345678 9abcdef0123456789ab',
+          status: 'active',
+          live_enabled: false
+        };
+        let enabledHtml = _followedGoLiveButtonHtml(enabledWallet);
+        assert.ok(!enabledHtml.includes('disabled'), 'enabled wallet should render enabled button (no disabled attribute)');
+        assert.ok(enabledHtml.includes('btn-followed-action'), 'enabled button must also have btn-followed-action class');
+        assert.ok(enabledHtml.includes('<button'), 'enabled must return a button element');
+
+        console.log('DISABLED_BUTTON_TEST_PASSED');
+    """)
+
+    script_path = tmp_path / "disabled_button_test.js"
+    script_path.write_text(test_script, encoding='utf-8')
+
+    result = subprocess.run(
+        [NODE, str(script_path)],
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
-    assert golive_func, "Could not find _followedGoLiveButtonHtml function"
-    func_text = golive_func.group(0)
-
-    # All return statements should include class="btn-followed-action"
-    # (either as btn-followed-revert-live or btn-followed-golive, but always btn-followed-action)
-    disabled_returns = re.findall(
-        r"return\s+`<button[^>]*class=\"[^\"]*btn-followed-action[^\"]*\"[^`]*disabled[^`]*`",
-        func_text,
-        re.DOTALL
-    )
-    assert len(disabled_returns) >= 2, \
-        "Expected at least 2 disabled button returns with btn-followed-action class (paused + posture-unavailable)"
-
-    # Verify enabled return also has the class (the last return statement)
-    # Count all button returns - should be 3 total (paused, posture-unavailable, enabled)
-    all_button_returns = re.findall(
-        r"return\s+`<button[^`]*`",
-        func_text,
-        re.DOTALL
-    )
-    assert len(all_button_returns) >= 3, \
-        f"Expected at least 3 return statements with buttons, found {len(all_button_returns)}"
-
-    # Verify all have the btn-followed-action class (both enabled and disabled)
-    for ret in all_button_returns:
-        assert "btn-followed-action" in ret, \
-            "All button returns (enabled and disabled) must have btn-followed-action class"
+    assert result.returncode == 0, \
+        f"_followedGoLiveButtonHtml test failed:\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+    assert "DISABLED_BUTTON_TEST_PASSED" in result.stdout, \
+        f"Test assertions did not pass:\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}"
 
 
 if __name__ == '__main__':
