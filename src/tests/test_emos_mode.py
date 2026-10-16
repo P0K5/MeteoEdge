@@ -127,6 +127,75 @@ class TestDefaultModeLiveConfig:
 
 
 # ---------------------------------------------------------------------------
+# Test 1c: training-ineligible cities never inherit EMOS_DEFAULT_MODE
+# (issue #1435 — Wuhan's abandoned retrain was leaking emos_primary through
+# the default-mode fallback and spamming the ready_for_promotion=0 WARNING).
+# ---------------------------------------------------------------------------
+
+class TestGetCityModeTrainingIneligible:
+    def test_ineligible_city_with_no_rows_resolves_legacy_despite_primary_default(self):
+        """Wuhan (training_eligible=False, no calibration rows at all) must
+        resolve to 'legacy' even when EMOS_DEFAULT_MODE is live-set to
+        'emos_primary' for the promoted-cities rollout."""
+        db = _db()
+        db.set_config("EMOS_DEFAULT_MODE", "emos_primary")
+        assert get_city_mode("Wuhan", db=db) == "legacy"
+
+    def test_ineligible_city_with_stale_row_on_inactive_track_resolves_legacy(self):
+        """Wuhan has a calibration row, but keyed to a (forecast_source,
+        sigma_source) combination that is no longer the active track — so
+        db.get_emos_coefficients resolves None for both shadow and primary,
+        same as having no row at all. Must still resolve to 'legacy', not
+        the live EMOS_DEFAULT_MODE."""
+        db = _db()
+        db.set_config("EMOS_DEFAULT_MODE", "emos_primary")
+        # Row written for a non-active forecast_source so the active-track
+        # lookup below returns None for both modes, mirroring the issue's
+        # fixed/ensemble sigma_source mismatch.
+        db.upsert_emos_coefficients(
+            city="Wuhan",
+            model_mode="emos_shadow",
+            a=0.0, b=1.0, c=0.0, d=1.0,
+            crps_score=1.5,
+            trained_at=datetime.utcnow().isoformat(),
+            ready_for_promotion=0,
+            lead_hours=24,
+            forecast_source="inactive_stack",
+        )
+        assert get_city_mode("Wuhan", db=db) == "legacy"
+
+    def test_eligible_city_with_no_rows_still_honours_default_mode(self):
+        """No regression (2026-10-10/11 promoted-city rollout): a
+        training-eligible city with no calibration rows at all still falls
+        through to the live EMOS_DEFAULT_MODE unchanged."""
+        db = _db()
+        db.set_config("EMOS_DEFAULT_MODE", "emos_primary")
+        assert get_city_mode("Miami", db=db) == "emos_primary"
+
+    def test_ineligible_city_with_shadow_row_on_active_track_still_serves_shadow(self):
+        """An ineligible city's own shadow row on the active track is
+        unaffected by this guard -- only the no-row default-mode fallback is
+        in scope."""
+        db = _db()
+        db.set_config("EMOS_DEFAULT_MODE", "emos_primary")
+        _upsert(db, "Wuhan", "emos_shadow", ready_for_promotion=0)
+        assert get_city_mode("Wuhan", db=db) == "emos_shadow"
+
+    def test_ineligible_city_with_explicit_override_is_still_honoured(self):
+        """An explicit emos_mode_override is a deliberate operator decision
+        and is out of scope for this guard -- only the default fallback path
+        is restricted."""
+        db = _db()
+        seed_config(db)
+        db.set_config("EMOS_MIN_SAMPLES_PROMOTION", "20")
+        db.set_emos_effective_mode("Wuhan", "emos_primary")
+        _upsert(db, "Wuhan", "emos_primary", ready_for_promotion=1)
+        for i in range(20):
+            db.log_crps("Wuhan", f"2026-05-{i + 1:02d}", 1.5)
+        assert get_city_mode("Wuhan", db=db) == "emos_primary"
+
+
+# ---------------------------------------------------------------------------
 # Test 2: shadow active — emos_shadow row present, no primary
 # ---------------------------------------------------------------------------
 
