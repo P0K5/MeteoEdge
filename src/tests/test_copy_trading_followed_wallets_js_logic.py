@@ -657,9 +657,9 @@ _ASSERTIONS = textwrap.dedent("""
       assert.ok(paperHtmlAll.includes('+$12.50') && paperHtmlAll.includes('-$3.25'), 'paper running P&L renders');
       // Issue #1316: the contaminated wallet discloses its still-open
       // both-sides-above-parity pairs; an unaffected wallet shows nothing.
-      assert.ok(paperHtmlAll.includes('$1.46 locked-in loss pending (2 both-sides pairs)'),
+      assert.ok(paperHtmlAll.includes('$1.46 locked in from 2 contaminated positions'),
         'contamination note renders for the affected wallet');
-      assert.strictEqual((paperHtmlAll.match(/locked-in loss pending/g) || []).length, 1,
+      assert.strictEqual((paperHtmlAll.match(/locked in from/g) || []).length, 1,
         'only the contaminated wallet gets a contamination note');
       // Designer review (PR #1354, round 1): dedicated red tier, not the
       // neutral .followed-paused-reason caption style; the alert-triangle
@@ -668,7 +668,7 @@ _ASSERTIONS = textwrap.dedent("""
       // screen readers).
       assert.ok(paperHtmlAll.includes('class="followed-contamination-note"'),
         'contamination note uses its own dedicated red-tier class, not .followed-paused-reason');
-      assert.ok(paperHtmlAll.includes('<i data-lucide="alert-triangle"></i>$1.46 locked-in loss pending'),
+      assert.ok(paperHtmlAll.includes('<i data-lucide="alert-triangle"></i>$1.46 locked in from'),
         'contamination note uses the established alert-triangle icon convention, not a raw glyph');
       assert.ok(!paperHtmlAll.includes('⚠'), 'no raw warning glyph anywhere in the contamination note');
       assert.ok(paperHtmlAll.includes('not yet settled into realized P&amp;L'),

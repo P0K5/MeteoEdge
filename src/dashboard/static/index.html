@@ -5994,9 +5994,8 @@ function _followedContaminationNoteHtml(w) {
   //   docs/design/copy-trading-live-views.md). No title attribute here at
   //   all: everything a reader needs is already in the rendered text.
   return `<span class="followed-contamination-note"><i data-lucide="alert-triangle"></i>`
-    + `$${usd} locked-in loss pending (${n} both-sides ${plural}) — `
-    + `pre-fix guaranteed-loss position${n === 1 ? '' : 's'} still open for this wallet `
-    + `(issue #1316), not yet settled into realized P&amp;L</span>`;
+    + `$${usd} locked in from ${n} contaminated position${n === 1 ? '' : 's'} — `
+    + `legacy issue, not yet settled into realized P&amp;L</span>`;
 }
 
 // Candidates now live on the Copy · Wallets tab (issue #1275).
