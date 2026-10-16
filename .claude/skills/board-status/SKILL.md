@@ -71,6 +71,20 @@ gh api graphql -f query='
 
 ## 3. Post the matching issue comment
 
+**The `export GH_TOKEN=...` above does not carry over to this step if it's a
+separate tool call** — the Bash tool only persists the working directory
+across calls, never shell state like exported env vars. Chain the export
+with the comment command itself, every time:
+
+```bash
+export GH_TOKEN="$GITHUB_TOKEN_OPERATIONAL" && gh issue comment <N> --body "..."
+```
+
+(PM: `GITHUB_TOKEN_SUPERVISOR` instead.) Treating "I exported it a step ago"
+as sufficient is exactly how #998/#1080/#1085/#1130/#1269/#1008/#1367 kept
+recurring — the token-export instruction existed and was followed, just not
+in the same shell invocation as the command it was supposed to authenticate.
+
 | Event | New status option | Comment template |
 |---|---|---|
 | Starting work | `STATUS_OPT_IN_PROGRESS` | "Starting work — plan: [2–4 steps]" |

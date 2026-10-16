@@ -77,17 +77,30 @@ hand-roll workarounds; use this instead:
      change when practical.
 8. **(G) Open a PR** following `.github/pull_request_template.md` — since
    `gh pr create --body …` bypasses the template, you must include its sections
-   yourself. **CRITICAL: Before running `gh pr create` or any other `gh`
-   command, export your operational GitHub token:**
+   yourself. **CRITICAL: `export GH_TOKEN="$GITHUB_TOKEN_OPERATIONAL"` must be
+   in the SAME shell command as `gh pr create` (joined with `&&`, or the same
+   heredoc), never a separate one.** The Bash tool does not persist shell
+   state (env vars, `export`, `cd`) across separate tool calls — only the
+   working directory carries over. An export run as its own call is gone by
+   the time the next call runs `gh pr create`, and `gh` silently falls back
+   to the default authenticated account (the PM's), which is exactly how
+   #998/#1080/#1085/#1130/#1269/#1008/#1367 kept recurring despite this step
+   already being documented. Always write it as one command:
 
    ```bash
-   export GH_TOKEN="$GITHUB_TOKEN_OPERATIONAL"
+   export GH_TOKEN="$GITHUB_TOKEN_OPERATIONAL" && gh pr create \
+     --title "..." --body-file ./.pr-body-<issue>.md
    ```
 
    This ensures PRs are authored under the operational account (not the PM's
    account), and allows the PM to formally review and approve your PR via the
    GitHub API. Without this, `gh pr review --approve` will fail with "Can not
-   approve your own pull request" (see governance.md for token rules).
+   approve your own pull request" (see governance.md for token rules). The
+   same rule applies to EVERY later `gh` call in this workflow (step 9's
+   board move, step 10's comment, step 11's reviewer request, step 12's
+   fixes) — each is its own tool call, so each one re-chains its own
+   `export GH_TOKEN="$GITHUB_TOKEN_OPERATIONAL" && gh ...`. Never rely on an
+   export from an earlier step still being in effect.
 
    PR sections:
    - `Closes #N` for every related issue (mandatory — unlinked PRs are rejected)
