@@ -80,14 +80,40 @@ def test_action_buttons_have_followed_actions_cell_class():
 
 def test_no_regressions_at_600px_and_above():
     """The media query for min-height:44px applies only at max-width:600px,
-    so larger viewports should not be affected."""
+    so larger viewports should not be affected. Verifies the rule is scoped
+    INSIDE the media query, not at root level."""
     html = INDEX_HTML.read_text(encoding='utf-8')
 
-    # Look for the pattern: .copy-table--roster with min-height:44px in media query
-    pattern = r"\.copy-table--roster[^}]*\.btn-followed-action\{min-height:44px;\}"
-    match = re.search(pattern, html, re.DOTALL)
-    assert match, \
-        "The CSS must have .copy-table--roster .btn-followed-action{min-height:44px;} rule"
+    # Verify the rule exists AND is inside a @media query (search forward from the rule to find @media before it)
+    # Find the min-height:44px rule for copy-table--roster
+    rule_pattern = r"\.copy-table--roster\s+\.followed-actions-cell\s+\.btn-followed-action\s*\{\s*min-height\s*:\s*44px\s*;\s*\}"
+    rule_match = re.search(rule_pattern, html)
+    assert rule_match, "The min-height:44px rule for .copy-table--roster .btn-followed-action must exist"
+
+    # Now verify this rule is inside @media(max-width:600px), not at root level
+    # Search backward from the rule to find the nearest @media query
+    rule_start = rule_match.start()
+    before_rule = html[:rule_start]
+
+    # Find the last @media(max-width: before the rule
+    last_media = before_rule.rfind("@media(max-width:600px)")
+    assert last_media >= 0, "The min-height:44px rule should be inside an @media(max-width:600px) query"
+
+    # Find the closing brace of that media query (count braces after @media)
+    media_start = last_media + len("@media(max-width:600px){")
+    brace_count = 1
+    pos = media_start
+    while brace_count > 0 and pos < len(html):
+        if html[pos] == "{":
+            brace_count += 1
+        elif html[pos] == "}":
+            brace_count -= 1
+        pos += 1
+    media_end = pos
+
+    # Verify the rule is between media_start and media_end
+    assert last_media < rule_start < media_end, \
+        "The min-height:44px rule must be inside the @media(max-width:600px) block, not at root level"
 
 
 if __name__ == '__main__':
