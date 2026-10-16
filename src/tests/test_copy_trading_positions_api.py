@@ -245,6 +245,91 @@ class TestPositionsEndpoint:
         assert row["divergence_usd"] is None
         assert row["divergence_pct"] is None
 
+    def _open_opposite_leg(self, db, address, *, outcome_index, entry_price,
+                            entry_ts, market="M-CONTAM", stake_usd=5.0):
+        """Insert one open copy_positions leg for *address*/*market* at the
+        given outcome/price/entry_ts -- mirrors `_open_position` above but
+        lets the outcome vary, needed to build an opposite-side overlap
+        pair (issue #1316's `get_opposite_side_overlap_pairs` definition)."""
+        signal_id = db.insert_copy_signal(
+            address=address, market=market, source_price=entry_price - 0.01,
+            detected_at=entry_ts, outcome_index=outcome_index, order_placed=1,
+            fill_price=entry_price, size_usd=stake_usd,
+        )
+        return db.insert_copy_position(
+            signal_id=signal_id, address=address, market=market,
+            outcome_index=outcome_index, entry_price=entry_price,
+            stake_usd=stake_usd, entry_ts=entry_ts,
+        )
+
+    def test_opposite_side_contamination_disclosed_when_still_open(self, api_client):
+        """Issue #1357: the Health/backtest comparison table discloses the
+        same still-open both-sides-above-parity contamination as the
+        Followed Wallets view (issue #1316), reusing the identical overlap
+        definition -- 0.60 + 0.50 = 1.10 combined cost, $0.10 over parity
+        on the $5/leg average stake = $0.50 locked-in loss."""
+        client, db = api_client
+        db.insert_followed_wallet(address="0xContam", stake_per_trade=5.0, added_at="2026-09-01T00:00:00Z")
+        self._open_opposite_leg(db, "0xContam", outcome_index=0, entry_price=0.60,
+                                 entry_ts="2026-09-19T00:00:00Z")
+        self._open_opposite_leg(db, "0xContam", outcome_index=1, entry_price=0.50,
+                                 entry_ts="2026-09-19T01:00:00Z")
+
+        resp = client.get("/api/copy-trading/positions")
+        row = {w["address"]: w for w in resp.json()["per_wallet"]}["0xContam"]
+        assert row["opposite_side_contamination_pairs"] == 1
+        assert row["opposite_side_contamination_usd"] == pytest.approx(0.50)
+
+    def test_opposite_side_contamination_zero_for_clean_wallet(self, api_client):
+        """A wallet with ordinary settled history and no above-parity
+        overlap discloses nothing -- the 0/0.0 default, not a missing
+        field."""
+        client, db = api_client
+        _settle(db, "0xClean", stake_usd=5.0, pnl=2.0)
+
+        resp = client.get("/api/copy-trading/positions")
+        row = {w["address"]: w for w in resp.json()["per_wallet"]}["0xClean"]
+        assert row["opposite_side_contamination_pairs"] == 0
+        assert row["opposite_side_contamination_usd"] == 0.0
+
+    def test_opposite_side_contamination_cleared_once_both_legs_settle(self, api_client):
+        """Once both legs of an above-parity pair have settled, their loss
+        is already fully reflected in realized_pnl_usd -- the per-wallet
+        row must stop disclosing it (the `_still_open` convention in
+        summarize_opposite_side_overlap's docstring)."""
+        client, db = api_client
+        a_id = self._open_opposite_leg(db, "0xWasContam", outcome_index=0, entry_price=0.60,
+                                        entry_ts="2026-09-19T00:00:00Z")
+        b_id = self._open_opposite_leg(db, "0xWasContam", outcome_index=1, entry_price=0.50,
+                                        entry_ts="2026-09-19T01:00:00Z")
+        db.settle_copy_position(a_id, -0.5, "2026-09-20T00:00:00Z")
+        db.settle_copy_position(b_id, 0.0, "2026-09-20T00:00:00Z")
+
+        resp = client.get("/api/copy-trading/positions")
+        row = {w["address"]: w for w in resp.json()["per_wallet"]}["0xWasContam"]
+        assert row["opposite_side_contamination_pairs"] == 0
+        assert row["opposite_side_contamination_usd"] == 0.0
+
+    def test_opposite_side_contamination_never_leaks_into_live_per_wallet(self, api_client):
+        """Issue #1357's acceptance criteria: the overlap query only covers
+        `copy_positions` (paper) -- a live row for the same wallet must
+        keep the 0/0.0 default rather than inheriting the paper figure."""
+        client, db = api_client
+        db.insert_followed_wallet(address="0xContamLive", stake_per_trade=5.0, added_at="2026-09-01T00:00:00Z")
+        self._open_opposite_leg(db, "0xContamLive", outcome_index=0, entry_price=0.60,
+                                 entry_ts="2026-09-19T00:00:00Z")
+        self._open_opposite_leg(db, "0xContamLive", outcome_index=1, entry_price=0.50,
+                                 entry_ts="2026-09-19T01:00:00Z")
+        _settle_live(db, "0xContamLive", stake_usd=5.0, pnl=1.0)
+
+        resp = client.get("/api/copy-trading/positions")
+        data = resp.json()
+        paper_row = {w["address"]: w for w in data["per_wallet"]}["0xContamLive"]
+        assert paper_row["opposite_side_contamination_pairs"] == 1
+        live_row = {w["address"]: w for w in data["live_per_wallet"]}["0xContamLive"]
+        assert live_row["opposite_side_contamination_pairs"] == 0
+        assert live_row["opposite_side_contamination_usd"] == 0.0
+
 
 # ---------------------------------------------------------------------------
 # GET /api/copy-trading/positions -- live column (issue #1186, Epic J)

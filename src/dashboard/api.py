@@ -724,13 +724,29 @@ class CopyWalletPnlBreakdownOut(BaseModel):
     figures (``None`` when the wallet has no screening row to compare
     against) in a single row, so the frontend's backtest-comparison toggle
     (issue #1148 acceptance criteria) just shows/hides columns rather than
-    re-fetching."""
+    re-fetching.
+
+    ``opposite_side_contamination_pairs``/``_usd`` (issue #1357, following
+    up on #1316/#1354) are the same still-OPEN both-sides-above-parity
+    disclosure as ``CopyFollowedWalletOut`` -- see
+    ``src.data.copy_pnl.summarize_opposite_side_overlap``'s docstring for
+    the "0 = never had one, or already settled" convention. Populated only
+    for the PAPER ``per_wallet`` rows: the underlying overlap query
+    (``Database.get_opposite_side_overlap_pairs``) reads ``copy_positions``
+    only, there is no ``copy_live_positions`` equivalent, matching this
+    model's existing backtest-comparison fields which are also Paper-only
+    (see ``CopyPositionsOut``'s docstring). ``live_per_wallet`` rows always
+    leave these at their ``0``/``0.0`` default -- indistinguishable from "no
+    contamination data computed for live" but consistent with the same
+    convention."""
     address: str
     n_settled: int
     realized_pnl_usd: float
     projected_flat_dollar_pnl: float | None = None
     divergence_usd: float | None = None
     divergence_pct: float | None = None
+    opposite_side_contamination_pairs: int = 0
+    opposite_side_contamination_usd: float = 0.0
 
 
 class CopyPnlTotalOut(BaseModel):
@@ -3395,6 +3411,17 @@ def copy_trading_positions() -> CopyPositionsOut:
     ``copy_trading_unfollow_wallet``'s docstring), and those positions'
     realized P&L should stay visible here.
 
+    Issue #1357 (following up on #1316/#1354): each paper per-wallet row
+    also carries ``opposite_side_contamination_pairs``/``_usd`` -- this is
+    the Health/backtest comparison table the Followed Wallets view's own
+    disclosure (issue #1316) never reached, and it's exactly where a reader
+    compares one wallet's ROI against another's, per that issue's own
+    rationale. Reuses ``summarize_opposite_side_overlap`` /
+    ``get_opposite_side_overlap_pairs`` verbatim -- same definitions, so
+    this table's numbers and the Followed Wallets view's can never drift
+    apart. Paper-only, like the backtest-comparison figures above (see
+    ``CopyWalletPnlBreakdownOut``'s docstring for why).
+
     Issue #1186 (Epic J, live/paper twin-panel split): the fields above
     are unchanged and PAPER-only. A fully independent ``live_*`` block is
     computed the same way, one layer up onto ``copy_live_positions`` /
@@ -3428,6 +3455,14 @@ def copy_trading_positions() -> CopyPositionsOut:
         for row in _db.get_open_copy_positions()
     ]
 
+    # Issue #1357: same still-open both-sides-above-parity disclosure as
+    # the Followed Wallets view (issue #1316) -- a wallet absent from this
+    # map has nothing to disclose (never had one, or it already settled),
+    # see summarize_opposite_side_overlap's docstring.
+    contamination_by_wallet = summarize_opposite_side_overlap(
+        _db.get_opposite_side_overlap_pairs()
+    )
+
     # Union of currently-followed addresses and any address with settled
     # history, so a wallet unfollowed after settling positions still shows
     # up in the breakdown (see docstring above).
@@ -3447,7 +3482,16 @@ def copy_trading_positions() -> CopyPositionsOut:
             ))
 
         comparison = get_wallet_backtest_comparison(_db, address)
-        per_wallet.append(CopyWalletPnlBreakdownOut(**comparison))
+        contamination_row = contamination_by_wallet.get(address)
+        per_wallet.append(CopyWalletPnlBreakdownOut(
+            **comparison,
+            opposite_side_contamination_pairs=(
+                contamination_row["n_above_parity_pairs_still_open"] if contamination_row else 0
+            ),
+            opposite_side_contamination_usd=(
+                contamination_row["locked_loss_usd_still_open"] if contamination_row else 0.0
+            ),
+        ))
 
     realized_pnl_history.sort(key=lambda p: p.settled_at)
     # Best-performing wallet first, matching the Candidates view's

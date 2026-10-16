@@ -375,7 +375,20 @@ spec'd by #1258). **Status: Built (this issue, backend only).**
    same rule). Issue #1359 is filed to do one joint copy-density pass
    across this note and #1266/#1355's exceeds-cap note once #1355 also
    lands, rather than each landing PR re-deriving the same row layout
-   independently. The Health/backtest
-   per-wallet comparison table is a second disclosure surface and does not
-   yet carry the same note — tracked separately as issue #1357 rather than
-   folded into this already-multi-file fix.
+   independently.
+
+   **Issue #1357 (decided: extend it).** The Health/backtest per-wallet
+   comparison table (`CopyWalletPnlBreakdownOut`, fed by
+   `copy_trading_positions()`'s paper `per_wallet` loop) was a second
+   disclosure surface that didn't carry the note — flagged as a scope call
+   rather than an oversight when #1354 landed, since it's exactly where a
+   reader compares one wallet's ROI against another's. Extended
+   `CopyWalletPnlBreakdownOut` with the same
+   `opposite_side_contamination_pairs`/`_usd` fields (reusing
+   `summarize_opposite_side_overlap`/`get_opposite_side_overlap_pairs`
+   verbatim, so the two tables' numbers can never drift apart) and
+   `_copyPerWalletRowHtml` renders the same `_followedContaminationNoteHtml`
+   next to Realized P&L — no new UI component. Paper-only, same as this
+   table's existing backtest-comparison figures: the overlap query only
+   covers `copy_positions`, there is no `copy_live_positions` equivalent, so
+   `live_per_wallet` rows are not extended.

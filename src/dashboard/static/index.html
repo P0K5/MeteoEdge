@@ -7471,6 +7471,13 @@ function _copyPerWalletTableHtml(rows) {
     </div>`;
 }
 
+// Issue #1357: reuses _followedContaminationNoteHtml (defined in the
+// Followed Wallets section above, issue #1316) verbatim next to this
+// table's Realized P&L cell too -- this Health/backtest comparison table
+// is exactly where a reader compares one wallet's ROI against another's,
+// so it needs the same still-open-contamination disclosure. The function
+// itself already no-ops (`''`) for a wallet with nothing to disclose, so
+// a 0-pairs row renders identically to before this issue.
 function _copyPerWalletRowHtml(w) {
   const addrEsc = _copyEscapeHtml(w.address);
   const pnlCls = w.realized_pnl_usd >= 0 ? 'copy-pnl-pos' : 'copy-pnl-neg';
@@ -7498,7 +7505,7 @@ function _copyPerWalletRowHtml(w) {
         <span class="copy-feedback-label"></span>
       </td>
       <td class="copy-td">${w.n_settled}</td>
-      <td class="copy-td ${pnlCls}">${_copyFmtUsd(w.realized_pnl_usd)}</td>
+      <td class="copy-td ${pnlCls}">${_copyFmtUsd(w.realized_pnl_usd)}${_followedContaminationNoteHtml(w)}</td>
       ${backtestCells}
     </tr>`;
 }
