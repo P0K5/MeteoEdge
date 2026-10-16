@@ -5,7 +5,13 @@ Controls whether each city uses legacy Gaussian, EMOS shadow, or EMOS primary mo
 import logging
 import os
 
-from src.config import CONFIG_DEFAULTS, FORECAST_STACK_MODELS, MODEL_STATE_ATTRS, get_live_config
+from src.config import (
+    CONFIG_DEFAULTS,
+    FORECAST_STACK_MODELS,
+    MODEL_STATE_ATTRS,
+    get_live_config,
+    is_training_eligible,
+)
 
 log = logging.getLogger(__name__)
 
@@ -91,6 +97,22 @@ def get_city_mode(city: str, db=None) -> str:
 
     Promotion guard: a city needs at least ``EMOS_MIN_SAMPLES`` CRPS log entries
     before it may serve ``emos_primary``, regardless of which path requested it.
+
+    Training-ineligible guard (issue #1435): a city for which
+    ``is_training_eligible(city)`` is ``False`` (e.g. a dead/low-cadence feed
+    flagged in ``source_priority.yaml``, see issue #558) never inherits
+    ``EMOS_DEFAULT_MODE`` via the no-calibration-row fallback in step 2 below —
+    it resolves straight to ``'legacy'`` instead, regardless of the live
+    ``EMOS_DEFAULT_MODE`` value. Such a city's retrain pipeline is abandoned by
+    design, so any calibration row it still has is permanently stale and keyed
+    to whichever (forecast_source, sigma_source) track was active when training
+    stopped; once that track is no longer the active one, the row simply won't
+    resolve and this fallback would otherwise sweep the city into whatever mode
+    is live for the actively-promoted cities (e.g. 'emos_primary'), which it was
+    never retrained or promoted for. This guard applies only to the *default*
+    fallback in step 2 — an explicit operator override (step 1) for such a city
+    is still honoured unconditionally, since that reflects a deliberate
+    decision, not an accidental default leak.
     """
     if db is None:
         return _default_mode()
@@ -109,11 +131,15 @@ def get_city_mode(city: str, db=None) -> str:
     shadow = db.get_emos_coefficients(city, "emos_shadow")
     primary = db.get_emos_coefficients(city, "emos_primary")
     if shadow is None and primary is None:
+        if not is_training_eligible(city):
+            return "legacy"
         return _default_mode(db)
     if primary and primary.get("ready_for_promotion") == 1 and _primary_allowed(city, db):
         return "emos_primary"
     if shadow:
         return "emos_shadow"
+    if not is_training_eligible(city):
+        return "legacy"
     return _default_mode(db)
 
 
