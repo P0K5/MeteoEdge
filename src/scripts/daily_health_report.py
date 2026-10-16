@@ -177,6 +177,17 @@ def _fmt_pnl(eur: "float | None") -> str:
     return f"{sign}EUR{abs(eur):,.2f}"
 
 
+def _fmt_pnl_contract(value: "float | None") -> str:
+    """Shadow PnL is per single contract, not a EUR stake (win at 76c =
+    +0.24, loss = -0.76) -- labelled distinctly from ``_fmt_pnl`` so it is
+    never mistaken for a euro figure. Do not reuse ``_fmt_pnl`` here: it is
+    shared with the live-trading sections, where the value really is EUR."""
+    if value is None:
+        return "N/A"
+    sign = "+" if value >= 0 else "-"
+    return f"{sign}{abs(value):,.2f}/contract"
+
+
 def _fmt_pct(value: "float | None", digits: int = 1) -> str:
     if value is None:
         return "N/A"
@@ -1326,110 +1337,145 @@ def _build_copy_skips(db, today: datetime) -> "tuple[list[str], dict]":
     return lines, flags
 
 
+#: (is_next_day value, section label, SQL predicate on trades.is_next_day).
+#: Next-day evaluations are shadow-only by design -- they can never go live
+#: -- and since 2026-10-11 have moved in the *opposite* direction from the
+#: live-eligible same-day book (#1450). Reporting one pooled number hides
+#: that same-day is clearly profitable; splitting them is the whole point
+#: of this function.
+_SAME_DAY_NEXT_DAY_CUTS = (
+    (0, "Same-day (live-eligible)"),
+    (1, "Next-day (research, shadow-only)"),
+)
+
+
 def _build_param_change_impact(db, today: datetime) -> list[str]:
     """Shadow PnL/win-rate since the entry-gate widening experiment landed.
 
-    Three cuts, in order: the whole shadow book since the change (context),
+    Split same-day (live-eligible) vs next-day (shadow-only research, can
+    never go live -- #1450) first, since pooling them makes a clearly
+    profitable same-day book look like a breakeven wash. Within each split,
+    three cuts, in order: the whole shadow book since the change (context),
     the specific NO/p_yes-0.05-0.10 pocket the gate change itself opened up
     (the thing actually being tested), and the 7 emos_primary-promoted
     cities (a *different* change that landed the same day) -- kept separate
     so a swing in one is never misread as evidence about the other.
+
+    Every win-rate line also shows the breakeven win rate it needs to beat
+    (mean ``actual_price``/100 over the same settled trades) -- NO entries
+    fill at 74-79c, so breakeven is ~77%, not 50%. PnL figures here are
+    shadow trades, which are per single contract, not a EUR stake -- see
+    ``_fmt_pnl_contract``.
     """
     lines = ["Entry-Gate Widening Experiment (since 2026-10-11)", "-" * 50]
     try:
         since = PARAM_CHANGE_DATE
-
-        overall = db._conn.execute(
-            "SELECT side, COUNT(*), "
-            "SUM(CASE WHEN outcome IS NOT NULL THEN 1 ELSE 0 END), "
-            "SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END), "
-            "SUM(CASE WHEN pnl < 0 THEN 1 ELSE 0 END), "
-            "COALESCE(SUM(pnl), 0) "
-            "FROM trades WHERE mode='shadow' AND direction='high' AND ts >= ? "
-            "GROUP BY side",
-            (since,),
-        ).fetchall()
-        if not overall:
-            lines.append("  No shadow trades since the change yet.")
-            lines.append("")
-            return lines
-
-        total_trades = total_settled = 0
-        total_pnl = 0.0
-        for side, n, settled, wins, losses, pnl in overall:
-            total_trades += n
-            total_settled += settled or 0
-            total_pnl += pnl or 0
-            wr = (wins / (wins + losses)) if (wins or losses) else None
-            pnl_display = pnl if settled else None
-            lines.append(
-                f"  {side:<4} {n:>4} trades, {settled or 0:>4} settled, "
-                f"win% {_fmt_pct(wr)} ({wins or 0}W/{losses or 0}L), {_fmt_pnl(pnl_display)}"
-            )
-        pending = total_trades - total_settled
-        lines.append(f"  TOTAL {total_trades} trades, {total_settled} settled "
-                     f"({pending} pending -- settlement lags ~1-2 days), {_fmt_pnl(total_pnl)}")
-
-        # The specific pocket MAX_CONFIDENCE_YES_FOR_NO=0.10 opened: NO-side
-        # entries at p_yes in (0.05, 0.10] that the old 0.05 ceiling would
-        # have rejected outright before this change. This is the one number
-        # that directly answers "is the parameter change itself paying off".
-        pocket = db._conn.execute(
-            "SELECT COUNT(*), "
-            "SUM(CASE WHEN outcome IS NOT NULL THEN 1 ELSE 0 END), "
-            "SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END), "
-            "SUM(CASE WHEN pnl < 0 THEN 1 ELSE 0 END), "
-            "COALESCE(SUM(pnl), 0), "
-            "SUM(COALESCE(is_next_day, 0)) "
-            "FROM trades WHERE mode='shadow' AND side='NO' AND ts >= ? "
-            "AND p_yes_raw > 0.0501 AND p_yes_raw <= 0.10",
-            (since,),
-        ).fetchone()
-        lines.append("")
-        if pocket and pocket[0]:
-            n, settled, wins, losses, pnl, next_day_n = pocket
-            wr = (wins / (wins + losses)) if (wins or losses) else None
-            pnl_display = pnl if settled else None
-            lines.append(
-                f"  Widened pocket (NO, p_yes 0.05-0.10): {n} trades "
-                f"({next_day_n} next-day -- unvalidated by the backtest), "
-                f"{settled} settled, win% {_fmt_pct(wr)} ({wins}W/{losses}L), "
-                f"{_fmt_pnl(pnl_display)}"
-            )
-        else:
-            lines.append("  Widened pocket (NO, p_yes 0.05-0.10): no trades yet")
-
-        # Same-day change, different mechanism: 7 cities promoted to
-        # emos_primary. Tracked separately so this section answers both
-        # "is the gate change working" and "is the promotion working"
-        # without conflating them.
         from src.config import STATIONS, station_city
         promoted_stations = tuple(
             s[0] for s in STATIONS if station_city(s) in EMOS_PRIMARY_PROMOTED_CITIES
         )
-        if promoted_stations:
-            placeholders = ",".join("?" * len(promoted_stations))
-            promo_row = db._conn.execute(
+
+        for next_day_flag, label in _SAME_DAY_NEXT_DAY_CUTS:
+            lines.append(f"  {label}:")
+
+            overall = db._conn.execute(
+                "SELECT side, COUNT(*), "
+                "SUM(CASE WHEN outcome IS NOT NULL THEN 1 ELSE 0 END), "
+                "SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END), "
+                "SUM(CASE WHEN pnl < 0 THEN 1 ELSE 0 END), "
+                "COALESCE(SUM(pnl), 0), "
+                "AVG(CASE WHEN outcome IS NOT NULL THEN actual_price END) "
+                "FROM trades WHERE mode='shadow' AND direction='high' AND ts >= ? "
+                "AND COALESCE(is_next_day, 0) = ? "
+                "GROUP BY side",
+                (since, next_day_flag),
+            ).fetchall()
+            if not overall:
+                lines.append("    No shadow trades since the change yet.")
+                lines.append("")
+                continue
+
+            total_trades = total_settled = 0
+            total_pnl = 0.0
+            for side, n, settled, wins, losses, pnl, avg_price in overall:
+                total_trades += n
+                total_settled += settled or 0
+                total_pnl += pnl or 0
+                wr = (wins / (wins + losses)) if (wins or losses) else None
+                breakeven = (avg_price / 100.0) if avg_price is not None else None
+                pnl_display = pnl if settled else None
+                lines.append(
+                    f"    {side:<4} {n:>4} trades, {settled or 0:>4} settled, "
+                    f"win% {_fmt_pct(wr)} (breakeven {_fmt_pct(breakeven)}) "
+                    f"({wins or 0}W/{losses or 0}L), {_fmt_pnl_contract(pnl_display)}"
+                )
+            pending = total_trades - total_settled
+            lines.append(f"    TOTAL {total_trades} trades, {total_settled} settled "
+                         f"({pending} pending -- settlement lags ~1-2 days), "
+                         f"{_fmt_pnl_contract(total_pnl)}")
+
+            # The specific pocket MAX_CONFIDENCE_YES_FOR_NO=0.10 opened: NO-side
+            # entries at p_yes in (0.05, 0.10] that the old 0.05 ceiling would
+            # have rejected outright before this change. This is the one number
+            # that directly answers "is the parameter change itself paying off".
+            pocket = db._conn.execute(
                 "SELECT COUNT(*), "
                 "SUM(CASE WHEN outcome IS NOT NULL THEN 1 ELSE 0 END), "
-                "SUM(CASE WHEN pnl>0 THEN 1 ELSE 0 END), "
-                "SUM(CASE WHEN pnl<0 THEN 1 ELSE 0 END), COALESCE(SUM(pnl),0) "
-                f"FROM trades WHERE mode='shadow' AND ts >= ? "
-                f"AND station IN ({placeholders})",
-                (since, *promoted_stations),
+                "SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END), "
+                "SUM(CASE WHEN pnl < 0 THEN 1 ELSE 0 END), "
+                "COALESCE(SUM(pnl), 0), "
+                "AVG(CASE WHEN outcome IS NOT NULL THEN actual_price END) "
+                "FROM trades WHERE mode='shadow' AND side='NO' AND ts >= ? "
+                "AND COALESCE(is_next_day, 0) = ? "
+                "AND p_yes_raw > 0.0501 AND p_yes_raw <= 0.10",
+                (since, next_day_flag),
             ).fetchone()
-            n, settled, wins, losses, pnl = promo_row
-            wr = (wins / (wins + losses)) if (wins or losses) else None
-            pnl_display = pnl if settled else None
-            lines.append(
-                f"  emos_primary cities (7): {n or 0} trades, {settled or 0} settled, "
-                f"win% {_fmt_pct(wr)} ({wins or 0}W/{losses or 0}L), {_fmt_pnl(pnl_display)}"
-            )
+            if pocket and pocket[0]:
+                n, settled, wins, losses, pnl, avg_price = pocket
+                wr = (wins / (wins + losses)) if (wins or losses) else None
+                breakeven = (avg_price / 100.0) if avg_price is not None else None
+                pnl_display = pnl if settled else None
+                lines.append(
+                    f"    Widened pocket (NO, p_yes 0.05-0.10): {n} trades, "
+                    f"{settled} settled, win% {_fmt_pct(wr)} "
+                    f"(breakeven {_fmt_pct(breakeven)}) ({wins}W/{losses}L), "
+                    f"{_fmt_pnl_contract(pnl_display)}"
+                )
+            else:
+                lines.append("    Widened pocket (NO, p_yes 0.05-0.10): no trades yet")
+
+            # Same-day change, different mechanism: 7 cities promoted to
+            # emos_primary. Tracked separately so this section answers both
+            # "is the gate change working" and "is the promotion working"
+            # without conflating them.
+            if promoted_stations:
+                placeholders = ",".join("?" * len(promoted_stations))
+                promo_row = db._conn.execute(
+                    "SELECT COUNT(*), "
+                    "SUM(CASE WHEN outcome IS NOT NULL THEN 1 ELSE 0 END), "
+                    "SUM(CASE WHEN pnl>0 THEN 1 ELSE 0 END), "
+                    "SUM(CASE WHEN pnl<0 THEN 1 ELSE 0 END), COALESCE(SUM(pnl),0), "
+                    "AVG(CASE WHEN outcome IS NOT NULL THEN actual_price END) "
+                    f"FROM trades WHERE mode='shadow' AND ts >= ? "
+                    f"AND COALESCE(is_next_day, 0) = ? "
+                    f"AND station IN ({placeholders})",
+                    (since, next_day_flag, *promoted_stations),
+                ).fetchone()
+                n, settled, wins, losses, pnl, avg_price = promo_row
+                wr = (wins / (wins + losses)) if (wins or losses) else None
+                breakeven = (avg_price / 100.0) if avg_price is not None else None
+                pnl_display = pnl if settled else None
+                lines.append(
+                    f"    emos_primary cities (7): {n or 0} trades, {settled or 0} settled, "
+                    f"win% {_fmt_pct(wr)} (breakeven {_fmt_pct(breakeven)}) "
+                    f"({wins or 0}W/{losses or 0}L), {_fmt_pnl_contract(pnl_display)}"
+                )
+            lines.append("")
 
     except Exception:
         log.exception("Param-change impact query failed")
         lines.append("  (unavailable -- query error)")
-    lines.append("")
+        lines.append("")
     return lines
 
 
@@ -1439,10 +1485,18 @@ def _build_station_breakdown(db, today: datetime) -> list[str]:
     underlying forecast quality are read side by side, not as two separate
     reports that have to be mentally merged.
 
+    Same-day trades only (#1450) -- next-day evaluations are shadow-only
+    research that can never go live, and pooling them here would mix a
+    live-eligible station's record with a shadow-only one under the same
+    row. PnL is per single contract, not a EUR stake (``_fmt_pnl_contract``),
+    and Win% is shown alongside its breakeven (mean ``actual_price``/100
+    over the same settled trades), not against a flat 50%.
+
     Sorted by trade count (most data first), not PnL -- this early, one
     settled trade swinging +/-100% is not what should decide a top-10 slot.
     """
-    lines = ["Per-Station Breakdown (top 10 by trade count, since 2026-10-11)", "-" * 55]
+    lines = ["Per-Station Breakdown (top 10 by trade count, same-day only, "
+             "since 2026-10-11)", "-" * 55]
     try:
         from src.config import STATIONS, station_city
         station_to_city = {s[0]: station_city(s) for s in STATIONS}
@@ -1452,8 +1506,10 @@ def _build_station_breakdown(db, today: datetime) -> list[str]:
             "SUM(CASE WHEN outcome IS NOT NULL THEN 1 ELSE 0 END), "
             "SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END), "
             "SUM(CASE WHEN pnl < 0 THEN 1 ELSE 0 END), "
-            "COALESCE(SUM(pnl), 0) "
+            "COALESCE(SUM(pnl), 0), "
+            "AVG(CASE WHEN outcome IS NOT NULL THEN actual_price END) "
             "FROM trades WHERE mode='shadow' AND direction='high' AND ts >= ? "
+            "AND COALESCE(is_next_day, 0) = 0 "
             "GROUP BY station ORDER BY COUNT(*) DESC LIMIT 10",
             (PARAM_CHANGE_DATE,),
         ).fetchall()
@@ -1462,14 +1518,15 @@ def _build_station_breakdown(db, today: datetime) -> list[str]:
             lines.append("")
             return lines
 
-        lines.append(f"  {'Station':<8}{'N':>5}{'Set':>5}{'Win%':>7}{'PnL':>11}"
-                     f"{'EMOS CRPS':>11}{'Legacy':>9}")
-        for station, n, settled, wins, losses, pnl in rows:
+        lines.append(f"  {'Station':<8}{'N':>5}{'Set':>5}{'Win%':>7}{'BE%':>7}"
+                     f"{'PnL':>15}{'EMOS CRPS':>11}{'Legacy':>9}")
+        for station, n, settled, wins, losses, pnl, avg_price in rows:
             wr = (wins / (wins + losses)) if (wins or losses) else None
+            breakeven = (avg_price / 100.0) if avg_price is not None else None
             # COALESCE(SUM(pnl), 0) turns "nothing settled yet" into a
-            # literal 0.0, which _fmt_pnl would print as "+EUR0.00" -- that
-            # reads as "broke even", not "no data yet". Show N/A instead
-            # whenever nothing has actually settled.
+            # literal 0.0, which _fmt_pnl_contract would print as
+            # "+0.00/contract" -- that reads as "broke even", not "no data
+            # yet". Show N/A instead whenever nothing has actually settled.
             pnl_display = pnl if settled else None
             city = station_to_city.get(station)
             emos_crps = legacy_crps = None
@@ -1491,7 +1548,8 @@ def _build_station_breakdown(db, today: datetime) -> list[str]:
             legacy_str = f"{legacy_crps:.3f}" if legacy_crps is not None else "N/A"
             lines.append(
                 f"  {station:<8}{n:>5}{settled:>5}{_fmt_pct(wr):>7}"
-                f"{_fmt_pnl(pnl_display):>11}{emos_str:>11}{legacy_str:>9}"
+                f"{_fmt_pct(breakeven):>7}{_fmt_pnl_contract(pnl_display):>15}"
+                f"{emos_str:>11}{legacy_str:>9}"
             )
     except Exception:
         log.exception("Station breakdown query failed")

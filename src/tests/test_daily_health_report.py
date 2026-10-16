@@ -30,13 +30,16 @@ from src.scripts.daily_health_report import (
     TABLE_LIVENESS_SPECS,  # noqa: E402
     _build_bot_health,
     _build_header,
+    _build_param_change_impact,
     _build_silent_failures,
     _build_m3_progress,
+    _build_station_breakdown,
     _build_table_liveness,
     _build_trading,
     _build_verdict,
     _fmt_age,
     _fmt_pnl,
+    _fmt_pnl_contract,
     _fmt_pct,
     _send_email,
     build_report,
@@ -101,6 +104,26 @@ class TestFmtPnl:
 
     def test_none(self):
         assert _fmt_pnl(None) == "N/A"
+
+
+class TestFmtPnlContract:
+    """Shadow PnL is per contract, not EUR (issue #1450) -- distinct
+    formatter so it is never mistaken for a live-trading euro figure."""
+
+    def test_positive(self):
+        assert _fmt_pnl_contract(4.87) == "+4.87/contract"
+
+    def test_negative(self):
+        assert _fmt_pnl_contract(-5.00) == "-5.00/contract"
+
+    def test_zero(self):
+        assert _fmt_pnl_contract(0.0) == "+0.00/contract"
+
+    def test_none(self):
+        assert _fmt_pnl_contract(None) == "N/A"
+
+    def test_does_not_say_eur(self):
+        assert "EUR" not in _fmt_pnl_contract(1.23)
 
 
 class TestFmtPct:
@@ -1455,3 +1478,197 @@ class TestSilentFailuresSection:
         lines, flags = _build_silent_failures(db, datetime.now(timezone.utc))
         assert any("unavailable" in ln for ln in lines)
         assert flags["n_write_failed"] == 0
+
+
+# ---------------------------------------------------------------------------
+# _build_param_change_impact / _build_station_breakdown -- same-day vs
+# next-day split (issue #1450).
+#
+# Next-day evaluations (is_next_day=1) are shadow-only research that can
+# never go live. Since 2026-10-11 they have moved opposite the live-eligible
+# same-day book, so pooling them makes a clearly profitable same-day book
+# read as a breakeven wash. These tests use a real sqlite3 connection
+# (rather than the SQL-prefix mock) because the split is driven by a bound
+# parameter, not by distinct query text.
+# ---------------------------------------------------------------------------
+
+def _shadow_trades_db(rows):
+    """Minimal synthetic trades/emos_calibration/emos_crps_log fixture.
+
+    Each row in `rows` is a dict; missing keys default to a settled,
+    same-day, 'high'-direction NO shadow trade at 76c (breakeven 76%).
+    """
+    conn = sqlite3.connect(":memory:")
+    conn.execute(
+        "CREATE TABLE trades (ts TEXT, station TEXT, mode TEXT, direction TEXT, "
+        "side TEXT, outcome TEXT, pnl REAL, actual_price INTEGER, p_yes_raw REAL, "
+        "is_next_day INTEGER NOT NULL DEFAULT 0)"
+    )
+    conn.execute(
+        "CREATE TABLE emos_calibration (city TEXT, model_mode TEXT, "
+        "crps_score REAL, trained_at TEXT)"
+    )
+    conn.execute(
+        "CREATE TABLE emos_crps_log (city TEXT, model_mode TEXT, crps_score REAL)"
+    )
+    for r in rows:
+        conn.execute(
+            "INSERT INTO trades (ts, station, mode, direction, side, outcome, "
+            "pnl, actual_price, p_yes_raw, is_next_day) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (
+                r.get("ts", "2026-10-12T00:00:00+00:00"),
+                r.get("station", "KORD"),
+                r.get("mode", "shadow"),
+                r.get("direction", "high"),
+                r.get("side", "NO"),
+                r.get("outcome", "settled"),
+                r.get("pnl", 0.24),
+                r.get("actual_price", 76),
+                r.get("p_yes_raw", 0.03),
+                r.get("is_next_day", 0),
+            ),
+        )
+    conn.commit()
+    db = MagicMock()
+    db._conn = conn
+    return db
+
+
+class TestBuildParamChangeImpactSameDayNextDaySplit:
+    def test_same_day_block_precedes_next_day_block(self):
+        db = _shadow_trades_db([
+            {"is_next_day": 0},
+            {"is_next_day": 1},
+        ])
+        text = "\n".join(_build_param_change_impact(db, datetime.now(timezone.utc)))
+        assert "Same-day (live-eligible):" in text
+        assert "Next-day (research, shadow-only):" in text
+        assert text.index("Same-day (live-eligible):") < text.index(
+            "Next-day (research, shadow-only):"
+        )
+
+    def test_same_day_and_next_day_totals_are_not_pooled(self):
+        """Same-day wins (+0.24 each) must not be summed together with the
+        next-day loss (-0.76) into one TOTAL line -- that is exactly the
+        ~breakeven-looking wash #1450 is about."""
+        db = _shadow_trades_db([
+            {"is_next_day": 0, "pnl": 0.24, "outcome": "win"},
+            {"is_next_day": 0, "pnl": 0.24, "outcome": "win"},
+            {"is_next_day": 1, "pnl": -0.76, "outcome": "loss"},
+        ])
+        lines = _build_param_change_impact(db, datetime.now(timezone.utc))
+        text = "\n".join(lines)
+        same_day_block = text.split("Same-day (live-eligible):")[1].split(
+            "Next-day (research, shadow-only):"
+        )[0]
+        next_day_block = text.split("Next-day (research, shadow-only):")[1]
+
+        assert "TOTAL 2 trades, 2 settled" in same_day_block
+        assert "+0.48/contract" in same_day_block
+        assert "TOTAL 1 trades, 1 settled" in next_day_block
+        assert "-0.76/contract" in next_day_block
+        # Never shown as a single pooled EUR-style figure.
+        assert "EUR" not in text
+
+    def test_win_rate_line_shows_breakeven_from_mean_actual_price(self):
+        """NO fills at 74-79c, so breakeven is ~77%, not a flat 50% (#1450)."""
+        db = _shadow_trades_db([
+            {"is_next_day": 0, "actual_price": 70, "outcome": "win", "pnl": 0.30},
+            {"is_next_day": 0, "actual_price": 80, "outcome": "loss", "pnl": -0.80},
+        ])
+        text = "\n".join(_build_param_change_impact(db, datetime.now(timezone.utc)))
+        assert "breakeven 75.0%" in text
+
+    def test_pending_trades_excluded_from_breakeven_average(self):
+        """Breakeven is computed over *settled* trades only -- an open
+        position's actual_price must not skew it."""
+        db = _shadow_trades_db([
+            {"is_next_day": 0, "actual_price": 76, "outcome": "win", "pnl": 0.24},
+            {"is_next_day": 0, "actual_price": 10, "outcome": None, "pnl": None},
+        ])
+        text = "\n".join(_build_param_change_impact(db, datetime.now(timezone.utc)))
+        assert "breakeven 76.0%" in text
+
+    def test_widened_pocket_split_by_same_day_next_day(self):
+        db = _shadow_trades_db([
+            {"is_next_day": 0, "p_yes_raw": 0.07, "outcome": "win", "pnl": 0.24},
+            {"is_next_day": 1, "p_yes_raw": 0.07, "outcome": "loss", "pnl": -0.76},
+        ])
+        lines = _build_param_change_impact(db, datetime.now(timezone.utc))
+        text = "\n".join(lines)
+        same_day_block = text.split("Same-day (live-eligible):")[1].split(
+            "Next-day (research, shadow-only):"
+        )[0]
+        next_day_block = text.split("Next-day (research, shadow-only):")[1]
+        assert "Widened pocket (NO, p_yes 0.05-0.10): 1 trades" in same_day_block
+        assert "Widened pocket (NO, p_yes 0.05-0.10): 1 trades" in next_day_block
+        assert "+0.24/contract" in same_day_block
+        assert "-0.76/contract" in next_day_block
+
+    def test_emos_primary_cities_split_by_same_day_next_day(self):
+        """KMIA (Miami) is one of the 7 emos_primary-promoted cities."""
+        db = _shadow_trades_db([
+            {"is_next_day": 0, "station": "KMIA", "outcome": "win", "pnl": 0.24},
+            {"is_next_day": 1, "station": "KMIA", "outcome": "loss", "pnl": -0.76},
+        ])
+        lines = _build_param_change_impact(db, datetime.now(timezone.utc))
+        text = "\n".join(lines)
+        same_day_block = text.split("Same-day (live-eligible):")[1].split(
+            "Next-day (research, shadow-only):"
+        )[0]
+        next_day_block = text.split("Next-day (research, shadow-only):")[1]
+        assert "emos_primary cities (7): 1 trades, 1 settled" in same_day_block
+        assert "+0.24/contract" in same_day_block
+        assert "emos_primary cities (7): 1 trades, 1 settled" in next_day_block
+        assert "-0.76/contract" in next_day_block
+
+    def test_no_trades_in_one_split_does_not_block_the_other(self):
+        db = _shadow_trades_db([{"is_next_day": 0}])
+        text = "\n".join(_build_param_change_impact(db, datetime.now(timezone.utc)))
+        same_day_block = text.split("Same-day (live-eligible):")[1].split(
+            "Next-day (research, shadow-only):"
+        )[0]
+        next_day_block = text.split("Next-day (research, shadow-only):")[1]
+        assert "No shadow trades since the change yet." in next_day_block
+        assert "No shadow trades since the change yet." not in same_day_block
+
+    def test_query_error_falls_back_to_unavailable(self):
+        db = MagicMock()
+        db._conn.execute.side_effect = RuntimeError("boom")
+        text = "\n".join(_build_param_change_impact(db, datetime.now(timezone.utc)))
+        assert "(unavailable -- query error)" in text
+
+
+class TestBuildStationBreakdownSameDayOnly:
+    def test_header_says_same_day_only(self):
+        db = _shadow_trades_db([{"is_next_day": 0}])
+        text = "\n".join(_build_station_breakdown(db, datetime.now(timezone.utc)))
+        assert "same-day only" in text
+
+    def test_next_day_trades_excluded_from_station_counts_and_pnl(self):
+        db = _shadow_trades_db([
+            {"station": "KORD", "is_next_day": 0, "outcome": "win", "pnl": 0.24},
+            {"station": "KORD", "is_next_day": 1, "outcome": "loss", "pnl": -0.76},
+        ])
+        text = "\n".join(_build_station_breakdown(db, datetime.now(timezone.utc)))
+        lines = [ln for ln in text.splitlines() if ln.strip().startswith("KORD")]
+        assert len(lines) == 1
+        assert "+0.24/contract" in lines[0]
+        assert "-0.76/contract" not in lines[0]
+
+    def test_pnl_labeled_per_contract_not_eur(self):
+        db = _shadow_trades_db([
+            {"station": "KORD", "is_next_day": 0, "outcome": "win", "pnl": 0.24},
+        ])
+        text = "\n".join(_build_station_breakdown(db, datetime.now(timezone.utc)))
+        assert "/contract" in text
+        assert "EUR" not in text
+
+    def test_breakeven_column_present(self):
+        db = _shadow_trades_db([
+            {"station": "KORD", "is_next_day": 0, "actual_price": 76,
+             "outcome": "win", "pnl": 0.24},
+        ])
+        text = "\n".join(_build_station_breakdown(db, datetime.now(timezone.utc)))
+        assert "BE%" in text
+        assert "76.0%" in text
