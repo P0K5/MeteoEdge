@@ -101,6 +101,21 @@ def test_refresh_label_hidden_below_480px():
     )
 
 
+# ── Tab bar: AC2 regression guard (issue #816, already-shipped behavior this
+#    PR intentionally does not touch -- pinned here so a future change can't
+#    silently remove the "no forced scroll of critical nav" guarantee) ──────
+
+def test_tab_bar_scrolls_horizontally_and_keeps_active_tab_visible():
+    html = _html()
+    body = _rule(html, ".tab-bar")
+    assert "overflow-x:auto" in body
+    assert re.search(
+        r"event\.target\.scrollIntoView\(_copyScrollOpts\(\{behavior:'smooth', "
+        r"inline:'nearest', block:'nearest'\}\)\)",
+        html,
+    ), "switchTab() must keep scrolling the clicked tab into view"
+
+
 # ── Grids: wallet-row / prob-row ─────────────────────────────────────────────
 
 def test_wallet_row_orphan_card_spans_full_width_at_600px():
