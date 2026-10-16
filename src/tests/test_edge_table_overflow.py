@@ -16,12 +16,17 @@ INDEX_HTML = REPO_ROOT / "src" / "dashboard" / "static" / "index.html"
 
 
 def test_edge_table_wrap_css_rule_exists():
-    """The .edge-table-wrap CSS rule with overflow-x:auto must exist in the style block."""
+    """The .edge-table-wrap CSS rule with overflow-x:auto must exist in the style block.
+
+    #816 adds position:relative to this rule (closes the #1286-class bug: an
+    unpositioned scroll container lets absolute-positioned descendants lay
+    out against the page instead of the wrap).
+    """
     html = INDEX_HTML.read_text(encoding="utf-8")
     assert re.search(
-        r"\.edge-table-wrap\s*\{\s*overflow-x\s*:\s*auto\s*;\s*\}",
+        r"\.edge-table-wrap\s*\{\s*overflow-x\s*:\s*auto\s*;\s*position\s*:\s*relative\s*;\s*\}",
         html,
-    ), "CSS rule .edge-table-wrap{overflow-x:auto;} not found in index.html"
+    ), "CSS rule .edge-table-wrap{overflow-x:auto;position:relative;} not found in index.html"
 
 
 def test_edge_decision_table_wrapped_in_overflow_div():
@@ -58,13 +63,13 @@ def test_edge_table_wrap_mirrors_promo_table_pattern():
     """The .edge-table-wrap pattern should mirror the existing .promo-table-wrap."""
     html = INDEX_HTML.read_text(encoding="utf-8")
 
-    # Both should have the same overflow-x:auto rule
+    # Both should have the same overflow-x:auto;position:relative; rule (#816).
     promo_css = re.search(
-        r"\.promo-table-wrap\s*\{\s*overflow-x\s*:\s*auto\s*;\s*\}",
+        r"\.promo-table-wrap\s*\{\s*overflow-x\s*:\s*auto\s*;\s*position\s*:\s*relative\s*;\s*\}",
         html,
     )
     edge_css = re.search(
-        r"\.edge-table-wrap\s*\{\s*overflow-x\s*:\s*auto\s*;\s*\}",
+        r"\.edge-table-wrap\s*\{\s*overflow-x\s*:\s*auto\s*;\s*position\s*:\s*relative\s*;\s*\}",
         html,
     )
     assert promo_css, "promo-table-wrap CSS not found"
