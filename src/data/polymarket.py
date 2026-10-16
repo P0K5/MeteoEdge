@@ -12,37 +12,87 @@ from src.config import (
 )
 
 
+#: Safety cap on the number of `/markets/keyset` pages `get_weather_markets()`
+#: will walk before giving up (issue #1434). At 100 markets/page this allows
+#: up to 100,000 markets -- ~29x the ~3,400 active weather markets seen live
+#: on 2026-10-16 -- so it should never bite in practice. It exists purely to
+#: guarantee termination if the API ever echoes a `next_cursor` forever (a
+#: server bug), and treats that case as a real failure (raises) rather than
+#: silently returning a partial list, for the same reason a fetch failure
+#: does below.
+MAX_WEATHER_MARKET_PAGES = 1000
+
+
 def get_weather_markets() -> list[dict]:
     """Fetch all active weather-tagged markets via Polymarket Gamma API.
 
-    Paginated (100 per page). Each page URL is cached for 5 min so back-to-back
+    Paginated via the Gamma API's cursor-based `/markets/keyset` endpoint
+    (100 per page, walked via the `after_cursor` it returns) -- NOT the
+    `offset`-based `/markets` endpoint this used before issue #1434. The
+    Gamma API hard-rejects `offset >= 2100` for this query
+    (`422 "offset too large, use /markets/keyset for deeper pagination"`),
+    and as of 2026-10-15 the weather-market universe grew past that wall, so
+    every market created after it went silently unseen. `/markets/keyset`
+    also rejects `offset` outright ("offset is not allowed on keyset
+    endpoints") -- `after_cursor` is the only supported pagination param.
+
+    Each page URL (including the cursor) is cached for 5 min so back-to-back
     polls don't re-fetch. Markets open/close infrequently within a session.
+
+    A fetch failure on ANY page -- including the first -- raises
+    ``RuntimeError`` rather than returning whatever was accumulated so far.
+    ``cached_fetch_json`` collapses "offset too large" and a transient
+    network failure into the same ``None`` return, so this function cannot
+    (and must not try to) tell them apart; what matters is that neither one
+    is silently treated as "reached the end of the list" the way the old
+    offset loop treated an API rejection. Callers already handle this:
+    ``src/scripts/run.py`` wraps this call in try/except and skips the poll
+    on exception, logging it loudly instead of recording a falsely-healthy
+    "N weather markets fetched" line.
     """
     all_markets: list[dict] = []
     seen_ids: set[str] = set()
+    cursor: "str | None" = None
 
-    for offset in range(0, 5000, 100):
+    for page_num in range(MAX_WEATHER_MARKET_PAGES):
         url = (
-            f"{POLYMARKET_GAMMA_API}/markets"
+            f"{POLYMARKET_GAMMA_API}/markets/keyset"
             f"?limit=100&active=true&closed=false"
-            f"&tag_id={POLYMARKET_WEATHER_TAG_ID}&offset={offset}"
+            f"&tag_id={POLYMARKET_WEATHER_TAG_ID}"
         )
+        if cursor:
+            url += f"&after_cursor={cursor}"
         data = cached_fetch_json(url, ttl_minutes=5)
         if data is None:
-            log.warning("[polymarket] offset=%s fetch failed, stopping pagination", offset)
-            break
-        batch = data if isinstance(data, list) else data.get("markets", [])
-        if not batch:
-            break
+            raise RuntimeError(
+                f"[polymarket] weather market fetch failed on page {page_num} "
+                f"(after {len(all_markets)} market(s) collected) -- refusing "
+                f"to treat this as end-of-results"
+            )
+
+        batch = data.get("markets", []) if isinstance(data, dict) else (
+            data if isinstance(data, list) else []
+        )
         for m in batch:
             mid = m.get("conditionId") or m.get("condition_id") or m.get("id")
             if mid and mid not in seen_ids:
                 seen_ids.add(mid)
                 all_markets.append(m)
-        if len(batch) < 100:
-            break
 
-    return all_markets
+        cursor = data.get("next_cursor") if isinstance(data, dict) else None
+        if not cursor:
+            log.info(
+                "[polymarket] %s weather markets fetched (complete, %s page(s))",
+                len(all_markets), page_num + 1,
+            )
+            return all_markets
+
+    raise RuntimeError(
+        f"[polymarket] weather market pagination did not terminate within "
+        f"{MAX_WEATHER_MARKET_PAGES} pages ({len(all_markets)} market(s) "
+        f"collected) -- treating as a failure rather than returning a "
+        f"silently truncated list"
+    )
 
 
 def _select_matching_market(result: "list[dict]", ticker: str) -> "dict | None":

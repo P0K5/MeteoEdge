@@ -616,7 +616,11 @@ def poll_once(
                 _snap_ob2 = fetch_orderbooks_batch(_open_token_ids)
             position_states = _log_open_position_snapshots(_pricing_weather, ts, db=db, orderbooks=_snap_ob2)
         return
-    log.info("[polymarket] %s weather markets fetched", len(markets))
+    # get_weather_markets() itself logs the "N weather markets fetched
+    # (complete, ...)" line on success (issue #1434) -- logging it again here
+    # would be redundant, and since a failed/truncated fetch now raises
+    # (caught above) rather than returning a partial list, there is no
+    # "incomplete" case left for this call site to report separately.
 
     # Build one shared orderbook dict for all tokens needed this poll:
     # - YES + NO tokens from every candidate market (for CLOB enrichment in scan_markets)
