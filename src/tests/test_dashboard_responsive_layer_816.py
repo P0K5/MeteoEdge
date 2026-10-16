@@ -156,6 +156,7 @@ def test_no_new_bare_breakpoint_values_introduced():
         ".btn-outline-label{display:none;}",
         ".config-param{flex-wrap:wrap;row-gap:var(--space-2);}",
     ):
+        assert marker in html, f"expected marker not found in index.html: {marker}"
         idx = html.index(marker)
         # walk backwards to the nearest preceding @media(max-width:...) to
         # confirm the rule is scoped to one of the three sanctioned values.
